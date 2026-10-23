@@ -186,11 +186,12 @@ class _Tally:  # one step's runs, each bounded and isolated so none stops the ot
 class _OnTarget:  # `enforce` names no object: its `rbac.denied` names the target, as S4's do
     audit: AuditEmitter
     user_id: uuid.UUID
+    session_id: uuid.UUID | None  # and the caller's session (#4174)
 
     @audited("rbac.denied")
     async def emit(self, action: str, **kwargs: Any) -> None:
         target = {"object_kind": "user", "object_id": str(self.user_id)}
-        await self.audit.emit(action, **kwargs | target)
+        await self.audit.emit(action, **kwargs | target | {"session_id": self.session_id})
 
 
 def _log() -> Any:
@@ -271,9 +272,11 @@ class UserDisableService:
         actor: PrincipalSnapshot,
         acknowledge_unknown_positions: bool = False,
         precondition: UserPrecondition | None = None,
+        session_id: uuid.UUID | None = None,
     ) -> DisableResult:
         """`precondition` (E42-T09: a PATCH's `If-Match`) is judged by the store on the user read
         under its user-row lock, before any write; it refuses with `UserVersionConflictError`.
+        `session_id` is the caller's session, which each refusal's `rbac.denied` names (#4174).
 
         Raises a `UserLifecycleError` with nothing changed, or a store failure: rolled back,
         unless the commit itself failed and its read-back did not find the change (#3445), whose
@@ -281,7 +284,7 @@ class UserDisableService:
         REVOKE, since AC5's no-op returns no session ids. A caller cancelled after the commit, or
         after a read-back found it, leaves the steps, and its record, to their task (R7)."""
         rid, now, uid = current_request_uuid(), self._clock(), str(user_id)
-        await self._guard(user_id, actor, rid)
+        await self._guard(user_id, actor, rid, session_id)
         bound = self._count_timeout_s
         positions = await _count(self._positions.open_position_count(uid), "positions", bound)
         orders = await _count(self._orders.open_order_count(uid), "orders", bound)
@@ -293,7 +296,7 @@ class UserDisableService:
             "acknowledged_unknown_positions": acknowledge_unknown_positions,
         }
         change, recovered = await self._commit(
-            user_id, actor.user_id, counts, rid, now, unknown, precondition
+            user_id, actor.user_id, counts, rid, now, unknown, precondition, session_id
         )
         if change is None:
             raise self._refused("not_found", UserNotFoundError(uid))
@@ -306,12 +309,14 @@ class UserDisableService:
         return DisableResult(change.changed, await asyncio.shield(task))
 
     @audited("rbac.denied")
-    async def authorize(self, user_id: uuid.UUID, *, actor: PrincipalSnapshot) -> None:
+    async def authorize(
+        self, user_id: uuid.UUID, *, actor: PrincipalSnapshot, session_id: uuid.UUID | None = None
+    ) -> None:
         """The guard alone: `users:write`, then a self-target, each refusal audited before any
-        read. A route that must put its step-up between the guard and the change (SR-025: the
-        refusals no step-up can cure come first) calls it before the gate; `disable` repeats it,
-        so no caller reaches the change without it."""
-        await self._guard(user_id, actor, current_request_uuid())
+        read, naming `session_id` (the caller's, #4174). A route that must put its step-up between
+        the guard and the change (SR-025: the refusals no step-up can cure come first) calls it
+        before the gate; `disable` repeats it, so no caller reaches the change without it."""
+        await self._guard(user_id, actor, current_request_uuid(), session_id)
 
     def _untrack(self, task: asyncio.Task[tuple[str, ...]]) -> None:
         """A raise is logged here too: once the caller is cancelled, no one awaits the task."""
@@ -328,24 +333,29 @@ class UserDisableService:
             await asyncio.wait(set(self._cascades))
 
     async def _guard(
-        self, user_id: uuid.UUID, actor: PrincipalSnapshot, rid: uuid.UUID | None
+        self,
+        user_id: uuid.UUID,
+        actor: PrincipalSnapshot,
+        rid: uuid.UUID | None,
+        session_id: uuid.UUID | None,
     ) -> None:
         try:  # `scope` is `Scope.NONE`: `users:write` is not per account
-            denied = _OnTarget(self._audit, user_id)
+            denied = _OnTarget(self._audit, user_id, session_id)
             await enforce(actor, Permission.USERS_WRITE, emitter=denied, request_id=rid)
         except ForbiddenError as exc:  # `enforce` audited `rbac.denied`
             raise self._refused("forbidden", LifecycleForbiddenError("forbidden_role")) from exc
         except _AUDIT_DOWN as exc:
             raise self._refused("audit_unavailable", LifecycleAuditUnavailableError()) from exc
         if user_id == actor.user_id:
-            await self._deny_self(_who(actor.user_id, user_id, rid))
+            await self._deny_self(_who(actor.user_id, user_id, rid), session_id)
 
-    async def _deny_self(self, who: dict[str, Any]) -> NoReturn:
+    async def _deny_self(self, who: dict[str, Any], session_id: uuid.UUID | None) -> NoReturn:
         """SR-055: refused with an audited 403, or a 503 if the record cannot be written."""
         try:
             await self._audit.emit(
                 "rbac.denied",
                 **who,
+                session_id=session_id,
                 outcome=AuditOutcome.DENIED,
                 severity=Severity.WARNING,
                 reason="self_target",
@@ -363,6 +373,7 @@ class UserDisableService:
         now: datetime,
         unknown: bool,
         precondition: UserPrecondition | None,
+        session_id: uuid.UUID | None,
     ) -> tuple[UserStatusChange | None, str | None]:
         """The store's change, and the error of a commit that raised if a read-back then found the
         change (#3445), else `None`."""
@@ -400,7 +411,7 @@ class UserDisableService:
         except OwnerFloorError as exc:  # refused under the lock, unaudited (UL1-D1)
             raise self._refused("last_owner", LastOwnerError(str(user_id))) from exc
         except UserSelfTargetError:  # the store's own SR-055 check: the same audited 403
-            await self._deny_self(_who(actor, user_id, rid))
+            await self._deny_self(_who(actor, user_id, rid), session_id)
         except _AuditRefusedError as exc:  # AC8: nothing durable, nothing changed
             raise self._refused("audit_unavailable", LifecycleAuditUnavailableError()) from exc
         except BaseException as exc:

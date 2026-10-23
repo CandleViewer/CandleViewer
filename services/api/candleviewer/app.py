@@ -1855,7 +1855,9 @@ def create_app(
     # #2266 D2: `rewrapKek`, the KEK re-wrap entry point. Owner only; step-up `keys` is path-gated
     # in `DANGEROUS_ROUTES`; M2 runs it behind `AdminService` (counts only).
     app.include_router(
-        make_admin_kek_router(ctx.admin, _LazyAuditEmitter(ctx.audit), owner_resolver)
+        make_admin_kek_router(
+            ctx.admin, _LazyAuditEmitter(ctx.audit), owner_resolver, auth=ctx.auth
+        )
     )
     # QA #1596: real session-backed resolver; without an identity provider
     # (fake backend) it stays `None` and every call fails closed with 501.
@@ -2091,6 +2093,7 @@ def create_app(
             rotation=KeyRotationPolicy.from_settings(resolved),
             # #836 slice 2b6: `testApiKey`, its verdict enforced by the self-check (decision 11).
             tests=wire_key_test(ctx, selfcheck, key_imports),
+            auth=ctx.auth,  # a refusal names the caller's session (#4174)
         )
     )
     # E27-T04 (#837): per-account health and the wallet cache, on both backends; the lifespan starts

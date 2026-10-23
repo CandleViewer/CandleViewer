@@ -237,6 +237,27 @@ async def test_the_owner_role_refusal_is_one_denial_of_the_caller_at_warning(kek
     assert tuple(denial.get(k) for k in keys) == want
 
 
+@pytest.mark.parametrize("perms", [frozenset(), OWNER], ids=["no_keys_manage", "not_the_owner"])
+async def test_a_refusal_names_the_callers_session(kek: _Kek, perms: frozenset[Permission]) -> None:
+    """#4174: as the `users:read` refusal names it, through the deployed app's wiring."""
+    token = await elevated(kek.w, "manager", perms)
+    assert kek.post(token).status_code == 403
+    [denial] = kek.w.audit.of("rbac.denied")
+    session = await kek.w.auth.sessions.peek_access_token(token)
+    assert session is not None and denial["session_id"] == session.id
+
+
+async def test_the_deployed_key_routes_name_the_callers_session_on_a_refusal(kek: _Kek) -> None:
+    """#4183's security look, L1: `app.py` wires the exchange-key router's `auth`, so a key
+    test refused `keys:read` names the caller's session, as the KEK route's refusal does."""
+    token = await _login(kek.w, "viewer", frozenset())
+    path = f"/exchange-accounts/{uuid.uuid4()}/keys/{uuid.uuid4()}/test"
+    assert kek.w.client.post(path, headers=_h(token)).status_code == 403
+    [denial] = kek.w.audit.of("rbac.denied")
+    session = await kek.w.auth.sessions.peek_access_token(token)
+    assert session is not None and denial["session_id"] == session.id
+
+
 async def test_a_call_without_its_csrf_token_is_refused(kek: _Kek) -> None:
     owner = await elevated(kek.w, "owner", OWNER)
     r = kek.w.client.post(PATH, headers={"Authorization": f"Bearer {owner}"}, json=BODY)

@@ -976,6 +976,24 @@ def test_patch_disable_runs_disable_cascade(b16_audit: RecordingAuditSink, spec:
     assert w.post_commit() and w.socket_users == [M]  # every socket of M (S7), after the commit
 
 
+def test_patch_disable_gives_the_cascade_the_elevated_session(
+    b16_audit: RecordingAuditSink, spec: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#4174: a refusal the cascade itself records names the session the step-up elevated, as
+    `DELETE`'s does."""
+    env, w = _disable_env(b16_audit, spec, positions=0, orders=0)
+    given: list[uuid.UUID | None] = []
+    disable = w.svc.disable
+
+    async def recording(user_id: uuid.UUID, **kwargs: Any) -> Any:
+        given.append(kwargs.get("session_id"))
+        return await disable(user_id, **kwargs)
+
+    monkeypatch.setattr(w.svc, "disable", recording)
+    assert env.patch(M, {"status": "disabled"}).status_code == 200
+    assert given == [_SESSION]
+
+
 def test_patch_disable_positions_unknown_409(b16_audit: RecordingAuditSink, spec: Any) -> None:
     """AC7 (O2): while the open-position count is unknown the disable needs the acknowledgement,
     else 409 `positions_unknown` and nothing changes; with it, the disable runs."""

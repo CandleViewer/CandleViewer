@@ -10,6 +10,7 @@ import json
 import os
 import time
 import traceback
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -56,11 +57,32 @@ class Resolver:
         return PEOPLE.get(request.headers.get("authorization", "").removeprefix("Bearer "))
 
 
+class SessionAuth:
+    """The session read a refusal's record names (#4174): every bearer names `SESSION`."""
+
+    sessions_is_active = True
+
+    def __init__(self) -> None:
+        self.sessions = self
+
+    async def peek_access_token(self, token: str) -> Any:
+        return SimpleNamespace(id=SESSION)
+
+
+SESSION = UUID(int=4174)
+
+
 class Route:
     """The router over `world`'s flow (`None`: the fake backend), with `world` as audit sink."""
 
     def __init__(
-        self, world: Any, *, wired: bool = True, raises: bool = False, resolved: bool = True
+        self,
+        world: Any,
+        *,
+        wired: bool = True,
+        raises: bool = False,
+        resolved: bool = True,
+        auth: Any = None,
     ) -> None:
         self.world, self.replays, app = world, IdempotencyCache(), FastAPI()
         self.imports: Any = KeyImports(world.flow, lambda: asyncio.sleep(0)) if wired else None
@@ -68,7 +90,7 @@ class Route:
         app.include_router(
             make_exchange_keys_router(
                 self.imports, world, Resolver() if resolved else None, egress_ip=EGRESS,
-                rotation=KeyRotationPolicy(), replays=self.replays,
+                rotation=KeyRotationPolicy(), replays=self.replays, auth=auth,
             )
         )  # fmt: skip
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=raises)
@@ -204,6 +226,15 @@ async def test_only_the_owner_may_import_even_a_manager_granted_on_the_account(
     shown = [(r["action"], r["object_kind"], r["object_id"]) for r in route.world.audit()]
     assert shown == denied and route.world.sent == []  # the refusal names the account (C-2.9)
     assert body.get("required_permissions", ["keys:manage"]) == ["keys:manage"]
+
+
+async def test_a_refusal_names_the_callers_session() -> None:
+    """#4174: as the `users:read` refusal names it."""
+    await (world := Rig()).boot()
+    world.flow = world.importer()
+    route = Route(world, auth=SessionAuth())
+    answer(await route.post("manager"), 403, "Problem")
+    assert [r["session_id"] for r in route.world.audit()] == [SESSION]
 
 
 @pytest.mark.parametrize("error", [AuditError("down"), RuntimeError("writer not started")])

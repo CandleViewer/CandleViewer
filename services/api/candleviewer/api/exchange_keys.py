@@ -54,6 +54,7 @@ from candleviewer.accounts.verification import Rule, VerificationResult
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.csrf import source_ip
 from candleviewer.api.idempotency import IdempotencyCache, StoredResponse
+from candleviewer.api.refusal_session import NamesSession, SessionsLike
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission, Scope
@@ -204,7 +205,7 @@ async def _not_owner(audit: _Emitter, actor: Importer, account_id: uuid.UUID) ->
     try:
         await _OnAccount(audit, account_id).emit(
             "rbac.denied", actor_label=str(actor.user_id), actor_user_id=actor.user_id,
-            actor_ip=actor.ip, session_id=None, outcome="denied", severity="warning",
+            actor_ip=actor.ip, outcome="denied", severity="warning",
             reason=_NOT_OWNER, request_id=actor.request_id,
         )  # fmt: skip
     except (AuditError, RuntimeError) as exc:  # RuntimeError: the audit writer is not started
@@ -223,9 +224,10 @@ def _actor(principal: PrincipalSnapshot, request: Request) -> Importer:
 def make_exchange_keys_router(
     imports: _Imports | None, audit: _Emitter, resolver: SnapshotResolver | None, *,
     egress_ip: str | None, rotation: KeyRotationPolicy, replays: IdempotencyCache | None = None,
-    tests: KeyTest | None = None,
+    tests: KeyTest | None = None, auth: SessionsLike | None = None,
 ) -> APIRouter:  # fmt: skip
-    """The key routes. `resolver=None` (no identity wired): 501 for every call."""
+    """The key routes. `resolver=None` (no identity wired): 501 for every call. A refusal's
+    `rbac.denied` names the caller's session, read through `auth` (#4174)."""
     router, running = APIRouter(tags=["exchange-accounts"]), set[tuple[str, str]]()
     replays, mac_key = replays if replays is not None else IdempotencyCache(), os.urandom(32)
 
@@ -260,8 +262,8 @@ def make_exchange_keys_router(
         try:
             await enforce(
                 principal, Permission.KEYS_MANAGE, scope=Scope.NONE,
-                emitter=_OnAccount(audit, account_id), actor_ip=actor.ip,
-                request_id=actor.request_id,
+                emitter=_OnAccount(NamesSession(audit, auth, request), account_id),
+                actor_ip=actor.ip, request_id=actor.request_id,
             )  # fmt: skip
         except ForbiddenError:
             need = ["keys:manage"]
@@ -314,7 +316,8 @@ def make_exchange_keys_router(
         try:
             await enforce(
                 principal, Permission.KEYS_READ, scope=Scope.GRANTED_ACCOUNTS,
-                exchange_account_id=account_id, emitter=_OnAccount(audit, account_id),
+                exchange_account_id=account_id,
+                emitter=_OnAccount(NamesSession(audit, auth, request), account_id),
                 actor_ip=actor.ip, request_id=actor.request_id,
             )  # fmt: skip
         except (ForbiddenError, AuditError, RuntimeError):  # an unaudited refusal still refuses
@@ -326,7 +329,7 @@ def make_exchange_keys_router(
         try:
             done = await tests.run(account_id, key_id, actor, include_ws=include_ws)
         except AccountScopeDeniedError as exc:  # SR-051: the store's live-owner gate refused
-            await _not_owner(audit, actor, account_id)
+            await _not_owner(NamesSession(audit, auth, request), actor, account_id)
             return _untested(exc)
         except AccountsError as exc:
             return _untested(exc)

@@ -88,6 +88,7 @@ from candleviewer.admin.user_disable import DisableResult
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.csrf import source_ip
 from candleviewer.api.query_allowlist import undeclared_query_refusal
+from candleviewer.api.refusal_session import refusal_session
 from candleviewer.api.sessions import _view_json
 from candleviewer.api.step_up import (
     _AuthLike,
@@ -226,9 +227,12 @@ class AccountAccessStore(GrantStore, Protocol):  # its writes go through `Accoun
 
 
 class UserDisable(Protocol):
-    """`admin.user_disable.UserDisableService`: `authorize` is its guard alone."""
+    """`admin.user_disable.UserDisableService`: `authorize` is its guard alone. Each refusal's
+    `rbac.denied` names `session_id`, the caller's session (#4174)."""
 
-    async def authorize(self, user_id: uuid.UUID, *, actor: PrincipalSnapshot) -> None: ...
+    async def authorize(
+        self, user_id: uuid.UUID, *, actor: PrincipalSnapshot, session_id: uuid.UUID | None = None
+    ) -> None: ...
 
     async def disable(
         self,
@@ -237,6 +241,7 @@ class UserDisable(Protocol):
         actor: PrincipalSnapshot,
         acknowledge_unknown_positions: bool = False,
         precondition: UserPrecondition | None = None,
+        session_id: uuid.UUID | None = None,
     ) -> DisableResult: ...
 
 
@@ -428,13 +433,18 @@ async def _audit(
     *,
     before: frozenset[str],
     after: frozenset[str],
+    session_id: uuid.UUID,
+    actor_ip: str | None,
 ) -> None:
     """C-12.8: every record carries the role set before and after (for a
-    denial, `after` is the *requested* set that was refused)."""
+    denial, `after` is the *requested* set that was refused), and the session
+    and address that asked (#4174)."""
     await emitter.emit(
         action,
         actor_label=str(principal.user_id),
         actor_user_id=principal.user_id,
+        actor_ip=actor_ip,
+        session_id=session_id,
         object_kind="user",
         object_id=str(user_id),
         reason=reason,
@@ -549,19 +559,18 @@ def make_users_router(
         if principal is None:
             return _unauthenticated()  # the registry's 401 code (AD-F24)
         who = _who(request)
+        denials = _NamesTarget(emitter, user_id, partial(session_of, request))  # #4174
         try:
             await enforce(
-                principal, Permission.USERS_WRITE, scope=Scope.NONE, emitter=emitter, **who
+                principal, Permission.USERS_WRITE, scope=Scope.NONE, emitter=denials, **who
             )
         except ForbiddenError as exc:
             return _forbidden(exc.deny.reason.value)
         if user_id == principal.user_id:  # SR-055: never the acting user, step-up or not
-            await emitter.emit(
+            await denials.emit(
                 "rbac.denied",
                 actor_label=str(principal.user_id),
                 actor_user_id=principal.user_id,
-                object_kind="user",
-                object_id=str(user_id),
                 outcome=AuditOutcome.DENIED,
                 severity=Severity.WARNING,
                 reason="self_target",
@@ -616,6 +625,8 @@ def make_users_router(
                             ",".join(changed),
                             before=before,
                             after=new_roles,
+                            session_id=record.id,
+                            actor_ip=who["actor_ip"],
                         )
             except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started
                 raise _AuditRefused from exc
@@ -644,6 +655,8 @@ def make_users_router(
                     "owner_floor",
                     before=current,
                     after=new_roles,
+                    session_id=record.id,
+                    actor_ip=who["actor_ip"],
                 )
             except (AuditError, RuntimeError):  # RuntimeError: audit not started
                 return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
@@ -787,7 +800,9 @@ def make_users_router(
         if principal is None:
             return _unauthenticated()
         try:  # before the step-up and any lookup: one 403 for an existing and a missing id (U25)
-            await user_disable.authorize(user_id, actor=principal)
+            await user_disable.authorize(
+                user_id, actor=principal, session_id=await refusal_session(auth, request)
+            )
         except UserLifecycleError as exc:
             return _lifecycle_problem(exc)
         if isinstance(gate := await _elevated(auth, request), JSONResponse):
@@ -805,7 +820,10 @@ def make_users_router(
             return _registered(ErrorCode.PURGE_UNAVAILABLE, 503, detail)
         try:
             await user_disable.disable(
-                user_id, actor=principal, acknowledge_unknown_positions=acknowledged
+                user_id,
+                actor=principal,
+                acknowledge_unknown_positions=acknowledged,
+                session_id=gate,
             )
         except UserLifecycleError as exc:
             return _lifecycle_problem(exc)
@@ -1112,6 +1130,7 @@ def make_user_admin_router(
         *,
         acknowledged: bool,
         expected: str | None,
+        session: uuid.UUID,
     ) -> JSONResponse:
         """SR-029: the whole cascade, exactly as `DELETE /users/{userId}` runs it (AC7 included),
         and nothing else: another field it would change is refused before anything is. UL3-T1:
@@ -1133,6 +1152,7 @@ def make_user_admin_router(
                 actor=principal,
                 acknowledge_unknown_positions=acknowledged,
                 precondition=None if expected is None else unchanged,
+                session_id=session,
             )
         except UserLifecycleError as exc:
             return _lifecycle_problem(exc)
@@ -1188,7 +1208,13 @@ def make_user_admin_router(
             return _registered(ErrorCode.VALIDATION_FAILED, 400, refusal)
         if body.status == "disabled":
             return await disable(
-                user_id, principal, body, shown, acknowledged=acknowledged, expected=expected
+                user_id,
+                principal,
+                body,
+                shown,
+                acknowledged=acknowledged,
+                expected=expected,
+                session=session,
             )
         if not body.model_fields_set:  # an empty patch changes nothing and takes no lock
             return _answer(shown)
