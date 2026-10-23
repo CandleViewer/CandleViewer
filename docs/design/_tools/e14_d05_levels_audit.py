@@ -142,6 +142,10 @@ SC: dict[str, float] = {
     "inset": 8,
     "target": 24,
     "narrow_room": 64,
+    "narrow_left": 40,
+    "side_room": 60,
+    "inside_room": 30,
+    "left_room": 300,
     "interval_min": 1,
     "gap_bars": 5,
     "budget_fraction": 0.25,
@@ -319,6 +323,7 @@ class Walk:
     dropped: list[str]
     rows: list[Placed]
     columns: int
+    side: str = "right"
 
     def kept(self) -> set[str]:
         return {r.level for r in self.rows}
@@ -331,44 +336,159 @@ class Case(Walk):
     inverted_rows: list[Placed] | None = None
 
 
-def collide(levels: list[Decimal], y_of: Callable[[Decimal], float], room: float) -> Walk:
-    """Q9's walk: pass 1 abbreviate by room, pass 2 thin by priority; P0 outward, P1 to column 2."""
-    widest = max(width_px(full_label(lv)) for lv in levels) + SC["inset"]
-    abbrev = room < widest
-    cols: list[list[tuple[float, float]]] = [[], []]
-    placed: dict[Decimal, tuple[int, float]] = {}
-    dropped: list[Decimal] = []
+Cols = list[list[tuple[float, float]]]  # the occupied intervals per column (column 1 first)
+WIDEST_FULL = max(width_px(full_label(lv)) for lv in LEVELS)
+WIDEST_SHORT = max(width_px(short_label(lv)) for lv in LEVELS)
+
+
+def side_of(room_right: float, room_left: float, ladder_w: float) -> tuple[str, bool]:
+    """Spec section 2.4: right -> left in the full form; else the wider side in the short form;
+    else inside (above the line, inside the ladder's own width). Returns (side, abbreviated)."""
+    need_full, need_short = WIDEST_FULL + SC["inset"], WIDEST_SHORT + SC["inset"]
+    if room_right >= need_full:
+        return "right", False
+    if room_left >= need_full:
+        return "left", False
+    wider, wider_room = ("right", room_right) if room_right >= room_left else ("left", room_left)
+    if wider_room >= need_short:
+        return wider, True
+    return "inside", ladder_w < need_full
+
+
+def label_x(side: str, column: int, w: float, x_start: float, x_end: float) -> float:
+    """The label box's left edge in pane px; column 2+ is INWARD (toward the ladder) on every side:
+    right: left-aligned 8 px right of the ladder's end; left: right-aligned 8 px left of its start;
+    inside: right-aligned 8 px inside the ladder's end. Each further column steps w_max + g inward.
+    """
+    step = (column - 1) * (WIDEST_FULL + G)
+    if side == "right":
+        return x_end + SC["inset"] - step
+    if side == "left":
+        return x_start - SC["inset"] - w + step
+    return x_end - SC["inset"] - w - step
+
+
+def _place(
+    levels: list[Decimal],
+    y_of: Callable[[Decimal], float],
+    cols: Cols,
+    clamp: tuple[float, float] | None,
+    classes: set[int],
+    inside: bool,
+    placed: dict[Decimal, tuple[int, float]],
+    dropped: list[Decimal],
+) -> None:
+    """The priority walk over a shared column list: P0 (outward when they meet, flipped inward
+    when the pane clamps them) and P1 take the first free column and never drop; P2-P4 take
+    column 1 or drop. Boxes are centred on the line (inside: above it) and clamped to the plot's
+    inner margin. `cols` may be shared by several ladders (pane-level, spec section 3 step 9)."""
 
     def free(c: int, top: float) -> bool:
+        while len(cols) <= c:
+            cols.append([])
         return all(top >= b + G or top + H <= t - G for t, b in cols[c])
 
+    def clamp_top(top: float) -> tuple[float, bool]:
+        if clamp is None:
+            return top, False
+        lo, hi = clamp[0] + SC["inset"], clamp[1] - SC["inset"] - H
+        c = min(max(top, lo), hi)
+        return c, c != top
+
+    def take(lv: Decimal, top: float, never_drop: bool) -> bool:
+        c = 0
+        while not free(c, top):
+            if not never_drop:
+                return False
+            c += 1  # P0 / P1: the next column inward
+        cols[c].append((top, top + H))
+        placed[lv] = (c + 1, top)
+        return True
+
+    def box_top(lv: Decimal) -> float:
+        return y_of(lv) - (H if inside else H / 2)
+
     order = priority(levels)
-    p0 = [lv for lv in order if cls(lv) == 0]
-    tops = {lv: y_of(lv) - H / 2 for lv in p0}
-    if len(p0) == 2:
-        upper, lower = sorted(p0, key=y_of)
-        if tops[lower] < tops[upper] + H + G:  # the centred boxes collide: both move outward
-            tops[upper], tops[lower] = y_of(upper) - H, y_of(lower)
-    for lv in p0:
-        cols[0].append((tops[lv], tops[lv] + H))
-        placed[lv] = (1, tops[lv])
+    if 0 in classes:
+        p0 = [lv for lv in order if cls(lv) == 0]
+        tops = {lv: box_top(lv) for lv in p0}
+        if len(p0) == 2:
+            upper, lower = sorted(p0, key=y_of)
+            if tops[lower] < tops[upper] + H + G:  # the boxes collide: both move outward
+                tops[upper], tops[lower] = y_of(upper) - H, y_of(lower)
+            for lv, inward in ((upper, y_of(upper)), (lower, y_of(lower) - H)):
+                t, moved = clamp_top(tops[lv])
+                tops[lv] = inward if moved else t  # a clamped outward box flips inward
+        for lv in p0:
+            take(lv, clamp_top(tops[lv])[0], True)
     for lv in order:
-        if cls(lv) == 0:
+        k = cls(lv)
+        if k == 0 or k not in classes:
             continue
-        top = y_of(lv) - H / 2
-        if free(0, top):
-            cols[0].append((top, top + H))
-            placed[lv] = (1, top)
-        elif cls(lv) == 1:  # 0.5 never drops: the second column, left of the first
-            cols[1].append((top, top + H))
-            placed[lv] = (2, top)
-        else:
+        if not take(lv, clamp_top(box_top(lv))[0], k == 1):
             dropped.append(lv)
+
+
+def collide(
+    levels: list[Decimal],
+    y_of: Callable[[Decimal], float],
+    room: float,
+    room_left: float = 0.0,
+    ladder_w: float = X2 - X1,
+    clamp: tuple[float, float] | None = None,
+) -> Walk:
+    """Q9's walk for one ladder: the side and the form (spec section 2.4 / section 3 step 1), then
+    the priority walk; P0 outward, P1 to the next inward column; the boxes clamped to the plot."""
+    side, abbrev = side_of(room, room_left, ladder_w)
+    cols: Cols = [[]]
+    placed: dict[Decimal, tuple[int, float]] = {}
+    dropped: list[Decimal] = []
+    _place(levels, y_of, cols, clamp, {0, 1, 2, 3, 4}, side == "inside", placed, dropped)
     rows = [Placed(str(lv), placed[lv][0], round(placed[lv][1], 1)) for lv in sorted(placed)]
+    columns = sum(1 for c in cols if c)
     form = "short" if abbrev else "full"
-    return Walk(
-        abbrev, form, len(placed), [str(lv) for lv in sorted(dropped)], rows, 2 if cols[1] else 1
-    )
+    return Walk(abbrev, form, len(placed), [str(lv) for lv in sorted(dropped)], rows, columns, side)
+
+
+@dataclass
+class Ladder:  # one ladder of a pane-level walk (spec section 3 step 9): pane-px geometry
+    name: str
+    levels: list[Decimal]
+    top_px: float
+    span_px: float
+    selected: bool
+    z_index: int
+
+
+def collide_many(ladders: list[Ladder], room: float) -> dict[str, Walk]:
+    """Several ladders sharing one gutter: one shared interval list per column; the selected
+    ladder first, then descending z-order; pass A places every ladder's P0 / P1, pass B the rest."""
+    order = sorted(ladders, key=lambda ld: (not ld.selected, -ld.z_index))
+    cols: Cols = [[]]
+    placed: dict[str, dict[Decimal, tuple[int, float]]] = {ld.name: {} for ld in ladders}
+    dropped: dict[str, list[Decimal]] = {ld.name: [] for ld in ladders}
+    side, abbrev = side_of(room, 0.0, X2 - X1)
+    for classes in ({0, 1}, {2, 3, 4}):
+        for ld in order:
+
+            def y_of(lv: Decimal, ld: Ladder = ld) -> float:
+                return ld.top_px + ld.span_px * float(1 - lv)
+
+            _place(ld.levels, y_of, cols, None, classes, False, placed[ld.name], dropped[ld.name])
+    out: dict[str, Walk] = {}
+    for ld in ladders:
+        pl = placed[ld.name]
+        rows = [Placed(str(lv), pl[lv][0], round(pl[lv][1], 1)) for lv in sorted(pl)]
+        out[ld.name] = Walk(
+            abbrev,
+            "short" if abbrev else "full",
+            len(pl),
+            [str(lv) for lv in sorted(dropped[ld.name])],
+            rows,
+            sum(1 for c in cols if c),
+            side,
+        )
+    return out
 
 
 def cap(span: float) -> int:  # the labelled-level cap of one column between the anchors
@@ -422,11 +542,45 @@ def cases() -> list[Case]:
 
 
 CASES = cases()
-NARROW = collide(LEVELS, y_normal(120), SC["narrow_room"])  # the abbreviated form (board 03)
-if not NARROW.abbreviated:
-    FAILS.append("the narrow-gutter case did not abbreviate")
+NARROW = collide(LEVELS, y_normal(120), SC["narrow_room"], SC["narrow_left"])  # both sides narrow
+if not NARROW.abbreviated or NARROW.side != "right":
+    FAILS.append("the narrow-gutter case did not abbreviate on the right")
+# the side cases (spec section 3 step 1; the lens round 1 F-4): the left side, the inside side
+LEFT = collide(LEVELS, y_normal(120), SC["side_room"], SC["left_room"])
+INSIDE = collide(LEVELS, y_normal(120), SC["inside_room"], SC["narrow_left"])
+if LEFT.side != "left" or LEFT.form != "full":
+    FAILS.append("the left-side case did not take the left side in the full form")
+if INSIDE.side != "inside" or INSIDE.form != "full":
+    FAILS.append("the inside case did not take the inside side in the full form")
+# the pane-edge clamp (step 8): the ladder's top anchor at the plot's top edge, a 12 px span
+EDGE = collide(LEVELS, y_normal(12), RIGHT_ROOM, clamp=(0.0, PLOT_H))
+# two ladders sharing one gutter (step 9): the selected scenario ladder and a second one
+LADDER_B = (D("63980.0"), D("64300.0"))  # the second ladder's anchors (prices)
+TWO = collide_many(
+    [
+        Ladder("A (selected)", LEVELS, 0.0, SC["fib_span_px"], True, 1),
+        Ladder(
+            "B",
+            LEVELS,
+            round(float(PRICES["anchor2"] - LADDER_B[1]) * PX_PER_PRICE, 1),
+            round(float(LADDER_B[1] - LADDER_B[0]) * PX_PER_PRICE, 1),
+            False,
+            2,
+        ),
+    ],
+    RIGHT_ROOM,
+)
+for _nm, _w in (("left", LEFT), ("inside", INSIDE), ("edge", EDGE), *TWO.items()):
+    for must in ("0", "0.5", "1"):
+        if must not in _w.kept():
+            FAILS.append(f"case {_nm}: level {must} dropped")
 OFFSCREEN_SHIFT = 700.0  # the second anchor pushed past the price axis (board 03)
-CLAMP_X = PLOT_W - SC["inset"] - max(width_px(full_label(lv)) for lv in LEVELS)
+CLAMP_X = PLOT_W - SC["inset"] - WIDEST_FULL
+COL_X = {  # the label columns' left edges in pane px for the scenario ladder (spec section 2.4)
+    "right": [label_x("right", c, WIDEST_FULL, X1, X2) for c in (1, 2)],
+    "left": [label_x("left", c, WIDEST_FULL, X1, X2) for c in (1, 2)],
+    "inside": [label_x("inside", c, WIDEST_FULL, X1, X2) for c in (1, 2)],
+}
 
 
 # ---- 4b. the time zones: the x-axis walk on the Fibonacci integers (Q10) --
@@ -564,15 +718,16 @@ BANDS = band_composites()
 
 def fill_ceiling_default() -> float:  # the largest 0.05 step at which every candle ink keeps 3:1
     best = 0.0
-    for step in range(1, 5):
+    for step in range(1, 21):  # 0.05 .. 1.00; the search stops at the first failing step
         alpha, ok = step * 0.05, True
         for theme in THEMES:
             fill, canvas = col(theme, "drawing.default"), col(theme, "surface.canvas")
             tc = mix(fill, alpha, canvas)
             for k in ("up", "down", "wick"):
                 ok = ok and ratio(mix(fill, alpha, col(theme, f"candle.{k}")), tc) >= 3
-        if ok:
-            best = alpha
+        if not ok:
+            break
+        best = alpha
     return round(best, 2)
 
 
@@ -592,6 +747,7 @@ class Ribbon:
     gap_bars: int
     chip_w: int
     chip_h: int
+    chip_h_comfortable: int
     box_w: int
     box_h: int
     name: str
@@ -612,6 +768,7 @@ def ribbon() -> Ribbon:
     chars = max(len(line1), len(line2_gap))
     chip_w = math.ceil(chars * SC["label_pt"] * 0.6) + 16  # type.num.sm mono at 0.6 em, 8 px pads
     chip_h = 2 * LINE_BOX + 8
+    chip_h_comfortable = chip_h - 4  # D06 :134's direction for canvas chips: 24 -> 20, so 36 -> 32
     name = (
         f"Measure {TIMES['anchor1']} {name_price(p1)} {ARROW} {TIMES['anchor2']} {name_price(p2)}"
     )
@@ -619,12 +776,23 @@ def ribbon() -> Ribbon:
     box_w, box_h = round(X2 - X1), round(float(abs(delta)) * PX_PER_PRICE)
     return Ribbon(
         f"{sign}{abs(delta):,.1f}", f"{sign}{abs(pct_)} %", bars, span_min, line1, line2,
-        line2_gap, gap_bars, chip_w, chip_h, box_w, box_h, name, surrogate,
+        line2_gap, gap_bars, chip_w, chip_h, chip_h_comfortable, box_w, box_h, name, surrogate,
     )  # fmt: skip
 
 
 RIBBON = ribbon()
 TAIL_CHIP = f"{fmt_price(VWAP.vwap)} (estimated)"
+MARKER_CAPTION = (
+    "(estimated)"  # the word beside the CMP-227 marker (15:2669: a label beside the mark)
+)
+TAIL_CHIP_W = width_px(TAIL_CHIP) + 16  # the chip box: the glyph run plus 8 px pads
+VWAP_CLAMP = {  # the follow-viewport rule (spec section 5.1 / section 6.2): pane px
+    "chip_x": PLOT_W
+    - SC["inset"]
+    - TAIL_CHIP_W,  # the tail chip's left edge at the inner right margin
+    "marker_x": SC["inset"] + 10,  # the marker's centre at the inner left margin (a 20 px pill)
+    "caption_x": SC["inset"] + 20 + 4,  # the caption 4 px right of the clamped marker
+}
 ANCHORS = (
     f"{TIMES['anchor1']} {name_price(PRICES['anchor1'])} {ARROW} "
     f"{TIMES['anchor2']} {name_price(PRICES['anchor2'])}"
@@ -648,10 +816,12 @@ class Budget:
     measured_case: int
     fraction: float
     budget: int
+    additive_pct: int
     fib_full: int
     fib_short: int
     fib24_full: int
     chip: int
+    caption: int
     ribbon: int
     fibs_full: int
     fibs24_full: int
@@ -663,6 +833,9 @@ class Budget:
 def glyph_budget() -> Budget:
     measured = int(GLYPH_CASE.group(2).replace(",", "")) if GLYPH_CASE else 0
     budget = int(measured * SC["budget_fraction"])
+    additive = (
+        round(100 * (measured + budget) / measured) if measured else 0
+    )  # % of the measured case
     full = {lv: glyphs(full_label(lv)) for lv in LEVELS}
     short = {lv: glyphs(short_label(lv)) for lv in LEVELS}
     fib_full, fib_short = sum(full.values()), sum(short.values())
@@ -680,8 +853,9 @@ def glyph_budget() -> Budget:
     rib = glyphs(RIBBON.line1) + glyphs(RIBBON.line2)
     fib24 = 24 * max(full.values())
     return Budget(
-        measured, SC["budget_fraction"], budget, fib_full, fib_short, fib24, glyphs(TAIL_CHIP), rib,
-        budget // fib_full, budget // fib24, p0p1_short, stages, holds,
+        measured, SC["budget_fraction"], budget, additive, fib_full, fib_short, fib24,
+        glyphs(TAIL_CHIP), glyphs(MARKER_CAPTION), rib, budget // fib_full, budget // fib24,
+        p0p1_short, stages, holds,
     )  # fmt: skip
 
 
@@ -709,7 +883,8 @@ def density() -> Density:
     band_zone = min(field, 6 * VWAP.sigma_px * PLOT_W)
     rib_outline = 2 * (RIBBON.box_w + RIBBON.box_h)
     chip = RIBBON.chip_w * RIBBON.chip_h
-    tail = (width_px(TAIL_CHIP) + 16) * 24
+    tail = TAIL_CHIP_W * 24
+    caption_ink = (width_px(MARKER_CAPTION) + 2) * H  # the word beside the marker, with its outline
     rib_fill = RIBBON.box_w * RIBBON.box_h
     per = {
         "fib lines": pc(fib_lines),
@@ -719,10 +894,11 @@ def density() -> Density:
         "ribbon outline": pc(rib_outline),
         "ribbon chip": pc(chip),
         "tail chip": pc(tail),
+        "marker caption": pc(caption_ink),
         "band fills (tinted)": pc(band_zone),
         "ribbon fill (tinted)": pc(rib_fill),
     }
-    opaque = fib_lines + fib_labels + curve + edges + rib_outline + chip + tail
+    opaque = fib_lines + fib_labels + curve + edges + rib_outline + chip + tail + caption_ink
     return Density(field, pc(opaque), pc(min(field, band_zone + rib_fill)), per)
 
 
@@ -937,9 +1113,45 @@ PAIRS: list[tuple[str, str, str, str]] = [
         "footprint.imbalance",
         "reported",
     ),
+    # the cell text UNDER the drawing fills, against its own outline (AC 4; the lens round 1 F-5):
+    # E06-D01 section 5's outline (palette.neutral.0 at 0.8 over the cell fill; dark and hc — the
+    # worst of the three fills) and, where E06-D01 measures no pair, the pane colour (light)
+    (
+        "cell text ink under the three-stack band fill at 0.05, against its outline",
+        "text.primary",
+        P3 + "|outline",
+        "text",
+    ),
+    (
+        "cell text ink under the ribbon fill at 0.05, against its outline",
+        "text.primary",
+        "drawing.default@0.05|outline",
+        "text",
+    ),
+    (
+        "cell text ink under the flattened fill at the 0.20 ceiling, against its outline",
+        "text.primary",
+        "drawing.default@CEIL|outline",
+        "text",
+    ),
+    (
+        "cell text ink under a three-stack at 0.20 (reported; behind the flatten switch)",
+        "text.primary",
+        "drawing.default@3x0.2|outline",
+        "reported",
+    ),
 ]
 MJS = re.sub(r"\s+", " ", (ROOT / "tools" / "contrast" / "pairs.mjs").read_text(encoding="utf-8"))
 REGISTERED = set(re.findall(r'fg: "([^"]+)", bg: "([^"]+)"', MJS))
+OUTLINE_INK = prim("palette.neutral.0")  # E06-D01 section 5: the cell text outline, at 0.8
+CELL_OUTLINES = {  # the outline colour(s) the cell text is read against, per theme
+    t: (
+        [col(t, "surface.canvas")]
+        if t == "light"
+        else [mix(OUTLINE_INK, 0.8, col(t, f"footprint.{k}")) for k in ("bid", "ask", "imbalance")]
+    )
+    for t in THEMES
+}
 
 
 def paint2(expr: str, theme: str, under: str) -> str:  # paint() plus the two decided expressions
@@ -947,6 +1159,22 @@ def paint2(expr: str, theme: str, under: str) -> str:  # paint() plus the two de
         return col(theme, LABEL_INK[theme])
     expr = expr.replace("@INTER", f"@{INTER_ALPHA}").replace("@CEIL", f"@{CEILING_DEFAULT}")
     return paint(expr, theme, under)
+
+
+def pair_value(fg: str, bg: str, theme: str) -> float:
+    """One pair in one theme. A composite bg ("tok@a") is the fill over the canvas; a pure fg under
+    it is composited in the layer order the spec uses — the fill OVER the ink (drawings sit above
+    the series, 26 section 3.1) — so both sides of the pair carry the tint. "|outline" reads the
+    cell text against its outline instead of the canvas (the worst of the outline colours)."""
+    bexpr, _, flag = bg.partition("|")
+    unders = CELL_OUTLINES[theme] if flag == "outline" else [col(theme, "surface.canvas")]
+    vals: list[float] = []
+    for under in unders:
+        bgh = paint2(bexpr, theme, under)
+        over = "@" in bexpr and "@" not in fg and fg != "LABEL_INK"
+        fgh = paint2(bexpr, theme, col(theme, fg)) if over else paint2(fg, theme, bgh)
+        vals.append(ratio(fgh, bgh))
+    return round(min(vals), 2)
 
 
 @dataclass
@@ -963,10 +1191,7 @@ class PairRow:
 def matrix() -> list[PairRow]:
     rows: list[PairRow] = []
     for el, fg, bg, role in PAIRS:
-        vals: list[float] = []
-        for t in THEMES:
-            bgh = paint2(bg, t, col(t, "surface.canvas"))
-            vals.append(round(ratio(paint2(fg, t, bgh), bgh), 2))
+        vals = [pair_value(fg, bg, t) for t in THEMES]
         bar = BAR.get(role)
         if bar is None:
             verdict = f"{role} (not gated)"
@@ -984,7 +1209,17 @@ def matrix() -> list[PairRow]:
             status = "PROPOSED"
         if fg == "LABEL_INK":
             fg = " / ".join(LABEL_INK[t] for t in THEMES)
-        rows.append(PairRow(el, fg, bg, role, vals, verdict, status))
+        rows.append(
+            PairRow(
+                el,
+                fg,
+                bg.replace("|outline", " over the cell outline"),
+                role,
+                vals,
+                verdict,
+                status,
+            )
+        )
     return rows
 
 
@@ -1227,6 +1462,52 @@ REG_QUOTES = (
     "`fib_retracement`, `fib_timezone` and `measure` exactly 2",
 )
 GATED_STRINGS = ("never persists", "until pinned", "deferred", "(estimated)", "`rbac.view_as`")
+# 26 section 3.7's SDF glyph set, parsed from its line (the lens round 1 F-2): every string drawn
+# on the canvas by these tools is checked against it; a glyph outside the set must be named in
+# the spec's A-row to 26 section 3.7 (section 16.2) until the atlas gains it
+GLYPH_LINE = re.search(r"\*\*Glyph set\*\*: digits, ([^—]+?) for labels", S26)
+GLYPH_SET: set[str] = set("0123456789 ")
+if GLYPH_LINE:
+    for tok in re.findall(r"`([^`]+)`", GLYPH_LINE.group(1)):
+        GLYPH_SET.update(tok)
+    if "`A`\u2013`Z`" in GLYPH_LINE.group(1):
+        GLYPH_SET.update(chr(c) for c in range(ord("A"), ord("Z") + 1))
+    if "`a`\u2013`z`" in GLYPH_LINE.group(1):
+        GLYPH_SET.update(chr(c) for c in range(ord("a"), ord("z") + 1))
+else:
+    FAILS.append("26 section 3.7: the glyph-set line was not parsed")
+ON_CANVAS: list[str] = [
+    *(full_label(lv) for lv in LEVELS),
+    *(short_label(lv) for lv in LEVELS),
+    *(str(n) for n in TIMEZONE_SET),
+    f"{fmt_price(VWAP.vwap)}",
+    TAIL_CHIP,
+    MARKER_CAPTION,
+    RIBBON.line1,
+    RIBBON.line2,
+    RIBBON.line2_gap,
+    RIBBON.line1.replace("+", "\u2212"),
+]
+GLYPHS_OUTSIDE = sorted({ch for s in ON_CANVAS for ch in s if ch not in GLYPH_SET})
+
+
+def glyph_gate(spec: str) -> dict[str, object]:
+    a_rows = section(spec, "### 16.2", "### 16.3")
+    glyph_row = " ".join(ln for ln in a_rows.splitlines() if "glyph set" in ln.lower())
+    if not glyph_row:
+        FAILS.append("section 16.2 has no A-row about 26 section 3.7's glyph set")
+    for ch in GLYPHS_OUTSIDE:
+        name = f"U+{ord(ch):04X}"
+        if ch not in glyph_row and name not in glyph_row:
+            FAILS.append(
+                f"on-canvas glyph {ch!r} ({name}) is outside 26:220's set; "
+                "the glyph-set A-row lacks it"
+            )
+    return {
+        "set_size": len(GLYPH_SET),
+        "strings": len(ON_CANVAS),
+        "outside": [f"{ch} U+{ord(ch):04X}" for ch in GLYPHS_OUTSIDE],
+    }
 
 
 def rows_of(md: str) -> list[list[str]]:
@@ -1283,6 +1564,15 @@ def string_gates(spec: str, hand: str, extra: list[Path]) -> dict[str, int]:
     est_frames = [f for f in frames if "estimated" in f]
     if not est_frames:
         FAILS.append("no fallback frame is named with 'estimated'")
+    for must in (
+        "SCR-037/vwap-estimated-panned",
+        "SCR-037/vwap-estimated-locked",
+        "SCR-037/vwap-panned",
+    ):
+        if must not in frames:
+            FAILS.append(f"the frame {must} is missing (the lens round 1 F-1 / F-3 / F-11)")
+    if spec.count(MARKER_CAPTION) < 2 or "beside the mark" not in spec:
+        FAILS.append("the marker's caption word is not specified beside the mark")
     fallback_rows = [r for r in rows_of(spec) if any(c.lower().startswith("fallback") for c in r)]
     for r in fallback_rows:
         if "(estimated)" not in " ".join(r):
@@ -1447,17 +1737,46 @@ def report(p: Callable[[str], None]) -> None:  # the plain text sections 1 to 9
         inv = fmt_rows(c.inverted_rows or [])
         case_rows.append([c.span, c.cap, c.form, c.drawn, drop, c.columns, fmt_rows(c.rows), inv])
     table(p, hdr, case_rows)
-    p(f"\nnarrow gutter ({SC['narrow_room']:g} px of room at 120 px): form {NARROW.form}")
-    p(f"drawn {NARROW.drawn}, dropped {', '.join(NARROW.dropped) or '—'}")
+    p(
+        f"\nnarrow gutter ({SC['narrow_room']:g} px right / {SC['narrow_left']:g} px left "
+        "at 120 px):"
+    )
+    p(
+        f"side {NARROW.side}, form {NARROW.form}, drawn {NARROW.drawn}, "
+        f"dropped {', '.join(NARROW.dropped) or '—'}"
+    )
+    for nm, w in (
+        ("left side", LEFT),
+        ("inside", INSIDE),
+        ("pane-edge clamp (12 px at the top)", EDGE),
+    ):
+        p(
+            f"{nm}: side {w.side}, form {w.form}, drawn {w.drawn}, columns {w.columns}, "
+            f"dropped {', '.join(w.dropped) or '—'}; rows {fmt_rows(w.rows)}"
+        )
+    for nm, w in TWO.items():
+        p(
+            f"two ladders — {nm}: drawn {w.drawn}, columns {w.columns}, "
+            f"dropped {', '.join(w.dropped) or '—'}; rows (pane px) {fmt_rows(w.rows)}"
+        )
+    p(f"label columns' left edges (pane px; column 2 inward): {COL_X}")
     p(f"off-screen: the second anchor {OFFSCREEN_SHIFT:g} px past the axis; clamp x = {CLAMP_X:g}")
     p("P0 / P1 survival and the shuffled-input determinism are asserted per case (see FAILS)")
     p("\n## 4. The glyph budget (26 section 3.7 / B3)\n")
     p(f"measured case {BUDGET.measured_case:,} by the fraction {BUDGET.fraction} (PROPOSED)")
-    p(f"= {BUDGET.budget:,} glyphs per pane for drawing labels")
+    p(
+        f"= {BUDGET.budget:,} glyphs per pane for drawing labels — ADDITIVE to the cell batch: "
+        "the two"
+    )
+    p(
+        f"batches sum to {BUDGET.additive_pct} % of the measured case "
+        "(no measured case covers the sum)"
+    )
     p(f"an 8-level fib: full {BUDGET.fib_full} / short {BUDGET.fib_short}; 24: {BUDGET.fib24_full}")
-    p(f"tail chip {BUDGET.chip}; ribbon {BUDGET.ribbon}")
+    p(f"tail chip {BUDGET.chip}; marker caption {BUDGET.caption}; ribbon {BUDGET.ribbon}")
     p(f"fibs in budget {BUDGET.fibs_full} (8 levels) / {BUDGET.fibs24_full} (24 levels)")
     p(f"200 fibs by thinning stage: {BUDGET.stages_200}; holds at stage '{BUDGET.holds_at}'")
+    p(f"on-canvas glyphs outside 26:220's set: {[f'{c} U+{ord(c):04X}' for c in GLYPHS_OUTSIDE]}")
     p("\n## 4b. The time zones (the Fibonacci integers on the x axis)\n")
     hdr = ["anchor gap (bars)", "spacing px", "visible of 8", "labels drawn", "dropped", "label w"]
     tz_rows: list[list[object]] = []
@@ -1481,7 +1800,11 @@ def report(p: Callable[[str], None]) -> None:  # the plain text sections 1 to 9
     p(f"sigma {VWAP.sigma} = {VWAP.sigma_px} px; bands {bands}; last {fmt_price(VWAP.last_price)}")
     p(f"approximated prefix {VWAP.prefix_bars} bars = {VWAP.prefix_px:g} px")
     p(f"(anchor {TIMES['vwap']} → first recorded print {TIMES['ticks']})")
-    p(f'tail chip "{TAIL_CHIP}"; legend "{VWAP.legend}"\n')
+    p(
+        f'tail chip "{TAIL_CHIP}" ({TAIL_CHIP_W} px); marker caption "{MARKER_CAPTION}"; '
+        f'legend "{VWAP.legend}"'
+    )
+    p(f"follow-viewport clamps (pane px): {VWAP_CLAMP}\n")
     hdr = ["alpha", "mode", "effective", "theme", "worst candle ink over the fill", "worst under"]
     band_rows: list[list[object]] = []
     for b in BANDS:
@@ -1501,7 +1824,10 @@ def report(p: Callable[[str], None]) -> None:  # the plain text sections 1 to 9
     p(f"Δ {RIBBON.delta} · {RIBBON.pct} · {RIBBON.bars} bars · {RIBBON.minutes} min")
     p(f'line 1 "{RIBBON.line1}" / line 2 "{RIBBON.line2}"')
     p(f'across a gap of {SC["gap_bars"]:g} bars: "{RIBBON.line2_gap}"')
-    p(f"chip {RIBBON.chip_w} by {RIBBON.chip_h} px; box {RIBBON.box_w} by {RIBBON.box_h} px")
+    p(
+        f"chip {RIBBON.chip_w} by {RIBBON.chip_h} px ({RIBBON.chip_h_comfortable} comfortable); "
+        f"box {RIBBON.box_w} by {RIBBON.box_h} px"
+    )
     p(f"names (D07's templates for the scenario): {NAMES_D07}")
     p("\n## 7. The density study (coverage of the 2,500-cell field)\n")
     p(f"field {DENSITY.field_px2:,.0f} px²; opaque ink {DENSITY.opaque_pct} %")
@@ -1531,7 +1857,11 @@ def report(p: Callable[[str], None]) -> None:  # the plain text sections 1 to 9
 
 
 def summary(
-    keys: dict[str, int], toks: dict[str, int], gates: dict[str, int], cnt: dict[str, object]
+    keys: dict[str, int],
+    toks: dict[str, int],
+    gates: dict[str, int],
+    cnt: dict[str, object],
+    gl: dict[str, object],
 ) -> str:
     levels: list[dict[str, object]] = []
     for lv in LEVELS:
@@ -1571,6 +1901,8 @@ def summary(
         "prefix_px": VWAP.prefix_px,
         "last": fmt_price(VWAP.last_price),
         "chip": TAIL_CHIP,
+        "chip_w": TAIL_CHIP_W,
+        "caption": MARKER_CAPTION,
         "legend": VWAP.legend,
     }
     ladder: dict[str, object] = {
@@ -1613,8 +1945,38 @@ def summary(
         "levels": levels,
         "priority": [str(lv) for lv in priority(LEVELS)],
         "cases": cases_,
-        "narrow": {"room": SC["narrow_room"], "form": NARROW.form, "drawn": NARROW.drawn},
+        "narrow": {
+            "room": SC["narrow_room"],
+            "room_left": SC["narrow_left"],
+            "side": NARROW.side,
+            "form": NARROW.form,
+            "drawn": NARROW.drawn,
+        },
+        "side_cases": {
+            k: {
+                "side": w.side,
+                "form": w.form,
+                "drawn": w.drawn,
+                "columns": w.columns,
+                "dropped": w.dropped,
+                "rows": [vars(r) for r in w.rows],
+            }
+            for k, w in (("left", LEFT), ("inside", INSIDE), ("edge", EDGE))
+        },
+        "two_ladders": {
+            k: {
+                "drawn": w.drawn,
+                "columns": w.columns,
+                "dropped": w.dropped,
+                "rows": [vars(r) for r in w.rows],
+            }
+            for k, w in TWO.items()
+        },
+        "ladder_b": [str(x) for x in LADDER_B],
+        "col_x": COL_X,
         "offscreen": {"shift": OFFSCREEN_SHIFT, "clamp_x": CLAMP_X},
+        "vwap_clamp": VWAP_CLAMP,
+        "glyphs": gl,
         "budget": vars(BUDGET),
         "timezone_set": list(TIMEZONE_SET),
         "tz_cases": [vars(c) for c in TZ_CASES],
@@ -1648,17 +2010,19 @@ def main() -> int:
     report(out.append)
     spec, hand = read(SPEC), read(HANDOFF)
     keys, toks = key_gate(spec), token_gate(spec, hand)
-    gates, cnt = string_gates(spec, hand, extra), counts(spec, hand)
+    gates, cnt, gl = string_gates(spec, hand, extra), counts(spec, hand), glyph_gate(spec)
     out.append(
         f"\n## 10. Hotkey lint\n\nkeymap: {keys['commands']} commands, {keys['errors']} lint errors"
     )
     out.append(
         f"the spec's section 9 names {keys['spec_keys']} keys, all in D02 section 9 or the keymap"
     )
-    out.append(f"\n## 11. Token bindings\n\n{toks}\n\n## 12. String gates\n\n{gates}")
+    out.append(
+        f"\n## 11. Token bindings\n\n{toks}\n\n## 12. String gates\n\n{gates}\n\nglyphs: {gl}"
+    )
     out.append(f"\n## 13. Counts\n\n{json.dumps(cnt, ensure_ascii=False)}")
     out.append(f"\nFAIL count (gated rows only): {len(FAILS)}" + "".join("\n- " + f for f in FAILS))
-    print(summary(keys, toks, gates, cnt) if "--json" in args else "\n".join(out))
+    print(summary(keys, toks, gates, cnt, gl) if "--json" in args else "\n".join(out))
     return 1 if FAILS else 0
 
 
