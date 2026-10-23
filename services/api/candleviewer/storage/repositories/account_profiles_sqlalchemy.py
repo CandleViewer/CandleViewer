@@ -31,11 +31,11 @@ record of a change that never landed: write-ahead over-reports, it never under-r
 A default move first locks the account row `FOR NO KEY UPDATE` and compares the binding's version
 (`exchange_accounts.default_binding_version`, which `trg_ap_default_binding` raises once per move),
 so moves on one account run one at a time and a stale one changes nothing. A path that locks an
-account row and its profile rows takes the account row first, as `require_live` does
-(`trade_groups_sqlalchemy.py`): a profile row first would deadlock against it once the trigger
-locks the account (21 Sec.3.2.4). Every leg's profile belongs to a leg account (`leg_values`), so
-`require_live` never holds a profile without first holding its account. `FOR NO KEY UPDATE` keeps
-a child row's FK check (`FOR KEY SHARE`) from waiting on the move.
+account row and its profile rows takes the account row first, as the trade-group store's
+share-locked re-check does (`trade_groups_sqlalchemy.py`): a profile row first would deadlock
+against it once the trigger locks the account (21 Sec.3.2.4). Every leg's profile belongs to a leg
+account (`leg_values`), so that re-check never holds a profile without first holding its account.
+`FOR NO KEY UPDATE` keeps a child row's FK check (`FOR KEY SHARE`) from waiting on the move.
 
 A database refusal leaves as `AccountProfileStoreRuleError` (a CHECK or the ladder trigger,
 which names itself with `USING CONSTRAINT`) or `AccountProfileStoreConflictError` (a unique
@@ -411,7 +411,12 @@ def binding_lock_statement(scope: OwnerScope, account_id: UUID) -> sa.Select[Any
             _EA.deleted_at.is_(None),
             sa.text(_OWNER_PRED).bindparams(caller=str(scope.user_id)),
         )
-        .with_for_update(of=_EA.id, key_share=True)
+        .with_for_update(
+            # Renders `OF exchange_accounts`, as `of=exchange_accounts` would; #2333's surface scan
+            # admits the Table only as an import, as `.c` columns or as a `select_from` argument.
+            of=_EA.id,
+            key_share=True,
+        )
     )
 
 
@@ -419,6 +424,8 @@ def binding_statement(scope: AccountScope, account_id: UUID) -> sa.Select[Any]:
     """The live account's binding version and its live default profile, in `scope`."""
     return (
         sa.select(_P.id, _EA.default_binding_version)
+        # The Table is the `select_from` argument, one of the three shapes #2333's surface scan
+        # admits (an import, `.c` columns, this): `.join(exchange_accounts, ...)` fails it.
         .select_from(exchange_accounts)
         .join(account_profiles, _P.exchange_account_id == _EA.id)
         .where(

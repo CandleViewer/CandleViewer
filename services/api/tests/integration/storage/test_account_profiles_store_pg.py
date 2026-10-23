@@ -659,14 +659,25 @@ async def test_the_database_names_each_refusal(
 
 
 async def test_an_owner_scope_held_by_a_non_owner_is_denied(
-    repo: ProfilesRepository, pg_dsn: str
+    repo: ProfilesRepository, owner: OwnerScope, pg_dsn: str
 ) -> None:
+    """The live-owner gate answers every path alike, the binding's read and its move included: a
+    403 for the impostor, never a not-found, and the real owner's binding stays where it was."""
     impostor = OwnerScope(_user(pg_dsn, "manager"))
     account = _account(pg_dsn)
+    (bootstrap,) = await repo.list_profiles(owner, account)
+    other = await repo.create_profile(owner, account, _profile(account, name="Other"))
     with pytest.raises(AccountScopeDeniedError):
         await repo.list_profiles(impostor, account)
     with pytest.raises(AccountScopeDeniedError):
         await repo.create_profile(impostor, account, _profile(account))
+    with pytest.raises(AccountScopeDeniedError):
+        await repo.get_default_binding(impostor, account)
+    with pytest.raises(AccountScopeDeniedError):
+        await repo.set_default_profile(
+            impostor, account, other.profile_id, expected_binding_version=1
+        )
+    assert await _binding(repo, owner, account) == (bootstrap.profile_id, 1)
 
 
 async def test_a_grant_reads_only_live_viewable_unfrozen_accounts(

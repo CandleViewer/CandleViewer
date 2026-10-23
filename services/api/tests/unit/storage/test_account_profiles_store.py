@@ -240,6 +240,15 @@ def test_the_default_read_locks_the_live_default_of_this_account_only() -> None:
     assert _params(stmt)["exchange_account_id_1"] == _ACCOUNT
 
 
+def test_the_binding_lock_matches_this_accounts_row_only() -> None:
+    """#906 0d: the move locks, and reads the binding's version of, the path's account and no
+    other; without the predicate it would lock every live account's row and read whichever
+    version came first (the owner predicate and the live account are pinned above)."""
+    stmt = mod.binding_lock_statement(_OWNER, _ACCOUNT)
+    assert "exchange_accounts.id = $" in _where(stmt)
+    assert _ACCOUNT in _params(stmt).values()
+
+
 @pytest.mark.parametrize("scope", [_OWNER, _GRANT], ids=["owner", "grant"])
 def test_the_binding_read_joins_the_live_default_in_scope(scope: OwnerScope | GrantScope) -> None:
     """#906 0d: the account's live default beside its binding version, under the caller's own
@@ -501,6 +510,32 @@ async def test_an_owner_call_by_anyone_else_is_denied_before_any_other_sql() -> 
 async def test_a_write_takes_an_owner_scope_only() -> None:
     with pytest.raises(AccountProfileStoreScopeDeniedError):
         await _store(_Rel()).delete_profile(_GRANT, _ACCOUNT, _PROFILE, expected_version=None)  # type: ignore[arg-type]  # the refusal under test
+
+
+async def test_a_default_move_takes_an_owner_scope_only_and_runs_no_sql() -> None:
+    """The binding is the account's ceiling (D7), moved by an owner alone: a grant, which only
+    reads (SR-051), is refused before any statement runs, so no account row is locked for it."""
+    rel = _Rel()
+    grant: Any = _GRANT  # the call takes an owner scope, so the type checker refuses a grant here
+    with pytest.raises(AccountProfileStoreScopeDeniedError):
+        await _store(rel).set_default_profile(grant, _ACCOUNT, _PROFILE, expected_binding_version=3)
+    assert rel.calls == [] and rel.commits == 0
+
+
+async def test_the_binding_read_is_denied_to_a_non_owner_before_any_other_sql() -> None:
+    rel = _Rel(_Result(scalar=False))
+    with pytest.raises(AccountProfileStoreScopeDeniedError):
+        await _store(rel).get_default_binding(_OWNER, _ACCOUNT)
+    assert len(rel.calls) == 1 and rel.commits == 0
+
+
+async def test_a_default_move_is_denied_to_a_non_owner_before_any_other_sql() -> None:
+    rel = _Rel(_Result(scalar=False))
+    with pytest.raises(AccountProfileStoreScopeDeniedError):
+        await _store(rel).set_default_profile(
+            _OWNER, _ACCOUNT, _PROFILE, expected_binding_version=3
+        )
+    assert len(rel.calls) == 1 and rel.commits == 0
 
 
 async def test_an_empty_grant_reads_nothing_and_runs_no_sql() -> None:
