@@ -2,7 +2,7 @@
 
 Offline (``python3 -I`` from the repo root), stdlib only beyond the repo modules it imports.
 It imports three lane tools and executes no other repo code: ``e13_d02_wires_audit.py`` (its
-``PAIRS``, ``col()``), ``e13_d03_palette_audit.py`` (its ``PAIRS``, ``palette()``, ``cvd_pairs()``,
+``PAIRS``, ``col()``), ``e13_d03_palette_audit.py`` (its ``PAIRS``, ``T``, ``JND``, ``key_hex()``,
 ``hx()``, ``ratio()``, ``lstar()``, ``de()``, ``sim()``, ``blend()`` -- which themselves load the
 repo scripts ``packages/ui/tokens/tests/verify_tokens.py`` (the token loader),
 ``docs/design/_tools/contrast_check.py`` (``contrast_ratio()``) and
@@ -10,23 +10,28 @@ repo scripts ``packages/ui/tokens/tests/verify_tokens.py`` (the token loader),
 ``e11_d07_a11y_review_audit.py`` (``nrm``, ``expand_keys``, ``load_keymap``, ``shipped_bindings``,
 ``load_reserved``, ``parse_05_hotkeys``, ``hotkey_05_keys``, ``load_fixture``, the string gates and
 ``table_cell_mismatches``; it loads ``scripts/keymap_lint.py`` -- ``normalise``, ``expand``,
-``lint_keymap``). Nothing is re-implemented, so every ratio and dE agrees with E13-D02 / E13-D03 to
-the hundredth. No network call is made and no URL literal exists in this file; the hygiene checks
+``lint_keymap``). No colour or key maths is re-implemented, so every ratio and dE agrees with
+E13-D02 / E13-D03 to the hundredth; two small pieces repeat E11's shape instead of importing it --
+``coactive()`` (E11's co-active sets are Chart / Grid + Replay; this review's are Objects / Chart +
+Replay, so a plain import would give the wrong answer) and the two screen-reader classifier
+regexes -- and ``cvd_pairs()`` is not called (D03 section 10.3's pairs are cited, not re-derived).
+No network call is made and no URL literal exists in this file; the hygiene checks
 use generic patterns that name no host, user or folder.
 
 Sections (each row names its source so a reviewer can re-grep it):
 
-1. The clause inventory (R1): the ``05`` items at the base beside the review's 39 clause ids, and
+1. The clause inventory (R1): the ``05`` items at the base beside the review's 40 clause ids, and
    the review's verdict table parsed from ``docs/design/E13/E13-D05.md`` (every id once, a verdict
    from the fixed vocabulary, evidence, and an owner + target on every at-risk / non-compliant /
    routed row).
 2. The keyboard contract (R3), the seven-operation table (R13) and the gesture audit (R5): rows,
    stops per surface, the tree's keys, no empty keyboard-path cell.
 3. The expected-rendering script (R4) and the politeness routing table (R7): every live-event
-   string exists verbatim in E13-D02 section 12 at the base; AC 3's four events present, and how
-   many are specified (a string and a politeness); every quoted string of the K / R / T2 tables
-   exists verbatim in one of the cited sources; nothing assertive; the cadence arithmetic; the
-   fabricated-AT phrases (expected 0).
+   string exists verbatim in E13-D02 section 12 at the base; AC 3's four events present, how
+   many carry a politeness, and how many are specified (a deck string and a politeness -- a
+   PROPOSED placeholder string is recorded, never counted as a deck string); every quoted string
+   of the K / R / T2 tables exists verbatim in one of the cited sources; nothing assertive; the
+   cadence arithmetic; the fabricated-AT phrases (expected 0).
 4. The state-carrier audit (R6): every carrier pair measured per theme (text 4.5, non-text 3,
    hc-text 7), its greyscale dL*, its protanopia / deuteranopia / tritanopia dE76 (JND 5.0); the
    union of the two upstream ``PAIRS`` lists re-measured; D05's composition rows (gated).
@@ -355,6 +360,8 @@ PLATFORM_NOTES = (("Ctrl+Space", "Objects", "the Windows IME on / off toggle on 
 BROWSER_OMITTED = {"Ctrl+A": "select all (E11-D07 F-20: absent from reserved-keys.json)"}
 
 
+# E11-D07's coactive() by shape, bound to this review's sets: importing E11's would test its
+# Chart / Grid + Replay sets, not the Objects / Chart + Replay ones above.
 def coactive(a: str, b: str) -> bool:
     if a == b or a in ALWAYS or b in ALWAYS:
         return True
@@ -376,6 +383,8 @@ def keymap_section() -> dict[str, Any]:
     km = E11.load_keymap()
     shipped = E11.shipped_bindings(km)
     reserved = E11.load_reserved()
+    with (E11.ROOT / "apps/web/src/keymap/reserved-keys.json").open(encoding="utf-8") as fh:
+        reserved_raw: dict[str, str] = json.load(fh)
     hot = E11.parse_05_hotkeys()
     fixture = E11.load_fixture()
     sr_by_key: dict[str, list[dict[str, Any]]] = {}
@@ -532,6 +541,7 @@ def keymap_section() -> dict[str, Any]:
         "shipped_commands": len(km["commands"]),
         "shipped_bindings": len(shipped),
         "reserved_entries": len(reserved),
+        "reserved_raw": len(reserved_raw),
         "hot_05_rows": len(hot),
         "design_literals": len(DESIGN_BINDINGS),
         "design_bindings": len(design),
@@ -968,6 +978,8 @@ def review_section(spec: str) -> dict[str, Any]:
     # both "none" is present but not specified (the ticket asks for a string and a level).
     events = {"add": False, "remov": False, "error": False, "warm-up complete": False}
     specified = dict(events)
+    with_politeness = dict(events)
+    placeholders: list[str] = []
     for r in lr:
         if len(r) < 9:
             problems.append(f"{r[0]}: {len(r)} cells, expected 9")
@@ -978,19 +990,33 @@ def review_section(spec: str) -> dict[str, Any]:
         if pol == "assertive":
             out["lr_assertive"] += 1
         has_string = r[8] not in ("", "—") and not r[8].lower().startswith("none")
-        for ev_name in events:
-            if ev_name in r[1].lower():
-                events[ev_name] = True
-                if has_string and pol in ("polite", "assertive", "label"):
-                    specified[ev_name] = True
-        if has_string:
+        # A PROPOSED placeholder (the string the merged deck still lacks) is recorded, never a
+        # deck string: the row must name its F id, and it never counts as "specified".
+        placeholder = has_string and "PROPOSED" in r[8]
+        if placeholder:
+            placeholders.append(r[0])
+            if not re.search(r"\bF-\d\d\b", r[8]):
+                problems.append(f"{r[0]}: a PROPOSED placeholder string must name its F row")
+        deck_ok = has_string and not placeholder
+        if deck_ok:
             for s in unquote(r[8]):
                 if re.sub(r"\s+", " ", s) not in deck:
                     problems.append(f"{r[0]}: string {s!r} is not in E13-D02 section 12")
+                    deck_ok = False
+        for ev_name in events:
+            if ev_name in r[1].lower():
+                events[ev_name] = True
+                if pol in ("polite", "assertive", "label"):
+                    with_politeness[ev_name] = True
+                    if deck_ok:
+                        specified[ev_name] = True
     out["events_present"] = sum(events.values())
     out["events_missing"] = [k for k, v in events.items() if not v]
     out["events_specified"] = sum(specified.values())
     out["events_unspecified"] = [k for k, v in specified.items() if not v]
+    out["events_with_politeness"] = sum(with_politeness.values())
+    out["lr_placeholders"] = len(placeholders)
+    out["lr_placeholder_ids"] = placeholders
     # Every quoted string in the K / R / T2 tables is a source's, verbatim (the deck check widened).
     quote_misses = quoted_string_misses(spec)
     out["quoted_string_misses"] = quote_misses
@@ -1177,6 +1203,7 @@ def build(spec_path: Path | None) -> dict[str, Any]:
         "shipped_commands": km["shipped_commands"],
         "shipped_bindings": km["shipped_bindings"],
         "reserved_entries": km["reserved_entries"],
+        "reserved_raw": km["reserved_raw"],
         "hot_05_rows": km["hot_05_rows"],
         "design_literals": km["design_literals"],
         "design_bindings": km["design_bindings"],
@@ -1262,6 +1289,8 @@ def build(spec_path: Path | None) -> dict[str, Any]:
             "lr_assertive",
             "events_present",
             "events_specified",
+            "events_with_politeness",
+            "lr_placeholders",
             "t2_rows",
             "t2_overconversion_candidates",
             "focus_moves",
@@ -1402,7 +1431,9 @@ def render_report(d: dict[str, Any]) -> str:
             f"events: {rv['events_present']} of 4 present "
             f"(missing: {rv['events_missing'] or 'none'}); "
             f"{rv['events_specified']} of 4 specified with a string and a politeness "
-            f"(unspecified: {rv['events_unspecified'] or 'none'});"
+            f"(unspecified: {rv['events_unspecified'] or 'none'}); "
+            f"{rv['events_with_politeness']} of 4 with a politeness; "
+            f"placeholders {rv['lr_placeholders']} {rv['lr_placeholder_ids']};"
             f" routing rows {rv['lr_rows']}, assertive {rv['lr_assertive']}"
         )
         out.append(
@@ -1477,7 +1508,8 @@ def render_report(d: dict[str, Any]) -> str:
     out += ["", "## Key map", ""]
     out.append(
         f"shipped {c['shipped_commands']} commands / {c['shipped_bindings']} bindings; "
-        f"reserved {c['reserved_entries']}; 05 rows {c['hot_05_rows']}; "
+        f"reserved {c['reserved_raw']} raw / {c['reserved_entries']} expanded; "
+        f"05 rows {c['hot_05_rows']}; "
         f"design literals {c['design_literals']} -> {c['design_bindings']} atomic bindings "
         f"(type-ahead {c['typeahead_keys']} keys); fixture {c['sr_rows']} rows; "
         f"Objects-context commands shipped {c['objects_context_commands']}; "
