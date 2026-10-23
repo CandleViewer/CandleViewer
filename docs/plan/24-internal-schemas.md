@@ -1662,7 +1662,7 @@ A store that cannot be reached before the send refuses the request with `503 sto
 6. `Idempotency-Key`: missing or not a UUID is `400 validation_failed`;
 7. the 24 h record: the same fingerprint replays its `2xx` with `Idempotency-Replayed: true`, another is `409 idempotency_key_reuse`;
 8. the anchor's lookup (`21-database-schema.md` §3.3.10): a replay answers the rows in their current state, with `reconciling`, or the recorded `429` or `502` with no `Retry-After`; an undecided anchor is `409 idempotency_in_flight` with `Retry-After`, and a key this principal used otherwise `409 idempotency_key_reuse`;
-9. the `trading.oms_enabled` flag (`21-database-schema.md` §10.7): off is `403 trading_disabled` without `reason`; it gates new admissions only, so a replay (steps 7 and 8), a create a restart resumes and a cancel never meet it;
+9. the `trading.oms_enabled` flag (`21-database-schema.md` §10.7): off is `403 trading_disabled` without `reason` for an admission that opens or increases exposure. It is narrower than the gate: an order whose body says `reduce_only` passes it (C-4.14, C-2.6), while the gate (§8.10) and step 10's switches still take that order and the pipeline still classifies it by its effect (SR-E29-01). The flag reads `reduce_only` from the one parsed body that step 11 validates, and only a JSON `true` passes it. It gates new admissions only, so a replay (steps 7 and 8), a create a restart resumes and a cancel never meet it;
 10. the switches (`TradingSwitches`, below): `403 trading_disabled`, only the gate's with a `reason`;
 11. the body, `PlaceOrderRequest` read strictly: a `limit` without `price`, and an `algo` whose `kind` is not `none` (`algo_unsupported`, until E32 and E34), are `400 validation_failed`;
 12. `submit`, shielded from the client's disconnect and from the request's deadline: the runtime runs it as a task it tracks, which renders the answer and stores a `2xx` in the 24 h record itself, so a request cancelled midway still decides its anchor. On stop the runtime gives such tasks at most `CV_OMS_DRAIN_S` (`20-architecture.md` §7.2), then cancels them, and a later repeat decides an anchor so left (above).
@@ -2512,6 +2512,8 @@ def size_leg(intent: OrderIntent, profile: AccountProfile,
 
     return LegSizing.ok(qty=qty, stop=stop, tps=resolve_tps(...), clamps=clamps)
 ```
+
+**The reference price (step 2).** `metrics.mid` and `metrics.last_price` come from the symbol's ticker stream, and a symbol the stream holds stale has neither. So a market order on a stale symbol has no reference price, and the order pipeline answers `503 exchange_unavailable` with `Retry-After`, with nothing written or sent: a stale price never sizes, caps or checks a market order (the orchestrator's ruling on #913 slice 3, 2026-10-23; E29-T04's `ReferencePricesBinding`).
 
 **9.3.1 Stop resolution.** `ticks` → `ref ± value*tick_size`; `percent` → `ref * (1 ∓ value)`; `atr` → `ref ∓ atr(period)*multiple`; `r_multiple` is invalid for the stop itself (it _defines_ R) and raises a validation error at profile save time. Sign follows side (long: stop below). The resolved stop is rounded conservatively (further from entry, never closer) so the actual risk never exceeds the budget. If ATR is unavailable (warmup), the resolver falls back to `fallback_sl_offset_pct` and flags `stop_fallback=True` on the leg.
 

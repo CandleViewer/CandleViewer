@@ -95,7 +95,8 @@ def test_the_oms_flag_refuses_only_new_admissions_with_a_reasonless_403() -> Non
     view takes no principal and, like `trading.live_enabled`'s, is off while unread (21 10.7)."""
     assert not _missing(
         _PLACE_TEXT,
-        "while off, refuses a new admission with `403 trading_disabled` and no `reason`",
+        "while off, refuses a new admission that opens or increases exposure with "
+        "`403 trading_disabled` and no `reason`",
         "neither a create a restart resumes nor a cancel is refused by it",
     )
     forbidden = _words(_RESPONSES["Forbidden"]["description"])
@@ -265,7 +266,7 @@ def test_20_declares_the_oms_settings_within_the_bounds_the_code_holds() -> None
     assert not _missing(
         rows["CV_OMS_SUBMIT_TIMEOUT_MS"][3],
         "(24 §8.4); 1000-8000, so 2 ",
-        "+ the submit timeout ≤ 10 s, the stop request's bound (`oms.ports.STOP_REQUEST_BOUND_S`",
+        "+ the submit timeout ≤ 10 s, the stop request's bound (`oms_wiring.STOP_REQUEST_BOUND_S`",
     )
     assert 2 * CV_PERSIST_TIMEOUT + 8 <= ports.STOP_REQUEST_BOUND_S and 8 < CV_COMMAND_TIMEOUT
     after = CV_PERSIST_TIMEOUT + submit.PLACE_WAIT_S + submit.RESULT_WAIT_S
@@ -340,3 +341,67 @@ def test_a_replayed_429_or_502_declares_its_replay_header() -> None:
             if operation["responses"].get("502") == _PLACE["responses"]["502"]:
                 parameters = str(operation.get("parameters", []))
                 assert "IdempotencyKey" in parameters, operation["operationId"]
+
+
+def test_the_flag_is_narrower_than_the_gate_and_the_security_lens_nits_are_written() -> None:
+    """The orchestrator's ruling on SEC-S3A-01 (2026-10-23): the flag gates admission, not
+    mounting, and only what opens or increases exposure, so an order whose body says
+    `reduce_only` passes it (C-4.14, C-2.6); the gate (24 8.10), which takes such an order, and
+    the switches still do. SEC-S3A-02 to -05: `/metrics`' reach, the flag write's propagation
+    bound, which `502` is stored, the sink's rows never restored from; and a stale ticker."""
+    assert not _missing(
+        _PLACE_TEXT,
+        "It is narrower than the order-entry gate (`24-internal-schemas.md` section 8.10): an "
+        "order whose body says `reduce_only` passes it, read from the one parsed body the strict "
+        "read validates and only as a JSON `true`, since a rollout flag gates no protective path "
+        "(C-4.14, C-2.6), while the gate and the switches below still take that order and the "
+        "server still classifies it by its effect (SR-E29-01, above).",
+        "The route is mounted whatever the flag says: the flag gates admission, not mounting.",
+    )
+    forbidden = _words(_RESPONSES["Forbidden"]["description"])
+    assert (
+        "an admission that opens or increases exposure only: an order whose body says "
+        "`reduce_only` passes it" in forbidden
+    )
+    step = _between(_INTERNAL_DOC, "\n9. the `trading.oms_enabled` flag", "\n10. ")
+    assert (
+        "It is narrower than the gate: an order whose body says `reduce_only` passes it (C-4.14, "
+        "C-2.6), while the gate (§8.10) and step 10's switches still take that order and the "
+        "pipeline still classifies it by its effect (SR-E29-01)." in step
+    )
+    assert (
+        "The flag reads `reduce_only` from the one parsed body that step 11 validates, and only "
+        "a JSON `true` passes it." in step
+    )
+    section = _words(_SCHEMA_DOC.split("### 10.7 Feature flags", 1)[1].split("### 10.8 ", 1)[0])
+    assert not _missing(
+        section,
+        "of those only the ones that open or increase exposure: an order whose body says "
+        "`reduce_only` passes it, since a rollout flag gates no protective path (C-4.14, C-2.6), "
+        "though the order-entry gate still takes that order",
+        "A replay, a create a restart resumes and a cancel never meet it",
+        "The route is mounted whatever the flag says.",
+        "and off again whenever a read fails, until one answers",
+        "A write reaches the process that makes it at once, through the writer's hook (else on its "
+        "own poll), and every other process sharing the database within `FLAG_POLL_S` (5 s) plus "
+        "one read",
+    )
+    architecture = _words(_ARCH)
+    assert (
+        "never gets ready (dashboard); read on `/metrics`, whose reach is the SR-046 ACL and the "
+        "private bind, not authentication" in architecture
+    )
+    assert not _missing(
+        _RUNTIME,
+        "No `machine_events` row carries a MAC, the standalone sink's included",
+        "None is ever a restore source: hydration rebuilds each order's machine from its "
+        "`order_events` and its row",
+    )
+    gateway = _words(_RESPONSES["OrderExchangeError"]["description"])
+    assert "today only by `placeOrder`'s anchor" in gateway
+    sizing = _between(_INTERNAL_DOC, "### 9.3 Sizing algorithm", "**9.3.1 Stop resolution.**")
+    assert not _missing(
+        sizing,
+        "a symbol the stream holds stale has neither",
+        "a stale price never sizes, caps or checks a market order",
+    )
