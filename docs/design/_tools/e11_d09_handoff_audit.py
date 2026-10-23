@@ -19,7 +19,10 @@ What it computes (each section names its source so a reviewer can re-grep it):
 2. The behaviour-rule constants, typed once with a source line each, and the worked cases of
    E11-D02 section 4.2 (three instruments, the dense variant), section 5.4 (six px-per-bar rows)
    and section 7.5 (the legend's 600 px case) re-derived from the rule and compared with the
-   spec's numbers. A disagreement is reported, never corrected silently.
+   spec's numbers. A disagreement is reported, never corrected silently. The two price-step
+   selectors E11-D02 writes (section 5.1's spacing rule and section 5.2's floored shorthand) are
+   both evaluated on the four section 4.2 cases and on a fifth case whose pane / G is not an
+   integer, so their divergence is printed (the pack's C-13), never hidden by the four that agree.
 3. The key map: E11-D07's 134 atomic design bindings joined with the K-row resolutions (PROPOSED)
    and an announcement literal typed from the owning specs; the pack's section 4 table compared
    row by row (count, keys, stops); the 37 unregistered keys from E11-D07's own computation.
@@ -30,8 +33,11 @@ What it computes (each section names its source so a reviewer can re-grep it):
    alias table to its primitive, a ``CR:`` name or a metric as a gap); the nine ``15`` entries'
    Tokens fields re-read and compared; the hex gate over the pack and the hand-off file.
 6. The state matrix: the pack's section 7 parsed; every source state (E11-D02 section 10,
-   E11-D03 section 10, E11-D04 section 15, ``14`` SCR-030) present for its surface; cells counted,
-   empty cells 0; the hand-off file's Table 1 reconciled with section 7.
+   E11-D03 section 10, E11-D04 section 15, ``14`` SCR-030) present for its surface; cells counted
+   with a blank, ``-`` or ``—`` cell counted as empty (expected 0), the pointer cells (``as`` /
+   ``see S-NNN``) and the ``n/a`` cells counted apart; the rows that name a T2 gate counted by
+   their ``T2-0N`` ids and the rows that say "not T2" counted separately (a substring match on
+   ``T2`` would add the two together); the hand-off file's Table 1 reconciled with section 7.
 7. The open-question log: the six upstream logs parsed; every source row present once in the
    pack's section 13; counts (total, answered, routed, unowned = 0); the owner histogram.
 8. The glyph union from the GL-string literal, compared both ways with ``26`` section 3.7's set.
@@ -49,8 +55,9 @@ Usage:
 
 Exit 0 on a clean run; exit 1 on a gated FAIL (a hex in the pack or the hand-off file; a key-map row
 missing from or extra to the design bindings; a motion row differing from E11-D06; an empty matrix
-cell; an open-question row without owner and target; a source-log row absent; a fabricated-session
-phrase; a marker drift under ``--check``; the E11-D07 tool absent under ``--check``).
+cell, a ``—`` placeholder included; an open-question row without owner and target; a source-log row
+absent; a fabricated-session phrase; a marker drift under ``--check``; the E11-D07 tool absent under
+``--check``).
 """
 
 from __future__ import annotations
@@ -216,6 +223,19 @@ def line_of(path: Path, needle: str) -> int:
     for i, ln in enumerate(read(path).splitlines(), 1):
         if needle in ln:
             return i
+    return 0
+
+
+def line_in_section(path: Path, start: str, needle: str) -> int:
+    """The 1-based line of the first `needle` at or after the first line containing `start`.
+
+    A finding id such as `F-06` is first mentioned in E11-D07's clause tables; the line an engineer
+    needs is its row in section 15.1, so the search starts at that heading (0 when absent)."""
+    lines = read(path).splitlines()
+    begin = next((i for i, ln in enumerate(lines) if start in ln), 0)
+    for i in range(begin, len(lines)):
+        if needle in lines[i]:
+            return i + 1
     return 0
 
 
@@ -721,6 +741,31 @@ def derive_time(
     }
 
 
+# E11-D02 writes the price-step selector twice: §5.1 :170 "the smallest step whose on-screen
+# spacing is ≥ G" and §5.2 :176 "ideal step = range / ⌊paneHeight / G⌋; pick the first ladder
+# value ≥ ideal". The two agree only while the floor crosses no ladder rung; the four §4.2 cases
+# (pane / G = 15 and 18.75) agree under both, so a fifth case with pane / G = 32.5 is evaluated to
+# print the divergence (the pack's C-13; B-1 follows §5.1 until the E11-D02 owner rules).
+SELECTOR_CASES: list[dict[str, Any]] = [
+    {k: c[k] for k in ("name", "tick", "lo", "hi", "px", "G")} for c in PRICE_CASES
+] + [{"name": "pane / G = 32.5 (C-13)", "tick": 0.5, "lo": 64000, "hi": 64810, "px": 1300, "G": 40}]
+
+
+def derive_selectors(case: dict[str, Any]) -> dict[str, Any]:
+    rng = case["hi"] - case["lo"]
+    ladder = price_ladder(case["tick"])
+    by_spacing = next(v for v in ladder if v * case["px"] / rng >= case["G"] - 1e-9)
+    by_floor = next(v for v in ladder if v >= rng / int(case["px"] // case["G"]) - 1e-9)
+    return {
+        "name": case["name"],
+        "pane_over_g": round(case["px"] / case["G"], 3),
+        "s51": by_spacing,
+        "s51_spacing": round(by_spacing * case["px"] / rng, 2),
+        "s52": by_floor,
+        "agree": abs(by_spacing - by_floor) < 1e-9,
+    }
+
+
 def derive_legend(pane: int = 600, row: int = 24, series: int = 13) -> dict[str, Any]:
     shown = max(3, int(0.3 * pane // row))
     return {
@@ -737,11 +782,14 @@ def behaviour() -> dict[str, Any]:
     prices = [derive_price(c) for c in PRICE_CASES]
     times = [derive_time(c) for c in TIME_CASES]
     legend = derive_legend()
+    selectors = [derive_selectors(c) for c in SELECTOR_CASES]
     return {
         "const": const(),
         "price_cases": prices,
         "time_cases": times,
         "legend": legend,
+        "selector_cases": selectors,
+        "selector_divergent": [s["name"] for s in selectors if not s["agree"]],
         "time_ladder_steps": len(TIME_LADDER_MIN),
         "disagreements": [p["name"] for p in prices if not p["agree"]]
         + [f"{t['px']} px/bar" for t in times if not t["agree"]]
@@ -1537,8 +1585,8 @@ SCR-030 chassis | loading older bars | `color.surface.hover` band left of the ol
   older bars…" | same tokens | same | band keeps its width at every density | the sentence |
   E11-D02-09-feed-states.png | E11-D02 §10 :408
 SCR-030 chassis | streaming | no chip; countdown live; last-price pill live; cluster `auto` pressed
-  reading Live | same | same | — | "Live" on the cluster | E11-D02-01-chassis-anatomy.png | E11-D02
-  §10 :409
+  reading Live | same | same | no state-specific change; §2.2's triples apply (E11-D02 §6
+  :214\u2013218) | "Live" on the cluster | E11-D02-01-chassis-anatomy.png | E11-D02 §10 :409
 SCR-030 chassis | stale | data-ink uniforms \u00d7 0.85; chip "Stale 7s · last 13:42:05"
   (`color.data-confidence.stale.*`) | same; post-dim data-ink ≥ 3.55:1 measured (§11.1 :430) | same
   | chip never wraps; readout truncates first (:422) | the chip text with the age (≤ 1 Hz) |
@@ -1547,8 +1595,8 @@ SCR-030 chassis | delayed (reduced rate) | chip "Reduced rate \u00d74": canvas-f
   `color.status.info.strong` dot; corner tag "1 s refresh" | same (dot 4.71:1 light, :411) | same |
   chips side by side, never stacked | the words | E11-D02-09-feed-states.png | E11-D02 §10 :411
 SCR-030 chassis | resyncing (book-level) | chart price unaffected; heatmap columns hatched (E21) |
-  same | same | — | "(estimated)" on hatched columns | text-only — E11-D02 :412 (E21 draws the
-  columns) | E11-D02 §10 :412
+  same | same | n/a — the chart is unaffected; E21 draws the columns (:412) | "(estimated)" on
+  hatched columns | text-only — E11-D02 :412 (E21 draws the columns) | E11-D02 §10 :412
 SCR-030 chassis | disconnected | frozen frame; scrim `color.surface.app` at `opacity.scrim`; strip
   "Disconnected — last data 00:12"; chip Reconnecting (3) / Offline | same; frozen chart below 3:1
   by design (O-K) | same | the strip stays one line; the countdown reads `—` | the sentence with the
@@ -1561,9 +1609,8 @@ SCR-030 chassis | demo / live badge | DEMO medium / LIVE bold, 2 px `color.env.*
   LIVE 2 px rule | same (border ≥ 3:1 everywhere) | same | text, not a stop; never wraps | the word,
   the glyph shape, the rule | E11-D02-10-env-replay-states.png | E11-D02 §10 :415
 SCR-030 chassis | low-GPU / reduced detail | corner badge "Reduced detail — footprint text hidden"
-  on `color.surface.raised`, glyph `color.status.warning.strong` | same (glyph 4.11:1 light) |
-  same |
-  inset 12 / 8 / 4 per density (:96) | the sentence | E11-D02-15-diagnostics-overlay.png | E11-D02
+  on `color.surface.raised`, glyph `color.status.warning.strong` | same (glyph 4.11:1 light) | same
+  | inset 12 / 8 / 4 per density (:96) | the sentence | E11-D02-15-diagnostics-overlay.png | E11-D02
   §10 :416
 SCR-030 chassis | aggregated (LOD chip) | chip "Zoomed out · 1 column = 12 bars", neutral pill,
   merge glyph; disclosure on focus | same | same | ratio live; the chip never wraps | the words and
@@ -1576,8 +1623,9 @@ SCR-030 chassis | scale locked | the lock badge "Price scale locked" at the gutt
   | "Price scale locked" | E11-D02-04-price-axis.png; E11-D03-04-lock-badge-states.png | E11-D02 §10
   :419
 SCR-030 chassis | empty / error | toolbar and status rows kept; CMP-029 placeholder, no GL context;
-  SCR-047 / SCR-048 content (E11-D04) | same | same | — | E11-D04's words |
-  E11-D04-08-empty-reasons-dark.png; E11-D04-10-error-engine.png | E11-D02 §10 :420
+  SCR-047 / SCR-048 content (E11-D04) | same | same | see S-112 / S-117 (SCR-047's and SCR-048's
+  edge-density rows) | E11-D04's words | E11-D04-08-empty-reasons-dark.png;
+  E11-D04-10-error-engine.png | E11-D02 §10 :420
 SCR-030 chassis | empty history (SCR-047 1a / 1b) | heading + cause + the `14` §0.5 rule 3 stem; CTA
   only for `recording:write` (sentence form otherwise) | same | same | long symbol names wrap at 200
   % | the heading and the timestamp | E11-D04-08-empty-reasons-dark.png | `14` :684; E11-D04 §11.2
@@ -1589,19 +1637,21 @@ SCR-030 bar series (E12-D02) | cache-loading | previous frame held; pending mark
   target; strip line after 600 ms | same | same | a fresh panel shows CMP-029 (static under reduce)
   | the pill's pending mark; the strip text | E12-D02 §7 boards (E12's) | `14` :699
 SCR-030 bar series (E12-D02) | progressive-backfill | E11-D02's loading band left of the oldest
-  loaded bar | same | same | — | "Loading older bars…" | E11-D02-09-feed-states.png | `14` :700
+  loaded bar | same | same | as S-002 (the band keeps its width at every density) | "Loading older
+  bars…" | E11-D02-09-feed-states.png | `14` :700
 SCR-030 bar series (E12-D02) | streaming | baseline: live bars, no chrome; stale / disconnected per
-  E11-D02 §10 | same | same | — | the status-row chip when degraded | E11-D02-01-chassis-anatomy.png
-  | `14` :701
+  E11-D02 §10 | same | same | as S-003 | the status-row chip when degraded |
+  E11-D02-01-chassis-anatomy.png | `14` :701
 SCR-030 bar series (E12-D02) | forming-bar | a distinct non-colour treatment on the last bar
   (E12-D06's form); CMP-226 countdown | same | same | activity progress in its slot on non-time bars
   | the countdown; the treatment's shape | E12-D02 §7 boards (E12's) | `14` :702
 SCR-030 bar series (E12-D02) | closed-bar | solid baseline treatment; an amended bar carries a
-  "corrected" marker | same | same | — | the "corrected" marker | E12-D02 §7 boards (E12's) | `14`
-  :703
+  "corrected" marker | same | same | n/a — no density note in `14` :703; E12-D06 owns the marker's
+  form | the "corrected" marker | E12-D02 §7 boards (E12's) | `14` :703
 SCR-030 bar series (E12-D02) | rebuilding | previous series stays drawn; strip phases: text + static
-  glyph from 600 ms, progress bar with `Cancel` after 2 s | same | same | — | the strip text and the
-  pending pill | E12-D02 §7 boards (E12's) | `14` :704
+  glyph from 600 ms, progress bar with `Cancel` after 2 s | same | same | n/a — no density note in
+  `14` :704; the strip is E12-D02's | the strip text and the pending pill | E12-D02 §7 boards
+  (E12's) | `14` :704
 SCR-030 bar series (E12-D02) | partial-history | dashed full-height boundary with a text tag
   (recording start / built range / lookback) | same | same | non-time: E11-D02's loading band | the
   tag's words | E12-D02 §7 boards (E12's) | `14` :705
@@ -1609,37 +1659,41 @@ SCR-030 bar series (E12-D02) | coverage-gap | hatched, labelled band over the ga
   (`pattern.hatch.gap`), or the labelled seam | same | same | a column spanning a seam still shows
   it | the label | E11-D02-05-time-axis.png | `14` :706; E11-D05 §7 :315
 SCR-030 bar series (E12-D02) | LOD-aggregated | E11-D02's status-row chip, persistent while active,
-  never a toast; L1 keeps hairline wicks | same | same | — | the chip's words and ratio |
-  E11-D02-09-feed-states.png | `14` :707
+  never a toast; L1 keeps hairline wicks | same | same | as S-011 (ratio live; the chip never wraps)
+  | the chip's words and ratio | E11-D02-09-feed-states.png | `14` :707
 SCR-030 bar series (E12-D02) | empty | SCR-047 replaces the pane stack, no GL context; toolbar,
-  status row and strip stay usable | same | same | — | SCR-047's heading |
-  E11-D04-08-empty-reasons-dark.png | `14` :708
+  status row and strip stay usable | same | same | see S-112 (SCR-047's edge-density row) |
+  SCR-047's heading | E11-D04-08-empty-reasons-dark.png | `14` :708
 SCR-030 bar series (E12-D02) | error | SCR-048 replaces the pane stack; toolbar, status row and
-  strip stay usable | same | same | — | SCR-048's heading | E11-D04-10-error-engine.png | `14` :709
+  strip stay usable | same | same | see S-117 (SCR-048's edge-density row) | SCR-048's heading |
+  E11-D04-10-error-engine.png | `14` :709
 SCR-030 chassis motion (E11-D06 §6) | countdown warn / closed (D12) | the word "closing" + weight;
-  the flip is instant in both modes | same | same | — | the word |
-  E11-D06-05-countdown-stale-strips.png | E11-D06 §6.1 :207; M-32
+  the flip is instant in both modes | same | same | the chip 24 / 20 / 20 and never wraps (E11-D02
+  §10 :422) | the word | E11-D06-05-countdown-stale-strips.png | E11-D06 §6.1 :207; M-32
 SCR-030 chassis motion (E11-D06 §6) | stale dimming (D13) | data-ink ramp 1.00 → 0.85 over
-  `motion.duration.normal`; chip at 0 ms | same | same | — | the chip |
-  E11-D06-05-countdown-stale-strips.png | E11-D06 §6.2 :219; M-18 / M-19
+  `motion.duration.normal`; chip at 0 ms | same | same | as S-004 (the chip never wraps; the readout
+  truncates first) | the chip | E11-D06-05-countdown-stale-strips.png | E11-D06 §6.2 :219; M-18 /
+  M-19
 SCR-030 chassis motion (E11-D06 §6) | LOD step and the aggregation chip (D14) | one-frame step, no
-  crossfade; chip at 0 ms | same | same | — | the chip's words | E11-D06-06-lod-collapse-strips.png
-  | E11-D06 §6.3 :230; M-22
+  crossfade; chip at 0 ms | same | same | as S-011 (the chip never wraps) | the chip's words |
+  E11-D06-06-lod-collapse-strips.png | E11-D06 §6.3 :230; M-22
 SCR-030 chassis motion (E11-D06 §6) | splitter drag, collapse, restore (D17, D18) | grip follows the
-  pointer; collapse / restore as translate + clip over `motion.duration.normal` | same | same | — |
-  the stub's word "collapsed" | E11-D06-06-lod-collapse-strips.png | E11-D06 §6.4 :234\u2013236;
-  M-28
+  pointer; collapse / restore as translate + clip over `motion.duration.normal` | same | same | the
+  stub row 32 / 24 / 24 by density (E11-D02 §8 :367) | the stub's word "collapsed" |
+  E11-D06-06-lod-collapse-strips.png | E11-D06 §6.4 :234\u2013236; M-28
 SCR-030 chassis motion (E11-D06 §6) | context-loss recovery (D19) | last frame held; CMP-028 strip
-  at 0 ms, text swaps, no spinner; restore is a cut | same | same | — | the strip's text and attempt
-  count | E11-D06-07-context-loss-safety-strips.png | E11-D06 §6.5 :240; M-33
+  at 0 ms, text swaps, no spinner; restore is a cut | same | same | see S-117 (the strip inherits
+  SCR-048's edge-density row) | the strip's text and attempt count |
+  E11-D06-07-context-loss-safety-strips.png | E11-D06 §6.5 :240; M-33
 SCR-030 chassis motion (E11-D06 §6) | loading skeleton (D16) | 1,200 ms shimmer, stops at 5 s;
-  static two-tone under reduce | same | same | — | the text counting ≤ 1 Hz |
-  E11-D06-05-countdown-stale-strips.png | E11-D06 §6.7 :248; M-31
+  static two-tone under reduce | same | same | as S-001 (the count in the sentence; no layout
+  change) | the text counting ≤ 1 Hz | E11-D06-05-countdown-stale-strips.png | E11-D06 §6.7 :248;
+  M-31
 SCR-043 price-scale menu | empty | n/a (fixed items); "Merge indicator scales" and "Reset scale"
-  disabled with inline reasons (data states, not T2) | same | same | — | the reason lines |
-  E11-D03-01-price-scale-menu.png | E11-D03 §10 :401
-SCR-043 price-scale menu | loading | none (synchronous) | — | — | — | — | text-only — E11-D03 :401 |
-  E11-D03 §10 :401
+  disabled with inline reasons (data states, not T2) | same | same | see S-038 (this surface's
+  edge-density row) | the reason lines | E11-D03-01-price-scale-menu.png | E11-D03 §10 :401
+SCR-043 price-scale menu | loading | none (synchronous) | n/a | n/a | n/a | n/a | text-only —
+  E11-D03 :401 | E11-D03 §10 :401
 SCR-043 price-scale menu | error | the disabled Logarithmic item with its inline D4 reason; after a
   D5 fallback the one-shot announcement | same | same | the reason line always visible | the reason
   sentence | E11-D03-01-price-scale-menu.png | E11-D03 §10 :401
@@ -1648,234 +1702,261 @@ SCR-043 price-scale menu | populated | Linear ✓ · Lock ☑ · Invert ☐ · M
   rows 32 with the Lock description; compact / dense 24, descriptions on focus; min 280 px | glyph
   shapes ◉ / ○ and ☑ / ☐ | E11-D03-02-price-scale-menu-themes.png | E11-D03 §10 :401
 SCR-043 price-scale menu | edge density | rows 24 at compact / dense; the menu never narrower than
-  280 px | same | same | the reason line always visible | — | E11-D03-01-price-scale-menu.png |
-  E11-D03 §10 :401
+  280 px | same | same | the reason line always visible | as S-037 (the populated row's glyph
+  shapes) | E11-D03-01-price-scale-menu.png | E11-D03 §10 :401
 SCR-043 time-scale menu | empty | no preset checked when the spacing matches none
-  (`aria-checked="false"`) | same | same | — | the unchecked radios | E11-D03-03-time-scale-menu.png
-  | E11-D03 §10 :402
-SCR-043 time-scale menu | loading | none | — | — | — | — | text-only — E11-D03 :402 | E11-D03 §10
-  :402
+  (`aria-checked="false"`) | same | same | see S-043 | the unchecked radios |
+  E11-D03-03-time-scale-menu.png | E11-D03 §10 :402
+SCR-043 time-scale menu | loading | none | n/a | n/a | n/a | n/a | text-only — E11-D03 :402 |
+  E11-D03 §10 :402
 SCR-043 time-scale menu | error | "Go to date…" disabled with the inline reason (never recorded / no
-  symbol) | same | same | — | the reason sentence | E11-D03-03-time-scale-menu.png | E11-D03 §10
-  :402
+  symbol) | same | same | see S-043 | the reason sentence | E11-D03-03-time-scale-menu.png | E11-D03
+  §10 :402
 SCR-043 time-scale menu | populated | Standard ✓ · dividers ☑ · maintenance ☑ · UTC ✓ | board 02 /
   03 | board 02 / 03 | the Local item's IANA name ellipsises after 24 characters | glyph shapes |
   E11-D03-03-time-scale-menu.png | E11-D03 §10 :402
 SCR-043 time-scale menu | edge density | as the price-scale menu | same | same | 24 px rows; full
-  name in the accessible name | — | E11-D03-03-time-scale-menu.png | E11-D03 §10 :402
-Scale-lock badge | empty | absent while auto | — | — | — | — | text-only — E11-D03 :403 | E11-D03
-  §10 :403
-Scale-lock badge | loading | none | — | — | — | — | text-only — E11-D03 :403 | E11-D03 §10 :403
-Scale-lock badge | error | n/a | — | — | — | — | text-only — E11-D03 :403 | E11-D03 §10 :403
+  name in the accessible name | as S-042 (the populated row's glyph shapes) |
+  E11-D03-03-time-scale-menu.png | E11-D03 §10 :402
+Scale-lock badge | empty | absent while auto | n/a | n/a | n/a | n/a | text-only — E11-D03 :403 |
+  E11-D03 §10 :403
+Scale-lock badge | loading | none | n/a | n/a | n/a | n/a | text-only — E11-D03 :403 | E11-D03 §10
+  :403
+Scale-lock badge | error | n/a | n/a | n/a | n/a | n/a | text-only — E11-D03 :403 | E11-D03 §10 :403
 Scale-lock badge | populated | resting / hover / focus / active (§5) | board 04 | board 04 | the
   pill extends over the plot edge in compact and dense gutters | the words "Price scale locked" +
   lock glyph | E11-D03-04-lock-badge-states.png | E11-D03 §10 :403
 Scale-lock badge | edge density | never truncated, never icon-only | same | same | ≤ 16 px terminal
   overhang (D03 §24) | the words | E11-D03-04-lock-badge-states.png | E11-D03 §10 :403
 SCR-031 Scales tab | empty | preview "Preview unavailable — no bars loaded" with every field enabled
-  | same | same | — | the sentence | E11-D03-06-scales-tab-states.png | E11-D03 §10 :404
+  | same | same | see S-053 | the sentence | E11-D03-06-scales-tab-states.png | E11-D03 §10 :404
 SCR-031 Scales tab | loading | none in the tab (live apply); the dialog's open is
-  `motion.duration.normal`, instant under reduce | same | same | — | — | text-only — E11-D03 :404 |
-  E11-D03 §10 :404
+  `motion.duration.normal`, instant under reduce | same | same | see S-053 | n/a — nothing is shown
+  in the tab (E11-D03 §10 :404) | text-only — E11-D03 :404 | E11-D03 §10 :404
 SCR-031 Scales tab | error | preview "Preview unavailable — chart error; settings still apply";
   Logarithmic disabled with the D4 reason; a stepper out of range shows CMP-007's invalid state (the
-  validity look) | same | same | — | the sentences; the field's error text |
+  validity look) | same | same | see S-053 | the sentences; the field's error text |
   E11-D03-06-scales-tab-states.png | E11-D03 §10 :404
 SCR-031 Scales tab | populated | every field at its value; the preview live; "Apply to: This panel"
   | board 06 | board 06 | comfortable default; compact rows 24; columns side by side above 720 px |
   the state words beside toggles | E11-D03-05-scales-tab.png | E11-D03 §10 :404
 SCR-031 Scales tab | edge density | at 200 % the columns stack and the preview goes below the fields
-  | same | same | compact when the app is compact | — | E11-D03-06-scales-tab-states.png | E11-D03
-  §10 :404
+  | same | same | compact when the app is compact | as S-052 (the state words beside toggles) |
+  E11-D03-06-scales-tab-states.png | E11-D03 §10 :404
 SCR-044 go-to-date | empty | fields prefilled with the cursor's bar; quick jumps "No journal entries
   for BTCUSDT yet" / "No alerts have fired" / "No confirmed swing" (outcomes, not T2) | same | same
-  | — | the sentences | E11-D03-07-go-to-date-default.png | E11-D03 §10 :405
+  | see S-058 | the sentences | E11-D03-07-go-to-date-default.png | E11-D03 §10 :405
 SCR-044 go-to-date | loading | "Checking…" on Jump (≤ 2 s, busy — not T2); quick-jump target lines
-  "Loading…" | same | same | — | the words | E11-D03-07-go-to-date-default.png | E11-D03 §10 :405
+  "Loading…" | same | same | see S-058 | the words | E11-D03-07-go-to-date-default.png | E11-D03 §10
+  :405
 SCR-044 go-to-date | error | before recorded history · invalid format · after the latest bar · after
   the replay clock · needs paging while disconnected · couldn't check · couldn't load · never
-  recorded; warning: no recorded data at the target | board 10 | board 10 | — | the CMP-027
+  recorded; warning: no recorded data at the target | board 10 | board 10 | see S-058 | the CMP-027
   sentence; `aria-invalid` + `aria-describedby` | E11-D03-08-go-to-date-errors.png | E11-D03 §10
   :405
 SCR-044 go-to-date | populated | fields + twin-zone line + hint; five quick jumps with targets; Jump
   enabled | board 10 | board 10 | 420 px at every density | the resolved target under each button |
   E11-D03-07-go-to-date-default.png; E11-D03-10-go-to-date-themes.png | E11-D03 §10 :405
 SCR-044 go-to-date | edge density | at 200 % the quick jumps wrap one per row and keep their reason
-  lines; never taller than the viewport \u2212 32 px | same | same | scrolls inside | — |
-  E11-D03-11-keyboard-and-landing.png | E11-D03 §10 :405
+  lines; never taller than the viewport \u2212 32 px | same | same | scrolls inside | as S-057 (the
+  resolved target under each button) | E11-D03-11-keyboard-and-landing.png | E11-D03 §10 :405
 SCR-044 RBAC variants | empty | viewer without `journal:read`: "Last journal entry" is T2 (T2-08) —
   `color.text.tertiary` label + `lock`, reason `rbac.permission` "Your role can't see the journal."
   under it, CMP-079 | same | same | same slot, same layout | the lock glyph and the reason sentence
   | E11-D03-09-go-to-date-rbac-feed.png (D03's anatomy; F-29 re-draws it) | E11-D03 §10 :406;
   E11-D07 §9.5 T2-08 :447
-SCR-044 RBAC variants | loading | n/a — no such state (the variant is a permission leg) | — | — | —
-  | — | text-only — E11-D03 :406 | E11-D03 §10 :406
-SCR-044 RBAC variants | error | n/a — no such state | — | — | — | — | text-only — E11-D03 :406 |
-  E11-D03 §10 :406
-SCR-044 RBAC variants | populated | owner / manager: all five enabled; viewing as: reads answer as
-  the target (no view-as leg on a read) | same | same | — | — | E11-D03-09-go-to-date-rbac-feed.png
-  | E11-D03 §10 :406; E09-D09 §3.1 :83
-SCR-044 RBAC variants | edge density | n/a — as the dialog's | — | — | — | — | text-only — E11-D03
+SCR-044 RBAC variants | loading | n/a — no such state (the variant is a permission leg) | n/a | n/a
+  | n/a | n/a | text-only — E11-D03 :406 | E11-D03 §10 :406
+SCR-044 RBAC variants | error | n/a — no such state | n/a | n/a | n/a | n/a | text-only — E11-D03
   :406 | E11-D03 §10 :406
-SCR-044 feed variants | empty | n/a | — | — | — | — | text-only — E11-D03 :407 | E11-D03 §10 :407
-SCR-044 feed variants | loading | n/a | — | — | — | — | text-only — E11-D03 :407 | E11-D03 §10 :407
+SCR-044 RBAC variants | populated | owner / manager: all five enabled; viewing as: reads answer as
+  the target (no view-as leg on a read) | same | same | see S-058 (the dialog's edge-density row) |
+  as S-057 (the resolved target under each button) | E11-D03-09-go-to-date-rbac-feed.png | E11-D03
+  §10 :406; E09-D09 §3.1 :83
+SCR-044 RBAC variants | edge density | n/a — as the dialog's | n/a | n/a | n/a | n/a | text-only —
+  E11-D03 :406 | E11-D03 §10 :406
+SCR-044 feed variants | empty | n/a | n/a | n/a | n/a | n/a | text-only — E11-D03 :407 | E11-D03 §10
+  :407
+SCR-044 feed variants | loading | n/a | n/a | n/a | n/a | n/a | text-only — E11-D03 :407 | E11-D03
+  §10 :407
 SCR-044 feed variants | error | Disconnected: paging refused; "Last journal entry" / "Last alert"
   are T2 (T2-09, a state leg — `lock` only, no CMP-079; reason PROPOSED as an E17-D01 state key) |
-  same | same | — | the lock glyph and the reason | E11-D03-09-go-to-date-rbac-feed.png (F-29
-  re-draws it) | E11-D03 §10 :407; E11-D07 §9.5 T2-09 :448
+  same | same | see S-058 (the dialog's edge-density row) | the lock glyph and the reason |
+  E11-D03-09-go-to-date-rbac-feed.png (F-29 re-draws it) | E11-D03 §10 :407; E11-D07 §9.5 T2-09 :448
 SCR-044 feed variants | populated | Stale / Delayed: the header repeats the feed chip verbatim;
-  everything enabled | same | same | — | the chip text | E11-D03-09-go-to-date-rbac-feed.png |
+  everything enabled | same | same | see S-058 (the dialog's edge-density row) | the chip text |
+  E11-D03-09-go-to-date-rbac-feed.png | E11-D03 §10 :407
+SCR-044 feed variants | edge density | n/a | n/a | n/a | n/a | n/a | text-only — E11-D03 :407 |
   E11-D03 §10 :407
-SCR-044 feed variants | edge density | n/a | — | — | — | — | text-only — E11-D03 :407 | E11-D03 §10
-  :407
-Chart after a jump | empty | n/a | — | — | — | — | text-only — E11-D03 :408 | E11-D03 §10 :408
-Chart after a jump | loading | the E11-D02 loading band around the target while E11-S15 pages (≤ 800
-  ms) | same | same | — | "Loading older bars…" | E11-D03-11-keyboard-and-landing.png | E11-D03 §10
+Chart after a jump | empty | n/a | n/a | n/a | n/a | n/a | text-only — E11-D03 :408 | E11-D03 §10
   :408
+Chart after a jump | loading | the E11-D02 loading band around the target while E11-S15 pages (≤ 800
+  ms) | same | same | as S-002 (the band keeps its width at every density) | "Loading older bars…" |
+  E11-D03-11-keyboard-and-landing.png | E11-D03 §10 :408
 Chart after a jump | error | the dialog re-opens with the server's error; the chart has not moved |
-  same | same | — | the error sentence | E11-D03-08-go-to-date-errors.png | E11-D03 §10 :408
+  same | same | see S-058 (the dialog re-opens; the chart has not moved) | the error sentence |
+  E11-D03-08-go-to-date-errors.png | E11-D03 §10 :408
 Chart after a jump | populated | target centred, dashed `color.chart.marker.goto` marker + pill,
   cursor column on the target, "Paused at 15 Sep 13:42" | same | `palette.blue.300` marker (7.05:1)
   | at 0.5 px/bar the marker is still 1 px dashed over the column | the marker's pill; the
   announcement | E11-D03-11-keyboard-and-landing.png | E11-D03 §10 :408
 Chart after a jump | edge density | at 200 px/bar the marker sits at the bar's centre | same | same
-  | — | — | E11-D03-11-keyboard-and-landing.png | E11-D03 §10 :408
-view switch (CMP-221 slot) | empty | n/a (always present) | — | — | — | — | text-only — E11-D04 :449
-  | E11-D04 §15 :449
-view switch (CMP-221 slot) | loading | n/a | — | — | — | — | text-only — E11-D04 :449 | E11-D04 §15
-  :449
-view switch (CMP-221 slot) | error | still operable on SCR-048 | same | same | — | the pressed
-  segment's check glyph | E11-D04-01-entry-point.png; E11-D04-10-error-engine.png | E11-D04 §15 :449
+  | as the dark cell (this row is the surface's edge-density state) | as S-072 (the marker's pill) |
+  E11-D03-11-keyboard-and-landing.png | E11-D03 §10 :408
+view switch (CMP-221 slot) | empty | n/a (always present) | n/a | n/a | n/a | n/a | text-only —
+  E11-D04 :451 | E11-D04 §15 :451
+view switch (CMP-221 slot) | loading | n/a | n/a | n/a | n/a | n/a | text-only — E11-D04 :451 |
+  E11-D04 §15 :451
+view switch (CMP-221 slot) | error | still operable on SCR-048 | same | same | see S-078 | the
+  pressed segment's check glyph | E11-D04-01-entry-point.png; E11-D04-10-error-engine.png | E11-D04
+  §15 :451
 view switch (CMP-221 slot) | populated | Chart pressed / Table pressed (`color.surface.selected` +
   `color.border.strong`) | E11-D04-03-table-light.png | E11-D04-04-table-hc.png | the
   minimum-viewport toolbar with the never-overflow set | the glyph + text label; `aria-checked` |
-  E11-D04-01-entry-point.png | E11-D04 §15 :449
+  E11-D04-01-entry-point.png | E11-D04 §15 :451
 view switch (CMP-221 slot) | edge density | the never-overflow set at 640 CSS px | same | same |
-  `size.control.height` 24 / 32 by density | — | E11-D04-05-table-200-zoom.png | E11-D04 §15 :449
+  `size.control.height` 24 / 32 by density | as S-077 (the glyph + text label; `aria-checked`) |
+  E11-D04-05-table-200-zoom.png | E11-D04 §15 :451
 SCR-045 bar table | empty | the SCR-047 block in the shell; caption "0 bars loaded" | same | same |
-  — | the heading | E11-D04-07-table-states.png | E11-D04 §15 :450; §10 :320
+  see S-083 | the heading | E11-D04-07-table-states.png | E11-D04 §15 :452; §10 :322
 SCR-045 bar table | loading | header row kept; twelve CMP-015 row skeletons `color.surface.hover`;
   caption "Loading 5,000 bars…"; `aria-busy`; 10 s → SCR-048 | same | same | skeletons static under
-  reduce | the caption's sentence | E11-D04-07-table-states.png | E11-D04 §15 :450; §10 :319
-SCR-045 bar table | error | the SCR-048 card in the shell, header row kept | same | same | — | the
-  card's heading | E11-D04-07-table-states.png | E11-D04 §15 :450
+  reduce | the caption's sentence | E11-D04-07-table-states.png | E11-D04 §15 :452; §10 :321
+SCR-045 bar table | error | the SCR-048 card in the shell, header row kept | same | same | see S-083
+  | the card's heading | E11-D04-07-table-states.png | E11-D04 §15 :452
 SCR-045 bar table | populated | caption, header, zebra (`color.surface.canvas` / `.raised`), focused
   row ring, selected row `color.surface.selected` + ✓, forming row | E11-D04-03-table-light.png |
   E11-D04-04-table-hc.png | 100k rows virtualised; 200 % at 640 CSS px; stacked reflow at 320;
   comfortable → compact step | ✓ glyph; `aria-current`; `aria-selected` | E11-D04-02-table-dark.png
-  | E11-D04 §15 :450
+  | E11-D04 §15 :452
 SCR-045 bar table | edge density | 100k rows virtualised (≤ 60 in the DOM); 200 % at 640 CSS px;
   stacked reflow at 320 CSS px with the F11 hint | same | same | the fit ladder of §5.2 | the hint
-  sentence | E11-D04-05-table-200-zoom.png | E11-D04 §15 :450; §10 :327
+  sentence | E11-D04-05-table-200-zoom.png | E11-D04 §15 :452; §10 :329
 SCR-045 bar table | filtered to zero | CMP-026 `filtered-empty`: "No rows match: …" + Clear filters;
-  header row kept | same | same | — | the sentence | E11-D04-06-sort-filter-copy.png | E11-D04 §10
-  :322
+  header row kept | same | same | see S-083 | the sentence | E11-D04-06-sort-filter-copy.png |
+  E11-D04 §10 :324
 SCR-045 bar table | before recorded history | static band row with the `14` §0.5 rule 3 stem + Show
-  coverage; Older disabled "History starts here" (an outcome, not T2) | same | same | — | the stem
-  sentence | E11-D04-07-table-states.png | E11-D04 §10 :324
+  coverage; Older disabled "History starts here" (an outcome, not T2) | same | same | see S-083 |
+  the stem sentence | E11-D04-07-table-states.png | E11-D04 §10 :326
 SCR-045 bar table | new bars while not following | the "3 new bars ↓" pill above the footer
-  (`Ctrl+End`); rows append silently | same | same | — | the pill's words |
-  E11-D04-07-table-states.png | E11-D04 §10 :325
+  (`Ctrl+End`); rows append silently | same | same | see S-083 | the pill's words |
+  E11-D04-07-table-states.png | E11-D04 §10 :327
 SCR-045 bar table | stale context | the banner "Data is for bar 13:42, no longer in view — press
   Shift+R or Refresh to current" | same | same | two lines at 200 % | the banner sentence |
-  E11-D04-07-table-states.png | E11-D04 §10 :326; §7 :268
-level sub-table | empty | "No footprint for this bar" row | same | same | — | the sentence |
-  E11-D04-02-table-dark.png | E11-D04 §15 :451
+  E11-D04-07-table-states.png | E11-D04 §10 :328; §7 :272
+level sub-table | empty | "No footprint for this bar" row | same | same | see S-092 | the sentence |
+  E11-D04-02-table-dark.png | E11-D04 §15 :453
 level sub-table | loading | "Loading levels…" one row, bounded at 2 s → "Levels unavailable — retry"
-  (an outcome) | same | same | — | the words | E11-D04-07-table-states.png | E11-D04 §15 :451
-level sub-table | error | inherits the card | same | same | — | the card |
-  E11-D04-07-table-states.png | E11-D04 §15 :451
+  (an outcome) | same | same | see S-092 | the words | E11-D04-07-table-states.png | E11-D04 §15
+  :453
+level sub-table | error | inherits the card | same | same | see S-092 | the card |
+  E11-D04-07-table-states.png | E11-D04 §15 :453
 level sub-table | populated | 12 rows on `color.surface.app` then inner scroll;
   `pattern.outline.imbalance` flag as text "Bid-stacked" / "Ask-stacked" |
   E11-D04-03-table-light.png | E11-D04-04-table-hc.png | 300 levels | the state words |
-  E11-D04-02-table-dark.png | E11-D04 §15 :451
-level sub-table | edge density | 300 levels; the sub-table scrolls after 12 rows | same | same | — |
-  — | E11-D04-07-table-states.png | E11-D04 §15 :451
-filter toolbar and chips | empty | no chips | same | same | — | — | E11-D04-06-sort-filter-copy.png
-  | E11-D04 §15 :452
-filter toolbar and chips | loading | n/a | — | — | — | — | text-only — E11-D04 :452 | E11-D04 §15
-  :452
-filter toolbar and chips | error | n/a | — | — | — | — | text-only — E11-D04 :452 | E11-D04 §15 :452
+  E11-D04-02-table-dark.png | E11-D04 §15 :453
+level sub-table | edge density | 300 levels; the sub-table scrolls after 12 rows | same | same | as
+  the dark cell (this row is the surface's edge-density state) | as S-091 (the state words) |
+  E11-D04-07-table-states.png | E11-D04 §15 :453
+filter toolbar and chips | empty | no chips | same | same | see S-097 | n/a — an absence (no chips),
+  nothing to carry (E11-D04 §15 :454) | E11-D04-06-sort-filter-copy.png | E11-D04 §15 :454
+filter toolbar and chips | loading | n/a | n/a | n/a | n/a | n/a | text-only — E11-D04 :454 |
+  E11-D04 §15 :454
+filter toolbar and chips | error | n/a | n/a | n/a | n/a | n/a | text-only — E11-D04 :454 | E11-D04
+  §15 :454
 filter toolbar and chips | populated | chips, "Showing n of m", the sort-status chip "not in time
   order" | E11-D04-03-table-light.png strip | E11-D04-04-table-hc.png strip | long filter list at
-  200 % | the words | E11-D04-06-sort-filter-copy.png | E11-D04 §15 :452
-filter toolbar and chips | edge density | the long filter list wraps at 200 % | same | same | — | —
-  | E11-D04-05-table-200-zoom.png | E11-D04 §15 :452
-stale banner | empty | n/a | — | — | — | — | text-only — E11-D04 :453 | E11-D04 §15 :453
-stale banner | loading | n/a | — | — | — | — | text-only — E11-D04 :453 | E11-D04 §15 :453
-stale banner | error | n/a | — | — | — | — | text-only — E11-D04 :453 | E11-D04 §15 :453
+  200 % | the words | E11-D04-06-sort-filter-copy.png | E11-D04 §15 :454
+filter toolbar and chips | edge density | the long filter list wraps at 200 % | same | same | as the
+  dark cell (this row is the surface's edge-density state) | as S-096 (the words) |
+  E11-D04-05-table-200-zoom.png | E11-D04 §15 :454
+stale banner | empty | n/a | n/a | n/a | n/a | n/a | text-only — E11-D04 :455 | E11-D04 §15 :455
+stale banner | loading | n/a | n/a | n/a | n/a | n/a | text-only — E11-D04 :455 | E11-D04 §15 :455
+stale banner | error | n/a | n/a | n/a | n/a | n/a | text-only — E11-D04 :455 | E11-D04 §15 :455
 stale banner | populated | shown: `color.status.warning.subtle` + `.strong`, the sentence + Refresh
   to current (`role="status"`, A-11) | E11-D04-07-table-states.png strip |
   E11-D04-07-table-states.png strip | two lines at 200 % | the sentence |
-  E11-D04-07-table-states.png | E11-D04 §15 :453
-stale banner | edge density | two lines at 200 % | same | same | — | — |
-  E11-D04-05-table-200-zoom.png | E11-D04 §15 :453
+  E11-D04-07-table-states.png | E11-D04 §15 :455
+stale banner | edge density | two lines at 200 % | same | same | as the dark cell (this row is the
+  surface's edge-density state) | as S-101 (the sentence) | E11-D04-05-table-200-zoom.png | E11-D04
+  §15 :455
 loading-older / before-history bands | empty | the before-history band (the `14` §0.5 rule 3 stem) |
-  same | same | — | the stem sentence | E11-D04-07-table-states.png | E11-D04 §15 :454
+  same | same | n/a — as S-107 (E11-D04 §15 :456: no edge-density state) | the stem sentence |
+  E11-D04-07-table-states.png | E11-D04 §15 :456
 loading-older / before-history bands | loading | "Loading older bars…" band + the Older control
-  (CMP-053 cursor mode) | same | same | — | the words | E11-D04-07-table-states.png | E11-D04 §15
-  :454
-loading-older / before-history bands | error | a failed page → the card | same | same | — | the card
-  | E11-D04-07-table-states.png | E11-D04 §15 :454
-loading-older / before-history bands | populated | n/a | — | — | — | — | text-only — E11-D04 :454 |
-  E11-D04 §15 :454
-loading-older / before-history bands | edge density | n/a | — | — | — | — | text-only — E11-D04 :454
-  | E11-D04 §15 :454
+  (CMP-053 cursor mode) | same | same | n/a — as S-107 (E11-D04 §15 :456: no edge-density state) |
+  the words | E11-D04-07-table-states.png | E11-D04 §15 :456
+loading-older / before-history bands | error | a failed page → the card | same | same | n/a — as
+  S-107 (E11-D04 §15 :456: no edge-density state) | the card | E11-D04-07-table-states.png | E11-D04
+  §15 :456
+loading-older / before-history bands | populated | n/a | n/a | n/a | n/a | n/a | text-only — E11-D04
+  :456 | E11-D04 §15 :456
+loading-older / before-history bands | edge density | n/a | n/a | n/a | n/a | n/a | text-only —
+  E11-D04 :456 | E11-D04 §15 :456
 SCR-047 pane | empty | reasons 1a / 1b / 2 / 3 \u00d7 CTA (owner, `recording:write`) / explanatory
   sentence (sentence-form T2, T2-06); in situ | E11-D04-09-empty-reasons-light-hc.png |
   E11-D04-09-empty-reasons-light-hc.png | long symbol names and long `status_reason` at 200 % | the
-  heading, the cause, the timestamp | E11-D04-08-empty-reasons-dark.png | E11-D04 §15 :455; E11-D07
+  heading, the cause, the timestamp | E11-D04-08-empty-reasons-dark.png | E11-D04 §15 :457; E11-D07
   §9.5 T2-06 :445
-SCR-047 pane | loading | n/a (the fetch's loading is the chart's skeleton) | — | — | — | — |
-  text-only — E11-D04 :455 | E11-D04 §15 :455
-SCR-047 pane | error | a timed-out fetch → SCR-048 | same | same | — | the card |
-  E11-D04-10-error-engine.png | E11-D04 §15 :455
-SCR-047 pane | populated | n/a | — | — | — | — | text-only — E11-D04 :455 | E11-D04 §15 :455
+SCR-047 pane | loading | n/a (the fetch's loading is the chart's skeleton) | n/a | n/a | n/a | n/a |
+  text-only — E11-D04 :457 | E11-D04 §15 :457
+SCR-047 pane | error | a timed-out fetch → SCR-048 | same | same | see S-117 (SCR-048's edge-density
+  row) | the card | E11-D04-10-error-engine.png | E11-D04 §15 :457
+SCR-047 pane | populated | n/a | n/a | n/a | n/a | n/a | text-only — E11-D04 :457 | E11-D04 §15 :457
 SCR-047 pane | edge density | long symbol names and long `status_reason` wrap at 200 % | same | same
-  | — | — | E11-D04-08-empty-reasons-dark.png | E11-D04 §15 :455
-SCR-048 card and strip | empty | n/a | — | — | — | — | text-only — E11-D04 :456 | E11-D04 §15 :456
+  | as the dark cell (this row is the surface's edge-density state) | as S-108 (the heading, the
+  cause, the timestamp) | E11-D04-08-empty-reasons-dark.png | E11-D04 §15 :457
+SCR-048 card and strip | empty | n/a | n/a | n/a | n/a | n/a | text-only — E11-D04 :458 | E11-D04
+  §15 :458
 SCR-048 card and strip | loading | the restoring strip with attempts "Graphics context lost —
-  restoring… attempt 1 of 3" (busy, not T2) | same | same | — | the attempt count |
-  E11-D04-10-error-engine.png | E11-D04 §15 :456
+  restoring… attempt 1 of 3" (busy, not T2) | same | same | see S-117 | the attempt count |
+  E11-D04-10-error-engine.png | E11-D04 §15 :458
 SCR-048 card and strip | error | engine / data feed / backend headings; the deferred variant while
   Disconnected; in situ | E11-D04-12-errors-light-hc.png | E11-D04-12-errors-light-hc.png | a long
   correlation id wraps, never truncates | the heading, body, code and ref line |
-  E11-D04-10-error-engine.png; E11-D04-11-error-feed-backend.png | E11-D04 §15 :456
-SCR-048 card and strip | populated | n/a | — | — | — | — | text-only — E11-D04 :456 | E11-D04 §15
-  :456
+  E11-D04-10-error-engine.png; E11-D04-11-error-feed-backend.png | E11-D04 §15 :458
+SCR-048 card and strip | populated | n/a | n/a | n/a | n/a | n/a | text-only — E11-D04 :458 |
+  E11-D04 §15 :458
 SCR-048 card and strip | edge density | a long correlation id wraps, never truncates | same | same |
-  — | — | E11-D04-12-errors-light-hc.png | E11-D04 §15 :456
-row-action menu | empty | no registered flow → no item | same | same | — | — |
-  E11-D04-06-sort-filter-copy.png | E11-D04 §15 :457
-row-action menu | loading | n/a | — | — | — | — | text-only — E11-D04 :457 | E11-D04 §15 :457
-row-action menu | error | n/a | — | — | — | — | text-only — E11-D04 :457 | E11-D04 §15 :457
+  as the dark cell (this row is the surface's edge-density state) | as S-115 (the heading, body,
+  code and ref line) | E11-D04-12-errors-light-hc.png | E11-D04 §15 :458
+row-action menu | empty | no registered flow → no item | same | same | see S-122 | n/a — an absence
+  (no item), nothing to carry (E11-D04 §15 :459) | E11-D04-06-sort-filter-copy.png | E11-D04 §15
+  :459
+row-action menu | loading | n/a | n/a | n/a | n/a | n/a | text-only — E11-D04 :459 | E11-D04 §15
+  :459
+row-action menu | error | n/a | n/a | n/a | n/a | n/a | text-only — E11-D04 :459 | E11-D04 §15 :459
 row-action menu | populated | five items; the write items T2 for a role without the grant
   (T2-01…T2-04: `lock`, full label `color.text.tertiary`, `rbac.permission` second line, CMP-079);
   view-as leg first | E11-D04-06-sort-filter-copy.png strip | E11-D04-06-sort-filter-copy.png strip
   | 200 % menu height | the lock glyph and the reason line | E11-D04-06-sort-filter-copy.png (F-27 /
-  F-28 re-draw the T2 items) | E11-D04 §15 :457; E11-D07 §9.5 :440\u2013443
-row-action menu | edge density | 200 % menu height scrolls | same | same | — | — |
-  E11-D04-05-table-200-zoom.png | E11-D04 §15 :457
-SCR-046 diagnostics overlay | hidden | enabled from SCR-118; `Ctrl+Shift+D` opens (E06-D02 §2.1) | —
-  | — | — | — | text-only — E11-D02 :383 | E11-D02 §9 :383
+  F-28 re-draw the T2 items) | E11-D04 §15 :459; E11-D07 §9.5 :440\u2013443
+row-action menu | edge density | 200 % menu height scrolls | same | same | as the dark cell (this
+  row is the surface's edge-density state) | as S-121 (the lock glyph and the reason line) |
+  E11-D04-05-table-200-zoom.png | E11-D04 §15 :459
+SCR-046 diagnostics overlay | hidden | enabled from SCR-118; `Ctrl+Shift+D` opens (E06-D02 §2.1) |
+  n/a — nothing drawn | n/a — nothing drawn | n/a — nothing drawn while hidden | n/a — nothing drawn
+  while hidden | text-only — E11-D02 :383 | E11-D02 §9 :383
 SCR-046 diagnostics overlay | shown | CMP-069 shell top-right over the active chart panel; CMP-036
   rows; CMP-024 sparklines at 2 Hz | same | same | ≤ 0.5 ms per frame | the row labels and values |
   E11-D02-15-diagnostics-overlay.png | E11-D02 §9 :383
 SCR-046 diagnostics overlay | pinned | the pin keeps the overlay open across panel focus changes |
-  same | same | — | the pin's pressed state | E11-D02-15-diagnostics-overlay.png | E11-D02 §9 :383
+  same | same | as S-124 (the shell is E06-D02's; ≤ 0.5 ms per frame) | the pin's pressed state |
+  E11-D02-15-diagnostics-overlay.png | E11-D02 §9 :383
 SCR-046 diagnostics overlay | threshold-breach | the "above budget" chip: `color.text.primary` on
   `color.status.danger.subtle` + `color.status.danger.strong` icon (A-6 corrects E06-D02's pair) |
-  same | same | — | the words "above budget" | E11-D02-15-diagnostics-overlay.png | E11-D02 §9 :383;
-  §19 A-6 :795
+  same | same | n/a — no density variant in E11-D02 §9 :383 (E06-D02's overlay) | the words "above
+  budget" | E11-D02-15-diagnostics-overlay.png | E11-D02 §9 :383; §19 A-6 :799
 SCR-049 grid cell | populated | the cell header's sync-group tag: `color.text.primary` chip on
   `color.surface.raised` with a 2 px border in the group's colour, the letter as text | same | same
   | 1\u00d72 … 3\u00d73 and custom grids (E15's) | the letter | E11-D02-08-multi-pane-chrome.png |
-  E11-D02 §8 :377; `14` :1072
+  E11-D02 §8 :377; `14` :1085
 SCR-049 grid cell | focused cell | the focused cell gets the chart ring; "Chart 2 of 4, group A" |
-  same | same | — | the ring; the name | E11-D02-08-multi-pane-chrome.png | E11-D02 §8 :377
+  same | same | n/a — no density variant in E11-D02 §8 :377 (the ring is CMP-039's) | the ring; the
+  name | E11-D02-08-multi-pane-chrome.png | E11-D02 §8 :377
 SCR-049 grid cell | degraded (GPU budget) | E15's: the explicit reduce-quality prompt when the grid
-  exceeds the GPU budget | same | same | — | the prompt's words | text-only — `14` :1085 (E15's) |
-  `14` :1085
+  exceeds the GPU budget | same | same | n/a — E15's prompt (`14` :1085); no chassis treatment | the
+  prompt's words | text-only — `14` :1085 (E15's) | `14` :1085
 """
 
 # Source state labels → the row label in the pack's §7 (typed once; the tool asserts presence).
@@ -1909,6 +1990,12 @@ SOURCE_STATE_MAP: dict[str, dict[str, str]] = {
     },
 }
 FIVE_STATES = ("empty", "loading", "error", "populated", "edge density")
+# A matrix cell is a treatment with its line, a pointer to the row that carries it, or `n/a` (bare
+# only where the cited source row says so, else with its reason). A dash is a placeholder: empty.
+EMPTY_CELLS = ("", "-", "—")
+POINTER_CELL = re.compile(r"^(?:as|see) (?:S-\d{3}\b|the dark cell\b)")
+NA_CELL = re.compile(r"^(?:n/a|none|absent)\b")
+T2_ID = re.compile(r"T2-0\d(?:…T2-0\d)?")
 
 
 def source_states() -> dict[str, Any]:
@@ -1917,7 +2004,9 @@ def source_states() -> dict[str, Any]:
         for r in md_table(read(D02), "## 10. States per SCR-030", "Chip order in the status row")
         if r and r[0].strip("*") != "State"
     ]
-    p14 = read(P14).splitlines()[683]
+    p14_lines = read(P14).splitlines()
+    scr030 = next(i for i, ln in enumerate(p14_lines) if ln.startswith("### SCR-030"))
+    p14 = next(ln for ln in p14_lines[scr030:] if ln.startswith("- **States:**"))
     p14_clean = re.sub(r"\((?:[^()]|\([^()]*\))*\)", "", p14.split("**States:**", 1)[1])
     p14_states = [s.strip().strip("*").strip() for s in p14_clean.split("·")]
     p14_states = [re.sub(r"\.$", "", s).strip() for s in p14_states if s.strip()]
@@ -1972,19 +2061,47 @@ def matrix_check(pack_rows: list[dict[str, str]]) -> dict[str, Any]:
                 missing.append(f"{surface}: {st} not in the pack")
     cells = 0
     empty = 0
+    pointers = 0
+    na = 0
     for r in pack_rows:
         for c in ("dark", "light", "hc", "edge", "carrier", "frame"):
             cells += 1
-            if not r[c].strip():
+            v = r[c].strip()
+            if v in EMPTY_CELLS:
                 empty += 1
+            elif POINTER_CELL.match(v):
+                pointers += 1
+            elif NA_CELL.match(v):
+                na += 1
+    # T2 is counted by the gate ids a row names, never by the substring "T2": the rows that say
+    # "not T2" (data states, busy, outcomes) are counted apart, and a range "T2-01…T2-04" expands.
+    t2_rows = 0
+    not_t2 = 0
+    t2_ids: set[str] = set()
+    for r in pack_rows:
+        dark = r["dark"]
+        if "not T2" in dark:
+            not_t2 += 1
+            continue
+        spans = T2_ID.findall(dark)
+        if spans or re.search(r"\b(?:is|are) T2\b", dark):
+            t2_rows += 1
+        for span in spans:
+            first, _, last = span.partition("…")
+            for n in range(int(first[-2:]), int((last or first)[-2:]) + 1):
+                t2_ids.add(f"T2-{n:02d}")
     surfaces = sorted({r["surface"] for r in pack_rows})
     return {
         "surfaces": len(surfaces),
         "states": len(pack_rows),
         "cells": cells,
         "empty": empty,
+        "pointers": pointers,
+        "na": na,
         "missing": missing,
-        "t2_rows": sum(1 for r in pack_rows if "T2" in r["dark"]),
+        "t2_rows": t2_rows,
+        "not_t2_rows": not_t2,
+        "t2_ids": sorted(t2_ids),
         "source_counts": {k: len(v) for k, v in src.items()},
     }
 
@@ -2314,7 +2431,7 @@ FABRICATED = [
 LOCAL_PATH = re.compile(r"/(?:home|Users)/[^/\s]+/")
 NOTES_DIR = re.compile(r"\b\w+-notes[/\\]")
 PENPOT_HOST = re.compile(r"penpot\.[a-z0-9-]+\.[a-z]{2,}", re.IGNORECASE)
-WORKSPACE_LINK = re.compile(r"(?:team|file)-id=|#/workspace")
+WORKSPACE_LINK = re.compile(r"(?:team|file)[-_]id=|#/work[s]pace")
 HEX = re.compile(r"#[0-9A-Fa-f]{6}\b")
 CLOSING = re.compile(
     r"\b(clos(?:e|es|ed|ing)|fix(?:es|ed|ing)?|resolv(?:e|es|ed|ing))\b", re.IGNORECASE
@@ -2461,7 +2578,7 @@ def d07_findings() -> dict[str, Any]:
         for r in md_table(text, "## 19. Hand-offs", "## 20. Summary")
         if r and re.fullmatch(r"HO-\d+", r[0])
     ]
-    lines = {r[0]: line_of(D07_SPEC, f"| {r[0]} ") for r in f}
+    lines = {r[0]: line_in_section(D07_SPEC, "### 15.1 F", f"| {r[0]} ") for r in f}
     return {
         "present": True,
         "f": [
@@ -2710,6 +2827,8 @@ def build(spec_path: Path | None, handoff_path: Path | None) -> dict[str, Any]:
         "proposed_rules": beh["proposed_rules"],
         "worked_cases": len(beh["price_cases"]) + len(beh["time_cases"]) + 1,
         "worked_disagreements": len(beh["disagreements"]),
+        "selector_cases": len(beh["selector_cases"]),
+        "selector_divergent": len(beh["selector_divergent"]),
         "time_ladder_steps": beh["time_ladder_steps"],
         "keymap_rows": len(km["rows"]),
         "keymap_missing": len(km_cmp["missing"]),
@@ -2741,7 +2860,12 @@ def build(spec_path: Path | None, handoff_path: Path | None) -> dict[str, Any]:
         "matrix_states": mc["states"],
         "matrix_cells": mc["cells"],
         "matrix_empty": mc["empty"],
+        "matrix_pointers": mc["pointers"],
+        "matrix_na": mc["na"],
+        "matrix_treatments": mc["cells"] - mc["empty"] - mc["pointers"] - mc["na"],
         "matrix_t2": mc["t2_rows"],
+        "matrix_not_t2": mc["not_t2_rows"],
+        "matrix_t2_ids": len(mc["t2_ids"]),
         "handoff_t1_diff": max(t1["diff"], 0),
         "oq_total": oc["total"],
         "oq_answered": oc["answered"],
@@ -3173,6 +3297,16 @@ def render_report(d: dict[str, Any]) -> str:
         f"  §7.5 legend {lg['pane']} px / {lg['row']} px row, {lg['series']} series: "
         f"{lg['shown']} shown, +{lg['more']} more — {verdict}"
     )
+    put(
+        f"selectors (E11-D02 §5.1 :170 vs §5.2 :176): cases {c['selector_cases']} · "
+        f"divergent {c['selector_divergent']} (C-13; B-1 follows §5.1)"
+    )
+    for s in beh["selector_cases"]:
+        verdict = "agree" if s["agree"] else "DIVERGE"
+        put(
+            f"  {s['name']}: pane / G {s['pane_over_g']} → §5.1 {s['s51']} "
+            f"(spacing {s['s51_spacing']} px) · §5.2 floored {s['s52']} — {verdict}"
+        )
     if km.get("absent"):
         put("keymap: " + D07_ABSENT)
     else:
@@ -3198,10 +3332,13 @@ def render_report(d: dict[str, Any]) -> str:
         f"`15` tokens {c['catalogue_tokens']} absent {c['catalogue_absent']}"
     )
     put(f"hex in spec/handoff: {c['hex_spec']} / {c['hex_handoff']}")
+    mc = d["matrix_check"]
     put(
         f"matrix: surfaces {c['matrix_surfaces']} · states {c['matrix_states']} · "
-        f"cells {c['matrix_cells']} · empty {c['matrix_empty']} · T2 cells {c['matrix_t2']} · "
-        f"handoff_t1_diff {c['handoff_t1_diff']}"
+        f"cells {c['matrix_cells']} · empty {c['matrix_empty']} (a `—` counts as empty) · "
+        f"pointers {c['matrix_pointers']} · n/a {c['matrix_na']} · "
+        f"T2 rows {c['matrix_t2']} ({', '.join(mc['t2_ids'])}) · "
+        f"not-T2 rows {c['matrix_not_t2']} · handoff_t1_diff {c['handoff_t1_diff']}"
     )
     put(
         f"oq: total {c['oq_total']} · answered {c['oq_answered']} · routed {c['oq_routed']} · "
