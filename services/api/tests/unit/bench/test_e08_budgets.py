@@ -1,6 +1,7 @@
 """E08-Q04 assertion logic on fake samples: each budget passes and fails where it should.
 Pure (no I/O, no clock), apart from the k6 driver's tests, which fake k6, the fixture app and its
-server, and write to `tmp_path`, and the k6 script's test, which reads the script."""
+server, and write to `tmp_path` (the weekly run's drive the runner so, its reports there too), and
+the k6 script's test, which reads the script."""
 
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from typing import Any
 import pytest
 
 from bench.ingestion import budgets as b
-from bench.ingestion import rest_load
+from bench.ingestion import rest_load, runner
 from bench.ingestion.budgets import Sample
 from bench.ingestion.config import Scenario
 from bench.ingestion.fixture_app import requests_plan
@@ -386,6 +387,80 @@ def test_drive_k6_no_export_variable_writes_nothing(
     monkeypatch.delenv(rest_load.K6_EXPORT_ENV, raising=False)
     monkeypatch.chdir(tmp_path)
     assert rest_load.drive_k6("1s", 1) == _K6_READ and not any(tmp_path.iterdir())
+
+
+def _every_route(**p95: float) -> str:
+    """k6's summary of a run that sampled every route, at 20 ms but for `p95`; no check failed."""
+    routes = {f"route_{r}_ms": {"p(95)": p95.get(r, 20.0), "count": 300} for r in requests_plan()}
+    return json.dumps({"metrics": {"checks": {"passes": 2100, "fails": 0}, **routes}})
+
+
+@pytest.fixture
+def weekly(faked_k6: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """The full pack's rest_k6 as the weekly cron starts it (#2825), over the faked k6: cold
+    klines at 527.5 ms cross their threshold (99), and every other check passes."""
+    monkeypatch.setenv("CV_BENCH_MACHINE_PROFILE", "unit-test")  # gated against no baseline
+    monkeypatch.setenv(rest_load.B13_REPORT_ONLY_ENV, "1")
+    faked_k6.code, faked_k6.text = 99, _every_route(klines_cold=527.5)
+    return faked_k6
+
+
+def _pack(tmp_path: Path) -> int:
+    """The runner's exit code, started as the pack step starts it."""
+    return runner.main(["rest_k6", "--profile", "full", "--out-dir", str(tmp_path / "reports")])
+
+
+def test_runner_weekly_run_only_budget_13_over_warns_and_exits_0(
+    weekly: SimpleNamespace, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#2825: until slice 2 decides Budget #13, the weekly run names the routes over it, green,
+    so it files no issue."""
+    assert _pack(tmp_path) == 0
+    warned = [x for x in capsys.readouterr().out.splitlines() if x.startswith("::warning::")]
+    over = "over Budget #13's 150 ms: rest_p95[klines_cold] 527.5 ms"
+    assert warned == [f"::warning::rest_k6: {over}; {rest_load.B13_SOFT_WEEKLY}"]
+
+
+def test_runner_dispatch_budget_13_over_exits_1(
+    weekly: SimpleNamespace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2825: a dispatch sets the variable empty, so Budget #13 still gates it."""
+    monkeypatch.setenv(rest_load.B13_REPORT_ONLY_ENV, "")
+    assert _pack(tmp_path) == 1
+
+
+@pytest.mark.parametrize(
+    ("code", "text", "starts", "match"),
+    [
+        (107, None, True, "k6 exited 107"),
+        (0, None, True, "wrote no summary"),
+        (0, _k6({"passes": 2397, "fails": 3, "value": 0.99875}), True, "counted 3 failed"),
+        (99, _every_route(klines_cold=527.5), False, "fixture app did not start"),
+    ],
+    ids=["k6-error", "no-summary", "failed-checks", "app-not-started"],
+)
+def test_runner_weekly_run_invalid_k6_run_still_fails(
+    weekly: SimpleNamespace,
+    tmp_path: Path,
+    code: int,
+    text: str | None,
+    starts: bool,
+    match: str,
+) -> None:
+    """#2825: report-only never masks a broken run: no reading, no report, and the step fails."""
+    weekly.code, weekly.text, weekly.starts = code, text, starts
+    with pytest.raises(RuntimeError, match=match):
+        _pack(tmp_path)
+    assert not (tmp_path / "reports").exists()
+
+
+def test_runner_weekly_run_another_failed_check_exits_1(
+    weekly: SimpleNamespace, tmp_path: Path
+) -> None:
+    """#2825: only the 150 ms rows are reported: warm klines without samples (no reading, so no
+    cache speed-up either) still fail the weekly run."""
+    weekly.text = _every_route(klines_cold=527.5, klines_warm=0.0)
+    assert _pack(tmp_path) == 1
 
 
 def test_k6_script_arms_only_checks_and_each_routes_budget_13_p95() -> None:

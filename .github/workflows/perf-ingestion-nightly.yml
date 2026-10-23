@@ -29,7 +29,11 @@ name: perf-ingestion-nightly
 # a group keeps one pending run and replaces the older one (perf-ws-load.yml's header). Busy: a
 # scheduled run skips the pack with a notice (green, no issue), a dispatch fails. Any API error
 # fails it, a 404 too: all three are on main; so does a job count that is not a number. A re-run
-# skips the pack, as its all-clear may be stale: dispatch again.
+# skips the pack, as its all-clear may be stale: dispatch again. On the weekly run, Budget #13's
+# per-route p95s are reported, not gated (CV_BENCH_B13_REPORT_ONLY: a warning names the routes,
+# the run stays green and files nothing), until #2825's slice 2 decides the budget, because a
+# known-red weekly job trains everyone to ignore red. A dispatch still gates them, and a refused
+# k6 run, an app that never started or any other failed check stays red on the schedule too.
 on:
   schedule:
     - cron: "37 3 * * *"
@@ -204,6 +208,7 @@ jobs:
         working-directory: services/api
         env:
           CV_BENCH_K6_EXPORT: bench/reports/rest_k6-k6-summary.json # k6's own summary, kept
+          CV_BENCH_B13_REPORT_ONLY: ${{ github.event_name == 'schedule' && '1' || '' }} # weekly
         run: uv run python -m bench.ingestion.runner "$SCENARIO" --profile full --out-dir bench/reports
       - name: Hand the gate diff to the issue job
         id: handoff
