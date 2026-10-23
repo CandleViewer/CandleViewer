@@ -106,7 +106,7 @@ from candleviewer.api.admin_statecharts import make_statechart_router
 from candleviewer.api.alert_deliveries import make_alert_deliveries_router
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.api.audit_budget import AuditBudgetFlushTask, AuditRecordBudget
-from candleviewer.api.audit_exports import AuditExports
+from candleviewer.api.audit_exports import AuditExports, ExportSigning
 from candleviewer.api.audit_limiter import AuditQueryLimiter, AuditVerifyLimiter
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
 from candleviewer.api.audit_signing_keys import make_audit_signing_router
@@ -1952,8 +1952,16 @@ def create_app(
     admin_jobs = AdminJobStore()
     app.state.admin_jobs = admin_jobs  # cancelled by the lifespan at shutdown
     # #889 S9: the export files the download serves, found in the job store it shares; the
-    # lifespan probes and sweeps them.
-    audit_exports = AuditExports(admin_jobs, resolved.data_dir, ttl_s=resolved.audit_export_ttl_s)
+    # lifespan probes and sweeps them. #889 S10: the export job, given M2's signer and key
+    # directory (`audit`'s ports) alone, and M2's read of a running rotation for its own 409.
+    export_signing = ExportSigning(
+        signer=bundle.export_signer, keys=bundle.signing_keys,
+        rotating=bundle.rotation_running.running, environment=resolved.environment,
+        max_rows=resolved.audit_export_max_rows, max_bytes=resolved.audit_export_max_bytes,
+    )  # fmt: skip
+    audit_exports = AuditExports(
+        admin_jobs, resolved.data_dir, ttl_s=resolved.audit_export_ttl_s, signing=export_signing
+    )
     app.state.audit_exports = audit_exports
     # #889 S7: `rotateAuditSigningKey`. Owner only; step-up `keys` is path-gated in
     # `DANGEROUS_ROUTES`; M2 rotates behind `AdminService`, never while an export job is queued or
@@ -1990,6 +1998,11 @@ def create_app(
             ),
             # #889 S7: `listAuditSigningKeys` reads M2's directory, its `verified` marks M2's.
             signing_keys=bundle.signing_keys,
+            export_limiter=AuditVerifyLimiter(
+                rate_per_hour=resolved.audit_export_rate_per_hour,
+                tracked_users=resolved.audit_budget_tracked_users,
+            ),
+            export_max_range_days=resolved.audit_export_max_range_days,
         )
     )
     app.include_router(make_hotkey_audit_router(_LazyAuditEmitter(ctx.audit), audit_resolver))

@@ -145,6 +145,17 @@ fixed, and read the destroy's record, which names the keys it destroyed. The tic
 only as an increase over a clean sample under 15 minutes old: the same failure at the next boot, or
 after a longer outage, raises nothing, so read that log line after every restart.
 
+## Symptom: export refused as `signing_unavailable` while `secrets` is healthy
+
+`exportAuditLog` answers `503 signing_unavailable`, but `secrets` is not degraded and no
+`export_key_*` reason is set: the export directory takes no hard links (#889 S10). Signals:
+`admin.audit_denied` with reason `export_volume_unavailable`, and `audit.export.link_probe_failed`,
+critical the first time and a warning while it keeps failing. The export file is published by a
+hard link, so `<data_dir>/audit-exports` must support `link(2)` within one device. Recovery: fix the
+mount (one device, a filesystem that takes hard links); the sweep probes again every 60 s, so export
+recovers with no restart. Never rotate the signing key for this: the key is sound, and an
+`unrecoverable` rotation would retire it and destroy its seed for nothing.
+
 ## KEK rotation (owner-run, per environment)
 
 Each environment has its own KEK lineage (#2338): rotate one environment at a time, on that

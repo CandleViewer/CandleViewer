@@ -12,7 +12,7 @@ import ipaddress
 import math
 import re
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Self
 
@@ -355,26 +355,31 @@ class AuditVerifyRequest(BaseModel):
 
 
 class AuditExportRequest(BaseModel):
-    """Validated body for `POST /admin/audit/export` (PR #1608 review
-    finding 3): `from`/`to` must be tz-aware UTC timestamps with
-    `from_ts <= to_ts`, and a malformed value is rejected by pydantic (422)
-    rather than reaching `_parse_ts` and raising an unhandled `ValueError`
-    (500)."""
+    """Validated body for `POST /admin/audit/export` (PR #1608 review finding 3; #889 S10): `from`
+    and `to` tz-aware timestamps, `from` earlier than `to` (22), `compress` a boolean, true when
+    absent, and no other member (`from_ts` and `to_ts` are its names here, never members). A
+    malformed value is a `422`, never a `500`, a bound that has no UTC instant (an offset past
+    year 1 or 9999) included."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     from_ts: datetime = Field(alias="from")
     to_ts: datetime = Field(alias="to")
+    compress: bool = True
 
     @field_validator("from_ts", "to_ts")
     @classmethod
     def _tz_aware(cls, value: datetime) -> datetime:
         if value.tzinfo is None:
             raise ValueError("must be a tz-aware (UTC) timestamp")
+        try:
+            value.astimezone(UTC)  # the export writes each bound in UTC (24 Sec.15.7)
+        except OverflowError:
+            raise ValueError("must have a UTC instant") from None
         return value
 
     @model_validator(mode="after")
     def _range_ordered(self) -> Self:
-        if self.from_ts > self.to_ts:
-            raise ValueError("`from` must be <= `to`")
+        if self.from_ts >= self.to_ts:
+            raise ValueError("`from` must be earlier than `to`")
         return self

@@ -11,8 +11,11 @@ import pytest
 from pydantic import ValidationError
 
 import candleviewer.app as app_mod
+from candleviewer.admin.wiring import secrets_bundle
 from candleviewer.audit_lane_wiring import LaneKeyRefused
 from candleviewer.settings import Environment, Settings
+from tests.unit.credentials_m2._service_fakes import _Src, _svc
+from tests.unit.credentials_m2._vectors import KEK_V1
 
 
 def test_create_app_wires_audit_settings_into_limiter_and_budget(
@@ -26,6 +29,7 @@ def test_create_app_wires_audit_settings_into_limiter_and_budget(
         return real(*args, **kwargs)
 
     monkeypatch.setattr(app_mod, "make_audit_router", spy)
+    bundle = secrets_bundle(_svc(_Src(KEK_V1, 1)))  # injected, as `test_admin_kek.py` does
     app = app_mod.create_app(
         Settings(
             environment=Environment.DEMO,
@@ -45,7 +49,12 @@ def test_create_app_wires_audit_settings_into_limiter_and_budget(
             audit_verify_deadline_s=41.0,
             audit_download_rate_per_hour=43,
             audit_export_ttl_s=47,
-        )
+            audit_export_max_rows=53,  # #889 S10: the export's caps, its hour and its window
+            audit_export_max_bytes=59,
+            audit_export_rate_per_hour=61,
+            audit_export_max_range_days=67,
+        ),
+        secrets_bundle=bundle,
     )
     lim, bud = seen["limiter"], seen["budget"]
     assert (lim._rate, lim._max_concurrent, lim._cap) == (7, 3, 71)
@@ -55,6 +64,13 @@ def test_create_app_wires_audit_settings_into_limiter_and_budget(
     assert (seen["download_limiter"]._rate, seen["download_limiter"]._cap) == (43, 71)  # #889 S9
     assert seen["exports"]._ttl == timedelta(seconds=47)
     assert seen["exports"]._jobs is app.state.admin_jobs  # the store the poll reads
+    signing = seen["exports"]._signing  # #889 S10: the job's, M2's directory the list's too
+    assert (signing.environment, signing.max_rows, signing.max_bytes) == (Environment.DEMO, 53, 59)
+    assert signing.keys is seen["signing_keys"] is bundle.signing_keys
+    assert signing.signer is bundle.export_signer  # M2's signer, the job's alone
+    assert signing.rotating == bundle.rotation_running.running  # M2's read, for the route's 409
+    assert (seen["export_limiter"]._rate, seen["export_limiter"]._cap) == (61, 71)
+    assert seen["export_max_range_days"] == 67
     assert seen["step_up"] is app.state.app_context.auth
     assert seen["verify_events"] is None  # the fake backend wires no `system_events` writer
     assert (bud._per_hour, bud._owner_per_hour) == (11, 13)

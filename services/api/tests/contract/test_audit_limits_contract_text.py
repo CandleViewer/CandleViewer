@@ -128,6 +128,11 @@ def test_export_limits_are_settings_named_with_their_defaults() -> None:
         stated = re.search(rf"`{name}`[^(]*\(default (\d+)\)", _EXPORT)
         assert stated and int(stated[1]) == default, name
         assert name not in Settings.model_fields or Settings.model_fields[name].default == default
+    rate = re.search(r"\(`audit_export_rate_per_hour`, default (\d+);", _EXPORT)  # #889 S10
+    lookup = "`409 idempotency_key_reuse`, before any refusal below; `503 signing_unavailable`;"
+    assert lookup in _EXPORT  # the route answers the stored `202` ahead of every refusal (S10b)
+    assert rate and Settings.model_fields["audit_export_rate_per_hour"].default == int(rate[1]) == 5
+    assert Settings.model_fields["audit_export_max_range_days"].default == 31
 
 
 def test_the_download_limit_is_a_setting_with_the_default_the_contract_states() -> None:
@@ -158,15 +163,12 @@ def test_export_states_the_adr_0039_rule(rule: str) -> None:
     assert rule in _EXPORT
 
 
-def test_export_states_its_checks_in_one_order_and_keeps_its_501_until_s10b() -> None:
-    """#889 S10's contract states the checks in the order S10b serves them, the idempotency lookup
-    before every refusal that follows validation; the `501` stays declared, deprecated, until S10b
-    removes it with the route, so each merge leaves `main` consistent (ruling, 2026-10-23)."""
+def test_export_is_served_with_no_501_and_its_checks_in_one_order() -> None:
+    """#889 S10b replaced the `501` with the route: the operation declares none, and states its
+    checks in this order, the idempotency lookup before every refusal that follows validation."""
     export = SPEC["paths"]["/admin/audit/export"]["post"]
-    assert set(export["responses"]) == {"202", "401", "403", "409", "422", "429", "501", "503"}
-    stub = export["responses"]["501"]["description"]
-    assert stub.startswith("Deprecated: replaced by #889 S10b")
-    assert "**Not implemented yet.**" in _EXPORT
+    assert set(export["responses"]) == {"202", "401", "403", "409", "422", "429", "503"}
+    assert "Not implemented yet" not in _EXPORT and "not_implemented" not in _EXPORT
     order = _EXPORT.split("**Order of the checks**", 1)[1].split("**Who.**", 1)[0]
     cues = [
         "`403 step_up_required`", "`401`", "`403` (`code: forbidden`)", "validation (`422`",
@@ -221,8 +223,8 @@ def test_a_job_succeeds_only_once_its_completion_is_recorded() -> None:
 
 
 def test_the_file_format_says_s10b_schedules_the_export() -> None:
-    """24 §15.7 (the code lens's C1-4): the job replaces the `501` from S10b on."""
-    assert "from S10b on, `exportAuditLog` schedules the job that plans, writes" in _format()
+    """24 §15.7 (the code lens's C1-4): the job replaced the `501` in S10b."""
+    assert "since S10b replaced its `501`, `exportAuditLog` schedules the job that" in _format()
 
 
 def test_job_error_names_every_code_a_failed_export_carries() -> None:

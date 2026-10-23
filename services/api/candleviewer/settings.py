@@ -518,6 +518,11 @@ class Settings(BaseSettings):
     # fails `export_too_large` and leaves nothing on disk.
     audit_export_max_rows: int = Field(default=1_000_000, ge=1)
     audit_export_max_bytes: int = Field(default=1_073_741_824, ge=1)
+    # #889 S10: the longest window one export may ask for, in days (past it `422`,
+    # `max_export_range`), and the exports each user may start in a rolling hour (only an export
+    # whose job is created counts; past it `429`).
+    audit_export_max_range_days: int = Field(default=31, ge=1, le=3650)
+    audit_export_rate_per_hour: int = Field(default=5, ge=1)
     # Download (#889 S9): a file is served until this long after its job succeeds (`expires_at`)
     # and deleted once found expired; each user downloads at most this many files in an hour.
     audit_export_ttl_s: int = Field(default=86_400, ge=1)

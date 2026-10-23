@@ -231,6 +231,9 @@ Option (a), with Ed25519.
    it in one PR (ruling 7): nothing before S10 can produce a signed file, and the download stays dark until then
    (S9). The signing-keys list and the rotation (S7) are complete, audited operations on their own. No flag gates a
    safety control here (C-4.14).
+   2026-10-23 (#889 S10): kept. S10's job and its API side land dark (S10a, S10a-2), and the route that replaces the
+   `501` lands alone (S10b), after 22's contract commit, with the `501`'s removal from 22: the contract commit keeps it
+   declared, deprecated, so each merge leaves `main` consistent (the main-orchestrator's ruling, 2026-10-23).
 
 ## Consequences
 
@@ -271,7 +274,7 @@ path is S0 → S2 → S8 → S9 → S10; S3 starts at once, S5 merges after S0, 
 | S7 | The list and rotate routes: the list marks `verified` only from M2's check (decision 4); rotation is single-flight and rate-capped (decision 5) | S2, S6 |
 | S8 | The export writer: batches with verify's renderings, canonical lines, deterministic gzip, SHA-256, off-loop I/O, the file `0600` and opened `O_NOFOLLOW` (repo practice; S8b confirms both). Unit: the lines pinned byte for byte | S2 |
 | S9 | The download and the requester rule (`getJob` too), dark until S10. 2026-10-22: four PRs, S9-0 the requester rule and `getJob`, S9-1a the reader (the lookup, the expiry, the file's checks and its guarded stream, mounting nothing), S9-1b the route, S9-2 the boot sweep and the hard-link probe | S2, S8 |
-| S10 | The signed export replaces the 501, through the injected signer; an export that straddles a rotation fails the job, as does one while S9-2's boot probe found no hard links (`links_ok`); the SR-E42-08 mark; AC-ADM-20 and AC-ADM-21. 2026-10-23 (#889 S7): the export route's own `409` while a rotation runs reads a capability S10 adds to M2 for it (the running rotation), never M2's internals, since nothing exposes `_export_rotating` yet; and S10's contract commit carries 22's two rotation fixes (S7's notes below) | S6, S7, S9 |
+| S10 | The signed export replaces the 501, through the injected signer; an export that straddles a rotation fails the job, as does one while S9-2's boot probe found no hard links (`links_ok`); the SR-E42-08 mark; AC-ADM-20 and AC-ADM-21. 2026-10-23 (#889 S7): the export route's own `409` while a rotation runs reads a capability S10 adds to M2 for it (the running rotation), never M2's internals, since nothing exposes `_export_rotating` yet; and S10's contract commit carries 22's two rotation fixes (S7's notes below). 2026-10-23 (#889 S10): built, the notes below; a volume without hard links refuses the request instead (`503 signing_unavailable`, its own reason), so no job is made to fail | S6, S7, S9 |
 
 2026-10-22 (#889 S9-1b), the download's choices where 22 is silent: a file that cannot be served (missing, a link, not
 one regular file, or not its manifest's size) answers `503 store_unavailable`, with `Retry-After` only for the reader's
@@ -320,6 +323,34 @@ and degrades export alone (`links_ok`), never the boot.
   `Idempotency-Replayed` header, which the route sends on a replay.
 - The listing's `admin.audit_read` holds the filter set and the count, as `queryAuditLog`'s does.
 
+2026-10-23 (#889 S10), the export as served; 22 owns its order of checks, written there first (C-6.1):
+
+- The job takes the active key from the directory when it starts, the one source of the key id
+  its header names and the signer is given (S7's re-check, A7), and M2's signer refuses a key id
+  that is the active row's but not the key its check passed for, as `export_key_unavailable`,
+  before any decrypt or record; the straddle is still `signing_key_rotated`. The plan reads the
+  head, then the window's first and last id up to it (`AuditExportReader.export_span`).
+- The single-flight hold is taken before the request's record (`AdminJobStore.reserve`, which
+  the rotation's `export_running` sees too) and released just before the job is submitted, no
+  `await` between; M2's `RotationRunning`, minted once in `admin/wiring.py` (R9), is the
+  running rotation the export reads. A volume without hard links is refused at the request with
+  `503 signing_unavailable`, recorded with reason `export_volume_unavailable`, and each sweep
+  tick probes again until the probe passes, so a remount recovers with no restart.
+- The records: the request's `admin.audit_export` (reason `requested`) names the job, the window
+  and `compressed`; the completion's (`completed`) the job, the window, the span, `row_count`,
+  `sha256`, `size_bytes`, `key_id` and `compressed`, written before the job turns `succeeded`:
+  unwritten, the file is removed and the job fails `audit_unavailable` (`internal_error` for a
+  manifest that does not validate), so no file is served without both. A failed job's completion
+  (`failed`, at warning) names its `error`. Each names `object_kind` `audit_export` and the job id
+  as `object_id`.
+- `expires_at` is at most `audit_export_ttl_s` from the job's end. Only the `202` is kept under the
+  `Idempotency-Key`, in the job store with its job, so a key outlives no evicted or lost job.
+  A failed job's file is removed by the job, or by the sweep when that fails or the job is
+  cancelled at shutdown.
+- `audit_export_max_range_days` is bounded at 3,650 (`le=3650`), so the window check cannot
+  overflow, and a bound with no UTC instant (an offset past year 1 or 9999) is a `422`, refused
+  before the single-flight hold is taken.
+
 ## Why not the alternatives
 
 - **(b) The §3 edge.** It is the same narrow call, made through a CONSTITUTION amendment: C-16.1's issue, three
@@ -341,6 +372,14 @@ and degrades export alone (`links_ok`), never the boot.
 ## Open questions
 
 Q1 and Q2 are tracked here and on #889; any still open when S10 opens is filed then as a plan-gap item (ruling 6).
+2026-10-23 (#889 S10): both are still open, and no S10 decision depends on either. Under the filing freeze each is
+filed as its row below and one comment on #889 (the main-orchestrator's ruling, 2026-10-23); each becomes an issue
+from its row once the owner lifts the freeze.
+
+| Question                                                            | Owner                                  | Target                                                                           | By                                                                       |
+| ------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Q1: whether an on-demand verify's chain break forces read-only mode | the owner (a security policy call)     | `04-security-program.md` §8.1 and `verifyAuditChain`'s handling of a break (E42) | the GA cut (2027-03-25), as an issue from this row once the freeze lifts |
+| Q2: what the export holds for a row whose redaction class is P0     | the owner (a data classification call) | 24 §15.7's file format (S2) and `audit/export.py`'s writer (S8)                  | the GA cut (2027-03-25), as an issue from this row once the freeze lifts |
 
 - **Q1, D11 of #889 issuecomment-6182603623: the on-demand verify's read-only question.** No decision here depends
   on it: verify signs nothing and holds no signer.
@@ -390,7 +429,8 @@ Q1 and Q2 are tracked here and on #889; any still open when S10 opens is filed t
   (S10), and a rotation during an export is refused 409 (S7).
 - End to end (S10): the downloaded file's `sha256sum` equals `AuditExportResult.sha256` and the `Repr-Digest`, and
   the signature over `cv.audit.export.v1:` and that hex verifies with the key whose full fingerprint was pinned, and
-  with no other. Test keys only (the RFC 8032 vectors), never real key material.
+  with no other. Test keys only, never real key material: the signing key is generated in-process, and RFC 8032
+  TEST 1's is a key that must fail.
 
 ## References
 

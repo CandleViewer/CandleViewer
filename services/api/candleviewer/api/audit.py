@@ -1,7 +1,7 @@
 """`GET /admin/audit`, `POST /admin/audit/verify`, `POST /admin/audit/export`
 (E09-T02 acceptance criteria: "Endpoints ... `GET /admin/audit` ... `POST
-/admin/audit/verify` ... `POST /admin/audit/export`"), the export's
-download, `GET /admin/audit/exports/{jobId}` (#889 S9, dark until S10), and
+/admin/audit/verify` ... `POST /admin/audit/export`"; the signed export since #889
+S10), the export's download, `GET /admin/audit/exports/{jobId}` (#889 S9), and
 the export signing keys, `GET /admin/audit/signing-keys` (#889 S7).
 
 QA defect #1596 blocker 1: `candleviewer.audit.query.AuditQueryService` and
@@ -36,7 +36,7 @@ import hashlib
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated, Any, Final, Protocol
 
 import structlog
@@ -53,9 +53,16 @@ from candleviewer.api.audit_budget import (
     ReadReservation,
     filters_digest,
 )
-from candleviewer.api.audit_exports import AuditExports, Export, ExportFileResponse
+from candleviewer.api.audit_exports import (
+    EXPORT_ACTION,
+    AuditExports,
+    Export,
+    ExportFileResponse,
+    export_window,
+)
 from candleviewer.api.audit_limiter import (
     DOWNLOAD_RATE_PER_HOUR,
+    EXPORT_RATE_PER_HOUR,
     AuditQueryLimiter,
     AuditQueryRefused,
     AuditVerifyLimiter,
@@ -71,6 +78,8 @@ from candleviewer.api.audit_verify import (
     verify_stop,
     write_verify_record,
 )
+from candleviewer.api.idempotency import IdempotencyKeyReuse, request_fingerprint
+from candleviewer.api.recorder_admin import JobConflict
 from candleviewer.api.step_up import StepUpAuth, require_session_elevation
 from candleviewer.audit.access import (
     AuditAccessDenied,
@@ -80,13 +89,16 @@ from candleviewer.audit.access import (
     redact_entry_for_view,
 )
 from candleviewer.audit.cursor import AuditCursor, InvalidAuditCursor, decode_cursor
-from candleviewer.audit.export_signing import SigningKeyDirectory
+from candleviewer.audit.export_job import ExportRequest, ExportSettings, SignedExport
+from candleviewer.audit.export_signing import Signer, SigningKeyDirectory
 from candleviewer.audit.hashing import ChainHasherBusy
 from candleviewer.audit.models import (
     AUDIT_QUERY_DEFAULT_LIMIT,
+    AuditExportRequest,
     AuditOutcome,
     AuditQueryRequest,
     AuditVerifyRequest,
+    ExportResult,
     Severity,
 )
 from candleviewer.audit.query import VERIFY_MAX_SPAN, VerifyPlan, VerifyRangeBeyondHead
@@ -158,6 +170,17 @@ class AuditQueryServiceLike(Protocol):
 
     @property
     def verify_slot(self) -> VerifySlot: ...
+
+    async def export(
+        self,
+        request: ExportRequest,
+        signer: Signer,
+        keys: SigningKeyDirectory,
+        *,
+        job_id: uuid.UUID,
+        owner: uuid.UUID,
+        settings: ExportSettings,
+    ) -> SignedExport: ...
 
 
 class AuditWriterLike(_Emitter, Protocol):
@@ -247,8 +270,16 @@ def _invalid(exc: ValidationError, model: type[BaseModel], status_code: int = 42
     )
 
 
-#: The verify body holds two ids at most; a longer one is refused without reading the rest.
+#: The verify body holds two ids at most, the export body two instants and a flag; a longer one
+#: is refused without reading the rest.
 _VERIFY_BODY_MAX_BYTES = 1024
+#: `exportAuditLog`'s request fingerprint covers the contract path (22 Idempotency).
+_EXPORT_PATH: Final = "/admin/audit/export"
+#: Why export alone is unavailable, its `503 signing_unavailable`'s detail by its record's reason.
+_EXPORT_DOWN: Final = {
+    "signing_unavailable": "The export signing key is missing or cannot be opened.",
+    "export_volume_unavailable": "The export directory cannot take an export file.",
+}
 
 
 async def _read_capped(request: Request, limit: int) -> bytes | None:
@@ -271,6 +302,23 @@ def _unavailable(detail: str = "audit record could not be written") -> JSONRespo
 
 _SUCCESS, _FAILURE = AuditOutcome.SUCCESS, AuditOutcome.FAILURE
 _INFO, _WARNING = Severity.INFO, Severity.WARNING
+
+
+def _rule(field: str, rule: str, detail: str) -> JSONResponse:
+    """A `422 validation_failed` naming the field and the rule it broke, never a value."""
+    errors = [{"field": field, "rule": rule}]
+    return _problem(
+        422, "Request validation failed", detail, code="validation_failed", errors=errors
+    )
+
+
+def _scheduled(job_id: str, *, replayed: bool = False) -> JSONResponse:
+    """22's `202`: the job, its `download_url` null; a repeat's carries `Idempotency-Replayed`."""
+    content = ExportResult(job_id=uuid.UUID(job_id)).model_dump(mode="json")
+    answer = JSONResponse(status_code=202, content=content)
+    if replayed:
+        answer.headers["Idempotency-Replayed"] = "true"
+    return answer
 
 
 def _verify_unavailable(exc: Exception) -> JSONResponse:
@@ -381,6 +429,8 @@ def make_audit_router(
     step_up: StepUpAuth | None = None,
     download_limiter: AuditVerifyLimiter | None = None,
     signing_keys: SigningKeyDirectory | None = None,
+    export_limiter: AuditVerifyLimiter | None = None,
+    export_max_range_days: int = 31,
 ) -> APIRouter:
     """Bind `/admin/audit*` to a concrete `AuditService` instance.
 
@@ -395,9 +445,11 @@ def make_audit_router(
     refusal unchanged but for `Retry-After`; a due record that cannot be written makes
     the call `503` with nothing returned (C-2.9).
 
-    The export download serves `exports`' files with `step_up`'s `audit` class and
-    `download_limiter`'s hourly count; without `exports` or `step_up` it serves none.
-    The signing-key list reads `signing_keys`, M2's directory; without it the keys are a `503`.
+    The export schedules `exports`' signed job, at most `export_limiter`'s hourly count of a
+    window of `export_max_range_days` (#889 S10); without `exports` export is unavailable. The
+    download serves `exports`' files with `step_up`'s `audit` class and `download_limiter`'s hourly
+    count; without `exports` or `step_up` it serves none. The signing-key list reads
+    `signing_keys`, M2's directory; without it the keys are a `503`.
 
     A Viewer holds no `audit:read` and gets `403` on every route here, as decided on
     #2083. Whether C-12.4's "Viewer (read-only, including audit)" should change that is
@@ -411,6 +463,11 @@ def make_audit_router(
         download_limiter
         if download_limiter is not None
         else AuditVerifyLimiter(rate_per_hour=DOWNLOAD_RATE_PER_HOUR)
+    )
+    export_starts = (
+        export_limiter
+        if export_limiter is not None
+        else AuditVerifyLimiter(rate_per_hour=EXPORT_RATE_PER_HOUR)
     )
 
     class _HttpProblem(Exception):
@@ -794,17 +851,107 @@ def make_audit_router(
     @router.post("/export")
     @_no_store
     async def export_audit_log(request: Request) -> JSONResponse:
-        """Deliberate stub until owner decision D1 (export signing-key custody,
-        E42-T02 design §6.3, #889). Authorisation runs first (401/403), then
-        `501 not_implemented`. No body is parsed (no pre-auth 422), no job or
-        artefact is created and no `admin.audit_export` record is written, since
-        nothing is exported. The `202` job flow arrives with the export slice."""
+        """`exportAuditLog` (#889 S10, ADR-0039) in 22's **Order of the checks**: `401` and `403
+        forbidden` before any body is read; validation (`422`, the `Idempotency-Key` too); the
+        idempotency lookup (the stored `202` with `Idempotency-Replayed: true`, or `409
+        idempotency_key_reuse`); `503 signing_unavailable`, recorded under the budget; the hourly
+        `429` and single-flight's `409 conflict`, both counted; then the write-ahead
+        `admin.audit_export` (`503 store_unavailable` when it cannot be written) and the `202`.
+        The single-flight hold is taken before that record, so no rotation and no other export
+        starts while it is written, and released just before the job is submitted, no `await`
+        between them."""
         try:
-            await _authorize_or_raise(request, "export")
+            service, principal, _ = await _authorize_or_raise(request, "export")
         except _HttpProblem as problem:
             return problem.response
+        checked = await _export_request(request)
+        if isinstance(checked, JSONResponse):
+            return checked
+        raw, body, key = checked
+        actor, digest = _budget_actor(principal), request_fingerprint("POST", _EXPORT_PATH, raw)
+        if exports is None:  # unwired: no job store and no signer
+            return await _export_down(service, principal, "signing_unavailable")
+        try:
+            prior = exports.replayed(actor.key, key, digest)
+        except IdempotencyKeyReuse:  # a `409`, counted as the other refusals are (22)
+            record_budget.count_suppressed(actor)
+            detail = "The key was first used with another request."
+            return _problem(409, "Conflict", detail, code="idempotency_key_reuse")
+        if prior is not None:
+            return _scheduled(prior, replayed=True)
+        if (why := await exports.unavailable()) is not None:
+            return await _export_down(service, principal, why)
+        if (wait := export_starts.retry_after(actor.key)) is not None:
+            record_budget.count_suppressed(actor)
+            detail = "audit export limit reached"
+            return _problem(
+                429, "Too many requests", detail, code="rate_limited", retry_after_s=wait
+            )
+        job_id, asked = uuid.uuid4(), ExportRequest(body.from_ts, body.to_ts, body.compress)
+        fields, state = _export_fields(principal, str(job_id)), export_window(job_id, asked)
+        try:
+            release = exports.reserve()
+        except JobConflict:
+            record_budget.count_suppressed(actor)
+            detail = "an audit export or a signing-key rotation is under way"
+            return _problem(409, "Conflict", detail, code="conflict")
+        try:  # from the hold on, nothing leaves without releasing it
+            written = await write_verify_record(
+                service.writer.emit, fields, outcome=_SUCCESS, severity=_INFO, reason="requested",
+                after_state=state | {"compressed": body.compress}, action=EXPORT_ACTION,
+            )  # fmt: skip
+        finally:
+            release()
+        if not written:
+            return _unavailable()
+        export_starts.record_start(actor.key)  # only an export whose job is created counts
+        exports.submit(
+            service.query, service.writer.emit, fields, principal, asked, job_id=job_id, key=key,
+            digest=digest,
+        )  # fmt: skip
+        return _scheduled(str(job_id))
+
+    async def _export_request(
+        request: Request,
+    ) -> tuple[bytes, AuditExportRequest, uuid.UUID | None] | JSONResponse:
+        """The body, read up to `_VERIFY_BODY_MAX_BYTES` and checked strictly, a window of at most
+        `export_max_range_days`, and the `Idempotency-Key` as a UUID when sent; else the `422`,
+        naming no value."""
+        raw = await _read_capped(request, _VERIFY_BODY_MAX_BYTES)
+        if raw is None:
+            return _rule("", "max_body_bytes", f"the body is over {_VERIFY_BODY_MAX_BYTES} bytes")
+        try:
+            body = AuditExportRequest.model_validate_json(raw, strict=True)
+        except ValidationError as exc:
+            return _invalid(exc, AuditExportRequest)
+        days = export_max_range_days
+        if body.to_ts - body.from_ts > timedelta(days=days):
+            detail = f"the window is longer than audit_export_max_range_days ({days})"
+            return _rule("to", "max_export_range", detail)
+        header = request.headers.get("idempotency-key")
+        try:
+            return raw, body, None if header is None else uuid.UUID(header)
+        except ValueError:
+            return _rule("Idempotency-Key", "uuid", "the Idempotency-Key is not a UUID")
+
+    async def _export_down(
+        service: AuditServiceLike, principal: AuditPrincipal, reason: str
+    ) -> JSONResponse:
+        """22: export alone is unavailable. `admin.audit_denied` naming why, under the audit
+        budget (a slot of it, never the hourly export quota): over its cap the refusal carries
+        `Retry-After`, and a record that cannot be written makes it `503 store_unavailable`."""
+        actor = _budget_actor(principal)
+        emitter = record_budget.emitter(service.writer, actor)
+        denied = {"outcome": AuditOutcome.DENIED, "severity": _WARNING, "reason": reason}
+        fields = _request_fields(principal) | {"object_kind": "audit_export"}
+        try:
+            await emitter.emit(DENIAL_ACTION, **fields, **denied)
+        except BudgetWriteFailed:
+            return _unavailable()
+        retry = record_budget.retry_after(actor.key) if emitter.suppressed else None
+        detail = f"{_EXPORT_DOWN[reason]} Export alone is unavailable."
         return _problem(
-            501, "Not implemented", "Audit export is not available yet.", code="not_implemented"
+            503, "Service unavailable", detail, code="signing_unavailable", retry_after_s=retry
         )
 
     @router.get("/exports/{jobId}")
