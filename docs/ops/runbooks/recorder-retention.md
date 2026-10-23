@@ -30,7 +30,9 @@ A day is its DAY partition, or, for the `PARTITION BY HOUR` table `orderbook_del
 partitions taken together (#3794): the preview lists it, its bytes are their sum, and one drop
 removes them all.
 Cold (Parquet) partition directories are deleted when they are past the total horizon
-(`21-database-schema.md` §7). `bars` partitions use their family's §7 row (the key carries
+(`21-database-schema.md` §7), or, under a `drop` row, past the row's own `retain_days` (§3.6.3): for
+`klines`, `liquidations`, `open_interest` and `funding_rates`, which §7 keeps forever, that is a
+first-time deletion, logged once per row as `retention_drop_finite_total`. `bars` partitions use their family's §7 row (the key carries
 `family=`): `family=time` (`bars_time`) is kept forever, `tick/volume/range/renko/delta` go at
 24 months, and any other or missing family is kept forever. Pinned symbols are never touched by
 a policy run, including a policy with `applies_to_pinned`.

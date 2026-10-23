@@ -532,8 +532,8 @@ class SqlAlchemyRecorderRepository:
         return None if reading is None else reading.hot_days
 
     async def policy_reading(self, symbol: str, stream: str) -> RowReading | None:
-        """`read_policy_row` of the EXPLICIT rule that wins for (symbol, stream), as the reaper's
-        facts read it; `None` when there is none, or the symbol is pinned."""
+        """`read_policy_row` of the EXPLICIT rule that wins for (symbol, stream), through the
+        mapping the reaper's facts use; `None` when there is none, or the symbol is pinned."""
         rows = await self._all(_RESOLVE, {"symbol": symbol, "stream": stream})
         return _reading(rows[0]) if rows else None
 

@@ -28,9 +28,12 @@ SYM = "BTCUSDT"
 class _Facts(FakeFacts):
     """The world's symbols and pins; the policies are the real `PgRetentionFacts` over fake rows."""
 
-    def __init__(self, w: World, stream: StreamKind, days: int, action: str) -> None:
+    def __init__(
+        self, w: World, stream: StreamKind, days: int, action: str, db_stream: str | None = None
+    ) -> None:
         super().__init__(w)
-        row = dict(scope="symbol", symbol=SYM, stream=stream.value, retain_days=days, action=action)
+        label = db_stream or stream.value  # the DB's spelling, when a test gives one
+        row = dict(scope="symbol", symbol=SYM, stream=label, retain_days=days, action=action)
         self._pg = PgRetentionFacts(_Rel([row]))  # type: ignore[arg-type]  # fake relational repo
 
     async def policies(self) -> Mapping[tuple[str | None, str], PolicyRow]:
@@ -45,6 +48,12 @@ def _config(stream: StreamKind) -> RetentionConfig:
 def test_drop_is_the_total_horizon_and_any_other_action_the_hot_window(action: str) -> None:
     assert read_policy_row("drop", 7) == RowReading(7, 7)
     assert read_policy_row(action, 7) == RowReading(7, None)
+
+
+@pytest.mark.parametrize("days", [0, -3])
+def test_a_drop_row_below_one_day_reads_as_archive_parquet(days: int) -> None:
+    """The DDL's `rp_days` refuses it; if one ever arrives, it states no horizon (fail closed)."""
+    assert read_policy_row("drop", days) == RowReading(days, None)
 
 
 @settings(max_examples=150, deadline=None, suppress_health_check=[HealthCheck.too_slow])
@@ -71,6 +80,7 @@ async def test_property_a_drop_row_deletes_at_n_and_never_before_other_rows_wait
     the §7 total; no hot day goes unarchived or inside its window; a pin loses nothing."""
     w = World()
     w.pinned = {SYM} if pinned else set()
+    cold |= {days + offset for offset in range(-2, 3) if days + offset >= 1}  # the horizon itself
     keys = {n: w.add_cold(SYM, stream, n) for n in cold}
     for n in hot:
         w.add_hot(stream, n, {SYM: 3})
@@ -100,7 +110,7 @@ async def test_a_drop_row_on_a_stream_kept_forever_deletes_at_n_and_says_so_once
     assert STREAM_DEFAULTS[stream.value][1] is None
     w = World()
     kept, due = w.add_cold(SYM, stream, 20), w.add_cold(SYM, stream, 21)
-    w.facts = facts = _Facts(w, stream, 20, "drop")
+    w.facts = facts = _Facts(w, stream, 20, "drop", db_stream=db_stream)
     with capture_logs() as logs:
         await manager(w, config=_config(stream)).run_nightly()
         await facts.policies()

@@ -57,10 +57,11 @@ def read_policy_row(action: str, retain_days: int) -> RowReading:
     (`SqlAlchemyRecorderRepository`) and by the reaper's facts (`PgRetentionFacts`), so they cannot
     disagree on it (21 §3.6.3). `drop`: `retain_days` is the TOTAL horizon, and the hot window too,
     so the day still leaves QuestDB through the verified roll-off (21 §5.3) and the reaper then
-    deletes it at `retain_days`, not at the §7 total. `archive_parquet`: the hot window; the §7
-    total stays, and the row never causes a delete. Any other action reads as `archive_parquet`
+    deletes it at `retain_days`, not at the §7 total. `archive_parquet`: the hot window; the delete
+    horizon stays the §7 total, never shorter than the hot window. Any other action, or a `drop`
+    whose `retain_days` is below 1 (the DDL's `rp_days` refuses it), reads as `archive_parquet`
     (fail closed: today's reading). A pinned symbol is outside it: each reader checks the pin."""
-    if action == "drop":
+    if action == "drop" and retain_days >= 1:
         return RowReading(retain_days, retain_days)
     return RowReading(retain_days, None)
 

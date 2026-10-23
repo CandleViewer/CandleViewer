@@ -9,7 +9,8 @@ Policy facts come from Postgres (`recorded_symbols`, `retention_policies`): by a
 (`read_policy_row`, the roll-off's reading too, #2188) `retain_days` is the hot window, under the
 §7 matrix seed's total horizon per stream (shipped in-package, `recorder/retention_defaults.py`; no
 column for it yet — the policy-write API is E16-T08), or for `drop` the total horizon itself. A
-build failure or invalid settings return `None` (purge -> 503), never failing the API's boot.
+build failure or invalid settings return `None` (purge -> 503); the API never fails to boot
+because of recorder config.
 `applies_to_pinned` has no column either, so policy runs never touch pinned data; the only path
 that can is the step-up purge with `include_pinned`.
 
