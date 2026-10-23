@@ -82,7 +82,9 @@ export function toGraph(ir: RuleIr, layout?: GraphLayout): GraphModel {
   }
   const root: Tree = { ...ir.conditions };
   for (const action of ir.actions) visit(root, action.node_id, "when");
-  for (const { id, ...data } of (layout ?? readLayout(ir.graph_layout)).comments) {
+  // A layout given has its comments read as a stored one's are: a list of comments with ids.
+  const given = layout == null ? ir.graph_layout : { comments: layout.comments ?? null };
+  for (const { id, ...data } of readLayout(given).comments) {
     fresh(id, data, false);
     nodes.push({ id, type: "comment", data });
   }

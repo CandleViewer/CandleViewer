@@ -128,6 +128,8 @@ describe("toGraph then toIr", () => {
     expect(hash(out.ir)).toBe(hash(ir));
     expect(out.layout).toEqual({ ...layout, comments: [{ id: "k2", text: "moved" }] });
     expect(readLayout(out.ir["graph_layout"])).toEqual(out.layout);
+    const given = toGraph(BASE, readLayout({ comments: [{ id: "k9", text: "mine" }] }));
+    expect(given.nodes.at(-1)).toEqual({ id: "k9", type: "comment", data: { text: "mine" } });
   });
 
   it("carry the layout's other keys and collapsed list into graph_layout, else none", () => {
@@ -172,6 +174,7 @@ describe("toGraph refuses", () => {
     ["no action", { actions: [] }, []],
     ["a null action", { actions: [null] }, []],
     ["an action with no node_id", { actions: [{ type: "pause_rule", params: {} }] }, []],
+    ["an action whose node_id is no text", { actions: [{ node_id: 5 }] }, []],
     ["no conditions", { conditions: undefined }, []],
     ["no trigger", { trigger: null }, []],
     ["an IR over the value bound", { name: Array(20_000).fill(0) }, [], "$: the rule IR is over"],
@@ -191,6 +194,9 @@ describe("toIr refuses", () => {
   const crossed = wired(right2, edge("c1", "c2", "right2"));
   const keys = Object.fromEntries(Array.from({ length: 1_000 }, (_, i) => [`k${i}`, i]));
   const list = { kind: "arithmetic", op: "add", operands: Array(1_000).fill({ const: 1 }) };
+  const unlisted = swap({ ...node("g1"), data: { children: "x" } });
+  const unfed = { ...unlisted, edges: G.edges.filter((e) => e.source === "g1") };
+  const alone = { ...G, nodes: [node("trigger")], edges: [] };
 
   it("a cycle, naming its path, rather than emit an IR (AC4)", () => {
     const message = "The graph has a cycle: g1 -> c1 -> g1.";
@@ -206,6 +212,7 @@ describe("toIr refuses", () => {
     ["an action no condition feeds", { ...G, edges: G.edges.slice(0, 3) }, "DANGLING_PORT", ["a2"]],
     ["a condition no action follows", plus(LONE), "ORPHAN_NODE", ["c9"]],
     ["no action", actionless, "ORPHAN_NODE", ["g1", "c1", "c2"]],
+    ["a trigger alone (graph.py:156-157)", alone, "ORPHAN_NODE", [], "no action node"],
     ["no trigger", { ...G, nodes: G.nodes.slice(1) }, SV, [], "one trigger"],
     ["two triggers", plus({ ...node("trigger"), id: "t2" }), SV, ["trigger", "t2"]],
     ["two nodes under one id", plus(node("c1")), SV, ["c1"]],
@@ -214,6 +221,7 @@ describe("toIr refuses", () => {
     ["a condition with no data", plus({ id: "c9", type: "condition" } as GraphNode), SV, ["c9"]],
     ["a gate with no data", swap({ id: "g1", type: "logicGate" } as GraphNode), SV, ["g1"]],
     ["a node that is no object", plus(null as unknown as GraphNode), SV, []],
+    ["a node whose id is no text", plus({ ...LONE, id: 7 } as unknown as GraphNode), SV, []],
     ["an edge from no node", wired(edge("zz", "g1", "in")), SV, ["zz", "g1"]],
     ["an edge into no node", wired(edge("c1", "zz", "in")), SV, ["c1", "zz"]],
     ["an edge to a port its node lacks", wired(edge("c1", "a1", "in")), SV, ["c1", "a1"]],
@@ -224,6 +232,7 @@ describe("toIr refuses", () => {
     ["more list edges than empty slots", wired(in1), SV, ["g1"]],
     ["fewer list edges than empty slots", fewer, SV, ["g1"]],
     ["a list that is no list", swap({ ...node("g1"), data: { children: "x" } }), SV, ["g1"]],
+    ["a list that is no list, though no edge fills it", unfed, SV, ["g1"]],
     ["a graph with no node list", { ...G, nodes: "x" } as unknown as GraphModel, SV, [], "lists"],
     ["no graph at all", null as unknown as GraphModel, SV, [], "one trigger"],
     ["exactly 1 000 nodes, past the cap", plus(...Array<GraphNode>(994).fill(LONE)), SV, ["c9"]],
@@ -237,5 +246,30 @@ describe("toIr refuses", () => {
   ] as const)("%s", (_case, graph, code, nodeIds, message?: string) => {
     const refused = refusal(code, { nodeIds, message: expect.stringContaining(message ?? "") });
     expect(() => toIr(graph)).toThrow(refused);
+  });
+
+  it("a layout that is no object, as toGraph refuses one with no list of comments", () => {
+    for (const bad of [null, 5]) expect(() => toIr(G, bad as never)).toThrow(refusal(SV, {}));
+    for (const bad of [{}, { comments: [null] }, 5]) {
+      expect(() => toGraph(BASE, bad as never)).toThrow(refusal(SV, {}));
+    }
+  });
+
+  it("nothing by its budget that the final bound accepts", () => {
+    const slots = (n: number) => ({ op: "all_of", children: Array(n).fill(null) });
+    const gate = (id: string, n: number) => ({ ...node("g1"), id, data: slots(n) });
+    const fan = (n: number, a: string, b: string) => Array<GraphEdge>(n).fill(edge(a, b, "in"));
+    const pair = (a: string, b: string) => [edge(a, b, "left"), edge(a, b, "right")];
+    const open = (id: string) => ({ ...LONE, id, data: { ...LONE.data, left: null, right: null } });
+    const start = [node("trigger"), node("a1")];
+    const [x, root] = [{ ...LONE, id: "x" }, edge("g0", "a1", "when")];
+    // 800 uses of a node with null inputs (16 830 values), a 1 000-slot gate used 5 times (15 050)
+    const shared = [gate("g0", 800), open("c1"), open("c2"), x];
+    const wide = [gate("g0", 5), gate("g1", 1_000), x];
+    const fills = [root, ...fan(800, "c1", "g0"), ...pair("c2", "c1"), ...pair("x", "c2")];
+    expect(() => toIr({ ...G, nodes: [...start, ...shared], edges: fills })).not.toThrow();
+    const edges = [root, ...fan(5, "g1", "g0"), ...fan(1_000, "x", "g1")];
+    expect(() => toIr({ ...G, nodes: [...start, ...wide], edges })).not.toThrow();
+    expect(() => toIr(chain(2, 71, { ...LONE.data, node_id: "x" }))).not.toThrow(); // 15 437 values
   });
 });

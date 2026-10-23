@@ -3,7 +3,11 @@
 export type { RuleIr } from "@candleviewer/protocol/rule-ir";
 export { nodesNeedingLayout, readLayout, toGraph } from "./adapter/toGraph.js";
 export { toIr } from "./adapter/toIr.js";
+export { findDanglingPorts, type DanglingPort } from "./analysis/dangling.js";
 export { canonicalise, compareWithServer, hash } from "./canonical/canonicalise.js";
 export { RULE_GRAPH_ERROR_CODES, RuleGraphError, isRuleGraphError } from "./errors.js";
 export type { RuleGraphErrorCode } from "./errors.js";
 export type * from "./model.js";
+export { NODE_PORTS, PORT_COMPAT, PORT_TYPES, canConnect, portTypeOfMetric } from "./ports.js";
+export { portsOf, type Connect, type MetricUnit, type MetricValueType } from "./ports.js";
+export type { NodeKind, NodePorts, PortType } from "./ports.js";
