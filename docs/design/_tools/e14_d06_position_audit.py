@@ -34,6 +34,7 @@ E14, RES = ROOT / "docs" / "design" / "E14", ROOT / "docs" / "design" / "researc
 SPEC, HANDOFF, D02 = E14 / "E14-D06.md", E14 / "E14-D06-handoff.md", E14 / "E14-D02.md"
 E30D02, E09 = ROOT / "docs/design/E30/E30-D02.md", ROOT / "docs/design/E09/E09-D09.md"
 E32, MEMO = RES / "e32-brackets-ladders.md", RES / "e14-drawing-mental-models.md"
+E30D03 = ROOT / "docs/design/E30/E30-D03.md"
 FIXTURE = ROOT / "packages/fixtures/bybit/2026-10-05/rest/instruments_after.json"
 FEE_FIXTURE = ROOT / "packages/fixtures/accounts/_base/fee_rate.json"
 D = Decimal
@@ -192,6 +193,9 @@ def plan(line: str) -> dict[str, str]:
     }
     out["cap"] = "exceeds" if risk > A["headroom"] else "within"
     out["server_clamp"] = fmt(lot(A["headroom"] / dist), QTY_DP) if out["cap"] == "exceeds" else ""
+    # 24 section 9.3.2 names the headroom clamp without its fee treatment (G13): both figures
+    fee_aware = fmt(lot(A["headroom"] / (dist + fee_unit)), QTY_DP)
+    out["server_clamp_fee"] = fee_aware if out["cap"] == "exceeds" else ""
     if target is None:
         return out | {"reward": "— set a target", "rr": "— set a target"}
     rr = (abs(target - entry) / dist).quantize(D("0.01"), rounding=ROUND_HALF_UP)
@@ -338,6 +342,23 @@ PIN22 = re.compile(r"`22` schema lines at the base \(([^)]*)\)")
 NAMED22 = re.compile(r"`([^`\s]+)` :(\d+)")
 Y_LINES, S24_LINES = Y.splitlines(), S24.splitlines()
 H24 = [(m.group(1), i) for i, ln in enumerate(S24_LINES) if (m := re.match(r"### (\d+\.\d+) ", ln))]
+# the D02 / E30-D03 anchors the spec names: a cited :N must be the row it claims (the lens F-2)
+D02_ROWS = re.compile(r"§10 rows ((?:\d+ / )*\d+) \(((?::\d+, )*:\d+)\)")
+D02_IDS = re.compile(r"§17\.[24] ((?:[CQ]\d+ / )*[CQ]\d+) \(((?::\d+, )*:\d+)\)")
+E30D03_ROW = re.compile(r"E30-D03 §9 :(\d+)|§9 \(:(\d+)\)")
+E30D03_PHRASE = "stop 200 ticks kept"
+
+
+def row_anchors(spec: str, lines: list[str], pat: re.Pattern[str], label: str) -> int:
+    n = 0
+    for m in pat.finditer(spec):
+        ids, refs = m.group(1).split(" / "), m.group(2).split(", ")
+        for row_id, ref in zip(ids, refs, strict=True):
+            ln = int(ref[1:])
+            if not (lines[ln - 1] if ln <= len(lines) else "").startswith(f"| {row_id} "):
+                FAILS.append(f"{label} anchor {ref} is not row {row_id}")
+            n += 1
+    return n
 
 
 def read(p: Path) -> str:
@@ -361,6 +382,15 @@ def rows(md: str, start: str, end: str) -> list[list[str]]:
 def tick(cell: str) -> str:
     mt = re.search(r"`([^`]+)`", cell)
     return mt.group(1) if mt else cell
+
+
+def keys_of(cell: str) -> list[str]:  # "`a.b.long` / `.short`" -> [a.b.long, a.b.short]
+    out: list[str] = []
+    for k in re.findall(r"`([^`]+)`", cell):
+        if k.startswith(".") and out:
+            k = out[0].rsplit(".", 1)[0] + k
+        out.append(k)
+    return out
 
 
 def anchor_gates(spec: str) -> dict[str, int]:
@@ -394,6 +424,16 @@ def anchor_gates(spec: str) -> dict[str, int]:
             if not lo <= int(num) <= hi:
                 FAILS.append(f"24 anchor :{num} is outside section {cite.group(1)}")
             n["anchors24"] += 1
+    d02 = read(D02).splitlines()
+    rows_n = row_anchors(spec, d02, D02_ROWS, "D02")
+    n["anchorsD02"] = rows_n + row_anchors(spec, d02, D02_IDS, "D02")
+    e30 = read(E30D03).splitlines()
+    n["anchorsE30D03"] = 0
+    for m in E30D03_ROW.finditer(spec):
+        ln = int(m.group(1) or m.group(2))
+        if E30D03_PHRASE not in (e30[ln - 1] if ln <= len(e30) else ""):
+            FAILS.append(f"E30-D03 anchor :{ln} does not hold the template-apply row")
+        n["anchorsE30D03"] += 1
     return n
 
 
@@ -425,12 +465,24 @@ def string_gates(spec: str, hand: str, extra: list[Path]) -> dict[str, int]:
     decks["E32-D01"] = rows(read(E32), "**5.3 Copy deck", "**5.4")
     decks["E09-D09"] = rows(read(E09), "## 10. Copy deck", "## 11.")
     src = {k: {tick(r[0]): r[1] for r in v if len(r) > 1} for k, v in decks.items()}
+    # source string -> {(owner, key)}; a verbatim string under none of its keys is re-keyed
+    by_text: dict[str, set[tuple[str, str]]] = {}
+    for src_owner, table in decks.items():
+        for r in table:
+            for k in keys_of(r[0]) if len(r) > 1 else []:
+                for q in re.findall(r'"([^"]+)"', r[1]):
+                    by_text.setdefault(q, set()).add((src_owner, k))
     deck = rows(spec, "## 10. Copy deck", "## 11.")
     reused = 0
     for r in deck:
         if len(r) < 3:
             continue
         key, text, source = tick(r[0]), r[1], r[2]
+        mine = set(keys_of(r[0]))
+        for quoted in re.findall(r'"([^"]+)"', text):
+            hits = by_text.get(quoted, set())
+            if hits and not mine & {k for _, k in hits}:
+                FAILS.append(f"copy deck {key}: re-keys {min(hits)} ({quoted[:40]!r})")
         if ADVICE.search(text):
             FAILS.append(f"copy deck {key}: an advice verb")
         if "held by" in text and "held by Bybit (exchange)" not in text:
@@ -533,7 +585,7 @@ def main() -> int:
     p(f"fees: taker={TAKER} maker={MAKER} ({FEE_SRC})")
     p(f"account (mock): {ACCT_SRC}; headroom={A['headroom']}\n")
     keys = "plan side entry stop target ticks mode size notional risk risk_fees risk_pct reward rr"
-    keys += " fee_1w fee_rt be be_ticks margin cap clamp server_clamp reason"
+    keys += " fee_1w fee_rt be be_ticks margin cap clamp server_clamp server_clamp_fee reason"
     p("| " + " | ".join(keys.split()) + " |\n|" + "---|" * len(keys.split()))
     for pl in PLANS.values():
         p("| " + " | ".join(pl.get(k, "") for k in keys.split()) + " |")
@@ -567,7 +619,9 @@ def main() -> int:
         prop_n += status == "PROPOSED"
         v3 = " | ".join(f"{v:.2f}" for v in vals)
         p(f"| {el} | `color.{fg}` | `color.{bg}` | {role} | {v3} | {verdict} | {status} |")
-    p(f"\npairs {len(PAIRS)} x 3 themes; registered {reg_n}, PROPOSED {prop_n}, FAIL {fail_n}\n")
+    distinct = len({tuple(ln.split("|")[1:3]) for ln in PAIRS})
+    head = f"pairs {len(PAIRS)} rows ({distinct} distinct) x 3 themes; "
+    p(f"\n{head}registered {reg_n}, PROPOSED {prop_n}, FAIL {fail_n}\n")
     p("## 5. CVD (dE76 under each deficiency; JND 5.0) and the greyscale strip's greys\n")
     p("| pair | theme | normal | protan | deutan | tritan | verdict |\n|" + "---|" * 7)
     collapses = 0
@@ -601,6 +655,7 @@ def main() -> int:
         summary |= {"plans": PLANS, "formats": FORMATS, "bound": len(BOUND)}
         summary |= {"registries": {k: len(v) for k, v in REG.items()}}
         summary |= {"pairs": [len(PAIRS), reg_n, prop_n, fail_n], "cvd_rows": len(CVD_PAIRS) * 3}
+        summary |= {"pairs_distinct": distinct}
         summary |= {
             "cvd_collapses": collapses,
             "grey": {k: grey(col("dark", k)) for k in GREY_TOKENS},
