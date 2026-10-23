@@ -84,3 +84,4 @@ async def test_503_before_the_first_computation() -> None:
     cache = RecordingStatusCache(lambda: None, None)
     status, body = await _Env(cache, "recording:read").get()
     assert (status, body["code"]) == (503, "store_unavailable")
+    assert body["detail"] == "The status is not ready yet."
