@@ -274,6 +274,8 @@ _STATE = (
     "added_by::text AS added_by, streams::text[] AS streams, orderbook_depth, updated_at "
     "FROM recorded_symbols WHERE id = %s::uuid"
 )
+#: The reaper's pin predicate (21 Sec.6, line 4471): the active pinned rows of a symbol.
+_PINNED = "SELECT 1 FROM recorded_symbols WHERE symbol = %s AND pinned AND removed_at IS NULL"
 
 
 @pytest.fixture
@@ -421,16 +423,20 @@ async def test_clear_manual_without_an_active_manual_row_is_absent_and_changes_n
     assert rid is None or _state(conn, rid) == before
 
 
-@pytest.mark.parametrize(("ref", "outcome"), [(None, "removed"), (_CHART, "demoted")])
-async def test_clear_manual_on_a_pinned_row_follows_the_same_rule(
-    repo: Repo, conn: Conn, ref: dict[str, str] | None, outcome: str
+@pytest.mark.parametrize("ref", [None, _CHART], ids=["no-refs", "chart-ref"])
+async def test_clear_manual_on_a_pinned_row_demotes_it_and_keeps_it_active(
+    repo: Repo, conn: Conn, ref: dict[str, str] | None
 ) -> None:
     rid = await _manual(repo)
     assert await repo.set_pinned(rid, True)
     if ref is not None:
         assert await repo.add_reason_ref(rid, ref)
-    assert await repo.clear_manual("BTCUSDT", "live") == outcome
-    assert _state(conn, rid)["pinned"] is True  # the pin itself is not touched
+    assert await repo.clear_manual("BTCUSDT", "live") == "demoted"
+    row = _state(conn, rid)
+    assert (row["reason"], row["pinned"], row["removed_at"]) == ("chart_open", True, None)
+    assert row["auto_added_at"] is not None  # `rs_autoshape` holds
+    assert conn.execute(_PINNED, ("BTCUSDT",)).fetchone() is not None  # the reaper still sees it
+    assert await repo.resolve_policy("BTCUSDT", "trades") is None  # so retention stays infinite
 
 
 async def test_clear_manual_racing_upsert_auto_never_loses_the_ref(repo: Repo, conn: Conn) -> None:

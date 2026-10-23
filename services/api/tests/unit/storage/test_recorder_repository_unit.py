@@ -146,6 +146,7 @@ async def test_clear_manual_maps_the_statement_outcome(
     assert params == {"symbol": "BTCUSDT", "env": "demo"}
     assert "AND reason = 'manual' RETURNING" in sql  # an auto row is never touched
     assert "COALESCE(auto_added_at, now())" in sql  # `rs_autoshape` holds for a demoted row
+    assert "AND NOT pinned THEN now()" in sql  # only an unpinned row without refs is removed
     assert "DELETE" not in sql.upper()
 
 

@@ -9,7 +9,11 @@ SQL only. `reason_refs` edits and the policy resolution are single statements
 so the auto-record path (E16-T02) cannot lose an update to a read-modify-write
 race; so are the manual-row writes (`upsert_manual`, `clear_manual`, `set_pinned`,
 E16-F01). Nothing here hard-deletes a row: `soft_remove` sets `removed_at`, and the
-gap/session tables are append/update-only (ADR-0015 Sec.7).
+gap/session tables are append/update-only (ADR-0015 Sec.7). A pinned row is never soft-removed
+by `clear_manual`, so its retention protection holds (the reaper and `resolve_policy` read
+active rows only; ADR-0015 decisions 4 and 6, 21-database-schema.md Sec.3.6.1 and line 4471,
+and #2188's Q3 ruling and S2b slice: a B11 stop removes an auto row unless it is manual or
+pinned); the policy's B11 lifecycle, not these writes, stops a pinned row's recording.
 """
 
 from __future__ import annotations
@@ -115,17 +119,19 @@ _UPSERT_MANUAL = sa.text(
         "updated_at = now() RETURNING @C@"
     )
 )
-# Takes the manual reason away. Refs left: the row becomes the auto reason they imply (a position
-# over a chart; any other ref counts as a chart) with `auto_added_at` set, so `rs_autoshape`
-# holds. No ref left: soft-removed. Pinned or not: the pin is not read here.
+# Takes the manual reason away. A row with refs left, or pinned, becomes the auto reason they
+# imply (a position over a chart; any other ref, or none, counts as a chart) with
+# `auto_added_at` set, so `rs_autoshape` holds, and stays active: that keeps a pin's retention
+# protection. Only an unpinned row with no ref left is soft-removed.
 _CLEAR_MANUAL = sa.text(
     "UPDATE recorded_symbols SET "
-    "reason = CASE WHEN reason_refs = '[]'::jsonb THEN reason "
+    "reason = CASE WHEN reason_refs = '[]'::jsonb AND NOT pinned THEN reason "
     "WHEN reason_refs @> jsonb_build_array(jsonb_build_object('kind', 'position')) "
     "THEN 'position_open' ELSE 'chart_open' END, "
-    "auto_added_at = CASE WHEN reason_refs = '[]'::jsonb THEN auto_added_at "
+    "auto_added_at = CASE WHEN reason_refs = '[]'::jsonb AND NOT pinned THEN auto_added_at "
     "ELSE COALESCE(auto_added_at, now()) END, "
-    "removed_at = CASE WHEN reason_refs = '[]'::jsonb THEN now() END, updated_at = now() "
+    "removed_at = CASE WHEN reason_refs = '[]'::jsonb AND NOT pinned THEN now() END, "
+    "updated_at = now() "
     "WHERE symbol = :symbol AND env = CAST(:env AS exchange_env) AND removed_at IS NULL "
     "AND reason = 'manual' RETURNING removed_at IS NOT NULL AS removed"
 )
@@ -306,8 +312,9 @@ class SqlAlchemyRecorderRepository:
 
     async def clear_manual(self, symbol: str, env: str) -> ManualCleared:
         """Take the manual reason off the active row (E16-F01): `demoted` to the auto reason its
-        refs imply, or `removed` (soft) when none is left. A pinned row follows the same rule.
-        `absent`: no active manual row for (symbol, env)."""
+        refs imply, or `removed` (soft) when none is left. A pinned row is never removed here, so it
+        is demoted even with no ref left and its retention protection holds; the policy's B11
+        lifecycle, not this method, stops its recording. `absent`: no active manual row."""
         rows = await self._write(_CLEAR_MANUAL, {"symbol": symbol, "env": env})
         if not rows:
             return "absent"
