@@ -15,7 +15,7 @@ so the formula is applied here in plain arithmetic and said so.
 
 Sections (each row names its source so a reviewer can re-grep it):
 
-1. The clause inventory: the ``05`` section 6 bullets at the base beside the review's 43 clause
+1. The clause inventory: the ``05`` section 6 bullets at the base beside the review's 45 clause
    ids (R1), and the review's verdict table parsed from ``docs/design/E11/E11-D07.md`` (every id
    once, a verdict from the fixed vocabulary, evidence, and an owner + target on every ``at risk``
    / ``non-compliant`` row).
