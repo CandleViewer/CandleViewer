@@ -855,6 +855,9 @@ _SAMPLE: dict[str, dict[str, Any]] = {
     "done.invoke.cancel": {"ok": False, "error_code": "EXCHANGE_UNKNOWN"},
     "done.invoke.amend": {"ok": True, "terms": {"price": "64000"}},
     **{f"error.platform.{i}": {"error": "TimeoutError"} for i in ("place", "cancel", "amend")},
+    "TERMS_CHANGED": {
+        "exchange_order_id": "x8", "trigger_price": "61000", "qty": "1", "updated_time": 2
+    },
 }  # fmt: skip
 
 
@@ -992,6 +995,61 @@ async def test_an_event_with_no_step_moves_nothing(rig: Rig) -> None:
     said = NewOrderEvent(kind="error", source="local", event_ts=T0, payload={"note": "probe"})
     await rig.events.append(ACCOUNT, order.id, said)
     assert rebuild(await _history(rig, order)) == await _row(rig, order)
+
+
+def _written(first: str, *steps: tuple[str, str, str, dict[str, Any]]) -> list[OrderEventRow]:
+    """The events B1's step writer stores: *first*'s row, then each `(from, to, trigger,
+    payload)`, numbered from 0."""
+    created = "validated" if first == "VALIDATE" else "submitted"
+    rows = [_recorded("draft", created, first, _SAMPLE[first])]
+    rows += [_recorded(*step) for step in steps]
+    return [replace(row, seq=seq) for seq, row in enumerate(rows)]
+
+
+_TERMS_STEP = ("submitted", "submitted", "TERMS_CHANGED", _SAMPLE["TERMS_CHANGED"] | {"qty": "2"})
+
+
+def test_fold_terms_step_takes_trigger_price_and_quantity() -> None:
+    """`adopt_terms` (INV-B1-q): the fold takes the trigger price and quantity a recorded stop's
+    terms step names, and `leaves_qty` follows; one naming only the trigger price keeps the
+    quantity."""
+    rebuilt = rebuild(_written("MATERIALISED", _TERMS_STEP))
+    assert (rebuilt.qty, rebuilt.trigger_price, rebuilt.leaves_qty) == (
+        Decimal(2),
+        Decimal(61000),
+        Decimal(2),
+    )
+    only = {"exchange_order_id": "x8", "trigger_price": "60000"}
+    rebuilt = rebuild(_written("MATERIALISED", ("submitted", "submitted", "TERMS_CHANGED", only)))
+    assert (rebuilt.qty, rebuilt.trigger_price) == (Decimal(1), Decimal(60000))
+
+
+_PLACED: tuple[tuple[str, str, str, dict[str, Any]], ...] = (
+    ("validated", "submitting", "SEND", {}),
+    ("submitting", "submitted", "done.invoke.place", _SAMPLE["done.invoke.place"]),
+)
+_FILLED = ("submitted", "partially_filled", "EXEC", _EXEC)
+
+
+@pytest.mark.parametrize(
+    ("first", "steps"),
+    [
+        ("VALIDATE", (*_PLACED, _TERMS_STEP)),
+        ("MATERIALISED", (_FILLED, ("partially_filled", "partially_filled", "TERMS_CHANGED",
+                                    {"exchange_order_id": "x8", "qty": "0.05"}))),
+        ("MATERIALISED", (("submitted", "submitted", "TERMS_CHANGED", {"updated_time": 2}),)),
+        ("MATERIALISED", (("submitted", "submitted", "TERMS_CHANGED", {"trigger_price": "0"}),)),
+    ],
+    ids=["placed", "under_filled", "no_term", "zero_term"],
+)  # fmt: skip
+def test_fold_terms_step_b1_never_writes_refuses_history(
+    first: str, steps: tuple[tuple[str, str, str, dict[str, Any]], ...]
+) -> None:
+    """OM-T03: B1 writes a terms step only on a recorded stop's row, naming a term, each above
+    zero, never a quantity under the filled one: a placed order's history holding one, or one
+    under its fills, naming no term or a zero one, is refused."""
+    with pytest.raises(OrderHistoryRefused, match="a terms step B1 never writes"):
+        rebuild(_written(first, *steps))
 
 
 async def test_an_amend_the_machine_did_not_adopt_changes_no_term(rig: Rig) -> None:

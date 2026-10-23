@@ -174,7 +174,7 @@ CommandEvent = Literal[
 ]  # fmt: skip
 PushEvent = Literal[
     "EXEC", "TRIGGERED", "EXPIRE", "REMOTE_CANCELLED", "AMEND_REJECTED", "SL_OBSERVED", "SL_LOST",
-    "SL_DEADLINE",
+    "SL_DEADLINE", "TERMS_CHANGED",
 ]  # fmt: skip
 #: The events `command` and `push` take, checked at run time (C-2.21): the `Literal`s bind static
 #: callers only, and the facade's gates hold only for the events they were written for.
@@ -237,6 +237,7 @@ B1_AUDITS: Final[Mapping[str, tuple[str, Outcome, Severity]]] = MappingProxyType
     "kill_cancel_lost": ("orders.cancel", "failure", "error"),
     "guard_denied": (ANOMALY, "denied", "error"),
     "reconcile_anomaly": (ANOMALY, "denied", "error"),
+    "terms_refused": (ANOMALY, "denied", "error"),
 })  # fmt: skip
 
 

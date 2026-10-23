@@ -16,13 +16,16 @@ The fold reads each event as B1's actions wrote it (`statechart.bindings.b01_ord
   execution): the exchange order id it names (`adopt_recon`);
 * a fill (`fill`, `partial_fill`): its execution, applied again through `apply_execution`;
 * an amend's result (`amend_ack`) that is `ok`: the terms it names, all or none (`adopt_amend`);
+* a recorded stop's terms step (`TERMS_CHANGED`, the one `exchange_push` that keeps its state):
+  the trigger price and quantity it names (`adopt_terms`);
 * a step into `rejected`: its `ret_code` and `ret_msg`, which are the reject columns
   (`OrderTransition`).
 
 An exchange order id binds once, as B1 binds it; any other event moves the state only. A history
 the fold cannot read raises `OrderHistoryRefused`: a gap in `seq`, a step whose `from_state` is not
-the state before it or that leaves a final state (INV-2), a first event B1 did not write, or a fill
-the order cannot absorb (OM-T04).
+the state before it or that leaves a final state (INV-2), a first event B1 did not write, a fill
+the order cannot absorb (OM-T04), or a terms step B1 never writes (on a row that is not a recorded
+stop's, naming no term, a term not above zero, or a quantity under the filled one).
 """
 
 from __future__ import annotations
@@ -37,7 +40,7 @@ from uuid import UUID
 
 from jsonschema import Draft202012Validator
 
-from candleviewer.statechart.bindings.b01_order import MAX_TEXT, SCHEMAS, Step
+from candleviewer.statechart.bindings.b01_order import FOLLOWED, MAX_TEXT, SCHEMAS, Step
 from candleviewer.storage.repositories.orders import (
     AMENDABLE,
     FILL_KINDS,
@@ -228,7 +231,22 @@ def _amend(out: dict[str, Any], terms: object) -> None:
     out.update(named)
 
 
-def _step(out: dict[str, Any], event: OrderEventRow, seen: list[str]) -> None:
+def _follow(out: dict[str, Any], payload: Mapping[str, Any], recorded: bool) -> None:
+    """`adopt_terms`: the trigger price and quantity a recorded stop's terms step names. B1 writes
+    one only on a recorded stop's row (`recorded`: its first event is `MATERIALISED`'s), naming a
+    term, each above zero, and never a quantity under the filled one (INV-1, INV-B1-q)."""
+    named = {key: _money(payload[key]) for key in FOLLOWED if payload.get(key) is not None}
+    if (
+        not recorded
+        or not named
+        or any(value <= 0 for value in named.values())
+        or named.get("qty", out["qty"]) < out["cum_exec_qty"]
+    ):
+        raise OrderHistoryRefused("a terms step B1 never writes")
+    out.update(named)
+
+
+def _step(out: dict[str, Any], event: OrderEventRow, seen: list[str], recorded: bool) -> None:
     """What one step after the first wrote besides its state (module docstring)."""
     payload = event.payload
     if event.kind in FILL_KINDS:
@@ -246,6 +264,8 @@ def _step(out: dict[str, Any], event: OrderEventRow, seen: list[str]) -> None:
         _bind(out, payload.get("exchange_order_id"))
     elif event.kind == "amend_ack" and payload.get("ok") is True:
         _amend(out, payload.get("terms"))
+    elif event.kind == "exchange_push" and event.from_state == event.to_state:
+        _follow(out, payload, recorded)
     if event.to_state == "rejected":
         out["reject_code"], out["reject_message"] = event.ret_code, event.ret_msg
 
@@ -263,6 +283,7 @@ def rebuild(events: Sequence[OrderEventRow]) -> RebuiltOrder:
         raise OrderHistoryRefused("the first event is not one B1 creates an order with")
     out, state = _created(first), cast(OrderState, first.to_state)
     seen: list[str] = []
+    recorded = first.kind == "exchange_push"  # a recorded stop's row (`MATERIALISED`)
     for index, event in enumerate(events[1:], start=1):
         if event.seq != index:
             raise OrderHistoryRefused(f"the history has no event at seq {index}")
@@ -270,7 +291,7 @@ def rebuild(events: Sequence[OrderEventRow]) -> RebuiltOrder:
             continue
         if event.from_state != state or LIFECYCLE_STATE_OF[state] in FINALS:
             raise OrderHistoryRefused(f"the step at seq {index} leaves no state the order held")
-        _step(out, event, seen)
+        _step(out, event, seen, recorded)
         state = event.to_state
     leaves = _EXACT.subtract(out["qty"], out["cum_exec_qty"])
     chart = LIFECYCLE_STATE_OF[state]

@@ -25,10 +25,11 @@
 
 Every step stores the chart state in `lifecycle_state` beside `state` (24 Sec.8.2 mapping), the
 exchange order id the machine bound (SR-E29-03), the terms an accepted amend changed (S2: only once
-the exchange accepts them), the event's kind and source (an exchange source carries its message,
-OM-R02) and the result's code on the event. A step into `rejected` stores its reject code as the
-event's `ret_code` and as `reject_code` alike (`OrderTransition`), so a fold of the events rebuilds
-the reject columns (`oms.recovery`).
+the exchange accepts them) or a recorded stop's terms step took (`TERMS_CHANGED`, Sec.8.3 rule 7),
+the event's kind and source (an exchange source carries its message, OM-R02) and the result's
+code on the event. A step into `rejected` stores its reject code as the event's `ret_code` and as
+`reject_code` alike (`OrderTransition`), so a fold of the events rebuilds the reject columns
+(`oms.recovery`).
 
 E29-T04 (24 Sec.8.4): the send's step (`validated` -> `submitting`) sets `idempotency_state` to
 `in_flight` and counts `submit_attempts` up; a step out of `submitting` or `unknown` that answers
@@ -59,7 +60,7 @@ from types import MappingProxyType
 from typing import Any, Final, Literal, cast, get_args
 from uuid import UUID
 
-from candleviewer.statechart.bindings.b01_order import FIRST_ROWS, Step
+from candleviewer.statechart.bindings.b01_order import FIRST_ROWS, FOLLOWED, Step
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
 from candleviewer.storage.repositories.executions import (
     ExecType,
@@ -132,6 +133,7 @@ _KINDS: Final[dict[str, tuple[OrderEventKind, OrderEventSource]]] = {
     "TRIGGERED": ("exchange_push", "ws_private"),
     "EXPIRE": ("expire", "ws_private"),
     "REMOTE_CANCELLED": ("exchange_push", "ws_private"),
+    "TERMS_CHANGED": ("exchange_push", "ws_private"),
     "AMEND_REJECTED": ("amend_ack", "ws_private"),
     "MISMATCH": ("reconcile_diff", "reconcile"),
     **dict.fromkeys(
@@ -444,8 +446,11 @@ def event_kind(step: Step) -> tuple[OrderEventKind, OrderEventSource]:
 
 def _amended(step: Step) -> dict[str, Decimal]:
     """An accepted amend's terms as the machine adopted them (`adopt_amend`): the context's value
-    of each term the result names, so a refused one writes the prior value back unchanged."""
+    of each term the result names, so a refused one writes the prior value back unchanged. A
+    recorded stop's terms step writes each term its push names, as `adopt_terms` took it."""
     result, ctx = step.payload, step.context
+    if step.event == "TERMS_CHANGED":
+        return {key: _decimal(ctx.get(key)) for key in FOLLOWED if key in result}
     named = result.get("terms") if step.event == "done.invoke.amend" else None
     if result.get("ok") is not True or not isinstance(named, Mapping):
         return {}

@@ -1,5 +1,5 @@
 """candleviewer.statechart.bindings.b01_order — MachineLogic for B1 `order`
-(#1650, E50; E29-T03 #847). Chart: `machines/B01.order.machine.json`, version 4.
+(#1650, E50; E29-T03 #847). Chart: `machines/B01.order.machine.json`, version 5.
 
 Guards are pure, total and deny by default (catalogue A6). Statecharts record, synchronous code
 enforces (C-2.21): `VALIDATE` carries the verdicts of the checks run before it (`gates`) and the
@@ -43,6 +43,11 @@ The `protection` region is untouched by KILL (C-2.6): it only audits. A recorded
 (`MATERIALISED`, 24 Sec.8.3 rule 7) is a position's protective stop, so KILL never cancels it: in
 each live state it can reach, the guarded `is_recorded_stop` arm, ahead of the cancelling one,
 consumes and audits the KILL and sends nothing.
+
+A recorded stop's row follows its order's trigger price and quantity through `TERMS_CHANGED`, a
+written step (24 Sec.8.3 rule 7, the sixth item; INV-B1-q): the guarded `recorded_terms_changed`
+arm re-enters `submitted`, `triggered` or `partially_filled`, and `audit_terms_refused` records
+any other, never as a `guard_denied` the OMS would answer with `FAULT`.
 """
 
 from __future__ import annotations
@@ -253,6 +258,10 @@ MAX_ATTEMPTS: Final = 4096
 REPEAT: Final = "a repeat exec_id (S4)"
 #: An EXEC before the bind waits in the facade's reorder buffer (SR-E29-03), never a FAULT.
 UNBOUND: Final = "the order has no bound exchange_order_id yet"
+#: The terms a recorded stop's row takes from its order on the exchange (24 Sec.8.3 rule 7).
+FOLLOWED: Final = ("qty", "trigger_price")
+#: A redelivered `TERMS_CHANGED` naming the terms the row holds (S4, S5): quiet, never recorded.
+UNCHANGED: Final = "the push names the terms the row holds"
 _REJECT_CODES: Final = frozenset(code.value for code in OmsErrorCode) | {EXPIRED_UNSENT}
 _DUPLICATE: Final = OmsErrorCode.DUPLICATE_CLIENT_ID.value
 #: Codes 24 Sec.8.6 routes to retry, poll or reconcile: the command port raises them (S1), so one
@@ -578,6 +587,41 @@ def is_recorded_stop(context: dict[str, Any], event: Any) -> bool:
     cancel of the position's protective stop (C-2.6, INV-B1-p). It records which row this is and
     decides nothing else (C-2.21)."""
     return _total("is_recorded_stop", lambda: context.get("recorded_stop") is True)
+
+
+def _followed(context: Mapping[str, Any], p: Mapping[str, Any]) -> dict[str, Decimal]:
+    """The terms a TERMS_CHANGED moves a recorded stop's row to, else ValueError saying why (24
+    Sec.8.3 rule 7)."""
+    if context.get("recorded_stop") is not True:
+        raise ValueError("the row is not a recorded stop's (24 Sec.8.3 rule 7)")
+    bound = _id(context.get("exchange_order_id"))
+    if bound is None or _id(p.get("exchange_order_id")) != bound:
+        raise ValueError("the push is not of the row's bound exchange order (SR-E29-03)")
+    terms = _positives(p, FOLLOWED)
+    if not terms:
+        raise ValueError("the push names no trigger price or quantity")
+    if terms.get("qty", _money(context.get("qty"))) < _money(context.get("filled_qty", "0")):
+        raise ValueError("the quantity is under the filled quantity (INV-1)")
+    if all(_same(_text(v), context.get(k)) for k, v in terms.items()):
+        raise ValueError(UNCHANGED)
+    return terms
+
+
+def _takes_terms(context: Mapping[str, Any], event: Any) -> bool:
+    try:
+        _followed(context, _fields(event))
+    except ValueError:
+        return False  # an expected denial: no ERROR (only `_total` logs a guard that fails)
+    return True
+
+
+def recorded_terms_changed(context: dict[str, Any], event: Any) -> bool:
+    """INV-B1-q: a `TERMS_CHANGED` a recorded stop's row takes. True only for the row
+    `record_materialised` marked, a push of its bound exchange order (SR-E29-03) naming a trigger
+    price or quantity, each above zero, a quantity not under the filled one (INV-1), and a term
+    that differs from the row's. It records the exchange's terms and decides nothing else
+    (C-2.21)."""
+    return _total("recorded_terms_changed", lambda: _takes_terms(context, event))
 
 
 def _reading(raw: object) -> dict[str, Any]:
@@ -1060,6 +1104,22 @@ async def record_materialised(_i: Any, context: dict[str, Any], event: Any, _a: 
     context.update(found, exchange_order_id=order["exchange_order_id"], recorded_stop=True)
 
 
+async def adopt_terms(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """`TERMS_CHANGED` that `recorded_terms_changed` took (INV-B1-q): the row takes the trigger
+    price and quantity its order shows on the exchange, as canonical text, and `leaves_qty`
+    follows; `persist_event`, first in the re-entered state's entry, writes them with the step's
+    row. Never raises (A1): a push it cannot read changes nothing and is logged."""
+    try:
+        terms = _followed(context, _fields(event))
+        qty = terms.get("qty", _money(context["qty"]))
+        leaves = Context(prec=40).subtract(qty, _money(context.get("filled_qty", "0")))
+    except Exception as exc:  # A1: unreachable behind the guard
+        link = context.get("order_link_id")
+        logger().error("b01_terms_not_adopted", order_link_id=link, reason=type(exc).__name__)
+        return
+    context.update({key: _text(value) for key, value in terms.items()}, leaves_qty=_text(leaves))
+
+
 async def adopt_untracked(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
     """`ADOPT` passed `adoption_allowed` (deny-all until E45-S01 records D6), whose verdicts
     include a native stop attached (C-2.6): the order is managed from here as it was discovered,
@@ -1296,6 +1356,28 @@ async def audit_reconcile_anomaly(i: Any, context: dict[str, Any], event: Any, _
     await _hook("reconcile_anomaly", {**context, "anomaly": detail})
 
 
+async def audit_terms_refused(i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
+    """INV-B1-q, C-07b: a `TERMS_CHANGED` the guarded arm did not take changes nothing and is
+    never deferred. A redelivered push naming the row's terms (`UNCHANGED`, S4, S5) is logged at
+    INFO and recorded nowhere; any other (a row that is not a recorded stop's, another order's
+    push, no term, a term not above zero, a quantity under the filled one) is logged at ERROR and
+    recorded as `terms_refused`, which the OMS writes as an anomaly (S6, OM-T04), never through
+    `guard_denied`, which it answers with `FAULT`."""
+    try:
+        _followed(context, _fields(event))
+        why = ""  # unreachable: the guarded arm took it
+    except ValueError as exc:
+        why = str(exc)
+    except Exception as exc:  # a push or context it cannot read (A1)
+        why = type(exc).__name__
+    link = context.get("order_link_id")
+    if why == UNCHANGED:
+        logger().info("b01_terms_unchanged", order_link_id=link)
+        return
+    logger().error("b01_terms_refused", order_link_id=link, reason=why, state=_leaf(i))
+    await _hook("terms_refused", {**context, "denied": {"reason": why, "trigger": _name(event)}})
+
+
 async def audit_operator_command_refused(
     i: Any, context: dict[str, Any], event: Any, _a: Any
 ) -> None:
@@ -1321,6 +1403,7 @@ ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
     "adopt_cancel_ack": adopt_cancel_ack,
     "adopt_recon": adopt_recon,
     "adopt_remote_cancel": adopt_remote_cancel,
+    "adopt_terms": adopt_terms,
     "adopt_untracked": adopt_untracked,
     "apply_fill": apply_fill,
     "arm_recon_deadline": arm_recon_deadline,
@@ -1332,6 +1415,7 @@ ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
     "audit_kill_protection_retained": audit_kill_protection_retained,
     "audit_operator_command_refused": audit_operator_command_refused,
     "audit_reconcile_anomaly": audit_reconcile_anomaly,
+    "audit_terms_refused": audit_terms_refused,
     "bump_recon_misses": bump_recon_misses,
     "emit_terminal": emit_terminal,
     "issue_kill_cancel": issue_kill_cancel,
@@ -1376,6 +1460,7 @@ GUARDS: dict[str, Callable[..., bool]] = {
     "is_link_id_mismatch": is_link_id_mismatch,
     "is_recorded_stop": is_recorded_stop,
     "passes_all_gates": passes_all_gates,
+    "recorded_terms_changed": recorded_terms_changed,
     "ret_code_ok": ret_code_ok,
     "ret_code_ok_and_has_fills": ret_code_ok_and_has_fills,
     "second_consecutive_miss": second_consecutive_miss,
@@ -1451,6 +1536,16 @@ _PUSH: Final = _closed(
 )
 #: A protection reading (B1.5): the position row's exchange time, stop and size.
 _READING: Final = _closed(updated_time=_MS, stop_loss=_MONEY_OR_NULL, size=_MONEY_TEXT)
+#: A recorded stop's order shown with another trigger price or quantity, changed in place (24
+#: Sec.8.3 rule 7): its terms, the exchange time S5 orders it by, and who met it.
+_TERMS_PUSH: Final = _closed(
+    exchange_order_id=_TEXT,
+    order_link_id=_TEXT,
+    **dict.fromkeys(FOLLOWED, _MONEY_TEXT),
+    updated_time=_MS,
+    source=_MATERIALISED_BY,
+    pass_id=_TEXT,
+)
 #: A reconciliation finding, sent after its SR-E29-03 full match (INV-B1-m).
 _FOUND: Final = _closed(exchange_order_id=_TEXT, execution=_EXECUTION, pass_id=_TEXT)
 _REASON: Final = _closed(reason=_TEXT)
@@ -1484,6 +1579,7 @@ SCHEMAS: Final[dict[str, dict[str, Any]]] = {
     "SL_DEADLINE": _closed(),
     "SL_LOST": _READING,
     "SL_OBSERVED": _READING,
+    "TERMS_CHANGED": _TERMS_PUSH,
     "TRANSPORT_FAULT": _REASON,
     "TRIGGERED": _PUSH,
     "VALIDATE": _closed(

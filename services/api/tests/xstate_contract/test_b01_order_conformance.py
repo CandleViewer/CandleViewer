@@ -1,16 +1,20 @@
 """B1 `order` conformance (E29-T03 #847, the remaining implementation): a snapshot round trip at
 each quiescence point a real order rests in, on the real binding with the in-memory stores, a
 refused restore of a forged or foreign snapshot, and the named family invariants of B1.7 (INV-1,
-INV-2 and INV-5), on the library."""
+INV-2 and INV-5), on the library. Chart version 5 (#848): a recorded stop's terms step round trips
+and is refused forged, and a golden version-4 snapshot is refused on restore, its order rebuilt
+from its `order_events` (28 B1.8, the snapshot migration)."""
 
 from __future__ import annotations
 
 import copy
 import dataclasses
+import json
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -29,10 +33,13 @@ from candleviewer.statechart.persistence import (
     Persister,
     Restorer,
     RestoreRefusedError,
+    Seal,
     SealedSnapshot,
     hmac_sealer,
+    open_sealed,
 )
-from candleviewer.statechart.registry import Registry
+from candleviewer.statechart.registry import Registry, machine_hash
+from candleviewer.statechart.upcasters import has_upcaster
 from candleviewer.storage.repositories.orders import NewOrder
 from tests.unit.oms.order_rig import ACCOUNT, Rig, build_rig, fill_of, gated, order_of
 from tests.xstate_contract._harness import Audit, AuditTap, Charts, Keys, Pager, Repo, exits, settle
@@ -41,6 +48,9 @@ from tests.xstate_contract.b01_ports import Commands, Store
 REGISTRY = Registry()
 CHART = REGISTRY.get("order")
 TERMINALS = ("filled", "cancelled", "rejected", "expired", "killed")
+#: Chart version 4's `machine_hash` (28 B1.8): version 5's restore refuses a snapshot sealed at it.
+V4_HASH = "18d4f519f032b9394245f00f18b0c6fce9145d22969ef2eb3854f2695190c3dc"
+_GOLDEN = Path(__file__).resolve().parent / "golden"
 
 
 # --- Snapshot round trips at each quiescence point, on the real binding --------------------------
@@ -224,6 +234,143 @@ async def test_b01_a_forged_or_foreign_snapshot_is_refused(
         assert (len(audit.quarantined), pager.pages) == (1, ["P1"])
 
 
+# --- Version 5: the terms step's snapshots, and version 4's refused (28 B1.8) -------------------
+
+
+async def _recorded_stop(rig: Rig) -> NewOrder:
+    """A recorded stop's row (24 Sec.8.3 rule 7), materialised by the private stream."""
+    stop = order_of(
+        5, order_link_id="ext-" + "ef" * 16, intent="stop_loss", order_type="Market", price=None,
+        trigger_price=Decimal(62000), stop_loss=None, reduce_only=True, close_on_trigger=True,
+        exchange_order_id="x-sl5",
+    )  # fmt: skip
+    assert await rig.facade.materialise(stop, environment="demo") == "submitted"
+    await rig.quiet()
+    return stop
+
+
+async def _recorded_stop_with_new_terms(rig: Rig) -> NewOrder:
+    """The row once its order's trigger price and quantity changed in place (INV-B1-q)."""
+    stop = await _recorded_stop(rig)
+    terms = {"exchange_order_id": "x-sl5", "trigger_price": "61000", "qty": "2", "updated_time": 9}
+    await rig.facade.push(ACCOUNT, stop.id, "TERMS_CHANGED", terms)
+    await rig.quiet()
+    return stop
+
+
+async def test_b01_terms_step_snapshot_round_trip_identical() -> None:
+    """29 Sec.1.3 on version 5: a sealed snapshot of a recorded stop's row whose terms step was
+    written restores the same configuration and context, its new terms included, and the restore
+    runs no step: it writes nothing and sends nothing."""
+    rig = build_rig(registry=REGISTRY)
+    try:
+        stop = await _recorded_stop_with_new_terms(rig)
+        interp = rig.facade._orders[stop.id].interp
+        before = (set(interp.current_state_ids), copy.deepcopy(dict(interp.context)))
+        assert (before[1]["qty"], before[1]["trigger_price"]) == ("2", "61000")
+        events = await rig.events.list_for_order(ACCOUNT, stop.id)
+        key, keys = MachineKey("order", str(stop.id), "demo"), Keys()
+        envelope = await _sealed(interp, key, keys)
+        restored = await _restorer(keys, Audit(), Pager()).restore(key, envelope)
+        try:
+            await settle()
+            after = (
+                set(restored.interpreter.current_state_ids),
+                dict(restored.interpreter.context),
+            )
+            assert after == before and not restored.degraded
+            assert await rig.events.list_for_order(ACCOUNT, stop.id) == events
+            assert rig.commands.sent == []
+        finally:
+            await restored.interpreter.stop()
+    finally:
+        await rig.facade.stop()
+
+
+def _version_4_hash(envelope: SealedSnapshot) -> SealedSnapshot:
+    return dataclasses.replace(envelope, machine_hash=V4_HASH)
+
+
+def _forged_terms(envelope: SealedSnapshot) -> SealedSnapshot:
+    context = {**envelope.snapshot["context"], "trigger_price": "60000"}  # moved after the seal
+    return dataclasses.replace(envelope, snapshot={**envelope.snapshot, "context": context})
+
+
+@pytest.mark.parametrize("defect", [_wrong_hash, _version_4_hash, _forged_terms])
+async def test_b01_terms_step_snapshot_forged_or_version_4_refused(
+    defect: Callable[[SealedSnapshot], SealedSnapshot],
+) -> None:
+    """CV-C52, CV-C53, MUST-12: a recorded stop's snapshot under another machine hash, under
+    version 4's, or with its trigger price edited after the seal is quarantined and pages P1; it
+    is never loaded."""
+    rig = build_rig(registry=REGISTRY)
+    try:
+        stop = await _recorded_stop_with_new_terms(rig)
+        key, keys, audit, pager = (
+            MachineKey("order", str(stop.id), "demo"),
+            Keys(),
+            Audit(),
+            Pager(),
+        )
+        envelope = await _sealed(rig.facade._orders[stop.id].interp, key, keys)
+        with pytest.raises(RestoreRefusedError):
+            await _restorer(keys, audit, pager).restore(key, defect(envelope))
+        assert (len(audit.quarantined), pager.pages) == (1, ["P1"])
+    finally:
+        await rig.facade.stop()
+
+
+def _version_4(chart: Mapping[str, Any]) -> dict[str, Any]:
+    """Chart version 4: version 5 without its `TERMS_CHANGED` groups (28 B1.8)."""
+    out = copy.deepcopy(dict(chart)) | {"version": 4}
+    for node in out["states"]["lifecycle"]["states"].values():
+        (node.get("on") or {}).pop("TERMS_CHANGED", None)
+    return out
+
+
+async def test_b01_version_4_golden_snapshot_refused_then_rebuilt_from_order_events() -> None:
+    """28 B1.8 version 5, the snapshot migration, on a golden snapshot: a recorded stop's row
+    sealed at version 4 (`golden/order.v4_to_v5.before.json`, its seal genuine under version 4's
+    chart) is refused by version 5's restore for its machine hash, quarantined and paged P1, and
+    never loaded; no upcaster carries it, as B1 recovers from `order_events`: the row's history
+    hydrates to the configuration `.after.json` names and to every context value the snapshot
+    held."""
+    before = json.loads((_GOLDEN / "order.v4_to_v5.before.json").read_text(encoding="utf-8"))
+    after = json.loads((_GOLDEN / "order.v4_to_v5.after.json").read_text(encoding="utf-8"))
+    key, seal = MachineKey(**before["key"]), Seal(**before["seal"])
+    envelope = SealedSnapshot(
+        key, before["version"], before["machine_hash"], before["snapshot"], seal
+    )
+    v4, keys, audit, pager = _version_4(CHART), Keys(), Audit(), Pager()
+    assert machine_hash(v4) == before["machine_hash"] == V4_HASH != REGISTRY.hash("order")
+    open_sealed(keys, v4, envelope, key=key, expected_machine_hash=V4_HASH)  # a genuine seal
+    with pytest.raises(RestoreRefusedError) as refused:
+        await _restorer(keys, audit, pager).restore(key, envelope)
+    assert (refused.value.reason, len(audit.quarantined), pager.pages) == (
+        after["refused"],
+        1,
+        ["P1"],
+    )
+    assert not has_upcaster("order", V4_HASH, REGISTRY.hash("order"))
+    rig = build_rig(registry=REGISTRY)
+    try:
+        stop = await _recorded_stop(rig)
+    except BaseException:
+        await rig.facade.stop()  # B1's ports are process-wide: never left wired (C-2.11)
+        raise
+    again = await rig.restart()
+    try:
+        assert str(stop.id) == key.entity_id
+        lifecycle = await again.facade.hydrate(ACCOUNT, stop.id, environment="demo")
+        await again.quiet()
+        assert again.facade.state(stop.id) == (lifecycle, after["protection"])
+        assert lifecycle == after["lifecycle"]
+        held = before["snapshot"]["context"]
+        assert {name: again.context(stop)[name] for name in held} == held
+    finally:
+        await again.facade.stop()
+
+
 # --- INV-1, INV-2 and INV-5 on the library --------------------------------------------------------
 
 
@@ -330,6 +477,9 @@ SAMPLES: dict[str, dict[str, Any]] = {
     "MATERIALISED": {"pass_id": "p1", "source": "reconcile"},
     "FIRST_FILL": {}, "SL_DEADLINE": {}, "SL_OBSERVED": {"updated_time": 9, "size": "1"},
     "SL_LOST": {"updated_time": 9, "size": "1"},
+    "TERMS_CHANGED": {
+        "exchange_order_id": "x1", "trigger_price": "61000", "qty": "1", "updated_time": 9
+    },
 }  # fmt: skip
 
 

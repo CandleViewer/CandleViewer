@@ -5,7 +5,9 @@ binding, the step writer and the in-memory stores, and through the OMS facade, t
 rule 7 asks of it: the entry sends nothing; the row takes `submitted`, a live state, whatever its
 order's exchange status, so its fills apply as steps; each fill is committed as a live row's is
 (`commit_fill`); KILL never cancels it, a CANCEL reaches it only through the cancel service, and
-the facade refuses an AMEND of it; recovery replays it from its first row."""
+the facade refuses an AMEND of it; recovery replays it from its first row. Chart version 5 (#848,
+E29-T05's contract-first PR) adds rule 7's sixth: the row's trigger price and quantity follow its
+order's through `TERMS_CHANGED`, a written step (INV-B1-q)."""
 
 from __future__ import annotations
 
@@ -35,8 +37,8 @@ from candleviewer.oms.recovery import RebuiltOrder, rebuild
 from candleviewer.statechart import build
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.registry import DEFAULT_MACHINES_DIR, Registry
-from candleviewer.storage.repositories.orders import NewOrder
-from tests.unit.oms.order_rig import ACCOUNT, NOW_US, build_rig
+from candleviewer.storage.repositories.orders import ORDER_STATE_OF, NewOrder
+from tests.unit.oms.order_rig import ACCOUNT, NOW_US, build_rig, gated
 from tests.xstate_contract._harness import Charts, exits, instrument, node_at, park, settle, walk
 from tests.xstate_contract.b01_ports import Commands, Store
 
@@ -152,7 +154,7 @@ def test_the_entry_is_taken_only_in_draft_and_invokes_no_service() -> None:
     assert arm == {"target": "#order.lifecycle.submitted", "actions": ["record_materialised"]}
     submitted = node_at(CHART, "lifecycle.submitted")
     assert "invoke" not in submitted and submitted["entry"] == ["persist_event"]
-    assert (CHART["version"], CHART["context"]["recorded_stop"]) == (4, False)
+    assert (CHART["version"], CHART["context"]["recorded_stop"]) == (5, False)
 
 
 @pytest.mark.parametrize(
@@ -524,6 +526,322 @@ async def test_inv_b1_p_a_recorded_stop_is_never_killed_and_keeps_every_fill_pro
         if filled == 1:
             fills[-1] = "fill"
         assert kinds == [*steps, *fills]
+
+
+# --- (6) The terms step (version 5): rule 7's sixth item, INV-B1-q -------------------------------
+
+#: The stop's order on the exchange with another trigger price and quantity, changed in place.
+TERMS: dict[str, Any] = {"exchange_order_id": EXCHANGE_ID, "trigger_price": "61000", "qty": "2"}
+GROUPED = ("submitted", "triggered", "partially_filled")
+
+
+async def _to(interp: Any, state: str) -> None:
+    """The materialised row moved to *state*: by a trigger push, or by a fill of 0.4."""
+    await _send(interp, "MATERIALISED", order=STOP)
+    if state == "triggered":
+        await _send(interp, "TRIGGERED", updated_time=1)
+    elif state == "partially_filled":
+        await _send(interp, "EXEC", **_fill("e1", "0.4"))
+    assert _leaf(interp) == state
+
+
+def test_terms_changed_arms_three_live_states_reenter_with_audited_fall_through() -> None:
+    """INV-B1-q: only `submitted`, `triggered` and `partially_filled` take `TERMS_CHANGED`, each
+    with exactly the guarded arm that re-enters it and the ordered unguarded fall-through (C-07b);
+    no region or root names it. The `reenter: true` of each arm is pinned here: without it the arm
+    is internal and writes no row, and CV-LINT-REENTER cannot see an absolute self-target
+    (#4267)."""
+    taking = {path: _arms(node, "TERMS_CHANGED") for path, node in walk(CHART)}
+    assert {path for path, arms in taking.items() if arms} == {f"lifecycle.{s}" for s in GROUPED}
+    for state in GROUPED:
+        guarded: dict[str, Any] = {"target": f"#order.lifecycle.{state}"}
+        guarded |= {"guard": "recorded_terms_changed", "reenter": True, "actions": ["adopt_terms"]}
+        assert taking[f"lifecycle.{state}"] == [guarded, {"actions": ["audit_terms_refused"]}]
+        assert taking[f"lifecycle.{state}"][0]["reenter"] is True
+    assert (_arms(CHART, "TERMS_CHANGED"), CHART["version"]) == ([], 5)
+
+
+@pytest.mark.parametrize(
+    ("extra", "source"),
+    [({}, "ws_private"), ({"pass_id": "p1", "source": "reconcile"}, "reconcile")],
+    ids=["private_stream", "reconciliation"],
+)
+@pytest.mark.parametrize("state", GROUPED)
+async def test_terms_changed_in_a_live_state_writes_one_step_and_moves_the_terms(
+    state: str, extra: dict[str, str], source: str
+) -> None:
+    """INV-B1-q, INV-B1-g: the push re-enters the row's live state, so its `order_events` row
+    (`exchange_push` from the path that met it, the state kept) and the row's `qty`,
+    `trigger_price` and generated `leaves_qty` are written with the step; nothing is sent, no
+    notice is posted, and the reduce-only row starts no `protection` region (INV-B1-o)."""
+    with _booked() as book:
+        async with _machine() as interp:
+            await _to(interp, state)
+            seq, outbox = interp.context["event_seq"], list(interp.context["outbox"])
+            await _send(interp, "TERMS_CHANGED", **TERMS, updated_time=2, **extra)
+            context = interp.context
+            leaves = 2 - Decimal(context["filled_qty"])
+            assert (_leaf(interp), context["event_seq"]) == (state, seq + 1)
+            assert (context["qty"], context["trigger_price"]) == ("2", "61000")
+            assert Decimal(context["leaves_qty"]) == leaves
+            assert (book.commands.sent, context["outbox"]) == ([], outbox)
+            assert _leaf(interp, "protection") == "not_required"
+        row = await book.store.get(ACCOUNT, STOP_ID)
+        assert row is not None
+        assert (row.qty, row.trigger_price, row.leaves_qty) == (Decimal(2), Decimal(61000), leaves)
+        stored = ORDER_STATE_OF[cast(Any, state)]
+        assert (await book.events())[-1] == ("exchange_push", source, stored, stored)
+
+
+async def test_terms_changed_write_refused_rolls_back_keeping_the_terms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S7, S11: a terms step whose write the store refuses rolls back: the row stays `submitted`
+    with its terms, the context is as it was, and no step is stored."""
+    store = Store()
+    monkeypatch.setattr(b01, "_ports", b01.OrderPorts(persist=store, commands=Commands()))
+    async with _machine() as interp:
+        await _send(interp, "MATERIALISED", order=STOP)
+        store.refuse = ValueError("the store refused the step")
+        before = copy.deepcopy(interp.context)
+        receipt = await _send(interp, "TERMS_CHANGED", **TERMS, updated_time=2)
+        assert receipt.error is not None
+        assert (_leaf(interp), interp.context) == ("submitted", before)
+        assert [step.event for step in store.steps] == ["MATERIALISED"]
+
+
+@pytest.mark.parametrize(
+    ("state", "push"),
+    [
+        ("submitted", TERMS | {"exchange_order_id": "x-other"}),
+        ("submitted", {"exchange_order_id": EXCHANGE_ID, "updated_time": 2}),
+        ("submitted", TERMS | {"trigger_price": "0"}),
+        ("partially_filled", TERMS | {"qty": "0.3"}),
+    ],
+    ids=["other_order", "no_term", "zero_term", "under_filled"],
+)
+async def test_terms_changed_not_taken_changes_nothing_and_records_terms_refused(
+    state: str, push: dict[str, Any]
+) -> None:
+    """INV-B1-q, C-07b: a push the guard denies is consumed by the ordered unguarded arm, never
+    deferred: the row, its context and its events stay as they were; it is logged at ERROR and
+    recorded as `terms_refused`, never as `guard_denied`, which the OMS answers with `FAULT`."""
+    with _booked() as book, capture_logs() as logs:
+        async with _machine() as interp:
+            await _to(interp, state)
+            before, events = copy.deepcopy(interp.context), await book.events()
+            await _send(interp, "TERMS_CHANGED", **push)
+            assert (_leaf(interp), interp.context, interp.deferred_count) == (state, before, 0)
+            assert (await book.events(), book.records[-1:]) == (events, ["terms_refused"])
+    assert "guard_denied" not in book.records
+    assert ("b01_terms_refused", "error") in [(e["event"], e["log_level"]) for e in logs]
+
+
+async def test_terms_changed_unchanged_repeat_writes_nothing_and_records_nothing() -> None:
+    """S4, S5: a redelivered push naming the terms the row now holds is no step and no anomaly:
+    the second delivery writes no event and no record, and is logged at INFO only."""
+    with _booked() as book, capture_logs() as logs:
+        async with _machine() as interp:
+            await _send(interp, "MATERIALISED", order=STOP)
+            await _send(interp, "TERMS_CHANGED", **TERMS, updated_time=2)
+            events, context = await book.events(), copy.deepcopy(interp.context)
+            await _send(interp, "TERMS_CHANGED", **TERMS, updated_time=2)
+            assert (await book.events(), interp.context, book.records) == (events, context, [])
+    said = [(e["event"], e["log_level"]) for e in logs if e["event"].startswith("b01_terms")]
+    assert said == [("b01_terms_unchanged", "info")]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [{"surprise": 1}, {"source": "rest"}, {"qty": 2}, {"trigger_price": None}],
+    ids=["unknown_key", "rest_source", "int_qty", "null_trigger"],
+)
+async def test_terms_changed_payload_outside_schema_refused_at_send(bad: dict[str, Any]) -> None:
+    """`TERMS_CHANGED`'s payload is closed and typed: money only as decimal text, met only on the
+    private stream or by reconciliation; anything else is refused at `send()`, before any
+    action."""
+    with _booked():
+        async with _machine() as interp:
+            await _send(interp, "MATERIALISED", order=STOP)
+            before = copy.deepcopy(interp.context)
+            with pytest.raises(InvalidEventPayloadError):
+                await interp.send("TERMS_CHANGED", wait=True, **(TERMS | bad))
+            assert interp.context == before
+
+
+async def test_terms_changed_during_a_cancel_waits_then_applies_after_the_refusal() -> None:
+    """S10: `cancel_pending` has no arm, so the root defers the push while the cancel is in
+    flight; the cancel service refuses (the position is open, 24 Sec.8.8 rule 6), the row is live
+    again, and the deferred push is taken there as a written step."""
+    gate, held = gated({"ok": False})
+    with _booked() as book:
+        book.commands.on_cancel = held
+        async with _machine() as interp:
+            await _send(interp, "MATERIALISED", order=STOP)
+            await _send(interp, "CANCEL")
+            await _send(interp, "TERMS_CHANGED", **TERMS, updated_time=2)
+            assert (_leaf(interp), interp.deferred_count) == ("cancel_pending", 1)
+            gate.set()
+            await settle()
+            assert (_leaf(interp), interp.context["trigger_price"]) == ("submitted", "61000")
+        assert (await book.events())[-2:] == [
+            ("cancel_ack", "rest", "pending_cancel", "accepted"),
+            ("exchange_push", "ws_private", "accepted", "accepted"),
+        ]
+
+
+_TERMS_STEPS = st.lists(
+    st.one_of(
+        st.tuples(
+            st.just("TERMS"),
+            st.sampled_from(("0", "0.25", "0.5", "1", "2")),
+            st.sampled_from((None, "61000", "62000")),
+            st.booleans(),  # foreign: a push of another exchange order
+        ),
+        st.tuples(st.just("EXEC"), st.sampled_from(("0.25", "0.5")), st.none(), st.just(False)),
+    ),
+    max_size=8,
+)
+
+
+@settings(max_examples=25, deadline=None)
+@given(triggered=st.booleans(), steps=_TERMS_STEPS)
+async def test_inv_b1_q_terms_move_only_by_a_written_step_property(
+    triggered: bool, steps: list[tuple[str, str, str | None, bool]]
+) -> None:
+    """INV-B1-q: whatever terms pushes and fills interleave, after a trigger push or not, the row's
+    trigger price and quantity are the context's after every event; they change exactly when one
+    `exchange_push` step that keeps its state is written, and never for a foreign push, a quantity
+    not above zero or one under the filled quantity; INV-1 holds, the row is never killed, nothing
+    is sent and its `protection` region stays `not_required`."""
+    b01._ATTEMPTS.clear()  # per example: the autouse reset runs once per test
+    with _booked() as book:
+        async with _machine() as interp:
+            await _send(interp, "MATERIALISED", order=STOP)
+            if triggered:
+                await _send(interp, "TRIGGERED", updated_time=1)
+            for n, (kind, qty, trigger, foreign) in enumerate(steps, start=2):
+                before, events = dict(interp.context), await book.events()
+                if kind == "EXEC":
+                    await _send(interp, "EXEC", **_fill(f"e{n}", qty))
+                else:
+                    push = {"exchange_order_id": "x-foreign" if foreign else EXCHANGE_ID}
+                    push |= {"qty": qty} | ({} if trigger is None else {"trigger_price": trigger})
+                    await _send(interp, "TERMS_CHANGED", **push, updated_time=n)
+                context, written = interp.context, (await book.events())[len(events) :]
+                terms = (context["qty"], context["trigger_price"])
+                assert 0 <= Decimal(context["filled_qty"]) <= Decimal(context["qty"])
+                row = await book.store.get(ACCOUNT, STOP_ID)
+                assert row is not None and (row.qty, row.trigger_price) == tuple(
+                    map(Decimal, terms)
+                )
+                moved = terms != (before["qty"], before["trigger_price"])
+                steps_kept = [e for e in written if e[0] == "exchange_push" and e[2] == e[3]]
+                assert moved == (len(steps_kept) == 1) and (kind == "TERMS" or not moved)
+                under = Decimal(qty) <= 0 or Decimal(qty) < Decimal(before["filled_qty"])
+                assert not (moved and (foreign or under))
+                assert _leaf(interp) != "killed"
+            assert (book.commands.sent, _leaf(interp, "protection")) == ([], "not_required")
+
+
+async def test_terms_changed_to_a_placed_order_via_facade_audited_anomaly_never_fault() -> None:
+    """S6, OM-T04: a `TERMS_CHANGED` the facade delivers to an order that is not a recorded stop's
+    is no step: B1's fall-through records `terms_refused`, which the facade writes as
+    `oms.reconcile_anomaly` (denied, error) with the refusal and trigger, and the order stays as
+    it was, never answered with `FAULT` or quarantined."""
+    rig = build_rig()
+    try:
+        order = await rig.submitted()
+        history = await rig.events.list_for_order(ACCOUNT, order.id)
+        push = {"exchange_order_id": "x1", "trigger_price": "61000", "qty": "2", "updated_time": 2}
+        await rig.facade.push(ACCOUNT, order.id, "TERMS_CHANGED", push)
+        await rig.quiet()
+        [record] = [r for r in rig.audit.records if r.reason == "terms_refused"]
+        assert (record.action, record.outcome, record.severity) == (
+            "oms.reconcile_anomaly",
+            "denied",
+            "error",
+        )
+        refusal = "the row is not a recorded stop's (24 Sec.8.3 rule 7)"
+        assert (record.detail["refusal"], record.detail["trigger"]) == (refusal, "TERMS_CHANGED")
+        assert rig.facade.state(order.id) == ("submitted", "not_required")
+        assert await rig.events.list_for_order(ACCOUNT, order.id) == history
+    finally:
+        await rig.facade.stop()
+
+
+@pytest.mark.parametrize(
+    ("lead", "extra"),
+    [
+        ((), {}),
+        (("TRIGGERED", {"updated_time": 1}), {"pass_id": "p1", "source": "reconcile"}),
+        (("EXEC", _fill("e1", "0.4")), {}),
+    ],
+    ids=["submitted", "triggered_by_reconciliation", "partially_filled"],
+)
+async def test_terms_changed_hydration_replays_the_written_step(
+    lead: tuple[Any, ...], extra: dict[str, str]
+) -> None:
+    """24 Sec.8.2 Recovery: the fold of a history holding the terms step equals the row, its new
+    terms included, and after a crash the facade hydrates the machine that crashed, configuration
+    and context, replaying the step off B1's table; nothing is written, audited, notified or
+    sent."""
+    rig, order = build_rig(), _stop()
+    try:
+        assert await rig.facade.materialise(order, environment="demo") == "submitted"
+        if lead:
+            await rig.facade.push(ACCOUNT, STOP_ID, *lead)
+        terms = TERMS | {"updated_time": 2} | extra
+        await rig.facade.push(ACCOUNT, STOP_ID, "TERMS_CHANGED", terms)
+        await rig.quiet()
+        history = await rig.events.list_for_order(ACCOUNT, STOP_ID)
+        last = history[-1]
+        assert (last.kind, last.from_state) == ("exchange_push", last.to_state)
+        row = await rig.orders.get(ACCOUNT, STOP_ID)
+        assert row is not None and rebuild(history) == RebuiltOrder.of_row(row)
+        assert (row.qty, row.trigger_price) == (Decimal(2), Decimal(61000))
+        state, context = rig.facade.state(STOP_ID), dict(rig.context(order))
+    except BaseException:
+        await rig.facade.stop()  # B1's ports are process-wide: never left wired (C-2.11)
+        raise
+    again = await rig.restart()
+    try:
+        assert state is not None
+        assert await again.facade.hydrate(ACCOUNT, STOP_ID, environment="demo") == state[0]
+        await again.quiet()
+        assert (again.facade.state(STOP_ID), again.context(order)) == (state, context)
+        assert await again.events.list_for_order(ACCOUNT, STOP_ID) == history
+        assert (again.audit.records, again.notices.got, again.commands.sent) == ([], [], [])
+    finally:
+        await again.facade.stop()
+
+
+def test_recorded_terms_changed_guard_total_denies_by_default() -> None:
+    """A6: pure and total. An empty context or event is a denial, a context it cannot read is a
+    denial logged once at ERROR, and a push of the row's order with new terms is taken."""
+    context = copy.deepcopy(CHART["context"]) | {"recorded_stop": True, "qty": "1"}
+    context |= {"exchange_order_id": EXCHANGE_ID, "trigger_price": "62000"}
+    push = SimpleNamespace(payload=TERMS)
+    assert b01.recorded_terms_changed({}, None) is False
+    assert b01.recorded_terms_changed(context, None) is False
+    with capture_logs() as logs:
+        assert b01.recorded_terms_changed(cast(Any, object()), push) is False
+    assert [(e["event"], e["guard"]) for e in logs] == [
+        ("b01_guard_failed", "recorded_terms_changed")
+    ]
+    assert b01.recorded_terms_changed(context, push) is True
+
+
+async def test_adopt_terms_unreadable_push_changes_nothing_and_logs() -> None:
+    """A1: the action is total; a push it cannot take, only reachable past the guard, changes
+    nothing and is logged at ERROR."""
+    context = copy.deepcopy(CHART["context"]) | {"recorded_stop": True}
+    context |= {"exchange_order_id": EXCHANGE_ID, "qty": "1", "trigger_price": "62000"}
+    before = copy.deepcopy(context)
+    with capture_logs() as logs:
+        await b01.adopt_terms(None, context, SimpleNamespace(payload={"qty": "2"}), None)
+    assert context == before
+    assert [entry["event"] for entry in logs] == ["b01_terms_not_adopted"]
 
 
 # --- The binding: the guard, the action and the first-row rule (A1, A6) -------------------------
