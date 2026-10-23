@@ -19,7 +19,7 @@ from candleviewer.accounts.verification import Refusal
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.order_entry import OrderEntryCheck
 from candleviewer.domain.primitives import AccountId, Environment, Px, Symbol
-from candleviewer.exchange.base.errors import AuthError, ExchangeError
+from candleviewer.exchange.base.errors import AuthError, ExchangeError, OmsErrorCode
 from candleviewer.exchange.base.models import TickerEvent
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.errors import OmsNotReady, OrderEntryRefused, TradingDisabled
@@ -142,12 +142,12 @@ class TradingSwitchesBinding:
         gate: OrderEntryCheck,
     ) -> None:
         self._live_enabled, self._live_flag = live_enabled, live_flag
-        self.kill_switch, self._gate = kill_switch, gate
+        self._kill_switch, self._gate = kill_switch, gate
 
     def refusal(self, account_id: AccountId, environment: Environment) -> TradingDisabled | None:
         if environment not in _NOT_LIVE and not (self._live_enabled and self._live_flag()):
             return TradingDisabled()
-        switched = self.kill_switch.refusal(account_id)
+        switched = self._kill_switch.refusal(account_id)
         if switched is not None:
             return switched
         gate = self._gate.refusal(account_id)
@@ -156,7 +156,7 @@ class TradingSwitchesBinding:
     def announce(self, *, metrics: Metrics) -> None:
         """At startup (20 Sec.6.2): `oms_interim_ports{port="kill_switch"}` at 1 with one WARNING
         while the interim serves the B18 kill switch, else at 0."""
-        announce_interim_port("kill_switch", self.kill_switch, metrics=metrics)
+        announce_interim_port("kill_switch", self._kill_switch, metrics=metrics)
 
 
 class KeyStandingReactions(Protocol):
@@ -174,8 +174,12 @@ class CredentialRejectionsBinding:
     """`CredentialRejections` (24 Sec.8.4 "A refused credential"; ruling Q10): the return code
     through the adapter's key-verdict table to its `Refusal`; one outside it, `10004` among them, or
     none is `UNKNOWN_KEY`, fail closed. The key standing takes it first, in memory, so the account
-    admits no order in this process until a recorded pass clears it; then the Owner is paged. The
-    durable reaction is #4243."""
+    admits no order in this process until a recorded pass clears it; then the Owner is paged, the
+    summary naming the account. The durable reaction is #4243.
+
+    Every report flips the standing (fail closed, C-2.21). Only a report of kind `AUTH_ERROR`
+    reads the table, which `OmsCommandPort._venue`, the port's one caller, sends with a return
+    code; a report of any other kind is `UNKNOWN_KEY` whatever code it carries, and pages."""
 
     def __init__(
         self,
@@ -200,7 +204,13 @@ class CredentialRejectionsBinding:
     async def refused(
         self, account_id: AccountId, *, error_code: str, exchange_ret_code: int | None
     ) -> None:
-        refusal = self.verdict(exchange_ret_code)
+        # Fail closed (ruling Q10): any report flips the standing. Only an `AUTH_ERROR` reads the
+        # adapter's table; any other kind, which `_venue` does not report today, is `UNKNOWN_KEY`.
+        refusal = (
+            self.verdict(exchange_ret_code)
+            if error_code == OmsErrorCode.AUTH_ERROR
+            else Refusal.UNKNOWN_KEY
+        )
         self._standings.credential_rejected(account_id, refusal)  # held before it is logged
         _log().critical(
             _PAGE,
@@ -209,10 +219,11 @@ class CredentialRejectionsBinding:
             exchange_ret_code=exchange_ret_code,
             refusal=refusal.value,
         )
+        summary = f"{_PAGE}: account {account_id}"
         try:
-            self._pager.raise_alert("page", _PAGE, machine_kind="order")
+            self._pager.raise_alert("page", summary, machine_kind="order")
         except Exception as exc:  # the standing holds whatever the pager does
-            _log().critical("oms_pager_failed", summary=_PAGE, failure=type(exc).__name__)
+            _log().critical("oms_pager_failed", summary=summary, failure=type(exc).__name__)
 
 
 class ClockHealthBinding:

@@ -64,6 +64,7 @@ from candleviewer.oms.errors import (
     AckWithoutOrderId,
     ClockDriftBlocked,
     HandoverUnavailable,
+    OmsNotReady,
     Problem,
     ResendRefused,
     StopRequestInFlight,
@@ -71,6 +72,7 @@ from candleviewer.oms.errors import (
     TradingDisabled,
     problem_for,
 )
+from candleviewer.oms.fakes import FakeClockHealth
 from candleviewer.oms.order_machine import OrderAuditRecord
 from candleviewer.oms.ports import (
     KeyedRecord,
@@ -78,7 +80,7 @@ from candleviewer.oms.ports import (
     PositionKey,
     RefuseWhileWaiting,
 )
-from candleviewer.oms_wiring import STOP_REQUEST_BOUND_S
+from candleviewer.oms_wiring import STOP_REQUEST_BOUND_S, ClockHealthBinding
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
 from candleviewer.storage.repositories.orders import NewOrder
@@ -771,6 +773,25 @@ async def test_a_tripped_clock_halt_refuses_a_resumed_create_after_the_switches(
     assert rig.switches.asked == [(order.exchange_account_id, "live" if live else "demo")]
     assert rig.calls(venue) == _LOOKUP
     assert rig.audits.written == [] and rig.notices.got == []
+
+
+@pytest.mark.parametrize("age_us", [SECOND_US, 2 * DAY_US], ids=["young", "past_the_bound"])
+async def test_an_unmeasured_clock_leaves_a_resumed_create_unsent_as_not_ready(age_us: int) -> None:
+    """Ruling Q8 (CR-S3B2-02): the binding answers a clock no measurement has answered for with
+    `OmsNotReady`, which `ClockHalt.refusal` lets through, after the switches, before the bound
+    is read. The port logs it `oms_resend_refused` with its code, as a refusal is, and raises it as
+    it is, so B1 lands the order in `unknown`: nothing sent, no record, no alert."""
+    rig = build_rig(clock=ClockHealthBinding(FakeClockHealth(lambda: 0.0)))  # never measured
+    order = new_order(LIVE_ACCOUNT, "live")
+    with capture_logs() as logs, pytest.raises(OmsNotReady) as refused:
+        await _resumed(rig, order, age_us=age_us)
+    assert problem_for(refused.value).code == "oms_not_ready"
+    assert rig.switches.asked == [(LIVE_ACCOUNT, "live")]
+    assert rig.calls(rig.live) == _LOOKUP
+    assert rig.audits.written == [] and rig.notices.got == []
+    [line] = [log for log in logs if log["event"] == "oms_resend_refused"]
+    assert (line["refusal"], line["code"]) == ("OmsNotReady", "oms_not_ready")
+    assert line["order_link_id"] == order.order_link_id and line["log_level"] == "warning"
 
 
 @pytest.mark.parametrize(

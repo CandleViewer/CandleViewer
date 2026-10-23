@@ -19,7 +19,7 @@ from candleviewer.admin.flags import LIVE_ENABLED, StoredFlag
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId, Environment
-from candleviewer.exchange.base.errors import ExchangeError
+from candleviewer.exchange.base.errors import ExchangeError, OmsErrorCode
 from candleviewer.exchange.base.models import TickerEvent
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.flags_wiring import FeatureFlagsRuntime
@@ -130,6 +130,15 @@ def test_switches_ask_no_live_precondition_of_another_environment(environment: E
     assert kill.asked == entry.asked == [ACCOUNT]
 
 
+@pytest.mark.parametrize("environment", ["mainnet", "Live", "paper", ""])
+def test_switches_count_an_environment_outside_the_set_as_live(environment: str) -> None:
+    """CR-S3B2-01, C-2.21 fail closed: only demo and testnet meet no live precondition, so any
+    other value, a typo or an environment added later, is held to both while they are off."""
+    binding, kill, entry = _switches(live=False, flag=False)
+    refused = binding.refusal(ACCOUNT, cast(Environment, environment))
+    assert type(refused) is TradingDisabled and (kill.asked, entry.asked) == ([], [])
+
+
 def test_switches_run_the_kill_switch_before_the_gate_and_the_first_refusal_wins() -> None:
     b18 = TradingDisabled()
     binding, kill, entry = _switches(b18=b18, gate=_GATE)
@@ -171,8 +180,10 @@ def test_the_kill_switch_is_announced_as_an_interim_port_while_the_interim_serve
     switch: Any, gauge: float
 ) -> None:
     """Q5: the interim admits and is announced with one WARNING; a real switch counts 0."""
-    binding, metrics = _switches()[0], Metrics("live")
-    binding.kill_switch = switch
+    binding = TradingSwitchesBinding(
+        live_enabled=False, live_flag=lambda: False, kill_switch=switch, gate=_Check()
+    )
+    metrics = Metrics("live")
     with capture_logs() as logs:
         binding.announce(metrics=metrics)
     labels = {"env": "live", "port": "kill_switch"}
@@ -226,25 +237,57 @@ async def test_a_refused_credential_flips_the_standing_then_pages(
     binding = CredentialRejectionsBinding(
         standings, key_refusal=ExchangeBybitService.key_refusal, pager=pager
     )
-    await binding.refused(ACCOUNT, error_code="AUTH_ERROR", exchange_ret_code=code)
+    await binding.refused(ACCOUNT, error_code=OmsErrorCode.AUTH_ERROR, exchange_ret_code=code)
     assert standings.rejected == [(ACCOUNT, refusal)]
-    assert pager.pages == [("page", "oms_credential_rejected", "order", [(ACCOUNT, refusal)])]
+    page = ("page", f"oms_credential_rejected: account {ACCOUNT}", "order", [(ACCOUNT, refusal)])
+    assert pager.pages == [page]  # CR-S3B2-04: the page names the account
 
 
-async def test_no_code_is_unknown_key_without_asking_the_table_and_a_pager_fault_is_logged() -> (
-    None
-):
+@pytest.mark.parametrize("kind", ["RATE_LIMITED", "PERMISSION_DENIED", "CLOCK_DRIFT", "auth_error"])
+async def test_a_report_of_another_kind_than_auth_error_is_unknown_key_and_pages(
+    kind: str,
+) -> None:
+    """SEC-S3B2-01: fail closed (ruling Q10). Only an `AUTH_ERROR` reads the adapter's table, so a
+    report of any other kind, whatever return code it carries, is `UNKNOWN_KEY`: the standing
+    flips and the Owner is paged, never a report left with the account admitted."""
+    standings = _Standings()
+    pager = _Pager(standings)
+    binding = CredentialRejectionsBinding(
+        standings, key_refusal=ExchangeBybitService.key_refusal, pager=pager
+    )
+    await binding.refused(ACCOUNT, error_code=kind, exchange_ret_code=10005)  # the table's verdict
+    assert standings.rejected == [(ACCOUNT, Refusal.UNKNOWN_KEY)]
+    page = ("page", f"oms_credential_rejected: account {ACCOUNT}", "order", standings.rejected)
+    assert pager.pages == [page]
+
+
+async def test_no_code_is_unknown_key_without_asking_the_table() -> None:
     def table(error: ExchangeError) -> tuple[str, int] | None:
         raise AssertionError("the table keys on codes")
 
     standings = _Standings()
+    pager = _Pager(standings)
+    binding = CredentialRejectionsBinding(standings, key_refusal=table, pager=pager)
+    await binding.refused(ACCOUNT, error_code="AUTH_ERROR", exchange_ret_code=None)
+    assert standings.rejected == [(ACCOUNT, Refusal.UNKNOWN_KEY)]
+    assert [page[:2] for page in pager.pages] == [
+        ("page", f"oms_credential_rejected: account {ACCOUNT}")
+    ]
+
+
+async def test_a_pager_fault_is_logged_never_raised_and_the_standing_holds() -> None:
+    standings = _Standings()
+    pager = _Pager(standings, RuntimeError("the pager hung up"))
     binding = CredentialRejectionsBinding(
-        standings, key_refusal=table, pager=_Pager(standings, RuntimeError("down"))
+        standings, key_refusal=ExchangeBybitService.key_refusal, pager=pager
     )
     with capture_logs() as logs:
-        await binding.refused(ACCOUNT, error_code="AUTH_ERROR", exchange_ret_code=None)
-    assert standings.rejected == [(ACCOUNT, Refusal.UNKNOWN_KEY)]
+        await binding.refused(ACCOUNT, error_code="AUTH_ERROR", exchange_ret_code=10005)
+    assert standings.rejected == [(ACCOUNT, Refusal.PERMISSION_DENIED)]  # held before the page
     assert [log["event"] for log in logs] == ["oms_credential_rejected", "oms_pager_failed"]
+    failed = logs[-1]
+    assert failed["failure"] == "RuntimeError" and str(ACCOUNT) in failed["summary"]
+    assert "hung up" not in str(logs)  # the fault's class is logged, never its text
 
 
 # --- ClockHealthBinding and InstrumentsBinding: not composed or not measured is not ready ---------
@@ -324,12 +367,13 @@ class _Tickers:
         (_Tickers("100", "101", "99"), Decimal("100.5")),  # the mid
         (_Tickers(None, "101", "99"), Decimal("99")),  # one side missing: the last price
         (_Tickers("0", "101", "99"), Decimal("99")),  # a side at zero is no quote
+        (_Tickers("100", "NaN", "99"), Decimal("99")),  # nor is one that is no number
         (_Tickers(None, None, None), None),
         (_Tickers("100", "101", "99", stale=True), None),  # a stale symbol has no price
         (None, None),  # no ticker stream composed
     ],
 )
-async def test_the_reference_price_is_the_mid_else_the_last(
+async def test_the_reference_price_is_the_quoted_mid_else_the_last_price_else_none(
     tickers: _Tickers | None, price: Decimal | None
 ) -> None:
     assert await ReferencePricesBinding(tickers).reference_price("BTCUSDT") == price

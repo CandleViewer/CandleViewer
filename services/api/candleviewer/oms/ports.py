@@ -907,8 +907,7 @@ class SubmissionPorts:
 
 
 def announce_interim_ports(ports: SubmissionPorts, *, metrics: Metrics) -> tuple[PortName, ...]:
-    """At startup: `announce_interim_port` for each slot (R4). Returns the slots interim ports
-    fill."""
+    """At startup: `announce_interim_port` for each slot (R4); returns the slots interims fill."""
     return tuple(
         name
         for name in PORT_NAMES
@@ -919,8 +918,11 @@ def announce_interim_ports(ports: SubmissionPorts, *, metrics: Metrics) -> tuple
 def announce_interim_port(
     name: PortName | RuntimePortName, port: object, *, metrics: Metrics
 ) -> bool:
-    """At startup, for one port: `oms_interim_ports{port}` set to 1 with one WARNING when an interim
-    (`Interim`) serves it, else to 0 with none. Returns whether an interim serves it."""
+    """At startup, for one port: `oms_interim_ports{port}` at 1 with one WARNING while an interim
+    serves it, else 0; returns whether one does. A `name` outside `INTERIM_PORT_LABELS`, the
+    gauge's closed set, is a `ValueError` before any series (the cap would drop it silently)."""
+    if name not in INTERIM_PORT_LABELS:
+        raise ValueError(f"{name!r} is not a label of {INTERIM_PORTS_METRIC}")
     spec = next(spec for spec in CATALOGUE if spec.name == INTERIM_PORTS_METRIC)
     gauge = metrics.gauge(spec.name, spec.help, spec.labels, max_series=spec.max_series)
     gauge.labels(name).set(1 if isinstance(port, Interim) else 0)

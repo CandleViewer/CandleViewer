@@ -88,7 +88,10 @@ class ClockHalt:
 
     def refusal(self) -> ClockDriftBlocked | None:
         """None while order entry may go on, else the refusal to answer with. A halt clears here,
-        once the clock's last measurement is healthy and younger than the trip."""
+        once the clock's last measurement is healthy and younger than the trip. A third outcome:
+        slice 3's `ClockHealthBinding` (ruling Q8) raises `OmsNotReady` from `assert_healthy` for a
+        clock not composed or not measured yet. That is no halt: it passes through as it is,
+        trips nothing and clears nothing, and a caller answers it as such."""
         try:
             self._clock.assert_healthy()
         except ClockDriftError:

@@ -29,6 +29,7 @@ from candleviewer.oms.fakes import (
 from candleviewer.oms.order_link import OrderLinkIdParts
 from candleviewer.oms.order_machine import OrderAuditRecord, _order_fields
 from candleviewer.oms.ports import (
+    ClockHealth,
     KeyedRecord,
     OrderHandovers,
     RefuseWhileWaiting,
@@ -327,8 +328,10 @@ def build_rig(
     handovers: OrderHandovers | None = None,
     gate: StopRequestGate | None = None,
     created_at: Callable[[], datetime] = lambda: T0,
+    clock: ClockHealth | None = None,
     **port_kwargs: Any,
 ) -> Rig:
+    """`clock` is what the halt reads, by default the rig's measured `health`."""
     now, monotonic = Now(), Monotonic()
     demo = FakeTradingPort(environment="demo", now_us=now)
     live = FakeTradingPort(environment="live", now_us=now)
@@ -342,7 +345,7 @@ def build_rig(
     health = FakeClockHealth(monotonic)
     health.measure()
     metrics = Metrics("demo")
-    halt = ClockHalt(health, monotonic=monotonic, metrics=metrics)
+    halt = ClockHalt(health if clock is None else clock, monotonic=monotonic, metrics=metrics)
     notices = Notices()
     if gate is None:
         gate = RefuseWhileWaiting(
