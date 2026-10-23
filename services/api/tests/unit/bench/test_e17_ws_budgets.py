@@ -23,6 +23,8 @@ from bench.ingestion import gate
 from bench.ingestion.budgets import Check, Verdict
 from bench.ws import HARNESS_VERSION, budgets, profiles, w5
 from bench.ws.budgets import Facts, Scrape
+from candleviewer.observability.metrics_catalogue import RTT_BUCKETS
+from candleviewer.ws import pacing
 
 PROFILE: dict[str, Any] = {
     "name": "A",
@@ -972,6 +974,17 @@ def test_w5_wants_its_class_announced_to_every_connection(
     out = judged(probed(f"mixed-{cls}", delay, {cls: sent}, rtt))  # a cohort of 5 connections
     assert (f"mixed-{cls}" not in out["skipped"]) is told
     assert any(f"announced {cls} 4 times to 5 connections" in n for n in out["notes"]) is not told
+
+
+def test_w5_cuts_the_probe_round_trips_at_the_lines_the_product_classifies_them_by() -> None:
+    """The judge reads `cv_ws_rtt_seconds` at 150 ms and 500 ms, exactly on a bucket edge, so no
+    interpolation stands between a sample and its class: if the product moves a line or an edge, so
+    must the harness."""
+    assert (w5.LAGGING_RTT_MS, w5.SATURATED_RTT_MS) == (
+        pacing.LAGGING_RTT_MS,
+        pacing.SATURATED_RTT_MS,
+    )
+    assert {w5.LAGGING_RTT_MS / 1000, w5.SATURATED_RTT_MS / 1000} <= set(RTT_BUCKETS)
 
 
 def test_w5_prices_the_wait_in_the_window_that_release_to_decode_cannot_see() -> None:
