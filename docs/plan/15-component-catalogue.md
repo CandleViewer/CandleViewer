@@ -148,8 +148,10 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 - **Tier**: Atom · **Purpose**: compact label (tag on journal entry, symbol category, "(estimated)" chip).
 - **Props**: `label` · `variant: "neutral"|"info"|"warning"|"danger"|"estimated"` · `icon?` · `removable?` · `onRemove?`.
-- **A11y**: if removable, remove control is a labelled `IconButton` (CMP-002) child, not a bare `×`.
-- **Tokens**: `color.chip.*`, `radius.pill`.
+- **Variants**: neutral (default), info, warning, danger, estimated. info/warning/danger always render their fixed registry glyph (colour-never-alone); `icon?` applies to neutral only and is ignored otherwise. estimated renders the literal "(estimated)" with a dashed outline and no icon. Only neutral chips may be removable.
+- **States**: default; focus-visible and disabled only for the interactive configurations (the removable chip's remove IconButton; the estimated chip). Disabled is the chip's own state and is never stacked on a disabled parent. RBAC/env-gated removal uses CMP-079 on the remove IconButton, or omits the control; superseded by E09-D09 §2.2 T2 (the E05-D02 boards PR restates it).
+- **A11y**: if removable, remove control is a labelled `IconButton` (CMP-002) child, not a bare `×`. Enter/Space on the remove button fires `onRemove`; the owning group (CMP-169, CMP-055) moves focus to the next chip, else the previous one, else its input, never to `<body>`.
+- **Tokens**: `radius.badge`, `size.control.height` (height), `space.inset.sm` (paddingX; paddingLeft when removable), `space.inset.xs` (gap; paddingRight when removable), `size.icon`, `type.ui.caption`; neutral: `color.neutral.subtle` fill + `color.border.default` 1 px stroke + `color.text.secondary` label/icon; info/warning/danger: `color.status.{tone}.subtle` fill + `color.text.primary` label + mandatory `info`/`warning`/`danger` glyph in `color.status.{tone}.strong`; estimated: no fill + dashed 1 px `color.status.info.strong` outline + `color.text.secondary` label "(estimated)"; focus ring `color.focus.ring`. (Replaces `color.chip.*` and `radius.pill`, which are not shipped semantic tokens.)
 - **E25-D05**: the `estimated` variant is a deprecated alias that renders CMP-227 EstimatedBadge (the one canonical badge, bound to the methodology drawer by its provider) — new consumers use CMP-227 directly.
 - **Storybook**: AllVariants, Removable, EstimatedChip (with tooltip).
 - **Tests**: unit, visual, axe, keyboard remove.
@@ -158,17 +160,17 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 - **Tier**: Atom · **Purpose**: small numeric/status indicator (unread count, connection dot).
 - **Props**: `variant: "count"|"dot"` · `value?: number` · `tone: "neutral"|"info"|"success"|"warning"|"danger"`.
-- **A11y**: `aria-label` describing meaning (e.g. "3 unread alerts"), never colour-only — dot variant always paired with adjacent text/icon at point of use.
-- **Tokens**: `color.status.*`.
+- **A11y**: `aria-label` describing meaning (e.g. "3 unread alerts"), never colour-only — dot variant always paired with adjacent text/icon at point of use. A dot is always `aria-hidden` and never rendered alone. It sits beside a visible word and, for info/success/warning/danger, the tone's registry glyph. A standalone count is `role="img"` + `aria-label` naming what is counted and any condition ("3 unread alerts"; ARIA 1.2 prohibits `aria-label` on a generic span). On a labelled control (e.g. the notifications IconButton) the count is `aria-hidden` and joins the control's name ("Notifications, 3 unread"). Tone never carries the condition alone.
+- **Tokens**: dot `color.status.{info|success|warning|danger}.default` (neutral: `color.neutral.default`), 8 px = `space.inset.xs` padding, centred in a `size.icon` slot, `radius.badge`, placed on `color.surface.app` or `color.surface.canvas`; count `color.status.{tone}.subtle` fill + 1 px `color.status.{tone}.strong` outline (neutral: `color.neutral.subtle` + `color.neutral.default`), numeral `type.num.xs` in `color.text.primary`, height and min-width `size.icon`, paddingX `space.inset.xs`, `radius.badge`.
 - **Storybook**: Count, Dot, AllTones.
 - **Tests**: unit, visual, axe.
 
 ### CMP-013 Avatar / ProfileBadge base
 
 - **Tier**: Atom · **Purpose**: initials/icon circle for accounts/managers; base for CMP-106 AccountBadge.
-- **Props**: `label: string` (initials derived) · `color?: string` (deterministic per-account hash) · `size`.
-- **A11y**: decorative unless only content — pairs with visible text label at point of use.
-- **Tokens**: `color.avatar.palette[]`, `radius.circle`.
+- **Props**: `label: string` (initials derived) · `color?: string` (deterministic per-account hash) · `size: "sm"|"md"` (default `md`; sm = `size.icon`, one initial; md = `size.control.height`, two initials).
+- **A11y**: decorative unless only content — pairs with visible text label at point of use. Decorative → `aria-hidden="true"`; only content → `role="img"` + `aria-label` = the full label.
+- **Tokens**: `radius.badge` (circle on a square box), `size.control.height` (md) / `size.icon` (sm), initials `type.ui.label` (md) / `type.ui.caption` (sm) in `color.text.primary`, fill `color.neutral.subtle` until an avatar palette is approved. (Replaces `color.avatar.palette[]`, which is not shipped, and `radius.circle`, which is a primitive.)
 - **Storybook**: Default, AllSizes, ColorPalette.
 - **Tests**: unit, visual.
 
@@ -211,9 +213,9 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-018 Divider
 
 - **Tier**: Atom · **Purpose**: visual/semantic separator.
-- **Props**: `orientation: "horizontal"|"vertical"` · `inset?`.
+- **Props**: `orientation: "horizontal"|"vertical"` (default `horizontal`) · `inset?: boolean` (default false; insets both ends: horizontal `space.inset.md`, vertical `space.inset.xs`) · `decorative?: boolean` (Radix Separator; true removes it from the accessibility tree).
 - **A11y**: `role="separator"` when semantically meaningful (e.g. inside menu), decorative otherwise.
-- **Tokens**: `color.border.subtle`.
+- **Tokens**: rule fill `color.border.subtle`, 1 px thick (equal to primitive `border.hairline`; no semantic width token); inset `space.inset.md` (horizontal) / `space.inset.xs` (vertical); vertical default length `size.control.height`.
 - **Storybook**: Horizontal, Vertical.
 - **Tests**: unit, visual.
 
@@ -229,18 +231,19 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-020 Typography primitives (Text, Heading, NumericText, MonoText)
 
 - **Tier**: Atom · **Purpose**: consistent type scale application; `NumericText` enforces tabular-nums + semantic colour + sign formatting for price/qty/PnL.
-- **Props** (NumericText): `value: number` · `format: "price"|"qty"|"pct"|"pnl"|"notional"` · `precision?` · `signDisplay?: "auto"|"always"|"never"` · `colorBySign?: boolean`.
-- **A11y**: `NumericText` renders a visually-hidden expanded reading (`aria-label`) for screen readers when abbreviated (e.g. "1.2M" → aria-label "1,200,000") per §4.
-- **Tokens**: `font.family.ui/mono`, `font.size.scale[]`, `color.text.buy/sell/neutral`.
+- **Props** (NumericText): `value: number` · `format: "price"|"qty"|"pct"|"pnl"|"notional"` · `precision?` · `signDisplay?: "auto"|"always"|"never"` (zero is always unsigned; `format="pnl"` and `colorBySign` both require `"always"`, per `05-accessibility-standard.md` §4) · `colorBySign?: boolean` (default false). Heading: `level: 1–6` (independent of its visual style).
+- **A11y**: when abbreviated, `NumericText` renders the visible abbreviation `aria-hidden="true"` plus a visually-hidden expanded reading (e.g. "1.2M" → "1,200,000"); it does not put `aria-label` on the span (ARIA 1.2 prohibits naming generic elements) per §4. `Heading` renders `h1`–`h6` by `level`.
+- **Tokens**: `type.ui.{caption,body,body-strong,label}` (Text) · `type.ui.{heading-sm,heading-md,heading-lg,display}` (Heading) · `type.num.{xs,sm,base,md,lg,xl}` (NumericText, MonoText; JetBrains Mono, fixed-width digits) · `color.text.primary` · `colorBySign`: `color.buy.default` / `color.sell.default` / `color.neutral.default`.
 - **Storybook**: TypeScale, NumericFormats, PnLColoring, AbbreviatedWithAriaLabel.
 - **Tests**: unit (formatting matrix incl. locale-independent decimal point per trading convention), visual, axe.
 
 ### CMP-021 Link
 
 - **Tier**: Atom · **Purpose**: in-app navigation/external link.
-- **Props**: `href?` · `to?` (internal route) · `external?: boolean` (renders icon + `rel="noopener"` + opens Electron shell external browser).
-- **A11y**: native `<a>`, focus-visible ring, external-link icon has `aria-hidden` with adjacent visually-hidden "(opens externally)" text.
-- **Tokens**: `color.text.link`.
+- **Props**: `href?` · `to?` (internal route) · `external?: boolean` (renders icon + `rel="noopener"` + opens Electron shell external browser) · `disabled?/disabledReason?` (RBAC/env-gated destinations render disabled-with-reason per CMP-079).
+- **States**: default, focus-visible, disabled, disabled-with-reason (CMP-079: disabled look + `locked` glyph + reason tooltip; superseded by E09-D09 §2.2 T2 (the E05-D02 boards PR restates it)); the link text is always underlined (`color.text.link` is 2.16:1 against body text, so colour alone cannot mark a link, WCAG 1.4.1).
+- **A11y**: native `<a>`, focus-visible ring, external-link icon has `aria-hidden` with adjacent visually-hidden "(opens externally)" text; disabled renders `<a role="link" aria-disabled="true">` with no `href` (not focusable); disabled-with-reason adds `tabindex="0"` and `aria-describedby` pointing at the reason tooltip; superseded by E09-D09 §2.2 T2 (the E05-D02 boards PR restates it).
+- **Tokens**: `color.text.link` (text, underline, external-link and locked icons), `type.ui.body`, `size.icon`, `space.inset.xs`, `color.focus.ring`, `radius.control`, `opacity.disabled`, `border.focus`.
 - **Storybook**: Internal, External.
 - **Tests**: unit, visual, axe.
 
@@ -267,16 +270,16 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tier**: Atom · **Purpose**: tiny inline trend line (Deep Stats rolling-N, watchlist row mini-chart).
 - **Props**: `data: number[]` · `width/height` · `colorBySign?: boolean`.
 - **A11y**: `role="img"` + `aria-label` summarising trend ("up 3.2% over 20 bars"); underlying data reachable via the parent row's DOM-mirror table (not a standalone interactive control).
-- **Tokens**: `color.text.buy/sell`.
-- **Storybook**: Uptrend, Downtrend, Flat.
+- **Tokens**: stroke `color.buy.default` (net up) / `color.sell.default` (net down) / `color.neutral.default` (flat) when `colorBySign`, otherwise `color.text.tertiary` (as E06-D02 §2.3); 1.5 px stroke (icon-grid weight), no fill, transparent background.
+- **Storybook**: Uptrend, Downtrend, Flat (each with `colorBySign` on and off).
 - **Tests**: unit, visual, axe.
 
 ### CMP-025 Avatar Group / Stack
 
 - **Tier**: Atom · **Purpose**: overlapping stack of account badges (trade-group summary).
 - **Props**: `items: {label,color}[]` · `max: number` (overflow shows `+N` chip).
-- **A11y**: `aria-label` listing all item labels even when visually truncated.
-- **Tokens**: `space.avatar.overlap`.
+- **A11y**: `aria-label` listing all item labels even when visually truncated. The container is `role="img"` with `aria-label="{n} accounts: {every label}"`; avatars and the `+N` chip are `aria-hidden`.
+- **Tokens**: CMP-013 Avatar (md) instances, each in a fixed `size.icon`-wide slot, so each avatar overlaps the next by the difference (8 px compact); 2 px `color.surface.canvas` cut-out ring; `+N` chip `color.neutral.subtle` + `type.num.sm` in `color.text.secondary`, `radius.badge`, height and min-width `size.control.height`, paddingX `space.inset.xs`. (Replaces `space.avatar.overlap`, which is not shipped.)
 - **Storybook**: Default, Overflow.
 - **Tests**: unit, visual, axe.
 
@@ -323,8 +326,8 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 - **Tier**: Atom · **Purpose**: labelled separator inside long forms (order ticket sections, rule condition groups).
 - **Props**: `label: string`.
-- **A11y**: renders as a non-interactive `role="separator"` with `aria-orientation="horizontal"`; label is visible text, not just aria.
-- **Tokens**: `color.border.subtle`, `font.size.caption`.
+- **A11y**: renders as a non-interactive `role="separator"` with `aria-orientation="horizontal"`, named by `aria-labelledby` pointing at the visible label, which is a sibling of the separator (never a child: a separator's children are presentational); label is visible text, not just aria.
+- **Tokens**: label `type.ui.caption` + `color.text.secondary`; gap `space.inset.sm`; rule = CMP-018 Divider (horizontal) in `color.border.subtle`.
 - **Storybook**: Default.
 - **Tests**: unit, visual, axe.
 
@@ -341,9 +344,9 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-032 Rating/Confidence Dots ("estimated confidence indicator")
 
 - **Tier**: Atom · **Purpose**: low/med/high confidence indicator for heuristic detectors (iceberg/stop-run/regime).
-- **Props**: `level: "low"|"medium"|"high"` · `label?`.
-- **A11y**: never colour-only — filled-dot-count + text label always paired. The dots are a supplement to a numeric confidence value the consumer renders adjacent (or passes as `label`), never its replacement; the word low / medium / high is always present in the text (E25-D05 §9).
-- **Tokens**: `color.status.*`.
+- **Props**: `level: "low"|"medium"|"high"` · `label?` (default "{Level} confidence"; an override must still name the level).
+- **A11y**: never colour-only — filled-dot-count + text label always paired. The dots are a supplement to a numeric confidence value the consumer renders adjacent (or passes as `label`), never its replacement; the word low / medium / high is always present in the text (E25-D05 §9). The dots are `aria-hidden`; the visible label is the accessible text.
+- **Tokens**: filled dot `color.status.info.default`, empty dot 1 px `color.text.tertiary` outline, dot 8 px = `space.inset.xs` padding, `radius.badge`, dot gap `space.inset.xs`, dots-to-label gap `space.inset.sm`, label `type.ui.caption` in `color.text.secondary`.
 - **Storybook**: AllLevels.
 - **Tests**: unit, visual, axe.
 
@@ -351,8 +354,9 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 - **Tier**: Atom · **Purpose**: copy-to-clipboard affordance (API key display, audit record id, order id).
 - **Props**: `value: string` · `label` (a11y name) · `onCopied?`.
-- **A11y**: `aria-label`, announces "Copied" via a transient polite live region on success.
-- **Tokens**: `color.action.ghost`.
+- **States**: default, copied (`check` glyph in `color.status.success.default`, reverts to default after 2 s), focus-visible, disabled.
+- **A11y**: `aria-label`, announces "Copied" via a transient polite live region on success; the announcement never contains the copied value.
+- **Tokens**: inherits CMP-002 IconButton `variant="ghost"`, `size="md"` (`color.text.secondary`, `color.text.primary`, `color.surface.hover`, `radius.control`, `size.control.height`, `size.icon`); copied glyph `color.status.success.default`.
 - **Storybook**: Default, CopiedState.
 - **Tests**: unit, visual, axe, clipboard-mock interaction test.
 
@@ -387,10 +391,10 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-037 SwatchLegendItem
 
 - **Tier**: Atom · **Purpose**: one legend row (colour + label + value), building block for CMP-113 HeatmapLegend and chart legends.
-- **Props**: `color` · `label` · `value?`.
-- **A11y**: grouped under parent legend's `role="group"` with `aria-label`.
-- **Tokens**: `color.*` (context-dependent).
-- **Storybook**: Default.
+- **Props**: `color` (a semantic `color.*` token reference) · `label` · `value?` · `glyph?: string` (non-colour channel, e.g. `▲`/`▼`, `aria-hidden`; required when `color` encodes direction: buy/sell, up/down).
+- **A11y**: grouped under parent legend's `role="group"` with `aria-label`; each item is an `li` of the legend's `ul`; swatch and glyph are `aria-hidden`, so the label text carries the meaning.
+- **Tokens**: swatch `size.icon` square, fill = the keyed data token (context-dependent `color.*`), 1 px `color.border.strong` outline; gap `space.inset.sm`; row min-height `size.row.height`; label `type.ui.caption` + `color.text.secondary`; value = CMP-020 NumericText `type.num.sm` + `color.text.primary`.
+- **Storybook**: Default, WithoutValue, WithGlyph.
 - **Tests**: unit, visual, axe.
 
 ### CMP-038 InlineSpinnerText ("Loading…" text+spinner pairing)

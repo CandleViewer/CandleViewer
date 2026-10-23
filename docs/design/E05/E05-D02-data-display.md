@@ -29,11 +29,14 @@ B1–B7, C1–C14 and D1–D12 (§6) and icon optical sizes (§7) apply here unc
   CMP-016 Tooltip. Superseded by E09-D09 §2.2 T2 (#3953); the boards PR folds §1, §5 E10, the CMP-011 and CMP-021 sections of §6, §7, the audit's gated rows and the catalogue's gated clauses into T2, and T2 governs until then. Overrides only; nothing is detached.
 - **No token change.** The Penpot token mirror is slice 1 §4's, and `packages/ui/tokens` has not changed since
   `73441f53`.
-- **Catalogue alignment, after #3914 merges.** The twelve entries' updates (Tokens lines with the shipped tokens, new
-  Variants and States lines, Props and A11y additions) are prepared but not in this commit, because slice 1 reformats
-  the whole of `docs/plan/15-component-catalogue.md` and an edit here would conflict with it. They land in this PR
-  once #3914 merges. Five updates are held: three wait for an owner answer (§5 E11, E15, E19) and two are Penpot
-  follow-ups, not catalogue lines.
+- **Catalogue alignment, in this PR.** The twelve entries' updates are applied to
+  `docs/plan/15-component-catalogue.md` on top of slice 1's edits (#3914): Tokens lines with the shipped tokens, a
+  Variants line (CMP-011), States lines (CMP-011, CMP-021, CMP-033), Props and A11y additions and the CMP-024 and
+  CMP-037 Storybook lines; no other entry changes, and the CMP-011 and CMP-021 gated clauses carry the E09-D09 §2.2
+  T2 marker. Five updates are held: three wait for an owner answer (§5 E11, CMP-012's connection-dot A11y sentence;
+  E15, CMP-020's Storybook rename to AbbreviatedWithExpandedReading; E19, CMP-011's `onOpenMethodology?` prop) and
+  two are Penpot follow-ups, not catalogue lines (CMP-021 re-copies its Props and A11y lines and CMP-033 its A11y
+  line into their Penpot descriptions, §4.3).
 
 | Component                          | Penpot component                  | Variants | Live instances inside                            |
 | ---------------------------------- | --------------------------------- | -------- | ------------------------------------------------ |
@@ -81,7 +84,7 @@ the Penpot-only layout workarounds and Penpot's own variant-set chrome.
    (§6).
 3. The owner decisions this slice needs are collected in §5; each component's own questions are listed with it in §6.
    What the boards show that is clipped, overlapping or off is in §4.3.
-4. The catalogue text quoted in §6 is the current entry, before the alignment edits (§1).
+4. The catalogue text quoted in §6 is each entry as it stands on `main`, before this PR's alignment edits (§1).
 
 ## 3. Conventions
 
@@ -254,7 +257,7 @@ are not asked again:
 - **E10 — Chip variant rules?** Only neutral chips are removable; info, warning and danger always show their registry
   glyph (`icon?` applies to neutral only); estimated shows the literal "(estimated)" with a dashed outline; gated
   removal belongs to the consumer (CMP-079 on the nested IconButton, or no remove control); after a removal the owning
-  group moves focus (CMP-169, CMP-055). **Recommended:** approve; the prepared catalogue edits carry these as the
+  group moves focus (CMP-169, CMP-055). **Recommended:** approve; this PR's catalogue edits carry these as the
   Variants, States and A11y lines. **Affects:** CMP-011. Its gated-removal clause is superseded by E09-D09 §2.2 T2 (#3953); the boards PR folds §1, §5 E10, the CMP-011 and CMP-021 sections of §6, §7, the audit's gated rows and the catalogue's gated clauses into T2, and T2 governs until then.
 - **E11 — Badge details?** Cap the displayed count at "99+" (the name keeps the full number); keep dot + glyph + word,
   per conventions §4, while light warning and danger dots are identical (A6); connection state belongs to CMP-239 and
@@ -914,7 +917,7 @@ _Board `CMP-030 · Divider-Label — doc` PENDING (text-first merge, 2026-10-23)
 **Catalogue (verbatim):**
 
 - **Props**: `level: "low"|"medium"|"high"` · `label?`.
-- **A11y**: never colour-only — filled-dot-count + text label always paired.
+- **A11y**: never colour-only — filled-dot-count + text label always paired. The dots are a supplement to a numeric confidence value the consumer renders adjacent (or passes as `label`), never its replacement; the word low / medium / high is always present in the text (E25-D05 §9).
 
 | Axis  | Values            | Default |
 | ----- | ----------------- | ------- |
