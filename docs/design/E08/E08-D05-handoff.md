@@ -2,8 +2,9 @@
 
 Ticket E08-D05 (#126); spec `docs/design/E08/E08-D05.md`. Six component contracts change (spec §13): one `16`
 §11.4 block each for CMP-213, CMP-219 and CMP-026, and one for the input, menu and `⋯` (CMP-048 / CMP-160,
-CMP-041, CMP-002). Tables 4, 5, Density and Essential exceptions share one shape, so they are given once, with a
-component column (§ "Shared tables"). **Status:** text pass and boards drawn; the Penpot and PNG lines are closed
+CMP-041, CMP-002). Every T2 control on these surfaces (spec §6.2, §6.3, §9.1) uses CMP-079 RbacGate and CMP-019
+Icon `lock` unchanged (E09-D09 §2.2). Tables 4, 5, Density and Essential exceptions share one shape, so they are given
+once, with a component column (§ "Shared tables"). **Status:** text pass and boards drawn; the Penpot and PNG lines are closed
 (page `E08-D05 Symbol search & quick-switcher` · id `30d9b30e-268f-80df-8008-d47e99ea26c2`, B01–B27); the FE ticket, not yet
 named (spec Q8), writes the stories. Penpot token sets = `packages/ui/tokens` at `1e495858930b5a88509e1912d86b203f74a27cab`.
 
@@ -121,11 +122,11 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ### Table 1 — Variants × States
 
-| Variant          | State                                                                | Penpot variant    | Story name                      | Notes                                                          |
-| ---------------- | -------------------------------------------------------------------- | ----------------- | ------------------------------- | -------------------------------------------------------------- |
-| `filtered-empty` | no matches: scope reminder + Clear search, Check again after a check | B03 / no-matches  | `FilteredEmptyNoMatch` (new)    | copy verbatim from spec §6.2                                   |
-| `filtered-empty` | status rule: View symbol info + Clear search                         | B03 / status-rule | `FilteredEmptyStatusRule` (new) | `status_reason` or the fallback                                |
-| `error`          | load failed: Retry now + Refresh from Bybit (Owner) or T2            | B03 / load-failed | `ErrorWithTwoActions` (new)     | the Ref line only with `instance`; over CMP-027 (spec A-D05-5) |
+| Variant          | State                                                                                                              | Penpot variant    | Story name                      | Notes                                                          |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------- | ------------------------------- | -------------------------------------------------------------- |
+| `filtered-empty` | no matches: scope reminder + Clear search, Check again after a check (CMP-079 T2 `search.check_cooldown` for 60 s) | B03 / no-matches  | `FilteredEmptyNoMatch` (new)    | copy verbatim from spec §6.2                                   |
+| `filtered-empty` | status rule: View symbol info + Clear search                                                                       | B03 / status-rule | `FilteredEmptyStatusRule` (new) | `status_reason` or the fallback                                |
+| `error`          | load failed: Retry now + Refresh from Bybit (Owner) or T2                                                          | B03 / load-failed | `ErrorWithTwoActions` (new)     | the Ref line only with `instance`; over CMP-027 (spec A-D05-5) |
 
 ### Table 2 — Keyboard
 
@@ -250,7 +251,7 @@ Screen reader: written, not run; the release-level pass (`05` §8) runs it. Exce
 - [x] Contrast matrix for every pair introduced — the audit script, exit 0.
 - [x] CVD simulation reviewed — section C of the script; the light collapses are carried by words.
 - [x] A Penpot variant and a story per state — the variants are drawn (table 1 of each block names the board); stories named above.
-- [x] Disabled-with-reason (CMP-079) for RBAC-gated actions — T2 items and buttons (spec §6.3).
+- [x] Disabled-with-reason (CMP-079 RbacGate, CMP-019 Icon `lock`) for role- and state-gated controls — T2 items and buttons (spec §6.3) and the cooldown's Check again (spec §6.2, `search.check_cooldown`).
 - [x] Loading, empty and error designed — the catalogue states with their own copy (spec §6.2).
 - [x] Keyboard table matches a keyboard path — spec §8; the test is the FE ticket's.
 - [x] Accessible name / role table — spec §9.1 and the tables 3 above.
