@@ -220,8 +220,9 @@ def make_rules_router(
         try:
             check_bounds(body["ir"], "rule")
             rule = build_rule(body["ir"])
-        except RuleCompileError as exc:  # a failing IR is still a 200 with valid=false
-            errs = [i.to_dict() for i in exc.issues]
+            canonicalize(rule)  # what compile hashes: a value the hash cannot hold is not valid
+        except (RuleCompileError, IrValueError) as exc:  # still a 200 with valid=false
+            errs = [i.to_dict() for i in _compile_error(exc).issues]
             return JSONResponse(
                 {"valid": False, "errors": errs, "warnings": [], "referenced_variables": [],
                  "referenced_actions": [], "estimated_evaluations_per_minute": 0}

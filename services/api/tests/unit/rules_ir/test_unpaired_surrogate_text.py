@@ -18,7 +18,9 @@ from typing import Any
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from pydantic import ValidationError
 
+from candleviewer.domain.text import UNPAIRED_SURROGATE
 from candleviewer.rules.ir import Rule, canonical, canonicalize, ir_hash
 
 FIXTURES = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "rule_ir"
@@ -143,3 +145,48 @@ def test_canonicalize_any_drawn_text_hashes_or_is_refused_never_unicode_encode_e
         assert lone and exc.reason == REASON, exc
     else:
         assert not lone
+
+
+def _node_ids(doc: Any, path: tuple[str | int, ...] = ()) -> list[tuple[str | int, ...]]:
+    """Where each ``node_id`` sits in a rule document: conditions, operands and actions."""
+    if isinstance(doc, dict):
+        found = [(*path, "node_id")] if "node_id" in doc else []
+        return found + [p for k, v in doc.items() for p in _node_ids(v, (*path, k))]
+    if isinstance(doc, list):
+        return [p for i, v in enumerate(doc) for p in _node_ids(v, (*path, i))]
+    return []
+
+
+def _fixture(name: str) -> Any:
+    return json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
+
+
+#: Between them: arithmetic, boolean, temporal and comparison nodes, and actions.
+_NODE_FIXTURES = ("nested_arith", "form_all_of_any_of", "temporal_sustained", "form_simple_0")
+_LONE = "\ud800"
+_LAYOUTS = {
+    "nested value": {"c1": {"x": _LONE}},
+    "list of objects": {"comments": [{"id": "k1", "text": _LONE}]},
+}
+SITES = [
+    pytest.param(name, path, _LONE, id=f"{name}:{'.'.join(map(str, path))}")
+    for name in _NODE_FIXTURES
+    for path in _node_ids(_fixture(name))
+] + [
+    pytest.param("form_simple_0", ("graph_layout",), layout, id=f"layout {label}")
+    for label, layout in _LAYOUTS.items()
+]
+
+
+@pytest.mark.parametrize(("name", "path", "value"), SITES)
+def test_rule_model_lone_surrogate_in_a_node_id_or_layout_is_a_validation_error(
+    name: str, path: tuple[str | int, ...], value: Any
+) -> None:
+    doc = _fixture(name)
+    holder = doc
+    for step in path[:-1]:
+        holder = holder[step]
+    holder[path[-1]] = value
+    with pytest.raises(ValidationError) as caught:
+        Rule.model_validate(doc)
+    assert UNPAIRED_SURROGATE in {e["msg"] for e in caught.value.errors()}

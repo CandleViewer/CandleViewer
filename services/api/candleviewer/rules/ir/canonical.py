@@ -5,17 +5,21 @@ sha256 over UTF-8 bytes. Computed server-side only, before persistence (never fr
 round-trip). Any change to this algorithm changes every hash: bump ``IR_HASH_VERSION`` and ship an
 upcaster. A float (only an untyped ``params`` holds one) hashes as ``Decimal(float.__repr__(x))``;
 a value with no canonical form is refused with ``IrValueError`` (``422 rule_ir_invalid``, not 500):
-a non-finite number, or text holding a lone surrogate (it has no UTF-8 form, so no hash holds it).
+a non-finite number, a number whose plain form would exceed 64 characters (``MAX_PLAIN_WIDTH``;
+every number outside the decimal context's range is one), or text holding a lone surrogate (it
+has no UTF-8 form, so no hash holds it).
 """
 
 from __future__ import annotations
 
+import decimal
 import hashlib
 import json
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from candleviewer.domain.plain_decimal import PlainWidthError, plain_decimal
 from candleviewer.domain.text import UNPAIRED_SURROGATE, escape_unpaired, unpaired_surrogate
 from candleviewer.rules.errors import RulesError
 from candleviewer.rules.ir.models import Rule
@@ -29,10 +33,14 @@ PRESENTATION_KEYS = frozenset({"graph_layout", "editor"})
 METADATA_KEYS = frozenset({"created_by", "created_at", "updated_at"})
 _EXCLUDED = PRESENTATION_KEYS | METADATA_KEYS
 
+#: The refusals of a number: no finite value, and a form too wide to hash.
+NOT_FINITE = "Input should be a finite number"
+OUT_OF_RANGE = "Number is outside the range a rule can hold"
+
 
 class IrValueError(RulesError, ValueError):
-    """A value the canonical form cannot hold: a non-finite number, text holding a lone surrogate,
-    or (``IrTypeError``) a type with no JSON form. ``loc`` is its field path, e.g.
+    """A value the canonical form cannot hold: a non-finite number, a number out of range, text
+    holding a lone surrogate, or (``IrTypeError``) a type with no JSON form. ``loc`` is its path:
     ``("actions", 0, "params", "weight")``, built step by step while the error unwinds (never on
     the success path); a refused key ends it with the code point escaped (``\\ud800``), so it
     prints as UTF-8. ``args`` is ``(loc, reason)``, so the error pickles and copies."""
@@ -55,17 +63,34 @@ class IrTypeError(IrValueError, TypeError):
     """A Python type with no canonical form: only code builds one, never JSON."""
 
 
+def _decimal(text: str) -> Decimal:
+    """``Decimal(text)`` for ``parse_ir_json``, whose one signal, a literal the type cannot read (an
+    exponent past ``decimal.MAX_EMAX``), is refused as the hash refuses a number out of range."""
+    try:
+        return Decimal(text)
+    except decimal.InvalidOperation as exc:
+        raise IrValueError((), OUT_OF_RANGE) from exc
+
+
 def parse_ir_json(text: str) -> Rule:
     """Parse IR JSON text into a ``Rule`` without a float round-trip (numbers become Decimal)."""
-    raw = json.loads(text, parse_float=Decimal)
+    raw = json.loads(text, parse_float=_decimal)
     return Rule.model_validate(raw)
 
 
 def dec_str(d: Decimal) -> str:
-    """Plain notation, no exponent, no trailing fractional zeros, no ``+``, ``-0`` -> ``0``."""
-    if d == 0:
-        return "0"
-    return format(d.normalize(), "f")
+    """Plain notation, no exponent, no trailing fractional zeros, no ``+``, ``-0`` -> ``0``.
+
+    A number whose plain form would exceed 64 characters (``MAX_PLAIN_WIDTH``) is an
+    ``IrValueError``, decided before the form is built: every number outside the decimal context's
+    range is one.
+    """
+    try:
+        return plain_decimal(d)
+    except PlainWidthError as exc:
+        raise IrValueError((), OUT_OF_RANGE) from exc
+    except decimal.DecimalException as exc:  # InvalidOperation: an sNaN
+        raise IrValueError((), OUT_OF_RANGE if d.is_finite() else NOT_FINITE) from exc
 
 
 def _strip(node: Any) -> Any:
@@ -129,7 +154,7 @@ def _normalise(o: Any) -> Any:
         return dec_str(Decimal(o))
     if isinstance(o, Decimal):
         if not o.is_finite():  # NaN / Infinity: Python's json reads them; no hash holds them
-            raise IrValueError((), "Input should be a finite number")
+            raise IrValueError((), NOT_FINITE)
         return dec_str(o)
     if isinstance(o, UUID):
         return str(o)
