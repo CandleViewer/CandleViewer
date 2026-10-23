@@ -16,9 +16,9 @@ and no fourth list:
    `OWN_GUARD`, with the record its own guard writes. A route in neither fails
    `test_every_admin_route_is_classified`.
 
-The executed rows are the cells. Of the two served `not_executable` rows, `PATH_GATED_ONLY` gives
-`rewrapKek` its none and stale cells, which its path guard answers before any body is read, and
-`NO_CELL` says why `PUT /admin/log-level` has none.
+The executed rows are the cells. Of the three served `not_executable` rows, `PATH_GATED_ONLY` gives
+`rewrapKek` and `rotateAuditSigningKey` their none and stale cells, which their path guard answers
+before any body is read, and `NO_CELL` says why `PUT /admin/log-level` has none.
 
 The rules the cells hold:
 
@@ -98,7 +98,7 @@ _AUDIT_READ = OwnGuard(
 _RECORDER = "E16's recorder administration; `recording:write`, Managers included (04 row 51)"
 
 #: Every served admin or users route that is not on `admin_router`. Reviewed data: SR-E42-09 wants
-#: it to shrink to the users routers. The two `not_executable` matrix rows are classified too.
+#: it to shrink to the users routers. The `not_executable` matrix rows are classified too.
 OWN_GUARD: dict[str, OwnGuard] = {
     "POST /users": _ENFORCE,
     "GET /users/invites": _ENFORCE,
@@ -117,6 +117,9 @@ OWN_GUARD: dict[str, OwnGuard] = {
     "DELETE /users/{userId}/sessions/{sessionId}": _ENFORCE,
     "POST /admin/keys/kek-rewrap": OwnGuard(
         "rbac.denied", True, "#2266 D2: `enforce`, its body validated before RBAC"
+    ),
+    "POST /admin/keys/audit-signing/rotate": OwnGuard(
+        "rbac.denied", True, "#889 S7: `enforce`, its body and key validated before RBAC"
     ),
     "GET /admin/audit": _AUDIT_READ,
     "POST /admin/audit/verify": _AUDIT_READ,
@@ -185,6 +188,12 @@ PATH_GATED_ONLY: dict[str, str] = {
         "422 for every actor; a valid one reaches the CI app's missing credential store (403 "
         "`kek_unavailable` for the Owner). Every actor is asserted in `test_admin_kek.py` "
         "(#2266 D2)"
+    ),
+    "POST /admin/keys/audit-signing/rotate": (
+        "as `rewrapKek`: past the `keys` guard the body and `Idempotency-Key` are validated before "
+        "RBAC, so the matrix's empty body is a 422 for every actor, and a valid one reaches the CI "
+        "app's missing credential store (403 `kek_unavailable`). Every actor is asserted in "
+        "`test_audit_signing_rotate.py` (#889 S7)"
     ),
 }
 #: Served `not_executable` rows with no cell, and why none can exist.

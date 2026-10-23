@@ -330,6 +330,7 @@ _REFUSAL_STATUSES: frozenset[int] = frozenset({401, 422, 501, 503})
 
 _STUB_STATUS: dict[str, int] = {
     "POST /admin/keys/kek-rewrap": 422,  # the empty body, validated before RBAC (#2266 D2)
+    "POST /admin/keys/audit-signing/rotate": 422,  # likewise (#889 S7)
     "PUT /admin/log-level": 501,
     "POST /auth/login": 422,
     "POST /auth/mfa/recovery": 422,

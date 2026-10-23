@@ -156,6 +156,7 @@ Option (a), with Ed25519.
    and paged), as `export_key_unopenable` (its wrap or seal does not open) or `export_key_mismatch`, and the
    directory names no key until a restart. Another environment's row, or a row missing its wrap or its seal, is
    refused before the record.
+   2026-10-23 (#889 S7): or until a rotation whose new key passes the check, decision 5's clause.
 
 4. **Verification.** `GET /admin/audit/signing-keys`, read-only, for `audit:read` (the Owner and Managers;
    `auth/rbac_seed.json:237`), lists the environment's keys, active and retired, each with its validity window, its
@@ -188,6 +189,13 @@ Option (a), with Ed25519.
    2026-10-22 (#889 S2): the idempotency record is durable. S4's new key row carries the request's idempotency key and
    fingerprint, and a retry rebuilds the `200` from the key rows, so it commits with the rotation; the in-memory cache
    alone would lose it at a restart.
+   2026-10-23 (#889 S7): built. M2's `SigningKeyRotator`, minted once in `admin/wiring.py` for `admin` alone (R9),
+   answers in 22's order: the idempotency lookup, with no in-memory record; `403 kek_unavailable`; the `429`; then
+   `409 conflict`. It makes the next version as boot makes the first (S5's `generate`, the `cv-export-dek-v1` wrap
+   proven to open), and the store commits it with its record. Once the rotation commits, M2 reads the active key back
+   and checks it (`check_key`). If it passes, the unavailable state clears with no restart: the gauge falls to 0, the
+   health reason clears, and the signer and the directory serve the new key. If it fails, the key is latched as at
+   boot.
 6. **Backups and KEK re-wrap.** The sealed seed lives in Postgres, so the database backup set carries it, as
    ciphertext only (ADR-0009 Design §7; SR-091); the KEK is kept outside that set as ADR-0009 says (Design §1, §7;
    Amendment 1). A KEK re-wrap covers the signing-key rows as it covers `auth_keys` (Amendment 4; yaml:12567-12570;
@@ -263,7 +271,7 @@ path is S0 → S2 → S8 → S9 → S10; S3 starts at once, S5 merges after S0, 
 | S7 | The list and rotate routes: the list marks `verified` only from M2's check (decision 4); rotation is single-flight and rate-capped (decision 5) | S2, S6 |
 | S8 | The export writer: batches with verify's renderings, canonical lines, deterministic gzip, SHA-256, off-loop I/O, the file `0600` and opened `O_NOFOLLOW` (repo practice; S8b confirms both). Unit: the lines pinned byte for byte | S2 |
 | S9 | The download and the requester rule (`getJob` too), dark until S10. 2026-10-22: four PRs, S9-0 the requester rule and `getJob`, S9-1a the reader (the lookup, the expiry, the file's checks and its guarded stream, mounting nothing), S9-1b the route, S9-2 the boot sweep and the hard-link probe | S2, S8 |
-| S10 | The signed export replaces the 501, through the injected signer; an export that straddles a rotation fails the job, as does one while S9-2's boot probe found no hard links (`links_ok`); the SR-E42-08 mark; AC-ADM-20 and AC-ADM-21 | S6, S7, S9 |
+| S10 | The signed export replaces the 501, through the injected signer; an export that straddles a rotation fails the job, as does one while S9-2's boot probe found no hard links (`links_ok`); the SR-E42-08 mark; AC-ADM-20 and AC-ADM-21. 2026-10-23 (#889 S7): the export route's own `409` while a rotation runs reads a capability S10 adds to M2 for it (the running rotation), never M2's internals, since nothing exposes `_export_rotating` yet; and S10's contract commit carries 22's two rotation fixes (S7's notes below) | S6, S7, S9 |
 
 2026-10-22 (#889 S9-1b), the download's choices where 22 is silent: a file that cannot be served (missing, a link, not
 one regular file, or not its manifest's size) answers `503 store_unavailable`, with `Retry-After` only for the reader's
@@ -282,6 +290,34 @@ and degrades export alone (`links_ok`), never the boot.
 
 2026-10-23 (#889 S7), the routes' choices where 22 is silent:
 
+- A refused rotation's record names why as `reason`, one of a closed set (`kek_unavailable`,
+  `rotation_in_progress`, `export_in_progress`, `no_active_key`), and the request's reason as `requested_reason`.
+  A failed rotation's record does the same, its `reason` `store_unavailable` or `audit_unavailable`, and names the
+  key it would have retired as `retired_key_id`; it is stored at error, as `security.kek_rotation_failed` is. The
+  rotated record's `reason` is the Owner's, and its `object_id` the new key.
+- A store failure reads `rotation()` again before it records: a committed row is the request's own `200`. A
+  COMMIT that becomes visible only after that read still leaves a failed record, and its replay runs no check,
+  so the active key is named by nothing (logged once as `secrets.export_key_not_checked`, or still latched
+  under its old reason when a latch predates the rotation) until a restart or another rotation.
+- The rotation's `429` is counted under the `/admin/audit*` record budget, as `queryAuditLog`'s is, labelled with
+  the Owner's username as `queryAuditLog` labels it. Every rotation that starts counts toward the hour's cap, a
+  failed one too, so three failures during a store outage hold the recovery rotation off until the first leaves
+  the rolling hour.
+- A rotation that raced its own first try (`ExportKeyRequestTaken`, or the key gone from under it) reads the
+  rotation again, and so does one whose store call failed, since its COMMIT may have landed with the answer lost:
+  found, it is the `200`, its key checked, and no failed record is written. Another request's rotation is
+  `409 conflict`.
+- A rotation that commits but whose new key fails the read-back check is answered `200`, its `active.verified`
+  false: the rotation is durable and a retry replays it, while the new key is latched, paged and recorded as at boot
+  (`security.audit_signing_key_unavailable`). A `stop()` during that check is no verdict on the key: the next boot
+  checks it.
+- A missing or malformed `Idempotency-Key` is `422`.
+- Every answer of the rotation, a replay and a refusal included, carries `Cache-Control: no-store`, and a
+  refusal's `rbac.denied` names the caller's session (#4174).
+- 22 needs two fixes, which S10's contract commit carries (C-6.1), not S7: its rotation `409` says a restart
+  recovers from no key to retire, which is wrong for keys present and none active (`export_key_inactive`: boot
+  never generates over keys, and the rotation refuses them, `no_active_key`); and the rotation's `200` declares no
+  `Idempotency-Replayed` header, which the route sends on a replay.
 - The listing's `admin.audit_read` holds the filter set and the count, as `queryAuditLog`'s does.
 
 ## Why not the alternatives
@@ -341,6 +377,10 @@ Q1 and Q2 are tracked here and on #889; any still open when S10 opens is filed t
   it does; and `export_key_inactive` (keys exist, none active) has no recovery even then, since a rotation retires
   the active key and boot never generates over keys. Open for S7: whether its rotation admits a first key when none
   is active, or an Owner-run step under change control does.
+  2026-10-23 (#889 S7): an `unrecoverable` rotation retires a key that does not open or does not match, and export
+  is available again with no restart once the new key passes the check (decision 5). The rotation admits no first
+  key: with none active it is `409 conflict` (22), so `export_key_inactive` still has no recovery through the API,
+  and the Owner-run step under change control stays open.
 
 ## Validation
 

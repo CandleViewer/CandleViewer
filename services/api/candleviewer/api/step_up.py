@@ -525,6 +525,8 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("GET", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("POST", re.compile(r"^/admin/keys/kek-rewrap$"), "keys"),  # rewrapKek (#2266, 04 row 41a)
+    # rotateAuditSigningKey (#889 S7, ADR-0039 decision 5): a grace class, as `rewrapKek`'s.
+    ("POST", re.compile(r"^/admin/keys/audit-signing/rotate$"), "keys"),
     ("POST", re.compile(r"^/risk/lockouts/[^/]+/override$"), "risk_caps"),
     # #2751 (SR-025, 04 §7.2.2 rows 38, 40, 50, 52). Mounted today: the export and deleteUser.
     ("PATCH", re.compile(r"^/users/[^/]+$"), "users"),  # updateUser

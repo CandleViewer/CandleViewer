@@ -443,9 +443,11 @@ def test_self_service_routes_reject_a_target_user_query_parameter(
 _PURGE_BODY = {"symbol": "BTCUSDT", "confirm_symbol": "BTCUSDT", "reason": "free disk"}
 #: A valid `createApiKey` body (#836): refused only for who sends it or the missing step-up.
 _IMPORT_BODY = {"api_key": "k" * 18, "api_secret": "s" * 36}
-#: Purge and key import also require an `Idempotency-Key`; the other mutations take none.
+#: Purge, key import and the signing-key rotation also require an `Idempotency-Key`; the other
+#: mutations take none.
 _IDEMPOTENCY_KEY = "00000000-0000-4000-8000-0000000000e1"
 _KEYED_MUTATIONS = {("POST", "/admin/recorder/purge"), ("POST", "/exchange-accounts/{uid}/keys")}
+_KEYED_MUTATIONS.add(("POST", "/admin/keys/audit-signing/rotate"))
 
 _ADMIN_MUTATIONS = [
     ("PUT", "/users/{uid}/roles", {"roles": ["viewer"]}),
@@ -456,6 +458,7 @@ _ADMIN_MUTATIONS = [
     ("POST", "/admin/recorder/purge", _PURGE_BODY),  # 04 §7.2.2 row 9a; mounted by E16-T06 (#490)
     ("POST", "/exchange-accounts/{uid}/keys", _IMPORT_BODY),  # createApiKey, mounted by #836
     ("POST", "/admin/backups/{uid}/download", None),  # 04 §7.2.2 row 52a; E42-T05 BK-10
+    ("POST", "/admin/keys/audit-signing/rotate", {"reason": "scheduled"}),  # #889 S7, ADR-0039
 ]  # fmt: skip
 
 
@@ -508,7 +511,6 @@ def test_administrative_mutations_require_step_up_even_for_the_owner(
 #: (#490) mounted `POST /admin/recorder/purge` and moved it into `_ADMIN_MUTATIONS`.
 _ADMIN_MUTATIONS_UNMOUNTED: list[tuple[str, str]] = [
     ("POST", "/risk/lockouts/{accountId}/override"),  # 04 §7.2.2 row 34; mounted by E39-S02 (#955)
-    ("POST", "/admin/keys/audit-signing/rotate"),  # rotateAuditSigningKey (ADR-0039); #889 S7
 ]
 #: The matrix row of an Owner-only operation (the `POST /admin/audit/verify` shape).
 _OWNER_ONLY_OUTCOMES = {
