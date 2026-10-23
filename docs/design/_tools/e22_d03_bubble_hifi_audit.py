@@ -35,7 +35,8 @@ TOKENS = ROOT / "packages" / "ui" / "tokens"
 TOOLS = ROOT / "docs" / "design" / "_tools"
 THEMES = ("dark", "light", "high-contrast")
 BAR: dict[str, float | None] = {"text": 4.5, "non-text": 3.0, "decorative": None}
-BAR.update({"rejected": 4.5, "reported": 3.0, "reported-text": 4.5, "glyph": 3.0})
+BAR.update({"rej-t": 4.5, "rej-nt": 3.0, "reported": 3.0})
+BAR.update({"reported-text": 4.5, "glyph": 3.0})
 
 
 def _load(path: Path, name: str) -> ModuleType:
@@ -141,7 +142,8 @@ def ticket_radius(law_name: str, notional: float, c: dict[str, float]) -> float:
 
 # B. the matrix (spec 8.1): element | fg | bg | role | note. Roles: text 4.5 / non-text 3 gated;
 # glyph = the side glyph inside the mark (gated 3:1, the 4.5 bar also printed); reported /
-# reported-text / rejected / decorative never gate. "alpha=" rows composite the fg over the bg.
+# reported-text / rej-* / decorative never gate; a rejected row is graded at the bar of the role
+# it would have had (rej-nt = non-text 3:1, rej-t = text 4.5:1). "alpha=" rows composite fg over bg.
 PAIRS_TXT = """mark: buy disc on canvas (fresh)|buy|canvas|non-text|pairs.mjs registered
 mark: sell square on canvas (fresh)|sell|canvas|non-text|pairs.mjs registered
 mark: buy disc on app (overlay off-pane)|buy|app|non-text|pairs.mjs registered
@@ -151,27 +153,27 @@ mark: CVD palette sell on canvas|cvd.sell|canvas|non-text|pairs.mjs registered (
 cap outline: 2 px ring, the mark's hue on canvas|sell|canvas|non-text|2 px of canvas gap
 aged band: buy at PROPOSED opacity.bubble.aged 0.8 over canvas|buy@0.8|canvas|non-text|D-5; CR-1
 aged band: sell at PROPOSED opacity.bubble.aged 0.8 over canvas|sell@0.8|canvas|non-text|D-5; CR-1
-aged alt: buy at opacity.muted 0.7 over canvas|buy@0.7|canvas|rejected|BQ-18 default, measured
-aged alt: sell at opacity.muted 0.7 over canvas|sell@0.7|canvas|rejected|BQ-18 default, measured
-aged alt: buy at opacity.disabled 0.45 over canvas|buy@0.45|canvas|rejected|never used for a band
-aged alt: sell at opacity.disabled 0.45 over canvas|sell@0.45|canvas|rejected|never used for a band
+aged alt: buy at opacity.muted 0.7 over canvas|buy@0.7|canvas|rej-nt|BQ-18 default; D03-Q1
+aged alt: sell at opacity.muted 0.7 over canvas|sell@0.7|canvas|rej-nt|BQ-18 default; D03-Q1
+aged alt: buy at opacity.disabled 0.45 over canvas|buy@0.45|canvas|rej-nt|never a band
+aged alt: sell at opacity.disabled 0.45 over canvas|sell@0.45|canvas|rej-nt|never a band
 stale: buy at the data-ink uniform 0.85 over canvas|buy@0.85|canvas|reported|E11-D06 D13
 stale: sell at the data-ink uniform 0.85 over canvas|sell@0.85|canvas|reported|E11-D06 D13
-stale + aged: buy at 0.8 x 0.85 = 0.68 over canvas|buy@0.68|canvas|reported|chip carries
-stale + aged: sell at 0.8 x 0.85 = 0.68 over canvas|sell@0.68|canvas|reported|chip carries
+stale + aged: buy at 0.8 x 0.85 = 0.68 over canvas|buy@0.68|canvas|reported|D13 pane-wide; logged
+stale + aged: sell at 0.8 x 0.85 = 0.68 over canvas|sell@0.68|canvas|reported|D13 pane-wide; logged
 glyph: text.inverse on the fresh buy fill|inverse|buy|glyph|E30-D02 D3 numbers
 glyph: text.inverse on the fresh sell fill|inverse|sell|glyph|E30-D02 D3 numbers
-glyph alt: text.primary on the fresh buy fill|t1|buy|rejected|the rejected reading
-glyph alt: text.primary on the fresh sell fill|t1|sell|rejected|the rejected reading
+glyph alt: text.primary on the fresh buy fill|t1|buy|rej-nt|the rejected reading
+glyph alt: text.primary on the fresh sell fill|t1|sell|rej-nt|the rejected reading
 glyph on the aged buy fill (0.8 over canvas)|inverse|buy@0.8|glyph|r >= 10 px only
 glyph on the aged sell fill (0.8 over canvas)|inverse|sell@0.8|glyph|r >= 10 px only
 label / badge: text.primary beside the mark, 1 px canvas halo|t1|canvas|text|CP21 / the x7 badge
-label alt: text.inverse on the fresh fill (label inside)|inverse|sell|rejected|not drawn (D-6)
+label alt: text.inverse on the fresh fill (label inside)|inverse|sell|rej-t|not drawn (D-6)
 legend row: text.primary on canvas|t1|canvas|text|CMP-199 row
 legend row hidden: text.tertiary on canvas|t3|canvas|text|eye off
 legend (estimated): text.primary on status.info.subtle|t1|info.subtle|text|E25-D05 12.1 reproduced
 legend (estimated): info.default outline on canvas|info.default|canvas|non-text|CMP-227 outline
-corner badge: text.secondary on raised|t2|raised|text|CP22, CMP-011 neutral
+corner badge: text.secondary on hover|t2|hover|text|CP22, CMP-011 neutral (A-16)
 tooltip title / labels: text.secondary on overlay|t2|overlay|text|CMP-197
 tooltip values: text.primary on overlay|t1|overlay|text|CMP-197
 tooltip hairline: border.default on overlay|b.default|overlay|decorative|CMP-197
@@ -181,9 +183,9 @@ tape: words and numerics on raised|t1|raised|text|memo 3.8 row 1
 tape: text on the tier-2 buy fill|t1|buy.subtle|text|memo 3.8
 tape: text on the tier-2 sell fill|t1|sell.subtle|text|memo 3.8
 tape: dimmed HH:MM: prefix on raised|t3|raised|text|tiers 0-1
-tape: tertiary prefix on buy.subtle|t3|buy.subtle|rejected|memo F4: undimmed on tier 2
-tape: tertiary prefix on selected|t3|selected|rejected|D02 D7: undimmed on the located row
-tape: the side word in the sell hue on raised|sell|raised|rejected|memo 3.8: the word is never hued
+tape: tertiary prefix on buy.subtle|t3|buy.subtle|rej-t|memo F4: undimmed on tier 2
+tape: tertiary prefix on selected|t3|selected|rej-t|D02 D7: undimmed on the located row
+tape: the side word in the sell hue on raised|sell|raised|rej-t|memo 3.8: the word is never hued
 tape: buy glyph + accent on raised|buy|raised|non-text|D02 10
 tape: sell glyph + accent on raised|sell|raised|non-text|D02 10
 tape: buy glyph on buy.subtle|buy|buy.subtle|non-text|D02 10
@@ -246,7 +248,7 @@ size.row.compact size.row.comfortable size.control.compact size.control.comforta
 size.target.min space.1 space.2 space.3 space.inset.xs space.inset.sm space.inset.md radius.badge
 radius.card radius.pill border.hairline border.thick border.focus elevation.popover
 font.family.mono font.family.ui font.weight.regular font.weight.medium font.weight.bold
-type.num.sm type.num.base type.ui.caption type.ui.label opacity.muted opacity.disabled
+type.num.xs type.num.sm type.num.base type.ui.caption type.ui.label opacity.muted opacity.disabled
 opacity.scrim motion.duration.instant motion.duration.fast motion.duration.normal
 size.bubble.scale color.marker.default color.chip.neutral font.mono space.filterbar.gap
 color.text.buy color.text.sell color.chart.pane.bg.default
@@ -282,6 +284,8 @@ MUST = (
     "Big {side}, {notional} USDT, {price}, {time}",
     "Big sell, 42,000 USDT, 65,410, 14:32:01",
     "Cluster of 7, 1.9 million USDT, sell, 14:02:11",
+    "Cluster of 7, 1,900,000 USDT, sell, 14:02:11, estimated",
+    "Big sell, 1,200,000 USDT, 64,012.0, 14:02:11",
     "Big sell · 1.2M USDT · 64,012.0 · 14:02:11.208",
     (
         "Cluster \u00d77 · 1.9M USDT · Sell · 7 prints within 250 ms / 1 tick · first print "
@@ -303,6 +307,13 @@ MUST = (
     "Not available",
 )
 SHARED = "Research PRs never edit `22`."
+# the A-id <-> entry anchors (lens round 1 F-5): each sentence must cite the id the 12 table gives
+# that entry, so a renumbering of the A-rows is caught (the table is parsed, never hard-coded)
+A_ANCHORS = (
+    ("CMP-195", "`color.marker.*` (CMP-195) does not exist and is not needed ({id})"),
+    ("CMP-199", "the two-row alternative is {id}'s second option"),
+    ("CMP-037", "for the Big trades legend row ({id199}, {id}; BQ-17)"),
+)
 FORBIDDEN = {
     "local path": re.compile(r"/(?:home|Users)/[^/\s]+/"),
     "Penpot host": re.compile(r"penpot\.[a-z0-9-]+\.[a-z]{2,}", re.IGNORECASE),
@@ -363,6 +374,14 @@ def gates(
     "Est." rule, the shared sentence on G-rows, the hygiene patterns and the rule ids."""
     missing = [s for s in MUST if s not in text] if must else []
     problems += [f"{label}: missing {s!r}" for s in missing]
+    if must:
+        table = re.findall(r"^\| (A-\d+) +\| (CMP-\d+) +\|", text, re.MULTILINE)
+        by_entry = {e: i for i, e in table if sum(1 for _, x in table if x == e) == 1}
+        for entry, phrase in A_ANCHORS:
+            want = phrase.format(id=by_entry.get(entry, "?"), id199=by_entry.get("CMP-199", "?"))
+            if want not in text:
+                problems.append(f"{label}: A-row anchor for {entry} not found: {want!r}")
+            missing += [] if want in text else [want]
     for ln in text.splitlines():
         if "Est." in ln and not re.search(r"E11-D04|E25-D05|E25-D01|C15|Q4|never", ln):
             problems.append(f"{label}: 'Est.' outside a sibling citation")
@@ -505,8 +524,9 @@ def main(argv: list[str] | None = None) -> int:
             verdict = "decorative (not gated)"
         elif role in ("reported", "reported-text", "scrim"):
             verdict = f"reported, not gated: would {verdict}"
-        elif role == "rejected":
-            verdict = f"rejected by design: would {verdict}"
+        elif role.startswith("rej-"):
+            bar_name = "non-text" if role == "rej-nt" else "text"
+            verdict = f"rejected by design ({bar_name} bar): would {verdict}"
         else:
             gated += 1
             if bad:
@@ -518,6 +538,8 @@ def main(argv: list[str] | None = None) -> int:
         cells = " | ".join(f"{v:.4f}" if bar and abs(v - bar) < 0.005 else f"{v:.2f}" for v in vals)
         fgn = TOK.get(fg.split("@")[0], fg) + (f" @ {fg.split('@')[1]}" if "@" in fg else "")
         bgn = TOK.get(bg.split("@")[0], bg) + (f" @ {bg.split('@')[1]}" if "@" in bg else "")
+        if role == "scrim":  # the measured bg is raised under app at opacity.scrim (BQ-13)
+            bgn = f"{TOK['raised']} under {TOK['app']} @ {T['dark']['opacity.scrim']}"
         say(f"| {element} | `{fgn}` | `{bgn}` | {role} | {cells} | {verdict} — {note} |")
         r2, key = [round(v, 2) for v in vals], f"{fg}|{bg}"
         rows.append({"element": element, "fg": fgn, "bg": bgn, "role": role, "ratio": r2})
