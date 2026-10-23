@@ -3,8 +3,8 @@ session (401), permission (403, audited), a user actor (403), the per-user write
 `Idempotency-Key` and the body (422), the store (503), the `recorder` step-up where the write
 changes retention (403), a replay (409 on another body), the entry in the settings' env and the
 caller's view (404), then the write, which the policy records ahead of the store (503 when it
-cannot); the routes record only what they refuse. No control has writes until the recorder
-runtime is bound (#2188): until then every write is 503."""
+cannot); the routes record what they refuse and a `retention_days` no policy member records.
+No control writes until the recorder runtime is bound (#2188): until then every write is 503."""
 
 from __future__ import annotations
 
@@ -226,15 +226,15 @@ def make_recording_writes_router(
             raise _missing()
         return entry
 
-    async def _denied(call: _Call, action: str, symbol: str, entry_id: str | None,
-                      reason: str) -> None:  # fmt: skip
-        """The record of a write refused before the policy wrote one, naming the real cause."""
-        p = call.p
+    async def _record(call: _Call, action: str, symbol: str, entry_id: str | None,
+                      refused: str | None = None, **fields: Any) -> None:  # fmt: skip
+        """A record the route writes (C-2.9); `refused`: a refused write's cause. Unwritten: 503."""
+        p, out = call.p, {"outcome": AuditOutcome.DENIED, "reason": refused}
         await _stored(audit.emit(
             action, actor_label=p.actor_name, actor_user_id=p.actor_id, actor_ip=p.ip,
             session_id=p.session_id, request_id=p.request_id, object_kind="recorded_symbol",
-            object_id=entry_id, object_label=symbol, severity=Severity.WARNING,
-            outcome=AuditOutcome.DENIED, reason=reason,
+            object_id=entry_id, object_label=symbol, **(out if refused else {}), **fields,
+            severity=Severity.WARNING if refused else Severity.INFO,
         ))  # fmt: skip
 
     @router.post("/recording/symbols")
@@ -251,7 +251,7 @@ def make_recording_writes_router(
             entry, prior = await _stored(call.control.add(body.symbol, spec, call.actor))
         except RecorderSymbolLimitError:  # refused before the policy's record
             code = ErrorCode.RECORDER_SYMBOL_LIMIT
-            await _denied(call, "recorder.start", body.symbol, None, code.value)
+            await _record(call, "recorder.start", body.symbol, None, code.value)
             raise common.Problem(422, code, "The recorder's symbol cap is reached.") from None
         seen = shown(call, entry)
         if prior is not None and view(call, prior) is None:
@@ -270,10 +270,14 @@ def make_recording_writes_router(
         if call.replayed is not None:
             return call.replayed
         entry = await visible(call, entry_id)
+        if body.retention_days is not None and not body.pinned:  # no policy member records it
+            await _record(call, "retention.change", entry.symbol, entry.id,
+                          before_state={"retention_days": entry.retention_days},
+                          after_state={"retention_days": body.retention_days})  # fmt: skip
         pinned = await _stored(call.control.pin(entry.id, body.pinned, call.actor,
                                                 retention_days=body.retention_days))  # fmt: skip
         if pinned is None:  # the row went after the lookup: no active row to pin
-            await _denied(call, "retention.change", entry.symbol, entry.id, "not_recorded")
+            await _record(call, "retention.change", entry.symbol, entry.id, "not_recorded")
             raise _missing()
         return done(call, JSONResponse(_dump(shown(call, pinned))))
 
