@@ -394,8 +394,8 @@ logged.
   run whose SR-009 process hardening did not take effect. The launcher and systemd steps are not
   drilled yet (FU-1, #2151). Where cv-api has no KEK, the CLI refuses `kek_unproven` and changes
   nothing. The settings default to `CV_KEK_SOURCE=handle`, `CV_KEK_HANDLE=/run/secrets/cv_kek` and
-  `CV_KEK_VERSION=1`, so a stack that mounts its KEK there passes the proof with the three unset:
-  only an unreachable KEK is "no KEK" (Drilling the refusals, below).
+  `CV_KEK_VERSION=1`, so outside `live` a stack that mounts its KEK there passes the proof with the
+  three unset: only an unreachable KEK is "no KEK" (Drilling the refusals, below).
 - cv-api's recovery-code key, `CV_AUTH_RECOVERY_HMAC_KEY_HEX`, in every environment: without 32
   bytes of hex in it the CLI exits 2 before it runs anything (the `live` rule checks the code with
   it). Never put its value, or any other secret, on a command line or in this file.
@@ -449,10 +449,14 @@ supported outside Swarm mode: expected, since the host files carry them (the aud
    is the expected end (exit 0). `Audit: records waiting in the host journal: N` means Postgres did
    not take them: they reach `audit_log` at the next cv-api boot. A refusal names its reason (table
    above): fix it and run again; each run is a new attempt with records of its own. The run's id is
-   the `run_id` of its `breakglass.run_ended` JSON line, and the `request_id` of its records. A
-   `host_fs_unavailable` (4) shows its cause as `[redacted:key-shape]`: check `CV_AUDIT_WAL_PATH`
-   and the volume (The audit volume, below). Its attempt and refusal still reach `audit_log`,
-   written straight to Postgres. To read a run's records and the event (read-only):
+   the `run_id` of its `breakglass.run_ended` JSON line (`breakglass.refused_unjournaled` for 4 and
+   5), and the `request_id` of its records. A `host_fs_unavailable` (4) shows its cause as
+   `[redacted:key-shape]`: check `CV_AUDIT_WAL_PATH` and the volume (The audit volume, below). Its
+   attempt and refusal still reach `audit_log`, written straight to Postgres. With no usable
+   journal and Postgres unreachable too, a 4 or 5 ends
+   `Audit: no record could be written (pre-audit refusal)`: nothing was checked or changed, and no
+   record of the run exists (C-2.9's bounded exception); the JSON line names the reason. To read a
+   run's records and the event (read-only):
 
    ```bash
    $COMPOSE exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
@@ -892,7 +896,7 @@ Proven end to end in process on the deployed app
 sessions included. `services/api/tests/security/auth/test_disable_user_drill.py` drives the same
 route from the manager's side: a private subscription's `bye` and close, and the measured time from
 the `DELETE` to the `bye`. The dev-stack drill (E09-X04, #2494) is recorded in
-`docs/security/reviews/e09-auth-review.md` section 4.
+`docs/security/reviews/e09-auth-review.md` section 4 with #300's second PR.
 
 ## 5. Audit-chain verification failure
 

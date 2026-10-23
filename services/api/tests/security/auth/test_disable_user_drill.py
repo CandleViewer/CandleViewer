@@ -8,9 +8,10 @@ side: a private subscription ends with `bye user_disabled` (`4403`, `reconnect: 
 the close, with no frame after the `bye` (23-ws-protocol.md §9.5, never the `4401` re-auth close,
 #2493); a pending step-up challenge is gone; the revoked token opens no socket; a second disable
 changes nothing; and the wall time from the `DELETE` to the `bye`, measured, under the 5 s bound.
-The dev-stack drill that a person-or-agent runs is recorded in
-`docs/security/reviews/e09-auth-review.md` section 4. The #2911 cases (a stray session no disable
-swept) keep their own harness: they drive the session service's refusal, not the route.
+The dev-stack drill that a person-or-agent runs (#2494) is recorded in
+`docs/security/reviews/e09-auth-review.md` section 4 with #300's second PR. The #2911 cases (a
+stray session no disable swept) keep their own harness: they drive the session service's refusal,
+not the route.
 """
 
 from __future__ import annotations
@@ -190,12 +191,8 @@ def test_a_disable_through_the_route_ends_a_private_subscription_with_bye_and_44
     status, frames, code, _ = _disable_a_subscribed_manager()
     p = frames[-1]["p"]
     assert status == 204
-    assert (p["reason"], p["reconnect"], p["code"], code) == (
-        "user_disabled",
-        False,
-        CLOSE_USER_DISABLED,
-        CLOSE_USER_DISABLED,
-    )
+    # 23-ws-protocol.md section 9.5's number, not the module's constant: the interface it pins
+    assert (p["reason"], p["reconnect"], p["code"], code) == ("user_disabled", False, 4403, 4403)
 
 
 def test_a_disable_through_the_route_reaches_the_socket_within_the_sr029_bound() -> None:
