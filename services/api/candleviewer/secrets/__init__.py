@@ -12,6 +12,8 @@ Key import holds `CandidateKeys` (minted by `admin.wiring` too): M2 verifies a p
 its `CandidateSigner`, a `SigningCapability`, and stores it only after the check passes (#836).
 `admin.wiring` also mints the audit export's `ExportSigner` and `SigningKeys` and adapts them to
 `audit`'s ports (#889, ADR-0039 decision 3): a signature and public key material, never a seed.
+It mints `SigningKeyRotator` for `admin` too (#889 S7): the signing key's rotation, which answers
+with public key material, or `ExportKeyRotationError`.
 """
 
 from __future__ import annotations
@@ -20,12 +22,14 @@ from candleviewer.secrets.broker import Purpose
 from candleviewer.secrets.candidate import CandidateKeys, CandidateSigner
 from candleviewer.secrets.errors import (
     CredentialUnavailable,
+    ExportKeyRotationError,
     KekRotationError,
     KekSourceNotPermitted,
     KekUnavailable,
     SecretsError,
     WithdrawPermissionRejected,
 )
+from candleviewer.secrets.export_rotator import SigningKeyRotator
 from candleviewer.secrets.export_signer import ExportSigner, SigningKeys
 from candleviewer.secrets.metrics import export_secrets_metrics
 from candleviewer.secrets.models import KekCheckResult, RewrapReport, StoredCredential
@@ -41,6 +45,7 @@ from candleviewer.secrets.service import (
     mint_borrower,
     mint_candidate_keys,
     mint_export_signer,
+    mint_signing_key_rotator,
     mint_signing_keys,
     prove_kek_possession,
 )
@@ -62,6 +67,7 @@ __all__ = [
     "CredentialBorrower",
     "CredentialStore",
     "CredentialUnavailable",
+    "ExportKeyRotationError",
     "ExportKeyStore",
     "ExportSigner",
     "KcvStore",
@@ -80,6 +86,7 @@ __all__ = [
     "SecretsMetadataFacade",
     "SecretsService",
     "SigningCapability",
+    "SigningKeyRotator",
     "SigningKeys",
     "StoredCredential",
     "WithdrawPermissionRejected",
@@ -87,6 +94,7 @@ __all__ = [
     "mint_borrower",
     "mint_candidate_keys",
     "mint_export_signer",
+    "mint_signing_key_rotator",
     "mint_signing_keys",
     "prove_kek_possession",
 ]

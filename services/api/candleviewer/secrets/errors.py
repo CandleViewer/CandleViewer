@@ -35,6 +35,17 @@ class KekSourceNotPermitted(SecretsError):
     code = "kek_source_not_permitted"
 
 
+class ExportKeyRotationError(SecretsError):
+    """A rotation of the audit export signing key that answers no rotation (#889 S7): `code` is its
+    `rotateAuditSigningKey` code (an idempotency answer, a refusal, or a `503`) and `retry_after_s`
+    the `429`'s wait. A refusal rotated nothing, all but `rate_limited` audited; a `503` may be
+    sent again with the same key, which finds the rotation if it committed."""
+
+    def __init__(self, code: str, retry_after_s: int | None = None) -> None:
+        super().__init__(code)
+        self.code, self.retry_after_s = code, retry_after_s
+
+
 class KekLoadError(SecretsError):
     """The KEK could not be loaded/verified; `reason` is one of the §6 reason tokens."""
 

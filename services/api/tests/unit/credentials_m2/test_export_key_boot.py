@@ -33,6 +33,8 @@ from tests.unit.credentials_m2.test_export_key_kek import _real
 from tests.unit.credentials_m2.test_export_key_store import ROTATED, rotation_request
 
 _OWNER = {"actor_kind": "system", "actor_role": "secrets"}
+#: The fake's `ExportKeyAuditNotWritten` (M10's, by its `code`, #889 S7), by its class name.
+_UNWRITTEN = "_AuditNotWritten"
 _BOOLEANS = {"retired_material_destroyed"}  # the audit port's JSON booleans
 
 
@@ -124,7 +126,7 @@ async def test_a_generation_record_that_fails_at_boot_leaves_no_latch_and_no_key
     paged = [e["log_level"] for e in logs if e["event"] == "secrets.export_key_unavailable"]
     assert paged == ["critical"] and (await svc.verify_kek_possession()).kcv_ok
     [failed] = [e for e in logs if e["event"] == "secrets.export_key_open_failed"]
-    assert (failed["reason"], failed["error"]) == ("export_key_generation_failed", "RuntimeError")
+    assert (failed["reason"], failed["error"]) == ("export_key_generation_failed", _UNWRITTEN)
 
 
 @pytest.mark.parametrize(
@@ -184,7 +186,7 @@ async def test_a_key_left_under_the_previous_kek_strands_and_latches_no_order_en
     assert (keys.rows[0]["kek_version"], svc.health().status) == (1, HealthStatus.OK)
     assert _steps_failed() == (before[0], before[1] + 1)
     [step] = [e for e in logs if e["event"] == "secrets.export_key_boot_step_failed"]
-    assert (step["step"], step["error"], step["log_level"]) == ("rewrap", "RuntimeError", "error")
+    assert (step["step"], step["error"], step["log_level"]) == ("rewrap", _UNWRITTEN, "error")
     report = await svc.rewrap_deks(2, environment="demo", actor_user_id="o", actor_role="owner")
     assert (report.remaining, report.complete, audit.records[-1][1]["export_left"]) == (
         1, False, "1"

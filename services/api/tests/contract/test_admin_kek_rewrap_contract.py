@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.step_up import DANGEROUS_PATH_PATTERN
 from candleviewer.auth.step_up import ACTION_CLASSES, NO_GRACE_ACTION_CLASSES
+from candleviewer.settings import Settings
 from candleviewer.ws._generated.error_codes import ERROR_META, WS_ERROR_CODES, ErrorCode
 from tests.contract import _admin_support as support
 from tests.contract._admin_support import ROOT, SPEC, text
@@ -368,6 +369,7 @@ def test_rotation_refuses_kek_then_cap_then_single_flight_before_its_record() ->
 def test_rotation_cap_is_a_setting_named_with_its_default() -> None:
     stated = re.search(r"`audit_signing_rotate_rate_per_hour`[^(]*\(default (\d+);", _ROT_DESC)
     assert stated and int(stated[1]) == 3
+    assert Settings.model_fields["audit_signing_rotate_rate_per_hour"].default == 3  # #889 S7
 
 
 def test_rotation_and_export_store_only_their_2xx_as_the_global_rule_excepts() -> None:

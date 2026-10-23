@@ -34,8 +34,8 @@ R8  Last-hop names pinned: `unwrap_dek`, `wrap_dek`, `open_`, `seal`, `cred_aad`
     `/run/credentials…` or `CV_KEK_…`.
 R9  Borrow names (see R10); admin metadata (`_ADMIN_ONLY`: attribute, bare name, import or
     literal) outside `admin/`;
-    `mint_borrower` / `mint_candidate_keys` / `mint_export_signer` / `mint_signing_keys` outside
-    `admin/wiring.py`; every M2-defined private
+    `mint_borrower` / `mint_candidate_keys` / `mint_export_signer` / `mint_signing_keys` /
+    `mint_signing_key_rotator` outside `admin/wiring.py`; every M2-defined private
     name (harvested with
     rglob, no subtraction) plus `_key`, `_cache`, `_items`, `_broker`, on non-self receivers.
 R10 Plaintext stays in `secrets/` (C-2.7, #2339): the plaintext borrow (`with_credentials`,
@@ -58,10 +58,14 @@ import candleviewer.secrets as m2
 PKG = Path(__file__).resolve().parents[3] / "candleviewer"
 MINT_SITES = {"admin/wiring.py"}
 #: The capability mints (`mint_candidate_keys`: key import's candidate verification, #836; the
-#: audit export's signer and key directory, #889 ADR-0039 decision 3).
+#: audit export's signer and key directory, #889 ADR-0039 decision 3; the signing key's rotator,
+#: #889 S7, decision 5).
 MINTS = frozenset(
-    {"mint_borrower", "mint_candidate_keys", "mint_export_signer", "mint_signing_keys"}
-)
+    {
+        "mint_borrower", "mint_candidate_keys", "mint_export_signer", "mint_signing_keys",
+        "mint_signing_key_rotator",
+    }
+)  # fmt: skip
 #: The M4 exchange adapter package (the only signing-capability holder), built from parts.
 _BORROW_SITE = "/".join(("exchange", "by" + "bit")) + "/"
 _ADMIN_SITE = "admin/"

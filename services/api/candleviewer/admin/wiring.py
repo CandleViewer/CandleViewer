@@ -56,11 +56,13 @@ from candleviewer.secrets import (
     SecretsMetadata,
     SecretsMetadataFacade,
     SecretsService,
+    SigningKeyRotator,
     SigningKeys,
     export_secrets_metrics,
     mint_borrower,
     mint_candidate_keys,
     mint_export_signer,
+    mint_signing_key_rotator,
     mint_signing_keys,
 )
 from candleviewer.settings import Settings
@@ -75,7 +77,8 @@ SecretsMeta = SecretsMetadata
 @dataclass(frozen=True)
 class SecretsBundle:
     """The narrow capabilities of one `SecretsService` (built once, in wiring); the export signer
-    and its key directory are `audit`'s ports, for S10's export job alone (#889, ADR-0039)."""
+    and its key directory are `audit`'s ports, for S10's export job (#889, ADR-0039), and the
+    rotator is `admin`'s, for `rotateAuditSigningKey`."""
 
     lifecycle: SecretsLifecycle
     metadata: SecretsMetadata
@@ -83,6 +86,7 @@ class SecretsBundle:
     candidate_keys: CandidateKeys
     export_signer: Signer
     signing_keys: SigningKeyDirectory
+    signing_key_rotator: SigningKeyRotator
 
 
 __all__ = [
@@ -128,6 +132,7 @@ _SECRETS_ERRORS = frozenset(
         "security.kek_rows_stranded",
         "security.audit_signing_key_unavailable",
         "security.audit_signing_key_material_destroyed",
+        "security.audit_signing_key_rotation_failed",  # #889 S7: a rotation that did not commit
     }
 )
 #: M2 refusals (#2266; #889 S7's rotation): stored as denied, at warning, as the other refusals
@@ -155,7 +160,7 @@ def _secrets_audit_columns(action: str, fields: dict[str, str]) -> dict[str, Any
         "object_kind": (
             "audit_signing_key" if signing_key else "api_key" if "key_id" in fields else "kek"
         ),
-        "object_id": fields.get("key_id"),
+        "object_id": fields.get("key_id", fields.get("active_key_id")),  # a rotation's new key
         "severity": Severity.ERROR if action in _SECRETS_ERRORS else Severity.INFO,
         "after_state": {k: _BOOL[v] if k in _BOOLEANS else v for k, v in fields.items()},
         "request_id": current_request_uuid(),  # the request the change is part of (#3990)
@@ -235,6 +240,7 @@ def secrets_bundle(svc: SecretsService) -> SecretsBundle:
         mint_candidate_keys(svc),
         _AuditExportSigner(mint_export_signer(svc)),
         _SigningKeyDirectory(mint_signing_keys(svc)),
+        mint_signing_key_rotator(svc),
     )
 
 

@@ -309,6 +309,12 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # (`secrets/export_signer.py`).
         "security.audit_export_signed",
         "security.audit_export_sign_failed",
+        # #889 S7 (ADR-0039 decision 5; 22 `rotateAuditSigningKey`): a rotation, committed with
+        # its keys; one refused before anything rotated (but the `429`); and one that did not
+        # commit (`secrets/export_rotator.py`).
+        "security.audit_signing_key_rotated",
+        "security.audit_signing_key_rotation_refused",
+        "security.audit_signing_key_rotation_failed",
         # #2728 (E16 R-E3 "config audit"): the keyless-testnet test clock is on at boot
         # (system actor `system:test-clock`, `auth/testnet_clock.py`).
         "system.config.test_clock_enabled",

@@ -388,6 +388,12 @@ class _RequestTaken(ValueError):
     code = "STORAGE_EXPORT_KEY_REQUEST_TAKEN"
 
 
+class _AuditNotWritten(RuntimeError):
+    """The fake's `ExportKeyAuditNotWritten` (M10): a change's record failed, so did the change."""
+
+    code = "STORAGE_EXPORT_KEY_AUDIT_NOT_WRITTEN"
+
+
 class InMemoryExportKeyStore:
     """Test fake for `ExportKeyStore`: `rows` holds `audit_signing_keys` rows of any environment
     and `audit` each record committed with a change. Bound to one environment, it refuses what a
@@ -438,7 +444,7 @@ class InMemoryExportKeyStore:
     def _commit(self, rows: list[dict[str, Any]], audit: tuple[str, dict[str, str]]) -> None:
         """The change and its record, or neither: one transaction."""
         if self.audit_fails:
-            raise RuntimeError("audit record not written")
+            raise _AuditNotWritten("audit record not written")
         self.audit.append((audit[0], dict(audit[1])))
         self.rows = rows
 
