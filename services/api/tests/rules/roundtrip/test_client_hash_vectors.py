@@ -150,6 +150,7 @@ def targeted() -> dict[str, str]:
     t["quirk/returned-ir-const"] = returned(t["edge/const-tiny"])
     t["edge/returned-ir-metric-param"] = returned(t["edge/metric-param-tiny"])
     stored = Rule.model_validate(json.loads(t["edge/sent-version"])).model_dump(mode="json")
+    large, small = "1" + "0" * 64, "0." + "0" * 62 + "1"  # 65 characters, one past MAX_PLAIN_WIDTH
     return t | {
         # save stores version 1 (manager.py); its own rule_id, mode and enabled overrides left out
         "quirk/stored-version": dump({**stored, "version": 1}),
@@ -166,6 +167,8 @@ def targeted() -> dict[str, str]:
         "refused/metric-param-surrogate": dump(edited(left={"n": SLOT}), '"\\ud800"'),
         "refused/node-id-surrogate": dump(edited(conditions={**cmp, "node_id": SLOT}), '"\\ud800"'),
         "refused/layout-surrogate": dump(edited(graph_layout={SLOT: 1}), '"\\udc00"'),
+        "refused/tolerance-65-large": dump(edited(conditions={**cmp, "tolerance": large})),
+        "refused/tolerance-65-small": dump(edited(conditions={**cmp, "tolerance": small})),
         "refused/unknown-key": dump(edited(variables={})),
     }
 
