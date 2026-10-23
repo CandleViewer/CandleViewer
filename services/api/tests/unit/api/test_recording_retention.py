@@ -19,6 +19,7 @@ from fastapi import FastAPI
 from candleviewer.api import recording_retention as retention
 from candleviewer.api.recorder_admin import JOB_KIND, AdminJobStore, Job
 from candleviewer.audit.access import AuditPrincipal
+from candleviewer.audit.models import AuditOutcome
 from candleviewer.recorder.retention import RunReport
 
 _PATH = "/recording/retention-policies"
@@ -31,6 +32,9 @@ class _Store:
     def __init__(self, log: list[str]) -> None:
         self.rows: list[dict[str, Any]] = []
         self.log, self.replaced = log, 0
+        self.actors: list[str | None] = []
+        self.entered, self.hold = asyncio.Event(), None  # `hold`: park a replace until set
+        self.fail: Exception | None = None  # raised by a replace, after it was asked for
 
     def seed(self, stream: str, days: int, action: str = "archive_parquet",
              symbol: str | None = None) -> None:  # fmt: skip
@@ -44,7 +48,13 @@ class _Store:
     async def replace(self, rows: list[dict[str, Any]], *,
                       actor: str | None) -> list[dict[str, Any]]:  # fmt: skip
         self.log.append("replace")
+        self.entered.set()
+        if self.hold is not None:
+            await self.hold.wait()
+        if self.fail is not None:
+            raise self.fail
         self.replaced += 1
+        self.actors.append(actor)
         self.rows = []
         for r in rows:
             self.seed(r["stream"], r["retain_days"], r["action"], r["symbol"])
@@ -53,11 +63,11 @@ class _Store:
 
 class _Sweeper:
     def __init__(self) -> None:
-        self.runs = 0
+        self.runs, self.locked = 0, False
 
     async def run_nightly(self) -> RunReport:
-        self.runs += 1
-        return RunReport(dry_run=False)
+        self.runs += 1  # a pass that found the volume lock held returns no `next_run_us`
+        return RunReport(dry_run=False, next_run_us=None if self.locked else 1)
 
 
 class _Env:
@@ -68,9 +78,11 @@ class _Env:
         self.audit_down = False
         self.store: _Store | None = _Store(self.log)
         self.jobs, self.sweeper = AdminJobStore(), _Sweeper()
+        self.sweeper_up = True
         app = FastAPI()
         app.include_router(retention.make_recording_retention_router(
-            lambda: self.store, self.jobs, lambda: self.sweeper, enabled, self, self))  # fmt: skip
+            lambda: self.store, self.jobs, lambda: self.sweeper if self.sweeper_up else None,
+            enabled, self, self))  # fmt: skip
         self.http = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
 
     async def resolve(self, request: Any) -> AuditPrincipal | None:
@@ -122,6 +134,7 @@ async def test_put_replaces_the_set_after_writing_the_change_with_before_and_aft
     assert change["before_state"]["items"] == [was]
     assert [i["retain_days"] for i in change["after_state"]["items"]] == [60, 3]
     assert change["actor_user_id"] == env.caller.user_id
+    assert env.store.actors == [str(env.caller.user_id)]  # the stored rows' created_by
 
 
 async def test_an_audit_that_cannot_be_written_stores_nothing() -> None:
@@ -238,3 +251,91 @@ async def test_no_store_is_503(method: str) -> None:
     env.store = None
     resp = await env.http.request(method, _PATH, json={"items": []})
     assert (resp.status_code, resp.json()["code"]) == (503, "store_unavailable")
+
+
+async def _park(env: _Env, key: str, days: int) -> asyncio.Task[httpx.Response]:
+    return asyncio.create_task(env.put([_item(days=days)], key))
+
+
+async def _spin() -> None:
+    for _ in range(30):  # let every ready task run to its next wait
+        await asyncio.sleep(0)
+
+
+async def test_two_overlapping_puts_are_audited_in_the_order_they_are_stored() -> None:
+    env = _Env("recording:write")
+    assert env.store is not None
+    env.store.seed("trades", 30)
+    env.store.hold = asyncio.Event()
+    first = await _park(env, str(uuid.uuid4()), 60)
+    await env.store.entered.wait()  # the first is inside the replace
+    second = await _park(env, str(uuid.uuid4()), 90)
+    await _spin()
+    env.store.hold.set()
+    assert [r.status_code for r in await asyncio.gather(first, second)] == [200, 200]
+    one, two = (kw for _, kw in env.audit)
+    assert two["before_state"]["items"] == one["after_state"]["items"]
+    assert [i["retain_days"] for i in two["after_state"]["items"]] == [90]
+    assert [i["retain_days"] for i in env.store.rows] == [90]  # the last record is the store
+
+
+async def test_a_replace_that_fails_after_the_record_writes_a_failure_record_and_raises() -> None:
+    env = _Env("recording:write")
+    assert env.store is not None
+    env.store.fail = RuntimeError("replace failed")
+    with pytest.raises(RuntimeError, match="replace failed"):
+        await env.put([_item()], apply_now="true")
+    assert [a for a, _ in env.audit] == ["retention.change", "retention.change"]
+    opened, closed = env.audit[0][1], env.audit[1][1]
+    assert "outcome" not in opened and closed["outcome"] == AuditOutcome.FAILURE
+    assert closed["reason"] == "RuntimeError" and closed["before_state"] == opened["before_state"]
+    assert [j.status for j in await _settle(env.jobs)] == ["cancelled"]  # no sweep ran
+    assert env.sweeper.runs == 0
+
+
+async def test_a_body_declared_over_the_cap_is_refused_before_it_is_read() -> None:
+    env = _Env("recording:write")
+    read: list[bool] = []
+
+    async def body() -> Any:
+        read.append(True)
+        yield b"{}"
+
+    request = env.http.build_request("PUT", _PATH, content=body(),
+                                     headers={"Content-Length": str(300 * 1024)})  # fmt: skip
+    resp = await env.http.send(request)
+    assert (resp.status_code, resp.json()["code"]) == (422, "validation_failed")
+    assert read == [] and env.log == []
+
+
+async def test_a_body_that_streams_past_the_cap_is_422() -> None:
+    env = _Env("recording:write")
+    big = b'{"items": [], "note": "' + b"x" * (300 * 1024) + b'"}'
+    resp = await env.http.put(_PATH, content=big)
+    assert (resp.status_code, resp.json()["code"]) == (422, "validation_failed")
+    assert env.log == []
+
+
+async def test_an_apply_now_that_is_not_true_or_false_is_422_and_stores_nothing() -> None:
+    env = _Env("recording:write")
+    resp = await env.put([_item()], apply_now="maybe")
+    assert (resp.status_code, resp.json()["code"]) == (422, "validation_failed")
+    assert env.log == [] and not env.jobs._jobs
+
+
+async def test_apply_now_without_a_sweeper_is_503_and_stores_nothing() -> None:
+    env = _Env("recording:write")
+    env.sweeper_up = False
+    resp = await env.put([_item()], apply_now="true")
+    assert (resp.status_code, resp.json()["code"]) == (503, "store_unavailable")
+    assert env.log == [] and not env.jobs._jobs
+    assert (await env.put([_item()])).status_code == 200  # a plain replace needs no sweeper
+
+
+@pytest.mark.parametrize("locked", [False, True])
+async def test_the_sweep_result_says_when_the_volume_lock_was_held(locked: bool) -> None:
+    env = _Env("recording:write")
+    env.sweeper.locked = locked
+    assert (await env.put([_item()], apply_now="true")).status_code == 200
+    (job,) = await _settle(env.jobs)
+    assert job.result is not None and job.result["skipped_locked"] is locked

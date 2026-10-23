@@ -7,10 +7,12 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import psycopg
 import pytest
 from testcontainers.postgres import PostgresContainer
 
@@ -66,3 +68,30 @@ async def test_a_failing_row_leaves_the_old_set(
     with pytest.raises(Exception, match="rp_days"):  # the table's CHECK refuses 0 days
         await store.replace([_row("trades", 10), _row("tickers", 0)], actor=None)
     assert await store.list_policies() == before
+
+
+async def test_a_disabled_row_is_not_listed_and_a_replace_clears_it(
+    dsn: str, store: policies.SqlAlchemyRetentionPolicies
+) -> None:
+    with psycopg.connect(dsn.replace("+asyncpg", ""), autocommit=True) as c:
+        c.execute("UPDATE retention_policies SET enabled = false WHERE stream = 'klines'")
+        gone = await store.list_policies()
+        assert len(gone) == 7 and "klines" not in {r["stream"] for r in gone}
+        await store.replace([_row("trades", 60)], actor=None)
+        left = c.execute("SELECT count(*) FROM retention_policies").fetchone()
+    assert left == (1,)  # the replace deleted the disabled row too
+
+
+async def test_the_actor_is_recorded_as_created_by(
+    dsn: str, store: policies.SqlAlchemyRetentionPolicies
+) -> None:
+    user = str(uuid.uuid4())
+    with psycopg.connect(dsn.replace("+asyncpg", ""), autocommit=True) as c:
+        c.execute(
+            "INSERT INTO users (id, email, username, password_hash, status) VALUES "
+            "(%s, 'a@x.test', 'actor', '$argon2id$fixture', 'active')",
+            (user,),
+        )
+        await store.replace([_row("trades", 60), _row("klines", 9)], actor=user)
+        who = c.execute("SELECT DISTINCT created_by::text FROM retention_policies").fetchall()
+    assert who == [(user,)]
