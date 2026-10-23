@@ -1,14 +1,14 @@
 # E30-D03 — handoff checklists (SCR-076, SCR-077, SCR-158, SCR-114 and the selector; #851)
 
-Per `docs/plan/16-design-system-brief.md` §11.4 and §13.3 item 8 (`02` §4.2): this SCR ticket changes three component contracts — **CMP-044 ConfirmDialog**, **CMP-105 AccountMultiSelect** and **CMP-232 LimitsChip** — so each gets a block below; the components it only composes (CMP-046 Drawer, CMP-068 CopyableCodeBlock, CMP-036 KeyValueRow, CMP-124 TradeGroupSummaryCard, CMP-158 SafetyInvariantNotice) get one placement line each and link their own checklists. **Deviation from the §11.4 block shape (the lane shape of E25-D05 / E36-D02):** Tables 1–5, the Density table and the Essential-exceptions table appear once each with a leading `Component` column instead of once per block. Every line is `[x]` with its evidence or `[ ] N/A — <reason>`; BLOCKED-PENPOT lines are N/A with the reason until hpe-worker-1 draws (2026-10-22). Prop names are PROPOSED (spec §10, A10–A12).
+Per `docs/plan/16-design-system-brief.md` §11.4 and §13.3 item 8 (`02` §4.2): this SCR ticket changes three component contracts — **CMP-044 ConfirmDialog**, **CMP-105 AccountMultiSelect** and **CMP-232 LimitsChip** — so each gets a block below; the components it only composes (CMP-046 Drawer, CMP-068 CopyableCodeBlock, CMP-036 KeyValueRow, CMP-124 TradeGroupSummaryCard, CMP-158 SafetyInvariantNotice) get one placement line each and link their own checklists. **Deviation from the §11.4 block shape (the lane shape of E25-D05 / E36-D02):** Tables 1–5, the Density table and the Essential-exceptions table appear once each with a leading `Component` column instead of once per block. Every line is `[x]` with its evidence or `[ ] N/A — <reason>`; the lines that waited on the boards now cite them (drawn 2026-10-23; spec §0). Prop names are PROPOSED (spec §10, A10–A12).
 
 ## Handoff checklist — CMP-044 ConfirmDialog (E30-D03, #851)
 
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-22). Page `E30-D03 Confirmation, rejection, defaults and selector` (id pinned once created; never a URL, host, team or file id); planned PNGs `docs/design/E30/img/E30-D03-01-scr-076-anatomy.png`, `-02-scr-076-demo-live-timeout.png`, `-03-scr-076-fanout.png`, `-13-themes-densities.png`
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §3: 18 `SCR-076/<state>` frames)
+- [x] **Final Penpot link** — page `E30-D03 Confirmation, rejection, defaults and selector` · id `f8fe7499-a188-8015-8008-d528c47d7c8f` (never a URL, host, team or file id), boards 01–03 and 13 (spec §0); PNGs `docs/design/E30/img/E30-D03-01-scr-076-anatomy.png`, `-02-scr-076-demo-live-timeout.png`, `-03-scr-076-fanout.png`, `-13-themes-densities.png`
+- [x] **Variants × States matrix** — Table 1 lists the frames (spec §3: 18 `SCR-076/<state>` frames), drawn on boards 01–03 and 08
 - [x] **Keyboard table** — Table 2 (spec §11): APG dialog keys only, Cancel focused on open, every activation of Confirm — `Enter`, `Space`, pointer — accepted ≥400 ms after open (`confirmDelayMs`), `Esc` cancels, focus returns to the submit; the LIVE don't-ask box is a Tab stop (T2, E09-D09 §2.2) and a press on it re-shows its reason once; no view-local override of a global binding, `Esc` / `Ctrl+K` untouched
 - [x] **Accessible name / role table** — Table 3: `role="dialog"` `aria-modal` named `confirm.name`, the environment sentence + the full-intent line as `aria-describedby` (the rows navigable as CMP-036 dt / dd), the Confirm's name restates the whole order
 - [x] **Live data** — Table 5: the countdown (`aria-live="off"`, polite at 0:10 and 0:00), the preview rows (the last settled answer; nothing streams inside the dialog); the replay and send-now confirms open on a fresh preview (SCR-158 → `SCR-076/replay` / `SCR-076/fanout-send-now`)
@@ -17,7 +17,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — spec §2 / §13: `color.surface.overlay`, `elevation.dialog`, `elevation.scrim`, `space.dialog.padding`, `space.row.height.{compact,comfortable}`, `color.text.{primary,secondary,tertiary,inverse}`, `color.buy.default` / `color.sell.default`, `color.env.{live,demo}`, `color.focus.ring`, `radius.badge`, `type.ui.{heading-sm,body-strong}`, `type.num.{md,base}`; none invented (CMP-043's `elevation.4` → `elevation.dialog`, A13); Penpot token sets = `packages/ui/tokens` at `6d2ff52f3360b764d2aafeb619688258fa1f89b6`
 - [x] **Data contract confirmed** — `POST /trade-groups/preview` (`TradeGroupPreview.legs[].resolved`, `estimated_margin_usd`, `estimated_risk_usd`, `totals`; re-run for Replay and for "Send 2 of 4 legs now — BUY BTCUSDT limit 64,010.0…", the held leg `overrides.skip: true`), `POST /orders`, `POST /trade-groups` (`atomicity`, `compensate`), `POST /settings/arm` (the `X-Arm-Token`), `GET /risk/summary`; gaps named: the auto-cancel seconds key (G6), the cancelled-reason payload (G7)
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (34 pairs × 3 themes, FAIL 0; 15 CVD rows) and the 18 PROPOSED `pairs.mjs` rows are spec §13
+- [ ] N/A — **Contrast and CVD**: the exports exist (spec §0) and the tool's numbers stand (34 pairs × 3 themes, FAIL 0; 15 CVD rows); the greyscale / CVD pass on the exports is spec §1.2's planned step; the 18 PROPOSED `pairs.mjs` rows are spec §13
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#851)
 
@@ -26,8 +26,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-22). Page `E30-D03 Confirmation, rejection, defaults and selector`; planned PNG `docs/design/E30/img/E30-D03-12-selector.png`
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; Table 1 lists the planned frames (spec §8: 12 `SCR-061/<state>` frames)
+- [x] **Final Penpot link** — page `E30-D03 Confirmation, rejection, defaults and selector` · id `f8fe7499-a188-8015-8008-d528c47d7c8f`, board 12 (spec §0); PNG `docs/design/E30/img/E30-D03-12-selector.png`
+- [x] **Variants × States matrix** — Table 1 lists the frames (spec §8: 12 `SCR-061/<state>` frames), drawn on board 12
 - [x] **Keyboard table** — Table 2 (spec §11): the CMP-048 combobox keys, `Shift+F10` on a leg row, `Esc` innermost; nothing global overridden
 - [x] **Accessible name / role table** — Table 3: `role="combobox"` named "Target: Group Core3, 3 accounts, 2 ready", rows `role="option"`, the leg table `role="table"`, T2 rows `aria-disabled` + `aria-describedby`
 - [x] **Live data** — Table 5: the preview re-runs on each change (debounced; polite results count); the stale-wallet leg shows its age
@@ -36,7 +36,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — spec §8 / §13: `color.surface.{overlay,raised,selected,hover}`, `color.text.{primary,secondary,tertiary}`, `color.env.{live,demo}`, `color.status.danger.strong`, `color.focus.ring`, `space.row.height.*` (CMP-105's `space.list.row` does not exist, A11); Penpot token sets = `packages/ui/tokens` at `6d2ff52f3360b764d2aafeb619688258fa1f89b6`
 - [x] **Data contract confirmed** — `GET /trade-group-definitions` (listed only when every member is granted, SR-E28-21; `members[].enabled`), `POST /trade-groups/preview` (`legs[].would_submit`, `rejection.code` ∈ the eight, `rejection.message`), `TradeGroupLegInput.overrides.skip`; gaps named: readiness (G3), served / unserved (G4), the skipped read-only leg vs the scope check (G5)
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; spec §13
+- [ ] N/A — **Contrast and CVD**: the exports exist (spec §0) and the tool's numbers stand; the greyscale / CVD pass on the exports is spec §1.2's planned step; spec §13
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#851)
 
@@ -45,8 +45,8 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: BLOCKED-PENPOT (2026-10-22). Page `E30-D03 Confirmation, rejection, defaults and selector`; planned PNG `docs/design/E30/img/E30-D03-01-scr-076-anatomy.png`
-- [ ] N/A — **Variants × States matrix**: PENDING until drawn; the `results` rendering appears on every `SCR-076/<state>` confirm frame (binding / none binding)
+- [x] **Final Penpot link** — page `E30-D03 Confirmation, rejection, defaults and selector` · id `f8fe7499-a188-8015-8008-d528c47d7c8f`, board 01 (spec §0); PNG `docs/design/E30/img/E30-D03-01-scr-076-anatomy.png`
+- [x] **Variants × States matrix** — drawn: the `results` rendering appears on every `SCR-076/<state>` confirm frame (boards 01–03 and 08; binding / none binding)
 - [x] **Keyboard table** — Table 2: the results block is static text inside the dialog (no stop of its own); the ticket's chip keeps D02 D14's disclosure
 - [x] **Accessible name / role table** — Table 3: a `role="group"` named "Profile limits" of CMP-036 rows; the binding row names the limit and the authority in text
 - [x] **Live data** — Table 5: none inside the dialog (the rows are the settled preview); on the ticket D02 D14's once-on-change announcement
@@ -55,13 +55,13 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Essential-exceptions log** — `none`
 - [x] **Tokens used** — `color.status.warning.subtle` / `.strong` for the binding row (CMP-232's `color.status.warn` does not exist — D02 A-10), `color.text.{primary,secondary}` on `color.surface.overlay`; Penpot token sets = `packages/ui/tokens` at `6d2ff52f3360b764d2aafeb619688258fa1f89b6`
 - [x] **Data contract confirmed** — the account profile (`24` §9.2 caps), `GET /risk/summary` (`cap_utilisation_pct`, `lockout`), `GET /instruments/{symbol}`; the limits of spec §1.4 (max position 17,500 USDT, daily 120 of 500 USDT, lev ≤ 10x, min 0.001 BTC)
-- [ ] N/A — **Contrast and CVD**: PENDING on the exports; spec §13
+- [ ] N/A — **Contrast and CVD**: the exports exist (spec §0) and the tool's numbers stand; the greyscale / CVD pass on the exports is spec §1.2's planned step; spec §13
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] N/A — **Sign-off**: owner approval pending (#851)
 
 **Placement lines (contract unchanged):** CMP-046 Drawer — SCR-077, right, `modal: false`, `role="dialog"` named `drawer.name` throughout; the CMP-027 class banner inside it is the `role="alert"` that fires once on open (A13; Table 3). CMP-068 CopyableCodeBlock — the exchange record with a `<blockquote>` for the verbatim text (A13). CMP-036 KeyValueRow — the restatement rows and "What CandleViewer sent". CMP-124 TradeGroupSummaryCard — the group's aggregate on SCR-061 (E28's). CMP-158 SafetyInvariantNotice — one line in the confirm and in SCR-114's Stop fieldset (D02 D12). CMP-079 RbacGate + CMP-019 Icon `lock` (`decorative=false`, name "Not available") — the LIVE don't-ask box (CMP-044) and the read-only member row with its include checkbox (CMP-105), E09-D09 §2.2 / §8: the raised fill with the hairline, the lock leading the full label, the reason linked by `aria-describedby`.
 
-### Table 1 — Variants × States (planned frames; PENDING until drawn)
+### Table 1 — Variants × States (frames as drawn; boards in spec §0)
 
 | Component | Variant                  | State                                                                                                                                                                                                                                                                                            | Penpot variant / frame                                      | Story name     | Notes                                     |
 | --------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- | -------------- | ----------------------------------------- |
@@ -133,10 +133,10 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 ## §A — Design QA checklist (`16` §12), filled
 
 - [x] Only published Tier-2 / Tier-3 tokens (spec §2, §13); zero hard-coded hex or px in the spec beyond the measured redlines.
-- [ ] N/A — three themes × two densities verified visually: BLOCKED-PENPOT; the tool measures all three themes (spec §13); board 13 shows every screen, the selector and the template list in light and hc.
+- [x] Three themes × two densities verified visually: the tool measures all three themes (spec §13); board 13 (`docs/design/E30/img/E30-D03-13-themes-densities.png`) shows every screen, the selector and the template list in light and hc, the LIVE confirm at comfortable; the other boards are dark, compact unless named.
 - [x] Contrast matrix for every pair introduced (34 × 3, FAIL 0; 18 PROPOSED `pairs.mjs` rows routed).
 - [x] CVD simulation reviewed for every new colour-carrying state (15 rows; the collapses carried by word / glyph / shape).
-- [ ] N/A — every State has a Penpot variant and a Storybook story: the frames are planned (Table 1), the stories are E30-S04 / S06 / S07 / T02's.
+- [ ] N/A — every State has a Penpot variant and a Storybook story: the frames are drawn (Table 1), the stories are E30-S04 / S06 / S07 / T02's.
 - [x] Disabled states use disabled-with-reason (CMP-079 / CMP-019 `lock` / E09-D09 §2.2 T2: the raised fill with the hairline, the lock leading the full label, no opacity), never a bare disabled control; the form-validity disable (Save while a default is above its ceiling or a preset is below the minimum, E09-D09 §9.1) takes E30-D02 D3's look (:128: "disabled = `opacity.disabled` on the control with the reason as full-opacity text under it, never inside it"): the label "Save" at `opacity.disabled`, "Fix 1 problem to save." as full-opacity `color.text.secondary` text under it, never inside the label; `aria-disabled`, focusable, no lock, no CMP-079, no key.
 - [x] Loading / empty / error states designed (the record loading, the two empty states, the nine rejection frames).
 - [x] Keyboard table completed (Table 2; spec §11).
@@ -150,7 +150,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] Demo / Live context unambiguous wherever a trading action can fire (the band, the pill, the rule, the sentence).
 - [x] Reuses existing CMP ids; no near-duplicate requested.
 - [ ] N/A — Storybook stories match the matrix: the implementing tickets'.
-- [ ] N/A — composes only published-library components in Penpot: BLOCKED-PENPOT.
+- [ ] N/A — composes only published-library components in Penpot: the boards are drawn from the board script (spec §0), which draws literal token values, no component instance.
 
 ## §B — Accessibility acceptance criteria (`05` §10), filled per screen
 
