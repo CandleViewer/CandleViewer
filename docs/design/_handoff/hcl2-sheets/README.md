@@ -45,6 +45,7 @@ Draw in this order, one board at a time:
 1. #4138 boards 01–10. Board 09 (the tint proof) gates the rest of #4138.
 2. #4138 boards 11–20, 93, 101 and 102.
 3. #4138 boards 21–29, 94 and 103 (added 23:4xZ).
+3a. #4138 boards 30–41 and 95 (added 01:2xZ, 2026-10-23: SCR-121 users list).
 4. #4070's 6 boards.
 5. #4046's 8 boards.
 
@@ -192,3 +193,5 @@ format. It was generated after every other file. Verify the folder with `sha256s
 own sha256 is in the transport message.
 
 **Update (00:3xZ, 2026-10-23):** #4138's boards 24, 26 and 27 were regenerated for the orchestrator's Q11 ruling (#960 comment 6353767685): the reassurance sentence is now the catalogue's "Native stops on the exchange are unaffected", withheld on a trading or stop-loss-protection fault (OV-4 and OV-6 withhold it; OV-7's maintenance banner keeps it). Draw these three from this commit or later.
+
+Batch 4 (boards 30–41, 95): notes paths scrubbed in batch 4 the same way in `30-scr121-loading.json`.

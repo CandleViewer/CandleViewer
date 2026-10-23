@@ -1,0 +1,2361 @@
+{
+ "board": {
+  "name": "E42-D03 / 35 SCR-121 / error · 1280×800+2560×1440 · dark",
+  "w": 4304,
+  "h": 1760,
+  "x": 18400,
+  "y": 10800,
+  "o": {
+   "dir": "row",
+   "align": "start",
+   "fill": "color.surface.app",
+   "pad": "space.inset.lg",
+   "gap": "space.inset.lg",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "frame-1280",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-072 TopBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-012 Badge (composition) · LIVE",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.hairline"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · workspace switcher",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · CMP-210 HealthChips",
+          "w": 160,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · search",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "search",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-061 UserMenu (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "basiltt",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 32,
+          "note": "opens CMP-061: Profile · Settings · Admin · Sign out (§4 L188)"
+         }
+        ]
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge is never hideable (E10-D02)"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-071 NavRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "justify": "space-between",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entries",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "entry-1",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-2",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-3",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-4",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-5",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "Admin entry",
+          "o": {
+           "dir": "row",
+           "radius": "radius.control",
+           "fill": "color.surface.selected",
+           "justify": "center",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "mark",
+            "chars": "◆",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 48,
+          "h": 32,
+          "note": "Owner only; structurally absent for Manager and Viewer (E10-D02); aria-current=page; named 'Admin'; DS-2 edge (D02:1003): color.text.tertiary at border.thick, inner; 6.29 / 6.81 / 12.54 against the rail, 3.98 / 4.86 / 7.94 against its fill (§15 L635, L638, L656)"
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704,
+        "vs": "fill",
+        "note": "64 px (collapsed, §2 D1)"
+       },
+       {
+        "t": "board",
+        "name": "CMP-209 RightRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.md",
+         "pad": "space.inset.md",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-211 PanicButtons (placeholder)",
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          },
+          "w": 216,
+          "h": 40,
+          "note": "E39-D01's Flatten all / Kill switch cluster at the rail's top; copy and look are E39's (§12 L537)"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-1",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-2",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-3",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 704,
+        "vs": "fill",
+        "note": "240 px at both sizes (§2 D1)",
+        "x": 1040,
+        "y": 0,
+        "abs": true
+       },
+       {
+        "t": "board",
+        "name": "main",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "pad": "space.inset.lg",
+         "fill": "color.surface.app",
+         "clip": true
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-087 band (composition)",
+          "o": {
+           "dir": "row",
+           "pad": "space.inset.lg",
+           "justify": "space-between",
+           "fill": "color.surface.raised"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "◆ Admin area · Users",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 944,
+          "h": 56,
+          "note": "role=\"region\" aria-label=\"Admin area\"; never focusable; the fill is not a carrier (§2 D2)"
+         },
+         {
+          "t": "rect",
+          "name": "CMP-087 rule (4 px)",
+          "w": 944,
+          "h": 4,
+          "o": {
+           "fill": "color.text.tertiary"
+          },
+          "note": "6.29 / 6.81 / 12.54 against the page (§15 L635)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-087 strip (composition)",
+          "o": {
+           "dir": "row",
+           "wrap": "wrap",
+           "gap": "space.inset.sm",
+           "padY": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "none",
+            "chars": "Nothing needs your action",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary",
+            "note": "strip.none (§14 L598): SH-6's one line (L186); U-6 names no item, so the strip has no Tab stop"
+           }
+          ],
+          "w": 944,
+          "note": "role=\"region\" \"Needs your action\"; a list; not live (the shell announces once)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-088 PageHeader (composition)",
+          "o": {
+           "dir": "row",
+           "padY": "space.inset.lg",
+           "justify": "space-between",
+           "align": "end"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "titles",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "h1",
+              "chars": "Users",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.primary",
+              "note": "the h1: the skip-link target (CMP-085)"
+             },
+             {
+              "t": "text",
+              "name": "meta",
+              "chars": "All times UTC · as of 14:02:11",
+              "typo": "type.ui.caption",
+              "color": "color.text.tertiary"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "primary action",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.button.paddingX",
+             "radius": "radius.control",
+             "height": "size.control.comfortable",
+             "justify": "center",
+             "fill": "color.action.primary.default"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "+ Invite user",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.on-action"
+             }
+            ],
+            "w": 102,
+            "h": 32,
+            "note": "opens SCR-123 (§7 L294; POST /users executed, M:1536-1540); enabled: users are not sub-accounts (D11 L124) and U-6 names no change; text.on-action on action.primary.default 4.76 (§15 L639); the first page stop (§7 L345)"
+           }
+          ],
+          "w": 944
+         },
+         {
+          "t": "board",
+          "name": "SCR-121 content",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "find bar",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-054 SearchBox (composition)",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "fill": "color.surface.sunken",
+               "height": "size.control.comfortable",
+               "stroke": "color.text.tertiary",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "glyph",
+                "icon": "search",
+                "color": "color.text.tertiary",
+                "size": "size.icon"
+               }
+              ],
+              "w": 320,
+              "h": 32,
+              "note": "role=\"searchbox\" (15:541); q: a username or e-mail substring, at most 120 characters, in the URL (§7 L295-296; Y:1911-1914); empty, so no 'Clear search' (15:541); its visible label, placeholder and accessible name: no source gives them (copy gap); DS-3 boundary 6.29 against the page, glyph 6.83 on sunken (§15 L650)"
+             },
+             {
+              "t": "board",
+              "name": "CMP-055 FilterBar (composition)",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "CMP-055 add-filter control (composition) · Role",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs",
+                 "padX": "space.button.paddingX",
+                 "radius": "radius.control",
+                 "fill": "color.action.secondary.default",
+                 "height": "size.control.comfortable",
+                 "justify": "center"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Role",
+                  "typo": "type.ui.body-strong",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "icon",
+                  "name": "chevron",
+                  "icon": "chevron-down",
+                  "color": "color.text.primary",
+                  "size": "size.icon"
+                 }
+                ],
+                "w": 73,
+                "h": 32,
+                "note": "a button opening its options, the RoleName (Y:1908-1910) values (not drawn); none set, so the list is unfiltered; the choice is URL state (§7 L295-296); its current-value text: no source gives one (copy gap)"
+               },
+               {
+                "t": "board",
+                "name": "CMP-055 add-filter control (composition) · Status",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs",
+                 "padX": "space.button.paddingX",
+                 "radius": "radius.control",
+                 "fill": "color.action.secondary.default",
+                 "height": "size.control.comfortable",
+                 "justify": "center"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Status",
+                  "typo": "type.ui.body-strong",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "icon",
+                  "name": "chevron",
+                  "icon": "chevron-down",
+                  "color": "color.text.primary",
+                  "size": "size.icon"
+                 }
+                ],
+                "w": 86,
+                "h": 32,
+                "note": "a button opening its options, the UserStatus (Y:1905-1907) values (not drawn); none set, so the list is unfiltered; the choice is URL state (§7 L295-296); its current-value text: no source gives one (copy gap)"
+               }
+              ],
+              "note": "role=\"group\" aria-label=\"Active filters\" (15:550; not visible); no filter set (15:552 Empty)"
+             }
+            ],
+            "note": "search → Role → Status in the Tab order (§7 L345); all URL state, so a filtered list is a deep link (L295-296; Y:1902-1914); stays usable in U-6 (U-6 names no change)"
+           },
+           {
+            "t": "board",
+            "name": "capacity line · over",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "line",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "text",
+                "chars": "6 sub-accounts in use · Regular tier allows 5. Bybit lets accounts keep sub-accounts made before 14 August 2026 — or the recorded tier may be wrong.",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "w": 890,
+                "note": "cap.over = D12 (L125, proposed; §14 L605): 6 in use (the most non-deleted sub-accounts under any one main account, Y:20864-20867), the Regular tier's cap 5 (Y:20859); it names both causes, Bybit's grandfathering before 14 August 2026 (docs/research/12-scope-and-users.md:11) or a wrong recorded tier, and asserts neither"
+               },
+               {
+                "t": "board",
+                "name": "CMP-021 Link (composition) · Change",
+                "o": {
+                 "dir": "column",
+                 "align": "start",
+                 "justify": "center"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "text",
+                  "chars": "Change",
+                  "typo": "type.ui.body",
+                  "color": "color.text.link"
+                 },
+                 {
+                  "t": "rect",
+                  "name": "underline",
+                  "w": 46,
+                  "h": 1,
+                  "o": {
+                   "fill": "color.text.link"
+                  }
+                 }
+                ],
+                "h": 32,
+                "note": "cap.over's [Change] (D12 L125; §14 L605): the capacity action, a Tab stop (§7 L345); opens §12's rung-1 Record tier dialog (dlg.tier L609; OV-8 L281, board 28), no step-up (§12 L534; DEV change); underlined, never colour-only; a 32 px target (§13 L591)"
+               }
+              ]
+             }
+            ],
+            "w": 944,
+            "note": "the capacity line over cap (D12; §7 L315), above the grid's place so it stays in view (§7 L296-297): its own read, GET /admin/capacity (admin:read, Y:12583; executed, M:103-107), its subaccounts section with its own AdminSliceStatus (Y:12580-12582; D8 L121); no CMP-023 meter and no tone (DEV over); static, never live"
+           },
+           {
+            "t": "board",
+            "name": "CMP-049 Table (composition) · error state",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-027 ErrorState (composition) · severity warning",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "triangle",
+                "icon": "warning",
+                "color": "color.status.warning.strong",
+                "size": "size.icon"
+               },
+               {
+                "t": "text",
+                "name": "text",
+                "chars": "Couldn't load users — store unavailable.",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "note": "users.error (§14 L606) with {detail} \"store unavailable\" (U-6, L337): text primary on raised 14.35 (§15 L641)"
+               },
+               {
+                "t": "board",
+                "name": "CMP-001 Button (composition) · Retry",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs",
+                 "padX": "space.button.paddingX",
+                 "radius": "radius.control",
+                 "height": "size.control.comfortable",
+                 "justify": "center",
+                 "fill": "color.action.secondary.default"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Retry",
+                  "typo": "type.ui.body-strong",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "w": 59,
+                "h": 32,
+                "note": "users.error's [Retry] (§14 L606): re-sends GET /users with the URL's q, role and status and no cursor (§7 L295-296; Y:1902-1914); text primary on the secondary fill 10.17 (§15 L641); the 503 carries Retry-After (Y:14832), and U-6 names no wait, so it stays enabled"
+               }
+              ],
+              "note": "role=\"status\" (severity warning, 15:291): the sentence announced once, polite, when the 503 lands (L337); the triangle (DS-5 icon/triangle pending, registry 'warning') 11.00 on raised (§15 L642); never colour-only: the words carry it"
+             }
+            ],
+            "w": 944,
+            "note": "the CMP-049 grid's place (§7 L297; 15:495, :497): GET /users answered 503 store_unavailable (Y:1928; Y:14848-14857), so no header row, no rows, no row menus and no Load more (DEV grid); its body is the CMP-027 ErrorState"
+           }
+          ],
+          "w": 944,
+          "note": "find bar → capacity line → the grid's place (§7 L294-297): the order of the anatomy and the Tab order (L345)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-093 AuditActionTrigger (composition) · footer marker",
+          "o": {
+           "dir": "row",
+           "padT": "space.inset.lg"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "text",
+            "chars": "Entering this area was recorded — Area entered (admin.area_entered)",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 944,
+          "note": "admin.area_entered comes from the strip's /admin/* reads on SCR-121-123 (§4 L201-204)"
+         }
+        ],
+        "w": 976,
+        "h": 704,
+        "vs": "fill",
+        "note": "<main>: band → rule → strip → PageHeader → find bar → capacity line → the grid's place (the error) → footer marker (§4 L165-171; §7 L294-298)"
+       }
+      ],
+      "w": 1280,
+      "h": 704,
+      "vs": "fill",
+      "note": "NavRail | main | RightRail (the rail is absolute at x = NavRail + main)"
+     },
+     {
+      "t": "board",
+      "name": "CMP-208 StatusBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "placeholder · connection chip",
+        "w": 120,
+        "h": 12,
+        "o": {
+         "radius": "radius.control",
+         "fill": "color.surface.hover"
+        }
+       },
+       {
+        "t": "board",
+        "name": "CMP-012 Badge (composition) · LIVE",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.xs",
+         "radius": "radius.badge",
+         "stroke": "color.env.live",
+         "strokeWidth": "border.hairline"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "word",
+          "chars": "LIVE",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 16
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge repeats the TopBar's (E10-D02)"
+     }
+    ],
+    "w": 1280,
+    "h": 800
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "frame-2560",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-072 TopBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-012 Badge (composition) · LIVE",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.hairline"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · workspace switcher",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · CMP-210 HealthChips",
+          "w": 160,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · search",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "search",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-061 UserMenu (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "basiltt",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 32,
+          "note": "opens CMP-061: Profile · Settings · Admin · Sign out (§4 L188)"
+         }
+        ]
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 2560,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 2560,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge is never hideable (E10-D02)"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-071 NavRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "justify": "space-between",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entries",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "entry-1",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-2",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-3",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-4",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-5",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "Admin entry",
+          "o": {
+           "dir": "row",
+           "radius": "radius.control",
+           "fill": "color.surface.selected",
+           "gap": "space.inset.sm",
+           "padX": "space.inset.md",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "mark",
+            "chars": "◆",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Admin",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 224,
+          "h": 32,
+          "note": "Owner only; structurally absent for Manager and Viewer (E10-D02); aria-current=page; DS-2 edge (D02:1003): color.text.tertiary at border.thick, inner; 6.29 / 6.81 / 12.54 against the rail, 3.98 / 4.86 / 7.94 against its fill (§15 L635, L638, L656)"
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 1344,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 239,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 1344,
+        "vs": "fill",
+        "note": "240 px (expanded, §2 D1)"
+       },
+       {
+        "t": "board",
+        "name": "CMP-209 RightRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.md",
+         "pad": "space.inset.md",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-211 PanicButtons (placeholder)",
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          },
+          "w": 216,
+          "h": 40,
+          "note": "E39-D01's Flatten all / Kill switch cluster at the rail's top; copy and look are E39's (§12 L537)"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-1",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-2",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-3",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 1344,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 1344,
+        "vs": "fill",
+        "note": "240 px at both sizes (§2 D1)",
+        "x": 2320,
+        "y": 0,
+        "abs": true
+       },
+       {
+        "t": "board",
+        "name": "main",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "pad": "space.inset.lg",
+         "fill": "color.surface.app",
+         "clip": true
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-087 band (composition)",
+          "o": {
+           "dir": "row",
+           "pad": "space.inset.lg",
+           "justify": "space-between",
+           "fill": "color.surface.raised"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "◆ Admin area · Users",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 2048,
+          "h": 56,
+          "note": "role=\"region\" aria-label=\"Admin area\"; never focusable; the fill is not a carrier (§2 D2)"
+         },
+         {
+          "t": "rect",
+          "name": "CMP-087 rule (4 px)",
+          "w": 2048,
+          "h": 4,
+          "o": {
+           "fill": "color.text.tertiary"
+          },
+          "note": "6.29 / 6.81 / 12.54 against the page (§15 L635)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-087 strip (composition)",
+          "o": {
+           "dir": "row",
+           "wrap": "wrap",
+           "gap": "space.inset.sm",
+           "padY": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "none",
+            "chars": "Nothing needs your action",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary",
+            "note": "strip.none (§14 L598): SH-6's one line (L186); U-6 names no item, so the strip has no Tab stop"
+           }
+          ],
+          "w": 2048,
+          "note": "role=\"region\" \"Needs your action\"; a list; not live (the shell announces once)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-088 PageHeader (composition)",
+          "o": {
+           "dir": "row",
+           "padY": "space.inset.lg",
+           "justify": "space-between",
+           "align": "end"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "titles",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "h1",
+              "chars": "Users",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.primary",
+              "note": "the h1: the skip-link target (CMP-085)"
+             },
+             {
+              "t": "text",
+              "name": "meta",
+              "chars": "All times UTC · as of 14:02:11",
+              "typo": "type.ui.caption",
+              "color": "color.text.tertiary"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "primary action",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.button.paddingX",
+             "radius": "radius.control",
+             "height": "size.control.comfortable",
+             "justify": "center",
+             "fill": "color.action.primary.default"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "+ Invite user",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.on-action"
+             }
+            ],
+            "w": 102,
+            "h": 32,
+            "note": "opens SCR-123 (§7 L294; POST /users executed, M:1536-1540); enabled: users are not sub-accounts (D11 L124) and U-6 names no change; text.on-action on action.primary.default 4.76 (§15 L639); the first page stop (§7 L345)"
+           }
+          ],
+          "w": 2048
+         },
+         {
+          "t": "board",
+          "name": "SCR-121 content",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "find bar",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-054 SearchBox (composition)",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "fill": "color.surface.sunken",
+               "height": "size.control.comfortable",
+               "stroke": "color.text.tertiary",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "glyph",
+                "icon": "search",
+                "color": "color.text.tertiary",
+                "size": "size.icon"
+               }
+              ],
+              "w": 320,
+              "h": 32,
+              "note": "role=\"searchbox\" (15:541); q: a username or e-mail substring, at most 120 characters, in the URL (§7 L295-296; Y:1911-1914); empty, so no 'Clear search' (15:541); its visible label, placeholder and accessible name: no source gives them (copy gap); DS-3 boundary 6.29 against the page, glyph 6.83 on sunken (§15 L650)"
+             },
+             {
+              "t": "board",
+              "name": "CMP-055 FilterBar (composition)",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "CMP-055 add-filter control (composition) · Role",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs",
+                 "padX": "space.button.paddingX",
+                 "radius": "radius.control",
+                 "fill": "color.action.secondary.default",
+                 "height": "size.control.comfortable",
+                 "justify": "center"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Role",
+                  "typo": "type.ui.body-strong",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "icon",
+                  "name": "chevron",
+                  "icon": "chevron-down",
+                  "color": "color.text.primary",
+                  "size": "size.icon"
+                 }
+                ],
+                "w": 73,
+                "h": 32,
+                "note": "a button opening its options, the RoleName (Y:1908-1910) values (not drawn); none set, so the list is unfiltered; the choice is URL state (§7 L295-296); its current-value text: no source gives one (copy gap)"
+               },
+               {
+                "t": "board",
+                "name": "CMP-055 add-filter control (composition) · Status",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs",
+                 "padX": "space.button.paddingX",
+                 "radius": "radius.control",
+                 "fill": "color.action.secondary.default",
+                 "height": "size.control.comfortable",
+                 "justify": "center"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Status",
+                  "typo": "type.ui.body-strong",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "icon",
+                  "name": "chevron",
+                  "icon": "chevron-down",
+                  "color": "color.text.primary",
+                  "size": "size.icon"
+                 }
+                ],
+                "w": 86,
+                "h": 32,
+                "note": "a button opening its options, the UserStatus (Y:1905-1907) values (not drawn); none set, so the list is unfiltered; the choice is URL state (§7 L295-296); its current-value text: no source gives one (copy gap)"
+               }
+              ],
+              "note": "role=\"group\" aria-label=\"Active filters\" (15:550; not visible); no filter set (15:552 Empty)"
+             }
+            ],
+            "note": "search → Role → Status in the Tab order (§7 L345); all URL state, so a filtered list is a deep link (L295-296; Y:1902-1914); stays usable in U-6 (U-6 names no change)"
+           },
+           {
+            "t": "board",
+            "name": "capacity line · over",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "line",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "text",
+                "chars": "6 sub-accounts in use · Regular tier allows 5. Bybit lets accounts keep sub-accounts made before 14 August 2026 — or the recorded tier may be wrong.",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "note": "cap.over = D12 (L125, proposed; §14 L605): 6 in use (the most non-deleted sub-accounts under any one main account, Y:20864-20867), the Regular tier's cap 5 (Y:20859); it names both causes, Bybit's grandfathering before 14 August 2026 (docs/research/12-scope-and-users.md:11) or a wrong recorded tier, and asserts neither"
+               },
+               {
+                "t": "board",
+                "name": "CMP-021 Link (composition) · Change",
+                "o": {
+                 "dir": "column",
+                 "align": "start",
+                 "justify": "center"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "text",
+                  "chars": "Change",
+                  "typo": "type.ui.body",
+                  "color": "color.text.link"
+                 },
+                 {
+                  "t": "rect",
+                  "name": "underline",
+                  "w": 46,
+                  "h": 1,
+                  "o": {
+                   "fill": "color.text.link"
+                  }
+                 }
+                ],
+                "h": 32,
+                "note": "cap.over's [Change] (D12 L125; §14 L605): the capacity action, a Tab stop (§7 L345); opens §12's rung-1 Record tier dialog (dlg.tier L609; OV-8 L281, board 28), no step-up (§12 L534; DEV change); underlined, never colour-only; a 32 px target (§13 L591)"
+               }
+              ]
+             }
+            ],
+            "w": 2048,
+            "note": "the capacity line over cap (D12; §7 L315), above the grid's place so it stays in view (§7 L296-297): its own read, GET /admin/capacity (admin:read, Y:12583; executed, M:103-107), its subaccounts section with its own AdminSliceStatus (Y:12580-12582; D8 L121); no CMP-023 meter and no tone (DEV over); static, never live"
+           },
+           {
+            "t": "board",
+            "name": "CMP-049 Table (composition) · error state",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "fill": "color.surface.raised",
+             "radius": "radius.card",
+             "pad": "space.inset.lg"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-027 ErrorState (composition) · severity warning",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "triangle",
+                "icon": "warning",
+                "color": "color.status.warning.strong",
+                "size": "size.icon"
+               },
+               {
+                "t": "text",
+                "name": "text",
+                "chars": "Couldn't load users — store unavailable.",
+                "typo": "type.ui.body",
+                "color": "color.text.primary",
+                "note": "users.error (§14 L606) with {detail} \"store unavailable\" (U-6, L337): text primary on raised 14.35 (§15 L641)"
+               },
+               {
+                "t": "board",
+                "name": "CMP-001 Button (composition) · Retry",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs",
+                 "padX": "space.button.paddingX",
+                 "radius": "radius.control",
+                 "height": "size.control.comfortable",
+                 "justify": "center",
+                 "fill": "color.action.secondary.default"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Retry",
+                  "typo": "type.ui.body-strong",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "w": 59,
+                "h": 32,
+                "note": "users.error's [Retry] (§14 L606): re-sends GET /users with the URL's q, role and status and no cursor (§7 L295-296; Y:1902-1914); text primary on the secondary fill 10.17 (§15 L641); the 503 carries Retry-After (Y:14832), and U-6 names no wait, so it stays enabled"
+               }
+              ],
+              "note": "role=\"status\" (severity warning, 15:291): the sentence announced once, polite, when the 503 lands (L337); the triangle (DS-5 icon/triangle pending, registry 'warning') 11.00 on raised (§15 L642); never colour-only: the words carry it"
+             }
+            ],
+            "w": 2048,
+            "note": "the CMP-049 grid's place (§7 L297; 15:495, :497): GET /users answered 503 store_unavailable (Y:1928; Y:14848-14857), so no header row, no rows, no row menus and no Load more (DEV grid); its body is the CMP-027 ErrorState"
+           }
+          ],
+          "w": 2048,
+          "note": "find bar → capacity line → the grid's place (§7 L294-297): the order of the anatomy and the Tab order (L345)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-093 AuditActionTrigger (composition) · footer marker",
+          "o": {
+           "dir": "row",
+           "padT": "space.inset.lg"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "text",
+            "chars": "Entering this area was recorded — Area entered (admin.area_entered)",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 2048,
+          "note": "admin.area_entered comes from the strip's /admin/* reads on SCR-121-123 (§4 L201-204)"
+         }
+        ],
+        "w": 2080,
+        "h": 1344,
+        "vs": "fill",
+        "note": "<main>: band → rule → strip → PageHeader → find bar → capacity line → the grid's place (the error) → footer marker (§4 L165-171; §7 L294-298)"
+       }
+      ],
+      "w": 2560,
+      "h": 1344,
+      "vs": "fill",
+      "note": "NavRail | main | RightRail (the rail is absolute at x = NavRail + main)"
+     },
+     {
+      "t": "board",
+      "name": "CMP-208 StatusBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "placeholder · connection chip",
+        "w": 120,
+        "h": 12,
+        "o": {
+         "radius": "radius.control",
+         "fill": "color.surface.hover"
+        }
+       },
+       {
+        "t": "board",
+        "name": "CMP-012 Badge (composition) · LIVE",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.xs",
+         "radius": "radius.badge",
+         "stroke": "color.env.live",
+         "strokeWidth": "border.hairline"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "word",
+          "chars": "LIVE",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 16
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 2560,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 2560,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge repeats the TopBar's (E10-D02)"
+     }
+    ],
+    "w": 2560,
+    "h": 1440
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "35 SCR-121 · U-6 error, over cap",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Source",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "spec §7 L337 U-6 · board 35 (§0 L63) · anatomy §7 L294-298 · capacity line L311-316, D12 L125 · keys L345, §13 L584 · §14 L605-606 · Y:1897-1928, :14829-14857 · spec 782eb0e4d",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "State and trigger",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "U-6: GET /users answered 503 store_unavailable (Y:1928, :14848-14857): in the grid's place users.error ('store unavailable', L337) + Retry; no header, rows or Load more (DJ). GET /admin/capacity, its own read (D8), answered used 6 > cap 5: D12's line (6 is D12's, not §1's 3).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Shell (b), no grace: band label only, strip.none (SH-6 L186; Q1 L146). GET /users is not mounted at e69a9200c (M:1529): drawn to the contract.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Decision ids",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "D12 (L125): no meter, no tone (kit DJ: D12 reads '6 … in use · … allows 5', not '{used} of {cap}'; CMP-023 is 0-100, 15:253) · D10, D11 (L123-124): the line above the grid, + Invite user enabled · D8 (L121) · CMP-027 severity warning = polite (L337; 15:291; DJ, as boards 16, 19, 102) · D1, D2 (L114-115) · D27 (L140) · Q1 (L146)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Roles",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Owner only, else SCR-155 (§4 L201; §7 L348). GET /users users:read (Y:1915; owner allow, not mounted, M:1529-1535); GET /admin/capacity admin:read, executed (Y:12583; M:103-107); POST /users executed (M:1536-1540).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-05",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Keyboard path and focus",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Tab (§4 L198; §7 L345; §13 L584): skip link → TopBar → NavRail → + Invite user → search → Role → Status → Change (the capacity action) → Retry (in the grid's place: no grid stop, no Load more) → RightRail → StatusBar; the strip has no item, so no stop. No focus drawn: U-6 names none and the answer never moves it (DJ; L200).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-06",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Announcement (text, region, when)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "When the 503 lands, once, polite: 'Couldn't load users — store unavailable.', the CMP-027 role=\"status\" region (L337; 15:291). The capacity line is static, never live. On entry the route announcer, polite: 'Admin · Users · LIVE' (§4 L199; announce.route).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-07",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Copy keys used",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "users.error ({detail} 'store unavailable', L337), cap.over (= D12, proposed), band.label, strip.none, meta.asof (proposed), footer.area_entered; announce.route (heard). Not §14: Users, + Invite user (L294), Role, Status (L295); the search box's name: a gap.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-08",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Tokens",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "colour: action.primary.default, action.secondary.default, border.subtle, env.live, status.warning.strong, surface.app, surface.hover, surface.raised, surface.selected, surface.sunken, text.link, text.on-action, text.primary, text.secondary, text.tertiary; type: ui.body, ui.body-strong, ui.caption, ui.heading-md, ui.label; space: button.paddingX, inset.lg, inset.md, inset.sm, inset.xs, stack.md, stack.sm, stack.xs; size: control.comfortable, icon; radius: badge, card, control; other: border.hairline, border.thick",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Dark (§15): error text on raised 14.35, triangle 11.00, Retry 10.17 (L641-642) · search edge 6.29, glyph 6.83 (L650) · Role, Status 10.17 · Change 7.45, + Invite user 4.76 (L638-639)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "fallback: color.border.input pending DS-3: the search well's boundary binds color.text.tertiary (§15 L626, L650)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "fallback: icon/triangle, icon/admin (◆) pending DS-5: the glyph 'warning' and band.label's ◆ (L597)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "fallback: color.surface.admin-tint pending DS-1: the band binds color.surface.raised (§2 D2, §15 L624)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "fallback: color.border.admin pending DS-2: the 4 px rule and the current Admin entry's edge bind color.text.tertiary (§2 D2, §15 L625; D02:1003)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-09",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Analytics and audit events",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Audit: admin.area_entered via the /admin/* reads (GET /admin/capacity, the strip's), naming the API route (§4 L201-204; D27); GET /users writes none, its 503 nothing. Analytics: none for U-6 (empty_state_shown is the empty states', L351).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-10",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Budget",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "14:2343 (D02:332): cursor-paginated; 500 users ≤4 ms scripting per frame. The error state: none named.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-11",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Sign-off",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "(14:2342) 7 'capacity constraint surfaced': U-5, U-6, boards 34, 35 (§17 L699).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E42-D03 · board 35 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400
+   }
+  }
+ ],
+ "export": "docs/design/E42/img/E42-D03-35-scr121-error.png",
+ "notes": {
+  "sources": [
+   "spec §7 L337 (U-6), L292-351 (SCR-121: anatomy L294-298, columns L299-305, the capacity line L311-320, the data rows L324 (GET /users not mounted) and L327 (GET /admin/capacity executed), keys L345-347, RBAC and events L348-351)",
+   "spec §0 L46-52, L63 (boards 30-41, 95); §1 L91, L94, L99-108 (decisions in, the worked example); §2 D1 L114, D2 L115, D8 L121, D10 L123, D11 L124, D12 L125, D27 L140; §3 Q1 L146; §4 L164-176, L186, L198-204; L17-18 (DS-1..DS-5 taken over from D02)",
+   "spec §12 L534 (Record tier, rung 1, no step-up); §13 L584, L590-591; §14 L597-600, L605-606, L609; §15 L620, L626-628, L635-642, L650, L656; §17 L699",
+   "Y = docs/plan/22-api-openapi.yaml L1897-1928 (GET /users, listUsers: cursor, limit, status, role, q ≤120; users:read; 200, 403, 503 ServiceUnavailable), L12571-12583 (GET /admin/capacity, getCapacity: admin:read; each section its own AdminSliceStatus), L14829-14857 (ServiceUnavailable: Retry-After; the storeUnavailable example, code store_unavailable, retry_after_seconds 5), L20859-20867 (SubaccountCapacity: cap 5 regular, 20 business_kyc; used, the most non-deleted sub-accounts under any one main account)",
+   "M = services/api/tests/contract/rbac/matrix.yaml L103-107 (GET /admin/capacity: executed), L1529-1535 (GET /users: not_mounted; owner allow), L1536-1540 (POST /users: executed)",
+   "E42-D02 L320 (SCR-121's wireframe: 'Search [____] Role [all v] Status [all v]'), L332 (the budget), L335 (the error state, '<fixed detail>'), L1003 (DS-2: 'the 4 px rule and the current nav entry's edge'), L1169 (DS-1..DS-5 handed over), inherited per spec L17-18 (docs/design/E42/E42-D02.md)",
+   "15:253 (CMP-023 value 0-100), :289-291 (CMP-027: severity warning role=status polite, error role=alert assertive), :495, :497 (CMP-049 emptyState, tokens), :537-541 (CMP-054), :546-552 (CMP-055), :696, :699, :708 (CMP-071, CMP-072), :893 (CMP-093), :2411 (CMP-208), :2416, :2421 (CMP-209) (docs/plan/15-component-catalogue.md)",
+   "14:2342-2344 (SCR-121 sign-off, performance, components), :2812 (empty_state_shown) (docs/plan/14-screens-catalogue.md); 05:148 (assertive reserved for discrete high-importance events) (docs/plan/05-accessibility-standard.md)",
+   "E10-D02:64 (the NavRail Admin entry, owner role only) (docs/design/E10/E10-D02.md); docs/research/12-scope-and-users.md:11 (the 5 / 20 caps, grandfathering, 14 August 2026)",
+   "gen_28.py, gen_27.py (the DS-2 edge, the renames, the re-citations, the fold and the .md writer); gen_22.py, gen_23.py (the underlined link); gen_16.py, gen_19.py, gen_102.py (polite CMP-027 lines at severity warning)",
+   "spec §15 L615-667 (tokens, contrast, colour vision)",
+   "spec §7 L292-351 (SCR-121 columns, chips, capacity line)",
+   "spec §14 L593-613 (copy deck)",
+   "spec §4 L162-204 (CMP-087 anatomy, SH-1..SH-8, focus, audit)",
+   "spec §2 D1 L114 (layout at both sizes)",
+   "spec §0 L42-82 (boards, names, footer, build order)"
+  ],
+  "copy_keys": [
+   "cap.over",
+   "users.error",
+   "band.label",
+   "strip.none",
+   "meta.asof",
+   "footer.area_entered",
+   "announce.route"
+  ],
+  "copy_gaps": [
+   "The CMP-054 search box has no visible label, placeholder or accessible name in any source: §7 L294-295 names the control and its query, §14 keys none, CMP-054 makes the placeholder optional (15:540); D02's wireframe draws 'Search [____]' (D02:320), not a key. Drawn as the empty well with its glyph; the name waits on the spec owner.",
+   "The Role and Status filters' current-value text and their options: none keyed (D02:320 draws 'Role [all v]' and 'Status [all v]', not keys); the controls show only 'Role' and 'Status' (L295), and their options, the RoleName and UserStatus values (Y:1905-1910), are not drawn.",
+   "users.error's {detail} is U-6's 'store unavailable' (L337), the fixed detail D02 names for the error state (D02:335 '<fixed detail>'); §14 keys no code-to-detail map, and the Problem's own detail ('The relational store is unavailable.', Y:14854) is not drawn: U-6 fixes the words.",
+   "cap.over (§14 L605) is D12's literal string (L125): its numbers, 6 and 5, are D12's sample, not §1's (L103), and it has no fills; cap.valuetext (L605) is not used (no meter, DEV over).",
+   "'Users': an anatomy string, not a §14 key (spec L294)",
+   "'+ Invite user': an anatomy string, not a §14 key (spec L294)",
+   "'Role': an anatomy string, not a §14 key (spec L295)",
+   "'Status': an anatomy string, not a §14 key (spec L295)",
+   "'Admin': an anatomy string, not a §14 key (§4 L164-165, the NavRail's Admin entry; E10-D02:64; CMP-071's item 'Admin', 15:696); drawn at 2560 only (the expanded rail, D1 L114)"
+  ],
+  "live_checks": [
+   "capacity line: at 1280 cap.over's words (about 902 px on one line) wrap at 890 px to about 2 lines, with 'Change' at the row's end, centred on them; at 2560 they sit on one line with 'Change' right after them. After touchTexts, re-measure the 1 px underline to the rendered word 'Change' and keep it 32 px tall with the word centred.",
+   "error: in both frames one row inside the raised region (space.inset.lg): the triangle, 'Couldn't load users — store unavailable.' and the Retry button (32 px), centred on one line; the region spans the content width (944 / 2048 px); no header row, no rows and no 'Load more' anywhere.",
+   "find bar: the 320 × 32 px search well (sunken, 1 px color.text.tertiary inner edge, the search glyph at its start, nothing else inside), then 'Role' and 'Status' as 32 px secondary triggers with a trailing chevron; the bar sits under the PageHeader, above the capacity line.",
+   "PageHeader: 'Users' (h1) and 'All times UTC · as of 14:02:11' on the left, '+ Invite user' (primary, enabled) at the right end, bottom-aligned with the meta line.",
+   "Admin entry: in both frames the current entry shows the 2 px color.text.tertiary inner edge (DS-2, D02:1003) around its color.surface.selected fill, inside its 48 x 32 / 224 x 32 px box; the ◆ mark and the 'Admin' label keep their places.",
+   "strip: one line, 'Nothing needs your action', at both sizes; the band carries the label only (no badge, no grace line).",
+   "fold frame-1280 (kit estimates; <main> clips at its 704 px box): in view — CMP-087 band (composition) (16-72 px); CMP-087 rule (4 px) (72-76 px); CMP-087 strip (composition) (76-107 px); CMP-088 PageHeader (composition) (106-179 px); find bar (178-211 px); capacity line · over (222-260 px); CMP-049 Table (composition) · error state (271-336 px); CMP-093 AuditActionTrigger (composition) · footer marker (335-365 px). Cut or below — none.",
+   "fold frame-2560 (kit estimates; <main> clips at its 1344 px box): in view — CMP-087 band (composition) (16-72 px); CMP-087 rule (4 px) (72-76 px); CMP-087 strip (composition) (76-107 px); CMP-088 PageHeader (composition) (106-179 px); find bar (178-211 px); capacity line · over (222-255 px); CMP-049 Table (composition) · error state (266-331 px); CMP-093 AuditActionTrigger (composition) · footer marker (330-360 px). Cut or below — none.",
+   "annotations: estimated 1604 px; the root is 1760 px (clip on), 124 px of headroom: after touchTexts + relayout the footer 'page E42-D03 · board 35 · r1' must end inside the root (raise the root's h, at most 1760, if not)",
+   "glyph ◆ (U+25C6): confirm Inter draws it; else Penpot substitutes a fallback font",
+   "root name: after the first section call the root must read back exactly as the sheet's board.name, or later calls create a duplicate root"
+  ],
+  "deviations": [
+   "Buttons, chips, badges, banners, fields, tiles, tables, menus and dialogs are compositions from tokens: admin controls are 32 px (size.control.comfortable, §4 L176) while the library CMP-001 binds size.control.height (24 px in the file's compact density), and cvsheet v1 cannot set an instance's glyph, fill or border.",
+   "SCR-121's content stack (find bar, capacity line, the grid's place) is spaced by space.stack.md (12 px), the kit's STEP for SCR-120's band step (D1 L114): no source sets SCR-121's vertical rhythm (kit choice).",
+   "The counts inside cap.over ('6', '5', '14 August 2026') keep the string's type (type.ui.body), as on boards 22 and 28: one sentence that wraps at 1280, and cvsheet v1 has no mixed runs.",
+   "The find bar (§7 L294-296) is local compositions: the CMP-054 SearchBox as a 320 × 32 px well (the kit field's width; no source sets it) on color.surface.sunken with DS-3's color.text.tertiary boundary and the registry 'search' glyph in color.text.tertiary (6.83 on sunken, the edge 6.29 against the page, §15 L650), empty, so no 'Clear search' button (15:541); the CMP-055 FilterBar with its add-filter controls 'Role' and 'Status' (15:548; L295) as 32 px secondary triggers with a trailing chevron (text and chevron color.text.primary, 10.17 on the secondary fill, §15 L641), none set. Neither carries a value or a placeholder: no source gives one (copy gaps).",
+   "The over-cap line (D12 L125; §7 L315) is the kit's capacity_line('over'): no CMP-023 meter and no tone glyph (the kit's choice, 'a bar cannot show more than its cap', argued here). D12's words are '6 sub-accounts in use · Regular tier allows 5', not cap.recorded's '{used} of {cap}' that a meter's cap.valuetext would read ('6 of 5'), and CMP-023's value runs 0-100 (15:253), so a bar cannot show 6 of 5; D12 names no tone (§7 L314 gives the warning tone to at capacity only). Used and cap were both read, which allows a meter (L315-316) without requiring one; board 91 draws the seven variants (L316), so the spec owner settles it there.",
+   "The over-cap numbers are D12's own (L125): 6 sub-accounts in use under the Regular tier's cap 5 (Y:20859), overriding §1's '3 sub-accounts in use' (L103) for this frame, as U-6's 'used > cap' needs (L337); the tier stays §1's Regular (L103). cap.over is D12's literal (§14 L605 'over D12'): no fills.",
+   "Links: 'Change' (cap.over's [Change]) is underlined by a 1 px rect (see the underline line); it is the board's only link.",
+   "'Change' follows plain text, so it carries a drawn 1 px color.text.link underline as wide as its estimated text (cvsheet v1 texts take no underline; boards 01, 22, 23 and 28): a link marked by colour alone fails against the text beside it. Its box is 32 px tall with the word centred, the comfortable target (§13 L591; §4 L176).",
+   "The grid's place (DJ): GET /users answered 503 store_unavailable, so nothing of the list renders: no header row, no rows, no row menus and no 'Load more' (no cursor, §7 L297). The CMP-049 region (color.surface.raised, radius.card; 15:497) holds only the CMP-027 ErrorState in its body (CMP-049's emptyState slot, 15:495). A header over an error would offer four sort buttons with nothing to sort (§7 L303-305); U-6's row names only the error line (L337).",
+   "CMP-027 at severity warning (DJ): U-6 is announced 'polite once' (L337), and CMP-027 is role=\"status\" (polite) only at severity warning; severity error is role=\"alert\", assertive (15:291), which `05`:148 reserves for discrete high-importance events. So the triangle (color.status.warning.strong, 11.00 on raised, §15 L642) leads the sentence, as boards 16, 19 and 102 draw their polite CMP-027 lines. D02 D4's octagon for 'down / error' (D02:182) is drawn for SCR-120's slice, component, flag, tier and clock reads, not this list read. The other reading, severity error with the octagon, contradicts L337's polite: the spec owner confirms.",
+   "TopBar, NavRail, RightRail and StatusBar content other than the Admin entry, the env badges and the owner's name is drawn as neutral placeholders (E10-D02 owns it; §1 L97 gives only the sizes). The chrome binds color.surface.app with color.border.subtle dividers as on boards 01-28, though `15` names color.surface.raised for CMP-071 NavRail, CMP-072 TopBar and CMP-209 RightRail (15:699, :708, :2421) and color.surface.sunken for CMP-208 StatusBar (15:2411): binding them is a kit change for every board (routed to the kit owner, as board 06 records).",
+   "Local helper kit_fixups() (board 06's review r1 finding 1, e42kit unchanged): e42kit marks the current Admin entry by its color.surface.selected fill alone, a state under AC-5's UI bar of 3.0 against the rail (§15 L620). D03 takes DS-2 over from D02 unchanged (L17-18; D02:1169) and DS-2 is 'the 4 px rule and the current nav entry's edge' (D02:1003), so the entry carries a color.text.tertiary (DS-2's fallback) border.thick inner edge: 6.29 / 6.81 / 12.54 against the rail (§15 L635, L638), 3.98 / 4.86 / 7.94 against its fill (§15 L656: F4 fails the 4.5 text bar; an edge is UI, bar 3.0), as boards 06, 16 and 21-28 draw it.",
+   "Local helper kit_fixups(): the kit's 'RightRail (composition)' and 'footer marker (CMP-093)' take the build notes' '<CMP id> <Name> (composition)' names 'CMP-209 RightRail (composition)' (15:2416) and 'CMP-093 AuditActionTrigger (composition) · footer marker' (15:893), as boards 06, 11 and 21-28 do.",
+   "Shell: (b) per action with no grace (SH-6, L186): the band label alone, no badge and no grace line, as SCR-120's boards 21-28 draw it (Q1 L146 '(b) is what the server does'); U-6 names no shell state.",
+   "The strip reads strip.none 'Nothing needs your action' (SH-6 L186; §14 L598): U-6 names no strip item, and §1's data (tier recorded, users.without_mfa 0, L103-104) raises none; the strip's own /admin/* reads answered (DJ: U-6's 503 is GET /users's alone, a /users route, §4 L203).",
+   "[Change] (cap.over's action, D12) opens §12's rung-1 Record tier dialog (dlg.tier, L609; OV-8 L281, board 28), as boards 09, 22 and 28 read cap.recorded's [Change] (DJ: §7 names no destination; dlg.tier's 'You can record it again later', L609); rung 1, no step-up (§12 L534).",
+   "No focus ring is drawn: U-6 names no focused control, and the answer never moves focus (DJ, as §4 L200 says of expiry and a route change); the keyboard block gives the order.",
+   "The PageHeader keeps meta.asof 'All times UTC · as of 14:02:11' (§4 L170; §1 L103): it stamps the reads that answered (the capacity line's, the strip's); the failed list shows no time and no number (D02 D4, L91: never a zero for a value not received).",
+   "GET /users is not mounted at e69a9200c (M:1529-1535; §7 L324 'the grid cannot render until it is'): U-6 is drawn against the contract's 503 (Y:1928; ServiceUnavailable Y:14829-14832, its storeUnavailable example code store_unavailable, Y:14848-14857). GET /admin/capacity is executed (M:103-107).",
+   "Both frames show the whole page: <main>'s content ends well inside its 704 / 1344 px box (the fold lines under Live checks), so nothing scrolls.",
+   "Root height: the kit's size, raised to the annotation column's estimate plus 128 px (cap 1760, the page pitch less 40), for text-metric error (the board 01, 02 and 07 reviews).",
+   "The kit's 'token:' line for size.control.comfortable (the validator's Tier-1 WARN on every 32 px control) is kept off the annotation column; it stays in the sheet notes and the .md, and the column's tokens line lists the token (boards 07, 11 and 28 keep it off). The column also prints the two DS-5 icon lines (triangle, ◆) as one line; the notes keep both.",
+   "Board names carry Penpot's normalised ' / ' form (E42-D03 / 31 SCR-121 / populated · …) so cvsheet's find-or-create root matches on every section call; §0 L46-47 writes 'SCR-121/populated'."
+  ],
+  "fallbacks": [
+   "token: size.control.comfortable (32 px, §4 L176) is the Tier-1 primitive the spec names (validator WARN)",
+   "fallback: color.border.input pending DS-3: the search well's boundary binds color.text.tertiary (§15 L626, L650)",
+   "fallback: icon/triangle pending DS-5: drawn with the registry glyph 'warning'",
+   "fallback: color.surface.admin-tint pending DS-1: the band binds color.surface.raised (§2 D2, §15 L624)",
+   "fallback: color.border.admin pending DS-2: the 4 px rule and the current Admin entry's edge bind color.text.tertiary (§2 D2, §15 L625; D02:1003)",
+   "fallback: icon/admin (◆) pending DS-5: drawn as the text glyph ◆ of band.label (L597)"
+  ],
+  "tokens": [
+   "type.ui.body-strong",
+   "color.text.on-action",
+   "space.inset.xs",
+   "space.button.paddingX",
+   "radius.control",
+   "size.control.comfortable",
+   "color.action.primary.default",
+   "color.text.primary",
+   "size.icon",
+   "color.action.secondary.default",
+   "space.inset.sm",
+   "color.text.tertiary",
+   "color.surface.sunken",
+   "border.hairline",
+   "type.ui.body",
+   "color.text.link",
+   "space.stack.xs",
+   "color.status.warning.strong",
+   "color.surface.raised",
+   "radius.card",
+   "space.inset.lg",
+   "space.stack.md",
+   "color.surface.hover",
+   "type.ui.caption",
+   "radius.badge",
+   "color.env.live",
+   "space.inset.md",
+   "color.text.secondary",
+   "color.border.subtle",
+   "color.surface.app",
+   "type.ui.label",
+   "type.ui.heading-md",
+   "space.stack.sm",
+   "color.surface.selected",
+   "border.thick",
+   "type.ui.heading-sm"
+  ]
+ }
+}

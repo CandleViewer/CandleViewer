@@ -1,0 +1,6628 @@
+{
+ "board": {
+  "name": "E42-D03 / 36 SCR-121 / in-flight · 1280×800+2560×1440 · dark",
+  "w": 4304,
+  "h": 1760,
+  "x": 0,
+  "y": 12600,
+  "o": {
+   "dir": "row",
+   "align": "start",
+   "fill": "color.surface.app",
+   "pad": "space.inset.lg",
+   "gap": "space.inset.lg",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "frame-1280",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-072 TopBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-012 Badge (composition) · LIVE",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.hairline"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · workspace switcher",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · CMP-210 HealthChips",
+          "w": 160,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · search",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "search",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-061 UserMenu (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "basiltt",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 32,
+          "note": "opens CMP-061: Profile · Settings · Admin · Sign out (§4 L188)"
+         }
+        ]
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge is never hideable (E10-D02)"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 1280,
+      "h": 704,
+      "vs": "fill",
+      "note": "NavRail | main | RightRail (the rail is absolute at x = NavRail + main)",
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-071 NavRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "justify": "space-between",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entries",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "entry-1",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-2",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-3",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-4",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-5",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 48,
+            "h": 32
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "Admin entry",
+          "o": {
+           "dir": "row",
+           "radius": "radius.control",
+           "fill": "color.surface.selected",
+           "justify": "center",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "mark",
+            "chars": "◆",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 48,
+          "h": 32,
+          "note": "Owner only; structurally absent for Manager and Viewer (E10-D02); aria-current=page; named 'Admin'; DS-2 edge (D02:1003): color.text.tertiary at border.thick, inner; 6.29 / 6.81 / 12.54 against the rail, 3.98 / 4.86 / 7.94 against its fill (§15 L635, L638, L656)"
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 63,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 64,
+        "h": 704,
+        "vs": "fill",
+        "note": "64 px (collapsed, §2 D1)"
+       },
+       {
+        "t": "board",
+        "name": "CMP-209 RightRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.md",
+         "pad": "space.inset.md",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-211 PanicButtons (placeholder)",
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          },
+          "w": 216,
+          "h": 40,
+          "note": "E39-D01's Flatten all / Kill switch cluster at the rail's top; copy and look are E39's (§12 L537)"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-1",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-2",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-3",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 704,
+        "vs": "fill",
+        "note": "240 px at both sizes (§2 D1)",
+        "x": 1040,
+        "y": 0,
+        "abs": true
+       },
+       {
+        "t": "board",
+        "name": "main",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "pad": "space.inset.lg",
+         "fill": "color.surface.app",
+         "clip": true
+        },
+        "w": 976,
+        "h": 704,
+        "vs": "fill",
+        "note": "<main>: band → rule → strip → PageHeader → route content → footer marker (§4 L165-171)",
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-087 band (composition)",
+          "o": {
+           "dir": "row",
+           "pad": "space.inset.lg",
+           "justify": "space-between",
+           "fill": "color.surface.raised"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "◆ Admin area · Users",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "grace line",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "seg-1",
+              "chars": "Still trusted for user changes ·",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "text",
+              "name": "seg-2",
+              "chars": "4:59",
+              "typo": "type.num.base",
+              "color": "color.text.secondary"
+             }
+            ],
+            "note": "copy: \"Still trusted for user changes · 4:59\"; SH-5: polite at 60 s and 10 s (D06:58)"
+           }
+          ],
+          "w": 944,
+          "h": 56,
+          "note": "role=\"region\" aria-label=\"Admin area\"; never focusable; the fill is not a carrier (§2 D2)"
+         },
+         {
+          "t": "rect",
+          "name": "CMP-087 rule (4 px)",
+          "w": 944,
+          "h": 4,
+          "o": {
+           "fill": "color.text.tertiary"
+          },
+          "note": "6.29 / 6.81 / 12.54 against the page (§15 L635)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-087 strip (composition)",
+          "o": {
+           "dir": "row",
+           "wrap": "wrap",
+           "gap": "space.inset.sm",
+           "padY": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "none",
+            "chars": "Nothing needs your action",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 944,
+          "note": "role=\"region\" \"Needs your action\"; a list; not live (the shell announces once)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-088 PageHeader (composition)",
+          "o": {
+           "dir": "row",
+           "padY": "space.inset.lg",
+           "justify": "space-between",
+           "align": "end"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "titles",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "h1",
+              "chars": "Users",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.primary",
+              "note": "the h1: the skip-link target (CMP-085)"
+             },
+             {
+              "t": "text",
+              "name": "meta",
+              "chars": "All times UTC · as of 14:02:11",
+              "typo": "type.ui.caption",
+              "color": "color.text.tertiary"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "primary action",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.button.paddingX",
+             "radius": "radius.control",
+             "height": "size.control.comfortable",
+             "justify": "center",
+             "fill": "color.action.primary.default"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "+ Invite user",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.on-action"
+             }
+            ],
+            "w": 102,
+            "h": 32,
+            "note": "opens SCR-123; enabled (D11)"
+           }
+          ],
+          "w": 944
+         },
+         {
+          "t": "board",
+          "name": "SCR-121 users list",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.md"
+          },
+          "w": 944,
+          "note": "find bar → capacity line → grid; no Load more (one page, DEV['order'])",
+          "kids": [
+           {
+            "t": "board",
+            "name": "find bar",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-054 SearchBox (composition)",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs",
+               "radius": "radius.control",
+               "fill": "color.surface.sunken",
+               "height": "size.control.comfortable",
+               "stroke": "color.text.tertiary",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "glyph",
+                "icon": "search",
+                "color": "color.text.secondary",
+                "size": "size.icon"
+               }
+              ],
+              "w": 320,
+              "h": 32,
+              "note": "role=\"searchbox\" (15:541); q: username or e-mail substring, ≤120 (L295); empty; its label or placeholder: no §14 key (copy gap)"
+             },
+             {
+              "t": "board",
+              "name": "CMP-055 FilterBar (composition)",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "filter · Role",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs",
+                 "padX": "space.button.paddingX",
+                 "radius": "radius.control",
+                 "height": "size.control.comfortable",
+                 "fill": "color.action.secondary.default",
+                 "justify": "center"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Role",
+                  "typo": "type.ui.body-strong",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "icon",
+                  "name": "chevron",
+                  "icon": "chevron-down",
+                  "color": "color.text.primary",
+                  "size": "size.icon"
+                 }
+                ],
+                "w": 73,
+                "h": 32,
+                "note": "a menu button; no filter set, so no value is shown (the URL carries none)"
+               },
+               {
+                "t": "board",
+                "name": "filter · Status",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs",
+                 "padX": "space.button.paddingX",
+                 "radius": "radius.control",
+                 "height": "size.control.comfortable",
+                 "fill": "color.action.secondary.default",
+                 "justify": "center"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Status",
+                  "typo": "type.ui.body-strong",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "icon",
+                  "name": "chevron",
+                  "icon": "chevron-down",
+                  "color": "color.text.primary",
+                  "size": "size.icon"
+                 }
+                ],
+                "w": 86,
+                "h": 32,
+                "note": "a menu button; no filter set, so no value is shown (the URL carries none)"
+               }
+              ],
+              "note": "role=\"group\" (15:550); Role and Status (L295)"
+             }
+            ],
+            "note": "all in the URL, so a filtered list is a deep link (L295-296)"
+           },
+           {
+            "t": "board",
+            "name": "capacity line (CMP-023 + text + action) · recorded",
+            "o": {
+             "dir": "column",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "line",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "CMP-023 Progress Bar (composition) · capacity meter",
+                "kids": [
+                 {
+                  "t": "rect",
+                  "name": "track",
+                  "w": 120,
+                  "h": 8,
+                  "o": {
+                   "radius": "radius.badge",
+                   "fill": "color.surface.hover"
+                  },
+                  "x": 0,
+                  "y": 0
+                 },
+                 {
+                  "t": "rect",
+                  "name": "fill",
+                  "w": 72,
+                  "h": 8,
+                  "o": {
+                   "radius": "radius.badge",
+                   "fill": "color.action.primary.default"
+                  },
+                  "x": 0,
+                  "y": 0
+                 }
+                ],
+                "w": 120,
+                "h": 8,
+                "note": "role=meter; aria-valuetext \"3 of 5 sub-accounts used\""
+               },
+               {
+                "t": "board",
+                "name": "text",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "seg-1",
+                  "chars": "3",
+                  "typo": "type.num.base",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "text",
+                  "name": "seg-2",
+                  "chars": "of",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "text",
+                  "name": "seg-3",
+                  "chars": "5",
+                  "typo": "type.num.base",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "text",
+                  "name": "seg-4",
+                  "chars": "sub-accounts used · Regular tier, recorded 2026-09-12",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "note": "copy: \"3 of 5 sub-accounts used · Regular tier, recorded 2026-09-12\""
+               },
+               {
+                "t": "board",
+                "name": "CMP-021 Link (composition) · Change",
+                "o": {
+                 "dir": "column",
+                 "align": "start"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "text",
+                  "chars": "Change",
+                  "typo": "type.ui.body",
+                  "color": "color.text.link"
+                 },
+                 {
+                  "t": "rect",
+                  "name": "underline",
+                  "w": 46,
+                  "h": 1,
+                  "o": {
+                   "fill": "color.text.link"
+                  }
+                 }
+                ],
+                "note": "opens the Record tier dialog (rung 1, §12 L534; board 28); underlined, not colour-only"
+               }
+              ]
+             }
+            ],
+            "w": 944,
+            "note": "GET /admin/capacity (admin:read; L327), its own read; a meter because used and cap were both read (L316); above the grid so it stays in view at 1280 (L296)"
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "frame-1280/body/main/SCR-121 users list",
+   "node": {
+    "t": "board",
+    "name": "CMP-049 Table (composition) · users",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "radius": "radius.card",
+     "clip": true
+    },
+    "w": 944,
+    "note": "role=grid, one tab stop, arrows between rows and cells, Enter opens SCR-122, the menu key or Shift+F10 opens a row's ⋯ (CMP-041's trigger; its name has no §14 key) (L345-346; D02:336); username with display_name under it (L299), a placeholder (§1 gives none; Y:15731 allows null); rows GET /users (not mounted, M:1529: a target)",
+    "kids": [
+     {
+      "t": "board",
+      "name": "header",
+      "o": {
+       "dir": "row",
+       "fill": "color.surface.hover",
+       "height": "space.row.height.comfortable"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "User",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 112,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "role",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Role",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 88,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "accounts",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Accounts",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 120,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "two_factor",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Two-factor",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 96,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "last",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Last sign-in",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 120,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "status",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Status",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 280,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "menu",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "w": 128,
+        "h": 32
+       }
+      ],
+      "h": 32,
+      "note": "User, Role, Last sign-in and Status are sort buttons (15:496; L303), enabled: has_more is false (DEV['order']); aria-sort only on a sorted header (none: the server's order); the row-menu column's header has no string (copy gap)"
+     },
+     {
+      "t": "board",
+      "name": "row · basiltt",
+      "o": {
+       "dir": "row",
+       "height": "space.row.height.comfortable",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "user",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "username",
+            "chars": "basiltt",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · basiltt's display name (User.display_name)",
+            "w": 64,
+            "h": 8,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ]
+         }
+        ],
+        "w": 112,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "role",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "owner",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "accounts",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "all (owner)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "note": "from the role, never from grants (D13)"
+         }
+        ],
+        "w": 120,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "two_factor",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "yes",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "last",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · basiltt's last sign-in (User.last_login_at, UTC)",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 120,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "status",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-011 Tag (composition) · active",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.badge",
+           "fill": "color.status.success.subtle"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "check",
+            "icon": "check",
+            "color": "color.status.success.strong",
+            "size": "size.icon"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Active",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24
+         }
+        ],
+        "w": 280,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "menu",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · row menu",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "more-horizontal",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         }
+        ],
+        "w": 128,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 944,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 31,
+        "abs": true
+       }
+      ],
+      "w": 944,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "row · alex",
+      "o": {
+       "dir": "row",
+       "height": "space.row.height.comfortable",
+       "fill": "color.surface.selected"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "user",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "username",
+            "chars": "alex",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · alex's display name (User.display_name)",
+            "w": 64,
+            "h": 8,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ]
+         }
+        ],
+        "w": 112,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "role",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "manager",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "accounts",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "count",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "seg-1",
+            "chars": "2",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "seg-2",
+            "chars": "accounts",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "note": "copy: \"2 accounts\"; D13 (L126): the list in the cell's description: sub_001 [LIVE], sub_002 [LIVE]"
+         }
+        ],
+        "w": 120,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "two_factor",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "yes",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "last",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · alex's last sign-in (User.last_login_at, UTC)",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 120,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "status",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-011 Tag (composition) · active",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.badge",
+           "fill": "color.status.success.subtle"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "check",
+            "icon": "check",
+            "color": "color.status.success.strong",
+            "size": "size.icon"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Active",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24,
+          "note": "unchanged until the answer (L338): Disabled after it"
+         }
+        ],
+        "w": 280,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "menu",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "stroke": "color.focus.ring",
+         "strokeWidth": "border.focus",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "in flight · users.disabling",
+          "chars": "Disabling alex…",
+          "typo": "type.ui.body",
+          "color": "color.text.secondary",
+          "note": "replaces the row menu while the request is held (L338); not live (U-7 announces the answer only); the row is aria-busy (D09:231): not T2"
+         }
+        ],
+        "w": 128,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 944,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 31,
+        "abs": true
+       }
+      ],
+      "w": 944,
+      "h": 32,
+      "note": "aria-busy while the request is held (D09:231); the row never moves before the answer (L338; D02:335); focus on its row-menu cell (§13 L586, DJ); the focused row: color.surface.selected (D02:121)"
+     },
+     {
+      "t": "board",
+      "name": "row · erin",
+      "o": {
+       "dir": "row",
+       "height": "space.row.height.comfortable",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "user",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "username",
+            "chars": "erin",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · erin's display name (User.display_name)",
+            "w": 64,
+            "h": 8,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ]
+         }
+        ],
+        "w": 112,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "role",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "viewer",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "accounts",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "account · sub_001",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "sub_001",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-012 Badge (composition) · LIVE",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.xs",
+             "radius": "radius.badge",
+             "stroke": "color.env.live",
+             "strokeWidth": "border.hairline"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "LIVE",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 16
+           }
+          ]
+         }
+        ],
+        "w": 120,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "two_factor",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "yes",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "last",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · erin's last sign-in (User.last_login_at, UTC)",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 120,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "status",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-011 Tag (composition) · active",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.badge",
+           "fill": "color.status.success.subtle"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "check",
+            "icon": "check",
+            "color": "color.status.success.strong",
+            "size": "size.icon"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Active",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24
+         }
+        ],
+        "w": 280,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "menu",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · row menu",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "more-horizontal",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         }
+        ],
+        "w": 128,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 944,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 31,
+        "abs": true
+       }
+      ],
+      "w": 944,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "row · bea",
+      "o": {
+       "dir": "row",
+       "height": "space.row.height.comfortable",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "user",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "username",
+            "chars": "bea",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · bea's display name (User.display_name)",
+            "w": 64,
+            "h": 8,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ]
+         }
+        ],
+        "w": 112,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "role",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "manager",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "accounts",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "account · sub_003",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "sub_003",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-012 Badge (composition) · LIVE",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.xs",
+             "radius": "radius.badge",
+             "stroke": "color.env.live",
+             "strokeWidth": "border.hairline"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "LIVE",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 16
+           }
+          ]
+         }
+        ],
+        "w": 120,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "two_factor",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "yes",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "last",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · bea's last sign-in (User.last_login_at, UTC)",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 120,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "status",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-011 Tag (composition) · trading_locked",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.badge",
+           "fill": "color.status.danger.subtle"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "octagon",
+            "icon": "danger",
+            "color": "color.status.danger.strong",
+            "size": "size.icon"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Trading locked (risk) · until 00:00 UTC",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24,
+          "note": "a labelled target (CG-13, L807): no per-user trading lockout is served"
+         }
+        ],
+        "w": 280,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "menu",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · row menu",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "more-horizontal",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         }
+        ],
+        "w": 128,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 944,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 31,
+        "abs": true
+       }
+      ],
+      "w": 944,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "row · carol",
+      "o": {
+       "dir": "row",
+       "height": "space.row.height.comfortable",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "user",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "username",
+            "chars": "carol",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · carol's display name (User.display_name)",
+            "w": 64,
+            "h": 8,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ]
+         }
+        ],
+        "w": 112,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "role",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "viewer",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 88,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "accounts",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "—",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "note": "D13: an invited or disabled row"
+         }
+        ],
+        "w": 120,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "two_factor",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "—",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "note": "aria-describedby users.mfa_pending 'Set up when the invite is accepted' (L301, proposed)"
+         }
+        ],
+        "w": 96,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "last",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Never signed in",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "note": "last_login_at null: never accepted"
+         }
+        ],
+        "w": 120,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "status",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-011 Tag (composition) · invited",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.badge",
+           "fill": "color.status.info.subtle"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "ring",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "ring",
+              "w": 13,
+              "h": 13,
+              "o": {
+               "stroke": "color.status.info.strong",
+               "strokeWidth": "border.thick"
+              }
+             }
+            ],
+            "w": 16,
+            "h": 16
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Invited · expires 2026-10-23 10:00 UTC",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24
+         }
+        ],
+        "w": 280,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "menu",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · row menu",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "more-horizontal",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         }
+        ],
+        "w": 128,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 944,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 31,
+        "abs": true
+       }
+      ],
+      "w": 944,
+      "h": 32
+     }
+    ]
+   }
+  },
+  {
+   "into": "frame-1280/body/main/SCR-121 users list/CMP-049 Table (composition) · users",
+   "node": {
+    "t": "board",
+    "name": "row · dave",
+    "o": {
+     "dir": "row",
+     "height": "space.row.height.comfortable",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "user",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "username",
+          "chars": "dave",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · dave's display name (User.display_name)",
+          "w": 64,
+          "h": 8,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       }
+      ],
+      "w": 112,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "role",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "viewer",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 88,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "accounts",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "note": "D13: an invited or disabled row"
+       }
+      ],
+      "w": 120,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "two_factor",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "note": "aria-describedby users.mfa_pending 'Set up when the invite is accepted' (L301, proposed)"
+       }
+      ],
+      "w": 96,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "last",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Never signed in",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "note": "last_login_at null: never accepted"
+       }
+      ],
+      "w": 120,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "status",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-011 Tag (composition) · invite_expired",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "radius": "radius.badge",
+         "fill": "color.status.warning.subtle"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "triangle",
+          "icon": "warning",
+          "color": "color.status.warning.strong",
+          "size": "size.icon"
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Invite expired · 2026-10-19 08:00 UTC",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24
+       }
+      ],
+      "w": 280,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "menu",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-002 IconButton (composition) · row menu",
+        "o": {
+         "dir": "row",
+         "justify": "center",
+         "radius": "radius.control"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "icon",
+          "icon": "more-horizontal",
+          "color": "color.text.secondary",
+          "size": "size.icon"
+         }
+        ],
+        "w": 32,
+        "h": 32
+       }
+      ],
+      "w": 128,
+      "h": 32
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 944,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 31,
+      "abs": true
+     }
+    ],
+    "w": 944,
+    "h": 32
+   }
+  },
+  {
+   "into": "frame-1280/body/main/SCR-121 users list/CMP-049 Table (composition) · users",
+   "node": {
+    "t": "board",
+    "name": "row · dan",
+    "o": {
+     "dir": "row",
+     "height": "space.row.height.comfortable",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "user",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "username",
+          "chars": "dan",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · dan's display name (User.display_name)",
+          "w": 64,
+          "h": 8,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       }
+      ],
+      "w": 112,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "role",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "viewer",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 88,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "accounts",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "note": "D13: an invited or disabled row"
+       }
+      ],
+      "w": 120,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "two_factor",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "placeholder · dan's two-factor (User.mfa_enabled)",
+        "w": 24,
+        "h": 12,
+        "o": {
+         "radius": "radius.control",
+         "fill": "color.surface.hover"
+        }
+       }
+      ],
+      "w": 96,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "last",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "placeholder · dan's last sign-in (User.last_login_at, UTC)",
+        "w": 72,
+        "h": 12,
+        "o": {
+         "radius": "radius.control",
+         "fill": "color.surface.hover"
+        }
+       }
+      ],
+      "w": 120,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "status",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-011 Tag (composition) · disabled",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "radius": "radius.badge",
+         "fill": "color.neutral.subtle"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "slashed-circle",
+          "icon": "cancelled",
+          "color": "color.text.secondary",
+          "size": "size.icon"
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Disabled",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24
+       }
+      ],
+      "w": 280,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "menu",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-002 IconButton (composition) · row menu",
+        "o": {
+         "dir": "row",
+         "justify": "center",
+         "radius": "radius.control"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "icon",
+          "icon": "more-horizontal",
+          "color": "color.text.secondary",
+          "size": "size.icon"
+         }
+        ],
+        "w": 32,
+        "h": 32
+       }
+      ],
+      "w": 128,
+      "h": 32
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 944,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 31,
+      "abs": true
+     }
+    ],
+    "w": 944,
+    "h": 32
+   }
+  },
+  {
+   "into": "frame-1280/body/main/SCR-121 users list/CMP-049 Table (composition) · users",
+   "node": {
+    "t": "board",
+    "name": "row · frank",
+    "o": {
+     "dir": "row",
+     "height": "space.row.height.comfortable",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "user",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "username",
+          "chars": "frank",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · frank's display name (User.display_name)",
+          "w": 64,
+          "h": 8,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       }
+      ],
+      "w": 112,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "role",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "viewer",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 88,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "accounts",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "note": "no grant in §1 (L102); D13 keys '—' only for invited and disabled rows (copy gap)"
+       }
+      ],
+      "w": 120,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "two_factor",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "placeholder · frank's two-factor (User.mfa_enabled)",
+        "w": 24,
+        "h": 12,
+        "o": {
+         "radius": "radius.control",
+         "fill": "color.surface.hover"
+        }
+       }
+      ],
+      "w": 96,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "last",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "placeholder · frank's last sign-in (User.last_login_at, UTC)",
+        "w": 72,
+        "h": 12,
+        "o": {
+         "radius": "radius.control",
+         "fill": "color.surface.hover"
+        }
+       }
+      ],
+      "w": 120,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "status",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-011 Tag (composition) · locked_out",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "radius": "radius.badge",
+         "fill": "color.status.warning.subtle"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "triangle",
+          "icon": "warning",
+          "color": "color.status.warning.strong",
+          "size": "size.icon"
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Locked out (sign-in)",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "CG-12: no until-time is served yet (§7 L308-309)"
+       }
+      ],
+      "w": 280,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "menu",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-002 IconButton (composition) · row menu",
+        "o": {
+         "dir": "row",
+         "justify": "center",
+         "radius": "radius.control"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "icon",
+          "icon": "more-horizontal",
+          "color": "color.text.secondary",
+          "size": "size.icon"
+         }
+        ],
+        "w": 32,
+        "h": 32
+       }
+      ],
+      "w": 128,
+      "h": 32
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 944,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 31,
+      "abs": true
+     }
+    ],
+    "w": 944,
+    "h": 32
+   }
+  },
+  {
+   "into": "frame-1280/body/main",
+   "node": {
+    "t": "board",
+    "name": "CMP-093 AuditActionTrigger (composition) · footer marker",
+    "o": {
+     "dir": "row",
+     "padT": "space.inset.lg"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "text",
+      "chars": "Entering this area was recorded — Area entered (admin.area_entered)",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary"
+     }
+    ],
+    "w": 944,
+    "note": "admin.area_entered comes from the strip's /admin/* reads on SCR-121-123 (§4 L201-204)"
+   }
+  },
+  {
+   "into": "frame-1280",
+   "node": {
+    "t": "board",
+    "name": "CMP-208 StatusBar (composition)",
+    "o": {
+     "dir": "row",
+     "padX": "space.inset.lg",
+     "justify": "space-between",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "board",
+      "name": "CMP-012 Badge (composition) · LIVE",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.xs",
+       "radius": "radius.badge",
+       "stroke": "color.env.live",
+       "strokeWidth": "border.hairline"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "word",
+        "chars": "LIVE",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "h": 16
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 48,
+    "note": "48 px (§1 L97); the env badge repeats the TopBar's (E10-D02)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "frame-2560",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 2560,
+    "h": 1440,
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-072 TopBar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.lg",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · wordmark",
+          "w": 88,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-012 Badge (composition) · LIVE",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "radius": "radius.badge",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.hairline"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · workspace switcher",
+          "w": 136,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · CMP-210 HealthChips",
+          "w": 160,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · search",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "search",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-061 UserMenu (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "basiltt",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 32,
+          "note": "opens CMP-061: Profile · Settings · Admin · Sign out (§4 L188)"
+         }
+        ]
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 2560,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 47,
+        "abs": true
+       }
+      ],
+      "w": 2560,
+      "h": 48,
+      "note": "48 px (§1 L97); the env badge is never hideable (E10-D02)"
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "dir": "row",
+       "align": "start"
+      },
+      "w": 2560,
+      "h": 1344,
+      "vs": "fill",
+      "note": "NavRail | main | RightRail (the rail is absolute at x = NavRail + main)",
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-071 NavRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "justify": "space-between",
+         "padY": "space.inset.sm",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "entries",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "entry-1",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-2",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-3",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-4",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "entry-5",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "rect",
+              "name": "placeholder · glyph",
+              "w": 16,
+              "h": 16,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             },
+             {
+              "t": "rect",
+              "name": "placeholder · label",
+              "w": 104,
+              "h": 8,
+              "o": {
+               "radius": "radius.control",
+               "fill": "color.surface.hover"
+              }
+             }
+            ],
+            "w": 224,
+            "h": 32
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "Admin entry",
+          "o": {
+           "dir": "row",
+           "radius": "radius.control",
+           "fill": "color.surface.selected",
+           "gap": "space.inset.sm",
+           "padX": "space.inset.md",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "mark",
+            "chars": "◆",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Admin",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "note": "`15:696`: CMP-071 NavRail's item 'Admin' (an anatomy string, no §14 key; §4 L188 names CMP-061's)"
+           }
+          ],
+          "w": 224,
+          "h": 32,
+          "note": "Owner only; structurally absent for Manager and Viewer (E10-D02); aria-current=page; DS-2 edge (D02:1003): color.text.tertiary at border.thick, inner; 6.29 / 6.81 / 12.54 against the rail, 3.98 / 4.86 / 7.94 against its fill (§15 L635, L638, L656)"
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 1344,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 239,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 1344,
+        "vs": "fill",
+        "note": "240 px (expanded, §2 D1)"
+       },
+       {
+        "t": "board",
+        "name": "CMP-209 RightRail (composition)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.inset.md",
+         "pad": "space.inset.md",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-211 PanicButtons (placeholder)",
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          },
+          "w": 216,
+          "h": 40,
+          "note": "E39-D01's Flatten all / Kill switch cluster at the rail's top; copy and look are E39's (§12 L537)"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-1",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-2",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · row-3",
+          "w": 216,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1,
+          "h": 1344,
+          "o": {
+           "fill": "color.border.subtle"
+          },
+          "x": 0,
+          "y": 0,
+          "abs": true
+         }
+        ],
+        "w": 240,
+        "h": 1344,
+        "vs": "fill",
+        "note": "240 px at both sizes (§2 D1)",
+        "x": 2320,
+        "y": 0,
+        "abs": true
+       },
+       {
+        "t": "board",
+        "name": "main",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "pad": "space.inset.lg",
+         "fill": "color.surface.app",
+         "clip": true
+        },
+        "w": 2080,
+        "h": 1344,
+        "vs": "fill",
+        "note": "<main>: band → rule → strip → PageHeader → route content → footer marker (§4 L165-171)",
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-087 band (composition)",
+          "o": {
+           "dir": "row",
+           "pad": "space.inset.lg",
+           "justify": "space-between",
+           "fill": "color.surface.raised"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "◆ Admin area · Users",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "grace line",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "seg-1",
+              "chars": "Still trusted for user changes ·",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             },
+             {
+              "t": "text",
+              "name": "seg-2",
+              "chars": "4:59",
+              "typo": "type.num.base",
+              "color": "color.text.secondary"
+             }
+            ],
+            "note": "copy: \"Still trusted for user changes · 4:59\"; SH-5: polite at 60 s and 10 s (D06:58)"
+           }
+          ],
+          "w": 2048,
+          "h": 56,
+          "note": "role=\"region\" aria-label=\"Admin area\"; never focusable; the fill is not a carrier (§2 D2)"
+         },
+         {
+          "t": "rect",
+          "name": "CMP-087 rule (4 px)",
+          "w": 2048,
+          "h": 4,
+          "o": {
+           "fill": "color.text.tertiary"
+          },
+          "note": "6.29 / 6.81 / 12.54 against the page (§15 L635)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-087 strip (composition)",
+          "o": {
+           "dir": "row",
+           "wrap": "wrap",
+           "gap": "space.inset.sm",
+           "padY": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "none",
+            "chars": "Nothing needs your action",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "w": 2048,
+          "note": "role=\"region\" \"Needs your action\"; a list; not live (the shell announces once)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-088 PageHeader (composition)",
+          "o": {
+           "dir": "row",
+           "padY": "space.inset.lg",
+           "justify": "space-between",
+           "align": "end"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "titles",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "h1",
+              "chars": "Users",
+              "typo": "type.ui.heading-md",
+              "color": "color.text.primary",
+              "note": "the h1: the skip-link target (CMP-085)"
+             },
+             {
+              "t": "text",
+              "name": "meta",
+              "chars": "All times UTC · as of 14:02:11",
+              "typo": "type.ui.caption",
+              "color": "color.text.tertiary"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "primary action",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.button.paddingX",
+             "radius": "radius.control",
+             "height": "size.control.comfortable",
+             "justify": "center",
+             "fill": "color.action.primary.default"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "+ Invite user",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.on-action"
+             }
+            ],
+            "w": 102,
+            "h": 32,
+            "note": "opens SCR-123; enabled (D11)"
+           }
+          ],
+          "w": 2048
+         },
+         {
+          "t": "board",
+          "name": "SCR-121 users list",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.md"
+          },
+          "w": 2048,
+          "note": "find bar → capacity line → grid; no Load more (one page, DEV['order'])",
+          "kids": [
+           {
+            "t": "board",
+            "name": "find bar",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-054 SearchBox (composition)",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "gap": "space.inset.xs",
+               "radius": "radius.control",
+               "fill": "color.surface.sunken",
+               "height": "size.control.comfortable",
+               "stroke": "color.text.tertiary",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "glyph",
+                "icon": "search",
+                "color": "color.text.secondary",
+                "size": "size.icon"
+               }
+              ],
+              "w": 320,
+              "h": 32,
+              "note": "role=\"searchbox\" (15:541); q: username or e-mail substring, ≤120 (L295); empty; its label or placeholder: no §14 key (copy gap)"
+             },
+             {
+              "t": "board",
+              "name": "CMP-055 FilterBar (composition)",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "filter · Role",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs",
+                 "padX": "space.button.paddingX",
+                 "radius": "radius.control",
+                 "height": "size.control.comfortable",
+                 "fill": "color.action.secondary.default",
+                 "justify": "center"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Role",
+                  "typo": "type.ui.body-strong",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "icon",
+                  "name": "chevron",
+                  "icon": "chevron-down",
+                  "color": "color.text.primary",
+                  "size": "size.icon"
+                 }
+                ],
+                "w": 73,
+                "h": 32,
+                "note": "a menu button; no filter set, so no value is shown (the URL carries none)"
+               },
+               {
+                "t": "board",
+                "name": "filter · Status",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs",
+                 "padX": "space.button.paddingX",
+                 "radius": "radius.control",
+                 "height": "size.control.comfortable",
+                 "fill": "color.action.secondary.default",
+                 "justify": "center"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Status",
+                  "typo": "type.ui.body-strong",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "icon",
+                  "name": "chevron",
+                  "icon": "chevron-down",
+                  "color": "color.text.primary",
+                  "size": "size.icon"
+                 }
+                ],
+                "w": 86,
+                "h": 32,
+                "note": "a menu button; no filter set, so no value is shown (the URL carries none)"
+               }
+              ],
+              "note": "role=\"group\" (15:550); Role and Status (L295)"
+             }
+            ],
+            "note": "all in the URL, so a filtered list is a deep link (L295-296)"
+           },
+           {
+            "t": "board",
+            "name": "capacity line (CMP-023 + text + action) · recorded",
+            "o": {
+             "dir": "column",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "line",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "CMP-023 Progress Bar (composition) · capacity meter",
+                "kids": [
+                 {
+                  "t": "rect",
+                  "name": "track",
+                  "w": 120,
+                  "h": 8,
+                  "o": {
+                   "radius": "radius.badge",
+                   "fill": "color.surface.hover"
+                  },
+                  "x": 0,
+                  "y": 0
+                 },
+                 {
+                  "t": "rect",
+                  "name": "fill",
+                  "w": 72,
+                  "h": 8,
+                  "o": {
+                   "radius": "radius.badge",
+                   "fill": "color.action.primary.default"
+                  },
+                  "x": 0,
+                  "y": 0
+                 }
+                ],
+                "w": 120,
+                "h": 8,
+                "note": "role=meter; aria-valuetext \"3 of 5 sub-accounts used\""
+               },
+               {
+                "t": "board",
+                "name": "text",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "seg-1",
+                  "chars": "3",
+                  "typo": "type.num.base",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "text",
+                  "name": "seg-2",
+                  "chars": "of",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "text",
+                  "name": "seg-3",
+                  "chars": "5",
+                  "typo": "type.num.base",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "text",
+                  "name": "seg-4",
+                  "chars": "sub-accounts used · Regular tier, recorded 2026-09-12",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "note": "copy: \"3 of 5 sub-accounts used · Regular tier, recorded 2026-09-12\""
+               },
+               {
+                "t": "board",
+                "name": "CMP-021 Link (composition) · Change",
+                "o": {
+                 "dir": "column",
+                 "align": "start"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "text",
+                  "chars": "Change",
+                  "typo": "type.ui.body",
+                  "color": "color.text.link"
+                 },
+                 {
+                  "t": "rect",
+                  "name": "underline",
+                  "w": 46,
+                  "h": 1,
+                  "o": {
+                   "fill": "color.text.link"
+                  }
+                 }
+                ],
+                "note": "opens the Record tier dialog (rung 1, §12 L534; board 28); underlined, not colour-only"
+               }
+              ]
+             }
+            ],
+            "w": 2048,
+            "note": "GET /admin/capacity (admin:read; L327), its own read; a meter because used and cap were both read (L316); above the grid so it stays in view at 1280 (L296)"
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "frame-2560/body/main/SCR-121 users list",
+   "node": {
+    "t": "board",
+    "name": "CMP-049 Table (composition) · users",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "radius": "radius.card",
+     "clip": true
+    },
+    "w": 2048,
+    "note": "role=grid, one tab stop, arrows between rows and cells, Enter opens SCR-122, the menu key or Shift+F10 opens a row's ⋯ (CMP-041's trigger; its name has no §14 key) (L345-346; D02:336); username with display_name under it (L299), a placeholder (§1 gives none; Y:15731 allows null); rows GET /users (not mounted, M:1529: a target)",
+    "kids": [
+     {
+      "t": "board",
+      "name": "header",
+      "o": {
+       "dir": "row",
+       "fill": "color.surface.hover",
+       "height": "space.row.height.comfortable"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "User",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 270,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "role",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Role",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 206,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "accounts",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Accounts",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 288,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "two_factor",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Two-factor",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 214,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "last",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Last sign-in",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 292,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "status",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Status",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 650,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "menu",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "w": 128,
+        "h": 32
+       }
+      ],
+      "h": 32,
+      "note": "User, Role, Last sign-in and Status are sort buttons (15:496; L303), enabled: has_more is false (DEV['order']); aria-sort only on a sorted header (none: the server's order); the row-menu column's header has no string (copy gap)"
+     },
+     {
+      "t": "board",
+      "name": "row · basiltt",
+      "o": {
+       "dir": "row",
+       "height": "space.row.height.comfortable",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "user",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "username",
+            "chars": "basiltt",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · basiltt's display name (User.display_name)",
+            "w": 64,
+            "h": 8,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ]
+         }
+        ],
+        "w": 270,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "role",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "owner",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 206,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "accounts",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "all (owner)",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "note": "from the role, never from grants (D13)"
+         }
+        ],
+        "w": 288,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "two_factor",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "yes",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 214,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "last",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · basiltt's last sign-in (User.last_login_at, UTC)",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 292,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "status",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-011 Tag (composition) · active",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.badge",
+           "fill": "color.status.success.subtle"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "check",
+            "icon": "check",
+            "color": "color.status.success.strong",
+            "size": "size.icon"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Active",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24
+         }
+        ],
+        "w": 650,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "menu",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · row menu",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "more-horizontal",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         }
+        ],
+        "w": 128,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 2048,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 31,
+        "abs": true
+       }
+      ],
+      "w": 2048,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "row · alex",
+      "o": {
+       "dir": "row",
+       "height": "space.row.height.comfortable",
+       "fill": "color.surface.selected"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "user",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "username",
+            "chars": "alex",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · alex's display name (User.display_name)",
+            "w": 64,
+            "h": 8,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ]
+         }
+        ],
+        "w": 270,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "role",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "manager",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 206,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "accounts",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "accounts",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "account · sub_001",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "name",
+              "chars": "sub_001",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "board",
+              "name": "CMP-012 Badge (composition) · LIVE",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.xs",
+               "radius": "radius.badge",
+               "stroke": "color.env.live",
+               "strokeWidth": "border.hairline"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "word",
+                "chars": "LIVE",
+                "typo": "type.ui.caption",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 16
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "account · sub_002",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "name",
+              "chars": "sub_002",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "board",
+              "name": "CMP-012 Badge (composition) · LIVE",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.xs",
+               "radius": "radius.badge",
+               "stroke": "color.env.live",
+               "strokeWidth": "border.hairline"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "word",
+                "chars": "LIVE",
+                "typo": "type.ui.caption",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 16
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "w": 288,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "two_factor",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "yes",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 214,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "last",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · alex's last sign-in (User.last_login_at, UTC)",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 292,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "status",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-011 Tag (composition) · active",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.badge",
+           "fill": "color.status.success.subtle"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "check",
+            "icon": "check",
+            "color": "color.status.success.strong",
+            "size": "size.icon"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Active",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24,
+          "note": "unchanged until the answer (L338): Disabled after it"
+         }
+        ],
+        "w": 650,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "menu",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "stroke": "color.focus.ring",
+         "strokeWidth": "border.focus",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "in flight · users.disabling",
+          "chars": "Disabling alex…",
+          "typo": "type.ui.body",
+          "color": "color.text.secondary",
+          "note": "replaces the row menu while the request is held (L338); not live (U-7 announces the answer only); the row is aria-busy (D09:231): not T2"
+         }
+        ],
+        "w": 128,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 2048,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 31,
+        "abs": true
+       }
+      ],
+      "w": 2048,
+      "h": 32,
+      "note": "aria-busy while the request is held (D09:231); the row never moves before the answer (L338; D02:335); focus on its row-menu cell (§13 L586, DJ); the focused row: color.surface.selected (D02:121)"
+     },
+     {
+      "t": "board",
+      "name": "row · erin",
+      "o": {
+       "dir": "row",
+       "height": "space.row.height.comfortable",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "user",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "username",
+            "chars": "erin",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · erin's display name (User.display_name)",
+            "w": 64,
+            "h": 8,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ]
+         }
+        ],
+        "w": 270,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "role",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "viewer",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 206,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "accounts",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "account · sub_001",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "sub_001",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-012 Badge (composition) · LIVE",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.xs",
+             "radius": "radius.badge",
+             "stroke": "color.env.live",
+             "strokeWidth": "border.hairline"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "LIVE",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 16
+           }
+          ]
+         }
+        ],
+        "w": 288,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "two_factor",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "yes",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 214,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "last",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · erin's last sign-in (User.last_login_at, UTC)",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 292,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "status",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-011 Tag (composition) · active",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.badge",
+           "fill": "color.status.success.subtle"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "check",
+            "icon": "check",
+            "color": "color.status.success.strong",
+            "size": "size.icon"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Active",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24
+         }
+        ],
+        "w": 650,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "menu",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · row menu",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "more-horizontal",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         }
+        ],
+        "w": 128,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 2048,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 31,
+        "abs": true
+       }
+      ],
+      "w": 2048,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "row · bea",
+      "o": {
+       "dir": "row",
+       "height": "space.row.height.comfortable",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "user",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "username",
+            "chars": "bea",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · bea's display name (User.display_name)",
+            "w": 64,
+            "h": 8,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ]
+         }
+        ],
+        "w": 270,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "role",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "manager",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 206,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "accounts",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "account · sub_003",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "name",
+            "chars": "sub_003",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-012 Badge (composition) · LIVE",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.xs",
+             "radius": "radius.badge",
+             "stroke": "color.env.live",
+             "strokeWidth": "border.hairline"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "LIVE",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 16
+           }
+          ]
+         }
+        ],
+        "w": 288,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "two_factor",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "yes",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 214,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "last",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "placeholder · bea's last sign-in (User.last_login_at, UTC)",
+          "w": 72,
+          "h": 12,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ],
+        "w": 292,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "status",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-011 Tag (composition) · trading_locked",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.badge",
+           "fill": "color.status.danger.subtle"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "octagon",
+            "icon": "danger",
+            "color": "color.status.danger.strong",
+            "size": "size.icon"
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Trading locked (risk) · until 00:00 UTC",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24,
+          "note": "a labelled target (CG-13, L807): no per-user trading lockout is served"
+         }
+        ],
+        "w": 650,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "menu",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · row menu",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "more-horizontal",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         }
+        ],
+        "w": 128,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 2048,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 31,
+        "abs": true
+       }
+      ],
+      "w": 2048,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "row · carol",
+      "o": {
+       "dir": "row",
+       "height": "space.row.height.comfortable",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "user",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "username",
+            "chars": "carol",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "rect",
+            "name": "placeholder · carol's display name (User.display_name)",
+            "w": 64,
+            "h": 8,
+            "o": {
+             "radius": "radius.control",
+             "fill": "color.surface.hover"
+            }
+           }
+          ]
+         }
+        ],
+        "w": 270,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "role",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "viewer",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 206,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "accounts",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "—",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "note": "D13: an invited or disabled row"
+         }
+        ],
+        "w": 288,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "two_factor",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "—",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "note": "aria-describedby users.mfa_pending 'Set up when the invite is accepted' (L301, proposed)"
+         }
+        ],
+        "w": 214,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "last",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "Never signed in",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "note": "last_login_at null: never accepted"
+         }
+        ],
+        "w": 292,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "status",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-011 Tag (composition) · invited",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.badge",
+           "fill": "color.status.info.subtle"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "ring",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "ellipse",
+              "name": "ring",
+              "w": 13,
+              "h": 13,
+              "o": {
+               "stroke": "color.status.info.strong",
+               "strokeWidth": "border.thick"
+              }
+             }
+            ],
+            "w": 16,
+            "h": 16
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Invited · expires 2026-10-23 10:00 UTC",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24
+         }
+        ],
+        "w": 650,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "menu",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "justify": "end"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-002 IconButton (composition) · row menu",
+          "o": {
+           "dir": "row",
+           "justify": "center",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "icon",
+            "icon": "more-horizontal",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 32,
+          "h": 32
+         }
+        ],
+        "w": 128,
+        "h": 32
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 2048,
+        "h": 1,
+        "o": {
+         "fill": "color.border.subtle"
+        },
+        "x": 0,
+        "y": 31,
+        "abs": true
+       }
+      ],
+      "w": 2048,
+      "h": 32
+     }
+    ]
+   }
+  },
+  {
+   "into": "frame-2560/body/main/SCR-121 users list/CMP-049 Table (composition) · users",
+   "node": {
+    "t": "board",
+    "name": "row · dave",
+    "o": {
+     "dir": "row",
+     "height": "space.row.height.comfortable",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "user",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "username",
+          "chars": "dave",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · dave's display name (User.display_name)",
+          "w": 64,
+          "h": 8,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       }
+      ],
+      "w": 270,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "role",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "viewer",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 206,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "accounts",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "note": "D13: an invited or disabled row"
+       }
+      ],
+      "w": 288,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "two_factor",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "note": "aria-describedby users.mfa_pending 'Set up when the invite is accepted' (L301, proposed)"
+       }
+      ],
+      "w": 214,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "last",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "Never signed in",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "note": "last_login_at null: never accepted"
+       }
+      ],
+      "w": 292,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "status",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-011 Tag (composition) · invite_expired",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "radius": "radius.badge",
+         "fill": "color.status.warning.subtle"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "triangle",
+          "icon": "warning",
+          "color": "color.status.warning.strong",
+          "size": "size.icon"
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Invite expired · 2026-10-19 08:00 UTC",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24
+       }
+      ],
+      "w": 650,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "menu",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-002 IconButton (composition) · row menu",
+        "o": {
+         "dir": "row",
+         "justify": "center",
+         "radius": "radius.control"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "icon",
+          "icon": "more-horizontal",
+          "color": "color.text.secondary",
+          "size": "size.icon"
+         }
+        ],
+        "w": 32,
+        "h": 32
+       }
+      ],
+      "w": 128,
+      "h": 32
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 2048,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 31,
+      "abs": true
+     }
+    ],
+    "w": 2048,
+    "h": 32
+   }
+  },
+  {
+   "into": "frame-2560/body/main/SCR-121 users list/CMP-049 Table (composition) · users",
+   "node": {
+    "t": "board",
+    "name": "row · dan",
+    "o": {
+     "dir": "row",
+     "height": "space.row.height.comfortable",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "user",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "username",
+          "chars": "dan",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · dan's display name (User.display_name)",
+          "w": 64,
+          "h": 8,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       }
+      ],
+      "w": 270,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "role",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "viewer",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 206,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "accounts",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "note": "D13: an invited or disabled row"
+       }
+      ],
+      "w": 288,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "two_factor",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "placeholder · dan's two-factor (User.mfa_enabled)",
+        "w": 24,
+        "h": 12,
+        "o": {
+         "radius": "radius.control",
+         "fill": "color.surface.hover"
+        }
+       }
+      ],
+      "w": 214,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "last",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "placeholder · dan's last sign-in (User.last_login_at, UTC)",
+        "w": 72,
+        "h": 12,
+        "o": {
+         "radius": "radius.control",
+         "fill": "color.surface.hover"
+        }
+       }
+      ],
+      "w": 292,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "status",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-011 Tag (composition) · disabled",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "radius": "radius.badge",
+         "fill": "color.neutral.subtle"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "slashed-circle",
+          "icon": "cancelled",
+          "color": "color.text.secondary",
+          "size": "size.icon"
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Disabled",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24
+       }
+      ],
+      "w": 650,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "menu",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-002 IconButton (composition) · row menu",
+        "o": {
+         "dir": "row",
+         "justify": "center",
+         "radius": "radius.control"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "icon",
+          "icon": "more-horizontal",
+          "color": "color.text.secondary",
+          "size": "size.icon"
+         }
+        ],
+        "w": 32,
+        "h": 32
+       }
+      ],
+      "w": 128,
+      "h": 32
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 2048,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 31,
+      "abs": true
+     }
+    ],
+    "w": 2048,
+    "h": 32
+   }
+  },
+  {
+   "into": "frame-2560/body/main/SCR-121 users list/CMP-049 Table (composition) · users",
+   "node": {
+    "t": "board",
+    "name": "row · frank",
+    "o": {
+     "dir": "row",
+     "height": "space.row.height.comfortable",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "user",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "user",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "username",
+          "chars": "frank",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "rect",
+          "name": "placeholder · frank's display name (User.display_name)",
+          "w": 64,
+          "h": 8,
+          "o": {
+           "radius": "radius.control",
+           "fill": "color.surface.hover"
+          }
+         }
+        ]
+       }
+      ],
+      "w": 270,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "role",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "viewer",
+        "typo": "type.ui.body",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 206,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "accounts",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "—",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "note": "no grant in §1 (L102); D13 keys '—' only for invited and disabled rows (copy gap)"
+       }
+      ],
+      "w": 288,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "two_factor",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "placeholder · frank's two-factor (User.mfa_enabled)",
+        "w": 24,
+        "h": 12,
+        "o": {
+         "radius": "radius.control",
+         "fill": "color.surface.hover"
+        }
+       }
+      ],
+      "w": 214,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "last",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "placeholder · frank's last sign-in (User.last_login_at, UTC)",
+        "w": 72,
+        "h": 12,
+        "o": {
+         "radius": "radius.control",
+         "fill": "color.surface.hover"
+        }
+       }
+      ],
+      "w": 292,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "status",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-011 Tag (composition) · locked_out",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "radius": "radius.badge",
+         "fill": "color.status.warning.subtle"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "triangle",
+          "icon": "warning",
+          "color": "color.status.warning.strong",
+          "size": "size.icon"
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Locked out (sign-in)",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "CG-12: no until-time is served yet (§7 L308-309)"
+       }
+      ],
+      "w": 650,
+      "h": 32
+     },
+     {
+      "t": "board",
+      "name": "menu",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs",
+       "padX": "space.inset.sm",
+       "justify": "end"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-002 IconButton (composition) · row menu",
+        "o": {
+         "dir": "row",
+         "justify": "center",
+         "radius": "radius.control"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "icon",
+          "icon": "more-horizontal",
+          "color": "color.text.secondary",
+          "size": "size.icon"
+         }
+        ],
+        "w": 32,
+        "h": 32
+       }
+      ],
+      "w": 128,
+      "h": 32
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 2048,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 31,
+      "abs": true
+     }
+    ],
+    "w": 2048,
+    "h": 32
+   }
+  },
+  {
+   "into": "frame-2560/body/main",
+   "node": {
+    "t": "board",
+    "name": "CMP-093 AuditActionTrigger (composition) · footer marker",
+    "o": {
+     "dir": "row",
+     "padT": "space.inset.lg"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "text",
+      "chars": "Entering this area was recorded — Area entered (admin.area_entered)",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary"
+     }
+    ],
+    "w": 2048,
+    "note": "admin.area_entered comes from the strip's /admin/* reads on SCR-121-123 (§4 L201-204)"
+   }
+  },
+  {
+   "into": "frame-2560",
+   "node": {
+    "t": "board",
+    "name": "CMP-208 StatusBar (composition)",
+    "o": {
+     "dir": "row",
+     "padX": "space.inset.lg",
+     "justify": "space-between",
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "placeholder · connection chip",
+      "w": 120,
+      "h": 12,
+      "o": {
+       "radius": "radius.control",
+       "fill": "color.surface.hover"
+      }
+     },
+     {
+      "t": "board",
+      "name": "CMP-012 Badge (composition) · LIVE",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.xs",
+       "radius": "radius.badge",
+       "stroke": "color.env.live",
+       "strokeWidth": "border.hairline"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "word",
+        "chars": "LIVE",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "h": 16
+     },
+     {
+      "t": "rect",
+      "name": "divider",
+      "w": 2560,
+      "h": 1,
+      "o": {
+       "fill": "color.border.subtle"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     }
+    ],
+    "w": 2560,
+    "h": 48,
+    "note": "48 px (§1 L97); the env badge repeats the TopBar's (E10-D02)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "36 SCR-121 · U-7 action in flight → done",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Source",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "spec §7 L338 U-7 · board 36 (§0 L63) · anatomy L294-305 · data L324-328 · keys, events L345-351 · at 782eb0e4d",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "State and trigger",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "U-7 (L338), trigger: Disable confirmed (U-8, board 37). Drawn at both sizes: alex's ⋯ replaced by 'Disabling alex…' (users.disabling), the request held; the row in place, still Active, until the answer (D02:335).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Done (annotated): on the 200 the row reads Disabled, Accounts '—' (D13), ⋯ back. A target: GET /users is not mounted (M:1529). Shell (b) with SH-5's grace (L185).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Decision ids",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "D1 layout (L114) · D2 DS-1 band, DS-2 rule (L115) · D3 m:ss (L116) · D10 CMP-023 meter (L123) · D11 capacity line, Invite enabled (L124) · D13 Accounts (L126) · D20 (L133) · D27 footer (L140) · D02 D3: Disable is rung 2 (§12 L535) · D02 D16-D18 (§1 L94) · Q1 (L146)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Roles",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Owner only, else SCR-155 (L348; §4 L201). Disable: users:write with the users step-up (Y:1991, :2007); never on the Owner's own row (U-5, admin.self.account).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-05",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Keyboard path and focus",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Focus returns to the dialog's opener, alex's ⋯ (§13 L586), now replaced: drawn on that grid cell, the grid's one stop (DJ). Tab: skip link → TopBar → NavRail → + Invite user → search → Role → Status → Change → grid (arrows; Enter SCR-122; Shift+F10 or the menu key: the row menu; repeats ignored) → RightRail → StatusBar (L345-346; §13 L584; §4 L198).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-06",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Announcement (text, region, when)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "On the answer, polite, once (L338; §13 L584): 'alex disabled. Signed out of 1 session.' (users.disabled; n = 1 from D02:694), set in SCR-121's role=status region, empty from mount (05:150). 'Disabling alex…' is not live. The grace line: polite at 60 s and 10 s only (L185), none now.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-07",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Copy keys used",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§14: band.label · band.grace · strip.none · meta.asof (proposed) · cap.recorded + [Change] · cap.valuetext (aria) · chip.active, .trading_locked, .invited, .invite_expired (proposed), .disabled, .locked_out (no time) · users.disabling · users.never (proposed) · users.mfa_pending (proposed; aria) · users.disabled (said) · footer.area_entered. Not keys: labels (L294-302), D13 (L126), §1 data.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-08",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Tokens",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "colour: action.primary.default, action.secondary.default, border.subtle, env.live, focus.ring, neutral.subtle, status.danger.strong, status.danger.subtle, status.info.strong, status.info.subtle, status.success.strong, status.success.subtle, status.warning.strong, status.warning.subtle, surface.app, surface.hover, surface.raised, surface.selected, surface.sunken, text.link, text.on-action, text.primary, text.secondary, text.tertiary; type: num.base, ui.body, ui.body-strong, ui.caption, ui.heading-md, ui.label; space: button.paddingX, inset.lg, inset.md, inset.sm, inset.xs, row.height.comfortable, stack.md, stack.sm, stack.xs; size: control.comfortable, icon; radius: badge, card, control; other: border.focus, border.hairline, border.thick",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Dark (§15): on raised 14.35 · 8.81 (L634, L641) · header 7.50 (L643) · chips 9.86-12.22, glyphs 6.69-7.83 (L644-645) · LIVE 4.42 (L637) · alex's selected row 10.17 (L643), in flight 6.24 (L656), focus 4.72 (L640) · h1 16.06, link 7.45, meta 6.29 (L638) · filters 10.17 (L641) · primary 4.76 (L639) · DS-3 6.29 (L650) · meter 4.07 (page)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Fallbacks (§15 L624-628): DS-1 band → surface.raised · DS-2 rule and Admin edge (D02:1003) → text.tertiary · DS-3 search edge → text.tertiary · DS-5 triangle 'warning', octagon 'danger', slashed circle 'cancelled', ring an ellipse, ◆ text",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-09",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Analytics and audit events",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "users.disable + one auth.session_revoked per session (L348), after choice B's positions.flatten (§8 L396); U-8's step-up writes auth.step_up_* (§5 L239-241) · admin.area_entered from the strip's /admin/* reads (§4 L201-203; D27). Analytics: none named.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-10",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Data and budget",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "updateUser PATCH (users:write, step-up users; Y:1986-2025): sessions end within 5 s, grants soft-revoked, rules disarmed, nothing flattened; no session count in its 200 (gap). GET /users not mounted (M:1529); Accounts one call per row (CG-11); /admin/capacity. Budget: 500 users ≤4 ms a frame (D02:332).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-11",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board notes",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Grey bars: values §1 does not give, not loading. bea's chip a target (CG-13); frank's without its time (CG-12).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E42-D03 · board 36 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400
+   }
+  }
+ ],
+ "export": "docs/design/E42/img/E42-D03-36-scr121-in-flight.png",
+ "notes": {
+  "sources": [
+   "spec §7 L292-351 (SCR-121: anatomy L294-298, columns L299-305, chips L306-310, the capacity line L311-317, data L324-328, U-7 L338, U-8 L339, keys and a11y L345-347, RBAC, audit, analytics L348-351)",
+   "spec §0 L46-49 (board name, footer), L63 (boards 30-41 and 95: 36 is U-7); §1 L94 (D02 D16-D18), L97 (chrome sizes), L99-108 (worked example: the eight users, LIVE, 14:02:11, Regular recorded 2026-09-12, 3 in use, users.total 8, .active 4, .without_mfa 0)",
+   "spec §2 D1 L114, D2 L115, D3 L116, D10 L123, D11 L124, D13 L126, D20 L133, D27 L140; §3 Q1 L146",
+   "spec §4 L164-177 (CMP-087 anatomy), L185 (SH-5, the users grace line), L186 (SH-6), L193 (the grace datum), L198-204 (focus, RBAC, audit); §8 L396 (UD-13: choice B writes positions.flatten), L400 (UD-17: ud.req_*); §9 L415 (usernames 3–32 characters), L438 (I-3, a dialog that waits for its answer); §12 L543-555 (the two-choice block; L554-555: a flatten that leaves the account open keeps alex's access), L572-575 (step-up mid-edit under (b); L575's classes omit SCR-121)",
+   "spec §12 L534-535 (rungs 1 and 2: Record tier, Disable); §13 L584 (SCR-121's keys, live regions, repeats), L586 (dialog focus return), L590-591 (focus-visible, reduced motion, targets)",
+   "spec §14 L597-606 (band, strip, meta, footer, save, chip, cap and users keys); §15 L620, L634-650, L656 (bars, band, rule, badges, page, primary, focus, secondary fill, table, chips, meters, DS-3, F4: secondary text on selected rows)",
+   "spec §20 CG-11 L805, CG-12 L806, CG-13 L807, CG-29 L823",
+   "E42-D02 L120 (type.num.base for every count and clock), L121 (color.surface.selected: the current nav entry and the focused row), L143 (D17: every frame annotates source, budget and events), L332 (SCR-121's budget), L335 (action in flight), L336 (the CMP-049 grid's keys), L694 (the in-flight announcement: 'alex disabled. Signed out of 1 session.'), L1003 (DS-2's nav-entry edge), L1169 (DS-1..DS-5 handed to D03), inherited per spec L17-18",
+   "D01 (docs/design/research/e42-admin.md) L668-669 (Disable's consequences: signs out within 5 s, removes access, disarms rules)",
+   "`15` (docs/plan/15-component-catalogue.md) L59, L142, L151, L232, L250, L389-393 (CMP-038), L420, L492-496 (CMP-049), L537-541 (CMP-054), L546-550 (CMP-055), L690, L696, L699, L708, L893, L2411, L2416, L2421",
+   "`05` L95-97 (roving tabindex; focus never stolen; focus returns on close), L150 (region hygiene); E09-D09 L231 (the loading row), L27 (E09-D06's 'Not sent' on abandonment); E10-D02 L64 (the Admin entry)",
+   "`22-api-openapi.yaml` L1904 and L13695-13699 (listUsers' Limit, default 100), L15151-15156 (PageMeta has_more), L1986-2025 (updateUser: users step-up, the disable cascade, 409 positions_unknown L1999-2000, 503 audit_unavailable L2004-2005, users:write, the 200 is a User), L11299-11307 (the held request: dropped unsent on cancel, expiry or the third failure; a re-send with no answer read back), L11309-11312 (a 5-minute grace per class; the three no-grace classes), L11410 (step_up_expires_at), L11523-11527 (resetUserMfa's sessions_revoked), L15716-15748 (User: display_name and last_login_at nullable); services/api/candleviewer/auth/step_up.py L98 (NO_GRACE_ACTION_CLASSES: live_enablement, killswitch, backups); services/api/candleviewer/audit/actions.py L169 (positions.flatten)",
+   "E09-D06 L35 (item 7: the held request, re-sent once), L58 (grace time polite at 60 s and 10 s only); E42-D02 L688 (the step-up grace announcements, deferred to E09-D06 §6)",
+   "boards 01 (placeholders), 05 (SH-5's grace line on Users), 22 (kit-level fixups, the underlined link), 31 (U-2: the row order, the env words, the find bar's width and spacing, the layer names, the column widths less 80 px), 37 (U-8's no-grace step-up line) and 95 (U-12: the focused row on color.surface.selected), read, not edited; review/36-scr121-in-flight.md (this fix round: findings 1-5; finding 2's table as a local copy until the kit carries it)",
+   "spec §4 L162-204 (CMP-087 anatomy, SH-1..SH-8, focus, audit)",
+   "spec §14 L593-613 (copy deck)",
+   "spec §15 L615-667 (tokens, contrast, colour vision)",
+   "spec §7 L292-351 (SCR-121 columns, chips, capacity line)",
+   "spec §2 D1 L114 (layout at both sizes)",
+   "spec §0 L42-82 (boards, names, footer, build order)"
+  ],
+  "copy_keys": [
+   "band.grace.class.users",
+   "band.grace",
+   "cap.recorded",
+   "cap.valuetext",
+   "chip.active",
+   "users.disabling",
+   "chip.trading_locked",
+   "users.mfa_pending",
+   "users.never",
+   "chip.invited",
+   "chip.invite_expired",
+   "chip.disabled",
+   "chip.locked_out",
+   "band.label",
+   "strip.none",
+   "meta.asof",
+   "footer.area_entered",
+   "users.disabled.one"
+  ],
+  "copy_gaps": [
+   "users.disabled's {n} (the sessions signed out): updateUser's 200 is a User (Y:2019-2025) with no session count (resetUserMfa's has sessions_revoked, Y:11523-11527) and no CG names it: the annotation fills n = 1 from D02:694's example 'alex disabled. Signed out of 1 session.' (§14's one-session form, L606); a contract gap for §20.",
+   "U-7's other answers: L338 renders only the success. The held PATCH dropped unsent (SCR-006 cancelled, expired or failed three times: 'tells the user it was not sent', Y:11302-11304), a re-send with no answer (read alex back, Y:11304-11307), a refusal (409 positions_unknown, Y:1999-2000; 503 audit_unavailable, Y:2004-2005) and a choice-B flatten that leaves sub_001 open (alex keeps access, §12 L554-555) have no SCR-121 rendering or key (save.* and ud.req_* are SCR-122's), and §12 L575's step-up classes omit SCR-121: spec questions, not drawn.",
+   "The in-flight result's live region: L338 and §13 L584 give its politeness (polite, once on the answer) and its text (users.disabled), no region: annotated as SCR-121's own role=status region, pre-rendered empty (05:150).",
+   "CMP-054's label or placeholder (the search box's accessible name): no §14 key (L294-295 name only its query); drawn empty with its glyph.",
+   "The row-menu column's header and the ⋯ trigger's accessible name ('⋯ (row menu)', L303): no §14 key; the header cell is drawn empty.",
+   "CMP-055's filter values (no filter set): none drawn; §14 keys no option strings for Role and Status.",
+   "Values §1 does not give (placeholders): the eight display names; the last sign-ins of basiltt, alex, bea, dan, erin and frank; dan's and frank's two-factor.",
+   "frank's Accounts cell: §1 gives him no grant (L102) and D13 keys '—' only for invited and disabled rows (L126): drawn '—', as board 31; the spec should say what a user with no grant reads.",
+   "The environments of sub_002 and sub_003: read as §1's LIVE (L102), as board 31; only sub_001 is named [LIVE] (L339). Board 01 drew sub_002's env as a placeholder pill: the boards should agree.",
+   "The done phase's row (annotated, not drawn): no spec line draws it; it follows chip.disabled (L307), D13 (L126) and updateUser's cascade (Y:1993-1998).",
+   "The grace line's announcement words: §4 L185 gives its region and timing (polite at 60 s and 10 s, D06:58) but no §14 key gives its text, and D02:688 defers to E09-D06 §6, which gives none (as board 05 notes).",
+   "'Users': an anatomy string, not a §14 key (spec L294)",
+   "'+ Invite user': an anatomy string, not a §14 key (spec L294)",
+   "'Role': an anatomy string, not a §14 key (spec L295)",
+   "'Status': an anatomy string, not a §14 key (spec L295)",
+   "'User': an anatomy string, not a §14 key (spec L299)",
+   "'Role': an anatomy string, not a §14 key (spec L299)",
+   "'Accounts': an anatomy string, not a §14 key (spec L300)",
+   "'Two-factor': an anatomy string, not a §14 key (spec L300)",
+   "'Last sign-in': an anatomy string, not a §14 key (spec L301)",
+   "'Status': an anatomy string, not a §14 key (spec L302)",
+   "'owner': an anatomy string, not a §14 key (spec L373)",
+   "'all (owner)': an anatomy string, not a §14 key (spec L126)",
+   "'yes': an anatomy string, not a §14 key (spec L300)",
+   "'manager': an anatomy string, not a §14 key (spec L373)",
+   "'2 accounts': an anatomy string, not a §14 key (spec L126)",
+   "'viewer': an anatomy string, not a §14 key (spec L373)",
+   "'—': an anatomy string, not a §14 key (spec L126)",
+   "'Admin': an anatomy string, not a §14 key (`15:696`: CMP-071 NavRail's items '… / Replay / Admin'; E10-D02:64 'Admin entry'; spec L188 names the CMP-061 menu's 'Admin'); drawn at 2560 only (the expanded rail, D1 L114)"
+  ],
+  "live_checks": [
+   "No inst nodes on this board: every part is a composition (kit deviation 'compose'), so no library set, variant or text layer needs verifying.",
+   "fit 1280: <main> 704 px, content est. 587 px (fits): CMP-087 band (composition) (16-72 px); CMP-087 rule (4 px) (72-76 px); CMP-087 strip (composition) (76-106 px); CMP-088 PageHeader (composition) (106-179 px); SCR-121 users list (179-542 px); CMP-093 AuditActionTrigger (composition) · footer marker (542-571 px). After relayout the grid's eight rows and the footer marker must be in view.",
+   "fit 2560: <main> 1344 px, content est. 587 px (fits): CMP-087 band (composition) (16-72 px); CMP-087 rule (4 px) (72-76 px); CMP-087 strip (composition) (76-106 px); CMP-088 PageHeader (composition) (106-179 px); SCR-121 users list (179-542 px); CMP-093 AuditActionTrigger (composition) · footer marker (542-571 px). After relayout the grid's eight rows and the footer marker must be in view.",
+   "in-flight cell (both frames): 'Disabling alex…' sits on one line, right-aligned in alex's 128 px row-menu cell, inside the cell's 2 px color.focus.ring; the row, on color.surface.selected, stays 32 px and in place (L338).",
+   "status column at 1280: every chip stays on one line inside the 280 px column (the longest, 'Invited · expires 2026-10-23 10:00 UTC', est. 255 px); the until-times are never cut (L305).",
+   "User cells: the username and its 8 px display-name bar fit the 32 px row (est. 30 px); at 2560 alex's two accounts (sub_001 [LIVE], sub_002 [LIVE]) sit on one line.",
+   "counts: '3' 'of' '5' 'sub-accounts used · …' (capacity line) and '2' 'accounts' (alex at 1280) sit on one baseline, space.inset.xs apart; the segments in type.num.base keep the body's baseline.",
+   "Change: after touchTexts + relayout the 1 px 'underline' rect sits directly under 'Change' and is as wide as it (the kit's text_w estimate: set it to the measured width if they differ).",
+   "Admin entry: the current entry shows its 2 px color.text.tertiary edge (DS-2, D02:1003) inside its color.surface.selected fill at both sizes.",
+   "grace line: its two text nodes ('Still trusted for user changes ·' in type.ui.body, '4:59' in type.num.base) sit on one line at the band's right end, space.inset.xs apart for the word space.",
+   "height: the root is 1760 px (root_size() 1720 plus 40 px of the 72 px slack: the 1760 px cap binds); the annotation column is est. 1683 px (45 px clear under it): after touchTexts + relayout it, its footer 'page E42-D03 · board 36 · r1' included, must end inside the root.",
+   "glyph ◆ (U+25C6): confirm Inter draws it; else Penpot substitutes a fallback font",
+   "root name: after the first section call the root must read back exactly as the sheet's board.name, or later calls create a duplicate root"
+  ],
+  "deviations": [
+   "U-7 is a transition (L338). Both frames draw its 'What renders', the in-flight moment: alex's row menu replaced by 'Disabling alex…' with the request held, the row unchanged and in place. The done phase draws no new string in the spec (users.disabled is the polite announcement on the answer, L338; D02:694), and a state board holds one frame per size (§0 L46-48; build notes), so the done phase is annotated, not drawn: on the 200 the row re-reads Disabled (chip.disabled, L307), Accounts '—' (D13, L126; the grants are soft-revoked, Y:1996), its ⋯ back in the cell, which keeps focus (05:96), and users.disabled is said once, politely; unsorted, the row stays where it is.",
+   "U-7 follows U-8's confirm whichever way the two-choice block went for sub_001 (L339; §12 L543-555): updateUser never flattens (Y:1997-1998), so 'Flatten first' is the OMS hand-off before the PATCH (D20, L133); U-7 names one in-flight string for the whole request, so the board draws only 'Disabling alex…' (DJ).",
+   "'With the request held' (L338) is read with E09-D06's held request (D06:35; §1 L96): the PATCH is kept and never re-sent on its own; if its users step-up interrupts it, SCR-006 runs over the page and the identical request is re-sent once (§12 L572-575). The moment drawn is after any step-up, the request in flight: SCR-006 is not drawn (U-7 names none).",
+   "Shell: CMP-087 under (b), what the server does (Q1 L146), with SH-5's users grace line at the band's right end (L185): Disable takes the users step-up (§12 L535; Y:1991), and a users step-up grants a 5-minute grace (Y:11309-11312; users is not a no-grace class, svc auth/step_up.py:98), so at U-7's moment a users grace window is live, SH-5's 'When', and SH-6 ('no grace', L186) does not hold. Its time, 4:59, is a fresh grace one second after the grant (DJ: no line gives the grace left at U-7; SH-5's sample 2:14 would mean a grace opened before U-8's confirm, whose step-up line then reads dlg.step_up.grace, not the no-grace dlg.step_up.code board 37 draws): with no grace live, U-8's PATCH answers 403 step_up_required, SCR-006 grants the grace and the request is re-sent once (§12 L572-575), which is U-7's moment. The line comes from the step-up answer (§4 L193; CG-2); no badge, no countdown elsewhere; the strip reads strip.none (§1's data raise no item).",
+   "'Disabling alex…' is plain text in the row-menu cell (type.ui.body, color.text.secondary, 6.24 on the selected row, F4 L656), right-aligned where ⋯ sits, with no spinner: U-7 (L338) and D02:335 name the text only, and CMP-038 InlineSpinnerText (15:389-393) wraps its spinner and text in role=status, which would announce the in-flight text where U-7 announces only the answer. The row is aria-busy while the request is held: E09-D09's loading row (aria-busy, focusable; D09:231), not T2 (G-T2); no control on the board is gated (the row menus are closed; U-5, board 34, draws the owner's T2 items).",
+   "Focus: U-7 draws the progress in the row, so U-8's dialog closed at the confirm (a dialog that waits for its answer shows it inside, as SCR-123's I-3 'Creating…', L438); on close focus returns to the opener (§13 L586; 05:97), alex's ⋯, which U-7 replaces; the board puts it on that grid cell, the grid's one stop (roving tabindex, 05:95; D02:336), the row on color.surface.selected (D02:121, as board 95), CMP-039's 2 px color.focus.ring inside the cell (§13 L590; 4.72 on selected, L640); at 2560 alex's two LIVE badge borders sit on it at 3.13 (token-sync.json; UI bar 3.0). §15 L637 measures the env-badge border on raised and on overlay only: on color.surface.selected DEMO is 2.58 (dark and hc; token-sync.json), under 3.0, so a DEMO account on a focused SCR-121 row needs a §15 row or a badge fill (spec question; every account here is LIVE). No source names the target when the opener is replaced, nor what the row-menu key does on alex's row while the request is held: spec questions (DJ).",
+   "Rows in U-2's listing (L333: basiltt, alex and erin Active, bea, carol, dave, dan, frank), as board 31 draws them, standing for 'unsorted, the server's order' (L304-305), which no contract states (CG-29, L823). The eight users are one page: listUsers' default page is 100 rows (Y:1904, Y:13695-13699), so has_more is false (PageMeta, Y:15156); the four sortable headers are enabled buttons with aria-sort on the sorted one only (none here, so no sort glyph; 15:496) and 'Load more' (L297) is not drawn.",
+   "Derived from §1 and the column rules, not invented: Two-factor 'yes' for the four active users (users.active 4 and users.without_mfa 0, L103-104; L300); '—' and 'Never signed in' for the invite rows carol and dave, never accepted (L300-302); Accounts per D13 (L126): 'all (owner)' for basiltt, '—' for carol, dave and dan, and for frank, who holds no grant in §1 (L102; D13 names only invited and disabled rows: copy gap), '2 accounts' for alex at 1280 with the list in the cell's description; every account reads LIVE, §1's environment (L102; sub_001 [LIVE] at L339), as board 31 (board 01 drew sub_002's env as a placeholder pill: a cross-board difference).",
+   "Chips (L306-310; text + glyph + tone): bea's 'Trading locked (risk) · until 00:00 UTC' is a labelled target (CG-13, L807: no per-user trading lockout is served); frank's reads 'Locked out (sign-in)' alone, CG-12's treatment (L806; L308-309); alex's stays 'Active' until the answer (L338).",
+   "Root height: the kit's root_size() plus 72 px slack for text-metric error, capped at 1760 px (the pitch guard), as boards 01 and 22.",
+   "A live countdown (band badge, grace line, view-as banner) sets its clock in type.num.base as its own text node (D02:120; Appendix A L865 CMP-087 Tokens); the node's note carries the full §14 string.",
+   "Buttons, chips, badges, banners, fields, tiles, tables, menus and dialogs are compositions from tokens: admin controls are 32 px (size.control.comfortable, §4 L176) while the library CMP-001 binds size.control.height (24 px in the file's compact density), and cvsheet v1 cannot set an instance's glyph, fill or border.",
+   "Spacing: the find bar, the capacity line and the grid stack with space.stack.md (12 px), the semantic alias bound for D02:120's 'space.3 stack step', as e42kit binds §2 D1's space.3 gaps.",
+   "Find bar (L294-296): the CMP-054 SearchBox is an empty 320 px field (e42kit's field() width, as board 31; no source sets one): the color.surface.sunken well with the DS-3 edge, 6.29 against the page (L650), and the search glyph, no placeholder: §14 keys neither a placeholder nor its accessible name (copy gap). CMP-055's Role and Status (L295) are two menu buttons (the secondary fill, 10.17, L641; a chevron), unset: the URL carries no filter.",
+   "Counts in type.num.base (D02:120): '3' and '5' in the capacity line and '2' in alex's 1280 Accounts cell are their own text nodes in rows whose space.inset.xs gap stands for the word space, each row's note carrying the full string (the method of e42kit's clock_text()).",
+   "Links: the one link on the board, 'Change' (cap.recorded's [Change]), sits beside plain text in the capacity line, so it carries a drawn 1 px color.text.link underline as wide as its estimated text (cvsheet v1 texts take no textDecoration; boards 01 and 22): color.text.link against color.text.primary is 2.16:1 dark, under the 3:1 a colour-only cue needs (§15 L620).",
+   "The capacity line (L296, L311; D10-D11): cap.recorded with §1's 3 in use and 'Regular, recorded 2026-09-12' (L103) and Regular's cap 5 (L317); the CMP-023 meter (120 px, e42kit's width; used and cap were both read, L316) carries cap.valuetext as its aria-valuetext (L347). It sits on the page, where its fill measures 4.07 against color.surface.app (token-sync.json; §15 L646 gives 3.64 on raised). [Change] opens the Record tier dialog (rung 1, §12 L534; board 28).",
+   "Column widths: SCR-121's one table, routed to the kit owner for e42kit.scr121_cols() and the SCR-121 boards' regeneration (review 36, finding 2), drawn here from a local copy until the kit carries it (the kit is not edited here; no source sets a width, and the kit's scr121_cols() today gives Status 226 px at 1280, under the longest chip): at 1280 user 112 · role 88 · accounts 120 · two-factor 96 · last sign-in 120 · status 280 · row menu 128 (944 px), board 31's widths less 80 px given to the row menu; at 2560 270 · 206 · 288 · 214 · 292 · 650 · 128 (2048 px), board 31's 2560 widths less the same 80 px. Status fits the longest chip ('Invited · expires 2026-10-23 10:00 UTC', est. 255 px; a chip never loses its until-time, L305), and the row-menu column holds 'Disabling alex…' (est. 93 px), so it replaces ⋯ in place with no reflow (DJ). A long username does not fit: usernames run 3–32 characters (§9 L415), and 'Disabling ' + a 32-character username + '…' is est. 286 px (a–z, 0–5) to 477 px (32 × W) in type.ui.body, so the 128 px cell would wrap and push the rows below; no line says how the cell fits it (spec question: e.g. the username truncated, with the full string as the cell's accessible name).",
+   "Placeholders: values §1 (L99-104) does not give are neutral color.surface.hover bars (radius.control; 12 px, 8 px for the line under a username), named by their field, as boards 01, 22 and 31 draw them: the display names (User.display_name, nullable, Y:15731), the last sign-ins of every user but the two invites (User.last_login_at, Y:15746) and dan's and frank's two-factor (users.without_mfa counts active users only, L104). They are not a loading state (U-1 is board 30).",
+   "TopBar, NavRail, RightRail and StatusBar content other than the Admin entry, the env badges and the owner's name is drawn as neutral placeholders (E10-D02 owns it; §1 L97 gives only the sizes). Chrome surface (kit-level, board 06 review finding 5, correcting e42kit's 'no source names a chrome surface'): `15` names color.surface.raised for CMP-071 NavRail, CMP-072 TopBar and CMP-209 RightRail (15:699, :708, :2421) and color.surface.sunken for CMP-208 StatusBar (15:2411); the boards draw all four on color.surface.app, CMP-070 AppShell's surface (15:690), with color.border.subtle dividers, so every kit board keeps one chrome; binding `15`'s surfaces is a kit change for every board (routed to the kit owner).",
+   "Local helper (kit-level, board 06 review finding 1): e42kit's _admin_entry marks the current Admin entry by its color.surface.selected fill alone, 1.58 against the rail (color.surface.app, dark; token-sync.json), under AC-5's UI bar of 3.0 (§15 L620). DS-2 binds color.border.admin to 'the 4 px rule and the current nav entry's edge' (D02:1003), handed over unchanged (spec L17-18; D02:1169), so this board draws it, as boards 06 and 22 do: color.text.tertiary (DS-2's fallback) at border.thick, inner; 6.29 against the rail (§15 L635) and 3.98 against the fill (§15 L656; an edge is UI, bar 3.0).",
+   "Local helper (kit-level, board 06 review finding 6): kit compositions take the build notes' '<CMP id> <Name> (composition)' names: 'CMP-209 RightRail (composition)' (kit: 'RightRail (composition)'; 15:2416), 'CMP-093 AuditActionTrigger (composition) · footer marker' (kit: 'footer marker (CMP-093)'; 15:893) and 'CMP-023 Progress Bar (composition) · capacity meter' (kit: 'CMP-023 meter (composition)'; 15:250), as board 22.",
+   "Annotation column: the kit's one-line-per-token fallback lines (DS-1, DS-2, DS-3, the Admin entry's DS-2 edge and the five DS-5 glyphs) print as one merged 'Fallbacks' line under Tokens, and the kit's 'token: size.control.comfortable …' line (the validator's Tier-1 WARN on every 32 px control) stays off the column, so its footer ends inside the 1760 px root; every full line stays in the sheet notes and the .md (boards 07, 11 and 22 keep the CONTROL line off the same way).",
+   "Board names carry Penpot's normalised ' / ' form (E42-D03 / 31 SCR-121 / populated · …) so cvsheet's find-or-create root matches on every section call; §0 L46-47 writes 'SCR-121/populated'."
+  ],
+  "fallbacks": [
+   "token: size.control.comfortable (32 px, §4 L176) is the Tier-1 primitive the spec names (validator WARN)",
+   "fallback: color.border.input pending DS-3: field boundaries bind color.text.tertiary (§15 L626, F1 L653)",
+   "fallback: icon/octagon pending DS-5: drawn with the registry glyph 'danger'",
+   "fallback: icon/ring (○) pending DS-5: drawn as a 13 px ellipse outline, border.thick",
+   "fallback: icon/triangle pending DS-5: drawn with the registry glyph 'warning'",
+   "fallback: icon/slashed-circle pending DS-5: drawn with the registry glyph 'cancelled'",
+   "fallback: color.surface.admin-tint pending DS-1: the band binds color.surface.raised (§2 D2, §15 L624)",
+   "fallback: color.border.admin pending DS-2: the 4 px rule binds color.text.tertiary (§2 D2, §15 L625)",
+   "fallback: icon/admin (◆) pending DS-5: drawn as the text glyph ◆ of band.label (L597)",
+   "fallback: color.border.admin pending DS-2: the current Admin entry's edge binds color.text.tertiary (D02:1003)"
+  ],
+  "tokens": [
+   "type.ui.body",
+   "color.text.secondary",
+   "type.num.base",
+   "space.inset.xs",
+   "type.ui.body-strong",
+   "color.text.on-action",
+   "space.button.paddingX",
+   "radius.control",
+   "size.control.comfortable",
+   "color.action.primary.default",
+   "color.text.primary",
+   "size.icon",
+   "color.action.secondary.default",
+   "space.inset.sm",
+   "color.surface.sunken",
+   "color.text.tertiary",
+   "border.hairline",
+   "space.inset.md",
+   "radius.badge",
+   "color.surface.hover",
+   "color.text.link",
+   "type.ui.label",
+   "space.row.height.comfortable",
+   "space.stack.xs",
+   "color.status.success.strong",
+   "color.status.success.subtle",
+   "color.border.subtle",
+   "color.surface.raised",
+   "color.focus.ring",
+   "border.focus",
+   "color.surface.selected",
+   "type.ui.caption",
+   "color.env.live",
+   "color.status.danger.strong",
+   "color.status.danger.subtle",
+   "color.status.info.strong",
+   "border.thick",
+   "color.status.info.subtle",
+   "color.status.warning.strong",
+   "color.status.warning.subtle",
+   "color.neutral.subtle",
+   "radius.card",
+   "space.stack.md",
+   "space.inset.lg",
+   "color.surface.app",
+   "type.ui.heading-md",
+   "space.stack.sm",
+   "type.ui.heading-sm"
+  ]
+ }
+}
