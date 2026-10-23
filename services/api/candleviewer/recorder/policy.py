@@ -23,6 +23,11 @@ recording; it only protects a symbol that is recording or recorded.
 Warm-up gate: until `positions_reloaded()` is called, no stop decision is taken (grace
 expiry or pre-emption), because the position cache may not be authoritative yet
 (#2188 opens the gate after the startup reconcile).
+
+Rows (`recorded_symbols`, #2188): every change is written to the injected `RecordedStore`
+first and to memory second, under `_lock`, so a failed write changes nothing. B11 hooks can
+outlive `_lock` (`_settle` is bounded), so the auto row is written before B11 starts and
+soft-removed after it stops, never from a hook.
 """
 
 from __future__ import annotations
@@ -42,6 +47,7 @@ from candleviewer.recorder.errors import (
     InvalidRecordedSymbolError,
     InvalidRecorderActorError,
     RecorderSymbolLimitError,
+    RecorderSymbolNotRecordedError,
 )
 from candleviewer.recorder.metrics import (
     recorder_b11_error_total,
@@ -58,6 +64,7 @@ from candleviewer.recorder.models import (
     RecorderCapRefused,
     RecorderSetChanged,
 )
+from candleviewer.recorder.sessions import DEFAULT_STREAMS
 from candleviewer.statechart import build
 from candleviewer.statechart.factory import default_clock
 from candleviewer.statechart.factory import restore as restore_chart
@@ -211,6 +218,12 @@ class _Sym:
             return sorted(f"position:{p}" for p in self.positions)
         return sorted(f"chart:{c}" for c in self.charts)
 
+    def row_refs(self) -> list[dict[str, str]]:
+        """The row's `reason_refs`, positions first: `clear_manual` decides from them."""
+        return [{"kind": "position", "id": p} for p in sorted(self.positions)] + [
+            {"kind": "chart", "id": c} for c in sorted(self.charts)
+        ]
+
     def idle(self) -> bool:
         return not (self.charts or self.positions or self.manual or self.pinned)
 
@@ -268,12 +281,14 @@ class RecordingPolicy:
             logger().warning("recorder_chart_ref_refused", symbol=symbol, cause="ref_cap")
             return
         s.charts.setdefault(chart_id, self._now())
+        await self._mirror_ref(symbol, "chart", chart_id, add=True)
         await self._reconcile(symbol)
 
     async def on_chart_closed(self, symbol: str, chart_id: str) -> None:
         s = self._syms.get(_valid(symbol))
         if s is not None:
             s.charts.pop(chart_id, None)
+            await self._mirror_ref(symbol, "chart", chart_id, add=False)
             await self._reconcile(symbol)
 
     async def on_position_opened(self, symbol: str, position_id: str) -> None:
@@ -282,12 +297,14 @@ class RecordingPolicy:
         if s is None:  # MAX_PROTECTED distinct symbols with positions: an incident, loud
             raise InvalidRecordedSymbolError(f"more than {MAX_PROTECTED} protected symbols")
         s.positions.add(position_id)
+        await self._mirror_ref(symbol, "position", position_id, add=True)
         await self._reconcile(symbol)
 
     async def on_position_closed(self, symbol: str, position_id: str) -> None:
         s = self._syms.get(_valid(symbol))
         if s is not None:
             s.positions.discard(position_id)
+            await self._mirror_ref(symbol, "position", position_id, add=False)
             await self._reconcile(symbol)
 
     async def add_manual(
@@ -300,31 +317,55 @@ class RecordingPolicy:
         if actor.kind != "user":
             raise InvalidRecorderActorError("manual add requires a user actor")
         _valid(symbol)
-        existing = self._syms.get(symbol)
-        already = existing is not None and existing.manual is not None
-        if not already and symbol not in self._active() and self._at_cap():
-            raise RecorderSymbolLimitError(f"max {self._cfg.max_symbols} recorded symbols")
-        s = self._sym(symbol, kind="protected")
-        if s is None:
-            raise RecorderSymbolLimitError(f"more than {MAX_PROTECTED} tracked symbols")
-        s.manual = _Manual(actor=actor, streams=tuple(streams), depth=depth)
-        s.last_actor = actor
+        async with self._lock:
+            existing = self._syms.get(symbol)
+            already = existing is not None and existing.manual is not None
+            if not already and symbol not in self._active() and self._at_cap():
+                raise RecorderSymbolLimitError(f"max {self._cfg.max_symbols} recorded symbols")
+            s = self._sym(symbol, kind="protected")
+            if s is None:
+                raise RecorderSymbolLimitError(f"more than {MAX_PROTECTED} tracked symbols")
+            try:  # row first, memory second; explicit streams (the DDL default has one fewer)
+                await self._recorded.upsert_manual(
+                    symbol, actor.id, streams or DEFAULT_STREAMS, depth, self._env
+                )
+            except Exception:
+                if s.idle():
+                    self._syms.pop(symbol, None)  # made by this call: leave no trace
+                raise
+            s.manual = _Manual(actor=actor, streams=tuple(streams), depth=depth)
+            s.last_actor = actor
         await self._reconcile(symbol)
 
     async def remove_manual(self, symbol: str, actor: Actor) -> None:
-        s = self._syms.get(_valid(symbol))
-        if s is None or s.manual is None:
-            return
-        s.manual, s.last_actor = None, actor
+        async with self._lock:
+            s = self._syms.get(_valid(symbol))
+            if s is None or s.manual is None:
+                return
+            await self._recorded.clear_manual(symbol, self._env)
+            s.manual, s.last_actor = None, actor
         await self._reconcile(symbol)
 
     async def set_pin(self, symbol: str, pinned: bool, actor: Actor) -> None:
-        """Pinning changes retention/eviction behaviour: audited with its actor (C-2.9)."""
-        s = self._sym(symbol, kind="protected")
-        if s is None:
-            raise RecorderSymbolLimitError(f"more than {MAX_PROTECTED} tracked symbols")
-        if s.pinned == pinned:
-            return
+        """Pinning changes retention/eviction behaviour: audited with its actor (C-2.9), then
+        written, then applied. A pin needs an active row (`RecorderSymbolNotRecordedError`);
+        unpinning an idle symbol also soft-removes the row that only the pin kept."""
+        async with self._lock:
+            s = self._sym(symbol, kind="protected")
+            if s is None:
+                raise RecorderSymbolLimitError(f"more than {MAX_PROTECTED} tracked symbols")
+            try:
+                if s.pinned != pinned:
+                    await self._write_pin(symbol, s, pinned, actor)
+                    s.pinned = pinned
+            finally:  # also drops an entry this call made, or an idle one the unpin freed
+                if s.idle() and symbol not in self._charts:
+                    self._syms.pop(symbol, None)
+
+    async def _write_pin(self, symbol: str, s: _Sym, pinned: bool, actor: Actor) -> None:
+        row = await self._recorded.get_by_symbol(symbol, self._env)
+        if row is None:
+            raise RecorderSymbolNotRecordedError("a pin needs an active recorded row")
         await self._audit_emit(
             "retention.change",
             symbol,
@@ -332,9 +373,10 @@ class RecordingPolicy:
             reason="pin" if pinned else "unpin",
             extra={"pinned": pinned},
         )
-        s.pinned = pinned
-        if s.idle():
-            self._syms.pop(symbol, None)
+        if not await self._recorded.set_pinned(row["id"], pinned):
+            raise RecorderSymbolNotRecordedError("the recorded row was removed")
+        if not (pinned or s.manual or s.charts or s.positions or symbol in self._charts):
+            await self._recorded.soft_remove(row["id"])  # an idle row only the pin kept
 
     # --- evaluation --------------------------------------------------------------------
 
@@ -429,7 +471,28 @@ class RecordingPolicy:
                 self._syms.pop(symbol, None)
             await self._publish(symbol)
 
+    async def _mirror_ref(self, symbol: str, kind: str, ident: str, *, add: bool) -> None:
+        """Keep the active row's `reason_refs` in step with a trigger that opened or closed, so
+        `clear_manual` decides from what is held. Best effort, never raises: a raise here would
+        skip the reconcile that follows."""
+        s = self._syms.get(symbol)
+        if symbol not in self._charts and not (s is not None and (s.manual or s.pinned)):
+            return  # nothing is recorded: the auto row is written when B11 starts
+        try:
+            async with self._lock:
+                row = await self._recorded.get_by_symbol(symbol, self._env)
+                if row is not None:
+                    op = self._recorded.add_reason_ref if add else self._recorded.remove_reason_ref
+                    await op(row["id"], {"kind": kind, "id": ident})
+        except Exception as exc:
+            logger().warning(
+                "recorder_ref_mirror_failed", symbol=symbol, kind=kind, error=type(exc).__name__
+            )
+
     async def _prune(self, symbol: str) -> None:
+        row = await self._recorded.get_by_symbol(symbol, self._env)
+        if row is not None and row["reason"] != "manual" and not row["pinned"]:
+            await self._recorded.soft_remove(row["id"])  # B11 stopped: the auto row goes too
         interp = self._charts.pop(symbol, None)
         self._gateway.unregister(symbol)
         if interp is not None:
@@ -468,6 +531,11 @@ class RecordingPolicy:
                 await self._refuse(symbol, s, reason)
                 return
         if symbol not in self._charts:
+            if reason != "manual":  # `add_manual` wrote its row first; an auto one is written now
+                first, *rest = s.row_refs()
+                rid = await self._recorded.upsert_auto(symbol, reason, first, self._env)
+                for ref in rest:
+                    await self._recorded.add_reason_ref(rid, ref)
             interp = (await build(MACHINE, clock=default_clock(), lane=LANE)).interpreter
             self._register(symbol, interp)
         streams = list(s.manual.streams) if s.manual else []

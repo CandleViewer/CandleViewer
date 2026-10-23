@@ -94,7 +94,10 @@ async def test_remove_manual_audits_the_remover(
     assert stop[0] == "recorder.stop" and stop[1]["actor_label"] == "user:mgr-2"
 
 
-async def test_set_pin_is_audited_with_actor(policy: RecordingPolicy, audit: FakeAudit) -> None:
+async def test_set_pin_is_audited_with_actor(
+    policy: RecordingPolicy, audit: FakeAudit, store: Mem
+) -> None:
+    await store.upsert_manual("BTCUSDT", None, (), None, "demo")  # a pin needs a recorded row
     await policy.set_pin("BTCUSDT", True, OWNER)
     await policy.set_pin("BTCUSDT", True, OWNER)  # no-op: no second record
     assert [(a, kw["actor_label"]) for a, kw in audit.records] == [

@@ -19,3 +19,7 @@ class RecorderSymbolLimitError(RecorderError):
 
 class InvalidRecorderActorError(RecorderError):
     """A recorder action named no (or an empty / non-user) actor (C-2.9, C-12.4)."""
+
+
+class RecorderSymbolNotRecordedError(RecorderError):
+    """`set_pin` named a symbol with no active `recorded_symbols` row: a pin needs a row."""
