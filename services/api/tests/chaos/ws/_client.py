@@ -225,14 +225,30 @@ class Client:
         sys = ((i, f) for i, f in enumerate(self.frames) if f["t"] == "d" and f["ch"] == "system")
         return [i for i, f in sys if f["p"]["kind"] == kind]
 
-    async def until(self, pred: Callable[[], bool], what: str) -> None:
+    async def until(
+        self,
+        pred: Callable[[], bool],
+        what: str,
+        *,
+        within_s: float = TIMEOUT_S,
+        detail: Callable[[], str] | None = None,
+    ) -> None:
+        """Wait, up to `within_s` of wall time, until `pred` holds after a frame. A failure names
+        the client's task, its last lifecycle notes and, if given, `detail()`: the state a caller
+        needs to tell where its scenario stopped (#4264)."""
         with contextlib.suppress(TimeoutError):
-            async with asyncio.timeout(TIMEOUT_S):
+            async with asyncio.timeout(within_s):
                 while not pred() and self.task is not None and not self.task.done():
                     self._tick.clear()
                     await self._tick.wait()
         if not pred():
-            pytest.fail(f"{what}: not reached in {TIMEOUT_S}s; {self.task!r}; log {self.log[-6:]}")
+            try:
+                more = "" if detail is None else f"; {detail()}"
+            except Exception as exc:  # the failure stands; its diagnostic is best effort
+                more = f"; detail() raised {exc!r}"
+            pytest.fail(
+                f"{what}: not reached in {within_s:.1f}s; {self.task!r}; log {self.log[-6:]}{more}"
+            )
 
     async def next_backoff(self) -> float:
         """The delay of the client's next backoff sleep, once it is parked in it."""

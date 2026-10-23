@@ -25,7 +25,8 @@ in `proxy.trace`: `DROP` aborts both legs of every live link (client sees 1006);
 then aborts every new connection until `HEAL`; `PAUSE` stops reading server->client (TCP backs
 up); `LATENCY` holds server->client bytes until `HEAL`; `HEAL` restores pass-through. Time moves
 only by `clock.advance()` once the client is parked in a backoff sleep; every wait is an event
-with a 5 s bound. Same seed, same backoff schedule and fault trace (scenario 6 pins the trace).
+with a 5 s bound, except scenario 2's wait for the sleeper's snapshots, which its pause bounds
+(below). Same seed, same backoff schedule and fault trace (scenario 6 pins the trace).
 A reset crosses the proxy, `PAUSE` also holds the chunk being read, no server behind it = reset (`down`).
 
 **Flag on.** `_server.flag_on()` (fixture `stack_on`, in `conftest.py`) serves the same router with
@@ -38,9 +39,11 @@ writes, not after the megabytes loopback autotuning holds. The lane buffer has a
 connect, as `Proxy` sets it, a receiver of 28 KiB or less that stopped reading resumes only on the
 sender's next zero-window probe, 0.5 s to seconds after `HEAL` (about 32 KiB on Linux 6.6; set
 before connect there is none), and kernels that advertise about half the buffer as window need
-twice that. 128 KiB clears it with room, and the `recovered` wait names both
-sizes if it ever stalls. uvicorn's transport keepalive (a 15 s ping, a 45 s pong timeout, then
-`1011`) is off there: it is timed on the loop's wall clock and the scenarios on the virtual one, so
+twice that. 128 KiB clears it with room, and scenario 2's waits name both sizes if one ever
+stalls; one hosted night (#4264) still saw the lane resnapshot about 1.4 to 2.9 s after `HEAL`, the
+cause not confirmed, so S2's D8 line prints that time (`the lane resnapshotted ... s (wall) after
+HEAL`): 0.5 s or more reads as the probe regime above (compare the lane's own baseline under
+`--cov`). uvicorn's transport keepalive (a 15 s ping, a 45 s pong timeout, then `1011`) is off there: it is timed on the loop's wall clock and the scenarios on the virtual one, so
 a slow run (coverage) would close a paused client mid-scenario. The §9.1 application heartbeat
 stays, on the virtual clock. Production keeps both: a reader stalled for 60 real seconds meets that
 `1011`, which this harness leaves out. The server's per-connection frame budget (#2176) is kept
@@ -129,7 +132,17 @@ the frames within 2 000, unless the check closed. At most one frame is pushed be
 (the bounded overshoot), the counters equal the lanes and windows recounted, and the windows'
 pending bytes are in it. Step 1 fires once while asleep, the class `saturated`: both topics' frames
 and windows go, both marked `backpressure`. No snapshot is queued while asleep (the writer, parked
-in its send, runs no drain); after `HEAL`, one per drain, and the streams resume with no gap. No
+in its send, runs no drain); after `HEAL`, one per drain, and the streams resume with no gap. The
+test awaits both snapshots before it feeds the 4 s awake, since a feed paced by the healthy clients
+alone can end before the lane recovers in wall time, and nothing publishes after it (#4264); that
+wait is bounded by the wall time the lane was paused plus 1 s (5 s at least), and the wall time
+from `HEAL` to both snapshots is printed. So the healthy clients' awake ticks never overlap the
+sleeper's backlog, by design: no assert needs the overlap, and a tick during the wait would move
+the stream past it. A publish landing during the writer's resumption is covered by the unit layer
+instead: `test_outbound.py::test_backpressure_slow_consumer_stays_within_the_budget` and
+`::test_backpressure_busy_topic_whose_snapshot_was_sent_never_closes`,
+`test_pipeline_ladder.py::test_ladder_order_drop_then_backpressure_snap_below_half_then_no_close`
+and `test_pacing.py::test_pacer_next_update_after_a_snapshot_drops_the_stale_window`. No
 step 3: what is left can always be dropped (`cv_ws_overflow_total` `drop` +2, `resnapshot` +2; no
 close). Two healthy clients on the same topics get every update in the tick that published it: no
 class the sleeper degraded and no frame held, 0 ms added on the virtual clock, where the Gherkin
