@@ -26,6 +26,7 @@ from candleviewer.accounts.trade_group_repository import TradeGroupRepository
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Px, Symbol
 from candleviewer.observability.metrics import Metrics
+from candleviewer.oms.commands import SUBMIT_TIMEOUT_S
 from candleviewer.oms.fakes import InMemoryOrderStore, InMemorySubmissionStore
 from candleviewer.oms.idempotency import AnchorService
 from candleviewer.oms.order_link_allocator import OrderLinkIdAllocator, OrderLinkLookup
@@ -362,12 +363,15 @@ def build_rig(
     lies: int = 0,
     audit_timeout_s: float = 0.5,
     risk: Any = None,
+    submit_timeout_s: float = SUBMIT_TIMEOUT_S,
     **pipeline_kwargs: Any,
 ) -> SubmitRig:
     """The pipeline over a fresh command-port rig and the real B1 facade; the caller stops the
     facade (`rigged`). The store holds each account the rig trades with in its environment
-    (D-2B1-02), so `trg_tgl_env` refuses a leg outside its group's environment as on Postgres."""
-    port = cr.build_rig()
+    (D-2B1-02), so `trg_tgl_env` refuses a leg outside its group's environment as on Postgres.
+    `submit_timeout_s` is the command port's deadline on a `place`, which the pipeline's
+    `place_wait_s` must outlast (D-2B2-01)."""
+    port = cr.build_rig(submit_timeout_s=submit_timeout_s)
     store = port.store
     submissions = InMemorySubmissionStore(store, audit_timeout_s=audit_timeout_s)
     for account in (cr.ref(), cr.ref(cr.LIVE_ACCOUNT, "live")):  # the command rig's accounts

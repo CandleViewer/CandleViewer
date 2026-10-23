@@ -73,7 +73,9 @@ record names the requesting principal and carries the request's correlation id (
 #3990). Once the anchor exists, the bounds (`SEND`'s write, `place_wait_s`, `result_wait_s`, then
 the anchor's, the leg's and the group's compare-and-sets and the outcome's record, each
 `store_timeout_s`) total 17 s by default; the pipeline refuses to be built with bounds that total
-`CV_OMS_INFLIGHT_STUCK_S` (30 s) or more, so a repeat meets the outcome this request records.
+`CV_OMS_INFLIGHT_STUCK_S` (30 s, or the anchor service's own when lower) or more, so a repeat
+meets the outcome this request records, or with a `place_wait_s` that does not outlast the
+command port's `submit_timeout_s`, so the first answer is the create's own (D-2B2-01).
 Logs carry ids, codes and state names, never a price, a size, the key or the fingerprint (21
 Sec.12, C-12.6).
 """
@@ -539,8 +541,10 @@ def _reject_code(answer: Mapping[str, Any] | None) -> str:
 
 class OrderSubmission:
     """The `placeOrder` pipeline (module docstring): one per process, with the OMS facade and the
-    command port it drives. Its bounds after the anchor must total under `STUCK_AFTER_S`
-    (`CV_OMS_INFLIGHT_STUCK_S`): any that reach it are refused with `ValueError`."""
+    command port it drives. Its bounds after the anchor must total under the anchor service's
+    `stuck_after_s` and the module's `STUCK_AFTER_S` (`CV_OMS_INFLIGHT_STUCK_S`), and its wait for
+    a create's answer (`place_wait_s`) must outlast the command port's `submit_timeout_s`
+    (D-2B2-01): bounds that do not are refused with `ValueError`."""
 
     def __init__(
         self,
@@ -587,10 +591,21 @@ class OrderSubmission:
             place_wait_s=self._place_wait_s,
             result_wait_s=self._result_wait_s,
         )
-        if after_anchor >= STUCK_AFTER_S:  # else a repeat may decide the anchor while this runs
+        # D-2B2-01: under the threshold the anchor service applies, or a repeat may decide the
+        # anchor while this request runs, and never past the module's own (24 Sec.8.4's 30 s).
+        stuck_after_s = min(STUCK_AFTER_S, anchors.stuck_after_s)
+        if after_anchor >= stuck_after_s:
             raise ValueError(
                 f"the bounds after the anchor total {after_anchor} s, not under "
-                f"CV_OMS_INFLIGHT_STUCK_S ({STUCK_AFTER_S} s)"
+                f"CV_OMS_INFLIGHT_STUCK_S ({stuck_after_s} s)"
+            )
+        # D-2B2-01: the wait for the create's answer outlasts the command port's one deadline on
+        # all of `place`, so the first answer is the create's own, its 429 or 502 included, never
+        # a 202 given up early (a NaN deadline is refused too).
+        if not self._place_wait_s > commands.submit_timeout_s:
+            raise ValueError(
+                f"place_wait_s ({self._place_wait_s} s) does not outlast the command port's "
+                f"submit_timeout_s ({commands.submit_timeout_s} s)"
             )
         self._stop_retries = tuple(_delay(wait) for wait in stop_retries)
         self._guard = NativeStopGuard(ports.stop_resolver)

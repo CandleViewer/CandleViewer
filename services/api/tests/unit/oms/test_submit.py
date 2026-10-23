@@ -1476,6 +1476,61 @@ async def test_bounds_after_the_anchor_under_the_in_flight_threshold_are_taken(
     assert rig.make(place_wait_s=18.5)._place_wait_s == 18.5  # 29.5 s in all
 
 
+def _anchors(rig: SubmitRig, stuck_after_s: float) -> AnchorService:
+    """An anchor service over the rig's store whose in-flight threshold is `stuck_after_s`."""
+    return AnchorService(
+        IdempotencyAnchorRepository(rig.store.anchors),
+        clock=lambda: cr.EPOCH + timedelta(microseconds=rig.port.now.us),
+        timeout_s=2.0,
+        stuck_after_s=stuck_after_s,
+    )
+
+
+async def test_bounds_that_reach_a_lowered_in_flight_threshold_are_refused(rig: SubmitRig) -> None:
+    """D-2B2-01: the threshold a repeat meets is the anchor service's own. Lowered to the default
+    bounds' 17 s, they reach it, so no pipeline is built over that service."""
+    with pytest.raises(ValueError, match=r"CV_OMS_INFLIGHT_STUCK_S \(17\.0 s\)"):
+        rig.make(anchors=_anchors(rig, 17.0))
+
+
+async def test_bounds_under_a_lowered_in_flight_threshold_are_taken(rig: SubmitRig) -> None:
+    assert rig.make(anchors=_anchors(rig, 17.25))._anchors.stuck_after_s == 17.25
+
+
+async def test_a_raised_in_flight_threshold_still_caps_the_bounds_at_the_modules(
+    rig: SubmitRig,
+) -> None:
+    """The module's `STUCK_AFTER_S` (24 Sec.8.4's 30 s) stays the ceiling, whatever longer
+    threshold the anchor service is built with."""
+    with pytest.raises(ValueError, match=r"CV_OMS_INFLIGHT_STUCK_S \(30\.0 s\)"):
+        rig.make(anchors=_anchors(rig, 60.0), place_wait_s=19.0)
+
+
+async def test_a_place_wait_that_does_not_outlast_the_submit_timeout_is_refused(
+    rig: SubmitRig,
+) -> None:
+    """D-2B2-01: the wait for the create's answer must outlast the command port's one deadline on
+    all of `place`, or a 429 or 502 answered in time would be given up into a 202; a wait of
+    just that deadline races it."""
+    with pytest.raises(ValueError, match="does not outlast"):
+        rig.make(place_wait_s=SUBMIT_TIMEOUT_S)
+
+
+@pytest.mark.parametrize("deadline", [PLACE_WAIT_S, float("nan")], ids=["raised", "nan"])
+async def test_a_command_port_whose_deadline_the_wait_does_not_outlast_is_refused(
+    rig: SubmitRig, deadline: float
+) -> None:
+    """A command port built with the default wait's 6 s as its deadline, or with none that
+    compares, takes no pipeline with that wait."""
+    with pytest.raises(ValueError, match="does not outlast"):
+        rig.make(commands=cr.build_rig(submit_timeout_s=deadline).port)
+
+
+async def test_a_wait_that_outlasts_a_lowered_submit_timeout_is_taken(rig: SubmitRig) -> None:
+    lowered = cr.build_rig(submit_timeout_s=0.5).port
+    assert rig.make(commands=lowered, place_wait_s=0.75)._place_wait_s == 0.75
+
+
 async def test_an_anchor_write_that_does_not_answer_is_bounded_as_the_other_writes_are(
     rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1904,23 +1959,25 @@ async def test_a_lost_send_goes_out_at_the_restart_under_its_id_and_a_later_repe
 
 
 async def test_a_create_that_has_not_answered_in_time_is_202_with_its_state(
-    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The outcome is not known yet: 202, as `unknown` is, never a 503 (24 Sec.8.4)."""
-    gate = asyncio.Event()
-    land = rig.port.demo.place_order
+    """The outcome is not known yet: 202, as `unknown` is, never a 503 (24 Sec.8.4). The wait
+    outlasts the command port's deadline (D-2B2-01), so it is B1's own turn that runs late here:
+    the create has not begun when the wait ends, then lands within its own deadline."""
+    async with rigged(submit_timeout_s=0.5, place_wait_s=0.6) as rig:
+        gate, place = asyncio.Event(), rig.port.port.place
 
-    async def held(request: Any) -> Any:
-        await gate.wait()
-        return await land(request)
+        async def late(command: Any) -> Any:
+            await gate.wait()
+            return await place(command)
 
-    monkeypatch.setattr(rig.port.demo, "place_order", held)
-    pipeline = rig.make(place_wait_s=0.01)
-    outcome = await pipeline.submit(entry(), context())
-    assert (outcome.status, outcome.lifecycle) == (202, "submitting")
-    gate.set()
-    await rig.quiet()
-    assert _row(rig, outcome).lifecycle_state == "submitted"
+        monkeypatch.setattr(rig.port.port, "place", late)
+        outcome = await rig.submit()
+        assert (outcome.status, outcome.lifecycle) == (202, "submitting")
+        gate.set()
+        row = _row(rig, outcome)
+        left = await rig.machines.settled(cr.ACCOUNT, row.id, leaving="submitting", timeout_s=5)
+        assert left == _row(rig, outcome).lifecycle_state == "submitted"
 
 
 async def test_an_outcome_step_not_known_in_time_is_202_as_submitting(
