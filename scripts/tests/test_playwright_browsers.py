@@ -25,7 +25,13 @@ echo "$*" >> "$FAKE/calls.log"
 shift 2
 case "$1" in
   --version) echo "Version ${FAKE_VERSION:-1.64.1}" ;;
-  install | install-deps)
+  install-deps)
+    if [ -n "${DEPS_RC:-}" ]; then
+      echo "E: Failed to fetch http://mirror/fonts-freefont-ttf (apt stub)" >&2
+      exit "$DEPS_RC"
+    fi
+    ;;
+  install)
     n=$(cat "$FAKE/runs" 2>/dev/null || echo 0); echo $((n + 1)) > "$FAKE/runs"
     [ "$((n + 1))" -gt "${INSTALL_FAILS:-0}" ] || { echo "download of chromium failed" >&2; exit 1; }
     ;;
@@ -81,6 +87,10 @@ def _installs(env: dict[str, str]) -> list[str]:
     return [c for c in _calls(env) if c.startswith("exec playwright install")]
 
 
+def _downloads(env: dict[str, str]) -> list[str]:
+    return [c for c in _installs(env) if not c.startswith("exec playwright install-deps")]
+
+
 def _summary(env: dict[str, str]) -> str:
     return Path(env["GITHUB_STEP_SUMMARY"]).read_text()
 
@@ -100,12 +110,15 @@ def test_version_that_is_not_a_plain_version_is_refused(env: dict[str, str]) -> 
     assert not Path(env["GITHUB_OUTPUT"]).exists()
 
 
-def test_miss_runs_the_full_install_with_deps_and_says_miss(
+def test_miss_runs_deps_once_then_the_plain_download_and_says_miss(
     env: dict[str, str],
 ) -> None:
     r = _run(env, "install", PW_CACHE_KEY=KEY, PW_CACHE_HIT="false", PW_VERSION=VERSION)
     assert r.returncode == 0, r.stderr
-    assert _installs(env) == ["exec playwright install --with-deps chromium"]
+    assert _installs(env) == [
+        "exec playwright install-deps chromium",
+        "exec playwright install chromium",
+    ]
     assert f"`{KEY}`" in _summary(env) and "miss" in _summary(env)
 
 
@@ -119,7 +132,10 @@ def test_hit_runs_only_install_deps_and_says_hit(env: dict[str, str]) -> None:
 def test_an_empty_hit_flag_counts_as_a_miss(env: dict[str, str]) -> None:
     r = _run(env, "install", PW_CACHE_KEY=KEY, PW_CACHE_HIT="", PW_VERSION=VERSION)
     assert r.returncode == 0, r.stderr
-    assert _installs(env) == ["exec playwright install --with-deps chromium"]
+    assert _installs(env) == [
+        "exec playwright install-deps chromium",
+        "exec playwright install chromium",
+    ]
 
 
 def test_hit_for_another_playwright_version_is_refused(env: dict[str, str]) -> None:
@@ -138,7 +154,7 @@ def test_download_fails_then_works_within_five_attempts(env: dict[str, str]) -> 
         INSTALL_FAILS="4",
     )
     assert r.returncode == 0, r.stderr
-    assert len(_installs(env)) == 5
+    assert len(_downloads(env)) == 5
     assert (Path(env["FAKE"]) / "sleeps.log").read_text().split() == [
         "10",
         "20",
@@ -160,7 +176,7 @@ def test_download_always_fails_ends_with_the_code_naming_the_download(
     )
     assert r.returncode == 1
     assert "CI-A11Y-005" in r.stderr and "download" in r.stderr
-    assert len(_installs(env)) == 5
+    assert len(_downloads(env)) == 5
 
 
 def test_each_attempt_is_bounded_and_the_bound_is_a_whole_number(
@@ -171,7 +187,7 @@ def test_each_attempt_is_bounded_and_the_bound_is_a_whole_number(
     )
     assert ok.returncode == 0 and (
         Path(env["FAKE"]) / "timeouts.log"
-    ).read_text().split() == ["120"]
+    ).read_text().split() == ["120", "120"]
     bad = _run(
         env,
         "install",
@@ -193,23 +209,74 @@ def test_a_stuck_download_is_killed_after_its_bound(env: dict[str, str]) -> None
     r = _run(env, "install", PW_CACHE_KEY=KEY, PW_CACHE_HIT="false", PW_VERSION=VERSION)
     assert r.returncode == 0
     flags = (Path(env["FAKE"]) / "timeout-flags.log").read_text().split()
-    assert flags == ["--kill-after=10"]
+    assert flags == ["--kill-after=10", "--kill-after=10"]
 
 
-def test_failed_apt_install_on_a_hit_does_not_blame_the_download(
+def test_failed_deps_on_a_miss_warns_then_downloads_with_the_cause_in_the_summary(
     env: dict[str, str],
 ) -> None:
     r = _run(
         env,
         "install",
         PW_CACHE_KEY=KEY,
+        PW_CACHE_HIT="false",
+        PW_VERSION=VERSION,
+        DEPS_RC="100",
+    )
+    assert r.returncode == 0, r.stderr
+    assert _downloads(env) == ["exec playwright install chromium"]
+    (warn,) = [ln for ln in r.stderr.splitlines() if ln.startswith("::warning::")]
+    assert "100" in warn and "Failed to fetch" in warn
+    assert "::group::" in r.stderr and "::endgroup::" in r.stderr
+    assert "Failed to fetch http://mirror/fonts-freefont-ttf" in r.stderr
+    summary = _summary(env)
+    assert "exit 100" in summary and "Failed to fetch" in summary
+
+
+def test_failed_deps_on_a_hit_warns_and_succeeds(env: dict[str, str]) -> None:
+    r = _run(
+        env,
+        "install",
+        PW_CACHE_KEY=KEY,
         PW_CACHE_HIT="true",
+        PW_VERSION=VERSION,
+        DEPS_RC="100",
+    )
+    assert r.returncode == 0, r.stderr
+    assert _downloads(env) == []
+    assert "::warning::" in r.stderr and "100" in r.stderr
+    assert "hit" in _summary(env) and "Failed to fetch" in _summary(env)
+
+
+def test_deps_ok_and_download_failing_five_times_is_the_code_with_the_cause(
+    env: dict[str, str],
+) -> None:
+    r = _run(
+        env,
+        "install",
+        PW_CACHE_KEY=KEY,
+        PW_CACHE_HIT="false",
         PW_VERSION=VERSION,
         INSTALL_FAILS="99",
     )
-    assert r.returncode == 1 and "CI-A11Y-005" in r.stderr
-    (line,) = [ln for ln in r.stderr.splitlines() if ln.startswith("::error::")]
-    assert "dependency" in line and "download" not in line
+    assert r.returncode == 1 and "::warning::" not in r.stderr
+    assert len(_downloads(env)) == 5
+    assert "download of chromium failed" in _summary(env)
+
+
+def test_deps_run_once_outside_the_retry_loop(env: dict[str, str]) -> None:
+    r = _run(
+        env,
+        "install",
+        PW_CACHE_KEY=KEY,
+        PW_CACHE_HIT="false",
+        PW_VERSION=VERSION,
+        INSTALL_FAILS="2",
+        DEPS_RC="100",
+    )
+    assert r.returncode == 0, r.stderr
+    assert len([c for c in _installs(env) if "install-deps" in c]) == 1
+    assert len(_downloads(env)) == 3
 
 
 def test_empty_backoff_list_ends_with_the_code(env: dict[str, str]) -> None:
