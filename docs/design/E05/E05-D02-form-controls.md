@@ -19,8 +19,9 @@ slice 2 (#4290, merged as `c899241c8`; its spec and audit are byte-identical to 
 cited). They apply here unchanged and are cited as "slice 1 §n", "slice 1 A3" and "slice 2 (#4290) E18".
 **Order-ticket contracts.** CMP-008, CMP-009 and CMP-065 are the bases of merged order-ticket components: E30-D02
 (`docs/design/E30/E30-D02.md`, SCR-060's order ticket) draws them, and E30-D04 (#4271, merged as `ca7d61fa1`,
-`docs/design/E30/E30-D04.md`) is the design-system contract of CMP-100 and CMP-101 (on CMP-008), CMP-119 (on CMP-065)
-and CMP-231 (on CMP-009). Where this slice meets them, §5.2 records each clash and how it is resolved.
+`docs/design/E30/E30-D04.md`) is the design-system contract of the fifteen order-ticket components; CMP-100 and CMP-101
+(on CMP-008), CMP-119 (on CMP-065) and CMP-231 (on CMP-009) build on this slice, and CMP-139 composes CMP-079. Where
+this slice meets them, §5.2 records each clash and how it is resolved.
 **Key.** `05`, `14`, `15`, `16` are the `docs/plan/` documents by number; D09 is `docs/design/E09/E09-D09.md`.
 `path:line` references are at `origin/main` `5a382efec`, except E30-D04's and E29-D02's, which merged after it and
 are cited at this PR's base, `f128ba6c6`.
@@ -118,34 +119,37 @@ inside its well (E30-D04 §2.5 (2)), and the reason line is CMP-040's, drawn in 
     and the words carry the state.
 24. **T2 in a form** (D09 §2.2, §9.1–§9.3; `14:85` rule 5; cited as "T2, conventions 24"). _Scope:_ a field, select,
     combobox, date field, stepper, row action or section that a view-as context, a permission, grant, account or
-    environment leg, or a registered state blocks (D09 §2.1 steps 3–4). The view-as leg never gates a protective write:
-    C-2.6's carve-out (attaching a missing native stop, tightening a stop, re-arming a protective trigger) stays enabled
-    while viewing as (D09 §2.1 step 3 (a); `22` View-as "Protective writes (C-2.6)"; E42-D02 D10), so a stop-tightening
-    field is never T2 on that leg, and the server classifies each write (`24` §8.10). CMP-079 RbacGate wraps the step-3
-    legs; a step-4 state reason (E30-D02 §14's `frozen` and `lockout`, E17-D01 §7's feed states) goes to the control's
-    own `disabledReason` (`docs/design/E42/E42-D03.md` §13 (4)). _Semantics:_ the control keeps its native role and its
-    full label; `aria-disabled="true"`, never the `disabled` attribute, so it stays in the Tab order and an option or
-    menu item stays arrow-reachable; a text-like field is also `readonly` (E42-D03 §13 (2)); `aria-describedby` points
-    at the reason node, which is in the DOM at mount, and while T2 the description is the reason alone (D09 §9.2: help
-    leaves the chain, its line stays visible). _Renderings:_ **2a inline** is the default for every slice-3 control. On
-    a field the CMP-019 `lock` glyph (`decorative=false`, name "Not available"; the base set's `icon/locked`, slice 1
-    §1) leads the value inside the well, ahead of any prefix, in `color.text.tertiary` like the value, and the field's
-    label stays `color.text.secondary`, as E30-D04 §2.5 (2) draws the order ticket's fields (`E30-D04.md:205`, `:292`;
-    §5.2); the reason sits under the field in `type.ui.caption`, `color.text.secondary`. A group (a radiogroup, a
-    segmented control) is led by one lock (E30-D04 §2.5 (2)); an option or a row-menu item leads its own label with the
-    lock, in `color.text.tertiary`, and carries the reason as its second line. **2b tooltip echo** only for an icon-only
-    control without inline room (a CMP-049 row-action IconButton): the lock badge on the icon (slice 1 §5.2's
-    `size.icon.sm` badge), the description node visually hidden, CMP-016 echoing it on hover and focus, never the only
-    copy. **One notice, many pointers** for a section read-only for the session (CMP-065): one notice under its heading
-    that every gated control's `aria-describedby` points at; each field still shows the lock in its well and renders no
-    reason of its own. _Visual:_ the well loses its enabled look — fill `color.surface.raised` with a 1 px
-    `color.border.default` hairline, as D09 §2.2 strips a filled control — and the value turns `color.text.tertiary`;
-    never `color.text.disabled`, never `opacity.disabled` on the label, value, glyph or reason (D09 §11: 2.86–4.31:1).
-    _Keys:_ Tab reaches it; Enter, Space, an arrow, `Alt+↓`, a bound hotkey or a printable key changes nothing and
-    re-shows the reason inline with one polite announcement per focus visit (D09 §9.3); `Esc` closes a 2b echo only.
-    _Reasons:_ D09 §3.1's keys (`rbac.permission` "Your role can't {verb}." with its §3.2 verb, `rbac.owner_only`,
-    `rbac.account`, `rbac.account_read_only`, `rbac.env`, `rbac.view_as`) or a registered state key; a component never
-    writes its own string. It emits no audit and no analytics.
+    environment leg, or a registered state blocks (D09 §2.1 steps 3–4). A protective write is the view-as leg's
+    exception: each write of C-2.6's carve-out (attaching a missing native stop, tightening a stop, re-arming a
+    protective trigger) stays enabled while viewing as once its handler is mounted, where both the viewer's RBAC and the
+    target's `x-rbac` allow it (D09 §2.1 step 3 (a); `22` View-as "Protective writes (C-2.6)"; E42-D02 D10;
+    `docs/design/E42/E42-D03.md` D25), and is T2 `rbac.view_as` like any write until then (E42-D03 V-4); the server
+    classifies each write (`24` §8.10). CMP-079 RbacGate wraps the step-3 legs; a step-4 state reason (E30-D02 §14's
+    `frozen` and `lockout`, E17-D01 §7's feed states) goes to the control's own `disabledReason` (E42-D03 §13 (4)),
+    unless a wrapper composes CMP-079 with the registered state key, as E30-D04 §14's CMP-139 does with `guard.mismatch`
+    (§5.2). _Semantics:_ the control keeps its native role and its full label; `aria-disabled="true"`, never the
+    `disabled` attribute, so it stays in the Tab order and an option or menu item stays arrow-reachable; a text-like
+    field is also `readonly` (E42-D03 §13 (2)); `aria-describedby` points at the reason node, which is in the DOM at
+    mount, and while T2 the description is the reason alone (D09 §9.2: help leaves the chain, its line stays visible).
+    _Renderings:_ **2a inline** is the default for every slice-3 control. On a field the CMP-019 `lock` glyph
+    (`decorative=false`, name "Not available"; the base set's `icon/locked`, slice 1 §1) leads the value inside the
+    well, ahead of any prefix, in `color.text.tertiary` like the value, and the field's label stays
+    `color.text.secondary`, as E30-D04 §2.5 (2) draws the order ticket's fields (`E30-D04.md:205`, `:292`; §5.2); the
+    reason sits under the field in `type.ui.caption`, `color.text.secondary`. A group (a radiogroup, a segmented
+    control) is led by one lock (E30-D04 §2.5 (2)); an option or a row-menu item leads its own label with the lock, in
+    `color.text.tertiary`, and carries the reason as its second line. **2b tooltip echo** only for an icon-only control
+    without inline room (a CMP-049 row-action IconButton): the lock badge on the icon (slice 1 §5.2's `size.icon.sm`
+    badge), the description node visually hidden, CMP-016 echoing it on hover and focus, never the only copy. **One
+    notice, many pointers** for a section read-only for the session (CMP-065): one notice under its heading that every
+    gated control's `aria-describedby` points at; each field still shows the lock in its well and renders no reason of
+    its own. _Visual:_ the well loses its enabled look — fill `color.surface.raised` with a 1 px `color.border.default`
+    hairline, as D09 §2.2 strips a filled control — and the value turns `color.text.tertiary`; never
+    `color.text.disabled`, never `opacity.disabled` on the label, value, glyph or reason (D09 §11: 2.86–4.31:1). _Keys:_
+    Tab reaches it; Enter, Space, an arrow, `Alt+↓`, a bound hotkey or a printable key changes nothing and re-shows the
+    reason inline with one polite announcement per focus visit (D09 §9.3); `Esc` closes a 2b echo only. _Reasons:_ D09
+    §3.1's keys (`rbac.permission` "Your role can't {verb}." with its §3.2 verb, `rbac.owner_only`, `rbac.account`,
+    `rbac.account_read_only`, `rbac.env`, `rbac.view_as`) or a registered state key; a component never writes its own
+    string. It emits no audit and no analytics.
 25. **What is not T2** (the standing rulings; D09 §9.1). _Validity_ (conventions 23): an invalid value is a message, not
     a lock, and an option that the form's own rules make unavailable, with a stated reason, takes E30-D04 §2.5's
     validity look (ruled as LANE-55, `E30-D04.md:203`; conventions 26). _Busy:_ a control whose own request is in flight
@@ -165,11 +169,12 @@ inside its well (E30-D04 §2.5 (2)), and the reason line is CMP-040's, drawn in 
     marks the choice). The active option (`aria-activedescendant`, keyboard or pointer) sits on `color.surface.hover`; a
     plain-disabled option is at `opacity.disabled` and the arrows skip it; an option that the form's own rules make
     unavailable, with a stated reason, takes the validity look (E30-D04 §2.5; CMP-231's unavailable TIF, its §17,
-    `E30-D04.md:511`): its label at `opacity.disabled`, the reason as its second line at full opacity and as its
-    description, `aria-disabled`, arrow-reachable, and Enter re-shows the reason instead of choosing it, with no lock; a
-    T2 option shows the lock and its full label in `color.text.tertiary` with the reason as its second line, stays
-    arrow-reachable, and Enter re-shows the reason instead of choosing it. Status rows (searching, no results, a failed
-    search) are text in `color.text.secondary`, not options.
+    `E30-D04.md:511`): its label at `opacity.disabled` (the label only: an active row keeps its `color.surface.hover`,
+    §5.2), the reason as its second line at full opacity and as its description, `aria-disabled`, arrow-reachable, and
+    Enter re-shows the reason instead of choosing it, with no lock; a T2 option shows the lock and its full label in
+    `color.text.tertiary` with the reason as its second line, stays arrow-reachable, and Enter re-shows the reason
+    instead of choosing it. Status rows (searching, no results, a failed search) are text in `color.text.secondary`, not
+    options.
 27. **Numbers and alignment.** Every number binds `type.num.*` (JetBrains Mono, tabular; `15:40` rule 6). Quantities
     end-align — in a numeric field (CMP-008) and in a numeric table column with its header — so decimals line up;
     dates, times, ids and text start-align (slice 2 (#4290) conventions 16). The decimal separator is '.' and the group
@@ -185,9 +190,9 @@ inside its well (E30-D04 §2.5 (2)), and the reason line is CMP-040's, drawn in 
     read-only keeps its border; T2's well keeps a GrayText border, while its label and lock stay CanvasText
     (ButtonText inside a button), its value keeps `FieldText` and its reason is CanvasText — the label is never
     dimmed, and forced colours grey only `:disabled`, never `aria-disabled`, so the border is set by hand (§5.2
-    records E42-D03 §15's opposite rule); an active option is Highlight with HighlightText; a selected table row or
-    day sets a Highlight fill with HighlightText explicitly (`forced-color-adjust: none` on that part, system colours
-    only).
+    records E42-D03 §15's opposite rule and E30-D04 §23.5's); an active option is Highlight with HighlightText; a
+    selected table row or day sets a Highlight fill with HighlightText explicitly (`forced-color-adjust: none` on that
+    part, system colours only).
 
 ## 4. Token mirror and themes
 
@@ -228,35 +233,60 @@ and 2 keep their resolution.
   look (conventions 26), all inactive; `size.icon.sm` for the 2b lock badge on an icon-only row action (as slice 1's
   badge); and `motion.duration.fast` with `motion.easing.decelerate` for the popup fade (slice 1 A8: only motion
   primitives exist).
-- **A cross-spec clash, recorded (forced colours):** E42-D03 §15 renders T2 labels and glyphs in `GrayText` and their
+- **Cross-spec clashes, recorded (forced colours):** E42-D03 §15 renders T2 labels and glyphs in `GrayText` and their
   reasons in `CanvasText` (`docs/design/E42/E42-D03.md:642`), the opposite of slice 1 conventions 12 on `main`
-  (`E05-D02.md:157`–`:158`: a gated control's shape border is GrayText, while its label, value indicators and lock
-  stay CanvasText or ButtonText). E09-D09 sets no forced-colours rule, so this slice keeps slice 1's (conventions 29),
-  and E42-D03 follows at its boards PR.
+  (`E05-D02.md:157`–`:158`: a gated control's shape border is GrayText, while its label, value indicators and lock stay
+  CanvasText or ButtonText). E09-D09 sets no forced-colours rule, so this slice keeps slice 1's (conventions 29), and
+  E42-D03 follows at its boards PR. E30-D04 §23.5 (PROPOSED, handed to E30-D05's accessibility review) lets the T2 fill
+  and hairline and the validity look's 0.45 drop out under forced colours (`E30-D04.md:669`), while conventions 29 sets
+  a T2 well's border and CMP-009 a validity-look option's label in GrayText by hand; recorded for E30-D05.
 - **Cross-spec clashes with E30-D04, recorded for its owner** (and E30-D02's for its §13), each resolved here or put
   to you:
   - **T2 on a field (aligned).** E30-D04 §2.5 (2) and its CMP-100, 101 and 119 ARIA rows put the lock inside the well,
     leading the value, and keep the field's own label `color.text.secondary` (`E30-D04.md:205`, `:292`, `:309`, `:394`);
-    this slice had led the CMP-040 label with the lock and turned it tertiary. E09-D09 §2.2 has no field case, and
+    this slice had led the CMP-040 label with the lock and turned it tertiary. E09-D09 §2.2 draws no field case, and
     E30-D04 is the merged contract of the fields built on CMP-008 and CMP-009, so conventions 24 now follows it for
     every slice-3 field (the CMP-007, 008, 009, 040, 047, 048, 065 and 079 sections, their `15` lines and audit §1–§4).
-    E30-D04's own `15` CMP-100 and CMP-101 A11y lines (on `main` since #4308) still say the lock is "leading the label";
-    they follow its §2.5 (2) at its next revision.
-  - **"Read-only" names T2 there.** E30-D04 and `15` CMP-100 and CMP-101 (#4308) call the fields' T2 state read-only
-    (their States lines, the `ReadOnlyT2` story), where this slice keeps read-only for the non-T2 `readonly` look
-    (conventions 22, 25) and calls the gated state disabled-with-reason (T2); E30-D04's owner renames at its next
-    revision.
+    Read literally on a field, D09 §2.2 would have the lock lead a tertiary label, so a PROPOSED one-sentence
+    clarification goes to E09-D09's owner, as #960 Q13 routed the outcome line: "On a field, the lock leads the value
+    inside the well, the value turns `color.text.tertiary` and the field's label stays `color.text.secondary` (E30-D04
+    §2.5 (2))." E30-D04's own `15` CMP-100 and CMP-101 A11y lines (on `main` since #4308) still say the lock is "leading
+    the label"; they follow its §2.5 (2) at E30-D04's boards PR (its boards are PENDING, `E30-D04.md:49`).
+  - **"Read-only" names T2 there.** E30-D04 and `15` CMP-100, CMP-101, CMP-119 and CMP-231 (#4308) call their T2 state
+    read-only (their States lines, the `ReadOnlyT2` stories), where this slice keeps read-only for the non-T2 `readonly`
+    look (conventions 22, 25) and calls the gated state disabled-with-reason (T2); E30-D04's owner renames at its boards
+    PR.
   - **The step buttons (put to you: §6 G22).** E30-D02 §2 names the nudge buttons CMP-008's `[−]` `[+]`
     (`E30-D02.md:107`); E30-D04 §4 binds them `color.surface.raised` and `radius.control` (`E30-D04.md:291`; `15`
     CMP-100 Tokens since #4308), and E30-D02 §13's Tab order stops on the price field's `[−]` and `[+]`
     (`E30-D02.md:345`); here they are CMP-002 ghost IconButtons with `tabindex="-1"`. Slice 1's CMP-002 has no raised
     variant, so aligning is not a text edit in this slice.
-  - **The large step (aligned).** E30-D04 §4 keeps `PageUp`/`PageDown` ×10 for CMP-100 and CMP-101 and routes E30-D02
-    §13's ×100 to D02's owner (`E30-D04.md:293`, its C14 `:1039`); G8's `largeStep` keeps ×10 as the default and names
-    no ×100 for them.
+  - **The large step (aligned).** E30-D04 §4 keeps `PageUp`/`PageDown` ×10 for CMP-100 (`E30-D04.md:293`), and its C14
+    keeps CMP-008's base for all fifteen and routes E30-D02 §13's ×100 to D02's owner (`:1039`); G8's `largeStep` keeps
+    ×10 as the default and names no ×100 for CMP-100 or CMP-101.
   - **Unavailable options (aligned).** E30-D04 §17 keeps an unavailable TIF option present, focusable and with its
     reason, in the validity look (`E30-D04.md:511`; `15` CMP-231), which CMP-009's option looks lacked; conventions 26
-    and CMP-009 now carry it, with a per-option `unavailableReason?` (§6 G9).
+    and CMP-009 now carry it, with a per-option `unavailableReason?` (§6 G9). One difference is kept: E30-D04 dims an
+    option's "own fill and label" (`:203`, `:511`; `15` CMP-231 "the option at `opacity.disabled`"), and here only the
+    label dims. An option has no fill of its own at rest, and an active row's `color.surface.hover` is the listbox's
+    active-option marker, drawn the same on every option, so it stays at full opacity on this one too; dimming it as
+    well would move the label's figures by at most 0.01 (3.68 / 2.81 / 3.99:1, against audit §4's 3.69 / 2.81 / 4.00:1).
+    Recorded for E30-D04's owner, whose board 03 draws that option (`E30-D04.md:50`).
+  - **Popup radius (kept: slice 1 conventions 8).** E30-D04 §17 and its C11 bind the listbox CMP-231 inherits to
+    `radius.control` (`E30-D04.md:512`, `:1036`; `15` CMP-231 Tokens since #4308); slice 1 conventions 8
+    (`E05-D02.md:137`) puts popovers on `radius.card`, which conventions 26 and `15` CMP-009 and CMP-048 bind, keeping
+    the 6 px of CMP-009's catalogue `radius.md` (`radius.control` is 4 px). E30-D04's owner follows at its boards PR.
+  - **Field padding (kept: slice 1 conventions 5).** E30-D04's Density rows pad CMP-100, 101 and 119 `space.inset.sm` /
+    `space.inset.md` (`E30-D04.md:294`, `:311`, `:396`); slice 1 conventions 5 (`E05-D02.md:127`) has density re-point
+    only the two heights, so conventions 21 keeps `space.inset.sm` in both densities, as E30-D04's own `15` lines do.
+    E30-D04's owner follows at its boards PR.
+  - **CMP-119's legend (put to you: §6 G14).** E30-D04 §10 sets CMP-119's legend in `type.ui.label` (`E30-D04.md:393`;
+    `15` CMP-119 Tokens since #4308). On a "yes" to G14 that legend wraps an `h{headingLevel}` too, and E30-D04's owner
+    then keeps `type.ui.label` as CMP-119's own override or takes `type.ui.heading-sm`.
+  - **State keys on CMP-079 (aligned).** E30-D04 §14's CMP-139 passes the state key `guard.mismatch` as CMP-079's
+    `reason` (`E30-D04.md:462`; D09 §8 and its DS-2, `E09-D09.md:218`, `:220`), as `15` CMP-079's `Denied(EnvMismatch)`
+    story does, so conventions 24 and CMP-079's "Not wrapped" line keep a step-4 state reason on the control's own
+    `disabledReason` unless a wrapper composes CMP-079 with the registered state key.
 - **Absolute internals:** only slice 1 B3's (a) focus ring and (b) overlay anchors (the popups and the calendar
   dialog). CMP-049's sticky header is `position: sticky` in code and a flex row in Penpot, not an absolute internal.
 - **Penpot variant-set chrome:** as slice 1 B7.
@@ -276,10 +306,11 @@ CMP-079, never the atom, as conventions 24 has the host gate every slice-3 contr
 
 - **G1 — The field boundary token.** No `color.border.*` token reaches 3:1 on raised and overlay (slice 1 A3), so the
   1 px well boundary binds `color.text.tertiary` (5.20–6.29:1 dark, 5.44–6.81:1 light, 10.36–12.54:1 high contrast
-  against the well and every host surface); E42-D03 §15 proposed `color.border.input` → `{color.text.tertiary}` (its
-  DS-3) for the same reason. **Recommended:** add that alias in the E05 token follow-up (no visual change), together
-  with slice 1 A3's control-outline token; keep `color.text.tertiary` until it lands. **Affects:** CMP-007, 008, 009,
-  047, 048, 054.
+  against the well and every host surface); E42-D03 §15 (its DS-3) and E30-D04's CR-1 (`E30-D04.md:250`) propose
+  `color.border.input` → `{color.text.tertiary}` for the same reason, and CR-1 also proposes `color.border.invalid` →
+  `{color.status.danger.default}`, the boundary of G2's option (a). **Recommended:** add that alias in the E05 token
+  follow-up (no visual change), together with slice 1 A3's control-outline token; keep `color.text.tertiary` until it
+  lands. **Affects:** CMP-007, 008, 009, 047, 048, 054.
 - **G2 — The invalid look and `color.text.error`.** `15:115` names `color.text.error`, which does not exist, and the
   merged consumer specs disagree. Options: (a) `docs/design/E30/E30-D02.md` D16: a 2 px `color.status.danger.default`
   boundary, the `danger` glyph in `color.status.danger.strong` (the CMP-019 tone rule), the message in
@@ -319,11 +350,12 @@ CMP-079, never the atom, as conventions 24 has the host gate every slice-3 contr
 - **G7 — `size` on CMP-007 and CMP-009** has no values. **Recommended:** drop it: the height follows density through
   `size.control.height`, as slice 1 C3 recommends for CMP-004. The edit is held until you answer (§6 (f)).
 - **G8 — CMP-008's large step.** `15:123` says `PageUp/PageDown` step ×10; E30-D02 §13 proposes `Shift+↑/↓` ×10 and
-  `PageUp/PageDown` ×100 for price and size and leaves the contract to CMP-008; E30-D04 §4 keeps ×10 for CMP-100 and
-  CMP-101 and routes the ×100 to D02's owner (`E30-D04.md:293`, its C14 `:1039`). **Recommended:** `Shift+↑/↓` ±10 ×
-  `step` always; `PageUp/PageDown` ± `largeStep` (a new prop, default 10 × `step`, so the catalogue's ×10 stays the
-  default, as E30-D04 §4 keeps it; should D02's owner adopt ×100, CMP-100 and CMP-101 pass 100 × tick); `Home`/`End` min
-  and max. **Affects:** CMP-008 (CMP-100, CMP-101: E30-D04 §4 and its C14 stand unchanged on a "yes").
+  `PageUp/PageDown` ×100 for price and size and leaves the contract to CMP-008; E30-D04 §4 keeps ×10 for CMP-100
+  (`E30-D04.md:293`), and its C14 keeps CMP-008's base for all fifteen and routes the ×100 to D02's owner (`:1039`).
+  **Recommended:** `Shift+↑/↓` ±10 × `step` always; `PageUp/PageDown` ± `largeStep` (a new prop, default 10 × `step`, so
+  the catalogue's ×10 stays the default, as E30-D04 keeps it; should D02's owner adopt ×100, CMP-100 and CMP-101 pass
+  100 × tick); `Home`/`End` min and max. **Affects:** CMP-008 (CMP-100, CMP-101: E30-D04 §4 and its C14 stand unchanged
+  on a "yes").
 - **G9 — CMP-009's pattern.** `15:132` names the APG Listbox/Combobox pattern, `aria-activedescendant` and the Radix
   Select primitive, whose listbox takes DOM focus instead. **Recommended:** the APG select-only combobox (focus stays on
   the trigger, `aria-activedescendant` names the active option), whatever primitive meets it; `searchable` renders
@@ -359,7 +391,8 @@ CMP-079, never the atom, as conventions 24 has the host gate every slice-3 contr
 - **G14 — CMP-065's heading.** A `legend` is not in the heading list (slice 2 (#4290) E24 left forms to carry their
   own). **Recommended:** the legend wraps a heading (`headingLevel?`, default 3); a collapsible section's disclosure
   button sits inside the heading (APG Disclosure); a collapsed section that holds an invalid field opens on submit.
-  **Affects:** CMP-065 (SCR-060, SCR-114, the admin forms).
+  **Affects:** CMP-065 (SCR-060, SCR-114, the admin forms; CMP-119, whose legend E30-D04 §10 sets in `type.ui.label`:
+  §5.2).
 - **G15 — CMP-079's renderings.** D09 §8 DS-2 asks for a `form` prop (`"inline" | "tooltip"`) and E42-D03 §13 (4) for
   a `"notice"` form. **Recommended:** `form?: "inline" | "tooltip" | "notice"` (default `inline`; `tooltip` only for
   icon-only controls and toolbar segments) and `noticeId?` (required with `notice`); the A11y line gains the T2 rule in
@@ -408,11 +441,11 @@ CMP-079, never the atom, as conventions 24 has the host gate every slice-3 contr
   has primary, secondary, ghost and danger) or CMP-008's own buttons, and a bound button that is `aria-disabled` rather
   than `disabled`, since a disabled one drops the focus it holds; (c) the base as (a), with CMP-100 and CMP-101
   overriding the fill in their own entries, as `15` CMP-100 reads. **Recommended:** (a): the base composes the published
-  CMP-002 unchanged; T2's raised fill and hairline (D09 §2.2) stay a visible change on the buttons, which a raised rest
-  fill would already wear; the raised fill measures 1.06 / 1.07 / 1.06:1 against the ticket's canvas panel (E30-D02 D2;
-  audit §4), so it marks nothing the glyph does not; and the arrows do the buttons' job (the APG Spin Button pattern),
-  which keeps two Tab stops per numeric field out of a dense ticket. On a "yes", E30-D04 §4, `15` CMP-100's Tokens line
-  and E30-D02 §13 follow at their next revision. **Affects:** CMP-008 (CMP-100, CMP-101).
+  CMP-002 unchanged; the raised fill measures 1.06 / 1.07 / 1.06:1 against the ticket's canvas panel (E30-D02 D2; audit
+  §4), so it marks nothing the glyph does not; and the arrows do the buttons' job (the APG Spin Button pattern), which
+  keeps two Tab stops per numeric field out of a dense ticket. On a "yes", E30-D04 §4 and `15` CMP-100's Tokens line
+  follow at E30-D04's boards PR, and E30-D02 §13's Tab order goes to D02's owner, as E30-D04's C14 routes its ×100.
+  **Affects:** CMP-008 (CMP-100, CMP-101).
 
 ### (e) Catalogue clauses applied, awaiting your approval
 
@@ -573,7 +606,7 @@ fills the order ticket's pair `color.surface.raised` (§5.2, §6 G22).
 | Tab / Shift+Tab       | Moves focus to or from the input. The `[−]` `[+]` buttons are not tab stops (`tabindex="-1"`): the keys below do their job. |
 | ↑ / ↓                 | Value ± `step`, rounded to `precision`; stops at `max` / `min`, never wraps.                                                |
 | Shift+↑ / Shift+↓     | Value ± 10 × `step` (G8).                                                                                                   |
-| Page Up / Page Down   | Value ± `largeStep` (default 10 × `step`, the catalogue's ×10, which E30-D04 §4 keeps for CMP-100 and CMP-101) (G8).        |
+| Page Up / Page Down   | Value ± `largeStep` (default 10 × `step`, the catalogue's ×10, which E30-D04 §4 and its C14 keep) (G8).                     |
 | Home / End            | `min` / `max`, when set.                                                                                                    |
 | Typing                | Edits the text; parsed, rounded and range-checked on blur, never mid-keystroke (G18).                                       |
 | Enter                 | Commits the typed value (the blur rules); implicit form submission is the host's, as CMP-007.                               |
@@ -651,12 +684,12 @@ visual.
 
 **Accessible name and role:**
 
-| Element | Role     | Name                                                  | ARIA                                                                                                                                       |
-| ------- | -------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| trigger | combobox | CMP-040's label through `aria-labelledby` ("Account") | `aria-haspopup="listbox"`, `aria-expanded`, `aria-controls`, `aria-activedescendant` while open; invalid and T2 as CMP-007 (no `readonly`) |
-| listbox | listbox  | the same label                                        | —                                                                                                                                          |
-| option  | option   | its label (and second line)                           | `aria-selected="true"` on the chosen one; plain: `aria-disabled="true"`; unavailable, T2: also `aria-describedby` → its reason line        |
-| chevron | none     | —                                                     | `aria-hidden="true"`                                                                                                                       |
+| Element | Role     | Name                                                              | ARIA                                                                                                                                                                                           |
+| ------- | -------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| trigger | combobox | CMP-040's label through `aria-labelledby` ("Account")             | `aria-haspopup="listbox"`, `aria-expanded`, `aria-controls`, `aria-activedescendant` while open; invalid and T2 as CMP-007 (no `readonly`)                                                     |
+| listbox | listbox  | the same label                                                    | —                                                                                                                                                                                              |
+| option  | option   | its label, plus a descriptive second line (never the reason line) | `aria-selected="true"` on the chosen one; plain: `aria-disabled="true"`; unavailable, T2: also `aria-describedby` → its reason line, kept out of the name (`aria-labelledby` → the label node) |
+| chevron | none     | —                                                                 | `aria-hidden="true"`                                                                                                                                                                           |
 
 **T2 and not T2:** a gated select is T2 through CMP-040 (conventions 24); a gated option is a T2 option (conventions
 26). Not T2: an unchosen required value (validity); an option the form's own rules make unavailable takes the validity
@@ -676,9 +709,10 @@ renders CMP-048's editable combobox (G9); a new States line with the open state 
 "(uses Radix Select primitive)" with "(any primitive that meets the select-only combobox,
 `docs/design/E05/E05-D02-form-controls.md` §6 G9)", since Radix Select's listbox takes DOM focus, and appends "the
 trigger keeps focus and `aria-activedescendant` names the active option (the APG select-only combobox)", the `Esc` rule
-and the validity-look and T2 options' `aria-describedby`, with neither `Enter` nor `Tab` choosing them; Tokens:
-`elevation.2` → `elevation.popover`, `radius.md` → `radius.card`, plus the field tokens and `opacity.disabled` for an
-unavailable option's label; Storybook adds Open, UnavailableOption and DisabledWithReason. Held: dropping `size` (G7).
+and the validity-look and T2 options' `aria-describedby`, with neither `Enter` nor `Tab` choosing them and the reason
+line the option's description, never part of its name; Tokens: `elevation.2` → `elevation.popover`, `radius.md` →
+`radius.card`, plus the field tokens and `opacity.disabled` for an unavailable option's label; Storybook adds Open,
+UnavailableOption and DisabledWithReason. Held: dropping `size` (G7).
 
 ### CMP-034 · MaskedValue
 
@@ -1251,7 +1285,8 @@ every other state belongs to the wrapped control.
 | reason node         | text            | —                  | rendered at mount; visually hidden and echoed by CMP-016 in the tooltip form                                                                                |
 | lock glyph or badge | img             | "Not available"    | CMP-019 `decorative=false`                                                                                                                                  |
 
-**Not wrapped** (not T2): validity, busy, availability, a step-4 state reason (the control's own `disabledReason`),
+**Not wrapped** (not T2): validity, busy, availability, a step-4 state reason (the control's own `disabledReason`,
+unless a wrapper composes CMP-079 with the registered state key, as E30-D04 §14's CMP-139 does: §5.2),
 T3 admin navigation (never rendered) and T4 refusals (the host's).
 
 **Catalogue alignment** (`15:783-790`): Props gains `form?: "inline" | "tooltip" | "notice"` (default `inline`;
