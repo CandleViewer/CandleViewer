@@ -2,7 +2,9 @@
 they send is checked against `cv://ws/v1/recorder.schema.json`). Pending until a runtime is bound,
 then the snapshot first and one whole frame a second; the `symbols` filter; the R-I2 view recorded
 at admit for everyone but the Owner (ruling Q6), never carrying `position_open` or a path; a full
-frame only for a principal that is the Owner now; a publish that raises re-snapshots with
+frame only for a principal that is the Owner now; a principal that stops being the Owner is
+re-snapped in the restricted view at the §9.5 re-evaluation, while one that becomes the Owner keeps
+the restricted view until it resubscribes; a publish that raises re-snapshots with
 `upstream_desync`; the subscription gauge. The size and CPU budgets run in the perf lane."""
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from candleviewer.recorder.policy import PolicyConfig
 from candleviewer.recorder.status import RecordingStatusCache
 from candleviewer.recorder.ws_topic import RecorderTopic, frame
 from candleviewer.ws.metrics import cv_ws_recorder_subscriptions_in_use
+from candleviewer.ws.permissions import VersionedSnapshot
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
 from candleviewer.ws_wiring import recorder_topic
 from tests.contract.ws._harness import check_schema
@@ -89,6 +92,24 @@ def _conn(
     return conn
 
 
+def _restricted_only(body: dict[str, Any]) -> None:
+    """`body` is the restricted view: none of the fields or rows that view leaves out."""
+    text = json.dumps(body)
+    assert body["role_restricted"] is True and "position_open" not in text
+    assert "endpoint" not in text and _PATHISH.search(text) is None
+    assert "XRPUSDT" not in {row["symbol"] for row in body["symbols"]}  # open position only
+
+
+def _apply(conn: Conn, roles: str) -> list[dict[str, Any]]:
+    """A §9.5 change to `roles`, then what the registry's settle sends (flag off)."""
+    authz = conn.authz
+    new = replace(authz.principal, roles=frozenset({roles}))
+    frames = authz.apply_snapshot(VersionedSnapshot(new, authz.version + 1), 9)
+    subs, authz.settling = authz.settling, []
+    conn.emitter.flush_pending(subs)
+    return frames or []
+
+
 def _payloads(conn: Conn) -> list[tuple[str, dict[str, Any]]]:
     return [(f["t"], f["p"]) for f in conn.take() if f["t"] in ("snap", "d")]
 
@@ -152,6 +173,59 @@ async def test_a_full_frame_reaches_only_a_principal_that_is_the_owner_now() -> 
     owner.authz.principal = replace(owner.authz.principal, roles=frozenset({"manager"}))
     await w.cache.refresh_once()
     assert _payloads(owner) == []
+
+
+async def test_a_demoted_owner_is_re_snapped_in_the_restricted_view_and_resyncs_in_it() -> None:
+    w = _world(_runtime())
+    owner = _conn(w, owner=True)
+    await w.cache.refresh_once()
+    ((_, snap),) = _payloads(owner)
+    assert snap["role_restricted"] is False and "endpoint" in json.dumps(snap)
+    assert [f["t"] for f in _apply(owner, "manager")] == ["permission_change"]
+    resync = {"t": "resync", "ch": "recorder", "p": {"reason": "manual"}}
+    assert owner.emitter.client_resync(owner.authz, resync) is None
+    await w.cache.refresh_once()  # and the deltas go on, in the restricted view
+    frames = [f for f in owner.take() if f["t"] in ("snap", "d")]
+    reasons = [(f["t"], f.get("meta", {}).get("reason")) for f in frames]
+    assert reasons == [("snap", "reconfigure"), ("snap", "client_resync"), ("d", None)]
+    for f in frames:
+        _restricted_only(f["p"])
+
+
+async def test_a_promoted_user_keeps_the_restricted_view_until_it_resubscribes() -> None:
+    """The view only narrows at a §9.5 re-evaluation: a full view takes a new `sub`."""
+    w = _world(_runtime())
+    user = _conn(w)
+    await w.cache.refresh_once()
+    user.take()
+    assert [f["t"] for f in _apply(user, "owner")] == ["permission_change"]
+    await w.cache.refresh_once()
+    ((kind, body),) = _payloads(user)
+    assert kind == "d"
+    _restricted_only(body)
+    assert user.authz.unsubscribe("recorder", None) is not None
+    user.sub({"ch": "recorder"})
+    ((kind, body),) = _payloads(user)
+    assert (kind, body["role_restricted"]) == ("snap", False)
+
+
+async def test_nothing_is_published_while_no_runtime_is_bound() -> None:
+    hub, published = SequencingHub(), []
+
+    def publish(ch: str, body: Any, **kw: Any) -> int:
+        published.append(body)
+        return hub.publish(ch, body, **kw)
+
+    topic = RecorderTopic(hub.subscriptions, publish, hub.resnapshot, SnapshotBody)
+    w = _World(hub, topic, RecordingStatusCache(lambda: w.runtime, None))
+    topic.attach(w.cache)
+    _conn(w, owner=True)
+    _conn(w)
+    await w.cache.refresh_once()
+    assert published == []
+    w.runtime = _runtime()
+    await w.cache.refresh_once()
+    assert [body["role_restricted"] for body in published] in ([False, True], [True, False])
 
 
 async def test_a_publish_that_raises_resnapshots_with_upstream_desync() -> None:
