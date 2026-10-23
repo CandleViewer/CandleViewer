@@ -194,7 +194,6 @@ class RecordingStatusCache:
         self._at = -math.inf
         self._listeners: list[Callable[[StatusSnapshot], None]] = []
         self._task: asyncio.Task[None] | None = None
-        recorder_status_cache_age_seconds.set_function(self.age)  # the cache built last (one app)
 
     def age(self) -> float:
         """Seconds since the last computation; `+Inf` before the first."""
@@ -234,8 +233,9 @@ class RecordingStatusCache:
             listener(snapshot)
 
     def start(self) -> None:
-        """Start the computing task (idempotent)."""
+        """Start the computing task (idempotent); from then on the age gauge reads this cache."""
         if self._task is None:
+            recorder_status_cache_age_seconds.set_function(self.age)
             self._task = spawn(self._run(), name="recorder-status-cache")
 
     async def stop(self) -> None:

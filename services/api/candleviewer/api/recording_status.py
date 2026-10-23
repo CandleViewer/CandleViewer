@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from candleviewer.api import recording_common as common
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.recorder.status import RecordingStatusCache
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 
 def make_recording_status_router(
@@ -22,7 +23,7 @@ def make_recording_status_router(
     async def get_recording_status(request: Request) -> JSONResponse:
         p = await common.caller(principal_resolver, audit, request, Permission.RECORDING_READ)
         if (body := cache.body(restricted=not p.is_owner)) is None:
-            raise common.unavailable()
+            raise common.Problem(503, ErrorCode.STORE_UNAVAILABLE, "The status is not ready yet.")
         return JSONResponse(body)
 
     return router
