@@ -6,14 +6,16 @@ addresses, `fixture` labels, and ids and numeric exchange uids (the `ea_uid_fmt`
 only) derived from each handle's name with `uuid5`: the handles' rows are the same on every run. Two
 things are random by design: the default profile each account gets from the `trg_ea_default_profile`
 trigger, and the invite's token. Nothing here is a credential, an exchange key, a token or anyone's
-personal data, and `tests/unit/test_admin_fixture_handles.py` and `test_admin_fixture_seed.py` pass
-every value, and this file, through the log redactor to keep it so.
+personal data, and `tests/unit/test_admin_fixture_handles.py`, `test_admin_fixture_seed.py` and
+`test_admin_corrupt_chain_fixture.py` pass every value, and this file, through the log redactor to
+keep it so.
 
-| File         | What it holds                                                                                   |
-| ------------ | ----------------------------------------------------------------------------------------------- |
-| `handles.py` | The users (every status and role), the demo accounts, the trade grants and the flags, by handle |
-| `seed.py`    | `seed_admin_world` and `check_admin_world`, and the refusal of a database not named for tests   |
-| `README.md`  | This file                                                                                       |
+| File               | What it holds                                                                                   |
+| ------------------ | ----------------------------------------------------------------------------------------------- |
+| `handles.py`       | The users (every status and role), the demo accounts, the trade grants and the flags, by handle |
+| `seed.py`          | `seed_admin_world` and `check_admin_world`, and the refusal of a database not named for tests   |
+| `corrupt_chain.py` | AUDIT-CORRUPT: `seed_corrupted_chain`, a chain with one of its own entries altered behind it    |
+| `README.md`        | This file                                                                                       |
 
 ## The handles
 
@@ -63,3 +65,47 @@ async with engine.begin() as conn:
   suite that signs in passes a hash it computes at run time, as `password_hash=`.
 
 `tests/integration/admin/test_admin_fixture_seed_pg.py` runs the seed twice on Postgres 16 and checks it.
+
+## The corrupted chain (AUDIT-CORRUPT)
+
+Into a migrated test database, from `services/api`:
+
+```python
+from pathlib import Path
+
+from tests.fixtures.admin.corrupt_chain import seed_corrupted_chain
+from tests.integration import _refused
+
+pg_dsn = _refused.pg_dsn  # a migrated Postgres 16 whose database is named `test`
+
+
+async def test_verify_reports_the_victim(pg_dsn: str, tmp_path: Path) -> None:
+    victim = await seed_corrupted_chain(pg_dsn, tmp_path)  # tmp_path holds the writer's WAL file
+    ...  # POST /admin/audit/verify over this database now answers first_bad_id == victim
+```
+
+- **What it writes:** seven entries through the real append path, so the trigger chains them, by a
+  writer it builds on `pg_dsn` (not one of yours: it cannot point at another database). Then it
+  alters the fourth behind the chain, its `reason` only, and answers that entry's id: the
+  `first_bad_id` that `POST /admin/audit/verify` must report.
+- **Deterministic in shape:** the seven entries, the victim's position (the fourth, `object_id`
+  `fixture-3`) and the forged `reason` are fixed. Row ids, `record_id`, `event_ts` and the hashes
+  differ on every run, as the writer draws them.
+- **The verify range must hold the victim:** a body of `{}` verifies only the newest 1,000,000 ids
+  (`audit_verify_max_span`; each entry takes two ids). A chain with more rows after the victim than
+  that needs a `from_id` at or below the victim's id.
+- **Who can run it:** altering a row behind the chain needs the owner of `audit_log` (the role that
+  ran the migrations), as an attacker holding the owner role would: the test container's user. The
+  app's role holds no `UPDATE`. The append-only trigger is off inside one transaction only, so a
+  failure, a lost connection among them, rolls the alteration back.
+- **Idempotent:** a second run writes no entry, alters nothing and answers the same id.
+- **Test databases only, because it is permanent:** audit rows can never be removed, so an altered
+  chain stays so for the life of its database. A database not named for tests is refused with
+  `FixtureRefused` before an entry is written, whether the alteration's connection or the writer's
+  pool reaches it.
+- **Self-checking:** `FixtureCheckError` when the chain does not hold exactly the seven entries, or
+  when `trg_audit_append` is not enabled after the seed (a second run reports a guard a crashed
+  run left off).
+- `tests/integration/admin/test_admin_corrupt_chain_pg.py` runs it through the verify route on
+  Postgres 16, and `tests/unit/test_admin_corrupt_chain_fixture.py` shows each guard on a fake
+  connection.
