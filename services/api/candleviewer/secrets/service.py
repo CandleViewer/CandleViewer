@@ -15,7 +15,9 @@ Capabilities (C-3.2): `AppContext.secrets` is `SecretsLifecycle` (start/stop/hea
 `admin.wiring` (`SecretsBundle.exchange_borrower`) — callers never declare their identity.
 It returns a MAC and the key id, never the API secret (C-2.7, #2339). The offline break-glass
 proof (`prove_kek_possession`, admin only, #2119) shares the custody path but never enrols.
-Key import's `CandidateKeys` (#836, `SecretsBundle.candidate_keys`) is minted in wiring too.
+Key import's `CandidateKeys` (#836, `SecretsBundle.candidate_keys`) is minted in wiring too, as
+are the audit export's `ExportSigner` and `SigningKeys` (#889): a signature and public key
+material, never a seed.
 """
 
 from __future__ import annotations
@@ -436,25 +438,39 @@ class SecretsService:
         except Exception as exc:  # a record M2 cannot read: never a reason to stop the boot
             _log().error("secrets.export_key_open_failed", error=type(exc).__name__)
             reason = "export_key_unopenable"
-        self._export_reason = reason
-        m.export_key_unavailable_state.set(reason is not None)
+        self._export_reason = None
+        m.export_key_unavailable_state.set(0)
         if reason is not None:
-            text = EXPORT_REMEDIATION.format(reason=reason)
-            _log().critical("secrets.export_key_unavailable", reason=reason, remediation=text)
-            try:  # an audit outage must not hide the page above
-                await self._audit(_export_custody.UNAVAILABLE, {"env": self._env, "reason": reason})
-            except Exception:
-                m.credential_outcome_audit_failures_total.inc()
+            await self._export_unavailable(reason)
+
+    async def _export_unavailable(self, reason: str) -> None:
+        """Export alone unavailable from now on (ADR-0039 decision 2): `secrets` degraded, the
+        page's gauge, a critical log, then the record at error; no order entry is latched."""
+        self._export_reason = reason
+        m.export_key_unavailable_state.set(1)
+        text = EXPORT_REMEDIATION.format(reason=reason)
+        _log().critical("secrets.export_key_unavailable", reason=reason, remediation=text)
+        try:  # an audit outage must not hide the page above
+            await self._audit(_export_custody.UNAVAILABLE, {"env": self._env, "reason": reason})
+        except Exception:
+            m.credential_outcome_audit_failures_total.inc()
 
     async def _sign_audit_export(
         self, key_id: object, digest: object, job_id: object, actor_user_id: object
     ) -> bytes:
-        """`mint_export_signer`'s call: `export_signer`'s checks in their order (#889, ADR-0039)."""
+        """`mint_export_signer`'s call: `export_signer`'s checks in their order (#889, ADR-0039). A
+        key found unusable at signing time is latched as at boot (decision 4: refused and paged),
+        so neither the signer nor the directory offers it again before a restart."""
         checked = export_signer.request(key_id, digest, job_id, actor_user_id)
         keks, keys = self._require()._held_keks(), self._export_keys
         if keys is None or self._export_reason is not None:
             raise CredentialUnavailable("export_key_unavailable")
-        return await export_signer.sign(keys, keks, self._audit, checked)
+        try:
+            return await export_signer.sign(keys, keks, self._audit, checked)
+        except CredentialUnavailable as exc:
+            if str(exc) in export_signer.KEY_FAULTS and self._export_reason is None:
+                await self._export_unavailable(str(exc))
+            raise
 
     async def _active_export_key(self) -> export_signer.PublicKey | None:
         """`mint_signing_keys`' call: None while no KEK is held or export is unavailable (22)."""

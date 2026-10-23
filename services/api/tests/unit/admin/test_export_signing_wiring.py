@@ -85,8 +85,12 @@ async def test_the_signers_records_are_registered_and_kept_whole() -> None:
     keys.rows[0]["sealed_seed"] = bytes(60)
     with pytest.raises(ExportSigningFailed):
         await bundle.export_signer.sign_audit_export(key_id, DIGEST, uuid4(), owner)
-    written = audit.records[-3:]  # signed; then signed and its failure
-    assert [a for a, _ in written] == [SIGNED, SIGNED, SIGNED.replace("signed", "sign_failed")]
+    failed_action = SIGNED.replace("signed", "sign_failed")
+    written = [r for r in audit.records if r[0] in (SIGNED, failed_action)][-3:]
+    assert [a for a, _ in written] == [SIGNED, SIGNED, failed_action]  # signed; signed, failed
+    latched = audit.records[-1]  # S6b-3: the key's fault latched, recorded at error as at boot
+    assert latched[0] == "security.audit_signing_key_unavailable"
+    assert secrets_audit_row("demo")(*latched)["severity"] == "error"
     for action, fields in written:
         row = secrets_audit_row("demo")(action, fields)
         assert (row["object_kind"], row["object_id"], row["actor_user_id"]) == (
