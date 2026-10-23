@@ -7,8 +7,9 @@ section 3.2 or a cited C-row in section 29); (2) the WCAG matrix with `contrast_
 resolves it, plus the disabled-look and rejected-M1 composites (reported, not gated) and the
 highlight composite;
 (3) CVD dE76 rows; (4) the flash audit; (5) the motion-table, one-treatment, disabled-look,
-view-as, RULED-stamp and structure gates; (6) hygiene. E30-D02 section 15.1's pairs are
-reproduced exactly.
+view-as, RULED-stamp, structure and CMP-158 string gates (section 15 and 28.12 quote each
+variant's sentence once, verbatim from E30-D02 section 14 / E36-D02 section 2 — C21);
+(6) hygiene. E30-D02 section 15.1's pairs are reproduced exactly.
 
 Usage: python3 -I docs/design/_tools/e30_d04_ds_motion_audit.py [--json] [--spec <path>]
 Exit 1 only on a gated FAIL.
@@ -389,6 +390,32 @@ def structure(spec: str) -> dict[str, object]:
     return st
 
 
+def string_gate(spec: str) -> dict[str, int]:
+    """C21: CMP-158 keeps one string per variant, each quoted once and verbatim from its source."""
+    d02 = (E30 / "E30-D02.md").read_text(encoding="utf-8")
+    e36 = (ROOT / "docs" / "design" / "E36" / "E36-D02.md").read_text(encoding="utf-8")
+    cat = (ROOT / "docs" / "plan" / "15-component-catalogue.md").read_text(encoding="utf-8")
+    m = re.search(r'^\| `sl\.note`\s*\|\s*"([^"]+)"', d02, re.MULTILINE)
+    sl_note = m.group(1) if m else ""
+    m = re.search(r'\*\*"(Every position keeps a native stop[^"]+)"\*\*', e36)
+    rule_editor = m.group(1) if m else ""
+    if not sl_note:
+        FAILS.append("strings: D02 section 14 has no sl.note row")
+    if not rule_editor:
+        FAILS.append("strings: E36-D02 section 2 has no CMP-158 sentence")
+    entry = section(cat, "### CMP-158", "### CMP-159")
+    if "E36-D03" in entry and rule_editor and rule_editor not in entry:
+        FAILS.append("strings: 15 CMP-158's E36-D03 sentence differs from E36-D02 section 2")
+    out: dict[str, int] = {}
+    for name, s in (("sl.note", sl_note), ("rule-editor", rule_editor)):
+        for where, a, b in (("15", "## 15.", "## 16."), ("28.12", "### 28.12", "### 28.13")):
+            n = section(spec, a, b).count(s) if s else 0
+            if n != 1:
+                FAILS.append(f"strings: the {name} sentence appears {n} times in {where} (want 1)")
+            out[f"{name}@{where}"] = n
+    return out
+
+
 def hygiene(texts: dict[str, str]) -> None:
     for name, txt in texts.items():
         if ("/" + "home/") in txt:
@@ -529,9 +556,11 @@ def main() -> int:
     if not spec:
         FAILS.append("spec missing")
     tok, treat, st = token_gate(spec), treatment_gate(spec), structure(spec)
+    strings = string_gate(spec)
     hygiene({"spec": spec, "handoff": hand, "tool": Path(__file__).read_text(encoding="utf-8")})
     p(f"\n## 6. Gates\n\ntokens: {tok}; treatments (references): {treat}")
     p(f"structure: {json.dumps(st)}")
+    p(f"strings (CMP-158, one per variant, verbatim from the source): {strings}")
     p(
         "hygiene OK"
         if not any(f.startswith(("spec:", "handoff:", "tool:")) for f in FAILS)
@@ -546,7 +575,7 @@ def main() -> int:
     }
     summary.update(cvd=cvd_rows, greys=greys, grey_deltas=deltas, resolved=resolved, flash=flash)
     summary["tokens"] = tok
-    summary.update(treatments=treat, structure=st)
+    summary.update(treatments=treat, structure=st, strings=strings)
     summary["fails"] = FAILS
     print(json.dumps(summary, ensure_ascii=False) if "--json" in args else "\n".join(out))
     return 1 if FAILS else 0
