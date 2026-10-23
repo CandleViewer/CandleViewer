@@ -65,12 +65,26 @@ def section(text: str, start: str, end: str) -> str:
     return text[i:] if j < 0 else text[i:j]
 
 
+def split_cells(line: str) -> list[str]:
+    """One table row's cells (pipes inside backticks or escaped as `\\|` are not separators)."""
+    return [c.strip() for c in re.split(r"(?<!\\)\|(?=(?:[^`]*`[^`]*`)*[^`]*$)", line)[1:-1]]
+
+
 def rows_of(table_text: str) -> list[list[str]]:
-    """The body rows of the first Markdown table in `table_text`, cell by cell (pipes inside
-    backticks or escaped as `\\|` are not separators)."""
-    out: list[list[str]] = []
+    """The body rows of the first Markdown table in `table_text`, cell by cell."""
+    return [cells for cells, _ in rows_with_lines(table_text, "", "")]
+
+
+def rows_with_lines(text: str, start: str, end: str) -> list[tuple[list[str], int]]:
+    """The body rows of the first Markdown table in the section `start`..`end` of `text`, each
+    with its 1-based line number in `text` (the copy-deck gate compares Source cells to them)."""
+    i = text.find(start) if start else 0
+    if i < 0:
+        return []
+    first = text.count("\n", 0, i) + 1
+    out: list[tuple[list[str], int]] = []
     seen_header = False
-    for line in table_text.splitlines():
+    for k, line in enumerate((section(text, start, end) if start else text).splitlines()):
         if not line.startswith("|"):
             if out:
                 break
@@ -78,9 +92,8 @@ def rows_of(table_text: str) -> list[list[str]]:
         if re.fullmatch(r"\|(?:\s*:?-+:?\s*\|)+", line.strip()):
             seen_header = True
             continue
-        cells = [c.strip() for c in re.split(r"(?<!\\)\|(?=(?:[^`]*`[^`]*`)*[^`]*$)", line)[1:-1]]
         if seen_header:
-            out.append(cells)
+            out.append((split_cells(line), first + k))
     return out
 
 
@@ -173,7 +186,7 @@ VOCAB_COUNTS = {"color": 8, "dash": 3, "width": 3, "fill_opacity": 1, "marker": 
 # none, joined by +), duration token, easing token, the reduce twin's kind, the static carrier the
 # twin keeps, loops?, maximum luminance changes per second, extra draws while active, carries
 # information? M6's one luminance change per second holds by rule (spec section 6 M6): a commit
-# within 1 s of the previous M6 start is a cut, so the fade never repeats inside a second.
+# within 1 s of the previous fade's start is a cut, so the fade never repeats inside a second.
 M_ROWS: tuple[tuple[str, str, str, str, str, str, str, bool, int, int, bool], ...] = (
     (
         "M1",
@@ -597,6 +610,16 @@ def add_pane(ratios: list[float], new: float, floor: float) -> list[float]:
     return [*out, new]
 
 
+def undo_restore(ratios: list[float], ratio: float, idx: int) -> list[float]:
+    """Undo of a collapse within the toast window (spec section 6 M5, C-46): the removed pane's
+    ratio is re-inserted at its index and the remaining panes scaled by 1 - ratio -- the exact
+    inverse of redistribute_remove while the remaining ratios are unchanged since the removal.
+    """
+    out = [r * (1.0 - ratio) for r in ratios]
+    out.insert(idx, ratio)
+    return out
+
+
 def r2(xs: list[float]) -> str:
     return " / ".join(
         f"{x:.2f}".rstrip("0").rstrip(".") if abs(x - round(x, 2)) < 1e-9 else f"{x:.3f}"
@@ -714,6 +737,9 @@ def motion_section() -> dict[str, Any]:
     plot_h = sum(heights)
     example = [0.6, 0.2, 0.2]
     removed = redistribute_remove(example, 2)
+    restored = undo_restore(removed, 0.2, 2)
+    if [round(x, 4) for x in restored] != example:
+        FAILS.append(f"M5 undo: the restore {r2(restored)} differs from {r2(example)}")
     added = add_pane(example, 0.2, floor_px / plot_h)
     seq: list[list[float]] = [[1.0]]
     for _ in range(6):
@@ -721,6 +747,7 @@ def motion_section() -> dict[str, Any]:
     out["ratios"] = {
         "example": example,
         "removeLast": [round(x, 4) for x in removed],
+        "undoRestores": [round(x, 4) for x in restored],
         "addPane": [round(x, 4) for x in added],
         "sixAddsPx": [round(x * plot_h) for x in seq[-1]],
         "floorPx": floor_px,
@@ -731,7 +758,7 @@ def motion_section() -> dict[str, Any]:
     p("")
     p(
         f"M4 / M5 ratios (26 section 8's example {r2(example)}): remove the last pane -> "
-        f"{r2(removed)}; "
+        f"{r2(removed)} (Undo within the toast window restores {r2(restored)}, C-46); "
         f"add a 0.2 pane -> {r2(added)}. Floor max(48 px, 3 x axis label height): the label is "
         f"{label_h:g} px (type.num.xs: font.size.2xs {size_2xs} x line-height {tight}), so the "
         "floor "
@@ -748,8 +775,8 @@ def motion_section() -> dict[str, Any]:
     p(
         "Flash audit: every row <= 1 luminance change per second, nothing loops ("
         + ", ".join(f"{r[0]} {r[8]}/s" for r in M_ROWS)
-        + "); M6 holds its 1 / s by rule (a commit within 1 s of the previous M6 start is a cut);"
-        " the inherited rows keep E11-D06 section 9.3's verdicts."
+        + "); M6 holds its 1 / s by rule (a commit within 1 s of the previous fade's start is a"
+        " cut); the inherited rows keep E11-D06 section 9.3's verdicts."
     )
     out["flashMax"] = max(r[8] for r in M_ROWS)
     out["loops"] = sum(1 for r in M_ROWS if r[7])
@@ -831,16 +858,21 @@ def quoted(cells: list[list[str]]) -> list[str]:
 def string_section(texts: dict[str, str], constitution: str) -> dict[str, Any]:
     spec = texts["spec"]
     deck = section(spec, "## 10.", "## 11.")
-    d02 = rows_of(section(read(D02_SPEC), "## 12. Copy deck", "## 13."))
-    d03_rows = rows_of(section(read(D03_SPEC), "## 13. Copy deck delta", "## 14."))
-    missing: list[str] = []
-    for src, rows_ in (("E13-D02 §12", d02), ("E13-D03 §13", d03_rows)):
-        for s in quoted(rows_):
-            if s not in deck:
-                missing.append(f"{src}: {s!r}")
-    if missing:
-        FAILS.append(f"copy deck: {len(missing)} upstream strings missing: {missing[:5]}")
     deck_rows = rows_of(deck)
+    d02_lines = rows_with_lines(read(D02_SPEC), "## 12. Copy deck", "## 13.")
+    d03_lines = rows_with_lines(read(D03_SPEC), "## 13. Copy deck delta", "## 14.")
+    d02 = [cells for cells, _ in d02_lines]
+    d03_rows = [cells for cells, _ in d03_lines]
+    # identity, not presence: every upstream row needs a deck row whose Where and Text cells equal
+    # it and whose Source cell names its line (orchestrator record 6370295588, m-4)
+    deck_keys = {(r[0], r[1], r[2]) for r in deck_rows if len(r) >= 3}
+    missing: list[str] = []
+    for src, rows_ in (("E13-D02 §12", d02_lines), ("E13-D03 §13", d03_lines)):
+        for cells, lineno in rows_:
+            if len(cells) >= 2 and (cells[0], cells[1], f"{src} :{lineno}") not in deck_keys:
+                missing.append(f"{src} :{lineno} {cells[0][:40]!r}")
+    if missing:
+        FAILS.append(f"copy deck: {len(missing)} upstream rows not cell-equal: {missing[:5]}")
     d04_rows = [r for r in deck_rows if len(r) >= 3 and r[2].startswith("D04")]
     keys: list[tuple[str, str]] = []
     for cells in rows_of(section(spec, "### 10.2", "## 11.")):
@@ -894,9 +926,9 @@ def string_section(texts: dict[str, str], constitution: str) -> dict[str, Any]:
         f"Copy deck: {len(deck_rows)} rows; E13-D02 §12 {len(d02)} rows / {len(quoted(d02))} "
         "strings "
         "and "
-        f"E13-D03 §13 {len(d03_rows)} rows / {len(quoted(d03_rows))} strings present verbatim: "
-        f"{len(missing)} missing; E13-D04 rows {len(d04_rows)}. PROPOSED indicator.* keys "
-        "(printed, "
+        f"E13-D03 §13 {len(d03_rows)} rows / {len(quoted(d03_rows))} strings cell-equal (Where, "
+        f"Text, Source line): {len(missing)} not equal; E13-D04 rows {len(d04_rows)}. PROPOSED "
+        "indicator.* keys (printed, "
         "not "
         "gated): "
         + ("; ".join(key_lines) or "none")
@@ -940,18 +972,23 @@ def structure_section(spec: str, handoff: str, plan14: str) -> dict[str, Any]:
         for ln in plan14.splitlines()
         if ln.startswith("- **DS and motion:**") and "E13-D04.md" in ln
     ]
+    # placement (record 6370295588 F-2): inside its SCR block, after E13-D03's "Hi-fi:" line (other
+    # Hi-fi lines may sit between, E14-D07's under SCR-036) and directly before the checklist
     placed = 0
+    screens: set[str] = set()
     all14 = plan14.splitlines()
     for i, ln in enumerate(all14):
-        if (
-            ln in lines14
-            and i > 0
-            and all14[i - 1].startswith("- **Hi-fi:**")
-            and "E13-D03" in all14[i - 1]
-            and i + 1 < len(all14)
-            and all14[i + 1].startswith("- **Design sign-off")
-        ):
+        if ln not in lines14:
+            continue
+        j = i - 1
+        while j >= 0 and not all14[j].startswith("### SCR-"):
+            j -= 1
+        block = all14[j + 1 : i]
+        after_d03 = any(x.startswith("- **Hi-fi:**") and "E13-D03" in x for x in block)
+        before_list = i + 1 < len(all14) and all14[i + 1].startswith("- **Design sign-off")
+        if j >= 0 and after_d03 and before_list:
             placed += 1
+            screens.add(all14[j][4:11])
     blocks = handoff.count("## Handoff checklist")
     blank = bool(re.search(r"^- \[ \] \*\*[^*]+\*\*\s*$", handoff, re.MULTILINE))
     stories = sum(
@@ -968,8 +1005,13 @@ def structure_section(spec: str, handoff: str, plan14: str) -> dict[str, Any]:
         problems.append(f"ledger rows {len(ledger)}, unanswered {unanswered}")
     if len(fenced) != 4:
         problems.append(f"15 A-row fenced entries {len(fenced)}")
-    if len(lines14) != 3 or placed != 3 or sum(1 for ln in all14 if "E13-D04.md" in ln) != 3:
-        problems.append(f"14 lines {len(lines14)}, placed {placed}")
+    if (
+        len(lines14) != 3
+        or placed != 3
+        or screens != {"SCR-034", "SCR-035", "SCR-036"}
+        or sum(1 for ln in all14 if "E13-D04.md" in ln) != 3
+    ):
+        problems.append(f"14 lines {len(lines14)}, placed {placed} in {sorted(screens)}")
     if blocks != 4 or blank:
         problems.append(f"handoff blocks {blocks}, blank line {blank}")
     FAILS.extend("structure: " + x for x in problems)
@@ -982,8 +1024,8 @@ def structure_section(spec: str, handoff: str, plan14: str) -> dict[str, Any]:
         + f"); {len(m_rows)} M rows + the inherited block; ledger L1 to L{len(ledger)}"
         f" each answered; D rows {counts['dRows']}; A {counts['aRows']} / CR {counts['crRows']} / "
         f"C {counts['cRows']} / G {counts['gRows']} / BQ {counts['qRows']}; `15` entries as fenced "
-        f"A-rows: {len(fenced)}; `14` pointer lines: {len(lines14)} ({placed} directly after the "
-        f"Hi-fi line, before the checklist); handoff blocks "
+        f"A-rows: {len(fenced)}; `14` pointer lines: {len(lines14)} ({placed} after E13-D03's "
+        f"Hi-fi line in the block, before the checklist); handoff blocks "
         f"{blocks}, blank checklist line {blank}; Storybook stories {stories}."
     )
     out: dict[str, Any] = {
