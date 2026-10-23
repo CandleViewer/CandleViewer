@@ -31,7 +31,10 @@ Sections (each row names its source so a reviewer can re-grep it):
    many carry a politeness, and how many are specified (a deck string and a politeness -- a
    PROPOSED placeholder string is recorded, never counted as a deck string); every quoted string
    of the K / R / T2 tables exists verbatim in one of the cited sources; nothing assertive; the
-   cadence arithmetic; the fabricated-AT phrases (expected 0).
+   cadence arithmetic; the fabricated-AT phrases (expected 0). The verbatim E13-D02 section 12
+   check is skipped for any routing-row string cell that carries "PROPOSED" and an F id; the skip
+   stays bounded because ``lr_placeholders`` is a re-derived marker (today 1, LR-05), so a second
+   placeholder row changes a visible marker and fails ``--check`` until the review records it.
 4. The state-carrier audit (R6): every carrier pair measured per theme (text 4.5, non-text 3,
    hc-text 7), its greyscale dL*, its protanopia / deuteranopia / tritanopia dE76 (JND 5.0); the
    union of the two upstream ``PAIRS`` lists re-measured; D05's composition rows (gated).
