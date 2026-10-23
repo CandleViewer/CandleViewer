@@ -18,14 +18,18 @@ Q5: `retain_days` is the hot window for `archive_parquet` (the stream's total ho
 default) and the total horizon for `drop`. The store holds no field for `downsample`, `pin` or
 `applies_to_pinned`, so those are refused until it does. A `drop` row is stored with Q5's meaning;
 the reaper and the roll-off readers do not read `action` yet (a follow-up with #2188), so a `drop`
-row currently keeps data at least as long as asked."""
+row currently keeps data at least as long as asked.
+
+Every stream the API covers needs one default row (no symbol) in the set, because the PUT replaces
+the whole set and the readers' fallbacks for a stream with no row differ. Follow-up (DATA-4, with
+#2188 S2c's shared helper): the derived-stream check under `drop` is not made here yet."""
 
 from __future__ import annotations
 
 import asyncio
 import re
 from collections.abc import Callable, Mapping, Sequence
-from typing import Annotated, Any, Literal, Protocol
+from typing import Annotated, Any, Literal, Protocol, get_args
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
@@ -120,6 +124,9 @@ def _checked(items: Sequence[_PolicyIn]) -> None:
         else:
             horizon = None if total is None else max(total, i.retain_days)
             rows[(i.symbol, stream)] = PolicyRow(i.symbol, stream, i.retain_days, horizon)
+    for stream in get_args(Stream):  # the PUT replaces the set: each stream keeps a default row
+        if (None, canonical_stream(stream)) not in rows:
+            raise _invalid(f"The set needs a default row (no symbol) for {stream}.")
     for scope in {None} | {s for s, _ in rows}:
         for derived in DERIVED_FROM_TRADES:  # the API cannot set them: their defaults hold
             rows.setdefault((scope, derived), PolicyRow(scope, derived, *STREAM_DEFAULTS[derived]))
@@ -197,6 +204,14 @@ def make_recording_retention_router(
         if now and run is None:
             raise common.unavailable()
         async with held:
+            try:  # a same-key twin may have been stored while this one waited for the lock
+                if (hit := replay(cache, owner, key, digest)) is not None:
+                    return hit
+            except IdempotencyKeyReuse:
+                code = ErrorCode.IDEMPOTENCY_KEY_REUSE
+                raise common.Problem(
+                    409, code, "The key was first used with another body."
+                ) from None
             before = await store.list_policies()
             gate: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
             try:
