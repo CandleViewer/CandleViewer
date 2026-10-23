@@ -1,20 +1,30 @@
 #!/usr/bin/env python3
 """E36-D04 accessibility design review audit: every number the review quotes, from the repo.
 
-Offline, stdlib only beyond three repo files it IMPORTS (never re-implements) through
+Offline, stdlib only beyond four repo files it IMPORTS (never re-implements) through
 `importlib.util`: the two E36 lane tools `e36_d02_form_audit.py` (`PAIRS_TABLE`, `rows()`,
 `load_theme()`, `resolve()`, `contrast()`) and `e36_d03_screens_audit.py` (`PAIRS_TABLE`,
 `MOTION_TABLE`, `TARGETS_TABLE`, `merged()`, `hex_of()`, `contrast()`, `motion()`, `targets()`,
 `px_of()`, `fmt()`) - both guard `main()` under `__main__` and their only top-level call is D02's
-`RECORDED_INPUTS = frozenset(...)`, so importing them runs nothing - and `scripts/keymap_lint.py`
+`RECORDED_INPUTS = frozenset(...)`, so importing them runs nothing - `scripts/keymap_lint.py`
 (`normalise`, `expand`, `lint_keymap`, `check_coverage`, `parse_catalogue`, `RESERVED`), which reads
-`apps/web/src/keymap/reserved-keys.json` at import and nothing else. It executes no other repo code
-and makes no network call. It prints, with a source label on every row: (1) the `05` clause
-inventory against the review's verdict table; (2) the key-map matrix - the shipped registry x
-`05` section 3.2 x the design bindings of E36-D02 sections 7 / 10 / 12 and E36-D03 sections 6 / 13 x
-the reserved keys x the screen-reader subset typed from the E11-D07 fixture (by head, `SR_SUBSET`) -
-with the conflict classes, `lint_keymap()` on the shipped file, the `check_coverage()` coupling and
-the eight-chord divergence table; (3) the union of the two specs' pair tables re-measured with each
+`apps/web/src/keymap/reserved-keys.json` at import and nothing else, and E11-D07's
+`e11_d07_a11y_review_audit.py` (merged as MERGE_E11_D07; BQ-6 RULED: import, never copy or
+re-implement) for the key-map classes it owns - `nrm()`, `expand_keys()`, `shipped_bindings()`,
+`load_reserved()` (the reserved file plus the `05` section 3.3 item 4 four), `parse_05_hotkeys()` /
+`hotkey_05_keys()`, `coactive()`, `ALWAYS`, `SR_LIVE_MODES` - and its `load_fixture()` over
+`e11_d07_sr_reserved_keys.json` (the screen-reader rows). Importing that tool runs its module-level
+setup: it loads the token verifier, the contrast and CVD helpers, the five E11 sibling tools and
+`keymap_lint.py` and resolves the three themes from `packages/ui/tokens` - repo files only. It
+executes no other repo code and makes no network call. It prints, with a source label on every row:
+(1) the `05` clause inventory against the review's verdict table; (2) the key-map matrix - the
+shipped registry x `05` section 3.2 x the design bindings of E36-D02 sections 7 / 10 / 12 and
+E36-D03 sections 6 / 13 x the reserved keys x the E11-D07 screen-reader fixture (imported; the
+review quotes the subset whose normal form is one of the editor's keys) - with the conflict classes
+in E11-D07's vocabulary (same-context, shadow of Global / Workspace, disjoint-context reuse,
+reserved, the `Alt+<letter>` family), `lint_keymap()` on the shipped file, the `check_coverage()`
+coupling and the eight-chord divergence table; (3) the union of the two specs' pair tables
+re-measured with each
 sibling's own ratio, plus the D04-only rows (the validity composite reported, not gated); (4) the
 hit-target table from the size tokens; (5) the 200 % statement scan; (6) the motion rows; (7) the
 review's T2 walk, SR script, naming, dialog and acceptance tables - every AL row cites a hand-off
@@ -46,7 +56,7 @@ STD05, CAT14 = PLAN / "05-accessibility-standard.md", PLAN / "14-screens-catalog
 KEYMAP = ROOT / "apps" / "web" / "src" / "keymap" / "keymap.json"
 MERGE_D02 = "787e574fca4e21ec460f240dc22d5f0f477ee4db"
 MERGE_D03 = "6c2446be25a90126dc4f6a7756642b62c5307e8f"
-HEAD_E11_D07 = "92a07a0e295f9a3c577c583d4f14cd27acc05a90"
+MERGE_E11_D07 = "de9a67609f887a82405abf45ef3286c963842d15"
 DEBOUNCE_MS, COALESCE_MS, AMBIENT_S, STD_CADENCE_S = 300, 250, 5, 2
 VERDICTS = ("compliant", "at risk", "non-compliant", "out of scope", "not yet decidable")
 SEVERITIES = ("Blocking", "Major", "Minor", "Info")
@@ -83,8 +93,9 @@ T2_KINDS = (
     "status",
     "outcome",
     "absence",
+    "T1",
 )
-LOOKS = ("T2", "validity", "loading", "status", "outcome", "absence")
+LOOKS = ("T2", "validity", "loading", "status", "outcome", "absence", "T1")
 VERIFIER = re.compile(r"^(axe:|e2e:|sr:|measure:)")
 # R1: the `05` clauses the verdict table carries, one row each (ids are the review's).
 CLAUSES = [
@@ -200,41 +211,11 @@ Alt+Shift+↑/↓ | memo G10 candidate for the E49 keymap owner (D02 §12:232)
 Ctrl+A | not bound on SCR-080 — the header checkbox selects all (D03 §13:277)
 Del | not bound on SCR-080 — Delete is a menu item with a confirm (D03 §13:279)
 """
-# The screen-reader subset: the E11-D07 fixture rows whose `norm` is in the editor's key set, typed
-# from `docs/design/_tools/e11_d07_sr_reserved_keys.json` at HEAD_E11_D07 (branch
-# design/e11-d07-canvas-a11y-review, PR #4228 open - "if #4228 merges as is"; BQ-6). Columns:
-# sr | mode | norm | function | section. A `LETTERS:` norm expands to one row per letter, as the
-# fixture holds them (the per-letter function names the element kind; summarised here per class).
-SR_SUBSET = """
-nvda | focus | Esc | Back to browse mode after auto-switch | Browse Mode
-nvda | browse | ↑ | Previous line in browse-mode document | Browse Mode
-nvda | browse | ↓ | Next line in browse-mode document | Browse Mode
-nvda | browse | ← | Previous character in browse-mode document | Browse Mode
-nvda | browse | → | Next character in browse-mode document | Browse Mode
-nvda | browse | Enter | Enter focus mode on controls needing it | Browse Mode
-nvda | browse | Space | Enter focus mode on controls needing it | Browse Mode
-jaws | browse | Enter | Turn on Forms Mode | Forms
-jaws | browse | ↑ | Say prior line (virtual cursor moves) | For Reading Text
-jaws | browse | ↓ | Say next line (virtual cursor moves) | For Reading Text
-jaws | browse | ← | Say prior character (virtual cursor moves) | For Reading Text
-jaws | browse | → | Say next character (virtual cursor moves) | For Reading Text
-jaws | global | ← | Rewind during Say All | For Reading Text
-jaws | global | → | Fast forward during Say All | For Reading Text
-jaws | global | PageUp | Faster speech during Say All | For Reading Text
-jaws | global | PageDown | Slower speech during Say All | For Reading Text
-voiceover | global | Esc | Close VO menu or rotor, leave mode | General commands
-voiceover | quick-nav | ← | Move between items (arrow-key Quick Nav) | Navigate using arrow keys
-voiceover | quick-nav | → | Move between items (arrow-key Quick Nav) | Navigate using arrow keys
-voiceover | quick-nav | ↑ | Move through current rotor items
-  | Navigate apps and webpages using the Quick Nav rotor
-voiceover | quick-nav | ↓ | Move through current rotor items
-  | Navigate apps and webpages using the Quick Nav rotor
-nvda | browse | LETTERS:ABCDEFGHIKLMNOPQRSTUVWX
-  | Single-letter navigation: next element of that kind | Single Letter Navigation
-jaws | browse | LETTERS:ABCDEFGHIJKLMNOPQRSTUVXZ | Navigation Quick Keys: next element of that kind
-  | Navigation Quick Keys
-voiceover | quick-nav | LETTERS:B | Single-key Quick Nav (after VO-Q) | Navigate using single keys
-"""
+# The screen-reader rows are E11-D07's fixture `docs/design/_tools/e11_d07_sr_reserved_keys.json`
+# (NVDA / JAWS / VoiceOver, pinned from vendor documentation), read through E11-D07's own
+# `load_fixture()` - nothing typed, nothing copied (BQ-6 RULED; E11-D07 merged as MERGE_E11_D07).
+# The review quotes the subset whose `norm` is in the editor's key set (the design keys, the native
+# composite keys and the thirteen chords); the chord-hit test runs over every fixture row.
 # D04-only pairs (Safety 9): label | fg | bg | role | bar  (gated at the bar; "report" = not gated)
 D04_PAIRS = """
 the reason text beside a validity-disabled control | color.text.secondary | color.surface.raised
@@ -294,6 +275,7 @@ the bulk-disarm dialog at 200 % | D03 | ## 3. | ## 4.
 the delete confirm at 200 % | D03 | ## 2. | ## 3.
 """
 ZOOM_RE = re.compile(r"200 ?%|stacked cards|reflow|fills the viewport|narrow mode|overlay fallback")
+TEXT_SCALE_RE = re.compile(r"text[ -]scale", re.IGNORECASE)
 FABRICATED = (
     r"\b(NVDA|JAWS|VoiceOver)\b.{0,40}\b(read|reads|said|announced|spoke|speaks|heard)\b",
     r"\bparticipant",
@@ -328,10 +310,11 @@ def load(name: str, path: Path) -> ModuleType:
     return mod
 
 
-# The three imports are typed Any at the boundary: the siblings ship no stubs (one-line reason).
+# The four imports are typed Any at the boundary: the siblings ship no stubs (one-line reason).
 d02: Any = load("e36_d02_form_audit", TOOLS / "e36_d02_form_audit.py")
 d03: Any = load("e36_d03_screens_audit", TOOLS / "e36_d03_screens_audit.py")
 kl: Any = load("keymap_lint", ROOT / "scripts" / "keymap_lint.py")
+e11: Any = load("e11_d07_a11y_review_audit", TOOLS / "e11_d07_a11y_review_audit.py")
 Row = list[str]
 
 
@@ -417,38 +400,18 @@ def verdict_word(cell: str) -> str:
 
 # ------------------------------------------------------------------------- 2. key map (R4)
 def norm(key: str) -> str:
-    try:
-        return str(kl.normalise(key))
-    except kl.KeymapError:  # a key outside the repo normaliser (Backspace, *) stays raw
-        return key
+    """E11-D07's `nrm()`: `keymap_lint.normalise()` where it applies, its canonical form for the
+    keys the repo normaliser leaves out on purpose (Home / End / PageUp / PageDown, `*`)."""
+    return str(e11.nrm(key))
 
 
-def parse_05_map(std: str) -> list[tuple[str, str, list[str]]]:
-    """(category, action, atomic keys) per row of `05` section 3.2, 36 rows at the base."""
-    out: list[tuple[str, str, list[str]]] = []
-    cat = ""
-    for ln in section(std, "| Category", "### 3.3").splitlines()[2:]:
-        c = cells(ln)
-        if len(c) < 3:
-            continue
-        cat = c[0].strip("* ") or cat
-        keys: list[str] = []
-        for span in re.findall(r"`([^`]+)`", c[2].split(" (")[0]):
-            try:
-                keys.extend(str(k) for k in kl.expand(span))
-            except kl.KeymapError:  # Backspace, `?` and friends stay raw
-                keys.append(span)
-        out.append((cat, c[1], keys))
-    return out
-
-
-def sr_rows() -> list[dict[str, str]]:
-    out = []
-    for sr, mode, n, fn, sec in rows(SR_SUBSET):
-        letters = n[8:] if n.startswith("LETTERS:") else None
-        for k in letters or [n]:
-            out.append({"sr": sr, "mode": mode, "norm": k, "function": fn, "section": sec})
-    return out
+def map05_rows() -> list[tuple[str, str, list[str]]]:
+    """(category, action, atomic keys) per row of `05` section 3.2 - E11-D07's parser
+    (`parse_05_hotkeys()` reads the file; `hotkey_05_keys()` normalises and expands the ranges)."""
+    return [
+        (str(r["category"]), str(r["action"]), [str(k) for k in e11.hotkey_05_keys(r)])
+        for r in e11.parse_05_hotkeys()
+    ]
 
 
 def _chord_row(
@@ -458,6 +421,7 @@ def _chord_row(
     screens: dict[str, set[str]],
     map05: list[tuple[str, str, list[str]]],
     sr_hits: dict[str, int],
+    reserved_all: dict[str, str],
 ) -> dict[str, Any]:
     atoms = [norm(key.replace("↑/↓", a)) for a in ("↑", "↓")] if "↑/↓" in key else [norm(key)]
     regs = sorted(
@@ -470,7 +434,7 @@ def _chord_row(
         }
     )
     r05 = sorted({f"{cat.strip()} — {act}" for cat, act, ks in map05 for a in atoms if a in ks})
-    res = sorted({str(kl.RESERVED[a]) for a in atoms if a in kl.RESERVED})
+    res = sorted({reserved_all[a] for a in atoms if a in reserved_all})
     return {
         "chord": key,
         "in_14": any(a in screens.get("SCR-081", set()) for a in atoms),
@@ -482,18 +446,21 @@ def _chord_row(
     }
 
 
-def keymap_matrix(cat14: str, std: str) -> dict[str, Any]:
+def keymap_matrix(cat14: str) -> dict[str, Any]:
     km = json.loads(read(KEYMAP))
     cmds = km["commands"]
+    by_id = {c["id"]: c for c in cmds}
     rules = [c for c in cmds if c["context"] == "Rules"]
+    # E11-D07's expansion of the shipped registry: one row per atomic binding, ranges included
     by_bind: dict[str, list[dict[str, Any]]] = {}
-    for c in cmds:
-        for b in kl.expand(c["defaultBinding"]):
-            by_bind.setdefault(str(b), []).append(c)
+    for s in e11.shipped_bindings(km):
+        by_bind.setdefault(str(s["key"]), []).append(by_id[s["id"]])
+    reserved_all: dict[str, str] = {
+        str(k): str(v) for k, v in e11.load_reserved().items()
+    }  # the file + the `05` four
     design = rows(DESIGN)
     dkeys = {norm(r[0]) for r in design if r[0] != "A..Z"} | set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
     native = set(kl.NAMED_KEYS) | {"Shift+Tab", "Home", "End", "*", "PageUp", "PageDown"}
-    sr = sr_rows()
     chords = [
         norm(k)
         for k in [
@@ -512,12 +479,18 @@ def keymap_matrix(cat14: str, std: str) -> dict[str, Any]:
             "Ctrl+C",
         ]
     ]
-    sr_hits = {k: sum(r["norm"] == k for r in sr) for k in chords}
+    # the screen-reader rows: E11-D07's fixture through its loader; the editor subset is quoted
+    fixture = e11.load_fixture()
+    sr_all: list[dict[str, Any]] = list(fixture["keys"])
+    editor_keys = dkeys | native | set(chords)
+    sr = [r for r in sr_all if str(r["norm"]) in editor_keys]
+    sr_hits = {k: sum(str(r["norm"]) == k for r in sr_all) for k in chords}
     sr_by_mode: dict[str, int] = {}
     for r in sr:
         if r["norm"] in dkeys:
-            sr_by_mode[r["mode"]] = sr_by_mode.get(r["mode"], 0) + 1
-    map05 = parse_05_map(std)
+            sr_by_mode[str(r["mode"])] = sr_by_mode.get(str(r["mode"]), 0) + 1
+    sr_live = sum(1 for r in sr if r["mode"] in e11.SR_LIVE_MODES)
+    map05 = map05_rows()
     rule05 = [m for m in map05 if "Rule builder" in m[0]]
     same: list[str] = []
     reuse: list[str] = []
@@ -532,14 +505,21 @@ def keymap_matrix(cat14: str, std: str) -> dict[str, Any]:
         for c in by_bind.get(n, []):
             tag = f"{n} · {c['id']}"
             is_same = expects != c["id"] and (expects != "-" or n in native)
+            # E11-D07's classes: same-context (the Rules context holds the key for another
+            # action), shadow-global (an always-live Global / Workspace binding), reuse (a
+            # context never co-active with Rules); the bare composite keys are APG, not bindings
             if c["context"] == "Rules" and is_same and tag not in same:
                 same.append(tag)
-            elif c["context"] == "Workspace" and tag not in shadow_ws:
+            elif c["context"] in e11.ALWAYS and tag not in shadow_ws:
                 shadow_ws.append(tag)
-            elif c["context"] not in ("Rules", "Global", "Workspace") and n not in native:
+            elif (
+                c["context"] != "Rules"
+                and not e11.coactive("Rules", c["context"])
+                and n not in native
+            ):
                 reuse += [f"{tag} ({c['context']})"] * (f"{tag} ({c['context']})" not in reuse)
-        if n in kl.RESERVED and f"{n} · {kl.RESERVED[n]}" not in reserved:
-            reserved.append(f"{n} · {kl.RESERVED[n]}")
+        if n in reserved_all and f"{n} · {reserved_all[n]}" not in reserved:
+            reserved.append(f"{n} · {reserved_all[n]}")
         if re.fullmatch(r"Alt\+[A-Z]", n) and n not in alt_family:
             alt_family.append(n)
         if n not in native and n not in by_bind and "+" in n and n not in unregistered:
@@ -548,7 +528,8 @@ def keymap_matrix(cat14: str, std: str) -> dict[str, Any]:
     reg_unspec = [
         c["id"]
         for c in rules
-        if c["id"] != "rules.delete" and not any(b in dnorm for b in kl.expand(c["defaultBinding"]))
+        if c["id"] != "rules.delete"
+        and not any(b in dnorm for b in e11.expand_keys(c["defaultBinding"]))
     ]
     unscoped = [c["id"] for c in rules if not c.get("screens")]
     # a `05` row whose key is unregistered in its own context but bound in Rules to another action
@@ -577,7 +558,7 @@ def keymap_matrix(cat14: str, std: str) -> dict[str, Any]:
         bound = [
             f"{k} → {c['id']}" for k in ks for c in by_bind.get(k, []) if c["context"] == "Rules"
         ]
-        res = [str(kl.RESERVED[k]) for k in ks if k in kl.RESERVED]
+        res = [reserved_all[k] for k in ks if k in reserved_all]
         rule05_rows.append(
             f"{a}: {' '.join(ks)} — {'; '.join(bound) if bound else 'unregistered'}"
             + (f"; reserved ({', '.join(res)})" if res else "")
@@ -594,13 +575,16 @@ def keymap_matrix(cat14: str, std: str) -> dict[str, Any]:
     cov_a01 = kl.check_coverage(km, cat14.replace(line_1764, a01)) if line_1764 else ["no :1764"]
     a01_bad = a01.replace("(Shift+F10)", "(`Shift+F10`)")
     cov_bad = kl.check_coverage(km, cat14.replace(line_1764, a01_bad)) if line_1764 else []
-    chord_rows = [_chord_row(k, p, by_bind, screens, map05, sr_hits) for k, p in rows(CHORDS)]
+    chord_rows = [
+        _chord_row(k, p, by_bind, screens, map05, sr_hits, reserved_all) for k, p in rows(CHORDS)
+    ]
     return {
         "commands": len(cmds),
         "rules_commands": len(rules),
         "atomic_bindings": sum(len(v) for v in by_bind.values()),
         "reserved_combos": len(json.loads(read(KEYMAP.with_name("reserved-keys.json")))),
-        "reserved_atomic": len(kl.RESERVED),
+        "reserved_atomic": len(e11.load_reserved_file_keys()),
+        "reserved_with_05_four": len(reserved_all),
         "lint_errors": len(kl.lint_keymap(km)),
         "coverage_errors": len(cov) + len(perr),
         "coverage_errors_a01": len(cov_a01),
@@ -619,11 +603,25 @@ def keymap_matrix(cat14: str, std: str) -> dict[str, Any]:
         "specified_unregistered": unregistered,
         "registered_unspecified": reg_unspec,
         "unscoped_rules_rows": unscoped,
+        "sr_fixture_rows": len(sr_all),
+        "sr_fixture_sources": len(fixture["sources"]),
+        "sr_fixture_by_reader": {
+            who: sum(1 for r in sr_all if r["sr"] == who) for who in ("nvda", "jaws", "voiceover")
+        },
         "sr_subset_rows": len(sr),
+        "sr_subset_live_mode_rows": sr_live,
         "sr_chord_hits": sum(sr_hits.values()),
         "sr_chord_hits_by_key": sr_hits,
         "sr_rows_by_mode": sr_by_mode,
-        "sr_letter_rows": sum(len(r["norm"]) == 1 and r["norm"].isalpha() for r in sr),
+        "sr_letter_rows": sum(len(str(r["norm"])) == 1 and str(r["norm"]).isalpha() for r in sr),
+        "sr_letter_rows_by_reader": {
+            who: sum(
+                1
+                for r in sr
+                if r["sr"] == who and len(str(r["norm"])) == 1 and str(r["norm"]).isalpha()
+            )
+            for who in ("nvda", "jaws", "voiceover")
+        },
         "chords": chord_rows,
     }
 
@@ -777,6 +775,8 @@ def target_table() -> dict[str, Any]:
 
 
 def zoom_table() -> dict[str, Any]:
+    """Per surface: the 200 % statement and, beside it, the in-app text-scale statement (`05`
+    section 5 item 7 names both; `16`'s `data-text-scale` 100 / 112 / 125 / 150)."""
     texts = {"D02": read(D02), "D03": read(D03)}
     out = []
     for surface, doc, start, end in rows(ZOOM):
@@ -784,6 +784,7 @@ def zoom_table() -> dict[str, Any]:
         hits = sorted({m.group(0) for m in ZOOM_RE.finditer(sec)})
         cited = "E35-D02" in surface
         state = "cited — E35-D02" if cited else ("stated" if hits else "silent")
+        ts = "cited — E35-D02" if cited else ("stated" if TEXT_SCALE_RE.search(sec) else "silent")
         out.append(
             {
                 "surface": surface,
@@ -791,6 +792,7 @@ def zoom_table() -> dict[str, Any]:
                 "section": start.strip("# ."),
                 "state": state,
                 "hits": hits,
+                "text_scale": ts,
             }
         )
     return {
@@ -798,6 +800,9 @@ def zoom_table() -> dict[str, Any]:
         "stated": sum(r["state"] == "stated" for r in out),
         "silent": sum(r["state"] == "silent" for r in out),
         "cited": sum(str(r["state"]).startswith("cited") for r in out),
+        "text_scale_stated": sum(r["text_scale"] == "stated" for r in out),
+        "text_scale_silent": sum(r["text_scale"] == "silent" for r in out),
+        "text_scale_cited": sum(str(r["text_scale"]).startswith("cited") for r in out),
     }
 
 
@@ -826,7 +831,12 @@ def motion_table() -> dict[str, Any]:
 
 # --------------------------------------------------------------------- 7. the review's tables
 def _t2_check(r: list[str]) -> tuple[str, str]:
-    """Return (kind, problem) for one T2 row; the problem names an over- or under-conversion."""
+    """Return (kind, problem) for one T2 row; the problem names an over- or under-conversion.
+
+    A row whose verdict starts "divergence" quotes the upstream spec's own drawing (D03 drawing a
+    validity, loading or deferred state as T2) and classifies it here; the quote is not the
+    review's conversion, so the lock / CMP-079 words in its cell are accepted - but the row must
+    name a C-row, and the look stays the review's classification."""
     kind, items, key, look = r[4], r[5].lower(), r[6], r[7]
     if kind not in T2_KINDS or look not in LOOKS:
         return kind, f"{r[0]}: kind {kind!r} / look {look!r}"
@@ -835,6 +845,9 @@ def _t2_check(r: list[str]) -> tuple[str, str]:
     has_lock = re.search(r"six items|lock glyph|(?<!no )(?<!never a )\block\b", items)
     dimmed = "opacity.disabled" in items or "text.disabled" in items
     drawn_lock = re.search(r"(?<!no )(?<!never a )(?<!not )\block glyph\b", items)
+    quoted = r[8].startswith("divergence")
+    if quoted and not r[9].strip("— "):
+        return kind, f"{r[0]}: a divergence without a C-row"
     if gate and look == "T2":
         if not keyed or not has_lock:
             return kind, f"{r[0]}: under-conversion — a T2 row without a key or the lock"
@@ -843,11 +856,12 @@ def _t2_check(r: list[str]) -> tuple[str, str]:
     elif gate:
         return kind, f"{r[0]}: a {kind} gate not drawn as T2 (a divergence is a C-row, the look T2)"
     elif kind == "validity":
-        if look != "validity" or drawn_lock or "cmp-079" in items.replace("no cmp-079", ""):
+        own_lock = drawn_lock or "cmp-079" in items.replace("no cmp-079", "")
+        if look != "validity" or (own_lock and not quoted):
             return kind, f"{r[0]}: over-conversion — a validity row drawn as T2"
         if "0.45" not in items:
             return kind, f"{r[0]}: a validity row without the 0.45 look"
-    elif look == "T2" or drawn_lock:
+    elif look == "T2" or (drawn_lock and not quoted):
         return kind, f"{r[0]}: over-conversion — a {kind} row drawn as T2"
     return kind, ""
 
@@ -910,19 +924,21 @@ def review_tables(text: str) -> tuple[dict[str, Any], list[str]]:
     # | C-row
     t2 = table_rows(section(text, "## 8.", "## 9."), r"T2-\d+ +\|")
     kinds: dict[str, int] = {}
-    over = under = 0
+    over = under = diverge = 0
     for r in t2:
         if len(r) < 10:
             bad.append(f"{r[0]}: {len(r)} cells")
             continue
         kind, problem = _t2_check(r)
         kinds[kind] = kinds.get(kind, 0) + 1
+        diverge += r[8].startswith("divergence")
         if problem:
             bad.append(problem)
             over += "over-conversion" in problem
             under += "under-conversion" in problem
     n |= {"t2_rows": len(t2), "t2_by_kind": kinds, "t2_over_conversion": over}
     n["t2_under_conversion"] = under
+    n["t2_divergences"] = diverge  # the upstream's over-conversions the walk records as C-rows
     # SR script: id | event | trigger | announced | mechanism | politeness | cadence | class |
     # verdict | finding
     srr = table_rows(section(text, "## 5.", "## 6."), r"SR-\d+ +\|")
@@ -1103,7 +1119,7 @@ def check_markers(text: str, counts: dict[str, Any]) -> list[str]:
 # ----------------------------------------------------------------------------------- 9. main
 def main(argv: list[str]) -> int:
     std, cat14 = read(STD05), read(CAT14)
-    inv, km = clause_inventory(std), keymap_matrix(cat14, std)
+    inv, km = clause_inventory(std), keymap_matrix(cat14)
     mx, tg, zm, mo = matrices(), target_table(), zoom_table(), motion_table()
     counts: dict[str, Any] = {
         "clause_inventory": inv,
@@ -1135,7 +1151,7 @@ def main(argv: list[str]) -> int:
         problems += bad + string_gates(review, review_path.name)
         if "--check" in argv:
             problems += check_markers(review, counts)
-            for s in (MERGE_D02, MERGE_D03, HEAD_E11_D07):
+            for s in (MERGE_D02, MERGE_D03, MERGE_E11_D07):
                 if s not in review:
                     problems.append(f"sha {s[:12]} not in the review's header")
     if "--draft" in argv:
@@ -1197,9 +1213,11 @@ def main(argv: list[str]) -> int:
             f"the registry: {k['contradicted_05']}"
         ),
         (
-            f"- SR_SUBSET rows {k['sr_subset_rows']} (letters {k['sr_letter_rows']}); chord hits "
-            f"{k['sr_chord_hits']} {k['sr_chord_hits_by_key']}; rows by mode over the design keys "
-            f"{k['sr_rows_by_mode']}"
+            f"- E11-D07 fixture (imported) {k['sr_fixture_rows']} rows {k['sr_fixture_by_reader']} "
+            f"from {k['sr_fixture_sources']} sources; the editor subset {k['sr_subset_rows']} "
+            f"(letters {k['sr_letter_rows']} {k['sr_letter_rows_by_reader']}; live-mode rows "
+            f"{k['sr_subset_live_mode_rows']}); chord hits {k['sr_chord_hits']} "
+            f"{k['sr_chord_hits_by_key']}; rows by mode over the design keys {k['sr_rows_by_mode']}"
         ),
         "- the eight chords: "
         + " · ".join(
@@ -1236,9 +1254,14 @@ def main(argv: list[str]) -> int:
         f"problems {tg['d03_problems']})"
     )
     out += [f"- {' | '.join(r)}" for r in tg["rows"]]
-    out.append(f"## 5. 200 %: stated {zm['stated']} / silent {zm['silent']} / cited {zm['cited']}")
+    out.append(
+        f"## 5. 200 %: stated {zm['stated']} / silent {zm['silent']} / cited {zm['cited']}; the "
+        f"in-app text scale: stated {zm['text_scale_stated']} / silent {zm['text_scale_silent']} / "
+        f"cited {zm['text_scale_cited']}"
+    )
     out += [
-        f"- {r['surface']} ({r['doc']} §{r['section']}): {r['state']} {r['hits']}"
+        f"- {r['surface']} ({r['doc']} §{r['section']}): {r['state']} {r['hits']}; text scale "
+        f"{r['text_scale']}"
         for r in zm["rows"]
     ]
     out.append(
@@ -1249,7 +1272,8 @@ def main(argv: list[str]) -> int:
     out.append(
         f"## 7. review tables: T2 {c.get('t2_rows', '-')} by kind {c.get('t2_by_kind', {})} "
         f"over-conversion {c.get('t2_over_conversion', '-')} / under-conversion "
-        f"{c.get('t2_under_conversion', '-')}; SR {c.get('sr_rows', '-')} (assertive "
+        f"{c.get('t2_under_conversion', '-')} / upstream divergences recorded as C-rows "
+        f"{c.get('t2_divergences', '-')}; SR {c.get('sr_rows', '-')} (assertive "
         f"{c.get('sr_assertive', '-')}); naming {c.get('naming_rows', '-')}; AL "
         f"{c.get('al_rows', '-')} by principle {c.get('al_by_principle', {})}; F "
         f"{c.get('f_rows', '-')} {c.get('f_by_severity', {})} {c.get('f_by_class', {})}; "
@@ -1267,8 +1291,8 @@ def main(argv: list[str]) -> int:
         f"{c.get('t2_over_conversion', '-')} / under-conversion "
         f"{c.get('t2_under_conversion', '-')}; union matrix gated FAIL: {len(mx['fail'])}; "
         f"D04 rows gated FAIL: {mx['d04_fail']}; targets < {tg['minimum']} without exception: "
-        f"{len(tg['under'])}; lint_keymap errors (shipped): {k['lint_errors']}; SR_SUBSET chord "
-        f"hits: {k['sr_chord_hits']}; host self-test {c['host_selftest']}"
+        f"{len(tg['under'])}; lint_keymap errors (shipped): {k['lint_errors']}; E11-D07 fixture "
+        f"chord hits: {k['sr_chord_hits']}; host self-test {c['host_selftest']}"
     )
     out.append("## 9. problems: " + ("\n".join(problems) if problems else "none"))
     print("\n".join(out))
