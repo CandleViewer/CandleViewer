@@ -1,7 +1,7 @@
 # E33-D01 — UX research: how traders configure and trust an emulated algorithm
 
-- **Ticket:** E33-D01 (issue #857) · **Status:** PR pending — **owner approval pending** (Agent-delivery adaptations,
-  owner decision 2026-09-25); boards not drawn yet · **Method:** heuristic evaluation of the locked plan texts +
+- **Ticket:** E33-D01 (issue #857) · **Status:** text first — **owner approval pending** (Agent-delivery adaptations,
+  owner decision 2026-09-25); boards PENDING (boards PR) · **Method:** heuristic evaluation of the locked plan texts +
   public documentation as recorded in the repository's research; **no sessions were run** · **Protocol and owner
   walkthrough checklist:** `e33-d01-session-protocol.md` (this folder), which owns the session script and scoring.
 - **Scope:** builders SCR-066 TWAP, SCR-067 iceberg, SCR-068 chase, SCR-069 OCO (its OCO half); the SCR-070 monitor
@@ -68,13 +68,13 @@ the owner run · **open** = needs sessions or an owner decision.
 
 ## Research boards (Penpot)
 
-Per `docs/design/README.md` ("Approval rule") a research ticket ships boards plus PNG exports. **None is drawn yet:**
-they are to be drawn on the project's Penpot instance (`docs/design/README.md`), on a page named `E33-D01`, bound to
-semantic tokens in `packages/ui/tokens`, exported with `docs/design/_tools/penpot_export.py` and embedded here and in
-the PR body by page name and id. Planned PNGs, each `docs/design/E33/img/E33-D01-NN-<board>.png`: `01-three-cases` (§4)
-· `02-caveat-candidates` (§3; Probe C) · `03-parameter-defaults` (§2; the Probe B paper prototype of SCR-066..069) ·
-`04-monitor-must-show` (§5; Probe D) · `05-pre-submit` (§6; Probe E) · `06-findings-decision-map` (§8, §9) ·
-`07-source-conflicts` (§1) · `08-probe-a-stimulus` (a running TWAP and its row, every caveat blanked; Probe A).
+Per `docs/design/README.md` ("Approval rule") a research ticket ships boards plus PNG exports. **PENDING (text first):**
+drawn on the project's Penpot instance (`docs/design/README.md`), on a page named `E33-D01`, bound to semantic tokens in
+`packages/ui/tokens`, exported and embedded here and in the boards PR (which completes #857) by page name and id.
+Planned PNGs, each `docs/design/E33/img/E33-D01-NN-<board>.png`: `01-three-cases` (§4) · `02-caveat-candidates` (§3;
+Probe C) · `03-parameter-defaults` (§2; the Probe B paper prototype of SCR-066..069) · `04-monitor-must-show` (§5; Probe
+D) · `05-pre-submit` (§6; Probe E) · `06-findings-decision-map` (§8, §9) · `07-source-conflicts` (§1) ·
+`08-probe-a-stimulus` (a running TWAP and its row, every caveat blanked; Probe A).
 
 ## Method note (Agent-delivery adaptation, owner decision 2026-09-25)
 
