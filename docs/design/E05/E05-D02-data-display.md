@@ -390,7 +390,7 @@ _Board `CMP-011 · Tag — doc` PENDING (text-first merge, 2026-10-23): the boar
 | container (static neutral/info/warning/danger) | none (generic span) | the visible label text                                                          | none                                                                                                                                        |
 | icon-left                                      | none                | none                                                                            | aria-hidden="true" (the status word is in the label)                                                                                        |
 | remove (CMP-002 IconButton)                    | button              | "Remove {label}", e.g. "Remove Breakout" (aria-label, lint-enforced by CMP-002) | disabled when State=disabled; for gated removal, disabledReason through CMP-079 (the reason is the accessible description); no aria-pressed |
-| container (Variant=estimated)                  | button              | the visible text "(estimated)"; the literal word estimated is in the name       | aria-describedby points at the CMP-016 tooltip; aria-expanded reflects the methodology drawer                                               |
+| container (Variant=estimated)                  | button              | the visible text "(estimated)"; the literal word estimated is in the name       | aria-describedby points at the CMP-016 tooltip; aria-haspopup="dialog", no aria-expanded (CMP-227, §5 E19)                                  |
 | focus-ring                                     | none                | none                                                                            | visual only (:focus-visible)                                                                                                                |
 
 **Token mapping** (catalogue name → shipped semantic token):
@@ -1099,7 +1099,7 @@ _Board `CMP-033 · CopyButton — doc` PENDING (text-first merge, 2026-10-23): t
 - The copied state shows only the check glyph in the success colour; there is no visible "Copied" text for sighted users. E09-D04 asks not to rely on a tooltip alone. Is the glyph change enough?
 - Wording: the catalogue announces "Copied"; E09-D04 announces "Copied to clipboard". Which one?
 - Security: the live-region text and any analytics never contain the copied value (it may be an API secret or a recovery code); flag for E05-X02.
-- State=disabled-with-reason is deliberately not drawn: no catalogued CopyButton use is RBAC- or env-gated, because copying is a read-only, client-side action on a value the user can already see, so the 14-screens §0.5 rule 5 / brief §12 'disabled with a reason' requirement (controls the user may not use) does not arise; the conventions §2 matrix rule draws no state the catalogue does not list. Plain disabled covers 'no value to copy yet'. If a gated use appears, it is one draw: nested CMP-002 State=disabled-with-reason plus `disabled?/disabledReason?` on the Props line. Confirm.
+- State=disabled-with-reason is deliberately not drawn: no catalogued CopyButton use is RBAC- or env-gated, because copying is a read-only, client-side action on a value the user can already see, so the 14-screens §0.5 rule 5 / brief §12 'disabled with a reason' requirement (controls the user may not use) does not arise; the conventions §2 matrix rule draws no state the catalogue does not list. Plain disabled covers 'no value to copy yet'. If a gated use appears, it is one draw: nested CMP-002 in its T2 form (E09-D09 §2.2) plus `disabled?/disabledReason?` on the Props line. Confirm.
 - Build: is it acceptable that the CopyButton root binds no opacity in State=disabled, so the dimming comes only from the nested CMP-002 opacity.disabled? The generic conventions §3 rule puts it on the root; doing both would dim twice.
 - Build: is a hidden single-space text an acceptable stand-in for the empty live region, given that Penpot cannot hold an empty text?
 
@@ -1195,7 +1195,8 @@ Completed for the 12 components of this slice. Open items say why and who closes
 **Behaviour & states**
 
 - [x] Every documented State has a corresponding Penpot variant (and Storybook story). All 82 variants of the matrix
-      rule are drawn, including the universal focus-visible and disabled states of the three interactive components;
+      rule are drawn, including the universal focus-visible and disabled states of the three interactive components
+      (the conventions §2 hover cells of CMP-011's remove button and CMP-033 come with the boards PR, §5 E18);
       the Storybook stories are E05-S01/S02's.
 - [ ] Disabled states use the disabled-with-reason pattern (CMP-079), never a bare disabled control. **Open:** the boards PR, T2. CMP-021 draws it
       for gated links, with a CMP-016 Tooltip; gated chip removal goes through CMP-079 on the nested IconButton
