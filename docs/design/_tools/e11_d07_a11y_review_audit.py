@@ -38,16 +38,20 @@ Sections (each row names its source so a reviewer can re-grep it):
 4. The channel-reuse table: E11-D05 section 7's registry ids and the token-meaning pairs the five
    specs bind, one meaning per channel per surface.
 5. The target table (R6): every interactive surface with its token resolved from
-   ``primitives.tokens.json``, or marked as a typed number with no token.
+   ``primitives.tokens.json`` or, for a semantic alias such as ``size.control.height``, from the
+   semantic sets (dark, then the light / hc overrides) with ``themes.json``'s density list giving
+   both density values; otherwise marked as a typed number with no token.
 6. The reduced-motion table (R8): E11-D06 section 7 parsed from the spec (47 rows), the reduce
    variant classified per row, the section 9.3 flash rates re-checked against 3/s, the section
    9.4 under-reduce column, and the override's entry points.
 7. The numbers block: node counts, ticks per ambient window, the cursor cap, the mirror slice, the
    table's scripting budget and the footprint column-set text compare.
 8. String gates on the review (and on the PR draft with ``--draft``): no fabricated-AT phrase, no
-   ``display:none`` recommended for the mirror, every H row ``(heuristic)``, every F row with an
-   owner and a target, every A row with a file and a section, no local path, no Penpot host
-   (a generic pattern that names no domain), no closing keyword beside an issue number.
+   ``display:none`` recommended for the mirror, every H row ``(heuristic)``, every F row with
+   exactly one owner and one target (a withdrawn row is exempt), every at-risk clause with a Major
+   finding or an interim path, every table row with its header's cell count, every A row with a
+   file and a section, no local path, no Penpot host (a generic pattern that names no domain), no
+   closing keyword beside an issue number.
 
 Usage:
   python3 -I docs/design/_tools/e11_d07_a11y_review_audit.py            Markdown report
@@ -55,7 +59,9 @@ Usage:
   ... --check docs/design/E11/E11-D07.md [--draft <file>]                re-derive every marker
   ... --figures docs/design/E11/img                                      render the two PNGs
 Exit 1 only on a gated FAIL (a D07 composition pair under its bar, a verdict row missing or
-malformed, an F row without owner / target, a fabricated-AT phrase, a ``--check`` drift).
+malformed, an F row without owner / target or with two of either, an at-risk clause without a
+Major finding or an interim path, a table row off its header's cell count, a fabricated-AT
+phrase, a ``--check`` drift).
 Stdout is forced to UTF-8.
 """
 
@@ -153,6 +159,26 @@ def primitives() -> dict[str, Any]:
 PRIM = primitives()
 
 
+def semantic_sizes() -> tuple[dict[str, str], set[str]]:
+    """Semantic size / spacing aliases (dark, then the light / hc overrides) and the names
+    ``themes.json`` resolves per density mode. ``size.control.height`` is one of them: the set
+    binds ``{size.control.compact}`` and the comfortable mode points it at
+    ``size.control.comfortable`` at runtime (``themes.json`` ``density.resolves``)."""
+    allt: dict[str, Any] = {}
+    for files in verify.THEMES.values():
+        allt.update(verify.merged_set(files))
+    aliases = {
+        k: str(v["$value"])
+        for k, v in allt.items()
+        if isinstance(v, dict) and v.get("$type") in ("sizing", "spacing", "dimension")
+    }
+    themes = json.loads((TOKENS / "themes.json").read_text(encoding="utf-8"))
+    return aliases, set(themes.get("density", {}).get("resolves", []))
+
+
+SEM_SIZES, DENSITY_RESOLVED = semantic_sizes()
+
+
 def dim85(h: str) -> str:
     """The stale state's data-ink x0.85 (E11-D02 section 10: a uniform multiply, no scrim)."""
     r, g, b = hex_to_rgb(h)
@@ -199,7 +225,9 @@ P26 = "docs/plan/26-chart-engine-design.md"
 P05 = "docs/plan/05-accessibility-standard.md"
 P14 = "docs/plan/14-screens-catalogue.md"
 E14 = "docs/design/E14/E14-D02.md (head a12cb2ac, in flight)"
+D01 = "docs/design/research/e11-chart-navigation-research.md"
 SRC = {
+    "D01": D01,
     "D02": D02,
     "D03": D03,
     "D04": D04,
@@ -229,8 +257,8 @@ Esc | Chart | plot | collapse the detail; not consumed when nothing is open | E0
 Space | Chart | plot | pan-drag modifier (not consumed in replay) | P26 | 279
 Alt+← | Chart | plot | step tick in replay (26's row) | P26 | 279
 Alt+→ | Chart | plot | step tick in replay (26's row) | P26 | 279
-Ctrl+Shift+↑ | Chart | plot | PROPOSED here: cursor level to the bar's high | D04 | 0
-Ctrl+Shift+↓ | Chart | plot | PROPOSED here: cursor level to the bar's low | D04 | 0
+Ctrl+Shift+↑ | Chart | plot | PROPOSED here (K14): cursor level to the bar's high (Q4-g) | D01 | 284
+Ctrl+Shift+↓ | Chart | plot | PROPOSED here (K14): cursor level to the bar's low (Q4-g) | D01 | 284
 Alt+T | Chart | * | toggle Chart / Table (global handler) | D04 | 143
 Alt+G | Chart | * | go to date (conditional on E11-D01 O13) | D03 | 367
 Ctrl+Shift+G | Chart | * | go to date (the O13 fallback) | D03 | 367
@@ -941,8 +969,9 @@ def channel_reuse() -> dict[str, Any]:
     return {"rows": len(CHANNELS), "multi": multi}
 
 
-# surface | density | w | h | spec:line | note. A token name is resolved from primitives; a bare
-# integer is a typed number; full / pane / pill = the containing dimension.
+# surface | density | w | h | spec:line | note. A token name is resolved from primitives, then
+# from the semantic sets with themes.json's density list (both density values); a bare integer
+# is a typed number; full / pane / pill = the containing dimension.
 TARGETS_TABLE = """
 splitter hit band | compact / dense | full | space.6 | D02:94, :355
   | 24 px band, 12 each side; grip 24 x 4
@@ -976,8 +1005,9 @@ SCR-031 toggle | every density | 44 | size.control.compact | D03:451 | 24 x 44 (
 table row (bar / level) | compact | full | size.row.compact | D04:540 | the row is the target
 table expander cell / header button / chip / Kbd / segment | compact | size.target.min
   | size.target.min | D04:540 | chips: 20 px pill + 2 px invisible padding
-view switch segment (Chart / Table) | compact | pill | size.control.height | D04:139
-  | token name does not exist at the base (G-row)
+view switch segment (Chart / Table) | compact / comfortable | pill | size.control.height
+  | D04:140 | a density-resolved semantic alias: semantic-dark :390 binds size.control.compact,
+  themes.json :23 lists it under density.resolves (the lens round 1 corrected r1's reading)
 E14 drawing-rail tool button (in flight) | compact / dense | size.control.compact
   | size.control.compact | E14:132 | E14's; Info
 E14 drawing-rail tool button (in flight) | comfortable | size.control.comfortable
@@ -1003,9 +1033,22 @@ def px(v: Any) -> tuple[str, int | None]:
     if v in ("full", "pane", "pill"):
         return (v, None)
     val = PRIM.get(v)
-    if val is None:
+    if val is not None:
+        return (f"{v} {val}", int(val))
+    alias = SEM_SIZES.get(v)
+    ref = alias.strip("{}") if alias else None
+    if ref is None or PRIM.get(ref) is None:
         return (f"{v} (no such token)", None)
-    return (f"{v} {val}", int(val))
+    compact = int(PRIM[ref])
+    if v in DENSITY_RESOLVED and ref.endswith(".compact"):
+        comf_ref = ref[: -len(".compact")] + ".comfortable"
+        if PRIM.get(comf_ref) is not None:
+            comf = int(PRIM[comf_ref])
+            return (
+                f"{v} → {ref} {compact} / {comf_ref} {comf} (density-resolved)",
+                min(compact, comf),
+            )
+    return (f"{v} → {ref} {compact}", compact)
 
 
 def target_rows() -> list[dict[str, Any]]:
@@ -1171,6 +1214,7 @@ AT_PHRASES = (
     r"the user said",
 )
 PENPOT_HOST = re.compile(r"penpot\.[a-z0-9-]+\.[a-z]{2,}", re.IGNORECASE)
+LOCAL_PATH = re.compile(r"/(?:home|Users)/[^/\s]+/")
 CLOSING = re.compile(r"\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b", re.IGNORECASE)
 ISSUE_REF = re.compile(r"#\d{2,}")
 
@@ -1190,6 +1234,33 @@ def bullets_05() -> dict[str, int]:
         nxt = "### 6.5" if sec == "6.4" else f"### {float(sec) + 0.1:.1f}"
         body = text.split(f"### {sec} ")[1].split(nxt)[0]
         out[sec] = sum(1 for ln in body.splitlines() if ln.startswith("- "))
+    return out
+
+
+def _two_parties(cell: str) -> bool:
+    """True when an owner / target cell names more than one party (R11: one of each per F row).
+    Text in parentheses is a qualifier, not a second party ("keymap owner (E10-S02 / E49-T04)")."""
+    bare = re.sub(r"\([^)]*\)", "", cell)
+    return bool(re.search(r";|\+|/| and ", bare))
+
+
+def table_cell_mismatches(text: str) -> list[str]:
+    """Rows whose unescaped pipe count differs from their table header's (GFM reads an unescaped
+    pipe inside a code span as a cell separator too)."""
+    lines = text.splitlines()
+    out: list[str] = []
+    expected = 0
+    for i, ln in enumerate(lines):
+        if not ln.startswith("|"):
+            expected = 0
+            continue
+        n = len(re.findall(r"(?<!\\)\|", ln))
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        if expected == 0 and re.fullmatch(r"\|[\s:|-]+\|?", nxt):
+            expected = n
+            continue
+        if expected and n != expected:
+            out.append(f"line {i + 1}: {n} pipes vs the header's {expected}")
     return out
 
 
@@ -1224,21 +1295,37 @@ def spec_section(spec: str) -> dict[str, Any]:
         if len(r) >= 8 and r[3].strip("* ") in by_verdict:
             by_verdict[r[3].strip("* ")] += 1
     f_rows = table_rows_with_prefix(spec, r"F-\d\d")
-    f_bad = [r[0] for r in f_rows if len(r) < 8 or r[5] in ("", "—") or r[6] in ("", "—")]
+    live = [r for r in f_rows if len(r) >= 3 and not r[2].lower().startswith("withdrawn")]
+    withdrawn = len(f_rows) - len(live)
+    f_bad = [r[0] for r in live if len(r) < 8 or r[5] in ("", "—") or r[6] in ("", "—")]
+    f_dual = [r[0] for r in live if len(r) >= 8 and (_two_parties(r[5]) or _two_parties(r[6]))]
     sev: dict[str, int] = {"Blocking": 0, "Major": 0, "Minor": 0, "Info": 0}
     cls: dict[str, int] = {}
-    for r in f_rows:
-        if len(r) >= 3:
-            s = r[2].strip("* ")
-            if s in sev:
-                sev[s] += 1
-            cls[r[1]] = cls.get(r[1], 0) + 1
+    f_text: dict[str, tuple[str, str]] = {}
+    for r in live:
+        s = r[2].strip("* ")
+        if s in sev:
+            sev[s] += 1
+        cls[r[1]] = cls.get(r[1], 0) + 1
+        f_text[r[0].strip("` ")] = (s, "|".join(r))
+    # The Key's scale, asserted: an at-risk clause carries a Major finding, or every one of its
+    # findings names the interim path the merged designs give it.
+    at_risk_bad: list[str] = []
+    for r in rows:
+        if len(r) >= 8 and r[3].strip("* ") == "at risk":
+            graded = [f_text[i] for i in re.findall(r"F-\d\d", r[5]) if i in f_text]
+            if not graded:
+                at_risk_bad.append(f"{r[0].strip('` ')} (no F id)")
+            elif not any(g[0] == "Major" for g in graded) and not all(
+                "interim" in g[1] for g in graded
+            ):
+                at_risk_bad.append(r[0].strip("` "))
     a_rows = table_rows_with_prefix(spec, r"A-\d\d")
     a_bad = [
         r[0]
         for r in a_rows
         if len(r) < 2
-        or not re.search(r"`(05|14|15|26|06|E11\.json)`", r[1])
+        or not re.search(r"`(05|14|15|26|06|E11\.json)`|E09-D09", r[1])
         or not re.search(r"§|SCR-\d+|CMP-\d+|ADR", r[1])
     ]
     c_rows = table_rows_with_prefix(spec, r"C-\d\d")
@@ -1253,6 +1340,7 @@ def spec_section(spec: str) -> dict[str, Any]:
     parity_rows = table_rows_with_prefix(spec, r"PR\d\d")
     rt_rows = table_rows_with_prefix(spec, r"R-T\d")
     hand_rows = table_rows_with_prefix(spec, r"HO-\d\d")
+    t2_rows = table_rows_with_prefix(spec, r"T2-\d\d")
     blocking_gestures = sum(1 for r in gesture_rows if len(r) >= 10 and "Blocking" in r[9])
     partial_gestures = sum(
         1 for r in gesture_rows if len(r) >= 6 and r[5].lower().startswith("partial")
@@ -1271,11 +1359,22 @@ def spec_section(spec: str) -> dict[str, Any]:
             )
     if f_bad:
         problems.append("F rows without owner/target: " + ", ".join(f_bad))
+    if f_dual:
+        problems.append("F rows with two owners or targets: " + ", ".join(f_dual))
+    if at_risk_bad:
+        problems.append(
+            "at-risk clauses without a Major finding or an interim path: " + ", ".join(at_risk_bad)
+        )
+    if sev["Blocking"] == 0 and (by_verdict["non-compliant"] or blocking_gestures):
+        problems.append("a non-compliant clause or a Blocking gesture without a Blocking F row")
+    cells = table_cell_mismatches(spec)
+    if cells:
+        problems.append("table rows off their header's cell count: " + "; ".join(cells[:5]))
     if a_bad:
         problems.append("A rows without a file and a section: " + ", ".join(a_bad))
     if h_bad:
         problems.append("H rows without (heuristic): " + ", ".join(h_bad))
-    if "/home/" in spec:
+    if LOCAL_PATH.search(spec):
         problems.append("local path in the review")
     if PENPOT_HOST.search(spec):
         problems.append("a Penpot host in the review")
@@ -1284,6 +1383,8 @@ def spec_section(spec: str) -> dict[str, Any]:
         "clauses_found": len(found),
         "by_verdict": by_verdict,
         "f_rows": len(f_rows),
+        "f_live": len(live),
+        "f_withdrawn": withdrawn,
         "f_by_severity": sev,
         "f_by_class": cls,
         "a_rows": len(a_rows),
@@ -1300,6 +1401,7 @@ def spec_section(spec: str) -> dict[str, Any]:
         "parity_rows": len(parity_rows),
         "rt_tasks": len(rt_rows),
         "handoffs": len(hand_rows),
+        "t2_rows": len(t2_rows),
         "problems": problems,
     }
 
@@ -1391,6 +1493,8 @@ def build(spec_path: Path | None) -> dict[str, Any]:
     for k in (
         "clauses_found",
         "f_rows",
+        "f_live",
+        "f_withdrawn",
         "a_rows",
         "c_rows",
         "g_rows",
@@ -1405,6 +1509,7 @@ def build(spec_path: Path | None) -> dict[str, Any]:
         "parity_rows",
         "rt_tasks",
         "handoffs",
+        "t2_rows",
     ):
         if k in sp:
             counts[k] = sp[k]
@@ -1489,6 +1594,7 @@ def check_markers(spec_text: str, counts: dict[str, Any]) -> list[str]:
         "gestures_blocking",
         "motion_rows",
         "target_rows",
+        "targets_no_token",
         "sr_rows",
         "alt_t_sr_rows",
         "lint_errors",
@@ -1523,19 +1629,26 @@ def render_report(d: dict[str, Any]) -> str:
             f"{bv['not yet decidable — routed to E11-Q05']} routed"
         )
         out.append(
-            f"F rows {sp['f_rows']} (Blocking {sev['Blocking']}, Major {sev['Major']}, "
-            f"Minor {sev['Minor']}, Info {sev['Info']}); A {sp['a_rows']} C {sp['c_rows']} "
-            f"G {sp['g_rows']} Q {sp['q_rows']} H {sp['h_rows']}"
+            f"F rows {sp['f_rows']} ({sp['f_live']} live: Blocking {sev['Blocking']}, "
+            f"Major {sev['Major']}, Minor {sev['Minor']}, Info {sev['Info']}; withdrawn "
+            f"{sp['f_withdrawn']}); A {sp['a_rows']} C {sp['c_rows']} G {sp['g_rows']} "
+            f"Q {sp['q_rows']} H {sp['h_rows']}"
         )
         out.append(
             f"stops {sp['stops']}; gestures {sp['gestures']} (Blocking {sp['gestures_blocking']}, "
             f"partial {sp['gestures_partial']}); hit boxes {sp['hit_boxes']}; desync paths "
             f"{sp['desync_paths']}; parity rows {sp['parity_rows']}; R-T tasks {sp['rt_tasks']}; "
-            f"hand-offs {sp['handoffs']}"
+            f"hand-offs {sp['handoffs']}; gated-control checks {sp['t2_rows']}"
         )
-        fb = sum(1 for p in sp["problems"] if p.startswith("F rows"))
+        fb = sum(1 for p in sp["problems"] if p.startswith("F rows without"))
+        dual = sum(1 for p in sp["problems"] if p.startswith("F rows with two"))
+        risk = sum(1 for p in sp["problems"] if p.startswith("at-risk clauses"))
+        offcells = sum(1 for p in sp["problems"] if p.startswith("table rows off"))
         at = sum(1 for p in sp["problems"] if p.startswith("fabricated"))
         out.append(f"F rows without owner/target: {fb}")
+        out.append(f"F rows with two owners or targets: {dual}")
+        out.append(f"at-risk clauses without a Major finding or an interim path: {risk}")
+        out.append(f"table rows off their header's cell count: {offcells}")
         out.append(f"fabricated-AT phrases: {at}")
     out += ["", "## 2. Key map"]
     out.append(
@@ -1681,7 +1794,7 @@ def main(argv: list[str] | None = None) -> int:
                 "closing keyword beside an issue number in the draft: " + h
                 for h in closing_keywords(dt)
             ]
-            if "/home/" in dt or PENPOT_HOST.search(dt):
+            if LOCAL_PATH.search(dt) or PENPOT_HOST.search(dt):
                 errs.append("local path or Penpot host in the draft")
         d["problems"] += errs
         rc = 1 if d["problems"] else 0

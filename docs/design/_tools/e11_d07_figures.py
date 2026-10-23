@@ -87,6 +87,11 @@ def hex_rgb(h: str) -> RGB:
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
+def text_w(s: str, scale: int = 2) -> int:
+    """The width a label needs: glyph count x the 6-column advance x the scale."""
+    return 6 * scale * len(s)
+
+
 def mix(a: RGB, b: RGB, t: float) -> RGB:
     r, g, b2 = (round(a[i] * (1 - t) + b[i] * t) for i in range(3))
     return (r, g, b2)
@@ -135,7 +140,11 @@ class Canvas:
                 if (xx - x + yy - y) % pitch == 0:
                     self.put(xx, yy, c)
 
-    def text(self, x: int, y: int, s: str, c: RGB, scale: int = 2) -> int:
+    def text(self, x: int, y: int, s: str, c: RGB, scale: int = 2, max_w: int | None = None) -> int:
+        """Draw a label; with ``max_w`` a label wider than its box is a render error, not a
+        clipped PNG (the lens round 1 found labels crossing their boxes and columns)."""
+        if max_w is not None and text_w(s, scale) > max_w:
+            raise ValueError(f"label {s!r} needs {text_w(s, scale)} px, its box gives {max_w}")
         cx = x
         for ch in s.upper():
             g = FONT.get(ch, FONT["#"])
@@ -184,17 +193,30 @@ def render_overlay(d: dict[str, Any]) -> Canvas:
     )
     x0, y0, w = 16, 56, 1248
     box = (ring, 0.28)
+    right_edge = x0 + w
 
     def hit(x: int, y: int, bw: int, bh: int, label: str) -> None:
+        """A hit box with its label measured against the box: inside when it fits, else beside
+        it to the right when the canvas has room, else under it (never across the box edge)."""
         cv.rect(x, y, bw, bh, box[0], box[1])
         cv.frame(x, y, bw, bh, ring)
-        cv.text(x + 4, y + max(2, bh // 2 - 6), label, text, 2)
+        if not label:
+            return
+        tw = text_w(label, 2)
+        ly = y + max(2, bh // 2 - 6)
+        if tw <= bw - 8:
+            cv.text(x + 4, ly, label, text, 2, max_w=bw - 8)
+        elif x + bw + 6 + tw <= right_edge:
+            cv.text(x + bw + 6, ly, label, text, 2, max_w=right_edge - (x + bw + 6))
+        else:
+            lx = max(x0, x + bw - tw)
+            cv.text(lx, y + bh + 4, label, text, 2, max_w=right_edge - lx)
 
     # toolbar and status rows (24), drawing rail (24, dashed: E14 in flight)
     cv.rect(x0, y0, w, 24, raised)
     hit(x0, y0, w, 24, "TOOLBAR ROW 24 (CMP-221, ROVING)   VIEW SWITCH CHART | TABLE 24")
     cv.rect(x0, y0 + 24, w, 24, raised)
-    hit(x0, y0 + 24, 420, 24, "STATUS CHIPS: 20 PX PILL + 2 + 2 = 24")
+    hit(x0, y0 + 24, 460, 24, "STATUS CHIPS: 20 PX PILL + 2 + 2 = 24")
     rail_x, rail_w = x0, 24
     pane_y = y0 + 48
     pane1_h, split_h, pane2_h, strip_h = 320, 24, 160, 24
@@ -205,15 +227,15 @@ def render_overlay(d: dict[str, Any]) -> Canvas:
     plot_x = x0 + rail_w
     plot_w = w - rail_w - gutter_w
     # pane 1: legend rows, plot, price gutter, lock badge
-    hit(plot_x + 8, pane_y + 8, 260, 24, "LEGEND ROW 0 (PANE LABEL) 24")
-    hit(plot_x + 8, pane_y + 36, 260, 24, "LEGEND ROW 1 + EYE TOGGLE 24 X 24")
+    hit(plot_x + 8, pane_y + 8, 410, 24, "LEGEND ROW 0 (PANE LABEL) 24")
+    hit(plot_x + 8, pane_y + 36, 410, 24, "LEGEND ROW 1 + EYE TOGGLE 24 X 24")
     cv.text(
         plot_x + 300, pane_y + 120, "PLOT: ONE ROVING STOP (THE SURROGATE IS THE PLOT)", text3, 2
     )
     gx = plot_x + plot_w
     hit(gx, pane_y, gutter_w, pane1_h, "48")
     cv.text(gx - 420, pane_y + pane1_h - 60, "PRICE GUTTER >= 48 X PANE HEIGHT", text3, 2)
-    hit(gx - 120, pane_y + pane1_h - 30, 116, 24, "LOCK BADGE 24")
+    hit(gx - 172, pane_y + pane1_h - 30, 168, 24, "LOCK BADGE 24")
     # splitter: hairline + 24 px band + 24 x 4 grip
     sy = pane_y + pane1_h
     hit(plot_x, sy, plot_w + gutter_w, split_h, "SPLITTER HIT BAND 24 (12 + 12)")
@@ -222,13 +244,13 @@ def render_overlay(d: dict[str, Any]) -> Canvas:
     cv.text(plot_x + plot_w // 2 + 20, sy + 6, "GRIP 24 X 4", text3, 2)
     # pane 2 and the collapsed stub
     p2 = sy + split_h
-    hit(plot_x + 8, p2 + 8, 260, 24, "LEGEND ROW 0 (VOLUME) 24")
+    hit(plot_x + 8, p2 + 8, 410, 24, "LEGEND ROW 0 (VOLUME) 24")
     hit(gx, p2, gutter_w, pane2_h, "48")
-    hit(plot_x + 300, p2 + 100, 420, 24, "COLLAPSED STUB 24 + RESTORE BUTTON 24 X 24")
-    # time strip and cluster
+    hit(plot_x + 300, p2 + 100, 520, 24, "COLLAPSED STUB 24 + RESTORE BUTTON 24 X 24")
+    # time strip and cluster (three 24 px segments; the label lands under the box)
     ty = p2 + pane2_h
     hit(plot_x, ty, plot_w, strip_h, "TIME STRIP (DRAG ZONE) 24")
-    hit(plot_x + plot_w - 3 * 24 - 8, ty, 72, 24, "A|F|> 24")
+    hit(plot_x + plot_w - 3 * 24 - 8, ty, 72, 24, "CLUSTER 3 X 24")
     # table surrogates row
     tb = ty + strip_h + 16
     cv.text(
@@ -355,9 +377,12 @@ def render_sheet(d: dict[str, Any]) -> Canvas:
         cv.hatch(x + 200, y + 190, 60, 24, txt, 2)
         cv.rect(x + 200, y + 230, 60, 24, tok("color.surface.selected"))
         cv.frame(x + 198, y + 228, 64, 28, tok("color.focus.ring"), 2)
-        cv.text(x + 8, y + 282, "CROSSHAIR / MAJOR / MINOR", txt, 2)
-        cv.text(x + 8, y + 300, "D10 COLUMN  STALE X0.85  IMB  HATCH  SEL+RING", txt, 2)
-        cv.text(x + 8, y + 318, "T3 AXIS / HIDDEN LEGEND", txt, 2)
+        # captions measured against the column (col_w - 16): a wider label is a render error
+        cap_w = col_w - 16
+        cv.text(x + 8, y + 282, "XHAIR / MAJOR / MINOR", txt, 2, max_w=cap_w)
+        cv.text(x + 8, y + 300, "D10 COL / STALE X0.85", txt, 2, max_w=cap_w)
+        cv.text(x + 8, y + 318, "IMB / HATCH / SEL+RING", txt, 2, max_w=cap_w)
+        cv.text(x + 8, y + 336, "T3 AXIS / HIDDEN LEGEND", txt, 2, max_w=cap_w)
         if th != "greyscale":
             rows = (
                 ("C5 RING/CANVAS", "C5"),
@@ -372,21 +397,22 @@ def render_sheet(d: dict[str, Any]) -> Canvas:
                 ("C18 T3/CANVAS", "C18"),
                 ("C19 TEXT/SEL", "C19"),
             )
-            yy = y + 350
+            yy = y + 368
             for lab, cid in rows:
                 v = comp[cid][th]
-                cv.text(x + 8, yy, f"{lab}: {v:.2f}" if v is not None else f"{lab}: N/A", txt, 2)
+                line = f"{lab}: {v:.2f}" if v is not None else f"{lab}: N/A"
+                cv.text(x + 8, yy, line, txt, 2, max_w=cap_w)
                 yy += 18
-            cv.text(x + 8, yy + 6, "BARS 3.0 NT 4.5 T 7.0 HC", txt, 2)
+            cv.text(x + 8, yy + 6, "BARS NT 3.0 T 4.5 HC 7", txt, 2, max_w=cap_w)
         else:
-            yy = y + 350
-            cv.text(x + 8, yy, "LUMA, FLOORED:", txt, 2)
+            yy = y + 368
+            cv.text(x + 8, yy, "LUMA, FLOORED:", txt, 2, max_w=cap_w)
             yy += 18
-            cv.text(x + 8, yy, "0.299R+0.587G+0.114B", txt, 2)
+            cv.text(x + 8, yy, "0.299R+0.587G+0.114B", txt, 2, max_w=cap_w)
             yy += 18
             for name in tokens:
                 lv = d["greyscale"].get(name)
-                cv.text(x + 8, yy, f"{name.split('.')[-1][:10].upper()} {lv}", txt, 2)
+                cv.text(x + 8, yy, f"{name.split('.')[-1][:10].upper()} {lv}", txt, 2, max_w=cap_w)
                 yy += 18
     foot = hex_rgb(th_hex["dark"]["color.text.tertiary"])
     cv.text(
