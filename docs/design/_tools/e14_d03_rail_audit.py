@@ -14,8 +14,9 @@ its source so a reviewer can re-grep it:
    primitive tokens (button, glyph, padding, badge, inset bar, separator block, focus ring).
 3. The hotkey lint: E14-D02's ``lint_report`` reproduced (SCR-037's own set, scheme (a) gated at 0,
    scheme (b) reported) plus the E11-D07 screen-reader fixture (``e11_d07_sr_reserved_keys.json``,
-   PR 4228, a contract in flight: passed with ``--sr-fixture`` or found beside this tool once it
-   merges) for the six interim chords and SCR-037's colliding set; the spec's stamp rule.
+   on ``main`` since PR 4228 merged: found beside this tool, or passed with ``--sr-fixture`` from
+   a checkout that predates the merge) for the six interim chords and SCR-037's colliding set; the
+   spec's stamp rule.
 4. The measured matrix: every fg / bg pair the rail and its menus render x dark / light /
    high-contrast, resolved as ``verify_tokens.py`` does and measured with
    ``contrast_check.contrast_ratio()`` (imported, never re-implemented); the bar per role; the
@@ -115,7 +116,7 @@ hide_all|eye-off|controls|Hide all drawings|rail
 delete_all|trash|controls (apart)|Delete all drawings…|rail
 overflow|more-horizontal|menus|More tools|rail
 draw|pencil|menus|Draw|rail
-armed_item|check|menus|armed|rail
+armed_item|check|menus|— (decorative; the second line reads 'armed')|rail
 """
 # the glyph in grid words (16 px canvas, 1.5 px stroke): IconName | description
 GLYPH_TXT = """
@@ -163,6 +164,7 @@ D02_TABLE3_CONTROLS: tuple[str, ...] = ("Magnet: weak", "Keep tool active", "Loc
 D02_TABLE3_CONTROLS += ("Hide all drawings", "Delete all drawings…", "More tools")
 CONTROL_GLYPHS = {"magnet": 3, "keep_active": 1, "lock_all": 2, "hide_all": 2, "delete_all": 1}
 SECTION_HEADINGS = (
+    "Cursor",
     "Lines",
     "Shapes",
     "Fibonacci",
@@ -450,7 +452,7 @@ def sr_lint(fixture: Path | None) -> dict[str, Any]:
     if fixture is None or not fixture.exists():
         return {
             "fixture": None,
-            "note": "fixture absent at this head (PR 4228 in flight): pass --sr-fixture",
+            "note": "fixture absent beside the tool (on main since PR 4228): pass --sr-fixture",
         }
     data = json.loads(fixture.read_text(encoding="utf-8"))
     rows: list[dict[str, Any]] = list(data["keys"])
