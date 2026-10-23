@@ -1,9 +1,10 @@
 # E35-D01 — UX research: how a trader decides to trust an automated rule with real orders
 
 - **Ticket:** E35-D01 (issue #860) · **Status:** text first — **owner approval pending** (Agent-delivery adaptations,
-  owner decision 2026-09-25); Penpot boards PENDING (boards PR) · **Method:** heuristic evaluation of the locked plan
-  texts and the repository's competitor research; **no sessions were run** · **Protocol and owner walkthrough
-  checklist:** `e35-d01-session-protocol.md` (this folder), which owns the session script, probe order and scoring.
+  owner decision 2026-09-25); Penpot boards drawn on page `E35-D01` · id `504164f9-8cb1-8083-8008-d45b908e0cbb` and
+  exported in this PR · **Method:** heuristic evaluation of the locked plan texts and the repository's competitor
+  research; **no sessions were run** · **Protocol and owner walkthrough checklist:** `e35-d01-session-protocol.md` (this
+  folder), which owns the session script, probe order and scoring.
 - **Scope:** SCR-080–089, weighted to SCR-084 simulation, SCR-085 arming and SCR-086 conflicts, with SCR-058, 059,
   072, 152 and 153; CMP-140–159, 011, 044, 227, 229 and 233–235. Feeds E35-D02, D03, D04 (a11y), D05 (copy deck),
   E35-S08 (analytics) and the E36/E37 editors. **Out of scope (ticket):** visual design, editor research, quantitative
@@ -54,7 +55,7 @@ the owner run · **open** = needs sessions or an owner decision.
 | AC1 and the validity control: a pre-agreed correct answer per probe, pass/fail per participant, an implication each | §2–§5 (cited answers, predicted misreadings, implications); protocol §5 scoring    | answers done; implications heuristic-only; scores open   |
 | AC2: how many restated the native-vs-emulated distinction; revised copy if most did not                             | §3 events and candidates A and B; protocol Probe 2, first and cold                 | heuristic-only; the count is open                        |
 | AC3 (edge): a contradiction recorded on #860 with the design decision taken                                         | §1 and §1a for the plan's contradictions; protocol §5 for session findings (OQ-14) | done (plan texts); open (sessions)                       |
-| Decision journey for arming, in `17-ux-diagrams.md`                                                                 | §6; `17` §1.5; Board 01                                                            | done in `17`; heuristic-only; board not drawn            |
+| Decision journey for arming, in `17-ux-diagrams.md`                                                                 | §6; `17` §1.5; Board 01                                                            | done in `17`; heuristic-only; board drawn                |
 | Terminology check against TradingView, DeepCharts and Bybit                                                         | §7, from the repository's research only                                            | heuristic-only                                           |
 | Copy annex for D02/D03, shared with E36/E37                                                                         | §9b (CA-1–CA-38, CA-19b); OQ-15                                                    | done (proposals; binding copy pending the owner)         |
 | Analytics events that reveal comprehension failures (E35-S08)                                                       | §9c                                                                                | done (proposals)                                         |
@@ -65,10 +66,21 @@ the owner run · **open** = needs sessions or an owner decision.
 ## Research boards (Penpot)
 
 Per `docs/design/README.md` ("Approval rule") research ships boards and PNG exports, journeys drawn as frames.
-**PENDING (text first):** drawn on page `E35-D01` with semantic tokens from `packages/ui/tokens`; the boards PR (which
-completes #860) exports them to `docs/design/E35/img/E35-D01-NN-<board>.png`, cited by page name and id:
-`01-arming-journey` (§6) · `02-probe-stimuli` (the protocol's ST1–ST7) · `03-copy-annex` (§9b) · `04-terms-matrix`
-(§7) · `05-findings-decision-map` (§8, §9a) · `06-source-conflicts` (§1; SC-14 settled by #3920).
+The six boards are drawn on page `E35-D01` · id `504164f9-8cb1-8083-8008-d45b908e0cbb` with semantic tokens from
+`packages/ui/tokens` and exported in this PR to `docs/design/E35/img/E35-D01-NN-<board>.png`, cited by page name and id:
+
+- `E35-D01-01-arming-journey` — the arming decision journey, steps 1–9 and 5a (§6; `17` §1.5):
+  ![E35-D01-01-arming-journey](../E35/img/E35-D01-01-arming-journey.png)
+- `E35-D01-02-probe-stimuli` — the probe stimuli, the protocol's ST1–ST7:
+  ![E35-D01-02-probe-stimuli](../E35/img/E35-D01-02-probe-stimuli.png)
+- `E35-D01-03-copy-annex` — the copy annex, CA-1–CA-38 and CA-19b (§9b):
+  ![E35-D01-03-copy-annex](../E35/img/E35-D01-03-copy-annex.png)
+- `E35-D01-04-terms-matrix` — the terminology check, seven terms with the exact label for each (§7):
+  ![E35-D01-04-terms-matrix](../E35/img/E35-D01-04-terms-matrix.png)
+- `E35-D01-05-findings-decision-map` — the findings register F1–F32 (§8) and the decision map for E35-D02 and D03 (§9a):
+  ![E35-D01-05-findings-decision-map](../E35/img/E35-D01-05-findings-decision-map.png)
+- `E35-D01-06-source-conflicts` — the source conflicts SC-1 to SC-23 (§1; SC-14 settled by #3920):
+  ![E35-D01-06-source-conflicts](../E35/img/E35-D01-06-source-conflicts.png)
 
 ## Method note (Agent-delivery adaptation, owner decision 2026-09-25)
 
