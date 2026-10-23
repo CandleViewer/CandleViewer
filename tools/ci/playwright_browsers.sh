@@ -28,6 +28,9 @@ fail() {
 
 [[ "$attempt_timeout" =~ ^[0-9]+$ ]] || fail "PW_INSTALL_TIMEOUT must be whole seconds"
 [ "${#backoff[@]}" -gt 0 ] || fail "PW_BACKOFF is empty"
+for wait_s in "${backoff[@]}"; do
+  [[ "$wait_s" =~ ^[0-9]+$ ]] || fail "PW_BACKOFF must be whole seconds"
+done
 
 current_version() {
   local out
@@ -62,7 +65,11 @@ case "${1:-}" in
       fi
       echo "playwright ${args[0]} failed (attempt $i of 5)" >&2
       if [ "$i" -lt 5 ]; then
-        sleep "${backoff[$((i - 1 < ${#backoff[@]} ? i - 1 : ${#backoff[@]} - 1))]}"
+        idx=$((i - 1))
+        if [ "$idx" -ge "${#backoff[@]}" ]; then
+          idx=$((${#backoff[@]} - 1))
+        fi
+        sleep "${backoff[$idx]}"
       fi
     done
     if [ "$ok" != 1 ]; then
