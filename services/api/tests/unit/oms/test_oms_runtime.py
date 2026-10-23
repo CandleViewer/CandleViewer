@@ -1,8 +1,9 @@
 """#913 slice 3E (E29-T04): the OMS runtime (`oms_wiring.OmsRuntime`, 20 Sec.6.2) on fakes. Its
 composition for the process's environment, the sink it takes, builds or refuses (rulings Q4 to Q6),
 the interim announcements, closing what a failed composition built, and one facade per process;
-its lifecycle: the startup's waits, `run`, the stop's drain, and the state `/readyz` gives. No I/O:
-in-memory stores, a fake venue, and a clock that moves only when the runtime sleeps on it."""
+its lifecycle: the startup's waits, `run`, the stop's drain, and the state `/readyz` gives; and
+the startup sweep after a crash. No I/O: in-memory stores, a fake venue, and a clock that moves only
+when the runtime sleeps on it."""
 
 from __future__ import annotations
 
@@ -11,10 +12,12 @@ import inspect
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, cast
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
@@ -24,23 +27,44 @@ from structlog.testing import capture_logs
 
 from candleviewer import oms_wiring
 from candleviewer.api.health import make_health_router
-from candleviewer.domain.primitives import Environment
+from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.fakes import FakeTradingPort
-from candleviewer.exchange.base.models import RateLane
+from candleviewer.exchange.base.models import AccountRef, RateLane
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.commands import OmsCommandPort
-from candleviewer.oms.errors import OmsNotReady
-from candleviewer.oms.fakes import FakeClockHealth, InMemoryOrderStore
-from candleviewer.oms_wiring import OmsRuntime, OmsStores, build_oms_runtime
+from candleviewer.oms.errors import AccountScopeDenied, OmsNotReady, OrderEntryRefused
+from candleviewer.oms.fakes import FakeClockHealth, InMemoryOrderStore, InMemorySubmissionStore
+from candleviewer.oms.order_machine import OrderMachines
+from candleviewer.oms.repository import RecordedStopRepository
+from candleviewer.oms_wiring import (
+    HYDRATE_CONCURRENCY,
+    SWEEP_MAX_FAILURES,
+    SWEEP_STATEMENT_TIMEOUT_MS,
+    CommandAccounts,
+    OmsRuntime,
+    OmsStores,
+    TradingAccountsBinding,
+    build_oms_runtime,
+    pg_stores,
+)
 from candleviewer.settings import Environment as Env
 from candleviewer.settings import Settings
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.persistence import ChainTripLatch, DegradedLatchError, MachineKey
 from candleviewer.statechart.plugins import InMemoryMachineEventSink
+from candleviewer.storage.errors import StorageQueryFailed
+from candleviewer.storage.repositories.orders import NewOrder
+from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
+from candleviewer.storage.repositories.recorded_stops import NewRecordedStop, RecordedStopRow
 from candleviewer.storage.repositories.trade_groups import TradeGroupStore
-from candleviewer.storage.repositories.trading_accounts import InMemoryTradingAccountReads
+from candleviewer.storage.repositories.trading_accounts import (
+    InMemoryTradingAccountReads,
+    TradingAccountRow,
+)
 from tests._signing import fake_capability
+from tests.unit.oms import command_rig as cr
+from tests.unit.oms import order_rig
 from tests.unit.oms.order_rig import ACCOUNT, GATES, Pager, order_of
 from tests.unit.oms.submit_rig import REGISTRY, Profiles, ReadOnly
 
@@ -167,7 +191,7 @@ class World:
         return OmsStores(
             orders=store, executions=store.executions, submissions=store.submissions,
             anchors=store.anchors, stops=store.stops, groups=cast(TradeGroupStore, None),
-            accounts=InMemoryTradingAccountReads(*self.accounts),
+            accounts=InMemoryTradingAccountReads(*self.accounts), sweep=store,
             sink=lambda: Sink(self.log, self.sink_fails), release=release,
         )  # fmt: skip
 
@@ -565,3 +589,472 @@ def test_readyz_gives_the_runtimes_state_alone_while_it_runs(
         "ok" if state in (None, "ok") else "degraded",
         checks,
     )
+
+
+# --- the startup sweep (20 Sec.6.2 steps 2 to 5) --------------------------------------------------
+
+KEY = UUID(int=0xBEEF)
+UNSENT, SENDING = cr.new_order(seq=1), cr.new_order(seq=2)
+LIVE_UNSENT = cr.new_order(cr.LIVE_ACCOUNT, "live", seq=3)
+DEMO_TWO = AccountId(UUID(int=0xD2))
+
+
+def _attach_rows(order: NewOrder, first: int = 11) -> list[NewRecordedStop]:
+    """The entry's attach rows as its first persist records them: its stop-loss and take-profit,
+    with ids from `first` on."""
+    common: dict[str, Any] = {
+        "exchange_account_id": order.exchange_account_id, "symbol": order.symbol,
+        "position_idx": 0, "position_side": "Buy", "source": "entry_attach",
+        "order_id": order.id, "tpsl_mode": "Full", "size": None, "actor_user_id": None,
+    }  # fmt: skip
+    return [
+        NewRecordedStop(
+            id=UUID(int=first), kind="stop_loss", trigger_price=cr.STOP,
+            audit_record_id=UUID(int=first + 1), **common,
+        ),
+        NewRecordedStop(
+            id=UUID(int=first + 2), kind="take_profit", trigger_price=Decimal(64000),
+            audit_record_id=UUID(int=first + 3), **common,
+        ),
+    ]  # fmt: skip
+
+
+async def _written(_rows: tuple[RecordedStopRow, ...]) -> None:
+    return None
+
+
+async def crashed(world: World, *, deleted: bool = False, live: bool = False) -> None:
+    """A process that went down leaving two entries of the demo account, as a crash leaves them:
+    `UNSENT` recorded and never sent, its attach rows pending, and `SENDING`, its create at the
+    venue's door; its facade stopped, its attempts gone with its memory. With `live`, a live
+    account's entry, `LIVE_UNSENT`, is recorded and unsent too, its attach rows pending."""
+    store, saved = world.store, b01._ATTEMPTS
+    InMemorySubmissionStore(store).seed_account(cr.ref())  # the account's environment (C-2.11)
+    world.accounts.append(TradingAccountRow(cr.ACCOUNT, "demo", cr.UIDS["demo"], deleted, KEY))
+    b01._ATTEMPTS = OrderedDict()
+    rig = order_rig.build_rig(store)
+    rig.commands.on_place = order_rig.gated({"ok": True})[1]  # the process goes down first
+    try:
+        for order in (UNSENT, SENDING):
+            await rig.facade.start(order, environment="demo", gates=order_rig.GATES)
+        stops = RecordedStopRepository(store.stops)
+        await stops.record(_attach_rows(UNSENT), write_ahead=_written)
+        if live:
+            InMemorySubmissionStore(store).seed_account(cr.ref(cr.LIVE_ACCOUNT, "live"))
+            await rig.facade.start(LIVE_UNSENT, environment="live", gates=order_rig.GATES)
+            await stops.record(_attach_rows(LIVE_UNSENT, 21), write_ahead=_written)
+        await rig.facade.command(cr.ACCOUNT, SENDING.id, "SEND", actor="user")
+    finally:
+        await rig.facade.stop()
+        b01._ATTEMPTS = saved
+
+
+def recording(monkeypatch: pytest.MonkeyPatch, calls: list[str], target: Any, name: str) -> None:
+    """`target.name` records its name in `calls`, then answers as it did."""
+    real = getattr(target, name)
+
+    async def recorded(*args: Any, **kwargs: Any) -> Any:
+        calls.append(name)
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(target, name, recorded)
+
+
+async def test_the_sweep_voids_hydrates_abandons_the_unsent_resumes_the_sent_then_is_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Steps 2 to 5 after a crash, once the flags are read: the account's orphaned attach rows are
+    voided and audited before anything hydrates; each unfinished order is hydrated; the one
+    recorded and never sent is abandoned (a KILL from `validated`, `startup_unsent`), and the
+    create left at the venue's door resumes under its own id, looked up first; `ready` comes
+    last."""
+    world, calls = World(), list[str]()
+    await crashed(world)
+    store = world.store
+    recording(monkeypatch, calls, store.stops, "void_orphans")
+    recording(monkeypatch, calls, store, "list_unfinished")
+    recording(monkeypatch, calls, store, "list_for_order")
+    async with started(world.runtime()) as runtime:
+        killed_when_ready: list[str | None] = []
+        ready = runtime._ready.set
+
+        def readied() -> None:
+            killed_when_ready.append(store._orders[UNSENT.id].lifecycle_state)
+            ready()
+
+        monkeypatch.setattr(runtime._ready, "set", readied)
+        waiter = asyncio.create_task(runtime.wait_ready())
+        await settle()
+        assert (calls, waiter.done(), runtime.state) == ([], False, "starting")  # flags unread
+        for flag in world.flags:
+            flag.read()
+        await until(waiter.done)
+        await waiter
+        assert runtime.state == "ok" and killed_when_ready == ["killed"]
+        assert calls.index("void_orphans") < calls.index("list_unfinished")
+        assert calls.index("list_unfinished") < calls.index("list_for_order")
+        assert [row.status for row in store._stops.values()] == ["void", "void"]
+        swept = [("sl.modified", "unplaced_entry_swept"), ("tp.modified", "unplaced_entry_swept")]
+        assert set(swept) <= set(world.writer.actions)
+        assert ("orders.cancel", "kill_no_cancel_unsubmitted") in world.writer.actions
+        await until(lambda: store._orders[SENDING.id].lifecycle_state != "submitting")
+        assert store._orders[SENDING.id].lifecycle_state == "submitted"
+        [port] = world.venue.ports
+        methods = [call.method for call in port.calls]
+        sent = methods.index("place_order")
+        assert methods.count("place_order") == 1
+        assert sent > 0 and set(methods[:sent]) <= {"open_orders", "order_history"}
+        [create] = [call.request for call in port.calls if call.method == "place_order"]
+        assert getattr(create, "order_link_id", None) == SENDING.order_link_id
+
+
+async def test_a_failing_store_leaves_it_not_ready_and_the_sweep_retries_with_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = World()
+    InMemorySubmissionStore(world.store).seed_account(cr.ref())
+    failures = [StorageQueryFailed("down") for _ in range(2 * SWEEP_MAX_FAILURES)]
+    real = world.store.stops.void_orphans
+
+    async def flaky(*args: Any, **kwargs: Any) -> Any:
+        if failures:
+            raise failures.pop()
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(world.store.stops, "void_orphans", flaky)
+    for flag in world.flags:
+        flag.read()
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            await until(lambda: runtime.state != "starting")
+            assert runtime.state == "ok"
+    assert world.clock.slept[:4] == [1.0, 2.0, 4.0, 8.0]  # doubled from the first wait
+    assert world.clock.slept[-1] == 30.0  # up to the ceiling, retried past `SWEEP_MAX_FAILURES`
+    failed = [e["error"] for e in logs if e["event"] == "oms_startup_sweep_failed"]
+    assert failed == ["StorageQueryFailed"] * len(world.clock.slept) and not world.pager.calls
+
+
+async def test_past_max_machines_the_sweep_pages_and_refuses_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """20 Sec.6.2 step 3: more unfinished orders than the facade holds: paged, nothing hydrated
+    or abandoned, and `degraded`, never ready."""
+    world, calls = World(), list[str]()
+    await crashed(world)
+    recording(monkeypatch, calls, world.store, "list_for_order")
+    for flag in world.flags:
+        flag.read()
+    async with started(world.runtime(max_machines=1)) as runtime:
+        await until(lambda: runtime.state != "starting")
+        assert runtime.state == "degraded" and calls == []
+    assert world.store._orders[UNSENT.id].lifecycle_state == "validated"
+    assert world.pager.calls == ["oms_startup_overflow: more than 1 unfinished orders"]
+
+
+async def test_a_resumed_create_on_a_deleted_account_lands_unknown_and_pages() -> None:
+    """CR-S3C1B-02, SEC-S3C1C-01: SR-E27-07 deletes an account with orders left unfinished; its
+    create, resumed at startup, meets the refusal in the command port: a page, nothing sent, and
+    B1 lands it in `unknown` for reconciliation. The unsent one is abandoned all the same (a KILL
+    from `validated` reads no account), and the sweep gets ready."""
+    world = World()
+    await crashed(world, deleted=True)
+    for flag in world.flags:
+        flag.read()
+    async with started(world.runtime()) as runtime:
+        await until(lambda: runtime.state != "starting")
+        orders = world.store._orders
+        await until(lambda: orders[SENDING.id].lifecycle_state != "submitting")
+        assert (runtime.state, orders[SENDING.id].lifecycle_state) == ("ok", "unknown")
+        assert orders[UNSENT.id].lifecycle_state == "killed"
+        assert world.venue.ports[0].calls == []
+    assert f"oms_order_account_refused: account {cr.ACCOUNT}" in world.pager.calls
+
+
+async def test_a_stop_attach_on_a_deleted_account_ends_sl_missing_and_pages() -> None:
+    """SEC-S3C1C-01: a partly filled entry whose stop attach was in flight when its process went
+    down, its account deleted since with its keys (SR-E27-07): the attach the startup resumes
+    meets the refusal, a page, and B1 ends the stop `sl_missing`; the sweep gets ready."""
+    world, account = World(), order_rig.ACCOUNT
+    ref = AccountRef(account_id=AccountId(account), uid="1", environment="demo", key_ref="k")
+    InMemorySubmissionStore(world.store).seed_account(ref)
+    world.accounts.append(TradingAccountRow(account, "demo", "1", True, KEY))
+    saved, b01._ATTEMPTS = b01._ATTEMPTS, OrderedDict()
+    rig = order_rig.build_rig(world.store)
+    try:
+        order = await rig.submitted()
+        rig.commands.on_attach = order_rig.gated(order_rig.READ_BACK)[1]  # in flight at the crash
+        await rig.facade.push(account, order.id, "EXEC", order_rig.fill_of(order, "e1", "0.5"))
+        await rig.quiet()
+        assert rig.facade.state(order.id) == ("partially_filled", "sl_pending")
+    finally:
+        await rig.facade.stop()
+        b01._ATTEMPTS = saved
+    for flag in world.flags:
+        flag.read()
+    async with started(world.runtime()) as runtime:
+        machines = runtime._composed().machines
+        await until(lambda: runtime.state != "starting")
+        await until(lambda: (machines.state(order.id) or ("", ""))[1] != "sl_pending")
+        assert runtime.state == "ok"
+        assert machines.state(order.id) == ("partially_filled", "sl_missing")
+    assert f"oms_order_account_refused: account {account}" in world.pager.calls
+
+
+async def test_an_account_refusal_that_reaches_the_sweep_skips_its_order_never_stops_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-S3C1C-01: counted and skipped as a refused history is, never raised out of the sweep:
+    the other order is still abandoned and `ready` set."""
+    world = World()
+    await crashed(world)
+    hydrate = OrderMachines.hydrate
+
+    async def refusing(self: OrderMachines, account_id: UUID, order_id: UUID, **kw: Any) -> str:
+        if order_id == SENDING.id:
+            raise AccountScopeDenied
+        return await hydrate(self, account_id, order_id, **kw)
+
+    monkeypatch.setattr(OrderMachines, "hydrate", refusing)
+    for flag in world.flags:
+        flag.read()
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            await until(lambda: runtime.state != "starting")
+            assert runtime.state == "ok"
+            assert world.store._orders[UNSENT.id].lifecycle_state == "killed"
+    [skipped] = [e for e in logs if e["event"] == "oms_startup_order_skipped"]
+    assert (skipped["order_id"], skipped["reason"]) == (str(SENDING.id), "AccountScopeDenied")
+    [swept] = [e for e in logs if e["event"] == "oms_startup_swept"]
+    assert (swept["hydrated"], swept["skipped"], swept["abandoned"]) == (1, 1, 1)
+
+
+@pytest.mark.parametrize(
+    ("deleted", "key", "refused"),
+    [(True, KEY, AccountScopeDenied), (False, None, OrderEntryRefused), (False, KEY, None)],
+)
+async def test_the_command_ports_account_read_pages_a_refusal_and_passes_it_on(
+    deleted: bool, key: UUID | None, refused: type[Exception] | None
+) -> None:
+    row = TradingAccountRow(cr.ACCOUNT, "demo", cr.UIDS["demo"], deleted, key)
+    binding = TradingAccountsBinding(InMemoryTradingAccountReads(row), environment="demo")
+    pager = Pager()
+    accounts = CommandAccounts(binding, pager)
+    if refused is None:
+        assert (await accounts.trading_account(cr.ACCOUNT)).key_ref == str(KEY)
+        assert pager.calls == []
+    else:
+        with pytest.raises(refused):
+            await accounts.trading_account(cr.ACCOUNT)
+        assert pager.calls == [f"oms_order_account_refused: account {cr.ACCOUNT}"]
+
+
+async def test_the_sweeps_reads_have_their_own_statement_cap() -> None:
+    """CR-S3C1C-01: the order store's 2 s cap would fail every retry on a large history."""
+    stores = pg_stores(Settings(), Metrics("demo"))
+    try:
+        assert isinstance(stores.sweep, SqlAlchemyOrderStore)
+        assert isinstance(stores.orders, SqlAlchemyOrderStore)
+        assert (stores.sweep._timeout, stores.orders._timeout) == (
+            str(SWEEP_STATEMENT_TIMEOUT_MS),
+            "2000",
+        )
+    finally:
+        await stores.release()
+
+
+async def test_the_sweep_leaves_another_environments_stops_pending_and_names_each_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-S3E3-01, Q20, C-2.11, C-2.6: a live account's entry, recorded and never sent as far as
+    this process knows, may still be sending from the live one, so its stops stay `pending`. A demo
+    sweep calls `void_orphans` once for each demo account and for no other scope, never for
+    `EVERY_ACCOUNT`."""
+    world, scopes = World(), list[Any]()
+    await crashed(world, live=True)
+    InMemorySubmissionStore(world.store).seed_account(cr.ref(DEMO_TWO, "demo"))
+    real = world.store.stops.void_orphans
+
+    async def named(scope: Any, **kwargs: Any) -> Any:
+        scopes.append(scope)
+        return await real(scope, **kwargs)
+
+    monkeypatch.setattr(world.store.stops, "void_orphans", named)
+    for flag in world.flags:
+        flag.read()
+    async with started(world.runtime()) as runtime:
+        await until(lambda: runtime.state != "starting")
+        assert runtime.state == "ok"
+    assert sorted(scopes, key=str) == sorted([cr.ACCOUNT, DEMO_TWO], key=str)
+    stops = world.store._stops.values()
+    voided = {s.exchange_account_id for s in stops if s.status == "void"}
+    pending = {s.exchange_account_id for s in stops if s.status == "pending"}
+    assert (voided, pending) == ({cr.ACCOUNT}, {cr.LIVE_ACCOUNT})
+
+
+async def test_an_error_no_retry_can_outlast_is_met_five_times_then_the_runtime_ends_degraded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-S3E3-02: an order whose hydration raises an error no refusal names (a `ValueError`) leaves
+    the `TaskGroup`'s `ExceptionGroup`, whose causes are logged, not its wrapper alone. It is met
+    `SWEEP_MAX_FAILURES` times with the backoff, then given up on and paged: `degraded`, nothing
+    abandoned (step 4 never ran), no order skipped on an error no refusal names."""
+    world = World()
+    await crashed(world)
+
+    async def broken(self: OrderMachines, account_id: UUID, order_id: UUID, **kw: Any) -> str:
+        raise ValueError("an order the facade cannot read")
+
+    monkeypatch.setattr(OrderMachines, "hydrate", broken)
+    for flag in world.flags:
+        flag.read()
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            await until(lambda: runtime.state == "degraded")
+    failed = [(e["error"], e["causes"]) for e in logs if e["event"] == "oms_startup_sweep_failed"]
+    assert failed == [("ExceptionGroup", ["ValueError"])] * SWEEP_MAX_FAILURES
+    assert world.clock.slept == [1.0, 2.0, 4.0, 8.0]  # no wait after the last attempt
+    assert world.pager.calls == ["oms_startup_sweep_gave_up: ValueError"]
+    assert world.store._orders[UNSENT.id].lifecycle_state == "validated"
+
+
+async def test_a_stop_that_meets_a_failing_hydration_ends_the_startup_never_retries_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stop's cancel that meets a hydration failing (here, as it is cancelled) leaves the
+    `TaskGroup` as an `ExceptionGroup`, not a `CancelledError`: the startup task ends there,
+    cancelled and logged, with no retry over the parts the stop closes. A startup task the stop
+    did not end (the regression) is let go once the runtime has stopped, so the test fails on it
+    instead of hanging in its teardown."""
+    world, flying, release = World(), asyncio.Event(), asyncio.Event()
+    await crashed(world)
+
+    async def failing(self: OrderMachines, account_id: UUID, order_id: UUID, **kw: Any) -> str:
+        flying.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            raise StorageQueryFailed("the connection went with the stop") from None
+        return "submitted"
+
+    monkeypatch.setattr(OrderMachines, "hydrate", failing)
+    for flag in world.flags:
+        flag.read()
+    try:
+        with capture_logs() as logs:
+            async with started(world.runtime()) as runtime:
+                startup = runtime._startup
+                await until(flying.is_set)
+    finally:
+        release.set()  # a regression's retried hydrations return, so nothing hangs
+    assert startup is not None and startup.cancelled() and world.clock.slept == []
+    events = [e["event"] for e in logs if e["event"].startswith("oms_startup_s")]
+    assert events == ["oms_startup_stopped"]
+
+
+@pytest.mark.parametrize("read", ["environment_accounts", "void_orphans", "list_unfinished"])
+async def test_a_sweep_read_that_stalls_times_out_is_logged_and_retried(
+    read: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-S3E3-03: each of the sweep's store calls has its statement cap plus a slack as its own
+    client-side bound, so a stalled connection is a logged, retried `TimeoutError`, not an OMS left
+    `starting` with no line in the log."""
+    monkeypatch.setattr(oms_wiring, "SWEEP_STATEMENT_TIMEOUT_MS", 0)
+    monkeypatch.setattr(oms_wiring, "SWEEP_CALL_SLACK_S", 0.3)  # real time, kept short
+    world, stalled = World(), list[bool]()
+    InMemorySubmissionStore(world.store).seed_account(cr.ref())
+    target = world.store.stops if read == "void_orphans" else world.store
+    real = getattr(target, read)
+
+    async def stalls_once(*args: Any, **kwargs: Any) -> Any:
+        if not stalled:
+            stalled.append(True)
+            await asyncio.Event().wait()
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(target, read, stalls_once)
+    for flag in world.flags:
+        flag.read()
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            async with asyncio.timeout(10):  # a bound on the test
+                await runtime.wait_ready()
+    failed = [e["error"] for e in logs if e["event"] == "oms_startup_sweep_failed"]
+    assert failed == ["TimeoutError"] and world.clock.slept == [1.0]
+
+
+async def test_a_history_the_facade_refuses_is_paged_skipped_and_the_sweep_still_gets_ready() -> (
+    None
+):
+    """CR-S3E3-04, 20 Sec.6.2 step 3: an order whose events do not rebuild its row (OM-T03) is
+    paged by the facade, counted and skipped (`OrderHistoryRefused` is in `_SKIPPED`); the unsent
+    one is abandoned and `ready` is set."""
+    world = World()
+    await crashed(world)
+    row = world.store._orders[SENDING.id]
+    world.store._orders[SENDING.id] = replace(row, qty=row.qty + 1)
+    for flag in world.flags:
+        flag.read()
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            await until(lambda: runtime.state != "starting")
+            assert runtime.state == "ok"
+    [skipped] = [e for e in logs if e["event"] == "oms_startup_order_skipped"]
+    assert (skipped["order_id"], skipped["reason"]) == (str(SENDING.id), "OrderHistoryRefused")
+    [swept] = [e for e in logs if e["event"] == "oms_startup_swept"]
+    assert (swept["hydrated"], swept["skipped"], swept["abandoned"]) == (1, 1, 1)
+    assert world.pager.calls == ["oms_order_history_refused"]
+
+
+async def test_the_sweep_hydrates_at_most_eight_orders_at_once_and_logs_how_long_it_took(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-S3E3-04, CR-S3E3-05: a gate in `hydrate` shows `HYDRATE_CONCURRENCY` orders in flight
+    though more are due, and `oms_startup_swept` carries the sweep's time on the injected clock."""
+    world, held, flying, peak = World(), asyncio.Event(), 0, 0
+    rows = [
+        SimpleNamespace(id=UUID(int=n), exchange_account_id=cr.ACCOUNT)
+        for n in range(HYDRATE_CONCURRENCY + 4)
+    ]
+
+    async def listed(environment: str, *, limit: int) -> Any:
+        return tuple(rows)
+
+    async def gated(self: OrderMachines, account_id: UUID, order_id: UUID, **kw: Any) -> str:
+        nonlocal flying, peak
+        flying += 1
+        peak = max(peak, flying)
+        await held.wait()
+        flying -= 1
+        return "submitted"
+
+    monkeypatch.setattr(world.store, "list_unfinished", listed)
+    monkeypatch.setattr(OrderMachines, "hydrate", gated)
+    for flag in world.flags:
+        flag.read()
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            await until(lambda: flying >= HYDRATE_CONCURRENCY)
+            await settle()  # a ninth would have started by now
+            assert peak == HYDRATE_CONCURRENCY
+            world.clock.s += 2.5  # the sweep takes this long
+            held.set()
+            await until(lambda: runtime.state == "ok")
+    [swept] = [e for e in logs if e["event"] == "oms_startup_swept"]
+    assert (swept["hydrated"], swept["elapsed_s"], peak) == (len(rows), 2.5, HYDRATE_CONCURRENCY)
+
+
+async def test_a_sweep_that_ends_while_the_stop_drains_does_not_set_ready_again() -> None:
+    """CR-S3E3-06: `stop()` clears `ready`, then drains the submits for up to `CV_OMS_DRAIN_S`
+    while the startup task runs on; a sweep that ends meanwhile must not set it."""
+    world = World()
+    async with started(world.runtime()) as runtime:
+        startup, submit = runtime._startup, runtime.run(asyncio.Event().wait())
+        assert startup is not None
+        stopping = asyncio.create_task(runtime.stop())
+        await settle()  # the stop is draining the submit
+        for flag in world.flags:
+            flag.read()
+        await until(startup.done)
+        assert not runtime._ready.is_set()
+        submit.cancel()
+        await stopping

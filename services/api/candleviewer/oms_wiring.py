@@ -40,15 +40,17 @@ from candleviewer.domain.order_entry import OrderEntryCheck, OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId, Environment, Px, Symbol
 from candleviewer.exchange.base.errors import AuthError, ExchangeError, OmsErrorCode
 from candleviewer.exchange.base.models import AccountRef, RateLane, TickerEvent
-from candleviewer.observability import spawn
+from candleviewer.observability import spawn, spawn_child
 from candleviewer.observability.metrics import BoundedMetric, Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms.clock_halt import ClockHalt
 from candleviewer.oms.commands import NEVER_SENT_ALERT, OmsCommandPort
 from candleviewer.oms.errors import (
     AccountScopeDenied,
+    AuditNotDurable,
     OmsNotReady,
     OrderEntryRefused,
+    OrderHistoryRefused,
     StoreUnavailable,
     TradingDisabled,
 )
@@ -107,9 +109,19 @@ from candleviewer.storage.repositories.idempotency_anchors import IdempotencyAnc
 from candleviewer.storage.repositories.idempotency_anchors_sqlalchemy import (
     SqlAlchemyIdempotencyAnchorStore,
 )
-from candleviewer.storage.repositories.orders import OrderEventStore, OrderStore, OrderStoreError
+from candleviewer.storage.repositories.orders import (
+    OrderEventStore,
+    OrderRow,
+    OrderStore,
+    OrderStoreError,
+    UnfinishedOrders,
+)
 from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
-from candleviewer.storage.repositories.recorded_stops import RecordedStopStore
+from candleviewer.storage.repositories.recorded_stops import (
+    SWEEP_REASON,
+    RecordedStopStore,
+    SweptStop,
+)
 from candleviewer.storage.repositories.recorded_stops_sqlalchemy import (
     SqlAlchemyRecordedStopStore,
 )
@@ -679,6 +691,37 @@ class OrderStateFeed:
 OmsState = Literal["starting", "ok", "degraded"]
 #: How often the startup's bounded wait looks at the clock guard and the key standing, in seconds.
 STARTUP_POLL_S: Final = 0.25
+#: The sweep's own statement cap on its reads, in milliseconds (CR-S3C1C-01). 21 Sec.13.1 row 49
+#: scans the environment's orders for `held` rows, which no index serves, and a history the order
+#: stores' 2 s cap cannot scan would fail every retry and leave the OMS never ready. 15 s, beside
+#: the startup wait's 45 s ceiling, keeps the sweep inside a deploy's 60 s `/readyz` window, and
+#: scans about 3 million rows at a conservative 200 000 rows a second.
+SWEEP_STATEMENT_TIMEOUT_MS: Final = 15_000
+#: What the client waits past that cap for one sweep read or write, in seconds, before it gives up
+#: on a stalled connection (CR-S3E3-03): the attempt is retried and logged.
+SWEEP_CALL_SLACK_S: Final = 2.0
+#: How many orders the sweep hydrates at once (20 Sec.6.2 step 3).
+HYDRATE_CONCURRENCY: Final = 8
+#: The backoff of a sweep the store or the audit failed, in seconds: the first wait, doubled up to
+#: the second.
+SWEEP_RETRY_S: Final = (1.0, 30.0)
+#: What a retry can outlast: the store's failures, the audit's, a timeout (an `OSError`).
+_RETRIED: Final = (StorageError, OrderStoreError, AuditNotDurable, StoreUnavailable, OSError)
+#: How many times the sweep meets any other error before it gives up, pages and ends `degraded`
+#: (CR-S3E3-02). One order's history raising it again and again must not hold every other order
+#: in silence for ever; and no order is skipped on an error no refusal names, which a defect
+#: could raise for every one of them (C-2.21).
+SWEEP_MAX_FAILURES: Final = 5
+#: Step 4's KILL reason (24 Sec.8.4): an order recorded, never sent, and left with no owner.
+STARTUP_UNSENT: Final = "startup_unsent"
+#: What the sweep counts and skips, its order left as its last step left it (20 Sec.6.2 step 3,
+#: SEC-S3C1C-01): a history the facade refuses, and an account the command port refuses
+#: (`CommandAccounts`); where it was refused, it was paged.
+_SKIPPED: Final = (OrderHistoryRefused, AccountScopeDenied, OrderEntryRefused)
+#: The record of a stop the sweep voids, by its kind (21 Sec.3.3.11).
+_SWEPT: Final[Mapping[str, str]] = MappingProxyType(
+    {"stop_loss": "sl.modified", "take_profit": "tp.modified"}
+)
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _US: Final = timedelta(microseconds=1)
 
@@ -760,7 +803,8 @@ class OrderStores(OrderStore, OrderEventStore, Protocol):
 @dataclass(frozen=True, slots=True)
 class OmsStores:
     """The runtime's stores, on one pool of its own that `release` disposes of, and the builder of
-    the standalone sink over it. They take no principal: no route reaches them (C-12.4)."""
+    the standalone sink over it. They take no principal: no route reaches them (C-12.4). `sweep`
+    is the startup sweep's reads, under their own statement cap (`SWEEP_STATEMENT_TIMEOUT_MS`)."""
 
     orders: OrderStores
     executions: ExecutionStore
@@ -769,6 +813,7 @@ class OmsStores:
     stops: RecordedStopStore
     groups: TradeGroupStore
     accounts: TradingAccountReads
+    sweep: UnfinishedOrders
     sink: Callable[[], OwnedSink]
     release: Callable[[], Awaitable[None]]
 
@@ -787,6 +832,7 @@ def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
         stops=SqlAlchemyRecordedStopStore(pool),
         groups=SqlAlchemyTradeGroupStore(pool),
         accounts=SqlAlchemyTradingAccountReads(pool),
+        sweep=SqlAlchemyOrderStore(pool, statement_timeout_ms=SWEEP_STATEMENT_TIMEOUT_MS),
         sink=lambda: build_machine_event_sink(settings, events, metrics=counts),
         release=pool.dispose,
     )
@@ -825,6 +871,9 @@ class _Parts:
     anchors: AnchorService
     machines: OrderMachines
     closers: tuple[_Closer, ...]
+    stops: RecordedStopRepository
+    audit: OmsAudit
+    sweep: UnfinishedOrders
 
 
 async def _drained(tasks: set[asyncio.Task[Any]], timeout_s: float) -> set[asyncio.Task[Any]]:
@@ -840,6 +889,53 @@ def _page(pager: Pager, summary: str) -> None:
         pager.raise_alert("page", summary, machine_kind="order")
     except Exception as exc:  # the page is lost, never what it pages on
         _log().critical("oms_pager_failed", summary=summary, error=type(exc).__name__)
+
+
+def _causes(error: BaseException) -> list[BaseException]:
+    """What a failed `TaskGroup` holds, nested groups too; any other error is its own cause."""
+    if isinstance(error, BaseExceptionGroup):
+        return [cause for inner in error.exceptions for cause in _causes(inner)]
+    return [error]
+
+
+def _sweep_audit(audit: OmsAudit) -> Callable[[tuple[SweptStop, ...]], Awaitable[None]]:
+    """`void_orphans`' write-ahead hook: each voided stop's record, `sl.modified` or `tp.modified`
+    with `unplaced_entry_swept`, as `system:oms`, its ids only (21 Sec.3.3.11, C-2.9)."""
+
+    async def write_ahead(swept: tuple[SweptStop, ...]) -> None:
+        for stop in swept:
+            detail = {"order_id": str(stop.order_id), "kind": stop.kind, "source": "entry_attach"}
+            record = KeyedRecord(
+                _SWEPT[stop.kind], str(stop.id), stop.exchange_account_id, "recorded_stop",
+                stop.id, "success", "warning", SWEEP_REASON, None, detail,
+            )  # fmt: skip
+            await audit.write(record)
+
+    return write_ahead
+
+
+class CommandAccounts:
+    """The command port's `TradingAccounts` (CR-S3C1B-02): the binding's, which pages an account
+    it refuses before the refusal goes on. SR-E27-07 lets an account be deleted with orders left
+    unfinished, which the startup hydrates (20 Sec.6.2); a create such an order resumes, or a stop
+    it attaches, meets the refusal in the command port, and B1 lands it in a defined state with
+    nothing sent: `unknown` for the create, for reconciliation, and `sl_missing` for the attach.
+    Its keys are revoked at the delete (SR-E27-07), so no stop can be attached there anyway: the
+    answer to C-2.6 is that recorded end with the page. One that reaches the sweep is skipped."""
+
+    def __init__(self, accounts: TradingAccountsBinding, pager: Pager) -> None:
+        self._accounts, self._pager = accounts, pager
+
+    async def trading_account(self, account_id: AccountId) -> AccountRef:
+        try:
+            return await self._accounts.trading_account(account_id)
+        except (AccountScopeDenied, OrderEntryRefused) as exc:
+            refusal = type(exc).__name__
+            _log().critical(
+                "oms_order_account_refused", account_id=str(account_id), refusal=refusal
+            )
+            _page(self._pager, f"oms_order_account_refused: account {account_id}")
+            raise
 
 
 async def _closed(closers: Sequence[_Closer], deadline: float) -> None:
@@ -1013,8 +1109,106 @@ class OmsRuntime:
         self._failed = False
 
     async def _started(self) -> None:
-        """The startup sweep (20 Sec.6.2); this slice runs its step 1."""
+        """The startup sweep (20 Sec.6.2): step 1's waits, then steps 2 to 4, run again after a
+        backoff while the store or the audit fails them (any other error ends it `degraded` after
+        `SWEEP_MAX_FAILURES`, paged), then step 5, `ready`, never early. A failure met while a
+        stop runs ends it, cancelled, never retried."""
         await self._waited()
+        parts, (delay, ceiling) = self._composed(), SWEEP_RETRY_S
+        stuck = 0  # the failures no retry can outlast (CR-S3E3-02)
+        while True:
+            try:
+                swept = await self._swept(parts)
+            except Exception as exc:  # a store or audit failure: retried, never ready on it
+                causes = _causes(exc)
+                kinds = sorted({type(cause).__name__ for cause in causes})
+                if self._stopping:  # the stop's cancel, that a `TaskGroup` gives back as errors
+                    _log().warning("oms_startup_stopped", causes=kinds)
+                    raise asyncio.CancelledError from exc
+                if not all(isinstance(cause, _RETRIED) for cause in causes):
+                    stuck += 1
+                _log().warning(
+                    "oms_startup_sweep_failed", error=type(exc).__name__, causes=kinds,
+                    stuck=stuck, retry_s=delay,
+                )  # fmt: skip
+                if stuck >= SWEEP_MAX_FAILURES:
+                    self._failed = True
+                    _log().critical("oms_startup_sweep_gave_up", causes=kinds)
+                    _page(self._pager, f"oms_startup_sweep_gave_up: {', '.join(kinds)}")
+                    return
+                await self._sleep(delay)
+                delay = min(2 * delay, ceiling)
+                continue
+            if swept and not self._stopping:  # a stop that began meanwhile clears `ready` for good
+                self._ready.set()
+                _log().info("oms_ready")
+            return
+
+    async def _swept(self, parts: _Parts) -> bool:
+        """Steps 2 to 4; False when step 3 refuses `ready`, past `MAX_MACHINES` orders (paged)."""
+        env, machines, began = self._env, parts.machines, self._monotonic()
+        accounts = await self._bounded(parts.sweep.environment_accounts(env))
+        for account_id in accounts:  # step 2: this environment's accounts only (C-2.11)
+            write_ahead = _sweep_audit(parts.audit)
+            void = parts.stops.void_orphans(account_id, at=self._now(), write_ahead=write_ahead)
+            await self._bounded(void)
+        rows = await self._bounded(parts.sweep.list_unfinished(env, limit=self._max + 1))
+        if len(rows) > self._max:  # more than the facade holds: never ready
+            self._failed = True
+            _log().critical("oms_startup_overflow", unfinished=len(rows), cap=self._max)
+            _page(self._pager, f"oms_startup_overflow: more than {self._max} unfinished orders")
+            return False
+        skipped, abandoned = await self._hydrated(machines, rows), 0
+        unsent = [r for r in rows if (machines.state(r.id) or ("",))[0] == "validated"]
+        for row in unsent:  # step 4: a KILL from `validated` only, never `kill` (it may cancel)
+            kill = machines.abandon(row.exchange_account_id, row.id, STARTUP_UNSENT)
+            if await self._kept(kill, row):
+                abandoned += 1
+            else:
+                skipped += 1
+        _log().info(
+            "oms_startup_swept", accounts=len(accounts), hydrated=len(rows) - skipped,
+            skipped=skipped, abandoned=abandoned, elapsed_s=round(self._monotonic() - began, 3),
+        )  # fmt: skip
+        return True
+
+    async def _bounded[T](self, call: Awaitable[T]) -> T:
+        """A sweep read or write within its statement cap and `SWEEP_CALL_SLACK_S`, else
+        `TimeoutError`: a stalled connection is retried and logged, not waited on in silence
+        (CR-S3E3-03)."""
+        async with asyncio.timeout(SWEEP_STATEMENT_TIMEOUT_MS / 1000 + SWEEP_CALL_SLACK_S):
+            return await call
+
+    async def _kept(self, step: Awaitable[object], row: OrderRow) -> bool:
+        """The order's step, or False with the order skipped (`_SKIPPED`): it stays as its last
+        step left it, and the sweep goes on to `ready`."""
+        try:
+            await step
+        except _SKIPPED as exc:
+            order_id, account_id = str(row.id), str(row.exchange_account_id)
+            reason = type(exc).__name__
+            _log().error(
+                "oms_startup_order_skipped", order_id=order_id, account_id=account_id, reason=reason
+            )
+            return False
+        return True
+
+    async def _hydrated(self, machines: OrderMachines, rows: Sequence[OrderRow]) -> int:
+        """Step 3: each order hydrated, `HYDRATE_CONCURRENCY` at once. Answers how many it
+        skipped (`_kept`)."""
+        slots, skipped = asyncio.Semaphore(HYDRATE_CONCURRENCY), 0
+
+        async def one(row: OrderRow) -> None:
+            nonlocal skipped
+            async with slots:
+                hydrate = machines.hydrate(row.exchange_account_id, row.id, environment=self._env)
+                if not await self._kept(hydrate, row):
+                    skipped += 1
+
+        async with asyncio.TaskGroup() as group:
+            for row in rows:
+                spawn_child(group, one(row), name="oms-hydrate")
+        return skipped
 
     async def _waited(self) -> None:
         """Step 1: at most `CV_OMS_STARTUP_WAIT_S` for the clock guard's first measurement and the
@@ -1088,7 +1282,8 @@ class OmsRuntime:
                 self._standings, key_refusal=self._venue.key_refusal, pager=self._pager
             )
             commands = OmsCommandPort(
-                router=router, accounts=accounts, orders=orders, stops=stops,
+                router=router, accounts=CommandAccounts(accounts, self._pager), orders=orders,
+                stops=stops,
                 handovers=NoHandoverStore(), credentials=rejections, clock_halt=halt,
                 switches=switches, audit=audit, submit_audit=audit, gate=gate, notices=notices,
                 now_us=self._now_us, submit_timeout_s=bounds.submit_timeout_s,
@@ -1146,7 +1341,7 @@ class OmsRuntime:
         except BaseException:
             await _closed(closers, asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S)
             raise
-        return _Parts(submission, anchors, machines, tuple(closers))
+        return _Parts(submission, anchors, machines, tuple(closers), stops, audit, stores.sweep)
 
     def _now_us(self) -> int:
         return (self._now() - _EPOCH) // _US

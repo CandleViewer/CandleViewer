@@ -136,7 +136,8 @@ class SweepScope(Enum):
     EVERY_ACCOUNT = "every_account"
 
 
-#: `void_orphans` over every account: the one call slice 3's startup wiring makes.
+#: `void_orphans` over every account of every environment: no caller wires it, the startup sweep
+#: names each account of its own environment (C-2.11).
 EVERY_ACCOUNT: Final = SweepScope.EVERY_ACCOUNT
 
 

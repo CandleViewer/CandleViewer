@@ -413,6 +413,12 @@ class InMemoryOrderStore:
         )
         return tuple(sorted(rows, key=lambda row: (row.created_ts, row.id)))[:limit]
 
+    async def environment_accounts(self, environment: Environment) -> tuple[UUID, ...]:
+        """`UnfinishedOrders` over the accounts `InMemorySubmissionStore.seed_account` gave
+        `environment`."""
+        await asyncio.sleep(0)
+        return tuple(a for a, env in self._environments.items() if env == environment)
+
     async def link_id_taken(self, order_link_id: str) -> bool:
         await asyncio.sleep(0)
         return self._link_taken(order_link_id)

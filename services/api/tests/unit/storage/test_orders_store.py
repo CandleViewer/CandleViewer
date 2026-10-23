@@ -778,6 +778,10 @@ _CALLS: dict[str, tuple[Callable[[mod.SqlAlchemyOrderStore], Awaitable[object]],
         lambda st: st.list_unfinished("demo", limit=10),
         [_Result([{"id": ACCOUNT}]), _Result([_order_row(state="held")])],
     ),
+    "environment_accounts": (
+        lambda st: st.environment_accounts("demo"),
+        [_Result([{"id": ACCOUNT}])],
+    ),
     "transition": (lambda st: st.transition(_STEP), [_LOCKED, _CAS, _EVENT]),
 }
 
@@ -892,7 +896,7 @@ async def test_any_other_database_error_keeps_only_its_sqlstate(
 @pytest.mark.parametrize(
     "read",
     ["get", "get_by_link_id", "get_by_exchange_order_id", "link_id_taken", "list_for_order",
-     "list_open", "list_unfinished"],
+     "list_open", "list_unfinished", "environment_accounts"],
 )  # fmt: skip
 async def test_a_failed_read_keeps_only_its_sqlstate_like_a_write(read: str) -> None:
     """One error family for the OMS (24 Sec.8.2 S7): the allocator's lookup and every other read

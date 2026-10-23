@@ -30,7 +30,8 @@ slice 3's route took from the authenticated session after its admission, never a
 every row it writes is the request's own account's (`TradingAccounts` resolved it by id alone,
 SR-E27-21), and no route reaches it but that one, after scope, the arm token and the replay lookup.
 `oms_wiring.py` (slice 3E, C-12.4) builds the Postgres adapters and the M14 facades over them
-for the OMS runtime alone, and mounts no route.
+for the OMS runtime alone, and mounts no route; its startup sweep calls `void_orphans` once per
+account of the process's own environment, before anything hydrates (20 Sec.6.2).
 """
 
 from __future__ import annotations
