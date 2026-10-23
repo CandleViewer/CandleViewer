@@ -326,7 +326,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **A11y:** `role="tree"` with arrow-key navigation; badge counts included in accessible names ("Alerts, 2 new").
 - **Audit:** `workspace.opened`, `workspace.renamed`, `workspace.deleted`. **Stories:** US-WS-001..004.
 - **Performance:** Rail expand/collapse animates in <=120 ms and does not reflow or remount any docked panel (transform-only, chart canvases keep their GL context).
-- **Components:** CMP-016 Tooltip, CMP-019 Icon, CMP-022 Kbd, CMP-071 NavRail, CMP-073 WorkspaceSwitcher.
+- **Components:** CMP-016 Tooltip, CMP-019 Icon (`lock`), CMP-022 Kbd, CMP-071 NavRail, CMP-073 WorkspaceSwitcher, CMP-079 RbacGate.
 - **Stories:** US-LAY-006, US-SET-001.
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.2 (heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] collapsed (icon) and expanded (label) variants [ ] workspace switcher with >20 workspaces (scroll + search) [ ] active-route indication is not colour-only [ ] tooltips on collapsed icons reachable by keyboard focus
@@ -502,7 +502,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 +------------------------------------------------------------------------------+
 ```
 
-- **Components:** CMP-073 WorkspaceSwitcher, CMP-080 DockPanel, CMP-081 DockGrid / Layout Manager, CMP-082 PanelHeader, CMP-217 LayoutPresetMenu, CMP-218 SyncMenu.
+- **Components:** CMP-019 Icon (`lock`), CMP-073 WorkspaceSwitcher, CMP-079 RbacGate, CMP-080 DockPanel, CMP-081 DockGrid / Layout Manager, CMP-082 PanelHeader, CMP-217 LayoutPresetMenu, CMP-218 SyncMenu.
 - **Data:** `GET /api/v1/workspaces/{id}` (layout tree + panel configs), `PUT /api/v1/workspaces/{id}`; panels subscribe their own topics.
 - **Interactions/hotkeys:** `Ctrl+1..9` layout presets; `Ctrl+S` save; `Ctrl+Shift+S` save as; `Alt+drag` move panel; `F11` full-screen active panel; `Ctrl+Alt+←/→` cycle panels; drag a watchlist symbol onto a panel to rebind it.
 - **States:** loading skeleton (panel frames, no data fetch until mount) · empty workspace (panel picker + SCR-019) · unsaved changes (`*` on the tab, prompt on navigation) · restored after crash ("Restored your layout from 14:02") · too many panels (>16: "Performance may degrade — consider fewer panels").
@@ -553,7 +553,7 @@ Drag preview                Drop zones
 
 - **Data:** `GET /api/v1/layout-presets`, `POST /api/v1/workspaces/{workspaceId}/layouts`.
 - **Warning state:** "Applying a preset replaces the current layout. Settings of surviving panels are kept."
-- **Components:** CMP-001 Button, CMP-043 Dialog, CMP-050 Card, CMP-217 LayoutPresetMenu.
+- **Components:** CMP-001 Button, CMP-019 Icon (`lock`), CMP-043 Dialog, CMP-050 Card, CMP-079 RbacGate, CMP-217 LayoutPresetMenu.
 - **Stories:** US-LAY-001, US-LAY-006, US-CHART-012.
 - **A11y:** Preset gallery is a listbox of cards with an accessible name and a text description of what each preset contains; preview thumbnails carry `alt` text enumerating the panels; applying a preset announces the result.
 - **Performance:** Thumbnails are static SVG (no live panels); applying a preset rebuilds the dock tree in <=300 ms and reuses existing panel instances where the type matches, avoiding GL context churn.
@@ -592,7 +592,7 @@ Drag preview                Drop zones
 - **Type:** Modal. Grouped catalogue of every addable panel with a one-line description, a thumbnail and chips for "requires recording", "(estimated)", "owner only".
 - **Data:** local panel registry + `GET /api/v1/admin/feature-flags` and role.
 - **States:** search · category filter · disabled entries with reasons ("Needs a recorded symbol", "Owner only").
-- **Components:** CMP-043 Dialog, CMP-048 Combobox / AutoComplete, CMP-050 Card, CMP-213 FuzzyList.
+- **Components:** CMP-019 Icon (`lock`), CMP-043 Dialog, CMP-048 Combobox / AutoComplete, CMP-050 Card, CMP-079 RbacGate, CMP-213 FuzzyList.
 - **Stories:** US-LAY-005.
 - **A11y:** Searchable list with category headings as real headings; each panel type has a one-line description read with its name; adding announces where the panel landed ('CVD added to the right column').
 - **Performance:** Panel mounts <=150 ms; the picker pre-warms nothing and the newly added panel subscribes to its WS topics only after mount.
@@ -608,7 +608,7 @@ Drag preview                Drop zones
 - **Audit:** `workspace.updated`, `workspace.deleted`, `workspace.exported`. **Stories:** US-WS-020.
 - **A11y:** Standard modal form: labelled fields, grouped fieldsets for defaults (symbol, interval, environment binding), error summary at top with in-page links.
 - **Performance:** Saving applies without a full workspace remount; only panels bound to a changed default re-resolve their data.
-- **Components:** CMP-001 Button, CMP-004 Toggle, CMP-040 FormField, CMP-043 Dialog, CMP-065 FormSection.
+- **Components:** CMP-001 Button, CMP-004 Toggle, CMP-019 Icon (`lock`), CMP-040 FormField, CMP-043 Dialog, CMP-065 FormSection, CMP-079 RbacGate.
 - **Stories:** US-LAY-002, US-LAY-003.
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.10 (heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] rename, default symbol/interval, environment binding, autosave toggle and sharing (owner) drawn [ ] 'this workspace is pinned to LIVE' warning drawn [ ] unsaved-changes handling [ ] delete-workspace confirmation path
@@ -643,7 +643,7 @@ Drag preview                Drop zones
 - **A11y:** full keyboard menu with type-ahead and shortcut hints. **Stories:** US-WS-023.
 - **Performance:** Menu opens in <=80 ms; it is built from a static descriptor, not a per-open API call.
 - **Analytics/audit:** Actions inherit the event of the action they invoke; the menu itself emits `panel.context_menu_opened` (analytics).
-- **Components:** CMP-041 Menu, CMP-216 PanelMenu.
+- **Components:** CMP-019 Icon (`lock`), CMP-041 Menu, CMP-079 RbacGate, CMP-216 PanelMenu.
 - **Stories:** US-LAY-005.
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.5 (heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] full item set drawn (settings, duplicate, float, maximise, link to sync group, rename, close) [ ] disabled items show a reason [ ] keyboard invocation via the context-menu key and Shift+F10 [ ] submenu behaviour and overflow near the viewport edge
@@ -651,7 +651,7 @@ Drag preview                Drop zones
 ### SCR-029 — Unsaved-changes / layout-conflict dialog
 
 - **Type:** Modal. "You have unsaved layout changes." [Save] [Discard] [Cancel]; the conflict variant adds a side-by-side summary of differences (panel count, symbols, sync groups).
-- **Components:** CMP-001 Button, CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog.
+- **Components:** CMP-001 Button, CMP-019 Icon (`lock`), CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog, CMP-079 RbacGate.
 - **Stories:** US-LAY-002, US-SET-003.
 - **A11y:** `role="alertdialog"`; the three choices are explicit buttons with verbs ('Save layout', 'Discard changes', 'Cancel'); the conflicting-change summary is text.
 - **Performance:** Conflict detection compares layout revision ids received over WS; the dialog appears within 300 ms of the conflicting write being detected.
