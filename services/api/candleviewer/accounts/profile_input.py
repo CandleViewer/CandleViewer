@@ -4,9 +4,9 @@
 M13 may not import `candleviewer.api`, so the router hands this module the decoded body. A member
 left out, or `null`, takes its contract default, never the stored value (R1C-08). Decimals are read
 exactly: a percent moves its exponent and trailing zeros go first, so `profiles._fits` never strips
-a long run. The first pass bounds every decimal by its column, whole digits and places alike (the
-13:26Z rulings), so a body it accepts maps, and the store takes it, with no 500 on the way. A
-broken precondition is a `TypeError` naming the member, never its value.
+a long run. The first pass bounds every decimal by its column, whole digits and places alike (#906,
+ruling of 2026-10-22 13:26Z), so a body it accepts maps, and the store takes it, with no 500 on the
+way. A broken precondition is a `TypeError` naming the member, never its value.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from uuid import UUID
 
 from candleviewer.accounts.profiles import AccountProfile, exact_sum
 from candleviewer.domain.primitives import TsUs
+from candleviewer.domain.text import unpaired_surrogate
 
 #: The validated body: `AccountProfileInput.model_dump(mode="json", exclude_unset=True)`.
 ProfileBody = Mapping[str, object]
@@ -200,7 +201,7 @@ def map_profile_input(
     )
 
 
-# -- The first pass (slice B1b; spec B1 sections 4.2, 4.3 and 7) ---------------------------------
+# -- The first pass (slice B1b). Rulings (a) to (c) and P14 are #906's, of 2026-10-22 13:26Z -----
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,10 +217,14 @@ class _Bound:
 
 
 _E20, _HUNDRED = Decimal("1E+20"), Decimal(100)
-#: numeric(38,18): whole digits below 1E+20 (the 13:26Z ruling (a)); a rung's `r` alike (b).
-_MONEY = _Bound(Decimal(0), _E20, 18)
-_PERCENT = _Bound(Decimal(0), _HUNDRED, 6, below=False)  # numeric(9,6), a percent of equity
-_LEVERAGE = _Bound(Decimal(1), _HUNDRED, 2, above=False, below=False)  # numeric(10,2)
+#: numeric(38,18): whole digits below 1E+20 (ruling (a)); a rung's `r` alike (ruling (b)).
+_MONEY: Final = _Bound(Decimal(0), _E20, 18)
+_PERCENT: Final = _Bound(Decimal(0), _HUNDRED, 6, below=False)  # numeric(9,6), a percent of equity
+_LEVERAGE: Final = _Bound(Decimal(1), _HUNDRED, 2, above=False, below=False)  # numeric(10,2)
+_MIN_LEG: Final = _Bound(Decimal(0), _E20, 18, above=False)  # zero is allowed: no minimum
+_ATR_MULTIPLE: Final = _Bound(Decimal(0), Decimal("1E+6"), 4)  # numeric(10,4), ruling (a)
+_FALLBACK: Final = _Bound(Decimal(0), _HUNDRED, 6)  # a percent, 0 to 100 exclusive
+_DAILY_LOSS_PCT: Final = _Bound(Decimal("0.1"), Decimal(50), 6, above=False, below=False)
 #: Each decimal member in the pass's order, read as sent: a percent stays a percent here.
 _DECIMALS: Final = (
     ("leverage", _LEVERAGE),
@@ -228,15 +233,15 @@ _DECIMALS: Final = (
     ("sizing.pct", _PERCENT),
     ("sizing.risk_per_trade_pct", _PERCENT),
     ("sizing.risk_per_trade_usd", _MONEY),
-    ("sizing.min_leg_notional_usd", _Bound(Decimal(0), _E20, 18, above=False)),
+    ("sizing.min_leg_notional_usd", _MIN_LEG),
     ("stop_loss.value", _MONEY),  # in whole ticks when the unit is `ticks`
-    ("stop_loss.atr_multiple", _Bound(Decimal(0), Decimal("1E+6"), 4)),  # numeric(10,4), (a)
-    ("stop_loss.fallback_pct", _Bound(Decimal(0), _HUNDRED, 6)),
+    ("stop_loss.atr_multiple", _ATR_MULTIPLE),
+    ("stop_loss.fallback_pct", _FALLBACK),
     ("take_profit.value", _MONEY),  # never whole ticks: it rounds to tick at submission (c)
     ("risk_caps.max_position_notional_usd", _MONEY),
     ("risk_caps.max_position_pct_equity", _PERCENT),
     ("risk_caps.max_daily_loss_usd", _MONEY),
-    ("risk_caps.max_daily_loss_pct", _Bound(Decimal("0.1"), Decimal(50), 6, False, False)),
+    ("risk_caps.max_daily_loss_pct", _DAILY_LOSS_PCT),
     ("risk_caps.max_leverage_cap", _LEVERAGE),
 )
 #: A rung's members, stored in jsonb: 18 places on both, and `r` below 1E+20 (ruling (b)).
@@ -257,13 +262,16 @@ _LOSS_BOUNDS: Final = (
     ("concurrent orders", ("max_concurrent_orders",)),
     ("leverage", ("max_leverage_cap",)),
 )
-#: P14 (the 13:26Z rider): the C0 controls. Postgres `text` holds no U+0000: a 500, not a 422.
+#: P14 (#906, ruling of 2026-10-22 13:26Z): `name` holds no C0 control and no lone surrogate.
+#: A U+0000 or a lone surrogate (no UTF-8 form; see `domain.text`) would be a driver 500, not a 422.
 _C0: Final = re.compile(r"[\x00-\x1f]")
 _OWN_OPERATION: Final = ProfileFieldError(
     "is_default", "default_has_own_operation", "The default binding has its own operation."
 )
 _CONTROL_IN_NAME: Final = ProfileFieldError(
-    "name", "not_allowed", "name takes no control character (U+0000 to U+001F)."
+    "name",
+    "not_allowed",
+    "name takes no control character (U+0000 to U+001F) or unpaired surrogate.",
 )
 _NEEDS_STOP: Final = ProfileFieldError(
     "stop_loss", "required", "risk_based sizing needs a stop_loss: the stop defines the risk."
@@ -281,13 +289,17 @@ _PAST_THE_LEG: Final = ProfileFieldError(
 )
 
 
+def _rung_path(i: int, key: str) -> str:
+    return f"take_profit_ladder[{i}].{key}"
+
+
 def _decimals(body: ProfileBody) -> Iterator[tuple[str, Decimal | None, _Bound]]:
     """Each decimal member's path, its value as sent (`None` when absent) and its bound."""
     for path, bound in _DECIMALS:
         parent, _, key = path.rpartition(".")
         yield path, _dec((_obj(body, parent) or {}) if parent else body, key), bound
     for i, rung in enumerate(_rungs(body)):
-        yield from ((f"take_profit_ladder[{i}].{key}", _dec(rung, key), b) for key, b in _RUNG)
+        yield from ((_rung_path(i, key), _dec(rung, key), b) for key, b in _RUNG)
 
 
 def _range(path: str, word: str, limit: Decimal) -> ProfileFieldError:
@@ -334,16 +346,20 @@ def check_profile_input(
     body: ProfileBody, *, stored_is_default: bool | None
 ) -> list[ProfileFieldError]:
     """The first pass over the `exclude_unset` dump of a body the schema phase passed: every
-    failure, in the spec's order (section 7). `stored_is_default` is `None` on a create and the
-    stored profile's `is_default` on a replace. Each rule reads what the client sent, never a
-    default, and a rule across members waits until they pass `range` and `precision`."""
+    failure, none cut, in this order. P1 `is_default` (a create counts as false); P14 `name`
+    (#906, ruling of 2026-10-22 13:26Z); P2 and P3 `range` and `precision`, member by member in
+    the order of `_DECIMALS` and then each rung; P4 to P6 the sizing amounts; P7 to P9 the stop;
+    P10 `all_symbols` with a list; P11 `ladder_sum`; P12 `above_leverage_cap`; P13 `cap_unbounded`.
+    `stored_is_default` is `None` on a create and the stored profile's `is_default` on a replace.
+    Each rule reads what the client sent, never a default, and P11 and P12 wait until their
+    members pass `range` and `precision`."""
     errors: list[ProfileFieldError] = []
     if bool(body.get("is_default")) != bool(stored_is_default):  # P1: a create counts as false
         errors.append(_OWN_OPERATION)
     name = body.get("name")
     if not isinstance(name, str):
         raise TypeError("name is not a string")
-    if _C0.search(name):  # P14
+    if _C0.search(name) or unpaired_surrogate(name):  # P14
         errors.append(_CONTROL_IN_NAME)
     sizing, stop = _obj(body, "sizing") or {}, _obj(body, "stop_loss")
     shape, refused = _sizing(sizing)
@@ -368,7 +384,7 @@ def check_profile_input(
             errors.append(ProfileFieldError(f"stop_loss.{member}", "required", message))
     if body.get("all_symbols") and body.get("allowed_symbols"):  # P10
         errors.append(_LISTED_TOO)
-    shares = [f"take_profit_ladder[{i}].qty_pct" for i in range(len(_rungs(body)))]
+    shares = [_rung_path(i, "qty_pct") for i in range(len(_rungs(body)))]
     if all(p in valid for p in shares) and exact_sum(valid[p] for p in shares) > _HUNDRED:
         errors.append(_PAST_THE_LEG)  # P11, on the exact sum
     leverage, cap = valid.get("leverage"), valid.get("risk_caps.max_leverage_cap")

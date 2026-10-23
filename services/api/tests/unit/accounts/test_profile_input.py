@@ -13,7 +13,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
@@ -29,6 +29,7 @@ from candleviewer.accounts.profile_input import (
 from candleviewer.accounts.profiles import AccountProfile, profile_values
 from candleviewer.api._generated.openapi_models import AccountProfileInput
 from candleviewer.audit.actions import PROFILE_SAVE_REFUSED_REASONS
+from candleviewer.domain.text import unpaired_surrogate
 
 _PID = UUID("0b5f6d0e-28a1-4c1e-9e01-000000000001")
 _AID = UUID("0b5f6d0e-28a1-4c1e-9e01-000000000002")
@@ -361,11 +362,11 @@ def test_native_stop_mandatory_is_the_only_audited_schema_rule() -> None:
     assert SCHEMA_RULES & PROFILE_SAVE_REFUSED_REASONS == {"native_stop_mandatory"}
 
 
-# -- B1b: the first pass (spec B1 sections 4.2, 4.3 and 7) ---------------------------------------
+# -- B1b: the first pass. Rulings (a) to (c) and P14 are #906's, of 2026-10-22 13:26Z -------------
 
-_E20 = "1" + "0" * 20  # every numeric(38,18) member, and a rung's `r`, is below 1E+20 (13:26Z)
-#: Section 4.3, copied here and not imported: (low, above, high, below, places) per member, where
-#: `above` reads "above `low`" (else "at least") and `below` reads "below `high`" (else "at most").
+_E20 = "1" + "0" * 20  # a numeric(38,18) member, or a rung's `r`, is below it (rulings (a), (b))
+#: Each member's bounds, copied here and not imported: (low, above, high, below, places). `above`
+#: reads "above `low`" (else "at least"), `below` reads "below `high`" (else "at most").
 _TABLE: dict[str, tuple[str, bool, str, bool, int]] = {
     "leverage": ("1", False, "100", False, 2),
     "risk_caps.max_leverage_cap": ("1", False, "100", False, 2),
@@ -392,7 +393,9 @@ _OWN = ProfileFieldError(
     "is_default", "default_has_own_operation", "The default binding has its own operation."
 )
 _NO_C0 = ProfileFieldError(
-    "name", "not_allowed", "name takes no control character (U+0000 to U+001F)."
+    "name",
+    "not_allowed",
+    "name takes no control character (U+0000 to U+001F) or unpaired surrogate.",
 )
 _NEEDS_STOP = "risk_based sizing needs a stop_loss: the stop defines the risk."
 _EITHER = "risk_based sizing needs sizing.risk_per_trade_pct or sizing.risk_per_trade_usd."
@@ -437,16 +440,23 @@ def _places(path: str, places: int) -> ProfileFieldError:
 
 
 def _edges() -> list[tuple[str, str, list[ProfileFieldError]]]:
-    """Test 20's rows: each member on and just past each bound and its places limit."""
+    """Test 20's rows: each member on, just past, and just inside each bound; at its places limit
+    and past it; and past a bound and its places limit at once (both entries, `range` first)."""
     rows: list[tuple[str, str, list[ProfileFieldError]]] = []
     for path, (low, above, high, below, places) in _TABLE.items():
+        past_low = _range(path, "above" if above else "at least", low)
+        past_high = _range(path, "below" if below else "at most", high)
         rows += [
             (path, low, [_range(path, "above", low)] if above else []),
-            (path, _at(low, places, -1), [_range(path, "above" if above else "at least", low)]),
+            (path, _at(low, places, -1), [past_low]),
+            (path, _at(low, places, 1), []),
             (path, high, [_range(path, "below", high)] if below else []),
-            (path, _at(high, places, 1), [_range(path, "below" if below else "at most", high)]),
+            (path, _at(high, places, 1), [past_high]),
+            (path, _at(high, places, -1), []),
             (path, _at("1", places, 1), []),
             (path, _at("1", places + 1, 1), [_places(path, places)]),
+            (path, _at(low, places + 1, -1), [past_low, _places(path, places)]),
+            (path, _at(high, places + 1, 1), [past_high, _places(path, places)]),
         ]
     return rows
 
@@ -455,7 +465,10 @@ def _edges() -> list[tuple[str, str, list[ProfileFieldError]]]:
 def test_each_decimal_member_is_refused_just_past_its_bounds(
     path: str, value: str, expected: list[ProfileFieldError]
 ) -> None:
-    assert check_profile_input(_home(path, value), stored_is_default=None) == expected
+    body = _home(path, value)
+    assert check_profile_input(body, stored_is_default=None) == expected
+    if not expected:  # a body the pass accepts maps, and every value of it fits its column
+        profile_values(_map(body))
 
 
 @pytest.mark.parametrize("path", _TABLE)
@@ -466,14 +479,14 @@ def test_trailing_zeros_count_for_no_decimal_place(path: str) -> None:
 
 def test_a_stop_in_ticks_is_a_whole_number_of_ticks() -> None:
     in_ticks = _with(stop_loss={"unit": "ticks", "value": "1.5"})
-    assert _first(in_ticks) == [("stop_loss.value", "precision", 0)]
+    assert check_profile_input(in_ticks, stored_is_default=None) == [_places("stop_loss.value", 0)]
     for stop in (
         {"unit": "ticks", "value": "15.000"},
         {"unit": "percent", "value": "1.5"},
         {"unit": "atr", "value": "1.5", "atr_multiple": "2"},
     ):
         assert _first(_with(stop_loss=stop)) == []
-    target = {"unit": "ticks", "value": "1.5"}  # 13:26Z (c): no whole ticks, even beside a stop
+    target = {"unit": "ticks", "value": "1.5"}  # ruling (c): no whole ticks, even beside a stop
     assert _first(_with(stop_loss={"unit": "ticks", "value": "10"}, take_profit=target)) == []
 
 
@@ -719,6 +732,14 @@ def test_every_failure_of_the_pass_is_listed_in_order() -> None:
         _unbounded("max_concurrent_orders"),
     ]
     assert {e.rule for e in got} == FIRST_PASS_RULES  # every rule it can answer with
+    # P2 and P3 go member by member: leverage, sizing, the stop's three, then the target's value
+    sizing = {"mode": "fixed_qty", "qty": "0", "min_leg_notional_usd": "-1"}
+    stop = {"unit": "percent", "value": "0", "atr_multiple": "0", "fallback_pct": "0"}
+    target = {"unit": "ticks", "value": "0"}
+    zeros = _with(leverage="0", sizing=sizing, stop_loss=stop, take_profit=target)
+    members = "leverage sizing.qty sizing.min_leg_notional_usd stop_loss.value".split()
+    members += "stop_loss.atr_multiple stop_loss.fallback_pct take_profit.value".split()
+    assert [field for field, *_ in _first(zeros)] == members
 
 
 def _strings(node: object) -> list[str]:
@@ -744,13 +765,16 @@ def test_the_audited_rules_are_exactly_the_audit_reasons_b1_can_meet() -> None:
     assert audited == {"native_stop_mandatory", "above_leverage_cap", "cap_unbounded"}
 
 
-@pytest.mark.parametrize(
-    "name",
-    ["Quartz\x00Zebra", "\x01", "tab\there", "line\n", "x\x1f", "a b", "del\x7f", "Alice — 0.5R"],
-)
-def test_a_name_with_a_control_character_is_not_allowed(name: str) -> None:
+#: What P14 refuses (a C0 control, a lone surrogate) and what it leaves be.
+_REFUSED = ["Quartz\x00Zebra", "\x01", "tab\there", "line\n", "x\x1f", "\ud800", "a\udfffb"]
+_TAKEN = ["a b", "del\x7f", "Alice — 0.5R", "\U0001f600"]
+
+
+@pytest.mark.parametrize("name", [*_REFUSED, *_TAKEN])
+def test_a_name_with_a_control_character_or_lone_surrogate_is_not_allowed(name: str) -> None:
     got = check_profile_input(_with(name=name), stored_is_default=None)
-    assert got == ([_NO_C0] if min(name) < " " else [])  # 13:26Z rider: a 422, never a 500
+    refused = min(name) < " " or unpaired_surrogate(name)  # a 422, never a 500
+    assert got == ([_NO_C0] if refused else [])
 
 
 @pytest.mark.parametrize(
@@ -821,12 +845,13 @@ def _c6(low: str, high: str, places: int) -> st.SearchStrategy[str]:
 
 _MAX = "9" * 20 + "." + "9" * 18  # the largest numeric(38,18)
 _MONEY, _PCT = _c6("0.000000000000000001", _MAX, 18), _c6("0.000001", "100", 6)
-_NAME_CHARACTERS = st.characters(min_codepoint=0x20, exclude_categories=["Cs"])  # no C0
+#: No C0 and no surrogate: P14's own test pins both (the model refuses a surrogate).
+_NAME_CHARACTERS = st.characters(min_codepoint=0x20, exclude_categories=["Cs"])
 
 
 @st.composite
 def _bodies(draw: st.DrawFn) -> dict[str, Any]:
-    """A body inside the contract and section 4.3 by construction, out to its columns' edges."""
+    """A body inside the contract and the pass's bounds by construction, out to the column edges."""
     amount = draw(st.sampled_from([*_SIZED, "risk_per_trade_pct", "risk_per_trade_usd"]))
     unit, cap = draw(st.sampled_from(["ticks", "percent", "atr"])), draw(_c6("1", "100", 2))
     stop = {
@@ -858,6 +883,7 @@ def _bodies(draw: st.DrawFn) -> dict[str, Any]:
     }
 
 
+@example(raw=_with(name="\U0001f600" * 80))  # the longest name: 80 characters, 320 bytes
 @settings(max_examples=300, deadline=None)
 @given(raw=_bodies())
 def test_every_body_within_the_contract_passes_and_maps_to_a_storable_profile(
