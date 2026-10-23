@@ -27,6 +27,47 @@ def env_example(tmp_path: Path) -> Path:
     return p
 
 
+CONTAINER_ID = "c0ffee000000"  # 12 hex digits, as `docker compose ps -q` prints one
+COMPOSE = ("infra/compose/docker-compose.yml",)
+DECOY = "decoy-decoy-decoy"  # a credential in the container's environment
+
+
+def fake_docker(
+    monkeypatch: pytest.MonkeyPatch,
+    ps: tuple[int, str] = (0, CONTAINER_ID + "\n"),
+    inspect: tuple[int, str] | list[tuple[int, str]] = (0, "CV_GIT_SHA=abc1234\n"),
+) -> SimpleNamespace:
+    """Fake `subprocess.run`: cosign and `compose up` succeed, the smoke test's two
+    queries answer (rc, stdout); a list of `inspect` answers is used one per call.
+    `.calls` logs each argv, `.kwargs` its keywords."""
+    log = SimpleNamespace(calls=[], kwargs=[])
+    answers = list(inspect) if isinstance(inspect, list) else [inspect]
+
+    def run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+        log.calls.append(cmd)
+        log.kwargs.append(kwargs)
+        if cmd[:2] == ["docker", "inspect"]:
+            rc, out = answers.pop(0) if len(answers) > 1 else answers[0]
+        else:
+            rc, out = ps if "ps" in cmd else (0, "")
+        return SimpleNamespace(returncode=rc, stdout=out, stderr="")
+
+    monkeypatch.setattr(dd.subprocess, "run", run)
+    return log
+
+
+def probes(monkeypatch: pytest.MonkeyPatch, **healthz: object) -> list[str]:
+    """Both probes say ok (`healthz` adds keys to its body); returns the urls polled."""
+    urls: list[str] = []
+
+    def fake_get_json(url: str, timeout_s: float = 3.0) -> dict:
+        urls.append(url)
+        return {"status": "ok", **healthz} if "healthz" in url else {"status": "ok"}
+
+    monkeypatch.setattr(dd, "_get_json", fake_get_json)
+    return urls
+
+
 def test_render_env_file_sets_digest_and_sha(tmp_path: Path, env_example: Path) -> None:
     out = tmp_path / ".env"
     dd.render_env_file(
@@ -119,46 +160,169 @@ def test_verify_signature_staging_also_allows_release_branch(
     assert _re.match(regexp, signer_release)
 
 
-def test_smoke_test_matches_sha_immediately(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = {"n": 0}
+@pytest.fixture()
+def clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fake clock: `sleep` advances `monotonic`, so a poll loop ends on its own."""
+    now = [0.0]
 
-    def fake_get_json(url: str, timeout_s: float = 3.0) -> dict:
-        calls["n"] += 1
-        if "healthz" in url:
-            return {"status": "ok", "git_sha": "abc1234"}
-        return {"status": "ok"}
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
 
-    monkeypatch.setattr(dd, "_get_json", fake_get_json)
-    dd.smoke_test("http://x", "abc1234", timeout_s=5.0)
-    assert calls["n"] == 2
+    monkeypatch.setattr(dd.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(dd.time, "sleep", sleep)
+
+
+def test_smoke_test_passes_when_the_container_has_the_deployed_sha(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    urls = probes(monkeypatch)
+    docker = fake_docker(monkeypatch)
+    dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
+    assert urls == ["http://x/healthz", "http://x/readyz"]
+    ps, inspect = docker.calls
+    assert " ".join(ps) == (
+        "docker compose -f infra/compose/docker-compose.yml --profile core ps -q api"
+    )
+    assert inspect[:5] == ["docker", "inspect", "--type", "container", "--format"]
+    assert inspect[5:] == [dd._INSPECT_SHA_TEMPLATE, CONTAINER_ID]
+    # The module's subprocess style: captured output, no `check`, and a bound.
+    assert all(k["capture_output"] and k["check"] is False for k in docker.kwargs)
+    assert all(k["timeout"] for k in docker.kwargs)
+
+
+def test_inspect_template_prints_only_the_sha_entry() -> None:
+    assert dd._INSPECT_SHA_TEMPLATE == (
+        '{{range .Config.Env}}{{if eq (index (split . "=") 0) "CV_GIT_SHA"}}'
+        "{{.}}{{end}}{{end}}"
+    )
+
+
+def test_smoke_test_passes_with_a_healthz_body_without_git_sha(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#4222's precondition: the probes may stop carrying the sha."""
+    body = {"status": "ok", "version": "0.1.0"}
+    monkeypatch.setattr(dd, "_get_json", lambda *a, **k: body)
+    fake_docker(monkeypatch)
+    dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
 
 
 def test_smoke_test_sha_mismatch_raises_ci_dep_003(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, clock: None
 ) -> None:
-    def fake_get_json(url: str, timeout_s: float = 3.0) -> dict:
-        if "healthz" in url:
-            return {"status": "ok", "git_sha": "old-sha"}
-        return {"status": "ok"}
-
-    monkeypatch.setattr(dd, "_get_json", fake_get_json)
-    monkeypatch.setattr(dd.time, "sleep", lambda _s: None)
+    probes(monkeypatch, git_sha="new-sha")  # /healthz claims the deployed sha, the
+    fake_docker(monkeypatch, inspect=(0, "CV_GIT_SHA=old-sha\n"))  # container does not
     with pytest.raises(dd.DeployError) as exc:
-        dd.smoke_test("http://x", "new-sha", timeout_s=0.05)
-    assert exc.value.code in {"CI-DEP-002", "CI-DEP-003"}
+        dd.smoke_test("http://x", "new-sha", COMPOSE, timeout_s=5.0)
+    assert exc.value.code == "CI-DEP-003"
+    assert "new-sha" in str(exc.value) and "old-sha" in str(exc.value)
+
+
+def test_smoke_test_retries_until_the_container_has_the_deployed_sha(
+    monkeypatch: pytest.MonkeyPatch, clock: None
+) -> None:
+    probes(monkeypatch)
+    answers = [(0, "CV_GIT_SHA=old-sha\n"), (0, "CV_GIT_SHA=abc1234\n")]
+    docker = fake_docker(monkeypatch, inspect=answers)
+    dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
+    assert sum(c[:2] == ["docker", "inspect"] for c in docker.calls) == 2
+
+
+def test_smoke_test_with_no_api_container_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, clock: None
+) -> None:
+    probes(monkeypatch)
+    docker = fake_docker(monkeypatch, ps=(0, ""))
+    with pytest.raises(dd.DeployError) as exc:
+        dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
+    assert exc.value.code == "CI-DEP-002"
+    assert "printed 0 value(s)" in str(exc.value)
+    assert "no attempt made" not in str(exc.value)  # the loop ran
+    assert not any(c[:2] == ["docker", "inspect"] for c in docker.calls)
+
+
+@pytest.mark.parametrize("query", ["ps", "inspect"])
+def test_smoke_test_failed_docker_query_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, clock: None, query: str
+) -> None:
+    """The exit status decides, not stdout: a query that exits 1 yet prints a
+    plausible answer must not be believed."""
+    probes(monkeypatch)
+    plausible = {"ps": (1, CONTAINER_ID + "\n"), "inspect": (1, "CV_GIT_SHA=abc1234\n")}
+    fake_docker(monkeypatch, **{query: plausible[query]})
+    with pytest.raises(dd.DeployError) as exc:
+        dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
+    assert exc.value.code == "CI-DEP-002"
+    assert "failed (exit 1)" in str(exc.value)
+    assert "no attempt made" not in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        FileNotFoundError("docker"),
+        dd.subprocess.TimeoutExpired("docker", 20.0),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+    ],
+    ids=["no-docker-binary", "docker-hangs", "not-utf-8"],
+)
+def test_smoke_test_docker_that_cannot_run_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, clock: None, error: Exception
+) -> None:
+    probes(monkeypatch)
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(dd.subprocess, "run", boom)
+    with pytest.raises(dd.DeployError) as exc:
+        dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
+    assert exc.value.code == "CI-DEP-002"
+    assert "did not complete" in str(exc.value)
+
+
+LEAK = f"POSTGRES_PASSWORD={DECOY}"
+OK_ID, OK_SHA = (0, CONTAINER_ID + "\n"), (0, "CV_GIT_SHA=abc1234\n")
+
+
+@pytest.mark.parametrize(
+    ("ps", "inspect"),
+    [
+        (OK_ID, (0, LEAK + "\n")),  # another variable, not the sha
+        (OK_ID, (0, LEAK + "\nCV_GIT_SHA=abc1234\n")),  # docker did not filter
+        (OK_ID, (0, "CV_GIT_SHA=abc1234\n" + LEAK + "\n")),
+        ((0, LEAK + "\n"), OK_SHA),  # a variable where a container id belongs
+        ((0, CONTAINER_ID + " " + LEAK + "\n"), OK_SHA),
+    ],
+)
+def test_smoke_test_never_echoes_what_docker_printed(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: None,
+    capsys: pytest.CaptureFixture[str],
+    ps: tuple[int, str],
+    inspect: tuple[int, str],
+) -> None:
+    """Anything docker prints beyond the one CV_GIT_SHA entry is refused, and no
+    message, repr or output repeats it (C-12.2, C-12.6)."""
+    probes(monkeypatch)
+    fake_docker(monkeypatch, ps=ps, inspect=inspect)
+    with pytest.raises(dd.DeployError) as exc:
+        dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
+    assert exc.value.code == "CI-DEP-002"
+    out, err = capsys.readouterr()
+    assert DECOY not in f"{exc.value} {exc.value!r} {out} {err}"
 
 
 def test_smoke_test_never_ready_raises_ci_dep_002(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, clock: None
 ) -> None:
-    def fake_get_json(url: str, timeout_s: float = 3.0) -> dict:
-        return {"status": "starting"}
-
-    monkeypatch.setattr(dd, "_get_json", fake_get_json)
-    monkeypatch.setattr(dd.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(dd, "_get_json", lambda *a, **k: {"status": "starting"})
+    docker = fake_docker(monkeypatch)
     with pytest.raises(dd.DeployError) as exc:
-        dd.smoke_test("http://x", "abc1234", timeout_s=0.05)
+        dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
     assert exc.value.code == "CI-DEP-002"
+    assert "not ready" in str(exc.value)
+    assert docker.calls == []  # the container is only looked at once the probes are ok
 
 
 def test_ledger_append_and_read_last_success(tmp_path: Path) -> None:
@@ -195,14 +359,8 @@ def test_ledger_append_and_read_last_success(tmp_path: Path) -> None:
 def test_deploy_success_path_writes_success_ledger(
     tmp_path: Path, env_example: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        dd.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stderr="")
-    )
-
-    def fake_get_json(url: str, timeout_s: float = 3.0) -> dict:
-        return {"status": "ok", "git_sha": "abc1234"}
-
-    monkeypatch.setattr(dd, "_get_json", fake_get_json)
+    fake_docker(monkeypatch)
+    probes(monkeypatch)
     ledger = tmp_path / "ledger.jsonl"
     rc = dd.deploy(
         image_ref="ghcr.io/o/img",
@@ -222,6 +380,37 @@ def test_deploy_success_path_writes_success_ledger(
     assert rc == 0
     rows = [json.loads(l) for l in ledger.read_text(encoding="utf-8").splitlines()]
     assert rows[-1]["outcome"] == "success"
+
+
+def test_deploy_container_sha_mismatch_records_sha_mismatch(
+    tmp_path: Path, env_example: Path, monkeypatch: pytest.MonkeyPatch, clock: None
+) -> None:
+    probes(monkeypatch)
+    docker = fake_docker(monkeypatch, inspect=(0, "CV_GIT_SHA=old-sha\n"))
+    ledger = tmp_path / "ledger.jsonl"
+    rc = dd.deploy(
+        image_ref="ghcr.io/o/img",
+        digest="sha256:" + "b" * 64,
+        sha="new-sha",
+        environment="dev",
+        actor="ci",
+        repository="o/r",
+        env_example=env_example,
+        env_out=tmp_path / ".env",
+        compose_files=("a.yml", "b.yml"),
+        base_url="http://x",
+        ledger_path=ledger,
+        smoke_timeout_s=5.0,
+        auto_rollback=False,
+    )
+    assert rc == 1
+    rows = [json.loads(x) for x in ledger.read_text(encoding="utf-8").splitlines()]
+    assert rows[-1]["outcome"] == "sha-mismatch"
+    assert "old-sha" in rows[-1]["detail"]
+    assert "new-sha" in rows[-1]["detail"]
+    # The container is looked up in the compose project this deploy brought up.
+    ps = next(c for c in docker.calls if "ps" in c)
+    assert ps[:7] == ["docker", "compose", "-f", "a.yml", "-f", "b.yml", "--profile"]
 
 
 def test_deploy_tampered_image_aborts_before_compose_up(
@@ -508,12 +697,8 @@ def test_auto_rollback_never_ready_raises_ci_dep_002(
 def test_main_success_returns_zero_and_defaults_auto_rollback_for_dev(
     tmp_path: Path, env_example: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        dd.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stderr="")
-    )
-    monkeypatch.setattr(
-        dd, "_get_json", lambda *a, **k: {"status": "ok", "git_sha": "abc1234"}
-    )
+    fake_docker(monkeypatch)
+    probes(monkeypatch)
     ledger = tmp_path / "ledger.jsonl"
     rc = dd.main(
         [

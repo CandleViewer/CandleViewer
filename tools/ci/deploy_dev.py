@@ -14,10 +14,13 @@ Flow (ticket "Scope / Deliverables" + acceptance scenarios):
      `docker compose ... up -d --wait` (waits on the `api` service's own
      healthcheck, which is only `/healthz`; the stronger sha-match check
      happens in step 3).
-  3. Smoke test: `GET /healthz`, `GET /readyz`, and assert the returned
-     `git_sha` equals the sha we just deployed (CI-DEP-003 on mismatch —
-     "deploy succeeded, old image still running" is the most common silent
-     failure mode per the ticket's technical notes).
+  3. Smoke test: poll `GET /healthz` and `GET /readyz` until both report
+     `status: ok`, then read `CV_GIT_SHA` from the running `api` container
+     (`docker compose ps -q api`, then `docker inspect` with a template that
+     prints only that variable, so no other variable of the container's
+     environment reaches this process) and assert it equals the sha we just
+     deployed, so the container was recreated from this deploy's `.env`
+     (CI-DEP-003 on mismatch, CI-DEP-002 if the container cannot be read).
   4. Append a `deployments/ledger.jsonl` record (success or failure).
   5. Dev-only: on smoke failure, automatically redeploy the previous digest
      (recorded in the ledger) and record that as its own entry — staging
@@ -218,11 +221,16 @@ def render_env_file(
     env_out_path.write_text("\n".join(rendered) + "\n", encoding="utf-8")
 
 
-def compose_up(compose_files: tuple[str, ...], *, profile: str = "core") -> None:
+def _compose_args(compose_files: tuple[str, ...], profile: str) -> list[str]:
+    """The `docker compose` argv prefix `up` and `ps` share, so both address one project."""
     args = ["docker", "compose"]
     for f in compose_files:
         args += ["-f", f]
-    args += ["--profile", profile, "up", "-d", "--wait"]
+    return [*args, "--profile", profile]
+
+
+def compose_up(compose_files: tuple[str, ...], *, profile: str = "core") -> None:
+    args = [*_compose_args(compose_files, profile), "up", "-d", "--wait"]
     result = subprocess.run(args, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise DeployError(
@@ -236,17 +244,79 @@ def _get_json(url: str, timeout_s: float = 3.0) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def smoke_test(base_url: str, expected_sha: str, *, timeout_s: float = 60.0) -> None:
-    """Poll `/healthz` + `/readyz` until healthy or `timeout_s` elapses.
+# Docker filters inside its own template, so of the container's environment only `CV_GIT_SHA`
+# is printed: no other variable (the stack's credentials, C-12.2, C-12.6) reaches this process.
+_INSPECT_SHA_TEMPLATE = (
+    '{{range .Config.Env}}{{if eq (index (split . "=") 0) "CV_GIT_SHA"}}{{.}}{{end}}{{end}}'
+)
+_SHA_ENTRY_PREFIX = "CV_GIT_SHA="
+_CONTAINER_ID_RE = re.compile(r"[0-9a-f]{12,64}")
+_DOCKER_QUERY_TIMEOUT_S = 20.0
 
-    Raises CI-DEP-002 on timeout (readiness never green) and CI-DEP-003 if
-    the deployed `git_sha` never matches the sha we just deployed within
-    the window — the ticket's "old image still running" failure mode.
+
+def _docker_query(args: list[str], what: str) -> str:
+    """Run one read-only docker query; CI-DEP-002 (never echoing stdout) if it cannot complete."""
+    try:
+        result = subprocess.run(
+            args, capture_output=True, text=True, check=False, timeout=_DOCKER_QUERY_TIMEOUT_S
+        )
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError) as exc:
+        raise DeployError("CI-DEP-002", f"{what} did not complete: {type(exc).__name__}") from exc
+    if result.returncode != 0:
+        raise DeployError(
+            "CI-DEP-002",
+            f"{what} failed (exit {result.returncode}): {result.stderr.strip()[:300]}",
+        )
+    return result.stdout
+
+
+def read_container_sha(compose_files: tuple[str, ...], *, profile: str = "core") -> str:
+    """`CV_GIT_SHA` of the one running `api` container, else CI-DEP-002 (fail closed).
+
+    Anything but one container and one `CV_GIT_SHA=` entry is refused, and no message repeats
+    what docker printed.
+    """
+    ids = _docker_query(
+        [*_compose_args(compose_files, profile), "ps", "-q", "api"], "docker compose ps -q api"
+    ).split()
+    if len(ids) != 1 or not _CONTAINER_ID_RE.fullmatch(ids[0]):
+        raise DeployError(
+            "CI-DEP-002",
+            f"no single running api container: docker compose ps -q api printed {len(ids)} "
+            "value(s), not exactly one container id",
+        )
+    answer = _docker_query(
+        ["docker", "inspect", "--type", "container", "--format", _INSPECT_SHA_TEMPLATE, ids[0]],
+        "docker inspect",
+    )
+    lines = [line for line in answer.splitlines() if line.strip()]
+    if len(lines) != 1 or not lines[0].startswith(_SHA_ENTRY_PREFIX):
+        raise DeployError(
+            "CI-DEP-002",
+            f"docker inspect did not print exactly one CV_GIT_SHA entry ({len(lines)} line(s))",
+        )
+    return lines[0].removeprefix(_SHA_ENTRY_PREFIX)
+
+
+def smoke_test(
+    base_url: str,
+    expected_sha: str,
+    compose_files: tuple[str, ...],
+    *,
+    timeout_s: float = 60.0,
+) -> None:
+    """Poll `/healthz` + `/readyz` until both are ok, then check the running `api` container.
+
+    Its `CV_GIT_SHA` (`read_container_sha`, never a probe body) must equal `expected_sha`: the
+    container was then recreated from this deploy's `.env`. The poll repeats until `timeout_s`;
+    CI-DEP-003 (naming both values) if the sha still differs, CI-DEP-002 if the probes never
+    turn green or the container cannot be found or read (never a pass).
     """
     deadline = time.monotonic() + timeout_s
-    last_error: str = "no attempt made"
-    last_sha: str | None = None
+    last_error: str = "no attempt made"  # only ever reported when the loop never ran
+    seen_sha: str | None = None
     while time.monotonic() < deadline:
+        seen_sha = None
         try:
             live = _get_json(f"{base_url}/healthz")
             ready = _get_json(f"{base_url}/readyz")
@@ -258,14 +328,20 @@ def smoke_test(base_url: str, expected_sha: str, *, timeout_s: float = 60.0) -> 
             last_error = f"not ready: healthz={live}, readyz={ready}"
             time.sleep(2.0)
             continue
-        last_sha = live.get("git_sha")
-        if last_sha == expected_sha:
+        try:
+            seen_sha = read_container_sha(compose_files)
+        except DeployError as exc:
+            last_error = str(exc)
+            time.sleep(2.0)
+            continue
+        if seen_sha == expected_sha:
             return
         time.sleep(2.0)
-    if last_sha is not None and last_sha != expected_sha:
+    if seen_sha is not None:
         raise DeployError(
             "CI-DEP-003",
-            f"sha mismatch after deploy: expected {expected_sha}, got {last_sha}",
+            f"sha mismatch after deploy: expected {expected_sha!r}, the running api "
+            f"container's CV_GIT_SHA is {seen_sha[:80]!r}",
         )
     raise DeployError("CI-DEP-002", f"smoke test timed out after {timeout_s}s: {last_error}")
 
@@ -321,7 +397,7 @@ def deploy(
 
     try:
         compose_up(compose_files)
-        smoke_test(base_url, sha, timeout_s=smoke_timeout_s)
+        smoke_test(base_url, sha, compose_files, timeout_s=smoke_timeout_s)
     except DeployError as exc:
         outcome: Literal["smoke-failed", "sha-mismatch"] = (
             "sha-mismatch" if exc.code == "CI-DEP-003" else "smoke-failed"

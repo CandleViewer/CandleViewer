@@ -1003,16 +1003,25 @@ carries a warning annotation titled `regression-guard (non-required)`, and the j
   this — investigate why `main.yml`'s own sign step produced (or the
   registry served) an unverifiable digest.
 - **CI-DEP-002** (smoke test failed / timed out): `/healthz` or `/readyz`
-  never returned `status: "ok"` within the timeout. On dev this triggers
+  never returned `status: "ok"` within the timeout, or the running `api`
+  container's `CV_GIT_SHA` could not be read (no running `api` container,
+  more than one, or `docker compose ps` / `docker inspect` failed, timed
+  out or printed anything but that one entry; the message says which and
+  never repeats what docker printed). On dev this triggers
   automatic redeploy of the last known-good digest (`rolled-back` ledger
   entry); on staging it stops and alerts — roll back manually (§8). Check
   the container logs for a stuck boot-time migration (advisory lock,
   E03-T10) first; a long CI-DEP-002 wait is often a CI-DEP-004 in disguise.
 - **CI-DEP-003** (sha mismatch after deploy): the container came up healthy
-  but `/healthz`'s `git_sha` never matched the digest we just deployed —
-  "deploy succeeded, old image still running". Check that the compose
-  service actually pulled the new digest (`docker compose images`) rather
-  than reusing a cached local tag.
+  but the running `api` container's `CV_GIT_SHA` is not the sha we just
+  deployed, so it was not recreated from this deploy's `.env` ("deploy
+  succeeded, old container still running"); the error names both values.
+  See the container with `docker compose ... ps api` (the `-f` files and
+  `--profile core` the deploy used), recreate it with
+  `docker compose ... up -d --force-recreate api` and re-run the deploy.
+  To read the value by hand use the `docker inspect` template in
+  `tools/ci/deploy_dev.py` (`_INSPECT_SHA_TEMPLATE`), which prints only that
+  variable: the container's whole environment holds the stack's credentials.
 - **CI-DEP-004** (migration lock timeout): the boot-time Alembic advisory
   lock (E03-T10) did not release within its own timeout, so the container
   never reaches `/readyz`. Surfaces here as a CI-DEP-002 smoke timeout;
@@ -1098,7 +1107,8 @@ section in the same sprint — do not just work around it and move on.
   `cosign verify`s the digest immediately before applying it, renders
   `infra/compose/.env` from `infra/compose/.env.example`, runs
   `docker compose ... up -d --wait`, smoke-tests `/healthz` + `/readyz` and
-  asserts the deployed `git_sha` matches, then appends a record to
+  asserts the running `api` container's `CV_GIT_SHA` matches, then appends
+  a record to
   `deployments/ledger.jsonl` (sha, digest, environment, actor, timestamp,
   outcome, duration) — committed by the workflow for auditability until
   E04's observability lands.
