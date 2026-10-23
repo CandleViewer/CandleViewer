@@ -3,8 +3,8 @@
 `widen_stop`, or a stop action whose `only_tighten` is anything but true, is refused with the issue
 code 22 registers (`stop_loosening`) on save, `/rules/validate`, `compileRule` and import, alike
 for the Owner, a Manager and a caller holding `*` or the retired `rules.loosen_stop`: no permission
-reaches it, and an import is refused, never stripped. Each route keeps its forbidden-role and
-cross-account refusals (C-12.4).
+reaches it, an import is refused, never stripped, and a version stored before the refusal is never
+armed. Each route keeps its forbidden-role and cross-account refusals (C-12.4).
 """
 
 from __future__ import annotations
@@ -66,8 +66,8 @@ IMPORTERS = {
 }
 
 
-def _issue(path: str) -> dict[str, Any]:
-    message = f"Action 1 could loosen a stop. {REASON}"
+def _issue(path: str, n: int = 1) -> dict[str, Any]:
+    message = f"Action {n} could loosen a stop. {REASON}"
     return {"path": path, "code": CODE, "message": message, "severity": "error", "class": "safety"}
 
 
@@ -95,6 +95,9 @@ def test_validator_refuses_every_action_that_could_loosen_a_stop(form: str) -> N
     ir, issue = _loosening(form)
     res = validate_rule(Rule.model_validate(ir), REG)
     assert [i.to_dict() for i in res.errors] == [issue] and res.blocks_arming
+    ir["actions"] = [_stop("tighten_stop"), {**ir["actions"][0], "node_id": "a2"}]  # second one
+    (later,) = validate_rule(Rule.model_validate(ir), REG).errors
+    assert later.to_dict() == _issue(issue["path"].replace("[0]", "[1]"), 2)
 
 
 @pytest.mark.parametrize(
@@ -107,6 +110,11 @@ def test_validator_refuses_every_action_that_could_loosen_a_stop(form: str) -> N
     ],
 )
 def test_validator_never_refuses_a_stop_action_that_only_tightens(action: dict[str, Any]) -> None:
+    assert validate_rule(Rule.model_validate(_ir(actions=[action])), REG).valid
+
+
+def test_validator_never_refuses_a_take_profit_edit() -> None:
+    action = _stop("modify_take_profit", only_tighten=False)  # a take profit is no stop
     assert validate_rule(Rule.model_validate(_ir(actions=[action])), REG).valid
 
 
@@ -182,3 +190,19 @@ async def test_import_keeps_its_cross_account_refusal() -> None:
         await m.import_rule({"ir": ir}, IMPORTERS["manager"])
     assert (refused.value.status, refused.value.code) == (403, "forbidden")
     assert [a for a, _ in audits] == ["rule.import_refused"]
+
+
+@pytest.mark.parametrize("role", ["owner", "star"])
+async def test_arming_refuses_a_stored_version_that_could_loosen_a_stop(role: str) -> None:
+    """A version stored before the refusal existed (no real database holds one) is never armed."""
+    m, _, _ = _mgr()
+    rid = (await m.create(_ir(), IMPORTERS["owner"]))["id"]
+    row = await m._s.get(rid)
+    assert row is not None
+    row.versions[0].ir["actions"] = [LOOSENING["widen_stop"][0]]
+    await m.set_mode(rid, "simulate", IMPORTERS["owner"], "k-sim")
+    await m.record_simulation(rid, row.versions[0].ir_hash, 5, 0.0)
+    with pytest.raises(RuleError) as refused:
+        await m.set_mode(rid, "armed", IMPORTERS[role], "k-arm")
+    assert (refused.value.status, refused.value.code) == (422, "rule_invalid")
+    assert (await m.get(rid, IMPORTERS["owner"]))["mode"] == "simulate"

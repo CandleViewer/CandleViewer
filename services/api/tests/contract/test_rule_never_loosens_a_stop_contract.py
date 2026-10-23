@@ -28,13 +28,14 @@ def _stop(kind: str, **params: Any) -> dict[str, Any]:
     return {"node_id": "a1", "type": kind, "params": {"mode": "atr", "value": 2, **params}}
 
 
-def test_22_registers_the_refusal_and_create_rule_holds_it_for_every_role() -> None:
+def test_22_registers_the_refusal_and_every_22_text_holds_it_for_every_role() -> None:
     assert _CODE in _SCHEMAS["RuleValidationIssue"]["properties"]["code"]["enum"]
     create = _words(_OPS["createRule"]["description"])
     for phrase in (
         "**No rule loosens a stop (24-internal-schemas.md section 8.8 rule 5).**",
         "is refused for every role, the Owner included, whatever permission the caller holds: "
         "`422 rule_ir_invalid`, issue code `stop_loosening`, class `safety`",
+        "at `actions[i].type` or `actions[i].params.only_tighten`",
         '"Not available — rules never loosen a stop."',
         "`validateRule` and `compileRule` report the same issue, and an imported rule is refused "
         "with it",
@@ -42,6 +43,10 @@ def test_22_registers_the_refusal_and_create_rule_holds_it_for_every_role() -> N
         assert phrase in create, phrase
     update = _words(_OPS["updateRule"]["description"])
     assert "held to the action budget and the stop rule of `createRule`" in update
+    kinds = _words(_SCHEMAS["RuleAction"]["properties"]["type"]["description"])
+    assert "`widen_stop` is retired and stays in this enum only so stored documents" in kinds
+    flag = _SCHEMAS["RuleVocabulary"]["properties"]["actions"]["items"]["properties"]
+    assert _words(flag["loosens_risk"]["description"]).startswith("Always false: no rule may")
 
 
 @pytest.mark.parametrize(

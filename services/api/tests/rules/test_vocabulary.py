@@ -25,7 +25,7 @@ from candleviewer.rules.vocabulary import (
     undescribed_metrics,
 )
 from candleviewer.rules.vocabulary import build as vbuild
-from candleviewer.rules.vocabulary.catalogue import ACTIONS, OPERATORS, TRIGGERS
+from candleviewer.rules.vocabulary.catalogue import ACTIONS, OPERATORS, RETIRED_ACTIONS, TRIGGERS
 from candleviewer.rules.vocabulary.metrics import kernel_params_schema
 from candleviewer.rules.vocabulary.registry import DuplicateMetricError
 
@@ -241,7 +241,7 @@ def test_rule_eligibility_is_server_placement_and_no_client_worker_name_is_a_met
 def test_every_enum_member_is_described() -> None:
     # `widen_stop` is retired: the IR still parses it (stored rules keep their hashes), and the
     # vocabulary never offers it.
-    assert set(typing.get_args(ActionType)) - {a.type for a in ACTIONS} == {"widen_stop"}
+    assert set(typing.get_args(ActionType)) - {a.type for a in ACTIONS} == RETIRED_ACTIONS
     assert {a.type for a in ACTIONS} < set(typing.get_args(ActionType)) and len(ACTIONS) == 24
     assert set(TRIGGERS) == set(typing.get_args(TriggerType)) and len(TRIGGERS) == 13
     assert set(OPERATORS) == set(typing.get_args(ComparisonOp))
