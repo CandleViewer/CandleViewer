@@ -596,8 +596,7 @@ def test_recorded_symbol_writes_are_handler_gated(method: str, path: str) -> Non
 
 
 def test_the_add_is_served_with_its_handler_gate() -> None:
-    """#492 S7: the add's `recorder` branch is proven by `test_recording_writes.py`
-    (`pinned` or `retention_days` without the step-up is `403 step_up_required`)."""
+    """#492 S7: `test_recording_writes.py` proves the add's `recorder` step-up (403)."""
     served = served_operations(create_app()) - _PENDING_HANDLER_GATES
     assert ("POST", "/recording/symbols") in served
 

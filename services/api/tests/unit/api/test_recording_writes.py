@@ -78,9 +78,8 @@ async def test_a_plain_add_needs_no_step_up_and_answers_201_with_an_estimate() -
     created = await env.add(symbol="SOLUSDT")
     body = created.json()
     assert created.status_code == 201 and env.actions() == ["recorder.start"]
-    assert (body["symbol"], body["reason"], body["pinned"]) == ("SOLUSDT", "manual", False)
-    assert (body["streams"], body["depth"], body["estimate"]["warning"]) == (list(STREAMS), 200,
-                                                                             None)  # fmt: skip
+    assert body.items() >= dict(symbol="SOLUSDT", reason="manual", pinned=False, depth=200).items()
+    assert (body["streams"], body["estimate"]["warning"]) == (list(STREAMS), None)
     assert body["added_by"] == str(env.caller.user_id)
     assert (await env.add(symbol="BTCUSDT", depth=500)).json()["estimate"]["warning"]
 
@@ -111,8 +110,7 @@ async def test_the_cap_is_422_and_a_re_add_answers_200_with_the_row() -> None:
     capped = await env.add(symbol="ETHUSDT")
     assert (capped.status_code, capped.json()["code"]) == (422, "recorder_symbol_limit")
     assert list(env.fake.entries) == ["BTCUSDT"] and env.actions()[-1] == "recorder.start"
-    assert (env.audit[-1][1]["outcome"], env.audit[-1][1]["reason"]) == (
-        "denied", "recorder_symbol_limit")  # fmt: skip
+    assert env.audit[-1][1].items() >= {("outcome", "denied"), ("reason", "recorder_symbol_limit")}
 
 
 async def test_a_key_replays_its_answer_and_another_body_under_it_is_409() -> None:
@@ -200,16 +198,21 @@ async def test_a_pin_always_needs_the_recorder_step_up_and_the_policy_records_it
 
 
 async def test_an_unpin_is_audited_before_the_store_and_a_refused_record_changes_nothing() -> None:
-    fake = FakeRecorder()
+    """ETHUSDT: `retention_days` with no pin change; no policy member records it, the route does."""
+    fake, days = FakeRecorder(), {"pinned": False, "retention_days": 7}
     entry = fake.put("BTCUSDT", state="stopped", pinned=True)
+    kept = fake.put("ETHUSDT", retention_days=9)
     env = _Env(fake, *W, elevated=True)
     env.fail_audit = True
-    refused = await env.http.put(_PIN.format(entry.id), json={"pinned": False})
-    assert (refused.status_code, refused.json()["code"]) == (503, "audit_unavailable")
-    assert fake.entries["BTCUSDT"].pinned
+    for row, body in ((entry, {"pinned": False}), (kept, days)):
+        refused = await env.http.put(_PIN.format(row.id), json=body)
+        assert (refused.status_code, refused.json()["code"]) == (503, "audit_unavailable")
+    assert fake.entries == {"BTCUSDT": entry, "ETHUSDT": kept}
     env.fail_audit = False
-    unpin = {"pinned": False, "retention_days": 7}
-    unpinned = await env.http.put(_PIN.format(entry.id), json=unpin)
+    assert (await env.http.put(_PIN.format(kept.id), json=days)).json()["retention_days"] == 7
+    after = [(a, r["before_state"], r["after_state"]) for a, r in env.audit]
+    assert after == [("retention.change", {"retention_days": 9}, {"retention_days": 7})]
+    unpinned = await env.http.put(_PIN.format(entry.id), json=days)
     assert (unpinned.json()["pinned"], unpinned.json()["retention_days"]) == (False, 7)
     assert "BTCUSDT" not in fake.entries  # an idle row unpinned goes
 

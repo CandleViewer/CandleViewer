@@ -65,13 +65,13 @@ class FakeRecorder:
         if old is None and len(self.entries) >= self.max_symbols:  # a re-add is never capped
             raise LimitError(f"max {self.max_symbols} recorded symbols")
         held = () if old is None or old.lingering else old.reasons
-        kept: dict[str, Any] = {"added_by": actor.id, "state": "starting"} if old is None else {
-            "pinned": old.pinned, "added_by": old.added_by, "state": old.state}  # fmt: skip
         streams, depth = streams or ("trades",), depth or 200
         await self._record("recorder.start", symbol, actor, "manual", streams=",".join(streams),
                            depth=str(depth), held_by=",".join(held) or None)  # fmt: skip
-        self.put(symbol, "manual", *(r for r in held if r != "manual"),
-                 streams=streams, depth=depth, **kept)  # fmt: skip
+        row = old or self.put(symbol, added_by=actor.id, state="starting")
+        reasons = ("manual", *(r for r in held if r != "manual"))  # a re-add keeps the rest
+        self.entries[symbol] = replace(row, reasons=reasons, streams=streams, depth=depth,
+                                       lingering=False, linger_until=None)  # fmt: skip
 
     async def remove_manual(self, symbol: str, actor: Actor) -> None:
         e = self.entries.get(symbol)
