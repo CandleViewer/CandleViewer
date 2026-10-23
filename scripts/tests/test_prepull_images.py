@@ -25,18 +25,20 @@ case "$1 $2" in
     ref=$3
     if [[ $ref == public.ecr.aws/* ]]; then
       n=$(count ecr_pulls)
+      [ "$n" -gt "${MIRROR_FAILS:-0}" ] || { echo "mirror 429" >&2; exit 1; }
       [ "${MIRROR_OK:-1}" = 1 ] || { echo "mirror down" >&2; exit 1; }
       echo "${MIRROR_SERVES:-${ref##*@sha256:}}" > "$FAKE/served"
       echo "${ref%%@*}" > "$FAKE/served_repo"
     else
       n=$(count hub_pulls)
       [ "$n" -gt "${HUB_FAILS:-0}" ] || { echo "token service timed out" >&2; exit 1; }
-      echo "${ref##*@sha256:}" > "$FAKE/served"
+      echo "${HUB_SERVES:-${ref##*@sha256:}}" > "$FAKE/served"
       echo "${ref%%@*}" > "$FAKE/served_repo"
     fi
     echo "$ref"
     ;;
   "tag "*)
+    [ "${TAG_FAILS:-0}" = 0 ] || exit 1
     echo "$3" >> "$FAKE/tagged"
     ;;
   "image inspect")
@@ -58,13 +60,18 @@ def env(tmp_path: Path) -> dict[str, str]:
     fake = bindir / "docker"
     fake.write_text(FAKE_DOCKER, encoding="utf-8")
     fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    nap = bindir / "sleep"
+    nap.write_text('#!/bin/bash\necho "$*" >> "$FAKE/sleeps.log"\n', encoding="utf-8")
+    nap.chmod(nap.stat().st_mode | stat.S_IXUSR)
+    tmo = bindir / "timeout"
+    tmo.write_text('#!/bin/bash\necho "$1" >> "$FAKE/timeouts.log"\nshift\nexec "$@"\n', encoding="utf-8")
+    tmo.chmod(tmo.stat().st_mode | stat.S_IXUSR)
     state = tmp_path / "state"
     state.mkdir()
     return {
         "PATH": f"{bindir}:{os.environ['PATH']}",
         "FAKE": str(state),
-        "PREPULL_BACKOFF": "0 0 0 0",
-        "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
+                "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
     }
 
 
@@ -198,3 +205,90 @@ def test_every_lane_that_collects_a_postgres_module_pre_pulls() -> None:
     }
     covered = {lane for lane in need if lane.startswith("db-chaos") or lane == "contract-security-3"}
     assert need == covered
+
+
+def _sleeps(env: dict[str, str]) -> list[str]:
+    p = Path(env["FAKE"]) / "sleeps.log"
+    return p.read_text().split() if p.exists() else []
+
+
+def test_backoff_waits_between_hub_attempts_and_not_after_the_last(
+    tmp_path: Path, env: dict[str, str]
+) -> None:
+    r = _run(tmp_path, env, PG, "postgres", HUB_FAILS="99")
+    assert r.returncode == 0, r.stderr
+    assert _sleeps(env)[:4] == ["10", "20", "40", "60"]
+
+
+def test_mirror_gets_three_attempts_with_a_wait_between(tmp_path: Path, env: dict[str, str]) -> None:
+    r = _run(tmp_path, env, PG, "postgres", HUB_FAILS="99", MIRROR_FAILS="2")
+    assert r.returncode == 0, r.stderr
+    assert _count(env, "ecr_pulls") == 3
+    assert _sleeps(env)[4:] == ["30", "60"]
+    again = _run(tmp_path, env, PG, "postgres", HUB_FAILS="99", MIRROR_FAILS="99")
+    assert again.returncode == 1 and "CI-INFRA-001" in again.stderr
+
+
+def test_hub_serving_another_digest_falls_back_to_the_mirror(
+    tmp_path: Path, env: dict[str, str]
+) -> None:
+    r = _run(tmp_path, env, PG, "postgres", HUB_SERVES=OTHER)
+    assert r.returncode == 0, r.stderr
+    assert _count(env, "ecr_pulls") == 1
+    assert "Public ECR mirror" in _summary(env)
+    assert "other than" in r.stderr
+
+
+def test_every_pull_has_its_own_time_bound(tmp_path: Path, env: dict[str, str]) -> None:
+    r = _run(tmp_path, env, PG, "postgres", HUB_FAILS="1")
+    assert r.returncode == 0, r.stderr
+    assert (Path(env["FAKE"]) / "timeouts.log").read_text().split() == ["120", "120"]
+
+
+def test_a_failing_tag_ends_with_the_code(tmp_path: Path, env: dict[str, str]) -> None:
+    r = _run(tmp_path, env, PG, "postgres", TAG_FAILS="1")
+    assert r.returncode == 1 and "CI-INFRA-001" in r.stderr
+
+
+def test_the_compose_postgres_image_resolves_to_its_pinned_tag(
+    tmp_path: Path, env: dict[str, str]
+) -> None:
+    listing = f"postgres-compose compose:postgres {ECR}:16.4@sha256:{DIGEST}\n"
+    compose = tmp_path / "compose.yml"
+    compose.write_text(f"services:\n  p:\n    image: postgres:16.4@sha256:{DIGEST}\n")
+    lst = tmp_path / "l.txt"
+    lst.write_text(listing)
+    r = subprocess.run(
+        ["bash", str(SCRIPT), "--list", str(lst), "--compose", str(compose), "postgres-compose"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert r.returncode == 0, r.stderr
+    assert "postgres:16.4" in (Path(env["FAKE"]) / "tagged").read_text()
+
+
+def test_the_real_list_names_every_image_the_jobs_pull() -> None:
+    rows = (REPO / "infra/images/prepull.txt").read_text(encoding="utf-8")
+    names = {ln.split()[0] for ln in rows.splitlines() if ln.strip() and not ln.startswith("#")}
+    assert {"postgres", "postgres-compose", "questdb", "grafana"} <= names
+    integ = (REPO / ".github/workflows/_job-integration.yml").read_text(encoding="utf-8")
+    assert "prepull_images.sh postgres postgres-compose questdb grafana" in integ
+
+
+def test_the_reaper_image_is_not_pulled_mid_job() -> None:
+    for wf in ("_job-py.yml", "_job-integration.yml", "_job-migrations.yml"):
+        text = (REPO / ".github/workflows" / wf).read_text(encoding="utf-8")
+        assert 'TESTCONTAINERS_RYUK_DISABLED: "true"' in text, wf
+
+
+def test_every_job_that_builds_a_postgres_container_pre_pulls() -> None:
+    for wf, marker in (
+        ("_job-integration.yml", "Audit query-plan measurement"),
+        ("_job-migrations.yml", "cv_app has no DDL privilege"),
+    ):
+        text = (REPO / ".github/workflows" / wf).read_text(encoding="utf-8")
+        head = text.split(marker)[0]
+        assert head.rstrip().rsplit("prepull_images.sh", 1)[-1].startswith(" postgres"), wf
