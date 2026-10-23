@@ -2,7 +2,8 @@
 
 - Ticket: E09-X01 (issue #196)
 - Owner: Security engineer (CODEOWNER)
-- Status: Draft — pending Architect + epic-owner review session (see §7)
+- Status: Final (2026-10-23, #2832). The E09-X04 review stands as the §7 session; its open items
+  are listed there.
 - Re-derives and extends `docs/plan/04-security-program.md` §5.6 (U1–U10) against the concrete design
   in ADR-0010 (`docs/plan/27-adrs/ADR-0010-auth-and-rbac.md`) and the schema in
   `docs/plan/21-database-schema.md` §3.1.
@@ -90,10 +91,10 @@ mitigation; a row with no verification is itself a finding (flagged `[FINDING]`)
 <!-- prettier-ignore -->
 | T | Threat | L | I | Risk | Mitigations | Verify | Residual |
 |---|--------|---|---|------|-------------|--------|----------|
-| U1 | Credential stuffing / brute force against a Manager account | M | H | **High** | SR-011 Argon2id (≥100 ms cost, excluded from budget #13); SR-015 per-account + per-IP throttling; SR-016 lockout after 5/15min + audit + owner notify | `test_login_lockout_after_five_failures`, `cv_auth_lockouts_total` alert on burst | Low |
+| U1 | Credential stuffing / brute force against a Manager account | M | H | **High** | SR-011 Argon2id (≥100 ms cost, excluded from budget #13); SR-015 per-account + per-IP throttling; SR-016 lockout after 5/15min + audit + owner notify | `test_login_lockout_after_five_failures`, `auth_lockouts_total` alert on burst (`AuthLockouts`) | Low |
 | U2 | Phishing a Manager's password | M | H | **High** | SR-020 mandatory TOTP for every trading-capable role; SR-021 TOTP replay prevention (single-use `mfa_challenges` row consumed atomically) | `test_totp_replay_rejected`, contract test for `mfa_challenges` consumption | Low |
 | U5 | Session-token theft via XSS or logs | M | H | **High** | SR-012 `HttpOnly`+`Secure`+`SameSite=Strict`; SR-112 CSP (no `unsafe-inline`/`unsafe-eval`); SR-122 redaction filter never logs tokens | `axe`/CSP header test, log-redaction unit test asserting session id never appears in any log sink | Low |
-| U6 | Session fixation — id not rotated across login → MFA → privilege-change transitions | L | M | Medium | SR-013 rotate on every authentication state transition (`sessions_rotation` links old→new, old marked `revoked_reason='rotated'`) | `test_session_rotates_on_login_and_on_mfa_step_up`, `test_session_rotates_on_role_change` | Low |
+| U6 | Session fixation — id not rotated across login → MFA → privilege-change transitions | L | M | Medium | SR-013 rotate on every authentication state transition (`sessions_rotation` links old→new, old marked `revoked_reason='rotated'`) | `test_session_rotates_on_login_and_on_mfa_step_up`, `test_session_rotates_on_role_change` | Medium until #2101: a role change only pushes permissions and a step-up mints nothing (E09-X04 R-1, 2026-10-23) |
 | U11 | TOTP code replay within the ±1 step skew window (same 30 s code accepted twice) | L | H | Medium | SR-021 extended: `mfa_challenges` records the last-accepted counter per method; a second presentation of the same or an earlier counter is rejected even inside the skew window | `test_totp_same_counter_rejected_within_skew_window` | Low |
 | U12 | Invite token guessed or replayed | L | H | Medium | Invite token is a 128-bit CSPRNG value, single-use, short TTL, hashed at rest like recovery codes (SR-022 pattern applied to invites); redemption revokes the token row atomically | `test_invite_token_single_use`, `test_invite_token_high_entropy_property` (hypothesis) | Low |
 | U13 | WS `auth` frame replayed onto a second socket to piggyback a session | L | H | Medium | The WS handshake binds the session cookie + CSRF-equivalent to the specific socket via SR-012/SR-013's session validation plus `Origin` check (ADR-0010 §3 CSRF/Origin validation); a replayed `auth` frame without a live, un-revoked session id is rejected and audited | `test_ws_auth_frame_rejected_without_live_session`, `test_ws_origin_validated` | Low. **Accepted risk for a replay while the session is live, dated 2026-10-22** (F-4 in `docs/security/abuse-cases/e09-auth.md`, under the #2701 delegation, comment 6284192190): the frame carries the bearer access token, which nothing binds to a connection, so a replay is refused only without a live, un-revoked session. F-2's envelope bounds it (the token's real expiry, #2265; a logout or a revocation, the `RevocationHub`; E17 WS-S01 and WS-S02). Binding the frame to the connection is #4202. Carried under RSK-021; owner Architect + Owner; review date 2027-01-22 (C-12.1) |
@@ -103,7 +104,7 @@ mitigation; a row with no verification is itself a finding (flagged `[FINDING]`)
 <!-- prettier-ignore -->
 | T | Threat | L | I | Risk | Mitigations | Verify | Residual |
 |---|--------|---|---|------|-------------|--------|----------|
-| U14 | Direct `UPDATE`/`DELETE` on `audit_log` | L | H | Medium | `REVOKE UPDATE, DELETE ON audit_log FROM cv_app, cv_ro` (schema §3.1, already applied at the SQL grant level); only an `INSERT`-only role is usable by the app | `test_audit_log_grants_deny_update_delete` (integration, asserts `SQLSTATE 42501`), nightly chain verifier (`cv_audit_chain_verified`) | Low |
+| U14 | Direct `UPDATE`/`DELETE` on `audit_log` | L | H | Medium | `REVOKE UPDATE, DELETE ON audit_log FROM cv_app, cv_ro` (schema §3.1, already applied at the SQL grant level); only an `INSERT`-only role is usable by the app | `test_audit_log_grants_deny_update_delete` (integration, asserts `SQLSTATE 42501`), the scheduled chain verifier (#3872): its gauge is `cv_audit_chain_verified_state`, and `AuditChainVerificationFailed` pages on the failure counter, `audit_chain_verification_failures_total` | Low |
 | U15 | Forged `account_id` in a request body used to act outside the caller's grant | M | H | **High** | SR-050/SR-051 (shared with F1, Area 4): `ScopeResolver` intersects the *requested* account ids with the caller's granted set server-side on every route — the body's `account_id` is never trusted alone | `authorize()` contract test: every route × every role × in/out-of-scope account id | Low |
 | U16 | Role/permission seed drift between the OpenAPI `x-rbac` vocabulary, the DB seed and the Python capability enum | M | H | **High** | Single source of truth: capability enum generates the OpenAPI `x-rbac` extension and the DB seed migration; a CI check diffs all three and fails on drift | `test_rbac_vocabulary_matches_openapi_and_seed` (generated-code required check) | Low |
 | U17 | An Alembic migration silently widens a grant (e.g. re-adds `UPDATE` on `audit_log`, or grants a role more than intended) | L | H | Medium | Migration review checklist item + a schema-invariant test that asserts current grants on every startup/CI run, independent of migration history | `test_schema_grants_invariant_on_audit_and_rbac_tables` | Low |
@@ -116,7 +117,7 @@ mitigation; a row with no verification is itself a finding (flagged `[FINDING]`)
 |---|--------|---|---|------|-------------|--------|----------|
 | U7 | Shared accounts make actions unattributable | M | M | Medium | SR-019 one identity per human, no shared logins; concurrent-session listing + forced logout in admin screens | `test_no_shared_login_enforced` (unique active credential per human by policy + review), `test_concurrent_sessions_listed_and_revocable` | Low |
 | U19 | An authenticated, state-changing action completes with no corresponding audit row | L | H | Medium | Audit write is in the same transaction as the state change it records (write-before-return, per C-2.9); a route-coverage test asserts every mutating route has a paired audit-event type declared | `test_every_mutating_route_writes_audit_row` (route-coverage matrix), `cv_audit_chain_verified` | Low |
-| U20 | Audit hash-chain gaps across a process restart or a migration | L | H | Medium | Chain continuity check on startup (verify `prev_hash` of the newest row against the last known checkpoint in `audit_checkpoints`) before the app accepts traffic; migrations touching `audit_log`/`audit_checkpoints` require a chain re-verification step in the migration runbook | `test_startup_chain_continuity_check`, `test_migration_preserves_chain_continuity` (round-trip) | Low |
+| U20 | Audit hash-chain gaps across a process restart or a migration | L | H | Medium | Chain continuity check on startup (verify `prev_hash` of the newest row against the last known checkpoint in `audit_checkpoints`) before the app accepts traffic; migrations touching `audit_log`/`audit_checkpoints` require a chain re-verification step in the migration runbook | `test_startup_chain_continuity_check`, `test_migration_preserves_chain_continuity` (round-trip) | Medium until #1238: the verifier cross-checks `audit_checkpoints`, but `run_checkpoint` (`audit/checkpoint.py:33`) has no caller, so deleting the newest rows leaves a chain that verifies (E09-X04 M4; E42's AD-F14) |
 | U21 | Clock manipulation (host or container clock skew) makes audit ordering untrustworthy independent of the hash chain | L | M | Medium | `audit_log.occurred_at` is a monotonic-checked server timestamp; the chain (`entry_hash`/`prev_hash`) provides tamper-evidence independent of wall-clock order, so a clock skew cannot silently reorder history without breaking the chain | `test_audit_ordering_survives_clock_skew_property` (hypothesis: shuffled timestamps still chain-verify by insertion order) | Low |
 
 ### 3.4 Information disclosure
@@ -136,20 +137,20 @@ mitigation; a row with no verification is itself a finding (flagged `[FINDING]`)
 <!-- prettier-ignore -->
 | T | Threat | L | I | Risk | Mitigations | Verify | Residual |
 |---|--------|---|---|------|-------------|--------|----------|
-| U10 | Owner locks themselves out (lost TOTP device and all recovery codes) | M | M | Medium | SR-023 sealed offline recovery-code envelope; documented host-local break-glass CLI requiring filesystem + KEK access (own trust boundary, §3.6) | `docs/security/runbooks` break-glass drill record (manual, per DoD "review session"), `test_break_glass_requires_host_filesystem_and_kek_present` (cannot be invoked over the network) | Low, but see §3.6 for the break-glass path's own residual risk |
-| U27 | Lockout mechanism weaponised: an attacker deliberately fails login 5x against a legitimate user to lock them out ahead of a trade decision | M | M | Medium | Lockout is scoped per-account **and** per-IP (SR-015/SR-016 combined) so a remote attacker without the victim's IP cannot force a full account lock without also being rate-limited; owner alert fires on any lockout, enabling fast manual unlock | `test_lockout_alert_fires_on_every_lockout`, `test_admin_can_manually_clear_lockout` | Low |
+| U10 | Owner locks themselves out (lost TOTP device and all recovery codes) | M | M | Medium | SR-023 sealed offline recovery-code envelope; documented host-local break-glass CLI requiring filesystem + KEK access (own trust boundary, §3.6) | `docs/security/runbooks` break-glass drill record (manual, per DoD "review session"), `test_break_glass_requires_host_filesystem_and_kek_present` (cannot be invoked over the network; it exists since #2119, `services/api/tests/unit/admin/test_breakglass_flow.py`) | Low, but see §3.6 for the break-glass path's own residual risk |
+| U27 | Lockout mechanism weaponised: an attacker deliberately fails login 5x against a legitimate user to lock them out ahead of a trade decision | M | M | Medium | Lockout is scoped per-account **and** per-IP (SR-015/SR-016 combined) so a remote attacker without the victim's IP cannot force a full account lock without also being rate-limited; owner alert fires on any lockout, enabling fast manual unlock | `test_lockout_alert_fires_on_every_lockout`, `test_admin_can_manually_clear_lockout` | Medium (E09-X04 M1, 2026-10-23): as built, 5 failures from any address lock the account for a fixed 15 minutes while the per-IP throttle allows 20 per 60 s, nothing unlocks it, and the `AuthLockouts` ticket is muted in quiet hours, so one mesh peer that knows a username keeps the account locked; #1233, #2621 |
 | U28 | Argon2id's ≥100 ms cost used as a compute-amplification DoS vector (flood of login attempts) | M | M | Medium | Per-IP + per-account throttling (SR-015) applies *before* the Argon2id call is reached; a bounded queue (C-2.18) in front of the auth verify path prevents unbounded event-loop starvation | `test_login_rate_limit_applied_before_hash_verify`, load test (k6) against the login endpoint | Low |
-| U29 | `sessions` table growth from unrevoked expired rows degrades query performance and, transitively, `GET /auth/session` p95 | L | M | Low | Scheduled reap of `revoked_at IS NOT NULL OR expires_at < now()` rows; partial index `ix_sessions_user_live`/`ix_sessions_expiry` (schema §3.1.4) keeps live-session lookups fast independent of table size | `test_expired_session_reap_job`, perf budget: `GET /auth/session` ≤100 ms p95 (Performance notes) | Low |
+| U29 | `sessions` table growth from unrevoked expired rows degrades query performance and, transitively, `GET /auth/session` p95 | L | M | Low | Scheduled reap of `revoked_at IS NOT NULL OR expires_at < now()` rows; partial index `ix_sessions_user_live`/`ix_sessions_expiry` (schema §3.1.4) keeps live-session lookups fast independent of table size | `test_expired_session_reap_job`, perf budget: `GET /auth/session` ≤100 ms p95 (Performance notes) | Low. No reap job exists: the only reaper is the anonymisation one (E09-X04 L4, #1232) |
 
 ### 3.6 Elevation of privilege
 
 <!-- prettier-ignore -->
 | T | Threat | L | I | Risk | Mitigations | Verify | Residual |
 |---|--------|---|---|------|-------------|--------|----------|
-| U3 | Role check missing on a new endpoint | M | H | **Critical** | SR-017 deny-by-default router: every route must declare a capability via a decorator/registration step or the app **fails to start** (import-time failure, not a runtime 403) | `test_app_fails_to_start_with_undeclared_route` (asserts `SystemExit`/import error, not merely a lint warning — this is the ticket's own acceptance-criteria "Failure case"); SR-018 automated route-coverage test enumerating every registered route against the capability table | Low |
+| U3 | Role check missing on a new endpoint | M | H | **Critical** | SR-017 deny-by-default router: every route must declare a capability via a decorator/registration step or the app **fails to start** (when `create_app()` builds it, not at import; not a runtime 403) | `test_app_fails_to_start_with_undeclared_route` (asserts the build fails, not merely a lint warning — this is the ticket's own acceptance-criteria "Failure case"); SR-018 automated route-coverage test enumerating every registered route against the capability table | Low |
 | U4 | Self-service role escalation | L | H | Medium | SR-055 role changes are Owner-only, cannot target self (`user_id != actor_id` invariant), require step-up auth | `test_role_change_rejects_self_target`, `test_role_change_requires_step_up` | Low |
 | U9 | TOTP recovery codes reusable or weakly generated | L | H | Medium | SR-022 128-bit CSPRNG codes, single-use (row deleted/flagged on redemption), hashed at rest; regenerating the set invalidates the old one atomically | `test_recovery_code_single_use`, `test_recovery_code_regeneration_invalidates_old_set`, entropy property test | Low |
-| U30 | `authorize()` called with a default-permissive argument (e.g. a missing/omitted scope parameter silently allows) | L | H | Medium | `ScopeResolver` API has **no** permissive default — the scope parameter is required and untyped/omitted calls fail mypy strict + a runtime `TypeError`; a lint rule (`no-implicit-authorize-default`) blocks call sites that don't pass an explicit scope | `test_authorize_requires_explicit_scope_argument` (raises on omission), mypy strict CI gate | Low |
+| U30 | `authorize()` called with a default-permissive argument (e.g. a missing/omitted scope parameter silently allows) | L | H | Medium | `ScopeResolver` API has **no** permissive default — the scope parameter is required and untyped/omitted calls fail mypy strict + a runtime `TypeError`; a lint rule (`no-implicit-authorize-default`) blocks call sites that don't pass an explicit scope | `test_authorize_requires_explicit_scope_argument` (raises on omission), mypy strict CI gate | Low, as a regression risk (E09-X04 L3, #1237): `decide()` and `enforce()` default to `scope=Scope.NONE` (`auth/scopes.py:162`, `:269`), and neither the lint rule nor the test exists. Every account-scoped call site checked passes `scope=` explicitly |
 | U31 | A route's declared capability is correct but its scope argument is wrong (e.g. checks role but not account membership) — the "second-layer" domain check gap | M | H | **High** | SR-050 second-layer domain check is a *distinct* control from the capability check, not a duplicate: `authorize()` verifies role+capability, then the caller's own domain logic re-verifies account membership against `user_account_access` before the mutation; contract test asserts both layers independently (a route with a valid capability but wrong scope arg must still 403) | `authorize()` contract test (route × role × correct-capability/wrong-scope matrix), specifically distinguishing this from U15/U16 | Low |
 | U32 | A stale permission snapshot in a live session survives a role change (e.g. a demoted Manager's already-open session keeps prior access) | M | H | **High** | SR-013 rotation-on-privilege-change (U6's control) is necessary but not sufficient on its own for *authorization freshness* — every `authorize()` call re-reads current role/scope from Postgres (or a short-lived, explicitly-invalidated cache per ADR-0010 Consequences), never from data cached in the session object at login time | `test_role_change_takes_effect_on_next_request_without_relogin`, cache-invalidation unit test | Low |
 | D1-shared | Admin route hidden in the UI but its API remains callable by a Manager (shared with Area 7 D1; listed here because it is `authorize()`'s job to prevent it) | M | H | **Critical** | SR-017 (see U3): server-side capability check is the only control; UI hiding is cosmetic. Route-coverage test calls every admin route as every role | Same as U3's `test_app_fails_to_start_with_undeclared_route` plus per-route role-matrix test | Low |
@@ -179,10 +180,15 @@ The offline break-glass CLI is modelled as a trust boundary distinct from the ru
   append-only journal under that run lock, and flushes both into `audit_log`, where the chain trigger
   links them, before it exits (R2d). Only records Postgres could not take (it was down) stay in the
   journal; cv-api folds them into `audit_log` at its next boot, after its own WAL replay, exactly once
-  and chain-verified.
-- **How a use is surfaced:** the unresolved `break_glass_used` event reaches every client as a WS
-  `system` notice after its first `auth_ok` (O4). Every run, refused ones included, pages
-  (AuthBreakGlassAttempted), an unresolved reset pages (AuthBreakGlassUsed), and a failure to read
+  and chain-verified. The exception is the pre-audit refusal (#2119's S3 criterion): a run whose
+  attempt record reaches neither the journal nor `audit_log`, as with no usable journal and Postgres
+  unreachable, refuses before any check and leaves no record, only the CLI's own log (E09-X04,
+  2026-10-23).
+- **How a use is surfaced:** the unresolved `break_glass_used` event reaches every full-session
+  client as a WS `system` notice after its first `auth_ok` (O4); an enrolment-only session's socket
+  closes `4403`, so the reset Owner gets it only after enrolling again. Every run that writes its
+  attempt record, refused ones included, pages (AuthBreakGlassAttempted), and a pre-audit refusal
+  does not; an unresolved reset pages (AuthBreakGlassUsed), and a failure to read
   that state raises a ticket (AuthBreakGlassStateReadFailing): decision R8 as built under #2496,
   awaiting the owner's confirmation on #2119. The break-glass abuse-detection row of §8 routes all
   three and states what they cannot see.
@@ -388,17 +394,29 @@ epic's own verification tickets:
 
 ## 7. Review session record
 
-_(To be completed at the scheduled review with the Architect and epic owner — this section is left as
-the template the session fills in, per the ticket's Definition of Done. This PR delivers the model for
-that review; it does not itself constitute the review.)_
+Recorded 2026-10-23 (#2832): the E09-X04 re-examination stands as this session. It was an agent's
+white-box review of the code on `origin/main` `4ce8f438`, with both drills on a dev stack, not a
+meeting with the Architect and the epic owner. Its record is
+`docs/security/reviews/e09-auth-review.md`: verdicts §1, triage §2, the drills §3 and §4.
 
-- Date:
-- Attendees: Architect, Epic owner (E09), Security engineer (author)
-- Comments:
-- Risk-register changes confirmed: RSK-020, RSK-021 refined per §6; break-glass accepted risk confirmed
-  or converted to a new RSK id; U45 (socket-only window, dated 2026-10-17; widened residual
-  confirmed 2026-10-18 on #3120) accepted risk confirmed or converted to a new RSK id.
-- Security-engineer sign-off: pending this session.
+- Date: 2026-10-23.
+- Attendees: none in person; an agent reviewed read-only, as the review record's Method says. The
+  Architect and the epic owner did not attend.
+- Comments: the code proved U1, U3, U6, U10, U14, U20, U27, U29, U30 and §3.6.1 stale, and they
+  are corrected above. The review's new findings are triaged in its §2.
+- Open items:
+  - named tests that do not exist: U6 (`test_session_rotates_on_login_and_on_mfa_step_up`,
+    `test_session_rotates_on_role_change`), U20 (`test_startup_chain_continuity_check`,
+    `test_migration_preserves_chain_continuity`), U27 (`test_admin_can_manually_clear_lockout`),
+    U29 (`test_expired_session_reap_job`) and U30
+    (`test_authorize_requires_explicit_scope_argument`);
+  - the SR-number collision: §4's provisional SR-024, SR-052, SR-053, SR-054 and SR-057 collide
+    with registered SRs in `04-security-program.md` §6.3 and §6.4, and RSK-020's text and
+    AC-AUTHZ-03 cite the colliding ids (#2832).
+- Risk-register changes confirmed: the RSK-020 and RSK-021 notes, re-examined 2026-10-23, with no
+  score change. The break-glass accepted risk (§3.6.1) and U45 stay inline accepted risks, Owner
+  sign-off pending; no new RSK id.
+- Security-engineer sign-off: with the review record's §7, at READY; pending.
 
 ## 8. Findings summary (routing)
 
