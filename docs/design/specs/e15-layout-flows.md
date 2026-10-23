@@ -65,7 +65,7 @@ flowchart TD
   D3 -->|yes| E3["SCR-029 unsaved variant, Cancel focused"]
   E3 -->|Cancel or Esc| C3
   E3 -->|Discard changes| H3
-  E3 -->|Save layout while T2, a viewer or viewing as| T3["Nothing sent: the reason re-shown under Save layout, announced once"]
+  E3 -->|Save layout T2: viewing as, or workspaces:write missing| T3["Nothing sent: the reason re-shown under Save layout, announced once"]
   T3 --> E3
   E3 -->|Save layout| F3{"updateLayout for Layout 1 with If-Match"}
   F3 -->|200| H3
