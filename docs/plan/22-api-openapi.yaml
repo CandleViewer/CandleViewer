@@ -355,8 +355,15 @@ info:
     (`429 exchange_rate_limited`), stores nothing under the key either: the same key and body
     are evaluated afresh after `Retry-After`.
     Exception (ADR-0039): `rotateAuditSigningKey` stores only its `200` under the key; every
-    refusal and every `503` is evaluated afresh on a retry. `exportAuditLog` stores only its
-    `202`: a `503`, `429` or `409` is evaluated afresh.
+    refusal and every `503` is evaluated afresh on a retry. That `200` is durable, as
+    `placeOrder`'s anchor is: the row of the key the rotation made keeps the request's key and
+    fingerprint, read only with the Owner who sent them (`21-database-schema.md` section
+    3.1.5b), so the same key and body reach the rotation's own `200` at any age, the 24 h gone
+    too, rebuilt from the key rows: the key it made as it was then, the key it retired, and each
+    `verified` mark as M2 gives it at the repeat (`Idempotency-Replayed: true`). Another Owner's
+    key is answered as one never seen, and the same key with another body is
+    `409 idempotency_key_reuse`. `exportAuditLog` stores only its `202`: a `503`, `429` or `409`
+    is evaluated afresh.
 
     **Binding point (#2304).** On every operation that requires the key (parameter
     `IdempotencyKeyRequired`, which every `x-idempotency: required` operation takes) the key is
