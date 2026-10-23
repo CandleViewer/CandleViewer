@@ -73,12 +73,12 @@ from candleviewer.oms.errors import (
 )
 from candleviewer.oms.order_machine import OrderAuditRecord
 from candleviewer.oms.ports import (
-    STOP_REQUEST_BOUND_S,
     KeyedRecord,
     NoHandoverStore,
     PositionKey,
     RefuseWhileWaiting,
 )
+from candleviewer.oms_wiring import STOP_REQUEST_BOUND_S
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
 from candleviewer.storage.repositories.orders import NewOrder
@@ -1689,6 +1689,5 @@ def test_the_stop_request_bound_exceeds_an_entrys_answer_path() -> None:
     assert defaults["submit_timeout_s"].default == SUBMIT_TIMEOUT_S
     persist, place, result = CV_PERSIST_TIMEOUT, SUBMIT_TIMEOUT_S, CV_PERSIST_TIMEOUT
     assert STOP_REQUEST_BOUND_S > persist + place + result
-    assert inspect.signature(RefuseWhileWaiting).parameters["bound_s"].default == (
-        STOP_REQUEST_BOUND_S
-    )
+    bound = inspect.signature(RefuseWhileWaiting).parameters["bound_s"]
+    assert bound.default is inspect.Parameter.empty  # given: `OmsBounds.stop_request_s`

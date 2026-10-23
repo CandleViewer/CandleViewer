@@ -60,9 +60,9 @@ class _Repo:
         return replace(_ROW, value=change.value, user_overrides=change.user_overrides)
 
 
-def _store(repo: _Repo, bound_s: float = 3.5) -> StorageFlagStore:
+def _store(repo: _Repo, bound_s: float = 3.5, environment: str = "live") -> StorageFlagStore:
     fake: Any = repo  # a structural fake repository
-    return StorageFlagStore(fake, bound_s=bound_s)
+    return StorageFlagStore(fake, bound_s=bound_s, environment=environment)
 
 
 async def _set(store: StorageFlagStore, seen: list[StoredFlag]) -> StoredFlag:
@@ -73,11 +73,18 @@ async def _set(store: StorageFlagStore, seen: list[StoredFlag]) -> StoredFlag:
     return await store.write("trading.one_click", prepare)
 
 
-async def test_ensure_seeds_every_registered_flag_with_its_kind_and_class() -> None:
+@pytest.mark.parametrize(
+    ("environment", "oms"), [("live", False), ("demo", True), ("testnet", False)]
+)
+async def test_ensure_seeds_each_flag_at_its_default_or_its_environments_seed(
+    environment: str, oms: bool
+) -> None:
+    """#913 slice 3 Q3: `trading.oms_enabled` is seeded on in a demo process alone."""
     repo = _Repo()
-    await _store(repo).ensure(FLAGS)
+    await _store(repo, environment=environment).ensure(FLAGS)
+    seeded = {f.key: f.default for f in FLAGS} | {"trading.oms_enabled": oms}
     assert repo.seeds == [
-        FlagSeed(f.key, f.kind.value, f.description, f.default, f.is_killswitch, f.variants)
+        FlagSeed(f.key, f.kind.value, f.description, seeded[f.key], f.is_killswitch, f.variants)
         for f in FLAGS
     ]
 

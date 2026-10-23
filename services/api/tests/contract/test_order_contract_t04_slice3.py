@@ -17,8 +17,14 @@ from candleviewer.api._generated import openapi_models as rest
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
 from candleviewer.exchange.bybit.key_info import refusal
 from candleviewer.exchange.bybit.mapping import map_ret_code
-from candleviewer.oms import commands, idempotency, ports, submit
-from candleviewer.settings import TEARDOWN_BUDGET_S
+from candleviewer.oms import submit
+from candleviewer.oms_wiring import OmsBounds
+from candleviewer.settings import (
+    OMS_AFTER_ANCHOR_S,
+    OMS_STOP_RESERVE_S,
+    TEARDOWN_BUDGET_S,
+    Settings,
+)
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from tests.openapi_helpers import deref
@@ -249,8 +255,8 @@ def test_20_starts_the_oms_after_account_health_and_sweeps_before_ready() -> Non
 
 
 def test_20_declares_the_oms_settings_within_the_bounds_the_code_holds() -> None:
-    """The code's defaults; the ranges keep the stop, command and stuck bounds the code holds, the
-    stop request's bound named where its setting is, and the drain inside the module's grace."""
+    """The code's defaults; the ranges keep the stop, command and stuck bounds `OmsBounds` holds,
+    the stop request's bound named where its setting is, and the drain inside the module's grace."""
     section = _ARCH.split("### 7.2 Configuration model", 1)[1].split("### 7.3 ", 1)[0]
     cells = [[cell.strip() for cell in line.strip("|").split("|")] for line in section.split("\n")]
     rows = {row[0].strip("`"): row[1:] for row in cells if len(row) == 5 and row[0][:4] == "`CV_"}
@@ -262,15 +268,17 @@ def test_20_declares_the_oms_settings_within_the_bounds_the_code_holds() -> None
         "CV_TRADING_LIVE_ENABLED": ["bool", "`false`", "process"],
     }
     assert {key: rows[key][:3] for key in expected} == expected
-    assert (commands.SUBMIT_TIMEOUT_S * 1000, idempotency.STUCK_AFTER_S) == (5000, 30)
+    bounds = OmsBounds.from_settings(Settings())
+    assert (bounds.submit_timeout_s * 1000, bounds.stuck_after_s) == (5000, 30)
     assert not _missing(
         rows["CV_OMS_SUBMIT_TIMEOUT_MS"][3],
         "(24 §8.4); 1000-8000, so 2 ",
         "+ the submit timeout ≤ 10 s, the stop request's bound (`oms_wiring.STOP_REQUEST_BOUND_S`",
     )
-    assert 2 * CV_PERSIST_TIMEOUT + 8 <= ports.STOP_REQUEST_BOUND_S and 8 < CV_COMMAND_TIMEOUT
-    after = CV_PERSIST_TIMEOUT + submit.PLACE_WAIT_S + submit.RESULT_WAIT_S
-    assert after + 4 * submit.STORE_TIMEOUT_S - commands.SUBMIT_TIMEOUT_S == 12
+    top = OmsBounds.from_settings(Settings(oms_submit_timeout_ms=8000, oms_inflight_stuck_s=120))
+    assert 2 * CV_PERSIST_TIMEOUT + top.submit_timeout_s == top.stop_request_s == 10
+    assert top.submit_timeout_s < CV_COMMAND_TIMEOUT
+    assert bounds.after_anchor_s - bounds.submit_timeout_s == OMS_AFTER_ANCHOR_S == 12
     assert "(submit + 12 s), ≤ 120" in rows["CV_OMS_INFLIGHT_STUCK_S"][3]
     rules = _between(_INTERNAL_DOC, "**The pipeline's own rules", "**8.4.1 ")
     assert not _missing(
@@ -279,10 +287,10 @@ def test_20_declares_the_oms_settings_within_the_bounds_the_code_holds() -> None
         "`CV_OMS_SUBMIT_TIMEOUT_MS`; the default adds 1 s for B1's turn, and the pipeline refuses "
         "a wait not above the deadline)",
     )
-    assert submit.PLACE_WAIT_S - commands.SUBMIT_TIMEOUT_S == 1  # B1's turn, past the deadline
+    assert bounds.place_wait_s - bounds.submit_timeout_s == 1  # B1's turn, past the deadline
     assert rows["CV_OMS_STARTUP_WAIT_S"][3].endswith("(§6.2); 5-45")  # inside the 60 s smoke
     assert "1-10, leaving ≥ 5 s of the OMS's 15 s grace" in rows["CV_OMS_DRAIN_S"][3]
-    assert 10 + 5 <= TEARDOWN_BUDGET_S  # the supervised module's grace the drain leaves 5 s of
+    assert 10 + OMS_STOP_RESERVE_S == TEARDOWN_BUDGET_S  # the module's grace, 5 s left of it
 
 
 def test_a_refused_credential_fails_closed_for_the_process_until_a_recorded_pass() -> None:

@@ -13,11 +13,13 @@ a lapsed bound, a flag with no row and an override user deleted after the writer
 maintenance gate (engaged until its flags are read), no order-entry gate until `create_app`
 composes the one that adds the account check (`compose_order_entry_gate`, #837 W3), so none ever
 holds the maintenance check alone, and the store:
-Postgres on the real backend, in memory at the registry defaults on the fake one. `start()` reads
+Postgres on the real backend, in memory on the fake one, a missing row seeded at the flag's default
+or its seed for the process environment (`ENVIRONMENT_SEEDS`, #913 slice 3). `start()` reads
 `flags.read_budget_ms` (500 ms when unset or unreadable; anything but a whole number of ms from 50
 to 2000 refuses boot), ensures every flag's row, reads `desktop.backend_connection`
-(`BackendConnectionFlag`) once and starts the maintenance poll; `stop()` cancels the poll and the
-flag's refresh.
+(`BackendConnectionFlag`) once and starts the maintenance poll and the polls of the OMS's two
+flag views (`FlagView`: `oms_enabled`, `live_enabled`); `stop()` cancels the polls and the flag's
+refresh.
 """
 
 from __future__ import annotations
@@ -26,17 +28,23 @@ import asyncio
 import json
 import re
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any, Final, Protocol, cast
 from uuid import UUID
 
 import structlog
 
-from candleviewer.admin.flags.catalogue import DESKTOP_BACKEND_CONNECTION, default_registry
+from candleviewer.admin.flags.catalogue import (
+    DESKTOP_BACKEND_CONNECTION,
+    ENVIRONMENT_SEEDS,
+    LIVE_ENABLED,
+    TRADING_OMS_ENABLED,
+    default_registry,
+)
 from candleviewer.admin.flags.maintenance import MaintenanceController, MaintenanceGate, chain_hooks
 from candleviewer.admin.flags.push import FlagPush, Session, SessionDirectory
-from candleviewer.admin.flags.registry import FlagSpec, FlagValue
+from candleviewer.admin.flags.registry import FlagKind, FlagSpec, FlagValue
 from candleviewer.admin.flags.resolver import StoredFlag
 from candleviewer.admin.flags.service import (
     DEFAULT_READ_BUDGET_MS,
@@ -79,6 +87,10 @@ from candleviewer.storage.testing.flags import InMemoryFlagRepository
 from candleviewer.ws.gateway import GatewayHub
 
 _WHOLE_MS: Final = re.compile(r"[0-9]{1,6}")
+#: How often a `FlagView` reads its flag from the store, in seconds (SEC-S3A-03), as
+#: `MaintenanceController` polls: a write reaches every process within it, and the writing
+#: process's own views at once, from the writer's change hook.
+FLAG_POLL_S: Final = 5.0
 FlagRepository = SqlAlchemyFlagRepository | InMemoryFlagRepository
 
 
@@ -104,9 +116,17 @@ def stored_flag(row: FlagRow) -> StoredFlag:
     )
 
 
-def _seeds(specs: Iterable[FlagSpec]) -> list[FlagSeed]:
+def _seeds(specs: Iterable[FlagSpec], environment: str) -> list[FlagSeed]:
+    """Each flag at its default, or at its seed for the process environment (#913 slice 3 Q3)."""
     return [
-        FlagSeed(s.key, s.kind.value, s.description, s.default, s.is_killswitch, s.variants)
+        FlagSeed(
+            s.key,
+            s.kind.value,
+            s.description,
+            ENVIRONMENT_SEEDS.get(s.key, {}).get(environment, s.default),
+            s.is_killswitch,
+            s.variants,
+        )
         for s in specs
     ]
 
@@ -131,14 +151,15 @@ def write_bound_s(budget_ms: int) -> float:
 
 
 class StorageFlagStore:
-    """The admin `FlagStore` port over a flag repository; a write lapses past `bound_s`."""
+    """The admin `FlagStore` port over a flag repository; a write lapses past `bound_s`, and
+    `ensure` seeds a missing row for the process `environment`."""
 
-    def __init__(self, repository: FlagRepository, *, bound_s: float) -> None:
-        self._repository, self._bound_s = repository, bound_s
+    def __init__(self, repository: FlagRepository, *, bound_s: float, environment: str) -> None:
+        self._repository, self._bound_s, self._environment = repository, bound_s, environment
 
     async def ensure(self, specs: Iterable[FlagSpec]) -> None:
         with _store_errors():
-            await self._repository.ensure(_seeds(specs))
+            await self._repository.ensure(_seeds(specs, self._environment))
 
     async def load(self) -> Mapping[str, StoredFlag]:
         with _store_errors():
@@ -222,6 +243,7 @@ class FeatureFlagsRuntime:
         self,
         relational: SqlAlchemyRelationalRepository | None,
         *,
+        environment: str,
         settings: SettingReader | None = None,
         audit: AuditEmitter,
         step_up: StepUp,
@@ -231,16 +253,20 @@ class FeatureFlagsRuntime:
         self.registry = default_registry()  # an unsafe definition refuses boot here
         self.gate = MaintenanceGate()
         self._order_entry_gate: OrderEntryGate | None = None
-        self._relational = relational
+        self._relational, self._environment = relational, environment
         self._repository: Callable[[int], FlagRepository]
-        if relational is None:  # the fake backend: in memory, at the registry defaults
-            memory = InMemoryFlagRepository(_seeds(self.registry.values()))
+        if relational is None:  # the fake backend: in memory, at the environment's seeds
+            memory = InMemoryFlagRepository(_seeds(self.registry.values(), environment))
             self._repository = lambda _budget_ms: memory
         else:
             self._repository = lambda ms: SqlAlchemyFlagRepository(relational, read_budget_ms=ms)
         self._settings = settings
         self._audit, self._step_up, self._users, self._sessions = audit, step_up, users, sessions
         self._poll: asyncio.Task[None] | None = None
+        self._view_polls: list[asyncio.Task[None]] = []
+        # #913 slice 3: the OMS's process-wide reads, built before the writer that takes their hook.
+        self.oms_enabled = FlagView(self, TRADING_OMS_ENABLED)
+        self.live_enabled = FlagView(self, LIVE_ENABLED)
         self._build(DEFAULT_READ_BUDGET_MS)
         self.backend_connection = BackendConnectionFlag(self)
 
@@ -263,7 +289,11 @@ class FeatureFlagsRuntime:
         return self._order_entry_gate
 
     def _build(self, budget_ms: int) -> None:
-        store = StorageFlagStore(self._repository(budget_ms), bound_s=write_bound_s(budget_ms))
+        store = StorageFlagStore(
+            self._repository(budget_ms),
+            bound_s=write_bound_s(budget_ms),
+            environment=self._environment,
+        )
         self.service = FlagService(self.registry, store, read_budget_ms=budget_ms)
         self.budget_ms = budget_ms
         push = FlagPush(self.service, self._sessions)
@@ -271,12 +301,13 @@ class FeatureFlagsRuntime:
             self.service, self.gate, notify=push.notify_maintenance, audit=self._audit
         )
         gate, effects = self.controller.gate_hook, self.controller.effects_hook
+        views = (self.oms_enabled.on_change, self.live_enabled.on_change)
         self.writer = FlagWriter(
             self.service,
             self._audit,
             self._step_up,
             self._users,
-            on_change=chain_hooks(gate, push.flag_changed, effects),
+            on_change=chain_hooks(gate, *views, push.flag_changed, effects),
         )
 
     async def start(self) -> None:
@@ -288,12 +319,18 @@ class FeatureFlagsRuntime:
         await self.backend_connection.refresh()  # the priming read; an outage keeps the default
         if self._poll is None:
             self._poll = spawn(self.controller.run(), name="feature-flag-maintenance-poll")
+            self._view_polls = [
+                spawn(view.run(), name=f"feature-flag-view-{view.key}")
+                for view in (self.oms_enabled, self.live_enabled)
+            ]
 
     async def stop(self) -> None:
-        poll, self._poll = self._poll, None
-        if poll is not None:
+        polls = [task for task in (self._poll, *self._view_polls) if task is not None]
+        self._poll, self._view_polls = None, []
+        for poll in polls:
             poll.cancel()
-            await asyncio.wait({poll})
+        if polls:
+            await asyncio.wait(polls)
         await self.backend_connection.close()  # before the engine its refresh reads goes
         if self._relational is not None:
             await self._relational.dispose()
@@ -344,6 +381,71 @@ class BackendConnectionFlag:
             self.value = flag.value is True
 
 
+class FlagView:
+    """One boolean flag read process-wide with no principal, for a synchronous check (C-2.21; 21
+    10.7): a call returns the last value read at once, so no request waits on the store. Unlike
+    `BackendConnectionFlag`, which keeps its last value through a fault (BC-D3), it fails closed:
+    off while unread, and whenever the store or the row cannot be read (its fail-closed value).
+    The writer's change hook applies a committed write before the write returns; `run` reads the
+    row every `FLAG_POLL_S` with a load of its own, never the service's snapshot, so it meets
+    another process's write within one poll and never drops another reader's load. A write applied
+    meanwhile bumps a generation, so a poll that read before it drops its reading, as
+    `MaintenanceController` does. `first_read()` returns once the store has answered for the flag
+    (the OMS startup sweep waits for it, 20 6.2)."""
+
+    def __init__(
+        self,
+        runtime: FeatureFlagsRuntime,
+        key: str,
+        *,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        self.key, self._runtime, self._spec = key, runtime, runtime.registry[key]
+        if self._spec.kind is not FlagKind.BOOLEAN:
+            raise ValueError(f"a flag view reads a boolean flag, not {key!r}")
+        self.value = self._spec.fail_closed_value is True
+        self._sleep, self._generation, self._read = sleep, 0, asyncio.Event()
+
+    def __call__(self) -> bool:
+        return self.value
+
+    async def first_read(self) -> None:
+        """Return once the store has answered for the flag, by a read or a write."""
+        await self._read.wait()
+
+    async def on_change(self, key: str, before: StoredFlag | None, after: StoredFlag) -> None:
+        """The writer's change hook: the committed row, applied with no await."""
+        if key == self.key:
+            self._generation += 1
+            self._apply(after)
+
+    async def refresh(self) -> None:
+        """One poll: the stored row, read with a load of its own within the read budget."""
+        generation = self._generation
+        rows: Mapping[str, StoredFlag] | None = None
+        try:
+            async with asyncio.timeout(self._runtime.budget_ms / 1000):
+                rows = await self._runtime.service.store.load()
+        except Exception as exc:  # an outage or a lapsed budget: closed until a read answers
+            _log().warning("feature_flag_view_unread", key=self.key, error=type(exc).__name__)
+        if generation == self._generation:  # a write applied meanwhile is newer: keep it
+            row = None if rows is None else rows.get(self.key) or StoredFlag(self._spec.default)
+            self._apply(row)
+
+    async def run(self) -> None:
+        """Poll every `FLAG_POLL_S` until cancelled (the runtime's task)."""
+        while True:
+            await self.refresh()
+            await self._sleep(FLAG_POLL_S)
+
+    def _apply(self, row: StoredFlag | None) -> None:
+        self.value = (
+            self._runtime.service.resolved(self._spec, row, None, frozenset()).value is True
+        )
+        if row is not None:
+            self._read.set()
+
+
 def build_feature_flags(
     settings: Settings,
     *,
@@ -359,6 +461,7 @@ def build_feature_flags(
     )
     return FeatureFlagsRuntime(
         relational,
+        environment=settings.environment.value,
         settings=None if relational is None else SqlAlchemySystemSettings(relational),
         audit=audit,
         step_up=step_up,

@@ -55,6 +55,7 @@ from candleviewer.oms.submit import (
     SubmitOutcome,
 )
 from candleviewer.oms.validator import Validator
+from candleviewer.oms_wiring import STOP_REQUEST_BOUND_S
 from candleviewer.risk.models import RiskDecision
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.plugins import InMemoryMachineEventSink
@@ -409,7 +410,7 @@ def build_rig(
         prices=prices,
         profiles=profiles,
         switches=port.switches,
-        gate=RefuseWhileWaiting(port.stops, now=now),
+        gate=RefuseWhileWaiting(port.stops, now=now, bound_s=STOP_REQUEST_BOUND_S),
         audit=port.audits,
         groups=TradeGroupRepository(cast(TradeGroupStore, groups)),
     )

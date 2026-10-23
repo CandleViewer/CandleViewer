@@ -5,6 +5,9 @@ third-party production chart library is out of scope (C-1.2)."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Final
+
 from candleviewer.admin.flags.registry import LIVE_ENABLED as LIVE_ENABLED
 from candleviewer.admin.flags.registry import MAINTENANCE_MODE as MAINTENANCE_MODE
 from candleviewer.admin.flags.registry import (
@@ -12,6 +15,7 @@ from candleviewer.admin.flags.registry import (
     FlagKind,
     FlagRegistry,
     FlagSpec,
+    FlagValue,
     Visibility,
 )
 
@@ -23,6 +27,15 @@ _ALL, _OWNER = Visibility.ALL_ROLES, Visibility.OWNER_ONLY
 MAINTENANCE_KEEP_RECORDER = "maintenance.keep_recorder"
 #: ADR-0038 2e: the composition root reads it with no principal for the CORS layer and the guard.
 DESKTOP_BACKEND_CONNECTION = "desktop.backend_connection"
+#: #913 slice 3 ruling Q3: new `placeOrder` admissions; the composition root reads it with no
+#: principal (`flags_wiring.FlagView`).
+TRADING_OMS_ENABLED = "trading.oms_enabled"
+#: Ruling Q3: the value the insert-only `ensure` gives a flag with no row in a process of an
+#: environment, where it is not the flag's default (21 10.7), so an Owner's later write sticks.
+#: Never a kill switch or the live gate (C-4.14; `test_flag_catalogue.py` holds it).
+ENVIRONMENT_SEEDS: Final[Mapping[str, Mapping[str, FlagValue]]] = {
+    TRADING_OMS_ENABLED: {"demo": True}
+}
 
 FLAGS: tuple[FlagSpec, ...] = (
     FlagSpec(
@@ -37,6 +50,15 @@ FLAGS: tuple[FlagSpec, ...] = (
     ),
     FlagSpec(
         "trading.one_click", _B, "One-click trading; requires an explicit arm.", _UI, False, _ALL
+    ),
+    FlagSpec(
+        TRADING_OMS_ENABLED,
+        _B,
+        "New OMS order admissions (placeOrder); owner @basiltt, removal #4227",
+        _ROLLOUT,
+        False,
+        _ALL,
+        restrictive=False,
     ),
     FlagSpec("engine.webgl_v2", _B, "Custom WebGL engine rollout.", _ROLLOUT, False, _ALL),
     FlagSpec("rules.graph_editor", _B, "Node-graph rule editor surface.", _UI, True, _ALL),

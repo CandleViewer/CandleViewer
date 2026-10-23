@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast, get_args
@@ -28,6 +29,7 @@ from candleviewer.admin.flags import (
     Visibility,
     default_registry,
 )
+from candleviewer.admin.flags.catalogue import TRADING_OMS_ENABLED
 from candleviewer.admin.flags.maintenance import MaintenanceController
 from candleviewer.admin.flags.policy import StepUpClass
 from candleviewer.admin.flags.store import FlagWrite, StoreUnavailableError
@@ -77,6 +79,7 @@ class _Sessions:
 def _runtime(settings: _Settings | None = None) -> wiring.FeatureFlagsRuntime:
     return wiring.FeatureFlagsRuntime(
         None,
+        environment="demo",
         settings=settings,
         audit=FakeAudit(),
         step_up=FakeStepUp(),
@@ -216,14 +219,114 @@ async def test_backend_connection_flag_stop_cancels_refresh_and_restart_reopens(
         await runtime.stop()
 
 
+_OMS = TRADING_OMS_ENABLED
+
+
+class _Polled(Exception):
+    """Ends a view's poll loop after one poll in a test."""
+
+
+def _oms_view(
+    store: Any, *, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+) -> tuple[wiring.FlagView, FlagService]:
+    """An OMS flag view of another process: no writer hook, its own service over `store`."""
+    registry = default_registry()
+    service = FlagService(registry, store, clock=Clock())
+    process = SimpleNamespace(registry=registry, service=service, budget_ms=500)
+    return wiring.FlagView(cast(wiring.FeatureFlagsRuntime, process), _OMS, sleep=sleep), service
+
+
+async def test_a_flag_view_is_off_while_unread_and_on_any_fault_after() -> None:
+    """21 10.7: off until the store has answered, then the stored value; an outage or an unreadable
+    row reads off again (its fail-closed value), never the last value (unlike BC-D3)."""
+    store = FakeFlagStore()
+    view, _ = _oms_view(store)
+    store.down = True
+    await view.refresh()
+    assert view() is False and not view._read.is_set()  # an outage is no first read
+    store.down, store.rows[_OMS] = False, StoredFlag(True)
+    await view.refresh()
+    await asyncio.wait_for(view.first_read(), 5)
+    assert view() is True
+    store.rows[_OMS] = StoredFlag("on")  # not a boolean
+    await view.refresh()
+    assert view() is False
+    store.rows[_OMS], store.down = StoredFlag(True), True
+    await view.refresh()
+    assert view() is False
+
+
+async def test_a_write_reaches_its_process_at_once_and_another_within_one_poll() -> None:
+    """SEC-S3A-03: the writer's hook turns this process's view off before the write returns; a
+    view of another process (no hook, its own service on the same store) meets the write on its
+    next poll, `FLAG_POLL_S` after the last, though its service's snapshot still holds `true`."""
+    delays: list[float] = []
+
+    async def one_poll(delay: float) -> None:
+        delays.append(delay)
+        raise _Polled
+
+    runtime = _runtime()  # demo: seeded on
+    other, its_service = _oms_view(runtime.service.store, sleep=one_poll)
+    with pytest.raises(_Polled):
+        await other.run()
+    await runtime.oms_enabled.refresh()
+    snapshot = await its_service.stored(runtime.registry[_OMS])
+    assert (runtime.oms_enabled(), other(), delays) == (True, True, [5.0])
+    assert snapshot is not None and snapshot.updated_at is not None
+    await runtime.writer.set(
+        _OMS, _OWNER, value=False, reason="hold new orders", expected_updated_at=snapshot.updated_at
+    )
+    assert runtime.oms_enabled() is False and other() is True  # its next poll has not run
+    assert await its_service.stored(runtime.registry[_OMS]) is snapshot  # fresh for 30 s
+    with pytest.raises(_Polled):
+        await other.run()
+    assert other() is False and delays == [wiring.FLAG_POLL_S] * 2
+
+
+async def test_a_poll_that_read_before_a_write_keeps_the_writes_value() -> None:
+    """As `MaintenanceController`: the hook bumps a generation, so a load started before the write
+    is dropped rather than turn the flag back on."""
+    store = FakeFlagStore()
+    store.rows[_OMS], store.hold = StoredFlag(True), asyncio.Event()
+    view, _ = _oms_view(store)
+    poll = asyncio.ensure_future(view.refresh())
+    await asyncio.sleep(0)  # the poll took its snapshot and waits on the store
+    await view.on_change(_OMS, StoredFlag(True), StoredFlag(False))
+    store.hold.set()
+    await poll
+    assert view() is False
+
+
+async def test_a_demo_seed_is_insert_only_so_an_owners_write_sticks_and_both_views_poll() -> None:
+    """Q3: a restart's `ensure` leaves the Owner's `false`; `start()` reads both OMS views and
+    `stop()` cancels their polls."""
+    runtime = _runtime()
+    row = await runtime.service.stored(runtime.registry[_OMS])
+    assert row is not None and row.value is True
+    await runtime.writer.set(
+        _OMS, _OWNER, value=False, reason="hold", expected_updated_at=row.updated_at
+    )
+    await runtime.start()
+    polls = runtime._view_polls
+    try:
+        both = (runtime.oms_enabled.first_read(), runtime.live_enabled.first_read())
+        await asyncio.wait_for(asyncio.gather(*both), 5)
+        assert (runtime.oms_enabled(), runtime.live_enabled()) == (False, False)
+    finally:
+        await runtime.stop()
+    assert len(polls) == 2 and all(poll.done() for poll in polls) and runtime._view_polls == []
+
+
 def test_every_step_up_class_a_flag_write_demands_is_registered() -> None:
     assert set(get_args(StepUpClass)) <= ACTION_CLASSES
     assert set(get_args(StepUpClass)) <= b16_session.ACTION_CLASSES  # the B16 mirror
 
 
-async def test_the_fake_backend_reads_every_flag_at_its_default_from_memory(
+async def test_the_fake_backend_reads_every_flag_at_its_demo_seed_from_memory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """At its default, but `trading.oms_enabled` on: `Settings()` is a demo process (Q3)."""
     monkeypatch.setattr(wiring, "SqlAlchemyFlagRepository", None)  # never Postgres here
     runtime = wiring.build_feature_flags(
         Settings(storage_backend="fake"), audit=FakeAudit(), step_up=FakeStepUp(),
@@ -233,7 +336,7 @@ async def test_the_fake_backend_reads_every_flag_at_its_default_from_memory(
     assert listed.resolution.value == "stored"
     assert {f.spec.key: f.value for f in listed.items} == {
         k: s.default for k, s in runtime.registry.items()
-    }
+    } | {TRADING_OMS_ENABLED: True}
     assert all(f.stored is not None and f.stored.updated_at for f in listed.items)
 
 
@@ -346,7 +449,12 @@ async def test_a_write_runs_the_gate_then_the_push_then_the_effects(
 
     monkeypatch.setattr(MaintenanceController, "effects_hook", effects_hook)
     runtime = wiring.FeatureFlagsRuntime(
-        None, audit=FakeAudit(), step_up=FakeStepUp(), users=FakeUsers(), sessions=sessions
+        None,
+        environment="demo",
+        audit=FakeAudit(),
+        step_up=FakeStepUp(),
+        users=FakeUsers(),
+        sessions=sessions,
     )
     runtime.gate.set(False)
     row = await runtime.service.stored(runtime.registry[MAINTENANCE_MODE])
@@ -366,7 +474,7 @@ async def test_a_flag_whose_kind_changed_reads_unreadable_alone() -> None:
         FlagSeed(pct.key, "boolean", "P", False, False),
         FlagSeed(form.key, "boolean", "", True, False),
     ]
-    store = wiring.StorageFlagStore(InMemoryFlagRepository(old), bound_s=1.0)  # old code's rows
+    store = wiring.StorageFlagStore(InMemoryFlagRepository(old), bound_s=1.0, environment="live")
     listed = await FlagService(FlagRegistry([pct, form]), store).visible(
         _OWNER.user_id, frozenset()
     )
