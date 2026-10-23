@@ -148,6 +148,7 @@ from candleviewer.api.onboarding_checklist import StepResult, bybit_key_restrict
 from candleviewer.api.openapi_publish import install_contract_openapi
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
 from candleviewer.api.recorder_purge import make_recorder_purge_router
+from candleviewer.api.recording_symbols import make_recording_symbols_router
 from candleviewer.api.response_headers import NoSniff
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
@@ -299,6 +300,7 @@ from candleviewer.orderflow.indicators.metrics import export_indicator_metrics
 from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
 from candleviewer.profiles_wiring import wire_profiles
+from candleviewer.recorder.control import StoredRecordingControl
 from candleviewer.recorder.coverage import CoverageService
 from candleviewer.recorder.metrics import current_write_backlog_rows, export_recorder_metrics
 from candleviewer.recorder.service import RecorderService
@@ -377,6 +379,7 @@ from candleviewer.storage.repositories.notifications_sqlalchemy import (
 )
 from candleviewer.storage.repositories.onboarding_sqlalchemy import SqlAlchemyOnboardingStore
 from candleviewer.storage.repositories.recorder_sqlalchemy import SqlAlchemyRecorderRepository
+from candleviewer.storage.repositories.recording_reads_sqlalchemy import SqlAlchemyRecordingReads
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -2429,6 +2432,18 @@ def create_app(
             _LazyAuditEmitter(ctx.audit),
             audit_resolver,
             _purge_elevation,
+        )
+    )
+    # E16-T08 (#492): the recorded-set reads, over the stored rows of the settings' env (C-2.11)
+    # until the recorder runtime is bound; `503` without the real backend.
+    app.state.recording_control = (
+        StoredRecordingControl(SqlAlchemyRecordingReads(_kb_pg), resolved.environment.value)
+        if _kb_pg is not None
+        else None
+    )
+    app.include_router(
+        make_recording_symbols_router(
+            lambda: app.state.recording_control, audit_resolver, _LazyAuditEmitter(ctx.audit)
         )
     )
     # E16-T05: nightly roll-off composition (constructed only; scheduling is flag-gated).
