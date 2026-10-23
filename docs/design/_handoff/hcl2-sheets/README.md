@@ -195,3 +195,7 @@ own sha256 is in the transport message.
 **Update (00:3xZ, 2026-10-23):** #4138's boards 24, 26 and 27 were regenerated for the orchestrator's Q11 ruling (#960 comment 6353767685): the reassurance sentence is now the catalogue's "Native stops on the exchange are unaffected", withheld on a trading or stop-loss-protection fault (OV-4 and OV-6 withhold it; OV-7's maintenance banner keeps it). Draw these three from this commit or later.
 
 Batch 4 (boards 30–41, 95): notes paths scrubbed in batch 4 the same way in `30-scr121-loading.json`.
+
+## #4178 (E32-D02): 13 wireframe boards (added 01:4xZ, 2026-10-23)
+
+Page `E32-D02`. Sheets `sheets/E32-D02/01-…` to `13-…`, drawn in order (board 01 first: it binds the names, the floor treatment and the T2 gate). Greyscale wireframes (the dark theme's semantic greys, no hue). Board names and exports come from each sheet (`E32-D02 / NN <slug>` → `docs/design/E32/img/E32-D02-NN-<slug>.png`). Boards 04, 06, 07 and 13 also get greyscale and deuteranopia renders (`docs/design/_tools/cvd_sim.py`, `<stem>-greyscale.png`, `<stem>-deuteranopia.png`). Notes paths scrubbed in: `01-legend-and-entry.json`, `02-scr064-editing.json`.

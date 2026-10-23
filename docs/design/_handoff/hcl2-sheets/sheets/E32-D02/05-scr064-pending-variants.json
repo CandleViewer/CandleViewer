@@ -1,0 +1,4283 @@
+{
+ "board": {
+  "name": "E32-D02 / 05 scr064-pending-variants",
+  "w": 4168,
+  "x": 0,
+  "y": 4000,
+  "o": {
+   "dir": "column",
+   "align": "start",
+   "fill": "color.surface.app",
+   "pad": "space.inset.lg",
+   "gap": "space.inset.lg"
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "head",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E32-D02 / 05 scr064-pending-variants",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary"
+     },
+     {
+      "t": "text",
+      "name": "source",
+      "chars": "Source: spec §4.3 rows 11-14 (L393-L396), each a variant of row 10 (L392, board 04); §3.2 L167-168; §3.8 L292 (row 13's held line); §4.2 L364, L370; §4.4 L415-421; §4.6 L439, L445; §8 L763, L766; the sl.* strings: E32-D01 §5.3 (D01:120-121, D01:125-126)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 4136
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "grid",
+    "o": {
+     "dir": "row",
+     "wrap": "wrap",
+     "colGap": "space.inset.xl",
+     "rowGap": "space.inset.xl",
+     "align": "start"
+    },
+    "w": 4136,
+    "kids": [
+     {
+      "t": "board",
+      "name": "cell · SCR-064 · pending-acknowledgement · ws down, acked",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "caption",
+        "chars": "SCR-064 / pending-acknowledgement · ws down, acked",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary",
+        "note": "the frame name (§0)"
+       },
+       {
+        "t": "board",
+        "name": "row",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.lg",
+         "align": "start"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "grid/cell · SCR-064 · pending-acknowledgement · ws down, acked/row",
+   "node": {
+    "t": "board",
+    "name": "SCR-064 / pending-acknowledgement · ws down, acked",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.overlay",
+     "radius": "radius.dialog",
+     "shadow": "elevation.dialog",
+     "pad": "space.inset.lg",
+     "gap": "space.stack.lg",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "header",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Manage BTCUSDT long 0.250 · Main ·",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "board",
+        "name": "CMP-075 EnvBadgeLocal (composition)",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.xs",
+         "radius": "radius.badge",
+         "stroke": "color.text.secondary"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "word",
+          "chars": "LIVE",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 16
+       }
+      ],
+      "w": 608,
+      "note": "the dialog's name: \"Manage BTCUSDT long 0.250 · Main · LIVE\""
+     },
+     {
+      "t": "text",
+      "name": "read-out",
+      "chars": "entry 64,010.0 · mark 64,012.5 · last 64,011.0 · liq 57,929.0 · 10x · +0.02 R",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "note": "positions, ticker; static text"
+     },
+     {
+      "t": "board",
+      "name": "CMP-119 BracketEditor (composition) · stop row · held",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "head",
+        "o": {
+         "dir": "row",
+         "justify": "space-between"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label + state",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Stop-loss · held by Bybit (exchange)",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "board",
+            "name": "state · Moving…",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "hourglass",
+              "icon": "pending",
+              "color": "color.text.primary",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Moving…",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             }
+            ],
+            "note": "the stop row's state word (sltp.moving, §3.8 L293): from Apply until a positions read shows the stop (D17; H1)"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "trigger",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "trigger",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-009 Select (composition)",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm",
+             "gap": "space.inset.xs",
+             "radius": "radius.control",
+             "stroke": "color.border.subtle"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Mark",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "icon",
+              "name": "chevron",
+              "icon": "chevron-down",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             }
+            ],
+            "h": 24
+           }
+          ]
+         }
+        ],
+        "w": 608
+       },
+       {
+        "t": "board",
+        "name": "controls",
+        "o": {
+         "dir": "row",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-100 PriceInput (composition)",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "600",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 104,
+          "h": 24,
+          "note": "read-only while the request is pending (row 10, L392); no clear glyph (§3.2)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-003 SegmentedControl (composition) · unit",
+          "o": {
+           "dir": "row",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "segment-1",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "price",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary"
+             }
+            ],
+            "h": 24
+           },
+           {
+            "t": "board",
+            "name": "segment-2",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm",
+             "fill": "color.surface.selected"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "ticks",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 24,
+            "note": "aria-checked"
+           },
+           {
+            "t": "board",
+            "name": "segment-3",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "%",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary"
+             }
+            ],
+            "h": 24
+           }
+          ],
+          "h": 24,
+          "note": "radiogroup; one roving stop"
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "recompute",
+        "chars": "→ 63,950.0 · 0.09 % below entry · risk 15.00 USDT (0.12 % of equity)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 608,
+        "note": "polite, ≤1 per 2 s"
+       },
+       {
+        "t": "text",
+        "name": "CMP-130 SlippageEstimateChip (composition)",
+        "chars": "slippage ≈ 3 ticks (estimated)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "note": "a stop closes at market: the fill can slip past the stop price"
+       },
+       {
+        "t": "text",
+        "name": "pending line",
+        "chars": "Bybit accepted the move to 63,950.0 — the position read that confirms it is waiting for the connection. Last confirmed stop 63,900.0.",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 608,
+        "note": "role=\"status\", polite, once (the PUT's 200 arrived while the private WS is down); replaces row 10's pending line"
+       },
+       {
+        "t": "board",
+        "name": "loosen slot",
+        "o": {
+         "dir": "row",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-001 Button (composition) · Loosen stop…",
+          "o": {
+           "dir": "row",
+           "padX": "space.button.paddingX",
+           "gap": "space.inset.xs",
+           "radius": "radius.control",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Loosen stop…",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.secondary"
+           }
+          ],
+          "h": 24,
+          "note": "opens E32-D05's flow (D4), not drawn"
+         },
+         {
+          "t": "text",
+          "name": "description",
+          "chars": "owner only · opens a confirmation",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ]
+       }
+      ],
+      "w": 608
+     },
+     {
+      "t": "board",
+      "name": "CMP-158 SafetyInvariantNotice (composition)",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.sm",
+       "pad": "space.inset.sm",
+       "radius": "radius.card",
+       "fill": "color.surface.raised",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "icon",
+        "name": "info",
+        "icon": "info",
+        "color": "color.text.secondary",
+        "size": "size.icon"
+       },
+       {
+        "t": "board",
+        "name": "sentences",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "sentence-1",
+          "chars": "Every position keeps a native stop — you can move it, not delete it.",
+          "typo": "type.ui.body",
+          "color": "color.text.secondary",
+          "w": 568
+         },
+         {
+          "t": "text",
+          "name": "sentence-2",
+          "chars": "Tightening is never blocked by order-entry limits; the stop is held by Bybit, not by this app.",
+          "typo": "type.ui.body",
+          "color": "color.text.secondary",
+          "w": 568
+         }
+        ]
+       }
+      ],
+      "w": 608,
+      "note": "role=\"note\", always visible"
+     },
+     {
+      "t": "board",
+      "name": "CMP-119 BracketEditor (composition) · TP ladder",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "head",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Take-profit ladder",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "sep",
+          "chars": "·",
+          "typo": "type.ui.caption",
+          "color": "color.text.tertiary"
+         },
+         {
+          "t": "text",
+          "name": "class",
+          "chars": "resting at Bybit, managed by CandleViewer",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "note": "text, never CMP-227 (D10)"
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "rung-1",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "rung",
+          "chars": "TP 1",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 NumericStepperInput (composition) · %",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "25",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 44,
+          "h": 24,
+          "note": "read-only"
+         },
+         {
+          "t": "text",
+          "name": "pct-unit",
+          "chars": "% ·",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 NumericStepperInput (composition) · R",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1.0",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 44,
+          "h": 24,
+          "note": "read-only"
+         },
+         {
+          "t": "text",
+          "name": "result",
+          "chars": "R · 64,120.0 · 0.062 · +6.82 USDT",
+          "typo": "type.num.sm",
+          "color": "color.text.primary",
+          "note": "R first on exits (D9)"
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "rung-2",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "rung",
+          "chars": "TP 2",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 NumericStepperInput (composition) · %",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "25",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 44,
+          "h": 24,
+          "note": "read-only"
+         },
+         {
+          "t": "text",
+          "name": "pct-unit",
+          "chars": "% ·",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 NumericStepperInput (composition) · R",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "2.0",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 44,
+          "h": 24,
+          "note": "read-only"
+         },
+         {
+          "t": "text",
+          "name": "result",
+          "chars": "R · 64,230.0 · 0.062 · +13.64 USDT",
+          "typo": "type.num.sm",
+          "color": "color.text.primary",
+          "note": "R first on exits (D9)"
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "rung-3 + total",
+        "o": {
+         "dir": "row",
+         "justify": "space-between"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "rung-3",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "rung",
+            "chars": "TP 3",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-008 NumericStepperInput (composition) · %",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.subtle"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "50",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 44,
+            "h": 24,
+            "note": "read-only"
+           },
+           {
+            "t": "text",
+            "name": "pct-unit",
+            "chars": "% ·",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-008 NumericStepperInput (composition) · R",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.subtle"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "3.0",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 44,
+            "h": 24,
+            "note": "read-only"
+           },
+           {
+            "t": "text",
+            "name": "result",
+            "chars": "R · 64,340.0 · 0.126 · +41.58 USDT",
+            "typo": "type.num.sm",
+            "color": "color.text.primary",
+            "note": "R first on exits (D9)"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "total",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "total",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "100 %",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "note": "the ladder's total cell"
+         }
+        ],
+        "w": 608
+       }
+      ],
+      "w": 608
+     },
+     {
+      "t": "board",
+      "name": "CMP-120 TrailingStopEditor (composition)",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "line",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Trailing",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-005 Checkbox (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "box",
+            "o": {
+             "dir": "row",
+             "justify": "center",
+             "radius": "radius.control",
+             "fill": "color.text.primary"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "check",
+              "icon": "check",
+              "color": "color.text.inverse",
+              "size": "size.icon"
+             }
+            ],
+            "w": 16,
+            "h": 16
+           }
+          ],
+          "h": 24,
+          "note": "checked"
+         },
+         {
+          "t": "board",
+          "name": "CMP-100 PriceInput (composition) · distance",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "150.0",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 64,
+          "h": 24,
+          "note": "read-only"
+         },
+         {
+          "t": "text",
+          "name": "distance",
+          "chars": "distance",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "sep",
+          "chars": "·",
+          "typo": "type.ui.caption",
+          "color": "color.text.tertiary"
+         },
+         {
+          "t": "text",
+          "name": "held",
+          "chars": "held by Bybit",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "sep · 2",
+          "chars": "·",
+          "typo": "type.ui.caption",
+          "color": "color.text.tertiary"
+         },
+         {
+          "t": "text",
+          "name": "activates",
+          "chars": "activates at",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 NumericStepperInput (composition) · activation",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "+1.0",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 48,
+          "h": 24,
+          "note": "read-only"
+         },
+         {
+          "t": "text",
+          "name": "r-unit",
+          "chars": "R",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ]
+       }
+      ],
+      "w": 608
+     },
+     {
+      "t": "board",
+      "name": "CMP-119 BracketEditor (composition) · breakeven",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "line",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Breakeven",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-005 Checkbox (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "box",
+            "o": {
+             "dir": "row",
+             "justify": "center",
+             "radius": "radius.control",
+             "fill": "color.text.primary"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "check",
+              "icon": "check",
+              "color": "color.text.inverse",
+              "size": "size.icon"
+             }
+            ],
+            "w": 16,
+            "h": 16
+           }
+          ],
+          "h": 24,
+          "note": "checked"
+         },
+         {
+          "t": "text",
+          "name": "at",
+          "chars": "at",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 NumericStepperInput (composition) · R",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1.0",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 48,
+          "h": 24,
+          "note": "read-only"
+         },
+         {
+          "t": "text",
+          "name": "r-unit",
+          "chars": "R",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "line",
+          "chars": "→ stop to 64,010.2 (+2 ticks)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "class",
+          "chars": "(app-managed)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "note": "text, never CMP-227 (D10)"
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "sentence",
+        "chars": "App-managed: moves the stop at +1 R only while CandleViewer runs; if it stops, the stop stays at 63,900.0, never lower.",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 608
+       }
+      ],
+      "w": 608
+     },
+     {
+      "t": "board",
+      "name": "footer",
+      "o": {
+       "dir": "row",
+       "justify": "end",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "actions",
+        "o": {
+         "dir": "row",
+         "gap": "space.stack.sm",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-001 Button (composition) · Close",
+          "o": {
+           "dir": "row",
+           "padX": "space.button.paddingX",
+           "gap": "space.inset.xs",
+           "radius": "radius.control",
+           "justify": "center",
+           "fill": "color.action.secondary.default"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Close",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "CMP-039 FocusRing (composition)",
+          "o": {
+           "dir": "row",
+           "pad": "space.inset.xs",
+           "radius": "radius.card",
+           "stroke": "color.text.primary",
+           "strokeWidth": "border.focus"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-001 Button (composition) · Applying…",
+            "o": {
+             "dir": "row",
+             "padX": "space.button.paddingX",
+             "gap": "space.inset.xs",
+             "radius": "radius.control",
+             "justify": "center",
+             "fill": "color.text.primary"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "busy",
+              "icon": "pending",
+              "color": "color.text.inverse",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Applying…",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.inverse"
+             }
+            ],
+            "h": 24,
+            "note": "CMP-001 loading: aria-busy; width locked; a second press does nothing"
+           }
+          ],
+          "note": "focus-visible"
+         }
+        ]
+       }
+      ],
+      "w": 608
+     }
+    ],
+    "w": 640,
+    "note": "CMP-043 Dialog (Modal) composition: role=\"dialog\", aria-modal, focus trapped, Esc closes, focus returns to the invoker (§3.1 L151)"
+   }
+  },
+  {
+   "into": "grid/cell · SCR-064 · pending-acknowledgement · ws down, acked/row",
+   "node": {
+    "t": "board",
+    "name": "annotation",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "radius": "radius.card",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Spec",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§4.3 row 11 (L393), a variant of row 10 (L392, board 04); the string: E32-D01 §5.3 (D01:125); §3.2 L167-168; §4.2 L364; §8 L766",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "State and trigger",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "When: the PUT answered 200; the private WS is down. Renders: the pending line replaced; the last confirmed stop named. Kept from row 10: Apply on a tighten typed in ticks, 600 → 63,950.0; the stop row's hourglass and \"Moving…\"; inputs read-only; Apply \"Applying…\" (aria-busy); Cancel → \"Close\".",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Decision ids",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "D17 (pending is never confirmed: the 200 alone is not applied; protected only from a positions read, INV-B8-a); D3 (§3.2 L167: every gated state names the stop Bybit holds); D15 (Esc never cancels a sent request); G-5 (B8's states are not on the wire); G-17 (the risk read-out is client-side and gross)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Copy keys",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "sl.ws_down.acked, preview.slippage, sltp.moving, sl.label, sltp.loosen, e32.be.line, sltp.applying, e32.close, e32.title.*, sl.note",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-05",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Focus and keyboard",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Unchanged: on Apply, now \"Applying…\" (aria-busy), where row 10 leaves it; a push never moves focus (§3.7 L264-266; H11). Esc or \"Close\" closes and never cancels the request: the pending line moves to SCR-063's row (§4.5 L433; D15).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-06",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Announcement (text, region, when)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "\"Bybit accepted the move to 63,950.0 — the position read that confirms it is waiting for the connection. Last confirmed stop 63,900.0.\" — role=\"status\", polite, once, when it replaces the pending line (the 200 arrived while the private WS is down).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-07",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Notes",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Data: the PUT /positions/{positionId}/tpsl 200 (TpSlResult) and the link state; confirmed only by a WS positions read (§4.2 L364). Resolves on 24 §8.5's reconnect reconciliation (D01:125): a positions read decides: → row 15 (applied) when it shows 63,950.0, else → row 16 (rejected) (D01:101: the line 'resolves to sl.tighten.done or to the refusal'). QA: C-13.6 scenario 2 (§8 L766). §3.6 L239 also sends a request made before the client's own disconnect here; that session's stale shading with the last-good time (14 §0.5 item 4) is not named by row 11 and the spec gives no time: not drawn (review question 4). No gated control: owner (§4.1), a tighten needs no arm (D16), and the busy Apply is not T2 (§3.6 L251-252).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     }
+    ],
+    "w": 360
+   }
+  },
+  {
+   "into": "grid",
+   "node": {
+    "t": "board",
+    "name": "cell · SCR-064 · pending-acknowledgement · ws down, unanswered",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "caption",
+      "chars": "SCR-064 / pending-acknowledgement · ws down, unanswered",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "note": "the frame name (§0)"
+     },
+     {
+      "t": "board",
+      "name": "row",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.lg",
+       "align": "start"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "into": "grid/cell · SCR-064 · pending-acknowledgement · ws down, unanswered/row",
+   "node": {
+    "t": "board",
+    "name": "SCR-064 / pending-acknowledgement · ws down, unanswered",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.overlay",
+     "radius": "radius.dialog",
+     "shadow": "elevation.dialog",
+     "pad": "space.inset.lg",
+     "gap": "space.stack.lg",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "header",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Manage BTCUSDT long 0.250 · Main ·",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "board",
+        "name": "CMP-075 EnvBadgeLocal (composition)",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.xs",
+         "radius": "radius.badge",
+         "stroke": "color.text.secondary"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "word",
+          "chars": "LIVE",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 16
+       }
+      ],
+      "w": 608,
+      "note": "the dialog's name: \"Manage BTCUSDT long 0.250 · Main · LIVE\""
+     },
+     {
+      "t": "text",
+      "name": "read-out",
+      "chars": "entry 64,010.0 · mark 64,012.5 · last 64,011.0 · liq 57,929.0 · 10x · +0.02 R",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "note": "positions, ticker; static text"
+     },
+     {
+      "t": "board",
+      "name": "CMP-119 BracketEditor (composition) · stop row · held",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "head",
+        "o": {
+         "dir": "row",
+         "justify": "space-between"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label + state",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Stop-loss · held by Bybit (exchange)",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "board",
+            "name": "state · Moving…",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "hourglass",
+              "icon": "pending",
+              "color": "color.text.primary",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "Moving…",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             }
+            ],
+            "note": "the stop row's state word (sltp.moving, §3.8 L293): from Apply until a positions read shows the stop (D17; H1)"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "trigger",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "trigger",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-009 Select (composition)",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm",
+             "gap": "space.inset.xs",
+             "radius": "radius.control",
+             "stroke": "color.border.subtle"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Mark",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "icon",
+              "name": "chevron",
+              "icon": "chevron-down",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             }
+            ],
+            "h": 24
+           }
+          ]
+         }
+        ],
+        "w": 608
+       },
+       {
+        "t": "board",
+        "name": "controls",
+        "o": {
+         "dir": "row",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-100 PriceInput (composition)",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "600",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 104,
+          "h": 24,
+          "note": "read-only while the request is pending (row 10, L392); no clear glyph (§3.2)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-003 SegmentedControl (composition) · unit",
+          "o": {
+           "dir": "row",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "segment-1",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "price",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary"
+             }
+            ],
+            "h": 24
+           },
+           {
+            "t": "board",
+            "name": "segment-2",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm",
+             "fill": "color.surface.selected"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "ticks",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 24,
+            "note": "aria-checked"
+           },
+           {
+            "t": "board",
+            "name": "segment-3",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "%",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary"
+             }
+            ],
+            "h": 24
+           }
+          ],
+          "h": 24,
+          "note": "radiogroup; one roving stop"
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "recompute",
+        "chars": "→ 63,950.0 · 0.09 % below entry · risk 15.00 USDT (0.12 % of equity)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 608,
+        "note": "polite, ≤1 per 2 s"
+       },
+       {
+        "t": "text",
+        "name": "CMP-130 SlippageEstimateChip (composition)",
+        "chars": "slippage ≈ 3 ticks (estimated)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "note": "a stop closes at market: the fill can slip past the stop price"
+       },
+       {
+        "t": "text",
+        "name": "pending line",
+        "chars": "Moving the stop to 63,950.0 — connection lost before Bybit answered; it is read back after reconnect. Until then the stop held by Bybit is the last confirmed 63,900.0.",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 608,
+        "note": "role=\"status\", polite, once (the connection is lost with the PUT unanswered); replaces row 10's pending line"
+       },
+       {
+        "t": "board",
+        "name": "loosen slot",
+        "o": {
+         "dir": "row",
+         "gap": "space.stack.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-001 Button (composition) · Loosen stop…",
+          "o": {
+           "dir": "row",
+           "padX": "space.button.paddingX",
+           "gap": "space.inset.xs",
+           "radius": "radius.control",
+           "justify": "center"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Loosen stop…",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.secondary"
+           }
+          ],
+          "h": 24,
+          "note": "opens E32-D05's flow (D4), not drawn"
+         },
+         {
+          "t": "text",
+          "name": "description",
+          "chars": "owner only · opens a confirmation",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ]
+       }
+      ],
+      "w": 608
+     },
+     {
+      "t": "board",
+      "name": "CMP-158 SafetyInvariantNotice (composition)",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.sm",
+       "pad": "space.inset.sm",
+       "radius": "radius.card",
+       "fill": "color.surface.raised",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "icon",
+        "name": "info",
+        "icon": "info",
+        "color": "color.text.secondary",
+        "size": "size.icon"
+       },
+       {
+        "t": "board",
+        "name": "sentences",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "sentence-1",
+          "chars": "Every position keeps a native stop — you can move it, not delete it.",
+          "typo": "type.ui.body",
+          "color": "color.text.secondary",
+          "w": 568
+         },
+         {
+          "t": "text",
+          "name": "sentence-2",
+          "chars": "Tightening is never blocked by order-entry limits; the stop is held by Bybit, not by this app.",
+          "typo": "type.ui.body",
+          "color": "color.text.secondary",
+          "w": 568
+         }
+        ]
+       }
+      ],
+      "w": 608,
+      "note": "role=\"note\", always visible"
+     },
+     {
+      "t": "board",
+      "name": "CMP-119 BracketEditor (composition) · TP ladder",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "head",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Take-profit ladder",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "sep",
+          "chars": "·",
+          "typo": "type.ui.caption",
+          "color": "color.text.tertiary"
+         },
+         {
+          "t": "text",
+          "name": "class",
+          "chars": "resting at Bybit, managed by CandleViewer",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "note": "text, never CMP-227 (D10)"
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "rung-1",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "rung",
+          "chars": "TP 1",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 NumericStepperInput (composition) · %",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "25",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 44,
+          "h": 24,
+          "note": "read-only"
+         },
+         {
+          "t": "text",
+          "name": "pct-unit",
+          "chars": "% ·",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 NumericStepperInput (composition) · R",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1.0",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 44,
+          "h": 24,
+          "note": "read-only"
+         },
+         {
+          "t": "text",
+          "name": "result",
+          "chars": "R · 64,120.0 · 0.062 · +6.82 USDT",
+          "typo": "type.num.sm",
+          "color": "color.text.primary",
+          "note": "R first on exits (D9)"
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "rung-2",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "rung",
+          "chars": "TP 2",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 NumericStepperInput (composition) · %",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "25",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 44,
+          "h": 24,
+          "note": "read-only"
+         },
+         {
+          "t": "text",
+          "name": "pct-unit",
+          "chars": "% ·",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 NumericStepperInput (composition) · R",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "2.0",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 44,
+          "h": 24,
+          "note": "read-only"
+         },
+         {
+          "t": "text",
+          "name": "result",
+          "chars": "R · 64,230.0 · 0.062 · +13.64 USDT",
+          "typo": "type.num.sm",
+          "color": "color.text.primary",
+          "note": "R first on exits (D9)"
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "rung-3 + total",
+        "o": {
+         "dir": "row",
+         "justify": "space-between"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "rung-3",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "rung",
+            "chars": "TP 3",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-008 NumericStepperInput (composition) · %",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.subtle"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "50",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 44,
+            "h": 24,
+            "note": "read-only"
+           },
+           {
+            "t": "text",
+            "name": "pct-unit",
+            "chars": "% ·",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-008 NumericStepperInput (composition) · R",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.subtle"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "3.0",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 44,
+            "h": 24,
+            "note": "read-only"
+           },
+           {
+            "t": "text",
+            "name": "result",
+            "chars": "R · 64,340.0 · 0.126 · +41.58 USDT",
+            "typo": "type.num.sm",
+            "color": "color.text.primary",
+            "note": "R first on exits (D9)"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "total",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "total",
+            "typo": "type.ui.caption",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "100 %",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "note": "the ladder's total cell"
+         }
+        ],
+        "w": 608
+       }
+      ],
+      "w": 608
+     },
+     {
+      "t": "board",
+      "name": "CMP-120 TrailingStopEditor (composition)",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "line",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Trailing",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-005 Checkbox (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "box",
+            "o": {
+             "dir": "row",
+             "justify": "center",
+             "radius": "radius.control",
+             "fill": "color.text.primary"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "check",
+              "icon": "check",
+              "color": "color.text.inverse",
+              "size": "size.icon"
+             }
+            ],
+            "w": 16,
+            "h": 16
+           }
+          ],
+          "h": 24,
+          "note": "checked"
+         },
+         {
+          "t": "board",
+          "name": "CMP-100 PriceInput (composition) · distance",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "150.0",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 64,
+          "h": 24,
+          "note": "read-only"
+         },
+         {
+          "t": "text",
+          "name": "distance",
+          "chars": "distance",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "sep",
+          "chars": "·",
+          "typo": "type.ui.caption",
+          "color": "color.text.tertiary"
+         },
+         {
+          "t": "text",
+          "name": "held",
+          "chars": "held by Bybit",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "sep · 2",
+          "chars": "·",
+          "typo": "type.ui.caption",
+          "color": "color.text.tertiary"
+         },
+         {
+          "t": "text",
+          "name": "activates",
+          "chars": "activates at",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 NumericStepperInput (composition) · activation",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "+1.0",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 48,
+          "h": 24,
+          "note": "read-only"
+         },
+         {
+          "t": "text",
+          "name": "r-unit",
+          "chars": "R",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ]
+       }
+      ],
+      "w": 608
+     },
+     {
+      "t": "board",
+      "name": "CMP-119 BracketEditor (composition) · breakeven",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "line",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Breakeven",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-005 Checkbox (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "box",
+            "o": {
+             "dir": "row",
+             "justify": "center",
+             "radius": "radius.control",
+             "fill": "color.text.primary"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "check",
+              "icon": "check",
+              "color": "color.text.inverse",
+              "size": "size.icon"
+             }
+            ],
+            "w": 16,
+            "h": 16
+           }
+          ],
+          "h": 24,
+          "note": "checked"
+         },
+         {
+          "t": "text",
+          "name": "at",
+          "chars": "at",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 NumericStepperInput (composition) · R",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.subtle"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1.0",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 48,
+          "h": 24,
+          "note": "read-only"
+         },
+         {
+          "t": "text",
+          "name": "r-unit",
+          "chars": "R",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "line",
+          "chars": "→ stop to 64,010.2 (+2 ticks)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "class",
+          "chars": "(app-managed)",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary",
+          "note": "text, never CMP-227 (D10)"
+         }
+        ]
+       },
+       {
+        "t": "text",
+        "name": "sentence",
+        "chars": "App-managed: moves the stop at +1 R only while CandleViewer runs; if it stops, the stop stays at 63,900.0, never lower.",
+        "typo": "type.ui.body",
+        "color": "color.text.secondary",
+        "w": 608
+       }
+      ],
+      "w": 608
+     },
+     {
+      "t": "board",
+      "name": "footer",
+      "o": {
+       "dir": "row",
+       "justify": "end",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "actions",
+        "o": {
+         "dir": "row",
+         "gap": "space.stack.sm",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-001 Button (composition) · Close",
+          "o": {
+           "dir": "row",
+           "padX": "space.button.paddingX",
+           "gap": "space.inset.xs",
+           "radius": "radius.control",
+           "justify": "center",
+           "fill": "color.action.secondary.default"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Close",
+            "typo": "type.ui.body-strong",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "CMP-039 FocusRing (composition)",
+          "o": {
+           "dir": "row",
+           "pad": "space.inset.xs",
+           "radius": "radius.card",
+           "stroke": "color.text.primary",
+           "strokeWidth": "border.focus"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-001 Button (composition) · Applying…",
+            "o": {
+             "dir": "row",
+             "padX": "space.button.paddingX",
+             "gap": "space.inset.xs",
+             "radius": "radius.control",
+             "justify": "center",
+             "fill": "color.text.primary"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "busy",
+              "icon": "pending",
+              "color": "color.text.inverse",
+              "size": "size.icon"
+             },
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Applying…",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.inverse"
+             }
+            ],
+            "h": 24,
+            "note": "CMP-001 loading: aria-busy; width locked; a second press does nothing"
+           }
+          ],
+          "note": "focus-visible"
+         }
+        ]
+       }
+      ],
+      "w": 608
+     }
+    ],
+    "w": 640,
+    "note": "CMP-043 Dialog (Modal) composition: role=\"dialog\", aria-modal, focus trapped, Esc closes, focus returns to the invoker (§3.1 L151)"
+   }
+  },
+  {
+   "into": "grid/cell · SCR-064 · pending-acknowledgement · ws down, unanswered/row",
+   "node": {
+    "t": "board",
+    "name": "annotation",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "radius": "radius.card",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Spec",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§4.3 row 12 (L394), as row 11 (L393), a variant of row 10 (L392, board 04); the string: E32-D01 §5.3 (D01:126); §3.6 L251-252; §8 L766",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "State and trigger",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "When: the request unanswered; the connection lost. Renders: as row 11 — the pending line replaced; the last confirmed stop named. Kept from row 10: 600 ticks → 63,950.0, \"Moving…\", inputs read-only, \"Applying…\" (aria-busy), \"Close\".",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Decision ids",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "D17; §3.6 L251-252 (a request in flight, an unanswered one included, is busy: CMP-001 loading, aria-busy, not T2); D3 (§3.2 L167); D15; G-5",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Copy keys",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "sl.ws_down.unanswered, preview.slippage, sltp.moving, sl.label, sltp.loosen, e32.be.line, sltp.applying, e32.close, e32.title.*, sl.note",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-05",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Focus and keyboard",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Unchanged: on Apply (\"Applying…\", aria-busy); a push never moves focus (§3.7 L264-266). Esc or \"Close\" closes and never cancels the request (§4.5 L433; D15).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-06",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Announcement (text, region, when)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "\"Moving the stop to 63,950.0 — connection lost before Bybit answered; it is read back after reconnect. Until then the stop held by Bybit is the last confirmed 63,900.0.\" — role=\"status\", polite, once, when the connection drops with the PUT unanswered.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-07",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Notes",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "The outcome is unknown until 24 §8.5's reconnect reconciliation reads the position back (D01:126; 24 §8.8 rule 6: an unanswered request's record stays pending until a read decides it); no re-send control is drawn. A positions read decides: → row 15 (applied) when it shows 63,950.0, else → row 16 (rejected) (D01:101: the line 'resolves to sl.tighten.done or to the refusal'). QA: C-13.6 scenarios 2 and 4, a timeout (§8 L766). Stale shading under the client's own disconnect: as row 11's note (§3.6 L239). No gated control.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     }
+    ],
+    "w": 360
+   }
+  },
+  {
+   "into": "grid",
+   "node": {
+    "t": "board",
+    "name": "cell · SCR-064 · pending-acknowledgement · ladder",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "caption",
+      "chars": "SCR-064 / pending-acknowledgement · ladder",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "note": "the frame name (§0)"
+     },
+     {
+      "t": "board",
+      "name": "row",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.lg",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "SCR-064 / pending-acknowledgement · ladder",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.overlay",
+         "radius": "radius.dialog",
+         "shadow": "elevation.dialog",
+         "pad": "space.inset.lg",
+         "gap": "space.stack.lg",
+         "clip": true
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "header",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "title",
+            "chars": "Manage BTCUSDT long 0.351 · Main ·",
+            "typo": "type.ui.heading-sm",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-075 EnvBadgeLocal (composition)",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.xs",
+             "radius": "radius.badge",
+             "stroke": "color.text.secondary"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "LIVE",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 16
+           }
+          ],
+          "w": 608,
+          "note": "the dialog's name: \"Manage BTCUSDT long 0.351 · Main · LIVE\""
+         },
+         {
+          "t": "text",
+          "name": "read-out",
+          "chars": "entry 63,873.9",
+          "typo": "type.num.sm",
+          "color": "color.text.primary",
+          "note": "positions, ticker; static text"
+         },
+         {
+          "t": "board",
+          "name": "CMP-119 BracketEditor (composition) · stop row · held",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "head",
+            "o": {
+             "dir": "row",
+             "justify": "space-between"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "label + state",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Stop-loss · held by Bybit (exchange)",
+                "typo": "type.ui.label",
+                "color": "color.text.secondary"
+               },
+               {
+                "t": "board",
+                "name": "state · Moving…",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "icon",
+                  "name": "hourglass",
+                  "icon": "pending",
+                  "color": "color.text.primary",
+                  "size": "size.icon"
+                 },
+                 {
+                  "t": "text",
+                  "name": "word",
+                  "chars": "Moving…",
+                  "typo": "type.ui.label",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "note": "the stop row's state word (sltp.moving, §3.8 L293): from Apply until a positions read shows the stop (D17; H1)"
+               }
+              ]
+             },
+             {
+              "t": "board",
+              "name": "trigger",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "trigger",
+                "typo": "type.ui.label",
+                "color": "color.text.secondary"
+               },
+               {
+                "t": "board",
+                "name": "CMP-009 Select (composition)",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.sm",
+                 "gap": "space.inset.xs",
+                 "radius": "radius.control",
+                 "stroke": "color.border.subtle"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Mark",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "icon",
+                  "name": "chevron",
+                  "icon": "chevron-down",
+                  "color": "color.text.secondary",
+                  "size": "size.icon"
+                 }
+                ],
+                "h": 24
+               }
+              ]
+             }
+            ],
+            "w": 608
+           },
+           {
+            "t": "board",
+            "name": "controls",
+            "o": {
+             "dir": "row",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-100 PriceInput (composition)",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "stroke": "color.border.subtle"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "62,476.0",
+                "typo": "type.num.base",
+                "color": "color.text.primary"
+               }
+              ],
+              "w": 104,
+              "h": 24,
+              "note": "read-only while the request is pending (row 10, L392); no clear glyph (§3.2)"
+             },
+             {
+              "t": "board",
+              "name": "CMP-003 SegmentedControl (composition) · unit",
+              "o": {
+               "dir": "row",
+               "radius": "radius.control"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "segment-1",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.sm",
+                 "fill": "color.surface.selected"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "price",
+                  "typo": "type.ui.label",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "aria-checked"
+               },
+               {
+                "t": "board",
+                "name": "segment-2",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "ticks",
+                  "typo": "type.ui.label",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "h": 24
+               },
+               {
+                "t": "board",
+                "name": "segment-3",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "%",
+                  "typo": "type.ui.label",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "h": 24
+               }
+              ],
+              "h": 24,
+              "note": "radiogroup; one roving stop"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "pending line",
+            "o": {
+             "dir": "column",
+             "align": "start",
+             "gap": "space.stack.xs"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "line-1",
+              "chars": "Moving the stop to 62,476.0 — 2 of 3 resting levels carry 62,476.0 · position pending…",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary",
+              "w": 608
+             },
+             {
+              "t": "text",
+              "name": "line-2",
+              "chars": "Held by Bybit now: 62,426.0.",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary",
+              "w": 608
+             }
+            ],
+            "w": 608,
+            "note": "role=\"status\", polite, per count change, at most once per 2 s"
+           },
+           {
+            "t": "board",
+            "name": "loosen slot",
+            "o": {
+             "dir": "row",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-001 Button (composition) · Loosen stop…",
+              "o": {
+               "dir": "row",
+               "padX": "space.button.paddingX",
+               "gap": "space.inset.xs",
+               "radius": "radius.control",
+               "justify": "center"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Loosen stop…",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.secondary"
+               }
+              ],
+              "h": 24,
+              "note": "opens E32-D05's flow (D4), not drawn"
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "owner only · opens a confirmation",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             }
+            ]
+           }
+          ],
+          "w": 608
+         },
+         {
+          "t": "board",
+          "name": "CMP-158 SafetyInvariantNotice (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.sm",
+           "pad": "space.inset.sm",
+           "radius": "radius.card",
+           "fill": "color.surface.raised",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "info",
+            "icon": "info",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           },
+           {
+            "t": "board",
+            "name": "sentences",
+            "o": {
+             "dir": "column",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "sentence-1",
+              "chars": "Every position keeps a native stop — you can move it, not delete it.",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary",
+              "w": 568
+             },
+             {
+              "t": "text",
+              "name": "sentence-2",
+              "chars": "Tightening is never blocked by order-entry limits; the stop is held by Bybit, not by this app.",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary",
+              "w": 568
+             }
+            ]
+           }
+          ],
+          "w": 608,
+          "note": "role=\"note\", always visible"
+         },
+         {
+          "t": "board",
+          "name": "footer",
+          "o": {
+           "dir": "row",
+           "justify": "end",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "actions",
+            "o": {
+             "dir": "row",
+             "gap": "space.stack.sm",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-001 Button (composition) · Close",
+              "o": {
+               "dir": "row",
+               "padX": "space.button.paddingX",
+               "gap": "space.inset.xs",
+               "radius": "radius.control",
+               "justify": "center",
+               "fill": "color.action.secondary.default"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Close",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24
+             },
+             {
+              "t": "board",
+              "name": "CMP-039 FocusRing (composition)",
+              "o": {
+               "dir": "row",
+               "pad": "space.inset.xs",
+               "radius": "radius.card",
+               "stroke": "color.text.primary",
+               "strokeWidth": "border.focus"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "CMP-001 Button (composition) · Applying…",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.button.paddingX",
+                 "gap": "space.inset.xs",
+                 "radius": "radius.control",
+                 "justify": "center",
+                 "fill": "color.text.primary"
+                },
+                "kids": [
+                 {
+                  "t": "icon",
+                  "name": "busy",
+                  "icon": "pending",
+                  "color": "color.text.inverse",
+                  "size": "size.icon"
+                 },
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Applying…",
+                  "typo": "type.ui.body-strong",
+                  "color": "color.text.inverse"
+                 }
+                ],
+                "h": 24,
+                "note": "CMP-001 loading: aria-busy; width locked; a second press does nothing"
+               }
+              ],
+              "note": "focus-visible"
+             }
+            ]
+           }
+          ],
+          "w": 608
+         }
+        ],
+        "w": 640,
+        "note": "CMP-043 Dialog (Modal) composition: role=\"dialog\", aria-modal, focus trapped, Esc closes, focus returns to the invoker (§3.1 L151)"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "grid/cell · SCR-064 · pending-acknowledgement · ladder/row",
+   "node": {
+    "t": "board",
+    "name": "annotation",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "radius": "radius.card",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Spec",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§4.3 row 13 (L395); §4.2 L370 (the re-stamp); D13 (L135); §5.1 L465-466 (levels 1-2), L588; the string: E32-D01 §5.3 (D01:120); the held line: §3.8 L292, as row 10 pairs it (L392); D3 (L125), §3.2 L167, H1 (L793); §8 L763",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "State and trigger",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "When: a tighten from 62,426.0 to 62,476.0 on the §5.1 ladder, levels 1-2 filled (long 0.351 BTC, avg entry 63,873.9) and 3-5 resting. Renders: the resting levels counted first, the position last (R2), and the stop Bybit holds on the position, 62,426.0, under the count. Kept from row 10: the hourglass and \"Moving…\", the held line (sltp.pending.held), inputs read-only, \"Applying…\" (aria-busy), \"Close\".",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Decision ids",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "D13 (one shared stop; a tighten re-stamps resting children first); D17 (each count only once read back, D01:120); D3 (L125; §3.2 L167: every gated state names the stop Bybit holds); D15; G-8 (the re-stamp order is not in 24 §8.8; §8 L763: the ladder parts are not buildable today); G-5 (§7 L732: SCR-064 10–14, B8's states are not on the wire)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Copy keys",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "sl.tighten.pending.ladder, sltp.pending.held, sltp.moving, sl.label, sltp.loosen, e32.title.*, sltp.applying, e32.close, sl.note",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-05",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Focus and keyboard",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Unchanged: on Apply (\"Applying…\", aria-busy); a push never moves focus (§3.7 L264-266). Esc or \"Close\" closes and never cancels the re-stamp (D15; §4.5 L433).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-06",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Announcement (text, region, when)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "\"Moving the stop to 62,476.0 — 2 of 3 resting levels carry 62,476.0 · position pending…\" + \"Held by Bybit now: 62,426.0.\" — one role=\"status\" region, polite, on each count change, at most once per 2 s, always the latest count (§3.7 L262).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-07",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Notes",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Data: each resting child's stop_loss by amendTradeGroup (orders:write) first, the position's setPositionTpSl last (§4.2 L370). Events: each child re-stamp is order.amended (§4.6 L445), then sl.modified with audit position.stop_modified (§4.6 L439). The held line is row 10's sltp.pending.held (§3.8 L292) with the position's stop, 62,426.0, which moves last (D13; G-8): drawn for D3, §3.2 L167, H1 (L793) and §14 L925, as sl.tighten.pending.ladder names only 62,476.0 (a spec carry, review question 1). Spec figures only: the header's 0.351 and entry 63,873.9 (§5.1 L466; L588); the spec gives no mark, last, liq, leverage, R, recompute, risk or slippage figure and no take-profit, trail or breakeven for this position, so none is drawn.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     }
+    ],
+    "w": 360
+   }
+  },
+  {
+   "into": "grid",
+   "node": {
+    "t": "board",
+    "name": "cell · SCR-064 · pending-acknowledgement · ladder partial",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "caption",
+      "chars": "SCR-064 / pending-acknowledgement · ladder partial",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "note": "the frame name (§0)"
+     },
+     {
+      "t": "board",
+      "name": "row",
+      "o": {
+       "dir": "row",
+       "gap": "space.inset.lg",
+       "align": "start"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "SCR-064 / pending-acknowledgement · ladder partial",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.overlay",
+         "radius": "radius.dialog",
+         "shadow": "elevation.dialog",
+         "pad": "space.inset.lg",
+         "gap": "space.stack.lg",
+         "clip": true
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "header",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "title",
+            "chars": "Manage BTCUSDT long 0.351 · Main ·",
+            "typo": "type.ui.heading-sm",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-075 EnvBadgeLocal (composition)",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.xs",
+             "radius": "radius.badge",
+             "stroke": "color.text.secondary"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "LIVE",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 16
+           }
+          ],
+          "w": 608,
+          "note": "the dialog's name: \"Manage BTCUSDT long 0.351 · Main · LIVE\""
+         },
+         {
+          "t": "text",
+          "name": "read-out",
+          "chars": "entry 63,873.9",
+          "typo": "type.num.sm",
+          "color": "color.text.primary",
+          "note": "positions, ticker; static text"
+         },
+         {
+          "t": "board",
+          "name": "CMP-119 BracketEditor (composition) · stop row · held",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "head",
+            "o": {
+             "dir": "row",
+             "justify": "space-between"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "label + state",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Stop-loss · held by Bybit (exchange)",
+                "typo": "type.ui.label",
+                "color": "color.text.secondary"
+               },
+               {
+                "t": "board",
+                "name": "state · Moving…",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs"
+                },
+                "kids": [
+                 {
+                  "t": "icon",
+                  "name": "hourglass",
+                  "icon": "pending",
+                  "color": "color.text.primary",
+                  "size": "size.icon"
+                 },
+                 {
+                  "t": "text",
+                  "name": "word",
+                  "chars": "Moving…",
+                  "typo": "type.ui.label",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "note": "the stop row's state word (sltp.moving, §3.8 L293): from Apply until a positions read shows the stop (D17; H1)"
+               }
+              ]
+             },
+             {
+              "t": "board",
+              "name": "trigger",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "trigger",
+                "typo": "type.ui.label",
+                "color": "color.text.secondary"
+               },
+               {
+                "t": "board",
+                "name": "CMP-009 Select (composition)",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.sm",
+                 "gap": "space.inset.xs",
+                 "radius": "radius.control",
+                 "stroke": "color.border.subtle"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "Mark",
+                  "typo": "type.ui.body",
+                  "color": "color.text.primary"
+                 },
+                 {
+                  "t": "icon",
+                  "name": "chevron",
+                  "icon": "chevron-down",
+                  "color": "color.text.secondary",
+                  "size": "size.icon"
+                 }
+                ],
+                "h": 24
+               }
+              ]
+             }
+            ],
+            "w": 608
+           },
+           {
+            "t": "board",
+            "name": "controls",
+            "o": {
+             "dir": "row",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-100 PriceInput (composition)",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "stroke": "color.border.subtle"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "value",
+                "chars": "62,476.0",
+                "typo": "type.num.base",
+                "color": "color.text.primary"
+               }
+              ],
+              "w": 104,
+              "h": 24,
+              "note": "read-only while the request is pending (row 10, L392); no clear glyph (§3.2)"
+             },
+             {
+              "t": "board",
+              "name": "CMP-003 SegmentedControl (composition) · unit",
+              "o": {
+               "dir": "row",
+               "radius": "radius.control"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "segment-1",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.sm",
+                 "fill": "color.surface.selected"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "price",
+                  "typo": "type.ui.label",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 24,
+                "note": "aria-checked"
+               },
+               {
+                "t": "board",
+                "name": "segment-2",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "ticks",
+                  "typo": "type.ui.label",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "h": 24
+               },
+               {
+                "t": "board",
+                "name": "segment-3",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.sm"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "%",
+                  "typo": "type.ui.label",
+                  "color": "color.text.secondary"
+                 }
+                ],
+                "h": 24
+               }
+              ],
+              "h": 24,
+              "note": "radiogroup; one roving stop"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "loosen slot",
+            "o": {
+             "dir": "row",
+             "gap": "space.stack.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-001 Button (composition) · Loosen stop…",
+              "o": {
+               "dir": "row",
+               "padX": "space.button.paddingX",
+               "gap": "space.inset.xs",
+               "radius": "radius.control",
+               "justify": "center"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Loosen stop…",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.secondary"
+               }
+              ],
+              "h": 24,
+              "note": "opens E32-D05's flow (D4), not drawn"
+             },
+             {
+              "t": "text",
+              "name": "description",
+              "chars": "owner only · opens a confirmation",
+              "typo": "type.ui.caption",
+              "color": "color.text.secondary"
+             }
+            ]
+           },
+           {
+            "t": "text",
+            "name": "pending line · level 4",
+            "chars": "Level 4 could not be re-stamped — the position's stop stays at 62,426.0 until it is.",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary",
+            "w": 608,
+            "note": "role=\"status\", polite, once (a child amend refused or unanswered)"
+           }
+          ],
+          "w": 608
+         },
+         {
+          "t": "board",
+          "name": "level 4 controls",
+          "o": {
+           "dir": "row",
+           "gap": "space.stack.sm",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-039 FocusRing (composition)",
+            "o": {
+             "dir": "row",
+             "pad": "space.inset.xs",
+             "radius": "radius.card",
+             "stroke": "color.text.primary",
+             "strokeWidth": "border.focus"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-001 Button (composition) · Retry",
+              "o": {
+               "dir": "row",
+               "padX": "space.button.paddingX",
+               "gap": "space.inset.xs",
+               "radius": "radius.control",
+               "justify": "center",
+               "fill": "color.text.primary"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Retry",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.inverse"
+               }
+              ],
+              "h": 24,
+              "note": "re-sends level 4's re-stamp (amendTradeGroup): a tighten needs no arm (D16); event order.amended (§4.6 L445)"
+             }
+            ],
+            "note": "focus-visible"
+           },
+           {
+            "t": "board",
+            "name": "CMP-001 Button (composition) · Cancel level 4",
+            "o": {
+             "dir": "row",
+             "padX": "space.button.paddingX",
+             "gap": "space.inset.xs",
+             "radius": "radius.control",
+             "justify": "center",
+             "fill": "color.action.secondary.default"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Cancel level 4",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 24,
+            "note": "cancels level 4's resting order; event order.cancelled (§4.6 L445)"
+           }
+          ],
+          "note": "state controls after the stop row, before the note (§4.4 L420; §3.7 L266)"
+         },
+         {
+          "t": "board",
+          "name": "CMP-158 SafetyInvariantNotice (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.sm",
+           "pad": "space.inset.sm",
+           "radius": "radius.card",
+           "fill": "color.surface.raised",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "info",
+            "icon": "info",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           },
+           {
+            "t": "board",
+            "name": "sentences",
+            "o": {
+             "dir": "column",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "sentence-1",
+              "chars": "Every position keeps a native stop — you can move it, not delete it.",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary",
+              "w": 568
+             },
+             {
+              "t": "text",
+              "name": "sentence-2",
+              "chars": "Tightening is never blocked by order-entry limits; the stop is held by Bybit, not by this app.",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary",
+              "w": 568
+             }
+            ]
+           }
+          ],
+          "w": 608,
+          "note": "role=\"note\", always visible"
+         },
+         {
+          "t": "board",
+          "name": "footer",
+          "o": {
+           "dir": "row",
+           "justify": "end",
+           "align": "start"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "actions",
+            "o": {
+             "dir": "row",
+             "gap": "space.stack.sm",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-001 Button (composition) · Close",
+              "o": {
+               "dir": "row",
+               "padX": "space.button.paddingX",
+               "gap": "space.inset.xs",
+               "radius": "radius.control",
+               "justify": "center",
+               "fill": "color.action.secondary.default"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Close",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24
+             },
+             {
+              "t": "board",
+              "name": "CMP-001 Button (composition) · Applying…",
+              "o": {
+               "dir": "row",
+               "padX": "space.button.paddingX",
+               "gap": "space.inset.xs",
+               "radius": "radius.control",
+               "justify": "center",
+               "fill": "color.text.primary"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "busy",
+                "icon": "pending",
+                "color": "color.text.inverse",
+                "size": "size.icon"
+               },
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Applying…",
+                "typo": "type.ui.body-strong",
+                "color": "color.text.inverse"
+               }
+              ],
+              "h": 24,
+              "note": "CMP-001 loading: aria-busy; width locked; a second press does nothing"
+             }
+            ]
+           }
+          ],
+          "w": 608
+         }
+        ],
+        "w": 640,
+        "note": "CMP-043 Dialog (Modal) composition: role=\"dialog\", aria-modal, focus trapped, Esc closes, focus returns to the invoker (§3.1 L151)"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "grid/cell · SCR-064 · pending-acknowledgement · ladder partial/row",
+   "node": {
+    "t": "board",
+    "name": "annotation",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "radius": "radius.card",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Spec",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§4.3 row 14 (L396); §4.4 L420; §4.6 L445; §3.5 L212-221; §8 L763; the string: E32-D01 §5.3 (D01:121)",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "State and trigger",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "When: a child amend refused or unanswered (level 4's re-stamp). Renders: level 4 named; the position's stop unchanged (62,426.0: children first, it has not moved); CMP-158 note. The field keeps the requested 62,476.0, read-only, with \"Moving…\"; \"Applying…\" (aria-busy); \"Close\".",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Decision ids",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "D13 and G-8 (children first: a fill of level 4 reverts nothing; pending, not dangerous, D01:121); D17; D16 (a tighten needs no arm, so Retry is not T2: 22's ArmToken arms an amendTradeGroup only for a risk-increasing component (quantity up, stop loosened, trigger re-armed; 22:13778-13780); a re-stamp to a tighter stop is none, and a looser one is refused outright, G-4 L731); D15; G-5",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Copy keys",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "sl.tighten.partial.ladder, sltp.moving, sl.label, sltp.loosen, e32.title.*, sltp.applying, e32.close, sl.note",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-05",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Focus and keyboard",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "\"Retry\" when the modal opens in this state (the Focus column, §3.7 L265-266); arriving mid-flow, focus stays on Apply and the line is announced. Tab: stop field → unit switch → trigger → \"Loosen stop…\" → \"Retry\" → \"Cancel level 4\" → \"Close\" → \"Applying…\" (§4.4 L417-421), the order drawn. Esc or \"Close\" closes and never cancels the re-stamp (D15; §4.5 L433).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-06",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Announcement (text, region, when)",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "\"Level 4 could not be re-stamped — the position's stop stays at 62,426.0 until it is.\" with its controls \"Retry\" · \"Cancel level 4\" — role=\"status\", polite, once, when the child amend is refused or found unanswered.",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     },
+     {
+      "t": "board",
+      "name": "block-07",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Notes",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Drawn: the refused case. Retry re-sends a refused amend with a new key (except 409 stop_request_in_flight, the headroom 429 and 503 store_unavailable, which keep it; §3.5 L217-219), and an unanswered one with its key and body once WS orders shows the result or its absence (§3.5 L213-216). Events: Retry → order.amended (the child re-stamp, amendTradeGroup); Cancel level 4 → order.cancelled (§4.6 L445). QA: one child's amendTradeGroup refused or timed out, a recorded fixture, C-13.6 scenario 4 (§8 L763). Spec figures only: as row 13. Review questions 2, 3 and 8: row 14 is a polite status (D01:121), while §3.5 L210-211 and §3.7 L263 announce a refusal assertively with its code and \"Attempt recorded\"; D01:121 reads \"inline + CMP-158 note\": the line is drawn inline and CMP-158 keeps sl.note (§3.2 L162 changes it only for frozen); refused and unanswered are two states (§3.5 L212).",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 328
+       }
+      ],
+      "w": 328
+     }
+    ],
+    "w": 360
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer",
+    "chars": "page E32-D02 · board 05 · r1",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary"
+   }
+  }
+ ],
+ "export": "docs/design/E32/img/E32-D02-05-scr064-pending-variants.png",
+ "notes": {
+  "sources": [
+   "E32-D01 §5.3 D01:125 (sl.ws_down.acked)",
+   "E32-D01 §5.3 D01:126 (sl.ws_down.unanswered)",
+   "E32-D01 §5.3 D01:120 (sl.tighten.pending.ladder)",
+   "E32-D01 §5.3 D01:121 (sl.tighten.partial.ladder)",
+   "worked number or anatomy string: '600' (spec L392; worked number: the tighten row 10 sends, typed in ticks (600 → 63,950.0); rows 11-12 keep it)",
+   "worked number or anatomy string: '→ 63,950.0 · 0.09 % below entry · risk 15.00 USDT (0.12 % of equity)' (spec L189; anatomy: §3.4's recompute line for the ticks entry, drawn in SCR-064 / pending-acknowledgement (600 → 63,950.0))",
+   "worked number or anatomy string: '62,426.0' (spec L395; worked number: row 13's stop before the tighten (the §5.1 ladder's shared stop, L460))",
+   "worked number or anatomy string: '62,476.0' (spec L395; worked number: row 13's tightened stop)",
+   "worked number or anatomy string: '0.351' (spec L466; worked number: §5.1 level 2's cum. qty, the position after levels 1-2 fill (L588: 'the filled 0.351 BTC'))",
+   "worked number or anatomy string: '63,873.9' (spec L466; worked number: §5.1 level 2's avg entry, the position's entry after levels 1-2 fill)",
+   "key owners the spec cites unquoted: E32-D01 §5.3 (D01:111-130), E30-D02 §14 (E30:369-460) and D15-D16 (E30:140-141)",
+   "spec §3.7 L260-267 (live regions and focus)",
+   "spec §4.1 L324-355 (SCR-064 anatomy), §4.3 L378-413 (states)",
+   "spec §3.2 L158-171 (the native-stop floor, one treatment)",
+   "spec §3.8 L269-316 (copy deck)",
+   "spec §3.4 L184-200 (entry modes, recompute lines, rounding)",
+   "spec §2 L117-145 (D1-D23)",
+   "spec §3.3 L173-182 (four classes, one sentence each)",
+   "spec §3.1 L149-156 (chassis)",
+   "spec §0 L35-74 (page, 13 boards, 73 frames, names, PNGs, build order)"
+  ],
+  "copy_keys": [
+   "sl.ws_down.acked",
+   "preview.slippage",
+   "sltp.moving",
+   "sl.label",
+   "sltp.loosen",
+   "e32.be.line",
+   "sltp.applying",
+   "e32.close",
+   "e32.title.*",
+   "sl.note",
+   "sl.ws_down.unanswered",
+   "sl.tighten.pending.ladder",
+   "sltp.pending.held",
+   "sl.tighten.partial.ladder"
+  ],
+  "copy_gaps": [
+   "sl.tighten.pending.ladder: the state row quotes the string; its owner is E32-D01 §5.3 (D01:120)",
+   "sl.tighten.partial.ladder: the state row quotes the string; its owner is E32-D01 §5.3 (D01:121)",
+   "sltp.pending.held: §3.8 L292 lists it for SCR-064 10 only; row 13 draws it under sl.tighten.pending.ladder, filled with the held 62,426.0 (deviation; spec carry, review question 1)",
+   "the ticks recompute line '→ 63,950.0 · 0.09 % below entry · risk 15.00 USDT (0.12 % of equity)' is §3.4 L189's table cell, not a §3.8 key; its risk carries no 'excl. fees' (G-17's caption belongs to sltp.readout, L286)",
+   "sl.ws_down.acked: the spec cites the key without its string; drawn verbatim from E32-D01 §5.3 (D01:125)",
+   "'trigger': an anatomy string, not a keyed one (spec L329)",
+   "'Mark': an anatomy string, not a keyed one (spec L329)",
+   "'price': an anatomy string, not a keyed one (spec L330)",
+   "'ticks': an anatomy string, not a keyed one (spec L330)",
+   "'%': an anatomy string, not a keyed one (spec L330)",
+   "'Take-profit ladder': an anatomy string, not a keyed one (spec L337)",
+   "'resting at Bybit, managed by CandleViewer': an anatomy string, not a keyed one (spec L178)",
+   "'R': an anatomy string, not a keyed one (spec L338)",
+   "'TP 1': an anatomy string, not a keyed one (spec L338)",
+   "'TP 2': an anatomy string, not a keyed one (spec L339)",
+   "'TP 3': an anatomy string, not a keyed one (spec L340)",
+   "'total': an anatomy string, not a keyed one (spec L340)",
+   "'Trailing': an anatomy string, not a keyed one (spec L341)",
+   "'distance': an anatomy string, not a keyed one (spec L341)",
+   "'held by Bybit': an anatomy string, not a keyed one (spec L341)",
+   "'activates at': an anatomy string, not a keyed one (spec L341)",
+   "'Breakeven': an anatomy string, not a keyed one (spec L342)",
+   "'at': an anatomy string, not a keyed one (spec L342)",
+   "'(app-managed)': an anatomy string, not a keyed one (spec L179)",
+   "'App-managed: moves the stop at +1 R only while CandleViewer runs; if it stops, the stop stays at 63,900.0, never lower.': an anatomy string, not a keyed one (spec L343-344)",
+   "'entry': an anatomy string, not a keyed one (spec L328)",
+   "'mark': an anatomy string, not a keyed one (spec L328)",
+   "'last': an anatomy string, not a keyed one (spec L328)",
+   "'liq': an anatomy string, not a keyed one (spec L328)",
+   "sl.ws_down.unanswered: the spec cites the key without its string; drawn verbatim from E32-D01 §5.3 (D01:126)",
+   "'Retry': an anatomy string, not a keyed one (spec L420)",
+   "'Cancel level 4': an anatomy string, not a keyed one (spec L420)"
+  ],
+  "live_checks": [
+   "root: hugs its content (about 4168 x 1203 px estimated); after the first section the root must read back exactly as the sheet's board.name",
+   "section 'SCR-064 / pending-acknowledgement · ws down, acked' is 16743 bytes (> the 12000-byte budget): a frame is rendered whole (FRAME_NOTE)",
+   "section 'SCR-064 / pending-acknowledgement · ws down, unanswered' is 16783 bytes (> the 12000-byte budget): a frame is rendered whole (FRAME_NOTE)"
+  ],
+  "deviations": [
+   "Rows 11-12 keep row 10's request, a tighten typed in ticks (600 → 63,950.0, L392): the field reads 600 with 'ticks' selected and §3.4 L189's recompute line under it, verbatim; its risk sits inside that line, so §4.1's separate price-mode read-out (sltp.readout, '= 1 R · excl. fees', L331) is not repeated, and the drawn risk carries no 'excl. fees' caption (§4.2 L365, G-17: a copy gap); CMP-130's slippage line (L332) stays.",
+   "Local helper pending_stop_row() (gen_05.py): the held stop row in row 10's pending form (L392), which the kit's stop_row() does not draw — the state mark (the hourglass and 'Moving…', sltp.moving) in the label line, the field, the unit switch and the trigger select read-only ('inputs read-only'), the field's read-outs under it, the state's line (static text in the stop row's description, §4.4 L418-419) and §4.1's owner loosen slot (rows 10-14 name no change to it). Rows 11-13 draw the line, then the slot, in board 04's row 10 order; row 14 draws the slot first (loosen_first), so the line sits directly above its 'Retry' and 'Cancel level 4' and the visual order follows §4.4's Tab order (L417-420: … 'Loosen stop…' → 'Retry' → 'Cancel level 4').",
+   "Every control is a composition from tokens, named '<CMP id> <Name> (composition)': the wireframes are greys only, and cvsheet v1 cannot recolour an instance or swap its glyph.",
+   "Segmented controls draw the anatomy's words verbatim, the selected one in capitals as written (BUY, LIMIT; §5.1 L458, §6.1 L628) and marked by the selected fill; the unit switch's '*' (L330) is that fill.",
+   "The busy state (CMP-001 loading, aria-busy; §3.6 L251-252) is the control's own look with the 'pending' glyph leading its busy label; E30-D02 D17's in-button progress bar is hi-fi.",
+   "Focus 'unchanged' (rows 11-13, L393-395) is drawn as the ring on the busy Apply ('Applying…', aria-busy), where row 10 leaves it ('stays on Apply', L392); pending_footer() wraps the kit's busy() button in its ring() (the kit's button() has no busy-and-focused state).",
+   "A focus ring is a 2 px inner stroke on a wrapper with space.inset.xs padding, so it sits 2 px off the control and adds 4 px on each side to the layout (CMP-039).",
+   "Frame captions, annotation labels, board titles, source lines and footers are board chrome, not product copy.",
+   "1 px outlines use cvlib's default stroke (1 px, inner) without binding border.hairline; 2 px boundaries and rings bind border.thick / border.focus (frames stay small: FRAME_NOTE).",
+   "Modal sizes are kit choices (the spec gives none): SCR-064 640 px wide, SCR-065 800 px (its minimum width 640 px collapses notional and cum. notional, §5.2 L519), SCR-069 720 px; heights hug the content except the 50-row frame (12 body rows, §5.2 L527).",
+   "No close (×) control is drawn in the dialog headers: §3.1 L152 names the verb, the object and the environment pill only; Esc closes (L151).",
+   "Every number is JetBrains Mono (§3.1 L155) in fields, cells, tiles and the read-out pairs; a number inside a sentence keeps the sentence's Inter, because a cvsheet v1 text node carries one typography.",
+   "Rows 13-14 are the §5.1 ladder's position (levels 1-2 filled: long 0.351 BTC at avg entry 63,873.9, L466; L588): the header carries 0.351, the read-out shows 'entry 63,873.9' only, and the stop row draws no recompute, risk or slippage read-out; the take-profit ladder, trailing and breakeven rows are not drawn — the spec gives none of these figures for this position, and a board never computes one (build notes; header L18-22). §4.1's TP rungs belong to the 0.250 position.",
+   "Row 13 draws row 10's pair of pending lines (L392): sl.tighten.pending.ladder, then sltp.pending.held filled with the position's held stop, 'Held by Bybit now: 62,426.0.' (§3.8 L292; 62,426.0 from L395). Row 13's Copy cell (L395) lists only sl.tighten.pending.ladder, which replaces sl.tighten.pending, row 10's first line, not its second (D01:120), and names 62,476.0 only; D3 (L125), §3.2 L167, H1 (L793) and §14 L925 want every pending frame to name the stop Bybit holds (spec carry: review question 1).",
+   "Row 14: sl.tighten.partial.ladder's trailing 'Retry · Cancel level 4' (L396) is drawn as the two controls §4.4 L420 names ('Retry' → 'Cancel level 4' follow the stop row: the kit's after_stop slot), the sentence before it verbatim as the line. The line is the stop row's last part, under §4.1's owner loosen slot (pending_stop_row(loosen_first=True)), so it reads straight into its two controls, in §4.4's Tab order (L417-420).",
+   "Frames are named 'SCR-0xx / <state>' (§0 L47), and cvsheet splits section paths on '/', so no section can address a node inside a frame: every frame is rendered whole in one section (the kit keeps each under 24000 bytes; one over the 12000-byte budget is listed in live_checks)."
+  ],
+  "fallbacks": [
+   "fallback: the stop row's hourglass (§4.3 row 10, L392) is the registry glyph 'pending'",
+   "fallback: color.border.input is not synced: field boundaries bind color.text.tertiary (1 px)",
+   "fallback: greys only (build notes): a primary button fills color.text.primary with a color.text.inverse label; hi-fi binds color.action.primary.default",
+   "fallback: the focus ring is drawn in greys: 2 px color.text.primary at a 2 px offset; hi-fi binds color.focus.ring",
+   "token: D19's space.2 / space.4 / space.1 (L141) bind space.stack.sm (step), space.inset.lg (dialog inset), space.stack.lg (section gap) and space.stack.xs (label gap); rows, fields and controls are a fixed 24 px (size.control.height and size.row.height resolve to 24 in compact; not bound, to keep frames small)"
+  ],
+  "tokens": [
+   "type.ui.caption",
+   "color.text.primary",
+   "color.text.secondary",
+   "size.icon",
+   "type.ui.label",
+   "space.inset.xs",
+   "space.inset.sm",
+   "type.ui.body",
+   "radius.control",
+   "color.border.subtle",
+   "type.num.base",
+   "color.surface.selected",
+   "type.ui.body-strong",
+   "space.button.paddingX",
+   "space.stack.sm",
+   "space.stack.xs",
+   "color.text.tertiary",
+   "type.num.sm",
+   "color.text.inverse",
+   "radius.card",
+   "border.focus",
+   "color.action.secondary.default",
+   "type.ui.heading-sm",
+   "radius.badge",
+   "color.surface.raised",
+   "space.inset.lg",
+   "color.surface.canvas",
+   "color.surface.overlay",
+   "radius.dialog",
+   "elevation.dialog",
+   "space.stack.lg",
+   "space.inset.xl",
+   "type.ui.heading-md",
+   "color.surface.app"
+  ]
+ }
+}
