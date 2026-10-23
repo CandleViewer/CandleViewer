@@ -1464,6 +1464,8 @@ REG_QUOTES = (
 GATED_STRINGS = ("never persists", "until pinned", "deferred", "(estimated)", "`rbac.view_as`")
 LOCKED_FRAMES = ("SCR-037/fib-locked", "SCR-037/vwap-locked", "SCR-037/vwap-estimated-locked")
 REFUSALS = ('"Read-only while viewing as {user}."', '"Your role can\'t save workspaces."')
+# the orchestrator's Q1-Q16 ruling (its issue-comment id): every section 16.5 row carries it
+RULING_ID = "6371750538"
 # 26 section 3.7's SDF glyph set, parsed from its line (the lens round 1 F-2): every string drawn
 # on the canvas by these tools is checked against it; a glyph outside the set must be named in
 # the spec's A-row to 26 section 3.7 (section 16.2) until the atlas gains it
@@ -1601,6 +1603,16 @@ def string_gates(spec: str, hand: str, extra: list[Path]) -> dict[str, int]:
             FAILS.append(
                 f"the section 9.4 table names the refusal {s_!r} {say.count(s_)} times, not once"
             )
+    # the rulings fold: the section 16.5 heading says RULED and every Q row names the ruling
+    q_sec = section(spec, "### 16.5", "### 16.6")
+    if "RULED" not in q_sec.splitlines()[0]:
+        FAILS.append("the section 16.5 heading does not say RULED")
+    q_rows = [r for r in rows_of(q_sec) if re.fullmatch(r"Q\d+", r[0])]
+    ruled_q = [r for r in q_rows if RULING_ID in " ".join(r)]
+    if len(ruled_q) != len(q_rows):
+        FAILS.append(
+            f"section 16.5: {len(q_rows) - len(ruled_q)} Q row(s) lack the ruling {RULING_ID}"
+        )
     s14 = (PLAN / "14-screens-catalogue.md").read_text(encoding="utf-8").splitlines()
     if sum(ln.startswith(POINTER) for ln in s14) != 1:
         FAILS.append("the 14 pointer line is not present exactly once")
@@ -1613,6 +1625,7 @@ def string_gates(spec: str, hand: str, extra: list[Path]) -> dict[str, int]:
         "estimated_frames": len(est_frames),
         "pin_t2_rows": len(t2_pin),
         "locked_t2_rows": locked_t2,
+        "ruled_q_rows": len(ruled_q),
         "frames_named": len(frames),
         "rule_ids": len(ids),
     }
