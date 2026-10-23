@@ -10,13 +10,15 @@ personal data, and `tests/unit/test_admin_fixture_handles.py`, `test_admin_fixtu
 `test_admin_corrupt_chain_fixture.py` pass every value, and this file, through the log redactor to
 keep it so.
 
-| File               | What it holds                                                                                   |
-| ------------------ | ----------------------------------------------------------------------------------------------- |
-| `handles.py`       | The users (every status and role), the demo accounts, grants, flags, and the backups, by handle |
-| `seed.py`          | `seed_admin_world`, `seed_backups` and their checks, and the refusal of a non-test database     |
-| `corrupt_chain.py` | AUDIT-CORRUPT: `seed_corrupted_chain`, a chain with one of its own entries altered behind it    |
-| `payloads/`        | The health reports and the overview, as JSON bodies of the contract's models                    |
-| `README.md`        | This file                                                                                       |
+| File                 | What it holds                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------------- |
+| `handles.py`         | The users (every status and role), the demo accounts, grants, flags, and the backups, by handle |
+| `seed.py`            | `seed_admin_world`, `seed_backups` and their checks, and the refusal of a non-test database     |
+| `corrupt_chain.py`   | AUDIT-CORRUPT: `seed_corrupted_chain`, a chain with one of its own entries altered behind it    |
+| `latched_machine.py` | SC-CHAIN-TRIPS: a sealed, latched order snapshot, its seed and its check                        |
+| `audit_10m.py`       | AUDIT-10M: `load_audit_10m`, E42-K01's 10 M-row generator run into a test database              |
+| `payloads/`          | The health reports and the overview, as JSON bodies of the contract's models                    |
+| `README.md`          | This file                                                                                       |
 
 ## The handles
 
@@ -175,3 +177,52 @@ async def test_verify_reports_the_victim(pg_dsn: str, tmp_path: Path) -> None:
 - `tests/integration/admin/test_admin_corrupt_chain_pg.py` runs it through the verify route on
   Postgres 16, and `tests/unit/test_admin_corrupt_chain_fixture.py` shows each guard on a fake
   connection.
+
+## The latched machine (SC-CHAIN-TRIPS)
+
+```python
+from tests.fixtures.admin.latched_machine import check_latched_machine, seed_latched_machine
+
+await seed_latched_machine(relational, keys, now=now)  # keys: the test's own `HmacKeys`
+await check_latched_machine(relational, keys, now=now)
+```
+
+- **What it writes:** one `machine_snapshots` row, through the composition root's `SnapshotAdapter`:
+  order `0a000000-0000-4000-8000-0000000000c7` in `demo`, triggered with its stop-loss present, two chain
+  trips and two deferred events. The inspector lists it degraded, as `order:<id>` (AD-S08-01).
+  `latched_row` builds the same row without a database, for a test that serves it from a fake store.
+- **The key is the caller's:** the row is sealed with the `HmacKeys` passed in, and the fixture holds no
+  key. A deployed cv-api has no provider that opens snapshot seals yet (#2701), so its inspector lists
+  nothing; the row is for a test that opens it with the same test provider.
+- **Not a restorable machine:** the row is the shape the inspector reads, with no drain seal (`cv_epoch`),
+  so a `Restorer` refuses it. Acknowledging the latch (AD-S08-02, AD-S08-03) waits on its operation (Q-7).
+- **Idempotent and self-checking:** the same keys and `now` give the same row, so a second run rewrites
+  it unchanged; `check_latched_machine` raises `FixtureCheckError` unless the inspector, reading the rows
+  back with the same keys, lists it degraded with its trips and deferred events.
+- **Test databases only:** a database not named for tests is refused with `FixtureRefused` before any read.
+- `tests/integration/admin/test_admin_latched_machine_pg.py` seeds it twice and checks it on Postgres 16.
+
+## The 10 M-row audit dataset (AUDIT-10M)
+
+```python
+from tests.fixtures.admin.audit_10m import load_audit_10m
+
+load_audit_10m(psycopg_dsn)  # 30 to 45 minutes through the chain trigger
+```
+
+- **What it writes:** ten million synthetic `audit_log` rows for the search budget (AD-S04-01), made
+  inside Postgres by E42-K01's set-based SQL (`bench/audit_index/ci_spike.py`), so nothing is stored.
+- **What is deterministic:** the row count, the time span (from 2026-01-01 over 365 days, evenly spaced)
+  and the 50 users `user_00` to `user_49`; after `setseed`, each row's action, severity, outcome,
+  environment and state, on the same Postgres version. `record_id`, `session_id` and `request_id` come
+  from `gen_random_uuid()` and differ on every load; no case names one.
+- **Chained or bulk:** by default the rows go through the chain trigger, so a verify over them passes
+  (E42-K01 measured 0.18 to 0.27 ms a row). `chained=False` is K01's bulk load: the trigger off for the load
+  only, which needs the database's superuser, and placeholder hashes, so a verify reports the first row;
+  use it for the search budget alone.
+- **Idempotent:** a second run finds the dataset's rows and loads nothing. A partly loaded dataset is
+  refused with `FixtureCheckError`: audit rows can never be removed (C-5.7), so load into a fresh test
+  database.
+- **Test databases only:** a database not named for tests is refused with `FixtureRefused` before any read.
+  No test loads 10 M rows; `tests/unit/test_admin_audit_10m_fixture.py` checks the batches, the SQL and
+  the refusals.
