@@ -77,8 +77,8 @@ SecretsMeta = SecretsMetadata
 @dataclass(frozen=True)
 class SecretsBundle:
     """The narrow capabilities of one `SecretsService` (built once, in wiring); the export signer
-    and its key directory are `audit`'s ports, for S10's export job (#889, ADR-0039), and the
-    rotator is `admin`'s, for `rotateAuditSigningKey`."""
+    and its key directory are `audit`'s ports, for S10's export job (#889, ADR-0039), the directory
+    also for `listAuditSigningKeys`, and the rotator is `admin`'s, for `rotateAuditSigningKey`."""
 
     lifecycle: SecretsLifecycle
     metadata: SecretsMetadata
@@ -283,6 +283,10 @@ class _SigningKeyDirectory:
     async def active(self) -> SigningKey | None:
         active = await self._keys.active()
         return None if active is None else SigningKey(*active)
+
+    @audit_exempt("read")
+    async def listing(self) -> list[dict[str, Any]] | None:
+        return await self._keys.listing()
 
 
 def build_audit_service(

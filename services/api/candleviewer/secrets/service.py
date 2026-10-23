@@ -517,6 +517,20 @@ class SecretsService:
             )
         return None
 
+    async def _listed_export_keys(self) -> list[dict[str, Any]] | None:
+        """`mint_signing_keys`' listing (#889 S7): every key of the environment, newest first, as
+        public records with their `verified` mark; None when the store cannot be read (22)."""
+        keys, listed = self._export_keys, None
+        if keys is not None and self._env:
+            try:
+                listed = await _export_custody._io(keys.list_keys(self._env))
+            except Exception as exc:
+                _log().error("secrets.export_key_list_failed", error=type(exc).__name__)
+        if listed is None:
+            return None
+        named = await self._active_export_key()
+        return [export_rotator.marked(rec, named and named[0]) for rec in listed]
+
     async def _marked(self, made: export_rotator.Rotation) -> export_rotator.Rotation:
         named = await self._active_export_key()
         return {k: export_rotator.marked(rec, named and named[0]) for k, rec in made.items()}
@@ -833,13 +847,17 @@ def mint_export_signer(service: SecretsService) -> ExportSigner:
 
 
 def mint_signing_keys(service: SecretsService) -> SigningKeys:
-    """Wiring-time directory of the active export signing key (#889, ADR-0039 decision 3): public
-    material only. Called once, in `admin.wiring.build_secrets_service`."""
+    """Wiring-time directory of the export signing keys (#889, ADR-0039 decisions 3 and 4): the
+    active key's public material, and every key's public record with M2's `verified` mark (S7).
+    Called once, in `admin.wiring.build_secrets_service`."""
 
     async def active() -> export_signer.PublicKey | None:
         return await service._active_export_key()
 
-    return SigningKeys(active)
+    async def listing() -> list[dict[str, Any]] | None:
+        return await service._listed_export_keys()
+
+    return SigningKeys(active, listing)
 
 
 def mint_signing_key_rotator(service: SecretsService) -> SigningKeyRotator:

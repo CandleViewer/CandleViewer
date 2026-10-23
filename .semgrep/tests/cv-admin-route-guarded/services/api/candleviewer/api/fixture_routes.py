@@ -55,6 +55,9 @@ def make_audit_router() -> APIRouter:
     @router.get("/exports/{jobId}")  # ok: cv-admin-route-guarded
     async def download_audit_export() -> None: ...
 
+    @router.get("/signing-keys")  # ok: cv-admin-route-guarded
+    async def list_audit_signing_keys() -> None: ...
+
     @router.delete("")  # ruleid: cv-admin-route-guarded
     async def wipe_audit_log() -> None: ...
 

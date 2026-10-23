@@ -186,6 +186,7 @@ def test_ac_adm_15_no_route_mutates_the_audit_log(admin: AdminWorld) -> None:
         "POST /admin/audit/verify",
         "POST /admin/audit/export",
         "GET /admin/audit/exports/{jobId}",  # #889 S9: a read; nothing mutates the log
+        "GET /admin/audit/signing-keys",  # #889 S7: a read of the signing keys, not of the log
     }
     admin.elevate(["audit"])  # the Owner's strongest standing: a live `audit` window
     before = len(admin.audit.records)

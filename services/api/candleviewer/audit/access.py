@@ -10,6 +10,7 @@ Grants follow `docs/plan/04-security-program.md` §7.2.1 / §7.2.2 rows 49,
   #2083; C-12.4's "Viewer (read-only, including audit)" is open for the
   owner's decision on #2428 (design D7), and nothing here widens it.
 * `verify` (`audit:read`, row 49a): Owner only.
+* `signing_keys` (`audit:read`, row 49b): Owner only, as `verify` (#889 S7, `listAuditSigningKeys`).
 * `export` (`audit:export`, row 50): Owner only (step-up enforced upstream).
 
 Owner-ness arrives on the principal (`is_owner`), resolved by the caller via
@@ -39,11 +40,12 @@ AuditPermission = Literal["audit:read", "audit:export"]
 _OPERATION_PERMISSION: dict[str, AuditPermission] = {
     "query": "audit:read",
     "verify": "audit:read",
+    "signing_keys": "audit:read",
     "export": "audit:export",
 }
 
 #: Operations only the Owner may perform even when `audit:read` is held.
-_OWNER_ONLY: frozenset[str] = frozenset({"verify", "export"})
+_OWNER_ONLY: frozenset[str] = frozenset({"verify", "signing_keys", "export"})
 
 
 class AuditView(StrEnum):
@@ -128,7 +130,7 @@ class AuditAccessDenied(AuditError):
 
 
 async def authorize(principal: AuditPrincipal, operation: str, emitter: _Emitter) -> AuditView:
-    """Allow `operation` (`query`/`verify`/`export`) for `principal` and return
+    """Allow `operation` (`query`/`verify`/`signing_keys`/`export`) for `principal` and return
     the projection it may see, or audit the denial and raise
     `AuditAccessDenied`. Unknown operations are denied (fail closed)."""
     permission = _OPERATION_PERMISSION.get(operation)

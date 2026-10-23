@@ -447,6 +447,31 @@ def test_a_refused_or_failed_records_reason_is_one_of_a_closed_set() -> None:
     )  # fmt: skip
 
 
+async def test_the_listing_marks_verified_only_the_active_key_the_directory_names() -> None:
+    """Decision 4: newest first, public records only; a retired key is never verified, and
+    nothing is while export is unavailable, while no KEK is held, or while the active key is not
+    the one M2 checked (code C3-1). An unreadable store lists nothing."""
+    rig = await _rig()
+    await rig.rotate()
+    listed = await rig.directory.listing()
+    assert listed is not None and [(k["version"], k["verified"]) for k in listed] == [
+        (2, True), (1, False)
+    ]  # fmt: skip
+    assert {*listed[0]} == {*EXPORT_KEY_PUBLIC, "verified"}  # no seed, no wrap, no request
+    broker, checked = rig.svc._broker, rig.svc._export_checked
+    for state in ({"_export_reason": "export_key_unopenable"}, {"_broker": None},
+                  {"_export_checked": rig.v1["key_id"]}):  # fmt: skip
+        vars(rig.svc).update(state)
+        assert [k["verified"] for k in await rig.directory.listing() or []] == [False, False]
+        vars(rig.svc).update(_export_reason=None, _broker=broker, _export_checked=checked)
+
+    async def down(*_: object) -> Any:
+        raise RuntimeError("store down")
+
+    setattr(rig.keys, "list_keys", down)  # noqa: B010
+    assert await rig.directory.listing() is None
+
+
 async def test_the_cap_counts_only_rotations_that_start_in_a_rolling_hour() -> None:
     rig = await _rig()
     rig.exporting = True
@@ -578,6 +603,7 @@ async def test_no_seed_or_dek_is_in_an_answer_a_log_or_a_record(
     with capture_logs() as logs:
         rig, ref = await _rig(), uuid4()
         answers = [await rig.rotate(ref=ref), await rig.rotate(ref=ref)]
+        answers.append(await rig.directory.listing())
         rig.keys.audit_fails = True
         with pytest.raises(ExportKeyRotationError) as failed:
             await rig.rotate()

@@ -415,7 +415,8 @@ async def test_each_capability_holds_a_closure_only_and_is_m2s() -> None:
     """As `CredentialBorrower`: no `__dict__` to reach the service, no subclass outside M2 (R7)."""
     b = await _booted()
     members = {ExportSigner: {"sign_audit_export", "_ExportSigner__sign"},
-               SigningKeys: {"active", "_SigningKeys__active"}}  # fmt: skip
+               SigningKeys: {"active", "_SigningKeys__active",
+                             "listing", "_SigningKeys__listing"}}  # fmt: skip  # S7: the listing
     for capability, kind in ((b.signer, ExportSigner), (b.directory, SigningKeys)):
         assert type(capability) is kind and not hasattr(capability, "__dict__")
         assert {n for n in dir(capability) if not n.startswith("__")} == members[kind]

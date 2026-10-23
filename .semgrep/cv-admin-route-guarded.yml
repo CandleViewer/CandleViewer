@@ -36,7 +36,8 @@ rules:
           # the audit-read guard, role-scoped and budgeted, refusing with `admin.audit_denied`
           # (SR-067, AD-R06, AD-D06); it joins the admin guard once #2836 gives that guard a
           # budget (SR-E42-09). GET /admin/audit/exports/{jobId}, the export's download (#889 S9),
-          # is on it too: its refusals fall under the same budget (22 `exportAuditLog`).
+          # is on it too: its refusals fall under the same budget (22 `exportAuditLog`). So is GET
+          # /admin/audit/signing-keys (#889 S7): Owner-only and budgeted as verify is (22).
           - metavariable-comparison:
               comparison: not (str($M) == "get" and str($PFX) == "/admin/audit" and str($PATH) == "")
           - metavariable-comparison:
@@ -45,6 +46,8 @@ rules:
               comparison: not (str($M) == "post" and str($PFX) == "/admin/audit" and str($PATH) == "/export")
           - metavariable-comparison:
               comparison: not (str($M) == "get" and str($PFX) == "/admin/audit" and str($PATH) == "/exports/{jobId}")
+          - metavariable-comparison:
+              comparison: not (str($M) == "get" and str($PFX) == "/admin/audit" and str($PATH) == "/signing-keys")
           # POST /admin/support-bundle and GET /admin/support-bundle/{job_id}
           # (api/support_bundle.py): E04's diagnostics export, which checks `admin:read` itself;
           # the GET refuses with no record or count (X03-F1), and both join the guard with #2836.

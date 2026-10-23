@@ -122,6 +122,7 @@ OWN_GUARD: dict[str, OwnGuard] = {
     "POST /admin/audit/verify": _AUDIT_READ,
     "POST /admin/audit/export": _AUDIT_READ,
     "GET /admin/audit/exports/{jobId}": _AUDIT_READ,  # #889 S9, its refusals in the same budget
+    "GET /admin/audit/signing-keys": _AUDIT_READ,  # #889 S7, Owner-only and budgeted as verify is
     "POST /admin/support-bundle": OwnGuard(
         "health.diagnostics_exported", False, "E04's diagnostics export"
     ),

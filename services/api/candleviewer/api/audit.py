@@ -1,7 +1,8 @@
 """`GET /admin/audit`, `POST /admin/audit/verify`, `POST /admin/audit/export`
 (E09-T02 acceptance criteria: "Endpoints ... `GET /admin/audit` ... `POST
-/admin/audit/verify` ... `POST /admin/audit/export`"), and the export's
-download, `GET /admin/audit/exports/{jobId}` (#889 S9, dark until S10).
+/admin/audit/verify` ... `POST /admin/audit/export`"), the export's
+download, `GET /admin/audit/exports/{jobId}` (#889 S9, dark until S10), and
+the export signing keys, `GET /admin/audit/signing-keys` (#889 S7).
 
 QA defect #1596 blocker 1: `candleviewer.audit.query.AuditQueryService` and
 `candleviewer.audit.access.authorize` existed but no `APIRouter` mounted
@@ -59,6 +60,7 @@ from candleviewer.api.audit_limiter import (
     AuditQueryRefused,
     AuditVerifyLimiter,
 )
+from candleviewer.api.audit_signing_keys import signing_key_view
 from candleviewer.api.audit_verify import (
     VERIFY_DEADLINE_S,
     VERIFY_STOP_ERRORS,
@@ -78,6 +80,7 @@ from candleviewer.audit.access import (
     redact_entry_for_view,
 )
 from candleviewer.audit.cursor import AuditCursor, InvalidAuditCursor, decode_cursor
+from candleviewer.audit.export_signing import SigningKeyDirectory
 from candleviewer.audit.hashing import ChainHasherBusy
 from candleviewer.audit.models import (
     AUDIT_QUERY_DEFAULT_LIMIT,
@@ -196,6 +199,8 @@ _PARAM_NAMES = {"actions": "action", "from_ts": "from", "to_ts": "to"}
 #: verify and export routes answer the same way, as their answers name a range, a chain state
 #: or who was refused. `_no_store` is the one place the header is set.
 _NO_STORE: Final = {"Cache-Control": "no-store"}
+#: `listAuditSigningKeys`' own filter set, which no `queryAuditLog` call has (#889 S7).
+_SIGNING_KEYS: Final = {"view": "signing_keys"}
 
 
 def _problem(
@@ -375,6 +380,7 @@ def make_audit_router(
     exports: AuditExports | None = None,
     step_up: StepUpAuth | None = None,
     download_limiter: AuditVerifyLimiter | None = None,
+    signing_keys: SigningKeyDirectory | None = None,
 ) -> APIRouter:
     """Bind `/admin/audit*` to a concrete `AuditService` instance.
 
@@ -391,6 +397,7 @@ def make_audit_router(
 
     The export download serves `exports`' files with `step_up`'s `audit` class and
     `download_limiter`'s hourly count; without `exports` or `step_up` it serves none.
+    The signing-key list reads `signing_keys`, M2's directory; without it the keys are a `503`.
 
     A Viewer holds no `audit:read` and gets `403` on every route here, as decided on
     #2083. Whether C-12.4's "Viewer (read-only, including audit)" should change that is
@@ -750,6 +757,39 @@ def make_audit_router(
                 verify_events, result, None if request_id is None else str(request_id)
             )
         return JSONResponse(status_code=200, content=_jsonable(result))
+
+    @router.get("/signing-keys")
+    @_no_store
+    async def list_audit_signing_keys(request: Request) -> JSONResponse:
+        """`listAuditSigningKeys` (#889 S7, ADR-0039 decision 4): Owner only, as verify; a read of
+        the audit area under the budget, as a filter set of its own (`admin.audit_read` naming
+        `object_kind` `audit_signing_key`); each key's `verified` mark is M2's. Over the cap:
+        `429`; a due record unwritten or the key store unreadable: `503`, nothing returned."""
+        try:
+            service, principal, _ = await _authorize_or_raise(request, "signing_keys")
+        except _HttpProblem as problem:
+            return problem.response
+        plan = record_budget.plan_read(_budget_actor(principal), filters_digest(_SIGNING_KEYS))
+        try:
+            if plan.action == "refuse":
+                return _over_cap(str(principal.actor_id))  # the actor's budget (#3085)
+            if plan.action == "unwritable":
+                return _unavailable()
+            listed = None if signing_keys is None else await signing_keys.listing()
+            if listed is None:
+                return _unavailable("signing key store unavailable")
+            items = [signing_key_view(key) for key in listed]
+            if plan.action == "record":
+                fields = _request_fields(principal) | {"object_kind": "audit_signing_key"}
+                detail = {"filters": _SIGNING_KEYS, "returned_count": len(items)}
+                try:
+                    await record_budget.write_read(plan, service.writer, fields, detail)
+                except BudgetWriteFailed:
+                    return _unavailable()
+            plan.commit()
+            return JSONResponse(status_code=200, content={"items": items})
+        finally:
+            plan.release()  # a read that served nothing gives its reservation back
 
     @router.post("/export")
     @_no_store
