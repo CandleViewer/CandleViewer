@@ -217,6 +217,11 @@ cvwb_bytes_encoded_total = Counter(
 cv_ws_connections_in_use = Gauge(
     "cv_ws_connections_in_use", "Open client WS connections (any lifecycle state)."
 )
+#: E16-T08: live `recorder` subscriptions across all connections (inc at admit, dec when dropped).
+cv_ws_recorder_subscriptions_in_use = Gauge(
+    "cv_ws_recorder_subscriptions_in_use",
+    "Live WS subscriptions of the recorder topic (one 1 Hz status frame each).",
+)
 cv_ws_handshake_seconds = Histogram(
     "cv_ws_handshake_seconds",
     "Socket accept to first auth_ok.",
@@ -428,6 +433,7 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_subscribe_total",
         "cv_ws_client_topics_depth",
         "cv_ws_alerts_subscriptions_in_use",
+        "cv_ws_recorder_subscriptions_in_use",
         "cv_ws_revoked_total",
         "cv_ws_permission_snapshots_refused_total",
         "cv_ws_upstream_consumers_in_use",

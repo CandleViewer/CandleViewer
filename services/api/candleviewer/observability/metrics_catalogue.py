@@ -2251,6 +2251,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_ws_recorder_subscriptions_in_use",
+        "gauge",
+        "subscriptions",
+        (),
+        "Live WS subscriptions of the recorder topic (one 1 Hz status frame each).",
+        "capacity",
+        _L,
+        "E16",
+        exported=True,
+    ),
+    _s(
         "cv_ws_revoked_total",
         "counter",
         "subscriptions",

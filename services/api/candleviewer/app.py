@@ -464,6 +464,7 @@ from candleviewer.ws_wiring import (
     default_snapshot_router,
     ingestion_streams,
     loop_call_later,
+    recorder_topic,
     wallet_topic,
 )
 
@@ -1644,6 +1645,9 @@ def create_app(
     # the alerts store; its deltas come from the dispatcher and the inbox routes (`on_change`).
     ws_alerts = alerts_topic(ws_sequencing)
     snapshot_adapters["alerts"] = ws_alerts
+    # E16-T08 (#492): the recorder module's `recorder` topic; the recording status attaches below.
+    ws_recorder = recorder_topic(ws_sequencing)
+    snapshot_adapters["recorder"] = ws_recorder
     # E17-T08: `sub` is authorised and snapped from `machine_states`, built above with the feed.
     ws_services = SubscriptionServices(
         upstream=ws_upstream,
@@ -2455,6 +2459,7 @@ def create_app(
         lambda: app.state.recording_runtime, app.state.disk_budget
     )
     app.state.ws_runtime.recorder_status = recording_status
+    ws_recorder.attach(recording_status)  # its frames go out on each computation
     app.include_router(
         make_recording_status_router(recording_status, audit_resolver, _LazyAuditEmitter(ctx.audit))
     )
