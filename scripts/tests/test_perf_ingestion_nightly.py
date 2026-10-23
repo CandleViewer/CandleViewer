@@ -5,7 +5,8 @@ These pin what the workflow's header claims: Python output is unbuffered, a disp
 `scenario` that reaches the runner through env and is checked first (a name with a scenario
 file), and the reports are uploaded on a cancel too. The check and pack steps run under `bash -e`,
 each in its working directory, with a stand-in `uv`.
-#2825: the weekly cron's rest_k6, its guard (under `bash -e`, a stand-in `gh`) and k6's pin.
+#2825: the weekly cron's rest_k6, its guard (under `bash -e`, a stand-in `gh` whose answers go
+through the step's own jq filters) and k6's pin.
 """
 
 from __future__ import annotations
@@ -192,15 +193,23 @@ def test_ingestion_soak_on_the_weekly_cron_is_skipped() -> None:
 
 
 def test_perf_pack_full_weekly_cron_runs_rest_k6(tmp_path: Path) -> None:
-    guard = _doc()["jobs"]["bench-free"]["if"]
-    assert guard.endswith(f" || github.event.schedule == '{WEEKLY}'")
-    job, all_clear = _job(), "needs.bench-free.outputs.free == 'true'"
-    assert (job["needs"], job["if"]) == ("bench-free", all_clear)
+    guard = _doc()["jobs"]["bench-free"]["if"]  # never on a smoke dispatch
+    full = "(github.event_name == 'workflow_dispatch' && inputs.profile == 'full')"
+    assert guard == f"{full} || github.event.schedule == '{WEEKLY}'"
+    job = _job()
+    assert job["needs"] == "bench-free"
     assert job["env"]["SCENARIO"] == SCENARIO  # rest_k6 on a schedule, else the input
     timeout = "${{ github.event_name == 'schedule' && 90 || 2100 }}"
     assert job["timeout-minutes"] == timeout  # the weekly run takes about 15 minutes
     code, calls = _pack(tmp_path, "rest_k6")  # which the scenario check lets through
     assert code == 0 and [c[4] for c in calls] == ["rest_k6"]
+
+
+def test_perf_pack_full_rerun_is_skipped() -> None:
+    # on bench-free's all-clear, on a run's first attempt only: "re-run failed jobs"
+    # re-runs the pack alone on that all-clear, however old, so a re-run skips it
+    all_clear = "needs.bench-free.outputs.free == 'true'"
+    assert _job()["if"] == f"{all_clear} && github.run_attempt == 1"
 
 
 def test_perf_pack_full_shares_the_bench_group_at_job_level_only() -> None:
@@ -217,35 +226,49 @@ def test_bench_free_runs_off_the_bench_runner_and_only_reads_actions() -> None:
     assert set(step["env"]) == {"GH_TOKEN", "EVENT"} and "${{" not in step["run"]
 
 
-#: A stand-in `gh` for the guard's calls (runs by status, a run's jobs counted as its
-#: filter counts them). GH_ANSWER: `runs` maps "file:status" to run ids, `jobs` a run
-#: id to [name, status] pairs; a path holding `fail` fails as the API's 404 does.
-FAKE_GH = """import json, os, re, sys
+@pytest.mark.parametrize(("wf", "job"), HOLDERS)
+def test_bench_free_each_holder_keeps_its_job_id_as_its_name(wf: str, job: str) -> None:
+    # the guard matches a job by its display name: a `name:` or a matrix would blind it
+    jobs = yaml.safe_load(WORKFLOW.with_name(wf).read_text(encoding="utf-8"))["jobs"]
+    assert job in jobs and not {"name", "strategy"} & set(jobs[job])
+
+
+#: A stand-in `gh` for the guard's calls: it serves the API's JSON for the path and
+#: prints what the step's own `--jq` filter makes of it, through jq (`-r`, as gh
+#: prints). GH_ANSWER: `runs` maps "file:status" to run ids, `jobs` a run id to
+#: [name, status] pairs, and `count`, if set, is what a jobs call prints instead; a
+#: path holding `fail` fails as the API's 404 does.
+FAKE_GH = """import json, os, re, subprocess, sys
 args = sys.argv[1:]
 path, jq = next(a for a in args if a.startswith("repos/")), args[args.index("--jq") + 1]
 answer = json.loads(os.environ["GH_ANSWER"])
 if answer.get("fail", "never") in path:
     sys.exit("gh: Not Found (HTTP 404)")
 if m := re.fullmatch(r"repos/o/r/actions/runs/(\\d+)/jobs\\?per_page=100", path):
-    name = re.search(r'\\.name == "([^"]+)"', jq).group(1)
+    if "count" in answer:
+        print(answer["count"])
+        sys.exit()
     jobs = answer.get("jobs", {}).get(m.group(1), [])
-    print(sum(n == name and s in ("queued", "in_progress") for n, s in jobs))
+    body = {"jobs": [{"name": n, "status": s} for n, s in jobs]}
 elif m := "--paginate" in args and re.search(r"workflows/([^/]+)/runs\\?status=(\\w+)&", path):
-    print("\\n".join(map(str, answer.get("runs", {}).get("{}:{}".format(*m.groups()), []))))
+    ids = answer.get("runs", {}).get("{}:{}".format(*m.groups()), [])
+    body = {"workflow_runs": [{"id": i} for i in ids]}
 else:
     sys.exit("unexpected gh call: " + " ".join(args))
+run = [os.environ["JQ"], "-r", jq]
+sys.exit(subprocess.run(run, input=json.dumps(body), text=True).returncode)
 """
 
 
 def _guard(tmp_path: Path, event: str, **answer: Any) -> tuple[int, str, str]:
-    """bench-free's step under `bash -e` in run 42, a stand-in `gh` answering."""
-    bash = shutil.which("bash")
-    assert bash, "bash runs the step"  # a fail-closed proof: never skipped
+    """bench-free's step under `bash -e` in run 42, a stand-in `gh` answering through jq."""
+    bash, jq = shutil.which("bash"), shutil.which("jq")
+    assert bash and jq, "bash runs the step, jq its filters"  # never skipped
     gh, out = tmp_path / "gh", tmp_path / "output"
     gh.write_text(f"#!{sys.executable}\n{FAKE_GH}", encoding="utf-8")
     gh.chmod(0o755)
     path = f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}"
-    env = {"PATH": path, "GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "42"}
+    env = {"PATH": path, "GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "42", "JQ": jq}
     env |= {"GITHUB_OUTPUT": str(out), "EVENT": event, "GH_ANSWER": json.dumps(answer)}
     (step,) = _doc()["jobs"]["bench-free"]["steps"]
     cmd = [bash, "-e", "-c", step["run"]]  # it reads no path relative to its cwd
@@ -299,6 +322,13 @@ def test_bench_free_api_error_fails_closed(tmp_path: Path, broken: str) -> None:
     held = _held("perf-ws-load.yml", "ws-load", "in_progress")
     code, log, out = _guard(tmp_path, "schedule", fail=broken, **held)
     assert (code, out) == (1, "") and "(HTTP 404)" in log, log
+
+
+def test_bench_free_empty_job_count_fails_closed(tmp_path: Path) -> None:
+    # gh prints `length` as a number: an empty count is no answer, never a 0 (free)
+    held = _held("perf-ws-load.yml", "ws-load", "in_progress")
+    code, log, out = _guard(tmp_path, "schedule", count="", **held)
+    assert (code, out) == (1, ""), log
 
 
 def test_k6_install_is_the_release_ws_load_pins_put_on_path() -> None:

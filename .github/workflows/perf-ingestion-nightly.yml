@@ -28,7 +28,8 @@ name: perf-ingestion-nightly
 # the weekly run joins the cv-bench-01 group it shares with the leg only while that group is idle:
 # a group keeps one pending run and replaces the older one (perf-ws-load.yml's header). Busy: a
 # scheduled run skips the pack with a notice (green, no issue), a dispatch fails. Any API error
-# fails it, a 404 too: all three are on main.
+# fails it, a 404 too: all three are on main; so does a job count that is not a number. A re-run
+# skips the pack, as its all-clear may be stale: dispatch again.
 on:
   schedule:
     - cron: "37 3 * * *"
@@ -123,18 +124,19 @@ jobs:
           busy=""
           for held in perf-ingestion-nightly.yml:perf-pack-full perf-bars-memdiag.yml:leg perf-ws-load.yml:ws-load; do
             wf=${held%%:*} job=${held#*:} n=0
-            for status in in_progress queued; do
+            for status in queued in_progress; do # queued first: a run that starts in between is seen
               ids=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?status=${status}&per_page=50" --paginate --jq '.workflow_runs[].id')
               for id in $ids; do
                 [ "$id" != "$GITHUB_RUN_ID" ] || continue # this run: its own perf-pack-full waits for this job
                 c=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/jobs?per_page=100" --jq "[.jobs[] | select(.name == \"${job}\" and (.status == \"in_progress\" or .status == \"queued\"))] | length")
+                [[ "$c" =~ ^[0-9]+$ ]] || exit 1 # an empty or odd count fails closed, never reads as 0
                 n=$((n + c))
               done
             done
             [ "$n" -eq 0 ] || busy="${busy:+$busy, }${wf} (job ${job})"
           done
           [ -n "$busy" ] || { echo "free=true" >> "$GITHUB_OUTPUT"; exit 0; }
-          if [ "$EVENT" = schedule ]; then # the busy rule (#2825, ruling pending): a schedule steps aside
+          if [ "$EVENT" = schedule ]; then # the busy rule (#2825): a schedule steps aside
             echo "::notice::the bench runner is busy (${busy}): this week's rest_k6 run is skipped"
           else # and a dispatch fails, as perf-ws-load's guard does
             echo "::error::refusing to start: the bench runner is busy: ${busy}; dispatch again when it has finished" >&2
@@ -147,11 +149,12 @@ jobs:
     # GitHub-hosted jobs cap at 6 h, so this targets the self-hosted bench runner (E04 bench
     # environment), on bench-free's all-clear (#2825).
     needs: bench-free
-    if: needs.bench-free.outputs.free == 'true'
+    if: needs.bench-free.outputs.free == 'true' && github.run_attempt == 1
     runs-on: [self-hosted, bench]
-    # shared with perf-bars-memdiag.yml's leg: one soak at a time on cv-bench-01 (#399); a pack
-    # dispatched while a leg is queued replaces that leg (one pending run per group); a run that
-    # skips this job may too (unverified)
+    # shared with perf-bars-memdiag.yml's leg: one soak at a time on cv-bench-01 (#399). A pack
+    # dispatched while a leg is queued would replace that leg (one pending run per group), so
+    # bench-free fails that dispatch first; a run that skips this job may still (unverified): that
+    # dispatch, the 03:37Z schedule, a smoke dispatch, the weekly cron when busy, a re-run
     concurrency:
       group: cv-bench-01
       cancel-in-progress: false

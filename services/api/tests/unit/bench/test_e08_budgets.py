@@ -305,6 +305,7 @@ def faked_k6(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> SimpleNamespace
         return object()
 
     temp = functools.partial(tempfile.TemporaryDirectory, dir=tmp_path)
+    monkeypatch.delenv(rest_load.K6_EXPORT_ENV, raising=False)  # a developer's own never leaks in
     monkeypatch.setattr("bench.ingestion.rest_load.shutil.which", lambda _: "/fake/k6")
     monkeypatch.setattr(rest_load, "write_cold_lake", lambda _: None)
     monkeypatch.setattr(rest_load, "build_app", build_app)
@@ -359,17 +360,22 @@ def test_drive_k6_app_up_on_the_third_sleep_reads_the_run(
     assert rest_load.drive_k6("1s", 1) == _K6_READ and len(naps) == 3
 
 
+@pytest.mark.parametrize(
+    "text", [_k6().replace(", ", ",\r\n"), None], ids=["crlf-summary", "no-summary"]
+)
 def test_drive_k6_refused_run_keeps_k6s_export_byte_for_byte(
-    faked_k6: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    faked_k6: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, text: str | None
 ) -> None:
     """#2825: k6's own bytes (CRLFs, which a text copy would not keep) where the workflow names,
-    written before `k6_reading` refuses the run: a refused run's export is its evidence."""
+    written before `k6_reading` refuses the run: a refused run's export is its evidence. Where k6
+    wrote no summary, nothing is kept and the run is still refused, never an `OSError`."""
     keep = tmp_path / "reports" / "rest_k6-k6-summary.json"
     monkeypatch.setenv(rest_load.K6_EXPORT_ENV, str(keep))
-    faked_k6.code, faked_k6.text = 107, _k6().replace(", ", ",\r\n")
+    faked_k6.code, faked_k6.text = 107, text
     with pytest.raises(RuntimeError, match="k6 exited 107"):
         rest_load.drive_k6("1s", 1)
-    assert keep.read_bytes() == faked_k6.text.encode("utf-8")
+    kept = keep.read_bytes() if keep.exists() else None
+    assert kept == (text.encode("utf-8") if text else None)
 
 
 def test_drive_k6_no_export_variable_writes_nothing(

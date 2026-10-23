@@ -192,7 +192,8 @@ and files. No concurrency group (#3449). Cost: one job a night, capped by its 35
 
 **Nightly issues, one per signal (#1849).** `fixture-drift.yml` (signal `fixture-drift`),
 `perf-storage-nightly.yml` (`perf-storage`), `perf-ingestion-nightly.yml` (`perf-ingestion-soak`,
-`perf-e08-q04-pack`, and `perf-e08-q04-full` on a dispatch with `profile=full`),
+`perf-e08-q04-pack`, and `perf-e08-q04-full` on a dispatch with `profile=full` and on the Sunday
+05:17 UTC `rest_k6` run),
 `dast-admin-nightly.yml` (`dast-admin`, labels `security`, `area/accounts-admin`; nightly at
 03:27 UTC and on dispatch) and `chaos-ws-nightly.yml` (`chaos-ws`, labels `qa`,
 `area/backend-platform`, `priority/p1`) report a red signal through `_nightly-issue.yml`, from
