@@ -59,10 +59,32 @@ def test_no_fixture_value_is_secret_shaped(value: str) -> None:
     assert redact_text(value) == value
 
 
-def test_no_readme_line_is_secret_shaped() -> None:
-    """Line by line, as a log carries it: the redactor cuts a long text whole."""
-    lines = _README.read_text(encoding="utf-8").splitlines()
-    assert [line for line in lines if redact_text(line) != line] == []
+def _secret_shaped_lines(text: str) -> list[int]:
+    """The first line number of each blank-line-separated paragraph of `text` that the redactor
+    changes: numbers only, so that a failure never prints the text. A paragraph is far under the
+    redactor's cut, which a whole file is not, and it keeps a label at a line's end with its value
+    on the next line together, which a line by line scan splits."""
+    found: list[int] = []
+    paragraph: list[str] = []
+    for number, line in enumerate([*text.splitlines(), ""], start=1):  # a closing blank line
+        if line.strip():
+            paragraph.append(line)
+            continue
+        joined = "\n".join(paragraph)
+        if paragraph and redact_text(joined) != joined:
+            found.append(number - len(paragraph))
+        paragraph = []
+    return found
+
+
+def test_no_readme_paragraph_is_secret_shaped() -> None:
+    flagged = _secret_shaped_lines(_README.read_text(encoding="utf-8"))
+    assert flagged == []  # line numbers, never the text
+
+
+def test_the_readme_scan_catches_a_label_with_its_value_on_the_next_line() -> None:
+    text = "A fine paragraph.\n\nSee below.\npassword:\nnot-a-value-1\n"
+    assert _secret_shaped_lines(text) == [3]
 
 
 async def test_the_placeholder_hash_verifies_no_password() -> None:
