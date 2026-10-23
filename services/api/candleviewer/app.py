@@ -1914,8 +1914,8 @@ def create_app(
     # Flush cadence and shutdown drain for the budget's counts; the lifespan runs it.
     app.state.audit_budget_flush = AuditBudgetFlushTask(audit_budget, _LazyAuditEmitter(ctx.audit))
     # #3085: `admin.view_as_refused` records under the viewers' own cap, never a slot of the
-    # budget above, whose other settings they share. Inert until the view-as guard, sockets and
-    # start call it; the lifespan runs its flush task as it runs the one above.
+    # budget above, whose other settings they share. The view-as guard, the sockets and the start
+    # call it; the lifespan runs its flush task as it runs the one above.
     view_as_refusals = ViewAsRefusalRecorder(
         _LazyAuditEmitter(ctx.audit),
         operations=declared_operations(spec),
@@ -1926,7 +1926,7 @@ def create_app(
     )
     app.state.view_as_refusals = view_as_refusals
     app.state.view_as_refusal_flush = view_as_refusals.flush
-    # #3085 S13b: the Owner starts a view-as context (`startViewAs`) behind the admin-area guard
+    # #3085: the Owner starts a view-as context (`startViewAs`) behind the admin-area guard
     # (`users:write`); its refusals before the step-up gate are recorded within the viewers' cap.
     # The service and the recorder are read per request; without them (fake backend) it is a 503.
     app.include_router(

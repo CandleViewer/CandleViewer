@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from tests.security.admin import _cells as cells
-from tests.security.admin._world import SIGNED_IN, AdminWorld
+from tests.security.admin._world import AdminWorld
 
 STATE = "fresh"
 #: The named families, each one cell: (the route, the caller, the record its guard owes).
@@ -46,7 +46,11 @@ def _unnamed(world: AdminWorld, op: cells.Op, actor: str, sent: list[str]) -> li
 
 @pytest.mark.parametrize(
     ("op", "actor"),
-    [pytest.param(op, a, id=f"{op.key}|{a}") for op in cells.ops_for(STATE) for a in SIGNED_IN],
+    [
+        pytest.param(op, a, id=f"{op.key}|{a}")
+        for op in cells.ops_for(STATE)
+        for a in cells.callers_for(op, STATE)
+    ],
 )
 def test_every_record_of_the_request_carries_the_id_the_middleware_bound(
     world: AdminWorld, sent: list[str], op: cells.Op, actor: str

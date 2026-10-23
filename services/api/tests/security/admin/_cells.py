@@ -268,24 +268,29 @@ GRACE_CLASSES: tuple[str, ...] = tuple(
 )
 
 
-#: Executed rows whose allowed call in the fresh state would change the shared world for the rest
-#: of its module, and why. Their none and stale cells stand; their fresh call is pinned elsewhere.
-NO_FRESH_CELL: dict[str, str] = {
-    _START: (
-        "#3085 S13b: an elevated Owner's start puts its session in a view-as context, read-only, "
-        "which then refuses every later write of the module's Owner and answers its reads in the "
+#: The fresh cells (route, caller) whose allowed call would change the shared world for the rest of
+#: its module, and why. Only that cell goes: the route's none and stale cells and its other
+#: callers' fresh cells run (`callers_for`), and the call is pinned elsewhere.
+NO_FRESH_CELL: dict[tuple[str, str], str] = {
+    (_START, "owner"): (
+        "#3085: an elevated Owner's start puts its session in a view-as context, read-only, which "
+        "then refuses every later write of the module's Owner and answers its reads in the "
         "target's scope; the 201, its records and its notice are pinned in "
-        "`tests/unit/api/test_view_as_start_route.py`"
+        "`tests/unit/api/test_view_as_start_route.py`, and the app's mount of the start in "
+        "`tests/unit/test_view_as_wiring.py`"
     ),
 }
 
 
 def ops_for(state: str) -> tuple[Op, ...]:
     """The cells' routes in `state`: every executed row, and the path-gated-only rows unless
-    a live window lets the request past their guard, which `NO_FRESH_CELL`'s rows never meet."""
-    if state == "fresh":
-        return tuple(op for op in OPS if op.key not in NO_FRESH_CELL)
-    return ALL_OPS
+    a live window lets the request past their guard."""
+    return OPS if state == "fresh" else ALL_OPS
+
+
+def callers_for(op: Op, state: str) -> tuple[str, ...]:
+    """The signed-in callers whose cell of `op` runs in `state`: all but `NO_FRESH_CELL`'s."""
+    return tuple(a for a in SIGNED_IN if state != "fresh" or (op.key, a) not in NO_FRESH_CELL)
 
 
 Kind = Literal["allow", "forbidden", "challenge"]
@@ -498,13 +503,17 @@ def _xfail(reason: str) -> pytest.MarkDecorator:
 
 
 def status_params(state: str) -> list[Any]:
-    return [pytest.param(op, a, id=f"{op.key}|{a}") for op in ops_for(state) for a in SIGNED_IN]
+    return [
+        pytest.param(op, a, id=f"{op.key}|{a}")
+        for op in ops_for(state)
+        for a in callers_for(op, state)
+    ]
 
 
 def record_params(state: str) -> list[Any]:
     out: list[Any] = []
     for op in ops_for(state):
-        for a in SIGNED_IN:
+        for a in callers_for(op, state):
             marks = []
             silent = op.own is not None and op.own.record is None
             if silent and expect(op, a, state).kind == "forbidden":
@@ -516,7 +525,7 @@ def record_params(state: str) -> list[Any]:
 def counted_params(state: str) -> list[Any]:
     out: list[Any] = []
     for op in ops_for(state):
-        for a in SIGNED_IN:
+        for a in callers_for(op, state):
             if expect(op, a, state).kind != "forbidden":
                 continue
             marks = []
@@ -563,7 +572,7 @@ def _code_gap(op: Op, actor: str) -> str | None:
 def code_params(state: str) -> list[Any]:
     out: list[Any] = []
     for op in ops_for(state):
-        for a in SIGNED_IN:
+        for a in callers_for(op, state):
             if expect(op, a, state).kind != "forbidden":
                 continue
             gap = _code_gap(op, a)

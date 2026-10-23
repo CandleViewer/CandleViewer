@@ -14,8 +14,8 @@ over the cap is. Nothing sets `Retry-After` (#3223 item 1). The object (Q8), nev
 payload, a session id in a state or raw input: the operation's contract path template
 (`after_state` `{method, path}`, as `auth.csrf_refused` records it), the frame type (`(invalid)`
 off `FRAME_TYPE`, with its length alone), or the requested user (`before_state` the held
-context, for `view_as_active`). Inert until #3085's guard, sockets and start call it; the app
-builds it, and the lifespan runs its flush task.
+context, for `view_as_active`). The guard, the sockets and the start call it; the app builds it,
+and the lifespan runs its flush task.
 """
 
 from __future__ import annotations

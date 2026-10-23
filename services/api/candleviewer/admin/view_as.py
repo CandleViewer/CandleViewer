@@ -3,9 +3,9 @@ its clear (#3085).
 
 `22-api-openapi.yaml` "View-as session", `startViewAs` and `endViewAs`; the state, its phase and
 the store contract are `auth/view_as.py`'s. The sweeper (`admin/view_as_sweeper.py`) runs it from
-the lifespan; nothing starts a context until the HTTP routes land (Q13). Its socket closer closes
-the sockets bound to the ended context, and after a start the session's sockets bound to none
-(`view_as_wiring.HubSocketCloser`).
+the lifespan, and the routes of `api/view_as.py` call it: the start, the read and the end. Its
+socket closer closes the sockets bound to the ended context, and after a start the session's
+sockets bound to none (`view_as_wiring.HubSocketCloser`).
 
 A context ends exactly once: of concurrent ends only the call whose conditional write
 (`end_view_as`, or `leave_view_as`, which also clears it) ended it closes the session's sockets

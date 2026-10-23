@@ -602,7 +602,7 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     #   with its handler test (`test_audit_export_download.py`) since #889 S9.
     ("GET", "/admin/audit/exports/{jobId}", "audit"),
     # #3085 startViewAs (SR-025, 04 §7.2.2 row 40b): RBAC and the five view-as refusals come
-    # before the gate, so only the handler can gate it. Mounted with its handler since S13b.
+    # before the gate, so only the handler can gate it. Mounted with its handler.
     ("POST", "/admin/view-as", "users"),
     # deleteBackup (04 §7.2.2 row 52, E42-T05 BK-12): `backups`, no-grace, as restore. One fresh
     # code per delete, which the handler spends after the 404 and the 501, bound to the request

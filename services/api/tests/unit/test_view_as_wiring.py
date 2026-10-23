@@ -17,6 +17,7 @@ from pydantic import SecretStr, ValidationError
 
 from candleviewer.admin.view_as import ViewAsService
 from candleviewer.admin.view_as_sweeper import ViewAsSweeper
+from candleviewer.api.view_as import make_view_as_start_router
 from candleviewer.app import _LazyAuditEmitter, create_app
 from candleviewer.auth.service import AuthService
 from candleviewer.settings import Settings
@@ -240,6 +241,29 @@ def test_create_app_gives_the_socket_the_apps_refusal_recorder(
     refusals = kwargs["view_as_refusals"]
     assert isinstance(refusals, SessionViewAsRefusals)
     assert refusals._recorder() is app.state.view_as_refusals
+
+
+def test_create_app_gives_the_start_the_apps_service_recorder_and_identity_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """22 `startViewAs`: on the real backend the start reads the app's one service and refusal
+    recorder per request, and the target's row through the identity provider. A start mounted
+    with none of them would answer every request 503 and refuse none, and no other test builds
+    its route through `create_app`."""
+    import candleviewer.app as appmod
+
+    seen: list[dict[str, Any]] = []
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs)
+        return make_view_as_start_router(*args, **kwargs)
+
+    monkeypatch.setattr(appmod, "make_view_as_start_router", spy)
+    app = create_app(_real())
+    (kwargs,) = seen
+    assert isinstance(app.state.view_as, ViewAsService) and kwargs["views"]() is app.state.view_as
+    assert kwargs["refusals"]() is app.state.view_as_refusals
+    assert kwargs["users"] is app.state.identity_provider and kwargs["users"] is not None
 
 
 async def test_the_sockets_refusal_record_fails_when_the_app_has_no_recorder(

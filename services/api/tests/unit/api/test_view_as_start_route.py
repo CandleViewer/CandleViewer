@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID, uuid4
 
 import httpx
@@ -19,14 +19,14 @@ from structlog.testing import capture_logs
 from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.deny_by_default import declared_operations
-from candleviewer.api.view_as import START_REFUSALS, make_view_as_start_router
+from candleviewer.api.view_as import make_view_as_start_router
 from candleviewer.api.view_as_refusals import VIEW_AS_REFUSED, ViewAsRefusalRecorder
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.errors import StepUpRequired
 from candleviewer.auth.models import MintedSession
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
-from candleviewer.auth.view_as import ViewAsStartResult, ViewAsState
+from candleviewer.auth.view_as import ViewAsEndReason, ViewAsStartResult, ViewAsState
 from tests.unit.admin.test_view_as_service import _TARGET, _VIEWER, _at, _Rig
 from tests.unit.api._fakes import BASE, HASHER, RecordingWriter
 from tests.unit.api.test_view_as_routes import Store
@@ -36,6 +36,7 @@ _PATH = "/admin/view-as"
 _REASON = "Reproduce the empty positions panel bo reported"
 _OTHER = UUID(int=3)  # a user who is not the target
 _RID = uuid4()
+_WAIT_S = 30.0  # bounds the barrier below: a regression fails instead of hanging the run
 
 
 def _user(username: str, status: str = "active", roles: tuple[str, ...] = ("manager",)) -> Any:
@@ -76,7 +77,8 @@ class Users:
 
     async def user(self, user_id: str) -> Any:
         if self.barrier is not None:
-            await self.barrier.wait()
+            async with asyncio.timeout(_WAIT_S):
+                await self.barrier.wait()
         if self.fails is not None:
             raise self.fails
         if user_id not in self.rows:
@@ -171,7 +173,38 @@ async def _viewing(w: World) -> ViewAsState:
     return state
 
 
+async def _held(w: World) -> ViewAsState:
+    """The signed-in session holding an ended context on `_TARGET` that it has not cleared: the
+    state after its expiry or its viewer's end, until the viewer leaves (22)."""
+    state = await _viewing(w)
+    assert w.minted is not None
+    ended = await w.repo.end_view_as(
+        str(w.minted.session_id), state.context_id, ended_at=w.clock(), reason=ViewAsEndReason.ENDED
+    )
+    assert ended is not None and ended.view_as is not None
+    return ended.view_as
+
+
+async def _cleared(w: World) -> ViewAsState:
+    """The signed-in session whose context ended, was recorded and was cleared by a leave."""
+    held = await _held(w)
+    assert w.minted is not None
+    session_id, now = str(w.minted.session_id), w.clock()
+    assert await w.repo.mark_view_as_recorded(session_id, held.context_id, now=now)
+    cleared = await w.repo.clear_view_as(session_id, held.context_id, now=now)
+    assert cleared is not None and cleared.view_as is not None
+    return cleared.view_as
+
+
 # -- the start ------------------------------------------------------------------------------------
+
+
+async def _after_a_start() -> World:
+    """A world whose signed-in viewer has started a context on `_TARGET`."""
+    w = World()
+    await w.sign_in()
+    await w.start()
+    return w
 
 
 async def test_a_start_answers_201_with_the_context_it_started() -> None:
@@ -189,8 +222,21 @@ async def test_a_start_answers_201_with_the_context_it_started() -> None:
         "read_only": True,
         "state": "active",
     }
+
+
+async def test_a_start_writes_one_started_record() -> None:
+    w = await _after_a_start()
     assert [c["action"] for c in w.ports.calls] == ["admin.view_as_started"]
-    assert len(w.repo.notices) == 1 and w.refused() == []
+
+
+async def test_a_start_notifies_the_target_once() -> None:
+    w = await _after_a_start()
+    assert len(w.repo.notices) == 1
+
+
+async def test_a_start_writes_no_refusal_record() -> None:
+    w = await _after_a_start()
+    assert w.refused() == []
 
 
 async def test_a_locked_target_can_be_viewed_as() -> None:
@@ -199,6 +245,23 @@ async def test_a_locked_target_can_be_viewed_as() -> None:
     await w.sign_in()
     w.users.rows[str(_TARGET)] = _user("bo", status="locked")
     assert (await w.start()).status_code == 201
+
+
+async def test_a_cleared_context_does_not_block_a_start() -> None:
+    """A viewer who left its context holds none (22): it can start another."""
+    w = World()
+    await w.sign_in()
+    await _cleared(w)
+    assert (await w.start()).status_code == 201
+
+
+async def test_a_reason_of_the_maximum_size_is_a_201_with_every_character_escaped() -> None:
+    """500 astral characters, each escaped as a surrogate pair: about 6 KB, the largest body the
+    contract allows, which the body cap leaves room for."""
+    w = World()
+    await w.sign_in()
+    raw = json.dumps({"target_user_id": str(_TARGET), "reason": "\U0001f600" * 500}).encode()
+    assert (await w.start(raw=raw)).status_code == 201
 
 
 async def test_of_two_concurrent_starts_one_starts_and_the_other_is_refused_and_recorded() -> None:
@@ -246,37 +309,72 @@ async def _owner(w: World) -> UUID:
     return _TARGET
 
 
-@pytest.mark.parametrize(
-    ("arrange", "status", "code"),
-    [
-        (_held_and_self, 409, "view_as_active"),
-        (_self, 403, "view_as_self_target"),
-        (_unknown, 404, "not_found"),
-        (_disabled_owner, 409, "conflict"),
-        (_invited, 409, "conflict"),
-        (_owner, 403, "view_as_owner_target"),
-    ],
-    ids=["active", "self", "not-found", "disabled", "invited", "owner"],
-)
-async def test_each_refusal_comes_in_the_contracts_order_and_is_recorded(
-    arrange: Callable[[World], Awaitable[UUID]], status: int, code: str
-) -> None:
-    """Each case also breaks every later rule, so only the order answers it. Each writes one
-    `admin.view_as_refused` naming the requested user, and none is a challenge."""
+#: Each refusal's cause, its status and its problem code.
+_REFUSALS = [
+    pytest.param((_held_and_self, 409, "view_as_active"), id="active"),
+    pytest.param((_self, 403, "view_as_self_target"), id="self"),
+    pytest.param((_unknown, 404, "not_found"), id="not-found"),
+    pytest.param((_disabled_owner, 409, "conflict"), id="disabled"),
+    pytest.param((_invited, 409, "conflict"), id="invited"),
+    pytest.param((_owner, 403, "view_as_owner_target"), id="owner"),
+]
+
+
+class Refusal(NamedTuple):
+    """A refused start: its world, the user it asked for, its answer, and the status and problem
+    code the contract gives that refusal."""
+
+    world: World
+    target: UUID
+    response: httpx.Response
+    status: int
+    code: str
+
+
+@pytest.fixture(params=_REFUSALS)
+async def refusal(request: pytest.FixtureRequest) -> Refusal:
+    """Each refusal, sent by an unelevated Owner, so a refusal that was a challenge would show."""
+    arrange, status, code = request.param
     w = World()
     await w.sign_in()
     w.auth.step_up.elevated = False
     w.users.rows[str(_VIEWER)] = _user("ana", roles=("owner",))
     target = await arrange(w)
     response = await w.start({"target_user_id": str(target), "reason": _REASON})
-    assert _code(response) == (status, code) and START_REFUSALS[code] == status
-    assert w.refused() == [(code, str(target))] and w.auth.step_up.pending == []
+    return Refusal(w, target, response, status, code)
 
 
-async def test_the_active_refusal_records_the_context_it_holds() -> None:
+async def test_each_refusal_comes_in_the_contracts_order(refusal: Refusal) -> None:
+    """Where a case can, it also breaks a later rule, so only the order answers it: the held
+    context is also a self-target, a self-target also an Owner's, and a disabled user an Owner."""
+    assert _code(refusal.response) == (refusal.status, refusal.code)
+
+
+async def test_each_refusal_is_recorded_naming_the_requested_user(refusal: Refusal) -> None:
+    assert refusal.world.refused() == [(refusal.code, str(refusal.target))]
+
+
+async def test_a_refused_start_is_never_a_challenge(refusal: Refusal) -> None:
+    assert refusal.world.auth.step_up.pending == []
+
+
+async def test_a_held_context_refuses_a_start_and_is_never_challenged() -> None:
+    """The state after its expiry (22 says live or held), and the viewer is not elevated."""
     w = World()
-    minted = await w.sign_in()
-    state = await _viewing(w)
+    await w.sign_in()
+    await _held(w)
+    w.auth.step_up.elevated = False
+    assert _code(await w.start()) == (409, "view_as_active")
+    assert w.auth.step_up.pending == []
+
+
+@pytest.mark.parametrize("hold", [_viewing, _held], ids=["live", "held"])
+async def test_the_active_refusal_records_the_context_it_holds(
+    hold: Callable[[World], Awaitable[ViewAsState]],
+) -> None:
+    w = World()
+    await w.sign_in()
+    state = await hold(w)
     await w.start({"target_user_id": str(_OTHER), "reason": _REASON})
     (record,) = w.audit.of(VIEW_AS_REFUSED)
     assert record["before_state"] == {
@@ -284,10 +382,19 @@ async def test_the_active_refusal_records_the_context_it_holds() -> None:
         "started_at": state.started_at.isoformat(),
         "expires_at": state.expires_at.isoformat(),
     }
+
+
+async def test_a_refusal_record_names_the_viewer_and_the_request_it_answers() -> None:
+    w = World()
+    minted = await w.sign_in()
+    await w.start({"target_user_id": str(_VIEWER), "reason": _REASON})
+    (record,) = w.audit.of(VIEW_AS_REFUSED)
     assert (record["actor_user_id"], record["session_id"]) == (_VIEWER, minted.session_id)
+    assert (record["actor_label"], record["actor_ip"]) == ("ana", "100.64.0.9")
+    assert record["request_id"] == _RID
 
 
-@pytest.mark.parametrize(
+_BODIES = pytest.mark.parametrize(
     "body",
     [
         json.dumps({"target_user_id": str(_TARGET)}).encode(),
@@ -298,15 +405,40 @@ async def test_the_active_refusal_records_the_context_it_holds() -> None:
     ],
     ids=["no-reason", "not-a-uuid", "blank-reason", "extra-member", "too-large"],
 )
-async def test_an_invalid_body_is_a_422_that_records_nothing_even_while_viewing(
-    body: bytes,
-) -> None:
+
+
+async def _invalid(body: bytes) -> tuple[World, httpx.Response]:
+    """An invalid body, sent by a session that holds a context: a valid one would be refused and
+    recorded."""
     w = World()
     await w.sign_in()
     await _viewing(w)
-    response = await w.start(raw=body)
+    return w, await w.start(raw=body)
+
+
+@_BODIES
+async def test_an_invalid_body_is_a_422_even_while_viewing(body: bytes) -> None:
+    _, response = await _invalid(body)
     assert _code(response) == (422, "validation_failed")
-    assert w.refused() == [] and "not-a-uuid" not in response.text
+
+
+@_BODIES
+async def test_an_invalid_body_records_nothing_even_while_viewing(body: bytes) -> None:
+    w, _ = await _invalid(body)
+    assert w.refused() == []
+
+
+@pytest.mark.parametrize(
+    ("body", "echoed"),
+    [
+        ({"target_user_id": "not-a-uuid", "reason": _REASON}, "not-a-uuid"),
+        ({"target_user_id": str(_TARGET), "reason": _REASON, "smuggled": 1}, "smuggled"),
+    ],
+    ids=["value", "member-name"],
+)
+async def test_an_invalid_body_is_never_echoed(body: dict[str, Any], echoed: str) -> None:
+    _, response = await _invalid(json.dumps(body).encode())
+    assert response.status_code == 422 and echoed not in response.text
 
 
 async def test_a_caller_without_users_write_is_the_guards_403_with_no_refusal_record() -> None:
@@ -330,14 +462,31 @@ async def test_a_refusal_that_cannot_be_recorded_answers_503_and_starts_nothing(
 # -- the step-up gate ------------------------------------------------------------------------------
 
 
-async def test_the_challenge_comes_after_the_refusals_and_restates_the_target() -> None:
+async def _challenged() -> tuple[World, MintedSession, httpx.Response]:
+    """An unelevated viewer's start, which no refusal stops."""
     w = World()
     minted = await w.sign_in()
     w.auth.step_up.elevated = False
-    response = await w.start()
+    return w, minted, await w.start()
+
+
+async def test_a_start_no_refusal_stops_is_challenged_when_not_elevated() -> None:
+    _, _, response = await _challenged()
     assert _code(response) == (403, "step_up_required")
+
+
+async def test_the_challenge_restates_the_target_and_not_the_reason() -> None:
+    _, _, response = await _challenged()
     assert response.json()["action_summary"] == "View as user 'bo', read-only"
+
+
+async def test_the_challenge_is_recorded_pending_for_the_session_and_its_class() -> None:
+    w, minted, _ = await _challenged()
     assert w.auth.step_up.pending == [(str(minted.session_id), "users")]
+
+
+async def test_a_challenged_start_starts_nothing_and_records_no_refusal() -> None:
+    w, _, _ = await _challenged()
     assert w.held() is None and w.refused() == [] and w.ports.calls == []
 
 
@@ -357,12 +506,39 @@ async def test_a_start_whose_records_cannot_be_written_answers_503_and_starts_no
     assert w.held() is None and w.repo.notices == []
 
 
-async def test_a_users_read_that_fails_answers_503_and_records_nothing() -> None:
+def _session_unreadable(w: World) -> None:
+    w.repo.fails.add("find_by_access_token_jti")  # the guard reads no row: the route's own read
+
+
+def _users_unreadable(w: World) -> None:
+    w.users.fails = ConnectionError("users store unreachable")
+
+
+_READS = pytest.mark.parametrize(
+    "fail", [_session_unreadable, _users_unreadable], ids=["session", "users"]
+)
+
+
+@_READS
+async def test_a_read_that_fails_answers_503_and_starts_nothing(
+    fail: Callable[[World], None],
+) -> None:
     w = World()
     await w.sign_in()
-    w.users.fails = ConnectionError("users store unreachable")
+    fail(w)
     assert _code(await w.start()) == (503, "store_unavailable")
-    assert w.refused() == [] and w.held() is None
+    assert w.refused() == [] and w.held() is None and w.ports.calls == []
+
+
+@_READS
+async def test_a_read_that_fails_says_the_context_could_not_be_started(
+    fail: Callable[[World], None],
+) -> None:
+    w = World()
+    await w.sign_in()
+    fail(w)
+    detail = (await w.start()).json()["detail"]
+    assert detail == "The view-as context could not be started. Try again shortly."
 
 
 async def test_a_backend_without_the_service_answers_503_after_the_guard() -> None:
@@ -430,7 +606,8 @@ async def test_a_start_that_could_not_be_written_logs_its_code_and_nothing_that_
 
 
 async def test_the_reason_reaches_only_the_started_record() -> None:
-    """It is never logged, challenged, answered or noticed, and no refusal carries it (22)."""
+    """It is never logged, answered or noticed, and no refusal record carries it (22). The
+    challenge restates the target alone, as its own test pins."""
     w = World()
     await w.sign_in()
     with capture_logs() as logs:

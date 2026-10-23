@@ -8,6 +8,7 @@ generated model. No network, a fake clock."""
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 from uuid import UUID
 
 import httpx
@@ -138,23 +139,35 @@ def test_every_declared_status_has_a_request_that_reaches_it() -> None:
     assert {status for status, *_ in _ANSWERS} == _DECLARED
 
 
-@pytest.mark.parametrize(
-    ("status", "send"),
-    [
+def _validated(response: httpx.Response) -> dict[str, Any]:
+    """The body, once its status is declared and its media type and schema are that response's."""
+    assert response.status_code in _DECLARED
+    pointer, media = _schema(response.status_code)
+    assert response.headers["content-type"].startswith(media)
+    body: dict[str, Any] = response.json()
+    validate_example(pointer, body)
+    return body
+
+
+def _answers(statuses: range) -> list[Any]:
+    return [
         pytest.param(status, send, id=f"startViewAs-{status}-{why}")
         for status, why, send in _ANSWERS
-    ],
-)
-async def test_the_answer_is_declared_and_validates_against_its_response(
-    status: int, send: Send
-) -> None:
+        if status in statuses
+    ]
+
+
+@pytest.mark.parametrize(("status", "send"), _answers(range(201, 202)))
+async def test_a_201_is_a_view_as_context_that_round_trips(status: int, send: Send) -> None:
     response = await send(World())
-    assert response.status_code == status and status in _DECLARED
-    pointer, media = _schema(status)
-    assert response.headers["content-type"].startswith(media)
-    body = response.json()
-    validate_example(pointer, body)
-    if status == 201:
-        assert api.ViewAsContext.model_validate(body).model_dump(mode="json") == body
-    else:
-        assert api.Problem.model_validate(body).code == body["code"]
+    assert response.status_code == status
+    body = _validated(response)
+    assert api.ViewAsContext.model_validate(body).model_dump(mode="json") == body
+
+
+@pytest.mark.parametrize(("status", "send"), _answers(range(400, 600)))
+async def test_a_refusal_is_a_problem_of_its_declared_response(status: int, send: Send) -> None:
+    response = await send(World())
+    assert response.status_code == status
+    body = _validated(response)
+    assert api.Problem.model_validate(body).code == body["code"]

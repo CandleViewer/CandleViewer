@@ -19,12 +19,14 @@ never branching on `reason` for user-facing text beyond the fixed
 from __future__ import annotations
 
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.metrics import authz_denied_total, normalise_permission
+from candleviewer.auth.models import UserStatus
 from candleviewer.auth.view_as import current_view_as
 from candleviewer.storage.repositories.accounts import AccountScope, GrantScope, OwnerScope
 
@@ -90,13 +92,42 @@ class PrincipalSnapshot:
 
     @property
     def is_owner(self) -> bool:
-        return "owner" in self.roles
+        return _holds_owner_role(self.roles)
 
     def grant_for(self, exchange_account_id: uuid.UUID) -> AccountGrant | None:
         for grant in self.account_grants:
             if grant.exchange_account_id == exchange_account_id:
                 return grant
         return None
+
+
+def _holds_owner_role(roles: Collection[str]) -> bool:
+    """The Owner test, by role name: `PrincipalSnapshot.is_owner`'s rule, which
+    `unviewable_target` applies to the roles of a user row that is not a snapshot yet."""
+    return "owner" in roles
+
+
+#: The statuses an Owner may view a user in (22 `startViewAs`): `locked` is only locked out of
+#: signing in. An allow-list, so a status added to `UserStatus` is not viewable until it is placed
+#: here.
+VIEWABLE_STATUSES: Final = frozenset({UserStatus.ACTIVE.value, UserStatus.LOCKED.value})
+
+
+class UnviewableTarget(StrEnum):
+    """Why a user cannot be viewed as, in the order the start refuses it."""
+
+    STATUS = "status"  # not in `VIEWABLE_STATUSES`
+    OWNER = "owner"  # holds the Owner role (`PrincipalSnapshot.is_owner`)
+
+
+def unviewable_target(status: object, roles: Collection[str]) -> UnviewableTarget | None:
+    """Why the user of *status* and *roles* cannot be viewed as, `None` when an Owner may. The
+    start refuses a target by it (`conflict`, then `view_as_owner_target`) and a context's
+    eligibility ends on it (`target_ineligible`, `view_as_wiring.IdentityEligibility`), so a
+    context starts only for a target that its next evaluation keeps."""
+    if status not in VIEWABLE_STATUSES:
+        return UnviewableTarget.STATUS
+    return UnviewableTarget.OWNER if _holds_owner_role(roles) else None
 
 
 @dataclass(frozen=True)
