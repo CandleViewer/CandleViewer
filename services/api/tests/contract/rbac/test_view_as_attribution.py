@@ -3,10 +3,10 @@
 While the Owner's session views as a user, each request it sends is read in the target's scope,
 refused read-only, or, for the viewer's own and the protective operations, served as the viewer.
 Every audit record any of them writes (a denied read's `rbac.denied`, a refused write's
-`admin.view_as_refused`, ...) names the viewer as its actor, never the target, and a record that
-names a session names the viewer's own: S8 splits the actor from the subject, and the app's
-emitter refuses a record that names the target as its actor. (`rbac.denied` on the `users:write`
-routes names no session for any caller; that predates view-as.) Each executed operation of
+`admin.view_as_refused`, ...) names the viewer as its actor, never the target, and names the
+viewer's own session: S8 splits the actor from the subject, the app's emitter refuses a record
+that names the target as its actor, and every `rbac.denied` names the caller's session (#4174,
+#4183). Each executed operation of
 `matrix.yaml` that acts in a session is sent once per target: not the viewer's own, and not one
 the unauthenticated caller may use, as an invite's redemption, which acts without the session.
 The world is `test_route_matrix.py`'s: the real app with the identity and backend seams faked, no
@@ -83,7 +83,9 @@ def test_the_sweep_sees_each_kind_of_record_a_viewing_session_causes(
 
 
 @pytest.mark.parametrize("target", VIEW_TARGETS)
-def test_a_record_naming_a_session_names_the_viewers(world: World, target: str) -> None:
+def test_every_record_names_the_viewers_session(world: World, target: str) -> None:
     _send_all(world, target)
-    named = {str(r["session_id"]) for r in world.audit.records if r.get("session_id") is not None}
-    assert named == {str(session_id_of("owner", viewing=target))}
+    named = {(r["action"], str(r.get("session_id"))) for r in world.audit.records}
+    assert {session for _, session in named} == {str(session_id_of("owner", viewing=target))}, (
+        sorted(named)
+    )
