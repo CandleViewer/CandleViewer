@@ -14,9 +14,9 @@ Gherkin row), CMP-054 SearchBox, CMP-065 FormSection and CMP-079 RbacGate, the d
 gateable form control uses. Slice 4 covers feedback and overlays, slice 5 the rest.
 **Companion:** `E05-D02-form-controls-a11y-audit.md` (accessibility pre-review of this slice).
 **Builds on:** slice 1's conventions 1–14 (§3), token mirror (§4), exceptions (§5) and decisions A1–A12, B1–B7, C1–C15
-and D1–D17 (D13 is superseded by E09-D09 §2.2 T2), and slice 2's conventions 15–20 and decisions E1–E27 (#4290,
-read at its head `bab507423` and cited as it stands, if #4290 merges as is). They apply here unchanged and are cited
-as "slice 1 §n", "slice 1 A3" and "slice 2 (#4290) E18".
+and D1–D17 (D13 is superseded by E09-D09 §2.2 T2), and the conventions 15–20 and decisions E1–E27 of
+slice 2 (#4290, head `fd4ea21d1`), read there and cited as they stand, if #4290 merges as is. They apply here unchanged
+and are cited as "slice 1 §n", "slice 1 A3" and "slice 2 (#4290) E18".
 **Key.** `05`, `14`, `15`, `16` are the `docs/plan/` documents by number; D09 is `docs/design/E09/E09-D09.md`.
 `path:line` references are at `origin/main` `5a382efec`.
 
@@ -345,7 +345,7 @@ CMP-079, never the atom, as conventions 24 has the host gate every slice-3 contr
   opening a CMP-041 row menu (`Shift+F10` from the row), whose gated items are T2 with the reason as their second line;
   an inline gated IconButton takes 2b. Either column makes the table a grid (§7 CMP-049's mode rule: one Tab stop,
   `05` §3.4 item 2), where `Space` also toggles the focused row and rows carry `aria-selected`; table mode keeps no
-  control in a row. **Affects:** CMP-049 (CMP-114, SCR-121, SCR-063).
+  control in a body row. **Affects:** CMP-049 (CMP-114, SCR-121, SCR-063).
 
 ### (e) Catalogue clauses applied, awaiting your approval
 
@@ -455,8 +455,8 @@ prefix and suffix never shrink.
 **Forced colors:** conventions 29.
 
 **Catalogue alignment** (`15:109-117`): Props gains `disabledReason?` and notes that `placeholder?` is an example,
-never the label (conventions 21); a States line replaces "default, focus,
-invalid, disabled, readOnly" with the nine looks above (conventions 22–24); A11y drops "`aria-errormessage` where
+never the label (conventions 21); a States line replaces "default, focus, invalid (red border + icon + message, not
+colour-only), disabled, readOnly" with the nine looks above (conventions 22–24); A11y drops "`aria-errormessage` where
 supported" (G16) and adds the polite once announcement and the T2 semantics; Tokens names the shipped tokens (G1, G2,
 G4): `color.surface.app`, `color.text.tertiary`, `color.text.secondary`, `color.text.primary`,
 `color.status.danger.default`, `color.border.default`, `color.surface.raised`, `color.focus.ring`, `radius.control`,
@@ -594,7 +594,8 @@ reason in CanvasText (HighlightText while active).
 **Catalogue alignment** (`15:128-135`): Props gains `placeholder?`, `invalid?`, `disabledReason?` and, on each option,
 `disabled?/disabledReason?` (conventions 26), and `searchable` renders CMP-048's editable combobox (G9); a new States
 line with the open state and the five option looks; A11y replaces "(uses Radix Select primitive)" with "(any primitive
-that meets the select-only combobox)", since Radix Select's listbox takes DOM focus (G9), and appends "the trigger keeps
+that meets the select-only combobox, `docs/design/E05/E05-D02-form-controls.md` §6 G9)", since Radix Select's listbox
+takes DOM focus, and appends "the trigger keeps
 focus and `aria-activedescendant` names the active option (the APG select-only combobox)", the `Esc` rule and the T2
 option's `aria-describedby`; Tokens: `elevation.2` → `elevation.popover`, `radius.md` → `radius.card`, plus the field
 tokens; Storybook adds Open and DisabledWithReason. Held: dropping `size` (G7).
@@ -644,7 +645,7 @@ empty do not apply (the component renders only when it holds a value, and it is 
 
 **Recovery codes are not CMP-034's.** The ticket's Security note names them beside API keys, but `14` never puts
 CMP-034 on a recovery-code screen: the server generates the codes and shows them once, in full, through CMP-206
-RecoveryCodeList (SCR-003, SCR-016, SCR-110: `14:191`, `14:432`, `14:2241`; drawn in `docs/design/E09/E09-D04.md`
+RecoveryCodeList (SCR-003, SCR-016, SCR-112: `14:191`, `14:432`, `14:2241`; drawn in `docs/design/E09/E09-D04.md`
 §6), a display that S1 and S6 would forbid. Their display rules are CMP-206's own, routed to E05-X02 beside S1–S7
 (§6 G19); S1–S7 cover the API keys and secrets a user enters on SCR-126 and SCR-127 only.
 
@@ -686,7 +687,7 @@ and is never announced per tick. **Resize & overflow:** the value wraps at any c
 buttons never grow. **Forced colors:** the box border and the text CanvasText; the buttons follow CMP-002.
 
 **Catalogue alignment** (`15:359-366`): Props: `value` gains "a value the client holds in the current flow, never a
-stored secret (C-2.7)", plus `label: string` (names the group and the buttons) and `copyable?: boolean` (default
+stored secret: C-2.7", plus `label: string` (names the group and the buttons) and `copyable?: boolean` (default
 `false`, CMP-033), and `revealed?` "never `true` at mount"; a new States line (masked, revealed, expiring, copied); A11y
 names the toggle "Show {label}"/"Hide {label}" in place of "Show secret"/"Hide secret" (their reading when `label` is
 "secret") and appends S1–S7 in one sentence, routing recovery codes to CMP-206; Tokens: `font.mono` → `type.num.base`,
@@ -929,7 +930,7 @@ are not options and `Esc` (G17); Tokens: `elevation.2` → `elevation.popover`, 
 
 **Mode rule:** `grid` is implied whenever a body column is interactive — `onRowSelect`'s select column, an actions
 column, an inline control; the `grid` prop only forces it for a static table. Table mode's interactive content is the
-sortable header buttons and the focusable scroll region, and its rows carry no controls: a roving tabindex keeps a
+sortable header buttons and the focusable scroll region, and its body rows carry no controls: a roving tabindex keeps a
 long table to one Tab stop (`05` §3.4 item 2, "200+ Tab presses"; E42-D03 §13 puts SCR-121's table, which has row
 actions, in grid mode).
 
@@ -972,13 +973,13 @@ on a selected row in dark, too thin a margin for body text, so cells never use i
 `color.border.subtle` rule equals its `color.surface.hover` fill in every theme (1.00:1), so it reads only against the
 first body row (1.24:1 in dark) and carries nothing; it stays as the real border that forced colours paint CanvasText.
 
-**Keyboard** — table mode (WAI-ARIA APG Table pattern: static cells, no control in a row):
+**Keyboard** — table mode (WAI-ARIA APG Table pattern: static cells, no control in a body row):
 
-| Keys                                             | Action                                                                                                                                       |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tab / Shift+Tab                                  | The scroll region when it scrolls (`tabindex="0"`, named by the caption), then the sortable header buttons in order; rows hold no Tab stops. |
-| Arrows, Page Up / Down, Home / End on the region | Scroll it (native).                                                                                                                          |
-| Enter / Space on a header button                 | Sorts ascending, then descending; while that column is `sortPending` the press changes nothing.                                              |
+| Keys                                             | Action                                                                                                                                            |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                                  | The scroll region when it scrolls (`tabindex="0"`, named by the caption), then the sortable header buttons in order; body rows hold no Tab stops. |
+| Arrows, Page Up / Down, Home / End on the region | Scroll it (native).                                                                                                                               |
+| Enter / Space on a header button                 | Sorts ascending, then descending; while that column is `sortPending` the press changes nothing.                                                   |
 
 **Keyboard** — grid mode (`grid`, or implied by an interactive body column; WAI-ARIA APG Grid pattern):
 
@@ -1000,15 +1001,15 @@ In grid mode a focused cell scrolls below the sticky header (`scroll-margin-top`
 
 **Accessible name and role:**
 
-| Element      | Role                                       | Name                                            | ARIA                                                                             |
-| ------------ | ------------------------------------------ | ----------------------------------------------- | -------------------------------------------------------------------------------- |
-| table        | table (native `<table>`); grid when a grid | the caption                                     | `aria-rowcount` (every row; -1 while unknown); `aria-busy="true"` while loading  |
-| header cell  | columnheader (`th scope="col"`)            | its label                                       | `aria-sort` on the sorted column, `none` on the other sortable ones              |
-| sort button  | button                                     | the header label                                | `aria-busy="true"` while `sortPending`                                           |
-| row          | row                                        | —                                               | `aria-rowindex` (absolute); `aria-selected` in grid mode with selection          |
-| select boxes | checkbox                                   | "Select all rows"; "Select {first cell}"        | the select-all `aria-checked="mixed"` when some rows are selected                |
-| actions      | button                                     | "Actions for {first cell}" ("Actions for alex") | `aria-haspopup="menu"`; a gated inline IconButton takes 2b (conventions 24)      |
-| live region  | status, one per table                      | —                                               | sort, filter, selection ("2 selected") and load results, once each (E11-D04 D16) |
+| Element      | Role                                        | Name                                            | ARIA                                                                             |
+| ------------ | ------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------- |
+| table        | table (native `<table>`); grid in grid mode | the caption                                     | `aria-rowcount` (every row; -1 while unknown); `aria-busy="true"` while loading  |
+| header cell  | columnheader (`th scope="col"`)             | its label                                       | `aria-sort` on the sorted column, `none` on the other sortable ones              |
+| sort button  | button                                      | the header label                                | `aria-busy="true"` while `sortPending`                                           |
+| row          | row                                         | —                                               | `aria-rowindex` (absolute); `aria-selected` in grid mode with selection          |
+| select boxes | checkbox                                    | "Select all rows"; "Select {first cell}"        | the select-all `aria-checked="mixed"` when some rows are selected                |
+| actions      | button                                      | "Actions for {first cell}" ("Actions for alex") | `aria-haspopup="menu"`; a gated inline IconButton takes 2b (conventions 24)      |
+| live region  | status, one per table                       | —                                               | sort, filter, selection ("2 selected") and load results, once each (E11-D04 D16) |
 
 **T2 and not T2:** row actions are T2 one by one — a row-menu item 2a with its second line, an inline IconButton 2b
 with the CMP-016 echo (conventions 24). Not T2: sorting and loading (busy), empty and filtered-empty (availability), an
@@ -1026,8 +1027,8 @@ adds `caption: string`, `loading?: boolean` and `error?: {message, onRetry}` (G1
 column and makes the table a grid (G21); a Variants line (table, grid, with the mode rule) and a new States line (the
 seven states, the selected row on `color.action.selected`); A11y applies E42-D03's row verbatim, then adds the sticky
 header and `scroll-margin-top`, table mode's two kinds of Tab stop (the focusable scroll region and the header
-buttons) with no control in a row, the grid that an interactive body column implies, the select boxes, the `Shift+F10`
-row menu with T2 items, the one live region and the stacked reflow; Tokens: `color.surface.raised`,
+buttons) with no control in a body row, the grid that an interactive body column implies, the select boxes, the
+`Shift+F10` row menu with T2 items, the one live region and the stacked reflow; Tokens: `color.surface.raised`,
 `color.border.subtle` and `font.mono` become the anatomy's tokens (G3); Storybook applies E42-D03's row verbatim and
 adds Loading, Error, FilteredEmpty and Reflow. Held: E11-D04's treegrid rows, `stickyFirstColumn` and `fitChars`
 (G12).
