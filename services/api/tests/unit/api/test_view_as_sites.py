@@ -43,6 +43,9 @@ _SESSIONS_OWN = {
     ("api/users.py", "make_users_router.put_user_roles"): (
         "a write, refused by the view-as guard while viewing"
     ),
+    ("api/view_as.py", "make_view_as_router._caller"): (
+        "the viewer's own session's context, which the routes read and leave (S12)"
+    ),
     ("api/view_as_guard.py", "make_view_as_guard.view_as_guard"): (
         "classifies the session's context (S7)"
     ),
