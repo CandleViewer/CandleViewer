@@ -19,6 +19,7 @@ _SUBJECT = frozenset(
     {
         ("api/audit_principal.py", "resolve"),
         ("api/me.py", "make_me_router._gate"),
+        ("api/order_principal.py", "_read"),
         ("api/rules_actor.py", "resolve"),
         ("api/session_snapshot.py", "resolve"),
     }

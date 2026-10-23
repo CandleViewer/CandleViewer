@@ -1,6 +1,7 @@
 """SQL grant/permission reads for rule scope (E35-S04). Static, parameterised SQL only.
 
 Returns plain tuples (account_id, can_view, frozen): storage may not import `rules` (M10).
+`load_trade_grants` (E29-T04, #913) adds `can_trade`, for the order route's principal.
 """
 
 from __future__ import annotations
@@ -13,6 +14,12 @@ from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRe
 
 _GRANTS = sa.text(
     "SELECT exchange_account_id, can_view, frozen FROM user_account_access "
+    "WHERE user_id = CAST(:id AS uuid)"
+)
+# E29-T04 (#913): the same rows with their trade right (21 Sec.3.1.3), so `decide(...,
+# requires_trade=True)` admits a grant with `can_trade` and refuses a view-only or frozen one.
+_TRADE_GRANTS = sa.text(
+    "SELECT exchange_account_id, can_view, can_trade, frozen FROM user_account_access "
     "WHERE user_id = CAST(:id AS uuid)"
 )
 # O5 (E42-T04, #965, C-2.21): a user who is not `active`, or is deleted, has no permission, so a
@@ -36,6 +43,13 @@ class SqlAlchemyScopeSource:
         async with self._relational.unit_of_work() as uow:
             rows = (await uow.session.execute(_GRANTS, {"id": str(owner)})).all()
         return [(UUID(str(r[0])), bool(r[1]), bool(r[2])) for r in rows]
+
+    async def load_trade_grants(self, user_id: UUID) -> list[tuple[UUID, bool, bool, bool]]:
+        """`(account_id, can_view, can_trade, frozen)` for each grant row of `user_id`, a
+        soft-revoked one (`can_view` false) included, which `decide` refuses."""
+        async with self._relational.unit_of_work() as uow:
+            rows = (await uow.session.execute(_TRADE_GRANTS, {"id": str(user_id)})).all()
+        return [(UUID(str(r[0])), bool(r[1]), bool(r[2]), bool(r[3])) for r in rows]
 
     async def load_permissions(self, owner: UUID) -> frozenset[str]:
         async with self._relational.unit_of_work() as uow:
