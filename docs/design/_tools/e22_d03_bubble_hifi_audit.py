@@ -59,14 +59,17 @@ def rows_of(txt: str, sep: str = "|") -> list[list[str]]:
 
 
 TOK = dict(d02.TOK)
-TOK.update(dict(rows_of("""app|color.surface.app
+TOK_MORE = """app|color.surface.app
 inverse|color.text.inverse
 cvd.buy|color.cvd.buy
 cvd.sell|color.cvd.sell
 info.subtle|color.status.info.subtle
 info.default|color.status.info.default
 ring|color.focus.ring
-b.subtle|color.border.subtle""")))
+b.subtle|color.border.subtle
+n.subtle|color.neutral.subtle
+warn.strong|color.status.warning.strong"""
+TOK.update(dict(rows_of(TOK_MORE)))
 
 
 def rgb(h: str) -> tuple[int, int, int]:
@@ -173,7 +176,8 @@ legend row: text.primary on canvas|t1|canvas|text|CMP-199 row
 legend row hidden: text.tertiary on canvas|t3|canvas|text|eye off
 legend (estimated): text.primary on status.info.subtle|t1|info.subtle|text|E25-D05 12.1 reproduced
 legend (estimated): info.default outline on canvas|info.default|canvas|non-text|CMP-227 outline
-corner badge: text.secondary on hover|t2|hover|text|CP22, CMP-011 neutral (A-16)
+legend pair swatch: the 1 px border.strong outline on canvas|b.strong|canvas|decorative|CMP-037
+neutral chips, corner badge: text.secondary on neutral.subtle|t2|n.subtle|text|CMP-011 neutral
 tooltip title / labels: text.secondary on overlay|t2|overlay|text|CMP-197
 tooltip values: text.primary on overlay|t1|overlay|text|CMP-197
 tooltip hairline: border.default on overlay|b.default|overlay|decorative|CMP-197
@@ -192,6 +196,7 @@ tape: buy glyph on buy.subtle|buy|buy.subtle|non-text|D02 10
 tape: sell glyph on sell.subtle|sell|sell.subtle|non-text|D02 10
 tape: located row text on selected|t1|selected|text|D02 S6
 tape: Paused chip text on status.warning.subtle|t1|warn.subtle|text|CMP-011 warning
+tape: Paused chip warning glyph on warning.subtle|warn.strong|warn.subtle|non-text|CMP-011 warning
 tape: status row / readout text.secondary on raised|t2|raised|text|CP3
 T2: full label text.tertiary + lock on raised|t3|raised|text|E09-D09 2.2
 T2: reason text.secondary on raised|t2|raised|text|E09-D09 2.2
@@ -235,14 +240,15 @@ MARKS = {
     "CVD buy mark on canvas": ("cvd.buy", "canvas"),
     "CVD sell mark on canvas": ("cvd.sell", "canvas"),
 }
-# D. every token the spec and the boards bind; the last eight are DS requests and must be MISSING
+# D. every token the spec and the boards bind; the last seven are DS requests and must be MISSING
 NAMED_TXT = """
 color.surface.app color.surface.canvas color.surface.raised color.surface.overlay
 color.surface.hover color.surface.selected color.text.primary color.text.secondary
 color.text.tertiary color.text.inverse color.border.default color.border.strong color.focus.ring
 color.buy.default color.buy.hc color.buy.subtle color.sell.default color.sell.hc color.sell.subtle
 color.cvd.buy color.cvd.sell color.status.info.subtle color.status.info.default
-color.status.warning.subtle color.data-confidence.stale.text color.data-confidence.stale.indicator
+color.status.warning.subtle color.status.warning.strong color.neutral.subtle size.icon
+color.data-confidence.stale.text color.data-confidence.stale.indicator
 color.data-confidence.disconnected.text color.data-confidence.disconnected.indicator
 size.row.compact size.row.comfortable size.control.compact size.control.comfortable size.icon.sm
 size.target.min space.1 space.2 space.3 space.inset.xs space.inset.sm space.inset.md radius.badge
@@ -250,18 +256,19 @@ radius.card radius.pill border.hairline border.thick border.focus elevation.popo
 font.family.mono font.family.ui font.weight.regular font.weight.medium font.weight.bold
 type.num.xs type.num.sm type.num.base type.ui.caption type.ui.label opacity.muted opacity.disabled
 opacity.scrim motion.duration.instant motion.duration.fast motion.duration.normal
-size.bubble.scale color.marker.default color.chip.neutral font.mono space.filterbar.gap
+size.bubble.scale color.marker.default font.mono space.filterbar.gap
 color.text.buy color.text.sell color.chart.pane.bg.default
 """
 NAMED = NAMED_TXT.split()
-EXPECT_MISSING = set(NAMED[-8:])
+EXPECT_MISSING = set(NAMED[-7:])
 # E. tools/contrast/pairs.mjs: registered today (a lost registration fails); PROPOSED rows printed
 REGISTERED = rows_of("""color.buy.default|color.surface.canvas
 color.sell.default|color.surface.canvas
 color.buy.default|color.surface.app
 color.sell.default|color.surface.app
 color.cvd.buy|color.surface.canvas
-color.cvd.sell|color.surface.canvas""")
+color.cvd.sell|color.surface.canvas
+color.status.warning.strong|color.status.warning.subtle""")
 PROPOSED = rows_of(  # D02-G5's seven rows, then this spec's own (D03-G5)
     """color.text.primary|color.buy.subtle|TEXT|D02-G5
 color.text.primary|color.sell.subtle|TEXT|D02-G5
@@ -433,6 +440,8 @@ def drift_phrases(out: dict[str, Any]) -> list[str]:
         hundredths(dark["t1|info.subtle"]),
         hundredths(dark["info.default|canvas"]),
         hundredths(dark["t2|overlay"]),
+        hundredths(dark["warn.strong|warn.subtle"]),
+        hundredths(dark["t2|n.subtle"]),
         hundredths(dark["t1|overlay"]),
         hundredths(sim["separation"]["hue"]),
         hundredths(sim["separation"]["fill"]),
@@ -447,6 +456,24 @@ def drift_phrases(out: dict[str, Any]) -> list[str]:
         f"{out['counts']['amendments']} A-rows",
     ]
     return phr
+
+
+def count_drift(out: dict[str, Any], text: str) -> list[str]:
+    """`--check`: every occurrence of a counted phrase ("N gated rows", ...) must carry the computed
+    N, so editing one copy of a repeated headline cannot pass on the strength of the others."""
+    m, c = out["matrix"], out["counts"]
+    fams = (
+        (m["gated"], "gated rows"),
+        (m["rows_total"], f"pairs {X} 3 themes"),
+        (c["states"], "tape states"),
+        (c["cmp_states"], "CMP-112 states"),
+        (c["amendments"], "A-rows"),
+    )
+    bad: list[str] = []
+    for want, suffix in fams:
+        found = re.findall(rf"\b(\d+) {re.escape(suffix)}", text)
+        bad += [f"{n} {suffix} (computed {want})" for n in found if int(n) != want]
+    return bad
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -641,14 +668,16 @@ def main(argv: list[str] | None = None) -> int:
     for fg, bg in REGISTERED:
         problems += [] if (fg, bg) in reg else [f"pairs.mjs no longer registers {fg} on {bg}"]
         say(f"- registered: `{fg}` on `{bg}`: {'yes' if (fg, bg) in reg else 'NO'}")
-    already = 0
+    already, own_open = 0, 0
     for fg, bg, thr, src in PROPOSED:
         state = "registered" if (fg, bg) in reg else "open"
         already += state == "registered"
+        own_open += state == "open" and src.startswith("D03")
         say(f"- PROPOSED ({thr}, {src}): `{fg}` on `{bg}`: {state}")
     out["pairs"] = {"registered_total": len(reg), "checked": len(REGISTERED)}
     out["pairs"].update({"proposed": len(PROPOSED), "proposed_already": already})
     out["pairs"]["proposed_own"] = sum(1 for p in PROPOSED if p[3].startswith("D03"))
+    out["pairs"]["proposed_own_open"] = own_open  # CR-3 adds the two composited aged rows
 
     say("\n## F. String gates and the counts the boards and the draft quote\n")
     constitution = (ROOT / "CONSTITUTION.md").read_text(encoding="utf-8")
@@ -682,6 +711,10 @@ def main(argv: list[str] | None = None) -> int:
         for d in drift:
             say(f"- {'DRIFT' if d in missing_drift else 'OK'}: {d}")
         problems += [f"drift: the spec lacks {d!r}" for d in missing_drift]
+        stale_counts = count_drift(out, spec_text)
+        for d in stale_counts:
+            say(f"- DRIFT (a counted phrase): {d}")
+        problems += [f"drift: the spec says {d}" for d in stale_counts]
         out["drift"] = {"phrases": len(drift), "missing": missing_drift}
     out["problems"] = problems
     if quiet:
