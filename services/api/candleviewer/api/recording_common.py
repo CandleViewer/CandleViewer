@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from collections.abc import Callable, Coroutine
 from typing import Any, Final
 from uuid import UUID
@@ -27,6 +28,7 @@ from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 CURSOR_TTL_S: Final = 3600
 Emitter = _Emitter  # the recorder routes' audit and session ports
 Resolver = _PrincipalResolver
+_SYMBOL: Final = re.compile(r"[A-Z0-9]{2,20}")  # what the server issues as a cursor key
 _PERMISSIONS: Final = {p.value: p for p in Permission}
 
 
@@ -94,12 +96,14 @@ def encode_cursor(scope: str, after: tuple[str, str], now: int) -> str:
 
 
 def decode_cursor(cursor: str, scope: str, now: int) -> tuple[str, str]:
-    """The key of a cursor issued for this query (`scope`) in the last hour, else 400."""
+    """The key of a cursor issued for this query (`scope`) in the last hour, else 400. The key
+    must look like a symbol, so no other text reaches the text bind of the page query."""
     try:
         data = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
         key, after = data["a"]
         fresh = type(data["iat"]) is int and 0 <= now - data["iat"] <= CURSOR_TTL_S
-        if (data["v"], data["q"]) == (1, scope) and fresh and isinstance(key, str):
+        symbol = isinstance(key, str) and _SYMBOL.fullmatch(key) is not None
+        if (data["v"], data["q"]) == (1, scope) and fresh and symbol:
             return key, str(UUID(after))
     except (AttributeError, KeyError, TypeError, ValueError):
         pass

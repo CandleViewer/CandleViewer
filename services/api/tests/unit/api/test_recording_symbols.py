@@ -13,6 +13,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+from candleviewer.api import recording_common as common
 from candleviewer.api.recording_symbols import make_recording_symbols_router
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.writer import AuditUnavailable
@@ -196,3 +197,17 @@ async def test_the_fake_keeps_an_active_row_when_it_is_unpinned() -> None:
     fake = _seeded()
     await fake.set_pin("BTCUSDT", False, Actor(kind="user", id="u-1"))
     assert fake.entries["BTCUSDT"].pinned is False and fake.entries["BTCUSDT"].state == "recording"
+
+
+@pytest.mark.parametrize("key", ["BTC\x00USDT", "\ud800", "btcusdt", "", "A", "X" * 21, "BTC-USDT"])
+def test_a_cursor_key_that_is_no_symbol_is_invalid(key: str) -> None:
+    cursor = common.encode_cursor("s", (key, str(uuid.uuid4())), 1_000)
+    with pytest.raises(common.Problem) as raised:
+        common.decode_cursor(cursor, "s", 1_000)
+    assert (raised.value.status, raised.value.code.value) == (400, "invalid_cursor")
+
+
+def test_a_cursor_key_that_is_a_symbol_round_trips() -> None:
+    uid = str(uuid.uuid4())
+    cursor = common.encode_cursor("s", ("BTCUSDT", uid), 1_000)
+    assert common.decode_cursor(cursor, "s", 1_000) == ("BTCUSDT", uid)
