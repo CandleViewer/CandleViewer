@@ -330,10 +330,14 @@ def tokens(theme: str = "semantic-dark") -> dict[str, str]:
     return {n: hexof(n) for n in NAMES}
 
 
-def streaks(cols: int) -> list[list[int]]:
+def streaks(cols: int, wall: int) -> list[list[int]]:
     """The hard case's background: per price row, persistent runs at stops 1-3 (0 = no liquidity),
-    base stop 3 / 2 / 1 by distance from the mid; one LCG step per run (one LCG, seeded 250)."""
+    base stop 3 / 2 / 1 by distance from the mid; one LCG step per run (one LCG, seeded 250). In
+    the wall's rows and the row above and below, a run covering the wall's column or one of its
+    neighbours is capped at stop 2, so a same-stop streak never masks the `bid.3` wall; the LCG
+    sequence and every run length are unchanged by the cap."""
     state, out = 250, []
+    guard = range(HARD_WALL_ROWS[0] - 1, HARD_WALL_ROWS[1] + 1)  # rows 139-143: the wall and ±1
     for r in range(PRICE_ROWS):
         d = abs(D(2 * r + 1) - PRICE_ROWS) / PRICE_ROWS  # the row's distance from the mid, 0..1
         base = 3 if d < MID_ZONES[0] else 2 if d < MID_ZONES[1] else 1
@@ -342,7 +346,10 @@ def streaks(cols: int) -> list[list[int]]:
             state = (state * 6364136223846793005 + 1442695040888963407) % 2**64
             v, kind = state >> 40, state >> 60  # v & 63: the run length; kind 0..15, shares 4/3/6/3
             stop = 0 if kind < 4 else min(3, max(1, base - (kind < 7) + (kind >= 13)))
-            line += [stop] * (RUN_MIN + (v & 63))
+            n = RUN_MIN + (v & 63)  # the run covers columns len(line) .. len(line) + n - 1
+            if r in guard and len(line) <= wall + 1 and len(line) + n >= wall:
+                stop = min(stop, 2)  # the cap: never the wall's own stop beside the wall
+            line += [stop] * n
         out.append(line[:cols])
     return out
 
@@ -382,7 +389,7 @@ def render(path: Path, edges: list[int], info: dict[str, object], hexes: dict[st
     gaps = [info["band_gap_columns"], info["ask_gap_columns"]]
     gap, agap = (x if isinstance(x, list) else [0, 0] for x in gaps)
     hard = info["variant"] == "hard"
-    runs, wall_rows = (streaks(cols) if hard else []), (HARD_WALL_ROWS if hard else WALL_ROWS)
+    runs, wall_rows = (streaks(cols, wall) if hard else []), (HARD_WALL_ROWS if hard else WALL_ROWS)
     state, cut, raw = 250, int(NOISE * 2**24), bytearray()  # a 64-bit LCG seeded 250: no library
     for r in range(PRICE_ROWS):
         line, below = bytearray(width), r >= PRICE_ROWS // 2  # bids below the mid line, asks above
