@@ -1071,7 +1071,7 @@ export interface paths {
     put?: never;
     /**
      * Compact Parquet cold-tier partitions
-     * @description Merges small files produced by the export job into target-sized partitions (21-database-schema.md section 5.4). Asynchronous; poll `GET /admin/jobs/{jobId}`.
+     * @description Merges small files produced by the export job into target-sized partitions (21-database-schema.md section 5.4). Asynchronous; poll `GET /admin/jobs/{jobId}`. One compaction at a time (`409 job_running`); a key reused with another body is `422 idempotency_key_reused`.
      */
     post: operations["compactRecorder"];
     delete?: never;
@@ -3173,6 +3173,8 @@ export interface paths {
      * @description The UI calls this before rendering a historical window so it can grey out ranges that
      *     were never recorded, rather than showing a misleading empty chart. Returns contiguous
      *     covered intervals per `stream_kind` with the storage tier that holds them.
+     *     A malformed `symbol` or an unknown `stream` is `400 validation_failed`, an unlisted symbol
+     *     `422 validation_failed`.
      */
     get: operations["getDataCoverage"];
     put?: never;
@@ -4205,7 +4207,17 @@ export interface paths {
     get: operations["listRetentionPolicies"];
     /**
      * Replace the retention policy set
-     * @description Policies are evaluated most-specific-first (per-symbol beats global). Pinned symbols are exempt unless a policy sets `applies_to_pinned: true`. Changes take effect at the next nightly retention sweep; `apply_now=true` triggers an immediate sweep.
+     * @description Replaces the whole set in one transaction. Policies are evaluated most-specific-first
+     *     (per-symbol beats global); pinned symbols are exempt. `retain_days` is, for
+     *     `archive_parquet`, the days a stream stays in the hot tier before the nightly roll-off moves
+     *     it to Parquet (its total horizon stays the stream default), and for `drop` the total horizon.
+     *     `downsample`, `pin` and `applies_to_pinned: true` are `422 retention_invalid_policy` until
+     *     the store holds their fields, as is a set where a stream derived from `trades` outlives it;
+     *     an unknown field is `422 validation_failed`. Always needs the `recorder` step-up
+     *     (`403 step_up_required`). Changes apply at the next nightly sweep; `apply_now=true` also
+     *     starts one `retention_sweep` job: `409 job_running` while one is queued or running, and
+     *     `409 conflict` while the retention scheduler is off (`CV_RETENTION_ENABLED`). A refused
+     *     request stores nothing.
      */
     put: operations["setRetentionPolicies"];
     post?: never;
@@ -4224,7 +4236,7 @@ export interface paths {
     };
     /**
      * List recording sessions (contiguous recording runs)
-     * @description A session opens when recording starts and closes on stop, crash or restart. Sessions are the unit that replay sessions are created from.
+     * @description A session opens when recording starts and closes on stop, crash or restart. Sessions are the unit that replay sessions are created from. A malformed, foreign or expired `cursor` is `400 invalid_cursor`.
      */
     get: operations["listRecordingSessions"];
     put?: never;
@@ -4304,6 +4316,7 @@ export interface paths {
      *     A row in the stop grace window is `lingering` (still recording until `linger_until`);
      *     `refusal` says why a stop is refused now. `role_restricted: true` marks a role-reduced
      *     list (R-I2): a symbol missing from it is unknown, never "not recording".
+     *     A malformed, foreign or expired `cursor` is `400 invalid_cursor`.
      */
     get: operations["listRecordedSymbols"];
     put?: never;
@@ -4314,6 +4327,10 @@ export interface paths {
      *     carries an estimated disk-rate warning (~0.5–0.75 GB/day/symbol compressed at depth 200).
      *     Adding a symbol already present is idempotent and returns `200` with the existing row; a
      *     symbol listed without `manual` (auto-recorded, or `lingering`) gains the `manual` reason.
+     *     An unlisted symbol is `422 validation_failed`, and past the symbol cap
+     *     (`RecordingStatus.policy.max_symbols`) an add is `422 recorder_symbol_limit`. `pinned: true`,
+     *     a non-default `retention_days` or a re-add that would change kept data's retention needs the
+     *     `recorder` step-up (`403 step_up_required`); a plain add needs none.
      */
     post: operations["addRecordedSymbol"];
     delete?: never;
@@ -4337,10 +4354,14 @@ export interface paths {
     post?: never;
     /**
      * Stop recording a symbol
-     * @description Stops subscriptions and closes the open recording session. Data is retained and remains
-     *     replayable unless `purge_data=true`, which schedules an irreversible delete across
-     *     QuestDB and Parquet (audited, owner-only). Removal is refused with `conflict` while an
-     *     auto-record trigger is still active (open chart or open position) unless `force=true`.
+     * @description Ends the `manual` reason at once. Within 5 s the row reads `lingering: true` with
+     *     `linger_until`; when that grace window (`RecordingStatus.policy.autostop_grace_s`, E16-D02
+     *     section 6.2) ends with no other reason left, recording stops and its session closes. Data is
+     *     kept, replayable, under retention policy. A pinned symbol keeps its row and pin, listed as
+     *     `stopped` with `pinned: true` until unpinned, which removes the row. Removal is refused with
+     *     `conflict` while an auto-record trigger is still active (open chart or open position) unless
+     *     `force=true`. `purge_data=true` is deprecated and refused with `422 validation_failed` (rule
+     *     `use_purge_route`): `purgeRecordedData` is the one path that deletes recorded data.
      */
     delete: operations["removeRecordedSymbol"];
     options?: never;
@@ -4350,7 +4371,8 @@ export interface paths {
      * @description `pinned: true` means "keep forever" and nulls `retention_days`. Un-pinning restores the
      *     global default (30 days) unless an explicit value is supplied. Narrowing `streams` stops
      *     those subscriptions but does **not** delete already-recorded data — use
-     *     `DELETE /recording/symbols/{id}?purge_data=true` for that.
+     *     `purgeRecordedData` for that. `pinned` or `retention_days` in the body needs the `recorder`
+     *     step-up (`403 step_up_required`); `streams` and `depth` alone need none.
      */
     patch: operations["updateRecordedSymbol"];
     trace?: never;
@@ -4367,7 +4389,9 @@ export interface paths {
     get?: never;
     /**
      * Pin (keep forever) or unpin a recorded symbol
-     * @description Convenience endpoint for the one-click pin toggle in the Recorder screen; equivalent to PATCH with `{pinned}`.
+     * @description Convenience endpoint for the one-click pin toggle in the Recorder screen; equivalent to
+     *     PATCH with `{pinned}`. Always needs the `recorder` step-up (`403 step_up_required`).
+     *     Unpinning a stopped symbol removes its row; its data then follows retention policy.
      */
     put: operations["pinRecordedSymbol"];
     post?: never;
@@ -12513,7 +12537,12 @@ export interface operations {
           };
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -12560,6 +12589,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
       /** @description An import job is already running. */
       409: {
@@ -16280,8 +16310,11 @@ export interface operations {
           "application/json": components["schemas"]["DataCoverage"];
         };
       };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -17840,6 +17873,8 @@ export interface operations {
         apply_now?: boolean;
       };
       header: {
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
@@ -17871,8 +17906,11 @@ export interface operations {
           };
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -17906,6 +17944,7 @@ export interface operations {
           };
         };
       };
+      400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
@@ -17930,6 +17969,7 @@ export interface operations {
           "application/json": components["schemas"]["RecordingStatus"];
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -17987,6 +18027,8 @@ export interface operations {
           };
         };
       };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -18033,8 +18075,11 @@ export interface operations {
           "application/json": components["schemas"]["RecordedSymbolWithEstimate"];
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -18058,6 +18103,7 @@ export interface operations {
           "application/json": components["schemas"]["RecordedSymbol"];
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
@@ -18067,9 +18113,12 @@ export interface operations {
     parameters: {
       query?: {
         force?: boolean;
+        /** @deprecated */
         purge_data?: boolean;
       };
       header: {
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
@@ -18086,16 +18135,19 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Stopped. */
+      /** @description Manual reason ended; recording stops after the grace window. */
       204: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
+      422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -18103,6 +18155,8 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
@@ -18132,9 +18186,12 @@ export interface operations {
           "application/json": components["schemas"]["RecordedSymbol"];
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -18142,6 +18199,8 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key (the exception under Idempotency in `info.description`). */
+        "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
@@ -18175,8 +18234,12 @@ export interface operations {
           "application/json": components["schemas"]["RecordedSymbol"];
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+      422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };

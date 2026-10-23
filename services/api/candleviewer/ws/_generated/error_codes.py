@@ -49,6 +49,7 @@ class ErrorCode(StrEnum):
     KEK_ROTATION_NOT_STAGED = "kek_rotation_not_staged"
     KEK_ROTATION_IN_PROGRESS = "kek_rotation_in_progress"
     STOP_REQUEST_IN_FLIGHT = "stop_request_in_flight"
+    JOB_RUNNING = "job_running"
     VERSION_CONFLICT = "version_conflict"
     PRECONDITION_REQUIRED = "precondition_required"
     PAYLOAD_TOO_LARGE = "payload_too_large"
@@ -59,6 +60,12 @@ class ErrorCode(StrEnum):
     NO_DATA_RECORDED = "no_data_recorded"
     BAR_WINDOW_TOO_LARGE = "bar_window_too_large"
     RESPONSE_TOO_LARGE = "response_too_large"
+    RECORDER_SYMBOL_LIMIT = "recorder_symbol_limit"
+    RETENTION_INVALID_POLICY = "retention_invalid_policy"
+    PURGE_CONFIRMATION_MISMATCH = "purge_confirmation_mismatch"
+    RETENTION_PINNED_REFUSED = "retention_pinned_refused"
+    IMPORT_RANGE_INVALID = "import_range_invalid"
+    IDEMPOTENCY_KEY_REUSED = "idempotency_key_reused"
     RATE_LIMITED = "rate_limited"
     EXCHANGE_RATE_LIMITED = "exchange_rate_limited"
     INTERNAL_ERROR = "internal_error"
@@ -148,6 +155,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.KEK_ROTATION_NOT_STAGED: ErrorMeta(("rest",), None, False, None, None, "No KEK rotation is staged as the request states (previous KEK not loaded, or another environment or version)"),
     ErrorCode.KEK_ROTATION_IN_PROGRESS: ErrorMeta(("rest",), None, True, None, None, "A KEK re-wrap run is already in progress for this environment"),
     ErrorCode.STOP_REQUEST_IN_FLIGHT: ErrorMeta(("rest",), None, True, None, None, "A stop request for this position is still in flight"),
+    ErrorCode.JOB_RUNNING: ErrorMeta(("rest",), None, True, None, None, "A job of this kind is already queued or running; one runs at a time"),
     ErrorCode.VERSION_CONFLICT: ErrorMeta(("rest",), None, False, None, None, "If-Match / ETag precondition failed"),
     ErrorCode.PRECONDITION_REQUIRED: ErrorMeta(("rest",), None, False, None, None, "The request must carry If-Match with the current ETag"),
     ErrorCode.PAYLOAD_TOO_LARGE: ErrorMeta(("rest",), None, False, None, None, "Request body or batch exceeds the operation's size ceiling"),
@@ -158,6 +166,12 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.NO_DATA_RECORDED: ErrorMeta(("rest", "ws",), "any", False, None, None, "Requested window predates the start of recording for this symbol"),
     ErrorCode.BAR_WINDOW_TOO_LARGE: ErrorMeta(("rest",), None, False, None, None, "Bar window exceeds the hard cap (400 d time / 31 d or 250 000 bars non-time)"),
     ErrorCode.RESPONSE_TOO_LARGE: ErrorMeta(("rest",), None, False, None, None, "Bar page would exceed the response size ceiling; request a smaller `limit`"),
+    ErrorCode.RECORDER_SYMBOL_LIMIT: ErrorMeta(("rest",), None, False, None, None, "Recording one more symbol would exceed the recorder's symbol cap"),
+    ErrorCode.RETENTION_INVALID_POLICY: ErrorMeta(("rest",), None, False, None, None, "The retention policy set failed validation or uses a value the store cannot hold yet"),
+    ErrorCode.PURGE_CONFIRMATION_MISMATCH: ErrorMeta(("rest",), None, False, None, None, "The typed confirm_symbol does not equal the symbol to purge"),
+    ErrorCode.RETENTION_PINNED_REFUSED: ErrorMeta(("rest",), None, False, None, None, "The symbol is pinned and the purge did not set include_pinned"),
+    ErrorCode.IMPORT_RANGE_INVALID: ErrorMeta(("rest",), None, False, None, None, "Import date range is inverted or spans more than 366 days"),
+    ErrorCode.IDEMPOTENCY_KEY_REUSED: ErrorMeta(("rest",), None, False, None, None, "Idempotency-Key reused with a different body (the code the recorder job routes ship)"),
     ErrorCode.RATE_LIMITED: ErrorMeta(("rest",), None, True, None, None, "Per-user API rate limit exceeded"),
     ErrorCode.EXCHANGE_RATE_LIMITED: ErrorMeta(("rest",), None, True, None, None, "Bybit per-UID rate budget exhausted (10006/10018) \u2014 request shed locally"),
     ErrorCode.INTERNAL_ERROR: ErrorMeta(("rest", "ws",), "any", True, None, None, "Unhandled server error (correlation id in `instance`)"),

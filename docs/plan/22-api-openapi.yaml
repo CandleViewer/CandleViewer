@@ -637,6 +637,10 @@ x-error-codes:
     status: 409
     title: A stop request for this position is still in flight
     retryable: true
+  - code: job_running
+    status: 409
+    title: A job of this kind is already queued or running; one runs at a time
+    retryable: true
   - code: version_conflict
     status: 412
     title: If-Match / ETag precondition failed
@@ -677,6 +681,30 @@ x-error-codes:
   - code: response_too_large
     status: 422
     title: Bar page would exceed the response size ceiling; request a smaller `limit`
+    retryable: false
+  - code: recorder_symbol_limit
+    status: 422
+    title: Recording one more symbol would exceed the recorder's symbol cap
+    retryable: false
+  - code: retention_invalid_policy
+    status: 422
+    title: The retention policy set failed validation or uses a value the store cannot hold yet
+    retryable: false
+  - code: purge_confirmation_mismatch
+    status: 422
+    title: The typed confirm_symbol does not equal the symbol to purge
+    retryable: false
+  - code: retention_pinned_refused
+    status: 422
+    title: The symbol is pinned and the purge did not set include_pinned
+    retryable: false
+  - code: import_range_invalid
+    status: 422
+    title: Import date range is inverted or spans more than 366 days
+    retryable: false
+  - code: idempotency_key_reused
+    status: 422
+    title: Idempotency-Key reused with a different body (the code the recorder job routes ship)
     retryable: false
   # --- 429 / 5xx ---------------------------------------------------------
   - code: rate_limited
@@ -4536,6 +4564,8 @@ paths:
         The UI calls this before rendering a historical window so it can grey out ranges that
         were never recorded, rather than showing a misleading empty chart. Returns contiguous
         covered intervals per `stream_kind` with the storage tier that holds them.
+        A malformed `symbol` or an unknown `stream` is `400 validation_failed`, an unlisted symbol
+        `422 validation_failed`.
       parameters:
         - $ref: "#/components/parameters/SymbolQuery"
         - name: stream
@@ -4590,8 +4620,11 @@ paths:
                           ]
                         gaps: []
                     generated_at: "2026-09-14T10:31:02.800Z"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
   # ===========================================================================
   # RECORDING
@@ -4609,6 +4642,7 @@ paths:
         A row in the stop grace window is `lingering` (still recording until `linger_until`);
         `refusal` says why a stop is refused now. `role_restricted: true` marks a role-reduced
         list (R-I2): a symbol missing from it is unknown, never "not recording".
+        A malformed, foreign or expired `cursor` is `400 invalid_cursor`.
       parameters:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
@@ -4667,6 +4701,8 @@ paths:
                         lag_ms: 31
                         added_by: null
                     meta: { next_cursor: null, has_more: false, count: 2 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
@@ -4679,6 +4715,10 @@ paths:
         carries an estimated disk-rate warning (~0.5–0.75 GB/day/symbol compressed at depth 200).
         Adding a symbol already present is idempotent and returns `200` with the existing row; a
         symbol listed without `manual` (auto-recorded, or `lingering`) gains the `manual` reason.
+        An unlisted symbol is `422 validation_failed`, and past the symbol cap
+        (`RecordingStatus.policy.max_symbols`) an add is `422 recorder_symbol_limit`. `pinned: true`,
+        a non-default `retention_days` or a re-add that would change kept data's retention needs the
+        `recorder` step-up (`403 step_up_required`); a plain add needs none.
       x-rbac: { permissions: [recording:write], scope: none }
       x-idempotency: recommended
       parameters:
@@ -4712,8 +4752,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RecordedSymbol" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /recording/symbols/{recordedSymbolId}:
@@ -4729,6 +4772,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RecordedSymbol" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -4740,10 +4784,13 @@ paths:
         `pinned: true` means "keep forever" and nulls `retention_days`. Un-pinning restores the
         global default (30 days) unless an explicit value is supplied. Narrowing `streams` stops
         those subscriptions but does **not** delete already-recorded data — use
-        `DELETE /recording/symbols/{id}?purge_data=true` for that.
+        `purgeRecordedData` for that. `pinned` or `retention_days` in the body needs the `recorder`
+        step-up (`403 step_up_required`); `streams` and `depth` alone need none.
       x-rbac: { permissions: [recording:write], scope: none }
       x-idempotency: optional
-      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -4757,34 +4804,46 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RecordedSymbol" }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [recording]
       operationId: removeRecordedSymbol
       summary: Stop recording a symbol
       description: |
-        Stops subscriptions and closes the open recording session. Data is retained and remains
-        replayable unless `purge_data=true`, which schedules an irreversible delete across
-        QuestDB and Parquet (audited, owner-only). Removal is refused with `conflict` while an
-        auto-record trigger is still active (open chart or open position) unless `force=true`.
+        Ends the `manual` reason at once. Within 5 s the row reads `lingering: true` with
+        `linger_until`; when that grace window (`RecordingStatus.policy.autostop_grace_s`, E16-D02
+        section 6.2) ends with no other reason left, recording stops and its session closes. Data is
+        kept, replayable, under retention policy. A pinned symbol keeps its row and pin, listed as
+        `stopped` with `pinned: true` until unpinned, which removes the row. Removal is refused with
+        `conflict` while an auto-record trigger is still active (open chart or open position) unless
+        `force=true`. `purge_data=true` is deprecated and refused with `422 validation_failed` (rule
+        `use_purge_route`): `purgeRecordedData` is the one path that deletes recorded data.
       x-rbac: { permissions: [recording:write], scope: none }
       x-idempotency: optional
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
         - name: purge_data
           in: query
+          deprecated: true
           schema: { type: boolean, default: false }
         - name: force
           in: query
           schema: { type: boolean, default: false }
       responses:
-        "204": { description: "Stopped." }
+        "204": { description: "Manual reason ended; recording stops after the grace window." }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /recording/symbols/{recordedSymbolId}/pin:
@@ -4793,10 +4852,15 @@ paths:
       tags: [recording]
       operationId: pinRecordedSymbol
       summary: Pin (keep forever) or unpin a recorded symbol
-      description: "Convenience endpoint for the one-click pin toggle in the Recorder screen; equivalent to PATCH with `{pinned}`."
+      description: |
+        Convenience endpoint for the one-click pin toggle in the Recorder screen; equivalent to
+        PATCH with `{pinned}`. Always needs the `recorder` step-up (`403 step_up_required`).
+        Unpinning a stopped symbol removes its row; its data then follows retention policy.
       x-rbac: { permissions: [recording:write], scope: none }
       x-idempotency: optional
-      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -4818,8 +4882,12 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RecordedSymbol" }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /recording/status:
@@ -4887,6 +4955,7 @@ paths:
                       autostop_pct: 90
                       halt_pct: 95
                       autorecord_enabled: true
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -4999,11 +5068,23 @@ paths:
       tags: [recording]
       operationId: setRetentionPolicies
       summary: Replace the retention policy set
-      description: "Policies are evaluated most-specific-first (per-symbol beats global). Pinned symbols are exempt unless a policy sets `applies_to_pinned: true`. Changes take effect at the next nightly retention sweep; `apply_now=true` triggers an immediate sweep."
+      description: |
+        Replaces the whole set in one transaction. Policies are evaluated most-specific-first
+        (per-symbol beats global); pinned symbols are exempt. `retain_days` is, for
+        `archive_parquet`, the days a stream stays in the hot tier before the nightly roll-off moves
+        it to Parquet (its total horizon stays the stream default), and for `drop` the total horizon.
+        `downsample`, `pin` and `applies_to_pinned: true` are `422 retention_invalid_policy` until
+        the store holds their fields, as is a set where a stream derived from `trades` outlives it;
+        an unknown field is `422 validation_failed`. Always needs the `recorder` step-up
+        (`403 step_up_required`). Changes apply at the next nightly sweep; `apply_now=true` also
+        starts one `retention_sweep` job: `409 job_running` while one is queued or running, and
+        `409 conflict` while the retention scheduler is off (`CV_RETENTION_ENABLED`). A refused
+        request stores nothing.
       x-rbac: { permissions: [recording:write], scope: none }
       x-idempotency: optional
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
         - name: apply_now
           in: query
           schema: { type: boolean, default: false }
@@ -5026,8 +5107,11 @@ paths:
                 type: object
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/RetentionPolicy" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /recording/sessions:
@@ -5035,7 +5119,7 @@ paths:
       tags: [recording]
       operationId: listRecordingSessions
       summary: List recording sessions (contiguous recording runs)
-      description: A session opens when recording starts and closes on stop, crash or restart. Sessions are the unit that replay sessions are created from.
+      description: A session opens when recording starts and closes on stop, crash or restart. Sessions are the unit that replay sessions are created from. A malformed, foreign or expired `cursor` is `400 invalid_cursor`.
       parameters:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
@@ -5073,6 +5157,7 @@ paths:
                           gap_count: 3,
                         }
                     meta: { next_cursor: null, has_more: false, count: 1 }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -13734,6 +13819,8 @@ paths:
       description: >
         Merges small files produced by the export job into target-sized partitions
         (21-database-schema.md section 5.4). Asynchronous; poll `GET /admin/jobs/{jobId}`.
+        One compaction at a time (`409 job_running`); a key reused with another body is
+        `422 idempotency_key_reused`.
       x-rbac: { permissions: [recording:write], scope: none }
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
@@ -13757,7 +13844,12 @@ paths:
                 type: object
                 properties:
                   job_id: { type: string, format: uuid }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/recorder/import:
@@ -13800,6 +13892,7 @@ paths:
                 properties:
                   job_id: { type: string, format: uuid }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409":
           description: An import job is already running.
