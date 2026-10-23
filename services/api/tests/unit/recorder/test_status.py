@@ -12,8 +12,11 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
+
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.recorder import control as rc
+from candleviewer.recorder import status as status_module
 from candleviewer.recorder.budget import BudgetConfig, DiskBudget
 from candleviewer.recorder.metrics import recorder_status_cache_age_seconds
 from candleviewer.recorder.policy import PolicyConfig
@@ -41,13 +44,41 @@ class _Clock:
 class _Counting(FakeRecorder):
     def __init__(self) -> None:
         super().__init__()
-        self.calls, self.fail = 0, False
+        self.calls, self.fail, self.hang = 0, False, False
 
     async def status(self) -> rc.ControlStatus:
         self.calls += 1
+        if self.hang:
+            await asyncio.Event().wait()  # never returns
         if self.fail:
             raise RuntimeError("runtime down")
         return await super().status()
+
+
+class _Ticker:
+    """The injected sleep: advances `clock`; after `passes` sleeps, sets `done` and waits."""
+
+    def __init__(self, clock: _Clock, passes: int) -> None:
+        self.clock, self.passes, self.slept, self.done = clock, passes, 0, asyncio.Event()
+
+    async def __call__(self, seconds: float) -> None:
+        self.slept, self.clock.t = self.slept + 1, self.clock.t + seconds
+        if self.slept == self.passes:
+            self.done.set()
+            await asyncio.Event().wait()  # until `stop` cancels it
+
+    async def run(self, cache: RecordingStatusCache) -> None:
+        """Start `cache`, then stop it once `done`: bounded, so a task that ends early fails."""
+        cache.start()
+        try:
+            async with asyncio.timeout(5):
+                await self.done.wait()
+        finally:
+            await cache.stop()
+
+
+def _gauge() -> float:
+    return float(recorder_status_cache_age_seconds.collect()[0].samples[0].value)
 
 
 def _budget(**kw: Any) -> DiskBudget:
@@ -136,29 +167,27 @@ async def test_one_computation_a_second_whatever_the_number_of_readers() -> None
 
 
 async def test_a_failed_computation_keeps_the_last_snapshot_and_its_age_grows() -> None:
-    clock, slept, fake, done = _Clock(), [], _Counting(), asyncio.Event()
-
-    async def sleep(seconds: float) -> None:
-        slept.append(seconds)
-        clock.t += seconds
-        if len(slept) == 2:
-            done.set()
-            await asyncio.Event().wait()
-
-    def age() -> float:
-        return float(recorder_status_cache_age_seconds.collect()[0].samples[0].value)
-
-    cache = _cache(fake, _budget(), clock=clock, sleep=sleep)
-    assert age() == math.inf  # never computed
+    clock, fake = _Clock(), _Counting()
+    cache = _cache(fake, _budget(), clock=clock, sleep=(ticker := _Ticker(clock, 2)))
+    assert cache.age() == math.inf  # never computed
     await cache.refresh_once()
     first = cache.snapshot()
     clock.t += 2.5
-    assert age() == 2.5
+    assert cache.age() == 2.5
     fake.fail = True  # every later status read fails
-    cache.start()
-    await done.wait()
-    await cache.stop()
-    assert cache.snapshot() is first and fake.calls == 3 and age() == 4.5
+    await ticker.run(cache)
+    _cache(None)  # another app's cache, built, never started: the gauge stays on the started one
+    assert cache.snapshot() is first and fake.calls == 3 and _gauge() == 4.5
+
+
+async def test_a_hung_status_read_keeps_the_last_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(status_module, "STATUS_TIMEOUT_S", 0.01)  # the loop's timer, kept short
+    clock, fake = _Clock(), _Counting()
+    cache = _cache(fake, _budget(), clock=clock, sleep=(ticker := _Ticker(clock, 2)))
+    await cache.refresh_once()
+    body, fake.hang = cache.body(restricted=False), True
+    await ticker.run(cache)  # both passes time out on the status read
+    assert (cache.body(False) is body, fake.calls, cache.age(), _gauge()) == (True, 3, 2, 2)
 
 
 def test_the_policy_is_integers_within_their_bounds() -> None:
