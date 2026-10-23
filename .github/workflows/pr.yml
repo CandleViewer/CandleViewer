@@ -199,6 +199,7 @@ jobs:
               - '.github/workflows/_job-coverage.yml'
             engine:
               - 'packages/chart-engine/**'
+              - 'packages/rule-graph/**'
               # The engine-bench job, its Node version, install script and allow-list (#3182).
               - '.github/workflows/_job-engine-bench.yml'
               - '.nvmrc'
