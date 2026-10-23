@@ -15,7 +15,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Motion pair** — Table 4: open / close and the countdown's last five seconds are E30-D04's recipes with instant twins; the value-change highlight is an instant token swap
 - [x] **Density notes** — Density table: 560 / 640 px, rows 24 / 32 px, smallest target 24 × 24 px (the close `×`)
 - [x] **Essential-exceptions log** — `none`
-- [x] **Tokens used** — spec §2 / §13: `color.surface.overlay`, `elevation.dialog`, `elevation.scrim`, `space.dialog.padding`, `space.row.height.{compact,comfortable}`, `color.text.{primary,secondary,tertiary,inverse}`, `color.buy.default` / `color.sell.default`, `color.env.{live,demo}`, `color.focus.ring`, `radius.badge`, `type.ui.{heading-sm,body-strong}`, `type.num.{md,base}`; none invented (CMP-043's `elevation.4` → `elevation.dialog`, A13); Penpot token sets = `packages/ui/tokens` at `99da22f17c100bd626d45db3792de6d468f0d8c3`
+- [x] **Tokens used** — spec §2 / §13: `color.surface.overlay`, `elevation.dialog`, `elevation.scrim`, `space.dialog.padding`, `space.row.height.{compact,comfortable}`, `color.text.{primary,secondary,tertiary,inverse}`, `color.buy.default` / `color.sell.default`, `color.env.{live,demo}`, `color.focus.ring`, `radius.badge`, `type.ui.{heading-sm,body-strong}`, `type.num.{md,base}`; none invented (CMP-043's `elevation.4` → `elevation.dialog`, A13); Penpot token sets = `packages/ui/tokens` at `6d2ff52f3360b764d2aafeb619688258fa1f89b6`
 - [x] **Data contract confirmed** — `POST /trade-groups/preview` (`TradeGroupPreview.legs[].resolved`, `estimated_margin_usd`, `estimated_risk_usd`, `totals`; re-run for Replay and for "Send 2 of 4 legs now — BUY BTCUSDT limit 64,010.0…", the held leg `overrides.skip: true`), `POST /orders`, `POST /trade-groups` (`atomicity`, `compensate`), `POST /settings/arm` (the `X-Arm-Token`), `GET /risk/summary`; gaps named: the auto-cancel seconds key (G6), the cancelled-reason payload (G7)
 - [ ] N/A — **Contrast and CVD**: PENDING on the exports; the tool's numbers (34 pairs × 3 themes, FAIL 0; 15 CVD rows) and the 18 PROPOSED `pairs.mjs` rows are spec §13
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
@@ -34,7 +34,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Motion pair** — Table 4: the disclosure open / close is E30-D04's recipe with an instant twin; row state flips are token swaps
 - [x] **Density notes** — rows 24 / 32 px; smallest target 24 × 24 px (the include / exclude control)
 - [x] **Essential-exceptions log** — `none`
-- [x] **Tokens used** — spec §8 / §13: `color.surface.{overlay,raised,selected,hover}`, `color.text.{primary,secondary,tertiary}`, `color.env.{live,demo}`, `color.status.danger.strong`, `color.focus.ring`, `space.row.height.*` (CMP-105's `space.list.row` does not exist, A11); Penpot token sets = `packages/ui/tokens` at `99da22f17c100bd626d45db3792de6d468f0d8c3`
+- [x] **Tokens used** — spec §8 / §13: `color.surface.{overlay,raised,selected,hover}`, `color.text.{primary,secondary,tertiary}`, `color.env.{live,demo}`, `color.status.danger.strong`, `color.focus.ring`, `space.row.height.*` (CMP-105's `space.list.row` does not exist, A11); Penpot token sets = `packages/ui/tokens` at `6d2ff52f3360b764d2aafeb619688258fa1f89b6`
 - [x] **Data contract confirmed** — `GET /trade-group-definitions` (listed only when every member is granted, SR-E28-21; `members[].enabled`), `POST /trade-groups/preview` (`legs[].would_submit`, `rejection.code` ∈ the eight, `rejection.message`), `TradeGroupLegInput.overrides.skip`; gaps named: readiness (G3), served / unserved (G4), the skipped read-only leg vs the scope check (G5)
 - [ ] N/A — **Contrast and CVD**: PENDING on the exports; spec §13
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
@@ -53,7 +53,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Motion pair** — Table 4: none animated
 - [x] **Density notes** — rows 24 / 32 px; no interactive target inside the dialog
 - [x] **Essential-exceptions log** — `none`
-- [x] **Tokens used** — `color.status.warning.subtle` / `.strong` for the binding row (CMP-232's `color.status.warn` does not exist — D02 A-10), `color.text.{primary,secondary}` on `color.surface.overlay`; Penpot token sets = `packages/ui/tokens` at `99da22f17c100bd626d45db3792de6d468f0d8c3`
+- [x] **Tokens used** — `color.status.warning.subtle` / `.strong` for the binding row (CMP-232's `color.status.warn` does not exist — D02 A-10), `color.text.{primary,secondary}` on `color.surface.overlay`; Penpot token sets = `packages/ui/tokens` at `6d2ff52f3360b764d2aafeb619688258fa1f89b6`
 - [x] **Data contract confirmed** — the account profile (`24` §9.2 caps), `GET /risk/summary` (`cap_utilisation_pct`, `lockout`), `GET /instruments/{symbol}`; the limits of spec §1.4 (max position 17,500 USDT, daily 120 of 500 USDT, lev ≤ 10x, min 0.001 BTC)
 - [ ] N/A — **Contrast and CVD**: PENDING on the exports; spec §13
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
@@ -137,7 +137,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] Contrast matrix for every pair introduced (34 × 3, FAIL 0; 18 PROPOSED `pairs.mjs` rows routed).
 - [x] CVD simulation reviewed for every new colour-carrying state (15 rows; the collapses carried by word / glyph / shape).
 - [ ] N/A — every State has a Penpot variant and a Storybook story: the frames are planned (Table 1), the stories are E30-S04 / S06 / S07 / T02's.
-- [x] Disabled states use disabled-with-reason (CMP-079 / CMP-019 `lock` / E09-D09 §2.2 T2: the raised fill with the hairline, the lock leading the full label, no opacity), never a bare disabled control; the one form-validity disable (Save while a default is above its ceiling, E09-D09 §9.1) names its reason in its label.
+- [x] Disabled states use disabled-with-reason (CMP-079 / CMP-019 `lock` / E09-D09 §2.2 T2: the raised fill with the hairline, the lock leading the full label, no opacity), never a bare disabled control; the form-validity disable (Save while a default is above its ceiling or a preset is below the minimum, E09-D09 §9.1) takes E30-D02 D3's look (:128: "disabled = `opacity.disabled` on the control with the reason as full-opacity text under it, never inside it"): the label "Save" at `opacity.disabled`, "Fix 1 problem to save." as full-opacity `color.text.secondary` text under it, never inside the label; `aria-disabled`, focusable, no lock, no CMP-079, no key.
 - [x] Loading / empty / error states designed (the record loading, the two empty states, the nine rejection frames).
 - [x] Keyboard table completed (Table 2; spec §11).
 - [x] Accessible-name / role table completed (Table 3).
