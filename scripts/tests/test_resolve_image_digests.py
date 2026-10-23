@@ -348,3 +348,21 @@ def test_with_retry_does_not_retry_client_errors() -> None:
     with pytest.raises(urllib.error.HTTPError):
         with_retry(fn, sleep=lambda _s: None)  # type: ignore[arg-type]
     assert len(calls) == 1
+
+
+def test_public_ecr_gets_an_anonymous_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#4301: the Public ECR mirror serves manifests only with its anonymous token."""
+    import io
+    import urllib.request
+
+    from tools.ci.resolve_image_digests import HttpRegistry
+
+    urls: list[str] = []
+
+    def fake_urlopen(url: str, timeout: float) -> io.BytesIO:
+        urls.append(url)
+        return io.BytesIO(b'{"token": "t"}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert HttpRegistry()._token("public.ecr.aws", "docker/library/postgres") == "t"
+    assert urls == ["https://public.ecr.aws/token/"]

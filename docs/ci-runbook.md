@@ -44,7 +44,7 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 │                                      matrices sharded, #3881), coverage combined over all of them
 ├─ architecture   (py filter)        → mirrors the py lane's result, beside coverage-thresholds
 ├─ _job-contract.yml (protocol filter) → OpenAPI/WS conformance         (CI-CON-001)
-├─ _job-integration.yml (py filter)  → fixture-driven + DB integration  (CI-INT-001/002); its
+├─ _job-integration.yml (py filter)  → fixture-driven + DB integration  (CI-INT-001/002, CI-INFRA-001); its
 │                                      `integration` job runs on the merge group and a merge
 │                                      train only, never on a PR's own run (#3881, see §3)
 ├─ _job-e2e.yml   (e2e filter)       → Playwright web (4 shards), e2e-staging (@demo-rest-only),
@@ -459,6 +459,22 @@ index alone, removing nothing.
   regenerating its checksum, or it was silently corrupted. Recompute and
   commit the checksum only if the edit was deliberate and reviewed; otherwise
   restore the original fixture.
+
+### CI-INFRA-* — image pre-pull (`tools/ci/prepull_images.sh`, `infra/images/prepull.txt`)
+
+- **CI-INFRA-001** (image pre-pull failed): the step before the tests could not pull an image
+  after its retries (5 attempts on the pinned source, then 3 on the mirror when the image has one),
+  or a pin was wrong. The message names the image and the cause. Docker Hub and the Public ECR
+  mirror both failing is an outage on the runner's side: re-run the group or job, and never
+  change a timeout or budget for it. If the message says the mirror's digest differs, or a ref has
+  no digest, the pins in `infra/images/prepull.txt` and `infra/images/PINS.md` disagree: fix them
+  in one PR. QuestDB and Grafana have no mirror, so only a re-run helps there. A green run's
+  step summary lists which registry served each image and its digest. A `429` or `Rate exceeded` from
+  the mirror is a re-run case too. Each pull is bounded to 120 s
+  (`PREPULL_PULL_TIMEOUT`; `py-perf` sets 45 s to fit its job timeout). For the compose Postgres
+  the mirror holds only where the daemon records a digest on `docker tag` (the containerd image
+  store); on a daemon that does not, the step fails with the code, naming the compose reference
+  that does not resolve, and a re-run is the answer.
 
 ### CI-E2E-* / CI-A11Y-* — Playwright + accessibility
 

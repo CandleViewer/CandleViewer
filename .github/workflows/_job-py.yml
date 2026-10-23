@@ -36,6 +36,8 @@ permissions:
   contents: read
 
 env:
+  # #4301: no reaper image is pulled mid-job; hosted runners are discarded after the job.
+  TESTCONTAINERS_RYUK_DISABLED: "true"
   PYTHONIOENCODING: utf-8
   # SR-140: CI never holds production Bybit credentials. Loopback is always
   # allowed by the guard; this var stays empty until a ticket adds
@@ -183,6 +185,14 @@ jobs:
       - name: uv sync --frozen
         run: uv sync --frozen --all-groups
 
+      # #4301: the tests construct PostgresContainer("postgres:16-alpine"), and testcontainers pulls it
+      # when the daemon lacks it, a cold pull mid-test. Pull it here, with retries and a pinned mirror.
+      - name: Pre-pull postgres:16-alpine (CI-INFRA-001)
+        # Only the lanes that collect a Postgres module (scripts/tests/test_prepull_images.py pins this).
+        if: ${{ startsWith(matrix.lane, 'db-chaos') || matrix.lane == 'contract-security-3' }}
+        working-directory: ${{ github.workspace }}
+        run: tools/ci/prepull_images.sh postgres
+
       - name: pytest (unit + non-exchange_smoke, network-guarded)
         env:
           HYPOTHESIS_PROFILE: ci
@@ -310,6 +320,15 @@ jobs:
 
       - name: uv sync --frozen
         run: uv sync --frozen --all-groups
+
+      # #4301: the tests construct PostgresContainer("postgres:16-alpine"), and testcontainers pulls it
+      # when the daemon lacks it, a cold pull mid-test. Pull it here, with retries and a pinned mirror.
+      - name: Pre-pull postgres:16-alpine (CI-INFRA-001)
+        working-directory: ${{ github.workspace }}
+        env:
+          # 8 pulls x 45 s + 220 s of waits = 580 s, inside this job's 10-minute timeout.
+          PREPULL_PULL_TIMEOUT: "45"
+        run: tools/ci/prepull_images.sh postgres
 
       - name: pytest perf budgets (C-13.9, no coverage tracing, isolated)
         run: uv run pytest -m "perf and not flaky" --no-cov -p no:cacheprovider -p no:randomly --durations=0
