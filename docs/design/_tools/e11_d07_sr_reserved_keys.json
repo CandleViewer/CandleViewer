@@ -1,0 +1,2095 @@
+{
+  "about": "Screen-reader reserved keys for NVDA, JAWS and VoiceOver, taken from public vendor documentation and pinned by hpe-worker-1 for the key-map conflict check of E11-D07 (#330); the review's tool reads it.",
+  "retrieved": "2026-10-22",
+  "sources": [
+    {
+      "id": "nvda",
+      "title": "NVDA 2026.2 Commands Quick Reference (NV Access)",
+      "url": "https://download.nvaccess.org/documentation/keyCommands.html",
+      "version": "2026.2",
+      "fetched": true,
+      "sections": [
+        "Basic NVDA commands",
+        "Navigating with the System Caret",
+        "Reviewing Text",
+        "Navigating with the Mouse",
+        "Browse Mode",
+        "Single Letter Navigation",
+        "The Elements List",
+        "Embedded Objects"
+      ]
+    },
+    {
+      "id": "nvda",
+      "title": "NVDA 2026.2 User Guide (NV Access)",
+      "url": "https://download.nvaccess.org/documentation/userGuide.html",
+      "version": "2026.2",
+      "fetched": true,
+      "sections": ["The NVDA Modifier Key", "Browse Mode"]
+    },
+    {
+      "id": "jaws",
+      "title": "JAWS Keystrokes reference (Freedom Scientific PDF, file dated 2022-01-21; the HTML keystroke and hotkey pages answered HTTP 403 to the fetch tool)",
+      "url": "https://support.freedomscientific.com/Content/Documents/Manuals/JAWS/Keystrokes.pdf",
+      "version": "not stated",
+      "fetched": true,
+      "sections": [
+        "Web Browsing Keystrokes: General",
+        "Navigation Quick Keys",
+        "Forms",
+        "Tables",
+        "PlaceMarkers",
+        "Elements",
+        "For Reading Text",
+        "Informational",
+        "For Cursors and Mouse",
+        "For Help",
+        "Miscellaneous",
+        "For Frames",
+        "For JAWS Tandem"
+      ]
+    },
+    {
+      "id": "jaws",
+      "title": "Collaboration and Productivity: Microsoft Teams and JAWS (Freedom Scientific training resource PDF, file dated 2023-03-20)",
+      "url": "https://support.freedomscientific.com/training/resources/Collaboration-and-Productivity-Microsoft-Teams-and-JAWS.pdf",
+      "version": "not stated",
+      "fetched": true,
+      "sections": ["Navigate the Teams Interface with JAWS"]
+    },
+    {
+      "id": "voiceover",
+      "title": "VoiceOver User Guide for Mac: Control your Mac using keyboard commands",
+      "url": "https://support.apple.com/guide/voiceover/control-your-mac-with-keyboard-commands-vo2681/10/mac/27",
+      "version": "macOS 27 (per the /mac/27 URL path and the guide's version picker)",
+      "fetched": true,
+      "sections": ["Enter VoiceOver commands"]
+    },
+    {
+      "id": "voiceover",
+      "title": "VoiceOver User Guide for Mac: General commands",
+      "url": "https://support.apple.com/guide/voiceover/general-commands-cpvokys01/10/mac/27",
+      "version": "macOS 27 (per the /mac/27 URL path and the guide's version picker)",
+      "fetched": true,
+      "sections": ["General commands"]
+    },
+    {
+      "id": "voiceover",
+      "title": "VoiceOver User Guide for Mac: Interaction commands",
+      "url": "https://support.apple.com/guide/voiceover/interaction-commands-cpvokys07/10/mac/27",
+      "version": "macOS 27 (per the /mac/27 URL path and the guide's version picker)",
+      "fetched": true,
+      "sections": ["Interaction commands"]
+    },
+    {
+      "id": "voiceover",
+      "title": "VoiceOver User Guide for Mac: Navigation commands",
+      "url": "https://support.apple.com/guide/voiceover/navigation-commands-cpvokys04/10/mac/27",
+      "version": "macOS 27 (per the /mac/27 URL path and the guide's version picker)",
+      "fetched": true,
+      "sections": ["Navigation commands"]
+    },
+    {
+      "id": "voiceover",
+      "title": "VoiceOver User Guide for Mac: Text commands",
+      "url": "https://support.apple.com/guide/voiceover/text-commands-cpvokys06/10/mac/27",
+      "version": "macOS 27 (per the /mac/27 URL path and the guide's version picker)",
+      "fetched": true,
+      "sections": ["Text commands"]
+    },
+    {
+      "id": "voiceover",
+      "title": "VoiceOver User Guide for Mac: Use VoiceOver Quick Nav in apps and webpages",
+      "url": "https://support.apple.com/guide/voiceover/quick-nav-vo27943/10/mac/27",
+      "version": "macOS 27 (per the /mac/27 URL path and the guide's version picker)",
+      "fetched": true,
+      "sections": [
+        "Turn Quick Nav on or off",
+        "Navigate using arrow keys",
+        "Navigate using single keys",
+        "Navigate apps and webpages using the Quick Nav rotor"
+      ]
+    },
+    {
+      "id": "voiceover",
+      "title": "VoiceOver User Guide for Mac: Use VoiceOver to navigate webpage tables",
+      "url": "https://support.apple.com/guide/voiceover/webpage-tables-vo27958/10/mac/27",
+      "version": "macOS 27 (per the /mac/27 URL path and the guide's version picker)",
+      "fetched": true,
+      "sections": ["Turn grouping on or off for the current table", "Navigate tables when grouped"]
+    }
+  ],
+  "classes": [
+    {
+      "sr": "nvda",
+      "class": "sr-modifier",
+      "rule": "The NVDA key is insert or numpadInsert by default (capsLock can be added), and every NVDA+<key> command normalises to SRKEY+<key>, which the app never binds.",
+      "examples": ["NVDA+n", "NVDA+q", "NVDA+1", "NVDA+f2", "NVDA+f7"]
+    },
+    {
+      "sr": "nvda",
+      "class": "browse-single-letter",
+      "rule": "In browse mode each listed key jumps to the next element and adding shift jumps to the previous one; NVDA+shift+space switches them off or on per document.",
+      "examples": ["h", "shift+h", "t", "1 to 9", "comma"]
+    },
+    {
+      "sr": "nvda",
+      "class": "table-nav",
+      "rule": "Within a table, control+alt with arrows, home, end, pageUp or pageDown moves by cell and NVDA+control+alt+arrows reads a row or column.",
+      "examples": [
+        "control+alt+rightArrow",
+        "control+alt+downArrow",
+        "control+alt+home",
+        "NVDA+control+alt+leftArrow"
+      ]
+    },
+    {
+      "sr": "nvda",
+      "class": "global",
+      "rule": "Control stops speech, shift pauses it and Control+alt+n starts NVDA, while the desktop layout also uses bare numpad keys for review and mouse (no row: outside the app's key vocabulary).",
+      "examples": ["Control", "shift", "Control+alt+n", "numpad7", "numpadDivide"]
+    },
+    {
+      "sr": "nvda",
+      "class": "mode-toggle",
+      "rule": "NVDA+space toggles browse and focus mode, escape returns to browse mode after an automatic switch, enter or space enter focus mode on controls that need it, and NVDA+control+space leaves an embedded object.",
+      "examples": ["NVDA+space", "escape", "enter", "space", "NVDA+control+space"]
+    },
+    {
+      "sr": "jaws",
+      "class": "sr-modifier",
+      "rule": "JAWS commands pair INSERT (desktop layout) or CAPS LOCK (laptop layout) with other keys and normalise to SRKEY+<key>, which the app never binds.",
+      "examples": ["INSERT+F7", "INSERT+F6", "CTRL+INSERT+X", "INSERT+F12", "INSERT+ALT+T"]
+    },
+    {
+      "sr": "jaws",
+      "class": "browse-single-letter",
+      "rule": "Navigation Quick Keys act in the Virtual Cursor, holding SHIFT moves to the previous instance, and CTRL+INSERT with a starred key lists those elements.",
+      "examples": ["H", "SHIFT+H", "T", "1 through 6", "SEMICOLON"]
+    },
+    {
+      "sr": "jaws",
+      "class": "table-nav",
+      "rule": "ALT+CTRL+arrows move cell by cell and WINDOWS KEY+ALT+arrows move by row or column, with the Windows key normalised as the token Win placed first.",
+      "examples": [
+        "ALT+CTRL+RIGHT ARROW",
+        "ALT+CTRL+DOWN ARROW",
+        "WINDOWS KEY+ALT+DOWN ARROW",
+        "CTRL+WINDOWS KEY+J"
+      ]
+    },
+    {
+      "sr": "jaws",
+      "class": "global",
+      "rule": "CTRL interrupts speech, ALT+CTRL+PAGE UP or PAGE DOWN changes the rate, CTRL+SHIFT+brackets set frames, and arrows plus PAGE UP or PAGE DOWN steer Say All.",
+      "examples": ["CTRL", "ALT+CTRL+PAGE UP", "CTRL+SHIFT+LEFT BRACKET", "PAGE UP"]
+    },
+    {
+      "sr": "jaws",
+      "class": "global",
+      "rule": "Layered commands start with INSERT+SPACEBAR (laptop CAPS LOCK+SPACEBAR) and JAWS takes the following key or keys.",
+      "examples": [
+        "INSERT+SPACEBAR, followed by H",
+        "INSERT+SPACEBAR, followed by J",
+        "INSERT+SPACEBAR, followed by T, and then QUESTION MARK",
+        "INSERT+SPACEBAR followed by X"
+      ]
+    },
+    {
+      "sr": "jaws",
+      "class": "global",
+      "rule": "Desktop-layout numpad keys and many WINDOWS Key combinations are JAWS commands; norms use DOM code names (NumpadAdd, Numpad5) and the token Win, outside the app's key vocabulary.",
+      "examples": [
+        "NUM PAD PLUS",
+        "NUM PAD MINUS",
+        "NUM PAD 5",
+        "WINDOWS Key+CTRL+DASH",
+        "CTRL+WINDOWS Key+L"
+      ]
+    },
+    {
+      "sr": "jaws",
+      "class": "mode-toggle",
+      "rule": "ENTER turns Forms Mode on, NUM PAD PLUS turns it off, and INSERT+Z toggles the Virtual PC Cursor.",
+      "examples": ["ENTER", "NUM PAD PLUS", "INSERT+Z"]
+    },
+    {
+      "sr": "voiceover",
+      "class": "sr-modifier",
+      "rule": "VO is Control-Option or Caps Lock (both by default), every VO-<key> command normalises to Ctrl+Alt+<key>, and VO-Command-<key> folds to the same norm because Command maps to Ctrl. Optional extra VO modifiers can be switched on in VoiceOver Utility (Commands > 'Also control VoiceOver with'): the Option key (the right Option key by default when enabled; norm Alt) and the numeric keypad; they are off unless the user enables them.",
+      "examples": ["VO-A", "VO-T", "VO-U", "VO-Fn-F8", "VO-Tab"]
+    },
+    {
+      "sr": "voiceover",
+      "class": "browse-single-letter",
+      "rule": "Single-key Quick Nav works only after VO-Q turns it on; the guide shows just b/B and 1/! and leaves the full default list to VoiceOver Utility, and the fetched pages do not state the default on/off state.",
+      "examples": ["b", "B", "1", "!"]
+    },
+    {
+      "sr": "voiceover",
+      "class": "table-nav",
+      "rule": "Table commands are VO combinations: VO-R and VO-C read headers, VO-Shift-T gives the position, VO-Command-Y moves by column (ungrouped) and VO-Home/VO-End reach cells (grouped).",
+      "examples": ["VO-R", "VO-C", "VO-Shift-T", "VO-Command-Y", "VO-Home"]
+    },
+    {
+      "sr": "voiceover",
+      "class": "global",
+      "rule": "Command-F5 toggles VoiceOver anywhere, and Escape (or Fn-Tab) closes VoiceOver menus or the rotor and leaves VoiceOver modes.",
+      "examples": ["Command-F5", "Escape or Fn-Tab"]
+    },
+    {
+      "sr": "voiceover",
+      "class": "mode-toggle",
+      "rule": "VO-Shift-Down/Up Arrow start and stop interacting, VO-Q and VO-Shift-Q toggle single-key and arrow-key Quick Nav, and arrow-key Quick Nav also uses arrow pairs pressed together (no norm: not expressible).",
+      "examples": [
+        "VO-Shift-Down Arrow",
+        "VO-Q",
+        "VO-Shift-Q",
+        "Right Arrow and Down Arrow at the same time",
+        "Left Arrow and Right Arrow at the same time"
+      ]
+    }
+  ],
+  "keys": [
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "h",
+      "norm": "H",
+      "function": "Next heading",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+h",
+      "norm": "Shift+H",
+      "function": "Previous heading",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "l",
+      "norm": "L",
+      "function": "Next list",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+l",
+      "norm": "Shift+L",
+      "function": "Previous list",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "i",
+      "norm": "I",
+      "function": "Next list item",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+i",
+      "norm": "Shift+I",
+      "function": "Previous list item",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "t",
+      "norm": "T",
+      "function": "Next table",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+t",
+      "norm": "Shift+T",
+      "function": "Previous table",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "k",
+      "norm": "K",
+      "function": "Next link",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+k",
+      "norm": "Shift+K",
+      "function": "Previous link",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "n",
+      "norm": "N",
+      "function": "Next non-link text",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+n",
+      "norm": "Shift+N",
+      "function": "Previous non-link text",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "f",
+      "norm": "F",
+      "function": "Next form field",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+f",
+      "norm": "Shift+F",
+      "function": "Previous form field",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "u",
+      "norm": "U",
+      "function": "Next unvisited link",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+u",
+      "norm": "Shift+U",
+      "function": "Previous unvisited link",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "v",
+      "norm": "V",
+      "function": "Next visited link",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+v",
+      "norm": "Shift+V",
+      "function": "Previous visited link",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "e",
+      "norm": "E",
+      "function": "Next edit field",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+e",
+      "norm": "Shift+E",
+      "function": "Previous edit field",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "b",
+      "norm": "B",
+      "function": "Next button",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+b",
+      "norm": "Shift+B",
+      "function": "Previous button",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "x",
+      "norm": "X",
+      "function": "Next checkbox",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+x",
+      "norm": "Shift+X",
+      "function": "Previous checkbox",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "c",
+      "norm": "C",
+      "function": "Next combo box",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+c",
+      "norm": "Shift+C",
+      "function": "Previous combo box",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "r",
+      "norm": "R",
+      "function": "Next radio button",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+r",
+      "norm": "Shift+R",
+      "function": "Previous radio button",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "q",
+      "norm": "Q",
+      "function": "Next block quote",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+q",
+      "norm": "Shift+Q",
+      "function": "Previous block quote",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "s",
+      "norm": "S",
+      "function": "Next separator",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+s",
+      "norm": "Shift+S",
+      "function": "Previous separator",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "m",
+      "norm": "M",
+      "function": "Next frame",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+m",
+      "norm": "Shift+M",
+      "function": "Previous frame",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "g",
+      "norm": "G",
+      "function": "Next graphic",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+g",
+      "norm": "Shift+G",
+      "function": "Previous graphic",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "d",
+      "norm": "D",
+      "function": "Next landmark",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+d",
+      "norm": "Shift+D",
+      "function": "Previous landmark",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "o",
+      "norm": "O",
+      "function": "Next embedded object (application, dialog, media)",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+o",
+      "norm": "Shift+O",
+      "function": "Previous embedded object (application, dialog, media)",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "a",
+      "norm": "A",
+      "function": "Next annotation",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+a",
+      "norm": "Shift+A",
+      "function": "Previous annotation",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "p",
+      "norm": "P",
+      "function": "Next text paragraph",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+p",
+      "norm": "Shift+P",
+      "function": "Previous text paragraph",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "w",
+      "norm": "W",
+      "function": "Next spelling error",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+w",
+      "norm": "Shift+W",
+      "function": "Previous spelling error",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "1 to 9",
+      "norm": "1",
+      "function": "Next heading at level 1",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+1 to 9",
+      "norm": "Shift+1",
+      "function": "Previous heading at level 1",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "1 to 9",
+      "norm": "2",
+      "function": "Next heading at level 2",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+1 to 9",
+      "norm": "Shift+2",
+      "function": "Previous heading at level 2",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "1 to 9",
+      "norm": "3",
+      "function": "Next heading at level 3",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+1 to 9",
+      "norm": "Shift+3",
+      "function": "Previous heading at level 3",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "1 to 9",
+      "norm": "4",
+      "function": "Next heading at level 4",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+1 to 9",
+      "norm": "Shift+4",
+      "function": "Previous heading at level 4",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "1 to 9",
+      "norm": "5",
+      "function": "Next heading at level 5",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+1 to 9",
+      "norm": "Shift+5",
+      "function": "Previous heading at level 5",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "1 to 9",
+      "norm": "6",
+      "function": "Next heading at level 6",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+1 to 9",
+      "norm": "Shift+6",
+      "function": "Previous heading at level 6",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "1 to 9",
+      "norm": "7",
+      "function": "Next heading at level 7",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+1 to 9",
+      "norm": "Shift+7",
+      "function": "Previous heading at level 7",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "1 to 9",
+      "norm": "8",
+      "function": "Next heading at level 8",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+1 to 9",
+      "norm": "Shift+8",
+      "function": "Previous heading at level 8",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "1 to 9",
+      "norm": "9",
+      "function": "Next heading at level 9",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+1 to 9",
+      "norm": "Shift+9",
+      "function": "Previous heading at level 9",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "comma",
+      "norm": ",",
+      "function": "Move past end of container",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "shift+comma",
+      "norm": "Shift+,",
+      "function": "Move to start of container",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "NVDA+shift+space",
+      "norm": "SRKEY+Shift+Space",
+      "function": "Switch single letter navigation off/on",
+      "section": "Single Letter Navigation"
+    },
+    {
+      "sr": "nvda",
+      "mode": "global",
+      "keys": "NVDA+space",
+      "norm": "SRKEY+Space",
+      "function": "Toggle browse and focus modes",
+      "section": "Browse Mode"
+    },
+    {
+      "sr": "nvda",
+      "mode": "focus",
+      "keys": "escape",
+      "norm": "Esc",
+      "function": "Back to browse mode after auto-switch",
+      "section": "Browse Mode"
+    },
+    {
+      "sr": "nvda",
+      "mode": "focus",
+      "keys": "NVDA+control+space",
+      "norm": "SRKEY+Ctrl+Space",
+      "function": "Leave embedded object for containing document",
+      "section": "Embedded Objects"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "cursor keys",
+      "norm": "↑",
+      "function": "Previous line in browse-mode document",
+      "section": "Browse Mode"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "cursor keys",
+      "norm": "↓",
+      "function": "Next line in browse-mode document",
+      "section": "Browse Mode"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "cursor keys",
+      "norm": "←",
+      "function": "Previous character in browse-mode document",
+      "section": "Browse Mode"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "cursor keys",
+      "norm": "→",
+      "function": "Next character in browse-mode document",
+      "section": "Browse Mode"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "enter",
+      "norm": "Enter",
+      "function": "Enter focus mode on controls needing it",
+      "section": "Browse Mode"
+    },
+    {
+      "sr": "nvda",
+      "mode": "browse",
+      "keys": "space",
+      "norm": "Space",
+      "function": "Enter focus mode on controls needing it",
+      "section": "Browse Mode"
+    },
+    {
+      "sr": "nvda",
+      "mode": "table",
+      "keys": "control+alt+leftArrow",
+      "norm": "Ctrl+Alt+←",
+      "function": "Previous table column",
+      "section": "Navigating with the System Caret"
+    },
+    {
+      "sr": "nvda",
+      "mode": "table",
+      "keys": "control+alt+rightArrow",
+      "norm": "Ctrl+Alt+→",
+      "function": "Next table column",
+      "section": "Navigating with the System Caret"
+    },
+    {
+      "sr": "nvda",
+      "mode": "table",
+      "keys": "control+alt+upArrow",
+      "norm": "Ctrl+Alt+↑",
+      "function": "Previous table row",
+      "section": "Navigating with the System Caret"
+    },
+    {
+      "sr": "nvda",
+      "mode": "table",
+      "keys": "control+alt+downArrow",
+      "norm": "Ctrl+Alt+↓",
+      "function": "Next table row",
+      "section": "Navigating with the System Caret"
+    },
+    {
+      "sr": "nvda",
+      "mode": "table",
+      "keys": "control+alt+home",
+      "norm": "Ctrl+Alt+Home",
+      "function": "First table column",
+      "section": "Navigating with the System Caret"
+    },
+    {
+      "sr": "nvda",
+      "mode": "table",
+      "keys": "control+alt+end",
+      "norm": "Ctrl+Alt+End",
+      "function": "Last table column",
+      "section": "Navigating with the System Caret"
+    },
+    {
+      "sr": "nvda",
+      "mode": "table",
+      "keys": "control+alt+pageUp",
+      "norm": "Ctrl+Alt+PageUp",
+      "function": "First table row",
+      "section": "Navigating with the System Caret"
+    },
+    {
+      "sr": "nvda",
+      "mode": "table",
+      "keys": "control+alt+pageDown",
+      "norm": "Ctrl+Alt+PageDown",
+      "function": "Last table row",
+      "section": "Navigating with the System Caret"
+    },
+    {
+      "sr": "nvda",
+      "mode": "table",
+      "keys": "NVDA+control+alt+downArrow",
+      "norm": "SRKEY+Ctrl+Alt+↓",
+      "function": "Say all down the column",
+      "section": "Navigating with the System Caret"
+    },
+    {
+      "sr": "nvda",
+      "mode": "table",
+      "keys": "NVDA+control+alt+rightArrow",
+      "norm": "SRKEY+Ctrl+Alt+→",
+      "function": "Say all along the row",
+      "section": "Navigating with the System Caret"
+    },
+    {
+      "sr": "nvda",
+      "mode": "table",
+      "keys": "NVDA+control+alt+upArrow",
+      "norm": "SRKEY+Ctrl+Alt+↑",
+      "function": "Read the whole column",
+      "section": "Navigating with the System Caret"
+    },
+    {
+      "sr": "nvda",
+      "mode": "table",
+      "keys": "NVDA+control+alt+leftArrow",
+      "norm": "SRKEY+Ctrl+Alt+←",
+      "function": "Read the whole row",
+      "section": "Navigating with the System Caret"
+    },
+    {
+      "sr": "nvda",
+      "mode": "global",
+      "keys": "Control",
+      "norm": "Ctrl",
+      "function": "Stop speech at once",
+      "section": "Basic NVDA commands"
+    },
+    {
+      "sr": "nvda",
+      "mode": "global",
+      "keys": "shift",
+      "norm": "Shift",
+      "function": "Pause speech; press again to resume",
+      "section": "Basic NVDA commands"
+    },
+    {
+      "sr": "nvda",
+      "mode": "global",
+      "keys": "Control+alt+n",
+      "norm": "Ctrl+Alt+N",
+      "function": "Start or restart NVDA",
+      "section": "Basic NVDA commands"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "A",
+      "norm": "A",
+      "function": "Next radio button",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+A",
+      "norm": "Shift+A",
+      "function": "Previous radio button",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "B",
+      "norm": "B",
+      "function": "Next button",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+B",
+      "norm": "Shift+B",
+      "function": "Previous button",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "C",
+      "norm": "C",
+      "function": "Next combo box, list box or tree",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+C",
+      "norm": "Shift+C",
+      "function": "Previous combo box, list box or tree",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "D",
+      "norm": "D",
+      "function": "Next element of a different type",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+D",
+      "norm": "Shift+D",
+      "function": "Previous element of a different type",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "E",
+      "norm": "E",
+      "function": "Next edit box",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+E",
+      "norm": "Shift+E",
+      "function": "Previous edit box",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "F",
+      "norm": "F",
+      "function": "Next form control",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+F",
+      "norm": "Shift+F",
+      "function": "Previous form control",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "G",
+      "norm": "G",
+      "function": "Next graphic",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+G",
+      "norm": "Shift+G",
+      "function": "Previous graphic",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "H",
+      "norm": "H",
+      "function": "Next heading",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+H",
+      "norm": "Shift+H",
+      "function": "Previous heading",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "I",
+      "norm": "I",
+      "function": "Next list item",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+I",
+      "norm": "Shift+I",
+      "function": "Previous list item",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "K",
+      "norm": "K",
+      "function": "Next PlaceMarker",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+K",
+      "norm": "Shift+K",
+      "function": "Previous PlaceMarker",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "L",
+      "norm": "L",
+      "function": "Next list",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+L",
+      "norm": "Shift+L",
+      "function": "Previous list",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "M",
+      "norm": "M",
+      "function": "Next frame",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+M",
+      "norm": "Shift+M",
+      "function": "Previous frame",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "O",
+      "norm": "O",
+      "function": "Next article",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+O",
+      "norm": "Shift+O",
+      "function": "Previous article",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "P",
+      "norm": "P",
+      "function": "Next paragraph",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+P",
+      "norm": "Shift+P",
+      "function": "Previous paragraph",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "R",
+      "norm": "R",
+      "function": "Next region",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+R",
+      "norm": "Shift+R",
+      "function": "Previous region",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "S",
+      "norm": "S",
+      "function": "Next element of the same type",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+S",
+      "norm": "Shift+S",
+      "function": "Previous element of the same type",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "T",
+      "norm": "T",
+      "function": "Next table",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+T",
+      "norm": "Shift+T",
+      "function": "Previous table",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "U",
+      "norm": "U",
+      "function": "Next unvisited link",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+U",
+      "norm": "Shift+U",
+      "function": "Previous unvisited link",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "V",
+      "norm": "V",
+      "function": "Next visited link",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+V",
+      "norm": "Shift+V",
+      "function": "Previous visited link",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "X",
+      "norm": "X",
+      "function": "Next check box",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+X",
+      "norm": "Shift+X",
+      "function": "Previous check box",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "Z",
+      "norm": "Z",
+      "function": "Next division",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+Z",
+      "norm": "Shift+Z",
+      "function": "Previous division",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "APOSTROPHE",
+      "norm": "'",
+      "function": "Next tab control",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+APOSTROPHE",
+      "norm": "Shift+'",
+      "function": "Previous tab control",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "DASH",
+      "norm": "-",
+      "function": "Next separator",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+DASH",
+      "norm": "Shift+-",
+      "function": "Previous separator",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SLASH",
+      "norm": "/",
+      "function": "Next clickable element",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+SLASH",
+      "norm": "Shift+/",
+      "function": "Previous clickable element",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SEMICOLON",
+      "norm": ";",
+      "function": "Next mouse-over element",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+SEMICOLON",
+      "norm": "Shift+;",
+      "function": "Previous mouse-over element",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "J",
+      "norm": "J",
+      "function": "Jump to a line number",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+J",
+      "norm": "Shift+J",
+      "function": "Reverse of J per Shift tip",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "N",
+      "norm": "N",
+      "function": "Skip past links",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+N",
+      "norm": "Shift+N",
+      "function": "Reverse of N per Shift tip",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "Q",
+      "norm": "Q",
+      "function": "Move to main region",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+Q",
+      "norm": "Shift+Q",
+      "function": "Reverse of Q per Shift tip",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+PERIOD",
+      "norm": "Shift+.",
+      "function": "Next element",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+COMMA",
+      "norm": "Shift+,",
+      "function": "Previous element",
+      "section": "Navigation Quick Keys"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "1 through 6",
+      "norm": "1",
+      "function": "Move to heading at level 1",
+      "section": "Web Browsing Keystrokes: General"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "1 through 6",
+      "norm": "2",
+      "function": "Move to heading at level 2",
+      "section": "Web Browsing Keystrokes: General"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "1 through 6",
+      "norm": "3",
+      "function": "Move to heading at level 3",
+      "section": "Web Browsing Keystrokes: General"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "1 through 6",
+      "norm": "4",
+      "function": "Move to heading at level 4",
+      "section": "Web Browsing Keystrokes: General"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "1 through 6",
+      "norm": "5",
+      "function": "Move to heading at level 5",
+      "section": "Web Browsing Keystrokes: General"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "1 through 6",
+      "norm": "6",
+      "function": "Move to heading at level 6",
+      "section": "Web Browsing Keystrokes: General"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "F3",
+      "norm": "F3",
+      "function": "JAWS Find next match",
+      "section": "Web Browsing Keystrokes: General"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+F3",
+      "norm": "Shift+F3",
+      "function": "JAWS Find previous match",
+      "section": "Web Browsing Keystrokes: General"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "Number Row Keys 7 through 0",
+      "norm": "7",
+      "function": "Read text at PlaceMarker 1",
+      "section": "PlaceMarkers"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+ number row keys 7 through 0",
+      "norm": "Shift+7",
+      "function": "Move to PlaceMarker 1",
+      "section": "PlaceMarkers"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "Number Row Keys 7 through 0",
+      "norm": "8",
+      "function": "Read text at PlaceMarker 2",
+      "section": "PlaceMarkers"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+ number row keys 7 through 0",
+      "norm": "Shift+8",
+      "function": "Move to PlaceMarker 2",
+      "section": "PlaceMarkers"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "Number Row Keys 7 through 0",
+      "norm": "9",
+      "function": "Read text at PlaceMarker 3",
+      "section": "PlaceMarkers"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+ number row keys 7 through 0",
+      "norm": "Shift+9",
+      "function": "Move to PlaceMarker 3",
+      "section": "PlaceMarkers"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "Number Row Keys 7 through 0",
+      "norm": "0",
+      "function": "Read text at PlaceMarker 4",
+      "section": "PlaceMarkers"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "SHIFT+ number row keys 7 through 0",
+      "norm": "Shift+0",
+      "function": "Move to PlaceMarker 4",
+      "section": "PlaceMarkers"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "CTRL+SHIFT+K",
+      "norm": "Ctrl+Shift+K",
+      "function": "Add, edit or remove permanent PlaceMarkers",
+      "section": "PlaceMarkers"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "F8",
+      "norm": "F8",
+      "function": "Select entire element or table",
+      "section": "Elements"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "ENTER",
+      "norm": "Enter",
+      "function": "Turn on Forms Mode",
+      "section": "Forms"
+    },
+    {
+      "sr": "jaws",
+      "mode": "focus",
+      "keys": "NUM PAD PLUS",
+      "norm": "NumpadAdd",
+      "function": "Turn off Forms Mode",
+      "section": "Forms"
+    },
+    {
+      "sr": "jaws",
+      "mode": "table",
+      "keys": "ALT+CTRL+RIGHT ARROW",
+      "norm": "Ctrl+Alt+→",
+      "function": "Next cell in row",
+      "section": "Tables"
+    },
+    {
+      "sr": "jaws",
+      "mode": "table",
+      "keys": "ALT+CTRL+LEFT ARROW",
+      "norm": "Ctrl+Alt+←",
+      "function": "Prior cell in row",
+      "section": "Tables"
+    },
+    {
+      "sr": "jaws",
+      "mode": "table",
+      "keys": "ALT+CTRL+DOWN ARROW",
+      "norm": "Ctrl+Alt+↓",
+      "function": "Cell below in column",
+      "section": "Tables"
+    },
+    {
+      "sr": "jaws",
+      "mode": "table",
+      "keys": "ALT+CTRL+UP ARROW",
+      "norm": "Ctrl+Alt+↑",
+      "function": "Cell above in column",
+      "section": "Tables"
+    },
+    {
+      "sr": "jaws",
+      "mode": "table",
+      "keys": "WINDOWS KEY+ALT+DOWN ARROW",
+      "norm": "Win+Alt+↓",
+      "function": "Next table row",
+      "section": "Tables"
+    },
+    {
+      "sr": "jaws",
+      "mode": "table",
+      "keys": "WINDOWS KEY+ALT+UP ARROW",
+      "norm": "Win+Alt+↑",
+      "function": "Prior table row",
+      "section": "Tables"
+    },
+    {
+      "sr": "jaws",
+      "mode": "table",
+      "keys": "WINDOWS KEY+ALT+RIGHT ARROW",
+      "norm": "Win+Alt+→",
+      "function": "Next table column",
+      "section": "Tables"
+    },
+    {
+      "sr": "jaws",
+      "mode": "table",
+      "keys": "WINDOWS KEY+ALT+LEFT ARROW",
+      "norm": "Win+Alt+←",
+      "function": "Prior table column",
+      "section": "Tables"
+    },
+    {
+      "sr": "jaws",
+      "mode": "table",
+      "keys": "WINDOWS KEY+COMMA",
+      "norm": "Win+,",
+      "function": "Read current row",
+      "section": "Tables"
+    },
+    {
+      "sr": "jaws",
+      "mode": "table",
+      "keys": "WINDOWS KEY+NUM PAD 5",
+      "norm": "Win+Numpad5",
+      "function": "Read current row",
+      "section": "Tables"
+    },
+    {
+      "sr": "jaws",
+      "mode": "table",
+      "keys": "WINDOWS KEY+PERIOD",
+      "norm": "Win+.",
+      "function": "Read current column",
+      "section": "Tables"
+    },
+    {
+      "sr": "jaws",
+      "mode": "table",
+      "keys": "CTRL+WINDOWS KEY+J",
+      "norm": "Win+Ctrl+J",
+      "function": "Jump to a table cell",
+      "section": "Tables"
+    },
+    {
+      "sr": "jaws",
+      "mode": "table",
+      "keys": "CTRL+WINDOWS KEY+SHIFT+J",
+      "norm": "Win+Ctrl+Shift+J",
+      "function": "Return to previous cell",
+      "section": "Tables"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "UP ARROW",
+      "norm": "↑",
+      "function": "Say prior line (virtual cursor moves)",
+      "section": "For Reading Text"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "DOWN ARROW",
+      "norm": "↓",
+      "function": "Say next line (virtual cursor moves)",
+      "section": "For Reading Text"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "LEFT ARROW",
+      "norm": "←",
+      "function": "Say prior character (virtual cursor moves)",
+      "section": "For Reading Text"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "RIGHT ARROW",
+      "norm": "→",
+      "function": "Say next character (virtual cursor moves)",
+      "section": "For Reading Text"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "CTRL+UP ARROW",
+      "norm": "Ctrl+↑",
+      "function": "Say prior paragraph",
+      "section": "For Reading Text"
+    },
+    {
+      "sr": "jaws",
+      "mode": "browse",
+      "keys": "CTRL+DOWN ARROW",
+      "norm": "Ctrl+↓",
+      "function": "Say next paragraph",
+      "section": "For Reading Text"
+    },
+    {
+      "sr": "jaws",
+      "mode": "global",
+      "keys": "LEFT ARROW",
+      "norm": "←",
+      "function": "Rewind during Say All",
+      "section": "For Reading Text"
+    },
+    {
+      "sr": "jaws",
+      "mode": "global",
+      "keys": "RIGHT ARROW",
+      "norm": "→",
+      "function": "Fast forward during Say All",
+      "section": "For Reading Text"
+    },
+    {
+      "sr": "jaws",
+      "mode": "global",
+      "keys": "PAGE UP",
+      "norm": "PageUp",
+      "function": "Faster speech during Say All",
+      "section": "For Reading Text"
+    },
+    {
+      "sr": "jaws",
+      "mode": "global",
+      "keys": "PAGE DOWN",
+      "norm": "PageDown",
+      "function": "Slower speech during Say All",
+      "section": "For Reading Text"
+    },
+    {
+      "sr": "jaws",
+      "mode": "global",
+      "keys": "ALT+CTRL+PAGE UP",
+      "norm": "Ctrl+Alt+PageUp",
+      "function": "Temporarily faster speech outside Say All",
+      "section": "For Reading Text"
+    },
+    {
+      "sr": "jaws",
+      "mode": "global",
+      "keys": "ALT+CTRL+PAGE DOWN",
+      "norm": "Ctrl+Alt+PageDown",
+      "function": "Temporarily slower speech outside Say All",
+      "section": "For Reading Text"
+    },
+    {
+      "sr": "jaws",
+      "mode": "global",
+      "keys": "CTRL",
+      "norm": "Ctrl",
+      "function": "Interrupt speech",
+      "section": "Informational"
+    },
+    {
+      "sr": "jaws",
+      "mode": "global",
+      "keys": "CTRL+SHIFT+LEFT BRACKET",
+      "norm": "Ctrl+Shift+[",
+      "function": "Frame top-left; twice sets frame to window",
+      "section": "For Frames"
+    },
+    {
+      "sr": "jaws",
+      "mode": "global",
+      "keys": "CTRL+SHIFT+RIGHT BRACKET",
+      "norm": "Ctrl+Shift+]",
+      "function": "Frame bottom-right corner",
+      "section": "For Frames"
+    },
+    {
+      "sr": "jaws",
+      "mode": "global",
+      "keys": "INSERT+SPACEBAR",
+      "norm": "SRKEY+Space",
+      "function": "Start a layered command (next key consumed)",
+      "section": "Miscellaneous"
+    },
+    {
+      "sr": "jaws",
+      "mode": "global",
+      "keys": "INSERT+Z",
+      "norm": "SRKEY+Z",
+      "function": "Toggle the Virtual PC Cursor",
+      "section": "Navigate the Teams Interface with JAWS"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "global",
+      "keys": "VO-Q",
+      "norm": "Ctrl+Alt+Q",
+      "function": "Toggle single-key Quick Nav",
+      "section": "General commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "global",
+      "keys": "VO-Shift-Q",
+      "norm": "Ctrl+Alt+Shift+Q",
+      "function": "Toggle arrow-key Quick Nav",
+      "section": "General commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "global",
+      "keys": "VO-Semicolon",
+      "norm": "Ctrl+Alt+;",
+      "function": "Lock VO modifier; plain keys become commands",
+      "section": "General commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "global",
+      "keys": "Command-F5",
+      "norm": "Ctrl+F5",
+      "function": "Turn VoiceOver on or off",
+      "section": "General commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "global",
+      "keys": "Escape or Fn-Tab",
+      "norm": "Esc",
+      "function": "Close VO menu or rotor, leave mode",
+      "section": "General commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "interact",
+      "keys": "VO-Shift-Down Arrow",
+      "norm": "Ctrl+Alt+Shift+↓",
+      "function": "Start interacting with an item",
+      "section": "Interaction commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "interact",
+      "keys": "VO-Shift-Up Arrow",
+      "norm": "Ctrl+Alt+Shift+↑",
+      "function": "Stop interacting with an item",
+      "section": "Interaction commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "global",
+      "keys": "VO-Shift-Left Arrow or Right Arrow",
+      "norm": "Ctrl+Alt+Shift+←",
+      "function": "Move on webpage without entering groups",
+      "section": "Interaction commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "global",
+      "keys": "VO-Shift-Left Arrow or Right Arrow",
+      "norm": "Ctrl+Alt+Shift+→",
+      "function": "Move on webpage without entering groups",
+      "section": "Interaction commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "quick-nav",
+      "keys": "Shift-Right Arrow or Left Arrow",
+      "norm": "Shift+→",
+      "function": "Move on webpage without entering groups",
+      "section": "Interaction commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "quick-nav",
+      "keys": "Shift-Right Arrow or Left Arrow",
+      "norm": "Shift+←",
+      "function": "Move on webpage without entering groups",
+      "section": "Interaction commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "table",
+      "keys": "VO-R",
+      "norm": "Ctrl+Alt+R",
+      "function": "Read table row header",
+      "section": "Interaction commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "table",
+      "keys": "VO-C",
+      "norm": "Ctrl+Alt+C",
+      "function": "Read table column header",
+      "section": "Interaction commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "table",
+      "keys": "VO-Shift-T",
+      "norm": "Ctrl+Alt+Shift+T",
+      "function": "Read row and column numbers",
+      "section": "Interaction commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "global",
+      "keys": "VO-Up Arrow",
+      "norm": "Ctrl+Alt+↑",
+      "function": "Move VoiceOver cursor up",
+      "section": "Navigation commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "global",
+      "keys": "VO-Down Arrow",
+      "norm": "Ctrl+Alt+↓",
+      "function": "Move VoiceOver cursor down",
+      "section": "Navigation commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "global",
+      "keys": "VO-Left Arrow",
+      "norm": "Ctrl+Alt+←",
+      "function": "Move VoiceOver cursor left",
+      "section": "Navigation commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "global",
+      "keys": "VO-Right Arrow",
+      "norm": "Ctrl+Alt+→",
+      "function": "Move VoiceOver cursor right",
+      "section": "Navigation commands"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "table",
+      "keys": "VO-Command-Y",
+      "norm": "Ctrl+Alt+Y",
+      "function": "Next column (ungrouped table)",
+      "section": "Navigate tables when grouped"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "table",
+      "keys": "VO-Command-Shift-Y",
+      "norm": "Ctrl+Alt+Shift+Y",
+      "function": "Previous column (ungrouped table)",
+      "section": "Navigate tables when grouped"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "table",
+      "keys": "VO-Home",
+      "norm": "Ctrl+Alt+Home",
+      "function": "First cell (grouped table)",
+      "section": "Navigate tables when grouped"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "table",
+      "keys": "VO-End",
+      "norm": "Ctrl+Alt+End",
+      "function": "Last cell (grouped table)",
+      "section": "Navigate tables when grouped"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "table",
+      "keys": "VO-Command-Equals",
+      "norm": "Ctrl+Alt+=",
+      "function": "Toggle grouping for this table",
+      "section": "Turn grouping on or off for the current table"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "quick-nav",
+      "keys": "Left Arrow or Right Arrow",
+      "norm": "←",
+      "function": "Move between items (arrow-key Quick Nav)",
+      "section": "Navigate using arrow keys"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "quick-nav",
+      "keys": "Left Arrow or Right Arrow",
+      "norm": "→",
+      "function": "Move between items (arrow-key Quick Nav)",
+      "section": "Navigate using arrow keys"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "quick-nav",
+      "keys": "Up Arrow or Down Arrow",
+      "norm": "↑",
+      "function": "Move through current rotor items",
+      "section": "Navigate apps and webpages using the Quick Nav rotor"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "quick-nav",
+      "keys": "Up Arrow or Down Arrow",
+      "norm": "↓",
+      "function": "Move through current rotor items",
+      "section": "Navigate apps and webpages using the Quick Nav rotor"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "quick-nav",
+      "keys": "b",
+      "norm": "B",
+      "function": "Next button (single-key Quick Nav)",
+      "section": "Navigate using single keys"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "quick-nav",
+      "keys": "B",
+      "norm": "Shift+B",
+      "function": "Previous button (single-key Quick Nav)",
+      "section": "Navigate using single keys"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "quick-nav",
+      "keys": "1",
+      "norm": "1",
+      "function": "Next heading level 1 (single-key)",
+      "section": "Navigate using single keys"
+    },
+    {
+      "sr": "voiceover",
+      "mode": "quick-nav",
+      "keys": "!",
+      "norm": "Shift+1",
+      "function": "Previous heading level 1 (single-key)",
+      "section": "Navigate using single keys"
+    }
+  ]
+}
