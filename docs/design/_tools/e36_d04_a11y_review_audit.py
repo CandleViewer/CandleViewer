@@ -17,7 +17,9 @@ with the conflict classes, `lint_keymap()` on the shipped file, the `check_cover
 the eight-chord divergence table; (3) the union of the two specs' pair tables re-measured with each
 sibling's own ratio, plus the D04-only rows (the validity composite reported, not gated); (4) the
 hit-target table from the size tokens; (5) the 200 % statement scan; (6) the motion rows; (7) the
-review's T2 walk, SR script, naming and acceptance tables; (8) the string gates; (9) the counts.
+review's T2 walk, SR script, naming, dialog and acceptance tables - every AL row cites a hand-off
+section B scenario by a line that starts one (`Scenario:`), or carries the review-only marker; (8)
+the string gates; (9) the counts.
 `--json` prints one object (the board script's CONST and the check-nums consume it); `--check
 <review> [--draft <file>]` re-derives every `<!-- audit:NAME=VALUE -->` marker and exits 1 on drift.
 
@@ -346,6 +348,24 @@ def rows(table: str) -> list[Row]:
 
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def b_scenarios(path: Path) -> dict[int, str]:
+    """The `Scenario:` lines of a hand-off's section B (`05` section 10 block), by 1-based line."""
+    out: dict[int, str] = {}
+    in_b = False
+    for i, ln in enumerate(read(path).splitlines(), 1):
+        if ln.startswith("## "):
+            in_b = ln.startswith("## B.")
+        m = re.match(r"^\s+Scenario: (.+)$", ln)
+        if in_b and m:
+            out[i] = m.group(1).strip()
+    return out
+
+
+B_REF = re.compile(r"§B :(\d+)")
+B_HANDOFF = re.compile(r"\b(D0[23])-handoff\b")
+REVIEW_ONLY = "no §B scenario — review-only"
 
 
 def section(text: str, start: str, end: str) -> str:
@@ -870,10 +890,18 @@ def review_tables(text: str) -> tuple[dict[str, Any], list[str]]:
         ("083", "**SCR-080**"),
         ("080", "**SCR-088**"),
         ("088", "**SCR-089**"),
-        ("089", "### 4.2"),
+        ("089", "**Dialogs and the preview**"),
     ):
         para = section(sec41, f"**SCR-{scr}**", nxt)
         n[f"stops_{scr}"] = para.count(" → ") + 1 if para else 0
+    dsec = section(sec41, "**Dialogs and the preview**", "### 4.2")
+    n["dialog_rows"] = len(
+        [
+            ln
+            for ln in dsec.splitlines()
+            if ln.startswith("| ") and not ln.startswith(("| Dialog", "| -"))
+        ]
+    )
     n["ac1_steps"] = len(table_rows(section(text, "### 4.2", "### 4.3"), r"\d+ +\|"))
     n["colour_rows"] = len(table_rows(section(text, "## 10.", "## 11."), r"\d+ +\|"))
     h20 = [ln for ln in section(text, "## 20.", "## 21.").splitlines() if ln.startswith("| ")]
@@ -917,6 +945,8 @@ def review_tables(text: str) -> tuple[dict[str, Any], list[str]]:
     al = table_rows(section(text, "## 16.", "## 17."), r"AL-\d+ +\|")
     princ: dict[str, int] = {}
     names = {"1": "perceivable", "2": "operable", "3": "understandable", "4": "robust"}
+    scen = {"D02": b_scenarios(H02), "D03": b_scenarios(H03)}
+    b_cited = review_only = 0
     for i, r in enumerate(al, 1):
         if len(r) < 8:
             bad.append(f"{r[0]}: {len(r)} cells")
@@ -928,9 +958,33 @@ def review_tables(text: str) -> tuple[dict[str, Any], list[str]]:
         m = re.search(r"\b([1-4])\.\d+\.\d+", r[2])
         p = names.get(m.group(1) if m else "", "none")
         princ[p] = princ.get(p, 0) + 1
+        # the section cell: every `§B :N` after a `D0n-handoff` must start a Scenario of that file
+        valid = 0
+        for part in r[4].split(";"):
+            h = B_HANDOFF.search(part)
+            if not h:
+                continue
+            for ref in B_REF.finditer(part):
+                if int(ref.group(1)) in scen[h.group(1)]:
+                    valid += 1
+                else:
+                    bad.append(
+                        f"{r[0]}: §B :{ref.group(1)} starts no Scenario of {h.group(1)}-handoff"
+                    )
+        marker = REVIEW_ONLY in r[4]
+        if valid and marker:
+            bad.append(f"{r[0]}: both a §B citation and the review-only marker")
+        elif valid:
+            b_cited += 1
+        elif marker:
+            review_only += 1
+        else:
+            bad.append(f"{r[0]}: no §B scenario line and no review-only marker")
     n["al_rows"] = len(al)
     n["al_without_verifier"] = sum(1 for r in al if len(r) >= 8 and not VERIFIER.match(r[5]))
     n["al_by_principle"] = princ
+    n["al_b_cited"], n["al_review_only"] = b_cited, review_only
+    n["b_scenarios"] = {"d02": len(scen["D02"]), "d03": len(scen["D03"])}
     # findings
     fnd = section(text, "## 15.", "## 16.")
     frows = table_rows(fnd, r"F-\d+ +\|")
@@ -1011,6 +1065,7 @@ REQUIRED_MARKERS = [
     "clauses_found",
     "f_rows",
     "al_rows",
+    "al_b_cited",
     "sr_rows",
     "t2_rows",
     "k_rows",
@@ -1204,7 +1259,10 @@ def main(argv: list[str]) -> int:
     )
     out.append(
         f"## 8. gates: F rows without owner/target: {c.get('f_without_owner_target', '-')}; "
-        f"AL rows without verifier: {c.get('al_without_verifier', '-')}; fabricated-AT phrases: "
+        f"AL rows without verifier: {c.get('al_without_verifier', '-')}; AL rows citing a §B "
+        f"scenario / review-only: {c.get('al_b_cited', '-')} / {c.get('al_review_only', '-')} "
+        f"(scenarios {c.get('b_scenarios', {})}; dialogs {c.get('dialog_rows', '-')}); "
+        f"fabricated-AT phrases: "
         f"{sum('fabricated' in q for q in problems)}; T2 walk: over-conversion "
         f"{c.get('t2_over_conversion', '-')} / under-conversion "
         f"{c.get('t2_under_conversion', '-')}; union matrix gated FAIL: {len(mx['fail'])}; "
