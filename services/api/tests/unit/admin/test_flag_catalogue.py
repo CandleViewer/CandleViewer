@@ -4,6 +4,8 @@ visible to a role as its 10.7 visibility says (the predicate the WS `system` fil
 
 from __future__ import annotations
 
+from types import MappingProxyType
+
 import pytest
 
 from candleviewer.admin.flags import default_registry
@@ -80,6 +82,8 @@ def test_oms_flag_is_an_all_roles_rollout_off_but_seeded_on_in_a_demo_process() 
     )
     assert "owner @basiltt" in spec.description and spec.description.endswith("removal #4227")
     assert ENVIRONMENT_SEEDS == {TRADING_OMS_ENABLED: {"demo": True}}
+    assert isinstance(ENVIRONMENT_SEEDS, MappingProxyType)  # read-only, and each entry with it
+    assert all(isinstance(seeds, MappingProxyType) for seeds in ENVIRONMENT_SEEDS.values())
     seeded = [registry[key] for key in ENVIRONMENT_SEEDS]
     assert not any(s.is_killswitch or s.requires_evidence for s in seeded)
 

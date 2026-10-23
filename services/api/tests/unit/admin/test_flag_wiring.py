@@ -223,7 +223,7 @@ _OMS = TRADING_OMS_ENABLED
 
 
 class _Polled(Exception):
-    """Ends a view's poll loop after one poll in a test."""
+    """Ends a view's poll loop in a test, after its last poll."""
 
 
 def _oms_view(
@@ -236,7 +236,33 @@ def _oms_view(
     return wiring.FlagView(cast(wiring.FeatureFlagsRuntime, process), _OMS, sleep=sleep), service
 
 
-async def test_a_flag_view_is_off_while_unread_and_on_any_fault_after() -> None:
+def _sleeps_through(
+    *steps: Callable[[], Awaitable[None]],
+) -> tuple[Callable[[float], Awaitable[None]], list[float]]:
+    """A poll loop's sleep, and its delays: the n-th sleep runs the n-th step (what happens while
+    the loop sleeps) and returns; the one after the last step ends the loop with `_Polled`."""
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+        if len(delays) > len(steps):
+            raise _Polled
+        await steps[len(delays) - 1]()
+
+    return sleep, delays
+
+
+class _Answering:
+    """A flag store whose `load` returns whatever `answer` holds, a mapping or not."""
+
+    def __init__(self, answer: object) -> None:
+        self.answer = answer
+
+    async def load(self) -> object:
+        return self.answer
+
+
+async def test_a_flag_view_is_off_while_unread_and_off_again_on_any_fault() -> None:
     """21 10.7: off until the store has answered, then the stored value; an outage or an unreadable
     row reads off again (its fail-closed value), never the last value (unlike BC-D3)."""
     store = FakeFlagStore()
@@ -259,29 +285,26 @@ async def test_a_flag_view_is_off_while_unread_and_on_any_fault_after() -> None:
 async def test_a_write_reaches_its_process_at_once_and_another_within_one_poll() -> None:
     """SEC-S3A-03: the writer's hook turns this process's view off before the write returns; a
     view of another process (no hook, its own service on the same store) meets the write on its
-    next poll, `FLAG_POLL_S` after the last, though its service's snapshot still holds `true`."""
-    delays: list[float] = []
-
-    async def one_poll(delay: float) -> None:
-        delays.append(delay)
-        raise _Polled
-
+    next poll, `FLAG_POLL_S` after the last, though its service's snapshot still holds `true`.
+    The loop's sleep returns once, so the write lands between two polls of one `run`."""
     runtime = _runtime()  # demo: seeded on
-    other, its_service = _oms_view(runtime.service.store, sleep=one_poll)
-    with pytest.raises(_Polled):
-        await other.run()
+
+    async def the_owner_writes() -> None:
+        assert (runtime.oms_enabled(), other()) == (True, True)  # both read the demo seed
+        snapshot = await its_service.stored(runtime.registry[_OMS])
+        assert snapshot is not None and snapshot.updated_at is not None
+        await runtime.writer.set(
+            _OMS, _OWNER, value=False, reason="hold", expected_updated_at=snapshot.updated_at
+        )
+        assert runtime.oms_enabled() is False and other() is True  # its next poll has not run
+        assert await its_service.stored(runtime.registry[_OMS]) is snapshot  # fresh for 30 s
+
+    sleep, delays = _sleeps_through(the_owner_writes)
+    other, its_service = _oms_view(runtime.service.store, sleep=sleep)
     await runtime.oms_enabled.refresh()
-    snapshot = await its_service.stored(runtime.registry[_OMS])
-    assert (runtime.oms_enabled(), other(), delays) == (True, True, [5.0])
-    assert snapshot is not None and snapshot.updated_at is not None
-    await runtime.writer.set(
-        _OMS, _OWNER, value=False, reason="hold new orders", expected_updated_at=snapshot.updated_at
-    )
-    assert runtime.oms_enabled() is False and other() is True  # its next poll has not run
-    assert await its_service.stored(runtime.registry[_OMS]) is snapshot  # fresh for 30 s
     with pytest.raises(_Polled):
         await other.run()
-    assert other() is False and delays == [wiring.FLAG_POLL_S] * 2
+    assert other() is False and delays == [wiring.FLAG_POLL_S] * 2  # polled again after a sleep
 
 
 async def test_a_poll_that_read_before_a_write_keeps_the_writes_value() -> None:
@@ -296,6 +319,61 @@ async def test_a_poll_that_read_before_a_write_keeps_the_writes_value() -> None:
     store.hold.set()
     await poll
     assert view() is False
+
+
+@pytest.mark.parametrize(("answer", "logged"), [(None, []), ([], ["AttributeError"])])
+async def test_a_poll_that_fails_any_way_reads_off_and_the_loop_polls_on(
+    answer: object, logged: list[str]
+) -> None:
+    """CR-S3B1-01: an answer that is no mapping raises outside the store read, and must neither
+    end the loop with the last value standing, possibly on, nor log more than the error's class.
+    `None` is the store's no-answer and reads off with no error to log. Three polls, the sleep
+    returning twice: the flag read (on), the broken answer (off), the mended one (on again)."""
+    healthy = {_OMS: StoredFlag(True)}
+    store, seen = _Answering(healthy), list[bool]()
+
+    async def the_store_breaks() -> None:
+        seen.append(view())  # the first poll read the flag
+        store.answer = answer
+
+    async def the_store_mends() -> None:
+        seen.append(view())  # the second failed: off, not the last value
+        store.answer = healthy
+
+    sleep, delays = _sleeps_through(the_store_breaks, the_store_mends)
+    view, _ = _oms_view(store, sleep=sleep)
+    with capture_logs() as logs, pytest.raises(_Polled):
+        await view.run()
+    assert (seen, view(), delays) == ([True, False], True, [wiring.FLAG_POLL_S] * 3)
+    failed = [log for log in logs if log["event"] == "feature_flag_view_poll_failed"]
+    assert [log["error"] for log in failed] == logged and all(log["key"] == _OMS for log in failed)
+
+
+async def test_a_view_poll_loop_ends_on_cancellation_not_unseen() -> None:
+    """The per-poll guard catches `Exception` alone: a cancel reaches the poll as it is."""
+    store = FakeFlagStore()
+    store.hold = asyncio.Event()  # the poll never gets its answer
+    view, _ = _oms_view(store)
+    polling = asyncio.ensure_future(view.run())
+    await asyncio.sleep(0)  # the poll waits on the store
+    polling.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await polling
+
+
+async def test_a_view_warns_when_it_turns_unread_and_logs_at_debug_while_it_stays_so() -> None:
+    """CR-S3B1-05: through an outage two views would warn 24 times a minute. The warning is the
+    transition to unread; a read ends the run, so the next outage warns again."""
+    store = FakeFlagStore()
+    store.rows[_OMS] = StoredFlag(True)
+    view, _ = _oms_view(store)
+    runs = [(True, "warning"), (True, "debug"), (True, "debug"), (False, None), (True, "warning")]
+    for down, level in runs:
+        store.down = down
+        with capture_logs() as logs:
+            await view.refresh()
+        assert [log["log_level"] for log in logs if "error" in log] == ([level] if level else [])
+        assert view() is not down  # read: on; unread: off
 
 
 async def test_a_demo_seed_is_insert_only_so_an_owners_write_sticks_and_both_views_poll() -> None:

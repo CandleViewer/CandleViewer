@@ -44,7 +44,7 @@ from candleviewer.admin.flags.catalogue import (
 )
 from candleviewer.admin.flags.maintenance import MaintenanceController, MaintenanceGate, chain_hooks
 from candleviewer.admin.flags.push import FlagPush, Session, SessionDirectory
-from candleviewer.admin.flags.registry import FlagKind, FlagSpec, FlagValue
+from candleviewer.admin.flags.registry import FlagKind, FlagSpec, FlagValue, value_matches
 from candleviewer.admin.flags.resolver import StoredFlag
 from candleviewer.admin.flags.service import (
     DEFAULT_READ_BUDGET_MS,
@@ -88,8 +88,9 @@ from candleviewer.ws.gateway import GatewayHub
 
 _WHOLE_MS: Final = re.compile(r"[0-9]{1,6}")
 #: How often a `FlagView` reads its flag from the store, in seconds (SEC-S3A-03), as
-#: `MaintenanceController` polls: a write reaches every process within it, and the writing
-#: process's own views at once, from the writer's change hook.
+#: `MaintenanceController` polls: a write reaches every process within it plus the read budget
+#: (a poll in flight keeps the old row), and the writing process's own views at once, from the
+#: writer's change hook.
 FLAG_POLL_S: Final = 5.0
 FlagRepository = SqlAlchemyFlagRepository | InMemoryFlagRepository
 
@@ -116,16 +117,26 @@ def stored_flag(row: FlagRow) -> StoredFlag:
     )
 
 
+def _seed(spec: FlagSpec, environment: str) -> FlagValue:
+    """`spec`'s seed for the process environment, else its default (#913 slice 3 Q3). A seed on a
+    kill switch or the live gate (`check_spec` binds it to `requires_evidence`), or one that is no
+    value of the flag's kind, is ignored and logged: whatever the table holds, no flag takes it
+    (C-4.14)."""
+    seeds = ENVIRONMENT_SEEDS.get(spec.key, {})
+    if environment not in seeds:
+        return spec.default
+    seed = seeds[environment]
+    if spec.is_killswitch or spec.requires_evidence or not value_matches(spec, seed):
+        _log().warning("feature_flag_seed_ignored", key=spec.key, environment=environment)
+        return spec.default
+    return seed
+
+
 def _seeds(specs: Iterable[FlagSpec], environment: str) -> list[FlagSeed]:
-    """Each flag at its default, or at its seed for the process environment (#913 slice 3 Q3)."""
+    """Each flag at its default, or at its seed for the process environment (`_seed`)."""
     return [
         FlagSeed(
-            s.key,
-            s.kind.value,
-            s.description,
-            ENVIRONMENT_SEEDS.get(s.key, {}).get(environment, s.default),
-            s.is_killswitch,
-            s.variants,
+            s.key, s.kind.value, s.description, _seed(s, environment), s.is_killswitch, s.variants
         )
         for s in specs
     ]
@@ -390,8 +401,10 @@ class FlagView:
     row every `FLAG_POLL_S` with a load of its own, never the service's snapshot, so it meets
     another process's write within one poll and never drops another reader's load. A write applied
     meanwhile bumps a generation, so a poll that read before it drops its reading, as
-    `MaintenanceController` does. `first_read()` returns once the store has answered for the flag
-    (the OMS startup sweep waits for it, 20 6.2)."""
+    `MaintenanceController` does. A poll that fails any way reads off and the loop polls on; the
+    view warns when it turns unread and logs at debug while it stays so, the error's class alone.
+    `first_read()` returns once the store has answered for the flag (the OMS startup sweep waits
+    for it, 20 6.2)."""
 
     def __init__(
         self,
@@ -405,6 +418,7 @@ class FlagView:
             raise ValueError(f"a flag view reads a boolean flag, not {key!r}")
         self.value = self._spec.fail_closed_value is True
         self._sleep, self._generation, self._read = sleep, 0, asyncio.Event()
+        self._failing = False  # the last poll left the flag unread, and warned
 
     def __call__(self) -> bool:
         return self.value
@@ -427,16 +441,31 @@ class FlagView:
             async with asyncio.timeout(self._runtime.budget_ms / 1000):
                 rows = await self._runtime.service.store.load()
         except Exception as exc:  # an outage or a lapsed budget: closed until a read answers
-            _log().warning("feature_flag_view_unread", key=self.key, error=type(exc).__name__)
+            self._lost("feature_flag_view_unread", exc)
         if generation == self._generation:  # a write applied meanwhile is newer: keep it
             row = None if rows is None else rows.get(self.key) or StoredFlag(self._spec.default)
             self._apply(row)
+        if rows is not None:
+            self._failing = False  # the store answered, and the poll went through
 
     async def run(self) -> None:
-        """Poll every `FLAG_POLL_S` until cancelled (the runtime's task)."""
+        """Poll every `FLAG_POLL_S` until cancelled (the runtime's task). A poll that raises reads
+        off, as an outage does, and the loop polls on; `CancelledError` is no `Exception`: it ends
+        the loop."""
         while True:
-            await self.refresh()
+            try:
+                await self.refresh()
+            except Exception as exc:  # outside the store read: no value is kept as it was
+                self.value = self._spec.fail_closed_value is True
+                self._lost("feature_flag_view_poll_failed", exc)
             await self._sleep(FLAG_POLL_S)
+
+    def _lost(self, event: str, exc: Exception) -> None:
+        """A poll left the flag unread: a warning when the view turns unread, debug while it stays
+        so (two views, twelve polls a minute each, through an outage); the error's class alone."""
+        log = _log().debug if self._failing else _log().warning
+        log(event, key=self.key, error=type(exc).__name__)
+        self._failing = True
 
     def _apply(self, row: StoredFlag | None) -> None:
         self.value = (

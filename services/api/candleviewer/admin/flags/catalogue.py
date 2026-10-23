@@ -6,6 +6,7 @@ third-party production chart library is out of scope (C-1.2)."""
 from __future__ import annotations
 
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Final
 
 from candleviewer.admin.flags.registry import LIVE_ENABLED as LIVE_ENABLED
@@ -32,10 +33,12 @@ DESKTOP_BACKEND_CONNECTION = "desktop.backend_connection"
 TRADING_OMS_ENABLED = "trading.oms_enabled"
 #: Ruling Q3: the value the insert-only `ensure` gives a flag with no row in a process of an
 #: environment, where it is not the flag's default (21 10.7), so an Owner's later write sticks.
-#: Never a kill switch or the live gate (C-4.14; `test_flag_catalogue.py` holds it).
-ENVIRONMENT_SEEDS: Final[Mapping[str, Mapping[str, FlagValue]]] = {
-    TRADING_OMS_ENABLED: {"demo": True}
-}
+#: Never a kill switch or the live gate (C-4.14): `flags_wiring._seeds` ignores such a seed, and
+#: `test_flag_catalogue.py` holds the table. Read-only at both levels, so nothing edits it at
+#: run time.
+ENVIRONMENT_SEEDS: Final[Mapping[str, Mapping[str, FlagValue]]] = MappingProxyType(
+    {TRADING_OMS_ENABLED: MappingProxyType({"demo": True})}
+)
 
 FLAGS: tuple[FlagSpec, ...] = (
     FlagSpec(

@@ -715,9 +715,10 @@ class Settings(BaseSettings):
     # The startup sweep's wait for the clock guard's first measurement and the key standing's
     # first read; the sweep must fit a deploy's 60 s `/readyz` smoke window.
     oms_startup_wait_s: float = Field(default=30.0, ge=5.0, le=45.0, allow_inf_nan=False)
-    # On stop, submits in flight get this long, then are cancelled. The runtime's stop is the
-    # lifespan's, outside `_refuse_unfittable_stop_budget`'s sum as the account health runtime's
-    # is; with `OMS_STOP_RESERVE_S` it keeps within the supervised OMS module's grace (20 Sec.6.2).
+    # On stop, submits in flight get this long, then are cancelled. The runtime's stop (slice 3E)
+    # will be the lifespan's, outside `_refuse_unfittable_stop_budget`'s sum as the account health
+    # runtime's is; with `OMS_STOP_RESERVE_S` it keeps within the supervised OMS module's grace
+    # (20 Sec.6.2).
     oms_drain_s: float = Field(
         default=10.0, ge=1.0, le=TEARDOWN_BUDGET_S - OMS_STOP_RESERVE_S, allow_inf_nan=False
     )
@@ -1064,11 +1065,13 @@ class Settings(BaseSettings):
         it: most are short, but `BarsRuntime.stop` (up to 30 s with bars on) and the metrics
         listener's unbounded drain can use the whole budget alone (#2878); the account health
         runtime's stop is bounded, at 25 s in three steps: `STOP_TIMEOUT_S` (11 s) for the loops
-        and for the drain, `RELEASE_TIMEOUT_S` (3 s) for its pool; the OMS runtime's (#913) at the
-        OMS module's grace, `CV_OMS_DRAIN_S` and `OMS_STOP_RESERVE_S`. A sum exactly at the
-        budget passes and leaves the other modules' normal stop time nothing, so the largest
-        grace is a limit, not a recommendation. Integer milliseconds, so a boundary is not a
-        float error.
+        and for the drain, `RELEASE_TIMEOUT_S` (3 s) for its pool. The OMS runtime's stop (#913;
+        slice 3E builds it) will be listed beside `account_health.stop`, before `stop_all`, at
+        the OMS module's grace: `CV_OMS_DRAIN_S` and `OMS_STOP_RESERVE_S`. This sum cannot see it:
+        at the defaults, 5 + 2 + 5 s and an OMS stop of up to 15 s make 27 of the 30 s budget. A
+        sum exactly at the budget passes and leaves the other modules' normal stop time nothing,
+        so the largest grace is a limit, not a recommendation. Integer milliseconds, so a
+        boundary is not a float error.
 
         That cut is cooperative (#3361): `asyncio.timeout` cancels the stop once. A stop that
         swallows that cancellation and keeps waiting, or that blocks the event loop, holds

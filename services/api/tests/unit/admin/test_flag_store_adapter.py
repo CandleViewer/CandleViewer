@@ -89,6 +89,32 @@ async def test_ensure_seeds_each_flag_at_its_default_or_its_environments_seed(
     ]
 
 
+@pytest.mark.parametrize(
+    ("key", "seed"),
+    [
+        ("killswitch.order_entry", True),
+        ("maintenance.mode", True),
+        ("trading.live_enabled", True),  # the live gate
+        ("trading.one_click", "yes"),  # a boolean flag takes no string
+    ],
+)
+async def test_ensure_ignores_a_seed_on_a_kill_switch_the_live_gate_or_of_the_wrong_kind(
+    monkeypatch: pytest.MonkeyPatch, key: str, seed: object
+) -> None:
+    """CR-S3B1-02, C-4.14: the catalogue's table is not the only guard. Such a seed is logged and
+    its flag keeps the default, while a valid seed beside it still lands."""
+    table = {key: {"demo": seed}, "trading.oms_enabled": {"demo": True}}
+    monkeypatch.setattr("candleviewer.flags_wiring.ENVIRONMENT_SEEDS", table)
+    repo = _Repo()
+    with capture_logs() as logs:
+        await _store(repo, environment="demo").ensure(FLAGS)
+    expected = {f.key: f.default for f in FLAGS} | {"trading.oms_enabled": True}
+    assert {s.key: s.default for s in repo.seeds} == expected
+    assert [(log["event"], log["key"], log["environment"]) for log in logs] == [
+        ("feature_flag_seed_ignored", key, "demo")
+    ]
+
+
 async def test_a_write_prepares_on_the_row_as_stored_and_returns_the_new_row() -> None:
     repo, seen = _Repo(), list[StoredFlag]()
     written = await _set(_store(repo), seen)
