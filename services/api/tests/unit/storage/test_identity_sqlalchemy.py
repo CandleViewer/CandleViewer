@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from candleviewer.storage.repositories import accounts_sqlalchemy
+from candleviewer.storage.repositories import accounts_sqlalchemy, identity_sqlalchemy
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 
 _NOW = datetime(2026, 10, 1, tzinfo=UTC)
@@ -69,6 +69,32 @@ async def test_user_maps_openapi_user_without_secret_columns() -> None:
 async def test_user_unknown_raises_lookup_error() -> None:
     with pytest.raises(LookupError):
         await _provider(_Rel([[]])).user("nope")
+
+
+async def test_names_reads_the_two_names_of_a_users_row() -> None:
+    """#3085 (Q12): a view-as target's names, by id alone."""
+    rel = _Rel([[("bo", "Bo B.")]])
+    assert await _provider(rel).names("u1") == ("bo", "Bo B.")
+    assert rel.calls[0][1] == {"id": "u1"}
+
+
+async def test_names_reads_an_anonymised_user_too() -> None:
+    """Its surrogate username and no display name: the read filters on no status."""
+    rel = _Rel([[("deleted-user-0123456789ab", None)]])
+    assert await _provider(rel).names("u2") == ("deleted-user-0123456789ab", None)
+
+
+async def test_names_of_no_row_is_a_lookup_error() -> None:
+    with pytest.raises(LookupError):
+        await _provider(_Rel([[]])).names("u3")
+
+
+def test_the_names_read_selects_two_columns_by_id_with_no_status_or_deletion_filter() -> None:
+    sql = " ".join(str(identity_sqlalchemy._NAMES_SQL).split())
+    columns, where = sql.split(" FROM users WHERE ")
+    assert columns == "SELECT username::text AS username, display_name"
+    assert where == "id = CAST(:id AS uuid)"
+    assert not re.search(r"status|deleted_at", sql)
 
 
 async def test_session_info_lists_permissions_and_scope() -> None:

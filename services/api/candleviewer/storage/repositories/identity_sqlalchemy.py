@@ -1,4 +1,5 @@
-"""SQL identity read path for `/auth/session`, `/auth/mfa/verify` (QA #1658) and `/me` (#2713).
+"""SQL identity read path for `/auth/session`, `/auth/mfa/verify` (QA #1658), `/me` (#2713) and
+`GET /auth/session/view-as`, whose target's names it reads (#3085).
 
 Implements the `IdentityProvider` shape `api/sessions.py` expects: the
 OpenAPI `User` object plus `SessionInfo.permissions`/`account_scope`, read
@@ -34,6 +35,12 @@ _USER_SQL = sa.text("""
     FROM users u
     WHERE u.id = CAST(:id AS uuid) AND u.deleted_at IS NULL
     """)
+# #3085 (Q12): a view-as target's two names, read whatever the user's status: an anonymised user
+# keeps its row, with its surrogate username and no display name. No `deleted_at` filter either:
+# a session's context keeps its target's row (`0042_sessions_view_as`, ON DELETE RESTRICT).
+_NAMES_SQL = sa.text(
+    "SELECT username::text AS username, display_name FROM users WHERE id = CAST(:id AS uuid)"
+)
 # O5 (E42-T04, #965, C-2.21): a user who is not `active`, or is deleted, has no permission (the
 # same predicate as `scope_sqlalchemy._PERMS`), so a disable takes effect at the next read.
 _PERMS_SQL = sa.text("""
@@ -116,6 +123,16 @@ class SqlAlchemyIdentityProvider:
         if found is None:
             raise LookupError("unknown user")
         return found
+
+    async def names(self, user_id: str) -> tuple[str, str | None]:
+        """`(username, display_name)` of *user_id*'s row, whatever its status (a view-as target's,
+        #3085), and nothing else of it; `LookupError` when there is no such row."""
+        async with self._relational.unit_of_work() as uow:
+            row = (await uow.session.execute(_NAMES_SQL, {"id": user_id})).first()
+        if row is None:
+            raise LookupError("unknown user")
+        username, display_name = row
+        return str(username), None if display_name is None else str(display_name)
 
     async def session_info(self, user_id: str) -> dict[str, Any]:
         async with self._relational.unit_of_work() as uow:

@@ -170,6 +170,18 @@ def _view(accounts: list[dict[str, Any]]) -> list[tuple[str, str]]:
     return [(a["label"], a["mode"]) for a in accounts]
 
 
+async def test_names_reads_a_users_row_whatever_its_status(db: Any) -> None:
+    """#3085 (Q12): a view-as target's names, a disabled and soft-deleted user's too; an id with
+    no row is a `LookupError`."""
+    provider, engine = db
+    uid = await _user(engine, "viewer")
+    await _exec(engine, _SET_STATUS, id=uid, status="disabled")
+    await _exec(engine, _SOFT_DELETE_USER, id=uid)
+    assert await provider.names(uid) == (f"u-{uid[:12]}", None)
+    with pytest.raises(LookupError):
+        await provider.names(str(uuid.uuid4()))
+
+
 async def test_an_owner_reaches_every_live_account_with_trade(db: Any) -> None:
     provider, engine = db
     owner = await _user(engine, "owner")

@@ -4,7 +4,8 @@ and the read and the end on `/auth/session/view-as`, the caller's own session (S
 session-wide rules (the viewer's own operations, read-only, protective writes, scope, expiry and
 hold, the actor, the refusal budget) live in the "View-as session" section of `info.description`,
 the WebSocket rules in `23-ws-protocol.md` §9.6. Five problem codes and three audit actions are
-registered. Additive (C-6.3); the routes stay pending until the server slice serves them."""
+registered. Additive (C-6.3). S12 serves the read and the end; the start stays pending until S13b
+serves it."""
 
 from __future__ import annotations
 
@@ -107,13 +108,32 @@ def test_state_changing_operations_take_the_csrf_token_and_the_read_takes_nothin
     assert {(m, p) for p in {*_PATH.values()} for m in SPEC["paths"][p]} == {*_PATH.items()}
 
 
-@pytest.mark.parametrize("method", list(_OPS))
-def test_operation_is_pending_and_has_its_rbac_matrix_row(method: str) -> None:
+#: The operations served so far: S12 serves the read and the end; S13b adds the start.
+_SERVED = frozenset({"get", "delete"})
+
+
+def _row(method: str) -> tuple[str, dict[str, Any]]:
     key = f"{method.upper()} {_PATH[method]}"
-    assert _PENDING[key]["ticket"] == "#3085"
-    row = _MATRIX["operations"][key]
+    return key, _MATRIX["operations"][key]
+
+
+@pytest.mark.parametrize("method", sorted(_SERVED))
+def test_a_served_operation_is_executed_with_no_pending_entry(method: str) -> None:
+    key, row = _row(method)
+    assert (key in _PENDING, "reason" in row, row["state"]) == (False, False, "executed")
+
+
+@pytest.mark.parametrize("method", sorted(set(_OPS) - _SERVED))
+def test_an_operation_not_served_yet_is_pending_and_not_mounted(method: str) -> None:
+    key, row = _row(method)
+    assert (_PENDING[key]["ticket"], row["state"]) == ("#3085", "not_mounted")
+
+
+@pytest.mark.parametrize("method", list(_OPS))
+def test_each_operation_has_its_rbac_matrix_row(method: str) -> None:
+    _, row = _row(method)
     _, _, rbac, _, outcomes = _OPS[method]
-    assert (row["state"], row["outcomes"]) == ("not_mounted", outcomes)
+    assert row["outcomes"] == outcomes
     assert (row["permissions"], row["scope"]) == (rbac["permissions"], rbac["scope"])
 
 
