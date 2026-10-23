@@ -31,7 +31,8 @@ def plain_decimal(d: Decimal) -> str:
     if d == 0:
         return "0"
     # Rounding only ever raises the leading exponent, by one at most. So a number whose leading
-    # digit lies this far out is too wide whatever it rounds to, and is refused unnormalised.
+    # digit lies this far out is too wide whatever it rounds to, and is refused unnormalised. The
+    # lower bound is needed too: below the context's range, normalize() flushes a number to 0.
     if not -MAX_PLAIN_WIDTH < d.adjusted() < MAX_PLAIN_WIDTH:
         raise PlainWidthError(_TOO_WIDE)
     normal = d.normalize()
