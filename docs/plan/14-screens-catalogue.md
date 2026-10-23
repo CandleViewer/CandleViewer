@@ -1219,7 +1219,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `oi_panel.metric_toggled`, `oi_panel.interval_changed`, `liquidation.print_clicked`, `funding.countdown_alert_set` (analytics).
 - **Design sign-off acceptance checklist:** [ ] OI series, funding rate + countdown to settlement, and the liquidation strip drawn together [ ] predicted vs actual funding distinguished with text [ ] liquidation cascade state drawn (aggregated bucket + counter) [ ] units and side of every figure explicit [ ] empty state where the exchange gives no value [ ] stale-data shading
 - **UX research:** [e24-deriv-reading.md](../design/research/e24-deriv-reading.md) (E24-D01; heuristic walkthrough, no participants: PROPOSED pane order with a persistent header row, `deriv.*` defaults, the countdown ladder with pay / receive copy, bars over the feed, basis as a header readout, zero vs unknown; contradictions C1–C15 and gaps G1–G11 for their owners).
-- **Wireframes:** [E24-D02.md](../design/E24/E24-D02.md) (E24-D02; greyscale wireframes of every state with its source, the deviations with their rulings, the contract gaps for their owners and the needs for E24-D03; boards on Penpot page `E24-D02`, exports in `docs/design/E24/img/`).
+- **Wireframes:** [E24-D02.md](../design/E24/E24-D02.md) (E24-D02; greyscale wireframes of every state with its source, the deviations with their rulings, the contract gaps for their owners and the needs for E24-D03; boards PENDING (BLOCKED-PENPOT) on Penpot page `E24-D02`, landing with their exports in a later PR).
 
 ### SCR-055 — Speed-of-tape panel
 
