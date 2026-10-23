@@ -5,17 +5,17 @@ one `16` §11.4 block each (`16` §13.3 item 8): CMP-220 IntervalPicker (with th
 CMP-069 InfoPanel and CMP-008 NumericStepperInput. CMP-007, CMP-017 and CMP-022 are used as catalogued, apart from
 their Tokens lines (spec DS-5), and so are CMP-079 RbacGate (T2) and CMP-019 Icon (the `lock`). The `15` entries stay
 with E12-D09 (#244), which adopts or rejects each variant; this file is its input. Tables 4, 5, Density and Essential
-exceptions share one shape and are given once. **Status:** text pass; Penpot and PNG lines are PENDING until the
-boards step (page `E12-D03`, boards 01–18); the stories are E12-S11's and E12-S12's. Penpot token sets =
-`packages/ui/tokens` at `3f0843a8bf5d1570b069e12758f2f891d38e07a3`.
+exceptions share one shape and are given once. **Status:** text pass; boards drawn (page `E12-D03`,
+`30d9b30e-268f-80df-8008-d48db325c32c`, boards 01–18; PNGs in `docs/design/E12/img/`); the stories are E12-S11's and
+E12-S12's. Penpot token sets = `packages/ui/tokens` at `3f0843a8bf5d1570b069e12758f2f891d38e07a3`.
 
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3). `[ ] PENDING` marks a line the boards step or a named ticket closes.
 
 ## Handoff checklist — CMP-220 IntervalPicker (E12-D03, #201)
 
-- [ ] **Final Penpot link** — PENDING: page `E12-D03`, boards 01–12 and 16; PNGs `docs/design/E12/img/E12-D03-NN-scr-042-*.png`
-- [x] **Variants × States matrix** — table 1; the Penpot variants are PENDING on board 16; E12-S11 and E12-S12 write the stories
+- [x] **Final Penpot link** — page `E12-D03` (`30d9b30e-268f-80df-8008-d48db325c32c`), boards 01–12 and 16; PNGs `docs/design/E12/img/E12-D03-NN-scr-042-*.png`
+- [x] **Variants × States matrix** — table 1; the Penpot variants are drawn on board 16; E12-S11 and E12-S12 write the stories
 - [x] **Keyboard table** — table 2; checked against `keymap.json` (71 commands): the popover root stops every key but the four Global chords, so `1`–`9` never fire `chart.interval_preset` twice; `I` is a proposal (spec §8.2); `Esc` and `Ctrl+K` untouched
 - [x] **Accessible name / role table** — table 3
 - [x] **Live data** — shared table 5: nothing streams; the trigger's name changes on commit and while pending
@@ -36,11 +36,11 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 | trigger                | non-time mode                                                                                                   | 02             | `TriggerBarMode` (new)                                     | "Vol 50 BTC"                   |
 | menu                   | R1 default (flag off)                                                                                           | 01             | `TimeIntervals` (catalogued)                               | Favourites and Time            |
 | menu                   | flag on; without Renko                                                                                          | 02, 18         | `BarModes` (catalogued), `BarModesNoRenko` (new)           | the Renko row absent           |
-| menu                   | no recorded prints; shallow recording                                                                           | 06             | `NeedsRecordedPrints`, `ShallowRecording` (new)            | rows focusable; the depth line |
+| menu                   | no recorded prints; shallow recording                                                                           | 06             | `NeedsRecordedPrints`, `ShallowRecording` (new)            | rows T2 (lock); the depth line |
 | favourites row         | nine, fewer, a non-time slot, an unavailable slot                                                               | 01, 09         | `Favourites` (catalogued)                                  | slot N is digit N              |
 | Recent and custom      | open, invalid, not yet, ladder value, Recent full                                                               | 08             | `CustomInterval` (new)                                     | waits for G-1b                 |
 | NC-8 parameter editor  | each mode; invalid; estimating; estimate; failed; too many bars; from `Change size…`; after a cancel; ATR typed | 03–05, 07, 10  | `ParamEditor` (new)                                        | outside the menu subtree       |
-| NC-9 favourites editor | default, picker, moved, cleared, save failed, Viewer (T2, lock), before G-3                                     | 09             | `FavouritesEditor` (new)                                   | in place, no dialog            |
+| NC-9 favourites editor | default, picker, moved, cleared, saving (`aria-busy`), save failed, Viewer (T2, lock), before G-3               | 09             | `FavouritesEditor` (new)                                   | in place, no dialog            |
 | density                | comfortable                                                                                                     | 12             | `Comfortable` (new)                                        | 32 px                          |
 | placement              | below, shifted, flipped, clamped and scrolled, in place from SCR-041                                            | 11, 15         | `Placement` (new)                                          | spec §7                        |
 
@@ -68,7 +68,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ## Handoff checklist — CMP-041 Menu (E12-D03, #201)
 
-- [ ] **Final Penpot link** — PENDING: page `E12-D03`, boards 14 and 16
+- [x] **Final Penpot link** — page `E12-D03` (`30d9b30e-268f-80df-8008-d48db325c32c`), boards 14 and 16
 - [x] **Variants × States matrix** — table 1
 - [x] **Keyboard table** — table 2; APG menu keys plus `←` / `→` aliases on chip rows; typeahead lands on disabled items too (E11-D03 §3.2)
 - [x] **Accessible name / role table** — table 3
@@ -88,7 +88,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 | --------------------------------------- | ------------------------------------------------ | -------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | chip item                               | rest, hover, focused, checked, checked + focused | board 16       | `ChipItems` (new)                          | rows wrap, never truncate                                                                                                                                                                     |
 | row item with a description             | rest, hover, focused, checked                    | 16             | `WithDescription` (new)                    | two lines; the description is `aria-describedby`                                                                                                                                              |
-| disabled-with-reason, state             | rest, focused                                    | 16             | `DisabledWithReason` (D03-CR-1)            | ⊘, the label in `color.text.secondary`, the reason line; focusable (spec D3-5, V-12)                                                                                                          |
+| disabled-with-reason, state (T2)        | rest, focused                                    | 16             | `DisabledWithReason` (D03-CR-1)            | CMP-079 T2: the `lock` (CMP-019) leads the full label in `color.text.tertiary`; C-24 or C-25 (PROPOSED keys `barmode.no_prints`, `barmode.lot_unknown`) in `color.text.secondary` (spec D3-5) |
 | disabled-with-reason, RBAC (CMP-079 T2) | rest, focused                                    | 09, 16         | `Denied(Permission)` (CMP-079, catalogued) | the `lock` (CMP-019, `decorative=false`, "Not available") leads the full label in `color.text.tertiary`; the reason line in `color.text.secondary`; `aria-disabled`, focusable (E09-D09 §2.2) |
 | trailing secondary zone                 | rest, hover                                      | 16             | `TrailingZone` (new)                       | pointer twin of `→`; no Tab stop                                                                                                                                                              |
 | content slot outside the menu           | editor, disclosure panel                         | 16             | `ContentSlot` (new)                        | not in the `menu` subtree; the rows below move down once                                                                                                                                      |
@@ -114,7 +114,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ## Handoff checklist — CMP-069 InfoPanel (E12-D03, #201)
 
-- [ ] **Final Penpot link** — PENDING: page `E12-D03`, boards 02, 06 and 16
+- [x] **Final Penpot link** — page `E12-D03` (`30d9b30e-268f-80df-8008-d48db325c32c`), boards 02, 06 and 16
 - [x] **Variants × States matrix** — table 1: the new inline variant (Q10); the drawer variant is unchanged
 - [x] **Keyboard table** — table 2
 - [x] **Accessible name / role table** — table 3
@@ -133,7 +133,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 | Variant | State                                                                  | Penpot variant | Story name             | Notes                                           |
 | ------- | ---------------------------------------------------------------------- | -------------- | ---------------------- | ----------------------------------------------- |
 | inline  | collapsed; expanded with prints (C-32, C-33)                           | board 02       | `Inline` (new)         | outside the host menu                           |
-| inline  | expanded, no prints: holder of `recording:write` (C-35) / other (C-36) | 06             | `InlineNoPrints` (new) | the route is a button: it opens M-023, a dialog |
+| inline  | expanded, no prints: `recording:write` (C-35) / its T2 sentence (C-36) | 06             | `InlineNoPrints` (new) | the route is a button: it opens M-023, a dialog |
 
 ### Table 2 — Keyboard
 
@@ -153,7 +153,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 ## Handoff checklist — CMP-008 NumericStepperInput (E12-D03, #201)
 
-- [ ] **Final Penpot link** — PENDING: page `E12-D03`, boards 03–05, 07 and 16
+- [x] **Final Penpot link** — page `E12-D03` (`30d9b30e-268f-80df-8008-d48db325c32c`), boards 03–05, 07 and 16
 - [x] **Variants × States matrix** — table 1
 - [x] **Keyboard table** — table 2; the catalogued spinbutton keys, plus `←` at the start and `Esc` returning to the host row
 - [x] **Accessible name / role table** — table 3
@@ -249,13 +249,13 @@ Screen reader: written, not run; the release-level pass (`05` §8) runs it. Exce
 
 ## `16` §12 design QA checklist
 
-- [ ] Published Tier-2 / Tier-3 tokens only — yes in the spec; the missing names are change requests (spec DS-5), none
-      invented; PENDING the boards' read-back.
-- [ ] Three themes × two densities — measured for contrast; PENDING on the boards (twins of 01–04, 06–10 and 12; 12 comfortable; 13–15 HC).
+- [x] Published Tier-2 / Tier-3 tokens only — yes in the spec; the missing names are change requests (spec DS-5), none
+      invented; the boards' read-back: 363 live bindings on board 01, and none absent or failed on any board.
+- [x] Three themes × two densities — measured for contrast; drawn on the boards (light twins of 01–04, 06–10 and 12; 12 comfortable; HC panels on 13–15).
 - [x] Contrast matrix for every pair introduced — the audit script, exit 0.
 - [x] CVD simulation reviewed — section C of the script; the ✕ and ⚠ glyphs share one amber in light, shapes and words
       carry them.
-- [ ] A Penpot variant and a story per state — variants PENDING (board 16); stories named above.
+- [ ] A Penpot variant and a story per state — variants drawn (board 16); the stories named above are PENDING the FE tickets.
 - [x] Disabled-with-reason (CMP-079) for RBAC-gated actions — "Edit favourites…" for a Viewer in the T2 form (the
       `lock`, the full label in `color.text.tertiary`, the reason in `color.text.secondary`); the recording route as
       its T2 sentence form (C-36).
@@ -269,4 +269,4 @@ Screen reader: written, not run; the release-level pass (`05` §8) runs it. Exce
 - [x] Order placement, positions, arming — SCR-042 places no orders.
 - [x] Estimated values chip-tagged — N/A: the build estimate is labelled "about" and is not a market value.
 - [x] Reuses existing CMP-\* — yes; the variants go to E12-D09 rather than new ids.
-- [ ] Stories match the matrix — PENDING the FE tickets. Published library components only — PENDING boards.
+- [ ] Stories match the matrix — PENDING the FE tickets. Published library components only — cannot be met by the boards: both pages (`E12-D03`, `E12-D02`) hold 0 component instances.
