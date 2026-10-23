@@ -197,16 +197,24 @@ class ExportSigner:
 @final
 class SigningKeys:
     """`audit`'s `SigningKeyDirectory`, M2's side: the active key's id, public key and fingerprint,
-    or None while export is unavailable; never its seed. Minted once by `mint_signing_keys`."""
+    or None while export is unavailable, and every key's public record with M2's `verified` mark
+    (#889 S7); never a seed. Minted once by `mint_signing_keys`."""
 
     def __init_subclass__(cls, **kw: Any) -> None:
         _m2_only(cls)
         super().__init_subclass__(**kw)
 
-    __slots__ = ("__active",)
+    __slots__ = ("__active", "__listing")
 
-    def __init__(self, active: Callable[[], Awaitable[PublicKey | None]]) -> None:
-        self.__active = active
+    def __init__(
+        self,
+        active: Callable[[], Awaitable[PublicKey | None]],
+        listing: Callable[[], Awaitable[list[dict[str, Any]] | None]],
+    ) -> None:
+        self.__active, self.__listing = active, listing
 
     async def active(self) -> PublicKey | None:
         return await self.__active()
+
+    async def listing(self) -> list[dict[str, Any]] | None:
+        return await self.__listing()

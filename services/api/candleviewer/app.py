@@ -1978,6 +1978,8 @@ def create_app(
                 rate_per_hour=resolved.audit_download_rate_per_hour,
                 tracked_users=resolved.audit_budget_tracked_users,
             ),
+            # #889 S7: `listAuditSigningKeys` reads M2's directory, its `verified` marks M2's.
+            signing_keys=bundle.signing_keys,
         )
     )
     app.include_router(make_hotkey_audit_router(_LazyAuditEmitter(ctx.audit), audit_resolver))

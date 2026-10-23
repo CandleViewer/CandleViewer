@@ -173,6 +173,9 @@ Option (a), with Ed25519.
    and confirms `audit:read`, which is derived from `auth/rbac_seed.json:237`.
    2026-10-22 (#889 S2): the list is Owner-only, as `verifyAuditChain` is: a Manager has no verification duty, and the
    list shows incident state.
+   2026-10-23 (#889 S7): M2 remembers the key its check passed for, at boot and after a rotation, and the directory
+   names, and the list marks `verified`, that key only. An active row this process did not check (written out of
+   band, or by another process) is named by nothing until a check here passes for it, at a restart or a rotation.
 5. **Rotation.** `POST /admin/keys/audit-signing/rotate`, beside `rewrapKek` (yaml:12553): Owner only
    (`keys:manage`), step-up class `keys` (ruling 2; D1's `security_sensitive` is not a step-up class), CSRF
    (C-12.10), idempotent (a retried request rotates once), single-flight (`409 conflict` while a rotation or an
@@ -276,6 +279,10 @@ digest, so the server checks only the size and the client the bytes.
 2026-10-22 (#889 S9-2): a sweep at boot and every 60 s deletes each export file and temporary name no live job needs, an
 expired one included, so a file outlives `expires_at` by a tick at most; a volume without hard links is found at boot
 and degrades export alone (`links_ok`), never the boot.
+
+2026-10-23 (#889 S7), the routes' choices where 22 is silent:
+
+- The listing's `admin.audit_read` holds the filter set and the count, as `queryAuditLog`'s does.
 
 ## Why not the alternatives
 

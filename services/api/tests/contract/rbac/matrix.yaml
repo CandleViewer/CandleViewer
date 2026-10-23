@@ -41,8 +41,7 @@ operations:
     permissions: ['audit:read']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml by E42-T02 S2 (ADR-0039 decision 4); S7 mounts it
+    state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   POST /admin/audit/verify:
     permissions: ['audit:read']

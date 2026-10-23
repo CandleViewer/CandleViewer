@@ -1,12 +1,13 @@
 """The audit export's signer and signing-key directory, as `audit` sees them (#889 S6b; ADR-0039
 decisions 3 and 4). `audit` owns these ports and never imports `secrets` (C-3.2): M2 implements
 both, `admin.wiring` mints them and maps M2's refusals, and S10 injects them into the export job.
+The directory's listing serves `listAuditSigningKeys` (#889 S7).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final, Protocol
+from typing import Any, Final, Protocol
 from uuid import UUID
 
 from candleviewer.audit.errors import AuditError
@@ -52,4 +53,10 @@ class Signer(Protocol):
 class SigningKeyDirectory(Protocol):
     async def active(self) -> SigningKey | None:
         """The active key's public material, or None while export is unavailable: no seed."""
+        ...
+
+    async def listing(self) -> list[dict[str, Any]] | None:
+        """Every key of the environment, newest first (#889 S7, `listAuditSigningKeys`): its public
+        record (`key_id`, `public_key`, `fingerprint_sha256`, `status`, `valid_from`,
+        `valid_until`, `retired_reason`) and M2's `verified` mark; None when unreadable."""
         ...
