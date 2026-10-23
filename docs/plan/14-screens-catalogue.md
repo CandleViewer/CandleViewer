@@ -1123,6 +1123,7 @@ Drag preview                Drop zones
 - **Stories:** US-DOM-001, US-DOM-002, US-DOM-003, US-DOM-005, US-DOM-006, US-DOM-007, US-DOM-008, US-DOM-009, US-MKT-007, US-ORD-009.
 - **Motion spec:** [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the resync scrim lifts in the frame the `snap` applies, no minimum; the disconnected scrim at 0 ms).
 - **Design sign-off acceptance checklist:** [ ] ladder rows, heatmap trail, bid/ask columns, working-order column and position marker drawn at 3 depth tiers [ ] green=bid / red=ask convention with a user-configurable theme and a non-colour (side label) encoding [ ] centred / free-scroll / recentre behaviour drawn [ ] arm/disarm affordance for click-trading drawn and unmistakable in LIVE [ ] accessible grid alternative confirmed equal-status [ ] _(estimated)_ chips on queue-position and iceberg markers [ ] performance acceptance against the mandatory WebGL spike recorded (see Performance)
+- **Design decision (DES-HEATMAP-01):** [E17-D03.md](../design/E17/E17-D03.md) (E17-D03; the 2–8 device-px column band and the 3 px target confirmed as the target, the clamped outcomes on 1 080 p / 1 440 p open for the owner's real-display walkthrough (C1); the `cell` slot becomes the PROPOSED auto / pinned / re-deriving / clamped columns chip, §3; the debounced re-snapshot is drawn like the depth-tier rebuild, never as Stale, §4).
 
 ### SCR-051 — Heatmap & ladder settings dialog
 
@@ -1152,6 +1153,7 @@ Drag preview                Drop zones
 - **Performance:** Changes apply to the running heatmap without dropping the historized frame buffer; re-colouring is a shader uniform update (<=1 frame), while depth-tier changes re-negotiate the WS subscription and show a 1-2 s rebuild state.
 - **Analytics/audit:** `dom.settings_changed` with `{key}` (analytics); `dom.depth_tier_changed` also records the negotiated tier for support purposes.
 - **Design sign-off acceptance checklist:** [ ] depth tier (50/200/500), row aggregation (ticks per row), heatmap trail length, intensity curve, colour theme, big-order threshold, tape-print overlay and click-trade behaviour all drawn [ ] live preview [ ] warning that a higher depth tier increases bandwidth and CPU, with the measured cost shown [ ] reset to defaults
+- **Design decision (DES-HEATMAP-01):** [E17-D03.md](../design/E17/E17-D03.md) (E17-D03; PROPOSED "Columns" row under Depth & scale — Auto plus the five rungs with the CMP-228 live preview and the 1–2 s rebuild sentence, §3; the pin persists per pane in the layout state, G3).
 
 ### SCR-052 — CVD / delta panel
 
