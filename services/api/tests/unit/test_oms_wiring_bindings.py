@@ -45,6 +45,7 @@ from candleviewer.oms_wiring import (
     TradingSwitchesBinding,
 )
 from candleviewer.settings import OMS_AFTER_ANCHOR_S, Settings
+from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
 from tests.unit.admin.flag_fakes import FakeAudit, FakeStepUp, FakeUsers
 
 ACCOUNT = AccountId(UUID(int=7))
@@ -76,8 +77,11 @@ def test_bounds_of_the_default_settings_are_the_pipelines_own_defaults() -> None
             "CV_OMS_INFLIGHT_STUCK_S",
         ),  # lowered to the 17 s after the anchor
         ({"stuck_after_s": 120.5}, "CV_OMS_INFLIGHT_STUCK_S"),  # past SEC-S3D-02's ceiling
-        ({"submit_timeout_s": 8.5, "place_wait_s": 9.5}, "stop request"),  # raised: 2 + 8.5 > 10
-        ({"submit_timeout_s": 10.0, "place_wait_s": 11.0, "stop_request_s": 13.0}, "command"),
+        ({"submit_timeout_s": 8.5, "place_wait_s": 9.5}, "entry's"),  # raised: 3 + 8.5 > 10
+        ({"submit_timeout_s": 7.5, "place_wait_s": 8.5}, "entry's"),  # 3 + 7.5 past 10 s
+        ({"submit_timeout_s": 7.0, "place_wait_s": 8.0}, "entry's"),  # 3 + 7 = 10, not inside
+        ({"stop_request_s": 9.5}, "attach's"),  # below B1's 10 s command timeout
+        ({"submit_timeout_s": 10.0, "place_wait_s": 11.0, "stop_request_s": 13.5}, "command"),
         ({"place_wait_s": 5.0}, "place_wait_s"),  # not above the deadline (D-2B2-01)
         ({"result_wait_s": math.nan}, "result_wait_s"),
     ],
@@ -85,6 +89,17 @@ def test_bounds_of_the_default_settings_are_the_pipelines_own_defaults() -> None
 def test_bounds_refuse_a_set_that_breaks_a_relation(change: dict[str, float], refused: str) -> None:
     with pytest.raises(ValueError, match=refused):
         dataclasses.replace(OmsBounds.from_settings(Settings()), **change)
+
+
+def test_the_settings_ceiling_answers_a_stop_request_a_second_inside_its_bound() -> None:
+    """Q4 (#913): an entry's stop request is answered within its first persist, which stamps the
+    row's `created_at`, its `SEND`, the create and its result step: 3 x `CV_PERSIST_TIMEOUT` + the
+    submit timeout, strictly inside the bound, so on its clean path the complete read never lists
+    a row its writer may still answer. The settings' ceiling keeps 1 s of it for clock skew and
+    commit latency."""
+    top = OmsBounds.from_settings(Settings(oms_submit_timeout_ms=6000, oms_inflight_stuck_s=120))
+    assert 3 * CV_PERSIST_TIMEOUT + top.submit_timeout_s == top.stop_request_s - 1
+    assert CV_COMMAND_TIMEOUT <= top.stop_request_s
 
 
 # --- TradingSwitchesBinding -----------------------------------------------------------------------

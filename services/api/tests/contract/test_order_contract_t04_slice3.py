@@ -274,12 +274,15 @@ def test_20_declares_the_oms_settings_within_the_bounds_the_code_holds() -> None
     assert (bounds.submit_timeout_s * 1000, bounds.stuck_after_s) == (5000, 30)
     assert not _missing(
         rows["CV_OMS_SUBMIT_TIMEOUT_MS"][3],
-        "(24 §8.4); 1000-8000, so 2 ",
-        "+ the submit timeout ≤ 10 s, the stop request's bound (`oms_wiring.STOP_REQUEST_BOUND_S`",
+        "(24 §8.4); 1000-6000, so 3 ",
+        "+ `CV_OMS_SUBMIT_TIMEOUT_MS` ≤ bound \N{MINUS SIGN} 1 s (the margin is clock skew "
+        "+ commit latency): an entry's stop request, answered within",
+        "lands inside 10 s, the stop request's bound (`oms_wiring.STOP_REQUEST_BOUND_S`",
+        "with B1's `CV_COMMAND_TIMEOUT` ≤ it for an attach)",
     )
-    top = OmsBounds.from_settings(Settings(oms_submit_timeout_ms=8000, oms_inflight_stuck_s=120))
-    assert 2 * CV_PERSIST_TIMEOUT + top.submit_timeout_s == top.stop_request_s == 10
-    assert top.submit_timeout_s < CV_COMMAND_TIMEOUT
+    top = OmsBounds.from_settings(Settings(oms_submit_timeout_ms=6000, oms_inflight_stuck_s=120))
+    assert 3 * CV_PERSIST_TIMEOUT + top.submit_timeout_s == top.stop_request_s - 1 == 9
+    assert CV_COMMAND_TIMEOUT <= top.stop_request_s and top.submit_timeout_s < CV_COMMAND_TIMEOUT
     assert bounds.after_anchor_s - bounds.submit_timeout_s == OMS_AFTER_ANCHOR_S == 12
     assert "(submit + 12 s), ≤ 120" in rows["CV_OMS_INFLIGHT_STUCK_S"][3]
     rules = _between(_INTERNAL_DOC, "**The pipeline's own rules", "**8.4.1 ")

@@ -180,9 +180,9 @@ __all__ = [
 #: row's and the account's reads, the exchange calls (the create and, after a duplicate, its
 #: lookups; or a resumed create's lookups and re-send) and the answer's record, hand-over,
 #: credential report or alert all end by. So an entry's stop request is answered within
-#: `CV_PERSIST_TIMEOUT` + this + `CV_PERSIST_TIMEOUT` ([LANE-25]), inside the stop request's
-#: bound (`oms_wiring.OmsBounds`) and B1's own `CV_COMMAND_TIMEOUT`. It also bounds `attach_stop`'s
-#: one `trading-stop` call.
+#: 3 x `CV_PERSIST_TIMEOUT` + this (its first persist, its `SEND` and its result step, [LANE-25],
+#: Q4), inside the stop request's bound (`oms_wiring.OmsBounds`) and B1's own
+#: `CV_COMMAND_TIMEOUT`. It also bounds `attach_stop`'s one `trading-stop` call.
 SUBMIT_TIMEOUT_S: Final = 5.0
 #: The bound on each other call (a read, the store, an audit, a notice, a hand-over, the stop
 #: gate), in seconds; inside `place` its deadline may end one sooner.

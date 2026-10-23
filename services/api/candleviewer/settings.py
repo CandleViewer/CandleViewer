@@ -706,9 +706,10 @@ class Settings(BaseSettings):
     killswitch_on_disconnect_s: int = 30
     # #913 slice 3 (20 Sec.6.2, Sec.7.2): the OMS runtime's bounds, read once at its start
     # (`oms_wiring.OmsBounds` checks them together). The submit timeout bounds one create's whole
-    # `place`; at most 8 s, so an entry's stop request is answered within the 10 s stop-request
-    # bound (2 x `CV_PERSIST_TIMEOUT` + it) and B1's 10 s command timeout cuts no `place`.
-    oms_submit_timeout_ms: int = Field(default=5000, ge=1000, le=8000)
+    # `place`; at most 6 s, so an entry's stop request, answered within 3 x `CV_PERSIST_TIMEOUT` +
+    # it, lands 1 s inside the 10 s stop-request bound (the margin is clock skew and commit
+    # latency), and B1's 10 s command timeout cuts no `place`.
+    oms_submit_timeout_ms: int = Field(default=5000, ge=1000, le=6000)
     # A repeat is `409 idempotency_in_flight` this long (21 Sec.3.3.10): longer than the
     # submission's bounds after its anchor, so no repeat decides an anchor whose request may still
     # send (`_refuse_a_stuck_window_inside_the_bounds`), and at most `OMS_INFLIGHT_STUCK_MAX_S`.

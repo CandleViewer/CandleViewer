@@ -48,9 +48,10 @@ from candleviewer.storage.repositories.trading_accounts import (
 )
 
 #: The stop request's bound (21 Sec.3.3.11, [LANE-25]), in seconds: how long an unanswered stop
-#: request holds its key before it waits for the complete read (`RefuseWhileWaiting`); at least an
-#: entry's answer path, 2 x `CV_PERSIST_TIMEOUT` + the submit timeout (`OmsBounds`). No safety
-#: knob: either side of it refuses a second request for the key.
+#: request holds its key before it waits for the complete read (`RefuseWhileWaiting`); above an
+#: entry's answer path, 3 x `CV_PERSIST_TIMEOUT` + the submit timeout, and at least an attach's,
+#: B1's `CV_COMMAND_TIMEOUT` (`OmsBounds`). No safety knob: either side of it refuses a second
+#: request for the key.
 STOP_REQUEST_BOUND_S: Final = 10.0
 #: B1's turn: what the pipeline's wait for the create's answer adds to the port's deadline.
 B1_TURN_S: Final = 1.0
@@ -68,11 +69,15 @@ def _log() -> Any:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class OmsBounds:
     """The OMS's time bounds in seconds (24 Sec.8.4), each finite and above zero (C-2.18). The
-    submit timeout bounds one create's `place`: a stop request's answer, 2 x `CV_PERSIST_TIMEOUT`
-    + it, fits `stop_request_s`, and B1's `CV_COMMAND_TIMEOUT` never cuts it. `place_wait_s`
-    outlasts it (D-2B2-01). `stuck_after_s`, the anchor service's own threshold (CR-S3D-01), is
-    above `after_anchor_s`, so no repeat decides an anchor whose request may still send, and at
-    most `OMS_INFLIGHT_STUCK_MAX_S` (SEC-S3D-02)."""
+    submit timeout bounds one create's `place`. An entry's stop request is answered within
+    3 x `CV_PERSIST_TIMEOUT` + it (its first persist stamps the row's `created_at`, then its
+    `SEND` and its result step), strictly inside `stop_request_s`, and an attach's within B1's
+    `CV_COMMAND_TIMEOUT`, at most `stop_request_s`: on its clean path, the complete read never
+    lists a row its writer may still answer (21 Sec.3.3.11); a persist whose commit lands late is
+    the step writer's compare-and-set's to settle. B1's command timeout never cuts a create, and
+    `place_wait_s` outlasts it (D-2B2-01). `stuck_after_s`, the anchor service's own threshold
+    (CR-S3D-01), is above `after_anchor_s`, so no repeat decides an anchor whose request may still
+    send, and at most `OMS_INFLIGHT_STUCK_MAX_S` (SEC-S3D-02)."""
 
     submit_timeout_s: float
     place_wait_s: float
@@ -85,11 +90,21 @@ class OmsBounds:
         for name in (bound.name for bound in fields(self)):
             if not (math.isfinite(seconds := getattr(self, name)) and seconds > 0):
                 raise ValueError(f"{name} must be a finite number of seconds above zero")
-        answer_s = 2 * CV_PERSIST_TIMEOUT + self.submit_timeout_s
-        if answer_s > self.stop_request_s or not self.submit_timeout_s < CV_COMMAND_TIMEOUT:
+        if not 3 * CV_PERSIST_TIMEOUT + self.submit_timeout_s < self.stop_request_s:
             raise ValueError(
-                f"submit_timeout_s ({self.submit_timeout_s:g} s): a stop request's answer must fit "
-                f"{self.stop_request_s:g} s, and B1's command timeout must not cut a create"
+                f"submit_timeout_s ({self.submit_timeout_s:g} s): an entry's stop request, "
+                f"answered within 3 x CV_PERSIST_TIMEOUT + it, must land inside "
+                f"{self.stop_request_s:g} s"
+            )
+        if not CV_COMMAND_TIMEOUT <= self.stop_request_s:
+            raise ValueError(
+                f"stop_request_s ({self.stop_request_s:g} s): an attach's stop request, answered "
+                f"within B1's {CV_COMMAND_TIMEOUT:g} s command timeout, must land inside it"
+            )
+        if not self.submit_timeout_s < CV_COMMAND_TIMEOUT:
+            raise ValueError(
+                f"submit_timeout_s ({self.submit_timeout_s:g} s): B1's {CV_COMMAND_TIMEOUT:g} s "
+                "command timeout must not cut a create"
             )
         if not self.place_wait_s > self.submit_timeout_s:
             raise ValueError(
