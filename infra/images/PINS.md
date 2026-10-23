@@ -12,6 +12,7 @@ into its row here.
 | Image                                  | Tag               | Digest                                                                  | Registry   | Resolved on | Source                                                                            |
 | -------------------------------------- | ----------------- | ----------------------------------------------------------------------- | ---------- | ----------- | --------------------------------------------------------------------------------- |
 | postgres                               | 16.4              | sha256:e62fbf9d3e2b49816a32c400ed2dba83e3b361e6833e624024309c35d334b412 | Docker Hub | 2026-10-06  | `infra/compose/docker-compose.yml`                                                |
+| public.ecr.aws/docker/library/postgres | 16.4              | sha256:e62fbf9d3e2b49816a32c400ed2dba83e3b361e6833e624024309c35d334b412 | Public ECR | 2026-10-06  | `infra/images/prepull.txt`                                                        |
 | questdb/questdb                        | 8.1.1             | sha256:82ef61a3919f4014e2aae1216f2803288b176a54c197d0933863bdc8c04a2e03 | Docker Hub | 2026-10-06  | `infra/compose/docker-compose.yml`                                                |
 | prom/prometheus                        | v2.54.1           | sha256:f6639335d34a77d9d9db382b92eeb7fc00934be8eae81dbc03b31cfe90411a94 | Docker Hub | 2026-10-06  | `infra/compose/docker-compose.yml`                                                |
 | python                                 | 3.12.7-alpine3.20 | sha256:5049c050bdc68575a10bcb1885baa0689b6c15152d8a56a7e399fb49f783bf98 | Docker Hub | 2026-10-06  | `infra/compose/docker-compose.yml`                                                |
@@ -26,11 +27,11 @@ into its row here.
 | postgres                               | 16-alpine         | sha256:f4610795587492cd4fb887c2dc3de301b813278bb6f616992061141b5f15ac36 | Docker Hub | 2026-10-23  | `infra/images/prepull.txt`                                                        |
 | public.ecr.aws/docker/library/postgres | 16-alpine         | sha256:f4610795587492cd4fb887c2dc3de301b813278bb6f616992061141b5f15ac36 | Public ECR | 2026-10-23  | `infra/images/prepull.txt`                                                        |
 
-All 14 pins are verified present in their registry by `--check` (with 3x backoff retry on 429/5xx).
+All 15 pins are verified present in their registry by `--check` (with 3x backoff retry on 429/5xx).
 
 Two sources, one image (#4301): `postgres:16-alpine`, which the test jobs pull before their tests
 (`tools/ci/prepull_images.sh`), is pinned on Docker Hub and on the Public ECR mirror at the same
-digest; the script fails unless both pins agree. QuestDB and Grafana have no official mirror and
+digest; the script fails unless both pins agree. `postgres:16.4` (compose) has the same two sources. QuestDB and Grafana have no official mirror and
 are retried on Docker Hub only.
 
 minio: `minio/minio:RELEASE.2024-09-13T20-26-02Z` is no longer anonymously served on Docker Hub or

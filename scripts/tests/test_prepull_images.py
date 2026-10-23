@@ -290,5 +290,5 @@ def test_every_job_that_builds_a_postgres_container_pre_pulls() -> None:
         ("_job-migrations.yml", "cv_app has no DDL privilege"),
     ):
         text = (REPO / ".github/workflows" / wf).read_text(encoding="utf-8")
-        head = text.split(marker)[0]
+        head = text.rpartition(marker)[0]
         assert head.rstrip().rsplit("prepull_images.sh", 1)[-1].startswith(" postgres"), wf

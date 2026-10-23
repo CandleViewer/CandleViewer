@@ -469,7 +469,8 @@ index alone, removing nothing.
   change a timeout or budget for it. If the message says the mirror's digest differs, or a ref has
   no digest, the pins in `infra/images/prepull.txt` and `infra/images/PINS.md` disagree: fix them
   in one PR. QuestDB and Grafana have no mirror, so only a re-run helps there. A green run's
-  step summary lists which registry served each image and its digest.
+  step summary lists which registry served each image and its digest. A `429` or `Rate exceeded` from
+  the mirror is a re-run case too. Each pull is bounded to 120 s.
 
 ### CI-E2E-* / CI-A11Y-* — Playwright + accessibility
 

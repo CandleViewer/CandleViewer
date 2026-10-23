@@ -5,3 +5,4 @@
 postgres postgres:16-alpine@sha256:f4610795587492cd4fb887c2dc3de301b813278bb6f616992061141b5f15ac36 public.ecr.aws/docker/library/postgres:16-alpine@sha256:f4610795587492cd4fb887c2dc3de301b813278bb6f616992061141b5f15ac36
 questdb compose:questdb/questdb -
 grafana compose:grafana/grafana -
+postgres-compose compose:postgres public.ecr.aws/docker/library/postgres:16.4@sha256:e62fbf9d3e2b49816a32c400ed2dba83e3b361e6833e624024309c35d334b412
