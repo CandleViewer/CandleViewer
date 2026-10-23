@@ -17,6 +17,7 @@ from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
 from candleviewer.admin.view_as_sweeper import LIST_LIMIT, ViewAsSweeper
+from candleviewer.api.users import RolesHookFailed
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.view_as import ViewAsEndReason, ViewAsState
 from candleviewer.view_as_wiring import RoleChangeNotifier
@@ -271,22 +272,24 @@ async def test_a_failing_hook_still_lets_the_registry_run_and_is_raised_after() 
     await rig.viewing()
     registry = _Registry(rig)
     rig.ports.fails["ineligible"] = ConnectionError("identity store unreachable")
-    with pytest.raises(ConnectionError):
+    with pytest.raises(RolesHookFailed) as raised:
         await RoleChangeNotifier(rig.service, registry).roles_changed(_VIEWER)
+    assert isinstance(raised.value.__cause__, ConnectionError)
     assert registry.seen == [(_VIEWER, [None])]
 
 
 async def test_a_hook_that_outlasts_its_bound_still_lets_the_registry_run() -> None:
     """The bound cuts a hook that never answers: the registry runs, then the bound's
-    `TimeoutError` is raised for the route to count."""
+    `TimeoutError` is raised, as `RolesHookFailed`'s cause, for the route to count."""
     rig = _Rig()
     await rig.viewing()
     registry = _Registry(rig)
     rig.ports.holds.add("ineligible")  # the eligibility read never answers
     notifier = RoleChangeNotifier(rig.service, registry, timeout_s=0)
     async with asyncio.timeout(5):  # a guard only: without the bound it fires, outside the raises
-        with pytest.raises(TimeoutError):
+        with pytest.raises(RolesHookFailed) as raised:
             await notifier.roles_changed(_VIEWER)
+    assert isinstance(raised.value.__cause__, TimeoutError)
     await rig.settled()
     assert registry.seen == [(_VIEWER, [None])]
 

@@ -267,6 +267,12 @@ class PermissionChangeNotifier(Protocol):
     async def roles_changed(self, user_id: uuid.UUID) -> None: ...
 
 
+class RolesHookFailed(Exception):
+    """A role push's view-as hook failed or outlasted its bound, its error the cause; the registry
+    push after it ran (`view_as_wiring.RoleChangeNotifier`, #3085 S5b). Logged `part` `view_as_hook`
+    apart from a registry failure."""
+
+
 class _AuditRefused(Exception):
     """The write-ahead audit record could not be written; the change rolled back."""
 
@@ -459,16 +465,20 @@ ROLES_PUSH_STEP: Final = "roles_push"
 
 
 def _roles_pushed(
-    user_id: uuid.UUID, outcome: Literal["ok", "failed"], error: str | None = None
+    user_id: uuid.UUID,
+    outcome: Literal["ok", "failed"],
+    error: str | None = None,
+    part: Literal["registry", "view_as_hook"] | None = None,
 ) -> None:
     """One count and one line per push of a committed role change (R7); `failed` raises the
-    `UserLifecycleStepFailed` ticket."""
+    `UserLifecycleStepFailed` ticket, and the line's `part` says what failed."""
     user_lifecycle_steps_total.labels(step=ROLES_PUSH_STEP, outcome=outcome).inc()
     (_log().error if outcome == "failed" else _log().info)(
         "users.update.step",
         step=ROLES_PUSH_STEP,
         outcome=outcome,
         error=error,
+        part=part,
         target_user_id=str(user_id),
         request_id=current_request_id(),
     )
@@ -479,8 +489,10 @@ async def _push_roles(notifier: PermissionChangeNotifier, user_id: uuid.UUID) ->
     is counted and logged, never rolled back and never the answer to a committed change."""
     try:
         await notifier.roles_changed(user_id)
+    except RolesHookFailed as exc:  # the registry ran; the view-as hook before it did not
+        _roles_pushed(user_id, "failed", type(exc.__cause__).__name__, part="view_as_hook")
     except Exception as exc:  # isolated: the change is committed
-        _roles_pushed(user_id, "failed", type(exc).__name__)
+        _roles_pushed(user_id, "failed", type(exc).__name__, part="registry")
     else:
         _roles_pushed(user_id, "ok")
 

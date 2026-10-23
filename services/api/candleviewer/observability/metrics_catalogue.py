@@ -3834,7 +3834,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "rule_disarm, invite_revoke (or skipped: not invited). The closing record of a change "
         "that did not commit (closing_record), one attempt: ok or failed. The grants push "
         "(grants_push, #2648): pushed, timeout or failed. The role push of a committed role "
-        "change (roles_push, E42-T09 #2649): ok or failed.",
+        "change (roles_push, E42-T09 #2649): ok or failed, a failure of the registry push or "
+        "of the view-as hook before it (#3085 S5b), the log line's part telling which.",
         "UserLifecycleStepFailed (a cascade step, closing record or role push failed in 15m, "
         "ticket); UserGrantsPushFailed (a grants push failed or timed out in 15m, ticket)",
         _L,

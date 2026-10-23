@@ -3,8 +3,9 @@ scraped registry with `env` by `export_user_lifecycle_metrics`. The label values
 declared here and pinned by tests to the module that writes each: the disable's results and the
 cascade's steps and outcomes in `admin/user_disable.py`, the grants push (`step`
 `grants_push`, `outcome` `pushed`, `timeout` or `failed`) in `admin/account_access.py` (#2648),
-and the role push of a committed role change (`step` `roles_push`, `outcome` `ok` or `failed`)
-in `api/users.py` (E42-T09, #2649).
+and the role push of a committed role change (`step` `roles_push`, `outcome` `ok` or `failed`,
+a failure of the registry push or of the view-as hook before it, #3085 S5b) in `api/users.py`
+(E42-T09, #2649).
 Every series is bound at import, so the first failure after a restart is an increase that the
 lifecycle tickets in `infra/prometheus/alerts/system_ticket.yml` can see."""
 
@@ -37,7 +38,7 @@ STEP_OUTCOMES: Final[Mapping[str, tuple[str, ...]]] = {
     "invite_revoke": ("ok", "failed", "skipped"),  # skipped: the user was not invited
     "closing_record": ("ok", "failed"),
     "grants_push": ("pushed", "timeout", "failed"),
-    "roles_push": ("ok", "failed"),  # E42-T09 (#2649): `PUT /users/{userId}/roles` and `PATCH`
+    "roles_push": ("ok", "failed"),  # E42-T09 (#2649), `PUT .../roles` and `PATCH`; with its hook
 }
 
 user_lifecycle_total = Counter(

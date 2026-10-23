@@ -28,7 +28,7 @@ from candleviewer.admin.view_as import (
     ViewAsService,
 )
 from candleviewer.admin.view_as_sweeper import ViewAsSweeper
-from candleviewer.api.users import PermissionChangeNotifier
+from candleviewer.api.users import PermissionChangeNotifier, RolesHookFailed
 from candleviewer.api.view_as_refusals import ViewAsRefusalRecorder, Viewer
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.models import SessionRecord
@@ -170,8 +170,9 @@ class RoleChangeNotifier:
     """The users routes' `PermissionChangeNotifier`: `ViewAsService.on_roles_changed` runs first,
     so no viewing socket takes on a promoted target's Owner scope when the WebSocket registry
     re-evaluates. A hook that fails or outlasts its bound still lets the registry run; its error
-    is raised after, for the route to count (`users.update.step`), and the sweeper evaluates what
-    it left within a tick. A cancelled request still runs the registry, and a registry failure
+    is raised after as the cause of `RolesHookFailed`, for the route to count and to log apart
+    (`users.update.step`, `part` `view_as_hook`), and the sweeper evaluates what it left within a
+    tick. A cancelled request still runs the registry, and a registry failure
     then is logged, never raised: it would replace the cancellation."""
 
     def __init__(
@@ -193,9 +194,9 @@ class RoleChangeNotifier:
             except Exception as exc:
                 _log().error("admin.view_as.registry_push_failed", error=type(exc).__name__)
             raise
-        except Exception:
+        except Exception as exc:
             await self._registry.roles_changed(user_id)
-            raise
+            raise RolesHookFailed from exc
         await self._registry.roles_changed(user_id)
 
 
