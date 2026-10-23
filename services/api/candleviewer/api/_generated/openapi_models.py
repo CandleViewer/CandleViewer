@@ -6915,6 +6915,12 @@ class OrderAcceptance(BaseModel):
     )
     trade_group: TradeGroup | None
     order: Order | None
+    reconciling: Annotated[
+        bool,
+        Field(
+            description="True when, as of the answer, the answered order is unresolved, its `lifecycle_state` `validated`, `submitting`, `unknown` or `quarantined`, or its state could not be read; a first answer included, and a repeat's too. A replay of a stored answer (`Idempotency-Replayed: true`) is that answer, so its value is as of the first one. False for every other state, `held` included. A separate member, because `OrderLifecycleState` mirrors the database enum and has no such value.\n"
+        ),
+    ]
 
 
 class JournalTradeDetail(JournalTrade):
