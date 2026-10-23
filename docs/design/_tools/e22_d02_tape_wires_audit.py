@@ -33,6 +33,7 @@ TOOLS = ROOT / "docs" / "design" / "_tools"
 ORDERFLOW = ROOT / "services" / "api" / "candleviewer" / "orderflow"
 THEMES = ("dark", "light", "high-contrast")
 BAR: dict[str, float | None] = {"text": 4.5, "non-text": 3.0, "decorative": None, "rejected": 4.5}
+BAR["scrim"] = 4.5  # the S10 composition: reported against the text bar, never gated (D02-C15)
 
 
 def _load(path: Path, name: str) -> ModuleType:
@@ -99,6 +100,18 @@ def col(theme: str, short: str) -> str:
     return str(T[theme][TOK.get(short, short)])
 
 
+def scrimmed(theme: str, short: str) -> str:
+    """The colour seen through `color.surface.app` at `opacity.scrim` (E08-D11 M11; E11-D02 10)."""
+    a, top, under = (
+        float(T[theme]["opacity.scrim"]),
+        rgb(col(theme, "color.surface.app")),
+        rgb(col(theme, short)),
+    )
+    return "#" + "".join(
+        f"{round(a * t + (1 - a) * u):02X}" for t, u in zip(top, under, strict=True)
+    )
+
+
 # A. the matrix (spec 14): text tokens on every neutral surface, the focus stand-in, the decorative
 # hairlines, and the hi-fi pairs memo 3.8 measured for E22-D03 ("D03:" rows reported, not gated).
 SURF = ("canvas", "raised", "sunken", "hover", "selected", "overlay")
@@ -107,6 +120,9 @@ PAIRS = [[f"{u} on {s}", t, s, "text"] for s in SURF for t, u in USE.items()]
 PAIRS = [p for p in PAIRS if (p[1], p[2]) != ("t3", "selected")]
 PAIRS += [[f"focus stand-in on {s}", "t1", s, "non-text"] for s in SURF]
 PAIRS += rows_of("""REJECTED: dimmed prefix on the selected row|t3|selected|rejected
+S10 scrim: row text under opacity.scrim of app|t1|raised|scrim
+S10 scrim: reason / readout under the scrim|t2|raised|scrim
+S10 scrim: HH:MM: prefix under the scrim|t3|raised|scrim
 divider hairline, card outline|b.default|raised|decorative
 live-edge divider|b.strong|raised|decorative
 tier-2 band edge (glyph + weight carry)|hover|raised|decorative
@@ -131,14 +147,29 @@ MEMO_38: dict[str, list[float]] = json.loads(  # e22-tape-reading.md 3.8 (dark /
     ' "sell|canvas": [4.68, 4.85, 7.60]}'
 )
 # B. tape geometry: the spec's px literals (2, PROPOSED) are the inputs; row counts are printed.
+# Per density (16 3: the step space.2 8 / space.3 12; the control 24 / 32): a pill row = 20 px
+# pills + the step; the header = the control + the step; the strip = one control line, or three
+# rows + the step.
 FRAMES = {"1280x800": (800, 40, 24), "2560x1440": (1440, 40, 24)}  # viewport h, shell top, bottom
-SLOTS = {"header": 32, "status": 28, "chips": 24, "column header": 20, "control strip": 24}
-STRIP_EXPANDED = (
-    80  # three 24 px rows + space.1 x 2; the default state draws the strip collapsed (24)
-)
+SLOTS = {
+    "compact": {"header": 32, "status": 28, "chips": 28, "column header": 20, "control strip": 24},
+    "comfortable": {
+        "header": 44,
+        "status": 32,
+        "chips": 32,
+        "column header": 24,
+        "control strip": 32,
+    },
+}
+STRIP_EXPANDED = {
+    "compact": 80,
+    "comfortable": 108,
+}  # three rows + the step; drawn collapsed by default
+GAP_TOKEN = {"compact": "space.2", "comfortable": "space.3"}
 CH = {"Time": 12, "Price": 9, "Size": 6, "Notional": 6, "Side": 4, "side glyph": 1, "tier mark": 1}
 MONO_EM = 0.60  # (heuristic) JetBrains Mono's nominal advance, printed as an estimate
 DOM_MAX, DIVIDERS, RATES = 60, 2, (50, 500, 2000)
+RING_DEFAULT, PARK_S = 10_000, 30  # 14 Performance's default ring (memo C6); the soft pause's park
 # D. memo 3.9: cvd_sim.py's maths as e22_d01_tape_stats.py quotes it
 DEUTERANOPIA = (  # cvd_sim.py: Machado, Oliveira & Fernandes 2009 sRGB-space matrix (quoted)
     (0.367322, 0.860646, -0.227968),
@@ -157,6 +188,10 @@ color.surface.raised|#1A1A1A|#181A22
 color.surface.canvas|#141414|#12141A"""
 )
 MEMO_SEP = {"hue": [1.59, 1.23, 1.46], "fill": [1.18, 1.08, 1.13]}  # memo lines 238-239
+MEMO_MIN = {
+    "glyph on raised": 3.75,
+    "mark on canvas": 3.97,
+}  # memo lines 240-247: the minima claimed
 # E. the engine constants, quoted as text (a changed value fails the run): name|expected
 LIMITS = rows_of("""OVERFLAG_FRACTION|Decimal("0.20")
 OVERFLAG_CAP_QUANTILE|0.80
@@ -210,7 +245,7 @@ SHARED = "Research PRs never edit `22`."
 FORBIDDEN = {
     "local path": re.compile(r"/(?:home|Users)/[^/\s]+/"),
     "Penpot host": re.compile(r"penpot\.[a-z0-9-]+\.[a-z]{2,}", re.IGNORECASE),
-    "Penpot team / file / workspace ref": re.compile(r"team-id=|file-id=|#/workspace"),
+    "Penpot team / file / workspace ref": re.compile(r"team[-_]id=|file[-_]id=|#/work[s]pace"),
 }
 COUNT_RX = rows_of(  # the ids the spec's tables carry: what the boards and the draft quote
     r"""boards=^\| (?:0[1-9]|1[0-3]) +\| `
@@ -251,6 +286,14 @@ def radii(k: float) -> dict[str, float]:
 def quoted(path: Path, pattern: str) -> str | None:
     m = re.search(pattern, path.read_text(encoding="utf-8"), re.MULTILINE)
     return m.group(1).strip() if m else None
+
+
+def consts_ring(limits: Path) -> str:
+    """`RING_BUFFER_MAX_PRINTS` as limits.py spells it (quoted text; the run fails if it moved)."""
+    v = quoted(limits, r"^RING_BUFFER_MAX_PRINTS: Final = ([^#\n]+?)\s*(?:#|$)")
+    if v is None:
+        raise SystemExit("limits.py: RING_BUFFER_MAX_PRINTS not found")
+    return v
 
 
 def gates(text: str, label: str, constitution: str, problems: list[str]) -> dict[str, Any]:
@@ -295,7 +338,10 @@ def main(argv: list[str] | None = None) -> int:
     say("|---|---|---|---|---|---|---|---|")
     fails, rows, repro = 0, [], []  # type: int, list[dict[str, Any]], list[list[Any]]
     for element, fg, bg, role in PAIRS:
-        vals = [ratio(col(t, fg), col(t, bg)) for t in THEMES]
+        if role == "scrim":  # the frozen rows seen through the scrim: both colours composited
+            vals = [ratio(scrimmed(t, fg), scrimmed(t, bg)) for t in THEMES]
+        else:
+            vals = [ratio(col(t, fg), col(t, bg)) for t in THEMES]
         bar, d03 = BAR[role], element.startswith("D03")
         bad = [THEMES[i] for i, v in enumerate(vals) if bar is not None and v < bar]
         verdict = "PASS" if not bad else "FAIL: " + ", ".join(bad)
@@ -303,6 +349,8 @@ def main(argv: list[str] | None = None) -> int:
             verdict = "decorative (not gated)"
         elif role == "rejected":
             verdict = "rejected by design; would " + verdict
+        elif role == "scrim":
+            verdict = "reported, not gated (D02-C15; E22-D03): would " + verdict
         elif d03:
             verdict = "D03 inherits; " + verdict + " (not gated)"
         elif bad:
@@ -313,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
         rows.append({"element": element, "fg": TOK[fg], "bg": TOK[bg], "role": role, "ratio": r2})
         if role == "text" and not d03 and key in E13_DARK:
             repro.append(["E13-D02", key, r2[0], E13_DARK[key], r2[0] == E13_DARK[key]])
-        if key in MEMO_38:
+        if key in MEMO_38 and role != "scrim":
             repro.append(["memo 3.8", key, r2, MEMO_38[key], r2 == MEMO_38[key]])
     n_ok = sum(1 for e in repro if e[4])
     diff = "" if n_ok == len(repro) else f" DIFF {[e for e in repro if not e[4]]}"
@@ -327,31 +375,64 @@ def main(argv: list[str] | None = None) -> int:
         "compact": int(T["dark"]["font.size.xs"]),
         "comfortable": int(T["dark"]["font.size.base"]),
     }
-    gaps, inset = (len(CH) - 1) * int(T["dark"]["space.2"]), 2 * int(T["dark"]["space.3"])
+    step = {d: int(T["dark"][GAP_TOKEN[d]]) for d in row}
+    gaps, inset = {d: (len(CH) - 1) * step[d] for d in row}, 2 * int(T["dark"]["space.3"])
     chs = sum(CH.values())
     tape: dict[str, Any] = {"row_px": row, "font_px": fs, "slots": SLOTS, "ch": CH, "ch_total": chs}
-    tape.update(
-        {"mono_em": MONO_EM, "strip_expanded_px": STRIP_EXPANDED, "frames": {}, "rates": {}}
-    )
-    tape["rows_600"] = {d: 600 // r for d, r in row.items()}
+    tape.update({"mono_em": MONO_EM, "strip_expanded_px": STRIP_EXPANDED, "gap_px": step})
+    tape.update({"frames": {}, "rates": {}, "rows_600": {d: 600 // r for d, r in row.items()}})
+    say(f"- slots per density (the step {step}): {SLOTS}; strip expanded {STRIP_EXPANDED}")
     for name, (h, top, bottom) in FRAMES.items():
-        log = h - top - bottom - sum(SLOTS.values())
-        n = {d: log // r for d, r in row.items()}
+        panel = h - top - bottom
+        log = {d: panel - sum(SLOTS[d].values()) for d in row}
+        n = {d: log[d] // row[d] for d in row}
         over = {d: DOM_MAX - v - DIVIDERS for d, v in n.items()}
-        tape["frames"][name] = {"panel_px": h - top - bottom, "log_px": log, "rows": n}
-        tape["frames"][name]["overscan"] = over
-        say(f"- {name}: panel {h - top - bottom} px, log {log} px, rows {n}, overscan {over}")
+        tape["frames"][name] = {"panel_px": panel, "log_px": log, "rows": n, "overscan": over}
+        say(f"- {name}: panel {panel} px, log {log} px, rows {n}, overscan {over}")
     ok600 = "MATCH" if tape["rows_600"] == w["rows_visible"] else "DIFF"
     say(f"- 600 px panel: rows {tape['rows_600']} (e22_d01 {w['rows_visible']}) {ok600}")
-    tape["min_width_px"] = {d: math.ceil(chs * MONO_EM * fs[d]) + gaps + inset + 2 for d in row}
-    say(f"- min width = {chs} ch x {MONO_EM} em (heuristic) x font + {gaps} + {inset} + 2 px:")
-    say(f"  {tape['min_width_px']}")
+    tape["min_width_px"] = {
+        d: math.ceil(chs * MONO_EM * fs[d]) + gaps[d] + inset + 2 for d in row
+    }  # the cell size per density is PROPOSED (D02-C11); one size at both densities is printed too
+    tape["min_width_one_size_px"] = math.ceil(chs * MONO_EM * fs["compact"]) + gaps["comfortable"]
+    tape["min_width_one_size_px"] += inset + 2
+    say(f"- min width = {chs} ch x {MONO_EM} em (heuristic) x font + gaps {gaps} + {inset} + 2 px:")
+    say(
+        f"  {tape['min_width_px']}; comfortable at the compact cell size "
+        f"{tape['min_width_one_size_px']}"
+    )
     for r in RATES:
         wr, pf = w["rates"][str(r)], round(r / 60, 2)
         dwell = {d: round(n_ * 1000 / r, 1) for d, n_ in tape["rows_600"].items()}
         okr = pf == wr["prints_per_frame"] and dwell["compact"] == wr["row_dwell_ms"]["compact"]
         tape["rates"][str(r)] = {"prints_per_frame": pf, "dwell_ms": dwell, "match_d01": okr}
         say(f"- {r} /s: {pf} per frame, dwell {dwell} ms; e22_d01 {'MATCH' if okr else 'DIFF'}")
+    ring_max = int(str(consts_ring(ORDERFLOW / "limits.py")).replace("_", ""))
+    fill = {
+        str(r): {
+            "ring_default_s": RING_DEFAULT / r,
+            "ring_max_s": ring_max / r,
+            "park_prints": PARK_S * r,
+        }
+        for r in RATES
+    }
+    tape["buffer_full"] = {
+        "ring_default": RING_DEFAULT,
+        "ring_max": ring_max,
+        "park_s": PARK_S,
+        "by_rate": fill,
+    }
+    say(
+        f"- a paused tape fills its ring (S22): {RING_DEFAULT} / {ring_max} prints in s, "
+        f"30 s park in prints:"
+    )
+    say(
+        "  "
+        + "; ".join(
+            f"{r} /s: {v['ring_default_s']:g} / {v['ring_max_s']:g} s, park {v['park_prints']}"
+            for r, v in fill.items()
+        )
+    )
     out["tape"] = tape
 
     say("\n## C. Bubble geometry (memo F14-F16; compared with e22_d01 worked.bubble)\n")
@@ -407,15 +488,40 @@ def main(argv: list[str] | None = None) -> int:
             f"{oks}"
         )
     out["cvd"] = {"swatches": sw, "separation": sep}
+    # the side hue as a mark, per rendering (memo lines 240-247: the glyph on the row >= 3.75, the
+    # bubbles on the canvas >= 3.97 in every rendering; the glyph on the tier-2 fill is reported)
+    marks = {
+        "glyph on raised": ("color.sell.default", "color.surface.raised"),
+        "mark on canvas": ("color.sell.default", "color.surface.canvas"),
+        "buy glyph on raised": ("color.buy.default", "color.surface.raised"),
+        "buy mark on canvas": ("color.buy.default", "color.surface.canvas"),
+        "sell glyph on sell.subtle": ("color.sell.default", "color.sell.subtle"),
+        "buy glyph on buy.subtle": ("color.buy.default", "color.buy.subtle"),
+    }
+    sim: dict[str, list[float]] = {}
+    for mname, (x, y) in marks.items():
+        sim[mname] = [round(ratio(sw[x][r_], sw[y][r_]), 2) for r_ in sw[x]]
+        want_min = MEMO_MIN.get(mname)
+        okm = "" if want_min is None else (" MATCH" if min(sim[mname]) == want_min else " MISMATCH")
+        if want_min is not None and min(sim[mname]) != want_min:
+            problems.append(f"3.9 minimum {mname}: {min(sim[mname])} vs memo {want_min}")
+        say(f"- {mname} (normal / greyscale / deuteranopia) {sim[mname]}{okm}")
+    out["cvd"]["marks"] = sim
 
     say("\n## E. The >20 % numbers (e22_d01; synthetic dense tape, shape only); quoted constants\n")
     dense = next(f for f in files if str(f["file"]).endswith("btcusdt-2026-09-01.jsonl.gz"))
     keys = ("250000", "100000", "30000", "10000", "p80", "p99")
     flagged = {k: round(100 * float(dense["flagged"][k]["fraction"]), 2) for k in keys}
     p80 = float(dense["flagged"]["p80"]["thr_usdt"])
+    p99 = float(dense["flagged"]["p99"]["thr_usdt"])
     say(
         f"- {dense['provenance']}: flagged % {flagged}; advisory at 30 000: "
         f"{dense['flagged']['30000']['advisory']}; p80 {p80:,.2f} USDT = suggested_value -> 34 723"
+    )
+    say(
+        f"- percentile mode p99 / 1 h: effective {p99:,.2f} USDT -> 'eff. 220k USDT (estimated)'; "
+        f"advisory {dense['flagged']['p99']['advisory']} (the cap engages above p80 only), "
+        f"no capped"
     )
     consts: dict[str, str | None] = {}
     for lname, lexp in LIMITS:
@@ -431,6 +537,8 @@ def main(argv: list[str] | None = None) -> int:
             )
     say("- quoted: " + "; ".join(f"{k} = {v}" for k, v in consts.items()))
     out["overflag"] = {"flagged_pct": flagged, "p80_usdt": p80, "suggested_value": 34723}
+    out["overflag"]["p99_usdt"] = p99
+    out["overflag"]["p99_advisory"] = str(dense["flagged"]["p99"]["advisory"])
     out["overflag"]["constants"] = consts
 
     say("\n## F. Token bindings (dark / light / hc, or MISSING = a DS request)\n")
