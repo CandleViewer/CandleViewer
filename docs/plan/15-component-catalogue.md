@@ -982,81 +982,59 @@ These are first-class design-system components per `05-accessibility-standard.md
 
 ### CMP-100 PriceInput
 
-- **Tier**: Molecule (trading) · **Purpose**: price entry with exchange tick-size validation and quick nudge buttons.
-- **Props**: `value: number` · `onChange` · `symbol: string` · `tickSize: number` (from `/v5/market/instruments-info`) · `side?: "buy"|"sell"` (tints on brand colour) · `referencePrice?: number` (last/mark, for %-away helper text) · `disabled?/disabledReason?`.
+- **Tier**: Molecule (trading) · **Purpose**: price entry with exchange tick-size validation and quick nudge buttons; the committed value never re-renders on a tick (the helpers are an isolated region, E30-D02 D6).
+- **Props**: `value: number` · `onChange` · `symbol: string` · `tickSize: number` (from `/v5/market/instruments-info`) · `side?: "buy"|"sell"` (tints the ▲ / ▼ glyph only — never the value text, never the focus halo) · `referencePrice?: number` (last/mark, for %-away helper text) · `disabled?/disabledReason?` (CMP-001's semantics; the reason is a key of `docs/design/E09/E09-D09.md` §3).
 - **Variants**: standalone, attached-to-order-line (rendered inline on chart via chart-engine overlay, CMP-192).
-- **States**: default, focus, invalid-tick (value not a multiple of `tickSize` → auto-rounds on blur with a visible "(rounded to nearest tick)" caption, never silently mutates without telling the user), disabled.
-- **A11y**: extends CMP-008 NumericStepperInput contract; `aria-label="Price"`, rounding-message rendered as `aria-live="polite"` text near the field, not just a toast.
-- **Tokens**: `font.mono`, `color.text.buy/sell`, `color.border.invalid`.
-- **API sketch**:
-
-```ts
-interface PriceInputProps {
-  value: number;
-  onChange: (v: number) => void;
-  symbol: string;
-  tickSize: number;
-  referencePrice?: number;
-  side?: "buy" | "sell";
-  disabled?: boolean;
-  disabledReason?: string;
-}
-```
-
+- **States**: default, focus, invalid-tick (value not a multiple of `tickSize` → auto-rounds on blur with a visible "(rounded to nearest tick)" caption; an exact half-tick tie rounds to the nearest even tick, E30-D02 A-5; never silently mutates), invalid (2 px `color.status.danger.default` boundary + `color.status.danger.strong` glyph + `color.text.primary` text), stale-helpers, read-only (E09-D09 §2.2 T2: `aria-disabled`, lock glyph, full label, reason linked).
+- **A11y**: extends CMP-008 NumericStepperInput contract; `aria-label="Price"`, rounding-message rendered as `aria-live="polite"` text near the field, not just a toast; focus is never moved by a tick; T2 per E09-D09 §2.2 for the view-as, viewer and read-only-account legs (CMP-079 RbacGate on the role legs; CMP-019 Icon `lock`, `decorative=false`, "Not available", leading the label).
+- **Tokens**: `font.family.mono` + `type.num.base` (tabular figures), `color.text.primary` on `color.surface.app`, `color.text.tertiary` as the 1 px rest boundary (= `color.border.input`, pending as E30-D04 CR-1; `color.border.strong` measures 1.91 / 1.57 / 1.91 and is not bound), `color.status.danger.default` / `color.status.danger.strong`, `color.text.secondary` (caption), `color.surface.raised` + `radius.control` (nudge buttons, 24 × 24 / 32 × 32), `space.inset.sm`, `color.focus.ring`.
+- **API sketch**: `interface PriceInputProps { value: number; onChange: (v: number) => void; symbol: string; tickSize: number; side?: "buy" | "sell"; referencePrice?: number; disabled?: boolean; disabledReason?: string }`
 - **Data contract**: `tickSize`/`symbol` sourced from Bybit `/v5/market/instruments-info` (REST, cached per symbol); no live WS dependency.
-- **Storybook**: Default, TickRounding, BuySideTint, SellSideTint, Disabled.
-- **Tests**: unit (tick-rounding matrix across symbols with different tick sizes), visual, axe, keyboard step, interaction test for rounding-announcement.
+- **Storybook**: Default, TickRounding, BuySideTint, SellSideTint, Invalid, FocusVisible, StaleHelpers, ReadOnlyT2, Comfortable, HighContrast.
+- **Tests**: unit (tick-rounding matrix across symbols with different tick sizes, the half-tick tie), visual, axe, keyboard step, interaction test for rounding-announcement, the T2 interaction test (reason in the DOM at mount, focusable, a press changes nothing), no re-render on a tick.
+- **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §4 (E30-D04; owner approval pending).
 
 ### CMP-101 QtyInput
 
-- **Tier**: Molecule (trading) · **Purpose**: quantity entry with exchange lot-size/min-notional validation and %-of-equity / risk-based helper.
-- **Props**: `value: number` · `onChange` · `symbol` · `lotSize: number` · `minQty: number` · `minNotional?: number` · `sizingMode: "qty"|"pctEquity"|"fixedUsd"|"riskPct"` · `onSizingModeChange` · `accountEquity?: number` · `disabled?/disabledReason?`.
-- **Variants**: qty mode, %-equity mode (renders derived qty read-only alongside the % input), fixed-$ mode, risk-% mode (requires a stop distance input to derive qty).
-- **States**: default, focus, below-min-qty (blocks submit, inline error), below-min-notional (blocks submit), disabled.
-- **A11y**: extends CMP-008; sizing-mode switch is CMP-003 SegmentedControl with `aria-describedby` explaining the active formula.
-- **Tokens**: `font.mono`, `color.border.invalid`.
-- **API sketch**:
-
-```ts
-interface QtyInputProps {
-  value: number;
-  onChange: (v: number) => void;
-  symbol: string;
-  lotSize: number;
-  minQty: number;
-  minNotional?: number;
-  sizingMode: "qty" | "pctEquity" | "fixedUsd" | "riskPct";
-  onSizingModeChange: (m: QtyInputProps["sizingMode"]) => void;
-  accountEquity?: number;
-  stopDistance?: number; // required for riskPct
-}
-```
-
-- **Data contract**: `lotSize`/`minQty`/`minNotional` sourced from Bybit `/v5/market/instruments-info` (REST, cached per symbol); `accountEquity` sourced from the account-equity WS/REST feed per `14-screens-catalogue.md` §0.4.
-- **Storybook**: QtyMode, PctEquityMode, FixedUsdMode, RiskPctMode, BelowMinQty, BelowMinNotional.
-- **Tests**: unit (lot/min-qty/min-notional validation matrix per sizing mode), visual, axe, keyboard.
+- **Tier**: Molecule (trading) · **Purpose**: quantity entry with exchange lot-size/min-notional validation and the E30-D02 D7 hybrid sizing control: one input, a unit switch and a read-out line that always shows the other three framings.
+- **Props**: `value: number` · `onChange` · `symbol` · `lotSize: number` · `minQty: number` · `minNotional?: number` · `sizingMode: "fixed_qty"|"fixed_notional"|"pct_equity"|"risk_based"` (`24-internal-schemas.md` §9.2; E30-D02 A-7) · `onSizingModeChange` · `accountEquity?: number` · `stopDistance?: number` (required for `risk_based`) · `disabled?/disabledReason?`.
+- **Variants**: fixed-qty mode, fixed-notional mode, %-equity mode (renders derived qty read-only alongside the % input), risk-% mode (requires a stop distance to derive qty); hedge-mode leg radiogroup (E30-D02 D27).
+- **States**: default, focus, below-min-qty (blocks submit, inline error), below-min-notional (blocks submit), stale-wallet (the `% eq` and `risk %` units `aria-disabled` with "Equity not available — wallet data is {n} s old", dimmed at `opacity.disabled`, focusable — the validity look of E30-D04 §2.5), preview-in-flight (the read-out greyed under the `(provisional)` hatch), server-size-replaced (the value-change highlight, E30-D04 M5), read-only (T2).
+- **A11y**: extends CMP-008; sizing-mode switch is CMP-003 SegmentedControl with `aria-describedby` explaining the active formula; the read-out line is one polite live region at ≤ 1 update per 2 s, latest value only; T2 per E09-D09 §2.2 (CMP-079 RbacGate on the role legs; CMP-019 Icon `lock` leading the label).
+- **Tokens**: `font.family.mono` + `type.num.base` / `type.num.sm`, `color.text.primary`, `color.surface.app`, `color.surface.raised` / `color.surface.selected` (the unit switch), `color.text.tertiary` (the 1 px rest boundary; = `color.border.input`, CR-1 pending), `color.status.danger.default`, `color.status.info.subtle` (the highlight overlay at 0.25), `radius.control`, `space.inset.sm`, `color.focus.ring`.
+- **API sketch**: `interface QtyInputProps { value: number; onChange: (v: number) => void; symbol: string; lotSize: number; minQty: number; minNotional?: number; sizingMode: "fixed_qty" | "fixed_notional" | "pct_equity" | "risk_based"; onSizingModeChange: (m: QtyInputProps["sizingMode"]) => void; accountEquity?: number; stopDistance?: number; disabled?: boolean; disabledReason?: string }`
+- **Data contract**: `lotSize`/`minQty`/`minNotional` sourced from Bybit `/v5/market/instruments-info` (REST, cached per symbol); `accountEquity` sourced from the account-equity WS/REST feed per `14-screens-catalogue.md` §0.4; the authoritative size from `POST /trade-groups/preview` (`resolved.qty`).
+- **Storybook**: FixedQty, FixedNotional, PctEquity, RiskBased, BelowMinQty, BelowMinNotional, StaleWalletUnits, PreviewInFlight, ServerSizeHighlight, ReadOnlyT2, Comfortable, HighContrast, ReducedMotion.
+- **Tests**: unit (lot/min-qty/min-notional validation matrix per sizing mode; `risk_based` without `stopDistance` is an error), visual, axe, keyboard, the live-region cadence and teardown test, the highlight twin test, the T2 test.
+- **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §5 (E30-D04; owner approval pending).
 
 ### CMP-102 SideToggle (Buy/Sell)
 
 - **Tier**: Molecule (trading) · **Purpose**: primary long/short direction selector on the order ticket.
-- **Props**: `value: "buy"|"sell"` · `onChange` · `size` · `disabled?`.
-- **A11y**: CMP-003 SegmentedControl composition (`role="radiogroup"`), buy option always labelled "Buy / Long", sell "Sell / Short" (full words, not just colour-coded B/S).
-- **Tokens**: `color.buy`, `color.sell`.
-- **API sketch**: `interface SideToggleProps { value: "buy"|"sell"; onChange: (v:"buy"|"sell")=>void; size?: "sm"|"md"; disabled?: boolean; }`
+- **Props**: `value: "buy"|"sell"` · `onChange` · `size?: "sm"|"md"` · `disabled?/disabledReason?` (the reason per E09-D09 §3).
+- **Variants**: `sm` (24 px halves), `md` (28 px halves — E30-D02 D2).
+- **States**: default, hover, focus-visible (the double ring: 2 px `color.focus.ring` outside a 1 px `color.surface.canvas` halo — never the ring directly on a fill), pressed, read-only (T2: both halves on `color.surface.raised` with a hairline, full labels in `color.text.tertiary`, the lock leading the group, one reason).
+- **A11y**: CMP-003 SegmentedControl composition (`role="radiogroup"`), buy option always labelled "Buy / Long", sell "Sell / Short" (full words, not just colour-coded B/S); the ▲ / ▼ glyph `aria-hidden`; `B` / `S` set the side only while the ticket region has focus and no text field is active; T2 per E09-D09 §2.2 on the group (CMP-079 RbacGate; CMP-019 Icon `lock` leading the group).
+- **Tokens**: `color.buy.default` / `color.sell.default` (the selected half's fill; `color.buy.hover` / `color.sell.hover` on hover), `color.text.inverse` (labels), `color.surface.raised` + `color.text.primary` (the unselected half), `radius.control`, `type.ui.label`, `color.focus.ring`.
+- **API sketch**: `interface SideToggleProps { value: "buy"|"sell"; onChange: (v:"buy"|"sell")=>void; size?: "sm"|"md"; disabled?: boolean; disabledReason?: string; }`
 - **Data contract**: pure UI state, no direct WS/REST dependency (value flows into CMP-107 OrderTicket's submit payload).
-- **Storybook**: Default, Disabled.
-- **Tests**: unit, visual, axe, keyboard.
+- **Storybook**: Default, SellSelected, Hover, FocusVisibleDoubleRing, Pressed, ReadOnlyT2, SizeSm, SizeMd, Comfortable, HighContrast, Greyscale.
+- **Tests**: unit, visual, axe, keyboard (the roving stop; `B` / `S` scoping), the greyscale assertion (word + glyph on both halves), the T2 test.
+- **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §6 (E30-D04; owner approval pending).
 
 ### CMP-103 OrderTypeTabs
 
 - **Tier**: Molecule (trading) · **Purpose**: Market/Limit/Conditional (and Emulated: Scaled/Iceberg/TWAP/Chase) order-type selector inside the order ticket.
-- **Props**: `value` · `onChange` · `options: OrderTypeOption[]` (native vs emulated types flagged with an "(emulated)" tag per safety-transparency rule).
-- **A11y**: CMP-042 Tabs composition; emulated-type tag rendered as visible text badge, not tooltip-only.
-- **Tokens**: inherits CMP-042.
-- **API sketch**: `type OrderTypeOption = { value: string; label: string; emulated?: boolean };`
+- **Props**: `value` · `onChange` · `options: OrderTypeOption[]` (native vs emulated types flagged with an "(emulated)" tag per safety-transparency rule; an unavailable type carries `unavailableReason`).
+- **Variants**: native only; with emulated types.
+- **States**: default, selected (`color.surface.selected` + a 2 px `color.text.primary` rule — never the action blue, E30-D02 D5), hover, focus-visible, emulated-unavailable (the validity look of E30-D04 §2.5: the tab at `opacity.disabled` with its reason "Available with E33 emulated algos" as its description, `aria-disabled`, focusable, no lock), read-only (T2).
+- **A11y**: CMP-042 Tabs composition; emulated-type tag rendered as visible text badge, not tooltip-only; manual activation (`Enter` / `Space`) because a switch re-shapes the form (E30-D04 §7, PROPOSED); T2 per E09-D09 §2.2 (CMP-079 RbacGate; CMP-019 Icon `lock` leading the first tab); an emulated tab takes the validity look (E30-D04 §2.5).
+- **Tokens**: inherits CMP-042; `color.surface.selected`, `color.text.primary` (the rule), `color.text.secondary` (unselected text, the tag), `type.ui.label`, `type.ui.caption`, `radius.control`, `color.focus.ring`.
+- **API sketch**: `type OrderTypeOption = { value: string; label: string; emulated?: boolean; unavailableReason?: string };`
 - **Data contract**: `options` list is a static client-side vocabulary (native Bybit order types + CandleViewer-emulated types); no WS/REST dependency.
-- **Storybook**: Default, WithEmulatedTypes.
-- **Tests**: unit, visual, axe, keyboard.
+- **Storybook**: Default, WithEmulatedTypes, Selected, FocusVisible, EmulatedValidity, ConditionalSelected, ReadOnlyT2, Comfortable, HighContrast.
+- **Tests**: unit, visual, axe, keyboard, the emulated-tab test (focusable, a press changes nothing, the sentence announced once), the T2 test.
+- **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §7 (E30-D04; owner approval pending).
 
 ### CMP-104 LeverageSlider
 
@@ -1084,31 +1062,17 @@ interface LeverageSliderProps {
 
 ### CMP-105 AccountMultiSelect
 
-- **Tier**: Organism (trading) · **Purpose**: multi-account picker for trade-group fan-out — select N sub-accounts, each shown with its ProfileBadge and per-account editable overrides.
-- **Props**: `accounts: {id,label,badge:ProfileBadgeProps,selected,profileSummary}[]` · `onToggle` · `onSelectAll` · `onEditProfile(accountId)` · `maxSelectable?: number` (sub-account cap 5/20).
-- **A11y**: `role="group"` with a `listbox`-like multi-select pattern (`aria-multiselectable="true"`), each row a `role="option"` `aria-selected`; "select all" is a distinct labelled control, not implicit.
-- **Tokens**: `color.surface.raised`, `space.list.row`.
-- **API sketch**:
-
-```ts
-interface AccountMultiSelectProps {
-  accounts: Array<{
-    id: string;
-    label: string;
-    badge: ProfileBadgeProps;
-    selected: boolean;
-    profileSummary: string; // "5x, 2% risk, allowed: BTC,ETH"
-  }>;
-  onToggle: (id: string) => void;
-  onSelectAll: (selected: boolean) => void;
-  onEditProfile: (id: string) => void;
-  maxSelectable?: number;
-}
-```
-
-- **Data contract**: `accounts` list sourced from the account-management REST endpoint (sub-account roster + profile settings); `profileSummary` is derived client-side from each account's saved risk-profile record.
-- **Storybook**: Default, AllSelected, AtCap, EditProfileInline.
-- **Tests**: unit (cap enforcement), visual, axe, keyboard multi-select.
+- **Tier**: Organism (trading) · **Purpose**: multi-account picker for trade-group fan-out — select N sub-accounts, each shown with its ProfileBadge and per-account editable overrides; the account / trade-group selector of SCR-061 (E30-D03 §8).
+- **Props**: `accounts: {id,label,badge:ProfileBadgeProps,selected,profileSummary}[]` · `onToggle` · `onSelectAll` · `onEditProfile(accountId)` · `maxSelectable?: number` (sub-account cap 5/20) · `mode: "account" | "group"` · group rows (`memberCount`, `readiness`) · per-leg rows (`wouldSubmit`, `rejection`, `skip`, `override`) (E30-D03 A11).
+- **Variants**: `account`, `group`.
+- **States**: default, selected row, hover, focus-visible, at-cap, narrowed, read-only-member (T2: the include box `aria-disabled`, the lock leading the full label, one shared reason "You can view this account, not trade it."), view-as read-only (one notice per frame), disclosure open / closed.
+- **A11y**: `role="group"` with a `listbox`-like multi-select pattern (`aria-multiselectable="true"`), each row a `role="option"` `aria-selected`; "select all" is a distinct labelled control, not implicit; `Shift+F10` opens the row menu, the read-only member's too; the read-only member row is T2 (CMP-079 RbacGate on the role legs; CMP-019 Icon `lock` leading the label; `aria-describedby` → the shared reason).
+- **Tokens**: `color.surface.raised` / `color.surface.selected` / `color.surface.hover`, `space.row.height.compact` / `space.row.height.comfortable`, `color.text.primary` / `color.text.secondary`, `color.env.live` / `color.env.demo` (the dot), `radius.control`, `color.focus.ring`, `color.surface.overlay` + `elevation.popover` (the popover).
+- **API sketch**: `interface AccountMultiSelectProps { accounts: Array<{ id: string; label: string; badge: ProfileBadgeProps; selected: boolean; profileSummary: string }>; onToggle: (id: string) => void; onSelectAll: () => void; onEditProfile: (id: string) => void; maxSelectable?: number; mode: "account" | "group" }`
+- **Data contract**: `accounts` list sourced from the account-management REST endpoint (sub-account roster + profile settings); `profileSummary` is derived client-side from each account's saved risk-profile record; the leg rows from `POST /trade-groups/preview` (E30-D03 §8).
+- **Storybook**: Default, AllSelected, AtCap, EditProfileInline, GroupMode, NarrowedGroup, ReadOnlyMemberT2, ViewAsReadOnly, DisclosureOpen, Comfortable, HighContrast, ReducedMotion.
+- **Tests**: unit (cap enforcement), visual, axe, keyboard multi-select, the T2 row test, the motion twin test (the disclosure reveals by clip + translate at its final geometry; instant under reduce).
+- **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §8 (E30-D04; owner approval pending); [E30-D03-handoff.md](../design/E30/E30-D03-handoff.md) (the contract block).
 
 ### CMP-106 ProfileBadge (account identity chip)
 
@@ -1123,36 +1087,16 @@ interface AccountMultiSelectProps {
 
 ### CMP-107 OrderTicket
 
-- **Tier**: Organism (trading) · **Purpose**: the primary execution surface — side, symbol, order type, price/qty, TP/SL attach, account(s), submit. Composes CMP-100/101/102/103/104/105/106.
+- **Tier**: Organism (trading) · **Purpose**: the primary execution surface — side, symbol, order type, price/qty, TP/SL attach, account(s), submit. Composes CMP-100/101/102/103/105/106 and CMP-119/121/122/130/139/158/229/231/232; CMP-079 RbacGate wraps every role leg and CMP-019 Icon `lock` leads every gated label (E09-D09 §2.2).
 - **Props**: `symbol` · `side` · `orderType` · `price?/qty` · `accounts: AccountMultiSelectProps["accounts"]` · `tpSl?: {tpMode,tpValue,slMode,slValue}` · `oneClickArmed: boolean` · `onSubmit` · `env: "demo"|"live"`.
-- **States**: idle, validating, submitting, submitted-ack, rejected(with reason), rate-limited(with retry countdown).
-- **A11y**: submit button uses CMP-044 ConfirmDialog when `!oneClickArmed`; when armed, submit still requires an explicit press (never fires from focus/hover) and shows a persistent "1-click ARMED" text+icon indicator per §3.1.5; rejection reason rendered via CMP-027 `role="alert"`.
-- **Tokens**: inherits children; `color.buy/sell` on submit button per side.
-- **API sketch**:
-
-```ts
-interface OrderTicketProps {
-  symbol: string;
-  side: "buy" | "sell";
-  orderType: string;
-  price?: number;
-  qty: number;
-  accounts: AccountMultiSelectProps["accounts"];
-  tpSl?: {
-    tpMode: "ticks" | "pct" | "r";
-    tpValue: number;
-    slMode: "ticks" | "pct" | "r";
-    slValue: number;
-  };
-  oneClickArmed: boolean;
-  env: "demo" | "live";
-  onSubmit: (order: OrderDraft) => Promise<OrderAck | OrderRejection>;
-}
-```
-
-- **Data contract**: on submit, posts an `OrderDraft` to the order-placement REST endpoint (Bybit `/v5/order/create` proxied through the backend per account); `submitted-ack`/`rejected`/`rate-limited` states are driven by the REST response and the order-update WS stream per `14-screens-catalogue.md` §0.4.
-- **Storybook**: Market, Limit, Conditional, OneClickArmed, MultiAccountFanOut, Rejected, RateLimited.
-- **Tests**: unit, visual, axe, keyboard end-to-end submit path, performance (order click→ack ≤500ms p95 budget instrumented in test), RBAC-disabled test (Viewer role).
+- **States**: idle, validating, submitting, awaiting_confirmation (2 s after `202` without a terminal update), submitted-ack, partially_filled, rejected(with reason), rate-limited(with retry countdown), protective_stop_pending (the unprotected banner, E30-D04 §2.3), blocked_by_profile (split: a per-field cap excess is a field error with the submit in the validity look; a whole-ticket block is T2 `profile.blocked`, PROPOSED), blocked_by_lockout, frozen, disconnected, viewer_read_only, account_read_only (the panel notice), live_not_enabled (`rbac.env`), live_locked (a LIVE submit while the arm store is locked / unknown — T2 with `arm.locked`'s description, E30-D04 §2.5), and the arm triple `locked | armed | unknown` from CMP-229 (E30-D02 A-8; the inventory is E30-D02 §10).
+- **A11y**: the submit confirms through CMP-044 ConfirmDialog per the SCR-114 confirmation policy (E30-D03 D9; LIVE always confirms); when armed, submit still requires an explicit press (never fires from focus/hover) and shows the persistent "1-click ARMED" text+icon indicator per §3.1.5 — CMP-229 in `scope: "global"`; rejection reason rendered via CMP-027 `role="alert"`; the panel is a `role="region"` named "Order ticket - {symbol} - {env} - {account}"; every role-, environment- or state-gated control is E09-D09 §2.2 T2 (view-as first, the account leg ahead of the guards; CMP-079 RbacGate, CMP-019 `lock`), a form-validity block is the E30-D04 §2.5 validity look; banners: `role="alert"` once for filled / partially filled, rejected, disconnected and the protective-stop banner, `role="status"` for accepted-not-yet-filled, pending-key and stale.
+- **Tokens**: inherits children; `color.buy.default` / `color.sell.default` with `color.text.inverse` on the submit button per side (the progress strip `color.text.inverse`, a 3 px `::before` along the bottom edge — E30-D04 M1); `color.status.success.subtle` / `color.status.danger.subtle` (banners); `color.surface.canvas` (panel), `color.surface.app` (wells); `radius.card`, `space.inset.sm`, `space.stack.sm`.
+- **API sketch**: `interface OrderTicketProps { symbol: string; side: "buy" | "sell"; orderType: string; price?: number; qty: number; accounts: AccountMultiSelectProps["accounts"]; tpSl?: { tpMode: "ticks" | "pct" | "r" | "price"; tpValue: number; slMode: "ticks" | "pct" | "price"; slValue: number }; oneClickArmed: boolean; onSubmit: (draft: OrderDraft) => void; env: "demo" | "live" }`
+- **Data contract**: on submit, posts an `OrderDraft` to the order-placement REST endpoint (Bybit `/v5/order/create` proxied through the backend per account); `submitted-ack`/`rejected`/`rate-limited` states are driven by the REST response and the order-update WS stream per `14-screens-catalogue.md` §0.4; the arm state from `POST /settings/arm`; the stop state from the WS `positions` `native_stop_present` and the order machine's `regions.protection` tag (`protected` / `naked`, `23`).
+- **Storybook**: Ready, Validating, InvalidSummary, Submitting, AwaitingConfirmation, Accepted, PartiallyFilled, RejectedCorrectable, RejectedLimit, RejectedTransient, RejectedExchange, OneLotMismatch, BlockedByProfile, BlockedByProfileT2, BlockedByLockout, Frozen, Disconnected, ReturnedFromDisconnect, PendingKey, ViewerReadOnly, ViewAsReadOnly, AccountReadOnly, LiveNotEnabled, LiveLocked, Locked, Armed, Unknown, HotkeysPaused, StaleHelpers, StaleWallet, PreviewInFlight, ReduceOnly, ProtectiveStopPending, Demo, Live, Comfortable, HighContrast, ReducedMotion.
+- **Tests**: unit, visual, axe, keyboard; the native-SL assertion on every submit path; the RBAC-disabled test; the submit lifecycle test (width locked, a second press does nothing and says so, the banner at frame 0); the reduce test; the live-region hygiene test.
+- **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §9 (E30-D04; owner approval pending); the screen: [E30-D02.md](../design/E30/E30-D02.md).
 
 ### CMP-108 DomLadderRow
 
@@ -1377,26 +1321,17 @@ interface AlgoProgressCardProps {
 
 ### CMP-119 BracketEditor (SL/TP attach widget)
 
-- **Tier**: Molecule (trading) · **Purpose**: attach/edit stop-loss and take-profit on the order ticket or an existing position, in ticks/%/R-multiple units, with native-exchange-SL guarantee messaging (safety invariant, `24-owner-decisions.md` §3).
-- **Props**: `slMode/tpMode: "ticks"|"pct"|"r"` · `slValue/tpValue` · `onChange` · `partialTpLevels?: {pct,rMultiple}[]` · `nativeSlConfirmed: boolean` (must be true before submit is enabled — reflects the always-native-SL invariant).
-- **A11y**: FormSection (CMP-065) composition; the native-SL guarantee is rendered as a persistent, non-dismissible inline note, not a one-time toast.
-- **Tokens**: inherits CMP-100/CMP-101.
-- **API sketch**:
-
-```ts
-interface BracketEditorProps {
-  slMode: "ticks" | "pct" | "r";
-  slValue: number;
-  tpMode: "ticks" | "pct" | "r";
-  tpValue: number;
-  partialTpLevels?: Array<{ pct: number; rMultiple: number }>;
-  onChange: (bracket: BracketConfig) => void;
-}
-```
-
-- **Data contract**: on save, posts SL/TP as conditional orders via the order-placement REST endpoint (Bybit `/v5/order/create` with `stopLoss`/`takeProfit` fields or separate conditional orders per exchange semantics); live SL/TP order state tracked via the order-update WS stream.
-- **Storybook**: Default, PartialTpLadder, RMultipleMode.
-- **Tests**: unit, visual, axe.
+- **Tier**: Molecule (trading) · **Purpose**: attach/edit stop-loss and take-profit on the order ticket or an existing position, the stop in ticks/%/price (R read out) and the take-profit in ticks/%/R/price, with native-exchange-SL guarantee messaging (safety invariant, `24-internal-schemas.md` §8.8; C-2.6). There is no stop toggle: "Stop-loss (required)" (E30-D02 D10).
+- **Props**: `slMode: "ticks"|"pct"|"price"` · `tpMode: "ticks"|"pct"|"r"|"price"` · `slValue/tpValue` · `onChange` · `partialTpLevels?: {pct,rMultiple}[]` · `nativeSlConfirmed: boolean` (true only once a valid stop is resolved from the typed value, the profile ticks or the fallback — never a user toggle; the submit gate).
+- **Variants**: ticket, existing position; reduce-only (the stop and TP rows collapsed to one sentence each).
+- **States**: default (the source line: typed · "from your profile: {n} ticks" · "fallback 2 % — ATR warming up"), focus, rounded-away (the caption), wrong-side or empty stop (a drawn blocked state with the field outlined), TP on / off, reduce-only-collapsed, read-only (T2).
+- **A11y**: FormSection (CMP-065) composition; the native-SL guarantee is rendered as a persistent, non-dismissible inline note (CMP-158, `role="note"`), not a one-time toast; the stop field's `aria-describedby` names the source and the holder ("held by Bybit (exchange)"); T2 per E09-D09 §2.2 on the section's controls (CMP-079 RbacGate; CMP-019 Icon `lock`).
+- **Tokens**: inherits CMP-100/CMP-101; the unit radiogroup CMP-003 (`color.surface.raised` / `color.surface.selected`); `font.family.mono` + `type.num.sm` (the R read-out); `type.ui.label` (legend); `color.text.secondary` (source line); `color.status.danger.default` / `color.status.danger.strong` (the blocked state); `space.inset.sm`, `space.field.gap`.
+- **API sketch**: `interface BracketEditorProps { slMode: "ticks" | "pct" | "price"; tpMode: "ticks" | "pct" | "r" | "price"; slValue: number; tpValue?: number; onChange: (b: Bracket) => void; partialTpLevels?: { pct: number; rMultiple: number }[]; nativeSlConfirmed: boolean }`
+- **Data contract**: on save, posts SL/TP as conditional orders via the order-placement REST endpoint (`POST /orders` `stop_loss` / `take_profit` — `22`, `ResolvedLegParams.stop_loss_price`; the backend maps them to Bybit's `/v5/order/create` fields); live SL/TP order state tracked via the order-update WS stream; the stop rounds away from the entry per `24` §9.3.1.
+- **Storybook**: Default, TypedStop, ProfileStop, FallbackStop, RoundedAwayCaption, WrongSideStop, PartialTpLadder, TpPriceMode, ReduceOnlyCollapsed, ReadOnlyT2, Comfortable, HighContrast.
+- **Tests**: unit (unit conversions, away-from-entry rounding), visual, axe, keyboard, the native-SL assertion (no render path yields `nativeSlConfirmed` true without a resolved stop; no toggle in the DOM), the T2 test.
+- **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §10 (E30-D04; owner approval pending).
 
 ### CMP-120 TrailingStopEditor
 
@@ -1411,23 +1346,31 @@ interface BracketEditorProps {
 
 ### CMP-121 RiskCalculatorPanel
 
-- **Tier**: Molecule (trading) · **Purpose**: derives position size from account equity, risk %, and stop distance — feeds QtyInput's `riskPct` sizing mode.
-- **Props**: `equity` · `riskPct` · `stopDistance` · `resultQty` (computed, read-only display) · `onApply`.
-- **A11y**: computed result is a live-region-announced KeyValueRow (CMP-036), "Apply" button pushes value into the ticket.
-- **Tokens**: `font.mono`.
-- **Data contract**: pure client-side calculation from `equity` (account-equity WS/REST feed), user-entered `riskPct`, and `stopDistance`; no independent WS/REST call of its own.
-- **Storybook**: Default, ZeroStopDistance(error state).
-- **Tests**: unit (calc formula), visual, axe.
+- **Tier**: Molecule (trading) · **Purpose**: derives position size from account equity, risk %, and stop distance — feeds QtyInput's `risk_based` sizing mode; its result is the ticket's read-out line ("= {notional} USDT · {pct} % eq · risk {risk} USDT ({riskpct} %) · 1 R = {risk}", E30-D02 D7).
+- **Props**: `equity` · `riskPct` · `stopDistance` · `resultQty` (computed, read-only display) · `onApply` · per row `freshness?: DataConfidenceState` (CMP-239 beside wallet-fed values) and `estimated?: boolean` (CMP-227 `inline` `sm` on estimated rows).
+- **Variants**: the read-out line (one line, compact); the preview block (CMP-036 rows, E30-S06).
+- **States**: default, computing (≤ 8 ms, no spinner), value-changed (the value-change highlight, E30-D04 M5), provisional (the client's number under the hatch), stale-wallet (CMP-078 shade + the age), zero-stop-distance (error row), read-only (T2 on "Apply" — E09-D09 §2.2: CMP-079 RbacGate on the role legs, CMP-019 Icon `lock` leading "Apply"; the rows static text).
+- **A11y**: computed result is a live-region-announced KeyValueRow (CMP-036) — one polite region at ≤ 1 update per 2 s, latest value only, never per tick; "Apply" button pushes value into the ticket; T2 per E09-D09 §2.2 on "Apply" (CMP-079 RbacGate; CMP-019 Icon `lock`, `decorative=false`, "Not available").
+- **Tokens**: `font.family.mono` + `type.num.sm` (every value, right-aligned, tabular figures), `color.text.primary` (values), `color.text.secondary` (labels), `color.status.info.subtle` (the highlight overlay at peak 0.25), `color.border.strong` (the provisional hatch texture), `space.row.height.compact` / `space.row.height.comfortable`.
+- **API sketch**: `interface RiskCalculatorPanelProps { equity: number; riskPct: number; stopDistance: number; resultQty: number; onApply: (qty: number) => void }`
+- **Data contract**: pure client-side calculation from `equity` (account-equity WS/REST feed), user-entered `riskPct`, and `stopDistance`; the authoritative numbers arrive from `POST /trade-groups/preview` and replace the client's with the highlight; no independent WS/REST call of its own.
+- **Storybook**: Default, ZeroStopDistance(error state), ValueChangeHighlight, Provisional, StaleWallet, EstimatedRows, ApplyReadOnlyT2, Comfortable, HighContrast, ReducedMotion.
+- **Tests**: unit (calc formula), visual, axe, the cadence test (≤ 1 announcement per 2 s under a 10 Hz feed), the highlight spacing test (≥ 500 ms per cell; the 1 Hz / 10 s stop), the reduce twin test, the teardown test, the T2 test on Apply.
+- **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §11 (E30-D04; owner approval pending).
 
 ### CMP-122 QuickSizeButtons ("size ladder" presets)
 
-- **Tier**: Molecule (trading) · **Purpose**: row of quick quantity/%-equity preset buttons (hotkey-bindable per digest 09 §1).
-- **Props**: `presets: {label,value}[]` · `activeValue?` · `onSelect` · `hotkeyHints?: string[]`.
-- **A11y**: CMP-003 SegmentedControl-like group; hotkey hints shown via CMP-022 Kbd inline.
-- **Tokens**: inherits CMP-001.
+- **Tier**: Molecule (trading) · **Purpose**: row of quick quantity/%-equity preset buttons (hotkey-bindable per digest 09 §1); presets set the size in every arm state — sizing is preparation, not execution (E30-D02 A-18).
+- **Props**: `presets: {label,value}[]` · `activeValue?` (derived by the host from the current size) · `onSelect` · `hotkeyHints?: string[]` · `minQty?: number` (a preset below it is `aria-disabled` with "min {min}").
+- **Variants**: quantity presets, %-equity presets (the resolved quantity shown); with / without hints.
+- **States**: default, active (`color.surface.selected` + ✓ + "active" in the name), hover, focus-visible, below-minimum (the validity look of E30-D04 §2.5: own fill and label at `opacity.disabled`, the minimum beside it, focusable, no lock), read-only (T2).
+- **A11y**: CMP-003 SegmentedControl-like group of native buttons named "{label} — preset {n}" with `aria-pressed`; hotkey hints shown via CMP-022 Kbd inline; `1`..`4` act only while the ticket region has focus and no text field is active; T2 per E09-D09 §2.2 on the group (CMP-079 RbacGate; CMP-019 Icon `lock` leading the group).
+- **Tokens**: inherits CMP-001 (`color.surface.raised`, `color.surface.selected`, `color.surface.hover`, `color.text.primary`, `radius.control`, `space.button.paddingX`); CMP-022 (`color.surface.raised`, `radius.xs`, `font.family.mono`); `color.focus.ring`; `opacity.disabled` (the validity look only).
+- **API sketch**: `interface QuickSizeButtonsProps { presets: { label: string; value: number }[]; activeValue?: number; onSelect: (v: number) => void; hotkeyHints?: string[]; minQty?: number }`
 - **Data contract**: `presets` are user-configured client-side/local-settings values (persisted via the settings REST endpoint); no live WS dependency.
-- **Storybook**: Default, WithHotkeyHints.
-- **Tests**: unit, visual, axe, keyboard.
+- **Storybook**: Default, WithHotkeyHints, ActiveDerived, PercentPresets, BelowMinimumValidity, ReadOnlyT2, Locked, Comfortable, HighContrast.
+- **Tests**: unit (the derived active preset; the minimum rule), visual, axe, keyboard (digit scoping; suppressed in text fields), the validity-look press test, the T2 test.
+- **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §12 (E30-D04; owner approval pending).
 
 ### CMP-123 FlattenAllButton
 
@@ -1511,13 +1454,17 @@ interface TradeGroupSummary {
 
 ### CMP-130 SlippageEstimateChip
 
-- **Tier**: Atom (trading) · **Purpose**: estimated slippage/impact preview for a given order size against current book depth.
-- **Props**: `estimatedSlippageBps: number` · `confidence: "low"|"medium"|"high"` (reuses CMP-032 Rating dots).
-- **A11y**: `(estimated)` chip variant (CMP-011) with InfoPanel link (CMP-069) explaining methodology.
-- **Tokens**: inherits CMP-011.
+- **Tier**: Atom (trading) · **Purpose**: estimated slippage/impact preview for a given order size against current book depth; composes the bps value, the CMP-032 confidence dots and CMP-227 EstimatedBadge (`inline`, `sm`) — the one estimated treatment (E30-D04 §2.4).
+- **Props**: `estimatedSlippageBps: number` · `confidence: "low"|"medium"|"high"` (reuses CMP-032 Rating dots) · the badge's subject (CMP-227's key; see E25-D05 and E30-D04 A19).
+- **Variants**: footer chip on a market order ("slippage ≈ {n} ticks (estimated)"), the est. slip row of the preview.
+- **States**: default (low / medium / high), badge hover / focus-visible / tooltip-open (CMP-227), stale-book (CMP-239 beside the value), absent (no book snapshot: the chip is absent).
+- **A11y**: the methodology opens from CMP-227's native button ("Estimated, slippage[, {confidence} confidence]", `aria-haspopup="dialog"`, `aria-describedby` → the tooltip); the confidence word is always present beside the dots; two accessible names in the composition; never colour, icon or opacity alone.
+- **Tokens**: `color.surface.raised` + `radius.pill` (the host chip), `font.family.mono` + `type.num.sm` + `color.text.primary` (the value), CMP-032's dots, CMP-227's `color.status.info.subtle` / `color.status.info.default` / `radius.badge`, `space.inset.xs` (composition gaps).
+- **API sketch**: `interface SlippageEstimateChipProps { estimatedSlippageBps: number; confidence: "low" | "medium" | "high" }`
 - **Data contract**: estimate computed client-side from the current orderbook WS snapshot (walking the book for the entered qty) at order-entry time; not a Bybit-provided field.
-- **Storybook**: Low, Medium, High.
-- **Tests**: unit, visual, axe.
+- **Storybook**: Low, Medium, High, FocusVisibleBadge, TooltipOpen, StaleBook, Absent, Comfortable, HighContrast, Greyscale.
+- **Tests**: unit, visual, axe, the composition test (two accessible names; "estimated" in the badge's name), the greyscale assertion.
+- **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §13 (E30-D04; owner approval pending); the badge: [E25-D05.md](../design/E25/E25-D05.md) §4.
 
 ### CMP-131 SpeedOfTapeGauge
 
@@ -1612,13 +1559,17 @@ interface TradeGroupSummary {
 
 ### CMP-139 EnvironmentAwareOrderGuard (wrapper)
 
-- **Tier**: Molecule (utility, trading-critical) · **Purpose**: the enforcement wrapper guaranteeing no live order can be placed while the workspace-level env context is `demo` and vice versa (defence-in-depth alongside server-side checks) — wraps CMP-107 OrderTicket and CMP-108 DomLadderRow's click-to-trade handlers.
-- **Props**: `activeEnv: "demo"|"live"` · `orderEnv: "demo"|"live"` · `children`.
-- **A11y**: mismatch renders the wrapped control disabled-with-reason (CMP-079 RbacGate pattern) rather than silently rerouting the order.
-- **Tokens**: n/a (behavioural wrapper).
-- **Data contract**: `activeEnv` sourced from the workspace-level environment-context store (client-side, backed by the session/account-selection REST state); `orderEnv` derived from the wrapped order's target account's `env` field (CMP-106 ProfileBadge data).
-- **Storybook**: Matched, Mismatched.
-- **Tests**: integration test — attempts to submit a live order while env=demo and asserts hard block + audit log entry.
+- **Tier**: Molecule (utility, trading-critical) · **Purpose**: the presentation wrapper that renders a submit affordance disabled-with-reason while the workspace-level env context is DEMO and the order targets LIVE, and vice versa (defence-in-depth alongside the server-side check, which is the enforcement) — wraps CMP-107 OrderTicket and CMP-108 DomLadderRow's click-to-trade handlers.
+- **Props**: `activeEnv: "demo"|"live"` · `orderEnv: "demo"|"live"` · `accountVisible: boolean` (false when the target account is outside the session's `account_scope`: the `rbac.account` leg renders and the guard is skipped) · `children`.
+- **Variants**: matched (renders the child untouched), mismatched, an unseen account (the `rbac.account` leg, ahead of the guard).
+- **States**: matched, mismatched (E09-D09 §2.2 T2 on the child: full label, lock glyph, `aria-disabled`, the reason `guard.mismatch` "Order is for a LIVE account while the workspace is DEMO"), unseen-account (T2 with `rbac.account` "This account isn't assigned to you." — E09-D09 §2.1 step 3(c); never the account's name, environment, balance or count).
+- **A11y**: mismatch renders the wrapped control disabled-with-reason (CMP-079 RbacGate pattern; CMP-019 `lock`, `decorative=false`, "Not available") rather than silently rerouting the order; the reason is in the DOM at mount and linked by `aria-describedby`; a press re-shows it once, politely; the view-as leg precedes the guard.
+- **Tokens**: n/a (behavioural wrapper; the T2 look's tokens apply to the child).
+- **API sketch**: `interface EnvironmentAwareOrderGuardProps { activeEnv: "demo" | "live"; orderEnv: "demo" | "live"; accountVisible: boolean; children: React.ReactNode }`
+- **Data contract**: `activeEnv` sourced from the workspace-level environment-context store (client-side, backed by the session/account-selection REST state); `orderEnv` derived from the wrapped order's target account's `env` field (CMP-106 ProfileBadge data); `accountVisible` from the session's `account_scope`.
+- **Storybook**: Matched, Mismatched, Mismatched(Demo→Live), Mismatched(Live→Demo), UnseenAccountT2, ViewAsReadOnly, HighContrast, ReducedMotion.
+- **Tests**: integration test — attempts to submit a live order while env=demo and asserts hard block + audit log entry; the T2 test on the wrapped submit; the account-leg test (no account label and no environment word in the DOM when `accountVisible` is false; the reason is `rbac.account`); no transition between gated and enabled.
+- **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §14 (E30-D04; owner approval pending).
 
 ---
 
@@ -1823,12 +1774,17 @@ interface NodeGraphCanvasProps {
 
 ### CMP-158 SafetyInvariantNotice ("native SL always attached")
 
-- **Tier**: Atom (rule engine, safety-critical) · **Purpose**: persistent, non-dismissible notice inside both rule editors reminding the author that emulated rule-engine stops never replace the mandatory native exchange-side SL (safety invariant, `24-owner-decisions.md` §3). **E36-D03 —** placement and sentence per E36-D02 §2 (PROPOSED): pinned directly above the action bar so it is in view at the moment of Arm; the sentence "Every position keeps a native stop — you can move it, not delete it. Rules can tighten it, never remove it — the stop is held by the exchange, not by this app." (the first sentence is `14` SCR-064 Validation / E32-D01 `sl.note`; the second keeps `sl.note`'s holder clause).
-- **Props**: none (static content component).
-- **A11y**: `role="note"`, always visible in both CMP-145 and CMP-146 layouts. **E36-D03 —** CMP-028 `tone="info"`, not in the Tab order; `color.text.primary` on `color.status.info.subtle`.
-- **Tokens**: inherits CMP-028 Callout.
-- **Storybook**: Default.
-- **Tests**: visual, axe, presence test (fails if removed from either editor's composition).
+- **Tier**: Atom (rule engine and trading, safety-critical) · **Purpose**: persistent, non-dismissible notice inside both rule editors and every order ticket (SCR-060 / 061; SCR-076 already lists it) reminding the author that emulated rule-engine stops never replace the mandatory native exchange-side SL (safety invariant, `24-internal-schemas.md` §8.8; C-2.6). **E36-D03 —** placement and sentence per E36-D02 §2 (PROPOSED): pinned directly above the action bar so it is in view at the moment of Arm; the sentence "Every position keeps a native stop — you can move it, not delete it. Rules can tighten it, never remove it — the stop is held by the exchange, not by this app." (the first sentence is `14` SCR-064 Validation / E32-D01 `sl.note`; the second keeps `sl.note`'s holder clause).
+- **Props**: `profileTicks: number` (the "{n}" of the ticket variant's sentence); otherwise static content — the rule-editor variant takes no prop (its sentence is E36-D03's, static).
+- **Variants**: ticket (inside the bracket section; its sentence is E30-D02 §14 `sl.note` "Every entry carries a native exchange stop: typed here, else your profile's {n} ticks, else the 2 % fallback. It is placed with the order, not after it."), rule editor (CMP-145 / CMP-146; its sentence and placement are E36-D03's above); compact one line / comfortable two lines.
+- **States**: default only (always visible; no hover, no dismiss, no loading).
+- **A11y**: `role="note"`, always visible in both CMP-145 and CMP-146 layouts and in every ticket; not a live region; the glyph `aria-hidden`. **E36-D03 —** CMP-028 `tone="info"`, not in the Tab order; `color.text.primary` on `color.status.info.subtle`.
+- **Tokens**: inherits CMP-028 Callout (`info`): `color.status.info.subtle`, `color.text.primary`, `color.status.info.strong` (glyph), `radius.card`, `space.inset.sm`, `type.ui.caption` / `type.ui.body`.
+- **API sketch**: `interface SafetyInvariantNoticeProps { profileTicks: number }`
+- **Data contract**: `profileTicks` from the account's profile (`GET /exchange-accounts/{id}/profiles`) — the ticket variant only.
+- **Storybook**: Default, Comfortable, HighContrast, InRuleEditor (E36-D03's sentence and placement).
+- **Tests**: visual, axe, presence test (fails if removed from either editor's composition or from the ticket); each variant renders its own source string (E30-D02 `sl.note` / E36-D03).
+- **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §15 (E30-D04; owner approval pending); the rule-editor variant's sentence and placement: E36-D03 (#4198).
 
 ### CMP-159 RuleConflictWarning
 
@@ -2691,12 +2647,17 @@ This band was added during the cross-document traceability reconciliation (see `
 
 ### CMP-229 ArmToggle
 
-- **Tier**: Molecule (trading, safety-critical) · **Purpose**: the arm/lock control (US-ORD-005) gating click-to-trade on the chart and DOM.
-- **Props**: `armed: boolean` · `onChange` · `scope: "chart"|"dom"|"global"` · `autoDisarmMs?: number` · `environment: "demo"|"live"`.
-- **A11y**: `aria-pressed` switch whose name states the scope and state ("Chart trading: locked"); arming in Live requires a deliberate second action and announces the change assertively; auto-disarm announces when it fires.
-- **Tokens**: `color.status.danger`, `color.status.success`, `radius.pill`.
-- **Storybook**: Locked, ArmedDemo, ArmedLive, AutoDisarmPending.
-- **Tests**: unit, visual, axe, interaction (no accidental single-key arm in Live), E2E (no order can be placed while locked).
+- **Tier**: Molecule (trading, safety-critical) · **Purpose**: the arm/lock control (US-ORD-005) gating click-to-trade on the chart and DOM, and the persistent armed indicator of `05-accessibility-standard.md` §3.1 rule 5 — the one armed treatment (E30-D04 §2.1).
+- **Props**: `state: "locked"|"armed"|"unknown"` (the arm store's enum; `armed: boolean` derived) · `onChange` · `scope: "chart"|"dom"|"global"` · `autoDisarmMs?: number` · `environment: "demo"|"live"` · `account`, `size`, `coin` (the pill's content) · `pausedReason?: string`.
+- **Variants**: `scope` chart / dom / global; DEMO / LIVE (the LIVE second action is CMP-044 `standard`).
+- **States**: LOCKED (neutral pill, lock glyph, "LOCKED · {account} · {size} {coin}"), ARMED (the attention pill "ARMED {mm:ss} · {account} · {size} {coin}"; static once entered), PAUSED ("hotkeys paused — typing in {field}" replaces the account · size segment in compact, a second line in comfortable), UNKNOWN ("Arm state unknown — submit off", fails closed), EXPIRING (polite at 60 s and 10 s), RETURN ("LOCKED — disconnected {mm:ss}, reconnected", held until the next arm), read-only (T2: the LOCKED pill keeps its shape and full label in `color.text.tertiary`, its lock is the one CMP-019 `lock`, the reason sits under the pill — E30-D04 §16).
+- **A11y**: `aria-pressed` switch whose name states the scope and state and stays stable while armed ("Chart trading: locked"; the remaining time is the CMP-035 node in `aria-describedby`, never in the name); arming in Live requires a deliberate second action and announces the change assertively; auto-disarm announces when it fires (the level per E30-D05 / E30-D02 O-L); the hotkeys-paused line is the same element's second line; the countdown is CMP-035 (`aria-live="off"`, polite at 60 s / 10 s); T2 per E09-D09 §2.2 for the role legs (CMP-079 RbacGate; CMP-019 Icon `lock`).
+- **Tokens**: `color.status.warning.subtle` / `color.status.warning.strong` (ARMED), `color.surface.raised` + `color.text.secondary` (LOCKED / UNKNOWN), `color.text.primary`, `radius.pill`, `font.family.mono` + `type.num.sm` (`mm:ss`), `type.ui.label`, `space.inset.sm`.
+- **API sketch**: `interface ArmToggleProps { state: "locked" | "armed" | "unknown"; onChange: (armed: boolean) => void; scope: "chart" | "dom" | "global"; autoDisarmMs?: number; environment: "demo" | "live"; account: string; size: number; coin: string; pausedReason?: string }`
+- **Data contract**: the arm state from `POST /settings/arm` (the `arm_token`, TTL) and the arm store's enum (E30-S04); the six auto-disarm triggers (E30-D02 SC-2).
+- **Storybook**: Locked, ArmedDemo, ArmedLive, AutoDisarmPending, Paused, Unknown, Expiring, ReturnedFromDisconnect, EntryTransition, AutoDisarmExit, LiveArmDialog, ReadOnlyT2, ScopeChart, ScopeDom, Comfortable, HighContrast, ReducedMotion.
+- **Tests**: unit, visual, axe, interaction (no accidental single-key arm in Live), E2E (no order can be placed while locked), the sustained-state test (no animation after the entry), the exit persistence test, the threshold announcements, the T2 test.
+- **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §16 (E30-D04; owner approval pending).
 
 ### CMP-230 OwnOrderMarker
 
@@ -2710,22 +2671,31 @@ This band was added during the cross-document traceability reconciliation (see `
 
 ### CMP-231 TifSelect
 
-- **Tier**: Atom (trading) · **Purpose**: time-in-force selector (GTC, IOC, FOK, PostOnly) with per-order-type availability.
-- **Props**: `value: Tif` · `onChange` · `available: Tif[]` · `orderType`.
-- **A11y**: unavailable options are disabled **with a stated reason** ("PostOnly is unavailable for market orders"), never silently absent; the expansion of each acronym is in the option's accessible description.
-- **Tokens**: inherits CMP-009 Select.
-- **Storybook**: Limit, Market, PostOnlyUnavailable.
-- **Tests**: unit, visual, axe.
+- **Tier**: Atom (trading) · **Purpose**: time-in-force selector (GTC, IOC, FOK, PostOnly) with per-order-type availability (E30-D02 D13: Market → IOC only; Limit → GTC default, IOC, FOK, PostOnly; Conditional follows the triggered type).
+- **Props**: `value: Tif` · `onChange` · `available: Tif[]` · `orderType` · `unavailableReason?: Record<Tif, string>`.
+- **Variants**: Limit, Market, Conditional.
+- **States**: closed, open, option-focused, unavailable-option (the validity look of E30-D04 §2.5: the option at `opacity.disabled` with its reason as its description, `aria-disabled`, focusable, no lock), read-only (T2 on the whole select).
+- **A11y**: unavailable options are disabled **with a stated reason** ("Market orders are always IOC on Bybit"), never silently absent; the expansion of each acronym is in the option's accessible description; `Enter` on an unavailable option selects nothing and announces the reason once; T2 per E09-D09 §2.2 on the whole select (CMP-079 RbacGate; CMP-019 Icon `lock`).
+- **Tokens**: inherits CMP-009 Select (`color.surface.overlay`, `elevation.popover`, `radius.control`); `color.text.primary` (options), `color.text.secondary` (descriptions), `opacity.disabled` (the validity look only), `color.focus.ring`.
+- **API sketch**: `interface TifSelectProps { value: Tif; onChange: (v: Tif) => void; available: Tif[]; orderType: string; unavailableReason?: Partial<Record<Tif, string>> }`
+- **Data contract**: the availability matrix is a static client-side vocabulary of Bybit's order-type rules; no WS/REST dependency.
+- **Storybook**: Limit, Market, PostOnlyUnavailable, Conditional, Open, OptionFocused, ReadOnlyT2, Comfortable, HighContrast.
+- **Tests**: unit (the matrix per order type), visual, axe (every option named, the description present), keyboard (the unavailable option focusable; `Enter` selects nothing), the T2 test.
+- **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §17 (E30-D04; owner approval pending).
 
 ### CMP-232 LimitsChip
 
-- **Tier**: Molecule (trading) · **Purpose**: compact display of the binding constraints on the current ticket — profile risk cap, remaining daily loss budget, max leverage, allowed-symbol status, exchange min/max qty.
-- **Props**: `limits: {id,label,value,used?,max?,binding:boolean,source:"profile"|"exchange"|"global"}[]`.
-- **A11y**: the **binding** limit is named in text and announced when it changes ("Blocked by daily loss cap: 480 of 500 USDT used"); each limit states which authority sets it, so the user knows whether the owner or the exchange is the constraint.
-- **Tokens**: `color.status.warn`, `font.mono`, `radius.pill`.
-- **Data contract**: from the per-account profile (`GET /exchange-accounts/{id}/profiles`), global risk policy, and instrument filters (`GET /instruments/{symbol}`).
-- **Storybook**: NoneBinding, RiskCapBinding, DailyLossBinding, SymbolNotAllowed.
-- **Tests**: unit, visual, axe.
+- **Tier**: Molecule (trading) · **Purpose**: compact display of the binding constraints on the current ticket — profile risk cap, remaining daily loss budget, max leverage, allowed-symbol status, exchange min/max qty; the binding limit is an attention pill with the word "binding", the number and the authority (E30-D02 D14); a `results` rendering for the confirm (E30-D03 A12).
+- **Props**: `limits: {id,label,value,used?,max?,binding:boolean,source:"profile"|"exchange"|"global",estimated?:boolean}[]`.
+- **Variants**: none binding ("Limits: none binding"), binding ("binding: {name} {value} ({authority})"), disclosure open (CMP-036 rows), `results` (the confirm).
+- **States**: none-binding, binding, changed (the value-change highlight on the changed row, announced once), disclosure open / closed, stale (CMP-239 beside a wallet-fed limit).
+- **A11y**: the **binding** limit is named in text and announced when it changes ("Blocked by daily loss cap: 480 of 500 USDT used") via one polite region at ≤ 1 per 2 s; each limit states which authority sets it, so the user knows whether the owner or the exchange is the constraint; the disclosure is a `<button>` with `aria-expanded` / `aria-controls`.
+- **Tokens**: `color.status.warning.subtle` / `color.status.warning.strong` (the binding pill and its ⚠ glyph), `color.surface.raised` + `color.text.primary` (the neutral pill), `font.family.mono` + `type.num.sm` (every number), `radius.pill`, `color.surface.overlay` + `elevation.popover` (the rows), `space.row.height.compact` / `space.row.height.comfortable`.
+- **API sketch**: `interface LimitsChipProps { limits: { id: string; label: string; value: string; used?: number; max?: number; binding: boolean; source: "profile" | "exchange" | "global"; estimated?: boolean }[] }`
+- **Data contract**: from the per-account profile (`GET /exchange-accounts/{id}/profiles`), global risk policy (`GET /risk/summary`), and instrument filters (`GET /instruments/{symbol}`); the confirm's `results` from `POST /trade-groups/preview` (E30-D03 A12).
+- **Storybook**: NoneBinding, RiskCapBinding, DailyLossBinding, SymbolNotAllowed, BindingChanged, DisclosureOpen, Results, StaleLimit, Comfortable, HighContrast, ReducedMotion.
+- **Tests**: unit (which limit binds), visual, axe, the announcement test (once per change, ≤ 1 per 2 s), the highlight twin test.
+- **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §18 (E30-D04; owner approval pending); the confirm rendering: [E30-D03.md](../design/E30/E30-D03.md) A12.
 
 ### CMP-233 RuleOptions
 
