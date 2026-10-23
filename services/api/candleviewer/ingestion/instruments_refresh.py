@@ -130,7 +130,8 @@ class BusPublisherLike(Protocol):
 
 class InstrumentRefreshError(IngestionError):
     """A refresh attempt failed after every retry (fetch, parse, or
-    persistence). The previous snapshot is left serving; see this module's
+    persistence), or (#906) an on-demand refresh (`ensure_fresh`) ended with no catalogue
+    fitting the caller's bound. The previous snapshot is left serving; see this module's
     docstring, "Refresh fails" scenario."""
 
 
@@ -317,6 +318,9 @@ class InstrumentsRefreshScheduler:
         the next caller until it ends or `stop()` cancels it. A refresh that ends with no fitting
         catalogue (it failed, or nothing is loaded) raises `InstrumentRefreshError`. `ValueError`
         for a bound that is not positive and finite.
+        No cooldown, unlike `ensure_symbol`, by design: callers must be authenticated and
+        rate-bounded (today the Owner's profile save), and a failing call costs up to
+        `max_retries` fetches.
 
         `None` is part of the type but never the answer: no fresh catalogue is an error."""
         if not (0 < max_age_s < math.inf and 0 < deadline_s < math.inf):

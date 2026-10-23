@@ -347,6 +347,7 @@ async def test_ensure_fresh_does_not_trust_a_persisted_copy_after_a_startup_time
         await sched.stop(grace_s=1.0)
 
 
+@pytest.mark.parametrize("loaded", [False, True], ids=["empty", "fresh"])
 @pytest.mark.parametrize(
     ("max_age_s", "deadline_s"),
     [
@@ -361,10 +362,12 @@ async def test_ensure_fresh_does_not_trust_a_persisted_copy_after_a_startup_time
     ],
 )
 async def test_ensure_fresh_refuses_a_bound_that_is_not_positive_and_finite(
-    max_age_s: float, deadline_s: float
+    max_age_s: float, deadline_s: float, loaded: bool
 ) -> None:
     fetch = HangingFetch()
     sched = _scheduler(fetch)
+    if loaded:
+        _warm(sched, "BTCUSDT")  # the fast path would answer: the bound is refused before it
     with pytest.raises(ValueError, match="positive and finite"):
         (await _ended(sched, max_age_s, deadline_s)).result()
     assert fetch.calls == 0 and sched._on_demand is None
@@ -385,6 +388,23 @@ async def test_ensure_fresh_concurrent_callers_join_one_refresh_task_and_cost_on
     answers = await asyncio.gather(first, *others)
     assert answers[0] is not None and all(a is answers[0] for a in answers)
     assert fetch.calls == 1
+
+
+async def test_ensure_fresh_callers_in_one_loop_turn_cost_one_refresh_even_when_it_fails() -> None:
+    """Callers started in one loop turn share one task (no await between the slot's read and
+    write). A failing fetch shows it: a second task would find no loaded copy to skip, and retry."""
+
+    async def down(_now_us: Callable[[], int]) -> InstrumentsFetchResult:
+        raise RuntimeError("exchange down")
+
+    sched = _scheduler(down, max_retries=1)
+    _warm(sched, "BTCUSDT", age_s=1000.0)
+    errors = _count("error")  # one per refresh, and each tries once
+    outcomes = await asyncio.gather(
+        *(sched.ensure_fresh(_MAX_AGE_S, _NO_DEADLINE_S) for _ in range(5)), return_exceptions=True
+    )
+    assert all(isinstance(o, instruments_refresh.InstrumentRefreshError) for o in outcomes)
+    assert _count("error") == errors + 1
 
 
 async def test_ensure_fresh_raises_pending_at_the_deadline_and_the_refresh_runs_on() -> None:
@@ -524,3 +544,18 @@ async def test_ensure_fresh_queued_behind_a_loading_refresh_does_not_fetch_again
     fresh = await caller
     assert fresh is not None and fresh.stale_since_us is None
     assert fetch.calls == 1  # the re-check after the lock found the catalogue loaded
+
+
+async def test_ensure_fresh_neither_reads_nor_arms_the_lookup_cooldown() -> None:
+    """A save is not throttled by a lookup, nor a lookup by a save. The clock is fixed, so a
+    cooldown armed by either would never lapse."""
+    fetch = HangingFetch()
+    fetch.up.set()
+    sched = _scheduler(fetch)
+    _warm(sched, "BTCUSDT", age_s=1000.0)
+    throttled = _count("throttled")
+    assert await sched.ensure_fresh(_MAX_AGE_S, _NO_DEADLINE_S) is not None  # a save: fetch 1
+    assert await sched.ensure_symbol("NOPEUSDT") is None  # a lookup it did not throttle: fetch 2
+    _warm(sched, "BTCUSDT", age_s=1000.0)  # stale again, inside the cooldown the lookup armed
+    assert await sched.ensure_fresh(_MAX_AGE_S, _NO_DEADLINE_S) is not None  # fetch 3
+    assert fetch.calls == 3 and _count("throttled") == throttled
