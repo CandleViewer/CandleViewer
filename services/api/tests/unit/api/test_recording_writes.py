@@ -19,7 +19,8 @@ from candleviewer.api import recording_writes as writes
 from candleviewer.api.recording_symbols import make_recording_symbols_router
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.writer import AuditUnavailable
-from tests.unit.recorder._control_fakes import STREAMS, FakeRecorder
+from candleviewer.recorder import control as rc
+from tests.unit.recorder._control_fakes import NOW, STREAMS, FakeRecorder
 
 W = ("recording:read", "recording:write")
 _ADD = "/recording/symbols"
@@ -35,6 +36,7 @@ class _Env:
     def __init__(self, fake: FakeRecorder | None, *perms: str, owner: bool = True,
                  elevated: bool = False) -> None:  # fmt: skip
         self.fake = FakeRecorder() if fake is None else fake
+        self.fake.audit = self  # the policy's own records (#2188 S2b), written ahead of the row
         self.writer: FakeRecorder | None = self.fake
         self.caller = AuditPrincipal(uuid.uuid4(), "u", frozenset(perms), is_owner=owner)
         self.audit: list[tuple[str, dict[str, Any]]] = []
@@ -188,7 +190,7 @@ def test_the_write_limiter_keeps_at_most_its_tracked_users() -> None:
     assert len(limiter) == 2 and limiter.admit("c") == 60 and limiter.admit("a") is None
 
 
-async def test_a_pin_always_needs_the_recorder_step_up_and_is_audited_with_before_after() -> None:
+async def test_a_pin_always_needs_the_recorder_step_up_and_the_policy_records_it() -> None:
     fake = FakeRecorder()
     entry = fake.put("BTCUSDT")
     env = _Env(fake, *W)
@@ -199,8 +201,8 @@ async def test_a_pin_always_needs_the_recorder_step_up_and_is_audited_with_befor
     pinned = await env.http.put(_pin(entry.id), json={"pinned": True})
     assert (pinned.status_code, pinned.json()["pinned"]) == (200, True)
     assert fake.entries["BTCUSDT"].pinned and env.actions() == ["retention.change"]
-    record = env.audit[0][1]
-    assert (record["before_state"]["pinned"], record["after_state"]["pinned"]) == (False, True)
+    record = env.audit[0][1]  # the policy's record; the route writes none of its own
+    assert (record["reason"], record["after_state"]["pinned"]) == ("pin", True)
     for bad in (
         {},
         {"pinned": "yes"},
@@ -227,10 +229,9 @@ async def test_an_unpin_is_audited_before_the_store_and_a_refused_record_changes
 class _Gone(FakeRecorder):
     """The row goes between the lookup and the pin: the policy finds no active row."""
 
-    async def pin(self, entry_id: str, pinned: bool, actor: Any, **kw: Any) -> Any:
-        symbol = self._symbol(entry_id)
+    async def set_pin(self, symbol: str, pinned: bool, actor: Any) -> None:
         self.entries.clear()
-        await self.set_pin(str(symbol), pinned, actor)  # raises: no active row
+        await super().set_pin(symbol, pinned, actor)  # raises: no active row
 
 
 async def test_a_pin_of_a_row_gone_since_the_lookup_is_404_audited_as_denied() -> None:
@@ -239,7 +240,7 @@ async def test_a_pin_of_a_row_gone_since_the_lookup_is_404_audited_as_denied() -
     env = _Env(fake, *W, elevated=True)
     gone = await env.http.put(_pin(entry.id), json={"pinned": True})
     assert (gone.status_code, gone.json()["code"]) == (404, "not_found")
-    assert (env.actions(), env.audit[-1][1]["outcome"]) == (["retention.change"] * 2, "denied")
+    assert (env.actions(), env.audit[-1][1]["outcome"]) == (["retention.change"], "denied")
 
 
 class _OtherEnv(FakeRecorder):
@@ -276,3 +277,26 @@ async def test_a_non_owner_reads_its_write_through_the_restricted_view() -> None
     env.elevated = True
     assert (await env.http.put(_pin(hidden.id), json={"pinned": True})).status_code == 404
     assert not fake.entries["XRPUSDT"].pinned
+
+
+@pytest.mark.parametrize("cause", sorted(rc.HIDDEN_CAUSES))
+async def test_a_non_owner_re_add_of_a_row_its_view_does_not_hold_reads_as_a_fresh_add(
+    cause: Any,
+) -> None:
+    """Restricted refusal parity: `201` and the fresh-add body, none of the row's settings or
+    session; the server re-adds the row (its pin stays) and the record names what held it."""
+    fresh = _Env(None, *W, owner=False)
+    fake = FakeRecorder()
+    fake.put("SOLUSDT", cause, pinned=True, depth=500, streams=("trades",), started_at=NOW,
+             refusals=(cause,))  # fmt: skip
+    env = _Env(fake, *W, owner=False)
+    env.caller = fresh.caller
+    first, again = await fresh.add(symbol="SOLUSDT"), await env.add(symbol="SOLUSDT")
+    assert (again.status_code, again.content) == (201, first.content)
+    assert fake.entries["SOLUSDT"].pinned and fake.entries["SOLUSDT"].reasons == ("manual", cause)
+    assert env.actions() == ["recorder.start"] == fresh.actions()
+    held_by = [e.audit[0][1]["after_state"]["held_by"] for e in (env, fresh)]
+    assert held_by == [cause, None]  # the record carries the real outcome
+    owner = _Env(fake, *W)
+    seen = await owner.add(symbol="SOLUSDT")
+    assert (seen.status_code, seen.json()["pinned"], seen.json()["depth"]) == (200, True, 500)
