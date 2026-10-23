@@ -227,6 +227,21 @@ describe("toIr refuses", () => {
   const c2NoLeft = { ...node("c2"), data: { kind: "comparison", op: "lt", right: {} } };
   const twiceA1 = swap(c2NoLeft, edge("g1", "a1", "when")); // a1 fed twice, c2 with no left
   const loopNoAction = { ...actionless, edges: [...inner, loop] };
+  const bare1 = { kind: "comparison", op: "gt", right: {} }; // no left operand
+  const empty = (id: string): GraphNode => ({ id, type: "condition", data: bare1 });
+  const lone = { ...alone, nodes: [...alone.nodes, empty("c9")] }; // one condition, no action
+  const unfedTwice = { ...G, edges: [...G.edges.slice(1), edge("c1", "a2", "when")] }; // a1 unfed
+  const astral = plus(empty("\u{1F600}"), empty("\uFF5E")); // U+FF5E sorts first by code point
+  const [p, q] = [
+    { ...LONE, id: "\uFF5E" },
+    { ...LONE, id: "\u{1F600}" },
+  ];
+  const apart = {
+    ...G,
+    nodes: [...G.nodes.slice(0, 3), p, q],
+    edges: [edge(p.id, "a1", "when"), edge(q.id, "a2", "when")],
+  };
+  const oneEdge = { ...unlisted, edges: [...unfed.edges, edge("c1", "g1", "in")] }; // children "x"
 
   it("a cycle, naming its path, rather than emit an IR (AC4)", () => {
     const message = "The graph has a cycle: g1 -> c1 -> g1.";
@@ -241,7 +256,13 @@ describe("toIr refuses", () => {
     ["a cycle and actions fed by two roots", twoRoots, "CYCLE_DETECTED", ["g1", "c1"]],
     ["actions fed by two roots", wired(edge("c1", "a2", "when")), "MULTIPLE_SINKS", ["a2"]],
     ["actions fed by a root each", perAction, "MULTIPLE_SINKS", ["c1", "g1"]],
-    ["an action fed twice by its root", wired(edge("g1", "a1", "when")), "MULTIPLE_SINKS", ["a1"]],
+    [
+      "an action fed twice by its root",
+      wired(edge("g1", "a1", "when")),
+      "MULTIPLE_SINKS",
+      ["a1"],
+      "Action a1 has more than one condition feeding it.",
+    ],
     ["an action no condition feeds", { ...G, edges: G.edges.slice(0, 3) }, "DANGLING_PORT", ["a2"]],
     ["a comparison with no left operand", noLeft, "DANGLING_PORT", ["c1"]],
     ["a temporal node with no child", noChild, "DANGLING_PORT", ["c2"]],
@@ -251,7 +272,22 @@ describe("toIr refuses", () => {
     ["an empty input and actions fed by two roots", noLeftRoots, "MULTIPLE_SINKS", ["a2"]],
     ["two empty inputs: the first in code point order", noLeftA2, "DANGLING_PORT", ["a2"]],
     ["two empty inputs, the nodes reversed: by code point", reversed, "DANGLING_PORT", ["a2"]],
-    ["no action, and an empty input", noAction, "ORPHAN_NODE", ["g1", "c1", "c2"]],
+    [
+      "no action, and an empty input",
+      noAction,
+      "ORPHAN_NODE",
+      ["g1", "c1", "c2"],
+      "The graph has no action node.",
+    ],
+    ["no action, one condition with an empty input", lone, "ORPHAN_NODE", ["c9"]],
+    [
+      "an empty input before an action fed twice: by code point",
+      unfedTwice,
+      "DANGLING_PORT",
+      ["a1"],
+    ],
+    ["two empty inputs beyond the BMP: by code point", astral, "DANGLING_PORT", ["\uFF5E"]],
+    ["roots beyond the BMP: in code point order", apart, "MULTIPLE_SINKS", ["\uFF5E", "\u{1F600}"]],
     ["an empty gate and an empty input: by code point", emptyGate, "DANGLING_PORT", ["c1"]],
     ["an action fed twice and an empty input: by code point", twiceA1, "MULTIPLE_SINKS", ["a1"]],
     ["a cycle and no action", loopNoAction, "CYCLE_DETECTED", ["c1", "g1"]],
@@ -297,6 +333,7 @@ describe("toIr refuses", () => {
       "Node g1 is missing its 'in' input.",
     ],
     ["a list that is no list", swap({ ...node("g1"), data: { children: "x" } }), SV, ["g1"]],
+    ["a list that is no list, one edge into it", oneEdge, SV, ["g1"]],
     ["a list that is no list, though no edge fills it", unfed, "DANGLING_PORT", ["g1"]],
     ["a graph with no node list", { ...G, nodes: "x" } as unknown as GraphModel, SV, [], "lists"],
     ["no graph at all", null as unknown as GraphModel, SV, [], "one trigger"],
