@@ -121,7 +121,7 @@ estimated chip glyph, outline | color.status.info.default | color.status.info.su
 current row outline | color.border.selected | color.surface.canvas | non-text | s4
 rejected n5: border.strong rule | color.border.strong | color.surface.canvas
   | rejected-non-text | s5
-canonical IR text (pre) | color.text.primary | color.surface.sunken | text | s5
+compiled IR text (pre) | color.text.primary | color.surface.sunken | text | s5
 the pre's described-by note | color.text.secondary | color.surface.sunken | text | s5
 row menu text (overlay) | color.text.primary | color.surface.overlay | text | s2
 row menu T2 label (overlay) | color.text.tertiary | color.surface.overlay | text | s2 s12
