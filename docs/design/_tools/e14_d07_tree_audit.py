@@ -500,9 +500,10 @@ def seeded(n: int, seed: int) -> list[dict[str, Any]]:
 
 # the filter path's fixed keys with the shell's keys (E13-D02 D25, §11.1): Shift+Tab to the filter
 # 1, Tab back into the tree 1 (the roving stop is the item focus left — the first group row), ↓ x2
-# past Overlays and Sub-panes to Drawings, ↓ x6 past the five sub-group rows to the first match
-# (worst: in the last sub-group), Enter 1; with C-20 (↓ / Enter from the filter focuses it) 3
-FIXED_SHELL, FIXED_C20 = 1 + 1 + 2 + 6 + 1, 1 + 1 + 1
+# past Overlays and Sub-panes to Drawings, ↓ x7 past the sync row (the group's first child, spec
+# section 6.1) and the five sub-group rows to the first match (worst: in the last sub-group), Enter
+# 1; with C-20 (↓ / Enter from the filter focuses it) 3
+FIXED_SHELL, FIXED_C20 = 1 + 1 + 2 + 7 + 1, 1 + 1 + 1
 TIME_ONLY = frozenset({"vertical_line", "brush", "polyline"})
 
 
@@ -609,8 +610,9 @@ def tree_report() -> dict[str, Any]:
     p("Keystroke bound, filter path at 500 (the stated strategy — the first price, or the type")
     p(f"word + the time of a time-only tool; separator-insensitive): typed + extra ↓ = {cost}")
     p(f"at worst ({fb['typed']} characters + {fb['extra']} ↓ for {fb['label']!r}); with the")
-    p(f"shell's {FIXED_SHELL} fixed keys (Shift+Tab, Tab, ↓ x2 to Drawings, ↓ x6 to the first")
-    p(f"match, Enter) = {bnd}; with C-20 ({FIXED_C20} fixed keys) {c20}.")
+    p(f"shell's {FIXED_SHELL} fixed keys (Shift+Tab, Tab, ↓ x2 to Drawings, ↓ x7 past the sync")
+    p(f"row and the five sub-group rows to the first match, Enter) = {bnd}; with C-20")
+    p(f"({FIXED_C20} fixed keys) {c20}.")
     bare_sum = f"{bare['typed']} + {bare['extra']}"
     p(f"A bare minute typed for a time-only tool: {bare['cost']} ({bare_sum}")
     p(f"↓ for {bare['label']!r}) → {FIXED_SHELL + bare['cost']} — why the strategy names the type")
