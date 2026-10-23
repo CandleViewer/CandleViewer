@@ -395,3 +395,24 @@ def test_the_rules_it_cites_keep_their_numbers() -> None:
     assert "\n6. **The recorded stop (SR-E29-06" in record
     assert "\n7. **Pairing through the bound id (SR-E29-03).**" in pairing
     assert not _missing(_SECTION, "24 §8.8 rule 6", "24 §8.3 rule 7")
+
+
+def test_rule_7_releases_the_record_only_when_its_order_no_longer_matches() -> None:
+    """The release 21's "Binding" cites (#848, the orchestrator's ruling of 2026-10-23 in LANE-41):
+    only a later push or section 8.5 read that section 8.8 rule 6's match no longer accepts
+    releases the record's binding, and an end keeps the id, so a stop that closed its position
+    still pairs. The materialised `orders` row is never released: its terms follow its order."""
+    pairing = _words(_INTERNAL_DOC.split("### 8.3 ", 1)[1].split("### 8.4 ", 1)[0])
+    binding = _words(_SECTION.split("**Binding.**", 1)[1].split("\n\n", 1)[0])
+    assert not _missing(
+        pairing,
+        "That binding is released (`exchange_order_id` cleared and `released_at` stamped, "
+        "`rs_release`; never bound again) only when a later push of that order, or a §8.5 read "
+        "of it, shows that §8.8 rule 6's match no longer accepts the order for the record's side",
+        "E29-T05 releases on the push and E29-T06 on the read.",
+        "An end never releases it",
+        "keeps the id, so the fills of a stop that closed its position still pair.",
+        "The materialised `orders` row is never released: its terms follow every in-place "
+        "change of its order (`TERMS_CHANGED`",
+    )
+    assert "the one of 24 §8.3 rule 7 (a later read of that order that no longer matches" in binding
