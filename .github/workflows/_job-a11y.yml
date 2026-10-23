@@ -98,9 +98,28 @@ jobs:
       - name: Build web app
         run: pnpm --filter @candleviewer/web run build
 
+      # #4305: the browsers are cached by the runner OS and the lockfile's Playwright version (no
+      # restore-keys: a bump never restores another version's browsers). The version is read from the
+      # installed lockfile, so this sits after `pnpm install`.
+      - name: Resolve the Playwright version
+        id: pwver
+        working-directory: apps/web
+        run: '"$GITHUB_WORKSPACE/tools/ci/playwright_browsers.sh" version'
+
+      - name: Cache the Playwright browsers
+        id: pwcache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ runner.os }}-${{ steps.pwver.outputs.version }}
+
       - name: Install Playwright browsers
         working-directory: apps/web
-        run: npx playwright install --with-deps chromium
+        env:
+          PW_CACHE_KEY: pw-browsers-${{ runner.os }}-${{ steps.pwver.outputs.version }}
+          PW_CACHE_HIT: ${{ steps.pwcache.outputs.cache-hit }}
+          PW_VERSION: ${{ steps.pwver.outputs.version }}
+        run: '"$GITHUB_WORKSPACE/tools/ci/playwright_browsers.sh" install'
 
       - name: Collect axe + keyboard + tree + flash (Playwright)
         # Collectors emit JSON/text under reports/a11y/. They fail only when
@@ -178,9 +197,25 @@ jobs:
           pnpm --filter @candleviewer/ui run storybook:build
 
       # packages/ui's playwright is apps/web's (one in the lockfile): the lanes' browser build.
+      - name: Resolve the Playwright version
+        id: pwver
+        working-directory: apps/web
+        run: '"$GITHUB_WORKSPACE/tools/ci/playwright_browsers.sh" version'
+
+      - name: Cache the Playwright browsers
+        id: pwcache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ runner.os }}-${{ steps.pwver.outputs.version }}
+
       - name: Install Playwright browsers
         working-directory: apps/web
-        run: npx playwright install --with-deps chromium
+        env:
+          PW_CACHE_KEY: pw-browsers-${{ runner.os }}-${{ steps.pwver.outputs.version }}
+          PW_CACHE_HIT: ${{ steps.pwcache.outputs.cache-hit }}
+          PW_VERSION: ${{ steps.pwver.outputs.version }}
+        run: '"$GITHUB_WORKSPACE/tools/ci/playwright_browsers.sh" install'
 
       - name: Run play functions and axe on every story (CI-A11Y-002)
         # bash adds pipefail: a summary that cannot read the report, or counts no passed story,
