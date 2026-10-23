@@ -1,6 +1,7 @@
 # hcl-worker-2's board sheets, drawn by the hpe lanes
 
-**READY (07:4xZ, 2026-10-23): #4180 batch 1 (30 boards, section below) for an idle hpe window, under the orchestrator's [DESIGN-THROUGHPUT] pull order (#4180, then #4193). Everything else stays on HOLD.** Earlier banner:
+**READY (07:4xZ, 2026-10-23): #4180 batch 1 (30 boards, section below) for an idle hpe window, under the orchestrator's [DESIGN-THROUGHPUT] pull order (#4180, then #4193). Everything else stays on HOLD.**
+**HOLD inside batch 1 (08:2xZ): rows 2 and 4, boards 03 and 06.** They still draw the forming bar 13:35 over 40 rows; boards 01, 02, 04 and 05 draw §4.1's five-level column (POC 64,011.0). Both are being regenerated; skip them and draw the other 28 in order. The fixed sheets come with batch 2. Earlier banner:
 
 **HOLD (02:2xZ, 2026-10-23): draw nothing from this folder until the orchestrator names a batch for your window.**
 
