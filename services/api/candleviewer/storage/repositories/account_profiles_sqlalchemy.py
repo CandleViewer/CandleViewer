@@ -33,8 +33,9 @@ A default move first locks the account row `FOR NO KEY UPDATE` and compares the 
 so moves on one account run one at a time and a stale one changes nothing. A path that locks an
 account row and its profile rows takes the account row first, as `require_live` does
 (`trade_groups_sqlalchemy.py`): a profile row first would deadlock against it once the trigger
-locks the account (21 Sec.3.2.4). `FOR NO KEY UPDATE` keeps a child row's FK check
-(`FOR KEY SHARE`) from waiting on the move.
+locks the account (21 Sec.3.2.4). Every leg's profile belongs to a leg account (`leg_values`), so
+`require_live` never holds a profile without first holding its account. `FOR NO KEY UPDATE` keeps
+a child row's FK check (`FOR KEY SHARE`) from waiting on the move.
 
 A database refusal leaves as `AccountProfileStoreRuleError` (a CHECK or the ladder trigger,
 which names itself with `USING CONSTRAINT`) or `AccountProfileStoreConflictError` (a unique

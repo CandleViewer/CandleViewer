@@ -490,6 +490,22 @@ async def test_a_tag_read_before_a_move_never_lands_even_back_on_the_same_profil
     assert await _binding(repo, owner, account) == (a.profile_id, 3)
 
 
+async def test_a_move_at_a_binding_version_ahead_of_the_binding_is_stale_and_moves_nothing(
+    repo: ProfilesRepository, owner: OwnerScope, pg_dsn: str
+) -> None:
+    """Nothing but the exact version is accepted, ahead or behind: a tag the binding has not
+    reached (2, on a fresh account at 1) moves nothing, so a crafted or miscounted `If-Match` never
+    moves the account's ceiling (D7) and the default stays the bootstrap's at version 1."""
+    account = _account(pg_dsn)
+    (bootstrap,) = await repo.list_profiles(owner, account)
+    alternate = await repo.create_profile(owner, account, _profile(account))
+    with pytest.raises(AccountVersionConflictError):
+        await repo.set_default_profile(
+            owner, account, alternate.profile_id, expected_binding_version=2
+        )
+    assert await _binding(repo, owner, account) == (bootstrap.profile_id, 1)
+
+
 async def test_the_binding_reads_in_scope_and_hides_an_account_out_of_it(
     repo: ProfilesRepository, owner: OwnerScope, pg_dsn: str
 ) -> None:

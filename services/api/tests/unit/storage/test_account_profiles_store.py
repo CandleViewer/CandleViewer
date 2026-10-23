@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import inspect
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -36,6 +37,7 @@ from candleviewer.storage.repositories.account_profiles import (
     PROFILE_CONFLICTS,
     PROFILE_RULES,
     AccountProfileRow,
+    AccountProfileStore,
     AccountProfileStoreConflictError,
     AccountProfileStoreRuleError,
     AccountProfileStoreScopeDeniedError,
@@ -798,13 +800,16 @@ async def test_without_a_hook_a_write_reads_nothing_first() -> None:
 
 async def test_a_move_at_an_old_binding_version_is_stale_before_the_profile_is_read() -> None:
     """No last-write-wins on the binding (#906 0d): a stale version is refused under the account
-    row lock, before the profile the move names is read, so it tells nothing about that profile."""
-    stale = _Rel(_GATE_OK, _Result([{"default_binding_version": 4}]))
-    with pytest.raises(AccountProfileStoreStaleError):
-        await _store(stale).set_default_profile(
-            _OWNER, _ACCOUNT, _PROFILE, expected_binding_version=3
-        )
-    assert len(stale.calls) == 2 and stale.commits == 0
+    row lock, before the profile the move names is read, so it tells nothing about that profile.
+    Nothing but the exact version is accepted, ahead or behind: a tag the binding has not reached
+    is as stale as one it has passed."""
+    for bound in (4, 2):  # the tag, 3, is behind the binding, then ahead of it
+        stale = _Rel(_GATE_OK, _Result([{"default_binding_version": bound}]))
+        with pytest.raises(AccountProfileStoreStaleError):
+            await _store(stale).set_default_profile(
+                _OWNER, _ACCOUNT, _PROFILE, expected_binding_version=3
+            )
+        assert len(stale.calls) == 2 and stale.commits == 0
     for script in ([_Result([])], [_BIND3, _Result([])]):  # no live account, then no profile
         missing = _Rel(_GATE_OK, *script)
         moved = await _store(missing).set_default_profile(
@@ -817,6 +822,23 @@ async def test_a_move_at_an_old_binding_version_is_stale_before_the_profile_is_r
     )
     assert again is not None and not again.written and again.version == 3
     assert again.previous is None and current.commits == 0 and len(current.calls) == 3
+
+
+@pytest.mark.parametrize(
+    "move",
+    [
+        AccountProfileStore.set_default_profile,
+        mod.SqlAlchemyAccountProfileStore.set_default_profile,
+    ],
+    ids=["port", "adapter"],
+)
+def test_a_move_requires_the_binding_version_in_the_port_and_the_adapter(
+    move: Callable[..., Any],
+) -> None:
+    """No default, so no caller can leave the tag out and fall back to last-write-wins: a later
+    `int | None = None` that skipped the check would pass every test that sends the keyword."""
+    parameter = inspect.signature(move).parameters["expected_binding_version"]
+    assert parameter.default is inspect.Parameter.empty
 
 
 async def test_get_default_binding_answers_the_row_or_none_and_an_empty_grant_runs_no_sql() -> None:

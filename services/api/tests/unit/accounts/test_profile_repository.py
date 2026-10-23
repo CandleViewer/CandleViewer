@@ -4,6 +4,7 @@ domain errors, one not-found for every miss, and the cache invalidated by every 
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -340,6 +341,13 @@ async def test_a_move_answers_the_binding_version_after_it() -> None:
     )
     assert moved.version == 8 and moved.profile.is_default
     assert store.calls[0][2] == {"expected_binding_version": 7, "write_ahead": None}
+
+
+def test_a_move_requires_the_binding_version_in_the_domain() -> None:
+    """No default, so no caller can leave the `If-Match` out and fall back to last-write-wins:
+    a later `int | None = None` that skipped the check would pass every test that sends it."""
+    move = inspect.signature(ProfilesRepository.set_default_profile)
+    assert move.parameters["expected_binding_version"].default is inspect.Parameter.empty
 
 
 async def test_the_binding_reads_as_its_default_profile_and_version() -> None:
