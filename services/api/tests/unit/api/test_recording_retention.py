@@ -8,6 +8,7 @@ scheduler off, nothing stored)."""
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any, get_args
@@ -384,20 +385,33 @@ async def test_two_overlapping_puts_with_one_key_store_once_and_record_once() ->
     assert env.store.replaced == 1 and env.log == ["retention.change", "replace"]
 
 
-async def test_a_chunked_body_with_no_length_over_the_cap_is_refused() -> None:
-    env = _Env("recording:write")
+async def _put_chunked(env: _Env, pad: int) -> httpx.Response:
+    """A whole, valid set as a chunked body (no Content-Length) plus `pad` bytes of trailing
+    whitespace: only the body cap can refuse it."""
+    valid = json.dumps({"items": _whole([])}).encode()
 
     async def body() -> Any:
-        yield b'{"items": [], "note": "'
-        for _ in range(40):  # 40 KiB chunks: the cap is 256 KiB
-            yield b"x" * 1024 * 40
-        yield b'"}'
+        yield valid
+        for _ in range(pad // (1024 * 40)):
+            yield b" " * 1024 * 40
 
     request = env.http.build_request("PUT", _PATH, content=body())
     assert "content-length" not in request.headers
-    resp = await env.http.send(request)
+    return await env.http.send(request)
+
+
+async def test_a_valid_chunked_body_over_the_cap_is_refused() -> None:
+    env = _Env("recording:write")
+    resp = await _put_chunked(env, 40 * 1024 * 7)  # 280 KiB of padding: the cap is 256 KiB
     assert (resp.status_code, resp.json()["code"]) == (422, "validation_failed")
     assert env.log == []
+
+
+async def test_a_valid_chunked_body_under_the_cap_is_stored() -> None:
+    env = _Env("recording:write")
+    resp = await _put_chunked(env, 40 * 1024 * 2)  # 80 KiB of padding
+    assert resp.status_code == 200
+    assert env.log == ["retention.change", "replace"]
 
 
 async def test_a_body_of_more_than_1000_items_is_refused() -> None:

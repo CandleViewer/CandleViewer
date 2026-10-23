@@ -243,6 +243,7 @@ def make_recording_retention_router(
                 if not gate.done():
                     gate.set_result(False)  # refused: the reserved sweep never runs
         out = JSONResponse({"items": [_dump(r) for r in stored]})
+        # no await may sit between the lock release and this cache put (a twin would miss it)
         return remember(cache, owner, key, digest, out)
 
     return router
