@@ -15,7 +15,10 @@ from fastapi import FastAPI
 
 from candleviewer.api.recording_symbols import make_recording_symbols_router
 from candleviewer.audit.access import AuditPrincipal
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.recorder import control as rc
+from candleviewer.recorder.models import Actor
+from candleviewer.storage.errors import StorageTierUnavailable
 from tests.unit.recorder._control_fakes import EmptyRows, FakeRecorder
 
 
@@ -138,3 +141,58 @@ async def test_restricted_refusal_parity(cause: Any, visible: Any) -> None:
         assert len(bodies) == 1
         named = await _Env(held, "recording:read").get(path)
         assert (named.get("items") or [named])[0]["refusal"] == cause
+
+
+async def test_restricted_pages_end_where_the_view_ends() -> None:
+    """A non-Owner's page edges follow the rows it can see, never the hidden-only row."""
+    viewer = _Env(_seeded(), "recording:read", owner=False)
+    whole = await viewer.get(limit=3)
+    assert _symbols(whole) == ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    assert whole["meta"] == {"next_cursor": None, "has_more": False, "count": 3}
+    seen: list[str] = []
+    page = await viewer.get(limit=2)
+    while True:
+        seen += _symbols(page)
+        if not page["meta"]["has_more"]:
+            break
+        page = await viewer.get(limit=2, cursor=page["meta"]["next_cursor"])
+    assert seen == ["BTCUSDT", "ETHUSDT", "SOLUSDT"] and "XRPUSDT" not in seen
+
+
+async def test_a_cursor_issued_to_the_owner_is_foreign_to_a_viewer() -> None:
+    fake = _seeded()
+    cursor = (await _Env(fake, "recording:read").get(limit=1))["meta"]["next_cursor"]
+    viewer = _Env(fake, "recording:read", owner=False)
+    assert (await viewer.get(limit=1, cursor=cursor))["code"] == "invalid_cursor"
+
+
+class _Refusing:
+    """A control whose store is down."""
+
+    async def list(self, query: rc.EntryQuery) -> rc.EntryPage:
+        raise StorageTierUnavailable("down")
+
+    async def get(self, entry_id: str) -> rc.RecordedEntry | None:
+        raise StorageTierUnavailable("down")
+
+
+async def test_a_store_outage_answers_503_on_both_routes() -> None:
+    env = _Env(_Refusing(), "recording:read")  # type: ignore[arg-type]  # a two-method double
+    for path in ("", f"/{uuid.uuid4()}"):
+        body = await env.get(path)
+        assert (body["status"], body["code"]) == (503, "store_unavailable")
+
+
+async def test_a_refused_audit_write_answers_503_and_reads_nothing() -> None:
+    class _NoAudit(_Env):
+        async def emit(self, action: str, **kwargs: Any) -> None:
+            raise AuditUnavailable("full")
+
+    denied = _NoAudit(_seeded(), "marketdata:read")
+    assert (await denied.get())["code"] == "store_unavailable"
+
+
+async def test_the_fake_keeps_an_active_row_when_it_is_unpinned() -> None:
+    fake = _seeded()
+    await fake.set_pin("BTCUSDT", False, Actor(kind="user", id="u-1"))
+    assert fake.entries["BTCUSDT"].pinned is False and fake.entries["BTCUSDT"].state == "recording"
