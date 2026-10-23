@@ -16,7 +16,7 @@ GlobalErrorBoundaryFallback. Slice 5 covers the rest.
 **Companion:** `E05-D02-feedback-overlays-a11y-audit.md` (accessibility pre-review of this slice).
 **Builds on:** slice 1's conventions 1–14, token mirror, exceptions and decisions A1–A12, B1–B7, C1–C15 and D1–D17 (D13
 is superseded by E09-D09 §2.2 T2); slice 2 (#4290)'s conventions 15–20 and decisions E1–E27 (read at its head
-`bab507423`, cited as it stands, if #4290 merges as is); slice 3 (text-first, PR pending)'s conventions 21–29 and
+`fd4ea21d1`, cited as it stands, if #4290 merges as is); slice 3 (text-first, PR pending)'s conventions 21–29 and
 decisions G1–G21 (read at `a069d28ee`, the base of this branch). They apply unchanged and are cited as "slice 1 A8",
 "slice 2 (#4290) E20" and "slice 3 (text-first, PR pending) conventions 24".
 **Key.** `05`, `14`, `15`, `16` are the `docs/plan/` documents by number; D09 is `docs/design/E09/E09-D09.md`, D08
@@ -25,7 +25,7 @@ section.
 
 ## 1. What this slice specifies
 
-- **17 components, 50 variant properties, 98 cells.** One Penpot variant set per CMP id, named `CMP-0xx · Name` (brief
+- **17 components, 50 variant properties, 99 cells.** One Penpot variant set per CMP id, named `CMP-0xx · Name` (brief
   §10; a catalogue `/` is dropped, slice 1 §1.1). The matrix rule is slice 1 conventions 2: every documented state at
   the default of the other axes, every other axis value once, and the universal states where the component is
   interactive. Each section lists its cells and the states that do not apply, with the reason; "closing" is a motion
@@ -34,35 +34,40 @@ section.
   anatomy and its tokens, the keyboard and role tables, focus, motion, live regions, T2 and what is not T2, alignment.
 - **No build yet.** Every token below is a published semantic token or a named primitive (§4, §5); nothing is drawn
   until the boards PR. Cells nest the components of slices 1–3 (CMP-001, 002, 005, 006, 007, 014, 019, 021, 031, 033,
-  040, 047) as live instances once their boards exist; a component of slice 5 (CMP-022 Kbd) or outside #161 (CMP-212
-  ToastHost) is drawn from its catalogue entry as a plain board until it ships.
+  040, 047, 079) as live instances once their boards exist; a component of slice 5 (CMP-022 Kbd) or outside #161
+  (CMP-212 ToastHost) is drawn from its catalogue entry as a plain board until it ships.
 - **The ruling on gating.** An atom never owns policy gating; the host does (the orchestrator's ruling on slice 2,
-  record 6368751311, M1). A container here — tooltip, popover, menu, dialog, drawer, toast, callout, empty state — has
-  no gated state of its own; only a nested control takes T2, in its own T2 form, with the host's reason (conventions
-  36).
+  record 6368751311, M1; slice 2 (#4290) E27 recommends the same: "the host owns the gating, never the atom", and "a
+  link to an admin destination is hidden, not locked"). A container here — tooltip, popover, menu, dialog, drawer,
+  toast, callout, empty state — has no gated state of its own; only a nested control takes T2, in its own T2 form
+  through CMP-079 RbacGate, with the host's reason (conventions 36).
 - **Catalogue alignment, in this PR.** The 17 entries of `15` are updated in slices 1–3's form; each clause traces to
   its section here. Clauses that encode a choice awaiting your answer are listed in §6 (e); the held updates are §6 (f).
 
-| Component                   | Penpot variant set (boards PR)          | Variant properties                   | Cells  | Composes (live instances)                                               |
-| --------------------------- | --------------------------------------- | ------------------------------------ | ------ | ----------------------------------------------------------------------- |
-| CMP-015 Skeleton            | `CMP-015 · Skeleton`                    | Shape, Motion, Surface               | 6      | —                                                                       |
-| CMP-016 Tooltip             | `CMP-016 · Tooltip`                     | Side, Mode, Content, Trigger         | 7      | CMP-002 (the trigger), CMP-019 (`lock` badge)                           |
-| CMP-017 Popover             | `CMP-017 · Popover`                     | Modal, Placement, Overflow           | 4      | CMP-040 + CMP-007, CMP-031, CMP-001; CMP-047's calendar                 |
-| CMP-023 ProgressBar         | `CMP-023 · ProgressBar`                 | Kind, Tone, Value, Label             | 8      | CMP-019 (`warning`, `danger`)                                           |
-| CMP-026 EmptyState          | `CMP-026 · EmptyState`                  | Variant, Action                      | 7      | CMP-019, CMP-001, CMP-021, CMP-023, CMP-027                             |
-| CMP-027 ErrorState          | `CMP-027 · ErrorState`                  | Form, Severity, Retry, Details       | 4      | CMP-019 (`danger`, `warning`), CMP-001, CMP-033                         |
-| CMP-028 Callout / Banner    | `CMP-028 · Callout`                     | Tone, Placement, Dismissible, Action | 8      | CMP-019, CMP-001, CMP-002, CMP-021, CMP-023                             |
-| CMP-029 Skeleton-Chart      | `CMP-029 · Skeleton-Chart placeholder`  | Panes, Motion                        | 3      | — (the host's CMP-038 sits over it)                                     |
-| CMP-038 InlineSpinnerText   | `CMP-038 · InlineSpinnerText`           | Phase, Cancel                        | 3      | CMP-014 Spinner, CMP-001                                                |
-| CMP-041 Menu                | `CMP-041 · Menu`                        | Trigger, ItemState                   | 9      | CMP-019 (`check`, `chevron-right`, `lock`), CMP-022 (plain board)       |
-| CMP-043 Dialog              | `CMP-043 · Dialog`                      | Size, Role, Overflow, State          | 7      | CMP-001, CMP-002 (close), CMP-040 + CMP-007                             |
-| CMP-044 ConfirmDialog       | `CMP-044 · ConfirmDialog`               | Variant, State                       | 9      | CMP-043, CMP-001, CMP-040 + CMP-007, CMP-005, CMP-006, CMP-027, CMP-019 |
-| CMP-045 Toast               | `CMP-045 · Toast`                       | Tone, Action, Lifetime, State        | 7      | CMP-019, CMP-001, CMP-002 (dismiss), CMP-041 (Snooze)                   |
-| CMP-046 Drawer              | `CMP-046 · Drawer`                      | Side, Modal, State                   | 5      | CMP-002 (close), CMP-001, CMP-015                                       |
-| CMP-089 ForbiddenState      | `CMP-089 · ForbiddenState`              | Variant, Ref, Scope                  | 4      | CMP-019 (`lock`), CMP-021, CMP-001                                      |
-| CMP-090 NotFoundState       | `CMP-090 · NotFoundState`               | Variant                              | 3      | CMP-019 (`search`), CMP-021                                             |
-| CMP-091 GlobalErrorBoundary | `CMP-091 · GlobalErrorBoundaryFallback` | Scope, Details, Repeated             | 4      | CMP-019 (`danger`), CMP-001, CMP-033                                    |
-| **17**                      |                                         | **50**                               | **98** |                                                                         |
+| Component                   | Penpot variant set (boards PR)          | Variant properties                   | Cells  | Composes (live instances)                                                                                     |
+| --------------------------- | --------------------------------------- | ------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------- |
+| CMP-015 Skeleton            | `CMP-015 · Skeleton`                    | Shape, Motion, Surface               | 6      | —                                                                                                             |
+| CMP-016 Tooltip             | `CMP-016 · Tooltip`                     | Side, Mode, Content, Trigger         | 7      | CMP-001, CMP-002 (triggers; CMP-079 on the gated one), CMP-019 (`lock` badge)                                 |
+| CMP-017 Popover             | `CMP-017 · Popover`                     | Modal, Placement, Overflow           | 4      | CMP-040 + CMP-007, CMP-031, CMP-001; CMP-047's calendar                                                       |
+| CMP-023 ProgressBar         | `CMP-023 · ProgressBar`                 | Kind, Tone, Value, Label             | 8      | CMP-019 (`warning`, `danger`)                                                                                 |
+| CMP-026 EmptyState          | `CMP-026 · EmptyState`                  | Variant, Action                      | 7      | CMP-019, CMP-001, CMP-021, CMP-023, CMP-027                                                                   |
+| CMP-027 ErrorState          | `CMP-027 · ErrorState`                  | Form, Severity, Retry, Details       | 4      | CMP-019 (`danger`, `warning`), CMP-001, CMP-033                                                               |
+| CMP-028 Callout / Banner    | `CMP-028 · Callout`                     | Tone, Placement, Dismissible, Action | 8      | CMP-019, CMP-001, CMP-002, CMP-021, CMP-023                                                                   |
+| CMP-029 Skeleton-Chart      | `CMP-029 · Skeleton-Chart placeholder`  | Panes, Motion                        | 3      | — (the host's CMP-038 sits over it)                                                                           |
+| CMP-038 InlineSpinnerText   | `CMP-038 · InlineSpinnerText`           | Phase, Cancel                        | 3      | CMP-014 Spinner, CMP-001                                                                                      |
+| CMP-041 Menu                | `CMP-041 · Menu`                        | Trigger, ItemState                   | 10     | CMP-019 (`check`, `chevron-right`, `lock`), CMP-079 (gated items), CMP-022 (plain board)                      |
+| CMP-043 Dialog              | `CMP-043 · Dialog`                      | Size, Role, Overflow, State          | 7      | CMP-001, CMP-002 (close), CMP-040 + CMP-007                                                                   |
+| CMP-044 ConfirmDialog       | `CMP-044 · ConfirmDialog`               | Variant, State                       | 9      | CMP-043, CMP-001, CMP-040 + CMP-007, CMP-005, CMP-006, CMP-027, CMP-019 (`lock`), CMP-079 (the gated Confirm) |
+| CMP-045 Toast               | `CMP-045 · Toast`                       | Tone, Action, Lifetime, State        | 7      | CMP-019 (tone glyphs, `lock`), CMP-001, CMP-002 (dismiss), CMP-041 (Snooze), CMP-079 (gated actions)          |
+| CMP-046 Drawer              | `CMP-046 · Drawer`                      | Side, Modal, State                   | 5      | CMP-002 (close), CMP-001, CMP-015                                                                             |
+| CMP-089 ForbiddenState      | `CMP-089 · ForbiddenState`              | Variant, Ref, Scope                  | 4      | CMP-019 (`lock`), CMP-021, CMP-001                                                                            |
+| CMP-090 NotFoundState       | `CMP-090 · NotFoundState`               | Variant                              | 3      | CMP-019 (`search`), CMP-021                                                                                   |
+| CMP-091 GlobalErrorBoundary | `CMP-091 · GlobalErrorBoundaryFallback` | Scope, Details, Repeated             | 4      | CMP-019 (`danger`), CMP-001, CMP-033                                                                          |
+| **17**                      |                                         | **50**                               | **99** |                                                                                                               |
+
+Every gated cell — CMP-016's echo · reason, CMP-041's disabled-with-reason, CMP-044's gated and CMP-045's T2 action —
+is a CMP-079 RbacGate composition with the CMP-019 `lock` glyph (conventions 36); CMP-026's two sentence cells carry
+neither, because the sentence form has no glyph and no button (D09 §8).
 
 **Deviations.** None of the 17 belongs elsewhere: CMP-089, 090 and 091 sit in the organism band of `15` §0.2, but the
 ticket lists them as cross-band v0 additions. The brief's "slice 2 E-row on CMP-014's cap" is slice 1's D15
@@ -75,7 +80,7 @@ ticket lists them as cross-band v0 additions. The brief's "slice 2 E-row on CMP-
    the catalogue text it quotes is `main`'s, before this PR's edits.
 3. The owner decisions are §6 (H1–H30); §6 (e) says what a "no" reverts, §6 (f) lists the held edits and hand-offs.
 4. The catalogue edits are in `docs/plan/15-component-catalogue.md`, in the 17 entries only; the boards PR then draws
-   the 98 cells and exports each section at dark/compact with the six proof frames (slice 1 §2).
+   the 99 cells and exports each section at dark/compact with the six proof frames (slice 1 §2).
 
 ## 3. Conventions (30–39, numbered on from slice 3's)
 
@@ -92,17 +97,22 @@ ticket lists them as cross-band v0 additions. The brief's "slice 2 E-row on CMP-
     primitives `palette.black` and `opacity.scrim` (§6 H1); never `color.surface.sunken`, which is black in dark only;
     no blur (D08 D16). It covers the workspace below the TopBar and the SCR-152 slot: the env band, the CMP-211 panic
     cluster and the shell's live regions stay above it and outside the inert subtree (§6 H23; `14:1673` "never covered
-    by a modal"). The page under it is `inert`. A press on the scrim is Cancel for `role="dialog"` and does nothing for
-    `role="alertdialog"`, which asks for an explicit choice.
+    by a modal"). The page under it is `inert`. CMP-212's toasts render above the scrim but outside the dialog's trap
+    and never over its footer, and they stay in the inert subtree: a toast is seen, its sentence speaks through
+    CMP-212's pre-rendered regions, which stay outside the subtree with the shell's, and its actions are reached after
+    the dialog closes (E40-D02 §4.3 "Modals", `E40-D02.md:671`, D-20). A press on the scrim is Cancel for
+    `role="dialog"` and does nothing for `role="alertdialog"`, which asks for an explicit choice.
 32. **Focus contract for overlays** (`05` §3.4 items 3–4, `05:96`–`:97`). Nothing here takes focus on its own: a toast,
     a callout, a tooltip and a route-level replacement never move it (D09 §9.4 restorations excepted, CMP-089, 091). A
-    surface opened by the user takes it: a popover or drawer to its first control (or `initialFocusRef`; without one,
-    its heading at `tabindex="-1"`), a menu to its first item (`↑` from the trigger: its last), a dialog to
-    `initialFocusRef`, else its first field, else its heading; a destructive or alert dialog to Cancel (`14:1619`
-    SCR-072, `14:2521` SCR-129; E42-D02 D18). A modal traps Tab; a non-modal surface lets Tab leave and closes or stays
-    open as its section says. **Return:** on close, focus goes back to the control that opened it; when that control is
-    gone, to the host's named fallback (E40-D02's bell), never to `body`. **Esc** closes the topmost layer only and
-    stops there: a tooltip first, then a menu or popover, then the dialog (`05` §3.3 rule 3: `Esc` is reserved).
+    surface opened by the user takes it: a popover to its first control (or `initialFocusRef`; without one, its heading
+    at `tabindex="-1"`), a drawer to `initialFocusRef`, else its heading at `tabindex="-1"` (its body is content to
+    read: E08-D06 §10.1, `E08-D06.md:397`; E40-D02 §4.4, `E40-D02.md:683`), a menu to its first item (`↑` from the
+    trigger: its last), a dialog to `initialFocusRef`, else its first field, else its heading; a destructive or alert
+    dialog to Cancel (`14:1619` SCR-072, `14:2521` SCR-129; E42-D02 D18). A modal traps Tab; a non-modal surface lets
+    Tab leave and closes or stays open as its section says. **Return:** on close, focus goes back to the control that
+    opened it; when that control is gone, to the host's named fallback (E40-D02's bell), never to `body`. **Esc** closes
+    the topmost layer only and stops there: a tooltip first, then a menu or popover, then the dialog (`05` §3.3 rule 3:
+    `Esc` is reserved).
 33. **Where feedback speaks** (`05` §6.2, `05:148`–`:150`; D09 §4.4). Polite by default; assertive (`role="alert"`) only
     for `05` §6.2's discrete, important class: an order rejected, the connection lost, a risk lockout, a refused action
     at its point of action, the error summary on submit. Each message speaks **once**; a counter, an age or a countdown
@@ -127,13 +137,23 @@ ticket lists them as cross-band v0 additions. The brief's "slice 2 E-row on CMP-
     change mid-flight lets a running fade finish on its clock (D08 D15).
 36. **Containers never gate; their nested controls do** (the ruling, §1). A gated action inside any component of this
     slice is the nested control's T2 form: CMP-001's and CMP-002's (D09 §2.2, which supersedes slice 1 D13), a CMP-041
-    item's (§7 CMP-041), CMP-006's option (slice 1) — `aria-disabled="true"`, never `disabled`; the full label; the
-    CMP-019 `lock` glyph (`decorative=false`, name "Not available") leading it, or its badge on an icon-only control;
-    the reason in the DOM at mount, linked by `aria-describedby`, in `color.text.secondary`; never `opacity.disabled` on
-    the label, glyph or reason (D09 §2.2, `E09-D09.md:49`; slice 3 conventions 24). The reason is the host's key (D09
-    §3.1 or a registered state vocabulary); a component never writes it. Several gated controls in one surface point at
-    one reason line ("one notice, many pointers"). The sentence form is CMP-026 with `cta` omitted (D09 §8,
-    `E09-D09.md:210`). A link whose only destination is an admin route is hidden (T3, D09 §2.1 step 1), never locked.
+    item's (§7 CMP-041), CMP-006's option (slice 1). _Wrapper:_ CMP-079 RbacGate wraps the step-3 leg (D09 §2.1 step 3;
+    §8, `E09-D09.md:204`) in slice 3 (text-first, PR pending) G15's `form` — `inline` by default, `tooltip` for an
+    icon-only control or a toolbar segment without room, `notice` for one reason line that several controls point at; a
+    step-4 state reason goes to the control's own `disabledReason` (slice 3 (text-first, PR pending) conventions 24).
+    _Semantics:_ the control keeps its role and its full label; `aria-disabled="true"`, never `disabled`, so it stays in
+    the Tab order and a menu item stays arrow-reachable; the CMP-019 `lock` glyph (`decorative=false`, name "Not
+    available") leads the label in rendering 2a, and is the badge on an icon-only control in 2b; the reason is in the
+    DOM at mount, linked by `aria-describedby`. _Visual:_ the label and the lock in `color.text.tertiary`, the reason in
+    `color.text.secondary`, a filled control's fill to `color.surface.raised` with a 1 px `color.border.default`
+    hairline (`border.hairline`); never `color.text.disabled`, never `opacity.disabled` on the label, glyph or reason
+    (D09 §2.2, `E09-D09.md:49`, measured 2.86–4.31:1 in D09 §11; slice 3 conventions 24). _Keys:_ Tab reaches it;
+    `Enter`, `Space` or a bound hotkey changes nothing and re-shows the reason inline with one polite announcement; an
+    arrow lands on a T2 menu item without activating it (D09 §9.3). _Reason:_ the host's key (D09 §3.1 or a registered
+    state vocabulary); a component never writes it, and it emits no audit and no analytics. Several gated controls in
+    one surface point at one reason line ("one notice, many pointers"). The sentence form is CMP-026 with `cta` omitted:
+    no glyph, no button (D09 §8, `E09-D09.md:210`). A link whose only destination is an admin route is hidden (T3, D09
+    §2.1 step 1), never locked.
 37. **What is not T2 here** (D09 §9.1; the standing rulings). _Busy:_ a confirm whose request is in flight, a toast
     action being sent, a load — CMP-001 `loading`, `aria-busy`, focusable, no lock, no reason. _Outcome:_ an action done
     or no longer applicable is replaced by its outcome line (an expired Undo by "EMA 21 removed."; #960 Q13).
@@ -183,7 +203,7 @@ slices 1–3 keep their resolution.
 | Surface widths    | tooltip at most 320 px; toast 360 px (E40-D02 §4.2); dialog sm 420 / md 560 / lg 960 px (§6 H17); drawer 480 px for detail (E08-D06 D-14), 320 / 360 px for docked inspectors (E14-D02, E18-D02); the empty-state and route-state text column at most 480 px                         | CMP-016, 026, 043, 044, 045, 046, 089–091 | Component constants and host data, like slice 1 §5.1 "Sample dimensions"; no size token (§6 H7) |
 | Surface heights   | a dialog at most 80 % of the viewport, then its body scrolls (E39-D03 §4); a popover or menu at most the room to the viewport edge                                                                                                                                                   | CMP-017, 041, 043, 044, 046               | Layout rules, not values (§6 H7)                                                                |
 | Progress track    | 8 px thick, built from `space.inset.xs` padding (slice 1 B4)                                                                                                                                                                                                                         | CMP-023                                   | As slice 1 B4; no token                                                                         |
-| Rings             | the inset focus ring at a −2 px offset (§6 H8); the hold ring's 3 px stroke (E39-D03 §4)                                                                                                                                                                                             | CMP-041; CMP-044                          | CMP-039 constants, as slice 1 B2                                                                |
+| Rings             | the inset focus ring at a −2 px offset (§6 H8); the hold ring's 3 px stroke (E39-D03 §5)                                                                                                                                                                                             | CMP-041; CMP-044                          | CMP-039 constants, as slice 1 B2                                                                |
 | Skeleton geometry | the last text line at 60 % width; CMP-029's candle silhouette (illustrative data)                                                                                                                                                                                                    | CMP-015, CMP-029                          | Data and illustration, like slice 1's surrogate chart                                           |
 | Timing            | tooltip delay 300 ms (`15:196`), leave grace 100 ms, skip window 300 ms; slow path at 5 s; shimmer period 1,200 ms, stopped at 5 s; toast duration 5 / 10 / 20 s / until dismissed; hold 800 ms (300–2,000 ms setting), discrete window 5 s, key gap 250 ms; activation guard 400 ms | CMP-016, 015, 029, 038, 044, 045          | Behaviour constants (slice 3 §5.1 "Timing"); the hold value is the token of §6 H2               |
 
@@ -364,11 +384,12 @@ modes), C13 (strict matrix), C15 (stories) and D15 (the slow path); slice 2 (#42
   allowed (the token guards against a slip, not a client); (3) Confirm ignores an activation in the first 400 ms after
   the dialog opens (`14` SCR-076; E30-D02 `:355`) and ignores key repeats. **Affects:** CMP-044 (CMP-001).
 - **H25 — The hold variant.** Options: (a) E39-D03's contract as the base; (b) the catalogue's sentence, each screen
-  writing its own paths. **Recommended:** E39-D03 §4's contract as CMP-044's base: pointer — press and hold for
-  `holdDurationMs` (H2) with a ring (`role="progressbar"`) and its percentage text; keyboard — hold `Enter` for the same
-  time, or two non-repeat presses at least 250 ms apart within 5 s (the first arms and renames the button "Press again
-  to …", announced politely once); key repeats never confirm; `Esc` or blur disarms; reduce — no sweep, the percentage
-  text alone at ≤ 2 updates a second. **Affects:** CMP-044 (CMP-211).
+  writing its own paths. **Recommended:** E39-D03 §5's contract (CMP-211's `hold` mode, `E39-D03.md:123`) as CMP-044's
+  base: pointer — press and hold for `holdDurationMs` (H2) with a ring (`role="progressbar"`) and its percentage text;
+  keyboard — hold `Enter` for the same time, or two non-repeat presses of `Enter` or `Space` at least 250 ms apart
+  within 5 s (the first arms and renames the button "Press again to …", announced politely once); key repeats never
+  confirm; `Esc` or blur disarms; reduce — no sweep, the percentage text alone at ≤ 2 updates a second. **Affects:**
+  CMP-044 (CMP-211).
 - **H26 — Toast timing.** The rule for CMP-045: a toast with an action, a `danger` tone or an error never times out; any
   other toast follows the user's toast-duration setting (5 / 10 / 20 s / until dismissed; E40 a11y T-1, OQ-12), pauses
   the whole stack on hover and focus, shows no countdown bar, and is copied to SCR-014. E40-D02 D-18 (Q2, ruled by the
@@ -381,9 +402,10 @@ modes), C13 (strict matrix), C15 (stories) and D15 (the slow path); slice 2 (#42
   cancel held for 5 s would delay a risk-reducing action ("cancel is always safe", `05:97`). Options: (a) the rule
   below; (b) SCR-015's 5 s Undo on cancels, which holds the cancel back. **Recommended:** an order cancel is sent at
   once and its toast offers no Undo (re-placing is a new order through the ticket); Undo stays for local, reversible
-  actions (an indicator or a drawing removed, E13-D02 `:223`), whose toast persists and whose Undo window follows the
-  duration setting, then gives way to its outcome line. The `14` wording is a hand-off to its owner (§6 (f)).
-  **Affects:** CMP-045 (SCR-015, E31's undo window).
+  actions (an indicator or a drawing removed, E13-D02 §6.2, `E13-D02.md:223`), whose toast persists and whose Undo
+  window follows the duration setting, then gives way to its outcome line; E13-D02's fixed 10 s window (pausing on hover
+  and focus) is one of the setting's values and follows it too. The `14` wording and E13-D02's window are hand-offs to
+  their owners (§6 (f)). **Affects:** CMP-045 (SCR-015, E31's undo window).
 - **H28 — Where a toast speaks.** `15:468` puts the live role on the toast; CMP-212 (`15:2530`) owns a polite and an
   assertive region, and E40-D02 §4.3 lets only the announcer write. Options: (a) CMP-212's regions and a `politeness`
   prop; (b) a live role on each toast, as written. **Recommended:** a toast is never its own live region: it writes its
@@ -411,9 +433,9 @@ quote a merged spec (E11-D03 D03-CR-1, D09 DS-3, E40-D02 §7.4) follow their sou
 - **Held in `15`:** CMP-028's "What changed" disclosure (H15 (3)), until you choose one of D09 DS-6's three shapes.
 - **Hand-offs (outside this PR's write set):** `16` §7 — the dialog recipe (H21) and the shimmer's 5 s stop (H3) — and
   `16` §2.6 with the token set — `color.surface.scrim` (H1) and `motion.duration.hold-confirm` (H2) — to the E05 token
-  follow-up and E05-D03 (#162); the `14` SCR-015 Type line's Undo (H27) to its owner (E10); E42-D02 D3's confirm look
-  (H24), E14-D03's danger glyph (H16) and E30-D04 M6's card motion (H21) to their owners; E40-D02 §4.2's light edge (H6)
-  to its DS-CR-2.
+  follow-up and E05-D03 (#162); the `14` SCR-015 Type line's Undo (H27) to its owner (E10); E13-D02 §6.2's fixed 10 s
+  Undo window (H27), E42-D02 D3's confirm look (H24), E14-D03's danger glyph (H16) and E30-D04 M6's card motion (H21) to
+  their owners; E40-D02 §4.2's light edge (H6) to its DS-CR-2.
 
 ## 7. Components
 
@@ -493,15 +515,15 @@ replacing `color.surface.skeleton` and `motion.shimmer` (H3); Storybook adds Sta
 
 **Variants × States (7 cells; boards PENDING: `CMP-016 · Tooltip`, export `img/CMP-016-tooltip.png`):**
 
-| Cell          | Axes                                                   | What it shows                                                                                                                                            |
-| ------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| default       | Side=top, Mode=describes, Content=short, Trigger=hover | one line over a CMP-001 trigger, `space.inset.xs` above it                                                                                               |
-| long          | Content=long                                           | E39-D03 S20's "Closes 4 positions at market — all accounts, LIVE + DEMO · hold 800 ms or press twice", wrapped at the 320 px maximum (`E39-D03.md:211`)  |
-| echo · name   | Mode=echo                                              | a collapsed NavRail item's name over its icon (`14:332` SCR-011 "tooltips on collapsed icons reachable by keyboard focus"); the name is the `aria-label` |
-| echo · reason | Mode=echo                                              | the T2 2b echo over a CMP-002 with its `lock` badge: "Only the owner can change account settings." (D09 §2.4, `E09-D09.md:76`)                           |
-| focus         | Trigger=focus                                          | the trigger's CMP-039 ring and the tooltip, shown at once                                                                                                |
-| right         | Side=right                                             | beside an option in a vertical list (slice 1 §3)                                                                                                         |
-| bottom        | Side=bottom                                            | flipped below when the viewport has no room above                                                                                                        |
+| Cell          | Axes                                                   | What it shows                                                                                                                                                |
+| ------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| default       | Side=top, Mode=describes, Content=short, Trigger=hover | one line over a CMP-001 trigger, `space.inset.xs` above it                                                                                                   |
+| long          | Content=long                                           | E39-D03 S20's "Closes 4 positions at market — all accounts, LIVE + DEMO · hold 800 ms or press twice", wrapped at the 320 px maximum (`E39-D03.md:211`)      |
+| echo · name   | Mode=echo                                              | a collapsed NavRail item's name over its icon (`14:332` SCR-011 "tooltips on collapsed icons reachable by keyboard focus"); the name is the `aria-label`     |
+| echo · reason | Mode=echo                                              | the T2 2b echo over a CMP-002 in CMP-079 (`form="tooltip"`) with its `lock` badge: "Only the owner can change account settings." (D09 §2.4, `E09-D09.md:76`) |
+| focus         | Trigger=focus                                          | the trigger's CMP-039 ring and the tooltip, shown at once                                                                                                    |
+| right         | Side=right                                             | beside an option in a vertical list (slice 1 §3)                                                                                                             |
+| bottom        | Side=bottom                                            | flipped below when the viewport has no room above                                                                                                            |
 
 **Not drawn:** closed (nothing renders); Side=left (derivable, slice 1 C13); every state of its own (the trigger's).
 
@@ -533,14 +555,15 @@ replacing `color.surface.skeleton` and `motion.shimmer` (H3); Storybook adds Sta
 after a 100 ms grace, on blur and on `Esc`, never on a timer. **Motion:** motion-safe — opacity 0 → 1 over
 `motion.duration.fast` / `decelerate` after the delay, out over `fast` / `accelerate`; motion-reduce — instant. **Live
 region:** none: a tooltip is read as a description, never announced. **T2 and not T2:** the tooltip is T2's reason echo
-(2b) and never the only copy (D09 §2.2, §9.2); it has no gated state of its own (conventions 36). **Hit target:** the
-trigger's; the tooltip is hoverable, not a target. **Resize & overflow:** wraps inside 320 px; grows with text scale;
-flips side at the viewport edge. **Forced colors:** a CanvasText 1 px border on Canvas, CanvasText text (conventions
-38).
+(2b: the trigger in CMP-079 `form="tooltip"`, its CMP-019 `lock` badge the visible marker) and never the only copy (D09
+§2.2, §9.2); it has no gated state of its own (conventions 36). **Hit target:** the trigger's; the tooltip is hoverable,
+not a target. **Resize & overflow:** wraps inside 320 px; grows with text scale; flips side at the viewport edge.
+**Forced colors:** a CanvasText 1 px border on Canvas, CanvasText text (conventions 38).
 
 **Catalogue alignment** (`15:193-200`): Props `content: string` and `mode?: "describes" | "echo"` (H10); A11y appends
-the two modes, the delay, keyboard focus at once, hoverable and persistent, `Esc` stopping at the tooltip; Tokens become
-the anatomy's (`elevation.popover` for `elevation.3`, `radius.card` for `radius.sm`); Storybook adds Echo.
+the two modes, the delay, keyboard focus at once, hoverable and persistent, `Esc` stopping at the tooltip, and the T2 2b
+echo of a trigger in CMP-079 with its `lock` badge (conventions 36); Tokens become the anatomy's (`elevation.popover`
+for `elevation.3`, `radius.card` for `radius.sm`); Storybook adds Echo.
 
 ### CMP-017 · Popover
 
@@ -674,15 +697,15 @@ with a 1 px CanvasText border; the value text carries the figure (conventions 38
 
 **Variants × States (7 cells; boards PENDING: `CMP-026 · EmptyState`, export `img/CMP-026-emptystate.png`):**
 
-| Cell                 | Axes                                           | What it shows                                                                                                                           |
-| -------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| default              | Variant=no-data, Action=cta                    | "No rules yet — start from a template" with `Browse templates` (E36-D03, `E36-D03.md:112`)                                              |
-| recording            | Variant=recording-not-started                  | "History starts {ts} — recording began then", the owner's CTA to the recorder (`14:83`; wording under review, E16-D01 §4)               |
-| backfill             | Variant=backfill-in-progress                   | "Loading history — page 3 of ~9" with a determinate CMP-023 (`15:287`); informational, never `danger`                                   |
-| filtered-empty       | Variant=filtered-empty                         | "No rows match: Bid-stacked, Delta negative" with `Clear filters` (E11-D04 §10)                                                         |
-| error                | Variant=error                                  | CMP-027's panel form, polite: "Couldn't load users — store unavailable." with `Retry` (E42-D03 U-6, `E42-D03.md:339`; §6 H13)           |
-| sentence             | Action=sentence                                | T2's sentence form for a viewer: "No rules yet. Your role can't change rules." — the reason alone, no button (`E36-D03.md:112`; D09 §8) |
-| sentence · recording | Variant=recording-not-started, Action=sentence | "Only the owner can start recording." for a manager or viewer (D09 §2.4, `E09-D09.md:73`)                                               |
+| Cell                 | Axes                                           | What it shows                                                                                                                                                                                                   |
+| -------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| default              | Variant=no-data, Action=cta                    | "No rules yet — start from a template" with `Browse templates` (E36-D03, `E36-D03.md:112`)                                                                                                                      |
+| recording            | Variant=recording-not-started                  | "History starts {ts} — recording began then", the owner's CTA to the recorder (`14:83`; wording under review, E16-D01 §4) and the `link?` drawn once: `Show coverage` (E11-D04 §11.2, `E11-D04.md:343`; §6 H13) |
+| backfill             | Variant=backfill-in-progress                   | "Loading history — page 3 of ~9" with a determinate CMP-023 (`15:287`); informational, never `danger`                                                                                                           |
+| filtered-empty       | Variant=filtered-empty                         | "No rows match: Bid-stacked, Delta negative" with `Clear filters` (E11-D04 §10)                                                                                                                                 |
+| error                | Variant=error                                  | CMP-027's panel form, polite: "Couldn't load users — store unavailable." with `Retry` (E42-D03 U-6, `E42-D03.md:339`; §6 H13)                                                                                   |
+| sentence             | Action=sentence                                | T2's sentence form for a viewer: "No rules yet. Your role can't change rules." — the reason alone, no button (`E36-D03.md:112`; D09 §8)                                                                         |
+| sentence · recording | Variant=recording-not-started, Action=sentence | "Only the owner can start recording." for a manager or viewer (D09 §2.4, `E09-D09.md:73`)                                                                                                                       |
 
 **Not drawn:** interactive states (static; the CTA and link are CMP-001's, CMP-021's); loading (CMP-015 or backfill).
 
@@ -734,13 +757,13 @@ adds SentenceForm.
 **Variants × States (4 cells, and one sample; boards PENDING: `CMP-027 · ErrorState`, export
 `img/CMP-027-errorstate-inlineerror.png`):**
 
-| Cell    | Axes                                                    | What it shows                                                                                                                              |
-| ------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| default | Form=panel, Severity=error, Retry=shown, Details=closed | "Couldn't load users — store unavailable." with `Retry` (E42-D03 U-6, `E42-D03.md:339`); polite, an in-panel load failure (§6 H14)         |
-| warning | Severity=warning                                        | the `warning` glyph and the host's sentence, `role="status"`                                                                               |
-| inline  | Form=inline, Retry=none                                 | the refusal at the point of action: "Not sent — your access changed. {reason}" (D09 `inflight.not_sent`, `E09-D09.md:270`), assertive once |
-| details | Details=open                                            | "Technical details" open: the code and the correlation id, selectable, with a CMP-033 copy button                                          |
-| summary | (sample)                                                | E30-D02 D16's error summary (`E30-D02.md:141`): the inline form with a heading and links to the fields, focused after a failed submit      |
+| Cell    | Axes                                                    | What it shows                                                                                                                                                                                  |
+| ------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| default | Form=panel, Severity=error, Retry=shown, Details=closed | "Couldn't load users — store unavailable." with `Retry` (E42-D03 U-6, `E42-D03.md:339`); an in-panel load failure, so `live="polite"` is set over the error default (§6 H14; the Polite story) |
+| warning | Severity=warning                                        | the `warning` glyph and the host's sentence, `role="status"`                                                                                                                                   |
+| inline  | Form=inline, Retry=none                                 | the refusal at the point of action: "Not sent — your access changed. {reason}" (D09 `inflight.not_sent`, `E09-D09.md:270`), assertive once                                                     |
+| details | Details=open                                            | "Technical details" open: the code and the correlation id, selectable, with a CMP-033 copy button                                                                                              |
+| summary | (sample)                                                | E30-D02 D16's error summary (`E30-D02.md:141`): the inline form with a heading and links to the fields, focused after a failed submit                                                          |
 
 **Not drawn:** interactive states (its buttons are CMP-001's); loading and empty (other components).
 
@@ -767,9 +790,9 @@ adds SentenceForm.
 
 **Motion:** none: it appears at once. **Live region:** once per failure: an error assertive, a warning polite; an
 in-panel load failure polite (slice 3 G17); `off` when another node already announced it (§6 H14). **T2 and not T2:** an
-error is an outcome, never T2 (conventions 37); a gated `action` takes CMP-001's T2 form. **Hit target:** the buttons',
-at least 24 px. **Resize & overflow:** wraps; the details scroll inside their box and never truncate. **Forced colors:**
-CanvasText text, the glyph `currentColor`, the details box a 1 px CanvasText border.
+error is an outcome, never T2 (conventions 37); a gated `action` takes CMP-001's T2 form through CMP-079 (conventions
+36). **Hit target:** the buttons', at least 24 px. **Resize & overflow:** wraps; the details scroll inside their box and
+never truncate. **Forced colors:** CanvasText text, the glyph `currentColor`, the details box a 1 px CanvasText border.
 
 **Catalogue alignment** (`15:293-300`): Props gains `form?`, `live?` and `action?` (H14); a States line (panel and
 inline, error and warning, details closed and open); A11y appends the `live` default and overrides, the mount rule,
@@ -837,8 +860,10 @@ turns CanvasText, and the glyph and the title carry the tone (conventions 38).
 
 **Catalogue alignment** (`15:302-311`): Purpose reads CMP-074 for "CMP-078"; Props gains `placement?` and `live?` (H15);
 a States line (six tones, inline and band, dismissible); A11y appends the `live` override and "once per state entry";
-Tokens become the anatomy's (for `color.callout.*` and the `color.data-confidence.*.indicator` accents, H5); Storybook
-adds Band and LivePolite. Held: the disclosure (H15 (3)).
+Tokens become the anatomy's (for `color.callout.*` and the `color.data-confidence.*.indicator` accents, H5), and the
+E08-D04 paragraph's two accents are qualified to match: they stay on `color.surface.*`, and on the callout's fill the
+edge and the glyph bind `color.status.danger.strong` (H5; E17-D02 C21, `E17-D02.md:443`); Storybook adds Band and
+LivePolite. Held: the disclosure (H15 (3)).
 
 ### CMP-029 · Skeleton-Chart placeholder
 
@@ -926,25 +951,26 @@ become the anatomy's (for "inherits CMP-014/CMP-020"); Storybook adds SlowPath a
 - **Props**: `trigger: ReactNode` · `items: {label,icon?,shortcut?,onSelect,danger?,disabled?}[]` · `onOpenChange`.
 - **A11y**: WAI-ARIA "Menu Button" pattern, arrow-key nav, type-ahead, `Esc` closes + returns focus, danger items get `aria-describedby` "destructive action" hint.
 
-| Axis      | Values                                                                                   | Default |
-| --------- | ---------------------------------------------------------------------------------------- | ------- |
-| Trigger   | button, context                                                                          | button  |
-| ItemState | default, focus-visible, active, checked, disabled, disabled-with-reason, danger, submenu | default |
+| Axis      | Values                                                                                          | Default |
+| --------- | ----------------------------------------------------------------------------------------------- | ------- |
+| Trigger   | button, context                                                                                 | button  |
+| ItemState | default, hover, focus-visible, active, checked, disabled, disabled-with-reason, danger, submenu | default |
 
-**Variants × States (9 cells; each draws the open menu with the named item; boards PENDING: `CMP-041 · Menu`, export
+**Variants × States (10 cells; each draws the open menu with the named item; boards PENDING: `CMP-041 · Menu`, export
 `img/CMP-041-menu.png`):**
 
-| Cell                 | Axes                              | What it shows                                                                                                                                                                     |
-| -------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| default              | Trigger=button, ItemState=default | E14-D02's tree-row menu (`E14-D02.md:75`): Duplicate · Reveal on chart · Move up · Move down, a separator, Remove with its `Del` shortcut                                         |
-| focus-visible        | ItemState=focus-visible           | "Reveal on chart" on `color.surface.hover` with the inset ring (§6 H8)                                                                                                            |
-| active               | ItemState=active                  | a pointer press: `color.surface.selected`                                                                                                                                         |
-| checked              | ItemState=checked                 | E11-D03's price-scale menu (`E11-D03.md:125`): the "Scale mode" radios and the Lock, Invert, Merge and Scale price only checkboxes, grouped, the `check` marking the chosen       |
-| disabled             | ItemState=disabled                | a plain-disabled item at `opacity.disabled` (unavailable to everyone in this state)                                                                                               |
-| disabled-with-reason | ItemState=disabled-with-reason    | SCR-063's "Edit risk caps" for a manager: the `lock`, the full label in `color.text.tertiary`, "Only the owner can change account settings." as its second line (`E09-D09.md:76`) |
-| danger               | ItemState=danger                  | Remove in the last group: its glyph in `color.status.danger.strong`, its label `color.text.primary` (§6 H16)                                                                      |
-| submenu              | ItemState=submenu                 | a row menu's Snooze open on its presets, 15 m / 1 h / until tomorrow (E40 a11y KM-5, `e40-alerts-a11y-review.md:71`)                                                              |
-| context              | Trigger=context                   | opened at the pointer on a grid row, or by `Shift+F10` on it (slice 3 CMP-049; D09 §9.3)                                                                                          |
+| Cell                 | Axes                              | What it shows                                                                                                                                                                                      |
+| -------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| default              | Trigger=button, ItemState=default | E14-D02's tree-row menu (`E14-D02.md:75`): Duplicate · Reveal on chart · Move up · Move down, a separator, Remove with its `Del` shortcut                                                          |
+| hover                | ItemState=hover                   | the pointer on "Reveal on chart": `color.surface.hover`, no ring (slice 1 conventions 2, D17)                                                                                                      |
+| focus-visible        | ItemState=focus-visible           | "Reveal on chart" on `color.surface.hover` with the inset ring (§6 H8)                                                                                                                             |
+| active               | ItemState=active                  | a pointer press: `color.surface.selected`                                                                                                                                                          |
+| checked              | ItemState=checked                 | E11-D03's price-scale menu (`E11-D03.md:125`): the "Scale mode" radios and the Lock, Invert, Merge and Scale price only checkboxes, grouped, the `check` marking the chosen                        |
+| disabled             | ItemState=disabled                | a plain-disabled item at `opacity.disabled` (unavailable to everyone in this state)                                                                                                                |
+| disabled-with-reason | ItemState=disabled-with-reason    | SCR-063's "Edit risk caps" for a manager, through CMP-079: the `lock`, the full label in `color.text.tertiary`, "Only the owner can change account settings." as its second line (`E09-D09.md:76`) |
+| danger               | ItemState=danger                  | Remove in the last group: its glyph in `color.status.danger.strong`, its label `color.text.primary` (§6 H16)                                                                                       |
+| submenu              | ItemState=submenu                 | a row menu's Snooze open on its presets, 15 m / 1 h / until tomorrow (E40 a11y KM-5, `e40-alerts-a11y-review.md:71`)                                                                               |
+| context              | Trigger=context                   | opened at the pointer on a grid row, or by `Shift+F10` on it (slice 3 CMP-049; D09 §9.3)                                                                                                           |
 
 **Not drawn:** closed (the trigger alone); loading, empty and error (its items are known; a command list is CMP-059).
 
@@ -991,17 +1017,17 @@ become the anatomy's (for "inherits CMP-014/CMP-020"); Storybook adds SlowPath a
 **Focus:** conventions 32 (the first item; back to the trigger). **Motion:** it opens at once (it takes focus,
 conventions 35); it closes with a `motion.duration.fast` fade; submenus switch at once; motion-reduce — instant. **Live
 region:** none of its own; a T2 item's refused key speaks once through the shell's polite region. **T2 and not T2:** per
-item, rendering 2a with the reason as the second line (D09 §8, `E09-D09.md:208`; slice 3 G21); a plain disabled item is
-unavailability, not a gate (conventions 37). **Hit target:** every item is `size.row.height` tall and the menu's full
-width. **Resize & overflow:** items grow taller with text; labels and second lines wrap and never truncate; the menu
-caps its height and scrolls. **Forced colors:** the focused item a Highlight fill with HighlightText
-(`forced-color-adjust: none`); separators CanvasText; a T2 item's label and lock GrayText, its reason CanvasText (slice
-3 conventions 29).
+item, rendering 2a with the reason as the second line, the step-3 leg through CMP-079 (conventions 36; D09 §8,
+`E09-D09.md:208`; slice 3 G21); a plain disabled item is unavailability, not a gate (conventions 37). **Hit target:**
+every item is `size.row.height` tall and the menu's full width. **Resize & overflow:** items grow taller with text;
+labels and second lines wrap and never truncate; the menu caps its height and scrolls. **Forced colors:** the focused
+item a Highlight fill with HighlightText (`forced-color-adjust: none`); separators CanvasText; a T2 item's label and
+lock GrayText, its reason CanvasText (slice 3 conventions 29).
 
 **Catalogue alignment** (`15:428-435`): Props applies E11-D03 D03-CR-1 (H16); a States line (the item states, T2 per D09
-§2.2, danger last); A11y appends Enter and Space, Tab closing all, disabled and T2 items reached and never activated,
-and the danger rule; Tokens become the anatomy's (`elevation.popover` for `elevation.3`, the inset ring of H8);
-Storybook adds Checkable, DisabledWithReason and Danger.
+§2.2 through CMP-079, danger last); A11y appends Enter and Space, Tab closing all, disabled and T2 items reached and
+never activated, and the danger rule; Tokens become the anatomy's (`elevation.popover` for `elevation.3`, the inset ring
+of H8); Storybook adds Checkable, DisabledWithReason and Danger.
 
 ### CMP-043 · Dialog
 
@@ -1038,7 +1064,7 @@ Storybook adds Checkable, DisabledWithReason and Danger.
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | scrim  | conventions 31: `palette.black` at `opacity.scrim` (§6 H1), at brief §2.5's step 5 (`elevation.scrim`'s layer)                                                                                                                       |
 | card   | `color.surface.overlay`, `elevation.dialog`, `radius.dialog`, a 1 px `color.border.default` edge; padding `space.dialog.padding`; block gap `space.stack.md`; at most 420 / 560 / 960 px wide (§6 H17) and 80 % of the viewport tall |
-| header | title `type.ui.heading-sm`, `color.text.primary` (`h2`); description `type.ui.body`, `color.text.secondary`; a `dialog` adds CMP-002 `ghost` `close` ("Close")                                                                       |
+| header | title `type.ui.heading-sm`, `color.text.primary` (`h2`); description `type.ui.body`, `color.text.secondary`; a `dialog` adds CMP-002 `ghost` `close` ("Close {title}")                                                               |
 | body   | the host's content; it scrolls when the card is capped                                                                                                                                                                               |
 | footer | a CMP-001 row, end-aligned, `space.inset.sm` apart: `Cancel` (`secondary`) first, the primary or danger action last                                                                                                                  |
 
@@ -1054,11 +1080,11 @@ Storybook adds Checkable, DisabledWithReason and Danger.
 
 **Accessible name and role:**
 
-| Element | Role                           | Name                          | ARIA                                                                                                |
-| ------- | ------------------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------- |
-| card    | dialog or alertdialog (`role`) | the title (`aria-labelledby`) | `aria-modal="true"`; `aria-describedby` → the description                                           |
-| scrim   | none                           | —                             | `aria-hidden="true"`; the page under it `inert`, the TopBar and the shell regions excepted (§6 H23) |
-| close   | button                         | "Close"                       | `role="dialog"` only                                                                                |
+| Element | Role                           | Name                          | ARIA                                                                                                                                                           |
+| ------- | ------------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| card    | dialog or alertdialog (`role`) | the title (`aria-labelledby`) | `aria-modal="true"`; `aria-describedby` → the description                                                                                                      |
+| scrim   | none                           | —                             | `aria-hidden="true"`; the page under it `inert`, the TopBar and the shell regions excepted (§6 H23); CMP-212's toasts painted above it, inert (conventions 31) |
+| close   | button                         | "Close {title}"               | `role="dialog"` only; the drawer's name form (CMP-046)                                                                                                         |
 
 **Focus:** conventions 32: initial focus, the trap, the return to the trigger or the host's fallback. **Motion:** §6
 H21: the scrim fades 0 → 0.6 over `motion.duration.normal` / `standard` and the card is a cut at frame 0 (D08 D2); the
@@ -1069,9 +1095,10 @@ inline CMP-027. **T2 and not T2:** none of its own (a container); a gated contro
 conventions 39. **Forced colors:** conventions 38.
 
 **Catalogue alignment** (`15:446-453`): Props gains the `size` values and `role?` (H17); a States line (default,
-scrolls, busy, reflow); A11y rewrites the `Esc` clause (H22) and gains the scrim, the inert page (H23), the initial
-focus and the fallback return; Tokens become the anatomy's (`elevation.dialog` for `elevation.4`, `radius.dialog` for
-`radius.lg`, the scrim's stand-in of H1); Storybook drops NoEscClose and adds AlertDialog, Scrolling and Busy.
+scrolls, busy, reflow); A11y rewrites the `Esc` clause (H22) and gains the scrim, the inert page (H23) with CMP-212's
+toasts above the scrim and inert (conventions 31), the initial focus, the close button's name "Close {title}" and the
+fallback return; Tokens become the anatomy's (`elevation.dialog` for `elevation.4`, `radius.dialog` for `radius.lg`, the
+scrim's stand-in of H1); Storybook drops NoEscClose and adds AlertDialog, Scrolling and Busy.
 
 ### CMP-044 · ConfirmDialog
 
@@ -1088,43 +1115,43 @@ focus and the fallback return; Tokens become the anatomy's (`elevation.dialog` f
 **Variants × States (9 cells, each over the scrim; boards PENDING: `CMP-044 · ConfirmDialog`, export
 `img/CMP-044-confirmdialog.png`):**
 
-| Cell            | Axes                            | What it shows                                                                                                                                                             |
-| --------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| default         | Variant=standard, State=default | SCR-072's "Freeze sub_001?" (E39-D03 §4.1, `E39-D03.md:106`): the subtitle, the "What this does" group, `Cancel` (focused) and `Freeze sub_001 — cancel 3 working orders` |
-| typed           | Variant=typed                   | E42-D02's rung 3, deleting user alex (`E42-D02.md:249`): the field for the username empty, the confirm natively disabled                                                  |
-| typed · match   | Variant=typed, State=match      | the field matching exactly; the confirm enabled                                                                                                                           |
-| hold            | Variant=hold                    | the confirm naming the effect, its ring at 0 % and "0 %"                                                                                                                  |
-| holding         | Variant=hold, State=holding     | a pointer hold: the ring at 50 % and "50 %" (`E39-D03.md:118`)                                                                                                            |
-| armed           | Variant=hold, State=armed       | the keyboard path after the first press: "Press again to flatten 4 positions — all accounts, LIVE + DEMO", the 5 s window (`E39-D03.md:119`)                              |
-| busy            | State=busy                      | after Confirm: CMP-001 `loading`, the inputs `readOnly`; SCR-072's per-account progress is the host's (`14:1617`)                                                         |
-| partial failure | State=partial-failure           | SCR-072's "partial failure with retry" (`14:1617`): a CMP-027 inline error with `Retry` above the footer                                                                  |
-| gated           | State=gated                     | the leg left mid-dialog: Confirm in CMP-001's T2 form and "Your role can't use the kill switch." under the footer (D09 §3.2; §6 H30)                                      |
+| Cell            | Axes                            | What it shows                                                                                                                                                                                                                                                                               |
+| --------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| default         | Variant=standard, State=default | SCR-072's "Freeze sub_001?" (E39-D03 §4.1, `E39-D03.md:106`): the subtitle, the "What this does" group, `Cancel` (focused) and `Freeze sub_001 — cancel 3 working orders`                                                                                                                   |
+| typed           | Variant=typed                   | E42-D02's rung 3, deleting user alex (`E42-D02.md:249`): the field for the username empty, the confirm natively disabled                                                                                                                                                                    |
+| typed · match   | Variant=typed, State=match      | the field matching exactly; the confirm enabled                                                                                                                                                                                                                                             |
+| hold            | Variant=hold                    | the confirm naming the effect, its ring at 0 % and "0 %"                                                                                                                                                                                                                                    |
+| holding         | Variant=hold, State=holding     | a pointer hold: the ring at 50 % and "50 %" (`E39-D03.md:118`)                                                                                                                                                                                                                              |
+| armed           | Variant=hold, State=armed       | the keyboard path after the first press: "Press again to flatten 4 positions — all accounts, LIVE + DEMO", the 5 s window (`E39-D03.md:119`)                                                                                                                                                |
+| busy            | State=busy                      | after Confirm: CMP-001 `loading`, the inputs `readOnly`; SCR-072's per-account progress is the host's (`14:1617`)                                                                                                                                                                           |
+| partial failure | State=partial-failure           | SCR-072's "partial failure with retry" (`14:1617`): a CMP-027 inline error with `Retry` above the footer                                                                                                                                                                                    |
+| gated           | State=gated                     | the leg left mid-dialog: Confirm in CMP-001's T2 form through CMP-079 — the `lock` leading its full label in `color.text.tertiary`, the fill `color.surface.raised` with a `color.border.default` hairline — and "Your role can't use the kill switch." under the footer (D09 §3.2; §6 H30) |
 
 **Not drawn:** a typed mismatch (the empty cell's look); hover and active (CMP-001's); a disabled dialog (never gated).
 
 **Anatomy** (on CMP-043, `role="alertdialog"`, `size` md — SCR-072's 560 px card):
 
-| Part         | Tokens                                                                                                                                                                                                     |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| title        | the verb and the object, as a question ("Freeze sub_001?"); CMP-043's header                                                                                                                               |
-| consequences | `role="group"` "What this does": `color.surface.raised`, `radius.card`, padding `space.inset.md`; sentences `type.ui.body`, `color.text.primary`; the irreversible line `type.ui.body-strong` (E39-D03 §4) |
-| typed field  | CMP-040 + CMP-007; its label names the token; `type.num.base` when the token is an id                                                                                                                      |
-| confirm      | CMP-001 `danger` (`color.text.on-action` on `color.status.danger.default`, §6 H24), labelled with the effect, never "Confirm"; a gate that only switches context (SCR-074's Demo → Live) uses `primary`    |
-| hold ring    | E39-D03 §4: a 3 px ring, `color.status.danger.default` over a `color.border.strong` track, beside its percentage in `type.num.sm`, `color.text.secondary`                                                  |
-| cancel       | CMP-001 `secondary`, first in the footer, the initial focus                                                                                                                                                |
+| Part         | Tokens                                                                                                                                                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| title        | the verb and the object, as a question ("Freeze sub_001?"); CMP-043's header                                                                                                                                                                      |
+| consequences | `role="group"` "What this does": `color.surface.raised`, `radius.card`, padding `space.inset.md`; sentences `type.ui.body`, `color.text.primary`; the irreversible line `type.ui.body-strong` (E39-D03 §4)                                        |
+| typed field  | CMP-040 + CMP-007; its label names the token; `type.num.base` when the token is an id                                                                                                                                                             |
+| confirm      | CMP-001 `danger` (`color.text.on-action` on `color.status.danger.default`, §6 H24), labelled with the effect, never "Confirm"; a gate that only switches context (SCR-074's Demo → Live) uses `primary`; gated (§6 H30), conventions 36's T2 look |
+| hold ring    | E39-D03 §5 (`E39-D03.md:118`): a 3 px ring, `color.status.danger.default` over a `color.border.strong` track, beside its percentage in `type.num.sm`, `color.text.secondary`                                                                      |
+| cancel       | CMP-001 `secondary`, first in the footer, the initial focus                                                                                                                                                                                       |
 
 **Keyboard** (WAI-ARIA APG Alert Dialog):
 
-| Keys                                | Action                                                                                                                                                                    |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| on open                             | Focus on `Cancel`; nothing is sent until Confirm (E39-D03 `:216`).                                                                                                        |
-| Tab / Shift+Tab                     | The body's controls, `Cancel`, Confirm, cycling (the trap).                                                                                                               |
-| Enter / Space on Confirm (standard) | Confirms, except in the first 400 ms after the dialog opened; key repeats are ignored (§6 H24).                                                                           |
-| typing in the typed field           | Confirm enables when the text matches exactly; `Enter` in the field never confirms.                                                                                       |
-| hold, pointer                       | Press and hold Confirm for `holdDurationMs`; releasing early resets the ring.                                                                                             |
-| hold, keyboard                      | Hold `Enter` for `holdDurationMs`, or two non-repeat presses at least 250 ms apart within 5 s (the first arms); `Space` has no hold path; `Esc` or blur disarms (§6 H25). |
-| Esc                                 | Cancel before the send; focus returns to the trigger (§6 H22).                                                                                                            |
-| Enter / Space on a T2 Confirm       | Nothing; the reason is re-shown with one polite announcement (D09 §9.3).                                                                                                  |
+| Keys                                | Action                                                                                                                                                                                                                                                                                                 |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| on open                             | Focus on `Cancel`; nothing is sent until Confirm (E39-D03 `:216`).                                                                                                                                                                                                                                     |
+| Tab / Shift+Tab                     | The body's controls, `Cancel`, Confirm, cycling (the trap).                                                                                                                                                                                                                                            |
+| Enter / Space on Confirm (standard) | Confirms, except in the first 400 ms after the dialog opened; key repeats are ignored (§6 H24).                                                                                                                                                                                                        |
+| typing in the typed field           | Confirm enables when the text matches exactly; `Enter` in the field never confirms.                                                                                                                                                                                                                    |
+| hold, pointer                       | Press and hold Confirm for `holdDurationMs`; releasing early resets the ring.                                                                                                                                                                                                                          |
+| hold, keyboard                      | Hold `Enter` for `holdDurationMs`, or two non-repeat presses of `Enter` or `Space` at least 250 ms apart within 5 s (the first arms); `Space` has no hold path (it activates on `keyup`), so a held `Space` is one press; `Esc` or blur disarms (§6 H25; E39-D03 §5, `E39-D03.md:123`, `:129`–`:130`). |
+| Esc                                 | Cancel before the send; focus returns to the trigger (§6 H22).                                                                                                                                                                                                                                         |
+| Enter / Space on a T2 Confirm       | Nothing; the reason is re-shown with one polite announcement (D09 §9.3).                                                                                                                                                                                                                               |
 
 **Accessible name and role:**
 
@@ -1141,19 +1168,20 @@ result in the host's toast (E39-D03 S20) and focus back on the trigger. **Motion
 fills over `holdDurationMs`; motion-reduce — no sweep, the percentage text alone (`E39-D03.md:239`). **Live region:** a
 Confirm label change and the armed name are polite, once (E39-D03 D13); the result is the host's polite toast, a failed
 leg an assertive CMP-027 once; a Confirm gated mid-dialog speaks once, assertively, when it held focus (D09 §4.4). **T2
-and not T2:** the nested Confirm takes CMP-001's T2 form in place (§6 H30; 2a, the host's reason under the footer); a
-scope option gated inside the body is CMP-006's T2 (E39-D03 `confirm-manager`). Not T2: a typed mismatch (validity:
-native `disabled`), the summary still loading (availability), a sent confirm (busy). **Hit target:** `Cancel` and
-Confirm at least 24 px; E39-D03's Confirm at least 240 px wide (host data). **Resize & overflow:** conventions 39; a
-consequence phrase never wraps mid-phrase ("Open positions are NOT closed", E39-D03). **Forced colors:** Confirm as
-CMP-001 (the danger meaning in its words); the ring Highlight on a CanvasText track, its text twin carrying the
-progress.
+and not T2:** the nested Confirm takes CMP-001's T2 form in place through CMP-079 (§6 H30; conventions 36; 2a, the
+host's reason under the footer); a scope option gated inside the body is CMP-006's T2 (E39-D03 `confirm-manager`). Not
+T2: a typed mismatch (validity: native `disabled`), the summary still loading (availability), a sent confirm (busy).
+**Hit target:** `Cancel` and Confirm at least 24 px; E39-D03's Confirm at least 240 px wide (host data). **Resize &
+overflow:** conventions 39; a consequence phrase never wraps mid-phrase ("Open positions are NOT closed", E39-D03).
+**Forced colors:** Confirm as CMP-001 (the danger meaning in its words); the ring Highlight on a CanvasText track, its
+text twin carrying the progress.
 
 **Catalogue alignment** (`15:455-462`): Props gains `consequences?` and `busy?` and states the label, typed-token and
-hold rules (H24, H25, H2); a States line (the nine cells); A11y appends `role="alertdialog"`, focus on `Cancel`, the 400
-ms guard, ignored repeats, the typed field's `Enter` rule, the hold paths and their reduce twin, and H30's T2 Confirm;
-Tokens become the anatomy's (for `color.status.danger` and `elevation.4`); Storybook adds Busy, PartialFailure and
-ConfirmGated.
+hold rules (H24, H25, H2); a States line (the nine cells; the gated Confirm through CMP-079 with the `lock`, the
+tertiary label and the `color.surface.raised` fill, D09 §2.2); A11y appends `role="alertdialog"`, focus on `Cancel`, the
+400 ms guard, ignored repeats, the typed field's `Enter` rule, the hold paths (`Space` arms, never holds) and their
+reduce twin, and H30's T2 Confirm; Tokens become the anatomy's (for `color.status.danger` and `elevation.4`); Storybook
+adds Busy, PartialFailure and ConfirmGated.
 
 ### CMP-045 · Toast
 
@@ -1171,40 +1199,41 @@ ConfirmGated.
 
 **Variants × States (7 cells; boards PENDING: `CMP-045 · Toast`, export `img/CMP-045-toast-notification.png`):**
 
-| Cell      | Axes                                                  | What it shows                                                                                                                                                                         |
-| --------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| default   | Tone=info, Action=none, Lifetime=timed, State=default | "Session extended. Idle timer reset. Next warning in 14:00." (D08 row 15, `E09-D08.md:114`)                                                                                           |
-| success   | Tone=success                                          | "Order accepted · id 42f" (`14:400` SCR-015)                                                                                                                                          |
-| warning   | Tone=warning, Action=actions, Lifetime=persistent     | E40-D02's fired alert (`E40-D02.md:626`): "Warning · Alert", "BTC above 65k", "Last price 65,012.5 crossed above 65,000", "BTCUSDT · 5m", `Open chart` `Snooze ▾` `Disable` `Details` |
-| danger    | Tone=danger, Lifetime=persistent                      | an order rejection with `Details`, which opens SCR-077 (`14:1691`)                                                                                                                    |
-| focused   | State=focused                                         | an action holding keyboard focus: its ring, and every timer in the stack paused (annotated)                                                                                           |
-| T2 action | Action=actions                                        | a viewer's fired alert: `Snooze` and `Disable` in T2 and one reason line both point at, "Your role can't change alerts." (E40-D02 §2.9, `E40-D02.md:312`)                             |
-| undo      | Action=actions                                        | a local undo, "EMA 21 removed. Undo" (E13-D02, `E13-D02.md:223`), and the outcome line once its window closes (§6 H27)                                                                |
+| Cell      | Axes                                                  | What it shows                                                                                                                                                                                                                                                     |
+| --------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| default   | Tone=info, Action=none, Lifetime=timed, State=default | "Session extended. Idle timer reset. Next warning in 14:00." (D08 row 15, `E09-D08.md:114`)                                                                                                                                                                       |
+| success   | Tone=success                                          | "Order accepted · id 42f" (`14:400` SCR-015)                                                                                                                                                                                                                      |
+| warning   | Tone=warning, Action=actions, Lifetime=persistent     | E40-D02's fired alert (`E40-D02.md:626`): "Warning · Alert", "BTC above 65k", "Last price 65,012.5 crossed above 65,000", "BTCUSDT · 5m", `Open chart` `Snooze ▾` `Disable` `Details`                                                                             |
+| danger    | Tone=danger, Lifetime=persistent                      | an order rejection with `Details`, which opens SCR-077 (`14:1691`)                                                                                                                                                                                                |
+| focused   | State=focused                                         | an action holding keyboard focus: its ring, and every timer in the stack paused (annotated)                                                                                                                                                                       |
+| T2 action | Action=actions                                        | a viewer's fired alert: `Snooze` and `Disable` in T2 through CMP-079 (`form="notice"`), each led by the `lock` with its full label in `color.text.tertiary`, and one reason line both point at, "Your role can't change alerts." (E40-D02 §2.9, `E40-D02.md:312`) |
+| undo      | Action=actions                                        | a local undo, "EMA 21 removed. Undo" (E13-D02, `E13-D02.md:223`), and the outcome line once its window closes (§6 H27)                                                                                                                                            |
 
 **Not drawn:** hover (behaviour); disabled (never gated whole); the stack, count and storm summary (CMP-212, CMP-165).
 
 **Anatomy** (E40-D02 §4.2; compact / comfortable: the buttons' heights and the body's line clamp):
 
-| Part    | Tokens                                                                                                     |
-| ------- | ---------------------------------------------------------------------------------------------------------- |
-| surface | conventions 30; 360 px (§5.1); padding `space.inset.md`; rows `space.stack.sm`                             |
-| edge    | a 2 px `border.thick` start edge in `color.status.{tone}.default` (§6 H6)                                  |
-| glyph   | CMP-019 at `size.icon` in `.strong`: `info`, `check`, `warning`, `danger`                                  |
-| kicker  | optional: `type.ui.caption`, `color.text.secondary` — the tone's word and the kind ("Warning · Alert")     |
-| title   | `type.ui.body-strong`, `color.text.primary`, one line                                                      |
-| body    | `type.ui.body`, `color.text.secondary`, at most two lines (three comfortable); the full text is in SCR-014 |
-| meta    | `type.num.sm`, `color.text.tertiary`                                                                       |
-| actions | CMP-001 `secondary` and `ghost`, compact, text labels                                                      |
-| dismiss | CMP-002 `ghost` `close`, "Dismiss {title}"                                                                 |
+| Part    | Tokens                                                                                                                |
+| ------- | --------------------------------------------------------------------------------------------------------------------- |
+| surface | conventions 30; 360 px (§5.1); padding `space.inset.md`; rows `space.stack.sm`                                        |
+| edge    | a 2 px `border.thick` start edge in `color.status.{tone}.default` (§6 H6)                                             |
+| glyph   | CMP-019 at `size.icon` in `.strong`: `info`, `check`, `warning`, `danger`                                             |
+| kicker  | optional: `type.ui.caption`, `color.text.secondary` — the tone's word and the kind ("Warning · Alert")                |
+| title   | `type.ui.body-strong`, `color.text.primary`, one line                                                                 |
+| body    | `type.ui.body`, `color.text.secondary`, at most two lines (three comfortable); the full text is in SCR-014            |
+| meta    | `type.num.sm`, `color.text.tertiary`                                                                                  |
+| actions | CMP-001 `secondary` and `ghost`, compact, text labels; gated, conventions 36's T2 look and one reason line under them |
+| dismiss | CMP-002 `ghost` `close`, "Dismiss {title}"                                                                            |
 
 **Keyboard** (no APG widget; its messages follow the APG Alert pattern through CMP-212's regions):
 
-| Keys                        | Action                                                                                                                                                                                                    |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tab / Shift+Tab             | A toast never takes focus on arrival; Tab reaches the stack (CMP-212's place in the Tab order, or the palette's "Focus toasts", E40 a11y KM-5) and moves through each toast's actions and dismiss button. |
-| Enter / Space               | Activate the focused action.                                                                                                                                                                              |
-| Esc on a focused toast      | Dismisses it; focus moves to the next toast, else back to where it was before the stack (E40 a11y KM-6).                                                                                                  |
-| hover or focus in the stack | Pauses every timer in it; leaving resumes them.                                                                                                                                                           |
+| Keys                         | Action                                                                                                                                                                                                                                                                                                            |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab              | A toast never takes focus on arrival; Tab reaches the stack (CMP-212's place in the Tab order, or the palette's "Focus toasts", E40 a11y KM-5) and moves through each toast's actions and dismiss button; while a modal is open the stack is inert and its actions wait for the dialog to close (conventions 31). |
+| Enter / Space                | Activate the focused action.                                                                                                                                                                                                                                                                                      |
+| Enter / Space on a T2 action | Nothing changes; the reason line is re-shown and announced once, politely (D09 §9.3).                                                                                                                                                                                                                             |
+| Esc on a focused toast       | Dismisses it; focus moves to the next toast, else back to where it was before the stack (E40 a11y KM-6).                                                                                                                                                                                                          |
+| hover or focus in the stack  | Pauses every timer in it; leaving resumes them.                                                                                                                                                                                                                                                                   |
 
 **Accessible name and role:**
 
@@ -1221,15 +1250,18 @@ ConfirmGated.
 the same setting and ends in its outcome line, never on an order cancel (§6 H27). **Motion** (E40-D02 §8,
 `E40-D02.md:1232`): enter `translateY` 8 px → 0 with opacity over `motion.duration.fast` / `decelerate`; exit opacity
 with `translateX` 8 px over `fast` / `accelerate`; motion-reduce — opacity only over `fast` (it needs E05-D03's
-exemption; until then a cut). **T2 and not T2:** a gated action is CMP-001's T2, 2a, with one reason line under the
-actions (one notice, many pointers); the dismiss button is never gated. Not T2: an action whose request is sending is
-busy; an Undo past its window is an outcome. **Hit target:** actions at least 24 px; dismiss 24 × 24. **Resize &
-overflow:** 360 px or the viewport less `space.inset.lg` each side; the body wraps to its clamp. **Forced colors:**
-conventions 38: the edge turns CanvasText; the glyph and the kicker carry the tone.
+exemption; until then a cut). **T2 and not T2:** a gated action is CMP-001's T2 through CMP-079 (`form="notice"`,
+conventions 36): the `lock` leads its full label, and one reason line under the actions is what every gated action's
+`aria-describedby` points at (one notice, many pointers); `Enter` or `Space` on it re-shows that line with one polite
+announcement; the dismiss button is never gated. Not T2: an action whose request is sending is busy; an Undo past its
+window is an outcome. **Hit target:** actions at least 24 px; dismiss 24 × 24. **Resize & overflow:** 360 px or the
+viewport less `space.inset.lg` each side; the body wraps to its clamp. **Forced colors:** conventions 38: the edge turns
+CanvasText; the glyph and the kicker carry the tone.
 
 **Catalogue alignment** (`15:464-471`): Props gains `kicker?`, `persistent?` and `politeness?` (E40-D02 §7.4; H28) and
-the persistence rule (H26); a States line (the seven cells); A11y rewrites the role clause (H28) and gains "never takes
-focus; `Esc` dismisses a focused toast; no Undo on an order cancel" (H27); Tokens become the anatomy's
+the persistence rule (H26); a States line (the seven cells; a gated action through CMP-079 with the `lock`, the tertiary
+label and one reason line every gated action points at, D09 §2.2); A11y rewrites the role clause (H28) and gains "never
+takes focus; `Esc` dismisses a focused toast; no Undo on an order cancel" (H27); Tokens become the anatomy's
 (`elevation.popover` for `elevation.3`; for the bare `color.status.*`); Storybook adds Persistent, Focused, ActionGated
 and Undo.
 
@@ -1293,8 +1325,9 @@ announce an error drawer once (SCR-077 `role="alert"` on open, `14:1691`). **T2 
 **Forced colors:** the inner edge and the header rule CanvasText; the scrim as CMP-043.
 
 **Catalogue alignment** (`15:473-480`): Props names `modal?`, `initialFocusRef?` and the width as host data (H7); a
-States line (default, loading, narrow); A11y appends the non-modal Tab path, the fallback return and the TopBar above a
-modal drawer's scrim (H23); Tokens become the anatomy's (for `elevation.3` and `motion.slide`, H21); Storybook adds
+States line (default, loading, narrow); A11y appends the initial focus (`initialFocusRef`, else the heading), the
+non-modal Tab path, the fallback return and the TopBar above a modal drawer's scrim, with CMP-212's toasts as under
+CMP-043 (H23; conventions 31); Tokens become the anatomy's (for `elevation.3` and `motion.slide`, H21); Storybook adds
 Loading and Narrow.
 
 ### CMP-089 · ForbiddenState
@@ -1459,10 +1492,11 @@ Completed for the 17 components. Open items say why and who closes them.
       progress fill (2.92:1, §6 H4), light warning's toast edge (2.76:1, §6 H6), E39-D03's hold ring on its track
       (1.90:1 dark). **Open** for the owner.
 - [ ] **CVD:** ΔE76 spot checks in the audit §5; every tone carries a glyph and a word. **Open:** E05-D04's review.
-- [ ] **Every State has a variant (and a story):** the 98 cells are specified (§1, §7). **Open:** the boards PR draws
+- [ ] **Every State has a variant (and a story):** the 99 cells are specified (§1, §7). **Open:** the boards PR draws
       them; the stories are E05-S01..S04's (slice 1 C15).
-- [ ] **Disabled with a reason (CMP-079):** containers never gate; a nested control takes its own T2 form with the
-      host's reason (conventions 36); validity and unavailability stay apart (conventions 37). **Open** until drawn.
+- [ ] **Disabled with a reason (CMP-079):** containers never gate; a nested control takes its own T2 form through
+      CMP-079, with the CMP-019 `lock` and the host's reason (conventions 36; the four gated cells, §1); validity and
+      unavailability stay apart (conventions 37). **Open** until drawn.
 - [ ] **Loading, empty and error designed:** CMP-015, 026, 027, 029, 038 and 091, and the drawer's and dialogs' loading
       and failure cells. **Open** until drawn.
 - [ ] **Keyboard tables** complete for all 17 (the APG pattern named, or none of its own with the reason). **Open** for
