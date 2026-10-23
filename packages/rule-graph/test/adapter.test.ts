@@ -221,6 +221,12 @@ describe("toIr refuses", () => {
   const noLeftT2 = { ...noLeft, nodes: [...noLeft.nodes, { ...node("trigger"), id: "t2" }] };
   const noLeftRoots = { ...noLeft, edges: [...noLeft.edges, edge("c1", "a2", "when")] };
   const noLeftA2 = { ...noLeft, edges: noLeft.edges.slice(0, 3) }; // nor an edge into a2
+  const reversed = { ...noLeftA2, nodes: [...noLeftA2.nodes].reverse() };
+  const noAction = { ...actionless, nodes: noLeft.nodes.filter((n) => n.type !== "action") };
+  const emptyGate = { ...bare, nodes: [...bare.nodes, ...noLeft.nodes.slice(4)] }; // c1, c2 too
+  const c2NoLeft = { ...node("c2"), data: { kind: "comparison", op: "lt", right: {} } };
+  const twiceA1 = swap(c2NoLeft, edge("g1", "a1", "when")); // a1 fed twice, c2 with no left
+  const loopNoAction = { ...actionless, edges: [...inner, loop] };
 
   it("a cycle, naming its path, rather than emit an IR (AC4)", () => {
     const message = "The graph has a cycle: g1 -> c1 -> g1.";
@@ -233,8 +239,8 @@ describe("toIr refuses", () => {
     ["a cycle and two triggers", twoT, "CYCLE_DETECTED", ["g1", "c1"]],
     ["a cycle and an action no condition feeds", noFeed, "CYCLE_DETECTED", ["g1", "c1"]],
     ["a cycle and actions fed by two roots", twoRoots, "CYCLE_DETECTED", ["g1", "c1"]],
-    ["actions fed by two roots", wired(edge("c1", "a2", "when")), "MULTIPLE_SINKS", ["g1", "c1"]],
-    ["actions fed by a root each", perAction, "MULTIPLE_SINKS", ["g1", "c1"]],
+    ["actions fed by two roots", wired(edge("c1", "a2", "when")), "MULTIPLE_SINKS", ["a2"]],
+    ["actions fed by a root each", perAction, "MULTIPLE_SINKS", ["c1", "g1"]],
     ["an action fed twice by its root", wired(edge("g1", "a1", "when")), "MULTIPLE_SINKS", ["a1"]],
     ["an action no condition feeds", { ...G, edges: G.edges.slice(0, 3) }, "DANGLING_PORT", ["a2"]],
     ["a comparison with no left operand", noLeft, "DANGLING_PORT", ["c1"]],
@@ -242,8 +248,13 @@ describe("toIr refuses", () => {
     ["a gate with no list and no edge", bare, "DANGLING_PORT", ["g1"]],
     ["between with no right2", between, "DANGLING_PORT", ["c1"]],
     ["an empty input and two triggers", noLeftT2, "DANGLING_PORT", ["c1"]],
-    ["an empty input and actions fed by two roots", noLeftRoots, "DANGLING_PORT", ["c1"]],
-    ["two empty inputs: the first in node order", noLeftA2, "DANGLING_PORT", ["a2"]],
+    ["an empty input and actions fed by two roots", noLeftRoots, "MULTIPLE_SINKS", ["a2"]],
+    ["two empty inputs: the first in code point order", noLeftA2, "DANGLING_PORT", ["a2"]],
+    ["two empty inputs, the nodes reversed: by code point", reversed, "DANGLING_PORT", ["a2"]],
+    ["no action, and an empty input", noAction, "ORPHAN_NODE", ["g1", "c1", "c2"]],
+    ["an empty gate and an empty input: by code point", emptyGate, "DANGLING_PORT", ["c1"]],
+    ["an action fed twice and an empty input: by code point", twiceA1, "MULTIPLE_SINKS", ["a1"]],
+    ["a cycle and no action", loopNoAction, "CYCLE_DETECTED", ["c1", "g1"]],
     ["a condition no action follows", plus(LONE), "ORPHAN_NODE", ["c9"]],
     ["no action", actionless, "ORPHAN_NODE", ["g1", "c1", "c2"]],
     ["a trigger alone, no node to the server (graph.py:85-87)", alone, SV, [], "list of nodes"],
@@ -262,6 +273,7 @@ describe("toIr refuses", () => {
     ["an edge from no node", wired(edge("zz", "g1", "in")), SV, ["zz", "g1"]],
     ["an edge into no node", wired(edge("c1", "zz", "in")), SV, ["c1", "zz"]],
     ["an edge to a port its node lacks", wired(edge("c1", "a1", "in")), SV, ["c1", "a1"]],
+    ["an edge to an inherited name", wired(edge("c1", "a1", "toString")), SV, ["c1", "a1"]],
     ["an edge out of an action", wired(edge("a1", "g1", "in")), SV, ["a1", "g1"]],
     ["an edge that is no object", wired(null as unknown as GraphEdge), SV, []],
     ["an input fed twice", wired(right2, right2), SV, ["c1"]],
@@ -322,7 +334,7 @@ describe("toIr refuses", () => {
     const fills = [root, ...fan(1_300, "c1", "g0"), ...pair("x9", "c1")];
     expect(() => toIr({ ...G, nodes: [...start, ...shared], edges: fills })).not.toThrow();
     const tick = { ...LONE, id: "t9", data: { kind: "temporal", op: "x", child: null } };
-    const nest = [root, ...fan(2_800, "t9", "g0"), edge("x", "t9", "child")]; // 19 600 values: the
+    const nest = [root, ...fan(2_800, "t9", "g0"), edge("x", "t9", "child")]; // 19 630 values: the
     const ticks = [gate("g0", 2_800), tick, x]; //   refund of each null child decides it
     expect(() => toIr({ ...G, nodes: [...start, ...ticks], edges: nest })).not.toThrow();
     const edges = [root, ...fan(4, "g1", "g0"), ...fan(1_000, "x", "g1")];

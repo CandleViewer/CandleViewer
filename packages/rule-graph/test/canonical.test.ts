@@ -233,7 +233,14 @@ describe("compareWithServer", () => {
     for (const odd of [digest.slice(1), `${digest}0`, digest.toUpperCase()]) {
       expect(compareWithServer(odd, odd), odd).toBe("mismatch"); // 63 or 65 digits, or upper case
     }
-    expect(compareWithServer(new String(digest), digest)).toBe("mismatch"); // a boxed String
+    const boxed = new String(digest); // no digest, whichever side it is on
+    for (const [a, b] of [
+      [boxed, digest],
+      [digest, boxed],
+      [boxed, boxed],
+    ]) {
+      expect(compareWithServer(a, b)).toBe("mismatch"); // typeof holds the first, === the second
+    }
     expectTypeOf(compareWithServer).returns.toEqualTypeOf<"match" | "mismatch">(); // tsc holds it
   });
 });

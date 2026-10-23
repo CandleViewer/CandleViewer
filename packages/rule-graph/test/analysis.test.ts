@@ -158,6 +158,18 @@ describe("isFormRepresentable", () => {
     expect(said({ ...BASE, actions } as never)).toEqual([]);
   });
 
+  it("keep to the shape: refuse a wrong type, a bad UUID and an IR over the bounds", () => {
+    const wide = Object.fromEntries(Array.from({ length: 20_000 }, (_, i) => [`k${i}`, i]));
+    let deep: object = {};
+    for (let i = 0; i < 70; i++) deep = { a: deep };
+    let far: object = deep; // 100 000 levels: refused by the bound, not a stack overflow
+    for (let i = 70; i < 100_000; i++) far = { a: far };
+    const over = [wide, deep, far].map((params) => ({ actions: [{ ...BASE.actions[0], params }] }));
+    const odd = [{ name: 5 }, { version: "1" }, { limits: { cooldown_ms: "5" } }, { rule_id: "x" }];
+    for (const edit of [...odd, ...over])
+      expect(() => said({ ...BASE, ...edit } as never)).toThrow(SV);
+  });
+
   // One row per graph-only construct (24 §11.4) and per way form.py meets one; the vectors above
   // pin none_of (corpus/25), a gate under a root any_of (28), and other temporal ops (15, 22, 24).
   it.each([
