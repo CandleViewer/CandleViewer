@@ -140,7 +140,7 @@ PAIRINGS = ((320, "compact"), (360, "comfortable"), (240, "compact"), (240, "com
 LABEL_PX, AVG_EM, TICK = 12.0, 0.56, "0.5"
 # the shared pill-label width rule (the board script's PILL_EM): an upper bound per glyph class
 PILL_EM = {"upper": 0.84, "wideLower": 0.95, "lower": 0.56, "digit": 0.68, "thin": 0.34}
-# D03 §2.2 (at bdd3975f): the API-only overflow tools have no glyph, so their type word is never
+# D03 §2.2 (at f6e2a7ca): the API-only overflow tools have no glyph, so their type word is never
 # dropped from the visible label (the tile would carry nothing)
 GLYPHLESS = frozenset({"brush", "pitchfork", "gann_fan", "price_range", "date_range"})
 # the tags (spec section 4): label -> has a glyph; a tag collapses to its glyph when the label
