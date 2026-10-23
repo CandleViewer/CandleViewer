@@ -23,12 +23,17 @@ store's rows in stored units (`profile_from_row` reads them): E28-T02 (#906) wir
 `profile.created|updated|deleted` record through it, as a typed refusal when it fails, and maps the
 `ap_native_sl` rule (unreachable through `AccountProfile`, whose `require_native_sl` is
 `Literal[True]`) to `native_stop_mandatory` with its audit row (SR-E28-08).
+
+The REST reads, `read_profiles` and `read_profile` (#906 D1b), answer each profile with its row's
+`created_at` (`StoredProfile`); a stored row the store or the model cannot read is
+`ProfileUnavailableError`, logged by its error class alone, as the order path's cache fails
+closed (SR-E28-24).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID
 
 import structlog
@@ -40,8 +45,15 @@ from candleviewer.accounts.errors import (
     AccountScopeDeniedError,
     AccountsError,
     AccountVersionConflictError,
+    ProfileUnavailableError,
 )
-from candleviewer.accounts.profiles import AccountProfile, profile_from_row, profile_values
+from candleviewer.accounts.profiles import (
+    AccountProfile,
+    profile_from_row,
+    profile_values,
+    to_us,
+)
+from candleviewer.domain.primitives import TsUs
 from candleviewer.storage.repositories.account_profiles import (
     AccountProfileRow,
     AccountProfileStore,
@@ -62,6 +74,34 @@ if TYPE_CHECKING:
 def _log() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
+
+
+#: A stored row that cannot be read, from the store's decode or the model (pydantic's
+#: ValidationError is a ValueError), as `profile_cache` catches it.
+_UNREADABLE: Final = (ValueError, TypeError, KeyError, ArithmeticError)
+
+
+@dataclass(frozen=True, slots=True)
+class StoredProfile:
+    """A live profile as a read answers it: the model and its row's `created_at` (us), which the
+    model does not hold (24 Sec.9.2 maps `created_at` to no domain field)."""
+
+    profile: AccountProfile
+    created_at: TsUs
+
+
+def _stored(row: AccountProfileRow) -> StoredProfile:
+    return StoredProfile(profile_from_row(row), to_us(row.created_at))
+
+
+def _unreadable(account_id: UUID, exc: Exception) -> ProfileUnavailableError:
+    _log().warning(
+        "profile.read_failed_closed",
+        reason="invalid_row",
+        account_id=str(account_id),
+        error=type(exc).__name__,  # never a value
+    )
+    return ProfileUnavailableError("stored profile unreadable")
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,23 +169,43 @@ class ProfilesRepository:
         if self._cache is not None:
             self._cache.invalidate(account_id)
 
+    async def read_profiles(
+        self, scope: AccountScope, account_id: UUID
+    ) -> tuple[StoredProfile, ...]:
+        """The account's live profiles, the default first, then by name; `()` when the account is
+        missing, deleted or outside `scope`, alike (an account in scope always has its default)."""
+        try:
+            return tuple(_stored(r) for r in await self._store.list_profiles(scope, account_id))
+        except AccountProfileStoreError as exc:
+            raise self._map(exc) from None
+        except _UNREADABLE as exc:
+            raise _unreadable(account_id, exc) from None
+
+    async def read_profile(
+        self, scope: AccountScope, account_id: UUID, profile_id: UUID
+    ) -> StoredProfile:
+        """`AccountNotFoundError("profile")` for a profile missing, deleted, another account's or
+        out of scope, all alike."""
+        try:
+            row = await self._store.get_profile(scope, account_id, profile_id)
+            stored = None if row is None else _stored(row)
+        except AccountProfileStoreError as exc:
+            raise self._map(exc) from None
+        except _UNREADABLE as exc:
+            raise _unreadable(account_id, exc) from None
+        if stored is None:  # outside the try: ruff TRY301
+            raise AccountNotFoundError("profile")
+        return stored
+
     async def list_profiles(
         self, scope: AccountScope, account_id: UUID
     ) -> tuple[AccountProfile, ...]:
-        try:
-            rows = await self._store.list_profiles(scope, account_id)
-        except AccountProfileStoreError as exc:
-            raise self._map(exc) from None
-        return tuple(profile_from_row(row) for row in rows)
+        return tuple(s.profile for s in await self.read_profiles(scope, account_id))
 
     async def get_profile(
         self, scope: AccountScope, account_id: UUID, profile_id: UUID
     ) -> AccountProfile:
-        try:
-            row = await self._store.get_profile(scope, account_id, profile_id)
-        except AccountProfileStoreError as exc:
-            raise self._map(exc) from None
-        return self._found(row)
+        return (await self.read_profile(scope, account_id, profile_id)).profile
 
     async def get_default_binding(self, scope: AccountScope, account_id: UUID) -> DefaultBinding:
         """The account's default binding; an account missing, soft-deleted or out of scope is
