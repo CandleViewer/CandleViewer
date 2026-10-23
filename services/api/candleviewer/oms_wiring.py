@@ -1,12 +1,18 @@
-"""Composition-root wiring (not a module) of the OMS (E29-T04, #913 slice 3), part 1, pure: the
-OMS's time bounds from the settings (`OmsBounds`, 20 Sec.7.2), refused together so a bad set fails
-the runtime's start, never a request, and the bindings of the ports `oms.ports` declares, each
-failing closed. Nothing is started or mounted here. No venue module is imported (C-2.2): the
-adapter's key-verdict table comes in as a callable, as `key_selfcheck_wiring` takes it.
+"""Composition-root wiring (not a module) of the OMS (E29-T04, #913 slice 3; 24 Sec.8.4, 20
+Sec.6.2), pure: nothing is started or mounted here.
+
+Part 1: the OMS's time bounds from the settings (`OmsBounds`, 20 Sec.7.2), refused together so a
+bad set fails the runtime's start, never a request, and the bindings of the ports `oms.ports`
+declares, each failing closed. No venue module is imported (C-2.2): the adapter's key-verdict
+table comes in as a callable, as `key_selfcheck_wiring` takes it.
+
+Part 2: the reads and adapters that bind the OMS's ports to the modules that own them, as `oms`
+imports no `audit`, `ws` or storage driver (C-3.1, C-3.3, ADR-0003).
 """
 
 from __future__ import annotations
 
+import asyncio
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, fields
@@ -17,17 +23,29 @@ import structlog
 
 from candleviewer.accounts.verification import Refusal
 from candleviewer.domain.events import Instrument
-from candleviewer.domain.order_entry import OrderEntryCheck
+from candleviewer.domain.order_entry import OrderEntryCheck, OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId, Environment, Px, Symbol
 from candleviewer.exchange.base.errors import AuthError, ExchangeError, OmsErrorCode
-from candleviewer.exchange.base.models import TickerEvent
+from candleviewer.exchange.base.models import AccountRef, TickerEvent
 from candleviewer.observability.metrics import Metrics
-from candleviewer.oms.errors import OmsNotReady, OrderEntryRefused, TradingDisabled
+from candleviewer.oms.errors import (
+    AccountScopeDenied,
+    OmsNotReady,
+    OrderEntryRefused,
+    StoreUnavailable,
+    TradingDisabled,
+)
 from candleviewer.oms.ports import ClockHealth, Interim, RuntimePortName, announce_interim_port
 from candleviewer.oms.submit import RESULT_WAIT_S, STORE_TIMEOUT_S
 from candleviewer.settings import OMS_INFLIGHT_STUCK_MAX_S, Settings
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
 from candleviewer.statechart.plugins import LogPager, Pager
+from candleviewer.storage.errors import StorageError
+from candleviewer.storage.repositories.orders import OrderStoreError
+from candleviewer.storage.repositories.trading_accounts import (
+    TradingAccountReads,
+    TradingAccountRow,
+)
 
 #: The stop request's bound (21 Sec.3.3.11, [LANE-25]), in seconds: how long an unanswered stop
 #: request holds its key before it waits for the complete read (`RefuseWhileWaiting`); at least an
@@ -306,3 +324,58 @@ class ReferencePricesBinding:
 
 def _priced(price: Px) -> bool:
     return price.is_finite() and price > 0
+
+
+# --- part 2: the reads and adapters (#913 slice 3C) ---
+
+#: Bounds the account read (C-2.18), whatever its caller bounds its own call with.
+ACCOUNT_READ_TIMEOUT_S: Final = 2.0
+#: The order-entry gate's answer for an account with no usable key (`accounts.order_gate`), which
+#: `trading_account` gives an account whose key went after the gate read it.
+NO_ACTIVE_KEY: Final = OrderEntryRefusal("no_active_key", "The account has no verified active key.")
+
+
+class TradingAccountsBinding:
+    """`oms.ports.TradingAccounts` over the principal-free account read, which only this module
+    may name (C-12.4, `test_oms_system_reads_callers.py`), for the process's environment (C-2.11).
+    An account that does not exist, is soft-deleted or is another environment's is
+    `AccountScopeDenied`, all three alike (no oracle). `environment_of` is the route's existence
+    step (24 Sec.8.4 step 4), after its RBAC check: a keyless account passes it, so the gate
+    answers `no_active_key`, which `trading_account` answers too. A read that fails or does not
+    answer within `timeout_s` is `StoreUnavailable`."""
+
+    def __init__(
+        self,
+        reads: TradingAccountReads,
+        *,
+        environment: Environment,
+        timeout_s: float = ACCOUNT_READ_TIMEOUT_S,
+    ) -> None:
+        self._reads, self._environment, self._timeout_s = reads, environment, timeout_s
+
+    async def trading_account(self, account_id: AccountId) -> AccountRef:
+        """The ref names the account the read returned, so a caller's check catches a read that
+        answered another one (SR-E27-21)."""
+        row = await self._live(account_id)
+        if row.active_key_id is None:
+            raise OrderEntryRefused(NO_ACTIVE_KEY)
+        return AccountRef(
+            account_id=AccountId(row.account_id),
+            uid=row.exchange_uid,
+            environment=row.environment,
+            key_ref=str(row.active_key_id),
+        )
+
+    async def environment_of(self, account_id: AccountId) -> Environment:
+        return (await self._live(account_id)).environment
+
+    async def _live(self, account_id: AccountId) -> TradingAccountRow:
+        try:
+            async with asyncio.timeout(self._timeout_s):
+                row = await self._reads.read_account(account_id)
+        except (TimeoutError, StorageError, OrderStoreError) as exc:
+            structlog.get_logger(__name__).warning("oms_account_unread", error=type(exc).__name__)
+            raise StoreUnavailable from None
+        if row is None or row.deleted or row.environment != self._environment:
+            raise AccountScopeDenied
+        return row
