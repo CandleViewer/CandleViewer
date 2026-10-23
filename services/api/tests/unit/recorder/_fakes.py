@@ -159,7 +159,7 @@ def _shape(member: Callable[..., object]) -> tuple[inspect.Signature, bool] | No
     when an annotation cannot be resolved."""
     try:
         return inspect.signature(member, eval_str=True), inspect.iscoroutinefunction(member)
-    except NameError:
+    except (NameError, AttributeError):  # a missing name, or a missing module attribute
         return None
 
 

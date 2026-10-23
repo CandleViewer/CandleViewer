@@ -11,9 +11,9 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
-from candleviewer.recorder.errors import RecorderSymbolNotRecordedError
-from candleviewer.recorder.models import RecorderSetChanged
-from candleviewer.recorder.policy import RecordedStore, RecordingPolicy, user_actor
+from candleviewer.recorder.errors import InvalidRecorderActorError, RecorderSymbolNotRecordedError
+from candleviewer.recorder.models import SYSTEM_ACTOR, RecorderSetChanged
+from candleviewer.recorder.policy import PolicyConfig, RecordedStore, RecordingPolicy, user_actor
 from candleviewer.recorder.sessions import DEFAULT_STREAMS, SessionManager
 from candleviewer.storage.repositories.recorder_sqlalchemy import SqlAlchemyRecorderRepository
 from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, Mem
@@ -169,8 +169,9 @@ async def test_an_add_writes_the_refs_the_symbol_already_holds(
     policy: RecordingPolicy, store: Mem
 ) -> None:
     await policy.on_chart_opened("BTCUSDT", "c1")  # not recording yet: no row to mirror to
+    await policy.on_chart_opened("BTCUSDT", "c2")
     await policy.add_manual("BTCUSDT", OWNER)
-    assert _row(store)["reason_refs"] == [CHART]
+    assert _row(store)["reason_refs"] == [CHART, {"kind": "chart", "id": "c2"}]
 
 
 async def test_remove_manual_clears_the_row(policy: RecordingPolicy, store: Mem) -> None:
@@ -196,6 +197,9 @@ async def test_remove_manual_audits_the_remover_before_it_clears_the_row(
     await policy.remove_manual("BTCUSDT", MANAGER)
     assert trace == ["audit:recorder.stop", "get_by_symbol", "clear_manual"]
     assert _trail(audit)[-1] == ("recorder.stop", "user:mgr-2")
+    assert audit.records[-1][1]["after_state"] == {
+        "symbol": "BTCUSDT", "reason": "manual", "actor": "mgr-2", "trigger_ref": "manual:owner-1"
+    }  # fmt: skip
 
 
 async def test_a_remove_on_a_symbol_that_keeps_a_chart_writes_one_user_record(
@@ -547,3 +551,68 @@ async def test_the_auto_row_is_written_before_b11_starts_and_removed_after_it_st
     await _lingering(policy)
     await _expire(policy, clock)
     assert seen == [("upsert_auto", True, None), ("soft_remove", True, "stopped")]
+
+
+async def test_unpinning_keeps_the_row_of_a_refused_position(
+    clock: FakeClock, bus: FakeBus, audit: FakeAudit, store: Mem
+) -> None:
+    """Delta D-3: the cap is full of manual entries, so a position is refused and has no
+    session; its symbol's idle row from an earlier run is kept by the position alone."""
+    p = RecordingPolicy(
+        disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock,
+        config=PolicyConfig(max_symbols=1), recorded=store,
+    )  # fmt: skip
+    p.positions_reloaded()
+    await p.add_manual("ETHUSDT", OWNER)
+    await _stale_row(store)
+    await p.on_position_opened("BTCUSDT", "p1")  # refused: no victim, no B11
+    await p.set_pin("BTCUSDT", True, OWNER)
+    await p.set_pin("BTCUSDT", False, OWNER)
+    assert not _row(store)["pinned"]  # still active: the position kept it
+    await p.stop()
+
+
+async def test_a_trigger_during_the_linger_after_a_remove_gets_its_row(
+    policy: RecordingPolicy, store: Mem
+) -> None:
+    """Delta D-1: the remove cleared the manual row while B11 lingers; a position opened then
+    keeps the session, and writes the row its reason needs, so a pin still finds it."""
+    await policy.add_manual("BTCUSDT", OWNER)
+    await policy.remove_manual("BTCUSDT", OWNER)
+    assert store.active("BTCUSDT") is None  # lingering, with no row
+    await policy.on_position_opened("BTCUSDT", "p1")
+    assert (_row(store)["reason"], _row(store)["reason_refs"]) == ("position_open", [POS])
+    await policy.set_pin("BTCUSDT", True, OWNER)
+    assert _row(store)["pinned"]
+
+
+async def test_a_failed_ref_sync_at_the_add_still_applies_the_entry(
+    policy: RecordingPolicy, store: Mem
+) -> None:
+    """Delta D-2: the refs are written best effort after the entry is applied; the remove
+    brings them up to date before it decides, so the row is demoted, not lost."""
+    await policy.on_chart_opened("BTCUSDT", "c1")
+    store.fail.add("add_reason_ref")
+    with capture_logs() as logs:
+        await policy.add_manual("BTCUSDT", OWNER)
+    assert policy._syms["BTCUSDT"].manual is not None and _row(store)["reason"] == "manual"
+    assert [e["event"] for e in logs if e["log_level"] == "warning"] == ["recorder_ref_sync_failed"]
+    store.fail.discard("add_reason_ref")
+    await policy.remove_manual("BTCUSDT", OWNER)
+    assert (_row(store)["reason"], _row(store)["reason_refs"]) == ("chart_open", [CHART])
+
+
+@pytest.mark.parametrize("op", ["remove", "pin"])
+async def test_remove_and_pin_refuse_a_non_user_actor_before_any_io(
+    policy: RecordingPolicy, audit: FakeAudit, trace: list[str], op: str
+) -> None:
+    """Delta D-4: as add and update do; a user's list change is never recorded as the system's."""
+    await policy.add_manual("BTCUSDT", OWNER)
+    audit.records.clear()
+    trace.clear()
+    with pytest.raises(InvalidRecorderActorError):
+        if op == "remove":
+            await policy.remove_manual("BTCUSDT", SYSTEM_ACTOR)
+        else:
+            await policy.set_pin("BTCUSDT", True, SYSTEM_ACTOR)
+    assert (audit.records, trace) == ([], [])

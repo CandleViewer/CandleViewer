@@ -149,6 +149,8 @@ async def test_a_refused_update_write_leaves_the_record_and_changes_nothing(
         {"depth": 0},
         {"depth": 100},
         {"depth": 501},
+        {"depth": True},
+        {"depth": 50.0},
         {"streams": ("bars",)},
         {"streams": ("trades", "funding_rates")},
         {"streams": ("TRADES",)},

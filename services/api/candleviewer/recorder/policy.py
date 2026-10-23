@@ -111,7 +111,7 @@ def _valid(symbol: str) -> str:
 def _check_settings(streams: Sequence[str] | None, depth: int | None) -> None:
     """Refuse what `recorded_symbols` would (`rs_depth`, `stream_kind`), before any audit or
     write: a record never stands for a change the table cannot take (C-2.9)."""
-    if depth is not None and depth not in ORDERBOOK_DEPTHS:
+    if depth is not None and (type(depth) is not int or depth not in ORDERBOOK_DEPTHS):
         raise RecorderInvalidUpdateError("depth must be one of 1, 50, 200, 500")
     if not STREAM_KINDS.issuperset(streams or ()):
         raise RecorderInvalidUpdateError("every stream must be a recorder stream kind")
@@ -193,11 +193,12 @@ class PolicyControlSurface(Protocol):
 
     async def remove_manual(self, symbol: str, actor: Actor) -> None:
         """Take the manual reason off; a symbol that is not manual is left as it is. Raises
-        `InvalidRecordedSymbolError`."""
+        `InvalidRecorderActorError` (not a user) and `InvalidRecordedSymbolError`."""
 
     async def set_pin(self, symbol: str, pinned: bool, actor: Actor) -> None:
-        """Pin or unpin the symbol's active row. Raises `RecorderSymbolNotRecordedError` (no
-        active row), `InvalidRecordedSymbolError` and `RecorderSymbolLimitError`."""
+        """Pin or unpin the symbol's active row. Raises `InvalidRecorderActorError` (not a user),
+        `RecorderSymbolNotRecordedError` (no active row), `InvalidRecordedSymbolError` and
+        `RecorderSymbolLimitError`."""
 
     async def update_manual(
         self,
@@ -407,18 +408,25 @@ class RecordingPolicy:
                 row = await self._recorded.upsert_manual(
                     symbol, actor.id, streams or DEFAULT_STREAMS, depth, self._env
                 )
-                await self._write_refs(row["id"], s)  # triggers held before the row existed
             except Exception:
                 if created and s.idle() and symbol not in self._charts:
                     self._syms.pop(symbol, None)  # made by this call: leave no trace
                 raise
             s.manual = _Manual(actor=actor, streams=tuple(streams), depth=depth)
+            try:  # triggers held before the row existed; best effort: the remove re-syncs them
+                await self._write_refs(row["id"], s)
+            except Exception as exc:
+                logger().warning(
+                    "recorder_ref_sync_failed", symbol=symbol, error=type(exc).__name__
+                )
         await self._reconcile(symbol)
 
     async def remove_manual(self, symbol: str, actor: Actor) -> None:
         """Take the manual reason off: audited as `recorder.stop` by the remover, then the row's
         refs are brought up to what memory holds and `clear_manual` decides from them, then memory
         changes. The symbol keeps recording for any other reason, else it lingers."""
+        if actor.kind != "user":
+            raise InvalidRecorderActorError("manual remove requires a user actor")
         async with self._lock:
             s = self._syms.get(_valid(symbol))
             if s is None or s.manual is None:
@@ -482,6 +490,8 @@ class RecordingPolicy:
         written, then applied. A pin needs an active row (`RecorderSymbolNotRecordedError`);
         unpinning an idle symbol also soft-removes the row that only the pin kept, judged from the
         row (manual, or holding refs) and from memory (a manual entry, a trigger, a session)."""
+        if actor.kind != "user":
+            raise InvalidRecorderActorError("a pin requires a user actor")
         async with self._lock:
             s = self._sym(symbol, kind="protected")
             if s is None:
@@ -671,15 +681,15 @@ class RecordingPolicy:
             if reason != "position_open" or not await self._preempt_for(symbol):
                 await self._refuse(symbol, s, reason)
                 return
+        if reason != "manual":  # `add_manual` wrote its row first; every auto reason writes its own
+            refs = s.row_refs()  # even while B11 lingers on a row a remove has just cleared
+            if not refs:  # the trigger closed while this start waited (a pre-emption)
+                return
+            first, *rest = refs
+            rid = await self._recorded.upsert_auto(symbol, reason, first, self._env)
+            for ref in rest:
+                await self._recorded.add_reason_ref(rid, ref)
         if symbol not in self._charts:
-            if reason != "manual":  # `add_manual` wrote its row first; an auto one is written now
-                refs = s.row_refs()
-                if not refs:  # the trigger closed while this start waited (a pre-emption)
-                    return
-                first, *rest = refs
-                rid = await self._recorded.upsert_auto(symbol, reason, first, self._env)
-                for ref in rest:
-                    await self._recorded.add_reason_ref(rid, ref)
             interp = (await build(MACHINE, clock=default_clock(), lane=LANE)).interpreter
             self._register(symbol, interp)
         streams = list(s.manual.streams) if s.manual else []
