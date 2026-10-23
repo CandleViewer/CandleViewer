@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # #3449: `pnpm install` below runs dependency lifecycle scripts, and no step pushes or
+          # #3449: `pnpm install` below runs no lifecycle script, and no step pushes or
           # fetches: the baseline step reads the PR base's copy from the checkout before it.
           persist-credentials: false
 

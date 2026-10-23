@@ -5,6 +5,7 @@ ignored it: every `pnpm install` ran the root `prepare` and each workspace packa
 scripts, and `pnpm config get` printed `undefined` for every key. These cases run the pinned pnpm,
 offline, in a scratch workspace built from COPIES of the repo's `.npmrc` and `pnpm-workspace.yaml`
 (`packages:` pointed at one scratch package), and assert what pnpm does, not what the files say.
+`.npmrc` keeps `ignore-scripts=true` for npm, which still reads it; one case pins that.
 
 CI must run them: `governance-tests` sets up the pinned pnpm (governance.yml), so without it they
 fail there, and skip only on a developer machine. A pnpm other than the pin answers for another
@@ -40,6 +41,10 @@ POLICY = {
     "save-exact": "true",
     "strict-peer-dependencies": "false",
 }
+#: What `.npmrc` keeps for npm, not pnpm: the CI steps that run `npm install -g corepack@latest`
+#: run npm inside the checkout, and npm reads this file. pnpm 12 reads `ignoreScripts` from the
+#: workspace file instead.
+NPM_ONLY = {"ignore-scripts": "true"}
 #: A dependency whose postinstall writes `built.txt` beside itself, installed from a local tarball.
 DEP = "dep-with-script"
 TARBALL = f"{DEP}-1.0.0.tgz"
@@ -92,6 +97,11 @@ def _need_pnpm() -> None:
     problem = _pnpm_problem()
     if problem:  # CI must run these proofs: they fail there and skip only on a developer machine
         (pytest.fail if os.environ.get("CI") else pytest.skip)(problem)
+
+
+def _need_npm() -> None:
+    if shutil.which("npm") is None:  # CI sets Node up and npm comes with it: fail there, skip here
+        (pytest.fail if os.environ.get("CI") else pytest.skip)("npm reads the setting .npmrc keeps")
 
 
 def _manifest(name: str, dependencies: dict[str, str] | None = None) -> str:
@@ -169,15 +179,23 @@ def _npmrc_settings() -> dict[str, str]:
     return {key.strip(): value.strip() for key, sep, value in settings if sep and key[:2] != "//"}
 
 
-def test_every_npmrc_setting_is_one_pnpm_reads(tmp_path: Path) -> None:
+def test_every_other_npmrc_setting_is_one_pnpm_reads(tmp_path: Path) -> None:
     _need_pnpm()
     # pr.yml's path filters name .npmrc (pnpm still reads its registry and auth entries).
     assert (ROOT / ".npmrc").is_file()
     shutil.copy(ROOT / ".npmrc", tmp_path / ".npmrc")
     (tmp_path / "package.json").write_text('{"name": "npmrc", "private": true}', encoding="utf-8")
-    wanted = _npmrc_settings()
+    wanted = {k: v for k, v in _npmrc_settings().items() if k not in NPM_ONLY}
     got = {k: _run(["pnpm", "config", "get", k], tmp_path, tmp_path).stdout.strip() for k in wanted}
     assert got == wanted, "pnpm 12 ignores these .npmrc settings: set them in pnpm-workspace.yaml"
+
+
+def test_npm_reads_the_script_setting_the_npmrc_keeps_for_it(tmp_path: Path) -> None:
+    _need_npm()
+    root = _workspace(tmp_path)  # the repo's .npmrc, copied
+    got = {k: _run(["npm", "config", "get", k], root, tmp_path).stdout.strip() for k in NPM_ONLY}
+    # `false` once the line is gone: npm then runs the install scripts of what it installs.
+    assert got == NPM_ONLY
 
 
 def _pack_dependency(tarball: Path) -> None:
