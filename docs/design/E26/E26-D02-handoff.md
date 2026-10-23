@@ -33,9 +33,9 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 | transport | paused; stepping (busy: `Play` `aria-busy`, the rest held; `Stepping…`); playing                                            | B06, B04 | `Paused`, `Playing` (catalogued)   | the step unit and the five glyphs, spec D-6, D-22         |
 | transport | seeking: the four rungs, landed, cancelled, a held second target                                                            | B07      | `Seeking` (E26-D05 list)           | spec §6.3, D-16                                           |
 | transport | gap ahead: the stop callout; the skipped notice                                                                             | B08      | `GapAhead` (E26-D05 list)          | spec D-13; the callout's actions come first in Tab order  |
-| transport | end of range (`>` T2, `replay.end_of_range`); restart refused by the quota                                                  | B11      | `EndOfRange` (E26-D05 list)        | spec D-18                                                 |
-| transport | session expiring (9:58 left); closed with `Resume`                                                                          | B12      | `SessionExpired` (E26-D05 list)    | spec D-20                                                 |
-| transport | error with a mapped cause                                                                                                   | B13      | `Error` (new)                      | spec D-23, §7.1                                           |
+| transport | end of range (`Play` becomes `Restart`, T1; `>` T2, `replay.end_of_range`); restart refused by the quota                    | B11      | `EndOfRange` (E26-D05 list)        | spec D-18                                                 |
+| transport | session expiring (9:58 left); closed with `Resume`, the transport T2 on `replay.ended`                                      | B12      | `SessionExpired` (E26-D05 list)    | spec D-20, §5.3                                           |
+| transport | error with a mapped cause; `Play` (2a) and `>` (2b) T2 on `replay.error`                                                    | B13      | `Error` (new)                      | spec D-23, §7.1, §5.3                                     |
 | transport | high speed; speed-limited                                                                                                   | B09      | `HighSpeed` (catalogued)           | spec D-8                                                  |
 | transport | viewing as (one `rbac.view_as` notice, every write T2); on hold (`replay.degraded`, the starting controls T2)               | B22, B23 | `ViewingAs`, `OnHold` (new)        | spec §5.3; 2b badges with the echo, `Play` 2a             |
 | transport | Viewer: drawn only if the owner grants Viewers sessions (today R-170 and a not-found R-171)                                 | —        | `ReadOnlyRole` (conditional)       | spec D-26, OQ-10                                          |
@@ -71,7 +71,7 @@ the native activation wins.
 | thumb on the track | `slider`                | "Replay position"                                                 | `aria-valuemin` / `max` the window and `aria-valuenow` the position, in epoch seconds; `aria-valuetext` "13:38:04 UTC, 13 September 2026 — recorded" |
 | thumb, gated       | `slider`                | "Replay position"                                                 | `aria-disabled="true"`; `aria-describedby` → the reason or the transport notice; a drag or key moves nothing (spec §5.3)                             |
 | `\|<<`, `<`, `>`   | `button`                | "Restart from 13:00", "Step back one bar", "Step forward one bar" | `aria-keyshortcuts`; T2 2b: `aria-disabled`, the `lock` badge, `aria-describedby` → the reason, the CMP-016 echo (spec §5.3)                         |
-| `Play` / `Pause`   | `button`                | the visible word                                                  | `aria-keyshortcuts="Space"`; reads `Cancel seek` while seeking; busy (`aria-busy`) while preparing or stepping; T2 2a (spec §5.3)                    |
+| `Play` / `Pause`   | `button`                | the visible word (kept while busy, spec §5.3)                     | `aria-keyshortcuts="Space"`; `Cancel seek` while seeking, `Restart` at `finished`; busy (`aria-busy`) while preparing or stepping; T2 2a (spec §5.3) |
 | step unit          | `radiogroup` (2 radios) | "Step by" · "Bar", "Tick"                                         | `aria-checked`; the arrows move between the two here (the page's step keys yield, spec D-21)                                                         |
 | `Leave replay`     | `button`                | the visible words                                                 | `aria-keyshortcuts="R"`                                                                                                                              |
 | `Go to`            | `textbox`               | "Go to time, UTC"                                                 | `aria-describedby` → "hh:mm:ss inside 13:00–15:00", the date added for a window over two days; `Esc` reverts the edit                                |
@@ -79,7 +79,7 @@ the native activation wins.
 | bookmark marker    | `button`                | "Bookmark 1, 13:41:07, <label>"                                   | the note as plain text in its description (threat model RP-T03)                                                                                      |
 | clock              | `timer`                 | "Replay clock"                                                    | `aria-live="off"`; text at most once a second (spec D-19)                                                                                            |
 | transport status   | `status` / `alert`      | "Replay status"                                                   | polite for discrete events; `alert` once for a gap stop, expiry, error, the hold (spec §12.1)                                                        |
-| transport notice   | `status` / `alert`      | the notice's sentence (spec §5.3)                                 | one node for viewing as, the hold and no session; every gated control's `aria-describedby` points at it                                              |
+| transport notice   | `status` / `alert`      | the notice's sentence (spec §5.3)                                 | one node for viewing as, the hold, no session and an ended session; every gated control's `aria-describedby` points at it                            |
 
 ## Handoff checklist — CMP-171 ReplaySpeedPicker (E26-D02 in context, #509)
 
@@ -91,7 +91,7 @@ the native activation wins.
 - [ ] **Motion pair** — N/A — the readout and the selection change in one frame; E26-D06 writes the motion pairs
 - [x] **Density notes** — shared density table
 - [x] **Essential-exceptions log** — none
-- [ ] **Tokens used** — PENDING E26-D05: `15` CMP-171 "inherits CMP-009" (a select) and CMP-003 allows 2–6 options, while the canonical list is seven presets shown at once (spec X-10); in context: `color.surface.selected`, `color.border.strong`, `color.text.primary`, `color.text.secondary`, `color.status.warning.subtle` / `.strong`, `type.num.sm` / `.base`, `size.icon.sm`
+- [ ] **Tokens used** — PENDING E26-D05: `15` CMP-171 "inherits CMP-009" (a select) and CMP-003 allows 2–6 options, while the canonical list is seven presets shown at once (spec X-10); in context: `color.surface.selected` (a T2 preset drops it, spec §5.3), `color.border.strong`, `color.text.primary`, `color.text.secondary`, `color.status.warning.subtle` / `.strong`, `type.num.sm` / `.base`, `size.icon.sm`
 - [x] **Data contract confirmed** — `ReplaySession.speed`; `play` with `speed` and `set_speed` (`22`; CC-11); the 0.1–100 range (`replay/playback.py:29-30`); the achieved rate from the engine once CC-3 lands, from the frames' `ts` / `wt` until then (spec D-8)
 - [ ] **Contrast and CVD** — computed (spec §12.2); PENDING (BLOCKED-PENPOT): `cvd_sim.py` with the boards' later PR
 - [x] **Design QA checklist (16 §12)** and the **a11y template (05 §10)** — at the end
@@ -247,4 +247,5 @@ Screen readers: NVDA by E26-D06 and E26-Q05; no exception is claimed.
   8. The gap callout naming what is missing, with the exact range and both actions; the skipped notice under `skip`.
   9. End of range, expiry with resume, error and disconnected as spec §7 draws them.
   10. The keyboard layer of spec §10 in each region; `Esc` cancels a seek only from the transport or the thumb.
-  11. Viewing as and the hold: one notice on the transport, every gated control pointing at it (boards 22 and 23).
+  11. Viewing as, the hold and an ended session: one notice on the transport, every gated control pointing at it
+      (boards 22, 23 and 12).
