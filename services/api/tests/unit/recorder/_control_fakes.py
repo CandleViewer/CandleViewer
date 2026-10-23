@@ -15,10 +15,15 @@ from candleviewer.recorder.policy import RefusalCause
 
 NOW: Final = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
 GRACE: Final = timedelta(minutes=30)
+STREAMS: Final = ("trades", "orderbook_delta", "tickers", "liquidations")  # the add's default
 
 
 class RecorderSymbolNotManualError(RecorderError):
     """Mirrors #2188 S2b's `candleviewer.recorder.errors.RecorderSymbolNotManualError`."""
+
+
+class RecorderSymbolNotRecordedError(RecorderError):
+    """Mirrors #2188 S2b's `candleviewer.recorder.errors.RecorderSymbolNotRecordedError`."""
 
 
 def _user(actor: Actor) -> None:
@@ -61,10 +66,11 @@ class FakeRecorder:
                                            linger_until=None if rest else NOW + GRACE)  # fmt: skip
 
     async def set_pin(self, symbol: str, pinned: bool, actor: Actor) -> None:
-        e = self.entries.get(symbol)
-        if e is not None and not pinned and e.state == "stopped":  # an idle row unpinned goes
+        if (e := self.entries.get(symbol)) is None:  # no active row
+            raise RecorderSymbolNotRecordedError(symbol)
+        if not pinned and e.state == "stopped":  # an idle row unpinned goes
             del self.entries[symbol]
-        elif e is not None:
+        else:
             self.entries[symbol] = replace(e, pinned=pinned)
 
     def lapse(self, symbol: str) -> None:
@@ -106,6 +112,40 @@ class FakeRecorder:
 
     async def get(self, entry_id: str) -> rc.RecordedEntry | None:
         return next((e for e in self.entries.values() if e.id == entry_id), None)
+
+    # The `RecordingControl` writes, by entry id, over the policy members above (as S9 maps them).
+    def _symbol(self, entry_id: str) -> str | None:
+        return next((s for s, e in self.entries.items() if e.id == entry_id), None)
+
+    async def add(
+        self, symbol: str, spec: rc.EntrySpec, actor: Actor
+    ) -> tuple[rc.RecordedEntry, bool]:
+        old = self.entries.get(symbol)
+        streams, depth = (old.streams, old.depth) if old else (STREAMS, 200)
+        await self.add_manual(symbol, actor, spec.streams or streams, spec.depth or depth)
+        return await self._settle(symbol, spec, actor), old is None
+
+    async def pin(
+        self, entry_id: str, pinned: bool, actor: Actor, *, retention_days: int | None = None
+    ) -> rc.RecordedEntry | None:
+        """A pin keeps forever (no `retention_days`); an unpin takes `retention_days` (none: the
+        global default), and of an idle row removes it."""
+        if (symbol := self._symbol(entry_id)) is None:
+            return None
+        kept = replace(self.entries[symbol], pinned=pinned,
+                       retention_days=None if pinned else retention_days)  # fmt: skip
+        await self.set_pin(symbol, pinned, actor)
+        if symbol in self.entries:
+            self.entries[symbol] = kept
+        return kept
+
+    async def _settle(self, symbol: str, spec: rc.EntrySpec, actor: Actor) -> rc.RecordedEntry:
+        e = self.entries[symbol]
+        if spec.pinned is not None:
+            return await self.pin(e.id, spec.pinned, actor, retention_days=spec.retention_days) or e
+        if spec.retention_days is not None:
+            self.entries[symbol] = e = replace(e, retention_days=spec.retention_days)
+        return e
 
     async def status(self) -> rc.ControlStatus:
         entries = tuple(e for _, e in sorted(self.entries.items()))
