@@ -90,6 +90,21 @@ async def test_one_entry_and_the_same_404_for_unknown_and_malformed_ids() -> Non
         assert (await env.get(f"/{other}"))["code"] == "not_found"
 
 
+async def test_one_entry_of_another_environment_is_404() -> None:
+    """C-2.11: a lookup asks for the settings' env, and another env's row is no entry."""
+    row = {"id": str(uuid.uuid4()), "symbol": "BTCUSDT", "reason": "manual", "pinned": False,
+           "streams": ["trades"], "depth": 200, "retention_days": None, "added_by": None,
+           "session_state": None, "session_started_at": None}  # fmt: skip
+
+    class _LiveRow(EmptyRows):
+        async def recorded_row(self, entry_id: str, **query: object) -> dict[str, Any] | None:
+            return row if query["env"] == "live" else None
+
+    for env, status in (("live", 200), ("demo", 404)):
+        env_app = _Env(rc.StoredRecordingControl(_LiveRow(), env), "recording:read")
+        assert (await env_app.http.get(f"/recording/symbols/{row['id']}")).status_code == status
+
+
 async def test_no_session_401_and_no_permission_403_audited() -> None:
     assert (await _Env(_seeded()).get())["code"] == "unauthenticated"
     denied = _Env(_seeded(), "marketdata:read")

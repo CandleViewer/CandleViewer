@@ -60,8 +60,17 @@ class FakeRecorder:
                                            linger_until=None if rest else NOW + GRACE)  # fmt: skip
 
     async def set_pin(self, symbol: str, pinned: bool, actor: Actor) -> None:
-        if symbol in self.entries:
-            self.entries[symbol] = replace(self.entries[symbol], pinned=pinned)
+        e = self.entries.get(symbol)
+        if e is not None and not pinned and e.state == "stopped":  # an idle row unpinned goes
+            del self.entries[symbol]
+        elif e is not None:
+            self.entries[symbol] = replace(e, pinned=pinned)
+
+    def lapse(self, symbol: str) -> None:
+        """The grace window ends: a pinned row is demoted and kept, `stopped`; another goes."""
+        e = self.entries.pop(symbol)
+        if e.pinned:
+            self.entries[symbol] = replace(e, state="stopped", lingering=False, linger_until=None)
 
     async def update_manual(self, symbol: str, actor: Actor, *,
                             streams: tuple[str, ...] | None = None,
