@@ -1,7 +1,9 @@
 """`SqlAlchemyRetentionPolicies` (E16-T08, #492): the `retention_policies` set the policy routes
 read and replace. A replace deletes every row and inserts the new set in ONE transaction, so a row
-the table refuses leaves the old set (the reaper and the roll-off read the enabled rows). Static,
-parameterised SQL; M10 returns rows, the route maps them."""
+the table refuses leaves the old set (the reaper and the roll-off read the enabled rows). The list
+shows enabled rows only, while a replace deletes every row: a disabled row (none is written today)
+goes with it unlisted, and the replaced rows start with no `last_run_at` or deleted-row count (no
+code writes them today). Static, parameterised SQL; M10 returns rows, the route maps them."""
 
 from __future__ import annotations
 

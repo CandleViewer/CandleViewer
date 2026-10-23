@@ -7,15 +7,23 @@ mapping and the validator (422 `retention_invalid_policy`), store (503), `apply_
 retention off, 409 `job_running`). Then `retention.change` is written with the set before and
 after, BEFORE the set is replaced in one transaction (C-2.9): if it cannot be written the answer
 is 503 `audit_unavailable` and nothing changes. `apply_now` reserves its one `retention_sweep`
-job first and lets it run only once the new set is stored; a refused request cancels it.
+job first and lets it run only once the new set is stored; a refused request cancels it. That
+job shares the `retention_sweep` slot with compaction, so an `apply_now` during a compaction is
+409 `job_running` (and the other way round); its result says `skipped_locked` when the nightly
+pass held the volume lock and nothing was swept. One lock per router holds each PUT from reading
+the set before it through the replace, so the records follow the order the sets are stored in; if
+the replace fails after its record, a second `retention.change` (failure) says it did not land.
 
 Q5: `retain_days` is the hot window for `archive_parquet` (the stream's total horizon stays its
 default) and the total horizon for `drop`. The store holds no field for `downsample`, `pin` or
-`applies_to_pinned`, so those are refused until it does."""
+`applies_to_pinned`, so those are refused until it does. A `drop` row is stored with Q5's meaning;
+the reaper and the roll-off readers do not read `action` yet (a follow-up with #2188), so a `drop`
+row currently keeps data at least as long as asked."""
 
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import Annotated, Any, Literal, Protocol
 
@@ -34,7 +42,7 @@ from candleviewer.api.idempotency import (
     request_fingerprint,
 )
 from candleviewer.api.recorder_admin import JOB_KIND, AdminJobStore, Job, JobConflict, logger
-from candleviewer.audit.models import Severity
+from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.recorder.retention import (
     DERIVED_FROM_TRADES,
@@ -48,6 +56,7 @@ from candleviewer.ws._generated.error_codes import ErrorCode
 
 _PATH = "/recording/retention-policies"
 _MAX_BODY = 256 * 1024
+_LENGTH = re.compile(r"[0-9]{1,19}")  # a usable Content-Length: ASCII digits only
 _UNHELD = "The store holds no field for this yet."
 Stream = Literal["trades", "orderbook_delta", "orderbook_snapshot", "tickers", "klines",
                  "liquidations", "open_interest", "funding"]  # fmt: skip
@@ -75,6 +84,20 @@ class _PolicyIn(BaseModel):
 class _SetIn(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
     items: Annotated[list[_PolicyIn], Field(max_length=1000)]
+
+
+async def _read_capped(request: Request) -> bytes | None:
+    """The body, or `None` past `_MAX_BODY`: a larger declared `Content-Length` is refused before
+    any read, and a stream is cut off as soon as it passes the cap."""
+    declared = request.headers.get("content-length", "")
+    if _LENGTH.fullmatch(declared) and int(declared) > _MAX_BODY:
+        return None
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw += chunk
+        if len(raw) > _MAX_BODY:
+            return None
+    return bytes(raw)
 
 
 def _invalid(detail: str) -> common.Problem:
@@ -129,6 +152,7 @@ def make_recording_retention_router(
     """`policies` is `None` until its store exists (503); `sweeper` runs an `apply_now` pass."""
     router = APIRouter(tags=["recording"], route_class=common.ProblemRoute)
     cache = IdempotencyCache() if idempotency is None else idempotency
+    held = asyncio.Lock()  # one PUT at a time, from reading the set before to storing the new one
 
     def bound() -> PolicyStore:
         if (found := policies()) is None:
@@ -151,8 +175,8 @@ def make_recording_retention_router(
         except ValueError:
             raise bad("Idempotency-Key must be a UUID.") from None
         apply_now = request.query_params.get("apply_now", "false")
-        raw = await request.body()
-        if apply_now not in ("true", "false") or len(raw) > _MAX_BODY:
+        raw = await _read_capped(request) if apply_now in ("true", "false") else None
+        if raw is None:
             raise bad("Invalid apply_now or body size.")
         owner, now = str(p.user_id), apply_now == "true"
         digest = request_fingerprint("PUT", f"{_PATH}?apply_now={apply_now}", raw)
@@ -172,33 +196,50 @@ def make_recording_retention_router(
             raise common.Problem(409, ErrorCode.CONFLICT, "The retention scheduler is off.")
         if now and run is None:
             raise common.unavailable()
-        before = await store.list_policies()
-        gate: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
-        try:
-            if now and run is not None:
-                _reserve(jobs, run, gate, (owner, key or "", digest))
-            after = [_logical(i.model_dump()) for i in body.items]
-            try:  # write-ahead (C-2.9): the change lands BEFORE the new set does
-                await audit.emit(
-                    "retention.change", actor_label=p.username, actor_user_id=p.user_id,
-                    actor_ip=p.ip, session_id=p.session_id, request_id=p.request_id,
-                    object_kind="retention_policies", severity=Severity.WARNING,
-                    before_state={"items": [_logical(r) for r in before]},
-                    after_state={"items": after, "apply_now": now},
-                )  # fmt: skip
-            except Exception as exc:
-                logger().error("retention_change_audit_failed", error=type(exc).__name__)
-                code = ErrorCode.AUDIT_UNAVAILABLE
-                raise common.Problem(503, code, "The audit record could not be written.") from None
-            stored = await store.replace(after, actor=owner)
-            gate.set_result(True)
-        finally:
-            if not gate.done():
-                gate.set_result(False)  # refused: the reserved sweep never runs
+        async with held:
+            before = await store.list_policies()
+            gate: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+            try:
+                if now and run is not None:
+                    _reserve(jobs, run, gate, (owner, key or "", digest))
+                after = [_logical(i.model_dump()) for i in body.items]
+                trail: dict[str, Any] = {
+                    "actor_label": p.username, "actor_user_id": p.user_id, "actor_ip": p.ip,
+                    "session_id": p.session_id, "request_id": p.request_id,
+                    "object_kind": "retention_policies",
+                    "before_state": {"items": [_logical(r) for r in before]},
+                    "after_state": {"items": after, "apply_now": now},
+                }  # fmt: skip
+                try:  # write-ahead (C-2.9): the change lands BEFORE the new set does
+                    await audit.emit("retention.change", severity=Severity.WARNING, **trail)
+                except Exception as exc:
+                    logger().error("retention_change_audit_failed", error=type(exc).__name__)
+                    code = ErrorCode.AUDIT_UNAVAILABLE
+                    raise common.Problem(
+                        503, code, "The audit record could not be written."
+                    ) from None
+                try:
+                    stored = await store.replace(after, actor=owner)
+                except Exception as exc:
+                    await _record_failure(audit, trail, exc)
+                    raise
+                gate.set_result(True)
+            finally:
+                if not gate.done():
+                    gate.set_result(False)  # refused: the reserved sweep never runs
         out = JSONResponse({"items": [_dump(r) for r in stored]})
         return remember(cache, owner, key, digest, out)
 
     return router
+
+
+async def _record_failure(audit: common.Emitter, trail: dict[str, Any], exc: Exception) -> None:
+    """Best effort: the change was recorded first, so say that it did not land."""
+    try:
+        await audit.emit("retention.change", outcome=AuditOutcome.FAILURE, severity=Severity.ERROR,
+                         reason=type(exc).__name__, **trail)  # fmt: skip
+    except Exception as again:
+        logger().error("retention_change_failure_unrecorded", error=type(again).__name__)
 
 
 def _reserve(
@@ -211,8 +252,13 @@ def _reserve(
             raise asyncio.CancelledError
         report = await run.run_nightly()
         progress(100.0)
-        return {"deleted": len(report.deleted), "freed_bytes": report.freed_bytes,
-                "skipped": len(report.skipped), "failed": len(report.failed)}  # fmt: skip
+        return {
+            "deleted": len(report.deleted),
+            "freed_bytes": report.freed_bytes,
+            "skipped": len(report.skipped),
+            "failed": len(report.failed),
+            "skipped_locked": report.next_run_us is None,
+        }  # the nightly pass held the lock
 
     async def done(job: Job) -> None:
         logger().info("retention_apply_now_done", job_id=job.id, status=job.status)
