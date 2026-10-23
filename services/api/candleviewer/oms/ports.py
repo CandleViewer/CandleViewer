@@ -45,6 +45,15 @@ The command port (`commands.OmsCommandPort`) consumes five more, which slice 3 b
 its fail-closed interim `RefuseWhileWaiting` (21 Sec.3.3.11). `ForeignOrderLockout` (SR-E27-19) is
 declared here for E29-T05 and E29-T06, its callers.
 
+The private-stream consumer (E29-T05, #848; 24 Sec.8.12) consumes five more, which its last
+slice binds and nothing binds yet: `StreamedAccounts` (the accounts it subscribes),
+`ReconciliationRequests` (a REST pass for an account whose stream resyncs), `AccountNotices` (23
+Sec.15.9's `account_notice`), `ExecutionHandovers` (a fill no row takes, kept for the next pass,
+a sibling of `OrderHandovers`) and `ProtectionReadings` (the stop of a position no live order
+protects), beside `TradingAccounts`, `CredentialRejections` and `ForeignOrderLockout`. Until their
+owners land, `NoHandoverStore` refuses both hand-overs and `NoReconciliation` every pass (E29-T06;
+a live process refuses to start with it), and `NoPositionProtection` a lost stop (E32-T02).
+
 The pipeline itself (`submit.OrderSubmission`) consumes three more, which slice 3 binds too:
 `Instruments` (the instrument-info cache), `ReferencePrices` (a market order's reference price)
 and `Profiles` (`accounts.profile_cache.EffectiveProfiles`, in its own shape). A request's records
@@ -77,12 +86,13 @@ import structlog
 from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Environment, Px, Qty, Side, Symbol
-from candleviewer.exchange.base.models import AccountRef, Order
+from candleviewer.exchange.base.models import AccountRef, Execution, Order
 from candleviewer.exchange.policy import InstrumentPolicy
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.observability.secret_type import ComparableSecret, Secret
 from candleviewer.risk.models import RiskDecision, RiskRefusal
+from candleviewer.settings import Environment as ProcessEnvironment
 from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.orders import OrderStoreError
 from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
@@ -92,6 +102,8 @@ from .errors import (
     FieldError,
     HandoverUnavailable,
     OrderInvalid,
+    ProtectionReadingsUnavailable,
+    ReconciliationUnavailable,
     StopRequestPending,
     StopUnitUnsupported,
     StoreUnavailable,
@@ -460,11 +472,17 @@ class OrderHandovers(Protocol):
 
 
 class NoHandoverStore:
-    """`OrderHandovers` until E29-T06's `oms_handovers` (S2-Q3's deviation): no hand-over can be
-    recorded, so each is `HandoverUnavailable`, and an order whose id another order holds waits in
-    `unknown`, where reconciliation meets the other order, instead of `held`."""
+    """`OrderHandovers` and `ExecutionHandovers` until E29-T06's `oms_handovers` (S2-Q3's
+    deviation): no hand-over can be recorded, so each is `HandoverUnavailable`, and an order whose
+    id another order holds waits in `unknown`, where reconciliation meets the other order, instead
+    of `held`."""
 
     async def hand_over_order(self, account_id: AccountId, order: Order) -> None:
+        raise HandoverUnavailable("no hand-over store exists until E29-T06 (S2-Q3)")
+
+    async def hand_over_execution(
+        self, account_id: AccountId, execution: Execution, *, empty_read: bool = False
+    ) -> None:
         raise HandoverUnavailable("no hand-over store exists until E29-T06 (S2-Q3)")
 
 
@@ -578,8 +596,9 @@ class RefuseWhileWaiting:
             raise StopRequestPending(retry_after_s=STOP_REQUEST_RETRY_AFTER_S)
 
 
-#: What a lockout opens on: an order, or a trade execution, with no OMS intent (24 Sec.8.10).
-Finding = Literal["order", "execution"]
+#: What a lockout opens on: an order, or a trade execution, with no OMS intent (24 Sec.8.10); and,
+#: until E29-T06 can keep one, a fill whose intent is undecided, fail closed (Sec.8.12 step 4).
+Finding = Literal["order", "execution", "undecided"]
 
 
 class ForeignOrderLockout(Protocol):
@@ -590,6 +609,121 @@ class ForeignOrderLockout(Protocol):
     Owner's release sticks. T04 declares it and calls it nowhere."""
 
     async def open(self, account_id: AccountId, *, finding: Finding, key: str) -> None: ...
+
+
+# --- The private-stream consumer's collaborators (E29-T05, 24 Sec.8.12) -------------------------
+
+#: Why a stream asks for a REST pass: its `resyncing` reasons (24 Sec.14.2 rule 13), as
+#: `exchange.base.models.PRIVATE_STREAM_REASONS` names them (a test pins the two alike).
+ResyncReason = Literal["connected", "reconnected", "rejected_frame"]
+#: The `reason` of an account notice (23-ws-protocol.md Sec.15.9, SR-E29-10): its current values,
+#: the stream lost (E29-T05) and reconciliation's three (E29-T06).
+AccountNoticeReason = Literal[
+    "oms.account_resyncing", "oms.account_desync", "oms.account_stale", "oms.account_synced"
+]
+
+
+class StreamedAccounts(Protocol):
+    """The accounts the private-stream consumer subscribes (24 Sec.8.12), the set account health
+    monitors: each enabled and not deleted, holding an active key, of an environment the router
+    has a port for. Ids alone, so nothing it answers selects a key (`TradingAccounts`, SR-E27-21).
+    The consumer reads it again on each of health's tracking refreshes (15 s), bounding the call
+    (C-2.18), and skips an account whose resolve is refused (`OrderRefused`), logged by its id
+    alone, until the next read. A read that cannot answer raises; an empty set found none."""
+
+    async def streamed_accounts(self) -> frozenset[AccountId]: ...
+
+
+class ReconciliationRequests(Protocol):
+    """Asks for a REST reconciliation of one account (24 Sec.8.5, which runs on every private-WS
+    reconnect: B19's `RECONNECTED`), the consumer's answer to a `resyncing` status, as private
+    topics send no snapshot (C-2.5). It returns once the request is taken, never once the pass has
+    run, and the caller bounds the call (C-2.18)."""
+
+    async def request_reconciliation(
+        self, account_id: AccountId, *, reason: ResyncReason
+    ) -> None: ...
+
+
+class NoReconciliation:
+    """`ReconciliationRequests` until E29-T06 (24 Sec.8.12): each request is
+    `ReconciliationUnavailable`, which the consumer logs, counts and pages once per episode
+    (`oms_reconciliation_unavailable`), keeping `oms.account_resyncing` in force without holding
+    order entry."""
+
+    async def request_reconciliation(self, account_id: AccountId, *, reason: ResyncReason) -> None:
+        raise ReconciliationUnavailable("no reconciliation pass exists until E29-T06")
+
+
+def refuse_live_without_reconciliation(
+    environment: ProcessEnvironment, port: ReconciliationRequests
+) -> None:
+    """The live start-up self-check (24 Sec.8.12, C-2.21), which E29-T05's wiring slice calls on
+    the binding as bound, before any wrapper (a wrapped stand-in would pass it):
+    `ReconciliationUnavailable` when a live process would run with `NoReconciliation`, as the
+    exchange is truth after a reconnect (C-2.5). The environment compares by value, so a plain
+    `"live"` refuses too. Demo and testnet run with its page; E29-T06 removes the stand-in and
+    this refusal together."""
+    if environment == ProcessEnvironment.LIVE and isinstance(port, NoReconciliation):
+        raise ReconciliationUnavailable("a live process needs E29-T06's reconciliation pass")
+
+
+class AccountNotices(Protocol):
+    """Publishes one `account_notice` about one account (23-ws-protocol.md Sec.15.9, SR-E29-10).
+    The composition root binds it to the gateway's `system` topic, so `oms` imports no `ws`
+    (C-3.4), and gives each `reason` its fixed severity and message, which name no account.
+    Synchronous and non-blocking, as the gateway's own offer is: it queues and never awaits."""
+
+    def publish(self, account_id: AccountId, *, reason: AccountNoticeReason) -> None: ...
+
+
+class ExecutionHandovers(Protocol):
+    """Where the private-stream consumer keeps a trade execution that no row takes for the next
+    reconciliation pass (24 Sec.8.3 rule 7, Sec.8.5 step 3d): `oms_handovers`, idempotent on the
+    account and the execution's `exec_id`; a sibling of `OrderHandovers`, never a widening of it.
+    `empty_read`, which the entry counts, is true only when a completed read of the fill's order
+    found none. E29-T06 lands the table and its writer; until then `NoHandoverStore` is the one
+    production binding. The caller bounds the call (C-2.18)."""
+
+    async def hand_over_execution(
+        self, account_id: AccountId, execution: Execution, *, empty_read: bool = False
+    ) -> None:
+        """Append `execution` for the next pass, or raise `HandoverUnavailable`."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class ProtectionReading:
+    """A position row's protection reading (24 Sec.8.12), B1's `SL_OBSERVED` or `SL_LOST`: the
+    row's exchange time in ms, its stop (None when it has none) and its size, B1's `_READING`
+    keys. `SL_LOST` is an open position (size above zero) with no stop; any other row, a flat one
+    included, is `SL_OBSERVED`, so a close never pages."""
+
+    event: Literal["SL_OBSERVED", "SL_LOST"]
+    updated_time: int
+    stop_loss: Px | None
+    size: Qty
+
+
+class ProtectionReadings(Protocol):
+    """Where the consumer sends the protection reading of a position no live order protects (24
+    Sec.8.12): a live order protects it while its B1 `protection` region holds it, in any leaf
+    but `not_required`, and takes the reading through `OrderMachines.push`. A reading no such
+    order took, as each closed before its push, comes here too. E32-T02 binds it to B8
+    (`position_protection`) in its own contract change; until then `NoPositionProtection` is the
+    one binding. `key` names the position's account too."""
+
+    async def take_reading(self, key: PositionKey, reading: ProtectionReading) -> None: ...
+
+
+class NoPositionProtection:
+    """`ProtectionReadings` until E32-T02: no machine holds the position, so an `SL_LOST` is
+    `ProtectionReadingsUnavailable`, which the consumer logs, counts and pages P1 on once per
+    episode (C-2.6); an `SL_OBSERVED`, a flat position's included, asks for nothing."""
+
+    async def take_reading(self, key: PositionKey, reading: ProtectionReading) -> None:
+        if reading.event == "SL_LOST":
+            raise ProtectionReadingsUnavailable("no position-protection machine until E32-T02")
 
 
 class Interim:

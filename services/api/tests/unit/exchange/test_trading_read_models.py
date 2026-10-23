@@ -117,6 +117,15 @@ def test_an_order_without_the_exchanges_id_is_refused(exchange_order_id: object)
         _order(exchange_order_id=exchange_order_id)
 
 
+def test_an_order_is_not_exchange_placed_unless_a_read_says_so() -> None:
+    """24 §8.10 (E29-T05's contract): a bool, false by default, so an order no adapter has
+    mapped as the exchange's own freezes like any other (SR-E27-19). Only a bool is taken."""
+    assert _order().exchange_placed is False
+    assert _order(exchange_placed=True).exchange_placed is True
+    with pytest.raises(ValidationError):
+        _order(exchange_placed="maybe")
+
+
 def _fast(**fields: Any) -> FastExecution:
     base: dict[str, Any] = {
         "exec_id": "x-1", "exchange_order_id": "e-1", "order_link_id": "ext-" + "0" * 32,

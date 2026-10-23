@@ -196,7 +196,20 @@ class HandoverUnavailable(OmsError):
     could not be handed to the next reconciliation pass (`oms_handovers`, 24 Sec.8.3 rule 3), which
     E29-T06 lands. Nothing was bound: the command port answers `place` with an empty lookup, so the
     order waits in `unknown` rather than `held` (S2-Q3), and `lookup` raises, as an empty answer
-    there would send the order."""
+    there would send the order. The private-stream consumer (E29-T05) meets it too, for a trade
+    execution no row takes (`ExecutionHandovers`, Sec.8.3 rule 7)."""
+
+
+class ReconciliationUnavailable(OmsError):
+    """No REST reconciliation pass can be asked for until E29-T06 lands one (`NoReconciliation`,
+    24 Sec.8.12): the consumer logs, counts and pages once per episode. A live process refuses to
+    start with that stand-in (`refuse_live_without_reconciliation`, C-2.21)."""
+
+
+class ProtectionReadingsUnavailable(OmsError):
+    """A position no live order protects (none whose B1 `protection` region holds it) lost its
+    stop, and no machine holds the position until E32-T02 binds B8 (`NoPositionProtection`, 24
+    Sec.8.12): the consumer logs, counts and pages P1 once per episode (C-2.6)."""
 
 
 class AckWithoutOrderId(OmsError):

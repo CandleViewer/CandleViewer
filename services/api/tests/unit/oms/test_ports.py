@@ -9,7 +9,8 @@ at startup and is counted in `oms_interim_ports{port}`. A `SizedOrder` is as str
 protective side of its reference price (C-2.6); its effect is an `OrderEffect`, and any effect but
 `REDUCE` is an entry's (fail closed). The arm token travels masked (C-12.6) and compares in
 constant time (SR-043). Slice 2b: the take-profit interim (S2-Q6, Q-L), an offset that is no finite
-figure passed through for the guard (#2877 ruling 2), and the request's records (C-2.9).
+figure passed through for the guard (#2877 ruling 2), and the request's records (C-2.9). E29-T05
+(#848, 24 Sec.8.12): the private-stream consumer's ports and their stand-ins.
 """
 
 from __future__ import annotations
@@ -32,9 +33,10 @@ from hypothesis import strategies as st
 from structlog.testing import capture_logs
 
 from candleviewer.accounts.profiles import AccountProfile
+from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Environment, Side
-from candleviewer.exchange.base.models import AccountRef, Order
+from candleviewer.exchange.base.models import PRIVATE_STREAM_REASONS, AccountRef, Execution, Order
 from candleviewer.ingestion.clock import ClockGuard
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
@@ -45,11 +47,19 @@ from candleviewer.oms.errors import (
     FieldError,
     HandoverUnavailable,
     OrderInvalid,
+    ProtectionReadingsUnavailable,
+    ReconciliationUnavailable,
     StopRequestPending,
     StopUnitUnsupported,
     StoreUnavailable,
 )
-from candleviewer.oms.fakes import FakeClockHealth, InMemoryForeignOrderLockout
+from candleviewer.oms.fakes import (
+    FakeClockHealth,
+    InMemoryAccountNotices,
+    InMemoryForeignOrderLockout,
+    InMemoryReconciliationRequests,
+    InMemoryStreamedAccounts,
+)
 from candleviewer.oms.ports import (
     FAILED,
     INTERIM_PORTS_METRIC,
@@ -57,10 +67,14 @@ from candleviewer.oms.ports import (
     PORT_NAMES,
     STOP_REQUEST_BOUND_S,
     STOP_REQUEST_RETRY_AFTER_S,
+    AccountNoticeReason,
+    AccountNotices,
     ArmToken,
     AuditOutcome,
     AuditSeverity,
     ClockHealth,
+    ExecutionHandovers,
+    Finding,
     FixedQtySizer,
     ForeignOrderLockout,
     Interim,
@@ -69,21 +83,31 @@ from candleviewer.oms.ports import (
     KeyedRecord,
     NoArmRecords,
     NoHandoverStore,
+    NoPositionProtection,
+    NoReconciliation,
     OrderEffect,
+    OrderHandovers,
     PositionKey,
     Profiles,
+    ProtectionReading,
+    ProtectionReadings,
     RateReading,
+    ReconciliationRequests,
     RefuseWhileWaiting,
+    ResyncReason,
     SizedOrder,
     SizingRequest,
     StopOffset,
+    StreamedAccounts,
     SubmissionPorts,
     SubmitActor,
     TradingAccounts,
     Verdict,
     announce_interim_ports,
+    refuse_live_without_reconciliation,
 )
 from candleviewer.risk.models import RiskDecision, RiskRefusal
+from candleviewer.settings import Environment as ProcessEnvironment
 from candleviewer.statechart.bindings import b01_order
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.orders import OrderStoreError
@@ -829,3 +853,172 @@ def test_the_profile_cache_as_it_stands_is_a_profiles_port() -> None:
     port: type[Profiles] = EffectiveProfiles
     member = inspect.signature(port.get_effective_profile)
     assert list(member.parameters) == ["self", "account_id", "profile_id"]
+
+
+# --- the private-stream consumer's collaborators (E29-T05, 24 Sec.8.12) --------------------------
+
+_PROTOCOL = Path(__file__).resolve().parents[5] / "docs" / "plan" / "23-ws-protocol.md"
+#: Each consumer port, its stand-in and its one member, and whether the member awaits.
+_CONSUMER_PORTS: Final = [
+    (StreamedAccounts, InMemoryStreamedAccounts, "streamed_accounts", True),
+    (ReconciliationRequests, InMemoryReconciliationRequests, "request_reconciliation", True),
+    (ReconciliationRequests, NoReconciliation, "request_reconciliation", True),
+    (AccountNotices, InMemoryAccountNotices, "publish", False),
+    (ExecutionHandovers, NoHandoverStore, "hand_over_execution", True),
+    (ProtectionReadings, NoPositionProtection, "take_reading", True),
+]
+
+
+def _fill() -> Execution:
+    return Execution.model_validate(
+        {
+            "exec_id": "x1", "exchange_order_id": "e1", "order_link_id": "ext-" + "0" * 32,
+            "account_id": ACCOUNT, "symbol": "BTCUSDT", "side": "buy", "price": "60000",
+            "qty": "1", "fee": "0.1", "fee_rate": "0.00055", "fee_currency": "USDT",
+            "is_maker": False, "exec_type": "trade", "closed_pnl": None, "ts_exec": 0,
+            "ts_ingest": 0, "seq": 1,
+        }
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("port", "stand_in", "name", "awaits"),
+    _CONSUMER_PORTS,
+    ids=[s.__name__ for _, s, *_ in _CONSUMER_PORTS],
+)
+def test_each_consumer_port_and_its_stand_in_take_the_same_call(
+    port: type[Any], stand_in: type[Any], name: str, awaits: bool
+) -> None:
+    """The member each binding implements, awaited or not as the port says (`AccountNotices`
+    never awaits, as the gateway's own offer does not), its parameters of the same names and
+    kinds."""
+    wanted, offered = getattr(port, name), getattr(stand_in, name)
+    assert inspect.iscoroutinefunction(wanted) is awaits
+    assert inspect.iscoroutinefunction(offered) is awaits
+    shape = [(p.name, p.kind) for p in inspect.signature(wanted).parameters.values()]
+    assert shape == [(p.name, p.kind) for p in inspect.signature(offered).parameters.values()]
+
+
+def test_the_streamed_accounts_read_takes_nothing_that_could_select_a_key() -> None:
+    """SR-E27-21, on the port itself, so no change to it and its stand-in together passes."""
+    assert list(inspect.signature(StreamedAccounts.streamed_accounts).parameters) == ["self"]
+
+
+def test_the_execution_hand_over_is_a_sibling_port_never_a_widening() -> None:
+    """The agreed shape (E29-T05 with E29-T04): `OrderHandovers` is left as it is."""
+    assert not hasattr(OrderHandovers, "hand_over_execution")
+    assert not hasattr(ExecutionHandovers, "hand_over_order")
+
+
+@pytest.mark.parametrize("binding", [ExecutionHandovers, NoHandoverStore])
+def test_an_execution_hand_over_counts_no_empty_read_unless_told(binding: type[Any]) -> None:
+    """24 Sec.8.5 step 3d's `empty_read=True`: keyword-only, and false unless a read found none."""
+    empty_read = inspect.signature(binding.hand_over_execution).parameters["empty_read"]
+    assert (empty_read.kind, empty_read.default) == (inspect.Parameter.KEYWORD_ONLY, False)
+
+
+async def test_no_handover_store_keeps_no_execution_either() -> None:
+    """S2-Q3's deviation, for the sibling port too: every execution hand-over is refused."""
+    with pytest.raises(HandoverUnavailable):
+        await NoHandoverStore().hand_over_execution(ACCOUNT, _fill(), empty_read=True)
+
+
+def test_a_resync_reason_is_one_of_the_resyncing_statuses_reasons() -> None:
+    """A stream asks for a pass with its `resyncing` status's reason (24 Sec.14.2 rule 13)."""
+    assert set(get_args(ResyncReason)) == PRIVATE_STREAM_REASONS["resyncing"]
+
+
+def test_an_account_notice_reason_is_one_the_ws_contract_names() -> None:
+    """23 Sec.15.9's account notices: the reasons the OMS publishes are its current values."""
+    contract = _PROTOCOL.read_text(encoding="utf-8")
+    paragraph = contract.split("**Account notices (SR-E29-10", 1)[1].split("\n\n", 1)[0]
+    named = {w.strip("`(),.") for w in paragraph.split() if w.startswith("`oms.account_")}
+    assert named == set(get_args(AccountNoticeReason))
+
+
+async def test_the_streamed_accounts_stand_in_answers_its_accounts() -> None:
+    accounts: StreamedAccounts = InMemoryStreamedAccounts(ACCOUNT)
+    assert await accounts.streamed_accounts() == frozenset({ACCOUNT})
+
+
+async def test_the_streamed_accounts_stand_in_raises_its_error_and_keeps_its_accounts() -> None:
+    accounts = InMemoryStreamedAccounts(ACCOUNT)
+    accounts.error = StorageTierUnavailable("down")
+    with pytest.raises(StorageTierUnavailable):
+        await accounts.streamed_accounts()
+    assert (accounts.reads, accounts.accounts) == (1, {ACCOUNT})
+
+
+async def test_the_reconciliation_stand_in_keeps_each_request_in_order() -> None:
+    other = AccountId(UUID(int=8))
+    requests = InMemoryReconciliationRequests()
+    await requests.request_reconciliation(ACCOUNT, reason="connected")
+    await requests.request_reconciliation(other, reason="rejected_frame")
+    assert requests.requests == [(ACCOUNT, "connected"), (other, "rejected_frame")]
+
+
+def test_the_notice_stand_in_keeps_each_notice_in_order() -> None:
+    notices = InMemoryAccountNotices()
+    notices.publish(ACCOUNT, reason="oms.account_resyncing")
+    notices.publish(ACCOUNT, reason="oms.account_synced")
+    assert notices.published == [
+        (ACCOUNT, "oms.account_resyncing"),
+        (ACCOUNT, "oms.account_synced"),
+    ]
+
+
+async def test_no_reconciliation_refuses_every_request() -> None:
+    """24 Sec.8.12: no pass exists until E29-T06, so the consumer pages once per episode."""
+    with pytest.raises(ReconciliationUnavailable):
+        await NoReconciliation().request_reconciliation(ACCOUNT, reason="reconnected")
+
+
+def test_a_live_process_refuses_to_start_with_no_reconciliation() -> None:
+    """24 Sec.8.12's live start-up check (C-2.21): the exchange is truth after a reconnect."""
+    with pytest.raises(ReconciliationUnavailable):
+        refuse_live_without_reconciliation(ProcessEnvironment.LIVE, NoReconciliation())
+
+
+@pytest.mark.parametrize("environment", [ProcessEnvironment.DEMO, ProcessEnvironment.TESTNET])
+def test_demo_and_testnet_start_with_no_reconciliation(environment: ProcessEnvironment) -> None:
+    refuse_live_without_reconciliation(environment, NoReconciliation())
+
+
+def test_a_live_process_starts_with_any_other_reconciliation_binding() -> None:
+    refuse_live_without_reconciliation(ProcessEnvironment.LIVE, InMemoryReconciliationRequests())
+
+
+def test_live_as_plain_text_refuses_no_reconciliation_too() -> None:
+    """The environment compares by value, so an untyped caller's `"live"` cannot slip past."""
+    as_text = cast(ProcessEnvironment, "live")  # a str where mypy wants the enum, on purpose
+    with pytest.raises(ReconciliationUnavailable):
+        refuse_live_without_reconciliation(as_text, NoReconciliation())
+
+
+async def test_no_position_protection_refuses_a_lost_stop() -> None:
+    """24 Sec.8.12: until E32-T02 binds B8, a lost stop no live order protects pages (C-2.6)."""
+    lost = ProtectionReading("SL_LOST", 1, None, Decimal(1))
+    with pytest.raises(ProtectionReadingsUnavailable):
+        await NoPositionProtection().take_reading(_KEY, lost)
+
+
+async def test_no_position_protection_takes_an_observed_stop_quietly() -> None:
+    seen = ProtectionReading("SL_OBSERVED", 1, Decimal(59000), Decimal(1))
+    await NoPositionProtection().take_reading(_KEY, seen)
+
+
+def test_a_protection_reading_carries_b1s_reading_keys() -> None:
+    """24 Sec.8.12: a position row becomes B1's `_READING`, which its guards read whole."""
+    keys = {field.name for field in dataclasses.fields(ProtectionReading)} - {"event"}
+    assert keys == set(b01_order._READING["properties"])
+
+
+def test_an_undecided_fill_is_a_finding_of_its_own() -> None:
+    """24 Sec.8.12 step 4: until E29-T06 it opens the lockout, fail closed, never as `execution`,
+    so its record never claims the fill has no OMS intent (Sec.15.5)."""
+    assert get_args(Finding) == ("order", "execution", "undecided")
+
+
+def test_the_lockout_stand_ins_record_is_a_registered_action() -> None:
+    """24 Sec.8.12 and Sec.15.5, contract first: the writer refuses an action it does not list."""
+    assert "oms.no_intent_detected" in AUDIT_ACTIONS

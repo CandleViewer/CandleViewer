@@ -593,7 +593,11 @@ class Order(BaseModel):
     id, which an adapter cannot know, so a read leaves it `None`;
     `exchange_order_id` is the exchange's, which every order a read returns
     carries (24 §14.2 rule 11). B1's full match (SR-E29-03) reads
-    `reduce_only`, `trigger_price` and `stop_loss`."""
+    `reduce_only`, `trigger_price` and `stop_loss`. `exchange_placed` is true
+    only for an order the exchange itself placed on the account, which skips
+    SR-E27-19's freeze and nothing else (24 §8.10): only the change that maps
+    the venue's order-creation type sets it, after E29-K01, so until then every
+    order is false and freezes like any other."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -620,6 +624,7 @@ class Order(BaseModel):
     order_kind: OrderKind = "order"
     position_idx: Literal[0, 1, 2] = 0
     time_in_force: Literal["gtc", "ioc", "fok", "post_only", "rpi"] = "gtc"
+    exchange_placed: bool = False
 
 
 class Execution(BaseModel):

@@ -145,6 +145,7 @@ def test_the_realtime_row_maps_field_for_field() -> None:
         "order_kind": "order",
         "position_idx": 1,
         "time_in_force": "gtc",
+        "exchange_placed": False,
     }
     assert page.nextPageCursor.startswith("page_args")
 

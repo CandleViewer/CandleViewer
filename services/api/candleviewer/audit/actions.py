@@ -170,6 +170,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # ended `rejected` unsent; the command port writes it ahead (system actor), the order its
         # object, its age and the bound in the detail.
         "oms.resend_refused",
+        # E29-T05 (#848, 24 Sec.8.12, contract first): the lockout's paging stand-in until E39-T04,
+        # an order or fill with no OMS intent, written ahead of its page (system actor, no freeze).
+        "oms.no_intent_detected",
         # E29-T04 (#913, 24 Sec.15.5, 21 Sec.3.3.11 "Audit"): a stop request the OMS records for a
         # position, written ahead with its row (`sl.attached`; `tp.modified` for a take-profit
         # side), and a void of one (`sl.modified`, `tp.modified`). Keyed (`writer.KEYED_ACTIONS`):
