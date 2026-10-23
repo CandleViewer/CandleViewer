@@ -10989,9 +10989,10 @@ export interface components {
         "application/problem+json": components["schemas"]["OpenExposureProblem"];
       };
     };
-    /** @description The exchange refused an order or position call. `exchange` holds `ret_code` only (`OrderExchangeProblem`, SR-E29-09): the exchange's text is served only by the audited diagnostics read (`getOrderDiagnostics`). */
+    /** @description The exchange refused an order or position call. `exchange` holds `ret_code` only (`OrderExchangeProblem`, SR-E29-09): the exchange's text is served only by the audited diagnostics read (`getOrderDiagnostics`). Every route that answers it takes an `Idempotency-Key`, so a repeat answered from the key's record carries `Idempotency-Replayed: true` (Idempotency, above; for `placeOrder`, its anchor). */
     OrderExchangeError: {
       headers: {
+        "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
         [name: string]: unknown;
       };
       content: {

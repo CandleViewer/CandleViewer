@@ -318,3 +318,25 @@ def test_the_etag_waits_for_slice_4_an_algo_for_its_epics_and_held_rows_are_scan
     [row] = [line for line in table.splitlines() if line.startswith("| 49  |")]
     assert "none for `held`" in row and "once per boot, scans for `held`" in row
     assert "no index for `held` orders, which row 49 reads once per boot" in _words(table)
+
+
+def test_a_replayed_429_or_502_declares_its_replay_header() -> None:
+    """22's Idempotency section: the `429` and `502` a recorded order answers are replayed with
+    `Idempotency-Replayed: true`, so `placeOrder` declares that header on both. The `502` is the
+    shared `OrderExchangeError`, whose every route takes a key, so the header is declared there
+    (#913 slice 3D2's security lens); its body stays `OrderExchangeProblem`, the code only."""
+    replayed = {"$ref": "#/components/headers/IdempotencyReplayed"}
+    assert _PLACE["responses"]["429"]["headers"]["Idempotency-Replayed"] == replayed
+    assert _PLACE["responses"]["502"] == {"$ref": "#/components/responses/OrderExchangeError"}
+    gateway = _RESPONSES["OrderExchangeError"]
+    assert gateway["headers"]["Idempotency-Replayed"] == replayed
+    schema = gateway["content"]["application/problem+json"]["schema"]
+    assert schema == {"$ref": "#/components/schemas/OrderExchangeProblem"}
+    assert "carries `Idempotency-Replayed: true`" in _words(gateway["description"])
+    for path_item in _SPEC["paths"].values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict) or "responses" not in operation:
+                continue
+            if operation["responses"].get("502") == _PLACE["responses"]["502"]:
+                parameters = str(operation.get("parameters", []))
+                assert "IdempotencyKey" in parameters, operation["operationId"]
