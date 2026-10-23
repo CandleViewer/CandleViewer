@@ -2825,7 +2825,7 @@ Scenario: Dock and resize
   Then it docks with a preview and its width persists
 Scenario: Hide and restore
   When I hide the tape
-  Then it disappears and remains restorable from the view menu and by hotkey
+  Then it minimises to a tab and comes back from that tab or from the panel menu
 Scenario: Floating window
   When I float a panel in the Electron shell
   Then it opens as a separate always-on-top window and its position persists per workspace

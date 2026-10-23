@@ -326,8 +326,9 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **A11y:** `role="tree"` with arrow-key navigation; badge counts included in accessible names ("Alerts, 2 new").
 - **Audit:** `workspace.opened`, `workspace.renamed`, `workspace.deleted`. **Stories:** US-WS-001..004.
 - **Performance:** Rail expand/collapse animates in <=120 ms and does not reflow or remount any docked panel (transform-only, chart canvases keep their GL context).
-- **Components:** CMP-016 Tooltip, CMP-019 Icon, CMP-022 Kbd, CMP-071 NavRail, CMP-073 WorkspaceSwitcher.
+- **Components:** CMP-016 Tooltip, CMP-019 Icon (`lock`), CMP-022 Kbd, CMP-071 NavRail, CMP-073 WorkspaceSwitcher, CMP-079 RbacGate.
 - **Stories:** US-LAY-006, US-SET-001.
+- **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.2 (heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] collapsed (icon) and expanded (label) variants [ ] workspace switcher with >20 workspaces (scroll + search) [ ] active-route indication is not colour-only [ ] tooltips on collapsed icons reachable by keyboard focus
 
 ### SCR-012 — Command palette
@@ -501,7 +502,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 +------------------------------------------------------------------------------+
 ```
 
-- **Components:** CMP-073 WorkspaceSwitcher, CMP-080 DockPanel, CMP-081 DockGrid / Layout Manager, CMP-082 PanelHeader, CMP-217 LayoutPresetMenu, CMP-218 SyncMenu.
+- **Components:** CMP-019 Icon (`lock`), CMP-073 WorkspaceSwitcher, CMP-079 RbacGate, CMP-080 DockPanel, CMP-081 DockGrid / Layout Manager, CMP-082 PanelHeader, CMP-217 LayoutPresetMenu, CMP-218 SyncMenu.
 - **Data:** `GET /api/v1/workspaces/{id}` (layout tree + panel configs), `PUT /api/v1/workspaces/{id}`; panels subscribe their own topics.
 - **Interactions/hotkeys:** `Ctrl+1..9` layout presets; `Ctrl+S` save; `Ctrl+Shift+S` save as; `Alt+drag` move panel; `F11` full-screen active panel; `Ctrl+Alt+←/→` cycle panels; drag a watchlist symbol onto a panel to rebind it.
 - **States:** loading skeleton (panel frames, no data fetch until mount) · empty workspace (panel picker + SCR-019) · unsaved changes (`*` on the tab, prompt on navigation) · restored after crash ("Restored your layout from 14:02") · too many panels (>16: "Performance may degrade — consider fewer panels").
@@ -511,6 +512,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Audit/analytics:** `workspace.saved`, `panel.added`, `panel.removed`, `layout.preset_applied`.
 - **Sign-off:** [ ] drop-zone previews specified [ ] keyboard docking specified [ ] 3 density modes [ ] crash-restore designed. **Stories:** US-WS-005..012.
 - **Stories:** US-LAY-001, US-LAY-002, US-LAY-005.
+- **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.1 (heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] default owner layout, manager layout and viewer layout drawn [ ] panel focus ring and active-panel affordance visible [ ] symbol-group colour tags carry a letter/number too [ ] layout restore after crash drawn [ ] DEMO and LIVE chrome variants [ ] 1280x800 minimum supported layout has no overlap
 
 ### SCR-021 — Dock / panel system (drag, split, float)
@@ -526,14 +528,15 @@ Drag preview                Drop zones
                             +---------------------------+
 ```
 
-- **Behaviour:** drop zones highlight with a 4 px accent and a translucent preview of the resulting rectangle; splitters resize by mouse or `Alt+Shift+arrows`; a panel can be floated into an OS window (Electron) or a maximised overlay (browser, with a notice).
+- **Behaviour:** five drop zones (left, right, top, bottom, and the centre to tab into) highlight with a 4 px accent and a translucent preview of the resulting rectangle; splitters resize by mouse or `Alt+Shift+arrows`; float is a desktop command, "Pop out" in the panel menu, never a drop target, and the window's re-dock button (CMP-215) returns the panel; the browser hides Pop out with an explanation instead of a maximised overlay; hiding a panel minimises it to a tab; drag docking is demoted while the mandatory keyboard move mode (CMP-214) stays the protected path (WCAG 2.1.1, 2.5.7).
 - **Components:** CMP-083 SplitPane, CMP-214 DockDropZone, CMP-215 FloatingWindowFrame, CMP-216 PanelMenu.
 - **States:** dragging · invalid drop (cursor + "Can't dock here") · floating · maximised · minimised-to-tab.
-- **A11y:** the panel menu (`Shift+F10` or the ⋮ button) exposes Move/Split/Float/Close; a live region announces "Chart moved to bottom-right".
+- **A11y:** the panel menu (`Shift+F10` or the ⋮ button) exposes Move/Split/Pop out (desktop app)/Close; a live region announces "Chart moved to bottom-right".
 - **Performance:** drag preview uses CSS transforms only; the drop commits exactly one layout mutation.
 - **Stories:** US-LAY-001, US-LAY-005, US-LAY-008.
 - **Analytics/audit:** `layout.panel_added`, `layout.panel_removed`, `layout.panel_moved`, `layout.split_created`, `layout.panel_floated`, `layout.maximised`, `layout.saved`, `layout.reset` (analytics only - layout is user preference, not a security-relevant state change).
-- **Design sign-off acceptance checklist:** [ ] drop-zone affordances for all six targets (N/S/E/W/centre/float) [ ] invalid-drop feedback [ ] keyboard move mode drawn with its own visible instructions [ ] minimum panel size and the 'panel too small - showing compact view' state [ ] drag preview does not obscure the drop target
+- **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.3–§5.5 (heuristic; owner approval pending).
+- **Design sign-off acceptance checklist:** [ ] drop-zone affordances for all five zones (N/S/E/W/centre-tabify; float is the panel menu's "Pop out" command, not a zone) [ ] invalid-drop feedback [ ] keyboard move mode drawn with its own visible instructions [ ] minimum panel size and the 'panel too small - showing compact view' state [ ] drag preview does not obscure the drop target
 
 ### SCR-022 — Layout preset gallery
 
@@ -550,11 +553,12 @@ Drag preview                Drop zones
 
 - **Data:** `GET /api/v1/layout-presets`, `POST /api/v1/workspaces/{workspaceId}/layouts`.
 - **Warning state:** "Applying a preset replaces the current layout. Settings of surviving panels are kept."
-- **Components:** CMP-001 Button, CMP-043 Dialog, CMP-050 Card, CMP-217 LayoutPresetMenu.
+- **Components:** CMP-001 Button, CMP-019 Icon (`lock`), CMP-043 Dialog, CMP-050 Card, CMP-079 RbacGate, CMP-217 LayoutPresetMenu.
 - **Stories:** US-LAY-001, US-LAY-006, US-CHART-012.
 - **A11y:** Preset gallery is a listbox of cards with an accessible name and a text description of what each preset contains; preview thumbnails carry `alt` text enumerating the panels; applying a preset announces the result.
 - **Performance:** Thumbnails are static SVG (no live panels); applying a preset rebuilds the dock tree in <=300 ms and reuses existing panel instances where the type matches, avoiding GL context churn.
 - **Analytics/audit:** `layout.preset_previewed`, `layout.preset_applied`, `layout.preset_saved_as`, `layout.preset_deleted` (analytics).
+- **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.6 (heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] built-in presets drawn (Scalper DOM, Footprint focus, Multi-chart 2x2, Analysis/journal, Replay) [ ] user presets with rename/delete [ ] 'applying replaces your current layout' confirmation [ ] empty user-preset state
 
 ### SCR-023 — Multi-chart sync configuration
@@ -580,6 +584,7 @@ Drag preview                Drop zones
 - **Components:** CMP-004 Toggle, CMP-011 Tag / Chip, CMP-040 FormField, CMP-043 Dialog, CMP-218 SyncMenu.
 - **Stories:** US-LAY-003, US-LAY-004.
 - **Analytics/audit:** `sync.group_created`, `sync.group_changed`, `sync.axis_toggled`, `sync.panel_joined_group`, `sync.panel_left_group` (analytics).
+- **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.8 (heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] all sync axes drawn as independent toggles (symbol / interval / crosshair / time range / drawings / indicator set) [ ] group colour tag is paired with a letter [ ] conflicting-sync warning drawn ('Chart 3 has a different interval - crosshair sync will align by timestamp') [ ] leaving a group does not reset the panel's own settings
 
 ### SCR-024 — Panel picker ("Add panel")
@@ -587,11 +592,12 @@ Drag preview                Drop zones
 - **Type:** Modal. Grouped catalogue of every addable panel with a one-line description, a thumbnail and chips for "requires recording", "(estimated)", "owner only".
 - **Data:** local panel registry + `GET /api/v1/admin/feature-flags` and role.
 - **States:** search · category filter · disabled entries with reasons ("Needs a recorded symbol", "Owner only").
-- **Components:** CMP-043 Dialog, CMP-048 Combobox / AutoComplete, CMP-050 Card, CMP-213 FuzzyList.
+- **Components:** CMP-019 Icon (`lock`), CMP-043 Dialog, CMP-048 Combobox / AutoComplete, CMP-050 Card, CMP-079 RbacGate, CMP-213 FuzzyList.
 - **Stories:** US-LAY-005.
 - **A11y:** Searchable list with category headings as real headings; each panel type has a one-line description read with its name; adding announces where the panel landed ('CVD added to the right column').
 - **Performance:** Panel mounts <=150 ms; the picker pre-warms nothing and the newly added panel subscribes to its WS topics only after mount.
 - **Analytics/audit:** `panel.added` with `{type, placement}` (analytics).
+- **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.9 (heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] all panel types listed with an icon + description [ ] panels unavailable to the role are shown disabled with a reason [ ] search with no results [ ] placement choice (where it will be inserted) is previewed
 
 ### SCR-025 — Workspace settings modal
@@ -602,8 +608,9 @@ Drag preview                Drop zones
 - **Audit:** `workspace.updated`, `workspace.deleted`, `workspace.exported`. **Stories:** US-WS-020.
 - **A11y:** Standard modal form: labelled fields, grouped fieldsets for defaults (symbol, interval, environment binding), error summary at top with in-page links.
 - **Performance:** Saving applies without a full workspace remount; only panels bound to a changed default re-resolve their data.
-- **Components:** CMP-001 Button, CMP-004 Toggle, CMP-040 FormField, CMP-043 Dialog, CMP-065 FormSection.
+- **Components:** CMP-001 Button, CMP-004 Toggle, CMP-019 Icon (`lock`), CMP-040 FormField, CMP-043 Dialog, CMP-065 FormSection, CMP-079 RbacGate.
 - **Stories:** US-LAY-002, US-LAY-003.
+- **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.10 (heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] rename, default symbol/interval, environment binding, autosave toggle and sharing (owner) drawn [ ] 'this workspace is pinned to LIVE' warning drawn [ ] unsaved-changes handling [ ] delete-workspace confirmation path
 
 ### SCR-026 — Workspace import
@@ -615,18 +622,20 @@ Drag preview                Drop zones
 - **A11y:** File input has a visible label and an accessible drop zone with a keyboard alternative; the import diff is a table, not a canvas; validation errors are listed as text with the offending key named.
 - **Performance:** Import parsing is done in a worker; a 2 MB layout file validates in <=500 ms without blocking the UI thread.
 - **Analytics/audit:** `layout.imported`, `layout.import_rejected` with `{reason}` (analytics).
+- **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.11 (heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] file-picker and drag-drop paths [ ] version-mismatch state ('exported from a newer version - 2 panels will be dropped') [ ] preview of what will be imported before applying [ ] rejection state for malformed or oversized files [ ] import never carries credentials or account bindings (verified in copy)
 
 ### SCR-027 — Floating panel window (Electron)
 
-- **Type:** OS window. Slim title bar with panel name, symbol, env badge and "return to workspace"; participates in sync groups; closes back into its origin dock slot.
-- **States:** normal · display disconnected (recovered to the primary display next launch) · browser fallback notice.
+- **Type:** OS window, opened by "Pop out" in the panel menu (desktop app only). Slim title bar with panel name, symbol, env badge and "return to workspace"; participates in sync groups; closes back into its origin dock slot.
+- **States:** normal · display disconnected (recovered to the primary display next launch) · browser build: no floating window (Pop out is hidden with an explanation).
 - **Components:** CMP-075 EnvBadgeLocal, CMP-080 DockPanel, CMP-215 FloatingWindowFrame.
 - **Stories:** US-LAY-005, US-SET-009.
 - **A11y:** The floating window is an independent document with its own title, skip link and focus scope; the window title names the panel, symbol and environment ('Ladder - BTCUSDT - LIVE'); moving focus between windows is OS-standard.
 - **Performance:** Each floating window is a separate renderer process with its own GL context; the combined budget target is >=58 fps across at most 4 GPU-heavy windows on the reference machine, beyond which the shell warns (SCR-046).
 - **Analytics/audit:** `panel.floated`, `panel.redocked`, `window.opened`, `window.closed` (analytics).
-- **Design sign-off acceptance checklist:** [ ] DEMO/LIVE band repeated in every floating window [ ] window chrome with re-dock control [ ] multi-monitor placement is remembered and restored [ ] behaviour when the parent window closes is drawn [ ] browser (non-Electron) fallback drawn - float degrades to a maximised panel with an explanatory note
+- **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.12 (heuristic; owner approval pending).
+- **Design sign-off acceptance checklist:** [ ] DEMO/LIVE band repeated in every floating window [ ] window chrome with re-dock control [ ] multi-monitor placement is remembered and restored [ ] behaviour when the parent window closes is drawn [ ] browser (non-Electron) build drawn - Pop out is hidden with an explanation, never a maximised overlay
 
 ### SCR-028 — Panel context menu
 
@@ -634,18 +643,20 @@ Drag preview                Drop zones
 - **A11y:** full keyboard menu with type-ahead and shortcut hints. **Stories:** US-WS-023.
 - **Performance:** Menu opens in <=80 ms; it is built from a static descriptor, not a per-open API call.
 - **Analytics/audit:** Actions inherit the event of the action they invoke; the menu itself emits `panel.context_menu_opened` (analytics).
-- **Components:** CMP-041 Menu, CMP-216 PanelMenu.
+- **Components:** CMP-019 Icon (`lock`), CMP-041 Menu, CMP-079 RbacGate, CMP-216 PanelMenu.
 - **Stories:** US-LAY-005.
+- **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.5 (heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] full item set drawn (settings, duplicate, float, maximise, link to sync group, rename, close) [ ] disabled items show a reason [ ] keyboard invocation via the context-menu key and Shift+F10 [ ] submenu behaviour and overflow near the viewport edge
 
 ### SCR-029 — Unsaved-changes / layout-conflict dialog
 
 - **Type:** Modal. "You have unsaved layout changes." [Save] [Discard] [Cancel]; the conflict variant adds a side-by-side summary of differences (panel count, symbols, sync groups).
-- **Components:** CMP-001 Button, CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog.
+- **Components:** CMP-001 Button, CMP-019 Icon (`lock`), CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog, CMP-079 RbacGate.
 - **Stories:** US-LAY-002, US-SET-003.
 - **A11y:** `role="alertdialog"`; the three choices are explicit buttons with verbs ('Save layout', 'Discard changes', 'Cancel'); the conflicting-change summary is text.
 - **Performance:** Conflict detection compares layout revision ids received over WS; the dialog appears within 300 ms of the conflicting write being detected.
 - **Analytics/audit:** `layout.conflict_detected`, `layout.conflict_resolved` with `{choice}` (analytics).
+- **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.7 (heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] unsaved-changes variant and cross-session conflict variant both drawn [ ] a plain-language summary of what differs [ ] no default destructive button [ ] Esc maps to Cancel, never to Discard
 
 ---
@@ -1083,6 +1094,7 @@ Drag preview                Drop zones
 - **Components:** CMP-080 DockPanel, CMP-081 DockGrid / Layout Manager, CMP-196 MultiChartLinker, CMP-217 LayoutPresetMenu, CMP-218 SyncMenu.
 - **Stories:** US-LAY-001, US-LAY-003, US-CHART-011.
 - **Analytics/audit:** `multichart.grid_changed`, `multichart.cell_symbol_changed`, `multichart.sync_group_changed`, `multichart.cell_maximised` (analytics).
+- **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.13 (heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] 1x2, 2x2, 3x3, 1+3 and custom grids drawn [ ] per-cell header with symbol/interval and sync-group tag [ ] active-cell focus indication [ ] maximise-cell and restore [ ] degraded state when the grid exceeds the GPU budget (see Performance) with the explicit reduce-quality prompt
 
 ---
@@ -2836,6 +2848,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Stories:** US-LAY-002, US-OBS-003.
 - **Performance:** Cold start to interactive shell <=2.5 s on the reference machine; the boot screen shows staged progress (shell, session, workspace, market data) and each stage has its own timeout with an actionable failure state rather than an indefinite spinner.
 - **Analytics/audit:** `app.boot_started`, `app.boot_completed` `{durationMs, stages}`, `app.boot_failed` `{stage, reason}` (analytics; boot failures also land in the incident log).
+- **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.14 (heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] staged progress drawn with named stages [ ] per-stage failure states with an action (retry, sign in again, open diagnostics) [ ] slow-boot state after 5 s explaining what is waiting [ ] the environment (DEMO/LIVE) is not shown until it is actually known - no default assumption [ ] version-mismatch handoff to SCR-157
 
 ### SCR-151 — Empty state pattern
@@ -2880,6 +2893,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **A11y:** A `role="status"` banner naming exactly which capability is degraded and what still works, in plain sentences; per-panel badges repeat the specific degradation in their accessible name.
 - **Performance:** Degraded mode is a deliberate reduction: the app sheds optional work (heatmap trail length, detector evaluation, non-focused panel update rate) to protect order entry and position display, which keep their full budget.
 - **Analytics/audit:** `degraded.entered` `{cause, sheddedFeatures}`, `degraded.exited` `{durationMs}` (analytics + incident log).
+- **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.15 (heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] each degradation cause drawn (backend partial outage, recorder down, cold tier unavailable, GPU budget exceeded, rate-limited) [ ] what still works vs what does not, stated per cause [ ] the automatic feature-shedding is disclosed, never silent [ ] manual 'reduce quality' control [ ] exit/restore state [ ] trading remains possible or is explicitly blocked - never ambiguous
 
 ### SCR-154 — Permission denied (403)

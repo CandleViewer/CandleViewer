@@ -24,7 +24,7 @@ session screen, and the recording quality. Give the corrected script a version i
 - [ ] The participant has closed every API-key, key-management, funding, wallet and transfer screen, and any account,
       balance or position view the session does not need.
 - [ ] The facilitator has looked at the shared screen before recording starts.
-- [ ] The recording goes to the private research drive only; no other upload or cloud sync is running.
+- [ ] The recording goes only to the private drive the owner designated (OQ-2); no other upload or cloud sync runs.
 - [ ] A note sheet is open under the session id, with profile, displays, scaling and input mode filled in.
 - [ ] The participant knows they may stop, skip, pause the recording or ask for more time.
 
