@@ -198,11 +198,14 @@ groups:
           summary: "A session revocation took more than 5 s to seal its sockets (SR-029)"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authrevocationlatencyhigh"
       - alert: WsRevocationCloseFailed
-        # #3635 (with #3497; SR-029): a WebSocket close that raised or hit its bound, on either
-        # path: the hub's per-session close of a revocation (ws/revocation.py, 2 s) and the
-        # registry's per-user close of a disable (ws/permissions.py, `send_timeout_s`). A
-        # cancelled close (the disable cascade's 2 s cut, which opens first and so ends a hung
-        # per-user closer before `send_timeout_s`) is not counted. That socket can stay
+        # #3635 (with #3497; SR-029): a WebSocket close that raised or hit its bound, on any of
+        # three paths: the hub's per-session close of a revocation (ws/revocation.py, 2 s), the
+        # registry's per-user close of a disable (ws/permissions.py, `send_timeout_s`), and the
+        # hub's per-context close of a view-as context's end or start (`close_context`, #3085
+        # S10, 2 s, run inline in the caller). A cancelled close is not counted: the disable
+        # cascade's 2 s cut, which opens first and so ends a hung per-user closer before
+        # `send_timeout_s`, and the view-as service's own 2 s cut of a context's closes, which
+        # logs `admin.view_as.close_failed`. That socket can stay
         # open until its access token ends (12 minutes at most) and, if its closer raised, may
         # not be sealed and keep receiving its read-only streams. A ticket, not a page: REST
         # already refuses the session (or the disabled user) and orders are REST only
@@ -223,7 +226,7 @@ groups:
           severity: ticket
           component: auth
         annotations:
-          summary: "A WebSocket close failed during a revocation or a user disable; the socket may have stayed open"
+          summary: "A WebSocket close failed during a revocation, a user disable or a view-as end; the socket may have stayed open"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-wsrevocationclosefailed"
       - alert: AuthzDeniedSpike
         expr: sum(increase(authz_denied_total[10m])) > 20
