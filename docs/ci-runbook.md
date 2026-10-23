@@ -210,8 +210,9 @@ the report jobs can write (`issues: write`, no checkout, no action), and a malfo
 job and files nothing. The Sunday `rest_k6` run reports Budget #13's per-route p95s without gating
 them until #2825's slice 2 decides the budget, because a known-red weekly job trains everyone to
 ignore red: a warning names the routes over 150 ms and nothing is filed. A dispatch still gates
-them, and any other failure of the Sunday run (a refused k6 run, an app that never started, another
-failed check) files as before.
+them, and any other failure of the Sunday run's pack step (a refused k6 run, an app that never
+started, another failed check) files as before. A failure before the pack (the `bench-free` guard,
+the k6 install, `uv sync`, the scenario check) files nothing, so look at the run.
 
 To triage a red `dast-admin` run (E42-X03's ZAP admin profile), find the step that failed:
 "Start the API" means the stack never came up (the step prints its log tail); a red "Phase A, the

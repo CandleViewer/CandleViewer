@@ -88,10 +88,12 @@ K6_READING_EXITS: Final = frozenset({0, 99})
 
 def k6_reading(returncode: int, text: str) -> dict[str, list[float]]:
     """Route -> [p95] from k6's `--summary-export` text ("" when k6 wrote none). The run is refused
-    unless k6 exited 0 or 99 and wrote a readable summary with no failed check. A 99 must be
-    explained by a route's p95 at or over 150 ms; otherwise the `checks` threshold failed, even
-    where the summary has no `checks` count. A route with no samples (`count` 0, or a `p(95)`
-    not above 0.0) has no reading, so `verdict` fails it by name, never a 0.0 that passes (#2825).
+    unless k6 exited 0 or 99 and wrote a readable summary that counts no failed check. The script
+    calls `check()` on every response, so a summary with no `checks` count is a changed export
+    shape: the run is unknown, never a 0 that passes, schedule or dispatch alike. A 99 must be
+    explained by a route's p95 at or over 150 ms; otherwise the `checks` threshold failed. A route
+    with no samples (`count` 0, or a `p(95)` not above 0.0) has no reading, so `verdict` fails it
+    by name, never a 0.0 that passes (#2825).
     """
     if returncode not in K6_READING_EXITS:
         raise RuntimeError(f"k6 exited {returncode}: the run is invalid, not a reading (#2825)")
@@ -101,7 +103,9 @@ def k6_reading(returncode: int, text: str) -> dict[str, list[float]]:
         metrics: Mapping[str, Any] = json.loads(text).get("metrics", {})
     except ValueError as exc:
         raise RuntimeError("k6 wrote an unreadable summary: the run is invalid (#2825)") from exc
-    fails = metrics.get("checks", {}).get("fails", 0)
+    fails = metrics.get("checks", {}).get("fails")
+    if fails is None:
+        raise RuntimeError("k6 wrote no checks count: the run is unknown (#2825)")
     if fails != 0:
         raise RuntimeError(f"k6 counted {fails!r} failed checks: the run is invalid (#2825)")
     out: dict[str, list[float]] = {}

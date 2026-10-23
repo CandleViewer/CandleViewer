@@ -1,7 +1,7 @@
 """E08-Q04 assertion logic on fake samples: each budget passes and fails where it should.
 Pure (no I/O, no clock), apart from the k6 driver's tests, which fake k6, the fixture app and its
-server, and write to `tmp_path` (the weekly run's drive the runner so, its reports there too), and
-the k6 script's test, which reads the script."""
+server, and write to `tmp_path` (the weekly run's tests start the runner, whose reports go there
+too), and the k6 script's test, which reads the script."""
 
 from __future__ import annotations
 
@@ -214,8 +214,8 @@ _K6_READ = {"instruments": [8.5], "data_coverage": [0.4], "trades": [12.0]}
 
 
 def _k6(checks: dict[str, float] | None = None, **p95: float) -> str:
-    """`_K6` as k6 writes it: `checks` replaces its checks counts (an empty mapping drops them), and
-    each keyword sets that route's p95."""
+    """`_K6` as k6 writes it, a zero `fails` among its checks counts: `checks` replaces those (an
+    empty mapping leaves no `fails`), and each keyword sets that route's p95."""
     doc = copy.deepcopy(_K6)
     metrics = doc["metrics"]
     if checks is not None:
@@ -225,11 +225,21 @@ def _k6(checks: dict[str, float] | None = None, **p95: float) -> str:
     return json.dumps(doc)
 
 
+def _no_checks(text: str) -> str:
+    """`text`, a k6 summary, as an export that wrote no `checks` metric at all."""
+    doc = json.loads(text)
+    del doc["metrics"]["checks"]
+    return json.dumps(doc)
+
+
+_NO_COUNT = "k6 wrote no checks count: the run is unknown"
+
+
 def test_k6_reading_keeps_only_the_routes_k6_sampled() -> None:
     """#2825: a route k6 took no samples for (`count` 0, or a 0.0 p95) has no reading, like a
-    route it wrote nothing for; a summary with neither checks nor routes reads nothing."""
+    route it wrote nothing for; a summary with a clean checks count and no routes reads nothing."""
     assert rest_load.k6_reading(0, _k6()) == _K6_READ
-    assert rest_load.k6_reading(0, json.dumps({"metrics": {}})) == {}
+    assert rest_load.k6_reading(0, json.dumps({"metrics": {"checks": {"fails": 0}}})) == {}
 
 
 def test_k6_reading_keeps_a_99_that_a_route_at_or_over_150_ms_explains() -> None:
@@ -250,24 +260,32 @@ def test_k6_reading_refuses_a_run_k6_ended_with_an_error(code: int) -> None:
     [
         (0, _k6({"passes": 2397, "fails": 3, "value": 0.99875}), "counted 3 failed checks"),
         (99, _k6(), "no route's p95 at or over 150 ms"),
-        (99, _k6({}), "no route's p95 at or over 150 ms"),
-        (99, _k6({}, trades=149.9), "no route's p95 at or over 150 ms"),
+        (99, _k6(trades=149.9), "no route's p95 at or over 150 ms"),
+        (0, _no_checks(_k6()), _NO_COUNT),
+        (0, _k6({"passes": 2400, "value": 1.0}), _NO_COUNT),
+        (99, _k6({}), _NO_COUNT),
+        (99, _no_checks(_k6(trades=527.5)), _NO_COUNT),
         (0, "", "wrote no summary"),
         (0, '{"metrics": {', "unreadable summary"),
     ],
     ids=[
         "failed-checks",
         "unexplained-99",
-        "unexplained-99-no-count",
         "unexplained-99-just-under",
+        "no-checks",
+        "no-fails",
+        "empty-checks-99",
+        "slow-route-no-checks",
         "no-summary",
         "cut-short",
     ],
 )
 def test_k6_reading_refuses_a_summary_of_no_valid_run(code: int, text: str, match: str) -> None:
     """#2825: a response that was not a 200 fails a check, and a failed check refuses the run, as
-    the in-process driver refuses a non-200: counted, or as a 99 no route's p95 explains; so do a
-    missing or an unreadable summary."""
+    the in-process driver refuses a non-200: counted, or as a 99 no route's p95 explains. A summary
+    with no `checks` count is an unknown run (the script always calls `check()`, so the export
+    changed), refused on every exit, a 99 that a slow route explains too. So are a missing and an
+    unreadable summary."""
     with pytest.raises(RuntimeError, match=match):
         rest_load.k6_reading(code, text)
 
@@ -435,9 +453,10 @@ def test_runner_dispatch_budget_13_over_exits_1(
         (107, None, True, "k6 exited 107"),
         (0, None, True, "wrote no summary"),
         (0, _k6({"passes": 2397, "fails": 3, "value": 0.99875}), True, "counted 3 failed"),
+        (99, _no_checks(_every_route(klines_cold=527.5)), True, _NO_COUNT),
         (99, _every_route(klines_cold=527.5), False, "fixture app did not start"),
     ],
-    ids=["k6-error", "no-summary", "failed-checks", "app-not-started"],
+    ids=["k6-error", "no-summary", "failed-checks", "no-checks-count", "app-not-started"],
 )
 def test_runner_weekly_run_invalid_k6_run_still_fails(
     weekly: SimpleNamespace,
@@ -454,12 +473,19 @@ def test_runner_weekly_run_invalid_k6_run_still_fails(
     assert not (tmp_path / "reports").exists()
 
 
+@pytest.mark.parametrize(
+    "p95",
+    [{"klines_warm": 0.0}, {"klines_warm": 400.0}, {"trades": 0.0}],
+    ids=["warm-no-reading", "no-speed-up", "trades-no-reading"],
+)
 def test_runner_weekly_run_another_failed_check_exits_1(
-    weekly: SimpleNamespace, tmp_path: Path
+    weekly: SimpleNamespace, tmp_path: Path, p95: dict[str, float]
 ) -> None:
-    """#2825: only the 150 ms rows are reported: warm klines without samples (no reading, so no
-    cache speed-up either) still fail the weekly run."""
-    weekly.text = _every_route(klines_cold=527.5, klines_warm=0.0)
+    """#2825: only the 150 ms rows are reported; every other hard check still fails the weekly run:
+    warm klines with no samples (no reading, so no speed-up either), warm klines at 400 ms (a 1.3x
+    speed-up from cold's 527.5 ms, under the minimum) and a route with no samples, each of the
+    last two failing that one check alone."""
+    weekly.text = _every_route(klines_cold=527.5, **p95)
     assert _pack(tmp_path) == 1
 
 

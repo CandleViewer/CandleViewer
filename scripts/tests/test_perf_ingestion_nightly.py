@@ -335,10 +335,13 @@ def test_bench_free_api_error_fails_closed(tmp_path: Path, broken: str) -> None:
 
 
 def test_bench_free_empty_job_count_fails_closed(tmp_path: Path) -> None:
-    # gh prints `length` as a number: an empty count is no answer, never a 0 (free)
+    # gh prints `length` as a number: an empty count is no answer, never a 0 (free), and the
+    # log names the run whose count it was
     held = _held("perf-ws-load.yml", "ws-load", "in_progress")
     code, log, out = _guard(tmp_path, "schedule", count="", **held)
-    assert (code, out) == (1, ""), log
+    errors = [x for x in log.splitlines() if x.startswith("::error::")]
+    named = "perf-ws-load.yml run 7 is not a number"
+    assert (code, out) == (1, "") and len(errors) == 1 and named in errors[0], log
 
 
 def test_k6_install_is_the_release_ws_load_pins_put_on_path() -> None:

@@ -133,7 +133,7 @@ jobs:
               for id in $ids; do
                 [ "$id" != "$GITHUB_RUN_ID" ] || continue # this run: its own perf-pack-full waits for this job
                 c=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/jobs?per_page=100" --jq "[.jobs[] | select(.name == \"${job}\" and (.status == \"in_progress\" or .status == \"queued\"))] | length")
-                [[ "$c" =~ ^[0-9]+$ ]] || exit 1 # an empty or odd count fails closed, never reads as 0
+                [[ "$c" =~ ^[0-9]+$ ]] || { echo "::error::refusing to start: the job count of ${wf} run ${id} is not a number, so the bench runner's state is unknown" >&2; exit 1; } # an empty or odd count fails closed, never reads as 0
                 n=$((n + c))
               done
             done
@@ -157,8 +157,8 @@ jobs:
     runs-on: [self-hosted, bench]
     # shared with perf-bars-memdiag.yml's leg: one soak at a time on cv-bench-01 (#399). A pack
     # dispatched while a leg is queued would replace that leg (one pending run per group), so
-    # bench-free fails that dispatch first; a run that skips this job may still (unverified): that
-    # dispatch, the 03:37Z schedule, a smoke dispatch, the weekly cron when busy, a re-run
+    # bench-free fails that dispatch first; a run that skips this job may still (unverified):
+    # any run without bench-free's all-clear, and a re-run
     concurrency:
       group: cv-bench-01
       cancel-in-progress: false
