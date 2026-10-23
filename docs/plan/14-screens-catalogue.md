@@ -2850,18 +2850,17 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 
 - **Behaviour:** exponential backoff with jitter; trading controls hard-disabled; panels freeze with their last-good timestamp; on reconnect, snapshots are re-fetched, order/position state is reconciled and any divergence is reported explicitly ("While you were offline: 1 order filled, 1 stop moved by a rule").
 - **A11y:** `role="alert"` once, then a persistent banner; the countdown is not announced on every tick.
-- **Components:** CMP-028 Callout / Banner, CMP-035 Countdown / Timer text, CMP-076 ConnectionStatus, CMP-077 ReconnectOverlay, CMP-078 StaleDataShade.
+- **Components:** CMP-019 Icon (`lock`), CMP-028 Callout / Banner, CMP-035 Countdown / Timer text, CMP-076 ConnectionStatus, CMP-077 ReconnectOverlay, CMP-078 StaleDataShade, CMP-079 RbacGate.
 - **Stories:** US-OBS-004, US-POS-008, US-MKT-007.
 - **Performance:** Reconnection uses exponential backoff (1s, 2s, 4s, 8s, capped 30s) with jitter; the next attempt time is shown. On reconnect, subscriptions are restored in priority order (private account state first, then the focused panel, then the rest) and a gap-fill request closes the missed window; target time-to-usable after a 30 s outage is <=5 s.
 - **Analytics/audit:** `ws.disconnected` `{reason, subscriptions}`, `ws.reconnect_attempt` `{attempt}`, `ws.reconnected` `{outageMs, gapFilled}` (analytics, and incident-log entries beyond a threshold). Orders attempted while disconnected are refused client-side and recorded as `order.blocked_offline`.
-- **Motion spec:** [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; banner content at 0 ms, dismissal fade, the PROPOSED hysteresis table and the flap collapse; `ws.banner_suppressed` proposed).
 - **Design sign-off acceptance checklist:** [ ] the global overlay and the per-panel stale shading are drawn together and are consistent [ ] last-good timestamp shown on every affected panel [ ] order entry is visibly blocked with the reason while private feeds are down [ ] the 'native stops still protect your positions' reassurance is stated where true [ ] reconnecting, gap-filling and restored states drawn [ ] the overlay never hides the positions grid entirely
-- **Design (hi-fi + handoff):** [E17-D02.md](../design/E17/E17-D02.md) · [E17-D02-handoff.md](../design/E17/E17-D02-handoff.md) (E17-D02; three SCR-152 variants, CMP-076/077/078/092, copy deck, announcement policy, motion PROPOSED)
+- **Design (hi-fi + handoff, motion spec):** [E17-D02.md](../design/E17/E17-D02.md) · [E17-D02-handoff.md](../design/E17/E17-D02-handoff.md) (E17-D02; three SCR-152 variants, CMP-076/077/078/092, copy deck, announcement policy, motion PROPOSED) · [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; banner content at 0 ms, dismissal fade, the PROPOSED hysteresis table and the flap collapse; `ws.banner_suppressed` proposed).
 
 ### SCR-153 — Degraded-mode state
 
 - **Type:** Banner. Backend up but a dependency is impaired (exchange WS down → REST polling; recorder down → no new history; rule engine down → armed rules not evaluating; GPU fallback → reduced visuals). Each variant states precisely what still works and what does not.
-- **Components:** CMP-028 Callout / Banner, CMP-069 InfoPanel, CMP-092 DegradedModeBanner, CMP-227 EstimatedBadge.
+- **Components:** CMP-019 Icon (`lock`), CMP-028 Callout / Banner, CMP-069 InfoPanel, CMP-079 RbacGate, CMP-092 DegradedModeBanner, CMP-227 EstimatedBadge.
 - **Stories:** US-DOM-005, US-SET-008, US-LAY-008.
 - **A11y:** A `role="status"` banner naming exactly which capability is degraded and what still works, in plain sentences; per-panel badges repeat the specific degradation in their accessible name.
 - **Performance:** Degraded mode is a deliberate reduction: the app sheds optional work (heatmap trail length, detector evaluation, non-focused panel update rate) to protect order entry and position display, which keep their full budget.
