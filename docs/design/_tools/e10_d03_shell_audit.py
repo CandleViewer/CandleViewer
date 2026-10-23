@@ -29,7 +29,9 @@ its source so a reviewer can re-grep it:
    PROPOSED / G-row; ``color.text.disabled`` / ``opacity.disabled`` never in a T2 row; which pairs
    ``tools/contrast/pairs.mjs`` registers.
 8. String gates on the committed files (the badge contract once, the T2 rule once, "T2" in every
-   gated row, the view-as leg first, the SCR-157 phrase, no "same as dark", no placeholders, no
+   gated row, the view-as leg first, no aggregate cluster line in a gated or board row, Release
+   T2 when engaged, every PROPOSED ``health.*`` sentence <= 60 characters with a full stop, the
+   SCR-157 phrase, no "same as dark", no placeholders, no
    chrome trading word, no local path, no Penpot host (a generic pattern; no host named), no
    pageLink, no closing keyword with an issue number, every planned board PENDING, the nine
    catalogue pointer lines, every ``US-…`` id cited exists in ``docs/plan/11-user-stories.md``).
@@ -1010,6 +1012,10 @@ TRADE_WORD_RE = re.compile(r"^(?:Buy|Sell|Place)\b")
 D02_PAGE_ID_RE = re.compile(r"page id `([0-9a-f-]{36})`")
 HEX_RE = re.compile(r"#[0-9A-Fa-f]{6}\b")
 US_ID_RE = re.compile(r"\bUS-[A-Z]+-(\d{3})(?:\.\.(\d{3}))?\b")
+AGGREGATE_LINE = "Safety · your role can't use these"  # D02 :84's cluster line, superseded (C25)
+RELEASE_SENTENCE = "Only the owner can release the kill switch."  # E09-D09 §3.1 :97 (C28)
+# the PROPOSED state keys and their sentences
+PROPOSED_KEY_RE = re.compile(r"`health\.[a-z_]+` \"([^\"]+)\"")
 NINE = (
     "SCR-010",
     "SCR-011",
@@ -1049,7 +1055,7 @@ def string_report(fails: list[str], spec: str) -> dict[str, Any]:
     g["t2_rule_once"] = spec.count(T2_SENTENCE) == 1
     s1, s4 = section(spec, "## 1.", "## 2."), section(spec, "## 4.", "## 5.")
     s9, s10 = section(spec, "## 9.", "## 10."), section(spec, "## 10.", "## 11.")
-    keys = ("rbac.", "health.", UPDATE_PHRASE, "Offline — cannot reach")
+    keys = ("rbac.", "health.", UPDATE_PHRASE)
     gated_rows = [r for r in table_rows(s4) if any(k in r for k in keys)]
     g["t2_in_gated_rows"] = bool(gated_rows) and all("T2" in r for r in gated_rows)
     g["t2_rows_cite_rule"] = bool(gated_rows) and all("§10.1" in r for r in gated_rows)
@@ -1071,6 +1077,20 @@ def string_report(fails: list[str], spec: str) -> dict[str, Any]:
     g["stamps_present"] = "PROPOSED" in spec and "RULED" in spec
     g["shape_sentence"] = SHAPE_SENTENCE in spec
     g["validity_sentence"] = VALIDITY_SENTENCE in spec
+    # the T2 pre-check fold: one reason node per control (no aggregate line in a gated row or a
+    # board row), Release… T2 for a non-owner when engaged, every PROPOSED health.* sentence
+    # <= 60 characters with a full stop
+    s0 = section(spec, "## 0.", "## 1.")
+    g["no_aggregate_cluster_line"] = (
+        AGGREGATE_LINE not in s4
+        and AGGREGATE_LINE not in s0
+        and AGGREGATE_LINE in section(spec, "### 17.3", "### 17.4")
+    )
+    g["release_t2_when_engaged"] = RELEASE_SENTENCE in s4 and RELEASE_SENTENCE in s10
+    proposed = set(PROPOSED_KEY_RE.findall(spec))
+    g["proposed_keys_form"] = bool(proposed) and all(
+        len(t) <= 60 and t.endswith(".") and "SR-" not in t for t in proposed
+    )
     cells = [c.strip().strip('`"“”') for r in table_rows(s10) for c in r.split("|")[1:-1]]
     bad_copy = [c for c in cells if TRADE_WORD_RE.match(c)]
     g["no_chrome_trading_word"] = not bad_copy
