@@ -58,7 +58,11 @@ pull_with_retries() {
     fi
     echo "pull of ${ref%%@*} failed (attempt $i of $attempts)" >&2
     if [ "$i" -lt "$attempts" ]; then
-      sleep "${waits[$((i - 1 < ${#waits[@]} ? i - 1 : ${#waits[@]} - 1))]}"
+      local idx=$((i - 1))
+      if [ "$idx" -ge "${#waits[@]}" ]; then
+        idx=$((${#waits[@]} - 1))
+      fi
+      sleep "${waits[$idx]}"
     fi
   done
   return 1
