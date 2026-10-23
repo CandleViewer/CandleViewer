@@ -1,19 +1,21 @@
 # E15 layout flows — F-LAY-1..6 (E15-D02)
 
-**Actors:** P1 owner and P2 manager; P3 viewer where a frame shows the refusal. No order is placed from these surfaces, and no layout action is audited (layout is user preference). **Route:** `/w/:workspaceId` (SCR-020), with modals as `?modal=<name>` (`docs/plan/14-screens-catalogue.md` §0.3). **Screens:** SCR-011, SCR-020, SCR-021, SCR-022, SCR-024, SCR-025, SCR-026, SCR-027, SCR-028, SCR-029. Frames, copy and decisions: `docs/design/E15/E15-D02.md` (D-n, OQ-A..T); board 25 draws each flow as a frame. Shared rules: a layout change writes nothing until Save (`updateLayout`), the working copy of every layout is kept on the device, SCR-029 opens only before a working copy would be discarded, and focus is never moved by a system event. The calls are the contract's (`docs/plan/22-api-openapi.yaml`); each flow ends with what it needs that the contract does not offer yet.
+**Actors:** P1 owner and P2 manager; P3 viewer, and an owner viewing as another user, where a frame shows a T2 control. No order is placed from these surfaces, and no layout action is audited (layout is user preference). **Route:** `/w/:workspaceId` (SCR-020), with modals as `?modal=<name>` (`docs/plan/14-screens-catalogue.md` §0.3). **Screens:** SCR-011, SCR-020, SCR-021, SCR-022, SCR-024, SCR-025, SCR-026, SCR-027, SCR-028, SCR-029. Frames, copy and decisions: `docs/design/E15/E15-D02.md` (D-n, OQ-A..T); board 25 draws each flow as a frame. Shared rules: a layout change writes nothing until Save (`updateLayout`), the working copy of every layout is kept on the device, SCR-029 opens only before a working copy would be discarded, focus is never moved by a system event, and a control the session may not use is T2, decided by the session's legs in the server's order, view-as first, then the permission, then a known state (spec §8.1), never by a role name. The calls are the contract's (`docs/plan/22-api-openapi.yaml`); each flow ends with what it needs that the contract does not offer yet.
 
 ## F-LAY-1 — Create a workspace
 
 ```mermaid
 flowchart TD
-  A1["Rail: New workspace, or the tab strip's + then New workspace"] --> B1{"Role holds workspaces:write?"}
-  B1 -->|viewer| C1["New workspace disabled: Your role can't save workspaces."]
-  B1 -->|owner or manager| D1["New workspace dialog: name, 1 to 40 characters, and Start from: a preset, Scalping preselected, or a blank layout"]
+  A1["Rail: New workspace, or the tab strip's + then New workspace"] --> B1{"The session's legs, then the state, in order"}
+  B1 -->|viewing as| C0["New workspace T2, pointing at the view-as banner: Read-only while viewing as alex."]
+  B1 -->|workspaces:write missing| C1["New workspace T2: Your role can't save workspaces."]
+  B1 -->|32 workspaces| C2["New workspace T2: You have the most workspaces you can have."]
+  B1 -->|none blocks| D1["New workspace dialog: name, 1 to 40 characters, and Start from: a preset, Scalping preselected, or a blank layout"]
   D1 -->|Cancel or Esc| E1["Nothing created"]
   D1 -->|Create workspace| F1["createWorkspace: POST /workspaces"]
   F1 -->|409 name_taken| G1["Inline: That name is already in use."]
   G1 --> D1
-  F1 -->|409 limit_reached| H1["Inline: You have 32 workspaces, the most you can have."]
+  F1 -->|409 limit_reached, another window got there first| H1["Inline refusal: You have 32 workspaces, the most you can have."]
   F1 -->|201 with its ETag| I1["createLayout: POST /workspaces/:id/layouts, Layout 1 on Ctrl+1, the preset's tree and panels, the current symbol kept"]
   I1 -->|201| J1["The new tab opens and activates: dock frame with real headers, panels mount on first visibility"]
   I1 -->|fails| K1["The tab opens on the no-layout state: No layout yet, with Browse presets and Start with a blank layout"]
@@ -39,9 +41,12 @@ flowchart TD
   H2 --> I2["Swing 4H active. The Scalping tab still reads Scalping *, named Scalping, unsaved changes"]
   I2 -->|back to Scalping| J2["Working copy restored exactly, still unsaved"]
   E2 -->|reopened from the rail| J2
-  J2 -->|Ctrl+S| K2{"updateLayout with If-Match"}
+  J2 -->|Ctrl+S| Q2{"Save T2? Viewing as, or workspaces:write missing"}
+  Q2 -->|yes| R2["Nothing sent: the reason re-shown beside Save, announced once, politely"]
+  Q2 -->|no| K2{"updateLayout with If-Match"}
   K2 -->|200| L2["Saved, the * cleared. Event: layout.saved"]
   K2 -->|412| M2["SCR-029 conflict variant, as in F-LAY-3"]
+  K2 -->|403, the session changed| X2["Refused at the point of action, then Save turns T2 from the re-read session"]
 ```
 
 - **Keyboard:** the tab strip activates manually (arrows move, `Enter` opens), `Ctrl+1..9` switches layouts, `Ctrl+S` saves.
@@ -60,6 +65,8 @@ flowchart TD
   D3 -->|yes| E3["SCR-029 unsaved variant, Cancel focused"]
   E3 -->|Cancel or Esc| C3
   E3 -->|Discard changes| H3
+  E3 -->|Save layout while T2, a viewer or viewing as| T3["Nothing sent: the reason re-shown under Save layout, announced once"]
+  T3 --> E3
   E3 -->|Save layout| F3{"updateLayout for Layout 1 with If-Match"}
   F3 -->|200| H3
   F3 -->|412| G3["SCR-029 conflict variant: re-read with getLayout, differences as text, the line Then Order-flow is applied, Cancel focused"]
@@ -138,9 +145,11 @@ flowchart TD
   C6 -->|Cancel| Z6["Nothing exported"]
   C6 -->|Download file| S6["The same bundle saved as a file, exactly what the preview listed. Event: workspace.exported"]
   S6 --> D6["Machine 2, owner or manager: the tab strip's +, then Import"]
-  D6 --> E6{"Role holds workspaces:write?"}
-  E6 -->|viewer| F6["Import disabled: Your role can't save workspaces."]
-  E6 -->|yes| G6["SCR-026: Choose file, or drop it"]
+  D6 --> E6{"The session's legs, then the state, in order"}
+  E6 -->|viewing as| V6["Import T2, pointing at the view-as banner"]
+  E6 -->|workspaces:write missing| F6["Import T2: Your role can't save workspaces."]
+  E6 -->|32 workspaces| W6["Import T2: You have the most workspaces you can have."]
+  E6 -->|none blocks| G6["SCR-026: Choose file, or drop it"]
   G6 --> H6["Validated in a worker: size, format, schema, version, panels"]
   H6 -->|over the size cap, 2 MB by E15-S07's default| I6["Rejected: the size and the limit stated, nothing imported"]
   H6 -->|malformed or schema error| J6["Rejected: the offending key named, nothing imported"]
@@ -150,9 +159,9 @@ flowchart TD
   K6 --> X6
   H6 -->|valid| L6["Preview table: layouts, panels, symbols, groups, dropped items with reasons, and the no-credentials line"]
   L6 -->|Cancel| Y6["Nothing imported"]
-  L6 -->|Import as new workspace| M6{"32 workspaces already?"}
-  M6 -->|yes| N6["Refused: delete one, then import again"]
-  M6 -->|no| O6["A new workspace, then each layout, the name made unique"]
+  L6 -->|Import as new workspace| M6{"createWorkspace"}
+  M6 -->|409 limit_reached, another window got there first| N6["Refused: delete one, then import again"]
+  M6 -->|201| O6["A new workspace, then each layout, the name made unique"]
   O6 --> P6["The new tab opens. Polite: Imported Scalping 2, 7 panels, 2 layouts, 2 items dropped. Event: layout.imported"]
 ```
 
