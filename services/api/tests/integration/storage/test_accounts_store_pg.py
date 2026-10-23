@@ -433,8 +433,10 @@ async def test_row_counts_are_env_scoped_live_accounts_and_every_key_row(
     test_a = await store.count_accounts_by_kind("testnet")
     demo_k = await store.count_api_keys_by_status("demo")
     test_k = await store.count_api_keys_by_status("testnet")
+    demo_p = await store.count_profiles_by_trading_state("demo")
+    test_p = await store.count_profiles_by_trading_state("testnet")
     main = await store.create_account(owner, _new(exch))
-    await store.create_account(owner, _new(exch, parent=main.id))
+    sub = await store.create_account(owner, _new(exch, parent=main.id))
     gone = await store.create_account(owner, _new(exch))
     await store.create_account(owner, _new(exch, env="testnet"))
     active, revoked = await _seed_key(creds, main.id), await _seed_key(creds, main.id)
@@ -449,8 +451,29 @@ async def test_row_counts_are_env_scoped_live_accounts_and_every_key_row(
         "active": 1, "revoked": 1, "pending": 1,
     }  # fmt: skip
     assert _delta(await store.count_api_keys_by_status("testnet"), test_k) == {}
+    # #906 D1a: each live account's bootstrap `Default` counts, trading disabled; the soft-deleted
+    # account's does not, and the other environment's stays out of it
+    demo = await store.count_profiles_by_trading_state("demo")
+    assert _delta(demo, demo_p) == {"trading_disabled": 2}
+    testnet = await store.count_profiles_by_trading_state("testnet")
+    assert _delta(testnet, test_p) == {"trading_disabled": 1}
+    with _c(pg_dsn) as c:  # one profile enabled for trading (0037 `ap_trading_caps`), one deleted
+        c.execute(
+            "UPDATE account_profiles SET trading_enabled = true, max_position_notional_usd = 1000, "
+            "max_daily_loss_usd = 100, max_open_positions = 1, max_concurrent_orders = 1, "
+            "max_leverage_cap = 10 WHERE exchange_account_id = %s",
+            (main.id,),
+        )
+        c.execute(
+            "UPDATE account_profiles SET deleted_at = now() WHERE exchange_account_id = %s",
+            (sub.id,),
+        )
+    demo = await store.count_profiles_by_trading_state("demo")
+    assert _delta(demo, demo_p) == {"trading_enabled": 1}  # sub's Default left both states
     with pytest.raises(ValueError):
         await store.count_accounts_by_kind("prod")
+    with pytest.raises(ValueError):
+        await store.count_profiles_by_trading_state("prod")
 
 
 async def test_key_selfcheck_store_is_env_bound_and_writes_only_its_columns(

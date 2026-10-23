@@ -397,6 +397,13 @@ _COUNT_KEYS = sa.text(
     "JOIN exchange_accounts ea ON ea.id = k.exchange_account_id "
     "WHERE ea.env::text = CAST(:env AS text) GROUP BY k.status"
 )
+_COUNT_PROFILES = sa.text(
+    "SELECT CASE WHEN p.trading_enabled THEN 'trading_enabled' ELSE 'trading_disabled' END "
+    "AS state, count(*) AS n FROM account_profiles p "
+    "JOIN exchange_accounts ea ON ea.id = p.exchange_account_id "
+    "WHERE p.deleted_at IS NULL AND ea.deleted_at IS NULL "
+    "AND ea.env::text = CAST(:env AS text) GROUP BY 1"
+)
 
 OWNER_STATEMENTS = frozenset(
     {
@@ -405,7 +412,7 @@ OWNER_STATEMENTS = frozenset(
     }
 )  # fmt: skip
 GRANT_STATEMENTS = frozenset({_GET_GRANT, _LIST_GRANT})
-TELEMETRY_STATEMENTS = frozenset({_COUNT_ACCOUNTS, _COUNT_KEYS})
+TELEMETRY_STATEMENTS = frozenset({_COUNT_ACCOUNTS, _COUNT_KEYS, _COUNT_PROFILES})
 
 _CONFLICT_CONSTRAINTS = frozenset(
     {"exchange_accounts_pkey", "ux_ea_uid", "ux_ea_label", "ux_api_keys_active",
@@ -795,6 +802,9 @@ class SqlAlchemyAccountsStore:
 
     async def count_api_keys_by_status(self, env: str) -> dict[str, int]:
         return await self._counts(_COUNT_KEYS, env, "status")
+
+    async def count_profiles_by_trading_state(self, env: str) -> dict[str, int]:
+        return await self._counts(_COUNT_PROFILES, env, "state")
 
     async def _counts(self, stmt: sa.TextClause, env: str, key: str) -> dict[str, int]:
         if env not in _ENVS:  # a typo'd env would silently count nothing

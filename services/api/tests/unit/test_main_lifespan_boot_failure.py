@@ -81,6 +81,7 @@ _ALWAYS = frozenset(
         "mesh_self_check",
         "account_access_service",
         "csrf_refusal_audits",
+        "profiles",
     }
 )
 

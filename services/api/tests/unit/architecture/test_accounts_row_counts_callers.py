@@ -5,6 +5,7 @@ only (no rows, no ids). They are system telemetry: `accounts.service.AccountsSer
 caller, and the M10 port and its Postgres adapter are the only definitions. A reference anywhere
 else in `candleviewer` (an `api/` router, the `AccountsRepository` facade, a WS topic) fails here
 and must be reviewed as an RBAC bypass first (C-12.4, SR-051).
+`count_profiles_by_trading_state` (#906 D1a) is the third, pinned the same way.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from pathlib import Path
 import candleviewer
 
 PKG = Path(candleviewer.__file__).resolve().parent
-NAMES = ("count_accounts_by_kind", "count_api_keys_by_status")
+NAMES = ("count_accounts_by_kind", "count_api_keys_by_status", "count_profiles_by_trading_state")
 ALLOWED = frozenset(
     {
         "accounts/service.py",

@@ -2,13 +2,14 @@
 
 Every module implements the lifecycle contract from `docs/plan/20-architecture.md` Sec.3:
 `start`, `stop`, `health`. On the real backend `create_app()` attaches the M10 aggregate counts
-and the two catalogue gauges, and `start()` runs ONE supervised loop that refreshes
-`cv_accounts_rows{env,kind}` and `cv_api_keys_rows{env,state}` every `REFRESH_INTERVAL_S`.
+and the three catalogue gauges, and `start()` runs ONE supervised loop that refreshes
+`cv_accounts_rows{env,kind}`, `cv_api_keys_rows{env,state}` and `cv_profile_rows{env,state}`
+(live profiles per trading state, #906) every `REFRESH_INTERVAL_S`.
 
 - The reads are scoped to the process environment (20 §7.1: queries never cross environments),
   which is also the metrics facade's `env` label, so demo rows never show as live (C-2.11).
-- Every value of the closed `account_kind` / `key_status` enums is set on each refresh, zero when
-  absent, so a vanished category reads 0, never its stale count.
+- Every value of the closed `account_kind` / `key_status` enums and each trading state is set on
+  each refresh, zero when absent, so a vanished category reads 0, never its stale count.
 - A failed or timed-out read, or a failed publish, keeps the last values, counts the failure
   (consecutive, reset on success) and degrades `health()`; it never stops the loop or the app.
 - A loop that still dies is logged by its done-callback and reads DEGRADED at once
@@ -64,6 +65,7 @@ READ_TIMEOUT_S: Final = 10.0
 STALE_AFTER_INTERVALS: Final = 3
 _KINDS: Final = tuple(k.value for k in AccountKind)
 _STATES: Final = tuple(s.value for s in KeyStatus)
+_PROFILE_STATES: Final = ("trading_enabled", "trading_disabled")
 _MODULE: Final = "accounts"
 
 
@@ -107,7 +109,7 @@ class AccountsService:
         self._clock = clock
         self._sleep = sleep
         self._counts: AccountsRowCounts | None = None
-        self._gauges: tuple[BoundedMetric, BoundedMetric] | None = None
+        self._gauges: tuple[BoundedMetric, BoundedMetric, BoundedMetric] | None = None
         self._env = ""
         self._task: asyncio.Task[None] | None = None
         self._started = False
@@ -123,11 +125,12 @@ class AccountsService:
         accounts_rows: BoundedMetric,
         api_keys_rows: BoundedMetric,
         *,
+        profile_rows: BoundedMetric,
         env: str,
     ) -> None:
         """Wire the store and the catalogue gauges (`create_app`, real backend only)."""
         self._counts = counts
-        self._gauges = (accounts_rows, api_keys_rows)
+        self._gauges = (accounts_rows, api_keys_rows, profile_rows)
         self._env = env
 
     def attach_key_selfcheck(
@@ -180,16 +183,20 @@ class AccountsService:
         count it (never raised, so the loop survives)."""
         if self._counts is None or self._gauges is None:
             return False
-        rows, key_rows = self._gauges
+        rows, key_rows, profile_rows = self._gauges
         try:
             async with asyncio.timeout(self._timeout_s):
                 accounts = await self._counts.count_accounts_by_kind(self._env)
             async with asyncio.timeout(self._timeout_s):
                 keys = await self._counts.count_api_keys_by_status(self._env)
+            async with asyncio.timeout(self._timeout_s):
+                profiles = await self._counts.count_profiles_by_trading_state(self._env)
             for kind in _KINDS:
                 rows.labels(kind).set(accounts.get(kind, 0))
             for state in _STATES:
                 key_rows.labels(state).set(keys.get(state, 0))
+            for trading in _PROFILE_STATES:
+                profile_rows.labels(trading).set(profiles.get(trading, 0))
         except Exception as exc:  # TimeoutError included; cancellation still propagates
             self._failures += 1
             logger().warning(
