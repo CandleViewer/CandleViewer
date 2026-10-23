@@ -517,13 +517,17 @@ index alone, removing nothing.
   Look for a slow step (install, browser download, build); a story count that has outgrown the
   budget needs sharding (`vitest --shard`), not a higher number.
 - **CI-A11Y-005** (Playwright browser download failed, `tools/ci/playwright_browsers.sh`): the
-  chromium download (or the apt dependency install on a cache hit) failed 5 times, waits 10, 20,
+  chromium download (`playwright install chromium`) failed 5 times, waits 10, 20,
   40, 60 s, each try bound to 120 s (`PW_INSTALL_TIMEOUT`; 5 tries and the waits stay inside the job's 15 min); the CDN is slow or down, so re-run the
   job and never change a budget. Both a11y jobs cache `~/.cache/ms-playwright` under the key
   `pw-browsers-<runner OS>-<Playwright version from the lockfile>`, with no `restore-keys`, so a
-  Playwright bump starts a cold cache. The step summary names the key and says hit or miss: a hit
-  runs `install-deps` only, a miss the full `install --with-deps` and then saves the cache in its own
-  step, so a cold run that later fails or runs long still seeds it.
+  Playwright bump starts a cold cache. The step summary names the key and says hit or miss: both
+  run `install-deps` first, once and bound like a download, and a hit stops there; a miss then runs
+  the plain `install chromium` and saves the cache in its own step, so a cold run that later fails
+  or runs long still seeds it. The system-deps step is optional on the hosted image (its libraries
+  are already installed): when it fails the job logs a `::warning::` with the exit code and the
+  last line of apt's stderr (the last 20 lines are in a log group, the one-line cause in the step
+  summary) and goes on; only the download failing 5 times raises CI-A11Y-005.
   The step sits after `pnpm install` because the version is read from the installed lockfile, so
   it is also after "Start the budget clock": the Storybook budget counts the whole job and stays
   600 s, which the cached install is what keeps it inside. The same code is raised when the version

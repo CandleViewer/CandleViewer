@@ -7,12 +7,14 @@
 #
 # `version` is the cache key's only variable part: `pnpm exec playwright --version` of the installed
 # lockfile (pnpm runs the lockfile's binary and never fetches one from a registry), accepted only as a plain X.Y.Z. `install` reads PW_CACHE_KEY, PW_CACHE_HIT ("true" on
-# a restored cache) and PW_VERSION from the step's env. On a hit the browsers are on disk and only
-# the apt dependencies are installed (`install-deps`); on a miss the full `install --with-deps`
-# downloads them. Either runs up to 5 attempts (waits PW_BACKOFF, default 10 20 40 60 s), each bound
-# to PW_INSTALL_TIMEOUT seconds (default 120, then killed 10 s later: 5 x 130 + 130 s of waits stays
-# inside the 900 s job backstop), so a slow CDN is retried and, if it never answers,
-# fails here with the code instead of in a later step. The same retry shape as
+# a restored cache) and PW_VERSION from the step's env. `install-deps` (apt libraries and fonts) runs
+# first, once, outside the retry loop and bound to PW_INSTALL_TIMEOUT: it is optional on the hosted
+# image, so a failure is a ::warning:: with its exit code and cause (apt's stderr, kept in a file,
+# last lines in a log group, one line in the step summary) and the step goes on. On a hit that is
+# all; on a miss `install chromium` (no --with-deps) then downloads the browser in up to 5 attempts
+# (waits PW_BACKOFF, default 10 20 40 60 s), each bound to PW_INSTALL_TIMEOUT seconds (default 120,
+# then killed 10 s later: 130 s of deps + 5 x 130 s + waits stays inside the 900 s job backstop), so
+# a slow CDN is retried and, if it never answers, fails here with the code instead of in a later step. The same retry shape as
 # tools/ci/prepull_images.sh. The cache key and hit or miss go to $GITHUB_STEP_SUMMARY.
 set -euo pipefail
 
@@ -49,34 +51,60 @@ case "${1:-}" in
     want=${PW_VERSION:?PW_VERSION is not set}
     if [ "${PW_CACHE_HIT:-}" = true ]; then
       state=hit
-      args=(install-deps chromium)
       # A guard on the step order (the key's version came from this same binary), not a check of the
       # restored files: a missing browser fails the first test run.
       [ "$(current_version || true)" = "$want" ] || fail "the key's Playwright $want is not the lockfile's"
     else
       state=miss
-      args=(install --with-deps chromium)
     fi
-    ok=0
-    for ((i = 1; i <= 5; i++)); do
-      if timeout --kill-after=10 "$attempt_timeout" pnpm exec playwright "${args[@]}"; then
-        ok=1
-        break
+    errf=$(mktemp)
+    trap 'rm -f "$errf"' EXIT
+    # run_logged <label> <command...>: bounded run; stderr goes to $errf, and a failure prints its last
+    # lines in a log group. Sets cause to a one-line reason.
+    run_logged() {
+      local label=$1
+      rc=0
+      shift
+      : >"$errf"
+      timeout --kill-after=10 "$attempt_timeout" "$@" 2>"$errf" || rc=$?
+      if [ "$rc" -ne 0 ]; then
+        echo "::group::$label failed (exit $rc), last lines of its stderr" >&2
+        tail -n 20 "$errf" >&2
+        echo "::endgroup::" >&2
+        cause=$(grep -v '^[[:space:]]*$' "$errf" | tail -n 1 || true)
+        cause=${cause:-no stderr output}
       fi
-      echo "playwright ${args[0]} failed (attempt $i of 5)" >&2
-      if [ "$i" -lt 5 ]; then
-        idx=$((i - 1))
-        if [ "$idx" -ge "${#backoff[@]}" ]; then
-          idx=$((${#backoff[@]} - 1))
+      return "$rc"
+    }
+    cause=""
+    rc=0
+    # System libraries and fonts: optional on the hosted image (the libraries are already there), so
+    # one bounded try outside the retry loop; a failure is a warning, never the job's failure.
+    if ! run_logged "playwright install-deps" pnpm exec playwright install-deps chromium; then
+      echo "::warning::playwright install-deps failed (exit $rc), continuing without it: $cause" >&2
+      echo "- playwright install-deps failed (exit $rc: $cause); continued, the runner image has the libraries" >>"$summary"
+    fi
+    ok=1
+    if [ "$state" = miss ]; then
+      ok=0
+      for ((i = 1; i <= 5; i++)); do
+        if run_logged "playwright install chromium (attempt $i)" pnpm exec playwright install chromium; then
+          ok=1
+          break
         fi
-        sleep "${backoff[$idx]}"
+        echo "playwright install failed (attempt $i of 5)" >&2
+        if [ "$i" -lt 5 ]; then
+          idx=$((i - 1))
+          if [ "$idx" -ge "${#backoff[@]}" ]; then
+            idx=$((${#backoff[@]} - 1))
+          fi
+          sleep "${backoff[$idx]}"
+        fi
+      done
+      if [ "$ok" != 1 ]; then
+        echo "- Playwright chromium download failed 5 times (last: $cause)" >>"$summary"
+        fail "the chromium download (playwright install) failed 5 times"
       fi
-    done
-    if [ "$ok" != 1 ]; then
-      if [ "$state" = hit ]; then
-        fail "the system dependency install (playwright install-deps) failed 5 times"
-      fi
-      fail "the chromium download (playwright install) failed 5 times"
     fi
     echo "- Playwright browsers: cache key \`$key\`, cache $state (playwright $want)" >>"$summary"
     ;;
