@@ -30,10 +30,12 @@ its source so a reviewer can re-grep it:
    carry ``opacity.disabled`` and never "T2" or "lock" (gated).
 7. String gates on the spec and the handoff (the T2 rule once, the view-as leg first, no closing
    keyword, no local path or Penpot host, every board row PENDING, no placeholder words, no
-   "merges as is" qualifier, the frame count in section 17, the colour-custom legend word, G-T11
-   named in the handoff, the Q1-Q16 rulings cited by issuecomment id with no pending ruling left,
-   the PROPOSED quota key named, rendering 2b named in section 8).
-8. The counts the boards and the PR quote (``--json`` feeds the local board check).
+   "merges as is" qualifier, the frame count in sections 0 and 17 and in the handoff, the
+   colour-custom legend word, G-T11 named in the handoff, the Q1-Q16 rulings cited by issuecomment
+   id with no pending ruling left, the PROPOSED quota key named, rendering 2b named in section 8,
+   the Board cell of every state row — the two text-only rows read "— (text only, Q11)").
+8. The counts the boards and the PR quote (``--json`` feeds the local board check; the text-only
+   states — specified in section 8 with no frame, Q11's rider — are listed).
 
 Usage: python3 -I docs/design/_tools/e14_d04_popover_audit.py [--json] [--check] [--table]
 A plain run prints every section and exits 0; ``--check`` exits 1 on any gated FAIL. UTF-8 stdout.
@@ -169,7 +171,9 @@ COLS = (
     "slot",
     "status",
 )
-# the section-8 state rows: id | kind | board; the spec's table must list exactly these (gated)
+# the section-8 state rows: id | kind | board; the spec's table must list exactly these (gated);
+# board TEXT_ONLY = specified in text with no frame (the two future alert forms, Q11's rider)
+TEXT_ONLY = "-"
 STATES_TXT = """
 default|none|05
 hover-focus|none|02
@@ -199,8 +203,8 @@ viewer|T2|05
 tool-defaults|validity|05
 multiselect-mixed|none|10
 alert-marker|marker|05
-alert-live|none|05
-alert-over-quota|T2|05
+alert-live|none|-
+alert-over-quota|T2|-
 zoom-125|none|10
 zoom-200|none|10
 forced-colors|none|05
@@ -284,8 +288,6 @@ BOARDS: list[tuple[str, str, list[str]]] = [
             "view-as",
             "tool-defaults",
             "alert-marker",
-            "alert-live",
-            "alert-over-quota",
             "forced-colors",
             "hc",
             "reduced-motion",
@@ -301,7 +303,6 @@ BOARDS: list[tuple[str, str, list[str]]] = [
             "locked-light",
             "viewer-light",
             "view-as-light",
-            "alert-over-quota-light",
         ],
     ),
     (
@@ -1199,6 +1200,13 @@ def binding_report(fails: list[str], spec: str) -> dict[str, Any]:
     want = [s[0] for s in STATES]
     if ids != want:
         fails.append(f"spec section 8 state ids differ from the tool's list: {ids} vs {want}")
+    for r, (sid, _k, board) in zip(rows, STATES, strict=False):
+        cell = r[6] if len(r) > 6 else ""
+        if board == TEXT_ONLY:
+            if not (cell.startswith("—") and "text only" in cell):
+                fails.append(f"text-only state {sid}: Board cell {cell!r} lacks '— (text only'")
+        elif cell != board:
+            fails.append(f"state {sid}: Board cell {cell!r} != the tool's board {board}")
     kinds: dict[str, int] = {}
     for r in rows:
         if len(r) < 2:
@@ -1252,8 +1260,11 @@ def string_report(fails: list[str], spec: str, hand: str, fill: dict[str, Any]) 
         "stated default with measured": f"default `fill_opacity` of {fill['default']:.2f} (measured"
         in spec,
         "no merges-as-is qualifier (E13-D03 merged)": "merges as is" not in both,
+        "section 0 names the frame count": f"{FRAMES_TOTAL} nested frames in all"
+        in section(spec, "\n## 0.", "\n## 1."),
         "section 17 names the frame count": f"{FRAMES_TOTAL} nested frames"
         in section(spec, "\n## 17.", "\n## 18."),
+        "handoff names the frame count": f"{FRAMES_TOTAL} nested frames" in hand,
         "colour-custom legend word": "Custom colour" in spec,
         "handoff names G-T11": "G-T11" in hand,
         "forced-colors T2 label in CanvasText": "GrayText"
@@ -1291,7 +1302,7 @@ def counts_report(spec: str, hand: str) -> dict[str, Any]:
     }
     frames = {n: list(fr) for n, _slug, fr in BOARDS}
     for sid, _kind, board in STATES:
-        if sid not in frames[board]:
+        if board != TEXT_ONLY and sid not in frames[board]:
             raise SystemExit(f"state {sid} has no frame on board {board}")
     km = json.loads(
         (ROOT / "apps" / "web" / "src" / "keymap" / "keymap.json").read_text(encoding="utf-8")
@@ -1303,6 +1314,7 @@ def counts_report(spec: str, hand: str) -> dict[str, Any]:
         "frames_per_board": {b: len(f) for b, f in frames.items()},
         "frames_total": sum(len(f) for f in frames.values()),
         "states": len(STATES),
+        "text_only_states": [s[0] for s in STATES if s[2] == TEXT_ONLY],
         "stories": len(STORIES),
         "swatches": len(SWATCH_KEYS),
         "A": len(ids["A"]),
