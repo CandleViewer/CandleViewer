@@ -36,12 +36,16 @@ unchanged, except the hover cells that §5 E18 puts to you. This document cites 
 - **Catalogue alignment, in this PR.** The twelve entries' updates are applied to
   `docs/plan/15-component-catalogue.md` on top of slice 1's edits (#3914): Tokens lines with the shipped tokens, a
   Variants line (CMP-011), States lines (CMP-011, CMP-021, CMP-033), Props and A11y additions and the CMP-024 and
-  CMP-037 Storybook lines; no other entry changes. The CMP-011 and CMP-021 gated clauses carry the E09-D09 §2.2 T2
-  marker and CMP-011's estimated clauses the CMP-227 marker (§5 E19); CMP-021's Tokens line keeps `radius.control`
-  for the ring until §5 E8 is answered. Six updates are held: four wait for an owner answer (§5 E11, CMP-012's
+  CMP-037 Storybook lines; no other entry changes. CMP-011's gated clause carries the E09-D09 §2.2 T2 marker (and
+  `14` §0.5 rule 5 for its omission) and its estimated clauses the CMP-227 marker (§5 E19); CMP-021's Tokens line
+  keeps `radius.control` for the ring until §5 E8 is answered, and CMP-020's says its `colorBySign` tokens are below
+  4.5:1 as text on some tiers until §5 E1. Seven updates are held: five wait for an owner answer (§5 E11, CMP-012's
   connection-dot A11y sentence; E15, CMP-020's Storybook rename to AbbreviatedWithExpandedReading; E19, CMP-011's
-  `onOpenMethodology?` prop; E25, `noreferrer` on CMP-021's Props line) and two are Penpot follow-ups, not catalogue
-  lines (CMP-021 re-copies its Props and A11y lines and CMP-033 its A11y line into their Penpot descriptions, §4.3).
+  `onOpenMethodology?` prop; E25, `noreferrer` on CMP-021's Props line; E27, CMP-021's gating: the
+  `disabled?/disabledReason?` Props clause, the disabled-with-reason parts of its States and A11y lines and the
+  `locked` icon on its Tokens line, so its Props line stays `main`'s and its States and A11y lines keep plain
+  disabled only) and two are Penpot follow-ups, not catalogue lines (CMP-021 re-copies its Props and A11y lines and
+  CMP-033 its A11y line into their Penpot descriptions, §4.3).
 
 | Component                          | Penpot component                  | Variants | Live instances inside                            |
 | ---------------------------------- | --------------------------------- | -------- | ------------------------------------------------ |
@@ -84,9 +88,10 @@ the Penpot-only layout workarounds and Penpot's own variant-set chrome.
    vertical divider, the CopyButton and the legend row grow from 24 to 32 px, and nothing else moves; the 8 px dots
    of CMP-012 and CMP-032 keep their size.
 2. The boards are PENDING (text-first merge, 2026-10-23): this PR carries no exports. The boards PR, which completes
-   slice 2, redraws the 12 sections on page `10 Components — Atoms` (the page id in the header), with the E09-D09
-   §2.2 T2 form on CMP-021 (CMP-011's remove button takes it through CMP-002 if §5 E10 is approved), CMP-011's
-   estimated chip restated as CMP-227 (§5 E19) and the hover cells of §5 E18, and exports each at dark/compact (§6).
+   slice 2, redraws the 12 sections on page `10 Components — Atoms` (the page id in the header), with CMP-021's gated
+   state held until §5 E27 is answered and then drawn per that ruling, the E09-D09 §2.2 T2 form on CMP-011's remove
+   button through CMP-002 if §5 E10 is approved, CMP-011's estimated chip restated as CMP-227 (§5 E19) and the hover
+   cells of §5 E18, and exports each at dark/compact (§6).
 3. The owner decisions this slice needs are collected in §5; each component's own questions are listed with it in §6.
    What the boards show that is clipped, overlapping or off is in §4.3.
 4. The catalogue text quoted in §6 is each entry as it stands on `main`, before this PR's alignment edits (§1).
@@ -103,15 +108,17 @@ on from them:
     §2.3). Data marks reach 3:1 on app and canvas; where another tier falls short (the audit's §4 lists each one), a
     shape, slope, count, sign, glyph or label already carries the meaning (brief §6 rule 1). Data-sized marks have no
     size token: their sample sizes are data (§4.1).
-16. **Typography roles** (CMP-020, used by CMP-030 and CMP-037): Text binds `type.ui.caption|body|body-strong|label`,
-    Heading `type.ui.heading-sm|heading-md|heading-lg|display` with a semantic `level` independent of its style, and
-    NumericText and MonoText `type.num.*` (JetBrains Mono, fixed-width digits). Numbers right-align in columns; ids
-    left-align. A colour-by-sign value always carries its + or − sign, and zero is unsigned and neutral. An
-    abbreviated value carries its expanded reading as visually hidden text, never as `aria-label` on a span (§5 E15).
-17. **Avatars** (CMP-013, CMP-025): a circle is `radius.badge` on a square box; md is `size.control.height`, sm is
-    `size.icon`. The fill is the interim `color.neutral.subtle` with `color.text.primary` initials until an avatar
-    palette exists (§5 E2). An avatar beside its visible name is decorative; alone, it is `role="img"` named by the
-    full label, never the initials. Stacks overlap through fixed `size.icon` slots, never a negative gap.
+16. **Typography roles** (CMP-020, used by CMP-030 and CMP-037; extends conventions §6): Text binds
+    `type.ui.caption|body|body-strong|label`, Heading `type.ui.heading-sm|heading-md|heading-lg|display` with a
+    semantic `level` independent of its style, and NumericText and MonoText `type.num.*` (JetBrains Mono, fixed-width
+    digits). Numbers right-align in columns; ids left-align. A colour-by-sign value always carries its + or − sign,
+    and zero is unsigned and neutral. An abbreviated value carries its expanded reading as visually hidden text, never
+    as `aria-label` on a span (§5 E15).
+17. **Avatars** (CMP-013, CMP-025; extends conventions §8): a circle is `radius.badge` on a square box; md is
+    `size.control.height`, sm is `size.icon`. The fill is the interim `color.neutral.subtle` with `color.text.primary`
+    initials until an avatar palette exists (§5 E2). An avatar beside its visible name is decorative; alone, it is
+    `role="img"` named by the full label, never the initials. Stacks overlap through fixed `size.icon` slots, never a
+    negative gap.
 18. **Padding-sized marks** (CMP-012, CMP-032): an 8 px dot is an empty board padded by `space.inset.xs` on every
     side, so no size token is invented. Penpot needs a 0.01 px spacer inside it (§4.1, §5 E5). Density never changes
     these marks, because `space.inset.*` has a single value (slice 1 §4).
@@ -184,7 +191,7 @@ on 2026-10-20 show:
 ## 5. Decisions for the owner (collected)
 
 Deduplicated across the 12 components and against slice 1 §6; each component's own wording stays in its section
-(§6). The new decisions are E1–E26; where an answer changes a drawing, the change lands in one Penpot pass over this
+(§6). The new decisions are E1–E27; where an answer changes a drawing, the change lands in one Penpot pass over this
 slice's sections with new exports ("the follow-up" below). These slice 1 decisions also cover this slice, and
 are not asked again:
 
@@ -205,12 +212,13 @@ are not asked again:
   CMP-002. CMP-021 is E8.
 - **B6** and **B7** (icon masters, variant-set chrome): the nested icons of CMP-011, 012, 021 and 033, and all twelve
   sets.
-- **C2** (gating props): CMP-021 gains `disabled?/disabledReason?`, because RBAC- and env-gated links must show their
-  reason (the spec's owner-approval item).
 - **C13** (strict matrix reading): combinations the rules make derivable are not drawn (CMP-011 draws Icon=true only
   at State=default; CMP-020 draws text, heading and mono-text once per style). CMP-012 draws the full Variant × Tone
   cross rather than each tone once, because both shapes are used in every tone.
 - **Slice 1 §1.1** (names without `/`): CMP-011, 013, 025 and 032.
+
+Slice 1's **C2** (gating props) is not one of them: it adds `disabled?/disabledReason?` to CMP-003, 005, 006, 010 and
+031 only (`E05-D02.md` §6) and never names CMP-021, so a gated link is put to you as E27.
 
 ### (a) Token gaps (E05-D01's token files, outside this PR's write set)
 
@@ -352,6 +360,24 @@ are not asked again:
   (dE76) under deuteranopia, so a deuteranope reads the side from the label alone; the spec keeps the ▲/▼ glyph
   optional for heatmap stops (05 §4.1's heatmap rule). **Recommended:** keep it optional for v0, and let E05-D04's CVD
   review decide whether heatmap legends also carry the glyph. **Affects:** CMP-037 (CMP-113).
+- **E27 — Can a link be gated?** The 2026-10-20 build gives CMP-021 a gated state (State=disabled-with-reason: the
+  dimmed link, a `locked` glyph and a reason tooltip) that no decision covers, since slice 1's C2 stops at CMP-003,
+  005, 006, 010 and 031 (`E05-D02.md:384`–`:387`; lines on `main`). `14` §0.5 rule 5 (`14-screens-catalogue.md:85`)
+  and its anatomy, E09-D09 §2.1, already settle two cases, which are not asked: a bare link whose only job is to reach
+  an `/admin/*` destination is hidden for a session without `admin:read` (T3, step 1, `E09-D09.md:38` and `:44`;
+  E08-D06's owner-only "Recorder settings" link is absent for others, `E08-D06-handoff.md:203`), and a control that
+  stands for a capability inside a visible surface drops its admin link and is decided by steps 2–5 with no link (the
+  host's sentence form or a T2 control, E09-D09 §2.2). Asked: does a link to a non-admin destination that fails a
+  step 3 or 4 leg (a permission, grant or environment, or a blocking state, `E09-D09.md:40`–`:41`) need a T2 link at
+  all, and if so, does CMP-021 join E09-D09 §8's T2 atoms "as CMP-001" (`E09-D09.md:205` lists CMP-001, 002, 004 and
+  005)? One merged spec already has one: E40-D02's "create a rule" link to `/rules/new`, disabled for a session
+  without `rules:write` (`E40-D02.md:83`–`:87`). **Recommended:** the host owns the gating, never the atom: CMP-021
+  states no gating policy of its own, and a link to an admin destination is hidden, not locked. For the asked case,
+  yes, as CMP-001: the host decides through CMP-079 RbacGate, the link takes E09-D09 §2.2's T2 form (a CMP-019 `lock`
+  glyph leading the full label, the reason inline), and CMP-021 joins E09-D09 §8's T2 atoms (an E09-D09 edit, outside
+  this PR). A "no" keeps links out of T2, and E40-D02's "create a rule" then needs another T2 control. Until you
+  answer, CMP-021's gating clauses in `15` stay at `main`'s text (§1), and the boards PR draws CMP-021 per your
+  ruling. **Affects:** CMP-021 (E09-D09 §8, E40-D02).
 
 ## 6. Components
 
@@ -430,7 +456,7 @@ _Board `CMP-011 · Tag — doc` PENDING (text-first merge, 2026-10-23): the boar
 - Estimated interactivity: brief §12 requires every estimated chip to link to its CMP-069 InfoPanel, but CMP-011 has no handler prop. Either add onOpenMethodology? (required when variant="estimated"), or confirm the chip is only interactive inside CMP-227 EstimatedBadge. In the second case the CMP-011 estimated chip is static and its focus-visible and disabled variants are dropped.
 - Should the estimated chip be exempt from opacity.disabled? It is an honesty marker (brief §1 principle 2, 'never lie by omission'; CMP-227), and dimmed its label drops to 2.84 / 2.31 / 3.96:1. If it is exempt, a disabled estimated chip keeps full opacity and only leaves the tab order, and the drawn State=disabled variant becomes a note.
 - Chip height binds size.control.height so the 24×24 remove target fits. In a 24 px table row the chip therefore touches the row edges. A shorter inline chip would need a new semantic size token; none is invented here.
-- RAW-VALUES REGISTER (group Indicators; one ruling for all groups). The E05-D02 AC and brief §12 ask for zero hardcoded px. Unbound numbers left in this group: (1) 1 px strokes: CMP-011 neutral outline, CMP-011 dashed estimated outline (and its dash pattern), CMP-012 count outline, CMP-032 empty-dot ring; the primitive border.hairline (1) exists but conventions only allow border.focus. (2) 2 px strokes: CMP-025 cut-out ring and CMP-014 arc; the primitive border.thick (2) exists. (3) Focus-ring geometry: CMP-011's ring rect is the chip expanded by 4 px (conventions §3's 2 px offset + the 2 px border.focus width), the same in every group. (4) Data-driven or intrinsic geometry: the CMP-023 root width (200 px in the drawn variants; instances fill their parent), the CMP-023 indicator widths (value % of the track: 124 / 170 / 200 px), and the CMP-014 arc (270° sweep, radius 9/24 of the box, round caps). Proposed ruling: record border.hairline and border.thick as named conventions exceptions, like border.focus, so strokes can bind; whitelist (3) and (4) as intrinsic geometry. CMP-025 no longer uses a raw negative gap (token-bound slots, see CMP-025).
+- RAW-VALUES REGISTER (group Indicators; one ruling for all groups). The E05-D02 AC and brief §12 ask for zero hardcoded px. Unbound numbers left in this group: (1) 1 px strokes: CMP-011 neutral outline, CMP-011 dashed estimated outline (and its dash pattern), CMP-012 count outline, CMP-032 empty-dot ring; the primitive border.hairline (1) exists but conventions only allow border.focus. (2) 2 px strokes: CMP-025 cut-out ring and CMP-014 arc; the primitive border.thick (2) exists. (3) Focus-ring geometry: CMP-011's ring rect is the chip expanded by 4 px (conventions §3's 2 px offset + the 2 px border.focus width), the same in every group. (4) Data-driven or intrinsic geometry: the CMP-023 root width (200 px in the drawn variants; instances fill their parent), the CMP-023 indicator widths (value % of the track: 124 / 170 / 200 px), and the CMP-014 arc (270° sweep, radius 9/24 of the box, round caps). Proposed ruling: record border.hairline and border.thick as named conventions exceptions, like border.focus, so strokes can bind; whitelist (3) and (4) as intrinsic geometry. CMP-025 no longer uses a raw negative gap (token-bound slots, see CMP-025). Stale since the build: slice 1 B1 and §5 E4 now put this ruling to you (`border.hairline` and `border.thick` as named exceptions), and CMP-014 is slice 1's and CMP-023 a later slice's.
 - Penpot treats '/' in a component name as an asset-group path, so 'Tag / Chip' is named 'CMP-011 · Tag', with the full catalogue name in the component description. Confirm this rule so all groups name slashed components the same way.
 - Matrix scope: Removable=true is drawn only for Variant=neutral (FilterBar and TagEditor chips). Status chips report system state and the estimated chip is an honesty marker, so neither is removable; this is now a spec rule, mirrored in catalogue_updates. Confirm. Estimated State=disabled is drawn because conventions §2 makes disabled universal for interactive components. It is the chip's own state and is never stacked on a disabled parent.
 - Gated removal (RBAC, env, CMP-169 rule-sourced readOnlyTags) is expressed by the consumer. Either omit the remove control (read-only tags), or show the nested CMP-002 in its disabled-with-reason look through CMP-079 (locked icon + CMP-016 tooltip). Superseded by E09-D09 §2.2 T2 (#3953); the boards PR folds §1, §5 E10, the CMP-011 and CMP-021 sections of §6, §7, the audit's gated rows and the catalogue's gated clauses into T2, and T2 governs until then. Per conventions §2, no new chip State value is drawn unless the owner asks for one. Confirm.
@@ -721,7 +747,7 @@ _Board `CMP-020 · Typography primitives — doc` PENDING (text-first merge, 202
 
 **Drawn:** 7 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d18bbf9079fb`.
 
-_Board `CMP-021 · Link — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it with the T2 form and exports `img/CMP-021-link.png` here._
+_Board `CMP-021 · Link — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it, its gated state held until §5 E27 is answered and then drawn per that ruling, and exports `img/CMP-021-link.png` here._
 
 **Keyboard** (Link (WAI-ARIA APG Link pattern, native `<a href>`; explicit role="link" for the disabled states, which have no href)):
 
@@ -743,7 +769,7 @@ _Board `CMP-021 · Link — doc` PENDING (text-first merge, 2026-10-23): the boa
 | external-icon                       | none (decorative)                                                                       | —                                                                                                                                 | aria-hidden="true"                                                                              |
 | locked                              | none (decorative)                                                                       | —                                                                                                                                 | aria-hidden="true"; the reason text is the accessible description                               |
 | sr-text                             | text (visually hidden span)                                                             | " (opens externally)"                                                                                                             | part of the link's accessible name                                                              |
-| reason                              | tooltip                                                                                 | Reason text, e.g. "Owner only: your role can't open this page."                                                                   | referenced by the link's aria-describedby; shown on hover and focus; Esc dismisses              |
+| reason                              | tooltip                                                                                 | Reason text from E09-D09 §3.1's vocabulary, e.g. "Your role can't {verb}."                                                        | referenced by the link's aria-describedby; shown on hover and focus; Esc dismisses              |
 
 **Token mapping** (catalogue name → shipped semantic token):
 
@@ -775,7 +801,7 @@ _Board `CMP-021 · Link — doc` PENDING (text-first merge, 2026-10-23): the boa
 **Open questions for the owner:**
 
 - CMP-021 has no States line: drawn default, focus-visible and disabled (the matrix rule makes disabled universal) plus disabled-with-reason (next item). Hover, active and visited are not drawn. Add any?
-- OWNER APPROVAL (list in the PR body), gated links: RBAC/env-gated links use State=disabled-with-reason (focusable role="link" + aria-disabled + reason tooltip), because 14-screens-catalogue.md §0.5 rule 5 renders a control the session may not use 'disabled with a visible reason' and 'never hidden' (only whole admin areas are hidden from navigation), the settings screen's sign-off checklist there requires 'sections the role cannot use are disabled with a reason, not hidden', and brief §12 forbids a bare disabled control for any RBAC/env-gated action. Superseded by E09-D09 §2.2 T2 (#3953); the boards PR folds §1, §5 E10, the CMP-011 and CMP-021 sections of §6, §7, the audit's gated rows and the catalogue's gated clauses into T2, and T2 governs until then. Plain disabled (not focusable) stays for unavailability that is not gating. This adds `disabled?/disabledReason?` to Link's Props (CMP-079 propagates disabledReason to the wrapped atom). Drawn for External=false only: external documentation links are not RBAC/env-gated. Confirm.
+- OWNER APPROVAL (list in the PR body), gated links, now §5 E27: slice 1's C2 does not cover links, and `14` §0.5 rule 5 step 1 hides a link to an admin destination (T3) rather than gating it, so E27 asks only about non-admin destinations. As built: RBAC/env-gated links use State=disabled-with-reason (focusable role="link" + aria-disabled + reason tooltip), because 14-screens-catalogue.md §0.5 rule 5 renders a control the session may not use 'disabled with a visible reason' and 'never hidden' (only whole admin areas are hidden from navigation), the settings screen's sign-off checklist there requires 'sections the role cannot use are disabled with a reason, not hidden', and brief §12 forbids a bare disabled control for any RBAC/env-gated action. Superseded by E09-D09 §2.2 T2 (#3953); the boards PR folds §1, §5 E10, the CMP-011 and CMP-021 sections of §6, §7, the audit's gated rows and the catalogue's gated clauses into T2, and T2 governs until then. Plain disabled (not focusable) stays for unavailability that is not gating. This adds `disabled?/disabledReason?` to Link's Props (CMP-079 propagates disabledReason to the wrapped atom), a catalogue edit held until E27 is answered. Drawn for External=false only: external documentation links are not RBAC/env-gated. Confirm.
 - The link is always underlined: color.text.link against body text is 2.16:1 (dark), below the 3:1 that would let colour alone mark a link (WCAG 1.4.1).
 - Add `noreferrer` to the catalogue's rel="noopener" so the private host never leaks in a Referer header on the browser dev target?
 - The external-link icon renders at size.icon (16 px) beside 13 px text; revisit with the icon optical-size decision on #161.
@@ -1052,11 +1078,11 @@ _Board `CMP-033 · CopyButton — doc` PENDING (text-first merge, 2026-10-23): t
 
 **Keyboard** (Button (WAI-ARIA APG Button pattern) + status message (polite live region, WCAG 4.1.3)):
 
-| Keys                | Action                                                                                                                                                                           |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tab / Shift+Tab     | Moves focus to / from the button; keyboard focus shows the CMP-002 ring. Disabled: skipped.                                                                                      |
-| Enter / Space       | Copies `value` to the clipboard, switches to State=copied and announces "Copied" (polite); focus stays on the button. Pressing again while copied copies again and re-announces. |
-| (no key; after 2 s) | Reverts to State=default silently (no announcement).                                                                                                                             |
+| Keys                | Action                                                                                                                                                                                                                                                                  |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab     | Moves focus to / from the button; keyboard focus shows the CMP-002 ring. Disabled: skipped.                                                                                                                                                                             |
+| Enter / Space       | Copies `value` to the clipboard, switches to State=copied and announces "Copied" (polite); focus stays on the button. Pressing again while copied copies again and re-announces. Key repeat (`event.repeat`, a held Enter) is ignored: one announcement per activation. |
+| (no key; after 2 s) | Reverts to State=default silently (no announcement).                                                                                                                                                                                                                    |
 
 **Accessible name and role:**
 
@@ -1199,8 +1225,8 @@ Completed for the 12 components of this slice. Open items say why and who closes
       (the conventions §2 hover cells of CMP-011's remove button and CMP-033 come with the boards PR, §5 E18);
       the Storybook stories are E05-S01/S02's.
 - [ ] Disabled states use the disabled-with-reason pattern (CMP-079), never a bare disabled control. **Open:** the boards PR, T2. CMP-021 draws it
-      for gated links, with a CMP-016 Tooltip; gated chip removal goes through CMP-079 on the nested IconButton
-      (§5 E10); copying is never gated (§5 E21); the nine other components are not interactive.
+      for gated links, with a CMP-016 Tooltip (held for §5 E27); gated chip removal goes through CMP-079 on the nested
+      IconButton (§5 E10); copying is never gated (§5 E21); the nine other components are not interactive.
 - [x] Loading/empty/error states are explicitly designed. No entry in this slice lists a loading, empty or error
       state; the missing copy-failure state is proposed in §5 E20.
 
@@ -1239,13 +1265,15 @@ Completed for the 12 components of this slice. Open items say why and who closes
       composes CMP-020, CMP-011 and CMP-033 compose CMP-002, and CMP-025 composes CMP-013.
 - [ ] Storybook stories match the full Variants × States matrix. **Not applicable to this design PR:** the stories are
       E05-S01/S02's, and the Penpot matrices are the enumeration they copy.
-- [x] Composes only published-library components: the nested CMP-002, CMP-013, CMP-016, CMP-018, CMP-020 and
-      `icon/{name}` copies are instances with overrides; nothing is detached.
+- [ ] Composes only published-library components. **Open:** as built on 2026-10-20, the nested CMP-002, CMP-013,
+      CMP-016, CMP-018, CMP-020 and `icon/{name}` copies are instances with overrides and nothing is detached; the
+      page is not re-verified at this head, so the boards PR verifies it on the redrawn page (audit scope).
 
 ## 8. Approval
 
 The owner approves by merging this spec PR and/or commenting `approved` on #161 (C-10.1; the coordinator reviews
-under the owner's delegation). This text merges first with the boards PENDING; the boards PR completes slice 2 (§6).
+under the owner's delegation). This text merges first with the boards PENDING; the boards PR completes slice 2 (§6)
+and delivers the brief §11.4 hand-off checklist, `docs/design/E05/E05-D02-handoff.md` (brief §13.3 item 8).
 Engineering stories E05-S01..S04 move to Ready only after every slice is approved. The
 accessibility pre-review is `E05-D02-data-display-a11y-audit.md`; the formal accessibility and CVD sign-off is
 E05-D04's.
