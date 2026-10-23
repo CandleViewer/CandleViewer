@@ -9,7 +9,7 @@ scaffold's authors, on the pinned toolchain versions from `/README.md`.
 
 **Mission:** starting from only the committed docs (`/README.md`,
 `/AGENTS.md`), go from a clean clone to a green `pnpm verify` and a green
-Python gate (`ruff`, `black --check`, `mypy --strict`, `pytest`) without
+Python gate (`ruff`, `ruff format --check`, `mypy --strict`, `pytest`) without
 asking the scaffold's author anything, or file every point that required a
 guess as a documentation defect.
 

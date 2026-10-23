@@ -84,8 +84,8 @@ merges `security-review` PRs personally; the orchestrator (Agent B's session, pe
    Frontend/hooks: `pnpm install` at the repo root (installs commitlint, lint-staged, branch-name
    hook — `test/` prefixes are rejected; use `feat fix chore design spike hotfix docs`).
 3. Learn "green" on `main` first. Commands are owned by `AGENTS.md` §4 — never invent one.
-   Backend gate: `ruff check . && ruff format --check . && black --check . && mypy --strict . &&
-lint-imports && pytest -p no:cacheprovider -m "not exchange_smoke and not (chaos and integration)
+   Backend gate: the lint, format-check, typecheck and architecture-contract (`lint-imports`)
+   commands in §4's `services/api` table, then `pytest -p no:cacheprovider -m "not exchange_smoke and not (chaos and integration)
 and not roundtrip and not fuzz and not harness and not perf and not flaky"`. JS/TS: `pnpm verify`.
    Semgrep custom rules: run each `.semgrep/cv-*.yml` as its own `--config` on your touched files;
    0 findings, and **never add `nosemgrep`/`noqa`/`type: ignore` without a coded, justified reason**.
@@ -216,7 +216,7 @@ Standing owner delegations recorded on #1778 (read the originals before relying 
 7. **Implement the minimum**; read two neighbouring files and copy their patterns. Decimal for
    money/price/qty; tz-aware UTC; pydantic v2 `extra="forbid"` at the edge; typed domain errors;
    bounded queues; every external await under a timeout; no `Any` in public signatures.
-8. **Run the gate** locally on touched dirs (ruff, format, black, mypy --strict, lint-imports,
+8. **Run the gate** locally on touched dirs (the checks in `AGENTS.md` §4,
    pytest for your dirs, semgrep cv-*). **Mutation check**: break the logic once and confirm a
    test fails; say which mutant in the PR. Never open an unrun PR.
 9. **Commit** conventionally (`type(scope): summary`, scope from the allowed list, ≤100-char

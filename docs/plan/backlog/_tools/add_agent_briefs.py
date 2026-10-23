@@ -206,7 +206,7 @@ def commands_for(component: str, epic: str) -> list[str]:
         ]
     if component in ("api", "backtesting", "auth", "alerts", "infra") or epic in ("E38", "E39", "E40"):
         cmds += [
-            "`cd services/api && ruff check . && black --check . && mypy --strict .`",
+            "`cd services/api && ruff check . && ruff format --check . && mypy --strict .`",
             "`cd services/api && pytest -m \"not integration\" --cov=. --cov-fail-under=85`",
         ]
     cmds.append("`pnpm verify` (full local gate before opening the PR)")
