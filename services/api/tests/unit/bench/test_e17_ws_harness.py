@@ -1361,8 +1361,8 @@ def test_w5_judge_rereads_a_saved_directory_to_the_answer_w5_wrote_and_writes_no
     assert capsys.readouterr().out == saved[tmp_path / "w5.json"].decode() and tree() == saved
 
 
-@pytest.mark.parametrize("kind", ["symlink", "oversized"])
-def test_w5_judge_refuses_a_symlink_or_an_oversized_file_before_it_reads(
+@pytest.mark.parametrize("kind", ["symlink", "fifo", "oversized"])
+def test_w5_judge_refuses_a_symlink_a_fifo_or_an_oversized_file_before_it_reads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], kind: str
 ) -> None:
     saved = saved_w5(tmp_path, monkeypatch)
@@ -1370,6 +1370,8 @@ def test_w5_judge_refuses_a_symlink_or_an_oversized_file_before_it_reads(
     bad = saved / "mixed-healthy" / "extra"
     if kind == "symlink":
         bad.symlink_to(saved / "w5.json")
+    elif kind == "fifo":
+        os.mkfifo(bad)  # neither a directory nor a regular file: a read would wait for a writer
     else:
         with bad.open("wb") as f:
             f.truncate((64 << 20) + 1)  # sparse: nothing is written
@@ -1377,6 +1379,30 @@ def test_w5_judge_refuses_a_symlink_or_an_oversized_file_before_it_reads(
         runner.cmd_w5_judge(argparse.Namespace(dir=str(saved)))
     assert str(refused.value) == f"{bad}: a symlink or over 64 MiB: not read"
     assert capsys.readouterr().out == ""  # the clean phases around it were not judged either
+
+
+def test_w5_judge_reads_a_file_of_exactly_64_mib(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (saved_w5(tmp_path, monkeypatch) / "mixed-healthy" / "extra").open("wb") as f:
+        f.truncate(64 << 20)  # sparse: the limit itself is read, one byte more is not
+    capsys.readouterr()
+    assert runner.cmd_w5_judge(argparse.Namespace(dir=str(tmp_path))) == 0
+
+
+def test_w5_judge_refuses_a_symlinked_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    link = tmp_path / "link"
+    link.symlink_to(saved_w5(tmp_path / "saved", monkeypatch), target_is_directory=True)
+    with pytest.raises(SystemExit) as refused:
+        runner.cmd_w5_judge(argparse.Namespace(dir=str(link)))
+    assert str(refused.value) == f"{link}: a symlink or over 64 MiB: not read"
+
+
+def test_w5_judge_of_a_missing_dir_gives_no_data(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert runner.cmd_w5_judge(argparse.Namespace(dir=str(tmp_path / "absent"))) == 1
+    assert json.loads(capsys.readouterr().out)["recommendation"] == "no_data"
 
 
 def test_w5_judge_names_a_mixed_phase_its_directory_lacks(

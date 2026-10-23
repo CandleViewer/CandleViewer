@@ -837,10 +837,12 @@ def cmd_w5_judge(a: argparse.Namespace) -> int:
     """Re-judge a saved W5 directory (`w5 --out-dir DIR`) offline: the phases `cmd_w5` builds, from
     the saved files alone, through `w5.analyze`. It prints the answer as JSON, writes nothing and
     exits as `cmd_w5` does (the note on a scrape that timed out and was kept is not repeated). A
-    symlink, or a file over 64 MiB, anywhere under DIR is refused before anything is read."""
+    symlink, a FIFO or a device (a read of one waits for a writer), or a file over 64 MiB, in DIR
+    or under it, is refused before anything is read; a DIR that is not there gets `no_data`."""
     root = Path(a.dir)
     for p in (root, *root.rglob("*")):
-        if p.is_symlink() or (p.is_file() and p.stat().st_size > 64 << 20):
+        special = p.exists() and not (p.is_dir() or p.is_file())  # a FIFO, a device
+        if p.is_symlink() or special or (p.is_file() and p.stat().st_size > 64 << 20):
             raise SystemExit(f"{p}: a symlink or over 64 MiB: not read")
     phases: list[w5.Phase] = []
     left_out: list[str] = []
