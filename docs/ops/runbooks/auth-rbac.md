@@ -429,8 +429,8 @@ without it; a clean stop also writes `/data/admin-jobs/`, and a recording `/data
 them (the audit lane key, below).
 
 1. Record the incident in its ticket before you start: who, when, why, and who has the host. Every
-   run that writes its attempt record pages (R8), refused ones included, and the pages need that
-   context.
+   run that writes its attempt record pages (R8; the limits are under Alerts, below), refused ones
+   included, and the pages need that context.
 2. Stop cv-api and check that it is down:
 
    ```bash
@@ -494,20 +494,27 @@ them (the audit lane key, below).
 
 **Alerts (R8).** `AuthBreakGlassAttempted` pages for every run that writes its attempt record,
 refused ones included (it counts `auth.break_glass_attempt` rows, so a pre-audit refusal does not
-page); `AuthBreakGlassUsed` pages while a reset's event is unresolved;
+page), with three limits: it sees no rise without Prometheus history of the series (a new
+Prometheus, or a refused run after cv-api was stopped for over a week); runs under 15 minutes apart
+share one page; and the page comes only at the first scrape after cv-api restarts, since the CLI
+runs while it is stopped (see the rule's comment in `infra/prometheus/alerts/system_page.yml` and
+`docs/plan/07-release-and-prr.md#alert-authbreakglassattempted`). A completed reset still pages
+through `AuthBreakGlassUsed`, which needs no history: it pages while a reset's event is unresolved.
 `AuthBreakGlassStateReadFailing` is a ticket when cv-api cannot read that state (their sections in
 `docs/plan/07-release-and-prr.md`). main-orchestrator ruled this routing (page, page, ticket) on
 2026-10-17 under the owner's delegation; it awaits the owner's confirmation on #2119. A severity is
 one label in `infra/prometheus/alerts`.
 
-**Drilling the refusals (#2494).** Outside `live` only: a `live` run needs an unused code from the
-sealed recovery envelope and resets the real Owner. A drill outside `live` pages too, since the
-rule has no environment filter and Alertmanager routes by severity alone: every run that writes
-its attempt record pages (R8), so warn the on-call first. Run each injection with `-T`, so that a
-run which passes the check under test stops at `no_tty` (11) and never reaches the prompt. Leaving
-the KEK variables unset is not "no KEK": they default to the compose secret's path, so a mounted
-KEK still loads and the proof passes. Point the handle at an absent path instead; a relative audit
-path drills 4. Each still writes an attempt and a refusal record:
+**Drilling the refusals (#2494).** Outside `live` only: an injection that fails to stop would
+consume a live recovery code and reset the real Owner (A7 showed one can, in
+`docs/security/reviews/e09-auth-review.md` section 3), and in `live` the KEK default is refused
+(`secrets/_source.py`). A drill outside `live` pages too, since the rule has no environment filter
+and Alertmanager routes by severity alone: every run that writes its attempt record pages (R8;
+limits above), so warn the on-call first. Run each injection with `-T`, so that a run which passes
+the check under test stops at `no_tty` (11) and never reaches the prompt. Leaving the KEK variables
+unset is not "no KEK": they default to the compose secret's path, so a mounted KEK still loads and
+the proof passes. Point the handle at an absent path instead; a relative audit path drills 4. Each
+still writes an attempt and a refusal record:
 
 ```bash
 $COMPOSE run -T --rm --no-deps -e CV_KEK_HANDLE=/run/secrets/absent_kek --entrypoint python api -m candleviewer.breakglass --owner <owner>   # 9 kek_unproven
