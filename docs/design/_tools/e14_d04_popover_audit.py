@@ -31,7 +31,8 @@ its source so a reviewer can re-grep it:
 7. String gates on the spec and the handoff (the T2 rule once, the view-as leg first, no closing
    keyword, no local path or Penpot host, every board row PENDING, no placeholder words, no
    "merges as is" qualifier, the frame count in section 17, the colour-custom legend word, G-T11
-   named in the handoff).
+   named in the handoff, the Q1-Q16 rulings cited by issuecomment id with no pending ruling left,
+   the PROPOSED quota key named, rendering 2b named in section 8).
 8. The counts the boards and the PR quote (``--json`` feeds the local board check).
 
 Usage: python3 -I docs/design/_tools/e14_d04_popover_audit.py [--json] [--check] [--table]
@@ -77,7 +78,8 @@ d02 = _load(TOOLS / "e14_d02_interaction_audit.py", "e14_d02_interaction_audit")
 
 THEMES = ("dark", "light", "high-contrast")
 # E13-D03 section 3.1 (merged as f437dc6b4, PR 4212): the eight slot aliases per theme;
-# high-contrast inherits the dark alias. Q12's default aliases color.drawing.palette.N to them.
+# high-contrast inherits the dark alias. Q12 (RULED, issuecomment 6362143576) aliases
+# color.drawing.palette.N to them.
 SLOT_ALIAS: dict[str, tuple[str, ...]] = {
     "dark": (
         "palette.teal.500",
@@ -252,6 +254,7 @@ BOARDS: list[tuple[str, str, list[str]]] = [
         [
             "duplicate-level",
             "levels",
+            "level-last-remove",
             "bands",
             "note",
             "note-empty",
@@ -277,6 +280,7 @@ BOARDS: list[tuple[str, str, list[str]]] = [
             "deleted-elsewhere",
             "locked",
             "viewer",
+            "viewer-filled",
             "view-as",
             "tool-defaults",
             "alert-marker",
@@ -333,6 +337,7 @@ BOARDS: list[tuple[str, str, list[str]]] = [
             "tool-defaults-menu",
             "tool-defaults-popover",
             "templates-viewer",
+            "templates-view-as",
         ],
     ),
     (
@@ -340,6 +345,7 @@ BOARDS: list[tuple[str, str, list[str]]] = [
         "multiselect-a11y-zoom",
         [
             "multiselect-mixed",
+            "multiselect-viewer",
             "batch-failed",
             "batch-target-unavailable",
             "zoom-125",
@@ -1256,6 +1262,11 @@ def string_report(fails: list[str], spec: str, hand: str, fill: dict[str, Any]) 
         "handoff has no blank checklist line": not [
             ln for ln in hand.splitlines() if ln.startswith("- [ ]") and "N/A" not in ln
         ],
+        "Q1-Q16 RULED by issuecomment id, nothing pending": "6362143576" in spec
+        and "RULING PENDING" not in spec
+        and "no orchestrator ruling exists" not in spec,
+        "the PROPOSED quota key named": "alert.quota_reached" in spec,
+        "rendering 2b named in section 8": "(2b)" in section(spec, "\n## 8.", "\n## 9."),
     }
     boards = table_rows(section(spec, "\n## 0.", "\n## 1."))
     checks["ten board rows, every one PENDING"] = len(boards) == len(BOARDS) and all(
