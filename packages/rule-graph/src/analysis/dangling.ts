@@ -11,7 +11,8 @@ import { type NodePorts, portsOf } from "../ports.js";
 
 /** An input left empty: its node and port, under the stable code DANGLING_PORT. */
 export type DanglingPort = { code: "DANGLING_PORT"; nodeId: string; port: string; message: string };
-/** The empty required inputs of `graph`, in node order, then port order. */
+/** The empty required inputs of `graph`, in node order, then port order; the server lists them by node id in
+ * code point order (graph.py:158), and toIr sorts them that way before it refuses the first. */
 export function findDanglingPorts(graph: GraphModel): DanglingPort[] {
   const { nodes, edges } = (isTree(graph) ? graph : {}) as Partial<GraphModel>;
   const lists = Array.isArray(nodes) && Array.isArray(edges);
