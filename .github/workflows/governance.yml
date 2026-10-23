@@ -197,8 +197,10 @@ jobs:
         with:
           node-version: "20"
 
+      # pnpm 12 downloads its native binary on first use and the cases run with corepack's network
+      # off, so the one `pnpm --version` here, with network access, fetches it.
       - name: Enable the pinned pnpm for the install-policy tests
-        run: corepack enable && corepack prepare pnpm@12.5.1 --activate
+        run: corepack enable && corepack prepare pnpm@12.5.1 --activate && pnpm --version
 
       - name: Install check dependencies (PyYAML for GOV-004, pytest(-cov) for unit tests)
         run: python -m pip install --quiet -r scripts/requirements-ci.txt

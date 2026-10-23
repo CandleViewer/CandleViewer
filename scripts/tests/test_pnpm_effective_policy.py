@@ -11,7 +11,8 @@ pins that.
 CI must run them: `governance-tests` sets up the pinned pnpm (governance.yml), so without it they
 fail there, and skip only on a developer machine. A pnpm other than the pin answers for another
 program, so that counts as absent. Nothing here touches the network: `--offline`, a registry
-nothing listens on, and corepack told not to download.
+nothing listens on, and corepack told not to download. pnpm 12 fetches its native binary on first
+use, so provisioning runs `pnpm --version` once with network access (governance.yml does).
 """
 
 from __future__ import annotations
@@ -99,7 +100,9 @@ def _pnpm_problem() -> str | None:
         return None
     return (
         f"package.json pins pnpm {PINNED_VERSION}, `pnpm --version` says "
-        f"{version or got.stderr.strip()!r}: run corepack prepare pnpm@{PINNED_VERSION} --activate"
+        f"{version or got.stderr.strip()!r}: run corepack prepare pnpm@{PINNED_VERSION} "
+        "--activate, then pnpm --version once with network access (pnpm 12 downloads its binary "
+        "on first use)"
     )
 
 
