@@ -158,10 +158,71 @@ def test_export_states_the_adr_0039_rule(rule: str) -> None:
     assert rule in _EXPORT
 
 
+def test_export_states_its_checks_in_one_order_and_keeps_its_501_until_s10b() -> None:
+    """#889 S10's contract states the checks in the order S10b serves them, the idempotency lookup
+    before every refusal that follows validation; the `501` stays declared, deprecated, until S10b
+    removes it with the route, so each merge leaves `main` consistent (ruling, 2026-10-23)."""
+    export = SPEC["paths"]["/admin/audit/export"]["post"]
+    assert set(export["responses"]) == {"202", "401", "403", "409", "422", "429", "501", "503"}
+    stub = export["responses"]["501"]["description"]
+    assert stub.startswith("Deprecated: replaced by #889 S10b")
+    assert "**Not implemented yet.**" in _EXPORT
+    order = _EXPORT.split("**Order of the checks**", 1)[1].split("**Who.**", 1)[0]
+    cues = [
+        "`403 step_up_required`", "`401`", "`403` (`code: forbidden`)", "validation (`422`",
+        "the idempotency lookup", "`503 signing_unavailable`;", "rate limit (`429`)",
+        "single-flight (`409 conflict`)", "the write-ahead request record and the `202`",
+    ]  # fmt: skip
+    at = [order.index(cue) for cue in cues]
+    assert at == sorted(at)
+    assert "the `429` and the two `409`s (`conflict` and `idempotency_key_reuse`) are" in order
+    assert "Only an export whose job is created counts toward the hourly rate" in order
+
+
+def test_export_is_unavailable_too_while_its_directory_takes_no_hard_links() -> None:
+    """#889 S9-2's probe (`links_ok`), consumed by S10: refused as the key's check is, recorded
+    with a reason of its own, and a sweep probes again."""
+    rule = "The same check answers the same way while the export directory takes no hard links"
+    assert rule in _EXPORT and "recorded with reason `export_volume_unavailable`" in _EXPORT
+    assert "the sweep probes again every 60 s, so a remount recovers with no restart" in _EXPORT
+
+
+def test_signing_unavailable_names_no_kek_among_a_failed_jobs_causes() -> None:
+    job_error = text(_SCHEMAS["Job"]["properties"]["error"]["description"])
+    assert "`signing_unavailable` (no KEK held, no usable key or a key that cannot be" in job_error
+
+
 def test_signing_unavailable_is_a_registered_rest_only_503() -> None:
+    """Its title names both causes the export route answers it for: the key, and an export
+    directory that takes no hard links (#889 S10, the security lens's C1-1)."""
     (entry,) = [e for e in SPEC["x-error-codes"] if e["code"] == "signing_unavailable"]
     assert (entry["status"], entry["retryable"]) == (503, False)
+    assert "or the export directory takes no hard links" in entry["title"]
     assert ERROR_META[ErrorCode("signing_unavailable")].surfaces == ("rest",)
+
+
+def test_an_exports_key_is_kept_with_its_job_not_for_24_h() -> None:
+    """The export's `Idempotency-Key` lives with its job in the process's job store, as the
+    recorder's job routes keep theirs, never for the 24 h the global rule states (ruling,
+    2026-10-23; the security lens's C1-2)."""
+    info = text(SPEC["info"]["description"])
+    assert "It keeps that `202` with its job in the process's job store, as" in info
+    assert "all lost at a restart, so for no fixed 24 h." in info
+
+
+def test_a_job_succeeds_only_once_its_completion_is_recorded() -> None:
+    """#889 S10 (the code lens's C1-1): an unwritten completion fails the job `audit_unavailable`
+    and removes its file; **Audit** names `admin.audit_export`'s four reasons."""
+    job_error = text(_SCHEMAS["Job"]["properties"]["error"]["description"])
+    assert "or the export's completion record could not be written, and its file is" in job_error
+    audit = _EXPORT.split("**Audit.**", 1)[1]
+    assert "The job turns `succeeded` only once its completion `admin.audit_export` is" in audit
+    assert "`requested`, `completed` and `failed`, beside the download's `downloaded`." in audit
+
+
+def test_the_file_format_says_s10b_schedules_the_export() -> None:
+    """24 §15.7 (the code lens's C1-4): the job replaces the `501` from S10b on."""
+    assert "from S10b on, `exportAuditLog` schedules the job that plans, writes" in _format()
 
 
 def test_job_error_names_every_code_a_failed_export_carries() -> None:

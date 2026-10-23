@@ -187,7 +187,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.DEGRADED_DATA: ErrorMeta(("rest", "ws",), "any", True, None, None, "Local store is behind the exchange beyond the freshness SLO"),
     ErrorCode.INSTRUMENT_CACHE_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Instrument cache is stale and could not be refreshed in time to check the exchange's limits"),
     ErrorCode.AUTH_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Second factor temporarily unavailable"),
-    ErrorCode.SIGNING_UNAVAILABLE: ErrorMeta(("rest",), None, False, None, None, "The audit export signing key is missing or cannot be opened; export alone is unavailable"),
+    ErrorCode.SIGNING_UNAVAILABLE: ErrorMeta(("rest",), None, False, None, None, "The audit export signing key is missing or cannot be opened, or the export directory takes no hard links; export alone is unavailable"),
     ErrorCode.TIMEOUT: ErrorMeta(("rest",), None, True, None, None, "Upstream exchange call exceeded the deadline"),
     ErrorCode.PROTOCOL_VIOLATION: ErrorMeta(("ws",), "connection", False, None, 1002, "Frame out of order or malformed envelope"),
     ErrorCode.FRAME_MALFORMED: ErrorMeta(("ws",), "connection", False, None, 1002, "Binary body inconsistent with its header"),

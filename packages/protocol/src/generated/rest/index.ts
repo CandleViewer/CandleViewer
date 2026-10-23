@@ -120,20 +120,27 @@ export interface paths {
      *     covers the window `[from, to)`, for offline retention. Poll `GET /admin/jobs/{jobId}`; once
      *     the job succeeds its `result` is an `AuditExportResult`.
      *
-     *     **Not implemented yet.** Until #889 S10 serves the signed export (ADR-0039), every request
-     *     that passes authentication, the `audit` step-up
-     *     and RBAC is answered `501 not_implemented`. No job is created and nothing is exported.
-     *     The `202` below is the target behaviour. While stubbed the checks run in this order. For
-     *     an authenticated session the step-up guard runs first, before the operation and before
-     *     RBAC: until the session holds an `audit` step-up the call is refused with
+     *     **Not implemented yet.** Until #889 S10b serves the signed export (ADR-0039), every request
+     *     that passes authentication, the `audit` step-up and RBAC is answered `501 not_implemented`:
+     *     no job is created, nothing is exported, and a `501` writes no audit record. That `501` is
+     *     deprecated: S10b removes it with the route that replaces it.
+     *
+     *     **Order of the checks** (as served from #889 S10b). For an authenticated session the
+     *     step-up guard runs first, before the operation and before RBAC: until the session holds an
+     *     `audit` step-up the call is refused with
      *     `403 step_up_required` (`action_class: audit`), whatever the caller's role. The operation
-     *     then answers `401` when the request is not authenticated, `403` (`code: forbidden`) for
-     *     anyone but the Owner, and `501` for the Owner; as on every audit operation,
-     *     `503 store_unavailable` comes first among these when the audit backend is unavailable. No
-     *     body is parsed before these checks, so a malformed body never changes the answer. A `501`
-     *     writes no audit record: nothing is exported. The limits, content, download and audit
-     *     rules below, and the `202`, are the target behaviour and apply in full once export is
-     *     implemented.
+     *     then answers `401` when the request is not authenticated and `403` (`code: forbidden`) for
+     *     anyone but the Owner; as on every audit operation, `503 store_unavailable` comes first
+     *     among these when the audit backend is unavailable. No body is parsed before these checks,
+     *     so a malformed body never changes those answers. Then, in this order: validation (`422`,
+     *     the `Idempotency-Key` too when one is sent); the idempotency lookup, which answers the
+     *     same key and body with the stored `202` (`Idempotency-Replayed: true`) and another body
+     *     with `409 idempotency_key_reuse`, before any refusal below; `503 signing_unavailable`;
+     *     the per-user rate limit (`429`); single-flight (`409 conflict`); then the write-ahead
+     *     request record and the `202` with its job. Only an export whose job is created counts
+     *     toward the hourly rate. Refusals fall under the audit budget described on
+     *     `queryAuditLog`, as `verifyAuditChain`'s do: the `429` and the two `409`s (`conflict`
+     *     and `idempotency_key_reuse`) are counted, never recorded.
      *
      *     **Who.** Owner only (`audit:export`, `04-security-program.md` §7.2.2 row 50), with a
      *     step-up of the `audit` action class (SR-025, 5-minute grace; SR-067). Until the session
@@ -174,9 +181,12 @@ export interface paths {
      *     under the audit budget described on `queryAuditLog`, as the other refusals on the
      *     `/admin/audit*` operations are: it spends a slot of that budget, never
      *     `audit_export_rate_per_hour` quota, and carries no `Retry-After` unless that budget's cap
-     *     adds one. A job whose header names a key that is no longer the active one when it signs (a
-     *     rotation ran anyway) fails unsigned with `error: signing_key_rotated`; `Job.error` lists the
-     *     codes a job fails with.
+     *     adds one. The same check answers the same way while the export directory takes no hard
+     *     links, as the probe at boot found (ADR-0039; the export file is published by a hard link,
+     *     and the sweep probes again every 60 s, so a remount recovers with no restart); that
+     *     refusal is recorded with reason `export_volume_unavailable`. A job whose header names a key
+     *     that is no longer the active one when it signs (a rotation ran anyway) fails unsigned with
+     *     `error: signing_key_rotated`; `Job.error` lists the codes a job fails with.
      *
      *     **Download.** The file at `download_url` is fetched with an authenticated `GET` whose URL
      *     carries no credential. Its checks run in this order: authentication (`401`),
@@ -195,7 +205,9 @@ export interface paths {
      *     record cannot be written the call fails with `503 store_unavailable` and no job is
      *     created. M2 writes `security.audit_export_signed` before it signs (ADR-0039 decision 7).
      *     Completion is audited with the job id, the window, the span, the row count, the file
-     *     digest and the actor.
+     *     digest and the actor. The job turns `succeeded` only once its completion
+     *     `admin.audit_export` is written, and that action's reasons are `requested`, `completed`
+     *     and `failed`, beside the download's `downloaded`.
      */
     post: operations["exportAuditLog"];
     delete?: never;
@@ -904,8 +916,9 @@ export interface paths {
      *     `Retry-After` past `audit_signing_rotate_rate_per_hour` rotations of the environment in
      *     a rolling hour (default 3; only rotations that start count); and `409 conflict`
      *     (single-flight) while a rotation or an export job, queued or running, is under way for
-     *     the environment, or when the environment has no key to retire (its first key is generated at
-     *     boot). The `429` is counted, not recorded, as `queryAuditLog`'s is; each other refusal is
+     *     the environment, or when the environment has no active key to retire (its first key is
+     *     generated at boot, while keys that are all retired have no recovery here: ADR-0039 Q4).
+     *     The `429` is counted, not recorded, as `queryAuditLog`'s is; each other refusal is
      *     audited as `security.audit_signing_key_rotation_refused` with its reason, as `rewrapKek`
      *     audits `security.kek_rotation_refused`, and a refusal whose record cannot be written is
      *     answered `503 audit_unavailable` instead.
@@ -7783,7 +7796,7 @@ export interface components {
       stale_since: string | null;
     };
     Job: {
-      /** @description Why a `failed` job failed, as a stable code, never a message. Open-ended for readers. A failed `audit_export` job has produced no downloadable file; it fails with `export_too_large` (its span is over `audit_export_max_rows`, or its file over `audit_export_max_bytes`; nothing is left on disk), `signing_key_rotated` (its header names a key that was no longer the active one when it came to sign), `signing_unavailable` (a key that cannot be opened, or a signer failure), `audit_unavailable` (the signer refused because its write-ahead record could not be written: an audit outage is answered as one) or `internal_error` (ADR-0039). */
+      /** @description Why a `failed` job failed, as a stable code, never a message. Open-ended for readers. A failed `audit_export` job has produced no downloadable file; it fails with `export_too_large` (its span is over `audit_export_max_rows`, or its file over `audit_export_max_bytes`; nothing is left on disk), `signing_key_rotated` (its header names a key that was no longer the active one when it came to sign), `signing_unavailable` (no KEK held, no usable key or a key that cannot be opened, or a signer failure), `audit_unavailable` (the signer refused because its write-ahead record could not be written, or the export's completion record could not be written, and its file is removed: an audit outage is answered as one) or `internal_error` (ADR-0039). */
       error?: string | null;
       /** Format: date-time */
       finished_at?: string | null;
@@ -11517,6 +11530,8 @@ export interface operations {
       /** @description Export scheduled. */
       202: {
         headers: {
+          "Cache-Control"?: "no-store";
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           [name: string]: unknown;
         };
         content: {
@@ -11533,7 +11548,7 @@ export interface operations {
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
-      /** @description Not implemented yet: export is stubbed until #889 S10 serves the signed export (ADR-0039; see the operation description). */
+      /** @description Deprecated: replaced by #889 S10b, which serves the signed export and removes this answer with the route (ADR-0039; see the operation description). */
       501: {
         headers: {
           [name: string]: unknown;
@@ -12363,6 +12378,8 @@ export interface operations {
       /** @description The key now active and the key it retired. Not a trust anchor: the Owner pins the new fingerprint from the record of a rotation the Owner performed (matched to the Owner's own request), never from this answer. */
       200: {
         headers: {
+          "Cache-Control"?: "no-store";
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           [name: string]: unknown;
         };
         content: {
@@ -12371,7 +12388,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
-      /** @description `conflict`: a rotation or an export job is under way for the environment, or it has no key to retire, which a restart recovers from, because boot generates the environment's first key. `idempotency_key_reuse`: the key was first used with another body. `idempotency_in_flight`: a call with the same key is still running. */
+      /** @description `conflict`: a rotation or an export job is under way for the environment, or it has no active key to retire. A restart recovers only an environment with no key at all, since boot generates its first key; keys that are all retired (`export_key_inactive`) are never generated over, and their recovery, an Owner-run step under change control, is open (ADR-0039 Q4). `idempotency_key_reuse`: the key was first used with another body. `idempotency_in_flight`: a call with the same key is still running. */
       409: {
         headers: {
           [name: string]: unknown;
