@@ -1,7 +1,9 @@
 // The required inputs a graph leaves empty (E37-T01), as rules/compiler/graph.py:118-168 finds:
 // an edge from a gate or condition, or an inline operand, fills each; a list, one per null slot.
-// Two deliberate differences, both stricter: a present null operand is empty (graph.py:139 reads
-// only the key), and each null slot of a list needs its edge (the server's nodes hold no list).
+// Three deliberate differences. Two are stricter: a present null operand is empty (graph.py:139
+// reads only the key), and each null slot of a list needs its edge (the server's nodes hold no
+// list). One is looser: an inline temporal child or gate item fills its port, where the server
+// needs an edge (graph.py:121-124); toGraph makes neither.
 import { SLOTS, isTree } from "../adapter/toGraph.js";
 import { check } from "../errors.js";
 import type { GraphModel } from "../model.js";

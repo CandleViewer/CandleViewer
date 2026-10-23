@@ -130,7 +130,8 @@ function walk(value: unknown, node: Node, path: string, exact: boolean): Canonic
 
 /**
  * The bounds, then `Rule.model_validate(ir).model_dump()`, normalised. With `exact` false, only
- * the shape is checked: a number or decimal text is taken as it is, as form.py reads no number.
+ * the shape is checked: decimal text is not parsed and a number is taken as it is, as form.py
+ * reads no number.
  */
 export function dump(ir: unknown, exact = true): Map<string, Canonical> {
   checkBounds(ir);
