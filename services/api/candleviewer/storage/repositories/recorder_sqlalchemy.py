@@ -7,7 +7,8 @@ Lives in M10 (`storage`) because only M10 may import a storage driver
 recorder module (M11) consumes it through injection. Static, parameterised
 SQL only. `reason_refs` edits and the policy resolution are single statements
 so the auto-record path (E16-T02) cannot lose an update to a read-modify-write
-race. Nothing here hard-deletes a row: `soft_remove` sets `removed_at`, and the
+race; so are the manual-row writes (`upsert_manual`, `clear_manual`, `set_pinned`,
+E16-F01). Nothing here hard-deletes a row: `soft_remove` sets `removed_at`, and the
 gap/session tables are append/update-only (ADR-0015 Sec.7).
 """
 
@@ -17,7 +18,7 @@ import json
 import uuid
 from collections.abc import Collection, Sequence
 from datetime import datetime, timedelta
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 import sqlalchemy as sa
 
@@ -31,10 +32,17 @@ from candleviewer.storage.repositories.recorded import (
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    constraint_of,
+    is_outage,
+    query_failure,
+    sqlstate_of,
 )
 
 #: Hard default retention (days) when neither a symbol nor a default policy exists.
 HARD_DEFAULT_RETAIN_DAYS = 30
+#: What `clear_manual` did to the active manual row: `demoted` to an auto reason, `removed`
+#: (soft), or `absent` (no active manual row).
+ManualCleared = Literal["demoted", "removed", "absent"]
 
 _RS_COLS = (
     "id::text AS id, symbol::text AS symbol, env::text AS env, reason::text AS reason, "
@@ -85,6 +93,44 @@ _REMOVE_REF = sa.text(
 )
 _SOFT_REMOVE = sa.text(
     "UPDATE recorded_symbols SET removed_at = now(), updated_at = now() "
+    "WHERE id = CAST(:id AS uuid) AND removed_at IS NULL RETURNING 1"
+)
+# --- E16-F01 manual rows ---------------------------------------------------------------------
+# A manual add makes the active (symbol, env) row manual: a new row, or the active auto row
+# promoted, its `reason_refs`, `auto_added_at` and `pinned` kept. A soft-removed row is outside
+# `ux_rs_symbol`, so a new row goes in beside it. No streams or depth: the column defaults of
+# `0011_recorder` on insert (an integration test pins them), the row's own on promotion.
+_UPSERT_MANUAL = sa.text(
+    _with_cols(
+        "INSERT INTO recorded_symbols (id, symbol, env, reason, streams, orderbook_depth, "
+        "added_by) VALUES (CAST(:id AS uuid), :symbol, CAST(:env AS exchange_env), 'manual', "
+        "COALESCE(CAST(CAST(:streams AS text[]) AS stream_kind[]), "
+        "'{trades,orderbook_delta,tickers,liquidations}'), "
+        "COALESCE(CAST(:depth AS smallint), 200), CAST(:added_by AS uuid)) "
+        "ON CONFLICT (symbol, env) WHERE removed_at IS NULL DO UPDATE SET reason = 'manual', "
+        "streams = COALESCE(CAST(CAST(:streams AS text[]) AS stream_kind[]), "
+        "recorded_symbols.streams), "
+        "orderbook_depth = COALESCE(CAST(:depth AS smallint), recorded_symbols.orderbook_depth), "
+        "added_by = COALESCE(EXCLUDED.added_by, recorded_symbols.added_by), "
+        "updated_at = now() RETURNING @C@"
+    )
+)
+# Takes the manual reason away. Refs left: the row becomes the auto reason they imply (a position
+# over a chart; any other ref counts as a chart) with `auto_added_at` set, so `rs_autoshape`
+# holds. No ref left: soft-removed. Pinned or not: the pin is not read here.
+_CLEAR_MANUAL = sa.text(
+    "UPDATE recorded_symbols SET "
+    "reason = CASE WHEN reason_refs = '[]'::jsonb THEN reason "
+    "WHEN reason_refs @> jsonb_build_array(jsonb_build_object('kind', 'position')) "
+    "THEN 'position_open' ELSE 'chart_open' END, "
+    "auto_added_at = CASE WHEN reason_refs = '[]'::jsonb THEN auto_added_at "
+    "ELSE COALESCE(auto_added_at, now()) END, "
+    "removed_at = CASE WHEN reason_refs = '[]'::jsonb THEN now() END, updated_at = now() "
+    "WHERE symbol = :symbol AND env = CAST(:env AS exchange_env) AND removed_at IS NULL "
+    "AND reason = 'manual' RETURNING removed_at IS NOT NULL AS removed"
+)
+_SET_PINNED = sa.text(
+    "UPDATE recorded_symbols SET pinned = CAST(:pinned AS boolean), updated_at = now() "
     "WHERE id = CAST(:id AS uuid) AND removed_at IS NULL RETURNING 1"
 )
 _OPEN_SESSION = sa.text(
@@ -194,6 +240,18 @@ class SqlAlchemyRecorderRepository:
             await uow.commit()
         return [dict(r) for r in rows]
 
+    async def _write(self, stmt: sa.TextClause, params: dict[str, Any]) -> list[dict[str, Any]]:
+        """`_all` for the manual-row writes: a statement the database refused leaves as
+        `StorageQueryFailed` (`StorageConstraintViolated` for a constraint), its SQLSTATE and
+        constraint name only, nothing chained (C-12.6). A database that cannot answer passes as
+        it is, for the caller's outage handling."""
+        try:
+            return await self._all(stmt, params)
+        except sa.exc.DBAPIError as exc:
+            if is_outage(exc):
+                raise
+            raise query_failure(sqlstate_of(exc), constraint_of(exc)) from None
+
     async def list_recorded(self, env: str = "live") -> list[dict[str, Any]]:
         return await self._all(_LIST, {"env": env})
 
@@ -227,6 +285,38 @@ class SqlAlchemyRecorderRepository:
 
     async def soft_remove(self, recorded_id: str) -> bool:
         return bool(await self._all(_SOFT_REMOVE, {"id": recorded_id}))
+
+    async def upsert_manual(
+        self, symbol: str, added_by: str | None, streams: Sequence[str], depth: int | None, env: str
+    ) -> dict[str, Any]:
+        """Make the active (symbol, env) row manual (E16-F01): insert it, or promote the active
+        auto row, keeping its `reason_refs`, `auto_added_at` and `pinned`. A soft-removed row is
+        never resurrected. No `streams` or `depth` takes the column default on insert and keeps
+        the row's on promotion; a named `added_by` replaces the row's, `None` never clears it.
+        `env` has no default: a caller that forgot it would write a `live` row (#2726)."""
+        params = {
+            "id": str(uuid.uuid4()),
+            "symbol": symbol,
+            "env": env,
+            "added_by": added_by,
+            "streams": list(streams) or None,
+            "depth": depth,
+        }
+        return (await self._write(_UPSERT_MANUAL, params))[0]
+
+    async def clear_manual(self, symbol: str, env: str) -> ManualCleared:
+        """Take the manual reason off the active row (E16-F01): `demoted` to the auto reason its
+        refs imply, or `removed` (soft) when none is left. A pinned row follows the same rule.
+        `absent`: no active manual row for (symbol, env)."""
+        rows = await self._write(_CLEAR_MANUAL, {"symbol": symbol, "env": env})
+        if not rows:
+            return "absent"
+        return "removed" if rows[0]["removed"] else "demoted"
+
+    async def set_pinned(self, recorded_id: str, pinned: bool) -> bool:
+        """Set `pinned` on the active row `recorded_id` (E16-F01). False: no active row has that
+        id (it never existed, or is soft-removed); True also when it already held that value."""
+        return bool(await self._write(_SET_PINNED, {"id": recorded_id, "pinned": pinned}))
 
     async def open_session(
         self,

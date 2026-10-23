@@ -8,11 +8,14 @@ parameter plumbing and result mapping of every public method.
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
 
+from candleviewer.storage.errors import StorageConstraintViolated
 from candleviewer.storage.repositories.recorder_sqlalchemy import (
     HARD_DEFAULT_RETAIN_DAYS,
     SqlAlchemyRecorderRepository,
@@ -36,6 +39,8 @@ class _Session:
 
     async def execute(self, stmt: Any, params: dict[str, Any]) -> _Result:
         self._owner.calls.append((str(stmt), params))
+        if self._owner.error is not None:
+            raise self._owner.error
         return _Result(self._owner.rows)
 
 
@@ -57,6 +62,7 @@ class _Relational:
     def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
         self.rows = rows or []
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.error: BaseException | None = None
 
     def unit_of_work(self) -> _Uow:
         return _Uow(self)
@@ -106,6 +112,73 @@ async def test_soft_remove_sets_removed_at_never_deletes() -> None:
     assert await repo.soft_remove("id1") is True
     sql = rel.calls[0][0]
     assert "removed_at = now()" in sql and "DELETE" not in sql.upper()
+
+
+_ROW = {"id": "r1", "symbol": "BTCUSDT", "reason": "manual"}
+
+
+async def test_upsert_manual_binds_its_arguments_and_returns_the_row() -> None:
+    repo, rel = _repo([_ROW])
+    assert await repo.upsert_manual("BTCUSDT", "u1", ["trades", "tickers"], 50, "demo") == _ROW
+    sql, params = rel.calls[0]
+    uuid.UUID(params["id"])  # a fresh uuid per call
+    assert (params["symbol"], params["env"], params["added_by"]) == ("BTCUSDT", "demo", "u1")
+    assert (params["streams"], params["depth"]) == (["trades", "tickers"], 50)
+    assert "ON CONFLICT (symbol, env) WHERE removed_at IS NULL" in sql
+    promoted = sql.split("DO UPDATE SET")[1].split("RETURNING")[0]
+    assert "reason = 'manual'" in promoted
+    for kept in ("reason_refs", "auto_added_at", "pinned"):
+        assert kept not in promoted  # a promotion leaves them as they were
+    await repo.upsert_manual("BTCUSDT", None, (), None, "live")  # no streams or depth: defaults
+    assert [rel.calls[1][1][k] for k in ("added_by", "streams", "depth")] == [None] * 3
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected"),
+    [([], "absent"), ([{"removed": False}], "demoted"), ([{"removed": True}], "removed")],
+)
+async def test_clear_manual_maps_the_statement_outcome(
+    rows: list[dict[str, Any]], expected: str
+) -> None:
+    repo, rel = _repo(rows)
+    assert await repo.clear_manual("BTCUSDT", "demo") == expected
+    sql, params = rel.calls[0]
+    assert params == {"symbol": "BTCUSDT", "env": "demo"}
+    assert "AND reason = 'manual' RETURNING" in sql  # an auto row is never touched
+    assert "COALESCE(auto_added_at, now())" in sql  # `rs_autoshape` holds for a demoted row
+    assert "DELETE" not in sql.upper()
+
+
+async def test_set_pinned_reports_whether_an_active_row_matched() -> None:
+    repo, rel = _repo([{"?column?": 1}])
+    assert await repo.set_pinned("r1", True) is True
+    sql, params = rel.calls[0]
+    assert params == {"id": "r1", "pinned": True}
+    assert "updated_at = now()" in sql and "removed_at IS NULL" in sql
+    repo2, _ = _repo([])
+    assert await repo2.set_pinned("missing", False) is False
+
+
+class _Driver(Exception):
+    def __init__(self, sqlstate: str, constraint_name: str | None = None) -> None:
+        super().__init__("Failing row contains (secret)")
+        self.sqlstate, self.constraint_name = sqlstate, constraint_name
+
+
+async def test_manual_writes_raise_the_sqlstate_and_constraint_only_and_pass_an_outage() -> None:
+    repo, rel = _repo()
+    rel.error = sa.exc.IntegrityError("INSERT", {"d": 7}, _Driver("23514", "rs_depth"))
+    with pytest.raises(StorageConstraintViolated) as refused:
+        await repo.upsert_manual("BTCUSDT", None, (), 7, "live")
+    assert (refused.value.sqlstate, refused.value.constraint) == ("23514", "rs_depth")
+    assert refused.value.__cause__ is None and "secret" not in str(refused.value)
+    rel.error = down = sa.exc.OperationalError("UPDATE", {}, _Driver("57P01"))
+    with pytest.raises(sa.exc.OperationalError) as outage:
+        await repo.set_pinned("r1", True)
+    assert outage.value is down  # an outage is the caller's to classify, not a refusal
+    rel.error = OSError("db down")
+    with pytest.raises(OSError, match="db down"):
+        await repo.clear_manual("BTCUSDT", "live")
 
 
 async def test_open_and_close_session() -> None:
