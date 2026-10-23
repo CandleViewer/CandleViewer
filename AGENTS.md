@@ -7,7 +7,7 @@
 > **Precedence:** `CONSTITUTION.md` > `AGENTS.md` > `CONTRIBUTING.md` > tool defaults. If this file
 > contradicts the Constitution, the Constitution wins and this file is a bug.
 >
-> **Version:** 2.1.0 · Last updated 2026-10-20 · Owner `@basiltt`
+> **Version:** 2.1.1 · Last updated 2026-10-23 · Owner `@basiltt`
 
 ---
 
@@ -353,7 +353,7 @@ exports, added in #3189) needs that package built: `turbo run test` builds the d
 | ---------------------------------------------- | ------------------------------------------------------------------------ |
 | Install dev deps                               | `uv sync --frozen`                                                       |
 | Lint                                           | `ruff check .`                                                           |
-| Format check / fix                             | `black --check .` / `black .`                                            |
+| Format check / fix                             | `ruff format --check .` / `ruff format .`                                |
 | Typecheck                                      | `mypy --strict .`                                                        |
 | Unit tests                                     | `pytest -m "not integration" --cov=. --cov-fail-under=85`                |
 | Integration tests (needs docker compose stack) | `pytest -m integration`                                                  |
@@ -364,6 +364,11 @@ exports, added in #3189) needs that package built: `turbo run test` builds the d
 | Apply / roll back migration                    | `alembic upgrade head` / `alembic downgrade -1`                          |
 | Deploy: apply Postgres and QuestDB schemas     | `python -m candleviewer.storage.migrate` (runbook: storage-migrate.md)   |
 | Run API locally                                | `python -m candleviewer.server --reload`                                 |
+
+`ruff format` is the only Python formatter: CI's `ruff format --check` and the commit hook run it.
+black stays in the dev group only because `datamodel-code-generator` formats the protocol models
+through it. Its style differs from ruff's, so never run `black` on the tree (#3639). A ticket brief or
+handoff that still names `black --check .` is stale (#4229): run `ruff format --check .` instead.
 
 ### Stack, E2E, load, security
 
@@ -456,7 +461,7 @@ too; on a red one, or if anything else lands on `main` meanwhile, stop and rebui
 ### 5.2 Python
 
 - **Python 3.12+**, `asyncio` throughout. **Ruff** (config in `pyproject.toml`, rule set includes `E,F,W,I,
-N,UP,B,A,C4,SIM,ASYNC,S,PT,RET,ARG,PTH,ERA,TRY,RUF`), **Black** (line length 100), **mypy `--strict`**
+N,UP,B,A,C4,SIM,ASYNC,S,PT,RET,ARG,PTH,ERA,TRY,RUF`), **`ruff format`** (line length 100), **mypy `--strict`**
   (no `Any` in public signatures, no untyped defs, no implicit `Optional`).
 - **Naming**: `snake_case` functions/variables, `PascalCase` classes, `SCREAMING_SNAKE_CASE` constants,
   modules `snake_case`. Async functions that perform I/O are named for the effect (`submit_order`,
@@ -708,7 +713,7 @@ Branch    : feat|fix|chore|design|spike|docs / <epic-key>-<short-slug>
 Commit    : type(scope): imperative subject   # scopes: Constitution §4.4
 PR        : one issue, "Closes #N", ≤400 LOC, template complete, 2 independent agent reviews (C-10.1)
 Integrate : git pull --rebase origin main     # never merge, never force-push main
-Local gate: pnpm verify   |   ruff check . && black --check . && mypy --strict . && pytest
+Local gate: pnpm verify   |   ruff check . && ruff format --check . && mypy --strict . && pytest
 Contract  : edit docs/plan/22-api-openapi.yaml or 23-ws-protocol.md FIRST, then pnpm generate
 Tests     : unit(logic) / integration(boundaries, recorded fixtures) / e2e(critical paths only)
 Never     : force-push main · edit applied migrations · touch secrets w/o security label ·

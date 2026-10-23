@@ -78,7 +78,7 @@ target-version = "py312"
 # never hand-lint; regenerate instead. Mirrors packages/protocol's generated-code
 # exclusion so lint/format never fights the codegen output shape.
 extend-exclude = ["**/_generated/**"]
-# lint-staged invokes ruff/black with explicit staged file paths; without
+# lint-staged invokes ruff (check, then format) with explicit staged file paths; without
 # force-exclude, explicit path args bypass extend-exclude above.
 force-exclude = true
 
@@ -104,12 +104,16 @@ select = ["E", "F", "I", "UP", "B", "S", "ASYNC", "RUF"]
 "tests/unit/architecture/test_negative_arch_violations.py" = ["S101", "S603"]
 
 [tool.black]
+# Not a gate: `ruff format` is the formatter (AGENTS.md §4), and black 26.10.1 styles pragma
+# comments and assert messages differently, so nothing runs `black` on the tree (#3639). The
+# table stays because datamodel-code-generator's `--formatters black` (see
+# scripts/generate_protocol_models.py) reads `line-length` from it: without it the generated
+# models would be wrapped at black's default 88.
 line-length = 100
 target-version = ["py312"]
 extend-exclude = "candleviewer/(api/_generated|ws/_generated)/"
-# Same rationale as [tool.ruff] force-exclude: lint-staged passes explicit
-# staged file paths, which black's exclude/extend-exclude ignore unless
-# force-exclude also matches.
+# Same rationale as [tool.ruff] force-exclude: explicit paths bypass exclude/extend-exclude
+# unless force-exclude also matches, so a manual `black` run still skips generated code.
 force-exclude = "candleviewer/(api/_generated|ws/_generated)/"
 
 [tool.mypy]
