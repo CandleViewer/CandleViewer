@@ -5,13 +5,14 @@ import { RULE_GRAPH_ERROR_CODES, RuleGraphError, isRuleGraphError } from "../src
 // on, so the list and its order are part of the package contract.
 
 describe("RULE_GRAPH_ERROR_CODES", () => {
-  it("lists exactly the five stable codes, in order", () => {
+  it("lists exactly the six stable codes, in order", () => {
     expect([...RULE_GRAPH_ERROR_CODES]).toEqual([
       "CYCLE_DETECTED",
       "DANGLING_PORT",
       "ORPHAN_NODE",
       "NOT_FORM_REPRESENTABLE",
       "SCHEMA_VIOLATION",
+      "MULTIPLE_SINKS",
     ]);
   });
 

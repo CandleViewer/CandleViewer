@@ -32,7 +32,7 @@ const OPERAND_TAGS = { metric: "MetricRef", const: "Literal_", operands: "Arithm
 const DECIMAL_PATTERN = "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"; // pydantic's Decimal text
 const UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
 const LONE_SURROGATE = /\p{Cs}/u; // under the u flag a valid pair is one code point
-const [MAX_VALUES, MAX_DEPTH] = [20_000, 64]; // rules/compiler/common.py:17-18
+export const [MAX_VALUES, MAX_DEPTH] = [20_000, 64]; // rules/compiler/common.py:17-18
 // A free-form value (`{}`, `additionalProperties: true`) is any JSON value.
 const free = (type: string): Node => ({ type, items: {}, additionalProperties: true });
 const ANY = ["null", "boolean", "number", "string", "array", "object"].map(free);
@@ -125,6 +125,12 @@ function walk(value: unknown, node: Node, path: string): Canonical {
 
 /** The bounds, then `Rule.model_validate(ir).model_dump()`, normalised. */
 export function dump(ir: unknown): Map<string, Canonical> {
+  checkBounds(ir);
+  return walk(ir, RULE_IR_SCHEMA as Node, "$") as Map<string, Canonical>; // the root is a model
+}
+
+/** Refuses a value of more than MAX_VALUES values, or deeper than MAX_DEPTH, as the server does. */
+export function checkBounds(ir: unknown): void {
   const stack: [unknown, number][] = [[ir, 0]]; // check_bounds (common.py:23-45): root at depth 0
   for (let count = 1; stack.length > 0; count++) {
     const [value, depth] = stack.pop() as [unknown, number]; // the loop runs while one is left
@@ -135,5 +141,4 @@ export function dump(ir: unknown): Map<string, Canonical> {
       for (const child of Object.values(value)) stack.push([child, depth + 1]);
     }
   }
-  return walk(ir, RULE_IR_SCHEMA as Node, "$") as Map<string, Canonical>; // the root is a model
 }
