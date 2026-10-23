@@ -14,6 +14,9 @@ each move test reads back with the default it moved to (the store's own read, #4
 the move locks the account row before any profile row. The two-session tests interleave a move
 with `require_live` and with a create: each waits for the move to wait on a lock, polling
 `pg_stat_activity` (test_trade_groups_store_pg.py's recipe), and never sleeps for a fixed time.
+
+A relaxing write's notice (#906 D2, SR-E28-01) is one `system_events` row that the write's own
+transaction inserts (one `xmin` with the rows it changed), and none survives a hook that refuses.
 """
 
 from __future__ import annotations
@@ -46,14 +49,18 @@ from candleviewer.accounts.errors import (
     AccountVersionConflictError,
 )
 from candleviewer.accounts.profile_cache import EffectiveProfiles
+from candleviewer.accounts.profile_caps import PROFILE_CAPS
+from candleviewer.accounts.profile_relaxing import looser_caps, widens_symbols
 from candleviewer.accounts.profile_repository import DefaultProfileMove, ProfilesRepository
 from candleviewer.accounts.profiles import AccountProfile, TakeProfitRung, profile_values
 from candleviewer.storage.repositories.account_profiles import (
     AccountProfileRow,
     AccountProfileStoreRuleError,
     LadderRung,
+    RelaxedNotice,
 )
 from candleviewer.storage.repositories.account_profiles_sqlalchemy import (
+    RELAXED_MESSAGE,
     SqlAlchemyAccountProfileStore,
     binding_lock_statement,
     insert_statement,
@@ -777,3 +784,109 @@ async def test_a_ladder_beyond_the_whole_leg_is_refused_by_the_trigger(
                                    dataclasses.replace(values, name="Over", is_default=False,
                                                        tp_ladder=over))  # fmt: skip
     assert ei.value.rule == "trg_ap_ladder_sum"
+
+
+def _notices(dsn: str, account: uuid.UUID) -> list[tuple[Any, ...]]:
+    """The account's `profile_relaxed` rows: every column the insert sets or leaves alone, and the
+    transaction that wrote the row (`xmin`)."""
+    return _sql(
+        dsn,
+        "SELECT component, kind, severity::text, message, details, correlation_id, symbol, "
+        "ret_code, resolved_at, resolved_by, recipient_user_id, xmin::text FROM system_events "
+        "WHERE exchange_account_id = %s AND kind = 'profile_relaxed' ORDER BY id",
+        account,
+    )
+
+
+async def test_a_relaxing_replace_commits_its_notice_with_it(
+    repo: ProfilesRepository, owner: OwnerScope, pg_dsn: str
+) -> None:
+    """SR-E28-01: the hook's notice is one `system_events` row that the replace's own transaction
+    writes (the profile row's `xmin`), of ids and columns, never a value. A narrowing adds none."""
+    account = _account(pg_dsn)
+    created = await repo.create_profile(owner, account, _profile(account))
+    corr = uuid.uuid4()
+
+    async def judges(
+        before: AccountProfileRow | None, after: AccountProfileRow
+    ) -> RelaxedNotice | None:
+        assert before is not None
+        looser = looser_caps(before.values, after.values)
+        widened = widens_symbols(before.values, after.values)
+        return RelaxedNotice(after.id, None, looser, widened, corr) if looser or widened else None
+
+    ids = (account, created.profile_id)
+    narrowed = created.model_copy(update={"max_open_positions": 1})
+    await repo.update_profile(owner, *ids, narrowed, expected_version=1, write_ahead=judges)
+    assert _notices(pg_dsn, account) == []
+    wider = narrowed.model_copy(update={"max_open_positions": 5,
+                                        "allowed_symbols": ("BTCUSDT", "SOLUSDT")})  # fmt: skip
+    await repo.update_profile(owner, *ids, wider, expected_version=2, write_ahead=judges)
+    (xmin,) = _sql(pg_dsn, "SELECT xmin::text FROM account_profiles WHERE id = %s", ids[1])[0]
+    details = {"looser_caps": ["max_open_positions"], "previous_profile_id": None,
+               "profile_id": str(ids[1]), "widened_symbols": True}  # fmt: skip
+    assert _notices(pg_dsn, account) == [
+        ("api", "profile_relaxed", "warning", RELAXED_MESSAGE, details, corr, *[None] * 5, xmin)
+    ]
+
+
+async def test_a_hook_that_refuses_leaves_neither_the_change_nor_a_notice(
+    repo: ProfilesRepository, owner: OwnerScope, pg_dsn: str
+) -> None:
+    """The notices wait for every hook: a move whose first hook answers one and whose second
+    refuses rolls back both rows, the binding and the notice."""
+    account = _account(pg_dsn)
+    (bootstrap,) = await repo.list_profiles(owner, account)
+    target = await repo.create_profile(owner, account, _profile(account))
+    calls: list[uuid.UUID] = []
+
+    async def answers_then_refuses(
+        before: AccountProfileRow | None, after: AccountProfileRow
+    ) -> RelaxedNotice | None:
+        calls.append(after.id)
+        if len(calls) > 1:
+            raise RuntimeError("audit store down")
+        return RelaxedNotice(after.id, None, (), False, None)
+
+    with pytest.raises(RuntimeError):
+        await repo.set_default_profile(owner, account, target.profile_id,
+                                       expected_binding_version=1,
+                                       write_ahead=answers_then_refuses)  # fmt: skip
+    assert calls == [bootstrap.profile_id, target.profile_id] and _notices(pg_dsn, account) == []
+    assert await _binding(repo, owner, account) == (bootstrap.profile_id, 1)
+
+
+async def test_a_relaxing_move_commits_one_notice_naming_both_profiles(
+    repo: ProfilesRepository, owner: OwnerScope, pg_dsn: str
+) -> None:
+    """A move off the bootstrap `Default`, which cannot trade, onto a profile that can loosens every
+    cap (the zero rule). One notice names the new default and the one it replaced, written by the
+    move's transaction: one `xmin` with both profiles and the account's binding."""
+    account = _account(pg_dsn)
+    (bootstrap,) = await repo.list_profiles(owner, account)
+    target = await repo.create_profile(owner, account, _profile(account))
+    demoted: list[AccountProfileRow] = []
+
+    async def judges(
+        before: AccountProfileRow | None, after: AccountProfileRow
+    ) -> RelaxedNotice | None:
+        if not after.values.is_default:  # the demoted default comes first
+            demoted.append(after)
+            return None
+        (old,) = demoted
+        return RelaxedNotice(after.id, old.id, looser_caps(old.values, after.values), False, None)
+
+    await repo.set_default_profile(owner, account, target.profile_id,
+                                   expected_binding_version=1, write_ahead=judges)  # fmt: skip
+    (notice,) = _notices(pg_dsn, account)
+    ids = {"previous_profile_id": str(bootstrap.profile_id), "profile_id": str(target.profile_id)}
+    caps = [cap.column for cap in PROFILE_CAPS]
+    assert notice[4] == ids | {"looser_caps": caps, "widened_symbols": False}
+    written = _sql(
+        pg_dsn,
+        "SELECT xmin::text FROM account_profiles WHERE exchange_account_id = %s "
+        "UNION SELECT xmin::text FROM exchange_accounts WHERE id = %s",
+        account,
+        account,
+    )
+    assert written == [(notice[-1],)]
