@@ -7,7 +7,8 @@ section 3.2 or a cited C-row in section 29); (2) the WCAG matrix with `contrast_
 resolves it, plus the disabled-look and rejected-M1 composites (reported, not gated) and the
 highlight composite;
 (3) CVD dE76 rows; (4) the flash audit; (5) the motion-table, one-treatment, disabled-look,
-view-as and structure gates; (6) hygiene. E30-D02 section 15.1's pairs are reproduced exactly.
+view-as, RULED-stamp and structure gates; (6) hygiene. E30-D02 section 15.1's pairs are
+reproduced exactly.
 
 Usage: python3 -I docs/design/_tools/e30_d04_ds_motion_audit.py [--json] [--spec <path>]
 Exit 1 only on a gated FAIL.
@@ -204,7 +205,7 @@ FLASH = (  # id | max luminance changes per second | loops | longest run ms | no
     "M10|0|no|0|non-visual (audio): no luminance change",
     "hatch|0|no|0|static texture",
 )
-VIEW_AS = ("100", "101", "102", "103", "105", "107", "119", "122", "229", "231")
+VIEW_AS = ("100", "101", "102", "103", "105", "107", "119", "121", "122", "229", "231")
 ORDER = ["100", "101", "102", "103", "105", "107", "119", "121", "122", "130", "139", "158"]
 ORDER += ["229", "231", "232"]
 ROWS = (
@@ -379,6 +380,12 @@ def structure(spec: str) -> dict[str, object]:
     st.update(story_total=sum(stories.values()), decisions=ids("D", "### 1.5", "## 2."))
     st.update(A=ids("A", "## 28.", "## 29."), C=ids("C", "## 29.", "## 30."))
     st.update(G=ids("G", "## 30.", "## 31."), Q=ids("Q", "## 31.", "## 32."))
+    qrows = {r[0]: " ".join(r) for r in rows(section(spec, "## 31.", "## 32."))}
+    unruled = [f"Q{n}" for n in range(1, 16) if "RULED (6363154397)" not in qrows.get(f"Q{n}", "")]
+    FAILS.extend(f"{q}: not stamped RULED (6363154397)" for q in unruled)
+    if "CONFIRMED (6363154397)" not in qrows.get("Q17", ""):
+        FAILS.append("Q17: not stamped CONFIRMED (6363154397)")
+    st.update(ruled=15 - len(unruled))
     return st
 
 
@@ -390,6 +397,8 @@ def hygiene(texts: dict[str, str]) -> None:
             FAILS.append(f"{name}: a Penpot hostname")
         if CLOSE_RE.search(txt):
             FAILS.append(f"{name}: a closing keyword")
+        if ("guard.mismatch" + "_unseen") in txt:  # Q17: no such key exists or is invented
+            FAILS.append(f"{name}: the unseen-guard key")
         if any(ord(c) >= 0x1F000 or (0x2600 <= ord(c) <= 0x27BF and c not in "✓✗⚠") for c in txt):
             FAILS.append(f"{name}: an emoji code point")
     blank = [
