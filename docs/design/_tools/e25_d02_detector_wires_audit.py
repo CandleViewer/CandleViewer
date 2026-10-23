@@ -307,9 +307,12 @@ FORBIDDEN = {
     "local path": re.compile(r"/(?:home|Users)/[^/\s]+/"),
     "Penpot host": re.compile(r"penpot\.[a-z0-9-]+\.[a-z]{2,}", re.IGNORECASE),
     "Penpot team / file / workspace ref": re.compile(r"team[-_]id=|file[-_]id=|#/work[s]pace"),
-    # the T2 rule is cited from its owners (C-16.5): no copied gate block, thread tag or agent name
+    # every rule is cited from its owners (C-16.5): no copied gate block, thread or lane tag,
+    # agent name or timestamped ruling ("the 02:13Z ruling", "ruled lane-wide 02:13Z")
     "lane provenance": re.compile(
-        r"\[[A-Z0-9]+-GATE\]|^# Standing gates|\b[a-z]{2,5}-worker-\d+\b", re.MULTILINE
+        r"\[[A-Z0-9]+-GATE\]|^# Standing gates|\b[a-z]{2,5}-worker-\d+\b|\bLANE-\d+\b"
+        r"|\[DESIGN-FLOW|\b\d{2}:\d{2}Z ruling\b|\bruled\b[^|\n]{0,40}\b\d{2}:\d{2}Z",
+        re.MULTILINE | re.IGNORECASE,
     ),
 }
 CLOSING_RX = re.compile(
@@ -582,9 +585,24 @@ def gates(text: str, label: str, constitution: str, problems: list[str]) -> dict
     }
 
 
-def drift(spec: str, geo: dict[str, Any], mw: dict[str, Any], cnt: dict[str, Any]) -> list[str]:
-    """The sentences the spec must carry for the tool's numbers (section 3, 4, 5, 9, 11)."""
-    need: list[str] = []
+def drift(
+    spec: str, geo: dict[str, Any], mw: dict[str, Any], cnt: dict[str, Any], mx: dict[str, Any]
+) -> list[str]:
+    """The sentences the spec must carry for the tool's numbers (sections 3-5, 9, 11, 16, 22)."""
+    pairs, fails, ok, tot = len(PAIRS), mx["fail"], mx["repro_ok"], mx["repro_n"]
+    pt = "pairs \u00d7 3 themes"
+    need: list[str] = [f"{pairs} {pt}", f"FAIL count {fails}", f"FAIL {fails};"]
+    need += [f"({ok} of {tot})", f"{ok} / {tot}"]
+    # every stated pair / FAIL count must equal the matrix, not only one of the statements
+    stated = set(re.findall(rf"(\d+) {pt}", spec)) - {str(pairs)}
+    need += [f"{pairs} {pt} (it also states {m})" for m in sorted(stated)]
+    stated = set(re.findall(r"\bFAIL (?:count )?(\d+)\b", spec)) - {str(fails)}
+    need += [f"FAIL count {fails} (it also states {m})" for m in sorted(stated)]
+    # the binding split: the gap list's DB ids are counted, bound = the DB-rows less the gaps
+    gx = re.search(r"(\d+) name a gap \(([^)]*)\)", spec)
+    gaps = len(set(re.findall(r"\bDB-\d+\b", gx.group(2)))) if gx else -1
+    rows = cnt["bindings"]
+    need += [f"{rows - gaps} of the {rows} DB-rows", f"{gaps} name a gap ("]
     for d in ("compact", "comfortable"):
         for key in FRAMES:
             z = geo["densities"][d]["frames"][key]["scr056"]["zone_rows"]
@@ -733,7 +751,8 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     if a.check and spec:
-        out["drift"] = drift(spec, geo, mw, cnt)
+        mx = {"fail": fails, "repro_ok": n_ok, "repro_n": len(repro)}
+        out["drift"] = drift(spec, geo, mw, cnt, mx)
         problems += [f"drift: the spec does not carry {n!r}" for n in out["drift"]]
     out["problems"] = problems
     if quiet:
