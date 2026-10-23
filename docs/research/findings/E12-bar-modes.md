@@ -15,7 +15,7 @@ This report substitutes a structured **heuristic evaluation** — run by the des
 Nielsen's 10 heuristics plus the CandleViewer trading-specific heuristics in
 `docs/plan/05-accessibility-standard.md` §3 — for the moderated 4–6 session study the ticket's body
 describes. No Owner or manager session has been run yet. Per the adaptation clause this satisfies
-the ticket's DoD *provisionally*; the reduced-evidence limitation is explicit and the **owner must
+the ticket's DoD _provisionally_; the reduced-evidence limitation is explicit and the **owner must
 accept it** (see §7 Owner walkthrough) before E12-D02 leaves Ready. The **written discussion guide**
 and **stimulus set description** in §1–§2 are ready for the owner (or a recruited external trader) to
 run for real; if real sessions are later run, replace the `(heuristic)` labels with `(session: <id>)`
@@ -34,6 +34,7 @@ E12-D02..E12-D08 do not each invent a variant.
 perp/order-flow traders if recruitable. 4–6 sessions, ~45 min each, remote screen-share.
 
 **Structure per session (protocol):**
+
 1. Warm-up (5 min): "Walk me through the last time you changed a chart's bar type or interval on any
    platform. What did you type first?"
 2. Today's tools (10 min): which bar modes they use today, on which platform (TradingView, exchange
@@ -45,8 +46,8 @@ perp/order-flow traders if recruitable. 4–6 sessions, ~45 min each, remote scr
    - Partial-history marker ("tick data begins here") — Stimulus B.
    - Rebuild progress + cancel affordance when a parameter changes — Stimulus C.
    - LOD/aggregation indicator on deep zoom-out — Stimulus D.
-   For each: "what do you think just happened? What would you expect to happen to your drawings,
-   indicators and alerts?"
+     For each: "what do you think just happened? What would you expect to happen to your drawings,
+     indicators and alerts?"
 5. Keyboard/screen-reader pass (5 min, at least one session): change bar mode using only the
    keyboard and (if the participant uses one) a screen reader; note where the "separate labelled
    group" and description text (CMP-220) succeed or fail.
@@ -81,16 +82,19 @@ them to anyone (own DoD gate, independent of whether a real session runs).
 
 ## 3. Bar-mode vocabulary (recommended; binds `bar_type`/`param` from `22-api-openapi.yaml`) `(contract)` + `(heuristic)` for the description/default column
 
-| `bar_type` (API) | User-facing label | One-line description | Param unit label | Recommended designed default (heuristic — confirm with real sessions) |
-|---|---|---|---|---|
-| `time` | **Time** | "One bar per fixed clock interval." | interval (e.g. `5m`) | unchanged — existing interval ladder |
-| `tick` | **Tick** | "One bar per fixed number of trades, regardless of size." | trades / bar | `1000` trades |
-| `volume` | **Volume** | "One bar per fixed amount of base-asset volume traded." | base-asset volume / bar | `50` (BTCUSDT-scale; unit shown as the instrument's base asset, e.g. "BTC") |
-| `range` | **Range** | "A new bar starts once price moves a fixed number of ticks from the bar's open." | ticks / bar | `40` ticks |
-| `delta` | **Delta** | "A new bar starts once cumulative signed (buy − sell) volume reaches a fixed size." | ticks (of cumulative signed volume) / bar | `25` |
-| `renko` | **Renko** | "Fixed-size price bricks; a new brick only forms once price moves a full brick size." | brick size in ticks, or ATR-based | `30` ticks, or `atr:14` |
-| `pnf` | **Point & Figure** | "Column-based reversal chart; a new column needs a full box move, a reversal needs N boxes back." | `box:reversal` (ticks:boxes) | `10:3` |
-| `heikin_ashi` | **Heikin-Ashi** | "Smoothed candles on a normal time axis — not a non-time mode; no x-axis affordance is triggered." | underlying time interval | unchanged — same as Time |
+| `bar_type` (API) | User-facing label  | One-line description                                                                               | Param unit label                                         | Recommended designed default (heuristic — confirm with real sessions)       |
+| ---------------- | ------------------ | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `time`           | **Time**           | "One bar per fixed clock interval."                                                                | interval (e.g. `5m`)                                     | unchanged — existing interval ladder                                        |
+| `tick`           | **Tick**           | "One bar per fixed number of trades, regardless of size."                                          | trades / bar                                             | `1000` trades                                                               |
+| `volume`         | **Volume**         | "One bar per fixed amount of base-asset volume traded."                                            | base-asset volume / bar                                  | `50` (BTCUSDT-scale; unit shown as the instrument's base asset, e.g. "BTC") |
+| `range`          | **Range**          | "A bar closes once its high-low range reaches a fixed number of ticks."                            | ticks / bar                                              | `40` ticks                                                                  |
+| `delta`          | **Delta**          | "A new bar starts once cumulative signed (buy − sell) volume reaches a fixed size."                | base-asset volume (absolute cumulative buy − sell) / bar | `25` (BTCUSDT-scale, in the base asset)                                     |
+| `renko`          | **Renko**          | "Fixed-size price bricks; a new brick only forms once price moves a full brick size."              | brick size in ticks, or ATR-based                        | `30` ticks, or `atr:14`                                                     |
+| `pnf`            | **Point & Figure** | "Column-based reversal chart; a new column needs a full box move, a reversal needs N boxes back."  | `box:reversal` (ticks:boxes)                             | `10:3`                                                                      |
+| `heikin_ashi`    | **Heikin-Ashi**    | "Smoothed candles on a normal time axis — not a non-time mode; no x-axis affordance is triggered." | underlying time interval                                 | unchanged — same as Time                                                    |
+
+Corrected 2026-10-22 by E12-D03 (#201): Delta is base-asset volume, not ticks (E12-D02 OQ-9), and Range closes on
+the bar's high-low span (`bars/threshold_builders.py`; US-CHART-004), as the shipped builders do.
 
 Naming note `(heuristic)`: "Point & Figure" abbreviated to "P&F" in the compact `IntervalPicker`
 menu row (CMP-220) but spelled out in the row's own description text and in SCR-045's data table
@@ -207,4 +211,3 @@ Agent-delivery adaptation clause, not a session-based finding. The Owner must ex
 reduced evidence (owner walkthrough checklist posted on issue #138) before treating E12-D02 as
 unblocked, per the ticket's own
 Acceptance criteria ("Reduced sample" scenario) — the CDO/Owner substitution applies.
-

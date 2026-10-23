@@ -753,9 +753,9 @@ flowchart TD
   H1 --> I1{"First data"}
   I1 -->|covers the visible window, or reaches a known boundary inside it, budget 600 ms| J1["Swap in one frame, centre kept, a boundary inside the window drawn as such: recording start, start of the built range, a coverage hole"]
   J1 --> V1
-  J1 --> K1["Progressive backfill: older windows load leftward behind the frontier tag, each request about one page at the density of the bars held, within the per-request caps"]
+  J1 --> K1["Progressive backfill: older windows load leftward behind the loading band, each request about one page at the density of the bars held, within the per-request caps"]
   K1 --> L1{"Next older page"}
-  L1 -->|fails, after halving any refused or failing window wider than one page| M1["Frontier reads Could not load older bars, Retry, painted bars stay"]
+  L1 -->|fails, after halving any refused or failing window wider than one page| M1["The loading band reads Couldn't load older bars, Retry, painted bars stay"]
   L1 -->|reaches recording start| P1
   L1 -->|reaches the start of the built range, also where it meets the lookback on a non-time series| X1["SCR-030/built-from with Build earlier bars, never an automatic build"]
   L1 -->|reaches the lookback| N1["SCR-030/lookback-boundary with Load more: the US-CHART-010 lookback, E11-S15 maxBars and memory budget"]
@@ -777,7 +777,7 @@ flowchart TD
   and about 250 000 bars estimated from the window's prints, about 6 hours of a 1 M-print day for range and Renko)
   and is sized from the density of the bars already held, about one page (≤5 000 bars), as E12-D02 §3 does for a
   historical centre. On `bar_window_too_large`, or a 503 on a window wider than one page's span, the client halves
-  the window and retries, without telling the user, before the frontier offers Retry.
+  the window and retries, without telling the user, before the loading band offers Retry.
 - **Events:** `chart.interval_changed {from, to, source, cache, first_paint_ms}`; `chart.error_shown` on a failure.
 
 ### 22.2 F-BAR-2 — Switch to a non-time bar mode and enter its parameter
