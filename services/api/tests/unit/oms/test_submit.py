@@ -19,15 +19,17 @@ import re
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field, replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.accounts.errors import ProfileUnavailableError
+from candleviewer.accounts.profile_cache import EffectiveProfiles
+from candleviewer.accounts.profiles import AccountProfile, profile_values
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.errors import (
@@ -59,6 +61,7 @@ from candleviewer.oms.errors import (
     OrderInvalid,
     OrderLinkIdExhausted,
     OrderStepUnknown,
+    ProfileNotFound,
     RateBudgetExceeded,
     RiskRefused,
     StopRequestPending,
@@ -83,11 +86,12 @@ from candleviewer.oms.submit import (
     OrderTrigger,
     SubmitOutcome,
     _after_anchor_s,
-    _entry_order_id,
+    entry_order_id,
 )
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
 from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.repositories.account_profiles import AccountProfileRow
 from candleviewer.storage.repositories.idempotency_anchors import AnchorOutcome
 from candleviewer.storage.repositories.orders import OrderRow
 from candleviewer.storage.repositories.recorded_stops import NewRecordedStop
@@ -379,6 +383,117 @@ async def test_an_entry_with_no_profile_is_refused_403(rig: SubmitRig) -> None:
     refused = await _refused(rig)
     assert isinstance(refused, RiskRefused)
     _nothing_done(rig)
+
+
+#: A `profile_id` a request names.
+_NAMED = UUID("5f0e1d2c-3b4a-4c96-8877-665544332211")
+
+
+def _profile_not_found(rig: SubmitRig, refused: OmsError) -> None:
+    """22 `PlaceOrderRequest.profile_id`: one answer whatever the case, recorded denied first at
+    the resolve step (C-2.9), naming no profile (no oracle of which case it was)."""
+    assert isinstance(refused, ProfileNotFound) and refused.detail == "No such profile."
+    assert (problem_for(refused).status, problem_for(refused).code) == (404, "not_found")
+    [record] = _denied(rig)
+    assert (record.reason, record.object_id) == ("not_found", cr.ACCOUNT)
+    assert record.detail == {
+        "step": "resolve", "code": "not_found", "symbol": SYMBOL, "environment": "demo",
+        "order_link_id": None,
+    }  # fmt: skip
+
+
+@pytest.mark.parametrize("held", ["another_accounts", "missing"])
+@pytest.mark.parametrize(
+    "request_",
+    [entry(profile_id=_NAMED), flatten(profile_id=_NAMED)],
+    ids=["entry", "reduce_only"],
+)
+async def test_a_named_profile_the_account_does_not_hold_is_404_with_nothing_done(
+    rig: SubmitRig, held: str, request_: OrderRequest
+) -> None:
+    """SEC-2B2-01's IDOR, its profile part: another account's profile and one that does not exist
+    are refused alike, `404 not_found` before the order is sized, nothing recorded or sent; a
+    reduce-only order too, never let through without the profile it names. The double answers
+    each as `EffectiveProfiles` does (no such profile of the account)."""
+    if held == "another_accounts":
+        foreign = profile(cr.LIVE_ACCOUNT, profile_id=str(_NAMED), is_default=False)
+        rig.profiles.held[(cr.LIVE_ACCOUNT, _NAMED)] = foreign
+    refused = await _refused(rig, request_)
+    _profile_not_found(rig, refused)
+    _nothing_done(rig)
+
+
+async def test_a_deleted_profile_is_404_as_a_missing_one_is(rig: SubmitRig) -> None:
+    """The profile an earlier order named, once deleted (the store reads no deleted row, and the
+    write invalidates the cache), answers as one never seen: nothing more recorded or sent."""
+    rig.profiles.held[(cr.ACCOUNT, _NAMED)] = profile(profile_id=str(_NAMED), is_default=False)
+    assert (await rig.submit(entry(profile_id=_NAMED))).status == 202
+    del rig.profiles.held[(cr.ACCOUNT, _NAMED)]
+    written, calls = rig.written(), rig.calls()
+    refused = await _refused(rig, entry(profile_id=_NAMED), context(client_ref=uuid4()))
+    _profile_not_found(rig, refused)
+    assert (rig.written(), rig.calls()) == (written, calls)
+
+
+class _AnyAccountsRow:
+    """`EffectiveProfileReads` over a store that ignores the account: it answers every read with
+    the one `row`, and records what it was asked."""
+
+    def __init__(self, row: AccountProfileRow) -> None:
+        self.row = row
+        self.asked: list[tuple[UUID, UUID | None]] = []
+
+    async def effective_profile(
+        self, account_id: UUID, profile_id: UUID | None
+    ) -> AccountProfileRow | None:
+        self.asked.append((account_id, profile_id))
+        return self.row
+
+
+def _stored(held: AccountProfile) -> AccountProfileRow:
+    """`held` as the profiles table returns it."""
+    at = datetime(2026, 10, 20, 9, tzinfo=UTC)
+    return AccountProfileRow(
+        id=held.profile_id, exchange_account_id=held.account_id, version=held.version,
+        values=profile_values(held), created_by=None, updated_by=None, created_at=at,
+        updated_at=at, deleted_at=None,
+    )  # fmt: skip
+
+
+async def test_a_profile_row_of_another_account_is_404_over_the_real_effective_profiles(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `rig`'s double keys on `(account, profile)`, so another account's row is never asked
+    for there. The guard is `EffectiveProfiles`' own (C-12.4): a store that answers the named
+    profile with another account's row gets `404 not_found` for the order, the one answer for
+    every case, with nothing recorded or sent."""
+    foreign = profile(cr.LIVE_ACCOUNT, profile_id=str(_NAMED), is_default=False)
+    reads = _AnyAccountsRow(_stored(foreign))
+    cache = EffectiveProfiles(reads)
+    monkeypatch.setattr(rig.pipeline, "_deps", replace(rig.pipeline._deps, profiles=cache))
+    try:
+        refused = await _refused(rig, entry(profile_id=_NAMED))
+    finally:
+        await cache.aclose()
+    _profile_not_found(rig, refused)
+    _nothing_done(rig)
+    assert reads.asked == [(cr.ACCOUNT, _NAMED)]  # it reached the store, and refused its answer
+
+
+async def test_an_unnamed_reduce_only_order_with_no_default_profile_goes_through(
+    rig: SubmitRig,
+) -> None:
+    """With none named and the account holding no default, an order that only reduces is never
+    refused for want of a profile (SR-E28-24, SR-E28-27), nor is it a 404: it is recorded and
+    sent as the exits' lane takes it, where an entry in this state is 403 (D11)."""
+    rig.profiles.held.clear()
+    rig.port.demo.seed_position(_position())
+    outcome = await rig.submit(flatten())
+    assert (outcome.status, outcome.lifecycle, outcome.trade_group_id) == (202, "submitted", None)
+    assert rig.calls() == ["positions", "place_order"]
+    sent = rig.port.demo.calls[1]
+    assert (sent.lane, _create(sent).reduce_only) == ("critical", True)
+    assert _denied(rig) == []
 
 
 @pytest.mark.parametrize(
@@ -852,10 +967,12 @@ async def test_a_held_key_is_answered_as_a_repeat_of_its_decided_request(rig: Su
     (the ruling of 2026-10-22), read by the id its group's names."""
     first = await rig.submit()
     assert first.trade_group_id is not None
-    assert first.order_id == _entry_order_id(first.trade_group_id)
+    assert first.order_id == entry_order_id(first.trade_group_id)
     rig.port.demo.calls.clear()
     replayed = await rig.submit()
-    assert replayed == replace(first, order_id=None, lifecycle="submitted", replayed=True)
+    assert replayed == replace(
+        first, order_id=None, lifecycle="submitted", replayed=True, written=None
+    )
     assert rig.calls() == [] and len(rig.store._orders) == 1
 
 
@@ -868,6 +985,21 @@ async def test_a_held_key_still_in_flight_or_with_another_body_is_refused_409(
     assert isinstance(in_flight, IdempotencyInFlight) and in_flight.retry_after_s == 1
     reused = await _refused(rig, ctx=context(request_sha256="0" * 64))
     assert isinstance(reused, IdempotencyKeyReuse)
+    assert rig.calls() == ["place_order"]
+
+
+async def test_the_routes_own_lookup_replays_what_a_held_keys_repeat_answers(
+    rig: SubmitRig,
+) -> None:
+    """Slice 3's route answers its own lookup's `Replay` with `answer_replay`, which reads the same
+    reconciled state as the pipeline's repeat of a held key: nothing sent, no rows of its own."""
+    first = await rig.submit()
+    lookup = await rig.pipeline._anchors.lookup(ACTOR.user_id, KEY, SHA)
+    assert isinstance(lookup, Replay)
+    answered = await rig.pipeline.answer_replay(cr.ACCOUNT, lookup)
+    assert answered == await rig.submit()
+    assert (answered.status, answered.lifecycle, answered.written) == (202, "submitted", None)
+    assert (answered.trade_group_id, answered.replayed) == (first.trade_group_id, True)
     assert rig.calls() == ["place_order"]
 
 
@@ -1131,6 +1263,55 @@ async def test_a_take_profit_offset_is_sent_on_a_tick_rounded_toward_the_entry(
     [create] = rig.port.demo.calls
     assert outcome.status == 202 and _create(create).take_profit == Decimal(sent)
     assert _row(rig, outcome).take_profit == Decimal(sent)
+
+
+#: An order's own terms, as its first persist wrote them and its row holds them since.
+_TERMS = (
+    "id", "exchange_account_id", "order_link_id", "symbol", "side", "intent", "order_type", "qty",
+    "price", "trigger_price", "trigger_by", "trigger_direction", "take_profit", "stop_loss",
+    "tpsl_mode", "time_in_force", "reduce_only", "close_on_trigger", "position_idx",
+    "trade_group_leg_id", "provenance",
+)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("script", "status"),
+    [
+        (None, 202),
+        (RateBudgetExceededError("no token", retry_after_s=1.5), 429),
+        (FakeReject(OmsErrorCode.INSUFFICIENT_MARGIN, 110007, "ab not enough"), 502),
+    ],
+    ids=["accepted", "rate_limited", "rejected"],
+)
+async def test_a_first_answer_carries_the_rows_its_persist_wrote(
+    rig: SubmitRig, script: Any, status: int
+) -> None:
+    """Slice 3's finding 7: the route renders a first answer with no read after the send, from the
+    rows as the persist wrote them: the order `validated`, its group `submitting` and its leg
+    `pending`, whatever the rows hold since."""
+    if script is not None:
+        rig.port.demo.script("place_order", script)
+    outcome = await rig.submit()
+    written, row, record = outcome.written, _row(rig, outcome), _group(rig, outcome)
+    assert outcome.status == status and written is not None
+    assert {n: getattr(written.order, n) for n in _TERMS} == {n: getattr(row, n) for n in _TERMS}
+    assert written.order.lifecycle_state == "validated" != row.lifecycle_state
+    assert written.group is not None and written.group.id == record.group.id
+    assert (written.group.status, written.group.symbol, written.group.side) == (
+        "submitting", record.group.symbol, record.group.side,
+    )  # fmt: skip
+    [leg], [stored] = written.legs, record.legs
+    assert (leg.id, leg.status, leg.target_qty, leg.resolved_sl_price) == (
+        stored.id, "pending", QTY, STOP,
+    )  # fmt: skip
+
+
+async def test_a_reduce_only_first_answer_carries_its_order_and_no_group(rig: SubmitRig) -> None:
+    rig.port.demo.seed_position(_position())
+    outcome = await rig.submit(flatten())
+    assert outcome.written is not None
+    assert (outcome.written.order.id, outcome.written.order.reduce_only) == (outcome.order_id, True)
+    assert (outcome.written.group, outcome.written.legs) == (None, ())
 
 
 # --- the reduce-only path -------------------------------------------------------------------------
@@ -1425,6 +1606,65 @@ async def test_bounds_after_the_anchor_under_the_in_flight_threshold_are_taken(
     assert rig.make(place_wait_s=18.5)._place_wait_s == 18.5  # 29.5 s in all
 
 
+def _anchors(rig: SubmitRig, stuck_after_s: float) -> AnchorService:
+    """An anchor service over the rig's store whose in-flight threshold is `stuck_after_s`."""
+    return AnchorService(
+        IdempotencyAnchorRepository(rig.store.anchors),
+        clock=lambda: cr.EPOCH + timedelta(microseconds=rig.port.now.us),
+        timeout_s=2.0,
+        stuck_after_s=stuck_after_s,
+    )
+
+
+async def test_bounds_that_reach_a_lowered_in_flight_threshold_are_refused(rig: SubmitRig) -> None:
+    """D-2B2-01: the threshold a repeat meets is the anchor service's own. Lowered to the default
+    bounds' 17 s, they reach it, so no pipeline is built over that service."""
+    with pytest.raises(ValueError, match=r"CV_OMS_INFLIGHT_STUCK_S \(17\.0 s\)"):
+        rig.make(anchors=_anchors(rig, 17.0))
+
+
+async def test_bounds_under_a_lowered_in_flight_threshold_are_taken(rig: SubmitRig) -> None:
+    assert rig.make(anchors=_anchors(rig, 17.25))._anchors.stuck_after_s == 17.25
+
+
+async def test_bounds_under_a_raised_in_flight_threshold_are_taken(rig: SubmitRig) -> None:
+    """The threshold a repeat meets is the anchor service's own, which `CV_OMS_INFLIGHT_STUCK_S`
+    may raise past the key's default of 30 s: bounds that total 30 s are taken under a 60 s one,
+    with no ceiling of the pipeline's."""
+    pipeline = rig.make(anchors=_anchors(rig, 60.0), place_wait_s=19.0)  # 30 s in all
+    assert (pipeline._anchors.stuck_after_s, pipeline._place_wait_s) == (60.0, 19.0)
+
+
+async def test_bounds_that_reach_a_raised_in_flight_threshold_are_refused(rig: SubmitRig) -> None:
+    with pytest.raises(ValueError, match=r"CV_OMS_INFLIGHT_STUCK_S \(60\.0 s\)"):
+        rig.make(anchors=_anchors(rig, 60.0), place_wait_s=49.0)  # 60 s in all
+
+
+async def test_a_place_wait_that_does_not_outlast_the_submit_timeout_is_refused(
+    rig: SubmitRig,
+) -> None:
+    """D-2B2-01: the wait for the create's answer must outlast the command port's one deadline on
+    all of `place`, or a 429 or 502 answered in time would be given up into a 202; a wait of
+    just that deadline races it."""
+    with pytest.raises(ValueError, match="does not outlast"):
+        rig.make(place_wait_s=SUBMIT_TIMEOUT_S)
+
+
+@pytest.mark.parametrize("deadline", [PLACE_WAIT_S, float("nan")], ids=["raised", "nan"])
+async def test_a_command_port_whose_deadline_the_wait_does_not_outlast_is_refused(
+    rig: SubmitRig, deadline: float
+) -> None:
+    """A command port built with the default wait's 6 s as its deadline, or with none that
+    compares, takes no pipeline with that wait."""
+    with pytest.raises(ValueError, match="does not outlast"):
+        rig.make(commands=cr.build_rig(submit_timeout_s=deadline).port)
+
+
+async def test_a_wait_that_outlasts_a_lowered_submit_timeout_is_taken(rig: SubmitRig) -> None:
+    lowered = cr.build_rig(submit_timeout_s=0.5).port
+    assert rig.make(commands=lowered, place_wait_s=0.75)._place_wait_s == 0.75
+
+
 async def test_an_anchor_write_that_does_not_answer_is_bounded_as_the_other_writes_are(
     rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1487,6 +1727,30 @@ def test_an_outcome_decides_its_anchor_with_its_own_answer() -> None:
     assert decided == AnchorOutcome(
         status=502, decided_at=cr.T0, code="exchange_error", ret_code=170131
     )
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"order_id": uuid4()}, {"trade_group_id": uuid4()}, {"replayed": True}],
+    ids=["another_order", "another_group", "replay"],
+)
+async def test_an_outcome_carries_only_the_rows_it_names_and_a_replay_none(
+    rig: SubmitRig, changes: dict[str, Any]
+) -> None:
+    outcome = await rig.submit()
+    with pytest.raises(ValueError, match="carries the rows it names"):
+        replace(outcome, **changes)
+
+
+async def test_an_outcome_never_shows_its_rows_in_its_repr(rig: SubmitRig) -> None:
+    """C-12.6: the rows hold the stop, the prices and the size, which no log line shows: not in
+    the outcome's repr, nor in the rows' own (the order, the group and its leg)."""
+    outcome = await rig.submit()
+    rows = outcome.written
+    assert rows is not None and rows.group is not None and len(rows.legs) == 1
+    assert "written" not in repr(outcome) and str(STOP) not in repr(outcome)
+    hidden = [*map(str, (STOP, TAKE_PROFIT, REFERENCE, QTY, KEY)), SHA]
+    assert [value for value in hidden if value in repr(rows)] == []
 
 
 def test_a_context_never_shows_its_key_or_fingerprint() -> None:
@@ -1809,7 +2073,7 @@ async def test_a_repeat_whose_order_cannot_be_read_answers_reconciling(
         repeat = await rig.submit()
     assert (repeat.status, repeat.replayed, repeat.lifecycle) == (202, True, RECONCILING)
     assert any(line["event"] == "oms_replay_state_unread" for line in logs)
-    assert await rig.pipeline._reconciled(cr.ACCOUNT, None) == RECONCILING
+    assert await rig.pipeline.reconciled_state(cr.ACCOUNT, None) == RECONCILING
 
 
 @pytest.mark.parametrize("venue", ["empty", "duplicate"])
@@ -1853,23 +2117,25 @@ async def test_a_lost_send_goes_out_at_the_restart_under_its_id_and_a_later_repe
 
 
 async def test_a_create_that_has_not_answered_in_time_is_202_with_its_state(
-    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The outcome is not known yet: 202, as `unknown` is, never a 503 (24 Sec.8.4)."""
-    gate = asyncio.Event()
-    land = rig.port.demo.place_order
+    """The outcome is not known yet: 202, as `unknown` is, never a 503 (24 Sec.8.4). The wait
+    outlasts the command port's deadline (D-2B2-01), so it is B1's own turn that runs late here:
+    the create has not begun when the wait ends, then lands within its own deadline."""
+    async with rigged(submit_timeout_s=0.5, place_wait_s=0.6) as rig:
+        gate, place = asyncio.Event(), rig.port.port.place
 
-    async def held(request: Any) -> Any:
-        await gate.wait()
-        return await land(request)
+        async def late(command: Any) -> Any:
+            await gate.wait()
+            return await place(command)
 
-    monkeypatch.setattr(rig.port.demo, "place_order", held)
-    pipeline = rig.make(place_wait_s=0.01)
-    outcome = await pipeline.submit(entry(), context())
-    assert (outcome.status, outcome.lifecycle) == (202, "submitting")
-    gate.set()
-    await rig.quiet()
-    assert _row(rig, outcome).lifecycle_state == "submitted"
+        monkeypatch.setattr(rig.port.port, "place", late)
+        outcome = await rig.submit()
+        assert (outcome.status, outcome.lifecycle) == (202, "submitting")
+        gate.set()
+        row = _row(rig, outcome)
+        left = await rig.machines.settled(cr.ACCOUNT, row.id, leaving="submitting", timeout_s=5)
+        assert left == _row(rig, outcome).lifecycle_state == "submitted"
 
 
 async def test_an_outcome_step_not_known_in_time_is_202_as_submitting(

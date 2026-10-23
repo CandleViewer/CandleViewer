@@ -11,8 +11,10 @@ or 502, once the order is recorded and sent, or raises the refusal the route ren
    `oms_clock_drift_blocked_total`), then the read-only gate (403 `trading_disabled`);
 2. the account the order is signed for, by its id alone (`TradingAccounts`, SR-E27-21), the route
    of its environment (C-2.11: a miswired one is a 500 that pages), the instrument (400 for a
-   symbol none lists) and the effective profile (none: an entry is refused at step 4, D11); a
-   read that fails or does not answer within `store_timeout_s` is 503 `store_unavailable`;
+   symbol none lists) and the effective profile (a named one the account does not hold, another
+   account's, a deleted or a missing one alike, is 404 `not_found`; with none named and no
+   default, an entry is refused at step 4, D11); a read that fails or does not answer within
+   `store_timeout_s` is 503 `store_unavailable`;
 3. the size (`Sizer`), the effect on the exchange-truth position (SR-E29-01, read for a
    reduce-only order only, within `position_timeout_s`), the reference price (the order's own
    price, else the market's, 24 Sec.9.3 step 2), the native stop and the intent
@@ -71,7 +73,10 @@ record names the requesting principal and carries the request's correlation id (
 #3990). Once the anchor exists, the bounds (`SEND`'s write, `place_wait_s`, `result_wait_s`, then
 the anchor's, the leg's and the group's compare-and-sets and the outcome's record, each
 `store_timeout_s`) total 17 s by default; the pipeline refuses to be built with bounds that total
-`CV_OMS_INFLIGHT_STUCK_S` (30 s) or more, so a repeat meets the outcome this request records.
+the anchor service's `stuck_after_s` (`CV_OMS_INFLIGHT_STUCK_S`, 30 s by default) or more, the
+threshold a repeat meets, so a repeat meets the outcome this request records, or with a
+`place_wait_s` that does not outlast the command port's deadline (`submit_timeout_s`; the default
+adds B1's turn to it), so the first answer can be the create's own (D-2B2-01).
 Logs carry ids, codes and state names, never a price, a size, the key or the fingerprint (21
 Sec.12, C-12.6).
 """
@@ -144,6 +149,7 @@ from candleviewer.storage.repositories.orders import (
 from candleviewer.storage.repositories.orders import OrderType as ColumnOrderType
 from candleviewer.storage.repositories.recorded_stops import NewRecordedStop, StopKind
 from candleviewer.storage.repositories.submissions import FirstPersist, FirstPersisted
+from candleviewer.storage.repositories.trade_groups import NewTradeGroup, NewTradeGroupLeg
 
 from .classify import REDUCING_INTENTS, NativeStopGuard, effect_of, take_profit_errors
 from .clock_halt import ClockHalt
@@ -162,6 +168,7 @@ from .errors import (
     OrderLinkIdExhausted,
     OrderStepRefused,
     OrderStepUnknown,
+    ProfileNotFound,
     RateBudgetExceeded,
     RiskRefused,
     StopRequestInFlight,
@@ -172,7 +179,7 @@ from .errors import (
     TradingDisabled,
     problem_for,
 )
-from .idempotency import STUCK_AFTER_S, AnchorService, InFlight, KeyReuse, Replay
+from .idempotency import AnchorService, InFlight, KeyReuse, Replay
 from .order_link import OrderLinkIdParts, OrderPurpose
 from .order_link_allocator import MAX_SEQ_INCREMENTS, OrderLinkIdAllocator
 from .order_machine import OrderMachines
@@ -206,7 +213,7 @@ __all__ = [
     "EXCHANGE_ERROR", "PLACE_WAIT_S", "POSITION_TIMEOUT_S", "RATE_LIMITED", "READ_RETRY_AFTER_S",
     "RECONCILING", "RESULT_WAIT_S", "STOP_RETRIES_S", "STOP_RETRY_AFTER_S", "STORE_TIMEOUT_S",
     "OrderRequest", "OrderSubmission", "OrderTrigger", "SubmissionDeps", "SubmitActor",
-    "SubmitContext", "SubmitOutcome",
+    "SubmitContext", "SubmitOutcome", "WrittenRows", "entry_order_id",
 ]  # fmt: skip
 
 #: The bound on each store read and write of the pipeline, in seconds: the account, the
@@ -246,7 +253,7 @@ RECONCILING: Final = "reconciling"
 _UNRESOLVED: Final = frozenset({"validated", "submitting", "unknown", "quarantined"})
 #: An entry's order is its one-leg group's only order, its id named from the group's under this
 #: namespace (fixed for good), so a repeat holding the group's anchor finds the order with no
-#: group read (`_entry_order_id`).
+#: group read (`entry_order_id`).
 _ENTRY_ORDERS: Final = UUID("0973ace5-8b31-4bc2-9a01-6d69961a0f75")
 #: The sides a reduce-only order may not carry where its venue sets neither on one, and their
 #: sentences (one rule, one shape).
@@ -383,15 +390,29 @@ class SubmitContext:
 
 
 @dataclass(frozen=True, slots=True)
+class WrittenRows:
+    """What a request's first persist wrote, as the pipeline built it (24 Sec.8.4 step 5): the
+    order, and for an entry its one-leg group and that leg, each in the status the persist gave it
+    (`validated`, `submitting`, `pending`). Slice 3's route renders the first `202` from them and
+    the answer's `lifecycle`, with no read after the send, where a store failure is never a 503 (24
+    Sec.8.4). Its repr shows none of the rows: they hold prices, sizes and stops (C-12.6)."""
+
+    order: NewOrder = field(repr=False)
+    group: NewTradeGroup | None = field(default=None, repr=False)
+    legs: tuple[NewTradeGroupLeg, ...] = field(default=(), repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class SubmitOutcome:
     """What a recorded request answers (24 Sec.8.4 point 6): 202 with the order's B1 state after
     its create (`lifecycle`), 429 `exchange_rate_limited` with `Retry-After` on the first answer
     only, or 502 `exchange_error` with the exchange's return code and never its text (SR-E29-09).
-    `replayed` marks the repeat of a decided anchor (`AnchorService.after_taken`), whose rows the
-    route reads in their current state: a `202` repeat carries its order's reconciled state in
+    A first answer carries the rows its persist wrote (`written`). `replayed` marks the repeat of
+    a decided anchor (`OrderSubmission.answer_replay`), which carries none, as the route reads its
+    rows in their current state: a `202` repeat carries its order's reconciled state in
     `lifecycle`, or `RECONCILING` while B1 has not resolved the order (C-2.10, never an assumed
-    success). The ids name the rows the request created: the order and, for an entry, its group
-    (a replay names what its anchor names)."""
+    success). The ids name the rows the request created: the order and, for an entry, its group (a
+    replay names what its anchor names)."""
 
     status: AnchorStatus
     anchor_id: UUID
@@ -402,6 +423,7 @@ class SubmitOutcome:
     ret_code: int | None = None
     retry_after_s: int | None = None
     replayed: bool = False
+    written: WrittenRows | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.status not in _CODES or self.code != _CODES[self.status]:
@@ -416,6 +438,11 @@ class SubmitOutcome:
             raise ValueError("a first 429, and only one, carries its Retry-After")
         if self.order_id is None and self.trade_group_id is None:
             raise ValueError("an outcome names the rows its request created")
+        rows = self.written
+        if rows is not None:
+            group_id = None if rows.group is None else rows.group.id
+            if self.replayed or (rows.order.id, group_id) != (self.order_id, self.trade_group_id):
+                raise ValueError("a first answer carries the rows it names, a replay none")
 
     def anchor_outcome(self, decided_at: datetime) -> AnchorOutcome:
         """The answer as the anchor records it (21 Sec.3.3.10 "Writes")."""
@@ -479,7 +506,7 @@ def _lane(request: OrderRequest) -> OrderLane:
     return "critical" if request.reduce_only and request.intent in REDUCING_INTENTS else "entry"
 
 
-def _entry_order_id(group_id: UUID) -> UUID:
+def entry_order_id(group_id: UUID) -> UUID:
     """An entry's order id, named from its one-leg group's (`_ENTRY_ORDERS`): the anchor names the
     group alone (21 Sec.3.3.10 `ia_target`), and a repeat reads the order's state by this id."""
     return uuid5(_ENTRY_ORDERS, str(group_id))
@@ -536,8 +563,10 @@ def _reject_code(answer: Mapping[str, Any] | None) -> str:
 
 class OrderSubmission:
     """The `placeOrder` pipeline (module docstring): one per process, with the OMS facade and the
-    command port it drives. Its bounds after the anchor must total under `STUCK_AFTER_S`
-    (`CV_OMS_INFLIGHT_STUCK_S`): any that reach it are refused with `ValueError`."""
+    command port it drives. Its bounds after the anchor must total under the anchor service's
+    `stuck_after_s` (`CV_OMS_INFLIGHT_STUCK_S`), and its wait for a create's answer
+    (`place_wait_s`) must outlast the command port's deadline (`submit_timeout_s`; the default adds
+    B1's turn to it): bounds that do not are refused with `ValueError` (D-2B2-01)."""
 
     def __init__(
         self,
@@ -584,10 +613,23 @@ class OrderSubmission:
             place_wait_s=self._place_wait_s,
             result_wait_s=self._result_wait_s,
         )
-        if after_anchor >= STUCK_AFTER_S:  # else a repeat may decide the anchor while this runs
+        # D-2B2-01: under the threshold the anchor service applies, the one a repeat meets: past
+        # it a repeat decides the anchor while this request still runs. The service's own value
+        # is the whole rule (`CV_OMS_INFLIGHT_STUCK_S`), with no ceiling of this module's.
+        stuck_after_s = anchors.stuck_after_s
+        if after_anchor >= stuck_after_s:
             raise ValueError(
                 f"the bounds after the anchor total {after_anchor} s, not under "
-                f"CV_OMS_INFLIGHT_STUCK_S ({STUCK_AFTER_S} s)"
+                f"CV_OMS_INFLIGHT_STUCK_S ({stuck_after_s} s)"
+            )
+        # D-2B2-01: the wait for the create's answer must outlast the command port's one deadline
+        # on all of `place` (the default adds B1's turn, which the wait spans before the deadline
+        # starts), or a 429 or 502 answered in time could be given up into a 202. A NaN deadline
+        # is refused too.
+        if not self._place_wait_s > commands.submit_timeout_s:
+            raise ValueError(
+                f"place_wait_s ({self._place_wait_s} s) does not outlast the command port's "
+                f"submit_timeout_s ({commands.submit_timeout_s} s)"
             )
         self._stop_retries = tuple(_delay(wait) for wait in stop_retries)
         self._guard = NativeStopGuard(ports.stop_resolver)
@@ -684,14 +726,19 @@ class OrderSubmission:
         return instrument
 
     async def _profile(self, request: OrderRequest) -> AccountProfile | None:
-        """The effective profile (24 Sec.9.3), or None when the account has none: an entry is then
-        refused at the check (D11), never sized from a default (SR-E28-24)."""
+        """The effective profile (24 Sec.9.3). A named `profile_id` the account does not hold,
+        another account's, a deleted one or one that does not exist, is 404 `not_found`, the same
+        answer for each (22 `PlaceOrderRequest`), whatever the order's kind. With none named, an
+        account with no default answers None: an entry is then refused at the check (D11), never
+        sized from a default (SR-E28-24)."""
         try:
             async with asyncio.timeout(self._store_timeout_s):
                 return await self._deps.profiles.get_effective_profile(
                     request.account_id, request.profile_id
                 )
         except AccountNotFoundError:
+            if request.profile_id is not None:
+                raise ProfileNotFound from None
             return None
         except (TimeoutError, ProfileUnavailableError, StorageError) as exc:
             _log().warning("oms_submit_profile_unread", failure=type(exc).__name__)
@@ -854,10 +901,10 @@ class OrderSubmission:
     ) -> _Rows:
         """The order's ids, its `order_link_id` (24 Sec.8.3: an entry's from its new group, a
         reduce-only order's from its own id) and the rows its first persist writes. An entry's
-        order id is named from its group's (`_entry_order_id`)."""
+        order id is named from its group's (`entry_order_id`)."""
         request = trace.request
         group_id = None if request.reduce_only else GroupId(uuid4())
-        order_id = uuid4() if group_id is None else _entry_order_id(group_id)
+        order_id = uuid4() if group_id is None else entry_order_id(group_id)
         anchor_id = uuid4()
         leg_id = None if group_id is None else uuid4()
         candidate = OrderLinkIdParts.generate(
@@ -1074,8 +1121,8 @@ class OrderSubmission:
 
     async def _repeat(self, trace: _Trace, taken: AnchorTaken) -> SubmitOutcome:
         """The key is held by an earlier request (21 Sec.3.3.10): its decided outcome is the
-        answer, nothing sent; a request still in flight, or another body, is refused. A `202`
-        carries the order's reconciled state (`_reconciled`), never an assumed success."""
+        answer, nothing sent (`answer_replay`); a request still in flight, or another body, is
+        refused."""
         context = trace.context
         lookup = await self._anchors.after_taken(
             taken.constraint, context.actor.user_id, context.client_ref, context.request_sha256
@@ -1084,14 +1131,22 @@ class OrderSubmission:
             raise lookup.refusal()
         if not isinstance(lookup, Replay):  # a held key is never fresh
             raise StoreUnavailable
-        anchor = lookup.anchor
+        return await self.answer_replay(trace.request.account_id, lookup)
+
+    async def answer_replay(self, account_id: AccountId, replay: Replay) -> SubmitOutcome:
+        """A decided anchor's answer to a repeat (21 Sec.3.3.10 "Repeats"), nothing sent: the
+        outcome it recorded, a `202` carrying its order's reconciled state (`reconciled_state`),
+        never an assumed success. The pipeline answers a held key with it, and slice 3's route its
+        own lookup's `Replay` (`AnchorService.lookup`), so both read the same state. An anchor
+        whose outcome no answer can hold is 503 `store_unavailable`."""
+        anchor = replay.anchor
         status = _STATUSES.get(anchor.outcome_status or 0)
         lifecycle = None
         if status == 202:
             order_id = anchor.order_id
             if order_id is None and anchor.trade_group_id is not None:
-                order_id = _entry_order_id(anchor.trade_group_id)
-            lifecycle = await self._reconciled(trace.request.account_id, order_id)
+                order_id = entry_order_id(anchor.trade_group_id)
+            lifecycle = await self.reconciled_state(account_id, order_id)
         try:
             if status is None:
                 raise ValueError("a decided anchor holds 202, 429 or 502")
@@ -1109,7 +1164,7 @@ class OrderSubmission:
             _log().error("oms_anchor_outcome_unreadable", anchor_id=str(anchor.id))
             raise StoreUnavailable from None
 
-    async def _reconciled(self, account_id: AccountId, order_id: UUID | None) -> str:
+    async def reconciled_state(self, account_id: AccountId, order_id: UUID | None) -> str:
         """A `202` repeat's state (the orchestrator's ruling of 2026-10-22, C-2.10): the state B1
         resolved the order to, else `RECONCILING`, while it is `_UNRESOLVED`, or its state cannot
         be read within `store_timeout_s` (an in-flight create is waited for that long); never
@@ -1495,18 +1550,21 @@ class OrderSubmission:
 
 def _outcome(rows: _Rows, lifecycle: str, answer: Mapping[str, Any] | None) -> SubmitOutcome:
     """Step 11's answer from the state B1 recorded (24 Sec.8.4 point 6): `rejected` is a 429 for a
-    refused rate token, else a 502 with the exchange's return code; any other state is a 202."""
+    refused rate token, else a 502 with the exchange's return code; any other state is a 202. Each
+    carries the rows the first persist wrote."""
     order_id, group_id, anchor_id = rows.order.id, rows.group_id, rows.anchor_id
+    written = WrittenRows(rows.order, rows.first.group, rows.first.legs)
     if lifecycle != "rejected":
-        return SubmitOutcome(202, anchor_id, order_id, group_id, lifecycle)
+        return SubmitOutcome(202, anchor_id, order_id, group_id, lifecycle, written=written)
     if answer is not None and answer.get("error_code") == _RATE_CODE:
         return SubmitOutcome(
             429, anchor_id, order_id, group_id, lifecycle, RATE_LIMITED,
-            retry_after_s=_retry_after(answer),
+            retry_after_s=_retry_after(answer), written=written,
         )  # fmt: skip
     return SubmitOutcome(
-        502, anchor_id, order_id, group_id, lifecycle, EXCHANGE_ERROR, _ret_code(answer)
-    )
+        502, anchor_id, order_id, group_id, lifecycle, EXCHANGE_ERROR, _ret_code(answer),
+        written=written,
+    )  # fmt: skip
 
 
 def _anchor(

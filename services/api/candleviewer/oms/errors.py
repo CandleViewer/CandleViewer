@@ -320,6 +320,14 @@ class OrderNotFound(OrderRefused):
     default_detail = "No such order."
 
 
+class ProfileNotFound(OrderRefused):
+    """A named `profile_id` the order's account does not hold (22 `PlaceOrderRequest`): another
+    account's, a deleted one and one that does not exist alike, so the answer tells none of them
+    apart. Refused before the order is sized, with nothing recorded or sent."""
+
+    default_detail = "No such profile."
+
+
 class IdempotencyKeyReuse(OrderRefused):
     default_detail = "The Idempotency-Key was first used with another request."
 
@@ -457,6 +465,7 @@ PROBLEMS: Final[Mapping[type[OmsError], Problem]] = MappingProxyType(
         TradingDisabled: Problem(403, "trading_disabled"),
         SessionNotArmed: Problem(403, "session_not_armed"),
         OrderNotFound: Problem(404, "not_found"),
+        ProfileNotFound: Problem(404, "not_found"),
         IdempotencyKeyReuse: Problem(409, "idempotency_key_reuse"),
         IdempotencyInFlight: Problem(409, "idempotency_in_flight", retry_after=True),
         StopRequestPending: Problem(409, "stop_request_in_flight", retry_after=True),

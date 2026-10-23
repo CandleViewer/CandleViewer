@@ -125,6 +125,13 @@ class AnchorService:
         self._timeout_s = _seconds("timeout_s", timeout_s)
         self._stuck_after_s = _seconds("stuck_after_s", stuck_after_s)
 
+    @property
+    def stuck_after_s(self) -> float:
+        """`CV_OMS_INFLIGHT_STUCK_S` as this service applies it: past it, a repeat decides an
+        undecided anchor (module docstring). The pipeline's bounds after the anchor must total
+        under it (`OrderSubmission`, D-2B2-01)."""
+        return self._stuck_after_s
+
     async def lookup(self, created_by: UUID, client_ref: UUID, request_sha256: str) -> Lookup:
         """The answer of a request whose key `created_by` may have sent before."""
         found = await self._bounded(self._anchors.find(created_by, client_ref, request_sha256))

@@ -836,7 +836,9 @@ async def test_idempotent_replay_after_a_restart(
     again = await _restart(pg, rel)
     try:
         replay = await again.submit(again.entry(), replace(context, request_id=_SECOND))
-        assert replay == replace(first, order_id=None, lifecycle="submitted", replayed=True)
+        assert replay == replace(
+            first, order_id=None, lifecycle="submitted", replayed=True, written=None
+        )
         assert len(again.creates()) == 1  # the first process's, and none since
         assert _held(pg_dsn, pg.account, pg.user) == (1, 1, 1, 1, 2)
         assert again.audits.of(_SECOND) == []

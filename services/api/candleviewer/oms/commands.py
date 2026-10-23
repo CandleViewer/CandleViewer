@@ -490,6 +490,13 @@ class OmsCommandPort:
         """The clock resync the last `CLOCK_DRIFT` started, while one runs or has run."""
         return self._resync
 
+    @property
+    def submit_timeout_s(self) -> float:
+        """The one deadline on all of a `place` (`SUBMIT_TIMEOUT_S`, CR-2B1-04), as this port
+        applies it: the pipeline's wait for a create's answer must outlast it, as its default does
+        with B1's turn added (`OrderSubmission`, D-2B2-01)."""
+        return self._submit_timeout_s
+
     async def aclose(self) -> None:
         """At shutdown (slice 3's lifecycle; every task owned, C-2.18): no `CLOCK_DRIFT` starts a
         resync from here on, and the one running is cancelled and awaited. The halt stays as it
