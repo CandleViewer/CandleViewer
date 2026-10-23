@@ -390,6 +390,20 @@ class InMemoryOrderStore:
         rows = self._rows(account_id)
         return tuple(r for r in rows if r.state in port.OPEN_STATES and symbol in {None, r.symbol})
 
+    async def list_unfinished(self, environment: Environment, *, limit: int) -> tuple[Row, ...]:
+        """`UnfinishedOrders` over the accounts `InMemorySubmissionStore.seed_account` gave an
+        environment, whatever `refuse` says of them (an unfinished order outlives its account's
+        status); an account never seeded has none, so its orders are listed under none."""
+        port.require_limit(limit)
+        await asyncio.sleep(0)
+        rows = (
+            r
+            for r in self._orders.values()
+            if r.state in port.UNFINISHED_STATES
+            and self._environments.get(r.exchange_account_id) == environment
+        )
+        return tuple(sorted(rows, key=lambda row: (row.created_ts, row.id)))[:limit]
+
     async def link_id_taken(self, order_link_id: str) -> bool:
         await asyncio.sleep(0)
         return self._link_taken(order_link_id)

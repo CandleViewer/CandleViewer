@@ -3,9 +3,10 @@
 SQLAlchemy Core over `db.models.orders` and `db.models.order_events`: every value is a bound
 parameter and nothing is built from strings. Reads select the explicit allow-lists `ORDER_COLUMNS`
 and `EVENT_COLUMNS`, never `*`. Every statement filters on `orders.exchange_account_id` (C-12.4),
-or for the entry-stop settle on `recorded_stops.exchange_account_id`, except the two in
-`UNSCOPED`: the insert, which writes the account it is given, and the 24 Sec.8.3 rule 5 yes/no
-over the global `ux_orders_link`. A unit test pins that set.
+or for the entry-stop settle on `recorded_stops.exchange_account_id`, except those in `UNSCOPED`:
+the insert, which writes the account it is given, the 24 Sec.8.3 rule 5 yes/no over the global
+`ux_orders_link`, and E29-T04's startup hydration read (21 Sec.13.1 row 49), whose two statements
+read one environment's accounts, then their unfinished orders. A unit test pins that set.
 
 `create` writes the order and its first event (`seq` 0) in one statement, a data-modifying CTE:
 one round trip in one transaction (#845 performance notes). `append` first locks the order row
@@ -46,7 +47,7 @@ So a caller meets `OrderStoreError` or `StorageError`, never a driver or pool ex
 from __future__ import annotations
 
 import math
-from collections.abc import AsyncIterator, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict, fields
 from datetime import datetime
@@ -54,9 +55,11 @@ from typing import Any, Final
 from uuid import UUID
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import DBAPIError
 
-from candleviewer.db.models import order_events, orders, recorded_stops
+from candleviewer.db.models import exchange_accounts, order_events, orders, recorded_stops
+from candleviewer.domain.primitives import Environment
 from candleviewer.storage.errors import (
     StorageQueryFailed,
     StorageTierUnavailable,
@@ -72,6 +75,7 @@ from candleviewer.storage.repositories.orders import (
     EVENT_FIELDS,
     MAX_EVENT_PAGE,
     OPEN_STATES,
+    UNFINISHED_STATES,
     CommittedStep,
     EntryStopSettle,
     NewOrder,
@@ -83,6 +87,7 @@ from candleviewer.storage.repositories.orders import (
     OrderTransition,
     StaleOrderState,
     require_exchange_record,
+    require_limit,
     require_no_fill,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -95,7 +100,10 @@ _E = order_events.c
 ORDER_COLUMNS: Final = tuple(_O[f.name] for f in fields(OrderRow))
 EVENT_COLUMNS: Final = tuple(_E[name] for name in EVENT_FIELDS)
 #: Statements without an `orders.exchange_account_id` filter (see the module docstring); tested.
-UNSCOPED: Final = frozenset({"create_statement", "link_taken_statement"})
+UNSCOPED: Final = frozenset({
+    "create_statement", "link_taken_statement", "environment_accounts_statement",
+    "list_unfinished_statement",
+})  # fmt: skip
 #: The default per-statement cap of the order store, in ms (#845 technical notes).
 OMS_STATEMENT_TIMEOUT_MS: Final = 2000
 #: Transaction-local (`true`), like the repository's `SET LOCAL`; the admin read model's form.
@@ -166,6 +174,25 @@ def list_open_statement(account_id: UUID, symbol: str | None) -> sa.Select[Any]:
     if symbol is not None:  # compared as text: SQLAlchemy 2.1 has no operator class for DOMAIN
         stmt = stmt.where(sa.type_coerce(_O.symbol, sa.Text) == symbol)
     return stmt.order_by(_O.created_ts, _O.id)
+
+
+def environment_accounts_statement(environment: Environment) -> sa.Select[Any]:
+    """Every account of `environment`, a disabled or soft-deleted one too (20 Sec.6.2)."""
+    accounts = exchange_accounts.c
+    return sa.select(accounts.id).where(accounts.env == environment)
+
+
+def list_unfinished_statement(account_ids: Iterable[UUID], limit: int) -> sa.Select[Any]:
+    """21 Sec.13.1 row 49: these accounts' orders in `UNFINISHED_STATES`, oldest first, at most
+    `limit`; the states rendered as literals, as `list_open_statement`'s are."""
+    states: sa.BindParameter[Any] = sa.bindparam(
+        "unfinished", sorted(UNFINISHED_STATES), expanding=True, literal_execute=True
+    )
+    ids = sa.bindparam("accounts", sorted({str(a) for a in account_ids}), type_=ARRAY(sa.Text))
+    stmt = sa.select(*ORDER_COLUMNS).where(
+        _O.exchange_account_id == sa.any_(sa.cast(ids, ARRAY(sa.Uuid))), _O.state.in_(states)
+    )
+    return stmt.order_by(_O.created_ts, _O.id).limit(limit)
 
 
 def link_taken_statement(order_link_id: str) -> sa.Select[Any]:
@@ -388,6 +415,20 @@ class SqlAlchemyOrderStore(CappedStore):
             result = await uow.session.execute(list_open_statement(account_id, symbol))
             return tuple(order_row(row) for row in result.mappings())
 
+    async def list_unfinished(
+        self, environment: Environment, *, limit: int
+    ) -> tuple[OrderRow, ...]:
+        """`UnfinishedOrders`: the environment's accounts, then their unfinished orders, in one
+        unit of work; no account reads no orders."""
+        require_limit(limit)
+        async with self._unit_of_work() as uow:
+            found = await uow.session.execute(environment_accounts_statement(environment))
+            accounts = [row["id"] for row in found.mappings()]
+            if not accounts:
+                return ()
+            result = await uow.session.execute(list_unfinished_statement(accounts, limit))
+            return tuple(order_row(row) for row in result.mappings())
+
     async def link_id_taken(self, order_link_id: str) -> bool:
         async with self._unit_of_work() as uow:
             result = await uow.session.execute(link_taken_statement(order_link_id))
@@ -424,7 +465,8 @@ class SqlAlchemyOrderStore(CappedStore):
 __all__ = [
     "EVENT_COLUMNS", "OMS_STATEMENT_TIMEOUT_MS", "ORDER_COLUMNS", "UNSCOPED", "CappedStore",
     "SqlAlchemyOrderStore", "append_statement", "commit_step", "create_statement",
-    "fill_statement", "get_by_link_statement", "get_statement", "link_taken_statement",
-    "list_events_statement", "list_open_statement", "lock_order", "lock_statement", "order_row",
+    "environment_accounts_statement", "fill_statement", "get_by_link_statement", "get_statement",
+    "link_taken_statement", "list_events_statement", "list_open_statement",
+    "list_unfinished_statement", "lock_order", "lock_statement", "order_row",
     "require_audit_bound", "settle_entry_stops_statement", "transition_statement",
 ]  # fmt: skip
