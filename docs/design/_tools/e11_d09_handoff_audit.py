@@ -1241,7 +1241,7 @@ def short_source(src: str) -> str:
 
 # E11-D07 cites `14` at its own pin; the pack reads `14` at its re-pinned `main`, so a D07 source
 # line in `14` that moved is mapped by content (SCR-049's A11y line, `Ctrl+Alt+1..9`).
-D07_SOURCE_REPIN = {("`14`", "1072"): "1102"}
+D07_SOURCE_REPIN = {("`14`", "1072"): "1106"}
 
 
 def keymap_rows() -> dict[str, Any]:
@@ -2086,13 +2086,13 @@ SCR-046 diagnostics overlay | threshold-breach | the "above budget" chip: `color
 SCR-049 grid cell | populated | the cell header's sync-group tag: `color.text.primary` chip on
   `color.surface.raised` with a 2 px border in the group's colour, the letter as text | same | same
   | 1\u00d72 … 3\u00d73 and custom grids (E15's) | the letter | E11-D02-08-multi-pane-chrome.png |
-  E11-D02 §8 :377; `14` :1107
+  E11-D02 §8 :377; `14` :1111
 SCR-049 grid cell | focused cell | the focused cell gets the chart ring; "Chart 2 of 4, group A" |
   same | same | n/a — no density variant in E11-D02 §8 :377 (the ring is CMP-039's) | the ring; the
   name | E11-D02-08-multi-pane-chrome.png | E11-D02 §8 :377
 SCR-049 grid cell | degraded (GPU budget) | E15's: the explicit reduce-quality prompt when the grid
-  exceeds the GPU budget | same | same | n/a — E15's prompt (`14` :1107); no chassis treatment | the
-  prompt's words | text-only — `14` :1107 (E15's) | `14` :1107
+  exceeds the GPU budget | same | same | n/a — E15's prompt (`14` :1111); no chassis treatment | the
+  prompt's words | text-only — `14` :1111 (E15's) | `14` :1111
 """
 
 # Source state labels → the row label in the pack's §7 (typed once; the tool asserts presence).
