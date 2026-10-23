@@ -1,9 +1,10 @@
 # E33-D01 — UX research: how traders configure and trust an emulated algorithm
 
 - **Ticket:** E33-D01 (issue #857) · **Status:** text first — **owner approval pending** (Agent-delivery adaptations,
-  owner decision 2026-09-25); boards PENDING (boards PR) · **Method:** heuristic evaluation of the locked plan texts +
-  public documentation as recorded in the repository's research; **no sessions were run** · **Protocol and owner
-  walkthrough checklist:** `e33-d01-session-protocol.md` (this folder), which owns the session script and scoring.
+  owner decision 2026-09-25); Penpot boards drawn on page `E33-D01` · id `2f3d2667-6b0f-80a6-8008-d4fe6a7cba88` and
+  exported in this PR · **Method:** heuristic evaluation of the locked plan texts + public documentation as recorded in
+  the repository's research; **no sessions were run** · **Protocol and owner walkthrough checklist:**
+  `e33-d01-session-protocol.md` (this folder), which owns the session script and scoring.
 - **Scope:** builders SCR-066 TWAP, SCR-067 iceberg, SCR-068 chase, SCR-069 OCO (its OCO half); the SCR-070 monitor
   and the SCR-063 Algos tab that hosts it; algo children in SCR-063 Working orders; the algo lines of SCR-072, 076,
   148, 152 and 153; CMP-103, 118, 123, 130, 158, 227. Feeds E33-D02 (#934) and E33-D03 (#935) with findings, defaults
@@ -68,13 +69,32 @@ the owner run · **open** = needs sessions or an owner decision.
 
 ## Research boards (Penpot)
 
-Per `docs/design/README.md` ("Approval rule") a research ticket ships boards plus PNG exports. **PENDING (text first):**
-drawn on the project's Penpot instance (`docs/design/README.md`), on a page named `E33-D01`, bound to semantic tokens in
-`packages/ui/tokens`, exported and embedded here and in the boards PR (which completes #857) by page name and id.
-Planned PNGs, each `docs/design/E33/img/E33-D01-NN-<board>.png`: `01-three-cases` (§4) · `02-caveat-candidates` (§3;
-Probe C) · `03-parameter-defaults` (§2; the Probe B paper prototype of SCR-066..069) · `04-monitor-must-show` (§5; Probe
-D) · `05-pre-submit` (§6; Probe E) · `06-findings-decision-map` (§8, §9) · `07-source-conflicts` (§1) ·
-`08-probe-a-stimulus` (a running TWAP and its row, every caveat blanked; Probe A).
+Per `docs/design/README.md` ("Approval rule") a research ticket ships boards plus PNG exports. The eight boards are
+drawn on the project's Penpot instance (`docs/design/README.md`), on page `E33-D01` · id
+`2f3d2667-6b0f-80a6-8008-d4fe6a7cba88`, bound to semantic tokens in `packages/ui/tokens`, and exported in this PR to
+`docs/design/E33/img/E33-D01-NN-<board>.png`, cited by page name and id:
+
+- `E33-D01-01-three-cases` — the three cases, the three ways an algo loses its owner (app-off, Bybit-link-off,
+  backend-off), with the binding disconnect copy (§4):
+  ![E33-D01-01-three-cases](../E33/img/E33-D01-01-three-cases.png)
+- `E33-D01-02-caveat-candidates` — what "emulated" tells a trader: the caveat candidates per strategy and the
+  restatement test (§3; Probe C):
+  ![E33-D01-02-caveat-candidates](../E33/img/E33-D01-02-caveat-candidates.png)
+- `E33-D01-03-parameter-defaults` — what traders set and what they expect defaulted, as the Probe B paper prototype of
+  SCR-066..069 (§2):
+  ![E33-D01-03-parameter-defaults](../E33/img/E33-D01-03-parameter-defaults.png)
+- `E33-D01-04-monitor-must-show` — what the monitor must show so nothing runs invisibly: the SCR-070 row, its states and
+  the must-show list M1–M12 and S1–S5 (§5; Probe D):
+  ![E33-D01-04-monitor-must-show](../E33/img/E33-D01-04-monitor-must-show.png)
+- `E33-D01-05-pre-submit` — the minimum to show before submit, per strategy (§6; Probe E):
+  ![E33-D01-05-pre-submit](../E33/img/E33-D01-05-pre-submit.png)
+- `E33-D01-06-findings-decision-map` — the findings register F1–F30 (§8) and the decision map for E33-D02 and E33-D03,
+  with the config defaults and the transparency controls (§9):
+  ![E33-D01-06-findings-decision-map](../E33/img/E33-D01-06-findings-decision-map.png)
+- `E33-D01-07-source-conflicts` — the source conflicts SC-1 to SC-19 (§1):
+  ![E33-D01-07-source-conflicts](../E33/img/E33-D01-07-source-conflicts.png)
+- `E33-D01-08-probe-a-stimulus` — the Probe A stimulus, a running TWAP and its row, every caveat blanked:
+  ![E33-D01-08-probe-a-stimulus](../E33/img/E33-D01-08-probe-a-stimulus.png)
 
 ## Method note (Agent-delivery adaptation, owner decision 2026-09-25)
 
