@@ -8,7 +8,8 @@ and reads an entry over the cap alone, with every member. Entries go in through 
 repository's own `insert`.
 
 Exercised by the CI integration job (testcontainers). Before review, verify's statements were
-also run by hand on a scratch Postgres 16.4, and these tests on a local Postgres 16 container.
+also run by hand on a scratch Postgres 16.4, and these tests on a local Postgres 16 container;
+#889 S10's export span read ran on one too.
 """
 
 from __future__ import annotations
@@ -221,6 +222,29 @@ async def test_an_export_span_count_stops_at_its_cap(
     _, ids = await _append(repo, [10, 10, 10, 10])
     span = {"first_id": ids[0], "last_id": ids[-1]}  # four entries, more ids since 0045
     assert [await repo.count_export_span(**span, cap=cap) for cap in (3, 9)] == [3, 4]
+
+
+async def test_an_export_span_is_its_windows_ids_up_to_the_head_and_the_first_ones_anchor(
+    relational: SqlAlchemyRelationalRepository,
+) -> None:
+    """#889 S10: on `ix_audit_time`, the least and greatest id of the window's entries up to the
+    head, and the first one's `prev_hash`; None for a window with none in it. Its own stamps, a
+    month past the other tests', so no other entry falls in its windows."""
+    repo, base, ids = SqlAlchemyAuditRepository(relational), _T0 + timedelta(days=30), []
+    for at in (-1, 0, 3600, 1800):  # before the window, at `from`, at `to`, inside it again
+        stamp = (base + timedelta(seconds=at)).isoformat()
+        record = {"record_id": uuid.uuid4(), "actor_label": "it", "action": "auth.login"}
+        await repo.insert(record | {"outcome": "success", "severity": "info", "event_ts": stamp})
+        head = await repo.read_head()
+        assert head is not None
+        ids.append(head[0])
+    window = {"from_ts": base, "to_ts": base + timedelta(hours=1)}
+    anchor = await repo.fetch_anchor_hash(ids[1])  # its predecessor's hash: its `prev_hash`
+    assert anchor is not None
+    assert await repo.export_span(**window, head_id=ids[3]) == (ids[1], ids[3], anchor)
+    assert await repo.export_span(**window, head_id=ids[2]) == (ids[1], ids[1], anchor)
+    later = {"from_ts": base + timedelta(days=1), "to_ts": base + timedelta(days=2)}
+    assert await repo.export_span(**later, head_id=ids[3]) is None
 
 
 async def test_an_export_written_from_postgres_recomputes_every_hash_and_link(

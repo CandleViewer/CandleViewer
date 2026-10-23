@@ -19,7 +19,8 @@ Key import's `CandidateKeys` (#836, `SecretsBundle.candidate_keys`) is minted in
 are the audit export's `ExportSigner` and `SigningKeys` (#889): a signature and public key
 material, never a seed. So is `SigningKeyRotator` (#889 S7), the signing key's rotation for
 `admin`, which answers with public key material and, once its new key passes the check, makes
-export available again with no restart.
+export available again with no restart, and `RotationRunning` (#889 S10), which tells the export
+route only whether a rotation runs.
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ from candleviewer.secrets.errors import (
     KekUnavailable,
     RotationCode,
 )
-from candleviewer.secrets.export_rotator import SigningKeyRotator
+from candleviewer.secrets.export_rotator import RotationRunning, SigningKeyRotator
 from candleviewer.secrets.export_signer import ExportSigner, SigningKeys
 from candleviewer.secrets.models import KekCheckResult, RewrapReport, StoredCredential
 from candleviewer.secrets.signing import RequestSignature, SigningMessage, scrub_frames
@@ -489,7 +490,7 @@ class SecretsService:
         if keys is None or self._export_reason is not None:
             raise CredentialUnavailable("export_key_unavailable")
         try:
-            return await export_signer.sign(keys, keks, self._audit, checked)
+            return await export_signer.sign(keys, keks, self._audit, checked, self._export_checked)
         except CredentialUnavailable as exc:
             if str(exc) in export_signer.KEY_FAULTS and self._export_reason is None:
                 await self._export_unavailable(str(exc))
@@ -868,6 +869,17 @@ def mint_signing_key_rotator(service: SecretsService) -> SigningKeyRotator:
         return await service._rotate_export_key(*call)
 
     return SigningKeyRotator(rotate)
+
+
+def mint_rotation_running(service: SecretsService) -> RotationRunning:
+    """Wiring-time read of the running rotation (#889 S10, ADR-0039 decision 5): `exportAuditLog`'s
+    own `409` while a rotation runs for the environment. Called once, in
+    `admin.wiring.secrets_bundle`."""
+
+    def running() -> bool:
+        return service._export_rotating is not None
+
+    return RotationRunning(running)
 
 
 async def prove_kek_possession(

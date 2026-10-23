@@ -308,6 +308,19 @@ async def test_the_fence_refuses_a_key_no_longer_active_after_the_record(
     assert (unwrapped, b.svc._export_reason) == ([], None)
 
 
+async def test_a_row_under_a_kek_version_not_held_is_logged_by_the_versions_alone() -> None:
+    """#889 S7's re-check, F3-2: the read that finds the active row under a KEK version this
+    process does not hold logs both versions, and nothing else."""
+    b = await _booted()
+    await _unavailable(b, "unheld")
+    with capture_logs() as logs:
+        assert await b.directory.active() is None
+    assert [e for e in logs if e["event"] == "secrets.export_key_kek_not_held"] == [
+        {"event": "secrets.export_key_kek_not_held", "kek_version": 9, "held": [1],
+         "log_level": "error"}
+    ]  # fmt: skip
+
+
 @pytest.mark.parametrize(
     ("change", "check"),
     [

@@ -9,7 +9,8 @@ checks run in this order, the first three before any decrypt or record:
 2. a KEK held (the caller's `kek_unavailable`), a key boot found usable, and the active key read,
    whole and of this process's environment, under a KEK this process holds, else
    `export_key_unavailable`;
-3. `key_id` is the active key's, else `signing_key_rotated`;
+3. `key_id` is the active key's, else `signing_key_rotated`, and the key M2's check passed for
+   (#889 S10, decision 4, as the directory names no other), else `export_key_unavailable`;
 4. `security.audit_export_signed` written ahead, naming the job, the Owner, `sha256`, `key_id` and
    `fingerprint_sha256`, else `audit_unavailable`;
 5. the fence: the active key read again is still `key_id` (the HMAC signer's re-check after its
@@ -104,16 +105,22 @@ async def _usable(
         for kek in keks:
             if kek.version == rec["kek_version"]:
                 return rec, kek, fingerprint(rec["public_key"])
+        versions = {"kek_version": int(rec["kek_version"]), "held": sorted(k.version for k in keks)}
+        _log().error("secrets.export_key_kek_not_held", **versions)  # #889 S7 re-check, F3-2
     except Exception as exc:
         _log().error("secrets.export_key_read_failed", error=type(exc).__name__)
     return None
 
 
 async def sign(
-    keys: ExportKeyStore, keks: tuple[LoadedKek, ...], audit: AuditSink, checked: Request
+    keys: ExportKeyStore,
+    keks: tuple[LoadedKek, ...],
+    audit: AuditSink,
+    checked: Request,
+    verified_id: str | None,
 ) -> bytes:
     """Checks 2 to 6 of the module docstring, once the caller found a KEK held (`keks`, the
-    current first) and a key boot found usable."""
+    current first) and a key boot found usable; `verified_id` is the key M2's check passed for."""
     key_id, digest, named = checked
     usable = await _usable(keys, keks)
     if usable is None:
@@ -121,6 +128,8 @@ async def sign(
     rec, holder, fp = usable
     if rec["key_id"] != key_id:
         raise CredentialUnavailable("signing_key_rotated")
+    if key_id != verified_id:  # an active row M2 did not check, swapped in out of band
+        raise CredentialUnavailable("export_key_unavailable")
     fields = {**_OWNER, **named, "env": rec["env"], "key_id": key_id, "fingerprint_sha256": fp}
     fields["sha256"] = digest.hex()
     if not await _written(audit, SIGNED, fields):

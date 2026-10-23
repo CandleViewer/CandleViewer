@@ -264,6 +264,17 @@ _EXPORT_COUNT_SQL = sa.text(
     "SELECT count(*) FROM (SELECT 1 FROM audit_log "
     "WHERE id >= :first_id AND id <= :last_id LIMIT :cap) s"
 )
+#: The span of an export's window as of the head (#889 S10): the least and greatest id, up to
+#: `:head_id`, of the entries with `:from_ts <= event_ts < :to_ts`, and the first one's `prev_hash`;
+#: one row of NULLs when none is in the window. `OFFSET 0` keeps the planner from turning min and
+#: max into a primary-key walk filtered on time, so the window is read as a range (`ix_audit_time`
+#: serves it); the statement budget bounds it.
+_EXPORT_SPAN_SQL = sa.text(
+    "SELECT s.first_id, s.last_id, a.prev_hash FROM (SELECT min(w.id) AS first_id, "
+    "max(w.id) AS last_id FROM (SELECT id FROM audit_log WHERE event_ts >= :from_ts "
+    "AND event_ts < :to_ts AND id <= :head_id OFFSET 0) w) s "
+    "LEFT JOIN audit_log a ON a.id = s.first_id"
+)
 
 #: For given rows, by id: the renderings the trigger hashed (as `_VERIFY_BATCH_SQL`, each cut
 #: at `:n` characters so a long one is never fetched whole) and the `entry_hash` of the
@@ -560,6 +571,13 @@ class SqlAlchemyAuditRepository:
         params = {"first_id": first_id, "last_id": last_id, "cap": cap}
         [(found,)] = await self._bounded_read(_EXPORT_COUNT_SQL, params, "export_count")
         return int(found)
+
+    async def export_span(
+        self, *, from_ts: datetime, to_ts: datetime, head_id: int
+    ) -> tuple[int, int, str] | None:
+        params = {"from_ts": from_ts, "to_ts": to_ts, "head_id": head_id}
+        [(first, last, anchor)] = await self._bounded_read(_EXPORT_SPAN_SQL, params, "export_span")
+        return None if first is None else (int(first), int(last), str(anchor))
 
     async def read_head(self) -> tuple[int, str] | None:
         rows = await self._bounded_read(_HEAD_SQL, {}, "head")
