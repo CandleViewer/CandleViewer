@@ -301,6 +301,11 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "security.audit_signing_key_rewrapped",
         "security.audit_signing_key_material_destroyed",
         "security.audit_signing_key_unavailable",
+        # #889 S6b (ADR-0039 decisions 3 and 7): the export signer's write-ahead record, before
+        # every signature, and the record that closes it when signing then fails
+        # (`secrets/export_signer.py`).
+        "security.audit_export_signed",
+        "security.audit_export_sign_failed",
         # #2728 (E16 R-E3 "config audit"): the keyless-testnet test clock is on at boot
         # (system actor `system:test-clock`, `auth/testnet_clock.py`).
         "system.config.test_clock_enabled",

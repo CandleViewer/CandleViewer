@@ -10,6 +10,8 @@ break-glass proof `prove_kek_possession` (#2119): metadata only, it never enrols
 are internal.
 Key import holds `CandidateKeys` (minted by `admin.wiring` too): M2 verifies a pasted pair through
 its `CandidateSigner`, a `SigningCapability`, and stores it only after the check passes (#836).
+`admin.wiring` also mints the audit export's `ExportSigner` and `SigningKeys` and adapts them to
+`audit`'s ports (#889, ADR-0039 decision 3): a signature and public key material, never a seed.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from candleviewer.secrets.errors import (
     SecretsError,
     WithdrawPermissionRejected,
 )
+from candleviewer.secrets.export_signer import ExportSigner, SigningKeys
 from candleviewer.secrets.metrics import export_secrets_metrics
 from candleviewer.secrets.models import KekCheckResult, RewrapReport, StoredCredential
 from candleviewer.secrets.secret import Secret
@@ -37,6 +40,8 @@ from candleviewer.secrets.service import (
     SigningCapability,
     mint_borrower,
     mint_candidate_keys,
+    mint_export_signer,
+    mint_signing_keys,
     prove_kek_possession,
 )
 from candleviewer.secrets.signing import KEY_ID_SLOT, RequestSignature
@@ -58,6 +63,7 @@ __all__ = [
     "CredentialStore",
     "CredentialUnavailable",
     "ExportKeyStore",
+    "ExportSigner",
     "KcvStore",
     "KekCheckResult",
     "KekRotationError",
@@ -74,10 +80,13 @@ __all__ = [
     "SecretsMetadataFacade",
     "SecretsService",
     "SigningCapability",
+    "SigningKeys",
     "StoredCredential",
     "WithdrawPermissionRejected",
     "export_secrets_metrics",
     "mint_borrower",
     "mint_candidate_keys",
+    "mint_export_signer",
+    "mint_signing_keys",
     "prove_kek_possession",
 ]

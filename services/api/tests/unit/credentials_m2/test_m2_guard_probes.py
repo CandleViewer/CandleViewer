@@ -53,6 +53,14 @@ PROBES: dict[str, str] = {
     "mint_candidates_elsewhere": (
         "from candleviewer.secrets import mint_candidate_keys\nmint_candidate_keys(s)"
     ),
+    # #889 S6b: the audit export signer's mints, and the last hop to an export key's DEK
+    "mint_export_signer_elsewhere": (
+        "from candleviewer.secrets import mint_export_signer\nmint_export_signer(s)"
+    ),
+    "mint_signing_keys_elsewhere": (
+        "from candleviewer.secrets import mint_signing_keys\nmint_signing_keys(s)"
+    ),
+    "export_unwrap": "dek = kek.unwrap_export_dek(row['dek_ref'], key_id=row['key_id'])",
     # boundary review: R1 literal-name reflection
     "getattr_closure": "x = getattr(ctx.secrets.health, '__closure__')",
     "getattr_mangled": "x = getattr(borrower, '_CredentialBorrower__borrow')",

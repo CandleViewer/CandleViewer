@@ -105,14 +105,8 @@ def test_ws_reauth_does_not_repeat_the_notice(client: TestClient) -> None:
 
 
 def _failing_bundle() -> Any:
-    from candleviewer.admin.wiring import SecretsBundle
-    from candleviewer.secrets import (
-        SecretsLifecycleFacade,
-        SecretsMetadataFacade,
-        SecretsService,
-        mint_borrower,
-        mint_candidate_keys,
-    )
+    from candleviewer.admin.wiring import secrets_bundle
+    from candleviewer.secrets import SecretsService
     from candleviewer.secrets._source import KekSources
     from candleviewer.secrets.store import InMemoryCredentialStore
     from tests.unit.credentials_m2._vectors import AuditLog
@@ -124,12 +118,7 @@ def _failing_bundle() -> Any:
     st = InMemoryCredentialStore()
     svc = SecretsService(store=st, kcv_store=st, audit=AuditLog(), harden=lambda: True,
                          sources=lambda s: KekSources(_Fail(), None, None))  # fmt: skip
-    return SecretsBundle(
-        SecretsLifecycleFacade(svc),
-        SecretsMetadataFacade(svc),
-        mint_borrower(svc, "exchange_adapter"),
-        mint_candidate_keys(svc),
-    )
+    return secrets_bundle(svc)
 
 
 async def test_readyz_and_health_show_secrets_down_after_kek_failure() -> None:
