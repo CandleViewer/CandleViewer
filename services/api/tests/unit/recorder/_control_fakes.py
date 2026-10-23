@@ -19,10 +19,20 @@ from candleviewer.recorder.sessions import DEFAULT_STREAMS
 NOW: Final = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
 GRACE: Final = timedelta(minutes=30)
 STREAMS: Final = ("trades", "orderbook_delta", "tickers", "liquidations")  # the add's default
+DEPTHS: Final = frozenset({1, 50, 200, 500})
 
 
 class RecorderSymbolNotManualError(RecorderError):
     """Mirrors #2188 S2b's `candleviewer.recorder.errors.RecorderSymbolNotManualError`."""
+
+
+class RecorderManualChangeError(RecorderError):
+    """A placeholder for #2188 S2b's typed refusal of an invalid `update_manual` (its name is
+    S2b's to choose): `field` and `rule` say what the policy refused."""
+
+    def __init__(self, field: str, rule: str) -> None:
+        super().__init__(field, rule)
+        self.field, self.rule = field, rule
 
 
 def _user(actor: Actor) -> None:
@@ -37,6 +47,8 @@ class FakeRecorder:
         self.max_symbols = max_symbols
         self.status_fields: dict[str, Any] = {}  # `ControlStatus` beside its entries
         self.audit: Any = None  # the policy's injected `AuditSink`; `None`: no records
+        self.stream_names = frozenset(STREAMS) | {"orderbook_snapshot", "klines", "open_interest",
+                                                  "funding"}  # fmt: skip
 
     async def _record(self, action: str, symbol: str, actor: Actor, reason: str,
                       **extra: str | bool | None) -> None:  # fmt: skip
@@ -85,6 +97,7 @@ class FakeRecorder:
         e = self.entries.get(symbol)
         if e is not None and "manual" in e.reasons and not e.lingering:
             rest = tuple(r for r in e.reasons if r != "manual")
+            await self._record("recorder.stop", symbol, actor, "manual")
             self.entries[symbol] = replace(e, reasons=rest or e.reasons, lingering=not rest,
                                            linger_until=None if rest else NOW + GRACE)  # fmt: skip
 
@@ -111,10 +124,17 @@ class FakeRecorder:
                             streams: tuple[str, ...] | None = None,
                             depth: int | None = None) -> None:  # fmt: skip
         _user(actor)
+        if depth is not None and depth not in DEPTHS:
+            raise RecorderManualChangeError("depth", "depth_allowed")
+        if streams is not None and (not streams or not set(streams) <= self.stream_names):
+            raise RecorderManualChangeError("streams", "stream_names")
         e = self.entries.get(symbol)
         if e is None or "manual" not in e.reasons or e.lingering:
             raise RecorderSymbolNotManualError(symbol)
-        self.entries[symbol] = replace(e, streams=streams or e.streams, depth=depth or e.depth)
+        streams, depth = streams or e.streams, depth or e.depth
+        await self._record("recorder.update", symbol, actor, "manual", streams=",".join(streams),
+                           depth=str(depth))  # fmt: skip
+        self.entries[symbol] = replace(e, streams=streams, depth=depth)
 
     def position_open(self, symbol: str) -> bool:
         return symbol in self.entries and "position_open" in self.entries[symbol].reasons
@@ -170,10 +190,17 @@ class FakeRecorder:
     async def update(
         self, entry_id: str, spec: rc.EntrySpec, actor: Actor
     ) -> rc.RecordedEntry | None:
+        """Streams and depth through `update_manual`, as S9 maps its refusals: a symbol with no
+        manual reason -> `ChangeRefused("not_manual")`; an invalid change -> its field's rule."""
         if (symbol := self._symbol(entry_id)) is None:
             return None
         if spec.streams is not None or spec.depth is not None:
-            await self.update_manual(symbol, actor, streams=spec.streams, depth=spec.depth)
+            try:
+                await self.update_manual(symbol, actor, streams=spec.streams, depth=spec.depth)
+            except RecorderSymbolNotManualError:
+                raise rc.ChangeRefused("not_manual") from None
+            except RecorderManualChangeError as exc:
+                raise rc.ChangeRefused(exc.rule, exc.field) from None
         return await self._settle(symbol, spec, actor)
 
     async def remove(
