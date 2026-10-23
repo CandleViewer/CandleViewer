@@ -226,10 +226,10 @@ class _Sessions(SessionService):
     async def authenticate_access_token(self, raw: str, **_: Any) -> Any:
         if raw != "tok":
             raise SessionNotFound("unknown token")
-        return SimpleNamespace(id=_SESSION, user_id=CALLER)
+        return SimpleNamespace(view_as=None, id=_SESSION, user_id=CALLER)
 
     async def peek_access_token(self, raw: str) -> Any:
-        return SimpleNamespace(id=_SESSION) if raw == "tok" else None
+        return SimpleNamespace(view_as=None, id=_SESSION) if raw == "tok" else None
 
 
 class _Auth:

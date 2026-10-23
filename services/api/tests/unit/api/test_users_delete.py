@@ -60,7 +60,7 @@ class _Auth:
     async def authenticate_access_token(self, token: str) -> Any:
         if self.session_error is not None:
             raise self.session_error
-        return SimpleNamespace(id=SESSION, user_id=CALLER)
+        return SimpleNamespace(view_as=None, id=SESSION, user_id=CALLER)
 
     async def peek_access_token(self, token: str) -> Any:
         """A refusal's read of its session (#4174): it authorises nothing."""

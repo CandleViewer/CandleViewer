@@ -131,8 +131,8 @@ def admin_area(
         try:
             await audit.emit(
                 AREA_ENTERED,
-                actor_label=principal.username,
-                actor_user_id=principal.user_id,
+                actor_label=principal.actor_name,
+                actor_user_id=principal.actor_id,
                 actor_ip=principal.ip,
                 session_id=principal.session_id,
                 object_kind="admin_route",
@@ -147,7 +147,7 @@ def admin_area(
             _log().error(
                 "admin.area_entered.audit_failed",
                 route=route,
-                actor_user_id=principal.user_id,
+                actor_user_id=principal.actor_id,
                 request_id=principal.request_id,
                 error=type(exc).__name__,
             )

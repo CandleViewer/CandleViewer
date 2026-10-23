@@ -303,7 +303,7 @@ class _Sessions:
     """`SessionService.authenticate_access_token` for one user: any token is that user's session."""
 
     def __init__(self, user: str) -> None:
-        self.record = SimpleNamespace(user_id=uuid.UUID(user), id=uuid.uuid4())
+        self.record = SimpleNamespace(user_id=uuid.UUID(user), id=uuid.uuid4(), view_as=None)
 
     async def authenticate_access_token(self, token: str, *, touch: bool = True) -> Any:
         return self.record

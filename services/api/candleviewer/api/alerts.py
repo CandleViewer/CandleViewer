@@ -32,6 +32,7 @@ from candleviewer.alerts.errors import AlertIrInvalid
 from candleviewer.api.alerts_http import Problem as _Problem
 from candleviewer.api.alerts_http import ProblemRoute as _ProblemRoute
 from candleviewer.api.alerts_http import caller
+from candleviewer.api.view_as_subject import acting_user
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.domain.text import refuse_unstorable_text
 from candleviewer.observability.context import current_request_uuid
@@ -134,8 +135,9 @@ class _Deps:
         return AlertCompiler(reg)
 
     async def audit_event(self, action: str, actor: Actor, alert_id: str, **kw: Any) -> None:
+        who = acting_user(actor.user_id)  # the viewer while viewing (#3085)
         await self.audit.emit(
-            action, actor_label=actor.user_id, actor_user_id=actor.user_id,
+            action, actor_label=who, actor_user_id=who,
             object_kind="alert", object_id=alert_id, request_id=current_request_uuid(), **kw,
         )  # fmt: skip
 

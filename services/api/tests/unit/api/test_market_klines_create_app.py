@@ -95,7 +95,9 @@ class _Sessions:
         user_id = _USER_OF.get(token)
         if user_id is None:
             raise SessionNotFound("unknown token")
-        return SimpleNamespace(id=user_id, user_id=user_id, mfa_satisfied_at=MFA_PROVED_AT)
+        return SimpleNamespace(
+            view_as=None, id=user_id, user_id=user_id, mfa_satisfied_at=MFA_PROVED_AT
+        )
 
 
 class _Identity:

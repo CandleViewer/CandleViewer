@@ -52,6 +52,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from candleviewer.alerts.dispatcher import Metric
 from candleviewer.api.alerts import READ, WRITE
 from candleviewer.api.alerts_http import AuditEmitter, Problem, ProblemRoute, Resolver, caller
+from candleviewer.api.view_as_subject import acting_user
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.rules.manager import Actor
@@ -310,14 +311,17 @@ def make_alert_deliveries_router(
 
     async def _audit(action: str, actor: Actor, kind: str, object_id: str | None,
                      **fields: Any) -> None:  # fmt: skip
+        who = acting_user(actor.user_id)  # the viewer while viewing (#3085)
         await audit.emit(
-            action, actor_label=actor.user_id, actor_user_id=actor.user_id,
+            action, actor_label=who, actor_user_id=who,
             object_kind=kind, object_id=object_id, request_id=current_request_uuid(), **fields,
         )  # fmt: skip
 
     async def _deny(actor: Actor, kind: str, object_id: str, reason: str) -> None:
-        """A foreign id: audited within the caller's denial budget (`DenialBudget`)."""
-        carried = budget.admit(actor.user_id)
+        """A foreign id: audited within the caller's denial budget (`DenialBudget`), the
+        viewer's while viewing (#3085)."""
+        who = acting_user(actor.user_id)
+        carried = budget.admit(who)
         if carried is None:
             return
         extra = {"after_state": {"suppressed_before": carried}} if carried else {}
@@ -325,7 +329,7 @@ def make_alert_deliveries_router(
             await _audit("alert.denied", actor, kind, object_id, outcome=AuditOutcome.DENIED,
                          reason=reason, **extra)  # fmt: skip
         except BaseException:  # not written: its slot and its count go back to the budget
-            budget.restore(actor.user_id, carried)
+            budget.restore(who, carried)
             raise
 
     reader = caller(actor_resolver, READ, LIST_DELIVERIES_QUERY)

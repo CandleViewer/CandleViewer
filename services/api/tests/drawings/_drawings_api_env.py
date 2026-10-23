@@ -252,7 +252,9 @@ class Sessions:  # session-store seam of the real app (`ctx.auth._sessions`): to
     async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:
         if (user_id := {"tok-a": USER_A}.get(token)) is None:
             raise SessionNotFound("unknown token")
-        return SimpleNamespace(id=SID, user_id=user_id, mfa_satisfied_at=MFA_PROVED_AT)
+        return SimpleNamespace(
+            view_as=None, id=SID, user_id=user_id, mfa_satisfied_at=MFA_PROVED_AT
+        )
 
     async def peek_access_token(self, token: str) -> Any:  # the CSRF guard's session binding
         return await self.authenticate_access_token(token)

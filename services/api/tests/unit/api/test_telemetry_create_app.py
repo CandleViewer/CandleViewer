@@ -39,7 +39,7 @@ class _Sessions:
     async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:
         if token != "good":  # noqa: S105 - test token
             raise SessionNotFound("nope")
-        return SimpleNamespace(id=_SID, user_id=_SID, mfa_satisfied_at=MFA_PROVED_AT)
+        return SimpleNamespace(view_as=None, id=_SID, user_id=_SID, mfa_satisfied_at=MFA_PROVED_AT)
 
 
 class _Identity:

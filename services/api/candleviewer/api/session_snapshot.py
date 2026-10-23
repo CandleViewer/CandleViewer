@@ -16,6 +16,7 @@ from collections.abc import Callable
 from fastapi import Request
 
 from candleviewer.api.audit_principal import _Identity, _Sessions
+from candleviewer.api.view_as_subject import view_as_subject
 from candleviewer.auth.errors import AuthError
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
@@ -38,8 +39,9 @@ class SessionSnapshotResolver:
             return None
         try:
             record = await self._sessions().authenticate_access_token(token, touch=True)
-            user = await self._identity.user(str(record.user_id))
-            info = await self._identity.session_info(str(record.user_id))
+            subject = view_as_subject(request, record)  # the target on a live view (#3085)
+            user = await self._identity.user(str(subject))
+            info = await self._identity.session_info(str(subject))
         except (AuthError, RuntimeError, LookupError):
             return None
         if user.get("status") != "active":
@@ -47,7 +49,7 @@ class SessionSnapshotResolver:
         codes = {str(code) for code in info.get("permissions", ())}
         try:
             return PrincipalSnapshot(
-                user_id=uuid.UUID(str(record.user_id)),
+                user_id=uuid.UUID(str(subject)),
                 roles=frozenset(str(r) for r in (user.get("roles") or ())),
                 permissions=frozenset(p for p in Permission if p.value in codes),
             )

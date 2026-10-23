@@ -573,3 +573,17 @@ async def test_a_cancelled_rate_limited_write_leaves_the_record_to_the_next_refu
     with pytest.raises(FetchLimited):
         await fx.fetch("A" * 43)
     assert [r["reason"] for r in fx.served()] == ["rate_limited"]
+
+
+async def test_a_viewing_bearers_refusal_is_recorded_as_the_viewers() -> None:
+    """#3085 (Q2): a bearer viewing as another user is the viewer acting, so the per-source
+    refusal's record names the viewer, never the user viewed."""
+    fx = await _fx()
+    token, _ = await fx.issue()
+    await _ten_misses(fx, token)
+    viewer = UUID(int=0x3085)
+    viewing = replace(principal("manager"), actor_user_id=viewer, actor_username="owner-anna")
+    with pytest.raises(FetchLimited):
+        await fx.fetch("A" * 43, viewing)
+    (record,) = fx.served()
+    assert (record["actor_user_id"], record["actor_label"]) == (viewer, "owner-anna")

@@ -71,6 +71,21 @@ class AuditPrincipal:
     #: `admin.area_entered`: no authorisation decision reads it, and step-up stays enforced by
     #: the `DANGEROUS_ROUTES` middleware (SR-025).
     last_step_up_at: datetime | None = None
+    #: #3085 (Q2): while the session views as another user, `user_id`, `username`, `permissions`
+    #: and `is_owner` are the target's, the subject's, and these two name the viewer, who acts.
+    #: A record or a budget reads `actor_id` and `actor_name`, never `user_id` and `username`.
+    actor_user_id: uuid.UUID | None = None
+    actor_username: str | None = None
+
+    @property
+    def actor_id(self) -> uuid.UUID:
+        """Who acts: the viewer while viewing, else the user."""
+        return self.actor_user_id or self.user_id
+
+    @property
+    def actor_name(self) -> str:
+        """The actor's username: the viewer's while viewing, else the user's."""
+        return self.actor_username or self.username
 
     def has(self, permission: str) -> bool:
         return "*" in self.permissions or permission in self.permissions  # nosem: no-adhoc-authz reason=Principal.has_permission-wildcard-impl-pending-E09-T01-authorize owner=@CandleViewer/security review=2026-12-31  # noqa: E501  # fmt: skip
@@ -130,8 +145,8 @@ async def authorize(principal: AuditPrincipal, operation: str, emitter: _Emitter
     )
     await emitter.emit(
         "admin.audit_denied",
-        actor_label=principal.username,
-        actor_user_id=principal.user_id,
+        actor_label=principal.actor_name,  # the viewer while viewing (#3085)
+        actor_user_id=principal.actor_id,
         actor_ip=principal.ip,
         session_id=principal.session_id,
         object_kind="audit_log",

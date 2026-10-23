@@ -117,6 +117,7 @@ from candleviewer.api.csrf import REFRESH_COOKIE as REFRESH_COOKIE  # re-exporte
 from candleviewer.api.enrolment_guard import EnrolmentRefusals, route_refusal
 from candleviewer.api.enrolment_guard import _unavailable as _session_unchecked
 from candleviewer.api.query_allowlist import undeclared_query_refusal
+from candleviewer.api.view_as_subject import view_as_subject
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.service import LaneNotWired
@@ -1502,10 +1503,11 @@ def make_session_router(
             return _problem(422, "Unprocessable", "invalid cursor")
         if offset < 0:
             return _problem(422, "Unprocessable", "invalid cursor")
-        # Scope is always the caller's own user id (x-rbac scope: self): the
-        # query is never parameterised by anything the client supplies.
+        # Scope is always the caller's own user id (x-rbac scope: self), the target's on a
+        # live view (#3085, Q10): the query is never parameterised by anything the client
+        # supplies. A context the guard did not stamp is a 503 (`ViewAsUnstamped`).
         views = await auth_service.sessions.list_sessions(
-            str(record.user_id), current_session_id=str(record.id)
+            str(view_as_subject(request, record)), current_session_id=str(record.id)
         )
         page = views[offset : offset + limit]
         has_more = offset + limit < len(views)

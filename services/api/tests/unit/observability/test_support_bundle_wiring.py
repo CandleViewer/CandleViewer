@@ -72,7 +72,9 @@ class _Sessions:
         users = {"owner": _OWNER, "mgr": _MGR}
         if token not in users:
             raise SessionNotFound("nope")
-        return SimpleNamespace(id=_SID, user_id=users[token], mfa_satisfied_at=MFA_PROVED_AT)
+        return SimpleNamespace(
+            view_as=None, id=_SID, user_id=users[token], mfa_satisfied_at=MFA_PROVED_AT
+        )
 
 
 class _Identity:

@@ -41,6 +41,7 @@ change.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -53,6 +54,7 @@ from fastapi.responses import JSONResponse, Response
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.idle_lock import idle_locked_problem, store_unavailable_problem
 from candleviewer.api.query_allowlist import undeclared_query_refusal
+from candleviewer.api.view_as_subject import ViewAsUnstamped, view_as_subject
 from candleviewer.auth.errors import AuthError, SessionIdleLocked
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.models import SessionRecord
@@ -108,6 +110,12 @@ class _Caller:
     user: dict[str, Any]
     permissions: frozenset[str]
     identity: MeIdentity
+    #: Whose answer this is (#3085, Q2): the target on a live view, else the session's user.
+    subject: uuid.UUID
+
+    @property
+    def viewing(self) -> bool:
+        return self.subject != self.record.user_id
 
 
 def _problem(status: int, code: str, title: str, detail: str, **extra: Any) -> JSONResponse:
@@ -198,8 +206,12 @@ def make_me_router(
                 501, "not_implemented", "Not implemented", "No identity provider is wired."
             )
         try:
-            user = await identity.user(str(record.user_id))
-            info = await identity.session_info(str(record.user_id))
+            subject = view_as_subject(request, record)  # the target on a live view (#3085)
+        except ViewAsUnstamped:  # a context the guard did not stamp: never the viewer's own scope
+            return _store_unavailable()
+        try:
+            user = await identity.user(str(subject))
+            info = await identity.session_info(str(subject))
         except LookupError:  # the user is gone
             return _unauthenticated()
         if user.get("status") != "active" or not _holds_only_known_roles(user):
@@ -217,7 +229,7 @@ def make_me_router(
             )
         if (refusal := undeclared_query_refusal(request, query)) is not None:
             return refusal  # SR-026: before anything is read for the answer
-        return _Caller(record, user, permissions, identity)
+        return _Caller(record, user, permissions, identity, subject)
 
     @router.get("/me", tags=["auth"])
     async def get_me(request: Request) -> Response:
@@ -232,16 +244,21 @@ def make_me_router(
                 "Authenticated but lacking the required permission",
                 "The account holds no live role.",
             )
-        accounts = await caller.identity.accounts(str(caller.record.user_id))
+        accounts = await caller.identity.accounts(str(caller.subject))
         body = {
             "user": caller.user,
             "role": role,
             "permissions": sorted(caller.permissions),
             "accounts": list(accounts),
             "session": {
-                "session_id": str(caller.record.id),
+                "session_id": str(caller.record.id),  # the viewer's own, while viewing (Q10)
                 "environment": environment.value,
-                "elevated_until": grace_expires_at(caller.record.step_up_elevations, now()),
+                # A view elevates nothing and arms nothing (Q10): it changes nothing.
+                "elevated_until": (
+                    None
+                    if caller.viewing
+                    else grace_expires_at(caller.record.step_up_elevations, now())
+                ),
                 "one_click_armed_until": None,  # one-click arming is not served yet
             },
         }

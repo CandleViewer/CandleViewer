@@ -28,6 +28,7 @@ from candleviewer.api.step_up import (
     consume_bound_grant,
 )
 from candleviewer.api.step_up_challenge import raw_request_target, request_fingerprint
+from candleviewer.api.view_as_subject import acting_user, view_as_subject
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.auth.errors import AuthError, SessionReadOnly, SessionRevoked
 from candleviewer.auth.scopes import PrincipalSnapshot
@@ -104,10 +105,12 @@ def make_rules_audit(emitter: Any) -> Callable[[str, dict[str, Any]], Any]:
     """Write-ahead audit callback (C-2.9) for `RulesManager`: ir_hash, environment, scope."""
 
     async def audit(action: str, payload: dict[str, Any]) -> None:
+        named = payload.get("actor")
+        actor = None if named is None else acting_user(str(named))  # the viewer while viewing
         await emitter.emit(
             _ACTIONS.get(action, "rules.version_create"),
-            actor_label=str(payload.get("actor", "system")),
-            actor_user_id=payload.get("actor"),
+            actor_label=str(actor or "system"),
+            actor_user_id=actor,
             outcome=AuditOutcome.DENIED if action in _DENIED else AuditOutcome.SUCCESS,
             object_kind="rule",
             object_id=str(payload.get("rule_id", "")),
@@ -137,8 +140,9 @@ class SessionRulesActorResolver:
             return None
         try:
             record = await self._sessions().authenticate_access_token(token, touch=True)
-            user = await self._identity.user(str(record.user_id))
-            info = await self._identity.session_info(str(record.user_id))
+            subject = view_as_subject(request, record)  # the target on a live view (#3085)
+            user = await self._identity.user(str(subject))
+            info = await self._identity.session_info(str(subject))
         except (AuthError, RuntimeError, LookupError):
             return None
         if user.get("status") != "active":
@@ -146,7 +150,7 @@ class SessionRulesActorResolver:
         try:
             # Sanctioned owner decision; unknown roles raise -> no actor (fail closed).
             snapshot = PrincipalSnapshot(
-                user_id=uuid.UUID(str(record.user_id)),
+                user_id=uuid.UUID(str(subject)),
                 roles=frozenset(str(r) for r in (user.get("roles") or ())),
                 permissions=frozenset(),
             )
@@ -179,7 +183,7 @@ class SessionRulesActorResolver:
             return True
 
         return Actor(
-            user_id=str(record.user_id),
+            user_id=str(subject),
             session_id=session_id,
             perms=frozenset(str(p) for p in info.get("permissions", ())),
             granted_accounts=frozenset(str(a) for a in info.get("account_scope", ())),

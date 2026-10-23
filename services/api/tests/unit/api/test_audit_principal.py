@@ -26,7 +26,7 @@ class _Sessions:
         users = {"owner-tok": _OWNER, "mgr-tok": _MANAGER}
         if token not in users:
             raise SessionNotFound("nope")
-        return SimpleNamespace(id=uuid.uuid4(), user_id=users[token])
+        return SimpleNamespace(view_as=None, id=uuid.uuid4(), user_id=users[token])
 
 
 class _Identity:
