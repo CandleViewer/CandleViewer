@@ -32,18 +32,19 @@ in section 1.
   - `AD-Snn-Nnn` is a negative or boundary case the story implies;
   - `AD-X-nn` is a cross-session scenario;
   - `CH-AD-n` is a charter;
-  - **[R]** marks a member of the regression pack (part 2 defines the pack).
+  - **[R]** marks a member of the regression pack (section 7 defines the pack).
 - **Layer:** each case names the layer that should own it, by `03-testing-strategy.md`'s pyramid: `unit`,
   `contract`, `integration`, `e2e`, `perf`, `security` or `a11y`. E42-Q02 automates from this label.
 - **Audit:** each case names the audit actions it expects, as registered in
   `services/api/candleviewer/audit/actions.py`, or says it expects none. After the step, the tester confirms
-  one record per audited request, with its actor, target, outcome, request id and, where `22` names one,
-  severity. An audited action with no record is a defect. The exceptions: `admin.area_entered` is written
-  once per admin API call, so a page that makes several calls writes several; a call let through by a live
-  grace also writes `auth.step_up_grace_used`; a write-ahead record whose change did not commit is closed by
-  a second, `failure` record; and past a budget (view-as refusals, audit reads) records are counted into
-  `suppressed`, not written one by one. Where a story names an action the registry does not hold, the case
-  names the registered one and the difference is a question in section 9.
+  one record per audited action, with its actor, target, outcome, request id and, where `22` names one,
+  severity. An audited action with no record is a defect. A disable also writes its cascade's records, one
+  `auth.session_revoked` per session and one `rules.disarm` per armed rule. The exceptions: `admin.area_entered`
+  is written once per admin API call, so a page that makes several calls writes several; a call let
+  through by a live grace also writes `auth.step_up_grace_used`; a write-ahead record whose change did not
+  commit is closed by a second, `failure` record; and past a budget (view-as refusals, audit reads) records
+  are counted into `suppressed`, not written one by one. Where a story names an action the registry does
+  not hold, the case names the registered one and the difference is a question in section 9.
 - **Timing:** each timing assertion cites its source and is measured between the server's audit timestamps
   where possible, not by the test runner's clock. A record written ahead of its commit (such as
   `users.disable`) starts an interval before it, which the server's 5 s revocation deadline does not count;
@@ -65,12 +66,14 @@ The handles below are fixed here. The fixture slices define each one as an idemp
 | MGR-M                                 | A Manager with an active session, one armed rule and a grant on SUB-S                        |
 | MGR-N                                 | A Manager with no grants                                                                     |
 | MGR-MANY                              | A Manager with grants on SUB-S, SUB-T and SUB-U                                              |
+| MGR-U                                 | A Manager with an active session and no grants: MGR-M for the stack that moves the clock     |
 | VIEWER-V                              | A Viewer                                                                                     |
 | INVITED-I, DISABLED-D, LOCKED-L       | A user in each non-active status                                                             |
 | SUB-S, SUB-T, SUB-U                   | Demo sub-accounts                                                                            |
 | SUB-K                                 | An account under the 48-hour key restriction                                                 |
 | TIER-FULL                             | The account tier `regular`, recorded, with 5 of 5 sub-accounts in use                        |
 | HEALTH-RECORDER-DOWN                  | The overview's `recorder` slice unreachable, every other slice healthy                       |
+| HEALTH-RECORDER-HANG                  | The overview's `recorder` slice never answering, every other slice healthy                   |
 | POS-M-S                               | An open position of MGR-M's on SUB-S, its exposure above the tightened cap AD-S03-04 saves   |
 | PROFILE-S                             | The profile bound to SUB-S                                                                   |
 | OVERVIEW-503                          | `GET /api/v1/admin/overview` answering `503`                                                 |
@@ -114,18 +117,26 @@ reach the admin area"; SCR §10 preamble; AC-ADM-01)
   AC-ADM-01): MGR-M's `GET /admin/audit` answers `200` with MGR-M's own records only, redacted, and recorder
   compact and import are not refused by role (the handler may still answer `4xx` for the body). VIEWER-V is
   refused all three, `403 forbidden`, though the recorder routes' refusals carry no `code` yet (SR-E42-09).
-- Audit: `admin.area_entered` (denied) per Owner-only read; on `/admin/audit*`, `admin.audit_denied` for a
-  refusal and `admin.audit_read` for MGR-M's read (AC-ADM-17: a read naming another actor first writes an
-  `admin.audit_denied`). E42-X03's RBAC cells hold the full matrix.
+  A fourth, the backup download link (`GET /admin/backups/{backupId}/download/{token}`), is public: its
+  token is the credential, so it is not refused by role for anyone.
+- Audit: `admin.area_entered` (denied) per Owner-only read on the admin-area guard; `rbac.denied` per
+  refusal on the `/users*` routes (AC-ADM-01); on `/admin/audit*`, `admin.audit_denied` for a refusal and
+  `admin.audit_read` for MGR-M's read (AC-ADM-17: a read naming another actor first writes an
+  `admin.audit_denied`); on the recorder routes, `recorder.compact` or `recorder.import`, outcome `denied`
+  for VIEWER-V and, for MGR-M, a record once the handler accepts the request (a `4xx` for the key or body
+  writes none). One refusal writes no record and carries no `code`: `GET /admin/support-bundle/{job_id}`
+  for a Manager or Viewer, a known gap (X03-F1, #2836) and not a new defect. E42-X03's RBAC cells hold the
+  full matrix.
 
 **AD-S01-03 Overview tiles resolve independently [R]** (`e2e`, `perf`; E42-S01 "Overview tiles resolve
 independently"; SCR-120)
 
-- Pre: OWNER, elevated; HEALTH-RECORDER-DOWN.
-- Steps: open `/admin`.
+- Pre: OWNER, elevated; HEALTH-RECORDER-DOWN, then HEALTH-RECORDER-HANG.
+- Steps: open `/admin`, once per handle.
 - Expected: the recorder tile shows its own error state with a retry action. Every other tile renders its
   value within 800 ms (SCR-120), measured by the overview's render metric (`cv_admin_overview_render_ms`,
-  E42-Q03).
+  E42-Q03). With HEALTH-RECORDER-HANG the same holds, and the recorder tile reaches its error state at 3 s,
+  its own timeout (E42-S01 performance notes), with no other tile waiting for it.
 - Audit: `admin.area_entered` (allowed), once per call.
 
 **AD-S01-04 Re-auth expires mid-edit** (`e2e`; E42-S01 "Re-auth expires mid-edit"; D02 D2)
@@ -152,12 +163,15 @@ independently"; SCR-120)
   - with no token refresh in between, a second `users`-class action 4 min 59 s after a step-up passes with
     no challenge (`auth.step_up_grace_used`); at 5 min it is challenged (`403 step_up_required`,
     `auth.step_up_required`);
-  - a refresh (`POST /auth/refresh`), an idle lock or the read-only downgrade voids the grace: the next action
-    of the class is challenged (22 `authRefresh`);
+  - a refresh (`POST /auth/refresh`) or an idle lock voids the grace: the next action of the class is
+    challenged (22 `authRefresh`). The read-only downgrade voids it too, and while it lasts a write answers
+    `403 session_read_only`, not a challenge;
   - an action of another class is challenged whatever the `users` grace;
   - a `backups`, `killswitch` or `live_enablement` action always needs a fresh code; its one-shot grant is
     bound to the request it was challenged for, single use and valid for 60 s, so another request with it is
-    refused `403 step_up_required`, `auth.step_up_mismatch` first, and leaves it bound;
+    refused `403 step_up_required`, `auth.step_up_mismatch` first, and leaves it bound. `22` also names
+    `sl_loosen` no-grace, for an owner loosening a stop through `setPositionTpSl`; the server holds it
+    only once E29-T07 extends it, and no admin case reaches it;
   - the grace is the server's, so a client clock set back changes nothing.
 - **AD-S01-N02 Cancel leaves the draft** (`e2e`; D02 D2): cancelling the entry gate returns to the previous
   non-admin route, not a dead end. Cancelling a held save's gate says "Not saved", keeps the page and its
@@ -171,6 +185,11 @@ independently"; SCR-120)
   `403 session_read_only` on every write), with Cancel the only action.
 - **AD-S01-N05 Step-up time** (`perf`; SCR-149): the step-up answers in ≤400 ms, measured by E42-Q03.
   Audit: `auth.step_up_granted`.
+- **AD-S01-N06 The audit marker names only registered actions** (`e2e`, `a11y`; D02 D5): every rung dialog
+  ends with "Recorded in the audit log · <label> (`<code>`)", every state-changing control outside a dialog
+  carries it in its `aria-describedby` line, an audited read says so in its page header ("Viewing this log
+  is recorded"), and the audit export's marker adds "· needs your confirmation". Each code is a name in
+  `audit/actions.py`, or absent: a marker never names an unregistered one. Audit: none.
 
 ### S02: the users list, invites and the lifecycle (US-ADMIN-001, 014; SCR-121, SCR-123)
 
@@ -208,17 +227,19 @@ access quickly"; US-ADMIN-001)
 **AD-S02-03 Delete keeps the history [R]** (`e2e`, `integration`; E42-S02 "Delete with history"; 22
 `deleteUser`)
 
-- Pre: OWNER, elevated; MGR-M, active.
+- Pre: OWNER, elevated; MGR-M, active. The anonymisation half needs the server's clock moved (§0), so it
+  runs on the testnet stack, which seeds users only, with MGR-U in place of MGR-M.
 - Steps: delete MGR-M through its rung-3 dialog, typing MGR-M's username to confirm.
 - Expected:
   - the confirm control stays disabled until the counts load and the typed name matches, and Enter in the
     name field never confirms (D02 D3, D18);
   - the delete (`DELETE /users/{userId}?purge=true`; `503 purge_unavailable` while no reaper runs) first
     disables MGR-M, then schedules the purge 90 days out; MGR-M's audit and journal history stay;
-  - the anonymised reference appears only once the purge has run, which the reaper does after that date.
-    Observing it needs the server's clock moved past the date (§0).
-- Audit: `users.disable`, `auth.session_revoked` per session, then `users.delete`. The reaper writes
-  `users.anonymise` later. See Q-10 on the "Disabled/Deleted" filter.
+  - the anonymised reference appears only once the purge has run, which the reaper does after that date:
+    with the clock moved past it, the reaper writes `users.anonymise`, MGR-U's username and email read as
+    a surrogate, and every audit row about MGR-U is unchanged (UL-AC12).
+- Audit: `users.disable`, `auth.session_revoked` per session, `rules.disarm` for each armed rule, then
+  `users.delete`. The reaper writes `users.anonymise` later. See Q-10 on the "Disabled/Deleted" filter.
 
 **AD-S02-04 The last owner is protected [R]** (`e2e`, `contract`; E42-S02 "Last owner protection"; AC-ADM-28)
 
@@ -244,18 +265,20 @@ destructive action")
 - Expected: the gate appears. After success the delete goes ahead exactly once, with the same idempotency
   key; replaying the request with that key writes nothing.
 - Audit: `auth.step_up_required`, `auth.step_up_granted`, `auth.step_up_grace_used`, then `users.disable`,
-  `auth.session_revoked` per session and one `users.delete`.
+  `auth.session_revoked` per session, `rules.disarm` and one `users.delete`.
 
 **Negative and boundary cases**
 
 - **AD-S02-N01 The invite link is never served again** (`contract`; AC-ADM-27 holds a spent link's replay):
   no read of the invite answers its link. Audit: none.
-- **AD-S02-N02 An invite may name only the viewer role** (`contract`; 22 `CreateUserRequest`; SR-027): an
-  invite naming `manager` or `owner` answers `422`, and no invite is written. Audit: `users.invite_refused`.
-- **AD-S02-N03 Two owners disable one manager at once** (`integration`; 22 `deleteUser`, `updateUser`): two
-  `DELETE`s answer `204` twice and write one `users.disable`, the second being a no-op with no record. Two
-  `PATCH`es to `disabled` with the same `ETag` answer one `200` and one `412 version_conflict`, and the
-  loser changes nothing; the second must send `If-Match`, since without it the server reads last write wins.
+- **AD-S02-N02 An invite may name only the viewer role** (`contract`; 22 `CreateUserRequest`; SR-027):
+  OWNER, elevated, sends an invite naming `manager` or `owner`. It answers `422`, and no invite is
+  written. Audit: `users.invite_refused`.
+- **AD-S02-N03 Two owners disable one manager at once** (`integration`; 22 `deleteUser`, `updateUser`):
+  OWNER and OWNER-2 are each elevated, and MGR-M is active. Two `DELETE`s answer `204` twice and write one
+  `users.disable`, the second being a no-op with no record. Two `PATCH`es to `disabled` with the same
+  `ETag` answer one `200` and one `412 version_conflict`, and the loser changes nothing; the second must
+  send `If-Match`, since without it the server reads last write wins.
 - **AD-S02-N04 A disabled user cannot sign in, and enabling restores nothing else** (`e2e`; 22 `updateUser`,
   `login`): the sign-in is refused with no session and recorded `auth.login_failed` (Q-15). On Enable,
   `users.enable`; the grants, sessions and disarmed rules stay gone, and a scheduled purge is cancelled.
@@ -306,9 +329,9 @@ sub-account")
 - Expected: the save is blocked until the owner chooses, with neither option pre-selected: leave the
   positions open (the owner takes them over) or flatten first (D02 §6.4).
 - Audit: `users.access_change`, with its `positions_decision`. See Q-11.
-- **AD-S03-03b An unknown position count fails closed** (`contract`; 22 `setUserAccountAccess`): while the
-  open-position count cannot be read, the save answers `409 positions_unknown` unless it carries
-  `acknowledge_unknown_positions`. Audit: none for the refusal.
+- **AD-S03-03b An unknown position count fails closed** (`contract`; 22 `setUserAccountAccess`): OWNER is
+  elevated, and while the open-position count cannot be read the save answers `409 positions_unknown`
+  unless it carries `acknowledge_unknown_positions`. Audit: none for the refusal.
 
 **AD-S03-04 Tighten a limit during an open position** (`e2e`, `integration`; E42-S03 "Tighten a limit
 during an open position")
@@ -334,16 +357,20 @@ read-only"; 22 "View-as session")
   - every state-changing control is disabled, with a reason, **except the protective writes** (C-2.6; 22
     "View-as session", "Protective writes"): engaging the kill switch on the target's accounts, amending an
     order or a trade group, and setting a position's TP/SL stay enabled and are served as the viewer (the
-    audit actor), when the viewer's and the target's RBAC both allow them;
+    audit actor), when the viewer's and the target's RBAC both allow them. D02 draws only one of them as an
+    enabled control, the freeze engage on the target's accounts (rung 0; D02 §4.1 and §5). The handlers of
+    the four are not mounted yet, so this half is blocked (§6);
   - the carve-out is bounded: releasing the kill switch, `scope: global` and an amend with any non-protective
     component are refused `403 view_as_read_only` by their handlers, before any effect; any other write sent
     anyway is refused the same way before authorisation, validation and any step-up (AC-ADM-22).
 - Audit: `admin.view_as_started` (severity `warning`, see Q-12); `admin.view_as_refused` per refused write;
+  `risk.freeze_manager` for a freeze engaged while viewing (D02 §5), the viewer being its actor;
   `admin.view_as_ended` on exit.
 
-**AD-S03-06 A concurrent edit is surfaced** (`e2e`, `contract`; E42-S03 "Concurrent edit"; AC-ADM-28, -29)
+**AD-S03-06 A concurrent edit is surfaced** (`e2e`, `contract`; E42-S03 "Concurrent edit"; 22 `updateUser`;
+UL3-T1)
 
-- Pre: OWNER loads MGR-M's detail; OWNER-2 then changes MGR-M's roles.
+- Pre: OWNER and OWNER-2 are each elevated. OWNER loads MGR-M's detail; OWNER-2 then changes MGR-M's roles.
 - Steps: OWNER saves a profile field (`PATCH /users/{userId}` with the `If-Match` it loaded).
 - Expected: `412 version_conflict`, shown as "This user changed while you were editing" with a reload
   action. OWNER's change is not applied.
@@ -762,13 +789,16 @@ catalogue's, and it is measured between server timestamps.
 - B: MGR-M, with the order ticket open.
 - A: OWNER, with a live `flags` grace, turns `maintenance.mode` on.
 - Expected:
-  - order acceptance is blocked server-side within **≤200 ms** of the `maintenance.enabled` record, measured
-    to the refused submit's `orders.submit` (denied) record; an order from B after that answers
-    `403 trading_disabled` with `reason: maintenance`;
+  - order acceptance is blocked server-side within **≤200 ms** (SCR-148): B keeps submitting
+    exposure-opening orders across the switch, and no `orders.submit` is accepted later than the
+    `maintenance.enabled` record plus 200 ms; each one refused after it answers `403 trading_disabled` with
+    `reason: maintenance` and is recorded `orders.submit` (denied);
   - the maintenance notice reaches every session, B's included, within **≤2 s** (SCR-148), measured to the
-    `notice` frame's `ts` (23 §15.9); B's carries only the role-neutral fields (`kind`, `severity`,
-    `message`, `reason`), as the `system` cuts of AC-ADM-11 and AC-ADM-35 do;
-  - B's cancels, closes and stop-tightening still pass (22 `setFeatureFlag`; AC-ADM-12).
+    `notice` frame's `ts` (23 §15.9); B's carries only what `23` §15.9's table gives a Manager for a
+    `notice` (`kind`, `severity`, `message`, `reason`), which AC-ADM-11 and AC-ADM-35 hold;
+  - B's cancels, closes (`closePosition`, `closeAllPositions`), attaching a missing native SL, and
+    quantity-reducing and stop-tightening amends still pass (22 `setFeatureFlag`; AC-ADM-12).
+- **Blocked** on `POST /orders` for the order bullets (E29-T07; AC-ADM-12).
 - End: A turns maintenance off, a rung-4 `killswitch` action with no grace (D02 D15; AC-ADM-07): a fresh
   code is asked, and B's next order is no longer refused for `reason: maintenance`.
 - Audit: `auth.step_up_grace_used`, `flags.change`, `maintenance.enabled`; B's refused order, `orders.submit`
@@ -777,15 +807,16 @@ catalogue's, and it is measured between server timestamps.
 
 ## 4. Exploratory charters
 
-Each charter is timeboxed, within `03-testing-strategy.md` §11.2's 60 to 120 minutes. A charter ends with notes, the defects filed and the coverage it reached.
+Each charter is timeboxed, within `03-testing-strategy.md` §11.2's 60 to 120 minutes. A charter ends with
+notes, the defects filed and the coverage it reached.
 
-| Charter                                                                                                                                                                                                  | Timebox | What would make this a finding                                                                                                                                                   |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **CH-AD-1** Try to see data outside your scope as a manager: deep links with foreign ids, the scope selector, `/me`, WebSocket subscriptions, the own-redacted audit view, exports                       | 90 min  | Any byte of another user's or an ungranted account's data; or a foreign id answered differently from a missing one                                                               |
-| **CH-AD-2** Try to make the audit log look editable: SCR-135 and SCR-136 controls, every HTTP verb on `/admin/audit*`, the export, a detail view edited in the browser, the chain check on AUDIT-CORRUPT | 60 min  | Any control or verb that changes a record; any affordance that suggests editing; a verify of AUDIT-CORRUPT that reports an intact chain or another `first_bad_id`                |
-| **CH-AD-3** Try to reach an admin screen without elevation: deep links, the back button after a cancelled gate, a second tab, a grace lapsing mid-load, a view-as session                                | 60 min  | A step-up-gated action that succeeds without a live grace; a state change or admin-area call with no record; an Owner-only route answering other than `403` in a view-as session |
-| **CH-AD-4** Try to lose form content by letting the step-up lapse, on every admin form                                                                                                                   | 60 min  | A form whose content is lost, that saves twice, or that saves without passing the gate                                                                                           |
-| **CH-AD-5** Try to make two tiles block each other: SCR-120 with subsystems slowed, failing and flapping                                                                                                 | 60 min  | One tile's failure or slowness delays another past 800 ms; a retry that blocks the page                                                                                          |
+| Charter                                                                                                                                                                                                  | Timebox | What would make this a finding                                                                                                                                                  |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **CH-AD-1** Try to see data outside your scope as a manager: deep links with foreign ids, the scope selector, `/me`, WebSocket subscriptions, the own-redacted audit view, exports                       | 90 min  | Any byte of another user's or an ungranted account's data; or a foreign id answered differently from a missing one                                                              |
+| **CH-AD-2** Try to make the audit log look editable: SCR-135 and SCR-136 controls, every HTTP verb on `/admin/audit*`, the export, a detail view edited in the browser, the chain check on AUDIT-CORRUPT | 60 min  | Any control or verb that changes a record; any affordance that suggests editing; a verify of AUDIT-CORRUPT that reports an intact chain or another `first_bad_id`               |
+| **CH-AD-3** Try to reach an admin screen without elevation: deep links, the back button after a cancelled gate, a second tab, a grace lapsing mid-load, a view-as session                                | 60 min  | A step-up-gated action that succeeds with no live grace or bound grant; a state change or admin call with no record; an Owner-only route not refused `403` in a view-as session |
+| **CH-AD-4** Try to lose form content by letting the step-up lapse, on every admin form                                                                                                                   | 60 min  | A form whose content is lost, that saves twice, or that saves without passing the gate                                                                                          |
+| **CH-AD-5** Try to make two tiles block each other: SCR-120 with subsystems slowed, failing and flapping                                                                                                 | 60 min  | One tile's failure or slowness delays another past 800 ms; a retry that blocks the page                                                                                         |
 
 CH-AD-2's chain check runs on AUDIT-CORRUPT, in a test database only, never on staging: a stored record
 changed there would permanently break an append-only, hash-chained log.
@@ -800,17 +831,17 @@ changed there would permanently break an append-only, hash-chained log.
 | E42-S01 | (failure) Re-auth expires mid-edit                    | AD-S01-04, AD-S01-N02, AD-S01-N03, CH-AD-4                         |
 | E42-S01 | (edge) Backend degraded                               | AD-S01-05                                                          |
 | E42-S02 | Create and assign role                                | AD-S02-01, AD-S02-N01, AD-S02-N02, AD-S02-N06, AD-S02-N07          |
-| E42-S02 | Disable revokes access quickly                        | AD-S02-02, AD-X-01, AD-S02-N04, AD-S02-N05                         |
+| E42-S02 | Disable revokes access quickly                        | AD-S02-02, AD-X-01, AD-S02-N04                                     |
 | E42-S02 | Delete with history                                   | AD-S02-03                                                          |
 | E42-S02 | (failure) Last owner protection                       | AD-S02-04                                                          |
-| E42-S02 | (edge) Capacity reached                               | AD-S02-05, AD-S02-N05                                              |
+| E42-S02 | (edge) Capacity reached                               | AD-S02-05                                                          |
 | E42-S02 | (failure) Step-up expired during a destructive action | AD-S02-06                                                          |
 | E42-S02 | (ticket rule) No audit record, no action              | AD-S02-N08, AD-S02-N09                                             |
 | E42-S03 | Bind a manager to a sub-account                       | AD-S03-01                                                          |
 | E42-S03 | Multiple bindings                                     | AD-S03-02                                                          |
 | E42-S03 | Unbind with open positions                            | AD-S03-03, AD-S03-03b                                              |
 | E42-S03 | Tighten a limit during an open position               | AD-S03-04                                                          |
-| E42-S03 | View-as is unmistakably read-only                     | AD-S03-05, AD-S03-N01 to AD-S03-N04, AD-S03-N06 to AD-S03-N08      |
+| E42-S03 | View-as is unmistakably read-only                     | AD-S03-05, AD-S03-N01 to AD-S03-N03, AD-S03-N06 to AD-S03-N08      |
 | E42-S03 | (failure) Concurrent edit                             | AD-S03-06, AD-S02-N03, AD-S03-N05                                  |
 | E42-S03 | (ticket rule) No audit record, no action              | AD-S03-N09 to AD-S03-N11                                           |
 | E42-S04 | Search the log                                        | AD-S04-01, AD-S04-N06                                              |
@@ -849,13 +880,15 @@ changed there would permanently break an append-only, hash-chained log.
 | E42-S08 | Acknowledge a latch                                   | AD-S08-02                                                          |
 | E42-S08 | Acknowledge without elevation is refused              | AD-S08-03                                                          |
 | E42-S08 | State diagram matches the running chart               | AD-S08-04                                                          |
+| D02     | (no scenario) D5, the audit marker                    | AD-S01-N06                                                         |
+| D02     | (no scenario) D8 patterns: chips, key restriction     | AD-S02-N05, AD-S03-N04                                             |
 
 The scope's implied cases map as follows. "Expired token mid-action" is AD-S01-04 and AD-S02-06.
 "Concurrent owner edits" is AD-S03-06 and AD-S02-N03 for a user's fields and roles, and AD-S03-N05 for
 the grant set. "A manager session open while their grant is revoked" is AD-X-02. "An export over the
 range limit" is AD-S04-N01, and "a flag changed twice in one second" is AD-S05-N01.
 
-The omissions that the review of the first draft found landed as follows: the grant-edit race in
+The omissions that the review of the S01 to S03 cases found landed as follows: the grant-edit race in
 AD-S03-N05 (Q-16); the invite's step-up and `account_access` cases in AD-S02-N06 and AD-S02-N07 (Q-17);
 the view-as start's gates, the reason's confidentiality and the sockets in AD-S03-N06 to AD-S03-N08; an
 unwritable audit record in AD-S02-N08, AD-S02-N09 and AD-S03-N09 to AD-S03-N11; the invariant that no
@@ -873,7 +906,9 @@ order is placed after a disable in AD-X-01; and the view-as entry criterion in s
 - for S03's view-as cases (AD-S03-05, AD-S03-N01 to AD-S03-N03, AD-S03-N06 to AD-S03-N08 and
   AD-S03-N11), `POST /admin/view-as` is mounted: on `main` today it is not (its `rbac/matrix.yaml` row is
   `not_mounted`, and AC-ADM-22 waits on #3085's server slice), so no context can start and those cases
-  are blocked.
+  are blocked; AD-S03-05's protective-write half also needs the four handlers, E39-S03 (`setKillSwitch`),
+  E29-T07 (`amendOrder`, `setPositionTpSl`) and E34-S03 (`amendTradeGroup`), since until each is mounted
+  the guard refuses it like any other write.
 
 **Exit.** A story group is done when all of these hold:
 
@@ -936,7 +971,8 @@ never lost.
 
 ## 9. Questions
 
-Each is a question for the implementing story, not a guess.
+Each is a question for the owner of the source it names (a story, the contract or the server), not a
+guess.
 
 - **Q-1:** E42-S01 and SCR-149 describe a 15-minute admin token. The server has per-action step-up instead,
   with a 5-minute grace per action class, and records an entry without refusing it. The web router gates
@@ -954,10 +990,11 @@ Each is a question for the implementing story, not a guess.
   only `users.invited` for an invite (`api/invites.py`). AD-S02-01 follows D9 and the server: `users.invited`,
   then `roles.grant`.
 - **Q-3:** E42-S02 expects `409 conflict`, audited as a denied action, for the only owner's own Disable or
-  Delete. The server refuses a self-target first, `403 self_target` (SR-055, audited `rbac.denied`), once the
-  step-up gate has passed; the `409` is the last _active_ owner's refusal from another owner (`04` §5.7 D6),
-  and on the disable path it is deliberately unaudited (the user-lifecycle model's UL1-D1). AD-S02-04 asserts
-  a refusal with nothing changed, and both statuses need a case once this is settled.
+  Delete. The server refuses a self-target first, `403 forbidden` with reason `self_target` (SR-055, audited
+  `rbac.denied`), once the step-up gate has passed; the `409` is the last _active_ owner's refusal from
+  another owner (`04` §5.7 D6), and on the disable path it is deliberately unaudited (the user-lifecycle
+  model's UL1-D1). AD-S02-04 asserts a refusal with nothing changed, and both statuses need a case once
+  this is settled.
 - **Q-4:** E42-S03 names the limit change's action `risk.limits_changed`, which the registry does not hold
   (it has `risk.freeze_manager` and `risk.unfreeze_manager`), and the per-user caps override has no admin
   endpoint on `main` (D02 §6.4, §13.1 and O-G). AD-S03-04 is blocked until both exist.
