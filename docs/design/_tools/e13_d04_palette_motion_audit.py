@@ -568,22 +568,32 @@ def redistribute_remove(ratios: list[float], idx: int) -> list[float]:
 
 
 def add_pane(ratios: list[float], new: float, floor: float) -> list[float]:
-    """A new sub-pane takes `new` of the whole, proportionally from every pane above the floor; a
-    pane the take would push below the floor is held there and the shortfall is taken from the
-    others.
+    """A new sub-pane takes `new` of the whole from the price pane (index 0) first, while the price
+    pane stays above the floor; only the remainder is taken proportionally from the sub-panes, a
+    sub-pane the take would push below the floor held there and its shortfall taken from the
+    others (BQ-7 as ruled, issuecomment-6364739361 on #315: 26 section 8's 0.6 / 0.2 / 0.2 example
+    reproduced exactly, the existing sub-panes stable).
     """
-    out = [r * (1 - new) for r in ratios]
-    for _ in range(len(out)):
-        short = sum(floor - r for r in out if r < floor)
-        if short <= 1e-12:
-            break
-        held = {i for i, r in enumerate(out) if r <= floor + 1e-12}
-        free = [i for i in range(len(out)) if i not in held]
-        if not free:
-            break
-        free_total = sum(out[i] for i in free)
-        for i in range(len(out)):
-            out[i] = floor if i in held else out[i] - short * out[i] / free_total
+    out = list(ratios)
+    give = max(0.0, min(new, out[0] - floor))
+    out[0] -= give
+    rest = new - give
+    if rest > 1e-12 and len(out) > 1:
+        subs = list(range(1, len(out)))
+        sub_total = sum(out[i] for i in subs)
+        for i in subs:
+            out[i] -= rest * out[i] / sub_total
+        for _ in range(len(subs)):
+            short = sum(floor - out[i] for i in subs if out[i] < floor)
+            if short <= 1e-12:
+                break
+            held = {i for i in subs if out[i] <= floor + 1e-12}
+            free = [i for i in subs if i not in held]
+            if not free:
+                break
+            free_total = sum(out[i] for i in free)
+            for i in subs:
+                out[i] = floor if i in held else out[i] - short * out[i] / free_total
     return [*out, new]
 
 
@@ -694,7 +704,8 @@ def motion_section() -> dict[str, Any]:
         )
         + ". A pane at the 18 ceiling exceeds it for the fade only and sheds M6 first (rung 0)."
     )
-    # sub-pane ratio arithmetic (26 section 8's example; the floor E11-D06 section 6.4 names)
+    # sub-pane ratio arithmetic (26 section 8's example; the floor E11-D06 section 6.4 names;
+    # the price pane gives the new 0.2 first -- BQ-7 RULED, issuecomment-6364739361)
     size_2xs = token_value("dark", "font.size.2xs")
     tight = token_value("dark", "font.lineheight.tight")
     label_h = float(str(size_2xs)) * float(str(tight))
@@ -728,7 +739,9 @@ def motion_section() -> dict[str, Any]:
         f"({' + '.join(str(h) for h in heights)})"
         f" six adds from one price pane give "
         + " / ".join(str(x) for x in out["ratios"]["sixAddsPx"])
-        + " px, every pane >= the floor (the first sub-pane is held at it on the sixth add)."
+        + " px, every pane >= the floor (the price pane reaches it on the fifth add and gives "
+        "nothing on the sixth; the new 0.2 comes from the price pane first, then proportionally "
+        "from the sub-panes -- BQ-7 as ruled)."
     )
     # flash audit and vestibular rows (E11-D06 section 9.3 / 9.4 shapes)
     p("")
