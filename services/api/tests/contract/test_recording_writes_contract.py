@@ -1,7 +1,8 @@
-"""#492 S7 provider contract: `addRecordedSymbol` and `pinRecordedSymbol` through the real
+"""#492 S7 and S8 provider contract: the four recorded-set writes through the real
 `create_app()` (the RBAC pack's world, with the fake control bound as the writer and every
 symbol listed). Bodies validate against the schema 22 declares for their status, and every
-status the routes answer is declared."""
+status the routes answer is declared. Owner, Manager and Viewer against a read, a write and the
+purge: the nine RBAC cases."""
 
 from __future__ import annotations
 
@@ -25,6 +26,8 @@ _PIN = f"{_ONE}/pin"
 _ANSWERED = {
     (_LIST, "post"): ("200", "201", "401", "403", "409", "422", "429", "503"),
     (_PIN, "put"): ("200", "401", "403", "404", "409", "422", "429", "503"),
+    (_ONE, "patch"): ("200", "401", "403", "404", "409", "422", "429", "503"),
+    (_ONE, "delete"): ("204", "401", "403", "404", "409", "422", "429", "503"),
 }
 _CASES = [(p, m, s) for (p, m), statuses in _ANSWERED.items() for s in statuses]
 _PROBLEMS = {"404": "NotFound", "409": "Conflict", "422": "UnprocessableEntity"}
@@ -47,6 +50,7 @@ def world() -> Iterator[World]:
         w, fake = build_world(mp), FakeRecorder()
         mp.setattr(appmod, "_catalogue_listed", lambda _ctx, symbol: symbol != "DOGEUSDT")
         fake.put("BTCUSDT")
+        fake.put("XRPUSDT", "manual", "chart_open", refusals=("chart_open",))
         w.app.state.recording_control = w.app.state.recording_writer = fake
         yield w
     finally:
@@ -98,3 +102,42 @@ def test_the_429_body_is_its_declared_response() -> None:
     limited = writes.Limited(12).response()
     assert (limited.status_code, limited.headers["Retry-After"]) == (429, "12")
     validate_example(_problem("429"), json.loads(limited.body))
+
+
+def test_each_update_and_stop_answer_is_its_declared_response(world: World) -> None:
+    owner, fake = bearer("owner"), world.app.state.recording_writer
+    btc, xrp = (f"{_LIST}/{fake.entries[s].id}" for s in ("BTCUSDT", "XRPUSDT"))
+    patched = world.client.patch(btc, json={"depth": 50}, headers=owner)
+    assert patched.status_code == 200
+    validate_example(_schema(_ONE, "patch", "200"), patched.json())
+    answers = {
+        "409": world.client.delete(xrp, headers=owner),
+        "422": world.client.delete(btc, params={"purge_data": "true"}, headers=owner),
+    }
+    for status, resp in answers.items():
+        assert (str(resp.status_code), resp.headers["content-type"]) == (
+            status, "application/problem+json")  # fmt: skip
+        validate_example(_problem(status), resp.json())
+    assert world.client.delete(btc, headers=owner).status_code == 204
+
+
+_NINE = {  # actor -> (read, write, purge); allow = past authorisation (the handler may refuse)
+    "owner": ("allow", "allow", "allow"),
+    "manager_with_grant": ("allow", "allow", "403"),
+    "viewer": ("allow", "403", "403"),
+}
+
+
+@pytest.mark.parametrize("actor", sorted(_NINE))
+def test_the_nine_rbac_cases_owner_manager_viewer_against_read_write_and_purge(
+    world: World, actor: str
+) -> None:
+    headers, absent = bearer(actor), f"{_LIST}/{uuid.uuid4()}"
+    answers = (
+        world.client.get(_LIST, headers=headers),
+        world.client.delete(absent, headers=headers),
+        world.client.post("/admin/recorder/purge", json={}, headers=headers),
+    )
+    seen = tuple({401: "401", 403: "403"}.get(r.status_code, "allow") for r in answers)
+    assert seen == _NINE[actor]
+    assert all(r.status_code < 500 for r in answers)

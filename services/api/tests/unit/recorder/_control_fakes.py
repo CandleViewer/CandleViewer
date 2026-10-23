@@ -161,6 +161,27 @@ class FakeRecorder:
             self.entries[symbol] = kept
         return kept
 
+    async def update(
+        self, entry_id: str, spec: rc.EntrySpec, actor: Actor
+    ) -> rc.RecordedEntry | None:
+        if (symbol := self._symbol(entry_id)) is None:
+            return None
+        if spec.streams is not None or spec.depth is not None:
+            await self.update_manual(symbol, actor, streams=spec.streams, depth=spec.depth)
+        return await self._settle(symbol, spec, actor)
+
+    async def remove(
+        self, entry_id: str, actor: Actor, *, force: bool = False
+    ) -> rc.RecordedEntry | None:
+        """Ends the manual reason; refused, with nothing changed, while a trigger holds."""
+        if (symbol := self._symbol(entry_id)) is None:
+            return None
+        causes = tuple(c for c in self.entries[symbol].refusals if c in rc.STOP_CAUSES)
+        if causes and not force:
+            raise rc.StopRefused(causes)
+        await self.remove_manual(symbol, actor)
+        return self.entries.get(symbol)
+
     async def _settle(self, symbol: str, spec: rc.EntrySpec, actor: Actor) -> rc.RecordedEntry:
         e = self.entries[symbol]
         if spec.pinned is not None:
