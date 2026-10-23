@@ -1,12 +1,13 @@
-"""Integration (E42-Q01, #962): the admin fixtures on a migrated Postgres 16.
+"""Integration (E42-Q01, #962): the admin fixtures on a migrated Postgres 16: the world and the
+backups of BACKUP-VERIFY-FAILED.
 
-The seed passes its own checks, a second run changes no row (nor any row's version), and a database
+Each seed passes its own checks, a second run changes no row (nor any row's version), and a database
 not named for tests is refused. Needs Docker (testcontainers); CI `integration` runs it.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,7 +16,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
 from candleviewer.db import models as m
-from tests.fixtures.admin.handles import ACCOUNTS, FLAGS, USERS
+from tests.fixtures.admin.handles import ACCOUNTS, BACKUPS, FLAGS, USERS
 from tests.fixtures.admin.seed import (
     FixtureRefused,
     check_admin_world,
@@ -29,6 +30,7 @@ pytestmark = pytest.mark.integration
 
 pg_dsn = _refused.pg_dsn  # the module-scoped Postgres 16, migrated; its database is named `test`
 _NOW = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
+_Seed = Callable[..., Awaitable[None]]
 _XMIN = sa.cast(sa.column("xmin"), sa.Text).label("xmin")  # a rewrite, even of an equal row, shows
 
 
@@ -84,7 +86,8 @@ async def test_a_second_seed_changes_no_row(engine: AsyncEngine) -> None:
         assert await _rows(conn) == before
 
 
-async def test_a_database_not_named_for_tests_is_refused(pg_dsn: str) -> None:
+@pytest.mark.parametrize("seed", [seed_admin_world, seed_backups])
+async def test_a_database_not_named_for_tests_is_refused(pg_dsn: str, seed: _Seed) -> None:
     admin = create_async_engine(pg_dsn, isolation_level="AUTOCOMMIT")
     try:
         async with admin.connect() as conn:
@@ -96,16 +99,32 @@ async def test_a_database_not_named_for_tests_is_refused(pg_dsn: str) -> None:
     try:
         async with other.begin() as conn:
             with pytest.raises(FixtureRefused):
-                await seed_admin_world(conn, now=_NOW)
+                await seed(conn, now=_NOW)
     finally:
         await other.dispose()
 
 
-async def test_the_backups_seed_twice_passes_its_checks(engine: AsyncEngine) -> None:
-    """BACKUP-VERIFY-FAILED: seeded twice, the rows hold their states."""
+async def _seed_backups(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         await seed_backups(conn, now=_NOW)
-    async with engine.begin() as conn:  # the second run changes nothing
-        await seed_backups(conn, now=_NOW)
+
+
+async def _backup_rows(engine: AsyncEngine) -> list[tuple[Any, ...]]:
+    """The fixture backups with their `xmin`, in a fixed order; never `encryption_ref` (class S)."""
+    columns = [c for c in m.backups.c if c.name != "encryption_ref"]
+    read = sa.select(*columns, _XMIN).where(m.backups.c.id.in_([b.id for b in BACKUPS]))
+    async with engine.connect() as conn:
+        return sorted((tuple(row) for row in (await conn.execute(read)).all()), key=str)
+
+
+async def test_the_seeded_backups_pass_their_own_checks(engine: AsyncEngine) -> None:
+    await _seed_backups(engine)
     async with engine.connect() as conn:
         await check_backups(conn)
+
+
+async def test_a_second_backups_seed_changes_no_row(engine: AsyncEngine) -> None:
+    await _seed_backups(engine)
+    before = await _backup_rows(engine)
+    await _seed_backups(engine)
+    assert await _backup_rows(engine) == before

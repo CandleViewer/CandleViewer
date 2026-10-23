@@ -3,8 +3,9 @@
 `seed_admin_world` writes the handles of `handles.py` into a migrated test database: rows with
 `INSERT ... ON CONFLICT`, keyed on each row's primary key (its derived id, the pair of ids of a role
 or a grant, a flag's key), so a second run changes nothing. `check_admin_world` then asserts what
-the plan's cases rely on. Both refuse a database whose name does not mark it as a test database, so
-no fixture lands in a real one.
+the plan's cases rely on. `seed_backups` and `check_backups` do the same for BACKUP-VERIFY-FAILED's
+two rows. All four refuse a database whose name does not mark it as a test database, so no fixture
+lands in a real one.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from candleviewer.db import models as m
 from tests.fixtures.admin.handles import (
     ACCOUNTS,
+    BACKUP_VERIFY_FAILED,
     BACKUPS,
     FLAGS,
     GRANTS,
@@ -33,6 +35,7 @@ from tests.fixtures.admin.handles import (
     OWNER,
     PLACEHOLDER_HASH,
     USERS,
+    FixtureBackup,
     account,
     fixture_id,
     user,
@@ -40,9 +43,12 @@ from tests.fixtures.admin.handles import (
 
 #: How long INVITED-I's invite stays open after the seed's `now`.
 _INVITE_OPEN: Final = timedelta(days=7)
-#: A fixture backup's size and how long its run, and then its verification, took.
+#: A fixture backup's kind, size and how long its run, and then its verification, took.
+_BACKUP_KIND: Final = "pg_basebackup"
 _BACKUP_BYTES: Final = 1_073_741_824
 _BACKUP_RUN: Final = timedelta(minutes=10)
+#: How a verified fixture backup was verified (`bk_verify` lists the methods).
+_VERIFY_METHOD: Final = "checksum"
 
 
 class FixtureRefused(RuntimeError):
@@ -221,8 +227,21 @@ async def check_admin_world(conn: AsyncConnection, *, now: datetime) -> None:
         raise FixtureCheckError("; ".join(failed))
 
 
+def _backup_columns(b: FixtureBackup) -> dict[str, Any]:
+    """What the seed writes of a backup besides its times, and the check reads back."""
+    return {
+        "kind": _BACKUP_KIND,
+        "status": b.status,
+        "target_path": b.target_path,
+        "checksum_sha256": b.checksum_sha256,
+        "verify_method": _VERIFY_METHOD if b.status == "verified" else None,
+        "error_message": b.error,
+    }
+
+
 async def seed_backups(conn: AsyncConnection, *, now: datetime) -> None:
-    """BACKUP-VERIFY-FAILED as of `now`; a second run with the same `now` changes nothing."""
+    """BACKUP-VERIFY-FAILED as of `now`; a second run keeps the rows the first wrote."""
+    _require_aware(now)
     await refuse_unless_test_database(conn)
     for b in BACKUPS:
         started = now - b.age
@@ -230,16 +249,12 @@ async def seed_backups(conn: AsyncConnection, *, now: datetime) -> None:
         await conn.execute(
             pg_insert(m.backups)
             .values(
+                **_backup_columns(b),
                 id=b.id,
-                kind="pg_basebackup",
-                status=b.status,
-                target_path=b.target_path,
                 size_bytes=_BACKUP_BYTES,
                 started_at=started,
                 finished_at=started + _BACKUP_RUN,
                 verified_at=started + 2 * _BACKUP_RUN if verified else None,
-                verify_method="checksum" if verified else None,
-                error_message=b.error,
                 triggered_by="schedule",
             )
             .on_conflict_do_nothing(index_elements=["id"])
@@ -247,16 +262,27 @@ async def seed_backups(conn: AsyncConnection, *, now: datetime) -> None:
 
 
 async def check_backups(conn: AsyncConnection) -> None:
-    """Raise `FixtureCheckError` unless each backup holds its status and its failure code."""
+    """Raise `FixtureCheckError` naming each way the catalogue is not the fixture's two backups."""
     await refuse_unless_test_database(conn)
-    rows = await conn.execute(
-        sa.select(m.backups.c.id, m.backups.c.status, m.backups.c.error_message).where(
-            m.backups.c.id.in_([b.id for b in BACKUPS])
-        )
-    )
-    seen = {(i, str(status), error) for i, status, error in rows.tuples()}
-    failed = [
-        f"{b.handle}: not {b.status}" for b in BACKUPS if (b.id, b.status, b.error) not in seen
-    ]
+    names = ("id", "started_at", "verified_at", *_backup_columns(BACKUP_VERIFY_FAILED))
+    read = sa.select(*(m.backups.c[n] for n in names))  # a test catalogue: a handful of rows
+    rows = (await conn.execute(read)).mappings().all()
+    held = {r["id"]: r for r in rows}
+    failed: list[str] = []
+    if held.keys() - {b.id for b in BACKUPS}:
+        failed.append("the backups table holds a row that is not the fixture's")
+    for b in BACKUPS:
+        row = held.get(b.id)
+        if row is None:
+            failed.append(f"{b.handle}: no row")
+            continue
+        got = {**row, "verified_at": "NULL" if row["verified_at"] is None else "set"}
+        want = _backup_columns(b) | {"verified_at": "set" if b.status == "verified" else "NULL"}
+        failed += [
+            f"{b.handle}: {c} is {got[c]!r}, not {v!r}" for c, v in want.items() if got[c] != v
+        ]
+    latest = max(rows, key=lambda r: (r["started_at"], r["id"]), default=None)
+    if BACKUP_VERIFY_FAILED.id in held and latest is not held[BACKUP_VERIFY_FAILED.id]:
+        failed.append(f"{BACKUP_VERIFY_FAILED.handle}: is not the latest backup")
     if failed:
         raise FixtureCheckError("; ".join(failed))

@@ -12,9 +12,10 @@ keep it so.
 
 | File               | What it holds                                                                                   |
 | ------------------ | ----------------------------------------------------------------------------------------------- |
-| `handles.py`       | The users (every status and role), the demo accounts, the trade grants and the flags, by handle |
-| `seed.py`          | `seed_admin_world` and `check_admin_world`, and the refusal of a database not named for tests   |
+| `handles.py`       | The users (every status and role), the demo accounts, grants, flags, and the backups, by handle |
+| `seed.py`          | `seed_admin_world`, `seed_backups` and their checks, and the refusal of a non-test database     |
 | `corrupt_chain.py` | AUDIT-CORRUPT: `seed_corrupted_chain`, a chain with one of its own entries altered behind it    |
+| `payloads/`        | The health reports and the overview, as JSON bodies of the contract's models                    |
 | `README.md`        | This file                                                                                       |
 
 ## The handles
@@ -66,22 +67,70 @@ async with engine.begin() as conn:
 
 `tests/integration/admin/test_admin_fixture_seed_pg.py` runs the seed twice on Postgres 16 and checks it.
 
-## The backups and the health payloads
+## The backups
 
-- **BACKUP-VERIFY-FAILED** (`seed_backups`, `check_backups` in `seed.py`): the latest backup failed its
-  verification (`checksum_mismatch`), and the last verified one is three days older. A world seeded
-  without it is **BACKUPS-NONE**.
-- **The payloads** (`payloads/`), each a body of the contract's model that validates and dumps back to
-  itself, served by a harness in place of the real read:
+**BACKUP-VERIFY-FAILED** is two rows in an otherwise empty catalogue (`seed_backups`, asserted by
+`check_backups`). Into a migrated test database, from `services/api`:
 
-  | File                          | Handle                | Model                                                             |
-  | ----------------------------- | --------------------- | ----------------------------------------------------------------- |
-  | `health_degraded.json`        | HEALTH-SUB002-WS-DOWN | `HealthReport`: `sub_002`'s private stream down                   |
-  | `health_outage.json`          | the outage            | `HealthReport`: down overall                                      |
-  | `overview_recorder_down.json` | HEALTH-RECORDER-DOWN  | `AdminOverview`: the recorder slice unavailable, every other `ok` |
+```python
+from datetime import UTC, datetime
 
-  HEALTH-TIMEOUT and OVERVIEW-503 are behaviours of a harness (a read that times out, an answer of `503`),
-  not payloads.
+from tests.fixtures.admin.seed import check_backups, seed_backups
+
+now = datetime.now(UTC)  # the clock the app under test reads
+async with engine.begin() as conn:
+    await seed_backups(conn, now=now)
+    await check_backups(conn)
+```
+
+| Handle               | Seeded as                                                                           |
+| -------------------- | ----------------------------------------------------------------------------------- |
+| BACKUP-VERIFIED      | A backup three days before `now`, verified by `checksum`: the last verified one     |
+| BACKUP-VERIFY-FAILED | The latest backup, an hour before `now`, `failed` with the code `checksum_mismatch` |
+| BACKUPS-NONE         | A world seeded without `seed_backups`: an empty catalogue                           |
+
+- **Idempotent:** `ON CONFLICT (id) DO NOTHING`: a second run, whatever its `now`, keeps the first's.
+- **Self-checking:** `check_backups` raises `FixtureCheckError` naming each difference: a value that
+  is not the seed's, a `verified_at` missing on the verified row or set on the failed one, a missing
+  row, a failed row that is not the latest, or any row besides these two.
+- **Test databases only:** both refuse a database not named `test` or `*_test`, with `FixtureRefused`
+  and before anything else is sent: the app's role cannot delete a backup row. `seed_backups` needs
+  a `now` with a timezone (`ValueError` otherwise); `check_backups` takes none.
+
+## The payloads
+
+`payloads/` holds JSON bodies of the contract's models, each a state the server can send: a
+`HealthReport` (`GET /admin/health`) or an `AdminOverview` (`GET /admin/overview`). A harness answers
+the read with one in place of the real call. Each validates against its model and dumps back to
+itself, and `test_admin_payload_fixtures.py` scans its strings for secrets and holds it to the
+producer: a health report to the registry's names (all ten required components), `overall` as the
+worst state and the keys `render_report` sends (`detail: ""` and `last_good_at: null` included, no
+`alerts_active`: the server omits it); an overview to the slices and fields the service reads, and
+its failed slice to the detail the fan-out gives it.
+
+```python
+import json
+from pathlib import Path
+
+payload = json.loads(Path("tests/fixtures/admin/payloads/health_degraded.json").read_text("utf-8"))
+```
+
+| File                          | Handle                | Model and state                                                          |
+| ----------------------------- | --------------------- | ------------------------------------------------------------------------ |
+| `health_degraded.json`        | HEALTH-SUB002-WS-DOWN | `HealthReport`: `bybit_private_ws` degraded, its detail naming `sub_002` |
+| `health_outage.json`          | none: #962's outage   | `HealthReport`: `postgres` and `questdb` down, so `overall` is down      |
+| `overview_recorder_down.json` | HEALTH-RECORDER-DOWN  | `AdminOverview`: the recorder slice `error`, `source failed`             |
+| `overview_recorder_hang.json` | HEALTH-RECORDER-HANG  | `AdminOverview`: the recorder slice `error`, `timed out after 300 ms`    |
+
+- **Two recorder handles, a file each:** AD-S01-03 runs both, and a failed read and a read that
+  outran the fan-out's 300 ms budget carry different details; "Error — timed out after 300 ms
+  [Retry]" is the second's. Both are `error`, the status that gives the tile its Retry. On this
+  `main` the real recorder slice is always `unavailable`, so no stack switch makes either.
+- **The outage** has no handle in the plan's §1: #962 asks for it, and no case uses it yet.
+- **The clock:** every instant is `2026-10-22T12:00:00Z` or minutes before. A browser draws "as of"
+  and "stale since" from its own clock, so a suite that asserts them freezes it at that instant.
+- **HEALTH-TIMEOUT and OVERVIEW-503** are behaviours of a harness (a health read that times out, an
+  overview that answers `503`), not payloads.
 
 ## The corrupted chain (AUDIT-CORRUPT)
 

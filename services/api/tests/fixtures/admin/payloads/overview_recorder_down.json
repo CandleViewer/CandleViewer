@@ -12,11 +12,12 @@
     "generated_at": "2026-10-22T12:00:00Z",
     "total": 5,
     "enabled": 5,
+    "keys_expiring_30d": 0,
     "keys_invalid": 0
   },
   "recorder": {
-    "status": "unavailable",
-    "detail": "fixture: the recorder did not answer",
+    "status": "error",
+    "detail": "source failed",
     "generated_at": "2026-10-22T12:00:00Z"
   },
   "storage": {

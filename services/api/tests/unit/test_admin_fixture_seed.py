@@ -1,13 +1,14 @@
 """E42-Q01 (#962): the admin seed and its check over an in-memory connection (no Docker). A test
 spoils one row the seed made and shows that the check names it; the Postgres half is
-`tests/integration/admin/test_admin_fixture_seed_pg.py`.
+`tests/integration/admin/test_admin_fixture_seed_pg.py`. The backups' seed and check follow the
+world's.
 """
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import pytest
@@ -18,18 +19,31 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from candleviewer.db import models as m
 from candleviewer.observability.redaction import redact_text
-from tests.fixtures.admin.handles import KEY_RESTRICTION, OWNER, account, user
+from tests.fixtures.admin.handles import (
+    BACKUP_VERIFIED,
+    BACKUP_VERIFY_FAILED,
+    BACKUPS,
+    KEY_RESTRICTION,
+    OWNER,
+    FixtureBackup,
+    account,
+    user,
+)
 from tests.fixtures.admin.seed import (
     FixtureCheckError,
     FixtureRefused,
     check_admin_world,
+    check_backups,
     seed_admin_world,
+    seed_backups,
 )
 
 _NOW = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
 _GATE = "trading.live_enabled"
 _INVITED, _LOCKED, _MGR_M = (user(h).id for h in ("INVITED-I", "LOCKED-L", "MGR-M"))
 _SUB_K, _SUB_S, _SUB_T = (account(h).id for h in ("SUB-K", "SUB-S", "SUB-T"))
+_FAILED, _VERIFIED = BACKUP_VERIFY_FAILED.id, BACKUP_VERIFIED.id
+_STRAY = uuid.uuid5(uuid.NAMESPACE_DNS, "stray-backup")  # a backup row that is not the fixture's
 _RUN = Callable[..., Awaitable[None]]
 
 
@@ -129,7 +143,12 @@ async def test_the_check_names_a_stray_second_role(seeded: FakeDb) -> None:
     await _refuses(seeded, r"MGR-M: roles are \['manager', 'viewer'\], not manager")
 
 
-@pytest.mark.parametrize("run", [seed_admin_world, check_admin_world])
+async def _check_backups(conn: AsyncConnection, *, now: datetime) -> None:
+    """`check_backups` takes no `now`: this gives the four loaders one call shape."""
+    await check_backups(conn)
+
+
+@pytest.mark.parametrize("run", [seed_admin_world, check_admin_world, seed_backups, _check_backups])
 async def test_a_database_not_named_for_tests_is_refused_before_anything_else(run: _RUN) -> None:
     db = FakeDb("candleviewer")
     with pytest.raises(FixtureRefused):
@@ -137,7 +156,7 @@ async def test_a_database_not_named_for_tests_is_refused_before_anything_else(ru
     assert [str(s) for s in db.statements] == ["SELECT current_database()"]
 
 
-@pytest.mark.parametrize("run", [seed_admin_world, check_admin_world])
+@pytest.mark.parametrize("run", [seed_admin_world, check_admin_world, seed_backups])
 async def test_a_naive_now_is_refused(run: _RUN) -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
         await run(FakeDb().conn, now=datetime(2026, 10, 22, 12, 0))
@@ -164,4 +183,69 @@ async def test_the_seeded_exchange_is_the_enums_one_value(seeded: FakeDb) -> Non
 
 async def test_no_value_the_seed_writes_is_secret_shaped(seeded: FakeDb) -> None:
     written = [v for rows in seeded.tables.values() for r in rows for v in r.values()]
+    assert [v for v in written if isinstance(v, str) and redact_text(v) != v] == []
+
+
+@pytest.fixture
+async def backed_up() -> FakeDb:
+    db = FakeDb()
+    await seed_backups(db.conn, now=_NOW)
+    return db
+
+
+async def _refuses_backups(db: FakeDb, named: str) -> None:
+    """`check_backups` raises `FixtureCheckError`, its message naming `named` (a regex)."""
+    with pytest.raises(FixtureCheckError, match=named):
+        await check_backups(db.conn)
+
+
+async def test_the_backups_check_passes_the_rows_the_seed_made(backed_up: FakeDb) -> None:
+    await check_backups(backed_up.conn)
+
+
+#: One seeded value spoiled per case: whose row, its column, the new value, what is named.
+_BACKUP_SPOILS = [
+    (_FAILED, "status", "verified", "BACKUP-VERIFY-FAILED: status is 'verified', not 'failed'"),
+    (_FAILED, "error_message", None, "error_message is None, not 'checksum_mismatch'"),
+    (_FAILED, "error_message", "internal_error", "error_message is 'internal_error', not 'checks"),
+    (_FAILED, "started_at", _NOW - timedelta(days=4), "BACKUP-VERIFY-FAILED: is not the latest"),
+    (_FAILED, "target_path", "fixture/rel", "target_path is 'fixture/rel', not '/fixture"),
+    (_FAILED, "checksum_sha256", None, "BACKUP-VERIFY-FAILED: checksum_sha256 is None, not '"),
+    (_FAILED, "verify_method", "checksum", "verify_method is 'checksum', not None"),
+    (_FAILED, "verified_at", _NOW, "BACKUP-VERIFY-FAILED: verified_at is 'set', not 'NULL'"),
+    (_VERIFIED, "status", "ok", "BACKUP-VERIFIED: status is 'ok', not 'verified'"),
+    (_VERIFIED, "kind", "pg_dump", "BACKUP-VERIFIED: kind is 'pg_dump', not 'pg_basebackup'"),
+    (_VERIFIED, "verify_method", None, "BACKUP-VERIFIED: verify_method is None, not 'checksum'"),
+    (_VERIFIED, "verified_at", None, "BACKUP-VERIFIED: verified_at is 'NULL', not 'set'"),
+]
+
+
+@pytest.mark.parametrize(
+    ("row", "column", "value", "named"), _BACKUP_SPOILS, ids=[c[3] for c in _BACKUP_SPOILS]
+)
+async def test_the_backups_check_names_a_spoiled_value(
+    backed_up: FakeDb, row: uuid.UUID, column: str, value: Any, named: str
+) -> None:
+    backed_up.row("backups", id=row)[column] = value
+    await _refuses_backups(backed_up, named)
+
+
+@pytest.mark.parametrize("backup", BACKUPS, ids=[b.handle for b in BACKUPS])
+async def test_a_missing_backup_row_is_named(backed_up: FakeDb, backup: FixtureBackup) -> None:
+    backed_up.tables["backups"].remove(backed_up.row("backups", id=backup.id))
+    await _refuses_backups(backed_up, f"{backup.handle}: no row")
+
+
+async def test_the_backups_check_names_an_older_stray_row(backed_up: FakeDb) -> None:
+    backed_up.tables["backups"].append({"id": _STRAY, "started_at": _NOW - timedelta(days=10)})
+    await _refuses_backups(backed_up, "a row that is not the fixture's")
+
+
+async def test_the_backups_check_names_a_newer_stray_row_as_the_latest(backed_up: FakeDb) -> None:
+    backed_up.tables["backups"].append({"id": _STRAY, "started_at": _NOW})
+    await _refuses_backups(backed_up, "BACKUP-VERIFY-FAILED: is not the latest backup")
+
+
+async def test_no_value_the_backups_seed_writes_is_secret_shaped(backed_up: FakeDb) -> None:
+    written = [v for r in backed_up.tables["backups"] for v in r.values()]
     assert [v for v in written if isinstance(v, str) and redact_text(v) != v] == []
