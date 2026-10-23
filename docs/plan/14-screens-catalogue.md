@@ -2139,6 +2139,8 @@ Drag preview                Drop zones
 ### SCR-100 — Watchlist panel
 
 - **Type:** Panel. Symbol lists with live scanner columns.
+- **Route:** a pane in `/w/:workspaceId` (pane kind `watchlist`).
+- **Persona & RBAC:** Owner and Manager edit their own lists; record/unrecord needs `recording:write` (Owner-only once E08-D07 C-12's amendments land), disabled with the reason without it; a session without `workspaces:write` sees its own lists read-only, and a view-as session the target's (E09-D09 T2, one panel notice).
 
 ```
 +--- Watchlist: "Majors" v -----------------------------------+
@@ -2150,26 +2152,30 @@ Drag preview                Drop zones
 +-------------------------------------------------------------+
 ```
 
-- **Data:** `GET /api/v1/watchlists`, `GET /api/v1/instruments`; live via batched `ticker.{symbol}` subscriptions; `recorder` for the REC chip.
-- **Interactions:** click = set the active symbol for the focused sync group; drag onto a panel to rebind that panel; `Del` remove; right-click = record/unrecord (owner), open in new chart, add alert, copy symbol.
-- **States:** loading · empty list ("Add symbols to watch") · symbol delisted (struck through with "Delisted by the exchange") · subscription cap reached ("Watching 200 symbols — remove some to add more").
-- **A11y:** table with sortable headers; the REC chip has text; percentage changes carry `+`/`−` signs.
-- **Performance:** ticker updates coalesced to 4 Hz; virtualised beyond 60 rows.
-- **Components:** CMP-011 Tag / Chip, CMP-026 EmptyState, CMP-049 Table, CMP-056 ColumnPicker, CMP-161 WatchlistRow, CMP-162 WatchlistGroupTabs.
+- **Data:** `GET /api/v1/watchlists`, `GET /api/v1/instruments`; live via one batched `ticker` subscription for the live window (at most 40 distinct symbols per connection, shared with the other panes; E08-D07 D6); `GET /api/v1/market/open-interest` for the OI Δ baseline; `recorder` for the REC chip.
+- **Interactions:** click or `Enter` = set the symbol of the panel's sync group (an unsynced panel sets the most recently focused market panel); drag onto a panel to rebind it, or "Send to panel ▸"; `Del` remove, with Undo; `Alt+↑`/`Alt+↓` move a row in manual order; right-click, `Shift+F10` or the menu key = record/unrecord (with `recording:write`; disabled with the reason without it), open recorder (with `admin:read`), open in new chart, send to panel, add alert, copy symbol, move up/down, remove; "+ add symbol" opens an inline symbol search that adds to this list and stays open; `Ctrl+F` filters the list.
+- **States:** loading (skeleton rows) · empty list ("No symbols on this watchlist", action "Add symbols to watch") · no watchlists · initialising ("—" until the first value) · not live (outside the live window) · stale per row ("Stale 7s"; escalated from 15 s; "Stale (server)") · stale per column (the last successful OI Δ baseline read older than 10 min) · disconnected (panel status "Disconnected — last data 00:12 ago", every row demoted) · filtered (no match) · viewer without a list (the reason alone, no button) · read-only (one panel notice) · load error · symbol delisted (struck through with "Delisted by the exchange") · subscription cap reached ("Watching 200 symbols — remove some to add more"); a disabled control is E09-D09 T2 with an E08-D07 §6.7 reason.
+- **Validation:** at most 200 symbols per list.
+- **A11y:** ARIA grid (`role="grid"`, roving tabindex, caption) with sortable headers; the REC chip has text; percentage changes carry `+`/`−` signs; ▲/▼ glyphs go with the signs; stale, not-live and delisted states are text; one polite summary per stale episode, never per tick.
+- **Performance:** ticker updates coalesced to 4 Hz (the 250 ms `ticker` throttle); virtualised beyond 60 rows; only the live window is subscribed, and it changes at most 4 times a minute, moves, list switches, adds and re-opens together (the `ticker` rebuild share is 5 per 60 s); rows outside it show "—" until a bulk ticker snapshot exists (E08-D07 C-11), then its delayed values, demoted (E08-D07 D7) and read at most every 5 s; one shared 1 Hz clock drives every countdown; stale marking is a class toggle.
+- **Components:** CMP-011 Tag / Chip, CMP-026 EmptyState, CMP-049 Table, CMP-056 ColumnPicker, CMP-161 WatchlistRow, CMP-162 WatchlistGroupTabs, CMP-001 Button, CMP-002 IconButton, CMP-015 Skeleton, CMP-016 Tooltip, CMP-017 Popover, CMP-019 Icon (`lock`), CMP-020 NumericText and MonoText, CMP-027 ErrorState, CMP-040 FormField, CMP-041 Menu, CMP-078 StaleDataShade, CMP-079 RbacGate, CMP-160 SymbolSearchInput, CMP-213 FuzzyList, CMP-216 PanelMenu, CMP-239 FreshnessMarker.
 - **Stories:** US-MKT-003, US-MKT-005, US-REC-002.
-- **Analytics/audit:** `watchlist.symbol_added`, `watchlist.symbol_removed`, `watchlist.reordered`, `watchlist.column_changed`, `watchlist.symbol_activated` (analytics); adding a symbol that triggers auto-recording additionally emits the audited `recorder.auto_record_started`.
+- **Analytics/audit:** `watchlist.symbol_added`, `watchlist.symbol_removed`, `watchlist.reordered`, `watchlist.column_changed`, `watchlist.symbol_activated` (analytics); `data_confidence.state_entered` `{surface, state}` (analytics). Adding a symbol never starts recording; record/unrecord (with `recording:write`, E08-D07 D12) is audited server-side as `recording.started` / `recording.stopped` (24 §15.5).
 - **Motion spec:** [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the one-shot row settle, "a stale cell never animates", the container-class mass transition at 200 rows / 60 rendered).
-- **Design sign-off acceptance checklist:** [ ] columns (symbol, last, change %, volume, funding, OI, spread) drawn with units [ ] up/down encoding uses arrows and text as well as colour [ ] flash-on-update respects reduced motion [ ] recording indicator per symbol [ ] drag-reorder with a keyboard alternative [ ] empty state with an add CTA [ ] stale-data shading
+- **Design sign-off acceptance checklist:** [ ] columns (symbol, last, change %, turnover, funding, funding countdown, OI Δ, spread, rec) drawn with units [ ] up/down encoding uses arrows and text as well as colour [ ] flash-on-update respects reduced motion [ ] recording indicator per symbol [ ] drag-reorder with a keyboard alternative [ ] empty state with an add CTA [ ] stale-data shading per row and per column, thresholds stated [ ] initialising and not-live rows [ ] the disconnected panel status
 
 ### SCR-101 — Watchlist manager
 
-- **Type:** Modal. Create/rename/delete/reorder lists, set the default list, import/export symbol sets, and bulk-add by filter (e.g. top 50 by 24 h volume).
-- **Validation:** list names unique; a list may hold ≤200 symbols.
-- **Components:** CMP-001 Button, CMP-043 Dialog, CMP-044 ConfirmDialog, CMP-049 Table, CMP-067 FileDrop / Import control, CMP-162 WatchlistGroupTabs.
+- **Type:** Modal (`?modal=watchlists`; R-110 `/watchlist` opens it). Create/rename/duplicate/delete lists, reorder symbols (lists too once the contract stores a position), import/export plain-text symbol lists, bulk-add by paste, configure each list's columns. Bulk add by filter is SCR-104's "send matches to watchlist"; a default list waits for a contract field.
+- **Data:** `GET`/`POST /api/v1/watchlists`, `PUT`/`DELETE /api/v1/watchlists/{watchlistId}`, `GET /api/v1/instruments`.
+- **Interactions:** move up/down buttons and `Alt+↑`/`Alt+↓`; `F2` renames.
+- **States:** lists, empty, paste preview, import preview, import rejected, delete confirmation, validation error, save failed, conflict (contract pending), read-only (E09-D09 T2; reasons: E08-D07 §6.7).
+- **Validation:** list names 1–80 characters, unique per user (trimmed, case-insensitive; checked client-side until the API rejects duplicates); a list may hold ≤200 symbols; import files are plain text, ≤64 KB; unknown and delisted symbols are reported, never added.
+- **Components:** CMP-001 Button, CMP-043 Dialog, CMP-044 ConfirmDialog, CMP-049 Table, CMP-067 FileDrop / Import control, CMP-162 WatchlistGroupTabs, CMP-002 IconButton, CMP-016 Tooltip, CMP-017 Popover, CMP-019 Icon (`lock`), CMP-026 EmptyState, CMP-027 ErrorState, CMP-040 FormField, CMP-041 Menu, CMP-042 Tabs, CMP-056 ColumnPicker, CMP-079 RbacGate, CMP-160 SymbolSearchInput, CMP-213 FuzzyList.
 - **Stories:** US-MKT-003.
-- **A11y:** Manager is a dialog with a list of watchlists and a symbol editor; every action button names its target; reorder has explicit 'move up/move down' buttons in addition to drag.
-- **Performance:** Watchlist CRUD is a small REST surface; changes apply locally first and reconcile, with conflicts surfaced rather than silently overwritten.
-- **Analytics/audit:** `watchlist.created`, `watchlist.renamed`, `watchlist.deleted`, `watchlist.duplicated`, `watchlist.imported` (analytics).
+- **A11y:** Manager is a dialog with a list of watchlists and a symbol editor; every action button names its target; reorder has explicit 'move up/move down' buttons in addition to drag. A move announces the new position ("BTCUSDT moved to position 2 of 12."); delete is a CMP-044 ConfirmDialog with Cancel focused.
+- **Performance:** Watchlist CRUD is a small REST surface; changes apply locally first and reconcile, with conflicts surfaced rather than silently overwritten. Surfacing a conflict needs a version on `PUT /watchlists/{watchlistId}` (E08-D07 C-1); until then a save is last-write-wins.
+- **Analytics/audit:** `watchlist.created`, `watchlist.renamed`, `watchlist.deleted`, `watchlist.duplicated`, `watchlist.imported`, `watchlist.exported`, `watchlist.bulk_added` `{count}` (analytics).
 - **Design sign-off acceptance checklist:** [ ] multiple watchlists with create/rename/duplicate/delete [ ] bulk add by paste [ ] import/export [ ] delete confirmation [ ] empty state [ ] per-list column configuration
 
 ### SCR-102 — Symbol search (global)
