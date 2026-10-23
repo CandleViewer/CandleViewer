@@ -271,3 +271,15 @@ def test_install_builds_no_dependency_and_the_runner_builds_an_allowlisted_one(
     assert ran.returncode == 0, ran.stderr
     # `pnpm rebuild` honours ignoreScripts too, so the runner must opt in to be the build path.
     assert built.is_file()
+
+
+def test_governance_shards_fetch_the_pnpm_binary_before_the_cases_run() -> None:
+    # pnpm 12 downloads its native binary on first use, and the cases run with corepack's network off.
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/governance.yml").read_text(encoding="utf-8")
+    )
+    runs = [str(step.get("run", "")) for step in workflow["jobs"]["governance-tests"]["steps"]]
+    (provision,) = [i for i, run in enumerate(runs) if "corepack prepare" in run]
+    assert f"corepack prepare pnpm@{PINNED_VERSION} --activate && pnpm --version" in runs[provision]
+    first_cases = next(i for i, run in enumerate(runs) if "governance_shards.py" in run)
+    assert provision < first_cases
