@@ -35,6 +35,7 @@ async def test_policy_manual_add_publishes_within_5s(
         "symbol": "BTCUSDT", "reason": "manual", "actor": "owner-1", "trigger_ref": "manual:owner-1"
     }  # fmt: skip
     assert kw["actor_label"] == "user:owner-1" and kw["env"] == "demo"
+    assert audit.records[1][1]["actor_label"] == "system:recorder-policy"  # the session's start
     entry = policy.effective_set()["BTCUSDT"]
     assert entry.priority == 300 and not entry.auto_evictable and entry.streams == ("trades",)
 

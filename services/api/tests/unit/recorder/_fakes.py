@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -75,9 +75,11 @@ class MemRecordedStore:
         if op in self.hold:
             await self.hold[op].wait()
 
-    def active(self, symbol: str) -> dict[str, Any] | None:
+    def active(self, symbol: str, env: str | None = None) -> dict[str, Any] | None:
+        """The symbol's active row, in `env` when one is given (the policy always gives its own)."""
         rows = self.rows.values()
-        return next((r for r in rows if r["symbol"] == symbol and not r["removed"]), None)
+        found = (r for r in rows if r["symbol"] == symbol and not r["removed"])
+        return next((r for r in found if env is None or r["env"] == env), None)
 
     def _new(self, symbol: str, env: str, reason: str) -> dict[str, Any]:
         rid = str(uuid.uuid4())
@@ -93,11 +95,11 @@ class MemRecordedStore:
 
     async def get_by_symbol(self, symbol: str, env: str) -> dict[str, Any] | None:
         await self._enter("get_by_symbol")
-        return self.active(symbol)
+        return self.active(symbol, env)
 
     async def upsert_auto(self, symbol: str, reason: str, ref: dict[str, str], env: str) -> str:
         await self._enter("upsert_auto")
-        row = self.active(symbol) or self._new(symbol, env, reason)
+        row = self.active(symbol, env) or self._new(symbol, env, reason)
         if ref not in row["reason_refs"]:
             row["reason_refs"].append(ref)
         return str(row["id"])
@@ -130,15 +132,15 @@ class MemRecordedStore:
         self, symbol: str, added_by: str | None, streams: Sequence[str], depth: int | None, env: str
     ) -> dict[str, Any]:
         await self._enter("upsert_manual")
-        row = self.active(symbol) or self._new(symbol, env, "manual")
+        row = self.active(symbol, env) or self._new(symbol, env, "manual")
+        kept = depth if depth is not None else row["orderbook_depth"]  # 0 is a depth, not "keep"
         row.update(reason="manual", added_by=added_by or row["added_by"],
-                   streams=list(streams) or row["streams"],
-                   orderbook_depth=depth or row["orderbook_depth"])  # fmt: skip
+                   streams=list(streams) or row["streams"], orderbook_depth=kept)  # fmt: skip
         return row
 
     async def clear_manual(self, symbol: str, env: str) -> ManualCleared:
         await self._enter("clear_manual")
-        row = self.active(symbol)
+        row = self.active(symbol, env)
         if row is None or row["reason"] != "manual":
             return "absent"
         if not (row["reason_refs"] or row["pinned"]):
@@ -152,14 +154,24 @@ class MemRecordedStore:
 Mem = MemRecordedStore  # short, so the `RecordingPolicy(...)` call sites stay on three lines
 
 
+def _shape(member: Callable[..., object]) -> tuple[inspect.Signature, bool] | None:
+    """A member's signature (annotations resolved) and whether it is a coroutine function; None
+    when an annotation cannot be resolved."""
+    try:
+        return inspect.signature(member, eval_str=True), inspect.iscoroutinefunction(member)
+    except NameError:
+        return None
+
+
 def surface_mismatches(candidate: type, surface: type) -> list[str]:
     """The members of the Protocol `surface` that `candidate` lacks or declares differently:
-    names, kinds, defaults and (resolved) annotations, so a rename on either side is caught."""
+    names, kinds, defaults, (resolved) annotations and sync versus async, so a rename or a swap
+    on either side is caught. An annotation that cannot be resolved counts as a mismatch."""
     wanted = {n: m for n, m in vars(surface).items() if callable(m) and not n.startswith("_")}
     return [
         name
         for name, member in wanted.items()
         if not callable(getattr(candidate, name, None))
-        or inspect.signature(getattr(candidate, name), eval_str=True)
-        != inspect.signature(member, eval_str=True)
+        or (got := _shape(getattr(candidate, name))) is None
+        or got != _shape(member)
     ]

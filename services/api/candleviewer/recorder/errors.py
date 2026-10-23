@@ -27,3 +27,9 @@ class RecorderSymbolNotManualError(RecorderError):
 
 class RecorderSymbolNotRecordedError(RecorderError):
     """`set_pin` named a symbol with no active `recorded_symbols` row: a pin needs a row."""
+
+
+class RecorderInvalidUpdateError(RecorderError):
+    """`add_manual` or `update_manual` named a depth or a stream that `recorded_symbols` refuses
+    (`rs_depth`, `stream_kind`); raised before any audit or write (the REST binding maps it to 422).
+    """

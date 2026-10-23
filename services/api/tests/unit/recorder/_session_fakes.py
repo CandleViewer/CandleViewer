@@ -18,6 +18,7 @@ from candleviewer.recorder.sessions import to_us
 class MemRecorderStore:
     def __init__(self) -> None:
         self.recorded: dict[str, str] = {}
+        self.refs: dict[str, dict[str, str]] = {}  # the ref each `upsert_auto` named
         self.sessions: dict[str, dict[str, Any]] = {}
         self.gaps: list[dict[str, Any]] = []
         self.fail = False
@@ -29,6 +30,7 @@ class MemRecorderStore:
     async def upsert_auto(
         self, symbol: str, reason: str, ref: dict[str, str], env: str = "live"
     ) -> str:
+        self.refs[symbol] = ref
         return self.recorded.setdefault(symbol, str(uuid.uuid4()))
 
     async def open_session_at(

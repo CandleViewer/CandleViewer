@@ -24,10 +24,13 @@ Warm-up gate: until `positions_reloaded()` is called, no stop decision is taken 
 expiry or pre-emption), because the position cache may not be authoritative yet
 (#2188 opens the gate after the startup reconcile).
 
-Rows (`recorded_symbols`, #2188): every change is written to the injected `RecordedStore`
-first and to memory second, under `_lock`, so a failed write changes nothing. B11 hooks can
-outlive `_lock` (`_settle` is bounded), so the auto row is written before B11 starts and
-soft-removed after it stops, never from a hook.
+Rows (`recorded_symbols`, #2188): a manual add, remove, update or pin is validated, then audited
+(write-ahead, C-2.9), then written to the injected `RecordedStore`, then applied to memory, all
+under `_lock`: a refused write leaves its record and no change. B11 hooks can outlive `_lock`
+(`_settle` is bounded), so the auto row is written before B11 starts and soft-removed after it
+stops, never from a hook, and the hooks write only the system's session records. Trigger refs
+are the exception: a chart or position opens in memory first and its ref is mirrored to the row
+best effort (a failed mirror is logged, never raised).
 """
 
 from __future__ import annotations
@@ -46,6 +49,7 @@ from candleviewer.bus.models import Topic
 from candleviewer.recorder.errors import (
     InvalidRecordedSymbolError,
     InvalidRecorderActorError,
+    RecorderInvalidUpdateError,
     RecorderSymbolLimitError,
     RecorderSymbolNotManualError,
     RecorderSymbolNotRecordedError,
@@ -56,8 +60,10 @@ from candleviewer.recorder.metrics import (
     recorder_cap_refused_total,
 )
 from candleviewer.recorder.models import (
+    ORDERBOOK_DEPTHS,
     PRECEDENCE,
     PRIORITY,
+    STREAM_KINDS,
     SYSTEM_ACTOR,
     Actor,
     EffectiveEntry,
@@ -102,6 +108,15 @@ def _valid(symbol: str) -> str:
     return symbol
 
 
+def _check_settings(streams: Sequence[str] | None, depth: int | None) -> None:
+    """Refuse what `recorded_symbols` would (`rs_depth`, `stream_kind`), before any audit or
+    write: a record never stands for a change the table cannot take (C-2.9)."""
+    if depth is not None and depth not in ORDERBOOK_DEPTHS:
+        raise RecorderInvalidUpdateError("depth must be one of 1, 50, 200, 500")
+    if not STREAM_KINDS.issuperset(streams or ()):
+        raise RecorderInvalidUpdateError("every stream must be a recorder stream kind")
+
+
 def logger() -> structlog.stdlib.BoundLogger:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)  # type: ignore[no-any-return]  # structlog returns Any
@@ -132,6 +147,7 @@ class AuditSink(Protocol):
         object_kind: str,
         object_id: str,
         reason: str,
+        before_state: AuditState | None = None,
         after_state: AuditState,
         env: str,
         outcome: str = "success",
@@ -164,13 +180,25 @@ class RecordedStore(Protocol):
 class PolicyControlSurface(Protocol):
     """What the recording REST binding (#492) calls on `RecordingPolicy`. Its fake is held to
     these signatures by `test_policy_control_surface.py`, so a rename on either side fails a
-    test. The read-only accessors join in #2188 S3."""
+    test. The read-only accessors join in #2188 S3. A write is audited before it is made (C-2.9):
+    an audit or store error propagates as it is (nothing here maps one), with memory unchanged."""
 
     async def add_manual(
         self, symbol: str, actor: Actor, streams: tuple[str, ...] = (), depth: int | None = None
-    ) -> None: ...
-    async def remove_manual(self, symbol: str, actor: Actor) -> None: ...
-    async def set_pin(self, symbol: str, pinned: bool, actor: Actor) -> None: ...
+    ) -> None:
+        """Add a manual entry, or give a listed symbol the manual reason; one already manual is
+        left as it is. Raises `InvalidRecorderActorError` (not a user), `InvalidRecordedSymbolError`
+        and `RecorderInvalidUpdateError` (a depth or stream the table refuses), and
+        `RecorderSymbolLimitError` (the cap)."""
+
+    async def remove_manual(self, symbol: str, actor: Actor) -> None:
+        """Take the manual reason off; a symbol that is not manual is left as it is. Raises
+        `InvalidRecordedSymbolError`."""
+
+    async def set_pin(self, symbol: str, pinned: bool, actor: Actor) -> None:
+        """Pin or unpin the symbol's active row. Raises `RecorderSymbolNotRecordedError` (no
+        active row), `InvalidRecordedSymbolError` and `RecorderSymbolLimitError`."""
+
     async def update_manual(
         self,
         symbol: str,
@@ -178,8 +206,15 @@ class PolicyControlSurface(Protocol):
         *,
         streams: tuple[str, ...] | None = None,
         depth: int | None = None,
-    ) -> None: ...
-    def position_open(self, symbol: str) -> bool: ...
+    ) -> None:
+        """Change a manual entry's streams or depth (None, or no streams: unchanged). It changes
+        the stored entry; a live session keeps its streams until its next start. Raises
+        `InvalidRecorderActorError`, `InvalidRecordedSymbolError`, `RecorderInvalidUpdateError`
+        and `RecorderSymbolNotManualError` (the symbol is not a manual entry)."""
+
+    def position_open(self, symbol: str) -> bool:
+        """The `StreamWriter` gate's predicate: True while the warm-up gate is closed, then
+        whether the symbol holds a position. Raises nothing."""
 
 
 #: (symbol, B11 hook name, chart context) -> None; see `RecordingPolicy.observe_states`.
@@ -234,8 +269,6 @@ class _Sym:
     stop_cause: str | None = None
     error_attempts: int = 0
     retry_at: float | None = None
-    #: Actor of the latest manual change (adder or remover) for the next audit record.
-    last_actor: Actor = SYSTEM_ACTOR
 
     def refs(self, reason: Reason) -> list[str]:
         """Trigger refs per reason (not last-writer-wins)."""
@@ -304,11 +337,13 @@ class RecordingPolicy:
         if s is None:
             logger().warning("recorder_chart_ref_refused", symbol=symbol, cause="symbol_cap")
             return
-        if chart_id not in s.charts and len(s.charts) >= self._cfg.max_refs_per_symbol:
+        new = chart_id not in s.charts
+        if new and len(s.charts) >= self._cfg.max_refs_per_symbol:
             logger().warning("recorder_chart_ref_refused", symbol=symbol, cause="ref_cap")
             return
         s.charts.setdefault(chart_id, self._now())
-        await self._mirror_ref(symbol, "chart", chart_id, add=True)
+        if new:  # a ref already held was mirrored when it opened
+            await self._mirror_ref(symbol, "chart", chart_id, add=True)
         await self._reconcile(symbol)
 
     async def on_chart_closed(self, symbol: str, chart_id: str) -> None:
@@ -323,8 +358,10 @@ class RecordingPolicy:
         s = self._sym(symbol, kind="protected")
         if s is None:  # MAX_PROTECTED distinct symbols with positions: an incident, loud
             raise InvalidRecordedSymbolError(f"more than {MAX_PROTECTED} protected symbols")
+        new = position_id not in s.positions
         s.positions.add(position_id)
-        await self._mirror_ref(symbol, "position", position_id, add=True)
+        if new:
+            await self._mirror_ref(symbol, "position", position_id, add=True)
         await self._reconcile(symbol)
 
     async def on_position_closed(self, symbol: str, position_id: str) -> None:
@@ -341,36 +378,63 @@ class RecordingPolicy:
         streams: tuple[str, ...] = (),
         depth: int | None = None,
     ) -> None:
+        """Add a manual entry, or give a listed symbol the manual reason; one already manual is
+        left as it is (22 `addRecordedSymbol`: changes go through `update_manual`). Validated,
+        audited as `recorder.start` by the user, written, then applied, so a refused write leaves
+        its record and no change. The session's own start is a later system record."""
         if actor.kind != "user":
             raise InvalidRecorderActorError("manual add requires a user actor")
         _valid(symbol)
+        _check_settings(streams, depth)
         async with self._lock:
             existing = self._syms.get(symbol)
-            already = existing is not None and existing.manual is not None
-            if not already and symbol not in self._active() and self._at_cap():
+            if existing is not None and existing.manual is not None:
+                return  # idempotent: no row write, no record, no change
+            if symbol not in self._active() and self._at_cap():
                 raise RecorderSymbolLimitError(f"max {self._cfg.max_symbols} recorded symbols")
+            created = existing is None
             s = self._sym(symbol, kind="protected")
             if s is None:
                 raise RecorderSymbolLimitError(f"more than {MAX_PROTECTED} tracked symbols")
-            try:  # row first, memory second; explicit streams (the DDL default has one fewer)
-                await self._recorded.upsert_manual(
+            try:  # explicit streams: the DDL default has one fewer than the recorder's
+                await self._audit_emit(
+                    "recorder.start",
+                    symbol,
+                    actor,
+                    reason="manual",
+                    extra={"trigger_ref": f"manual:{actor.id}"},
+                )
+                row = await self._recorded.upsert_manual(
                     symbol, actor.id, streams or DEFAULT_STREAMS, depth, self._env
                 )
+                await self._write_refs(row["id"], s)  # triggers held before the row existed
             except Exception:
-                if s.idle():
+                if created and s.idle() and symbol not in self._charts:
                     self._syms.pop(symbol, None)  # made by this call: leave no trace
                 raise
             s.manual = _Manual(actor=actor, streams=tuple(streams), depth=depth)
-            s.last_actor = actor
         await self._reconcile(symbol)
 
     async def remove_manual(self, symbol: str, actor: Actor) -> None:
+        """Take the manual reason off: audited as `recorder.stop` by the remover, then the row's
+        refs are brought up to what memory holds and `clear_manual` decides from them, then memory
+        changes. The symbol keeps recording for any other reason, else it lingers."""
         async with self._lock:
             s = self._syms.get(_valid(symbol))
             if s is None or s.manual is None:
                 return
+            await self._audit_emit(
+                "recorder.stop",
+                symbol,
+                actor,
+                reason="manual",
+                extra={"trigger_ref": f"manual:{s.manual.actor.id}"},
+            )
+            row = await self._recorded.get_by_symbol(symbol, self._env)
+            if row is not None:
+                await self._write_refs(row["id"], s)
             await self._recorded.clear_manual(symbol, self._env)
-            s.manual, s.last_actor = None, actor
+            s.manual = None
         await self._reconcile(symbol)
 
     async def update_manual(
@@ -381,35 +445,43 @@ class RecordingPolicy:
         streams: tuple[str, ...] | None = None,  # None (or empty) = unchanged
         depth: int | None = None,  # None = unchanged
     ) -> None:
-        """Change a manual entry's streams or depth: written first, then audited, then applied,
-        so a failure at any step leaves memory as it was. The adder stays (`added_by=None`)."""
+        """Change a manual entry's streams or depth: validated, audited as `recorder.update` with
+        the entry as it was and as it will be, written, then applied, so a refused write leaves its
+        record and no change. The adder stays (`added_by=None`). It changes the stored entry; a
+        live session keeps its streams until its next start. A change to nothing writes nothing."""
         if actor.kind != "user":
             raise InvalidRecorderActorError("manual update requires a user actor")
+        _check_settings(streams, depth)
         async with self._lock:
             s = self._syms.get(_valid(symbol))
             if s is None or s.manual is None:
                 raise RecorderSymbolNotManualError("only a manual entry can be updated")
+            held = (s.manual.streams or DEFAULT_STREAMS, s.manual.depth)
             new = _Manual(
                 actor=s.manual.actor,
                 streams=tuple(streams or s.manual.streams),
                 depth=s.manual.depth if depth is None else depth,
             )
             row_streams = new.streams or DEFAULT_STREAMS
-            await self._recorded.upsert_manual(symbol, None, row_streams, new.depth, self._env)
+            if (row_streams, new.depth) == held:
+                return
             await self._audit_emit(
                 "recorder.update",
                 symbol,
                 actor,
                 reason="manual",
+                before={"streams": ",".join(held[0]), "depth": _str(held[1])},
                 extra={"streams": ",".join(row_streams), "depth": _str(new.depth)},
             )
+            await self._recorded.upsert_manual(symbol, None, row_streams, new.depth, self._env)
             s.manual = new
         await self._reconcile(symbol)
 
     async def set_pin(self, symbol: str, pinned: bool, actor: Actor) -> None:
         """Pinning changes retention/eviction behaviour: audited with its actor (C-2.9), then
         written, then applied. A pin needs an active row (`RecorderSymbolNotRecordedError`);
-        unpinning an idle symbol also soft-removes the row that only the pin kept."""
+        unpinning an idle symbol also soft-removes the row that only the pin kept, judged from the
+        row (manual, or holding refs) and from memory (a manual entry, a trigger, a session)."""
         async with self._lock:
             s = self._sym(symbol, kind="protected")
             if s is None:
@@ -435,8 +507,14 @@ class RecordingPolicy:
         )
         if not await self._recorded.set_pinned(row["id"], pinned):
             raise RecorderSymbolNotRecordedError("the recorded row was removed")
-        if not (pinned or s.manual or s.charts or s.positions or symbol in self._charts):
+        kept = row["reason"] == "manual" or bool(row["reason_refs"])  # the row's own reasons
+        if not (pinned or kept or s.manual or s.charts or s.positions or symbol in self._charts):
             await self._recorded.soft_remove(row["id"])  # an idle row only the pin kept
+
+    async def _write_refs(self, recorded_id: str, s: _Sym) -> None:
+        """Bring the row's `reason_refs` up to every trigger memory holds (adding is idempotent)."""
+        for ref in s.row_refs():
+            await self._recorded.add_reason_ref(recorded_id, ref)
 
     # --- evaluation --------------------------------------------------------------------
 
@@ -540,7 +618,7 @@ class RecordingPolicy:
         skip the reconcile that follows."""
         s = self._syms.get(symbol)
         if symbol not in self._charts and not (s is not None and (s.manual or s.pinned)):
-            return  # nothing is recorded: the auto row is written when B11 starts
+            return  # no row of this process yet: B11's start or `add_manual` writes the refs held
         try:
             async with self._lock:
                 row = await self._recorded.get_by_symbol(symbol, self._env)
@@ -595,7 +673,10 @@ class RecordingPolicy:
                 return
         if symbol not in self._charts:
             if reason != "manual":  # `add_manual` wrote its row first; an auto one is written now
-                first, *rest = s.row_refs()
+                refs = s.row_refs()
+                if not refs:  # the trigger closed while this start waited (a pre-emption)
+                    return
+                first, *rest = refs
                 rid = await self._recorded.upsert_auto(symbol, reason, first, self._env)
                 for ref in rest:
                     await self._recorded.add_reason_ref(rid, ref)
@@ -767,7 +848,8 @@ class RecordingPolicy:
 
     async def _hook(self, name: str, context: Mapping[str, object]) -> None:
         """B11 side effects for THIS policy's charts. Audit is write-ahead and raises if
-        unavailable, so the service fails and the chart goes to `error` (C-2.9)."""
+        unavailable, so the service fails and the chart goes to `error` (C-2.9). The records are
+        the session's start and stop, by the system; a user's list change is audited at its call."""
         symbol = str(context.get("symbol") or "")
         if self._state_observer is not None:
             try:
@@ -789,12 +871,11 @@ class RecordingPolicy:
         raw = context.get("reasons")
         held = [r for r in PRECEDENCE if isinstance(raw, list) and r in raw]
         reason: Reason = held[0] if held else self._published.get(symbol, "chart_open")
-        actor = s.last_actor if reason == "manual" else SYSTEM_ACTOR
         cause = s.stop_cause if name == "unsubscribe" else None
         await self._audit_emit(
             "recorder.start" if name == "subscribe" else "recorder.stop",
             symbol,
-            actor,
+            SYSTEM_ACTOR,
             reason=cause or reason,
             extra={"trigger_ref": ",".join(s.refs(reason)) or None},
         )
@@ -810,6 +891,7 @@ class RecordingPolicy:
         reason: str,
         extra: Mapping[str, str | bool | None],
         outcome: str = "success",
+        before: AuditState | None = None,
     ) -> None:
         await self._audit.emit(
             action,
@@ -818,6 +900,7 @@ class RecordingPolicy:
             object_kind="recorded_symbol",
             object_id=symbol,
             reason=reason,
+            before_state=before,
             after_state={"symbol": symbol, "reason": reason, "actor": actor.id, **extra},
             env=self._env,
             outcome=outcome,

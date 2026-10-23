@@ -83,15 +83,22 @@ async def test_add_manual_rejects_system_actor(policy: RecordingPolicy) -> None:
     assert policy.effective_set() == {}
 
 
-async def test_remove_manual_audits_the_remover(
+async def test_remove_manual_audits_the_remover(policy: RecordingPolicy, audit: FakeAudit) -> None:
+    await policy.add_manual("BTCUSDT", OWNER)
+    await policy.remove_manual("BTCUSDT", user_actor("mgr-2"))  # recorded at the call
+    stop = audit.records[-1]
+    assert stop[0] == "recorder.stop" and stop[1]["actor_label"] == "user:mgr-2"
+
+
+async def test_the_lifecycle_stop_after_a_remove_is_the_systems(
     policy: RecordingPolicy, audit: FakeAudit, clock: FakeClock
 ) -> None:
     await policy.add_manual("BTCUSDT", OWNER)
     await policy.remove_manual("BTCUSDT", user_actor("mgr-2"))
     clock.advance(1_800)
-    await policy.tick()
+    await policy.tick()  # the grace ends: B11 stops the session
     stop = audit.records[-1]
-    assert stop[0] == "recorder.stop" and stop[1]["actor_label"] == "user:mgr-2"
+    assert stop[0] == "recorder.stop" and stop[1]["actor_label"] == "system:recorder-policy"
 
 
 async def test_set_pin_is_audited_with_actor(

@@ -2888,7 +2888,7 @@ Nothing starts leaving for an owner who is not active (`users.status` other than
 
 > Shipped as Alembic `0011_recorder` (E16-T01; the ticket's `0007` number was taken). DDL below is verbatim, except `stream_kind` is created by this revision (no earlier owner) and defaults are seeded one row per `stream_kind` (`engine_metrics` is not a `stream_kind`). `cv_app`/`cv_ro` have DELETE/TRUNCATE revoked on `recording_sessions` and `recording_gaps`.
 
-The user-managed recorded list, empty by default (owner decision #4). Auto-record rows are created by the recorder when a chart or position opens and are soft-removed by the recorder when B11 stops (#2188), unless manual or pinned.
+The user-managed recorded list, empty by default (owner decision #4). Auto-record rows are written by the recorder when recording starts for a chart or a position (an open chart starts nothing until its dwell passes), and are soft-removed by the recorder when B11 stops, or when an unpin finds the symbol idle (no manual reason, no trigger held, no live session) (#2188), unless manual or pinned.
 
 ```sql
 CREATE TABLE recorded_symbols (

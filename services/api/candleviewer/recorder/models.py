@@ -19,6 +19,14 @@ PRECEDENCE: Final[tuple[Reason, ...]] = ("manual", "position_open", "chart_open"
 #: Eviction priority consumed by the E16-T07 ladder: higher survives longer.
 PRIORITY: Final[dict[Reason, int]] = {"manual": 300, "position_open": 200, "chart_open": 100}
 
+#: What `recorded_symbols` accepts: `rs_depth` and the `stream_kind` enum (21 section 3.6.1, the
+#: same sets as 22's `depth` and `StreamKind`). A test pins both to the DDL.
+ORDERBOOK_DEPTHS: Final = frozenset({1, 50, 200, 500})
+STREAM_KINDS: Final = frozenset(
+    "trades orderbook_delta orderbook_snapshot tickers klines liquidations "
+    "open_interest funding".split()
+)
+
 
 class Actor(BaseModel):
     """Who caused a recorder action (audit `actor`, C-2.9). Never an empty id."""
