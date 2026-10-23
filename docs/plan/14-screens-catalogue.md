@@ -437,6 +437,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Components:** CMP-001 Button, CMP-040 FormField, CMP-066 Stepper, CMP-097 OnboardingChecklist, CMP-201 PasswordField, CMP-205 QrCode, CMP-206 RecoveryCodeList.
 - **Stories:** US-ONB-003, US-ONB-008, US-ACCT-001.
 - **Design sign-off acceptance checklist:** [ ] all steps drawn incl. skip/resume [ ] key-entry step never echoes the secret after save [ ] 'start in DEMO' default is visible and explained [ ] progress and back/forward semantics [ ] completion state links to the setup checklist (SCR-019)
+- **Wireframes (E27-D02, step 3):** [E27-D02.md](../design/E27/E27-D02.md) §5.7 (text-first, owner approval pending; boards pending on page `E27-D02`) — the account step as SCR-126 inline: one "Verify and save", the withdrawal verdict as a result row the server fills, never a box; loading, valid, invalid and skipped frames.
 
 ### SCR-017 — Manager/viewer onboarding (invited user)
 
@@ -482,6 +483,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Components:** CMP-021 Link, CMP-023 Progress Bar, CMP-050 Card, CMP-097 OnboardingChecklist.
 - **Stories:** US-ONB-007, US-ACCT-001, US-REC-001.
 - **Design sign-off acceptance checklist:** [ ] per-role task set drawn (owner vs manager) [ ] partially-complete and fully-complete states [ ] dismiss/restore path [ ] each task deep-links to the screen that completes it
+- **Wireframes (E27-D02, account tasks):** [E27-D02.md](../design/E27/E27-D02.md) §5.7 (text-first, owner approval pending) — the `sub_account` and `api_key` tasks pending, done and blocked with reason; a Manager's task is disabled with the owner-only reason and its admin link dropped.
 
 ---
 
@@ -1742,6 +1744,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `account.detail_viewed` (analytics). No secret material is ever rendered here; key identifiers are shown truncated.
 - **Design sign-off acceptance checklist:** [ ] equity, available balance, used margin, unrealised PnL, leverage, position mode and margin mode drawn with units [ ] permission/allowlist summary [ ] per-account profile summary with a link to SCR-131 (owner only) [ ] rate-limit budget usage [ ] disabled/suspended account state [ ] no secret is displayed, ever - verified in copy review
 - **UX research (E27-D01):** [e27-key-custody.md](../design/research/e27-key-custody.md) — heuristic research (no sessions run), owner approval pending, every recommendation PROPOSED: non-owners see only served facts — key status and health in words, no permission or allowlist summary, no egress IP or rate budget, masked balances undrawn until defined (AD-13, OQ-6); no 48 h unlock time without a recorded source (AD-14); "Rotation due" and "Bybit expiry" as two words (AD-5).
+- **Wireframes (E27-D02):** [E27-D02.md](../design/E27/E27-D02.md) §5.6 (text-first, owner approval pending; boards pending on page `E27-D02`) — the drawer per role and in view-as, the figures with units and freshness, the stale balance, key invalid, IP mismatch (the Owner's), disabled or suspended, no key; the SCR-131 link hidden for non-owners, never locked.
 
 ---
 
@@ -2494,6 +2497,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Stories:** US-ACCT-001, US-ACCT-010, US-ADMIN-014.
 - **Design sign-off acceptance checklist:** [ ] columns (label, UID, environment, permissions, IP allowlist, key age, state) drawn [ ] the warning state for a missing IP allowlist or a key older than the policy is text plus icon [ ] withdrawal-permission-detected state is drawn as a blocking error, not a warning [ ] per-row actions (edit, rotate key, disable, delete) with step-up [ ] add-account CTA [ ] empty state [ ] no secret is ever rendered in the list
 - **UX research (E27-D01):** [e27-key-custody.md](../design/research/e27-key-custody.md) — heuristic research (no sessions run), owner approval pending, every recommendation PROPOSED: the withdrawal verdict always dated, and negated when a check fails, is stale or cannot run, with a failed key shown as a row error plus the system read-only banner (AD-3); Test says before the press that a failure makes trading read-only on every account, and a pass never ends that (AD-1, F-22); the allowlist as a read-only row with the egress IP to copy, required in every environment (AD-4); "Rotation due" and "Bybit expiry" as two words (AD-5); LIVE and DEMO grouping (OQ-4).
+- **Wireframes (E27-D02):** [E27-D02.md](../design/E27/E27-D02.md) §5.1 (text-first, owner approval pending; boards pending on page `E27-D02`) — two-line rows grouped LIVE and DEMO, the dated and negated withdrawal verdict, withdrawal detected as a blocking error, a frame for every catalogued state (§7 state inventory).
 
 ### SCR-126 — Admin: add / edit Bybit account
 
@@ -2521,6 +2525,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Stories:** US-ACCT-001, US-ACCT-002, US-ACCT-007, US-ACCT-003.
 - **Design sign-off acceptance checklist:** [ ] label, environment, API key and secret fields drawn, with the secret write-only (never re-displayed after save) [ ] the mandatory checks drawn: withdrawal permission must be OFF, IP allowlist must be configured, trade+read only [ ] validation result panel showing what the backend verified (UID, permissions, allowlist, server time skew) [ ] failure states for each check with actionable copy [ ] edit mode where the secret field is empty and optional [ ] step-up gate before save
 - **UX research (E27-D01):** [e27-key-custody.md](../design/research/e27-key-custody.md) — heuristic research (no sessions run), owner approval pending, every recommendation PROPOSED: one "Verify and save" with a three-outcome check list instead of a test before save (AD-1, AD-2, C12); edit never takes a key, a new key goes through Rotate (C17); the allowlist set in Bybit's dashboard, never typed here (AD-4); no reveal control (AD-11); the write-only and withdrawal facts in plain words (CP-1, CP-5); a validating state that names its wait of up to 12 s (AD-16).
+- **Wireframes (E27-D02):** [E27-D02.md](../design/E27/E27-D02.md) §5.2 (text-first, owner approval pending; boards pending on page `E27-D02`) — one "Verify and save" behind the `keys` step-up, the check list with a failure frame per check, the write-only and allowlist facts in words, edit mode as the key row with Rotate.
 
 ### SCR-127 — Admin: API key rotation
 
@@ -2533,6 +2538,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Stories:** US-ACCT-004, US-ACCT-005, US-ACCT-006.
 - **Design sign-off acceptance checklist:** [ ] all rotation stages drawn with their success and failure states [ ] the 'orders are drained before switch-over' behaviour stated [ ] rollback state if the new key fails validation [ ] the reminder to delete the old key at Bybit, with a confirmation checkbox [ ] key-age policy restated [ ] step-up gate
 - **UX research (E27-D01):** [e27-key-custody.md](../design/research/e27-key-custody.md) — heuristic research (no sessions run), owner approval pending, every recommendation PROPOSED: the contract's stages with the fixed 900 s overlap and the refused-new-key state at full fidelity, no rollback or early revoke until #897 serves one, and no schedule in v1 (AD-6, C2, C13); the rotation-avoidance responses RA-1..RA-7; the delete-at-Bybit line (CD-8); rung 1 with the `keys` step-up (OQ-10).
+- **Wireframes (E27-D02):** [E27-D02.md](../design/E27/E27-D02.md) §5.3 (text-first, owner approval pending; boards pending on page `E27-D02`) — the contract's five stages with the 900 s overlap countdown, the refused new key ("Nothing changed"), the delete-at-Bybit note; rollback and the drain read drawn as not yet served.
 
 ### SCR-128 — Admin: key health & secrets policy panel
 
@@ -2544,6 +2550,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Analytics/audit:** `admin.key_health_viewed` (analytics); `admin.secrets_policy_changed` `{key, before, after}` and `admin.key_marked_compromised` are **audited** at high severity.
 - **Design sign-off acceptance checklist:** [ ] per-key age, permissions, allowlist and rotation-due state drawn [ ] the secrets-at-rest policy stated (where keys live, how they are encrypted, who can read them) [ ] 'mark as compromised' emergency action with its immediate effect (key disabled, orders halted for that account) [ ] overdue-rotation state [ ] no secret material is rendered anywhere - verified in copy review
 - **UX research (E27-D01):** [e27-key-custody.md](../design/research/e27-key-custody.md) — heuristic research (no sessions run), owner approval pending, every recommendation PROPOSED: "mark as compromised" opens the revoke path in C-12.12's order — freeze, delete at Bybit at once, revoke here, then the KEK rotation, session invalidation and exposure-window audit handed to E27-T05 (#900), and only then a replacement key — never a rotation, with no new endpoint or audit code, and flatten first before the Bybit delete only as the owner's choice (AD-7, F-21, OQ-16, C3, C14, C18); Test says what a failure does, and a pass never ends read-only (AD-1, F-22); the KEK-separated backup stated (CP-2); the rotation policy read-only (C15); one KEK-unavailable notice (AD-15).
+- **Wireframes (E27-D02):** [E27-D02.md](../design/E27/E27-D02.md) §5.4 (text-first, owner approval pending; boards pending on page `E27-D02`) — the per-key table, the secrets-at-rest policy in sentences, the overdue state, and "mark as compromised" as C-12.12's ordered card.
 
 ### SCR-129 — Admin: account disable / delete confirmation
 
@@ -2555,6 +2562,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Stories:** US-ACCT-006, US-SET-003.
 - **Design sign-off acceptance checklist:** [ ] disable and delete are separate flows with different copy [ ] open positions/orders/algos block deletion and are listed with counts [ ] historical records are retained and this is stated explicitly [ ] assigned users are listed and told what they lose [ ] typed confirmation plus step-up [ ] the irreversible nature of delete is stated
 - **UX research (E27-D01):** [e27-key-custody.md](../design/research/e27-key-custody.md) — heuristic research (no sessions run), owner approval pending, every recommendation PROPOSED: exactly the contract's two exposure choices, none pre-selected, counts before the confirm, and delete as "Flatten first, then delete" only (AD-8, C6); "Delete (keeps history)" saying that it flattens first, what cannot be undone and that the key stays valid at Bybit (AD-9, CD-5); the revoke-key dialog is this screen's (E27-S04) and shares its anatomy (AD-8, IM-4).
+- **Wireframes (E27-D02):** [E27-D02.md](../design/E27/E27-D02.md) §5.5 (text-first, owner approval pending; boards pending on page `E27-D02`) — disable and delete as separate rung-3 flows, open exposure blocking a delete with counts, the revoke dialog, unknown exposure and the exchange error.
 
 ### SCR-130 — Admin: per-account profiles list
 
