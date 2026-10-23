@@ -9,10 +9,13 @@ value through the log redactor to keep it so.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Final, Literal
+
+from candleviewer.storage.repositories.backups import BackupErrorCode
 
 #: The namespace every fixture id is derived in (`uuid5`), so an id never changes between runs.
 _NAMESPACE: Final = uuid.UUID("0e42a0c1-9620-4d1f-8e4a-ad31f1c7e962")
@@ -117,6 +120,40 @@ FLAGS: Final[dict[str, bool]] = {
     "trading.live_enabled": False,
     "rules.graph_editor": True,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class FixtureBackup:
+    handle: str
+    status: Literal["verified", "failed"]
+    #: How long before the seed's `now` the backup started.
+    age: timedelta
+    #: The verification's failure code, one the backup store records (`BACKUP_ERROR_CODES`).
+    error: BackupErrorCode | None = None
+
+    @property
+    def id(self) -> uuid.UUID:
+        return fixture_id(self.handle)
+
+    @property
+    def target_path(self) -> str:
+        """Absolute, as the store requires, and plainly synthetic."""
+        return f"/fixture/backups/{self.handle.lower()}"
+
+    @property
+    def checksum_sha256(self) -> str:
+        """The digest of the handle's name: no artefact exists behind the row."""
+        return hashlib.sha256(f"fixture:{self.handle}".encode()).hexdigest()
+
+
+#: BACKUP-VERIFIED: the last backup that passed its verification, three days old, so the page can
+#: say how old it is. BACKUP-VERIFY-FAILED: the latest, whose verification failed on its digest.
+BACKUP_VERIFIED: Final = FixtureBackup("BACKUP-VERIFIED", "verified", timedelta(days=3))
+BACKUP_VERIFY_FAILED: Final = FixtureBackup(
+    "BACKUP-VERIFY-FAILED", "failed", timedelta(hours=1), error="checksum_mismatch"
+)
+#: Both rows are the whole catalogue of BACKUP-VERIFY-FAILED; a world without them is BACKUPS-NONE.
+BACKUPS: Final[tuple[FixtureBackup, ...]] = (BACKUP_VERIFIED, BACKUP_VERIFY_FAILED)
 
 
 def user(handle: str) -> FixtureUser:

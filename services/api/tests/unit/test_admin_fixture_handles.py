@@ -22,13 +22,18 @@ from candleviewer.admin.flags.registry import FlagKind
 from candleviewer.auth.hashing import Hasher
 from candleviewer.db import models as m
 from candleviewer.observability.redaction import redact_text
+from candleviewer.storage.repositories.backups import BACKUP_ERROR_CODES
+from candleviewer.storage.repositories.backups_sqlalchemy import _path as backup_path_rule
 from tests.fixtures.admin.handles import (
     ACCOUNTS,
+    BACKUP_VERIFY_FAILED,
+    BACKUPS,
     FLAGS,
     GRANTS,
     KEY_RESTRICTION,
     PLACEHOLDER_HASH,
     USERS,
+    FixtureBackup,
     account,
     fixture_id,
 )
@@ -42,7 +47,10 @@ _REFUSE = "candleviewer testdb test_candleviewer prod latest candleviewer_test_b
 def _values() -> list[str]:
     users = [s for u in USERS for s in (u.handle, u.username, u.email)]
     accounts = [s for a in ACCOUNTS for s in (a.handle, a.label, a.exchange_uid)]
-    return [*users, *accounts, *FLAGS, PLACEHOLDER_HASH]
+    backups = [
+        s for b in BACKUPS for s in (b.handle, b.target_path, b.checksum_sha256, b.error) if s
+    ]
+    return [*users, *accounts, *backups, *FLAGS, PLACEHOLDER_HASH]
 
 
 def _uid_format() -> re.Pattern[str]:
@@ -115,7 +123,7 @@ def test_the_users_cover_every_role() -> None:
 
 
 def test_the_handles_are_unique() -> None:
-    handles = [u.handle for u in USERS] + [a.handle for a in ACCOUNTS]
+    handles = [u.handle for u in USERS] + [a.handle for a in ACCOUNTS] + [b.handle for b in BACKUPS]
     assert len(handles) == len(set(handles))
 
 
@@ -148,3 +156,25 @@ def test_a_database_named_for_tests_is_seeded(name: str) -> None:
 @pytest.mark.parametrize("name", _REFUSE)
 def test_any_other_database_is_refused(name: str) -> None:
     assert not is_test_database(name)
+
+
+def test_the_backups_newest_first_are_the_failed_one_and_the_verified_one() -> None:
+    assert [b.status for b in sorted(BACKUPS, key=lambda b: b.age)] == ["failed", "verified"]
+
+
+def test_the_failed_backup_failed_on_its_digest() -> None:
+    assert BACKUP_VERIFY_FAILED.error == "checksum_mismatch"
+
+
+def test_the_failed_backups_code_is_one_the_store_records() -> None:
+    assert BACKUP_VERIFY_FAILED.error in BACKUP_ERROR_CODES
+
+
+@pytest.mark.parametrize("backup", BACKUPS, ids=[b.handle for b in BACKUPS])
+def test_a_backups_path_passes_the_stores_rule_for_a_target_path(backup: FixtureBackup) -> None:
+    assert backup_path_rule(backup.target_path) == backup.target_path
+
+
+@pytest.mark.parametrize("backup", BACKUPS, ids=[b.handle for b in BACKUPS])
+def test_a_backups_digest_is_sha256_hex(backup: FixtureBackup) -> None:
+    assert re.fullmatch(r"[0-9a-f]{64}", backup.checksum_sha256)

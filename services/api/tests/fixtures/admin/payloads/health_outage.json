@@ -1,0 +1,91 @@
+{
+  "overall": "down",
+  "version": "fixture",
+  "git_sha": "fixture",
+  "environment": "demo",
+  "uptime_seconds": 3600,
+  "server_time": "2026-10-22T12:00:00Z",
+  "clock_offset_ms": null,
+  "components": [
+    {
+      "name": "postgres",
+      "state": "down",
+      "latency_ms": 4,
+      "latency_unit": "ms",
+      "detail": "postgres unreachable",
+      "last_good_at": "2026-10-22T11:50:00Z"
+    },
+    {
+      "name": "questdb",
+      "state": "down",
+      "latency_ms": 1000,
+      "latency_unit": "ms",
+      "detail": "questdb unreachable",
+      "last_good_at": null
+    },
+    {
+      "name": "parquet_store",
+      "state": "healthy",
+      "latency_ms": 1,
+      "latency_unit": "ms",
+      "detail": "",
+      "last_good_at": "2026-10-22T12:00:00Z"
+    },
+    {
+      "name": "bybit_public_ws",
+      "state": "degraded",
+      "latency_ms": 2,
+      "latency_unit": "ms",
+      "detail": "connecting",
+      "last_good_at": "2026-10-22T11:55:00Z"
+    },
+    {
+      "name": "bybit_private_ws",
+      "state": "healthy",
+      "latency_ms": 12,
+      "latency_unit": "ms",
+      "detail": "",
+      "last_good_at": "2026-10-22T12:00:00Z"
+    },
+    {
+      "name": "bybit_rest",
+      "state": "healthy",
+      "latency_ms": 118,
+      "latency_unit": "ms",
+      "detail": "",
+      "last_good_at": "2026-10-22T12:00:00Z"
+    },
+    {
+      "name": "oms",
+      "state": "healthy",
+      "latency_ms": 1,
+      "latency_unit": "ms",
+      "detail": "",
+      "last_good_at": "2026-10-22T12:00:00Z"
+    },
+    {
+      "name": "rule_engine",
+      "state": "healthy",
+      "latency_ms": 1,
+      "latency_unit": "ms",
+      "detail": "",
+      "last_good_at": "2026-10-22T12:00:00Z"
+    },
+    {
+      "name": "recorder",
+      "state": "healthy",
+      "latency_ms": 42,
+      "latency_unit": "ms",
+      "detail": "",
+      "last_good_at": "2026-10-22T12:00:00Z"
+    },
+    {
+      "name": "disk",
+      "state": "warning",
+      "latency_ms": 0,
+      "latency_unit": "ms",
+      "detail": "used 92%",
+      "last_good_at": "2026-10-22T12:00:00Z"
+    }
+  ]
+}

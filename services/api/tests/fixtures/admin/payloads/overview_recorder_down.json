@@ -1,0 +1,39 @@
+{
+  "generated_at": "2026-10-22T12:00:00Z",
+  "users": {
+    "status": "ok",
+    "generated_at": "2026-10-22T12:00:00Z",
+    "total": 9,
+    "active": 6,
+    "without_mfa": 0
+  },
+  "accounts": {
+    "status": "ok",
+    "generated_at": "2026-10-22T12:00:00Z",
+    "total": 5,
+    "enabled": 5,
+    "keys_expiring_30d": 0,
+    "keys_invalid": 0
+  },
+  "recorder": {
+    "status": "error",
+    "detail": "source failed",
+    "generated_at": "2026-10-22T12:00:00Z"
+  },
+  "storage": {
+    "status": "ok",
+    "generated_at": "2026-10-22T12:00:00Z",
+    "used_bytes": 1073741824,
+    "free_bytes": 107374182400,
+    "days_until_full": null
+  },
+  "trading": {
+    "status": "ok",
+    "generated_at": "2026-10-22T12:00:00Z",
+    "live_enabled": false,
+    "kill_switch_engaged": false,
+    "open_positions": 0
+  },
+  "incidents_open": 0,
+  "incidents": { "status": "ok", "generated_at": "2026-10-22T12:00:00Z", "open": 0 }
+}
