@@ -94,6 +94,7 @@ from candleviewer.oms.submit import (
 )
 from candleviewer.oms.validator import Validator
 from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
 from candleviewer.statechart.plugins import InMemoryMachineEventSink
 from candleviewer.storage.repositories.account_profiles_sqlalchemy import (
     SqlAlchemyAccountProfileStore,
@@ -141,6 +142,10 @@ _SECOND: Final = uuid.UUID("7a2e3d4c-5b6a-4f79-8a8b-0c1d2e3f4a51")
 #: How long a race may hold its first persist open: the step's write and the store's statement
 #: and hook bounds are widened to it, so the race's own lock wait is the only wait.
 _RACE_BOUND_S: Final = 15.0
+#: How long a create a restart resumes may take to leave `submitting`: B1 bounds its attempt (the
+#: lookups and the one create) by `CV_COMMAND_TIMEOUT` and its step's write by
+#: `CV_PERSIST_TIMEOUT`. The wait ends at that step, so the bound only turns a hang into a failure.
+_RESUME_BOUND_S: Final = CV_COMMAND_TIMEOUT + CV_PERSIST_TIMEOUT
 
 
 def _login(dsn: str, role: str) -> str:
@@ -508,7 +513,9 @@ class Rig:
         return [create for create in sent if isinstance(create, PlaceOrderRequest)]
 
     async def settle(self) -> None:
-        """Until the facade's turns settled every step an invoke's answer brought."""
+        """Until the facade's turns settled every step an invoke's answer brought. An invoke still
+        in flight runs in B1's own task, which `idle` does not wait on: one that reads or writes
+        Postgres before it answers is waited for by its step (`machines.settled`)."""
         for _ in range(4):
             for _ in range(32):
                 await asyncio.sleep(0)
@@ -911,6 +918,12 @@ async def test_retry_reuses_the_id(
         assert await again.machines.hydrate(again.account, order_id, environment="demo") == (
             "submitting"
         )
+        # The create resumes in B1's `place` invoke once the replay ends, and reads the row from
+        # Postgres before its lookups and its send: wait for the step its answer brings.
+        left = await again.machines.settled(
+            again.account, order_id, leaving="submitting", timeout_s=_RESUME_BOUND_S
+        )
+        assert left == "submitted"
         await again.settle()
         methods = again.calls()
         sent = methods.index("place_order")
