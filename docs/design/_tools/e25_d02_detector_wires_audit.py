@@ -70,7 +70,7 @@ def rows_of(txt: str, sep: str = "|") -> list[list[str]]:
     return [ln.split(sep) for ln in txt.strip().splitlines()]
 
 
-TOK = dict(rows_of("""canvas|color.surface.canvas
+TOK_ROWS = """canvas|color.surface.canvas
 raised|color.surface.raised
 overlay|color.surface.overlay
 sunken|color.surface.sunken
@@ -82,7 +82,8 @@ t2|color.text.secondary
 t3|color.text.tertiary
 t.disabled|color.text.disabled
 b.default|color.border.default
-b.strong|color.border.strong"""))
+b.strong|color.border.strong"""
+TOK = dict(rows_of(TOK_ROWS))
 
 
 def rgb(h: str) -> tuple[int, int, int]:
@@ -206,6 +207,10 @@ def mono_w(label: str, size: float) -> int:
 # collapse ladder (spec 11: the alert affordance folds to an icon-only CMP-002 with the 2b echo, a
 # pill row wraps to a second row, the Delayed tag moves under the readout, the evidence row wraps,
 # the SCR-056 age column folds into the time cell's accessible name). The readout may always wrap.
+# A "header" row is the CMP-082 title plus its two 24 px actions (menu, close), a step apart; folded,
+# the close action moves into the menu (D02-C12) and the title never truncates. A "signals" row is
+# SCR-057's breakdown (mono, one row per sample signal); folded, each row stacks as its CMP-036
+# label / value pair (the name over the rest; spec 11).
 ONE_LINE: dict[str, list[dict[str, Any]]] = {
     "SCR-055": [
         {
@@ -218,7 +223,7 @@ ONE_LINE: dict[str, list[dict[str, Any]]] = {
             "items": ["elevated", "Stale 12s", "Updates every 1 s, \u00d74 slower"],
             "fold": "drop-last",
         },
-        {"kind": "text", "items": ["Tape speed BTCUSDT"], "fold": "keep"},
+        {"kind": "header", "items": ["Tape speed BTCUSDT"], "fold": "menu"},
     ],
     "SCR-056": [
         {
@@ -227,12 +232,24 @@ ONE_LINE: dict[str, list[dict[str, Any]]] = {
             "fold": "wrap",
         },
         {"kind": "row56", "items": [], "fold": "drop-age"},
-        {"kind": "text", "items": ["Imbalances BTCUSDT 1m"], "fold": "keep"},
+        {"kind": "header", "items": ["Imbalances BTCUSDT 1m"], "fold": "menu"},
     ],
     "SCR-057": [
         {"kind": "pills", "items": ["Trending down (estimated) · medium"], "fold": "keep"},
         {"kind": "text", "items": ["Confidence 0.71 (sub-signal agreement)"], "fold": "wrap"},
-        {"kind": "text", "items": ["Regime (estimated) BTCUSDT"], "fold": "keep"},
+        {"kind": "header", "items": ["Regime (estimated) BTCUSDT"], "fold": "menu"},
+        {"kind": "text", "items": ["Why this classification?"], "fold": "keep"},
+        {
+            "kind": "signals",
+            "items": [
+                "trend strength \u00b7 0.62 \u00b7 w 0.3 \u00b7 +0.19 \u00b7 supports",
+                "volatility \u00b7 1.8 \u00b7 w 0.2 \u00b7 +0.10 \u00b7 supports",
+                "volume profile shape \u00b7 0.4 \u00b7 w 0.2 \u00b7 \u22120.04 \u00b7 opposes",
+                "tape speed \u00b7 3.1 \u00b7 w 0.2 \u00b7 +0.14 \u00b7 supports",
+                "OI trend \u00b7 0.1 \u00b7 w 0.1 \u00b7 0.00 \u00b7 neutral",
+            ],
+            "fold": "stack",
+        },
     ],
     "SCR-058": [
         {"kind": "text", "items": ["Stop run (estimated)"], "fold": "keep"},
@@ -468,9 +485,17 @@ def min_widths() -> dict[str, Any]:
                     }.get(fold, w)
                 elif kind == "row56":
                     w, wf = row56(LADDER56[0]), row56(LADDER56[-1])
+                elif kind == "header":
+                    w = inter_w(items[0], ui) + 2 * (step + ICON_PX)
+                    wf = inter_w(items[0], ui) + step + ICON_PX
+                elif kind == "signals":
+                    w = max(mono_w(r, mono) for r in items)
+                    wf = max(mono_w(part, mono) for r in items for part in r.split(" \u00b7 ", 1))
                 else:
                     w = inter_w(items[0], ui)
                     wf = 0 if fold == "wrap" else w
+                if kind == "signals":
+                    items = [max(items, key=lambda r: mono_w(r, mono))]
                 if w > widest:
                     widest, which = w, " · ".join(items) or kind
                 if wf > folded:
