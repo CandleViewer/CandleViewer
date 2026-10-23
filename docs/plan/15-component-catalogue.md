@@ -741,31 +741,37 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 ### CMP-076 ConnectionStatus
 
-- **Tier**: Organism · **Purpose**: global WS/API connectivity indicator (connected/reconnecting/degraded/offline), feeds `system.health` topic.
-- **Props**: `status: "connected"|"reconnecting"|"degraded"|"offline"` · `lastGoodTs` · `latencyMs?`.
-- **A11y**: icon+text+colour triad; state changes to `degraded`/`offline` announce via `role="alert"` (assertive) once, not on every heartbeat.
-- **Tokens**: `color.status.*`.
-- **Storybook**: AllStates.
-- **Tests**: unit, visual, axe, announcement-throttling test.
+- **Tier**: Organism · **Purpose**: the global connection-state chip in the TopBar (CMP-072): the client↔backend transport and the feed's freshness as one of five values (E17-D01 §4, architect ruling A4; `docs/design/E17/E17-D02.md` §3, §5), with the last-good time and the client's own `ping` RTT. Read-only is a permission overlay (CMP-117, the SCR-152 region), never a chip state; Resyncing is panel-only.
+- **Props**: `status: "live"|"delayed"|"stale"|"reconnecting"|"offline"` · `lastGoodTs` (relative age; absolute UTC on hover and focus) · `latencyMs?` (≤1 Hz, never announced) · `attempt?` · `nextAttemptAtMs?` · `staleAgeMs?` · `oldestTopic?` · `throttleMultiplier?` · `serverStale?` · `upstreamDown?` · `resyncStorm?` · `strong?` (T2) · `detail?` (the `connection_quality` numbers, tooltip only) · `density`.
+- **Variants**: compact (a 20 px pill in the 24 px row) · comfortable (a 24 px pill in the 32 px row).
+- **States**: live · delayed · stale · stale strong (T2) · reconnecting (a retry scheduled or in flight — a shell-cause `offline` and a reattempt's `connecting` included, E17-D01 §4) · offline (a fatal close or `bye.reconnect: false` only) · connecting before the session's first `auth_ok` (no counter, "Connecting…", PROPOSED) · upstream-down · stale (server) · resync storm (tooltip detail) × default / hover / focus-visible / tooltip-open / hc / greyscale.
+- **A11y**: a native `<button>`; icon + text + colour triad per state; name "Connection: Stale 7 seconds, last data 13:42:05 UTC"; `Enter`/`Space` opens the details popover, `Esc` closes it; **owns no live region** — the connection announcements are the SCR-152 region's (E17-D01 §7: `delayed` polite once on entry and exit, `reconnecting`/`offline` assertive once per Disconnected episode — the first `transitionSeq` change out of a live value; the attempt cycle inside it re-announces nothing — never per heartbeat); the age and latency are `aria-live="off"`.
+- **Tokens**: `color.text.primary`, `color.surface.raised`/`.hover`, `color.status.{danger,warning,info}.{subtle,strong}`, `color.status.info.default` (Delayed, pending E17-D01 A7), `color.data-confidence.{live,stale}.indicator`, `color.border.default`, `color.focus.ring`, `radius.badge`, `border.hairline`/`.focus`, `size.control.{compact,comfortable}`, `size.target.min`, `size.icon.sm`, `space.inset.{xs,sm}`, `type.ui.{caption,label}`, `font.family.{ui,mono}`, `elevation.popover`.
+- **Storybook**: Live, Delayed, Stale, StaleEscalated, StaleServer, UpstreamDown, Reconnecting, Offline, Compact, Comfortable, TooltipOpen, HighContrast, Greyscale.
+- **Tests**: unit (the selector and the precedence), visual, axe, announcement-throttling test (one announcement per Disconnected episode, never per reattempt or heartbeat), retry-state test (a shell-cause `offline` and a reattempt's `connecting` render `reconnecting`; "Offline — retry stopped" only for `fatal` / `bye.reconnect: false`), Stale-over-Delayed test (a stale, server-stale or upstream-down public topic under a `saturated` transport shows Stale, never "Reduced rate ×N" — E17-D01 D2), no-live-region-on-the-chip test.
 - **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the chip follows the title's ≤ 1 / s slots and latch, never the transport; `latencyMs` ≤ 1 Hz, never in a live region — PROPOSED).
 
 ### CMP-077 ReconnectOverlay
 
-- **Tier**: Organism · **Purpose**: full-workspace overlay during total disconnect (`14-screens-catalogue.md` §0.5.4, SCR-152).
-- **Props**: `retryInSec` · `onRetryNow` · `attempt`.
-- **A11y**: `role="alertdialog"`, non-dismissible (data is genuinely stale — no false "OK" affordance), keyboard-operable manual retry button.
-- **Tokens**: `elevation.5`, `color.surface.scrim`.
-- **Storybook**: Default, RetryExhausted.
-- **Tests**: unit, visual, axe, focus-trap test.
+- **Tier**: Organism · **Purpose**: the connection **region** in the reserved SCR-152 banner slot (0–96 px below the TopBar; E08-D02 §3, E08-D03 §2): Disconnected (reconnecting / offline), session ended, `recovered`, `long-outage` and the Read-only reason slot (`shutdown_notice` and the E17-D01 §6 reasons that the routing table of `docs/design/E17/E17-D02.md` §6 assigns to the region; the backend-health causes are CMP-092's). Re-specified by E17-D01 A1 as **non-modal**: it never covers the positions grid (SCR-063), cancel / close controls or CMP-211; the per-panel scrims are CMP-078's. The name is kept for id stability; a rename (ConnectionRegion) is PROPOSED (`docs/design/E17/E17-D02.md` §6).
+- **Props**: `state: "reconnecting"|"offline"|"session-ended"|"recovered"|"long-outage"|"read-only"` · `offlineCause?` (`fatal` → `offline`; a shell cause → `reconnecting` with the cause sentence) · `inFlight?` · `attempt?` · `nextAttemptAtMs?` · `lastGoodTs` · `onRetryNow` (one manual new handshake, never a loop) · `onSignIn` · `onDetails` · `reason?: {message, scope, stillWorks, countdownMs?}` · `role: "owner"|"manager"|"viewer"` (selects the bound Details instance — never a conditional string, E08-D03 §4) · `recoveredSummary?` · `unstable?` (T5 latch).
+- **Variants**: Owner Details · Manager / Viewer Details (two bound instances).
+- **States**: reconnecting · retrying now · unstable (T5) · offline (retry stopped: a fatal close or `bye.reconnect: false` only; a shell-cause `offline` is a `reconnecting` instance with the cause sentence and no counter until the client carries one) · session ended (`bye.reconnect: false`; `Sign in`, never a retry — `23-ws-protocol.md` §4.4) · the 30 s step · long-outage (5 min; strong fill, `color.text.inverse`) · recovered (dismissible, never auto-hidden before 10 s) · read-only (per reason) × default / focus-visible / hc / greyscale.
+- **A11y**: `role="region"` named "Connection"; **no `alertdialog`, no focus trap**; the state change never moves focus (`05-accessibility-standard.md` §3.4 item 3); the CMP-028 `connection-disconnected` callout inside it fires `role="alert"` once per Disconnected episode (never per reattempt); `Retry now`, `Sign in` and `Details` are buttons in the Tab order (`Enter`/`Space`; `Esc` closes Details and returns focus); `RetryExhausted` = the `offline` chip state; the countdown is CMP-035 `aria-live="off"`.
+- **Tokens**: `color.status.{danger,warning,success}.{subtle,strong}`, `color.text.{primary,secondary,inverse,link,on-action}`, `color.action.primary.default`, `color.focus.ring`, `radius.control`, `border.thick`/`.focus`, `size.icon.md`, `space.inset.sm`, `type.ui.{body,body-strong}`, `elevation.chrome`, `motion.duration.{instant,fast}`, `motion.easing.accelerate`. Not this component's: `elevation.5` (= `elevation.scrim`, the per-panel scrim layer) and the requested `color.surface.scrim` alias (`color.surface.overlay` at `opacity.scrim`).
+- **Storybook**: Reconnecting, OfflineFatal, ReconnectingUnreachable, SessionEnded, Recovered, LongOutage, ReadOnlyShutdown, ReadOnlyKillSwitch, DetailsOwner, DetailsViewer, Keyboard, ReducedMotion.
+- **Tests**: unit, visual, axe, **no-trap test** (`Tab` leaves the region; SCR-063's controls stay reachable while Disconnected), one-alert-per-episode test, no-retry-on-`reconnect: false` test (the `session-ended` state renders `Sign in` and no `Retry now`), Details-split test (no Owner field renders in the Viewer instance).
 
 ### CMP-078 StaleDataShade
 
-- **Tier**: Molecule (chrome) · **Purpose**: per-panel shading applied after 2s without an expected update (§0.5.4).
-- **Props**: `stale: boolean` · `lastGoodTs`.
-- **A11y**: shading is supplemented with a visible "Last update Xs ago" text, not opacity alone.
-- **Tokens**: `color.overlay.stale`.
-- **Storybook**: Fresh, Stale.
-- **Tests**: unit, visual, axe.
+- **Tier**: Molecule (chrome) · **Purpose**: per-panel freshness shade applied at the per-topic T1 threshold (book 2 s, ticker 5 s, trades 10 s; E17-D01 A2 / §4.1, superseding the blanket 2 s) and escalated at T2 (3×), plus the frozen Disconnected / Resyncing scrim (`docs/design/E17/E17-D02.md` §7).
+- **Props**: `state: "fresh"|"stale"|"escalated"|"stale-server"|"disconnected"` · `lastGoodTs` · `ageMs` · `topic` · `symbol` · `sinceTs?` (`meta.stale`) · `blocksLadder?` (the SCR-050 ladder's T2 block from T1 — `docs/design/E17/E17-D02.md` §7, §13.1).
+- **Variants**: panel (chart, DOM / heatmap, tape, watchlist) · grid row (positions / orders, de-emphasised in place, never re-sorted).
+- **States**: fresh (nothing rendered) · stale (the 15 % dim + chip "Stale 7s" + "Last update 7 s ago") · escalated (header strip "Stale 15 s — new orders blocked on BTCUSDT", the T2 notice row and the lock cursor on SCR-050, strong chip) · stale-server ("Stale (server) — since 14:02:11") · disconnected (held last frame under the 0.6 scrim, "Disconnected — last data 00:12"; "Resyncing book…" while the book has no consumable state).
+- **A11y**: shading is supplemented with the visible "Last update Xs ago" text and the absolute UTC time on hover / focus, never opacity alone; the shade is `aria-hidden` with its text exposed via `aria-describedby` on the panel region (E08-D03 §5); `role="img"` canvases keep their summary; the `Alt+T` table alternative carries the same state word and age (E11-D04 D15); stale enter / exit announce polite once at panel level; the Disconnected and escalated blocks are E09-D09 §2.2's T2 — CMP-079 with the `feed.*` reason in a notice row under the panel header and the CMP-019 `lock` glyph, every row's `aria-describedby` pointing at it, the lock cursor as reinforcement, no tooltip — never `inert`: the ladder keeps its roving focus and a keystroke re-shows E17-D01 D13's sentence inline with one polite announcement (`docs/design/E17/E17-D02.md` §13.1); **never pulses**.
+- **Tokens**: `color.data-confidence.stale.{text,indicator,surface}` (the surface composited at 0.15 = the requested `color.overlay.stale` alias), `color.data-confidence.resyncing.indicator`, `color.surface.overlay` at `opacity.scrim` (the requested `color.surface.scrim` alias), `elevation.scrim`, `color.status.warning.{subtle,strong}`, `color.text.{primary,secondary}`, `border.thick`, `type.ui.{caption,body-strong}`, `font.family.mono`, `motion.duration.{normal,fast,instant}`, `motion.easing.{standard,accelerate}`.
+- **Storybook**: Fresh, Stale, Escalated, StaleServer, Disconnected, ReducedMotion.
+- **Tests**: unit (T1 / T2 per topic; the block lifts in the `snap` frame), visual, axe, never-stacked test, no-animation-on-stale test (E08-D11 D16), focus-retention test (focus inside a blocked ladder is kept; the Tab order is unchanged while Disconnected).
 - **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the 15 % panel dim settles once in and cuts out after a clearing window; the T2 `escalated` strip and lock cursor are cuts — PROPOSED).
 
 ### CMP-079 RbacGate (disabled-with-reason wrapper)
@@ -886,12 +892,14 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 ### CMP-092 DegradedModeBanner
 
-- **Tier**: Molecule (chrome) · **Purpose**: system-health-driven banner (ingestion lag, recorder disk near-full, engine FPS below budget) distinct from ConnectionStatus (which is transport-only).
-- **Props**: `issues: {id,severity,message}[]`.
-- **A11y**: `role="status"`/`role="alert"` by severity, dismissible per-issue but reappears if condition persists (not a silent permanent dismiss).
-- **Tokens**: `color.status.warning`.
-- **Storybook**: SingleIssue, MultipleIssues.
-- **Tests**: unit, visual, axe.
+- **Tier**: Molecule (chrome) · **Purpose**: SCR-153's banner for **backend-health causes** — upstream exchange down, the upstream private reconnect, E04 ingestion lag, recorder down or its disk near-full, rule engine down, GPU fallback, cold tier, engine FPS below budget, the `23-ws-protocol.md` §15.9 process read-only notices and `maintenance.enabled`, the E17-D01 D17 conditions — each row stating what still works; a row blocks — the gated controls T2 per E09-D09 §2.2 (CMP-079 + the CMP-019 `lock` glyph with a `health.*` reason, `docs/design/E17/E17-D02.md` §10 J, §13.1) — only where the order path refuses on the cause (`24-internal-schemas.md` §8.10), every other degradation is an info or warning row (first match wins), with the CMP-210 chip beside it (one reason → one surface: the routing table in `docs/design/E17/E17-D02.md` §6 — never also the SCR-152 region). Distinct from ConnectionStatus (transport) and from the SCR-152 region (Disconnected); degraded cadence (Delayed) is **not** an issue here (E17-D01 D4 / A5; `docs/design/E17/E17-D02.md` §8).
+- **Props**: `issues: {id, severity: "info"|"warning"|"blocking", message, stillWorks, scope?, dismissible, href?, chip?}[]` · `onDismiss(id)`.
+- **Variants**: single-issue · multiple-issue (one row per issue, `space.stack.sm`; three or more collapse the stillWorks sentences behind "Show details", PROPOSED).
+- **States**: info · warning · blocking (per row) · dismissed-for-the-episode (reappears when the condition re-asserts) × default / focus-visible / hc.
+- **A11y**: `role="status"` for info and warning rows, `role="alert"` once for a blocking row (it refuses new risk) — the one announcement for that condition, never also the SCR-152 region's; severity by glyph + word + colour; dismissible per-issue but reappears while the condition persists (never a silent permanent dismiss); the dismiss control is in the Tab order (≥24 px), the CMP-210 chip only with its admin link — without `admin:read` it is a status display, never T2 (E09-D09 §2.1 step 1); no row ever says "Trading is off" where cancel / close remain.
+- **Tokens**: `color.status.{info,warning,danger}.{subtle,strong}`, `color.status.info.default`, `color.text.{primary,secondary}`, `color.surface.raised`, `color.focus.ring`, `space.stack.sm`, `space.inset.sm`, `size.target.min`, `type.ui.{body,caption}`, `motion.duration.{instant,fast}`.
+- **Storybook**: SingleIssue, MultipleIssues, Blocking, DismissedReappears, HighContrast.
+- **Tests**: unit (dismissal reappears on a new `system` frame), visual, axe, live-region test (status vs alert by severity).
 
 ### CMP-093 AuditActionTrigger (wraps any state-changing control to guarantee audit emission)
 
