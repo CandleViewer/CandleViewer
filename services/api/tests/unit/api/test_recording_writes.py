@@ -732,3 +732,39 @@ async def test_a_null_retention_days_without_an_unpin_is_422() -> None:
     assert fake.entries["BTCUSDT"] == entry and env.actions() == []
     unpinned = await env.http.patch(_one(entry.id), json={"retention_days": None, "pinned": False})
     assert unpinned.status_code == 200
+
+
+@pytest.mark.parametrize("days", [7, None])
+async def test_patch_of_retention_days_with_an_unpin_that_changes_no_pin_is_recorded(
+    days: int | None,
+) -> None:
+    """`retention_days` named while `pinned` is not true: no policy member records it, so the
+    route writes its own `retention.change` ahead of the store (a refused record stores none)."""
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT", retention_days=9)
+    env = _Env(fake, *W, elevated=True)
+    body = {"pinned": False, "retention_days": days}
+    env.fail_audit = True
+    refused = await env.http.patch(_one(entry.id), json=body)
+    assert (refused.status_code, refused.json()["code"]) == (503, "audit_unavailable")
+    assert fake.entries["BTCUSDT"] == entry
+    env.fail_audit = False
+    stored = await env.http.patch(_one(entry.id), json=body)
+    assert (stored.status_code, stored.json()["retention_days"]) == (200, days)
+    assert env.actions() == ["retention.change"]  # the pin is unchanged: the policy writes none
+    record = env.audit[0][1]
+    assert (record["before_state"], record["after_state"]) == (
+        {"retention_days": 9}, {"retention_days": days})  # fmt: skip
+
+
+async def test_a_refused_mixed_patch_writes_the_denied_twin_of_the_route_retention_record() -> None:
+    fake = FakeRecorder()
+    entry = fake.put("ETHUSDT", "chart_open")
+    env = _Env(fake, *W, elevated=True)
+    refused = await env.http.patch(_one(entry.id), json={"retention_days": 7, "depth": 50})
+    assert (refused.status_code, refused.json()["code"]) == (409, "conflict")
+    assert fake.entries["ETHUSDT"] == entry
+    records = [(a, r.get("outcome"), r.get("reason")) for a, r in env.audit]
+    assert records == [("retention.change", None, None),
+                       ("retention.change", "denied", "not_manual"),
+                       ("recorder.update", "denied", "not_manual")]  # fmt: skip
