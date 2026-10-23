@@ -73,17 +73,20 @@ TIERS = 6  # the identity ladder's line tiers (spec section 4.1)
 CAP = 20  # SR-E13-02: instances per chart
 # The eight slots (PROPOSED aliases; no hex is invented): dark alias, light alias; high-contrast
 # inherits the dark alias (no semantic-hc line). Chosen by the search below: every alias clears
-# 3:1 on the canvas and the dE floor from every reserved token in its theme; the order alternates
-# hue family and lightness (dark: a light step, a dark step, ...; light: a strong dark step first).
+# 3:1 on the canvas and the dE floor from every reserved token in its theme, and every slot keeps
+# the same dE floor from every other slot of its theme (the first k slots always share a pane;
+# gated in section 1c); the order alternates hue family and lightness (dark: a light step, a mid
+# or dark step, ...; light: a strong dark step first). The pale tints the search also passes read
+# as text and are not taken (spec section 3.2).
 SLOTS = (
-    ("palette.teal.400", "palette.teal.900"),
+    ("palette.teal.500", "palette.teal.900"),
     ("palette.cyan.600", "palette.blue.400"),
-    ("palette.teal.500", "palette.cyan.900"),
+    ("palette.amber.600", "palette.cyan.900"),
     ("palette.purple.600", "palette.purple.500"),
-    ("palette.amber.600", "palette.amber.900"),
-    ("palette.teal.600", "palette.teal.600"),
+    ("palette.teal.600", "palette.amber.900"),
+    ("palette.cvd.light.blue.3", "palette.teal.600"),
     ("palette.purple.400", "palette.purple.900"),
-    ("palette.light.cyan.300", "palette.cvd.blue.1"),
+    ("palette.light.amber.300", "palette.cvd.blue.1"),
 )
 # The reserved set: every semantic colour token in the theme except the surface tiers (direction,
 # status, environment, selection, focus, action, text, border, grid and chrome, the heatmap, CVD,
@@ -104,18 +107,23 @@ EXCLUDED_FAMILIES = (
 # Dichromacy collapses accepted as recorded residuals (spec section 3.5, C-28): (slot, theme,
 # projection) -> the non-colour carrier. Any other protan / deutan collapse is a gated FAIL.
 RESIDUALS: dict[tuple[int, str, str], str] = {
-    (1, "dark", "protanopia"): "a 2 px series stroke vs an area cell; the legend swatch and label",
-    (1, "high-contrast", "protanopia"): "a 2 px series stroke vs an area cell; the legend row",
-    (
-        7,
-        "dark",
-        "deuteranopia",
-    ): "a series vs a full-width horizontal line with its DOM pill; the row",
-    (
-        7,
-        "high-contrast",
-        "deuteranopia",
-    ): "a series vs a full-width line with its DOM pill; the row",
+    (7, "dark", "deuteranopia"): (
+        "per token: order.line - a series vs a full-width horizontal line with its DOM pill; "
+        "focus.ring - a ring 2 px outside an element, in the chrome; text.link - underlined text "
+        "in the chrome; the legend row"
+    ),
+    (7, "high-contrast", "deuteranopia"): (
+        "per token: order.line - a series vs a full-width line with its DOM pill; "
+        "action.primary.default - a button fill in the chrome; border.selected - a selected "
+        "row's outline in the chrome; text.link - underlined text in the chrome; the legend row"
+    ),
+    (8, "dark", "protanopia"): (
+        "cvd.heatmap.ask.1 - a series stroke vs a CVD-safe heatmap cell (an area); "
+        "the legend swatch and label"
+    ),
+    (8, "high-contrast", "protanopia"): (
+        "cvd.heatmap.ask.1 - a series stroke vs a CVD-safe heatmap cell; the legend row"
+    ),
 }
 _SHORT_SRC = (
     "app=color.surface.app canvas=color.surface.canvas raised=color.surface.raised "
@@ -312,7 +320,7 @@ for _i in range(1, 9):
             "pill-text",
         ),
         (
-            f"slot {_i} vs the focus ring (adjacent on a focused swatch)",
+            f"slot {_i} vs the focus ring (reported, not adjacent: a 2 px offset)",
             "ring",
             f"s{_i}",
             "reported",
@@ -573,14 +581,16 @@ def palette() -> tuple[list[dict[str, object]], dict[str, list[str]]]:
     return out, words
 
 
-def cvd_pairs() -> tuple[int, list[str], list[str], dict[str, float]]:
+def cvd_pairs() -> tuple[int, list[str], list[str], dict[str, float], dict[str, float]]:
     p("")
-    p(f"## 1c. Slot pairs: CIE76 dE, normal and under the three dichromacies (JND {JND}); dL*")
+    p(f"## 1c. Slot pairs: CIE76 dE, normal (gated >= {DE_FLOOR:.0f} for every pair: the first k ")
+    p(f"slots always share a pane) and under the three dichromacies (JND {JND}); dL*")
     p("")
     row("pair", "theme", "normal", "protan", "deutan", "tritan", "dL*", "verdict")
     row(*["---"] * 8)
     n, collapses, grey = 0, [], []
     min_adj: dict[str, float] = {t: 999.0 for t in THEMES}
+    min_de: dict[str, float] = {t: 999.0 for t in THEMES}
     for a in range(1, 9):
         for b in range(a + 1, 9):
             adjacent = b - a == 1 or (a, b) == (1, 8)
@@ -594,6 +604,9 @@ def cvd_pairs() -> tuple[int, list[str], list[str], dict[str, float]]:
                 dl = abs(lstar(ha) - lstar(hb))
                 if dl < JND:
                     grey.append(f"{a}-{b} {t}")
+                min_de[t] = min(min_de[t], d[0])
+                if d[0] < DE_FLOOR:
+                    FAILS.append(f"slots {a}-{b} under {DE_FLOOR:.0f} dE in normal vision ({t})")
                 if adjacent:
                     min_adj[t] = min(min_adj[t], dl)
                     if d[0] < JND:
@@ -602,6 +615,8 @@ def cvd_pairs() -> tuple[int, list[str], list[str], dict[str, float]]:
                         FAILS.append(f"adjacent slots {a}-{b} under {JND} L* ({t})")
                 v = "distinct" if not weak else "COLLAPSES under " + ", ".join(weak)
                 v += "" if not weak else " (the ladder tier and the label carry it)"
+                if d[0] < DE_FLOOR:
+                    v = f"FAIL: under {DE_FLOOR:.0f} dE in normal vision; " + v
                 name = f"{a} vs {b}" + (" (adjacent)" if adjacent else "")
                 row(name, t, *[f"{x:.1f}" for x in d], f"{dl:.1f}", v)
     p("")
@@ -610,9 +625,12 @@ def cvd_pairs() -> tuple[int, list[str], list[str], dict[str, float]]:
         + ("; ".join(grey) or "none")
         + ". Smallest adjacent dL*: "
         + "; ".join(f"{t} {min_adj[t]:.1f}" for t in THEMES)
+        + ". Smallest slot-vs-slot dE in normal vision (every pair gated >= "
+        + f"{DE_FLOOR:.0f}): "
+        + "; ".join(f"{t} {min_de[t]:.1f}" for t in THEMES)
         + "."
     )
-    return n, collapses, grey, min_adj
+    return n, collapses, grey, min_adj, min_de
 
 
 def slot_vs_reserved() -> tuple[int, dict[str, int], list[str]]:
@@ -1089,7 +1107,7 @@ def main(argv: list[str]) -> int:
     )
     slot_search()
     pal, words = palette()
-    n_cvd, collapses, grey, min_adj = cvd_pairs()
+    n_cvd, collapses, grey, min_adj, min_de = cvd_pairs()
     n_proj, proj_counts, proj_listed = slot_vs_reserved()
     for line in proj_listed:
         p(f"- {line}")
@@ -1166,6 +1184,7 @@ def main(argv: list[str]) -> int:
         "cvdCollapses": len(collapses),
         "greyPairsUnderJnd": len(grey),
         "minAdjacentDL": round(min(min_adj.values()), 1),
+        "minSlotPairDE": round(min(min_de.values()), 1),
         "projectionRows": n_proj,
         "protanCollapses": proj_counts["protanopia"],
         "deutanCollapses": proj_counts["deuteranopia"],
