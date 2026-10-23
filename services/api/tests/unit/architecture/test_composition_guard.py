@@ -24,6 +24,7 @@ contract PR that adds an operation raises ``PENDING_BASELINE`` by exactly its ov
 against current ``main`` with CI re-run there (two parallel raises merge cleanly yet both
 under-count); a PR that serves a frozen operation lowers ``FROZEN_BASELINE`` and
 ``PENDING_BASELINE`` by the same amount.
+`getRecordingStatus` (#492, E16-T08) is served: 118, frozen 113.
 """
 
 from __future__ import annotations
@@ -51,8 +52,8 @@ from candleviewer.statechart.registry import Registry
 PKG = Path(bindings_pkg.__file__).resolve().parents[2]
 API_DIR = PKG / "api"
 MAIN_TREE = ast.parse((PKG / "main.py").read_text(encoding="utf-8"))
-PENDING_BASELINE = 119
-FROZEN_BASELINE = 114
+PENDING_BASELINE = 118
+FROZEN_BASELINE = 113
 BASELINE_TICKET = "E49-K01-F4-baseline"
 REAL_TICKET = re.compile(r"^#\d+$|^E\d\d-[A-Z]\d\d$")
 ALLOW: dict[str, dict[str, dict[str, str]]] = json.loads(

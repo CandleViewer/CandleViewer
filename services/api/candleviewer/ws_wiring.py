@@ -458,8 +458,15 @@ class MachineRevocationAudit:
             await asyncio.wait({task})
 
 
+class _Refresher(Protocol):
+    def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
+
+
 class WsRuntime:
-    """Lifespan owner of the gateway's background work and its planned shutdown."""
+    """Lifespan owner of the gateway's background work and its planned shutdown. It also starts
+    and stops `recorder_status`, the 1 Hz recording status (E16-T08), once the app sets it."""
 
     def __init__(
         self,
@@ -477,12 +484,15 @@ class WsRuntime:
         self._clock = clock
         self._sweeper: asyncio.Task[None] | None = None
         self._notified = False
+        self.recorder_status: _Refresher | None = None
 
     def start(self) -> None:
         self._notified = False
         self.hub.shutting_down = False  # an in-process restart: the server is up again
         if self._sweeper is None:
             self._sweeper = spawn(self.upstream.run(self._clock), name="ws-upstream-sweeper")
+        if self.recorder_status is not None:
+            self.recorder_status.start()
 
     async def stop(self) -> int:
         """§9.4: `shutdown_notice`, grace, `bye` + `1001`; then wait (bounded) for the sockets
@@ -492,6 +502,8 @@ class WsRuntime:
         shutdown closes the sockets, and the lifespan teardown's later call only stops the
         sweeper."""
         notified = 0
+        if self.recorder_status is not None:  # no status frame starts after the notice
+            await self.recorder_status.stop()
         if not self._notified:
             self._notified = True
             s = self._settings
