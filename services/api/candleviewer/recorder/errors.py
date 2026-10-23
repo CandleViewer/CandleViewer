@@ -21,5 +21,9 @@ class InvalidRecorderActorError(RecorderError):
     """A recorder action named no (or an empty / non-user) actor (C-2.9, C-12.4)."""
 
 
+class RecorderSymbolNotManualError(RecorderError):
+    """`update_manual` named a symbol that is not a manual entry: there is nothing to update."""
+
+
 class RecorderSymbolNotRecordedError(RecorderError):
     """`set_pin` named a symbol with no active `recorded_symbols` row: a pin needs a row."""

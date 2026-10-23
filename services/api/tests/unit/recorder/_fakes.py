@@ -5,6 +5,7 @@ the `recorded_symbols` store (no I/O, no sleeps). Tests import them from here, n
 from __future__ import annotations
 
 import asyncio
+import inspect
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -149,3 +150,16 @@ class MemRecordedStore:
 
 
 Mem = MemRecordedStore  # short, so the `RecordingPolicy(...)` call sites stay on three lines
+
+
+def surface_mismatches(candidate: type, surface: type) -> list[str]:
+    """The members of the Protocol `surface` that `candidate` lacks or declares differently:
+    names, kinds, defaults and (resolved) annotations, so a rename on either side is caught."""
+    wanted = {n: m for n, m in vars(surface).items() if callable(m) and not n.startswith("_")}
+    return [
+        name
+        for name, member in wanted.items()
+        if not callable(getattr(candidate, name, None))
+        or inspect.signature(getattr(candidate, name), eval_str=True)
+        != inspect.signature(member, eval_str=True)
+    ]

@@ -36,7 +36,7 @@ import asyncio
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Final, Literal, Protocol
+from typing import Any, Final, Literal, Protocol, runtime_checkable
 
 import structlog
 from pydantic import ValidationError
@@ -47,6 +47,7 @@ from candleviewer.recorder.errors import (
     InvalidRecordedSymbolError,
     InvalidRecorderActorError,
     RecorderSymbolLimitError,
+    RecorderSymbolNotManualError,
     RecorderSymbolNotRecordedError,
 )
 from candleviewer.recorder.metrics import (
@@ -89,6 +90,10 @@ def user_actor(user_id: str | None) -> Actor:
         return Actor(kind="user", id=user_id or "")
     except ValidationError:
         raise InvalidRecorderActorError("a non-empty user id is required") from None
+
+
+def _str(value: int | None) -> str | None:
+    return None if value is None else str(value)
 
 
 def _valid(symbol: str) -> str:
@@ -153,6 +158,28 @@ class RecordedStore(Protocol):
     ) -> dict[str, Any]: ...
     async def clear_manual(self, symbol: str, env: str) -> ManualCleared: ...
     async def set_pinned(self, recorded_id: str, pinned: bool) -> bool: ...
+
+
+@runtime_checkable
+class PolicyControlSurface(Protocol):
+    """What the recording REST binding (#492) calls on `RecordingPolicy`. Its fake is held to
+    these signatures by `test_policy_control_surface.py`, so a rename on either side fails a
+    test. The read-only accessors join in #2188 S3."""
+
+    async def add_manual(
+        self, symbol: str, actor: Actor, streams: tuple[str, ...] = (), depth: int | None = None
+    ) -> None: ...
+    async def remove_manual(self, symbol: str, actor: Actor) -> None: ...
+    async def set_pin(self, symbol: str, pinned: bool, actor: Actor) -> None: ...
+    async def update_manual(
+        self,
+        symbol: str,
+        actor: Actor,
+        *,
+        streams: tuple[str, ...] | None = None,
+        depth: int | None = None,
+    ) -> None: ...
+    def position_open(self, symbol: str) -> bool: ...
 
 
 #: (symbol, B11 hook name, chart context) -> None; see `RecordingPolicy.observe_states`.
@@ -344,6 +371,39 @@ class RecordingPolicy:
                 return
             await self._recorded.clear_manual(symbol, self._env)
             s.manual, s.last_actor = None, actor
+        await self._reconcile(symbol)
+
+    async def update_manual(
+        self,
+        symbol: str,
+        actor: Actor,
+        *,
+        streams: tuple[str, ...] | None = None,  # None (or empty) = unchanged
+        depth: int | None = None,  # None = unchanged
+    ) -> None:
+        """Change a manual entry's streams or depth: written first, then audited, then applied,
+        so a failure at any step leaves memory as it was. The adder stays (`added_by=None`)."""
+        if actor.kind != "user":
+            raise InvalidRecorderActorError("manual update requires a user actor")
+        async with self._lock:
+            s = self._syms.get(_valid(symbol))
+            if s is None or s.manual is None:
+                raise RecorderSymbolNotManualError("only a manual entry can be updated")
+            new = _Manual(
+                actor=s.manual.actor,
+                streams=tuple(streams or s.manual.streams),
+                depth=s.manual.depth if depth is None else depth,
+            )
+            row_streams = new.streams or DEFAULT_STREAMS
+            await self._recorded.upsert_manual(symbol, None, row_streams, new.depth, self._env)
+            await self._audit_emit(
+                "recorder.update",
+                symbol,
+                actor,
+                reason="manual",
+                extra={"streams": ",".join(row_streams), "depth": _str(new.depth)},
+            )
+            s.manual = new
         await self._reconcile(symbol)
 
     async def set_pin(self, symbol: str, pinned: bool, actor: Actor) -> None:

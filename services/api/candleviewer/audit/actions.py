@@ -217,6 +217,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "indicator_preset.imported",
         "recorder.start",
         "recorder.stop",
+        # #2188 (orchestrator ruling): `update_manual` changed a manual entry's streams or depth.
+        "recorder.update",
         "recorder.compact",
         # E16-T10: public trade-archive import (write-ahead accept + outcome).
         "recorder.import",
