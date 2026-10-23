@@ -26,6 +26,7 @@ const named = (...ids: unknown[]) => ids.filter((id): id is string => typeof id 
  * layout defaults to an empty one, so stored positions need the caller's layout passed in.
  */
 export function toIr(graph: GraphModel, layout = BLANK): { ir: RuleIrDraft; layout: GraphLayout } {
+  check(isTree(layout), SV, "The layout given is not an object.");
   const { nodes = [], edges = [] }: Partial<GraphModel> = isTree(graph) ? graph : {};
   // Lists, within the server's caps (rules/compiler/common.py:19-20).
   const fits = Array.isArray(nodes) && Array.isArray(edges) && nodes.length <= 1_000;
@@ -73,7 +74,8 @@ export function toIr(graph: GraphModel, layout = BLANK): { ir: RuleIrDraft; layo
     const loop = `The graph has a cycle: ${[...cycle, id].join(" -> ")}.`;
     check(!path.includes(id), "CYCLE_DETECTED", loop, cycle);
     const { data } = byId.get(id) as GraphNode;
-    spend(1 + Object.keys(data).length); // a copy adds at least as many: never past checkBounds
+    // A copy adds at least as many values (a node_id in data is replaced): never past checkBounds.
+    spend(1 + Object.keys(data).filter((key) => key !== "node_id").length);
     built.add(id);
     const out: Tree = { ...data };
     delete out["kind"];
@@ -99,6 +101,7 @@ export function toIr(graph: GraphModel, layout = BLANK): { ir: RuleIrDraft; layo
   const lost = nodes.filter((node) => /^(condition|logicGate)$/.test(node.type));
   const orphans = lost.filter((node) => !built.has(node.id)).map((node) => node.id);
   check(orphans.length === 0, "ORPHAN_NODE", `No action follows ${orphans.join(", ")}.`, orphans);
+  check(actions.length > 0, "ORPHAN_NODE", "The graph has no action node."); // graph.py:156-157
   const notes = nodes.filter((node) => node.type === "comment");
   const comments = notes.map(({ id, data }) => ({ ...data, id }) as CommentNode);
   const { extra, positions, collapsed } = layout;
