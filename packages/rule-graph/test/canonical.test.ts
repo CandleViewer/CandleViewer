@@ -2,7 +2,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { RULE_IR_SCHEMA } from "@candleviewer/protocol/rule-ir";
 import { describe, expect, expectTypeOf, it } from "vitest";
-import { canonicalise, compareWithServer, hash } from "../src/canonical/canonicalise.js";
+import {
+  byCodePoint,
+  canonicalise,
+  compareWithServer,
+  hash,
+} from "../src/canonical/canonicalise.js";
 import { sha256Hex } from "../src/sha256.js";
 
 // Written and byte-checked by services/api/tests/rules/roundtrip/test_client_hash_vectors.py.
@@ -109,6 +114,11 @@ describe("canonicalise and hash", () => {
     expect(Object.keys(actions[0].params)).toEqual(keys);
   });
 
+  it("compare ids as a number below, above or at zero, never NaN: a prefix first both ways round", () => {
+    const signs = [byCodePoint("c1", "c10"), byCodePoint("c10", "c1"), byCodePoint("c1", "c1")];
+    expect(signs.map(Math.sign)).toEqual([-1, 1, 0]); // an engine sort never shows a NaN or a 1 for 0
+  });
+
   it("read plain decimal text as Python's Decimal does, zeros and 28 digits included", () => {
     const cases = { "00.5": "0.5", "007": "7", "0007.50": "7.5", "-0": "0", "-0.00": "0" };
     for (const [text, out] of Object.entries(cases))
@@ -152,6 +162,9 @@ describe("canonicalise and hash", () => {
 
   it("refuse a dropped value, a hole or a lone surrogate at any depth, at its path", () => {
     expect(() => canonicalise({ ...BASE, name: undefined })).toThrow(refusal("$.name: "));
+    expect(() => canonicalise({ ...BASE, description: undefined })).toThrow(
+      refusal("$.description: "),
+    );
     expect(() => params({ x: { y: undefined } })).toThrow(refusal("$.actions[0].params.x.y: "));
     expect(() => params({ x: Array(2) })).toThrow(refusal("$.actions[0].params.x[0]: "));
     expect(() => params({ x: { y: "a\udc00" } })).toThrow(refusal("$.actions[0].params.x.y: "));
@@ -169,8 +182,8 @@ describe("canonicalise and hash", () => {
     ["decimal text with a plus sign", ["conditions", "tolerance"], "+1.5"],
     ["decimal text that ends in a point", ["conditions", "tolerance"], "5."],
     ["decimal text past 28 digits", ["conditions", "tolerance"], "1234567890.1234567890123456789"],
-    ["decimal text past the exponent range", ["conditions", "tolerance"], `1${"0".repeat(1e6)}`],
-    ["a decimal under the exponent range", ["conditions", "tolerance"], `0.${"0".repeat(1e6)}1`],
+    ["decimal text a million digits wide", ["conditions", "tolerance"], `1${"0".repeat(1e6)}`],
+    ["a fraction a million digits wide", ["conditions", "tolerance"], `0.${"0".repeat(1e6)}1`],
     ["a 65-character form, its sign counted", ["conditions", "tolerance"], `-1${"0".repeat(63)}`],
     ["an operand of no kind", ["conditions", "right"], { params: {} }],
     ["an op that is not text", ["conditions"], { node_id: "c", op: 5, left: { const: 1 } }],
@@ -217,6 +230,10 @@ describe("compareWithServer", () => {
     expect(compareWithServer(undefined, undefined)).toBe("mismatch");
     expect(compareWithServer("x", "x")).toBe("mismatch");
     expect(compareWithServer(Symbol("x"), digest)).toBe("mismatch");
+    for (const odd of [digest.slice(1), `${digest}0`, digest.toUpperCase()]) {
+      expect(compareWithServer(odd, odd), odd).toBe("mismatch"); // 63 or 65 digits, or upper case
+    }
+    expect(compareWithServer(new String(digest), digest)).toBe("mismatch"); // a boxed String
     expectTypeOf(compareWithServer).returns.toEqualTypeOf<"match" | "mismatch">(); // tsc holds it
   });
 });

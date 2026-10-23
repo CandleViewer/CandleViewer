@@ -47,11 +47,18 @@ describe("findDanglingPorts", () => {
   const oneSlot = only(G.edges.filter((e) => e.source !== "c2"));
   const from = (source: string) =>
     edit({ c1: { ...C1, right: null } }, [], wired(edge(source, "c1", "right")));
+  const open = { ...C1, left: null, right: null }; // both operands empty
+  const fedOne = edit({ c1: open }, [x1(2)], wired(edge("x1", "c1", "right")));
   it.each([
     ["an action no edge feeds", only(G.edges.slice(0, 3)), ["a2.when"]],
     ["a gate whose slots no edge fills", only(gates), ["g1.in"]],
     ["a gate one of whose two slots no edge fills", oneSlot, ["g1.in"]],
     ["a gate with no list, which its edges fill", edit({ g1: { op: "all_of" } }), []],
+    ["a gate with no list and no edge", edit({ g1: { op: "all_of" } }, [], gates), ["g1.in"]],
+    ["a gate with an empty list", edit({ g1: { children: [] } }, [], gates), ["g1.in"]],
+    ["a gate whose list is no list", edit({ g1: { children: "x" } }, [], gates), ["g1.in"]],
+    ["an edge into one of two empty operands", fedOne, ["c1.left"]],
+    ["two empty operands, in port order", at(open), ["c1.left", "c1.right"]],
     ["a comparison with no right operand", at({ kind: "comparison", left }), ["c1.right"]],
     ["a comparison whose right operand is null", at({ ...C1, right: null }), ["c1.right"]],
     ["a null operand an edge fills", fedRight, []],
@@ -76,7 +83,9 @@ describe("findDanglingPorts", () => {
   });
 
   it("refuse what is no graph: no lists, a non-object edge or node, a node of no kind", () => {
+    const bare = { id: "c9", type: "condition" } as never; // no data
     const bad = [null, { ...G, nodes: "x" }, { ...G, edges: [null] }, edit({}, [null as never])];
+    bad.push({ ...G, edges: 5 } as never, edit({}, [bare]));
     for (const graph of [...bad, edit({ c1: { kind: "x" } }), edit({}, [{ ...t1, id: 7 }])]) {
       const refused = expect.objectContaining({ code: "SCHEMA_VIOLATION" });
       expect(() => findDanglingPorts(graph as GraphModel)).toThrow(refused);
