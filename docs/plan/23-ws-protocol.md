@@ -854,6 +854,14 @@ The account-scoped private topics (below) intersect the requested `exchange_acco
 
 Payload: [`AlertUpdate`](#157-alertupdate); `message` is the delivery `body`, falling back to `title`. Desktop-channel outcomes are reported over REST via `POST /v1/alerts/deliveries/{deliveryId}/desktop-outcome`, not over this socket. Metric: `cv_ws_alerts_subscriptions_in_use`, the live `alerts` subscriptions (the ticket's `cv_ws_alerts_subscribers`; 20-architecture.md §12.1).
 
+#### 6.2.2 `recorder` topic
+
+**Contract (E16-T08, #492).** `recording:read`, scope none (§6.3). The topic carries the status REST `GET /recording/status` serves: one snapshot, computed once a second for every reader. Until the recorder runtime is bound, a `recorder` subscription stays `snapshot_pending` (§7.7), as the order-flow families do until #2197.
+
+- **Role view (R-I2, E16-FR-07).** Every subscriber but the Owner gets the role-restricted view until a position carries its account (E29-T06): `role_restricted: true`, no symbol recorded only for an open position, and no `position_open` as a `reason` or a `refusal`. The server records the view on the subscription at `sub`; no client value sets it.
+- **Snapshot and deltas.** The current status, its `symbols` narrowed to the subscription's `symbols` option when it names any. A requested symbol the recorder does not track is `{symbol, state: "idle"}` in a full frame and is left out of a restricted one, where a missing symbol is unknown (§15.8). A delta is the whole frame, at most one a 1 000 ms window; frames are never merged (§8.2).
+- **Integrity.** Private: never cached or shared by the gateway (§7.7), and every `snapshot: false` attach is `snapshot_forced` (§7.6). A frame the server could not publish re-snapshots the topic's subscriptions with reason `upstream_desync` (§7.4).
+
 ### 6.3 Topic → permission matrix
 
 | Topic family                                                                                     | Required permission | Scope narrowing             |
