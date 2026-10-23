@@ -5393,9 +5393,10 @@ paths:
           flag (`20-architecture.md` section 6.2); the B17 live-enablement gate stays the
           user-facing truth.
         * Every refusal is audited before it is answered (C-2.9; 24-internal-schemas.md section
-          8.4). A refusal by RBAC, or by the account's grant or existence, stays `403` when its
-          record cannot be written; any later refusal whose record cannot be written is answered
-          `503 audit_unavailable` instead (#913 slice 3 ruling Q9).
+          8.4), the `501` and the runtime's `oms_not_ready` aside (below). A refusal by RBAC, or
+          by the account's grant or existence, stays `403` when its record cannot be written; any
+          later refusal whose record cannot be written is answered `503 audit_unavailable`
+          instead (#913 slice 3 ruling Q9).
         * While order entry is halted for clock drift (Bybit `10002`, 24-internal-schemas.md
           section 8.6, or the exchange clock guard past 2000 ms, section 2.8), the request is
           refused with `503 clock_drift` and `Retry-After` until time sync recovers. A request
@@ -5407,6 +5408,9 @@ paths:
           startup sweep, which retries while the store or the audit lane fails
           (`20-architecture.md` section 6.2); and in the pipeline, while no instrument catalogue
           is composed or the exchange clock guard has not taken its first measurement.
+          The runtime's answer is not audited, as the `501` is not, but counted, so it is never
+          turned into `503 audit_unavailable` and a client retrying through a startup adds no
+          audit rows.
           `clock_drift` is answered for a measured halt only (above), and `store_unavailable`
           for a store failure that a request meets once the OMS is ready (below). A deployment
           that composes no OMS (the fake backend) answers `501 not_implemented` instead, nothing
@@ -18290,11 +18294,12 @@ components:
         reconciling:
           type: boolean
           description: >
-            True while the answered order is unresolved, its `lifecycle_state` `validated`,
-            `submitting`, `unknown` or `quarantined`, or while its state could not be read; a
-            first answer included, and a repeat's too. False once it is resolved. A separate
-            member, because `OrderLifecycleState` mirrors the database enum and has no such
-            value.
+            True when, as of the answer, the answered order is unresolved, its `lifecycle_state`
+            `validated`, `submitting`, `unknown` or `quarantined`, or its state could not be
+            read; a first answer included, and a repeat's too. A replay of a stored answer
+            (`Idempotency-Replayed: true`) is that answer, so its value is as of the first one.
+            False for every other state, `held` included. A separate member, because
+            `OrderLifecycleState` mirrors the database enum and has no such value.
     AmendTradeGroupRequest:
       type: object
       additionalProperties: false

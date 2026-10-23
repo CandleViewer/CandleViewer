@@ -3791,9 +3791,10 @@ export interface paths {
      *       flag (`20-architecture.md` section 6.2); the B17 live-enablement gate stays the
      *       user-facing truth.
      *     * Every refusal is audited before it is answered (C-2.9; 24-internal-schemas.md section
-     *       8.4). A refusal by RBAC, or by the account's grant or existence, stays `403` when its
-     *       record cannot be written; any later refusal whose record cannot be written is answered
-     *       `503 audit_unavailable` instead (#913 slice 3 ruling Q9).
+     *       8.4), the `501` and the runtime's `oms_not_ready` aside (below). A refusal by RBAC, or
+     *       by the account's grant or existence, stays `403` when its record cannot be written; any
+     *       later refusal whose record cannot be written is answered `503 audit_unavailable`
+     *       instead (#913 slice 3 ruling Q9).
      *     * While order entry is halted for clock drift (Bybit `10002`, 24-internal-schemas.md
      *       section 8.6, or the exchange clock guard past 2000 ms, section 2.8), the request is
      *       refused with `503 clock_drift` and `Retry-After` until time sync recovers. A request
@@ -3805,6 +3806,9 @@ export interface paths {
      *       startup sweep, which retries while the store or the audit lane fails
      *       (`20-architecture.md` section 6.2); and in the pipeline, while no instrument catalogue
      *       is composed or the exchange clock guard has not taken its first measurement.
+     *       The runtime's answer is not audited, as the `501` is not, but counted, so it is never
+     *       turned into `503 audit_unavailable` and a client retrying through a startup adds no
+     *       audit rows.
      *       `clock_drift` is answered for a measured halt only (above), and `store_unavailable`
      *       for a store failure that a request meets once the OMS is ready (below). A deployment
      *       that composes no OMS (the fake backend) answers `501 not_implemented` instead, nothing
@@ -8545,7 +8549,7 @@ export interface components {
     /** @description `placeOrder`'s `202` (#913 ruling R3): what the request created, each order with its state, so a client finds every order and its state from this answer alone. Exactly one member is non-null among `trade_group` and `order`. An entry (an order that is not reduce-only, or that exceeds the position it reduces; SR-E29-01) creates a one-leg trade group: `trade_group` holds it, its leg carrying the order in `order_details`, and `order` is null. A reduce-only order that only reduces joins no trade group: `order` holds it, its `trade_group_id` null, and `trade_group` is null. `reconciling` says whether reconciliation still has to resolve the order (#913 slice 3 ruling Q2). */
     OrderAcceptance: {
       order: components["schemas"]["Order"] | null;
-      /** @description True while the answered order is unresolved, its `lifecycle_state` `validated`, `submitting`, `unknown` or `quarantined`, or while its state could not be read; a first answer included, and a repeat's too. False once it is resolved. A separate member, because `OrderLifecycleState` mirrors the database enum and has no such value. */
+      /** @description True when, as of the answer, the answered order is unresolved, its `lifecycle_state` `validated`, `submitting`, `unknown` or `quarantined`, or its state could not be read; a first answer included, and a repeat's too. A replay of a stored answer (`Idempotency-Replayed: true`) is that answer, so its value is as of the first one. False for every other state, `held` included. A separate member, because `OrderLifecycleState` mirrors the database enum and has no such value. */
       reconciling: boolean;
       trade_group: components["schemas"]["TradeGroup"] | null;
     };
