@@ -113,11 +113,17 @@ def test_actions_declare_permission_simulate_only() -> None:
     po = acts["place_order"]
     assert po["simulate_only"] is True and po["available"] is False
     assert "simulate" in po["restriction"]
-    assert acts["widen_stop"]["loosens_risk"] is True
-    full = {
-        a["id"]: a for a in _vocab(permissions={"orders:write", "rules.loosen_stop"})["actions"]
-    }
-    assert full["place_order"]["simulate_only"] is False and full["widen_stop"]["available"]
+    full = {a["id"]: a for a in _vocab(permissions={"orders:write"})["actions"]}
+    assert full["place_order"]["simulate_only"] is False
+
+
+def test_no_action_offers_to_loosen_a_stop() -> None:
+    """No rule loosens a stop (24-internal-schemas.md section 8.8 rule 5): `widen_stop` is not
+    offered, and no action is flagged, gated or described as a way to loosen one."""
+    acts = _vocab(permissions={"*"})["actions"]
+    assert "widen_stop" not in {a["id"] for a in acts}
+    assert [a["id"] for a in acts if a["loosens_risk"]] == []
+    assert [a["id"] for a in acts if "loosen_stop" in json.dumps(a)] == []
 
 
 def test_registry_is_single_source() -> None:
@@ -233,7 +239,10 @@ def test_rule_eligibility_is_server_placement_and_no_client_worker_name_is_a_met
 
 
 def test_every_enum_member_is_described() -> None:
-    assert {a.type for a in ACTIONS} == set(typing.get_args(ActionType)) and len(ACTIONS) == 25
+    # `widen_stop` is retired: the IR still parses it (stored rules keep their hashes), and the
+    # vocabulary never offers it.
+    assert set(typing.get_args(ActionType)) - {a.type for a in ACTIONS} == {"widen_stop"}
+    assert {a.type for a in ACTIONS} < set(typing.get_args(ActionType)) and len(ACTIONS) == 24
     assert set(TRIGGERS) == set(typing.get_args(TriggerType)) and len(TRIGGERS) == 13
     assert set(OPERATORS) == set(typing.get_args(ComparisonOp))
     for a in ACTIONS:

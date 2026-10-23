@@ -110,8 +110,10 @@ def test_ac_e_loosening_a_stop_is_refused_at_save(params: dict[str, Any]) -> Non
     }
     r = e.c.post("/rules", json={"ir": _ir(actions=[stop])})
     assert r.status_code == 422 and r.json()["code"] == "rule_ir_invalid"
+    assert [i["code"] for i in r.json()["issues"]] == ["stop_loosening"]  # the Owner too (#2698)
     widen = {"node_id": "a1", "type": "widen_stop", "params": {"mode": "pct", "value": 1}}
-    assert e.c.post("/rules", json={"ir": _ir(actions=[widen])}).status_code == 422
+    r = e.c.post("/rules", json={"ir": _ir(actions=[widen])})
+    assert r.status_code == 422 and [i["code"] for i in r.json()["issues"]] == ["stop_loosening"]
     assert _rules(e) == []
 
 

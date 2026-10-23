@@ -121,7 +121,7 @@ def test_feedback_loop_guard() -> None:
         "params": {"side": "buy", "order_type": "market", "qty_mode": "fixed"},
     }
     rule = _doc(_cmp(PRICE, {"const": 1}), [place], trigger={"type": "on_order_fill"})
-    res = validate_rule(rule, REG, {"orders:write"})
+    res = validate_rule(rule, REG)
     (e,) = [i for i in res.errors if i.code == "feedback_loop"]
     assert e.klass == "safety"
     assert "loop" in e.message
@@ -154,26 +154,12 @@ def test_require_native_stop_invariant() -> None:
             "type": "modify_stop_loss",
             "params": {"mode": "absolute", "value": 1, **extra},
         }
-        res = validate_rule(_doc(_cmp(PRICE, {"const": 1}), [a]), REG, {"*"})
+        res = validate_rule(_doc(_cmp(PRICE, {"const": 1}), [a]), REG)
         assert "native_stop_violation" in _codes(res.errors)
     params = {"side": "buy", "order_type": "market", "qty_mode": "x", "require_native_stop": False}
     po = {"node_id": "a1", "type": "place_order", "params": params}
-    res = validate_rule(_doc(_cmp(PRICE, {"const": 1}), [po]), REG, {"*"})
+    res = validate_rule(_doc(_cmp(PRICE, {"const": 1}), [po]), REG)
     assert "native_stop_violation" in _codes(res.errors)
-
-
-def test_only_tighten_false_needs_loosen_stop_permission() -> None:
-    """Dedicated safety test: loosening a stop is permission gated."""
-    params = {"mode": "absolute", "value": 1, "only_tighten": False}
-    a = {"node_id": "a1", "type": "modify_stop_loss", "params": params}
-    rule = _doc(_cmp(PRICE, {"const": 1}), [a])
-    res = validate_rule(rule, REG, {"orders:write"})
-    (e,) = [i for i in res.errors if i.code == "permission_required"]
-    assert e.klass == "safety"
-    granted = validate_rule(rule, REG, {"rules.loosen_stop"})
-    assert "permission_required" not in _codes(granted.errors)
-    tighten = {**a, "params": {"mode": "absolute", "value": 1}}
-    assert validate_rule(_doc(_cmp(PRICE, {"const": 1}), [tighten]), REG).valid
 
 
 def test_trigger_metric_validated() -> None:
@@ -413,7 +399,7 @@ def test_perf_100_node_compile_and_validate_budget() -> None:
         compile_form(f)
 
     _assert_median_within(compile_both, budget_ms=500)
-    _assert_median_within(lambda: validate_rule(rule, REG, set()), budget_ms=100)
+    _assert_median_within(lambda: validate_rule(rule, REG), budget_ms=100)
 
 
 class _StepClock:
