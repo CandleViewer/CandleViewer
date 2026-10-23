@@ -10,7 +10,9 @@ A write sends the profile through `profile_values` (the model's rules ran when i
 the database repeats them), never `version`: the database bumps it and records the revision
 (SR-E28-07). `update_profile` and `delete_profile` take the client's `If-Match` as
 `expected_version` (`None` writes whatever is current); `set_default_profile` is the one write
-that moves the default (decision D7, the bound profile is the account's ceiling) and the default
+that moves the default (decision D7, the bound profile is the account's ceiling), and it takes the
+binding's `If-Match` as `expected_binding_version`, which it requires (#906 0d). The binding
+reads through `get_default_binding`, whose miss is `AccountNotFoundError("account")`. The default
 is never deleted (`AccountConflictError("default_profile")`).
 
 Every write, whatever its outcome, invalidates the account in `EffectiveProfiles` before it
@@ -64,10 +66,22 @@ def _log() -> Any:
 
 @dataclass(frozen=True, slots=True)
 class DefaultProfileMove:
-    """The new default and the profile it replaced (`None` when nothing was replaced)."""
+    """The new default, the profile it replaced (`None` when nothing was replaced) and the
+    binding's version after the move (unchanged when nothing was written)."""
 
     profile: AccountProfile
     previous: AccountProfile | None
+    version: int
+
+
+@dataclass(frozen=True, slots=True)
+class DefaultBinding:
+    """An account's default binding (decision D7): its default profile and the binding's version,
+    the `ETag` of `getAccountDefaultProfile`, one more with each move and never repeated."""
+
+    account_id: UUID
+    profile_id: UUID
+    version: int
 
 
 class ProfilesRepository:
@@ -132,6 +146,19 @@ class ProfilesRepository:
         except AccountProfileStoreError as exc:
             raise self._map(exc) from None
         return self._found(row)
+
+    async def get_default_binding(self, scope: AccountScope, account_id: UUID) -> DefaultBinding:
+        """The account's default binding; an account missing, soft-deleted or out of scope is
+        `AccountNotFoundError("account")`, all alike."""
+        try:
+            row = await self._store.get_default_binding(scope, account_id)
+        except AccountProfileStoreError as exc:
+            raise self._map(exc) from None
+        if row is None:
+            raise AccountNotFoundError("account")
+        return DefaultBinding(
+            account_id=row.account_id, profile_id=row.profile_id, version=row.version
+        )
 
     async def create_profile(
         self,
@@ -199,15 +226,17 @@ class ProfilesRepository:
         account_id: UUID,
         profile_id: UUID,
         *,
-        expected_version: int | None,
+        expected_binding_version: int,
         write_ahead: ProfileWriteAhead | None = None,
     ) -> DefaultProfileMove:
+        """At the binding's version (`If-Match`): a stale one is `AccountVersionConflictError`
+        and moves nothing; the answer carries the version after the move."""
         try:
             move = await self._store.set_default_profile(
                 scope,
                 account_id,
                 profile_id,
-                expected_version=expected_version,
+                expected_binding_version=expected_binding_version,
                 write_ahead=write_ahead,
             )
         except AccountProfileStoreError as exc:
@@ -219,7 +248,9 @@ class ProfilesRepository:
         previous = None if move.previous is None else profile_from_row(move.previous)
         if move.written:
             self._written(1 + (previous is not None))
-        return DefaultProfileMove(profile=profile_from_row(move.profile), previous=previous)
+        return DefaultProfileMove(
+            profile=profile_from_row(move.profile), previous=previous, version=move.version
+        )
 
     async def delete_profile(
         self,

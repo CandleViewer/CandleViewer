@@ -28,6 +28,15 @@ unchanged, except that a raw `OSError` or driver error from the hook is mapped b
 database's (so the hook raises its own typed refusal). A commit that fails after the hook leaves a
 record of a change that never landed: write-ahead over-reports, it never under-reports.
 
+A default move first locks the account row `FOR NO KEY UPDATE` and compares the binding's version
+(`exchange_accounts.default_binding_version`, which `trg_ap_default_binding` raises once per move),
+so moves on one account run one at a time and a stale one changes nothing. A path that locks an
+account row and its profile rows takes the account row first, as the trade-group store's
+share-locked re-check does (`trade_groups_sqlalchemy.py`): a profile row first would deadlock
+against it once the trigger locks the account (21 Sec.3.2.4). Every leg's profile belongs to a leg
+account (`leg_values`), so that re-check never holds a profile without first holding its account.
+`FOR NO KEY UPDATE` keeps a child row's FK check (`FOR KEY SHARE`) from waiting on the move.
+
 A database refusal leaves as `AccountProfileStoreRuleError` (a CHECK or the ladder trigger,
 which names itself with `USING CONSTRAINT`) or `AccountProfileStoreConflictError` (a unique
 index), carrying only the name; any other failure as `StorageQueryFailed(sqlstate)`, and a
@@ -67,6 +76,7 @@ from candleviewer.storage.repositories.account_profiles import (
     AccountProfileStoreScopeDeniedError,
     AccountProfileStoreStaleError,
     AccountProfileValues,
+    DefaultBindingRow,
     DefaultMove,
     LadderRung,
     ProfileWriteAhead,
@@ -117,11 +127,6 @@ _OWNER_PRED: Final = (
 _GRANT_PRED: Final = (
     "EXISTS (SELECT 1 FROM user_account_access uaa WHERE uaa.user_id = CAST(:caller AS uuid) "
     "AND uaa.exchange_account_id = exchange_accounts.id AND uaa.can_view AND NOT uaa.frozen)"
-)
-#: Serialises default moves on one account (`ux_ap_default` is checked per statement).
-_LOCK_DEFAULT: Final = sa.text(
-    "SELECT pg_advisory_xact_lock(hashtextextended('cv.profiles.default:' "
-    "|| CAST(:account AS text), 0))"
 )
 #: SQLSTATEs that carry a constraint name: unique, check and foreign-key violations.
 _NAMED_VIOLATIONS: Final = frozenset({"23505", "23514", "23503"})
@@ -395,6 +400,43 @@ def default_statement(scope: OwnerScope, account_id: UUID) -> sa.Select[Any]:
     )
 
 
+def binding_lock_statement(scope: OwnerScope, account_id: UUID) -> sa.Select[Any]:
+    """The live account in scope and its binding version, `FOR NO KEY UPDATE` to the commit and
+    before any profile row: moves on one account run one at a time, and `trg_ap_default_binding`'s
+    bump is the only change."""
+    return (
+        sa.select(_EA.default_binding_version)
+        .where(
+            _EA.id == account_id,
+            _EA.deleted_at.is_(None),
+            sa.text(_OWNER_PRED).bindparams(caller=str(scope.user_id)),
+        )
+        .with_for_update(
+            # Renders `OF exchange_accounts`, as `of=exchange_accounts` would; #2333's surface scan
+            # admits the Table only as an import, as `.c` columns or as a `select_from` argument.
+            of=_EA.id,
+            key_share=True,
+        )
+    )
+
+
+def binding_statement(scope: AccountScope, account_id: UUID) -> sa.Select[Any]:
+    """The live account's binding version and its live default profile, in `scope`."""
+    return (
+        sa.select(_P.id, _EA.default_binding_version)
+        # The Table is the `select_from` argument, one of the three shapes #2333's surface scan
+        # admits (an import, `.c` columns, this): `.join(exchange_accounts, ...)` fails it.
+        .select_from(exchange_accounts)
+        .join(account_profiles, _P.exchange_account_id == _EA.id)
+        .where(
+            _P.exchange_account_id == account_id,
+            _P.is_default.is_(True),
+            _P.deleted_at.is_(None),
+            account_visible(scope, account_id),
+        )
+    )
+
+
 def unset_default_statement(scope: OwnerScope, account_id: UUID) -> sa.Update:
     return (
         sa.update(account_profiles)
@@ -526,6 +568,17 @@ class SqlAlchemyAccountProfileStore:
             m = (await uow.session.execute(stmt)).mappings().first()
         return None if m is None else _row(m)
 
+    async def get_default_binding(
+        self, scope: AccountScope, account_id: UUID
+    ) -> DefaultBindingRow | None:
+        if self._fails_closed(scope):
+            return None
+        async with self._unit_of_work(scope) as uow:
+            m = (await uow.session.execute(binding_statement(scope, account_id))).mappings().first()
+        if m is None:
+            return None
+        return DefaultBindingRow(account_id, _uuid(m["id"]), int(m["default_binding_version"]))
+
     async def create_profile(
         self,
         scope: OwnerScope,
@@ -582,21 +635,25 @@ class SqlAlchemyAccountProfileStore:
         account_id: UUID,
         profile_id: UUID,
         *,
-        expected_version: int | None,
+        expected_binding_version: int,
         write_ahead: ProfileWriteAhead | None = None,
     ) -> DefaultMove | None:
         owner = _require_owner(scope)
         async with self._unit_of_work(owner) as uow:
-            await uow.session.execute(_LOCK_DEFAULT, {"account": str(account_id)})
+            bound = await uow.session.execute(binding_lock_statement(owner, account_id))
+            m_bound = bound.mappings().first()
+            if m_bound is None:
+                return None
+            version = int(m_bound["default_binding_version"])
+            if version != expected_binding_version:
+                raise AccountProfileStoreStaleError
             stmt = lock_profile_statement(owner, account_id, profile_id)
             current = (await uow.session.execute(stmt)).mappings().first()
             if current is None:
                 return None
             target = _row(current)
-            if expected_version is not None and target.version != expected_version:
-                raise AccountProfileStoreStaleError
             if target.values.is_default:
-                return DefaultMove(profile=target, previous=None, written=False)
+                return DefaultMove(profile=target, previous=None, written=False, version=version)
             old = None
             if write_ahead is not None:  # the previous default's before-state, locked
                 found = await uow.session.execute(default_statement(owner, account_id))
@@ -611,7 +668,8 @@ class SqlAlchemyAccountProfileStore:
                 await self._ahead(write_ahead, old, previous)
             await self._ahead(write_ahead, target, profile)
             await uow.commit()
-        return DefaultMove(profile=profile, previous=previous, written=True)
+        # `trg_ap_default_binding` bumped it once, under this transaction's row lock
+        return DefaultMove(profile=profile, previous=previous, written=True, version=version + 1)
 
     async def delete_profile(
         self,
