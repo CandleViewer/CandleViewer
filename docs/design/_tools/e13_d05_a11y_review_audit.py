@@ -23,22 +23,27 @@ Sections (each row names its source so a reviewer can re-grep it):
 2. The keyboard contract (R3), the seven-operation table (R13) and the gesture audit (R5): rows,
    stops per surface, the tree's keys, no empty keyboard-path cell.
 3. The expected-rendering script (R4) and the politeness routing table (R7): every live-event
-   string exists verbatim in E13-D02 section 12 at the base; AC 3's four events present; nothing
-   assertive; the cadence arithmetic; the fabricated-AT phrases (expected 0).
+   string exists verbatim in E13-D02 section 12 at the base; AC 3's four events present, and how
+   many are specified (a string and a politeness); every quoted string of the K / R / T2 tables
+   exists verbatim in one of the cited sources; nothing assertive; the cadence arithmetic; the
+   fabricated-AT phrases (expected 0).
 4. The state-carrier audit (R6): every carrier pair measured per theme (text 4.5, non-text 3,
    hc-text 7), its greyscale dL*, its protanopia / deuteranopia / tritanopia dE76 (JND 5.0); the
    union of the two upstream ``PAIRS`` lists re-measured; D05's composition rows (gated).
 5. The key-map matrix (R9): the E13 design bindings typed from E13-D02 / E13-D03 with their source
    line against the shipped ``keymap.json``, ``reserved-keys.json``, the ``05`` section 3.2 table
-   and the screen-reader fixture; the classes; the D25 shadow column compared with the registry;
-   ``lint_keymap()`` on the shipped file (expected 0).
-6. The T2 table (R8): rows by gate class; over-conversion candidates must carry an F id.
+   and the screen-reader fixture; the classes (every live-mode fixture hit classed, none dropped),
+   the type-ahead split per class and the hits per reader and mode; the D25 shadow column compared
+   with the registry; ``lint_keymap()`` on the shipped file (expected 0).
+6. The T2 table (R8): rows by gate class; a non-gate row whose Form cell renders the control as T2
+   is an over-conversion candidate and must carry an F id (the count is a marker).
 7. The target table: every size resolved from its token in ``primitives.tokens.json`` or marked
    typed; verdict >= 24 px.
 8. String gates on the review (and on the PR draft with ``--draft``): every H row ``(heuristic)``,
-   every F row with exactly one owner and one target, every A row with a file and a section, no
-   local path, no Penpot host (a generic pattern), every table row with its header's cell count,
-   no closing keyword beside an issue number in the draft.
+   every F row with exactly one owner, one target and a consumer, listed by the clause row it
+   cites, every A row with a file and a section, no local path, no Penpot host (a generic
+   pattern), every table row with its header's cell count, no closing keyword beside an issue
+   number in the draft.
 
 Usage:
   python3 -I docs/design/_tools/e13_d05_a11y_review_audit.py            Markdown report
@@ -106,7 +111,8 @@ def grey_hex(h: str) -> str:
 # --------------------------------------------------------------------------- 1. clauses (R1)
 # The review's clause ids: 05 section 3.1 (5 of its 7 items -- item 5 is the 1-click armed indicator
 # and item 7 the chart keys, E11-D07's), 3.3 (4), 3.4 (10, item 6 split into its SC 2.4.11 half and
-# its ring half), 4 (4), 5 (5 of 7), 6.2 (4 clauses from 2 bullets), 6.4 (1), 6.5 (1), 7 (4) = 39.
+# its ring half), 4 (4), 5 (6 of 7 -- item 5, the near-black rule, is a token rule), 6.2 (4 clauses
+# from 2 bullets), 6.4 (1), 6.5 (1), 7 (4) = 40.
 # The wording is derived from 05 at the base, never from this list.
 CLAUSES: list[str] = [
     *("3.1.1", "3.1.2", "3.1.3", "3.1.4", "3.1.6"),
@@ -114,7 +120,7 @@ CLAUSES: list[str] = [
     *("3.4.1", "3.4.2", "3.4.3", "3.4.4", "3.4.5", "3.4.6a", "3.4.6b", "3.4.7", "3.4.8"),
     *("3.4.9", "3.4.10"),
     *("4.1", "4.2", "4.3", "4.4"),
-    *("5.1", "5.2", "5.4", "5.6", "5.7"),
+    *("5.1", "5.2", "5.3", "5.4", "5.6", "5.7"),
     *("6.2a", "6.2b", "6.2c", "6.2d", "6.4a", "6.5a"),
     *("7.1", "7.2", "7.3", "7.4"),
 ]
@@ -441,7 +447,13 @@ def keymap_section() -> dict[str, Any]:
                 x["context"],
                 "no reservedOverride",
             )
-    # (d) screen-reader hits (the fixture)
+    # (d) screen-reader hits (the fixture). Every live-mode hit is classed -- none is dropped:
+    # sr-table (table mode), sr-browse (single letters / digits in browse mode or single-key
+    # Quick Nav), sr-quicknav (arrows under VoiceOver Quick Nav), sr-browse-nav (browse-mode
+    # arrows, Enter, Space, Home / End), sr-focus (a focus-mode key -- NVDA's Esc after an automatic
+    # switch), sr-global (a reader-global key -- JAWS's Say All arrows, VoiceOver's Esc), sr-chord,
+    # and sr-<mode> for any other mode the fixture carries. Hits are also counted per reader + mode.
+    sr_hits: dict[str, int] = {}
     for x in design:
         for r in sr_by_key.get(x["key"], []):
             if r["mode"] not in E11.SR_LIVE_MODES:
@@ -454,10 +466,17 @@ def keymap_section() -> dict[str, Any]:
                 kind = "sr-browse"
             elif r["mode"] == "quick-nav" and arrow:
                 kind = "sr-quicknav"
+            elif r["mode"] == "browse":
+                kind = "sr-browse-nav"
+            elif r["mode"] == "focus":
+                kind = "sr-focus"
+            elif r["mode"] == "global":
+                kind = "sr-global"
             elif "+" in x["key"] and not arrow:
                 kind = "sr-chord"
             else:
-                continue
+                kind = "sr-" + str(r["mode"])
+            sr_hits[f"{r['sr']} {r['mode']}"] = sr_hits.get(f"{r['sr']} {r['mode']}", 0) + 1
             add(
                 kind,
                 who(x),
@@ -501,6 +520,13 @@ def keymap_section() -> dict[str, Any]:
     by_class: dict[str, int] = {}
     for c in conflicts:
         by_class[c["class"]] = by_class.get(c["class"], 0) + 1
+    # The split each KM row quotes: how many of a class fall on the tree's type-ahead letters and
+    # digits (KM-02, KM-11, KM-14) and how many on the other keys (KM-01, KM-03..KM-07).
+    typeahead_mark = "Objects/tree: focus the next item"
+    by_class_typeahead: dict[str, int] = {}
+    for c in conflicts:
+        if typeahead_mark in c["a"]:
+            by_class_typeahead[c["class"]] = by_class_typeahead.get(c["class"], 0) + 1
     objects_cmds = [c["id"] for c in km["commands"] if c["context"] == "Objects"]
     return {
         "shipped_commands": len(km["commands"]),
@@ -521,6 +547,8 @@ def keymap_section() -> dict[str, Any]:
         ),
         "conflicts": conflicts,
         "conflicts_by_class": by_class,
+        "conflicts_by_class_typeahead": by_class_typeahead,
+        "sr_hits_by_reader_mode": sr_hits,
         "d25_undeclared": undeclared,
         "d25_stale": stale,
         "lint_errors": list(E11.keymap_lint.lint_keymap(km)),
@@ -581,7 +609,7 @@ SC-25 | environment icon | blocked-removal row | icon/env-live | color.env.live
   | color.surface.raised | non-text
 SC-26 | count chip suffix | CMP-224 | the word + icon/warning | color.status.danger.strong
   | color.surface.raised | non-text
-SC-27 | tags (On chart xN, Requires recorded history) | SCR-034 option | the tag words
+SC-27 | tags (On chart \u00d7N, Requires recorded history) | SCR-034 option | the tag words
   | color.text.secondary | color.surface.hover | text
 SC-28 | second instance | legend row | the next ladder tier + the label suffix
   | color.text.primary | color.surface.canvas | text
@@ -597,8 +625,8 @@ CP-03 | T2 Delete label on the bulk bar (hover fill) | color.text.tertiary | col
 CP-04 | T2 reason beside Delete on the bulk bar | color.text.secondary | color.surface.hover | text
 CP-05 | validity: Apply's primary fill at opacity.disabled over the overlay | validity_fill
   | color.surface.overlay | reported
-CP-06 | validity: Apply's label at opacity.disabled over its composited fill
-  | blend(color.text.on-action, validity_fill, 0.45) | validity_fill | reported
+CP-06 | validity: Apply's label under group opacity (opacity.disabled on the control)
+  | blend(color.text.on-action, color.surface.overlay, 0.45) | validity_fill | reported
 CP-07 | validity: the reason beside Apply at full opacity | color.text.secondary
   | color.surface.overlay | text
 CP-08 | focus ring beside a slot swatch tile (on the overlay, 2 px offset) | color.focus.ring
@@ -617,7 +645,9 @@ CP-14 | the used-by-rules glyph on a selected tree row | color.status.warning.st
 """
 
 
-# A named composite the composition rows reuse (E30-D02 D3's look: the fill at opacity.disabled).
+# A named composite the composition rows reuse (E30-D02 D3's look: opacity.disabled on the control,
+# a group opacity -- so the fill and the label are each composited over the overlay at 0.45, and the
+# label never passes through the fill; CP-06 measures the two composites against each other).
 ALIASES = {"validity_fill": "blend(color.action.primary.default, color.surface.overlay, 0.45)"}
 
 
@@ -836,6 +866,54 @@ def unquote(cell: str) -> list[str]:
     return found or [cell.strip("`* ")]
 
 
+# The sources every quoted string of the keyboard-contract (K), expected-rendering (R) and gated-
+# control (T2) tables must come from, verbatim: the two merged specs and the handoff, the neighbours
+# the review cites for names and reasons, and the plan documents. Read at the base.
+SOURCE_FILES = (
+    "docs/design/E13/E13-D02.md",
+    "docs/design/E13/E13-D03.md",
+    "docs/design/E13/E13-D03-handoff.md",
+    "docs/design/E09/E09-D09.md",
+    "docs/design/E11/E11-D02.md",
+    "docs/design/E06/E06-D03.md",
+    "docs/design/E14/E14-D02.md",
+    "docs/plan/05-accessibility-standard.md",
+    "docs/plan/14-screens-catalogue.md",
+    "docs/plan/15-component-catalogue.md",
+    "docs/plan/11-user-stories.md",
+)
+QUOTED_TABLES = ("K34", "K35", "K36", "KL", "TK", "R34", "R35", "R36", "RL", "T2")
+QUOTE_MIN_CHARS = 12
+
+
+def flat(text: str) -> str:
+    text = text.replace("\u00a0", " ").replace("\u2019", "'").replace('\\"', '"')
+    return re.sub(r"\s+", " ", text)
+
+
+def sources_text() -> str:
+    return " ".join(flat((ROOT / p).read_text(encoding="utf-8")) for p in SOURCE_FILES)
+
+
+def quoted_string_misses(spec: str) -> list[str]:
+    """Quoted strings of >= QUOTE_MIN_CHARS in the K / R / T2 tables that no source carries.
+
+    A quote with an ellipsis or a placeholder brace is an abbreviation, not a string, and is
+    skipped; everything else is compared whitespace-folded against SOURCE_FILES at the base."""
+    src = sources_text()
+    misses: list[str] = []
+    for pre in QUOTED_TABLES:
+        for r in rows_with(spec, pre + r"-\d+"):
+            for cell in r[1:]:
+                for s in re.findall(r"[\"“]([^\"”]+)[\"”]", cell):
+                    s2 = flat(s).strip()
+                    if len(s2) < QUOTE_MIN_CHARS or "…" in s2 or "{" in s2:
+                        continue
+                    if s2 not in src:
+                        misses.append(f"{r[0]}: {s!r}")
+    return misses
+
+
 def review_section(spec: str) -> dict[str, Any]:
     problems: list[str] = []
     out: dict[str, Any] = {}
@@ -885,7 +963,11 @@ def review_section(spec: str) -> dict[str, Any]:
     lr = rows_with(spec, r"LR-\d+")
     out["lr_rows"] = len(lr)
     out["lr_assertive"] = 0
+    # AC 3's four events: a row must exist for each ("present"), and the row is "specified" only
+    # when it carries a deck string and a politeness level -- a row whose string and politeness are
+    # both "none" is present but not specified (the ticket asks for a string and a level).
     events = {"add": False, "remov": False, "error": False, "warm-up complete": False}
+    specified = dict(events)
     for r in lr:
         if len(r) < 9:
             problems.append(f"{r[0]}: {len(r)} cells, expected 9")
@@ -895,16 +977,27 @@ def review_section(spec: str) -> dict[str, Any]:
             problems.append(f"{r[0]}: politeness {r[4]!r} not in {POLITENESS}")
         if pol == "assertive":
             out["lr_assertive"] += 1
+        has_string = r[8] not in ("", "—") and not r[8].lower().startswith("none")
         for ev_name in events:
             if ev_name in r[1].lower():
                 events[ev_name] = True
-        if r[8] not in ("", "—") and "none" not in r[8].lower():
+                if has_string and pol in ("polite", "assertive", "label"):
+                    specified[ev_name] = True
+        if has_string:
             for s in unquote(r[8]):
                 if re.sub(r"\s+", " ", s) not in deck:
                     problems.append(f"{r[0]}: string {s!r} is not in E13-D02 section 12")
     out["events_present"] = sum(events.values())
     out["events_missing"] = [k for k, v in events.items() if not v]
-    # T2 table (R8): id, control, gate class, form, what the spec says, verdict, finding
+    out["events_specified"] = sum(specified.values())
+    out["events_unspecified"] = [k for k, v in specified.items() if not v]
+    # Every quoted string in the K / R / T2 tables is a source's, verbatim (the deck check widened).
+    quote_misses = quoted_string_misses(spec)
+    out["quoted_string_misses"] = quote_misses
+    problems += [f"quoted string not in any source: {m}" for m in quote_misses]
+    # T2 table (R8): id, control, gate class, form, what the spec says, verdict, finding. A row of a
+    # non-gate class whose Form cell renders the control as T2 is an over-conversion candidate and
+    # must carry an existing F id in its finding cell.
     t2 = rows_with(spec, r"T2-\d+")
     out["t2_rows"] = len(t2)
     by_class = {c: 0 for c in GATE_CLASSES}
@@ -919,7 +1012,7 @@ def review_section(spec: str) -> dict[str, Any]:
             problems.append(f"{r[0]}: gate class {r[2]!r} not in the set")
             continue
         by_class[cls] += 1
-        if cls in NOT_GATES and "T2" in r[4]:
+        if cls in NOT_GATES and re.search(r"\bT2\b", r[3]):
             fid = re.search(r"F-\d+", r[6] or "")
             over.append(r[0])
             if not fid or fid.group(0) not in f_ids:
@@ -927,7 +1020,8 @@ def review_section(spec: str) -> dict[str, Any]:
                     f"{r[0]}: over-conversion candidate without an F row in the finding cell"
                 )
     out["t2_by_class"] = by_class
-    out["t2_overconversion_candidates"] = over
+    out["t2_overconversion_ids"] = over
+    out["t2_overconversion_candidates"] = len(over)
     # focus moves, motion, plug-in, hand-offs, protocol tasks, boards
     fm = rows_with(spec, r"FM-\d+")
     out["focus_moves"] = len(fm)
@@ -942,13 +1036,16 @@ def review_section(spec: str) -> dict[str, Any]:
     out["rt_tasks"] = len(rows_with(spec, r"R-T\d+"))
     out["km_rows"] = len(rows_with(spec, r"KM-\d+"))
     out["boards"] = len([r for r in rows_with(spec, r"0\d") if "PENDING" in " ".join(r)])
-    # findings (R11)
+    # findings (R11): id, class, severity, clause, change, owner, target, consumer, evidence. One
+    # owner and one target per row (the consumer column may name two stories); every F row whose
+    # clause cell names a 05 clause id must be listed in that clause's finding cell (section 10.1).
     f_rows = rows_with(spec, r"F-\d+")
     sev = {"Blocking": 0, "Major": 0, "Minor": 0, "Info": 0}
     classes: dict[str, int] = {}
+    clause_rows = {c: r for c in CLAUSES for r in rows_with(spec, re.escape(c) + r"`?\s*\|") if r}
     for r in f_rows:
-        if len(r) < 8:
-            problems.append(f"{r[0]}: {len(r)} cells, expected 8")
+        if len(r) < 9:
+            problems.append(f"{r[0]}: {len(r)} cells, expected 9")
             continue
         s = r[2].strip()
         if s not in sev:
@@ -960,6 +1057,14 @@ def review_section(spec: str) -> dict[str, Any]:
             problems.append(f"{r[0]}: no owner or no target")
         elif E11._two_parties(r[5]) or E11._two_parties(r[6]):
             problems.append(f"{r[0]}: more than one owner or target")
+        if r[7] in ("", "—"):
+            problems.append(f"{r[0]}: no consumer named")
+        for cid in re.findall(r"`([0-9]+\.[0-9]+(?:\.[0-9]+)?[ab]?)`", r[3]):
+            row = clause_rows.get(cid)
+            if row is None:
+                problems.append(f"{r[0]}: clause {cid} is not a clause row")
+            elif len(row) < 6 or r[0] not in row[5]:
+                problems.append(f"{r[0]}: clause {cid}'s finding cell does not list it")
     out["f_rows"] = len(f_rows)
     out["f_by_severity"] = sev
     out["f_by_class"] = classes
@@ -1036,6 +1141,15 @@ def build(spec_path: Path | None) -> dict[str, Any]:
         if items[key] != want:
             problems.append(f"05 section {key}: {items[key]} items at the base, expected {want}")
     comp_fail = [c["id"] for c in comp if c["fail"]]
+    # The ids behind each minimum and the light-theme non-text rows between 3:1 and 4.5:1 (the
+    # glyphs whose text bar is met by the word beside them) -- printed so the review quotes ids the
+    # tool found, not ids it remembered.
+    min_protan = min(car, key=lambda c: float(c["protan"]))
+    min_deutan = min(car, key=lambda c: float(c["deutan"]))
+    min_dl = min(car, key=lambda c: float(c["dl"]))
+    light_nontext = [
+        c["id"] for c in car if c["role"] == "non-text" and 3.0 <= float(c["light"]) < 4.5
+    ]
     counts: dict[str, Any] = {
         "clauses_expected": len(CLAUSES),
         "carriers_rows": len(car),
@@ -1043,6 +1157,11 @@ def build(spec_path: Path | None) -> dict[str, Any]:
         "carriers_min_protan": min(c["protan"] for c in car),
         "carriers_min_deutan": min(c["deutan"] for c in car),
         "carriers_min_dl": min(c["dl"] for c in car),
+        "carriers_min_protan_id": min_protan["id"],
+        "carriers_min_deutan_id": min_deutan["id"],
+        "carriers_min_dl_id": min_dl["id"],
+        "carriers_light_nontext_3_45": len(light_nontext),
+        "carriers_light_nontext_3_45_ids": ", ".join(light_nontext),
         "composition_rows": len(comp),
         "composition_gated": sum(1 for c in comp if BAR.get(c["role"]) is not None),
         "composition_fail": len(comp_fail),
@@ -1080,6 +1199,11 @@ def build(spec_path: Path | None) -> dict[str, Any]:
     }
     for cls, n in sorted(km["conflicts_by_class"].items()):
         counts["conflicts_" + cls.replace("-", "_")] = n
+    for cls, n in sorted(km["conflicts_by_class_typeahead"].items()):
+        counts["conflicts_" + cls.replace("-", "_") + "_typeahead"] = n
+    counts["conflict_classes"] = len(km["conflicts_by_class"])
+    for rm, n in sorted(km["sr_hits_by_reader_mode"].items()):
+        counts["sr_hits_" + rm.replace(" ", "_").replace("-", "_")] = n
     for k, v in items.items():
         counts["items_05_" + k.replace(".", "_")] = v
     rev: dict[str, Any] = {}
@@ -1137,7 +1261,9 @@ def build(spec_path: Path | None) -> dict[str, Any]:
             "lr_rows",
             "lr_assertive",
             "events_present",
+            "events_specified",
             "t2_rows",
+            "t2_overconversion_candidates",
             "focus_moves",
             "focus_data_driven",
             "motion_rows",
@@ -1231,6 +1357,8 @@ def check_markers(spec_text: str, counts: dict[str, Any]) -> list[str]:
         "sr_rows",
         "lr_rows",
         "events_present",
+        "events_specified",
+        "t2_overconversion_candidates",
         "fabricated_at",
         "boards",
         "design_bindings",
@@ -1272,12 +1400,19 @@ def render_report(d: dict[str, Any]) -> str:
         )
         out.append(
             f"events: {rv['events_present']} of 4 present "
-            f"(missing: {rv['events_missing'] or 'none'});"
+            f"(missing: {rv['events_missing'] or 'none'}); "
+            f"{rv['events_specified']} of 4 specified with a string and a politeness "
+            f"(unspecified: {rv['events_unspecified'] or 'none'});"
             f" routing rows {rv['lr_rows']}, assertive {rv['lr_assertive']}"
         )
         out.append(
             f"T2 rows: {rv['t2_rows']} by class {rv['t2_by_class']}; "
-            f"over-conversion candidates {rv['t2_overconversion_candidates']}"
+            f"over-conversion candidates {rv['t2_overconversion_candidates']} "
+            f"{rv['t2_overconversion_ids']}"
+        )
+        out.append(
+            f"quoted strings in the K / R / T2 tables not in any source: "
+            f"{len(rv['quoted_string_misses'])}"
         )
         out.append(
             f"F rows: {rv['f_rows']} {rv['f_by_severity']}; A {rv['a_rows']} C {rv['c_rows']} "
@@ -1300,7 +1435,14 @@ def render_report(d: dict[str, Any]) -> str:
         out.append(head + nums + cvd + f"| {'yes' if r['colour_only'] else 'no'} |")
     out += [
         "",
-        f"carriers: {c['carriers_rows']} rows / {c['carriers_colour_only']} colour-only",
+        (
+            f"carriers: {c['carriers_rows']} rows / {c['carriers_colour_only']} colour-only; "
+            f"minimum dL* {fmt(c['carriers_min_dl'])} ({c['carriers_min_dl_id']}), "
+            f"protan dE {fmt(c['carriers_min_protan'])} ({c['carriers_min_protan_id']}), "
+            f"deutan dE {fmt(c['carriers_min_deutan'])} ({c['carriers_min_deutan_id']}); "
+            f"light non-text rows between 3:1 and 4.5:1: {c['carriers_light_nontext_3_45']} "
+            f"({c['carriers_light_nontext_3_45_ids']})"
+        ),
         "",
     ]
     out += [
@@ -1341,7 +1483,12 @@ def render_report(d: dict[str, Any]) -> str:
         f"Objects-context commands shipped {c['objects_context_commands']}; "
         f"lint_keymap errors (shipped): {c['lint_errors']}"
     )
-    out.append(f"conflicts: {c['conflicts_total']} total by class {km['conflicts_by_class']}")
+    out.append(
+        f"conflicts: {c['conflicts_total']} total in {c['conflict_classes']} classes "
+        f"{km['conflicts_by_class']}; on the tree's type-ahead keys "
+        f"{km['conflicts_by_class_typeahead']}; screen-reader hits by reader and mode "
+        f"{km['sr_hits_by_reader_mode']}"
+    )
     for x in km["conflicts"]:
         out.append(f"- [{x['class']}] {x['a']}  vs  {x['b']}  ({x['contexts']}; {x['note']})")
     out.append("")
