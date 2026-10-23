@@ -172,7 +172,8 @@ VOCAB_COUNTS = {"color": 8, "dash": 3, "width": 3, "fill_opacity": 1, "marker": 
 # The motion rows (spec section 6): id, element, animated property (opacity / transform / clip /
 # none, joined by +), duration token, easing token, the reduce twin's kind, the static carrier the
 # twin keeps, loops?, maximum luminance changes per second, extra draws while active, carries
-# information?
+# information? M6's one luminance change per second holds by rule (spec section 6 M6): a commit
+# within 1 s of the previous M6 start is a cut, so the fade never repeats inside a second.
 M_ROWS: tuple[tuple[str, str, str, str, str, str, str, bool, int, int, bool], ...] = (
     (
         "M1",
@@ -734,7 +735,8 @@ def motion_section() -> dict[str, Any]:
     p(
         "Flash audit: every row <= 1 luminance change per second, nothing loops ("
         + ", ".join(f"{r[0]} {r[8]}/s" for r in M_ROWS)
-        + "); the inherited rows keep E11-D06 section 9.3's verdicts."
+        + "); M6 holds its 1 / s by rule (a commit within 1 s of the previous M6 start is a cut);"
+        " the inherited rows keep E11-D06 section 9.3's verdicts."
     )
     out["flashMax"] = max(r[8] for r in M_ROWS)
     out["loops"] = sum(1 for r in M_ROWS if r[7])
