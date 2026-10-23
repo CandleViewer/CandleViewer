@@ -88,13 +88,13 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  A4["Add panel in the tab strip, or Add panel from the Ctrl+K palette"] --> B4["SCR-024: search and categories, entries disabled with their reasons"]
+  A4["Add panel in the tab strip, or Add panel from the Ctrl+K palette"] --> E4{"Layout already holds 16 panels?"}
+  E4 -->|yes| F4["Add panel T2, the tab strip button and the palette command, 2a: This layout has the most panels it can hold."]
+  E4 -->|no| B4["SCR-024: search and categories, T2 entries with their reasons"]
   B4 -->|Esc| Z4["Picker closes, nothing added"]
   B4 --> C4["CVD chosen"]
   C4 --> D4["Place: Right of Chart, with the mini-map preview"]
-  D4 --> E4{"Layout already holds 16 panels?"}
-  E4 -->|yes| F4["Add disabled: This layout has 16 panels, the most it can hold. Close one first."]
-  E4 -->|no| G4{"Estimated frame cost over the budget?"}
+  D4 --> G4{"Estimated frame cost over the budget?"}
   G4 -->|yes| H4["Confirm with the measured and the estimated cost, Cancel focused"]
   H4 -->|Cancel| D4
   H4 -->|Add panel anyway| I4
@@ -103,6 +103,7 @@ flowchart TD
   J4 --> K4["Polite: CVD added to the right of Chart. Event: layout.panel_added type cvd, placement right"]
 ```
 
+- **T2:** the 16-panel state is checked at both entries, `layout.limit.panels` (spec §8.1); its reason sits beside the tab strip's button and is the palette option's second line, and `Enter` on either changes nothing and re-shows it, announced once, politely.
 - **Keyboard:** typing filters, arrows move through results, `Tab` reaches the Place select, `Enter` adds.
 - **Events:** `layout.panel_added {type, placement}` (SCR-024 calls it `panel.added`).
 - **Contract:** nothing is written until Save (`updateLayout`); at most 16 panes per layout; a kind must be one of `PaneKind`'s twelve, and the account kinds carry no symbol or interval. The cost estimate is client-side, from E15-K01's measurements.
