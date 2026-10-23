@@ -10,22 +10,28 @@ its source so a reviewer can re-grep it:
    cursor rows say "no popover", the deferred rows are marked, every cell is a shared field with a
    real ``22`` key and bound, a declared slot or a ``G-T`` id, and the key rules hold (gated).
 2. The anatomy arithmetic: widths, rows, padding, the body height per tool and density, the 90 vh
-   threshold at 800 and 400 CSS px, the swatch row and the selected indicator (printed, not typed).
+   threshold at 800 and 400 CSS px, the swatch rows (both must fit the inner width: gated) and the
+   radio / tile / inner-ring geometry of E13-D03's CMP-031 (printed, not typed).
 3. The measured matrix: every fg / bg pair the spec's section 10 lists x dark / light /
    high-contrast, resolved exactly as ``packages/ui/tokens/tests/verify_tokens.py`` layers the
    themes, measured with ``contrast_check.contrast_ratio()`` (imported, never re-implemented); the
-   reproductions of E14-D02 section 15, E30-D02 line 361, E09-D09 section 11 and E13-D03 section
-   3.1 (PR 4212's head) to the hundredth; gated roles 0 FAIL, structure-only rows reported.
+   reproductions of E14-D02 section 15, E30-D02 line 361, E09-D09 section 11 and E13-D03 sections
+   3.1 and 10.1 line 322 (merged, f437dc6b4) to the hundredth; gated roles 0 FAIL, structure-only
+   rows reported. 3b: each theme's swatch hexes on the other theme's canvas and the hex
+   collisions between the two sets (a stored hex is theme-fixed: G-T11).
 4. The fill-opacity study (ticket AC 3): per swatch x theme the largest ``fill_opacity`` (step
    0.01) at which ``color.candle.up`` / ``.down`` / ``.wick`` (and the CVD-safe pair) keep >= 3:1
    over one, two and three stacked fills and over the flattened composite, both layer orders; the
-   three-stack minimum rounded down to 0.05 is the stated default (gated equal to the spec's).
+   three-stack minimum rounded down to 0.05 is the stated default (gated equal to the spec's); the
+   tint of a fill against the bare canvas at the default and at the flattened ceiling.
 5. The CVD rows: ``cvd_simulate.simulate`` + ``delta_e76`` under three deficiencies, 5.0 floor.
 6. Token bindings: every token the spec binds exists in the merged dark set, or is marked PROPOSED
    on its row; T2 rows never carry ``color.text.disabled`` or ``opacity.disabled``; validity rows
    carry ``opacity.disabled`` and never "T2" or "lock" (gated).
 7. String gates on the spec and the handoff (the T2 rule once, the view-as leg first, no closing
-   keyword, no local path or Penpot host, every board row PENDING, no placeholder words).
+   keyword, no local path or Penpot host, every board row PENDING, no placeholder words, no
+   "merges as is" qualifier, the frame count in section 17, the colour-custom legend word, G-T11
+   named in the handoff).
 8. The counts the boards and the PR quote (``--json`` feeds the local board check).
 
 Usage: python3 -I docs/design/_tools/e14_d04_popover_audit.py [--json] [--check] [--table]
@@ -70,7 +76,7 @@ keymap_lint = _load(ROOT / "scripts" / "keymap_lint.py", "keymap_lint")
 d02 = _load(TOOLS / "e14_d02_interaction_audit.py", "e14_d02_interaction_audit")
 
 THEMES = ("dark", "light", "high-contrast")
-# E13-D03 section 3.1 at PR 4212's head (if it merges as is): the eight slot aliases per theme;
+# E13-D03 section 3.1 (merged as f437dc6b4, PR 4212): the eight slot aliases per theme;
 # high-contrast inherits the dark alias. Q12's default aliases color.drawing.palette.N to them.
 SLOT_ALIAS: dict[str, tuple[str, ...]] = {
     "dark": (
@@ -96,6 +102,8 @@ SLOT_ALIAS: dict[str, tuple[str, ...]] = {
 }
 SLOT_ALIAS["high-contrast"] = SLOT_ALIAS["dark"]
 E13_SLOT_CANVAS_DARK = (7.30, 4.57, 5.90, 3.05, 4.85, 3.28, 6.73, 3.87)
+# E13-D03 section 10.1 line 322: color.border.selected on color.surface.selected (the inner ring)
+E13_INNER_RING = (3.46, 3.39, 4.72)
 SWATCH_KEYS = ("color.drawing.default", *(f"color.drawing.palette.{i}" for i in range(1, 9)))
 HUE_WORD = {
     "cvd": "blue"
@@ -108,6 +116,18 @@ HUE_WORD = {
 FILLED = ("rectangle", "ellipse", "triangle", "parallel_channel", "price_range", "date_range")
 TEXT_TOOLS = ("text", "callout")
 FIB = ("fib_retracement", "fib_extension", "fib_timezone")
+# the tools whose drawing changes when extend_left / extend_right flips (spec section 3; 22 allows
+# the keys on every tool - a horizontal ray is a horizontal_line with extend_right)
+EXTEND = (
+    "trendline",
+    "horizontal_line",
+    "rectangle",
+    "parallel_channel",
+    "fib_retracement",
+    "fib_extension",
+)
+NOT_SHOWN = "— (allowed by `22`, not shown)"
+NO_BOX = "— (styles nothing until the note's box field lands)"
 SLOT: dict[str, str] = {
     "fib_retracement": "levels",
     "fib_extension": "levels",
@@ -151,11 +171,14 @@ COLS = (
 STATES_TXT = """
 default|none|05
 hover-focus|none|02
+colour-custom|none|02
+save-as-default-noop|validity|02
 edited-unsaved|none|05
 invalid-width|validity|05
 template-name-empty|validity|09
 template-name-duplicate|validity|09
 duplicate-level|validity|04
+note-empty|validity|04
 saving|none|05
 saved|outcome|05
 save-failed|none|05
@@ -163,13 +186,15 @@ save-failed-offline|none|05
 access-changed|none|05
 session-read-only|none|05
 conflict|none|05
+deleted-elsewhere|none|05
 batch-failed|none|10
+batch-target-unavailable|none|10
 template-saving|none|09
 template-save-failed|none|09
 locked|T2|05
-viewer|T2|05
 view-as|T2|05
-tool-defaults|none|05
+viewer|T2|05
+tool-defaults|validity|05
 multiselect-mixed|none|10
 alert-marker|marker|05
 alert-live|none|05
@@ -196,6 +221,9 @@ BOARDS: list[tuple[str, str, list[str]]] = [
         [
             "hover-focus",
             "swatches",
+            "colour-custom",
+            "swatch-focused-selected",
+            "save-as-default-noop",
             "width",
             "style",
             "extend-lock",
@@ -226,6 +254,7 @@ BOARDS: list[tuple[str, str, list[str]]] = [
             "levels",
             "bands",
             "note",
+            "note-empty",
             "measure",
             "position",
             "channel",
@@ -245,6 +274,7 @@ BOARDS: list[tuple[str, str, list[str]]] = [
             "access-changed",
             "session-read-only",
             "conflict",
+            "deleted-elsewhere",
             "locked",
             "viewer",
             "view-as",
@@ -311,6 +341,7 @@ BOARDS: list[tuple[str, str, list[str]]] = [
         [
             "multiselect-mixed",
             "batch-failed",
+            "batch-target-unavailable",
             "zoom-125",
             "zoom-200",
             "focus-order",
@@ -318,6 +349,7 @@ BOARDS: list[tuple[str, str, list[str]]] = [
     ),
 ]
 LIGHT_TWINS = ("03", "06", "08")
+FRAMES_TOTAL = sum(len(f) for _n, _s, f in BOARDS)
 STORIES = [
     "Default",
     "EditedUnsaved",
@@ -327,6 +359,7 @@ STORIES = [
     "SaveFailedOffline",
     "AccessChanged",
     "Conflict",
+    "DeletedElsewhere",
     "Locked",
     "Viewer",
     "ViewAs",
@@ -352,6 +385,8 @@ ROW = {"compact": "size.control.compact", "comfortable": "size.control.comfortab
 LEGEND = {"compact": 20, "comfortable": 24}
 HEADER = {"compact": (24, 16, 16), "comfortable": (32, 20, 20)}  # title, subtitle, status line
 SWATCH_GAP = {"compact": "space.1", "comfortable": "space.2"}
+SMALL_ROW = {"compact": 16, "comfortable": 20}  # a label, legend or counter line
+SW, CUE, LINK = "swatch", "cue", "link"  # the colour block, the note's counter, the ghost row
 VIEWPORT_H = (800, 400)  # 1280x800 at 100 %, the same at 200 % zoom (CSS px)
 
 
@@ -450,11 +485,10 @@ def hue_word(alias: str) -> str:
 
 
 def swatch_name(i: int, th: str) -> str:
+    """E13-D03 section 13's grammar: the ordinal, the hue word of the active theme."""
     if i == 0:
-        return (
-            f"Default — {hue_word(str(theme(th)['color.drawing.default']['$value']).strip('{}'))}"
-        )
-    return f"Slot {i} — {hue_word(SLOT_ALIAS[th][i - 1])}"
+        return f"Default, {hue_word(str(theme(th)['color.drawing.default']['$value']).strip('{}'))}"
+    return f"Slot {i}, {hue_word(SLOT_ALIAS[th][i - 1])}"
 
 
 # --- 1. the schema -----------------------
@@ -533,9 +567,13 @@ def derive_schema(api: dict[str, Any]) -> list[dict[str, str]]:
         n = api["points"][tool]
         row["anchors"] = f"`geometry.points` \u00d7 {n}"
         row["colour"] = "`style.colour`"
-        row["width"] = f"`style.width` {api['width'][0]}..{api['width'][1]}"
-        row["style"] = "`style.dash`"
-        row["extend L / R"] = "`geometry.extend_left` / `extend_right`"
+        row["width"] = (
+            f"`style.width` {api['width'][0]}..{api['width'][1]}" if tool != "text" else NO_BOX
+        )
+        row["style"] = "`style.dash`" if tool != "text" else NO_BOX
+        row["extend L / R"] = (
+            "`geometry.extend_left` / `extend_right`" if tool in EXTEND else NOT_SHOWN
+        )
         row["fill"] = (
             "`style.fill_colour` / `fill_opacity` "
             f"{api['fill_opacity'][0]}..{api['fill_opacity'][1]} + flatten (G-T4)"
@@ -611,8 +649,8 @@ def schema_report(fails: list[str], spec: str, api: dict[str, Any]) -> dict[str,
             fails.append(f"schema: bands slot on {t}")
         if ("fill_colour" in r["fill"]) != (t in FILLED):
             fails.append(f"schema: fill fields on {t}")
-        if "extend_left" not in r["extend L / R"]:
-            fails.append(f"schema: extend fields missing on {t}")
+        if ("extend_left" in r["extend L / R"]) != (t in EXTEND):
+            fails.append(f"schema: extend fields on {t}")
     # the spec's table must equal the derivation cell by cell
     if not got:
         fails.append("spec section 3 table not found")
@@ -650,31 +688,37 @@ def px(name: str) -> int:
     return int(float(str(tok(name))))
 
 
-def anatomy_report() -> dict[str, Any]:
+def anatomy_report(fails: list[str]) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    # field rows per tool: Style (colour, width, style[, font size], label) + Fill (3, filled only)
-    # + Geometry (2) + Visibility and lock (2) + Anchors (n) + the slot rows + Alert (1) + Templates
-    # (picker, Save as default, Save as template, Manage) + Actions (1 row: Clone, Delete)
-    cases = {
-        "trendline": {"rows": 4 + 2 + 2 + 2 + 1 + 4 + 1, "sections": 8, "slot_rows": 0},
-        "rectangle": {"rows": 4 + 3 + 2 + 2 + 2 + 1 + 4 + 1, "sections": 9, "slot_rows": 0},
-        "text": {"rows": 5 + 2 + 2 + 1 + 4 + 1 + 4 + 1, "sections": 9, "slot_rows": 4},
-        "fib_retracement (7 levels)": {
-            "rows": 4 + 2 + 2 + 2 + 9 + 1 + 4 + 1,
-            "sections": 9,
-            "slot_rows": 9,
-        },
-        "fib_retracement (24 levels)": {
-            "rows": 4 + 2 + 2 + 2 + 26 + 1 + 4 + 1,
-            "sections": 9,
-            "slot_rows": 26,
-        },
+    # Sections per tool at the default state (spec section 2.1), each a list of items: an int n is
+    # n field rows; SW is the colour block (the group-label row + the tile row + the legend row);
+    # CUE is the note's counter line; LINK is the Manage templates ghost row. Anchors and Templates
+    # are closed CMP-065 disclosures by default (a legend row only: []), opened in the "(... open)"
+    # case; Fill shows the "Same as stroke" box checked, so no fill swatch row; text hides width and
+    # style (section 3). Section order: Style, [Fill], [Geometry], Visibility and lock, Anchors,
+    # [the slot], Alert, Templates, Actions.
+    cases: dict[str, list[list[Any]]] = {
+        "trendline": [[SW, 1, 1, 1], [1, 1], [1, 1], [], [1], [], [1]],
+        "trendline (anchors and templates open)": [
+            [SW, 1, 1, 1],
+            [1, 1],
+            [1, 1],
+            [1, 1],
+            [1],
+            [1, 1, LINK],
+            [1],
+        ],
+        "rectangle": [[SW, 1, 1, 1], [1, 1, 1], [1, 1], [1, 1], [], [1], [], [1]],
+        "text": [[SW, 1, 1], [1, 1], [], [3, CUE], [1], [], [1]],
+        "fib_retracement (7 levels)": [[SW, 1, 1, 1], [1, 1], [1, 1], [], [1] * 8, [1], [], [1]],
+        "fib_retracement (24 levels)": [[SW, 1, 1, 1], [1, 1], [1, 1], [], [1] * 25, [1], [], [1]],
     }
     for dens in ("compact", "comfortable"):
         pad, row, gap = px(PAD[dens]), px(ROW[dens]), px("space.field.gap")
         stack = px("space.stack.md") if dens == "compact" else px("space.stack.lg")
         title, sub, status = HEADER[dens]
         inner = WIDTH[dens] - 2 * pad
+        small = SMALL_ROW[dens]
         d: dict[str, Any] = {
             "width": WIDTH[dens],
             "pad": pad,
@@ -683,32 +727,45 @@ def anatomy_report() -> dict[str, Any]:
             "gap": gap,
             "stack": stack,
             "legend": LEGEND[dens],
+            "small_row": small,
+            "swatch_block": small + row + small,
             "header": title + sub + status,
         }
+        item_h = {SW: small + row + small, CUE: small, LINK: LEGEND[dens]}
         heights: dict[str, int] = {}
-        for name, c in cases.items():
-            body = (
-                c["sections"] * LEGEND[dens] + c["rows"] * row + (c["rows"] - c["sections"]) * gap
-            )
-            body += (c["sections"] - 1) * stack
+        for name, secs in cases.items():
+            body = 0
+            for items in secs:
+                rows_h = sum(item_h[i] if isinstance(i, str) else int(i) * row for i in items)
+                body += LEGEND[dens] + rows_h + max(0, len(items) - 1) * gap
+            body += (len(secs) - 1) * stack
             heights[name] = pad + d["header"] + stack + body + pad
         d["heights"] = heights
         d["vh90"] = {str(v): int(0.9 * v) for v in VIEWPORT_H}
         d["scrolls"] = {
             str(v): [n for n, h in heights.items() if h > int(0.9 * v)] for v in VIEWPORT_H
         }
-        tile, sgap = px("size.target.min"), px(SWATCH_GAP[dens])
+        d["fits_800"] = [n for n, h in heights.items() if h <= int(0.9 * VIEWPORT_H[0])]
+        tile, radio, sgap = px("size.icon.md"), px("size.target.min"), px(SWATCH_GAP[dens])
+        row_width = 9 * radio + 8 * sgap
         d["swatch"] = {
             "tile": tile,
+            "radio": radio,
             "gap": sgap,
-            "row_width": 9 * tile + 8 * sgap,
-            "fits": 9 * tile + 8 * sgap <= inner,
+            "row_width": row_width,
+            "fits": row_width <= inner,
+            "stroke_px": px("border.thick"),
             "ring_px": px("border.thick"),
-            "ring_offset": px("border.thick"),
-            "ring_box": tile + 2 * (px("border.thick") + px("border.thick")),
+            "ring_box": radio,
             "check": px("size.icon.sm"),
-            "halo": px("border.hairline"),
+            "focus_offset": px("border.focus"),
+            "focus_box": radio + 2 * (px("border.focus") + px("border.thick")),
+            "label_row": small,
         }
+        if row_width > inner:
+            fails.append(
+                f"anatomy: the swatch rows ({row_width}) overflow the inner width {inner} ({dens})"
+            )
         out[dens] = d
     out["type"] = {
         "label": f"{px('font.size.sm')} / {px('font.weight.medium')}",
@@ -757,7 +814,12 @@ the hairline on the overlay (structure only)|color.border.default|color.surface.
 the meaning-carrying field border (E13-D03 s2)|color.text.tertiary|color.surface.overlay|non-text
 chip outline on the overlay (structure only)|color.border.strong|color.surface.overlay|structure
 focus ring on the overlay|color.focus.ring|color.surface.overlay|non-text
-the selected swatch ring (outside the tile)|color.border.selected|color.surface.overlay|non-text
+the checked radio's inner ring (E13-D03 322)|color.border.selected|color.surface.selected|non-text
+the inner ring beside the canvas tile|color.border.selected|color.surface.canvas|non-text
+the check glyph on the canvas tile|color.text.primary|color.surface.canvas|non-text
+the tile border inside a selected radio|color.text.tertiary|color.surface.selected|non-text
+the canvas tile's edge (structure only)|color.surface.canvas|color.surface.overlay|structure
+focus ring vs the inner ring (never touching)|color.focus.ring|color.border.selected|reported
 validity glyph (E30-D02 D16)|color.status.danger.strong|color.surface.overlay|non-text
 the 2 px field boundary (E30-D02 D16)|color.status.danger.default|color.surface.overlay|non-text
 Delete as danger-ink text (rejected)|color.status.danger.default|color.surface.overlay|rejected-text
@@ -810,33 +872,6 @@ def matrix_report(fails: list[str]) -> dict[str, Any]:
                 "role": "non-text",
             }
         )
-    for i, key in enumerate(SWATCH_KEYS):
-        rows.append(
-            {
-                "element": f"{sw(i)} tile on the overlay (reported)",
-                "fg": key,
-                "bg": "color.surface.overlay",
-                "role": "reported",
-            }
-        )
-    for i, key in enumerate(SWATCH_KEYS):
-        rows.append(
-            {
-                "element": f"check glyph over {sw(i)} (reported; the halo carries it)",
-                "fg": "color.text.primary",
-                "bg": key,
-                "role": "reported",
-            }
-        )
-    for i, key in enumerate(SWATCH_KEYS):
-        rows.append(
-            {
-                "element": f"selected ring beside {sw(i)} (reported; adjacent)",
-                "fg": "color.border.selected",
-                "bg": key,
-                "role": "reported",
-            }
-        )
     gated = failing = 0
     per_theme_fail = dict.fromkeys(THEMES, 0)
     for r in rows:
@@ -881,6 +916,16 @@ def matrix_report(fails: list[str]) -> dict[str, Any]:
         fails.append(
             f"E13-D03 s3.1 reproduction: {rep['e13_d03_s31_dark']} != {E13_SLOT_CANVAS_DARK}"
         )
+    ring = next(
+        r
+        for r in rows
+        if r["fg"] == "color.border.selected" and r["bg"] == "color.surface.selected"
+    )
+    rep["e13_d03_322_inner_ring"] = [fmt(ring["ratios"][th]) for th in THEMES]
+    if [float(v) for v in rep["e13_d03_322_inner_ring"]] != list(E13_INNER_RING):
+        fails.append(
+            f"E13-D03 line 322 reproduction: {rep['e13_d03_322_inner_ring']} != {E13_INNER_RING}"
+        )
     hc_over = set(verify.load("semantic-hc.tokens.json"))
     used = sorted({r[k] for r in rows for k in ("fg", "bg")} - set(SWATCH_KEYS[1:]))
     tokens = {
@@ -898,8 +943,29 @@ def matrix_report(fails: list[str]) -> dict[str, Any]:
         "no_hc_override": no_hc,
         "swatch_names": {th: [swatch_name(i, th) for i in range(9)] for th in THEMES},
         "swatch_hex": {th: [hx(k, th) for k in SWATCH_KEYS] for th in THEMES},
+        "cross_theme": cross_theme(),
         "tokens": tokens,
     }
+
+
+def cross_theme() -> dict[str, Any]:
+    """3b: a stored hex is theme-fixed (22 DrawingStyle.colour) - each theme's set on the other
+    theme's canvas, the hex collisions between the sets and the slots whose hue family changes."""
+    out: dict[str, Any] = {}
+    for th, oth in (("dark", "light"), ("light", "dark")):
+        canvas = hx("color.surface.canvas", oth)
+        vals = [ratio(hx(k, th), canvas) for k in SWATCH_KEYS]
+        out[f"{th}_set_on_{oth}_canvas"] = [fmt(v) for v in vals]
+        out[f"{th}_set_under_3_on_{oth}_canvas"] = [i for i, v in enumerate(vals) if v < 3.0]
+    dk = {hx(k, "dark"): i for i, k in enumerate(SWATCH_KEYS)}
+    lt = {hx(k, "light"): i for i, k in enumerate(SWATCH_KEYS)}
+    out["collisions"] = [[h, dk[h], lt[h]] for h in dk if h in lt and dk[h] != lt[h]]
+    out["family_changes"] = [
+        i + 1
+        for i in range(8)
+        if hue_word(SLOT_ALIAS["dark"][i]) != hue_word(SLOT_ALIAS["light"][i])
+    ]
+    return out
 
 
 # --- 4. the fill study -------------------
@@ -986,6 +1052,23 @@ def fill_report(fails: list[str], spec: str) -> dict[str, Any]:
     for th in THEMES:
         names = ("color.candle.up", "color.candle.down", "color.candle.wick")
         limiting[th] = min((ratio(hx(k, th), hx("color.surface.canvas", th)), k) for k in names)
+    # the tint of a fill against the bare canvas: one / two / three stacked at the default, and one
+    # layer at the flattened ceiling (how visible a new zone is where no candle sits)
+    tint: dict[str, Any] = {}
+    for th in THEMES:
+        canvas = hx("color.surface.canvas", th)
+        per: dict[str, list[float]] = {}
+        for key in SWATCH_KEYS:
+            f = hx(key, th)
+            per[key] = [
+                round(ratio(blend(f, canvas, 1 - (1 - default) ** n), canvas), 2) for n in (1, 2, 3)
+            ] + [round(ratio(blend(f, canvas, flat_default), canvas), 2)]
+        tint[th] = {
+            "per_swatch": per,
+            "one_layer": [min(v[0] for v in per.values()), max(v[0] for v in per.values())],
+            "three_stacked": [min(v[2] for v in per.values()), max(v[2] for v in per.values())],
+            "at_flat_ceiling": [min(v[3] for v in per.values()), max(v[3] for v in per.values())],
+        }
     return {
         "table": table,
         "min3": min3,
@@ -1000,6 +1083,7 @@ def fill_report(fails: list[str], spec: str) -> dict[str, Any]:
         "round_to": 0.05,
         "at_default": at_default,
         "candle_on_canvas": {th: (fmt(v), k) for th, (v, k) in limiting.items()},
+        "tint": tint,
     }
 
 
@@ -1161,6 +1245,13 @@ def string_report(fails: list[str], spec: str, hand: str, fill: dict[str, Any]) 
         "template cap 80 with its 22 line": "1..80" in spec and "22:19527" in spec,
         "stated default with measured": f"default `fill_opacity` of {fill['default']:.2f} (measured"
         in spec,
+        "no merges-as-is qualifier (E13-D03 merged)": "merges as is" not in both,
+        "section 17 names the frame count": f"{FRAMES_TOTAL} nested frames"
+        in section(spec, "\n## 17.", "\n## 18."),
+        "colour-custom legend word": "Custom colour" in spec,
+        "handoff names G-T11": "G-T11" in hand,
+        "forced-colors T2 label in CanvasText": "GrayText"
+        not in section(spec, "\n## 8.", "\n## 9."),
         "handoff has three blocks": hand.count("## Handoff checklist —") == 3,
         "handoff has no blank checklist line": not [
             ln for ln in hand.splitlines() if ln.startswith("- [ ]") and "N/A" not in ln
@@ -1237,7 +1328,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(schema_table(derive_schema(api)))
         return 0
     schema = schema_report(fails, spec, api)
-    anatomy = anatomy_report()
+    anatomy = anatomy_report(fails)
     matrix = matrix_report(fails)
     fill = fill_report(fails, spec)
     cvdr = cvd_report()
@@ -1279,6 +1370,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"gap {d['gap']} stack {d['stack']} legend {d['legend']} header {d['header']}"
             )
             p(f"  heights {d['heights']}; 90 vh {d['vh90']}; scrolls {d['scrolls']}")
+            p(f"  fits 90 vh at 800: {d['fits_800']}")
             p(f"  swatch {d['swatch']}")
         p(f"type {anatomy['type']} radius {anatomy['radius']} motion {anatomy['motion']}")
         p(f"opacity.disabled {anatomy['opacity_disabled']}")
@@ -1296,6 +1388,7 @@ def main(argv: list[str] | None = None) -> int:
         p(f"reproductions {matrix['reproductions']}")
         p(f"no hc override: {matrix['no_hc_override']}")
         p(f"swatch names {matrix['swatch_names']}; hex {matrix['swatch_hex']}")
+        p(f"3b. swatch hexes across themes {matrix['cross_theme']}")
         p("## 4. Fill-opacity study (max a per swatch: 1 / 2 / 3 stacked; under = the fill under")
         p("   the candles, over = the fill over them)")
         for row in fill["table"]:
@@ -1310,6 +1403,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         p(f"per swatch, one layer over the candles {fill['flattened']}")
         p(f"candle inks at the default (up / down / wick; over): {fill['at_default']}")
+        p("tint vs the bare canvas (1 / 2 / 3 stacked at the default; one layer at the ceiling):")
+        p(f"  {fill['tint']}")
         p(
             f"excluded {fill['excluded']}; the lowest candle ink on the canvas "
             f"{fill['candle_on_canvas']}"
