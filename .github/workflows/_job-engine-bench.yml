@@ -27,5 +27,7 @@ jobs:
         run: pnpm --filter @candleviewer/chart-engine test:perf
       - name: CVWB decode perf budgets, 23 section 16.3 (E17-T02, no coverage)
         run: pnpm --filter @candleviewer/protocol test:perf
+      - name: Rule-graph adapter budgets, 200 nodes (E37-T01, no coverage)
+        run: pnpm --filter @candleviewer/rule-graph test:perf
       - name: Placeholder (E03-T14 fills in GPU benchmark run + baseline diff)
         run: echo "engine-bench lane stub — implemented by E03-T14"

@@ -6,9 +6,9 @@ import { vitestPreset } from "@candleviewer/config/vitest";
 // precedent), so a missing or stale protocol build never stands in for it.
 const RULE_IR = resolve(import.meta.dirname, "../protocol/src/generated/ruleIr/index.ts");
 
-// One project for now: `unit`, run under V8 coverage by test:cov. The floor is the ticket's
-// engine class (E37-T01: >=85%), the same as chart-engine's (CONSTITUTION C-9.1 #4). The `perf`
-// project, run without coverage, lands with the 200-node budget test (E37-T01 slice S7).
+// Two projects: `unit`, run under V8 coverage by test:cov, and `perf` (the 200-node budget), run
+// WITHOUT coverage by test:perf in the engine bench. The floor is the ticket's engine class
+// (E37-T01: >=85%), the same as chart-engine's (CONSTITUTION C-9.1 #4).
 export default defineConfig({
   resolve: { alias: [{ find: /^@candleviewer\/protocol\/rule-ir$/, replacement: RULE_IR }] },
   test: {
@@ -32,6 +32,10 @@ export default defineConfig({
           include: ["test/**/*.test.ts"],
           exclude: ["test/**/*.perf.test.ts"],
         },
+      },
+      {
+        extends: true,
+        test: { name: "perf", include: ["test/**/*.perf.test.ts"], testTimeout: 60_000 },
       },
     ],
   },

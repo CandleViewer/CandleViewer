@@ -5,6 +5,8 @@
 - Deciders: Owner (`@basiltt`) — owner approval pending.
 - Numbering note: the ticket text says "ADR-0016 / ADR-0025"; both are taken, so this is the next free
   number, 0026 (delivery adaptations).
+- Amended: 2026-10-23, §4 (the top-level strip the code does) and §5 (the editor's display-only hash mirror,
+  E37-T01).
 - Related: E35-K01 (this spike), E35-T01 (consumer), ADR-0007, `24-internal-schemas.md` §11.4,
   `21-database-schema.md` §3.4, `docs/plan/spikes/E35-K01.md`.
 
@@ -27,7 +29,7 @@ renumbering vs `rule_events.node_ref`, and what the fuzz generator must cover.
 2. **Hashing happens in application code before insert and the hash is stored.** Postgres `jsonb` reorders
    keys and normalises numbers, so the hash must never be recomputed from the jsonb round-trip.
 3. **node_ref: keep author-assigned `node_id`s in the stored IR and in `rule_events.node_ref`; renumber only
-   inside the hashed view.** DFS renumbering as a *stored* id is unsafe (spike test: inserting one node
+   inside the hashed view.** DFS renumbering as a _stored_ id is unsafe (spike test: inserting one node
    shifts later ids, so version N's `n3` is a different node in N+1). Renumbering in the hashed view makes
    isomorphic documents with different author ids hash equal, which is desired. `{"ref": id}` pointers are
    rewritten with the same mapping. DFS visits keys in sorted order so dict ordering cannot change ids.
@@ -35,9 +37,13 @@ renumbering vs `rule_events.node_ref`, and what the fuzz generator must cover.
    (events carry `rule_version_id`). When viewing a newer version, a node is highlighted only if the same
    `node_id` still exists there; otherwise the UI shows "node no longer in this version" and never
    highlights a different node. Author ids are immutable once assigned and never reused after deletion.
-4. **Presentation boundary (excluded from hash):** `presentation` (incl. `graph_layout` x/y, `editor`),
-   `comment`, `collapsed`, stripped at any depth by key name. Everything else, including `name`, is hashed.
-5. **Computed server-side only** (constraint for E36/E37: the TS editor never computes the canonical hash).
+4. **Presentation boundary (excluded from hash):** `graph_layout` (x/y, `collapsed`, comments), `editor` and the
+   save metadata (`created_by`, `created_at`, `updated_at`), stripped at the top level only, as `canonical.py:29-34`
+   does. Everything else, including `name`, is hashed.
+5. **Authoritative server-side only** (amended 2026-10-23 for E37-T01, by the 2026-10-22 ruling): the server
+   computes the `ir_hash` that is stored, audited and compared. The TS editor's mirror (`packages/rule-graph`)
+   computes the same canonical form and hash for display only: it never stores that hash or sends it as
+   authority, and a disagreement with the server's shows as "server differs", never resolved client-side.
 6. **Fuzz strategy (E35-T01):** Hypothesis `recursive` grammar `all_of|any_of` over compare leaves
    (prototype: max 4 children; production uses schema limits: 32 boolean children, 8 arithmetic operands,
    10 actions), numbers from ints and 6-place decimals, random author ids, random layout. Properties:
@@ -50,11 +56,11 @@ renumbering vs `rule_events.node_ref`, and what the fuzz generator must cover.
 
 ## Considered options (100-node doc, 1000 iterations, workstation Python 3.13)
 
-| Strategy | p50 | p99 | Decimal fidelity | Readability / diff | Verdict |
-|---|---|---|---|---|---|
-| 1. JCS, Decimal -> double | 9.4 ms | 26.9 ms | **lossy** (0.1000000000000000055511151231257827 collides with 0.1) | good | rejected: collisions break audit non-repudiation |
-| 2. JCS, Decimal -> string | 4.7 ms | 14.4 ms | exact | good (text) | **chosen** |
-| 3. canonical CBOR of decimal strings | 6.5 ms | 16.6 ms | exact | binary, needs tooling | rejected: no benefit, hard to diff/support |
+| Strategy                             | p50    | p99     | Decimal fidelity                                                   | Readability / diff    | Verdict                                          |
+| ------------------------------------ | ------ | ------- | ------------------------------------------------------------------ | --------------------- | ------------------------------------------------ |
+| 1. JCS, Decimal -> double            | 9.4 ms | 26.9 ms | **lossy** (0.1000000000000000055511151231257827 collides with 0.1) | good                  | rejected: collisions break audit non-repudiation |
+| 2. JCS, Decimal -> string            | 4.7 ms | 14.4 ms | exact                                                              | good (text)           | **chosen**                                       |
+| 3. canonical CBOR of decimal strings | 6.5 ms | 16.6 ms | exact                                                              | binary, needs tooling | rejected: no benefit, hard to diff/support       |
 
 All are far inside the <=500 ms compile and <=300 ms validate budgets. The prototype uses sorted
 `json.dumps`; E35-T01 should add an RFC 8785 conformance test for key order and string escaping (decimal
@@ -63,7 +69,7 @@ strings sidestep JCS number serialisation entirely).
 ## Consequences
 
 - Stable under re-serialisation, so saving an unchanged rule never creates a spurious version.
-- Prices are strings inside the *hashed* view only; stored IR keeps whatever the schema defines.
+- Prices are strings inside the _hashed_ view only; stored IR keeps whatever the schema defines.
 - Any change to this algorithm changes every hash: E35-T01 must add an `ir_hash_version` and upcaster.
 - Residual risk: author-id immutability is an editor invariant E36/E37 must enforce.
 

@@ -19,6 +19,7 @@
     "format": "prettier --write .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --project unit",
+    "test:perf": "vitest run --project perf",
     "test:cov": "vitest run --project unit --coverage",
     "build": "tsup",
     "size": "echo \"@candleviewer/rule-graph: no bundle budget (library; the editor route carries it)\""
