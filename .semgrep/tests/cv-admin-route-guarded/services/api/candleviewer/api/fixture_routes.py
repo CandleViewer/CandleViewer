@@ -70,6 +70,9 @@ def make_literal() -> APIRouter:
     @router.post("/admin/keys/kek-rewrap")  # ok: cv-admin-route-guarded
     async def rewrap_kek() -> None: ...
 
+    @router.post("/admin/keys/audit-signing/rotate")  # ok: cv-admin-route-guarded
+    async def rotate_audit_signing_key() -> None: ...
+
     @router.post("/admin/keys/rotate")  # ruleid: cv-admin-route-guarded
     async def rotate() -> None: ...
 

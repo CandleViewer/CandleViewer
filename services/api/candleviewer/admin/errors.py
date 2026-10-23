@@ -114,3 +114,14 @@ class ViewAsStartUnavailable(AdminError):
     def __init__(self, code: ViewAsStartCode) -> None:
         super().__init__(code)
         self.code: ViewAsStartCode = code
+
+
+class SigningKeyRotationError(AdminError):
+    """`AdminService.rotate_audit_signing_key` answered no rotation (#889 S7): `code` is the
+    `rotateAuditSigningKey` code (an idempotency answer, a refusal or a `503`) and `retry_after_s`
+    the `429`'s wait. A refusal rotated nothing, M2 auditing all but the `429`; a `503` may be sent
+    again with the same key, which finds the rotation if it committed."""
+
+    def __init__(self, code: str, retry_after_s: int | None = None) -> None:
+        super().__init__(code)
+        self.code, self.retry_after_s = code, retry_after_s

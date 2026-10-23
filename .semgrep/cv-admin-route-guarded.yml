@@ -110,8 +110,11 @@ rules:
               comparison: re.match("^/admin(/|$)", str($PATH))
           # POST /admin/keys/kek-rewrap (api/admin_kek.py): #2266 decision 2, `enforce` on
           # `keys:manage` then the Owner role, each refusal `rbac.denied`, the body checked first.
+          # POST /admin/keys/audit-signing/rotate (api/audit_signing_keys.py): #889 S7, the same.
           - metavariable-comparison:
               comparison: not (str($M) == "post" and str($PATH) == "/admin/keys/kek-rewrap")
+          - metavariable-comparison:
+              comparison: not (str($M) == "post" and str($PATH) == "/admin/keys/audit-signing/rotate")
       # A router included, or an app mounted, under /admin.
       - patterns:
           - pattern-either:

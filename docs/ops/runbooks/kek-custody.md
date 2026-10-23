@@ -112,13 +112,27 @@ its probe reads every M2 degrade as `down`; a critical `secrets.export_key_unava
 the `security.audit_export_sign_failed` record just before it names the key and the reason, and a
 restart runs the boot check again.
 
-| reason                                         | Check                                                                                                                                                                                        |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `export_key_store_unavailable`                 | `audit_signing_keys` unreadable (Postgres down, or a schema older than `0046_audit_signing_keys`); restart once fixed                                                                        |
-| `export_key_generation_failed`                 | the environment had no key and the first could not be stored with its record: check `audit_log` and the Postgres log, then restart                                                           |
-| `export_key_stranded`                          | the key is wrapped under a KEK version this process did not load: restart with `CV_KEK_PREV_HANDLE`, as for `kek_rows_stranded`                                                              |
-| `export_key_unopenable`, `export_key_mismatch` | the key's wrap or seal does not open, or its seed is not its public key's: a custody or tampering incident (AD-D13). Never edit the row; no recovery until S7's rotation ships (ADR-0039 Q4) |
-| `export_key_inactive`                          | keys exist and none is active (an out-of-band retire); boot never generates over them, and the recovery is open (ADR-0039 Q4)                                                                |
+| reason                                         | Check                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `export_key_store_unavailable`                 | `audit_signing_keys` unreadable (Postgres down, or a schema older than `0046_audit_signing_keys`); restart once fixed                                                                                                                                                                                           |
+| `export_key_generation_failed`                 | the environment had no key and the first could not be stored with its record: check `audit_log` and the Postgres log, then restart                                                                                                                                                                              |
+| `export_key_stranded`                          | the key is wrapped under a KEK version this process did not load: restart with `CV_KEK_PREV_HANDLE`, as for `kek_rows_stranded`; if that KEK is lost, rotate (below) with reason `unrecoverable` (ADR-0039 decision 6)                                                                                          |
+| `export_key_unopenable`, `export_key_mismatch` | the key's wrap or seal does not open, or its seed is not its public key's: a custody or tampering incident (AD-D13). Never edit the row. Recover with the rotation below, reason `unrecoverable` (or `compromise`): once the new key passes its check, export is available again, with no restart (ADR-0039 Q4) |
+| `export_key_inactive`                          | keys exist and none is active (an out-of-band retire); boot never generates over them, the rotation refuses them (`409 conflict`), and the recovery is open (ADR-0039 Q4)                                                                                                                                       |
+
+The rotation, the Owner's: `POST /admin/keys/audit-signing/rotate` with `{"reason": "unrecoverable"}`
+(or `compromise`), after a `keys` step-up (a grace class: one in the last 5 minutes serves) and with
+a fresh UUID `Idempotency-Key`. After a lost answer, send the same key and body again: that replays
+the `200` and rotates nothing. At most 3 rotations start per environment in a rolling hour
+(`audit_signing_rotate_rate_per_hour`), a failed one counting too, so a store outage can use up the
+hour. The `200` is no pin: pin the new key's `active_fingerprint_sha256` from the
+`security.audit_signing_key_rotated` record of your own rotation (`24-internal-schemas.md` §15.7),
+never from the answer or the list. A fresh `200` (no `Idempotency-Replayed`) whose `active.verified` is
+`false`, with `secrets` degraded, means the new key failed its check and is latched as at boot: read its
+reason in the table above. For any other `false`, list the keys: if the active one is `verified`, nothing is
+wrong (a replay shows its key as it was made, and a marking read can fail after the check passed).
+Otherwise this process has not checked it (no KEK held, a `stop()` during the check, or
+`secrets.export_key_not_checked` in the log): restart, or rotate again.
 
 <a id="alert-auditsigningkeybootstepfailed"></a>
 

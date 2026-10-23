@@ -152,8 +152,10 @@ operations:
     permissions: ['keys:manage']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml by E42-T02 S2 (ADR-0039 decision 5); S7 mounts it
+    state: not_executable
+    reason: 'the CI app wires M2 without a credential store, so an authorised Owner gets 403 kek_unavailable,
+      read as a refusal; every actor gets 422 for the empty body, validated before RBAC. Each actor is
+      asserted in tests/unit/api/test_audit_signing_rotate.py (#889 S7)'
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   POST /admin/keys/kek-rewrap:
     permissions: ['keys:manage']

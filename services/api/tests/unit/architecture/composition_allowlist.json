@@ -330,10 +330,6 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
-    "POST /admin/keys/audit-signing/rotate": {
-      "reason": "contract-first operation (E42-T02 S2, ADR-0039); its S7 slice serves it",
-      "ticket": "E42-T02"
-    },
     "POST /chart-templates": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"

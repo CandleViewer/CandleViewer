@@ -109,6 +109,7 @@ from candleviewer.api.audit_budget import AuditBudgetFlushTask, AuditRecordBudge
 from candleviewer.api.audit_exports import AuditExports
 from candleviewer.api.audit_limiter import AuditQueryLimiter, AuditVerifyLimiter
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
+from candleviewer.api.audit_signing_keys import make_audit_signing_router
 from candleviewer.api.audit_verify_runner import ChainVerifyRunner
 from candleviewer.api.auth_perf import auth_perf_enabled, make_auth_perf_router
 from candleviewer.api.contract_conformance import load_contract_subset
@@ -949,7 +950,7 @@ def build_app_context(
         auth=build_auth_service(resolved, clock=auth_clock),
         audit=audit,
         journal=JournalService(),
-        admin=AdminService(secrets=secrets.metadata),
+        admin=AdminService(secrets=secrets.metadata, signing_keys=secrets.signing_key_rotator),
         alerts=AlertsService(),
         observability=ObservabilityService(),
         ws=WsService(),
@@ -1954,6 +1955,15 @@ def create_app(
     # lifespan probes and sweeps them.
     audit_exports = AuditExports(admin_jobs, resolved.data_dir, ttl_s=resolved.audit_export_ttl_s)
     app.state.audit_exports = audit_exports
+    # #889 S7: `rotateAuditSigningKey`. Owner only; step-up `keys` is path-gated in
+    # `DANGEROUS_ROUTES`; M2 rotates behind `AdminService`, never while an export job is queued or
+    # running in this job store, and a `429` is counted under the audit budget. A refusal's
+    # `rbac.denied` names the caller's session through `ctx.auth` (#4174).
+    emitter = _LazyAuditEmitter(ctx.audit)
+    rotations = make_audit_signing_router(
+        ctx.admin, emitter, owner_resolver, budget=audit_budget, jobs=admin_jobs, auth=ctx.auth
+    )
+    app.include_router(rotations)
     app.include_router(
         make_audit_router(
             ctx.audit,
