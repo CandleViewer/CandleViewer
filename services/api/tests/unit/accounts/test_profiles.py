@@ -21,16 +21,18 @@ from uuid import UUID
 import pytest
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from candleviewer.accounts.profiles import (
     AccountProfile,
     SymbolEntries,
+    SymbolPattern,
     SymbolScope,
     TakeProfitRung,
     profile_from_row,
     profile_values,
 )
+from candleviewer.api._generated.openapi_models import ProfileSymbolPattern
 from candleviewer.domain.events import Instrument
 from candleviewer.exchange.bybit.instruments import parse_instrument
 from candleviewer.storage.repositories.account_profiles import AccountProfileRow, LadderRung
@@ -528,3 +530,35 @@ def test_wildcard_matches_only_listed_linear_usdt_perps(
     in USDT, by an anchored suffix, and nothing else."""
     scope = SymbolScope.of(_profile("fixed_notional"))  # allowed_symbols: ["*USDT"]
     assert scope.allows(_recorded_btcusdt(**edits)) is matched
+
+
+def test_a_blocked_pattern_matches_any_symbol() -> None:
+    """#4209 R1S-01: the block list's wildcard is always on, so blocking `*USDT` under
+    `all_symbols` also blocks a row no allow pattern may match (here, settled in USDC)."""
+    scope = SymbolScope.of(_profile("pct_equity", denied_symbols=["*USDT"]))  # all_symbols
+    assert scope.allows(_recorded_btcusdt(settle_coin="USDC")) is False
+
+
+def test_an_empty_allow_list_admits_nothing() -> None:
+    """#4209 R1S-01, decision D11: no `all_symbols` and no entry admits nothing."""
+    assert SymbolScope.of(_profile(allowed_symbols=[])).admits(_recorded_btcusdt()) is False
+
+
+def test_symbol_entries_take_a_one_shot_iterable() -> None:
+    """#4209 R1C-04: `of` reads its entries once, so an iterator compiles whole."""
+    entries = SymbolEntries.of(iter(["BTCUSDT", "*USDT"]))
+    assert entries == SymbolEntries(exact=frozenset({"BTCUSDT"}), suffixes=frozenset({"USDT"}))
+
+
+_REST_SYMBOL: str = ProfileSymbolPattern.model_json_schema()["pattern"]
+_DOMAIN_SYMBOL = TypeAdapter(SymbolPattern)
+
+
+@settings(max_examples=300, deadline=None)
+@given(entry=st.from_regex(_REST_SYMBOL, fullmatch=True))
+def test_the_rest_symbol_pattern_is_the_stricter(entry: str) -> None:
+    """#906, D3 ruling 12 (2026-10-23 02:44Z; D1 Finding 1): whatever the REST model takes, the
+    domain takes too. The domain is the looser (it takes `BTCUSDC` and `*ABCD`), as accepted; a
+    REST pattern loosened past it fails here."""
+    assert ProfileSymbolPattern.model_validate(entry).root == entry
+    assert _DOMAIN_SYMBOL.validate_python(entry) == entry

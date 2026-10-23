@@ -10,6 +10,7 @@ import yaml
 from jsonschema import ValidationError
 
 from candleviewer.accounts.errors import AccountVersionConflictError
+from candleviewer.accounts.profile_validator import SECOND_PASS_RULES
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.audit.actions import AUDIT_ACTIONS, PROFILE_SAVE_REFUSED_REASONS
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
@@ -218,6 +219,7 @@ def test_the_refusal_rules_are_one_list_in_two_passes() -> None:
     members = set(_COMPONENTS["schemas"]["AccountProfileInput"]["properties"])
     cited = set(re.findall(r"`([a-z]+(?:_[a-z]+)*)`", second[: second.rindex(audited)]))
     assert cited - members == set(two.split())
+    assert set(two.split()) == SECOND_PASS_RULES
     r4_03 = (  # the 08:08Z ruling: a refusal of shape alone is a 422 and no audit row
         "A body refused only by rules of shape or by `default_has_own_operation` is not audited,"
         " semantic shape such as `stop_defines_r` included."
