@@ -1,7 +1,8 @@
 # E05-D02 — Design-system atoms and molecules: slice 2 (data display and text atoms)
 
-**Ticket:** E05-D02 (#161) · **Epic:** E05 Design system v0 · **Status:** In Review — awaiting owner approval (slice 2)
-(design PR: the owner approves under C-10.1; the coordinator reviews)
+**Ticket:** E05-D02 (#161) · **Epic:** E05 Design system v0 · **Status:** In Review — awaiting owner approval (slice 2 of 5)
+(design PR: the owner approves under C-10.1; the coordinator reviews); text-first: the boards are PENDING and the
+boards PR completes slice 2 (§6)
 **Penpot:** page `10 Components — Atoms` (page id `a4fbc4c3-2c4d-80f4-8008-b1248b9e760f`) of the CandleViewer DS file.
 **Slices:** #161 ships as several design PRs. Slice 1 (#3914, `E05-D02.md`) covers actions and selection. This slice
 covers the data display and text atoms: CMP-011 Tag, CMP-012 Badge, CMP-013 Avatar, CMP-018 Divider, CMP-020
@@ -25,7 +26,7 @@ B1–B7, C1–C14 and D1–D12 (§6) and icon optical sizes (§7) apply here unc
   disabled-with-reason row where the component can be gated (CMP-021 only), then notes and samples.
 - **Composition by live instances:** CMP-011 and CMP-033 nest CMP-002 IconButton, CMP-025 nests CMP-013 Avatar, CMP-030
   nests CMP-018 Divider and CMP-020 Text, CMP-037 nests CMP-020 Text and NumericText, and CMP-021's reason row uses a
-  CMP-016 Tooltip. Overrides only; nothing is detached.
+  CMP-016 Tooltip. Superseded by E09-D09 §2.2 T2 (#3953); the boards PR folds §1, §5 E10, the CMP-011 and CMP-021 sections of §6, §7, the audit's gated rows and the catalogue's gated clauses into T2, and T2 governs until then. Overrides only; nothing is detached.
 - **No token change.** The Penpot token mirror is slice 1 §4's, and `packages/ui/tokens` has not changed since
   `73441f53`.
 - **Catalogue alignment, after #3914 merges.** The twelve entries' updates (Tokens lines with the shipped tokens, new
@@ -74,9 +75,12 @@ the Penpot-only layout workarounds and Penpot's own variant-set chrome.
    only `size.control.height` and `size.row.height` (slice 1 §4), so the chips, the md avatar, the avatar stack, the
    vertical divider, the CopyButton and the legend row grow from 24 to 32 px, and nothing else moves; the 8 px dots
    of CMP-012 and CMP-032 keep their size.
-2. Each component's PNG in §6 is its documentation section at dark/compact, exported from Penpot.
+2. The boards are PENDING (text-first merge, 2026-10-23): this PR carries no exports. The boards PR, which completes
+   slice 2, redraws the 12 sections on page `10 Components — Atoms` (the page id in the header), with the E09-D09
+   §2.2 T2 form where a component is gateable (CMP-011's gated removal, CMP-021), and exports each at dark/compact
+   (§6).
 3. The owner decisions this slice needs are collected in §5; each component's own questions are listed with it in §6.
-   What the exports show that is clipped, overlapping or off is in §4.3.
+   What the boards show that is clipped, overlapping or off is in §4.3.
 4. The catalogue text quoted in §6 is the current entry, before the alignment edits (§1).
 
 ## 3. Conventions
@@ -145,7 +149,8 @@ and slice 1 B1. Zero values (padding or gap 0, CMP-037's square swatch corner) n
 
 ### 4.3 Known gaps in the Penpot build (no owner decision needed)
 
-Every drawn combination of the twelve draw lists is present, in the variant set and in the matrix. The exports show:
+Every drawn combination of the twelve draw lists is present, in the variant set and in the matrix. The boards as drawn
+on 2026-10-20 show:
 
 - **CMP-011:** in the removable focus-visible variant, the nested CMP-002 ring touches the last glyph of the label and
   covers the chip's 1 px outline on the right (0 px clearance; §5 E7). The estimated chip's dashed outline breaks up
@@ -153,7 +158,7 @@ Every drawn combination of the twelve draw lists is present, in the variant set 
 - **CMP-012:** single-digit counts draw as 14 × 16 px ovals, not 16 px circles (§4.2). The danger count outline and
   the "Blocked" glyph in the usage row are amber, because `color.status.danger.strong` is amber in dark (slice 1 A6).
 - **CMP-018 and CMP-030:** the 1 px `color.border.subtle` rules are barely visible at 1x (1.24:1 on canvas, 1.31:1 on
-  app, dark), and CMP-030's rule sits on a half pixel, so the export anti-aliases it across two rows (browsers snap
+  app, dark), and CMP-030's rule sits on a half pixel, so Penpot's export anti-aliases it across two rows (browsers snap
   it). Judge the rules in the matrix cells.
 - **CMP-024:** the matrix wraps 5 + 1 (cosmetic).
 - **CMP-025:** the 8 px overlap hides most of each covered avatar's second initial ("AD" and "BS" read as "A" and "B"
@@ -168,7 +173,7 @@ Every drawn combination of the twelve draw lists is present, in the variant set 
 
 Deduplicated across the 12 components and against slice 1 §6; each component's own wording stays in its section
 (§6). The new decisions are E1–E26; where an answer changes a drawing, the change lands in one Penpot pass over this
-slice's sections with refreshed exports ("the follow-up" below). These slice 1 decisions also cover this slice, and
+slice's sections with new exports ("the follow-up" below). These slice 1 decisions also cover this slice, and
 are not asked again:
 
 - **A1** (#3896, the label-on-fill retune): no label in this slice sits on a failing fill; the solid count badge was
@@ -250,7 +255,7 @@ are not asked again:
   glyph (`icon?` applies to neutral only); estimated shows the literal "(estimated)" with a dashed outline; gated
   removal belongs to the consumer (CMP-079 on the nested IconButton, or no remove control); after a removal the owning
   group moves focus (CMP-169, CMP-055). **Recommended:** approve; the prepared catalogue edits carry these as the
-  Variants, States and A11y lines. **Affects:** CMP-011.
+  Variants, States and A11y lines. **Affects:** CMP-011. Its gated-removal clause is superseded by E09-D09 §2.2 T2 (#3953); the boards PR folds §1, §5 E10, the CMP-011 and CMP-021 sections of §6, §7, the audit's gated rows and the catalogue's gated clauses into T2, and T2 governs until then.
 - **E11 — Badge details?** Cap the displayed count at "99+" (the name keeps the full number); keep dot + glyph + word,
   per conventions §4, while light warning and danger dots are identical (A6); connection state belongs to CMP-239 and
   E08-D04 §3, not to CMP-012. **Recommended:** approve all three; the held connection-dot A11y edit is then dropped.
@@ -341,7 +346,7 @@ are not asked again:
 
 **Drawn:** 11 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d189d102ec48`.
 
-![CMP-011 · Tag](img/CMP-011-tag-chip.png)
+_Board `CMP-011 · Tag — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it with the T2 form for gated removal and exports `img/CMP-011-tag-chip.png` here._
 
 **Keyboard** (Button (the remove IconButton and the estimated chip) plus Tooltip (the estimated chip's methodology summary through CMP-016). Static chips follow no pattern: they are non-interactive text.):
 
@@ -399,7 +404,7 @@ are not asked again:
 - RAW-VALUES REGISTER (group Indicators; one ruling for all groups). The E05-D02 AC and brief §12 ask for zero hardcoded px. Unbound numbers left in this group: (1) 1 px strokes: CMP-011 neutral outline, CMP-011 dashed estimated outline (and its dash pattern), CMP-012 count outline, CMP-032 empty-dot ring; the primitive border.hairline (1) exists but conventions only allow border.focus. (2) 2 px strokes: CMP-025 cut-out ring and CMP-014 arc; the primitive border.thick (2) exists. (3) Focus-ring geometry: CMP-011's ring rect is the chip expanded by 4 px (conventions §3's 2 px offset + the 2 px border.focus width), the same in every group. (4) Data-driven or intrinsic geometry: the CMP-023 root width (200 px in the drawn variants; instances fill their parent), the CMP-023 indicator widths (value % of the track: 124 / 170 / 200 px), and the CMP-014 arc (270° sweep, radius 9/24 of the box, round caps). Proposed ruling: record border.hairline and border.thick as named conventions exceptions, like border.focus, so strokes can bind; whitelist (3) and (4) as intrinsic geometry. CMP-025 no longer uses a raw negative gap (token-bound slots, see CMP-025).
 - Penpot treats '/' in a component name as an asset-group path, so 'Tag / Chip' is named 'CMP-011 · Tag', with the full catalogue name in the component description. Confirm this rule so all groups name slashed components the same way.
 - Matrix scope: Removable=true is drawn only for Variant=neutral (FilterBar and TagEditor chips). Status chips report system state and the estimated chip is an honesty marker, so neither is removable; this is now a spec rule, mirrored in catalogue_updates. Confirm. Estimated State=disabled is drawn because conventions §2 makes disabled universal for interactive components. It is the chip's own state and is never stacked on a disabled parent.
-- Gated removal (RBAC, env, CMP-169 rule-sourced readOnlyTags) is expressed by the consumer. Either omit the remove control (read-only tags), or show the nested CMP-002 in its disabled-with-reason look through CMP-079 (locked icon + CMP-016 tooltip). Per conventions §2, no new chip State value is drawn unless the owner asks for one. Confirm.
+- Gated removal (RBAC, env, CMP-169 rule-sourced readOnlyTags) is expressed by the consumer. Either omit the remove control (read-only tags), or show the nested CMP-002 in its disabled-with-reason look through CMP-079 (locked icon + CMP-016 tooltip). Superseded by E09-D09 §2.2 T2 (#3953); the boards PR folds §1, §5 E10, the CMP-011 and CMP-021 sections of §6, §7, the audit's gated rows and the catalogue's gated clauses into T2, and T2 governs until then. Per conventions §2, no new chip State value is drawn unless the owner asks for one. Confirm.
 - A single chip cannot see its siblings, so the focus-after-removal rule (next remove button, else previous, else the group's input) is a consumer contract. The CMP-169 TagEditor and CMP-055 FilterBar entries should state it in their own tickets.
 - Removable + focus-visible (build review): the nested CMP-002 ring (2 px offset + 2 px border.focus) exactly fills the 4 px space.inset.xs gap, so its outer edge touches the last glyph of the label. Accept, or widen the label-to-remove gap?
 - Estimated chip (build review): on a radius.badge pill, Penpot's default dash pattern leaves the two end arcs as separate short dashes. They read like a second pair of brackets around the literal '(estimated)'. Accept, tune the (unbound) dash pattern, or drop the literal parentheses (affects CMP-227 parity)?
@@ -419,7 +424,7 @@ are not asked again:
 
 **Drawn:** 10 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d153fe4eec00`.
 
-![CMP-012 · Badge](img/CMP-012-badge-status-dot-count.png)
+_Board `CMP-012 · Badge — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-012-badge-status-dot-count.png` here._
 
 **Keyboard** (None (static indicator). A standalone count badge uses the WAI-ARIA 1.2 img role.):
 
@@ -488,7 +493,7 @@ are not asked again:
 
 **Drawn:** 2 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d15c412ce2b9`.
 
-![CMP-013 · Avatar](img/CMP-013-avatar-profilebadge-base.png)
+_Board `CMP-013 · Avatar — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-013-avatar-profilebadge-base.png` here._
 
 **Keyboard** (None (static image; the WAI-ARIA img role when the avatar is the only content).):
 
@@ -547,7 +552,7 @@ are not asked again:
 
 **Drawn:** 4 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d14b336c413c`.
 
-![CMP-018 · Divider](img/CMP-018-divider.png)
+_Board `CMP-018 · Divider — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-018-divider.png` here._
 
 **Keyboard** (A non-focusable ARIA `separator`, as used inside the APG Menu/Menubar and Toolbar patterns; otherwise decorative.):
 
@@ -605,7 +610,7 @@ are not asked again:
 
 **Drawn:** 29 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d157afaecfe3`.
 
-![CMP-020 · Typography primitives](img/CMP-020-typography-primitives-text-heading-numerictext-monotext.png)
+_Board `CMP-020 · Typography primitives — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-020-typography-primitives-text-heading-numerictext-monotext.png` here._
 
 **Keyboard** (None. These are static text. Heading uses the ARIA `heading` role; there is no APG widget pattern.):
 
@@ -671,7 +676,7 @@ are not asked again:
 
 **Drawn:** 7 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d18bbf9079fb`.
 
-![CMP-021 · Link](img/CMP-021-link.png)
+_Board `CMP-021 · Link — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it with the T2 form and exports `img/CMP-021-link.png` here._
 
 **Keyboard** (Link (WAI-ARIA APG Link pattern, native `<a href>`; explicit role="link" for the disabled states, which have no href)):
 
@@ -721,7 +726,7 @@ are not asked again:
 **Open questions for the owner:**
 
 - CMP-021 has no States line: drawn default, focus-visible and disabled (the matrix rule makes disabled universal) plus disabled-with-reason (next item). Hover, active and visited are not drawn. Add any?
-- OWNER APPROVAL (list in the PR body), gated links: RBAC/env-gated links use State=disabled-with-reason (focusable role="link" + aria-disabled + reason tooltip), because 14-screens-catalogue.md §0.5 rule 5 renders controls the user may not use 'disabled with a reason tooltip, not hidden' (only whole admin areas are hidden from navigation), the settings screen's sign-off checklist there requires 'sections the role cannot use are disabled with a reason, not hidden', and brief §12 forbids a bare disabled control for any RBAC/env-gated action. Plain disabled (not focusable) stays for unavailability that is not gating. This adds `disabled?/disabledReason?` to Link's Props (CMP-079 propagates disabledReason to the wrapped atom). Drawn for External=false only: external documentation links are not RBAC/env-gated. Confirm.
+- OWNER APPROVAL (list in the PR body), gated links: RBAC/env-gated links use State=disabled-with-reason (focusable role="link" + aria-disabled + reason tooltip), because 14-screens-catalogue.md §0.5 rule 5 renders controls the user may not use 'disabled with a reason tooltip, not hidden' (only whole admin areas are hidden from navigation), the settings screen's sign-off checklist there requires 'sections the role cannot use are disabled with a reason, not hidden', and brief §12 forbids a bare disabled control for any RBAC/env-gated action. Superseded by E09-D09 §2.2 T2 (#3953); the boards PR folds §1, §5 E10, the CMP-011 and CMP-021 sections of §6, §7, the audit's gated rows and the catalogue's gated clauses into T2, and T2 governs until then. Plain disabled (not focusable) stays for unavailability that is not gating. This adds `disabled?/disabledReason?` to Link's Props (CMP-079 propagates disabledReason to the wrapped atom). Drawn for External=false only: external documentation links are not RBAC/env-gated. Confirm.
 - The link is always underlined: color.text.link against body text is 2.16:1 (dark), below the 3:1 that would let colour alone mark a link (WCAG 1.4.1).
 - Add `noreferrer` to the catalogue's rel="noopener" so the private host never leaks in a Referer header on the browser dev target?
 - The external-link icon renders at size.icon (16 px) beside 13 px text; revisit with the icon optical-size decision on #161.
@@ -741,7 +746,7 @@ are not asked again:
 
 **Drawn:** 6 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d17f976e0a2b`.
 
-![CMP-024 · Sparkline](img/CMP-024-sparkline.png)
+_Board `CMP-024 · Sparkline — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-024-sparkline.png` here._
 
 **Keyboard** (None. A static graphic (ARIA `img`), not an APG widget.):
 
@@ -776,7 +781,7 @@ are not asked again:
 - The spec asks for round caps and joins. The Penpot plugin API has no stroke-join property, so caps are set to round and joins use Penpot's default rendering. Stroke alignment is center, which is the only meaningful option for an open path.
 - Extra content beyond the standard section items, following the CMP-030 section pattern: a size-demo row and notes, tokens and open-questions captions. The size-demo row holds 6 instances at 256 x 64 showing the width/height props, with the stroke staying 1.5 px.
 - No focus-visible, disabled, disabled-with-reason, loading or error states are drawn, so the reason row does not apply. The spec defines no such states because the sparkline is a non-interactive role=img graphic.
-- The matrix wraps 5 + 1 at its fixed 960 px width, because cells size to their captions. The variant container has no fill; Penpot draws its standard purple variant-container outline in the export, as in the peer sections.
+- The matrix wraps 5 + 1 at its fixed 960 px width, because cells size to their captions. The variant container has no fill; Penpot draws its standard purple variant-container outline on export, as in the peer sections.
 
 **Open questions for the owner:**
 
@@ -797,7 +802,7 @@ are not asked again:
 
 **Drawn:** 2 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d167bfdeca91`.
 
-![CMP-025 · Avatar Group](img/CMP-025-avatar-group-stack.png)
+_Board `CMP-025 · Avatar Group — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-025-avatar-group-stack.png` here._
 
 **Keyboard** (None (static image summary using the WAI-ARIA img role).):
 
@@ -860,7 +865,7 @@ are not asked again:
 
 **Drawn:** 1 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d1747940818b`.
 
-![CMP-030 · Divider-Label](img/CMP-030-divider-label.png)
+_Board `CMP-030 · Divider-Label — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-030-divider-label.png` here._
 
 **Keyboard** (None. A non-focusable ARIA `separator` named by its visible label; no APG widget pattern.):
 
@@ -902,7 +907,7 @@ are not asked again:
 - Section semantics: in ARIA a separator's children are presentational, so a label inside it disappears from browse mode. This spec keeps the label as a visible sibling that names the separator via aria-labelledby. Screen-reader users still cannot jump between sections by heading. For order-ticket and rule-group sections, consider a heading (h3) or fieldset/legend as the semantic carrier, with the rule decorative. Owner/accessibility decision.
 - Layout: leading caption plus trailing rule, not a centred caption. Confirm.
 - Build: Penpot needs at least one variant property, so CMP-030 ships as a one-variant set with State=default. The alternative is a plain, non-variant component. Confirm which the atom library wants for single-draw components; CMP-038 is the other one.
-- Carried from CMP-018: the rule's color.border.subtle measures 1.24:1 on color.surface.canvas and 1.31:1 on color.surface.app in dark, so it is barely visible in the export. The label carries the meaning (9.33:1 and 9.85:1). This rides on CMP-018's light-overlay question.
+- Carried from CMP-018: the rule's color.border.subtle measures 1.24:1 on color.surface.canvas and 1.31:1 on color.surface.app in dark, so it is barely visible at 1x. The label carries the meaning (9.33:1 and 9.85:1). This rides on CMP-018's light-overlay question.
 
 ### CMP-032 · Confidence Dots
 
@@ -918,7 +923,7 @@ are not asked again:
 
 **Drawn:** 3 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d199080bddec`.
 
-![CMP-032 · Confidence Dots](img/CMP-032-rating-confidence-dots.png)
+_Board `CMP-032 · Confidence Dots — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-032-rating-confidence-dots.png` here._
 
 **Keyboard** (None. This is static text plus a decorative graphic, not the APG radio or slider 'rating' input.):
 
@@ -978,7 +983,7 @@ are not asked again:
 
 **Drawn:** 4 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d1946e70bab8`.
 
-![CMP-033 · CopyButton](img/CMP-033-copybutton.png)
+_Board `CMP-033 · CopyButton — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-033-copybutton.png` here._
 
 **Keyboard** (Button (WAI-ARIA APG Button pattern) + status message (polite live region, WCAG 4.1.3)):
 
@@ -1043,7 +1048,7 @@ are not asked again:
 
 **Drawn:** 3 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d1677c770364`.
 
-![CMP-037 · SwatchLegendItem](img/CMP-037-swatchlegenditem.png)
+_Board `CMP-037 · SwatchLegendItem — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-037-swatchlegenditem.png` here._
 
 **Keyboard** (None. A static list (ul/li) inside an ARIA `group` named by the parent legend; no APG widget pattern.):
 
@@ -1102,8 +1107,8 @@ Completed for the 12 components of this slice. Open items say why and who closes
       hidden. Ticked when the owner accepts them (slice 1 B1, §5 E4 and E5) or tokens replace them.
 - [ ] Verified in all three themes at both density modes. **Open:** structurally guaranteed (every paint is a
       semantic token that all three themes resolve, heights bind the two density-owned tokens, auto-layout
-      everywhere), and the contrast figures cover all three themes, but the exports are dark/compact only and the
-      mode-switch walk-through (§2 step 1) is not recorded yet.
+      everywhere), and the contrast figures cover all three themes, but the boards are PENDING (the boards PR, §6)
+      and the mode-switch walk-through (§2 step 1) is not recorded yet.
 - [ ] Passes the automated contrast-matrix check for every colour pair it introduces or touches. **Open:** 14
       `colorBySign` text pairs fail 4.5:1 (§5 E1). The non-text pairs below 3:1 that
       `E05-D02-data-display-a11y-audit.md` §4 lists are not relied on for meaning (dividers, the legend swatch
@@ -1117,7 +1122,7 @@ Completed for the 12 components of this slice. Open items say why and who closes
 - [x] Every documented State has a corresponding Penpot variant (and Storybook story). All 82 variants of the matrix
       rule are drawn, including the universal focus-visible and disabled states of the three interactive components;
       the Storybook stories are E05-S01/S02's.
-- [x] Disabled states use the disabled-with-reason pattern (CMP-079), never a bare disabled control. CMP-021 draws it
+- [ ] Disabled states use the disabled-with-reason pattern (CMP-079), never a bare disabled control. **Open:** the boards PR, T2. CMP-021 draws it
       for gated links, with a CMP-016 Tooltip; gated chip removal goes through CMP-079 on the nested IconButton
       (§5 E10); copying is never gated (§5 E21); the nine other components are not interactive.
 - [x] Loading/empty/error states are explicitly designed. No entry in this slice lists a loading, empty or error
@@ -1164,6 +1169,7 @@ Completed for the 12 components of this slice. Open items say why and who closes
 ## 8. Approval
 
 The owner approves by merging this spec PR and/or commenting `approved` on #161 (C-10.1; the coordinator reviews
-under the owner's delegation). Engineering stories E05-S01..S04 move to Ready only after every slice is approved. The
+under the owner's delegation). This text merges first with the boards PENDING; the boards PR completes slice 2 (§6).
+Engineering stories E05-S01..S04 move to Ready only after every slice is approved. The
 accessibility pre-review is `E05-D02-data-display-a11y-audit.md`; the formal accessibility and CVD sign-off is
 E05-D04's.

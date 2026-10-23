@@ -8,8 +8,10 @@ requirements).
 accessibility and CVD sign-off is E05-D04's**, and this document does not replace it.
 
 Covers the 12 components of slice 2 (CMP-011, 012, 013, 018, 020, 021, 024, 025, 030, 032, 033 and 037) as specified
-in `E05-D02-data-display.md` §6 and drawn on Penpot page `10 Components — Atoms`. The shared CMP-039 focus ring and
-the CMP-002 IconButton that CMP-011 and CMP-033 nest are reviewed in slice 1's audit (`E05-D02-a11y-audit.md`).
+in `E05-D02-data-display.md` §6 and drawn on Penpot page `10 Components — Atoms`. Their board exports are PENDING
+(text-first merge, 2026-10-23); the boards PR completes slice 2 (`E05-D02-data-display.md` §6). The shared CMP-039
+focus ring and the CMP-002 IconButton that CMP-011 and CMP-033 nest are reviewed in slice 1's audit
+(`E05-D02-a11y-audit.md`).
 
 **Method.** Every ratio below was computed for this review from the token files in `packages/ui/tokens` (dark, light
 and high contrast, layered as `verify_tokens.py` layers them; WCAG 2.x relative luminance). They match the specs'
@@ -92,6 +94,7 @@ its bar. The CMP-039 ring is at least 4.72:1 (dark, high contrast) and 4.81:1 (l
 | CMP-020          | `colorBySign` zero `neutral.default` as text                                                        | 6.29 / 5.96 / 5.62 / 5.20 / 4.79 / **3.98** / 6.83 | 6.81 / 6.36 / 5.92 / 5.44 / 5.44 / 4.86 / 4.86                   | as dark                                          | 4.5   | **Fail (dark and high contrast, selected)**: §5 E1                                                                        |
 | CMP-021          | Link text, underline and glyphs `text.link` on the seven tiers                                      | 7.45 / 7.05 / 6.66 / 6.15 / 5.66 / 4.72 / 8.08     | 6.75 / 6.30 / 5.86 / 5.39 / 5.39 / 4.81 / 4.81                   | as dark                                          | 4.5   | Pass                                                                                                                      |
 | CMP-021          | `text.link` against body text `text.primary` (WCAG 1.4.1)                                           | 2.16                                               | 2.66                                                             | 2.44                                             | 3     | Below 3:1, so the link is always underlined: Pass by the underline                                                        |
+| Gated (CMP-021)  | Superseded by E09-D09 §2.2 T2 (#3953): the row below measures the gated link in its dimmed form     | —                                                  | —                                                                | —                                                | —     | Superseded (E09-D09 §2.2 T2): the boards PR folds the row below into T2, and T2 governs until then                        |
 | CMP-021          | Dimmed link over canvas                                                                             | 2.40                                               | 2.08                                                             | 2.40                                             | —     | Exempt (inactive); the gated state adds the `locked` glyph and the reason                                                 |
 | CMP-024          | Uncoloured stroke `text.tertiary` on the seven tiers                                                | 6.29 / 5.96 / 5.62 / 5.20 / 4.79 / 3.98 / 6.83     | 6.81 / 6.36 / 5.92 / 5.44 / 5.44 / 4.86 / 4.86                   | 12.54 to 7.94 (selected)                         | 3     | Pass                                                                                                                      |
 | CMP-024          | Signed strokes `buy.default` / `sell.default` / `neutral.default`, lowest tier                      | 4.98 / 3.13 / 3.98 (selected)                      | 3.84 / 3.70 / 4.86 (selected, sunken)                            | 6.66 / 5.08 / 3.98 (selected)                    | 3     | Pass (dark sell on selected is the thinnest margin)                                                                       |
