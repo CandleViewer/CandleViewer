@@ -60,8 +60,9 @@ ENTRIES = (
     "234",
     "235",
 )
-#: The validator's issue codes the spec quotes; `stop_loosening` is PR 4246's (22 registers it at
-#: its head 17b21251) and counts only once `validator.py` carries it - eleven today, twelve then.
+#: The validator's issue codes the spec quotes, each counted once `validator.py` carries the
+#: literal: eleven on main - PR 4246 (merged via 35efcf28) retired `permission_required` from the
+#: validator as it added `stop_loosening`, so the count held while the set changed.
 _CODES = (
     "unknown_metric schema_error operator_not_applicable type_mismatch missing_action_param "
     "unreachable_branch permission_required native_stop_violation feedback_loop "
@@ -81,7 +82,7 @@ IMPORT_REASONS = (
     "forbidden | Only the Owner can raise a rule's action budget above the default.",
     (
         "rule_ir_invalid | the validator's issues, a field each (a loosening reads 'Not "
-        "available'; stop_loosening under PR 4246, if it merges as is)"
+        "available'; stop_loosening for every role - PR 4246, merged via 35efcf28)"
     ),
     "payload_too_large (rule_body.py) | Request body or batch exceeds the operation's size ceiling",
     "not checked | Service unavailable - rule engine vocabulary unavailable (the call refused)",
@@ -355,9 +356,9 @@ def contract() -> dict[str, object]:
     con["b9_tags_present"] = "needs_human_rearm" in b9 and "once_satisfied" in b9
     con["audit_keys"] = sorted(set(re.findall(r'"(rule\.[a-z_]+)"', manager)))
     con["validator_codes"] = [c for c in CODES if f'"{c}"' in validator]
-    # PR 4246 (stop_loosening) probes, read from text on whichever side of its merge this runs:
-    # the code in the validator, widen_stop retired from the catalogue, and D03-G18 - open while
-    # the validate / compile routes still read the retired loosen-stop permission.
+    # PR 4246 (stop_loosening, merged via 35efcf28) probes, read from text: the code in the
+    # validator, widen_stop retired from the catalogue, and the validate / compile routes no
+    # longer reading a loosen-stop permission (D03-G18 closed). main() gates all three.
     con["stop_loosening_shipped"] = '"stop_loosening"' in validator
     con["widen_stop_retired"] = "RETIRED_ACTIONS" in catalogue
     con["validate_reads_loosen_permission"] = "LOOSEN_STOP_PERMISSION" in api_rules
@@ -429,7 +430,7 @@ def gates(files: list[Path]) -> list[str]:
             "no screen of this ticket offers a loosening or stop-clearing control",
             "no account ids, no keys, no armed state",
             "System rules cannot be changed.", "from the IR itself",
-            "stop_loosening", "if #4246 merges as is",
+            "stop_loosening", "35efcf28",
             "could loosen a stop. Not available — rules never loosen a stop.")  # fmt: skip
     cons, bad = read(ROOT / "CONSTITUTION.md"), []
     for f in files:
@@ -438,11 +439,13 @@ def gates(files: list[Path]) -> list[str]:
             bad.append(f"{f.name}: missing")
             continue
         bad += [f"{f.name}: lacks {s!r}" for s in need if s not in t]
-        bad += [
-            f"{f.name}: forbidden {s!r}"
-            for s in (*old, "This rule may " + "widen the stop", *private)
-            if s in t
-        ]
+        forbidden = (
+            *old,
+            "This rule may " + "widen the stop",
+            "if #4246 " + "merges as is",  # a merge qualifier that outlived the merge
+            *private,
+        )
+        bad += [f"{f.name}: forbidden {s!r}" for s in forbidden if s in t]
         cids = sorted(set(re.findall(r"\bC-\d+\.\d+\b", t)))
         bad += [f"{f.name}: dangling {c}" for c in cids if f"**{c}" not in cons]
     bad += [
@@ -528,6 +531,11 @@ def main(argv: list[str]) -> int:
     gated = [p for p in pairs if p["role"] in GATED]
     proposed = sorted({(str(p["fg"]), str(p["bg"])) for p in gated if not p["registered"]})
     bad += gates([SPEC, HANDOFF, *extra])
+    # PR 4246 is merged and cited plainly, so its three probes must read true / true / false
+    bad += [] if con["stop_loosening_shipped"] else ["validator.py lacks stop_loosening (PR 4246)"]
+    bad += [] if con["widen_stop_retired"] else ["catalogue.py lacks RETIRED_ACTIONS (PR 4246)"]
+    if con["validate_reads_loosen_permission"]:
+        bad.append("api/rules.py reads a loosen-stop permission, but D03-G18 is cited as closed")
     bad += [f"invented token {n}" for n, s, _ in bound if s.startswith("MISSING")]
     bad += [f"memo pair {k}: {got[k]} != {v}" for k, v in memo.items() if got[k] != v]
     bad += [f"{p['fg']} on {p['bg']}: {p['verdict']}" for p in gated if p["verdict"] != "PASS"]
