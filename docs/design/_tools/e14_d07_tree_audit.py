@@ -3,14 +3,17 @@ draft quote, computed from the repo. Standalone, offline, stdlib only (``python3
 
 Sections, each row labelled with its source: (1) template coverage — ``22``'s ``DrawingTool`` enum
 and point counts against the spec's section 2 table, the examples rendered by the ``template()`` the
-board script copies, the label budget per drawer width, the fragment-drop level per example, the
+board script copies, the label budget at the shell's width x density pairings from section 3.1's
+redline (one geometry source, shared with the board script), the tag-collapse rule, the
+fragment-drop level per example (every fragment a substring of the accessible name), the
 collision check over the 500-row distribution; (2) the tree model — D02 board 09's 20 rows, seeded
-200 / 500 rows, the virtualised window at a 728 px stack per density, ``aria-setsize`` per group,
-the keystroke bound (the filter path, computed; the group path, worst case), the 200-row threshold;
+200 / 500 rows, the virtualised window at a 728 px stack per density (the sync row and the wrapped
+bulk bar counted), ``aria-setsize`` per group, the keystroke bound (the filter path under the stated
+strategy with the shell's keys, and with C-20; the group path, worst case), the 200-row threshold;
 (3) the measured matrix — every pair the drawings rows add in dark / light / high-contrast, resolved
 as ``packages/ui/tokens/tests/verify_tokens.py`` does and measured with ``contrast_ratio()`` from
 ``docs/design/_tools/contrast_check.py`` (imported, never re-implemented), the ``pairs.mjs`` status
-per row as a text scan, the reproductions of E13-D02 §13, E13-D03 row 94, E09-D09 §11 and E30-D02;
+per row as a text scan, the reproductions of E13-D02 §13, E13-D03 row 95, E09-D09 §11 and E30-D02;
 (4) the CVD rows — ``docs/research/_tools/cvd_simulate.py``, CIE76 at a 5.0 JND, the greyscale luma
 of every fill; (5) the hotkey lint — ``scripts/keymap_lint.py`` over the shipped keymap plus E13-D02
 D25's PROPOSED Objects commands in memory (the file is never written) and the gate that the spec
@@ -127,10 +130,24 @@ SUBGROUP = {"lines": "Lines", "shapes": "Shapes", "fibonacci": "Fibonacci"}
 SUBGROUP.update({"analysis": "Analysis", "annotation": "Annotations"})
 FIB = ("fib_retracement", "fib_extension", "fib_timezone")
 TIME_RE = re.compile(r"\b\d{2}:\d{2}\b ?")
-# compact / comfortable row geometry (E13-D02 §2; E13-D03 §2 row 94): (row height, indent step,
-# the px before the label, the px the three buttons and their gaps take)
-ROW = {"compact": (24, 16, 56, 80), "comfortable": (32, 20, 56, 108)}
-LABEL_PX, AVG_EM, WIDTHS, TICK = 12.0, 0.56, (320, 360, 240), "0.5"
+# compact / comfortable row geometry from the spec's section 3.1 redline (E13-D02 §2; E13-D03 §2
+# row 95), shared with the board script: (row height, indent step, the px before the label without
+# the indent — 8 + grip 16 + 4 + tile 16 + 8, the px after it — 8 + three buttons + 2 gaps + 8)
+ROW = {"compact": (24, 16, 52, 96), "comfortable": (32, 20, 52, 120)}
+# the shell's width x density pairings (E13-D02 §2 line 66: 320 compact, 360 comfortable) and the
+# 240 px narrow mode in either density — "360 compact" and "320 comfortable" never occur
+PAIRINGS = ((320, "compact"), (360, "comfortable"), (240, "compact"), (240, "comfortable"))
+LABEL_PX, AVG_EM, TICK = 12.0, 0.56, "0.5"
+# the shared pill-label width rule (the board script's PILL_EM): an upper bound per glyph class
+PILL_EM = {"upper": 0.84, "wideLower": 0.95, "lower": 0.56, "digit": 0.68, "thin": 0.34}
+# D03 §2.2 (at bdd3975f): the API-only overflow tools have no glyph, so their type word is never
+# dropped from the visible label (the tile would carry nothing)
+GLYPHLESS = frozenset({"brush", "pitchfork", "gann_fan", "price_range", "date_range"})
+# the tags (spec section 4): label -> has a glyph; a tag collapses to its glyph when the label
+# beside its full form would keep less than one price (section 2.4)
+TAGS = {"this pane only": True, "off-screen": True, "restored": False, "approximate": False}
+TAGS.update({"not saved": True, "changed elsewhere": True})
+TAG_PX, TAG_PAD, TAG_GLYPH, TAG_GAP, TAG_COLLAPSED = 11, 12, 14, 6, 20
 
 
 def tool_name(tool: str) -> str:
@@ -179,19 +196,67 @@ def template(tool: str, rec: dict[str, Any]) -> str:
     return core + (f" · {rec['label']}" if rec.get("label") else "")
 
 
-def fragments(label: str, user_label: str | None) -> list[str]:
-    """The visible label's fragment-drop ladder (spec section 2.4; E30-D02 D3's precedent)."""
-    l1 = label[: -len(f" · {user_label}")] if user_label else label
-    return [label, l1, TIME_RE.sub("", l1).replace("  ", " ").strip()]
+def pill_text_w(label: str, size: float) -> float:
+    """The label box a pill needs (the board script's pillTextW, per glyph class)."""
+    em = 0.0
+    for ch in label:
+        if ch.isupper():
+            em += PILL_EM["upper"]
+        elif ch in "mw":
+            em += PILL_EM["wideLower"]
+        elif ch.islower():
+            em += PILL_EM["lower"]
+        elif ch.isdigit():
+            em += PILL_EM["digit"]
+        elif ch in " .,:;\u00b7'\u2019|-":
+            em += PILL_EM["thin"]
+        else:
+            em += 1.0
+    return em * size
 
 
-def budget_px(width: int, density: str, lock: bool, tag_px: int) -> int:
+PRICE_PX = pill_text_w("64,120.5", LABEL_PX)  # one price: the floor the label keeps beside a tag
+
+
+def tag_px(label: str, collapsed: bool = False) -> int:
+    """The tag slot's width incl. its 6 px gap: the pill rule at 11 px, or the glyph-only form."""
+    if collapsed:
+        return TAG_COLLAPSED + TAG_GAP
+    return round(pill_text_w(label, TAG_PX) + TAG_PAD + (TAG_GLYPH if TAGS[label] else 0)) + TAG_GAP
+
+
+def fragments(tool: str, label: str, user_label: str | None) -> list[str]:
+    """The visible label's fragment-drop ladder (spec section 2.4; E30-D02 D3's precedent): (1) the
+    type word — the tile glyph and the sub-group carry it, never for a glyph-less tool; (2) the user
+    label; (3) the end ellipsis. Every fragment is a contiguous part of the accessible name (WCAG
+    2.5.3), which the gate asserts."""
+    l0 = label[: -len(f" · {user_label}")] if user_label else label
+    name = tool_name(tool)
+    l1 = label if tool in GLYPHLESS else label[len(name) + 1 :]
+    l2 = l0 if tool in GLYPHLESS else l0[len(name) + 1 :]
+    out = [label, l1, l2]
+    if any(f not in label for f in out):
+        FAILS.append(f"section 2.4: a fragment of `{tool}` is not part of its accessible name")
+    return out
+
+
+def budget_px(
+    width: int, density: str, lock: bool, tag: str | None, collapsed: bool = False
+) -> int:
     _, indent, left, right = ROW[density]
-    return width - left - 2 * indent - right - (16 if lock else 0) - tag_px
+    tag_w = tag_px(tag, collapsed) if tag else 0
+    return width - left - 2 * indent - right - (16 if lock else 0) - tag_w
 
 
 def chars(px: int) -> int:
-    return int(px // (LABEL_PX * AVG_EM))
+    return max(0, int(px // (LABEL_PX * AVG_EM)))
+
+
+def tag_collapses(width: int, density: str, tag: str) -> bool:
+    """PROPOSED (spec section 2.4): a tag with a glyph keeps its words only while the label beside
+    it keeps one price; otherwise it collapses to its glyph (the words stay in the name and the
+    tooltip). A tag without a glyph never collapses — its words are its only carrier."""
+    return TAGS[tag] and budget_px(width, density, False, tag) < PRICE_PX
 
 
 # One example per tool at D02's numbers (13:40 / 14:05 / 14:10 / 13:52 / 14:30 / 12:00; 64,120.5 /
@@ -305,31 +370,75 @@ def templates_report(spec: str | None) -> dict[str, Any]:
         p(f"Spec section 2: {covered} / {len(enum)} tools covered.")
     p()
     p(f"Label budget (`type.ui.label` {LABEL_PX:g} px at Inter's average advance {AVG_EM} em, an")
-    p("estimate; the accessible name is never truncated): px → characters before the ellipsis")
+    p("estimate; the accessible name is never truncated) from the section 3.1 redline at the")
+    p("shell's pairings (E13-D02 §2 line 66): px → characters before the ellipsis")
     p()
-    row("drawer width", "density", "plain row", "with the lock glyph", "with a 78 px tag")
+    row(
+        "drawer width",
+        "density",
+        "plain row",
+        "with the lock glyph",
+        "with the 'this pane only' tag",
+    )
     row("---", "---", "---", "---", "---")
     budgets: dict[str, list[int]] = {}
-    for w in WIDTHS:
-        for d in ROW:
-            a, b, c = (budget_px(w, d, x, y) for x, y in ((False, 0), (True, 0), (False, 78)))
-            budgets[f"{w}/{d}"] = [a, chars(a), chars(b), chars(c)]
-            row(w, d, f"{a} px → {chars(a)}", f"{b} px → {chars(b)}", f"{c} px → {chars(c)}")
+    for w, d in PAIRINGS:
+        a, b = budget_px(w, d, False, None), budget_px(w, d, True, None)
+        col = tag_collapses(w, d, "this pane only")
+        c = budget_px(w, d, False, "this pane only", col)
+        budgets[f"{w}/{d}"] = [a, chars(a), chars(b), chars(c) if w > 240 else -1]
+        tagcell = "the tag moves into the tooltip (D20)" if w == 240 else f"{c} px → {chars(c)}"
+        row(
+            w,
+            d,
+            f"{a} px → {chars(a)}",
+            f"{b} px → {chars(b)}",
+            tagcell + (" (glyph only)" if col and w > 240 else ""),
+        )
     p()
-    p("Fragment-drop level per example (compact, plain row): 0 = full label, 1 = the user label")
-    p("dropped, 2 = the times dropped, 3 = ellipsis")
+    p(f"Tag collapse (PROPOSED, section 2.4; the floor is one price, {PRICE_PX:.0f} px): a tag")
+    p("whose full form would leave less than that collapses to its glyph (its words stay in the")
+    p("name)")
     p()
-    row("tool", *WIDTHS)
-    row("---", *["---"] * len(WIDTHS))
+    row("tag", "full px", *[f"{w} {d}" for w, d in PAIRINGS[:2]])
+    row("---", "---", "---", "---")
+    collapse: dict[str, list[bool]] = {}
+    for tg, has_glyph in TAGS.items():
+        collapse[tg] = [tag_collapses(w, d, tg) for w, d in PAIRINGS[:2]]
+        kind = "" if has_glyph else "glyph-less"
+        row(
+            tg,
+            tag_px(tg) - TAG_GAP,
+            *[
+                ("collapses to its glyph" if c else "keeps its words")
+                + (f" ({kind})" if kind else "")
+                for c in collapse[tg]
+            ],
+        )
+    p()
+    p("Fragment-drop level per example (plain row): 0 = full label, 1 = the type word dropped")
+    p("(never for a glyph-less tool), 2 = the user label dropped too, 3 = ellipsis")
+    p()
+    row("tool", *[f"{w} {d}" for w, d in PAIRINGS])
+    row("---", *["---"] * len(PAIRINGS))
     levels: dict[str, list[int]] = {}
     for t in enum:
-        frags = fragments(ex[t], EXAMPLES[t].get("label"))
-        fit = [chars(budget_px(w, "compact", False, 0)) for w in WIDTHS]
+        frags = fragments(t, ex[t], EXAMPLES[t].get("label"))
+        fit = [chars(budget_px(w, d, False, None)) for w, d in PAIRINGS]
         levels[t] = [next((i for i, f in enumerate(frags) if len(f) <= n), 3) for n in fit]
         row(f"`{t}`", *levels[t])
+    hl = fragments(
+        "horizontal_line", ex["horizontal_line"], EXAMPLES["horizontal_line"].get("label")
+    )
+    keeps = [len(hl[2]) <= chars(budget_px(w, d, False, None)) for w, d in PAIRINGS[:3]]
+    p()
+    p(f"A horizontal line keeps its full price ({hl[2]!r}) at 320 compact, 360 comfortable and")
+    p(f"240 compact: {keeps}.")
+    if not all(keeps):
+        FAILS.append("section 2.4: a horizontal line loses its price at a real width")
     fam = {t: SUBGROUP[family(t)] for t in enum}
     out = {"enum": enum, "arity": arity, "examples": ex, "covered": covered, "family": fam}
-    return {**out, "budgets": budgets, "levels": levels}
+    return {**out, "budgets": budgets, "levels": levels, "tag_collapse": collapse}
 
 
 # --- 2. the tree model (spec section 5) ----------------------------------------------------------
@@ -389,33 +498,73 @@ def seeded(n: int, seed: int) -> list[dict[str, Any]]:
     return out
 
 
-def filter_bound(labels: list[str], digits_only: bool) -> tuple[int, int, int]:
-    """The filter path's worst case: per label, min over substrings of (typed characters + extra ↓
-    for the other matches), then the maximum; returns (typed, extra ↓, labels sharing their text).
+# the filter path's fixed keys with the shell's keys (E13-D02 D25, §11.1): Shift+Tab to the filter
+# 1, Tab back into the tree 1 (the roving stop is the item focus left — the first group row), ↓ x2
+# past Overlays and Sub-panes to Drawings, ↓ x6 past the five sub-group rows to the first match
+# (worst: in the last sub-group), Enter 1; with C-20 (↓ / Enter from the filter focuses it) 3
+FIXED_SHELL, FIXED_C20 = 1 + 1 + 2 + 6 + 1, 1 + 1 + 1
+TIME_ONLY = frozenset({"vertical_line", "brush", "polyline"})
+
+
+def match_key(s: str) -> str:
+    """The separator-insensitive, case-insensitive match (PROPOSED, spec section 5.3)."""
+    return s.lower().replace(",", "").replace(" ", "")
+
+
+def typed_for(rec: dict[str, Any], with_type_word: bool) -> str:
+    """What the stated strategy types: the first price of a priced tool, or the time of a time-only
+    tool — preceded by the type word's last word when the strategy says so (a bare minute is shared
+    by every object anchored at that bar)."""
+    if rec["tool"] in TIME_ONLY:
+        word = tool_name(rec["tool"]).split()[-1] + " " if with_type_word else ""
+        return str(word + rec["t"][0])
+    return price(rec["p"][0])
+
+
+def filter_bound(recs: list[dict[str, Any]], with_type_word: bool) -> dict[str, Any]:
+    """The filter path's worst case under the stated strategy: per object, the typed characters
+    (separators dropped) + the extra ↓ for the other objects whose label matches the same text;
+    the maximum over the seeded rows. Every typed text is a real part of its label (gated)."""
+    labels = [template(r["tool"], r) for r in recs]
+    keys = [match_key(s) for s in labels]
+    worst: tuple[int, int, int, str] = (0, 0, 0, "")
+    for r, lab, key in zip(recs, labels, keys, strict=True):
+        typed = match_key(typed_for(r, with_type_word))
+        if typed not in key:
+            FAILS.append(f"section 5.3: the typed text {typed!r} is not in its label {lab!r}")
+        extra = sum(1 for k in keys if typed in k) - 1
+        if len(typed) + extra > worst[0]:
+            worst = (len(typed) + extra, len(typed), extra, lab)
+    cost, typed_n, extra_n, lab = worst
+    return {"cost": cost, "typed": typed_n, "extra": extra_n, "label": lab}
+
+
+def bar_rows(width: int) -> int:
+    """The bulk bar's rows at a drawer width (the board script's wrap, estimated with the pill
+    rule at 11 px): the count box 70, the pills with 14 px padding and 4 px gaps, the separator
+    between two 12 px gaps, the trash glyph 14 before Delete, the 12 px gap before Clear selection.
     """
-    pool = [re.sub(r"[^0-9,.:→ ]", "", s) if digits_only else s.lower() for s in labels]
-    best = [(10**6, 0)] * len(pool)
-    for n in range(1, 13):
-        counts: dict[str, int] = {}
-        subs = [{s[i : i + n] for i in range(len(s) - n + 1) if s[i : i + n].strip()} for s in pool]
-        for ss in subs:
-            for x in ss:
-                counts[x] = counts.get(x, 0) + 1
-        for i, ss in enumerate(subs):
-            if ss:
-                extra = min(counts[x] for x in ss) - 1
-                if n + extra < sum(best[i]):
-                    best[i] = (n, extra)
-    typed, extra = max(best, key=sum)
-    return typed, extra, sum(1 for s in pool if pool.count(s) > 1)
+    items = [("Hide", 0), ("Show", 0), ("Lock", 0), ("Unlock", 0), ("|", 0), ("Delete", 14)]
+    items.append(("Clear selection", 0))
+    avail, rows = width - 20, 1
+    x: float = 70.0
+    for label, glyph in items:
+        need = 25 if label == "|" else pill_text_w(label, 11) + 14 + glyph
+        if x + need > avail:
+            x, rows = 0, rows + 1
+        x += need + (12 if label == "Delete" else 0 if label == "|" else 4)
+    return rows
 
 
 def window(density: str, bulk: bool) -> tuple[int, int]:
     """(fixed px, visible rows) of one expanded sub-group at the stack: the drawer header and the
-    filter at the row height, the footer 40 / 48, the four group rows, the five sub-group rows, the
-    bulk bar 32 / 40 when shown; the other three groups collapsed."""
+    filter at the row height, the footer 40 / 48, the four group rows, the sync row, the five
+    sub-group rows, the bulk bar 32 / 40 per wrapped row when shown (bar_rows at the pairing's
+    width); the other three groups collapsed."""
     rh = ROW[density][0]
-    fixed = 2 * rh + (40 if rh == 24 else 48) + 9 * rh + ((32 if rh == 24 else 40) if bulk else 0)
+    width = 320 if density == "compact" else 360
+    bar = (32 if rh == 24 else 40) * bar_rows(width) if bulk else 0
+    fixed = 2 * rh + (40 if rh == 24 else 48) + 10 * rh + bar
     return fixed, (STACK_PX - fixed) // rh
 
 
@@ -439,12 +588,12 @@ def tree_report() -> dict[str, Any]:
         row(n, *d.values(), sum(d.values()), "yes" if n > THRESHOLD else "no")
     labels = [template(r["tool"], r) for r in r500]
     dup = len(labels) - len(set(labels))
+    shared = sum(1 for s in labels if labels.count(s) > 1)
     win = {d_: [window(d_, False), window(d_, True)] for d_ in ROW}
-    typed, extra, shared = filter_bound(labels, True)
-    typed_any, extra_any, _ = filter_bound(labels, False)
+    fb, bare = filter_bound(r500, True), filter_bound(r500, False)
     above = 1 + 3 + 1 + 2 + 2  # Overlays (3 items) and Sub-panes (2 panes, 2 indicators) expanded
     biggest = max(d500.values())
-    worst_group = 1 + above + 1 + len(SUBGROUP) + 1 + (biggest - 1)
+    worst_group = 1 + above + 1 + 1 + len(SUBGROUP) + 1 + (biggest - 1)  # + the sync row
     lines = [r for r in r500 if family(r["tool"]) == "lines"]
     pos = next(i for i, r in enumerate(lines) if r["tool"] == "horizontal_line") + 1
     example = template(lines[pos - 1]["tool"], lines[pos - 1])
@@ -452,20 +601,32 @@ def tree_report() -> dict[str, Any]:
     p(f"Collisions over the 500 labels (full anchors, no user label): {dup} — the ordinal '(2)'")
     p(f"triggers {dup} times; {shared} labels share their text with another.")
     for d_, (plain, bulk) in win.items():
-        p(f"Visible window ({d_}, {STACK_PX} px stack): fixed {plain[0]} px → {plain[1]} rows;")
-        p(f"with the bulk bar fixed {bulk[0]} px → {bulk[1]} rows.")
-    p(f"Keystroke bound, filter path at 500: Shift+Tab 1 + {typed} typed digits + ↓ 1 (+{extra}")
-    p(f"more ↓ for the other matches) + Enter 1 = {3 + typed + extra}; over any characters typed")
-    p(f"{typed_any} + {extra_any} more ↓ → {3 + typed_any + extra_any}.")
-    p(f"The group path, worst at 500: Tab 1 + ↓ x{above} to Drawings + → 1 + ↓ x{len(SUBGROUP)}")
-    p(f"to the sub-group + → 1 + ↓ x{biggest - 1} inside it = {worst_group}.")
+        wd = 320 if d_ == "compact" else 360
+        p(f"Visible window ({d_}, {STACK_PX} px stack; the sync row counted): fixed {plain[0]} px")
+        rows_ = f"with the bulk bar on {bar_rows(wd)} rows fixed {bulk[0]} px → {bulk[1]}."
+        p(f"→ {plain[1]} rows; {rows_}")
+    cost, bnd, c20 = fb["cost"], FIXED_SHELL + fb["cost"], FIXED_C20 + fb["cost"]
+    p("Keystroke bound, filter path at 500 (the stated strategy — the first price, or the type")
+    p(f"word + the time of a time-only tool; separator-insensitive): typed + extra ↓ = {cost}")
+    p(f"at worst ({fb['typed']} characters + {fb['extra']} ↓ for {fb['label']!r}); with the")
+    p(f"shell's {FIXED_SHELL} fixed keys (Shift+Tab, Tab, ↓ x2 to Drawings, ↓ x6 to the first")
+    p(f"match, Enter) = {bnd}; with C-20 ({FIXED_C20} fixed keys) {c20}.")
+    bare_sum = f"{bare['typed']} + {bare['extra']}"
+    p(f"A bare minute typed for a time-only tool: {bare['cost']} ({bare_sum}")
+    p(f"↓ for {bare['label']!r}) → {FIXED_SHELL + bare['cost']} — why the strategy names the type")
+    p("word.")
+    p(f"The group path, worst at 500: Tab 1 + ↓ x{above} to Drawings + → 1 + ↓ past the sync row")
+    p(f"1 + ↓ x{len(SUBGROUP)} to the sub-group + → 1 + ↓ x{biggest - 1} inside it")
+    p(f"= {worst_group}.")
     setsize = {SUBGROUP[g]: d500[g] for g in SUBGROUP}
     p(f"`aria-setsize` per sub-group at 500: {setsize}; the first horizontal line in Lines:")
     p(f"item {pos} of {d500['lines']} — {example}.")
-    bounds = {"typed": typed, "extra": extra, "bound": 3 + typed + extra}
-    bounds.update({"bound_any": 3 + typed_any + extra_any, "group_worst": worst_group})
+    bounds = {"typed": fb["typed"], "extra": fb["extra"], "cost": fb["cost"]}
+    bounds.update({"bound": FIXED_SHELL + fb["cost"], "bound_c20": FIXED_C20 + fb["cost"]})
+    bounds.update({"bare_minute": FIXED_SHELL + bare["cost"], "group_worst": worst_group})
     out = {"dist20": d20, "dist200": d200, "dist500": d500, "collisions": dup, "shared": shared}
     out.update({"window": win, "threshold": THRESHOLD, "bounds": bounds, "setsize500": setsize})
+    out["bar_rows"] = {"320": bar_rows(320), "360": bar_rows(360)}
     return {**out, "example": [pos, d500["lines"], example]}
 
 
@@ -475,26 +636,25 @@ PAIRS = rows("""
 text.primary | surface.overlay | text | row label, default; the drawer is overlay (E13-D02 §13)
 text.primary | surface.hover | text | row label hovered; sub-group header; bulk bar (E13-D02 §13)
 text.primary | surface.selected | text | row label selected; the check glyph (E13-D02 §13)
-text.tertiary | surface.overlay | text | hidden row label (E13-D03 row 94)
+text.tertiary | surface.overlay | text | hidden row label (E13-D03 row 95)
 text.tertiary | surface.hover | text | hidden row label, hovered
-text.secondary | surface.selected | text | hidden-and-selected label (E13-D03 row 94 reproduced)
+text.secondary | surface.selected | text | hidden-and-selected label (E13-D03 row 95 reproduced)
 text.tertiary | surface.selected | rejected | REJECTED: text.tertiary on the selected fill (E13-D02)
 text.secondary | surface.hover | text | neutral tag text (this pane only, off-screen, restored)
 text.primary | status.warning.subtle | text | warning tag text (not saved, changed elsewhere)
 status.warning.strong | status.warning.subtle | non-text | warning tag glyph on its fill
-text.secondary | surface.overlay | text | header sync line; the T2 notice and second line; empty row
-text.link | surface.overlay | text | header link "Sync group" (held out of pairs.mjs by E47-D03)
-text.primary | surface.raised | text | toast text; the confirm's "Delete 7" (CMP-001 secondary)
-text.link | surface.raised | text | toast Undo (CMP-021)
+text.secondary | surface.overlay | text | the sync row; the T2 notice; a locked item's second line
+text.primary | surface.raised | text | toast text (type.ui.label, E13-D03 row 101)
+text.primary | action.secondary.default | text | CMP-001 secondary: the bar, the confirms, the Undo
 status.danger.default | surface.hover | rejected | REJECTED: the Delete word in danger.default ink
 text.inverse | status.danger.default | rejected | REJECTED: a red button face (inverse on danger)
 text.tertiary | surface.raised | text | T2 label and lock glyph on the control fill (E09-D09 §11)
 text.disabled | surface.raised | rejected | REJECTED: text.disabled on the control fill (E09-D09)
-text.secondary | surface.canvas | non-text | type glyph on its 16 x 10 canvas tile (E13-D03 row 94)
+text.secondary | surface.canvas | non-text | type glyph on its 16 x 10 canvas tile (E13-D03 row 95)
 text.tertiary | surface.canvas | non-text | type glyph, hidden row
 text.secondary | surface.overlay | non-text | lock glyph after the label; eye / lock / menu; grip
 text.secondary | surface.selected | non-text | eye / lock / menu glyphs on a selected row
-status.danger.strong | surface.hover | non-text | danger glyph (icon/trash) on the bulk bar
+status.danger.strong | action.secondary.default | non-text | trash glyph on the secondary face
 status.danger.strong | surface.overlay | non-text | danger glyph in the row menu (E13-D02 §13)
 text.tertiary | surface.selected | non-text | selected outline 1 px vs the selected fill (E13-D02)
 text.tertiary | surface.hover | non-text | bulk bar edge 1 px vs the bar fill (E13-D02 §13)
@@ -706,7 +866,7 @@ HYGIENE = {
     "a local path": re.compile(r"/(?:home|Users)/[^/\s]+/"),
     "a Penpot host": re.compile(r"penpot\.[a-z0-9-]+\.[a-z]{2,}", re.IGNORECASE),
     "pageLink": re.compile(r"pageLink"),
-    "a workspace url or id": re.compile(r"team-id=|file-id=|#/workspace"),
+    "a workspace url or id": re.compile(r"team[-_]id=|file[-_]id=|#/work[s]pace"),
     "a closing keyword before an issue ref": re.compile(
         r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b\s*:?\s*#\d+", re.IGNORECASE
     ),
@@ -747,9 +907,7 @@ def strings_report(spec: str, handoff: str, draft: str | None) -> dict[str, Any]
     def only_in(word: str, *marks: str) -> bool:
         return all(any(m in ln for m in marks) for ln in lines if word in ln)
 
-    gated = [
-        r for r in table_rows(spec, "## 4.", "## 5.") if re.search(r"Viewer|view-as", " ".join(r))
-    ]
+    gated = gated_rows(spec)
     boards = table_rows(spec, "## 0.", "## 1.")
     ids = sorted(set(re.findall(r"\bC-\d+\.\d+\b", both)))
     cons = read(ROOT / "CONSTITUTION.md")
@@ -757,6 +915,9 @@ def strings_report(spec: str, handoff: str, draft: str | None) -> dict[str, Any]
     blank = re.findall(r"^- \[[ x~]\]\s*(?:\*\*[^*\n]+\*\*)?\s*$", handoff, re.MULTILINE)
     t2_once = spec.count("never the `disabled` attribute") == 1 and "full label" in spec
     t2_rows = all("T2" in " ".join(r) for r in gated)
+    empty_ok = not re.search(r"No drawings on BTCUSDT\. (?:Your role|Read-only)", both)
+    apply_ok = only_in("Apply template", "absent", "C-23", "D02 §8.3", "deferred")
+    locked_ok = only_in('"Locked."', "C-7")
     clone_ok = "Duplicate" in spec and all(
         "C-" in ln for ln in lines if re.search(r"\bClone\b", ln)
     )
@@ -769,6 +930,10 @@ def strings_report(spec: str, handoff: str, draft: str | None) -> dict[str, Any]
         ("the T2 rule stated once (full label; never the `disabled` attribute)", t2_once),
         (f"'T2' in every gated state row ({len(gated)} rows)", t2_rows),
         ("the view-as leg named first", "view-as leg first" in spec),
+        ("the sentence-form empty line carries no second copy of the reason", empty_ok),
+        ("'Apply template' only as the absent entry (C-23) or D02's quoted clause", apply_ok),
+        ('D02\'s "Locked." only in a C-7 line', locked_ok),
+        ("the locked state leg named with its PROPOSED key", "`drawing.locked`" in spec),
         ("the never-cross-symbols sentence", "Sync never crosses symbols" in spec),
         ("'this pane only'", "this pane only" in spec),
         ("'Trendline #3' only in a C-row", only_in("Trendline #3", "C-")),
@@ -796,6 +961,11 @@ def strings_report(spec: str, handoff: str, draft: str | None) -> dict[str, Any]
     return {"checks": len(checks), "failed": failed, "gated_rows": len(gated), "ids": ids}
 
 
+def gated_rows(spec: str) -> list[list[str]]:
+    """The section 4 rows that show a gated control: a T2 leg or the locked state leg."""
+    return [r for r in table_rows(spec, "## 4.", "## 5.") if re.search(r"T2|locked", r[0])]
+
+
 def counts_report(spec: str, handoff: str) -> dict[str, Any]:
     states = table_rows(spec, "## 4.", "## 5.")
     parity = table_rows(spec, "### 9.2", "### 9.3")
@@ -805,7 +975,7 @@ def counts_report(spec: str, handoff: str) -> dict[str, Any]:
         return len(re.findall(rf"^\| {prefix}\d+ ", sec16, re.MULTILINE))
 
     counts = {"boards": len(table_rows(spec, "## 0.", "## 1.")), "states": len(states)}
-    counts["t2_rows"] = sum("T2" in " ".join(r) for r in states)
+    counts["t2_rows"] = len(gated_rows(spec))  # the same list the string gate checks
     counts["matrix_rows_in_spec"] = len(table_rows(spec, "### 10.1", "### 10.2"))
     counts["parity_rows"] = len(parity)
     counts["parity_gaps"] = sum(r[-1].lower().startswith("gap") for r in parity)
@@ -845,6 +1015,7 @@ ring | focus.ring
 warnSubtle | status.warning.subtle
 warnStrong | status.warning.strong
 dangerStrong | status.danger.strong
+secondary | action.secondary.default
 """))
 
 
