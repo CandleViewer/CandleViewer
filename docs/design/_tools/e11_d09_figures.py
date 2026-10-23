@@ -3,7 +3,8 @@
 Imported by ``e11_d09_handoff_audit.py --figures <dir>``; never run on its own path at import.
 Pure Python: a 24-bit PNG writer (``zlib`` + ``struct``), axis-aligned rectangles, 1 px lines with
 a dash pattern, a 45-degree hatch and a 5 x 7 bitmap font (upper case, digits and the symbols the
-labels need; lower case is drawn with the upper-case glyph and the sheet says so), so the figure is
+labels need; lower case is drawn with the upper-case glyph and the sheet says so; a pattern row's
+text wraps at word boundaries and a row grows with its lines, nothing is sliced), so the figure is
 reproducible on any host without numpy or PIL. Every colour comes from the audit's resolved
 dark-theme tokens and every number from its counts; nothing is typed here that the pack does not
 carry. No network call is made and no URL literal exists in this file.
@@ -77,7 +78,46 @@ FONT: dict[str, tuple[int, ...]] = {
     "▼": (0, 0x1F, 0x1F, 0x0E, 0x0E, 0x04, 0x04),
     "°": (0x0E, 0x0A, 0x0E, 0, 0, 0, 0),
     "?": (0x0E, 0x11, 0x01, 0x02, 0x04, 0, 0x04),
+    ";": (0, 0x0C, 0x0C, 0, 0x0C, 0x04, 0x08),
+    "'": (0x0C, 0x0C, 0x04, 0x08, 0, 0, 0),
+    "=": (0, 0, 0x1F, 0, 0x1F, 0, 0),
+    "\u2192": (0, 0x04, 0x02, 0x1F, 0x02, 0x04, 0),
 }
+# the text column of a pattern row: 44 px in, up to the 1:1 swatch at 740 px → 116 cells of 6 px
+ROW_TEXT_CHARS = 112
+ROW_LINE_PX = 14
+
+
+def wrap(s: str, width: int = ROW_TEXT_CHARS) -> list[str]:
+    """Word-wrap at spaces; a word longer than the width stands alone (nothing is cut mid-word)."""
+    lines: list[str] = []
+    cur = ""
+    for word in s.split(" "):
+        if not cur:
+            cur = word
+        elif len(cur) + 1 + len(word) <= width:
+            cur += " " + word
+        else:
+            lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def pattern_lines(p: dict[str, Any]) -> list[str]:
+    """The text lines of one pattern row: the id, then the geometry, the ink and the opacity +
+    meaning, each wrapped at word boundaries (never sliced)."""
+    return [
+        p["id"].upper(),
+        *wrap(p["geometry"].upper()),
+        *wrap(("INK " + p["ink"]).upper()),
+        *wrap(("OPACITY " + p["opacity"] + " - " + p["meaning"]).upper()),
+    ]
+
+
+def pattern_row_h(lines: list[str]) -> int:
+    return max(64, 8 + ROW_LINE_PX * len(lines) + 2)
 
 
 def hex_rgb(h: str) -> RGB:
@@ -193,7 +233,9 @@ def render_sheet(d: dict[str, Any]) -> Canvas:
     border = _tok(d, "color.border.default", "#2E363E")
     strong = _tok(d, "color.border.strong", "#3D4650")
     up = _tok(d, "color.candle.up", "#2EBD59")
-    c = Canvas(1280, 820, bg)
+    pats = d["patterns"]
+    row_hs = [pattern_row_h(pattern_lines(p)) for p in pats]
+    c = Canvas(1280, 820 + sum(h - 64 for h in row_hs), bg)
     c.text(32, 24, "E11-D09 FIGURE A - ASSET SHEET (RENDERED BY THE TOOL)", text, 2)
     c.text(
         32,
@@ -204,21 +246,16 @@ def render_sheet(d: dict[str, Any]) -> Canvas:
         1,
     )
     y = 72
-    pats = d["patterns"]
+    row_y = y
     for i, p in enumerate(pats):
-        row_y = y + i * 72
-        c.rect(32, row_y, 1216, 64, canvas_c)
-        c.frame(32, row_y, 1216, 64, border)
-        c.text(44, row_y + 8, p["id"].upper(), text, 1)
-        c.text(44, row_y + 22, p["geometry"][:70].upper(), text2, 1)
-        c.text(44, row_y + 36, ("INK " + p["ink"][:60]).upper(), text3, 1)
-        c.text(
-            44,
-            row_y + 50,
-            ("OPACITY " + p["opacity"] + " - " + p["meaning"][:40]).upper(),
-            text3,
-            1,
-        )
+        if i:
+            row_y += row_hs[i - 1] + 8
+        row_h = row_hs[i]
+        c.rect(32, row_y, 1216, row_h, canvas_c)
+        c.frame(32, row_y, 1216, row_h, border)
+        for k, ln in enumerate(pattern_lines(p)):
+            colour = text if k == 0 else (text2 if k == 1 else text3)
+            c.text(44, row_y + 8 + k * ROW_LINE_PX, ln, colour, 1)
         pid = p["id"]
         # 1:1 swatch (48 x 48) and 4:1 swatch (192 x 48)
         sx, s4 = 740, 820
@@ -260,7 +297,7 @@ def render_sheet(d: dict[str, Any]) -> Canvas:
             c.rect(s4 + 136, row_y + 8, 24, 24, bg, 0.0)
         c.text(sx, row_y + 58, "1:1", text3, 1)
         c.text(s4, row_y + 58, "4:1", text3, 1)
-    y = y + len(pats) * 72 + 16
+    y = row_y + row_hs[-1] + 8 + 16
     gl = d["glyphs"]
     c.text(
         32,

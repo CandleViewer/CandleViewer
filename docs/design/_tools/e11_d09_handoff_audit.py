@@ -14,8 +14,10 @@ the only writes happen under ``--figures <dir>``.
 What it computes (each section names its source so a reviewer can re-grep it):
 
 1. The redline parse: E11-D02 section 2's dimensions table and section 6's density record, read
-   from the spec at the base; every token named in a cell resolved through the loader; the
-   typed-only cells (the drift ``size.control.height``, the gutter formula, the pill heights) named.
+   from the spec at the base (with E11-D05 section 6's class columns, the tooltip title type of
+   E11-D02 section 7.3 and the minimum-pane label heights of section 2); every token named in a
+   cell resolved through the loader; the typed-only cells (the drift ``size.control.height``, the
+   gutter formula, the pill heights) named.
 2. The behaviour-rule constants, typed once with a source line each, and the worked cases of
    E11-D02 section 4.2 (three instruments, the dense variant), section 5.4 (six px-per-bar rows)
    and section 7.5 (the legend's 600 px case) re-derived from the rule and compared with the
@@ -49,14 +51,15 @@ What it computes (each section names its source so a reviewer can re-grep it):
 Usage:
   python3 -I docs/design/_tools/e11_d09_handoff_audit.py                 Markdown report
   ... --json                                                one object (boards, figure, check-nums)
-  ... --emit <redlines|keymap|motion|tokens|matrix|oq|glyphs|findings>    the pack's table rows
+  ... --emit <redlines|density|keymap|motion|tokens|matrix|oq|glyphs|findings>  the pack's tables
   ... --check docs/design/E11/E11-D09.md [docs/design/E11/E11-D09-handoff.md] [--draft <file>]
   ... --figures docs/design/E11/img                                       render figure A
 
 Exit 0 on a clean run; exit 1 on a gated FAIL (a hex in the pack or the hand-off file; a key-map row
 missing from or extra to the design bindings; a motion row differing from E11-D06; an empty matrix
 cell, a ``—`` placeholder included; an open-question row without owner and target; a source-log row
-absent; a fabricated-session phrase; a marker drift under ``--check``; the E11-D07 tool absent under
+absent; a fabricated-session phrase; a marker drift under ``--check``; a cell of the pack's section
+2.1, 2.2, 6.1, 7.1 or 13.1 table that differs from ``--emit``; the E11-D07 tool absent under
 ``--check``).
 """
 
@@ -298,6 +301,77 @@ def parse_d02_density() -> list[dict[str, Any]]:
     return out
 
 
+def parse_d02_tooltip_title() -> dict[str, Any]:
+    """E11-D02 §7.3's tooltip title type per density, read from the layout sketch's title line.
+
+    The line reads "title: color.text.secondary, type.ui.caption (comfortable: type.ui.label)": the
+    first token is the type at compact and dense, the bracketed one the comfortable type."""
+    lines = read(D02).splitlines()
+    begin = next(i for i, ln in enumerate(lines) if ln.startswith("### 7.3"))
+    rx = re.compile(
+        r"title: color\.text\.secondary, (type\.ui\.[\w-]+) \(comfortable: (type\.ui\.[\w-]+)\)"
+    )
+    for i in range(begin, len(lines)):
+        m = rx.search(lines[i])
+        if m:
+            return {"default": m.group(1), "comfortable": m.group(2), "line": i + 1}
+    return {"default": "", "comfortable": "", "line": 0}
+
+
+def parse_d05_density_classes() -> dict[str, dict[str, str]]:
+    """E11-D05 §6's table: the `fontSizeClass` / `axisFontSizeClass` cells per mode, with lines."""
+    text = read(D05)
+    data = md_table(text, "## 6. The density scale", "### 6.1")
+    out: dict[str, dict[str, str]] = {}
+    for r in data:
+        mode = r[0].strip("*") if r else ""
+        if mode in ("comfortable", "compact", "dense") and len(r) >= 4:
+            out[mode] = {
+                "cell": r[2],
+                "axis": r[3],
+                "line": str(line_of(D05, f"| **{mode}**")),
+            }
+    return out
+
+
+def density_rows() -> list[dict[str, str]]:
+    """The pack's §2.2 rows: E11-D02 §6's record cell for cell (bold stripped from `lodBias`) with
+    E11-D05 §6's class columns — parsed, never typed."""
+    d05 = parse_d05_density_classes()
+    out: list[dict[str, str]] = []
+    for r in parse_d02_density():
+        c = d05.get(r["mode"], {"cell": "—", "axis": "—", "line": "0"})
+        out.append(
+            {
+                "mode": r["mode"],
+                "cellPadPx": r["cellPadPx"],
+                "cell_class": c["cell"],
+                "axis_class": c["axis"],
+                "type": r["axis_type"],
+                "lodBias": r["lodBias"].replace("**", ""),
+                "G": r["G"],
+                "spacing": r["spacing"],
+                "legend_row": r["legend_row"],
+                "source": f"E11-D02 §6 :{r['line']}; E11-D05 §6 :{c['line']}",
+            }
+        )
+    return out
+
+
+def min_pane_label_heights(parsed: list[dict[str, Any]]) -> str:
+    """The label heights E11-D02 §2's minimum-pane row writes (3 x 16 / 3 x 13; dense writes 48)."""
+    row = next((r for r in parsed if r["element"].startswith("Minimum pane height")), None)
+    if row is None:
+        return "—"
+    found = [
+        m.group(1)
+        for c in ("comfortable", "compact")
+        for m in [re.search("3 \u00d7 (\\d+)", row[c])]
+        if m
+    ]
+    return "/".join(found) if found else "—"
+
+
 def redline_tokens(parsed: list[dict[str, Any]]) -> dict[str, Any]:
     names = sorted({t for r in parsed for t in r["tokens"]})
     resolved = {n: resolve_token(n, "dark") for n in names}
@@ -329,22 +403,25 @@ axes | Mode tag (log / % / inv) and zone tag (UTC hh:mm:ss) | caption + digits `
   `type.num.*` | — | 1.0 | GL | E11-D02 §7.1 :244, §7.2 :267
 axes | Last-price pill | h 20; ▲ / ▼ glyph; 4 px nub; 1 px dashed line | h 17 | h 16 | fill
   `color.candle.up` / `color.candle.down`; text `color.chart.pill.text.inverse` | `type.num.*` |
-  `radius.xs` | 1.0 | GL | E11-D02 §7.1 :244; §2 :99
+  `radius.xs` | 1.0 | GL | E11-D02 §7.1 :244; §2 :99; radius E11-D05 §10.2 :705 (axis pills)
 axes | Mark / index pill | h 20; prefix `M` / `I`; line 1 px dashed 2 / 6 | h 17 | h 16 |
   `color.chart.pill.bg` + `color.chart.pill.border` + `color.chart.pill.text.default`; line
-  `color.chart.boundary` | `type.num.*` | `radius.xs` | 1.0 | GL | E11-D02 §7.1 :244
+  `color.chart.boundary` | `type.num.*` | `radius.xs` | 1.0 | GL | E11-D02 §7.1 :244; radius E11-D05
+  §10.2 :705 (axis pills)
 axes | Lock badge (button) | pill h 24; 24 px hit box | h 20 (+2 / +2 invisible padding) | same |
   `color.surface.raised` + `color.border.strong` + `color.text.primary`; lock glyph |
   `type.ui.caption` | `radius.badge` | 1.0 | DOM | E11-D02 §7.1 :244; E11-D03 §5 :193
 axes | Cluster segment fill and pressed `auto` | fill + 1 px border; pressed: selected fill + strong
   border + check glyph | same | same | `color.surface.raised` + `color.border.default`; pressed
   `color.surface.selected` + `color.border.strong` + `color.text.primary` | `type.ui.caption` |
-  `radius.control` | 1.0 | DOM | E11-D02 §7.2 :267
+  `radius.control` | 1.0 | DOM | E11-D02 §7.2 :267; radius inferred — a segmented control's (:267),
+  `15` CMP-003 :75 at the PR base
 axes | Paused pill (`auto` off state) | h 24 | h 20 | h 20 | `color.status.warning.subtle` +
   `color.text.primary`; pause glyph `color.status.warning.strong` | `type.ui.caption` /
-  `type.num.sm` | `radius.badge` | 1.0 | DOM | E11-D02 §7.2 :267
+  `type.num.sm` | `radius.badge` | 1.0 | DOM | E11-D02 §7.2 :267; radius inferred — the chip rule
+  §10 :422
 axes | Cluster exclusion zone / tag zone | 8 px left of the cluster; 8 px right of the zone tag |
-  same | same | — | — | — | — | GL (layout) | E11-D02 §5.1 :170\u2013171
+  same | same | — | — | — | — | GL (layout) | E11-D02 §5.1 :171\u2013172
 crosshair | Crosshair lines | 1 px dashed 4 / 4, device-snapped; `max(1, floor(dpr))` device px |
   same | same | `color.chart.crosshair` (= `color.crosshair`) | — | — | 1.0 (remote `opacity.muted`)
   | GL | E11-D02 §7.3 :298; §4.4 :161
@@ -358,8 +435,8 @@ crosshair | Keyboard cursor column (D10) | ≥ 2 px core + 1 px halos | same | s
   | GL | E06-D03 D10 :176; E11-D05 §4.1b :101
 tooltip | Tooltip box (CMP-197) | padding `space.inset.md`; width 200\u2013260 px, ≤ 40 % of the
   pane | `space.inset.sm` | `space.inset.xs` | `color.surface.overlay` + 1 px
-  `color.border.default`; `elevation.popover` | title `type.ui.label`; values `type.num.base` /
-  `.sm` / `.xs` | `radius.card` | 1.0 | DOM | E11-D02 §7.3 :304\u2013318
+  `color.border.default`; `elevation.popover` | PARSED (E11-D02 §7.3's title line; §2 :98) |
+  `radius.card` | 1.0 | DOM | E11-D02 §7.3 :304\u2013318
 tooltip | Tooltip anchor offsets and margins | 16 px right and 16 px below the anchor; 8 px plot
   margins; band ±(pill h / 2 + 4 px) | same | same | — | — | — | — | DOM (layout) | E11-D02 §7.3
   :320
@@ -368,16 +445,21 @@ tooltip | Tooltip swatch and rows | 8 px shape swatch; overflow after 12 rows as
   E11-D02 §7.3 :310\u2013313
 legend | Legend block | max width 40 % of the pane; row 0 = pane label row | same | same |
   `color.text.primary`; hidden row `color.text.tertiary`; focus bar `color.action.primary.default` 2
-  px | `type.ui.label` / `type.ui.body` | — | 1.0 | DOM | E11-D02 §7.5 :339, :343; §8 :373
+  px | `type.ui.body` / `type.ui.label` / `type.ui.caption` (comfortable / compact / dense — §6
+  :216\u2013218; §7.5 :339 writes the compact default) | — | 1.0 | DOM | E11-D02 §7.5 :339, :343; §8
+  :373; §6 :216\u2013218
 legend | Legend controls (chevron, menu, eye toggle) | 32 \u00d7 32 | 24 \u00d7 24 | 24 \u00d7 24
   (floor) | `color.focus.ring` ring 2 px, 2 px offset | — | — | 1.0 | DOM | E11-D02 §7.5 :339; §6
   rule 3 :233
 legend | Swatch and label truncation | 8 \u00d7 8 shape swatch; labels ellipsise at 18 characters |
-  same | same | the series' token (shape, never colour alone) | `type.ui.label` | — | 1.0 | DOM |
-  E11-D02 §7.5 :339, :341
+  same | same | the series' token (shape, never colour alone) | `type.ui.body` / `type.ui.label` /
+  `type.ui.caption` (comfortable / compact / dense — §6 :216\u2013218) | — | 1.0 | DOM | E11-D02
+  §7.5 :339, :341; §6 :216\u2013218
 legend | "+N more" popover | max height 60 % of the pane; scrollable | same | same |
-  `color.surface.overlay` + `elevation.popover` | `type.ui.label` | `radius.card` | 1.0 | DOM |
-  E11-D02 §7.5 :341
+  `color.surface.overlay` + `elevation.popover` | the legend row's — `type.ui.body` /
+  `type.ui.label` / `type.ui.caption` (the same row component, :341; §6 :216\u2013218) |
+  `radius.card` | 1.0 | DOM | E11-D02 §7.5 :341; radius inferred — CMP-197's (E11-D05 §10.2 :704),
+  the popover sharing its overlay + `elevation.popover` set (:703)
 panes | Splitter hairline and grip | 1 px hairline; grip 32 \u00d7 4 | grip 24 \u00d7 4 | grip 24
   \u00d7 4 | hairline `color.chart.rule`; grip `color.text.tertiary` → hover `color.text.secondary`
   → drag `color.focus.ring`; hover hairline `color.border.strong` | — | `radius.pill` | 1.0 | GL
@@ -405,17 +487,18 @@ chrome | Env badge (CMP-075) | text DEMO medium / LIVE bold; 2 px border; LIVE 2
 chrome | Countdown (CMP-226) | label caption + digits | same | same | `color.text.secondary`; warn
   `color.status.warning.subtle` + `color.text.primary` + glyph `color.status.warning.strong`; closed
   `color.text.tertiary` | `type.ui.caption` / `type.num.sm`; warn `font.weight.medium` |
-  `radius.badge` | 1.0 | DOM | E11-D02 §7.4 :330\u2013332
+  `radius.badge` | 1.0 | DOM | E11-D02 §7.4 :330\u2013332; radius: the status-row chip rule §10 :422
+  (the countdown is in the chip order)
 chrome | Corner badge (reduced detail) | inset 12 | inset 8 | inset 4 | `color.surface.raised` +
   `color.text.primary`; glyph `color.status.warning.strong` | `type.ui.caption` | `radius.badge` |
-  1.0 | DOM | E11-D02 §10 :416; §2 :96
+  1.0 | DOM | E11-D02 §10 :416; §2 :97; radius inferred — the chip rule §10 :422
 chrome | Loading band (older bars) | band left of the oldest bar | same | same |
   `color.surface.hover` + `color.text.secondary` | `type.ui.body` | — | 1.0 | DOM | E11-D02 §7.2
   :273
 menus | SCR-043 menu rows | row 32; padding `space.inset.sm`; min width 280, max 360 | row 24 | row
   24 | `color.surface.overlay` + 1 px `color.border.default`; `elevation.popover`; hover
   `color.surface.hover`; heading `color.text.tertiary` | `type.ui.caption` heading | `radius.card` |
-  1.0 | DOM | E11-D03 §3.1 :119
+  1.0 | DOM | E11-D03 §3.1 :121
 menus | D4 inline reason (disabled Logarithmic) | second line inside the item | same | same |
   `color.text.secondary` reason; label `color.text.disabled` (exempt — not T2: a data state) |
   `type.ui.caption` | — | 1.0 | DOM | E11-D03 §3.1 :103; E11-D07 F-29 :590
@@ -443,22 +526,22 @@ tab | CMP-228 PreviewTile | — | — | — | `color.surface.sunken` | — | `ra
 table | Row height (bar, level, header) | `size.row.comfortable` 32 | `size.row.compact` 24 | — |
   zebra `color.surface.canvas` / `color.surface.raised`; header + hover `color.surface.hover`;
   selected `color.surface.selected`; dividers `color.border.subtle` | — | — | 1.0 | DOM | E11-D04 §2
-  :90, §20 :803
+  :97, §20 :804
 table | Cell padding / panel inset | `space.3` 12 / 12 | `space.2` 8 / 8 | — | — | — | — | — | DOM |
-  E11-D04 §2 :91
+  E11-D04 §2 :98
 table | Numeric and label type | `type.num.base` 13; `type.ui.body` 13 | `type.num.sm` 11;
   `type.ui.caption` 11 / `type.ui.label` 12 | — | `color.text.primary`; `color.text.secondary`; day
-  rule `color.text.tertiary` | `font.family.mono` tabular | — | 1.0 | DOM | E11-D04 §2 :92\u201393
+  rule `color.text.tertiary` | `font.family.mono` tabular | — | 1.0 | DOM | E11-D04 §2 :99\u2013100
 table | Expander / action buttons; chips and Kbd | 32 \u00d7 32; chip 24 | 24 \u00d7 24
   (`size.target.min`); chip 20 (+2 / +2 → 24 hit box) | — | chips `color.surface.raised` +
-  `color.border.default` | `type.ui.caption` | `radius.badge` | 1.0 | DOM | E11-D04 §2 :94\u201395
+  `color.border.default` | `type.ui.caption` | `radius.badge` | 1.0 | DOM | E11-D04 §2 :101\u2013102
 table | View switch segment (CMP-003) | `size.control.comfortable` 32 | `size.control.compact` 24
   (`size.control.height`, density-resolved) | — | pressed `color.surface.selected` +
-  `color.border.strong` | `type.ui.caption` | `radius.control` | 1.0 | DOM | E11-D04 §2 :96; E11-D07
-  TG24 :481
+  `color.border.strong` | `type.ui.caption` | `radius.control` | 1.0 | DOM | E11-D04 §2 :103;
+  E11-D07 TG24 :481
 table | Banner (stale / loading) and sub-table | banner 40; sub-table 10 visible rows | banner 32
   (two lines at 200 %); 12 rows | — | banner `color.status.warning.subtle` / `.strong`; sub-table
-  `color.surface.app` | `type.ui.body` | — | 1.0 | DOM | E11-D04 §2 :97\u201398
+  `color.surface.app` | `type.ui.body` | — | 1.0 | DOM | E11-D04 §2 :104\u2013105
 table | T2 row-menu item (write items for a role without the grant) | full label + lock glyph;
   reason as the item's second line | same | — | `color.text.tertiary` label + glyph;
   `color.text.secondary` reason; `color.surface.raised` fill + `color.border.default` hairline
@@ -500,7 +583,30 @@ def redline_rows() -> list[dict[str, Any]]:
                 "source": f"E11-D02 §2 :{r['line']}",
             }
         )
+    title = parse_d02_tooltip_title()
+    tooltip_row = next(
+        (r for r in parse_d02_dimensions() if r["element"].startswith("Tooltip padding")), None
+    )
+    values = (
+        " / ".join(
+            f"`{t}`" if i == 0 else f"`.{t.rsplit('.', 1)[1]}`"
+            for i, t in enumerate(
+                m.group(0)
+                for c in ("comfortable", "compact", "dense")
+                for m in [re.search(r"type\.num\.\w+", tooltip_row[c])]
+                if m
+            )
+        )
+        if tooltip_row
+        else "—"
+    )
+    parsed_title = (
+        f"title `{title['default']}` (comfortable `{title['comfortable']}` — "
+        f"§7.3 :{title['line']}); values {values} (§2 :{tooltip_row['line'] if tooltip_row else 0})"
+    )
     for cells in rows(EXTRA_REDLINES):
+        if cells[6].startswith("PARSED"):
+            cells[6] = parsed_title
         out.append(
             dict(
                 zip(
@@ -528,15 +634,15 @@ def redline_rows() -> list[dict[str, Any]]:
 # ---- 2 behaviour rules
 # name | value | source (typed once; every number a B-row quotes)
 CONST_TABLE = """
-collision_gap_label_heights | 1.5 | E11-D02 §5.1 :168; E11-S06 AC
-G_time_px | 96 / 80 / 64 | E11-D02 §5.1 :169
-G_price_px | 48 / 40 / 32 | E11-D02 §5.1 :169
-exclusion_zone_px | 8 | E11-D02 §5.1 :170\u2013171
-price_ladder | {1, 2, 5} \u00d7 10^n \u00d7 tickSize | E11-D02 §5.2 :175
-time_ladder_steps | 23 | E11-D02 §5.2 :176
+collision_gap_label_heights | 1.5 | E11-D02 §5.1 :169; E11-S06 AC
+G_time_px | 96 / 80 / 64 | E11-D02 §5.1 :170
+G_price_px | 48 / 40 / 32 | E11-D02 §5.1 :170
+exclusion_zone_px | 8 | E11-D02 §5.1 :171\u2013172
+price_ladder | {1, 2, 5} \u00d7 10^n \u00d7 tickSize | E11-D02 §5.2 :176
+time_ladder_steps | 23 | E11-D02 §5.2 :177
 major_step_rule | s_M = min decimal-round (10^k or 5 \u00d7 10^k) ≥ 2 \u00d7 s_L and an integer
-  multiple of s_L | E11-D02 §4.2 :148
-percent_ladder | 0.1 / 0.2 / 0.5 / 1 / 2 / 5 / 10 | E11-D02 §4.2 :151
+  multiple of s_L | E11-D02 §4.2 :149
+percent_ladder | 0.1 / 0.2 / 0.5 / 1 / 2 / 5 / 10 | E11-D02 §4.2 :152
 tooltip_offset_px | 16 / 16 | E11-D02 §7.3 :320
 tooltip_margin_px | 8 | E11-D02 §7.3 :320
 tooltip_width_px | 200\u2013260, ≤ 40 % of the pane | E11-D02 §7.3 :318
@@ -547,8 +653,8 @@ legend_visible_rows | ⌊0.3 \u00d7 pane height / row height⌋, min 3 | E11-D02
 legend_ellipsis_chars | 18 | E11-D02 §7.5 :341
 legend_popover_max | 60 % of the pane | E11-D02 §7.5 :341
 splitter_step_pct | 2 / 10 | E11-D02 §8 :361\u2013362
-min_pane_height | max(48 px, 3 \u00d7 axis label height) | E11-D02 §2 :95; §8 :367
-stub_height_px | 32 / 24 / 24 | E11-D02 §2 :94
+min_pane_height | max(48 px, 3 \u00d7 axis label height) | E11-D02 §2 :96; §8 :367
+stub_height_px | 32 / 24 / 24 | E11-D02 §2 :95
 collapse_duration | motion.duration.normal, motion.easing.standard | E11-D06 §6.4 :236
 magnet_radius_weak_px_s07 | 8 | E11.json E11-S07 Scope (E11-D01 :234)
 magnet_radius_drawing_px_e14 | 12 | E14-D02 :65
@@ -561,7 +667,7 @@ def const() -> dict[str, dict[str, str]]:
 
 
 PRICE_CASES: list[dict[str, Any]] = [
-    # instrument, tick, lo, hi, pane px, G, expected s_L, s_M, labels, spacing (E11-D02 §4.2 :150)
+    # instrument, tick, lo, hi, pane px, G, expected s_L, s_M, labels, spacing (E11-D02 §4.2 :151)
     {
         "name": "BTCUSDT compact",
         "tick": 0.5,
@@ -721,7 +827,7 @@ def derive_time(
     case: dict[str, Any], width: int = 1200, g: int = 80, bar_min: float = 1
 ) -> dict[str, Any]:
     """The step picked for 1 m bars: sub-minute steps exist only below a one-minute interval
-    (E11-D02 §5.2 :176), so the ladder starts at the bar interval."""
+    (E11-D02 §5.2 :177), so the ladder starts at the bar interval."""
     px = case["px"]
     idx = next(
         i
@@ -948,8 +1054,9 @@ Chart | legend | ← | none specified — the control's name (AT: "EMA 20 visibl
 Chart | legend | → | none specified — the control's name (AT: "EMA 20 visible", stable) | E11-D02
   §7.5 :345
 Chart | legend | Space | "EMA 20 hidden" / "EMA 20 shown" (polite) | E11-D02 §7.5 :345
-Chart | legend | Enter | "EMA 20 hidden" / "EMA 20 shown"; "7 more series" on opening the popover |
-  E11-D02 §7.5 :345; §12 :664
+Chart | legend | Enter | "EMA 20 hidden" / "EMA 20 shown"; "N more series" on opening the popover —
+  §12 :666 writes "7 more series" where §7.5 :341's case gives "+6 more" (C-15) | E11-D02 §7.5 :345;
+  §12 :666
 Chart | legend | Esc | none — back to the plot (the cursor's summary on landing) | E11-D02 §7.5 :345
 Chart | chips | ← | name + description on focus (the chip's text and its `aria-describedby`) |
   E11-D02 §12 :667
@@ -1020,8 +1127,9 @@ Menu | * | Tab | the next stop's name | E11-D03 §12.1 :464
 Dialog | * | Tab | none specified — the focused field's name (AT) inside the trap | E11-D03 §12.2
   :472
 Dialog | * | Enter | one polite announcement: "Jumped to 15 Sep 13:42 UTC — close 64,210, delta
-  \u2212128. Following paused." (a gap landing: "No data at 02:12 — landed on 02:15, close …") |
-  E11-D03 §7.5 :360
+  \u2212128. Following paused." (a gap landing: "No data at 02:12 — landed on 02:15, close …"); on a
+  T2 quick jump (T2-08 / T2-09) nothing jumps and the reason is re-shown in its target line,
+  announced once, politely (§8.1) | E11-D03 §7.5 :360
 Dialog | * | Space | none specified — a segment toggles / a button presses (AT reads the state); on
   a T2 quick jump (T2-08 / T2-09) nothing presses and the reason is re-shown in its target line,
   announced once, politely (§8.1) | E11-D03 §12.2 :476
@@ -1321,7 +1429,8 @@ neutral GL pills (mark `M`, index `I`, remote time pill) | GL | `color.chart.pil
   `color.chart.pill.border` + `color.chart.pill.text.default` | uniform | text on a surface |
   E11-D05 §4.1b :95\u201397
 crosshair pills and the last-price pill text | GL | `color.chart.pill.text.inverse` (=
-  `color.text.inverse`); `radius.xs`; 4 px padding | uniform | text | E11-D05 §4.1b :98
+  `color.text.inverse`); `radius.xs`; 4 px padding | uniform | text | E11-D05 §4.1b :98; §10.2 :705
+  (`radius.xs`)
 go-to-date marker line and pill | GL | `color.chart.marker.goto` (= `color.action.primary.default`);
   text `color.chart.pill.text.on-marker` | uniform | non-text / text | E11-D05 §4.1b :99\u2013100
 keyboard cursor column (D10) and its halo | GL | `color.chart.focus.ring` (= `color.focus.ring`);
@@ -1347,14 +1456,15 @@ maintenance window, coverage gap | GL | `pattern.hatch.gap` (registry id, D05 CR
 estimated data (cells, series), imbalance outline, delta notch | GL | `pattern.hatch.estimated`,
   `pattern.dashed.estimated`, `pattern.outline.imbalance`, `glyph.notch.delta`;
   `color.footprint.imbalance` | `patterns.ts` | encoding | E11-D05 §7 :313\u2013319
-density record (`cellPadPx`, `fontSizeClass`, `axisFontSizeClass`, `lodBias`) | GL |
-  `density.chart.<mode>` (PROPOSED home, D05 Q7) carried as `EngineTheme.metrics`; the class →
-  `type.num.xs` / `type.num.sm` / `type.num.base` | metrics | — | E11-D05 §6 :283\u2013287, §6.1
-  :297; E11-D02 §6 :214\u2013218
+density record (`cellPadPx`, `fontSizeClass`, `axisFontSizeClass`, `lodBias`) | GL | an
+  `EngineTheme.metrics` scalar — its token home `density.chart.<mode>` is PROPOSED (D05 Q7 :297) and
+  no token binds the record at the base; the class → `type.num.xs` / `type.num.sm` / `type.num.base`
+  | metrics | — | E11-D05 §6 :283\u2013287, §6.1 :297; E11-D02 §6 :214\u2013218
 toolbar row, status row, collapsed stub fill | DOM | `color.surface.raised` | CSS custom property |
   surface | E11-D02 §7.6 :349, §8 :367
-legend label, focused pane label, readout values | DOM | `color.text.primary`; `type.ui.label` /
-  `type.ui.body`; `type.num.*` values | CSS | text | E11-D02 §7.5 :339
+legend label, focused pane label, readout values | DOM | `color.text.primary`; `type.ui.body` /
+  `type.ui.label` / `type.ui.caption` (comfortable / compact / dense); `type.num.*` values | CSS |
+  text | E11-D02 §6 :216\u2013218; §7.5 :339
 legend value label, loading text | DOM | `color.text.secondary` | CSS | text | E11-D02 §7.2 :273,
   §7.5 :339
 hidden legend row, unfocused pane label | DOM | `color.text.tertiary` (never `color.text.disabled`)
@@ -1365,8 +1475,9 @@ focus ring on surrogates (CMP-039) | DOM | `color.focus.ring` (2 px, 2 px offset
 tooltip box | DOM | `color.surface.overlay` + `color.border.default`; `radius.card`;
   `elevation.popover` | CSS | surface | E11-D02 §7.3 :304\u2013307; `15` CMP-197 :2370
 tooltip title, labels and values | DOM | `color.text.secondary` (title, labels);
-  `color.text.primary` (values); `type.ui.caption` / `type.ui.label`; `type.num.*`; `space.inset.xs`
-  / `space.inset.sm` / `space.inset.md` per density | CSS | text | E11-D02 §7.3 :308\u2013309
+  `color.text.primary` (values); title `type.ui.caption` (`type.ui.label` at comfortable);
+  `type.num.*`; `space.inset.xs` / `space.inset.sm` / `space.inset.md` per density | CSS | text |
+  E11-D02 §7.3 :308\u2013309
 coloured indicator values (E13) | DOM | `CR:color.text.buy` / `CR:color.text.sell` — until minted,
   values stay `color.text.primary` | CSS | text | E11-D02 §11.4 CR-5 :643; E11-D05 §4.3 :119
 chips and badges (text on a neutral pill) | DOM | `color.text.primary` on `color.surface.raised`;
@@ -1431,23 +1542,23 @@ CMP-228 PreviewTile | DOM | `color.surface.sunken`; `radius.md` | CSS | surface 
 table body, rows, header, selection | DOM | `color.surface.canvas` (odd rows) /
   `color.surface.raised` (even) / `color.surface.hover` (header, hover) / `color.surface.selected`
   (selected) / `color.surface.app` (sub-table) / `color.surface.sunken` (code chip);
-  `color.border.subtle` dividers | CSS | surface | E11-D04 §20 :803
+  `color.border.subtle` dividers | CSS | surface | E11-D04 §20 :804
 table text | DOM | `color.text.primary`; `color.text.secondary`; `color.text.tertiary` (the day
   rule); `color.text.link`; `color.text.on-action`; `type.num.sm` / `type.num.base`;
   `type.ui.caption` / `type.ui.label` / `type.ui.body` / `type.ui.heading-sm`; `font.family.mono`;
-  `CR:font.feature.tabularNums` | CSS | text | E11-D04 §20 :804\u2013805
+  `CR:font.feature.tabularNums` | CSS | text | E11-D04 §20 :805\u2013806
 table chips, Kbd, segment, buttons | DOM | `color.surface.raised`; `color.border.default`;
   `radius.control`; `radius.badge`; `size.control.height` (density-resolved: `size.control.compact`
   / `size.control.comfortable`); `size.target.min`; `size.row.compact` / `size.row.comfortable`;
   `space.1` / `space.2` / `space.3`; `space.inset.sm` / `space.inset.md` | CSS | text / non-text |
-  E11-D04 §20 :806; E11-D07 F-19 :600
+  E11-D04 §20 :807; E11-D07 F-19 :600
 stale banner, restoring strip | DOM | `color.status.warning.subtle` / `color.status.warning.strong`;
-  `motion.duration.fast` fade | CSS | text / non-text | E11-D04 §20 :803, :807
+  `motion.duration.fast` fade | CSS | text / non-text | E11-D04 §20 :804, :808
 SCR-048 card | DOM | `color.surface.raised`; rule + glyph `color.status.danger.strong`; code chip
   `color.surface.sunken`; `radius.card` | CSS | text / non-text | E11-D04 §12.1 :360
 `(estimated)` chip (CMP-227) | DOM | `color.status.info.subtle` / `color.status.info.strong` | CSS |
-  text / non-text | E11-D04 §20 :803
-imbalance flag bar | DOM | `color.footprint.imbalance` | CSS | non-text | E11-D04 §20 :803
+  text / non-text | E11-D04 §20 :804
+imbalance flag bar | DOM | `color.footprint.imbalance` | CSS | non-text | E11-D04 §20 :804
 T2 row-menu write items (CMP-079 + CMP-019 `lock`) | DOM | label + lock glyph `color.text.tertiary`;
   reason `color.text.secondary`; fill `color.surface.raised` + `color.border.default` hairline —
   never `color.text.disabled`, never `opacity.disabled` | CSS | text | E11-D07 §9.5 :440\u2013443;
@@ -1456,7 +1567,7 @@ SCR-047 block (CMP-026) | DOM | `color.surface.canvas`; heading `type.ui.heading
   `color.text.secondary`; timestamp `font.family.mono` `color.text.primary`; link `color.text.link`
   | CSS | text | E11-D04 §11.1 :336
 loading spinner inside CMP-038 (reduce pair) | DOM | `CR:motion.spin` (named by `15` CMP-014, not
-  minted) | CSS | — | E11-D04 §17.5 :545, §20 :807
+  minted) | CSS | — | E11-D04 §17.5 :545, §20 :808
 dialog, menu, tooltip, chip and popover motion | DOM | `motion.duration.fast` /
   `motion.duration.normal`; `motion.easing.standard`; `motion.duration.instant` | CSS | — | E11-D06
   §7 rows 12, 39, 40; E11-D03 §12.4 :490\u2013491
@@ -1511,6 +1622,10 @@ def token_rows() -> dict[str, Any]:
         elif names:
             status = "token"
         else:
+            status = "no token (a metric or a rule)"
+        if consumer == "metrics":
+            # T-27: the density record travels as an `EngineTheme.metrics` scalar; its token home is
+            # PROPOSED (E11-D05 Q7), so the row is a metric, not one of the tokens that exist.
             status = "no token (a metric or a rule)"
         resolves = (
             "yes"
@@ -2126,7 +2241,7 @@ def matrix_check(pack_rows: list[dict[str, str]]) -> dict[str, Any]:
 # from | id | question (short) | status | answered where / owner | target | by
 OQ_TABLE = """
 E11-D02 §20 | O-A | replay hue: purple or teal | routed | owner | #2701 (E11-D05 Q3 keeps purple as
-  the default) | was due 2026-10-22; before E11-T04's token PR
+  the default) | next walkthrough (#331 owner item 6); before E11-T04's token PR (Sprint 06)
 E11-D02 §20 | O-B | `dense` as a per-panel override | answered | E11-D05 §6 :79 (ruled 2026-10-21
   20:27Z) | — | —
 E11-D02 §20 | O-C | `symbol` / `interval` / `env` in the diagnostics snapshot | routed | owner |
@@ -2134,8 +2249,7 @@ E11-D02 §20 | O-C | `symbol` / `interval` / `env` in the diagnostics snapshot |
 E11-D02 §20 | O-D | high-contrast minor grid off | answered | E11-D05 §6 :79 (ruled 2026-10-21
   20:27Z) | — | —
 E11-D02 §20 | O-E | the pressed `auto` word; a `\u203a` word; a second countdown home | routed |
-  owner
-  via E11-D03 (its O-8) | E11-D03 follow-up; #2701 | 2026-10-29
+  owner via E11-D03 (its O-8) | E11-D03 follow-up; #2701 | 2026-10-29
 E11-D02 §20 | O-F | the E06-T01 run on the reference machine | routed | owner | #2701 (E06-T01 / T02
   / T03) | run before 2026-10-29
 E11-D02 §20 | O-G | the footprint readout unit (E11-D01 O4) | routed | owner (product) | E11-D01 O4;
@@ -2207,10 +2321,10 @@ E11-D05 §14 | Q8 | the chart root's role | answered | E11-D07 §2 :84 — `appl
 E11-D05 §14 | Q9 | the harness owner and home | routed | owner; the E11 lane | E11-S06 #387 | before
   E11-S06 starts (Sprint 06)
 E11-D05 §14 | Q10 | E12-D06 D8's gap band adopts `pattern.hatch.gap` | routed | E12-D09 | E12-D09's
-  spec | E12-D09
+  spec | 2026-10-29
 E11-D05 §14 | Q11 | O-F: the E06 spike run | routed | owner | #2701 | run by 2026-10-29
 E11-D05 §14 | Q12 | one spelling "(estimated)" vs "Est." | routed | owner (`25` owner) | E25-D01 Q4
-  | with E25-D01's Q4
+  | 2026-10-29
 E11-D05 §14 | Q13 | high-contrast chrome louder (`color.border.default` hc override) | routed |
   owner, beside O-D | first E11-T04 PR | Sprint 06
 E11-D06 §13.4 | O-1 | τ, floors, cut thresholds, duration pair, easing — the feel run; the pin
@@ -2245,7 +2359,7 @@ E11-D07 §15.5 | Q-03 | the high / low chord vs the TradingView habit | routed |
 E11-D07 §15.5 | Q-04 | E11-D01 O13 — the `Alt+<letter>` family | routed | owner | E11-D01 O13 |
   before E11-S13 starts (Sprint 09)
 E11-D07 §15.5 | Q-05 | the 200-row cap vs the 1 ms slice | routed | E06-T02 | E06-T02's run |
-  E06-T02
+  2026-10-29
 E11-D07 §15.5 | Q-06 | SCR-046's values: a live region or on-demand text | routed | E11-T07 owner |
   E11-T07 | before E11-T07 starts (Sprint 09)
 this pack | Q1 | the deliverable path (`docs/design/E11/`) | answered | RULED as the default built —
@@ -2262,7 +2376,8 @@ this pack | Q5 | the motion table verbatim by tool | answered | RULED (636461026
   built | — | —
 this pack | Q6 | the key map's source: the E11-D07 import | answered | RULED (6364610269):
   `DESIGN_BINDINGS` imported from `main` (#4228 merged `de9a676…`), never a literal copy; `--check`
-  exits 0 at the base; the K-row resolutions stay PROPOSED to their owners (§4.2) | — | —
+  exits 0 at the base (the PR base `0d9aba93…`); the K-row resolutions stay PROPOSED to their owners
+  (§4.2) | — | —
 this pack | Q7 | the walkthrough's form: protocol + agent dry run + owner items | answered | RULED
   (6364610269): (a) + (b) + (c); the dry run is a fold input, not a gate — its NOT FOUND rows become
   G-rows with owners (G-17); nothing is claimed as a session; no recording exists (C-6) | — | —
@@ -2348,7 +2463,7 @@ def oq_check(pack: list[dict[str, str]]) -> dict[str, Any]:
 # ---- 8 glyph union (GL text)
 # surface | example string(s) drawn in GL | source
 GL_STRINGS_TABLE = """
-price tick labels (CMP-188) | 64,050.0 ; 3,240.00 ; 150.200 ; 63,900 | E11-D02 §5.2 :175; §4.2 :150
+price tick labels (CMP-188) | 64,050.0 ; 3,240.00 ; 150.200 ; 63,900 | E11-D02 §5.2 :176; §4.2 :151
 time labels (CMP-189) | 13:30 ; 08:00 ; 14 Oct ; Oct ; 2027 ; 14 Oct 13:30 ; 29 Sep ; 01 Oct |
   E11-D02 §5.3 :183\u2013186; §5.4 :194\u2013199
 zone tag with the live clock | UTC 13:47:05 ; UTC+2 15:47:05 | E11-D02 §7.2 :267
@@ -2630,6 +2745,7 @@ PACK = DESIGN / "E11" / "E11-D09.md"
 HANDOFF = DESIGN / "E11" / "E11-D09-handoff.md"
 SECTIONS = {
     "redlines": ("## 2. Redlines", "## 3. Behaviour rules"),
+    "density": ("### 2.2 The density record", "## 3. Behaviour rules"),
     "keymap": ("### 4.1 The complete key map", "### 4.2 The conflict resolutions"),
     "motion": ("## 5. The motion table", "## 6. Token mapping"),
     "tokens": ("## 6. Token mapping", "## 7. State matrix"),
@@ -2717,6 +2833,36 @@ def compare_motion(pack: list[list[str]], d06: list[list[str]]) -> int:
     return diff + max(0, len(pack) - len(d06))
 
 
+def emitted_rows(d: dict[str, Any], what: str) -> list[list[str]]:
+    """The data rows of `--emit <what>`, parsed the way the pack's tables are."""
+    out: list[list[str]] = []
+    for ln in emit(d, what).splitlines()[2:]:
+        cells = ln.strip().strip("|").replace("\\|", "\x00").split("|")
+        out.append([c.strip().replace("\x00", "|") for c in cells])
+    return out
+
+
+def table_diff(pack: list[list[str]], want: list[list[str]], label: str) -> list[str]:
+    """Cell for cell: the pack's table against the tool's emission (a `—` placeholder, a blanked
+    owner or a re-typed value fails here even when the row counts agree)."""
+    errs: list[str] = []
+    if len(pack) != len(want):
+        errs.append(f"{label}: {len(pack)} rows in the pack vs {len(want)} emitted")
+    for i, (p, w) in enumerate(zip(pack, want, strict=False), 1):
+        if len(p) != len(w):
+            errs.append(f"{label} row {i}: {len(p)} cells in the pack vs {len(w)} emitted")
+            continue
+        for j, (a, b) in enumerate(zip(p, w, strict=True), 1):
+            if a.strip() != b.strip():
+                errs.append(
+                    f"{label} row {i} cell {j}: pack {a.strip()[:48]!r} "
+                    f"vs emitted {b.strip()[:48]!r}"
+                )
+    if len(errs) > 8:
+        errs = [*errs[:8], f"{label}: {len(errs) - 8} more differing cell(s)"]
+    return errs
+
+
 def handoff_t1_diff(handoff_text: str, pack_rows: list[dict[str, str]]) -> dict[str, Any]:
     """The hand-off file's Table 1 states per surface against §7's."""
     if "### Table 1" not in handoff_text:
@@ -2746,6 +2892,7 @@ def build(spec_path: Path | None, handoff_path: Path | None) -> dict[str, Any]:
     handoff_text = read(handoff_path) if handoff_path and handoff_path.exists() else ""
     d02 = parse_d02_dimensions()
     red = redline_rows()
+    den = density_rows()
     rt = redline_tokens(d02)
     beh = behaviour()
     km = keymap_rows()
@@ -2787,6 +2934,7 @@ def build(spec_path: Path | None, handoff_path: Path | None) -> dict[str, Any]:
     red_missing: list[str] = []
     km_cmp: dict[str, Any] = {"rows": 0, "missing": [], "extra": []}
     mo_diff = -1
+    pack_table_diff = 0
     t1: dict[str, Any] = {"diff": -1, "detail": []}
     if spec_text:
         have_el = {r[2] for r in pack_red if len(r) > 2}
@@ -2815,6 +2963,29 @@ def build(spec_path: Path | None, handoff_path: Path | None) -> dict[str, Any]:
             if len(r) > 4 and i < len(tok["rows"]) and r[4].strip() != tok["rows"][i]["status"]:
                 tid, want = tok["rows"][i]["id"], tok["rows"][i]["status"]
                 problems.append(f"token row {tid} status {r[4].strip()!r} != computed {want!r}")
+        # the five tables the tool emits are gated cell for cell, and the empty-cell and unowned
+        # gates run on the pack's own rows, not only on the literals
+        partial = {"redlines": red, "density": den, "tokens": tok, "matrix": mat, "oq": oq}
+        for key in ("redlines", "density", "tokens", "matrix", "oq"):
+            diffs = table_diff(
+                pack_table(spec_text, key), emitted_rows(partial, key), f"pack §{key}"
+            )
+            pack_table_diff += len(diffs)
+            problems += diffs
+        mcols = ("surface", "state", "dark", "light", "hc", "edge", "carrier", "frame", "source")
+        pack_mc = matrix_check(
+            [dict(zip(mcols, r[1:], strict=True)) for r in pack_mat if len(r) == 10]
+        )
+        if pack_mc["empty"]:
+            problems.append(f"pack §7.1: {pack_mc['empty']} empty cell(s) (a `—` counts as empty)")
+        problems += [f"pack §7.1: {m}" for m in pack_mc["missing"]]
+        ocols = ("from", "id", "question", "status", "where_or_owner", "target", "by")
+        pack_oc = oq_check([dict(zip(ocols, r, strict=True)) for r in pack_oq if len(r) == 7])
+        problems += [
+            f"pack §13.1: open-question row without owner + target: {u}"
+            for u in pack_oc["unowned_rows"]
+        ]
+        problems += [f"pack §13.1: source-log row missing: {m}" for m in pack_oc["source_missing"]]
         for key, task in (("walkthrough", r"W-T\d"),):
             if id_rows(spec_text, key, task) != 6:
                 problems.append("walkthrough: W-T1…W-T6 not all present")
@@ -2858,6 +3029,8 @@ def build(spec_path: Path | None, handoff_path: Path | None) -> dict[str, Any]:
         "redline_parsed": len(d02),
         "redline_tokens_resolved": len([n for n, v in rt["resolved"].items() if v]),
         "redline_typed_only": len(rt["typed_only"]),
+        "min_pane_label_heights": min_pane_label_heights(d02),
+        "pack_table_diff": pack_table_diff,
         "behaviour_rules": beh["rules"],
         "proposed_rules": beh["proposed_rules"],
         "worked_cases": len(beh["price_cases"]) + len(beh["time_cases"]) + 1,
@@ -2953,7 +3126,8 @@ def build(spec_path: Path | None, handoff_path: Path | None) -> dict[str, Any]:
         "problems": problems,
         "redlines": red,
         "redline_tokens": rt,
-        "density": parse_d02_density(),
+        "density": den,
+        "density_source": parse_d02_density(),
         "behaviour": beh,
         "keymap": {k: v for k, v in km.items() if k != "rows"},
         "keymap_rows": km["rows"],
@@ -3052,6 +3226,41 @@ def emit(d: dict[str, Any], what: str) -> str:
                         r["radius"],
                         r["opacity"],
                         r["gl_dom"],
+                        r["source"],
+                    ]
+                )
+            )
+    elif what == "density":
+        out.append(
+            mdrow(
+                [
+                    "Mode",
+                    "`cellPadPx`",
+                    "`fontSizeClass` → cell text",
+                    "`axisFontSizeClass` → axis, pills, tags",
+                    "Axis / legend / readout type",
+                    "`lodBias`",
+                    "`G` time / price",
+                    "Spacing step",
+                    "Legend row",
+                    "Source",
+                ]
+            )
+        )
+        out.append(mdrow(["---"] * 10))
+        for r in d["density"]:
+            out.append(
+                mdrow(
+                    [
+                        r["mode"],
+                        r["cellPadPx"],
+                        r["cell_class"],
+                        r["axis_class"],
+                        r["type"],
+                        r["lodBias"],
+                        r["G"],
+                        r["spacing"],
+                        r["legend_row"],
                         r["source"],
                     ]
                 )
@@ -3368,6 +3577,10 @@ def render_report(d: dict[str, Any]) -> str:
         f"`15` tokens {c['catalogue_tokens']} absent {c['catalogue_absent']}"
     )
     put(f"hex in spec/handoff: {c['hex_spec']} / {c['hex_handoff']}")
+    put(
+        f"pack tables vs --emit (§2.1, §2.2, §6.1, §7.1, §13.1): {c['pack_table_diff']} differing "
+        f"cell(s) · B-6 label heights parsed from D02 §2: {c['min_pane_label_heights']}"
+    )
     mc = d["matrix_check"]
     put(
         f"matrix: surfaces {c['matrix_surfaces']} · states {c['matrix_states']} · "
