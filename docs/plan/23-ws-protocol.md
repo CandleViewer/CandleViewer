@@ -94,7 +94,7 @@ The server echoes exactly one. A client offering no recognised subprotocol is cl
 
 - **Additive changes** (new topic, new optional field, new error code) do **not** bump the version. Clients MUST ignore unknown fields and unknown topic names.
 - **Breaking changes** (field removal, semantic change, envelope layout change) introduce `cv.v2`, served in parallel for at least one release.
-- The server states the exact build in the `welcome` frame (`protocol`, `server_version`, `git_sha`). A client whose `min_server_version` expectation is unmet SHOULD warn but MAY continue.
+- The server states its build label in the `welcome` frame (`protocol`, `server_version`), and the exact build (`git_sha`) only after authentication, in `auth_ok` (§4.3; E09-X02 F-8). §13.3 still declares `welcome.git_sha`, optional, but no `welcome` carries it. A client whose `min_server_version` expectation is unmet SHOULD warn but MAY continue.
 
 The version is negotiated by the subprotocol (`cv.v1.*`, §2.2) and carried by `protocol: "cv.v1"` in `hello` and `welcome` (§4.2); a breaking change is `cv.v2`, served in parallel (C-6.3). The envelope has no `v` member, because one would repeat the subprotocol on every frame, and none is added.
 
@@ -366,7 +366,6 @@ The client sends `hello` immediately on open. The server replies `welcome` with 
     "protocol": "cv.v1",
     "encoding": "msgpack",
     "server_version": "1.0.0",
-    "git_sha": "a91f0c3",
     "connection_id": "ws_0193f2bc1d40",
     "server_time_ms": 1789132262002,
     "clock_skew_ms": 22,
@@ -439,6 +438,7 @@ The client sends `hello` immediately on open. The server replies `welcome` with 
     "session_id": "5e1a0c33-2b44-4f10-9a22-77aa11bb22cc",
     "token_expires_at_ms": 1789132862110,
     "kill_switch": { "engaged": false, "scope": "global" },
+    "git_sha": "a91f0c3",
   },
 }
 ```
@@ -468,9 +468,9 @@ Rules:
 - Both subprotocols are served, `cv.v1.msgpack` first (§2.2, #2483). Its client frames are decoded under the SR-185 bounds (§3.6), and its data frames carry CVWB payloads raw, as `e: "b"` (§3.2).
 - New connections per user are rate limited (#2558): at most `CV_WS_MAX_AUTHS_PER_USER_PER_MIN` (20 by default, 1 to 20) sockets may complete their first successful `auth` in any sliding 60 s window. A failed `auth` (it has its own 3 strikes) and an in-place re-`auth` do not count; only a new socket's first successful `auth` does. The socket that would exceed the limit gets `bye` `client_rate_limited` with `retry_after_ms` (the time until the oldest counted `auth` leaves the window, at least 1 000) and `reconnect: true`, then close `4429`, **instead of** `auth_ok`. It never becomes authenticated, so it writes no `ws.connection.closed` row, which is the point: a valid token cannot open and close sockets in a tight loop and add one audit row per close. Every refusal is counted in `cv_ws_connect_rate_limited_total` (and in `cv_ws_closes_total{reason="client_rate_limited"}`, a series the inbound frame limiter's `4429` shares). The warning that names the user and the peer address is capped: it is logged for a user's first refusal in a window. The count is per user, kept in memory per process, and forgotten once a user's window is empty.
 - Sockets that have not authenticated yet are capped per process (#2155): a socket counts from `accept` to its first `auth_ok`, and at most 64 count at a time (`MAX_UNAUTHENTICATED_SOCKETS`: 8 users with 8 sockets each, all reconnecting at once). A re-`auth` never counts, and a socket that ends any other way (a close by either side, a fault, a cancellation) stops counting then. Past the cap a new socket is accepted and at once gets `bye server_shedding_load` with `retry_after_ms` 10 000 (the auth timeout, the longest a counted socket may still wait for `auth_ok`) and `reconnect: true`, then close `1013`, before any frame is read. It is never counted and writes no audit row, as it has no identity. The `bye` and the close get the 2 s close flush deadline (§4.4). Each refusal is counted in `cv_ws_closes_total{reason="server_shedding_load"}`, which is never capped. Its `ws socket shed` warning, with the cap and the peer address, is capped as §2.5's is: at most 10 a minute, then one `ws socket sheds suppressed` line, and the rest of that minute is only counted.
-- `welcome.server_version` / `git_sha` come from settings (`CV_VERSION`, `CV_GIT_SHA`). `auth_ok.kill_switch` reflects the live kill-switch state at the time of the `auth`.
+- `welcome.server_version` comes from settings (`CV_VERSION`), and `auth_ok.git_sha` from `CV_GIT_SHA`. No `welcome` carries `git_sha`, so the exact build is not sent before authentication (E09-X02 F-8); §13.3 keeps the optional member declared, and cv.v1 still admits it. `auth_ok.kill_switch` reflects the live kill-switch state at the time of the `auth`.
 - Settings (`CV_WS_*`): `CV_WS_AUTH_TIMEOUT_S` (10), `CV_WS_MAX_INBOUND_FRAME_BYTES` (262 144), `CV_WS_MAX_CONNECTIONS_PER_USER` (8), `CV_WS_MAX_AUTHS_PER_USER_PER_MIN` (20), `CV_WS_SHUTDOWN_GRACE_MS` (5 000), `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS` (20 000), `CV_WS_QUEUE_BYTES` (8 388 608, floor 4 194 304), `CV_WS_QUEUE_FRAMES` (2 000, floor 256) and `CV_WS_CLASSIFY_INTERVAL_MS` (1 000). The defaults are the values in this section, §8.3, §8.4 and §9.4. `CV_WS_BACKPRESSURE_ENABLED` (off) turns on the §8 mechanisms, and `welcome.features.coalescing` follows it (§4.2); it is a C-4.13 flag, removed with #2900. `CV_WS_QUEUE_BYTES` and `CV_WS_QUEUE_FRAMES` may be lowered down to their floors and never below them, and never raised above the values here (a raise needs a security review, E17 threat model §6); so may `CV_WS_MAX_INBOUND_FRAME_BYTES`, `CV_WS_MAX_CONNECTIONS_PER_USER` and `CV_WS_MAX_AUTHS_PER_USER_PER_MIN`, down to 1 024, 1 and 1 (#415); `CV_WS_CLASSIFY_INTERVAL_MS` is held to 500-10 000. The floors, 4 194 304 bytes and 256 frames, are typo guards that refuse, at startup, a byte budget under one maximum outbound frame or a frame budget under the 200 allowed subscriptions (§3.6), either of which would close a connection at its first large frame or its first round of snapshots. At a floor nothing more than one maximum frame is promised to fit.
-- `auth_ok` carries `user_id`, `roles`, `permissions`, `account_scope`, `session_id`, `token_expires_at_ms` and `kill_switch`. It does not carry `username` or `allowed_environments`, which the examples above show and §13.4 marks optional (#2486).
+- `auth_ok` carries `user_id`, `roles`, `permissions`, `account_scope`, `session_id`, `token_expires_at_ms`, `kill_switch` and `git_sha`, on a first `auth` and an in-place re-`auth` alike. It does not carry `username` or `allowed_environments`, which the examples above show and §13.4 marks optional (#2486).
 - `auth_ok.kill_switch` carries the same role-filtered view as the `system` topic (§15.9), on a first `auth` and on an in-place re-`auth` alike: the whole object for the Owner; for a Manager or Viewer only `engaged`, `scope`, `engaged_at_ms` and the `exchange_account_ids` its `account_scope` lists. A connection whose principal holds no role gets no `kill_switch` (the field is optional, §13.4).
 - When an authenticated connection ends, one `ws.connection.closed` audit row is attempted (#2486):
   - its reason is the close reason: the `bye`'s (`other` if it is not a §13.6 reason); else `internal_error` after a fault; else `shutdown` when the server is shutting down (§9.4) and its host ended the socket (uvicorn's own `1012`, or the cancellation of the handler when uvicorn's graceful timeout expires); else `client_closed`: a close the client sent, a drop that a read or a failed send saw, or its own `1012` while the server runs. While the server is shutting down the label is best effort: a client's own `1012`, and a client that drops unseen just before the host cancels the handler, cannot be told from the host and read `shutdown`; and a send that fails in that window cannot be told from a socket the host has already closed, so a host's `1012` can read `client_closed` (the failed send ends the writer, which stops a reader that is busy, in a re-auth that hangs, before it reads the `1012`). Both labels are `info` rows. uvicorn's own `1012` under `--reload` reads `client_closed`, because `--reload` does not mark the server as shutting down;
@@ -1679,11 +1679,11 @@ The sessions show a server with `CV_WS_BACKPRESSURE_ENABLED` on (§8.4), so `wel
 // 1. open wss://…/api/v1/ws with Sec-WebSocket-Protocol: cv.v1.msgpack, cv.v1.json
 // 2. handshake
 C→S {"t":"hello","id":"c-1","p":{"client":"candleviewer-web","client_version":"1.0.0","shell":"electron","protocol":"cv.v1","capabilities":["binary_book","binary_bars","binary_footprint","binary_heatmap","coalescing","replay"],"clock_ms":1789132261980}}
-S→C {"t":"welcome","id":"c-1","ts":1789132262002,"p":{"protocol":"cv.v1","encoding":"msgpack","server_version":"1.0.0","git_sha":"a91f0c3","connection_id":"ws_0193f2bc1d40","server_time_ms":1789132262002,"clock_skew_ms":22,"auth_required":true,"auth_timeout_ms":10000,"heartbeat":{"interval_ms":15000,"timeout_ms":45000},"limits":{"max_subscriptions":200,"max_topics_per_request":50,"max_inbound_frame_bytes":262144,"max_outbound_frame_bytes":4194304,"min_throttle_ms":50,"max_symbols_per_connection":40},"features":{"replay":true,"binary_payloads":true,"coalescing":true}}}
+S→C {"t":"welcome","id":"c-1","ts":1789132262002,"p":{"protocol":"cv.v1","encoding":"msgpack","server_version":"1.0.0","connection_id":"ws_0193f2bc1d40","server_time_ms":1789132262002,"clock_skew_ms":22,"auth_required":true,"auth_timeout_ms":10000,"heartbeat":{"interval_ms":15000,"timeout_ms":45000},"limits":{"max_subscriptions":200,"max_topics_per_request":50,"max_inbound_frame_bytes":262144,"max_outbound_frame_bytes":4194304,"min_throttle_ms":50,"max_symbols_per_connection":40},"features":{"replay":true,"binary_payloads":true,"coalescing":true}}}
 
 // 3. authenticate
 C→S {"t":"auth","id":"c-2","p":{"access_token":"eyJhbGciOiJFZERTQSJ9…","environments":["live","demo"]}}
-S→C {"t":"auth_ok","id":"c-2","ts":1789132262110,"p":{"user_id":"9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001","username":"basiltt","roles":["owner"],"permissions":["marketdata:read","orders:read","orders:write","positions:read","positions:write","executions:read","accounts:read","rules:read","alerts:read","recording:read","audit:read"],"account_scope":[],"allowed_environments":["live","demo"],"session_id":"5e1a0c33-2b44-4f10-9a22-77aa11bb22cc","token_expires_at_ms":1789132862110,"kill_switch":{"engaged":false,"scope":"global"}}}
+S→C {"t":"auth_ok","id":"c-2","ts":1789132262110,"p":{"user_id":"9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001","username":"basiltt","roles":["owner"],"permissions":["marketdata:read","orders:read","orders:write","positions:read","positions:write","executions:read","accounts:read","rules:read","alerts:read","recording:read","audit:read"],"account_scope":[],"allowed_environments":["live","demo"],"session_id":"5e1a0c33-2b44-4f10-9a22-77aa11bb22cc","token_expires_at_ms":1789132862110,"kill_switch":{"engaged":false,"scope":"global"},"git_sha":"a91f0c3"}}
 S→C {"t":"snap","ch":"system","s":1,"ts":1789132262112,"e":"j","p":{"kind":"health","health":"healthy","kill_switch":{"engaged":false,"scope":"global"},"feature_flags":{"trading.live_enabled":false,"rules.graph_editor":true},"exchange":{"public_ws":"connected","private_ws":"connected","rest":"healthy"},"clock_offset_ms":4,"degraded_topics":[]}}
 
 // 4. subscribe (private first, then the focused pane). An Owner's account_scope is [] (§4.3), so an
@@ -2167,7 +2167,10 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
     "protocol": { "const": "cv.v1" },
     "encoding": { "enum": ["msgpack", "json"] },
     "server_version": { "type": "string" },
-    "git_sha": { "type": "string" },
+    "git_sha": {
+      "type": "string",
+      "description": "Not sent (E09-X02 F-8): the exact build comes only after authentication, as auth_ok.git_sha (§4.3). Kept declared and optional, as cv.v1 admits it."
+    },
     "connection_id": { "type": "string" },
     "server_time_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
     "clock_skew_ms": { "type": "integer" },
@@ -2263,7 +2266,11 @@ A `snap` sent as a chunk set (§3.6) carries `s: null` on every chunk but the la
     },
     "session_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" },
     "token_expires_at_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
-    "kill_switch": { "$ref": "cv://ws/v1/system.schema.json#/$defs/killSwitch" }
+    "kill_switch": { "$ref": "cv://ws/v1/system.schema.json#/$defs/killSwitch" },
+    "git_sha": {
+      "type": "string",
+      "description": "The exact build (CV_GIT_SHA), sent only after authentication (E09-X02 F-8; §4.3)."
+    }
   },
   "additionalProperties": false
 }

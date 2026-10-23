@@ -916,7 +916,6 @@ def _limits() -> dict[str, Any]:
     welcome = lifecycle.welcome_payload(
         encoding="json",
         server_version="0",
-        git_sha="0",
         connection_id="c",
         server_time_ms=0,
         client_clock_ms=None,

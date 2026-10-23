@@ -18,7 +18,6 @@ def _welcome(**cap: int) -> dict[str, int]:
     welcome = welcome_payload(
         encoding="json",
         server_version="1.0.0",
-        git_sha="abc",
         connection_id="ws_1",
         server_time_ms=1,
         client_clock_ms=None,

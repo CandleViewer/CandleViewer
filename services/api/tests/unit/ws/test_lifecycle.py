@@ -175,13 +175,13 @@ def test_welcome_payload_full_limits_and_clock_skew() -> None:
     p = welcome_payload(
         encoding="json",
         server_version="1",
-        git_sha="abc",
         connection_id="ws_1",
         server_time_ms=1_000_022,
         client_clock_ms=1_000_000,
         features=welcome_features(coalescing=False),
     )
     assert p["clock_skew_ms"] == 22
+    assert "git_sha" not in p  # E09-X02 F-8: the exact build only in `auth_ok` (§4.3)
     assert p["limits"] == LIMITS_BLOCK
     assert LIMITS_BLOCK == {
         "max_subscriptions": 200,
@@ -216,7 +216,6 @@ def test_welcome_payload_omits_skew_without_integer_client_clock(clock: object) 
     p = welcome_payload(
         encoding="json",
         server_version="1",
-        git_sha="abc",
         connection_id="ws_1",
         server_time_ms=5,
         client_clock_ms=clock,
@@ -229,7 +228,6 @@ def test_welcome_clock_skew_can_be_negative() -> None:
     p = welcome_payload(
         encoding="json",
         server_version="1",
-        git_sha="a",
         connection_id="c",
         server_time_ms=1000,
         client_clock_ms=3500,
@@ -270,7 +268,6 @@ def test_welcome_payload_carries_exactly_the_features_it_is_given() -> None:
     p = welcome_payload(
         encoding="json",
         server_version="1",
-        git_sha="a",
         connection_id="c",
         server_time_ms=1000,
         client_clock_ms=None,

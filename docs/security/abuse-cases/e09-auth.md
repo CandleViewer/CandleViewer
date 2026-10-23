@@ -1,4 +1,4 @@
-# E09-X02 — Abuse-case catalogue: auth, session, RBAC (partial delivery)
+# E09-X02 — Abuse-case catalogue: auth, session, RBAC
 
 - Ticket: E09-X02 (#298). Threat source: `docs/security/threat-models/e09-auth-rbac.md` (E09-X01).
 - Method: white-box, in-process, fixed clock, in-memory fakes, no network. Automated cases live in
@@ -6,8 +6,8 @@
 - **Scope:** the durable in-process subset: the service-level cases, plus the HTTP, WS and
   observability cases of #2144 driven through the real `create_app()` stack. Rows marked **NOT RUN**
   have no observed result and are NOT claimed as defended; the remaining ones need real Postgres
-  roles or a DB-wired stack and are tracked in #2105, except the nightly chain verifier, which waits
-  for its job (F-6, #2111).
+  roles or a DB-wired stack and are tracked in #2105. The nightly chain verifier, NOT RUN until its
+  job existed (F-6), runs since #3872 and is shown on Postgres 16 in CI's integration lane.
 - **Integration lane:** AC-AUD-01/02 are the exception to "in-process". They log in as the real
   `cv_app` role on Postgres 16, created by `infra/scripts/pg_bootstrap.sql` on a schema migrated as
   `cv_owner`, in `services/api/tests/integration/audit/test_audit_guard_cv_app.py`. CI's integration
@@ -21,7 +21,7 @@
 
 ## Mutation check (DoD)
 
-Each control was disabled on the scratch worktree and the named case failed, then reverted:
+Each control was disabled on a scratch worktree or in place, the named case failed, then reverted:
 
 | Control disabled                                                       | Failing case                                                                           |
 | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -50,6 +50,12 @@ Each control was disabled on the scratch worktree and the named case failed, the
 | `auth_login_failures_total` increments removed (#2319)                 | `test_obs_credential_*`, `test_obs_mfa_*`                                              |
 | `auth_refresh_reuse_total` not in `AUTH_EXPORTED_NAMES` (#2319)        | `test_obs_refresh_*`                                                                   |
 | `users_invites_rejected_total` not in `AUTH_EXPORTED_NAMES` (#2319)    | `test_obs_invite_*`                                                                    |
+| `welcome_payload` puts `git_sha` back in the `welcome` (F-8)           | AC-INFO-01 `welcome`; `test_lifecycle*.py`, `test_app_wiring.py`                       |
+| the sha back under another key, in the `welcome` (F-8)                 | AC-INFO-01's value checks: the sha is not in the `welcome`                             |
+| the `welcome` carries only the sha's 7-character prefix (F-8)          | AC-INFO-01 `welcome` (the prefix check); the failed pre-auth sequence                  |
+| the sha in a pre-auth `err`, `bye` or close reason (F-8)               | AC-INFO-01's failed pre-auth sequence                                                  |
+| the gateway builds `auth_ok` without `git_sha` (F-8)                   | AC-INFO-01's `auth_ok` control; `test_app_wiring.py`, `test_lifecycle_socket.py`       |
+| the gateway builds a re-auth's `auth_ok` without `git_sha` (F-8)       | AC-INFO-01's re-auth case; the first-auth control still passes                         |
 
 AC-AUD-01/02 attack the real `cv_app`, so their controls are the shipped files that give it its
 rights. Each was changed on a scratch copy of `0003_audit_log` or `pg_bootstrap.sql`, except the last
@@ -139,11 +145,12 @@ race. The 3 unit cases, in `tests/unit/auth/test_mfa_service_edges.py`, are
 | AC-INV-07     | U12               | Signed-in user Bob holds Alice's invite link        | Redeem with Bob's bearer; also send `username` / `user_id` / `email` claims                           | The invite never attaches to the caller                                                                                                                                      | Claims: 400, not consumed, `users.invite_rejected` (`identity_tamper`) row each; Alice viewer; Bob untouched   | DESIGN-DECISION (bearer link, U12 custody); claims unaudited before #2319 |
 | AC-INV-08     | U12               | Another invitee's pending TOTP method               | Confirm Alice's invite with Mallory's method and a valid code                                         | Refused; Alice unaffected                                                                                                                                                    | 422 `invalid_code`; `users.invite_rejected` (`enrollment_invalid`); Alice completes                            | DEFENDED                                                                  |
 | AC-WS-01      | §4.3              | Socket before `auth_ok`                             | `sub` to private `orders` three times before `auth`                                                   | Nothing served; socket closed                                                                                                                                                | `err not_authenticated` x2, then `bye not_authenticated` (4401); nothing subscribed                            | DEFENDED                                                                  |
-| AC-WS-02      | U13               | Captured `auth` frame (bearer access token)         | Replay it on a second socket while the session is live; again after logout                            | Rejected without a live session (U13 text)                                                                                                                                   | Live: `auth_ok` for the victim's session; logout closes both (4401); later replays fail                        | **FINDING F-4** (Architect/Owner: extend F-2 or fix)                      |
+| AC-WS-02      | U13               | Captured `auth` frame (bearer access token)         | Replay it on a second socket while the session is live; again after logout                            | Rejected without a live session (U13 text)                                                                                                                                   | Live: `auth_ok` for the victim's session; logout closes both (4401); later replays fail                        | **FINDING F-4**, accepted (F-2's envelope); R2: #4202                     |
 | AC-WS-03      | U32 §9.5          | Manager socket on `orders` for a granted account    | Revoke the grant; re-auth with the same token; subscribe again                                        | Dropped live; not regained                                                                                                                                                   | `permission_change` + `revoked` (`account_scope_changed`); re-sub `account_scope_denied`                       | DEFENDED (re-auth snapshot race: fixed by #2318)                          |
 | AC-WS-04      | §5.2 §6 registry  | Authenticated socket                                | `sub` per name: `../admin`, `orders.*`, `/../`, control chars, case, 300 chars; mixed; unknown names  | Refused, nothing attached, socket stays open: a name that is not a topic name refuses its whole `sub` (§5.2, #2567); an unknown but well-formed name is refused per topic    | Malformed: `err invalid_options`, `topics[i]`; granted topic beside one not attached. Unknown: per topic       | DEFENDED                                                                  |
 | AC-AUD-01     | U14 SR-066        | `cv_app`: SELECT, INSERT only, on both audit tables | `UPDATE`, `DELETE`, `TRUNCATE` on `audit_log` and on `audit_checkpoints` as `cv_app`                  | `insufficient_privilege` for the missing table privilege; every row unchanged afterwards                                                                                     | Local PG 16.2: refused x6, rows unchanged (`test_cv_app_cannot_rewrite_audit_history`)                         | DEFENDED (integration lane: `pytest tests/integration -m integration`)    |
 | AC-AUD-02     | U14 SR-063 SR-066 | Same role, own login per attempt; owns nothing      | Drop, disable or replace each guard trigger and function; take ownership; replica mode; add a trigger | Each attempt `insufficient_privilege`; guard unchanged (triggers, enabled, function bodies, owners), still firing: owner UPDATE, DELETE, TRUNCATE refused, new row chained   | Local PG 16.2: refused x44 (4 with CREATE on the schema), guard intact: see the evidence note                  | DEFENDED (integration lane: `pytest tests/integration -m integration`)    |
+| AC-INFO-01    | U26 §4.3          | No credential: a socket before `auth`               | WS `hello`, read `welcome`; `sub`, then 3 bad `auth` to the close; `auth` twice, read `auth_ok`       | No git sha, whole or cut to 7 characters, in the pre-auth `welcome`, `err`, `bye` or close reason: only the build label (the version); the sha in each `auth_ok`             | `welcome` and the failed sequence: the version, no sha; a Manager's `auth_ok`, first and re-auth: the sha      | DEFENDED (F-8: the WS read; the probes #4222, `/metrics` #4206)           |
 
 Evidence for AC-AUD-01/02, all in the CI integration lane (`pytest tests/integration -m integration`):
 
@@ -192,23 +199,28 @@ refused before any password check when its CSRF token belongs to another session
 | Real DB checks  | Argon2id params from DB row; atomic MFA/recovery consume; Alertmanager delivery of the lockout alert (SR-016; its series: #2628)               | Fakes only here                                                        |
 | HTTP RBAC sweep | Every admin/owner route as Manager/Viewer; body/query/path account_id; list probes; self-service `user_id` (D5); role change with live session | Needs full app wiring                                                  |
 
-## NOT RUN (no observed result; blocked by a missing job, not by the environment)
+## The nightly chain verifier (NOT RUN until its job existed: F-6, #2111)
 
-| Area          | Cases                                                             | Why                                                |
-| ------------- | ----------------------------------------------------------------- | -------------------------------------------------- |
-| Audit attacks | the nightly chain verifier detects an out-of-band edit (U14, U20) | There is no scheduled verifier job yet: F-6, #2111 |
+| Area          | Cases                                                             | Evidence                                                                                                                        |
+| ------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Audit attacks | the nightly chain verifier detects an out-of-band edit (U14, U20) | `test_audit_verify_runner_pg.py::test_scheduled_run_finds_a_row_altered_behind_the_chain_and_the_next_run_still_happens`, #3872 |
 
-The on-demand verifier already locates such an edit: `test_superuser_tamper_is_located` in
-`services/api/tests/integration/audit/test_audit_repository.py` edits a row as a superuser with the
-append-only trigger disabled, and `verify()` returns that row as the first bad one. Only the scheduled
-run waits for #2111; an environment would not unblock it.
+The verifier runs on schedule since #3872, which wires the job of #3017 to the real runner from
+`create_app`; #3059 pages when no run has passed for 26 hours. The case
+`test_audit_verify_runner_pg.py::test_scheduled_run_finds_a_row_altered_behind_the_chain_and_the_next_run_still_happens`
+is AC5 shown on real Postgres 16 (the #298 QA record; CI's
+integration lane, as it does not run locally): a row altered behind the chain, as a superuser
+can alter one, is found by a scheduled run, whose critical `admin.audit_verify` record names the
+first bad entry, and the next run still happens. The on-demand verifier locates such an edit
+too: `test_superuser_tamper_is_located` in
+`services/api/tests/integration/audit/test_audit_repository.py`.
 
 ## X01 threat cross-check (#298 AC1)
 
 These ids from `docs/security/threat-models/e09-auth-rbac.md` have no "Cases" row of their own; every
-other id is in that table's threat column or, for U17 and U20, in a "NOT RUN" table above. "Not
-executable" means this harness has no way to attempt the attack; the reason says where the check
-lives instead.
+other id is in that table's threat column or, for U17, in a "NOT RUN" table above, and for U20 in
+the nightly chain verifier's table. "Not executable" means this harness has no way to attempt the
+attack; the reason says where the check lives instead.
 
 | Threat | Case, or why it is not executable here                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -221,7 +233,6 @@ lives instead.
 | U23    | Not executable here: DOM, URL and browser-storage persistence (SR-054) is a browser property, owned by the E09-Q02 Playwright suite (#293, `enrolment.spec.ts`; SCR-003 is not built yet). Server side: AC-MFA-03/04                                                                                                                                                                                                                                                       |
 | U24    | `POST /admin/audit/export` is Owner-only (Manager and Viewer get 403, executed in `tests/contract/rbac/matrix.yaml`). The PII projection on rows a Manager may query needs the DB-wired audit stack (#2105)                                                                                                                                                                                                                                                                |
 | U25    | AC-CSRF-05 (a foreign session id gets the same 404 as a missing one) and `test_never_issued_expired_and_revoked_tokens_get_a_byte_identical_401`; the full 403-body sweep is #2105                                                                                                                                                                                                                                                                                         |
-| U26    | **FINDING F-8**: `/healthz` (`security: []`) and the pre-auth WS `welcome` (`23-ws-protocol.md` §4.2) serve `git_sha` and the version to any client (`tests/unit/test_app.py::test_healthz_returns_200_with_build_info`, `tests/unit/ws/test_app_wiring.py::test_welcome_carries_settings_build_info`)                                                                                                                                                                     |
 | U29    | Not executable: no expired-session reap job exists in `candleviewer/` yet, and the `GET /auth/session` p95 budget needs Postgres and k6 (E09-Q05 in #2105)                                                                                                                                                                                                                                                                                                                 |
 | U33    | Not executable: a startup refusal, not a request path; this harness injects `auth_clock`, which wins. Tests: `tests/unit/test_settings_test_clock.py`, `tests/unit/auth/test_testnet_clock.py`, `tests/unit/test_main_lifespan.py`. Time-moving cases: e2e stack only (`qa/plans/e09-auth-rbac-test-plan.md` §6.3)                                                                                                                                                         |
 | U35    | Not executable here: no mounted route restates its request yet (the route slice of #2304). Cases: `test_bound_grant_refuses_a_swapped_payload` (`tests/unit/api/test_step_up_binding_router.py`), `test_rules_grant_bound_to_one_rule_refuses_to_arm_another` (`tests/unit/api/test_step_up_rules_route.py`)                                                                                                                                                               |
@@ -280,10 +291,11 @@ not through `create_app()`.
 Every authenticated WS connection also writes one `ws.connection.closed` row when it ends (#2528;
 `reason` is the `bye` reason, else `internal_error`, `shutdown` or `client_closed`); an
 unauthenticated close writes none. No runtime signal by nature: AC-CRED-01/02 (offline hash),
-AC-ENUM-03 (timing), AC-CSRF-03 (cookie flags) and AC-SES-01b, 02 and 04 (a normal sign-in or
-refresh: nothing is attacked, so nothing is signalled). AC-MFA-05 shares the `auth.mfa_failed`
-path. "None" in the alert column is the recorded state, not a target: alerting on these signals is
-a detection-rule decision.
+AC-ENUM-03 (timing), AC-CSRF-03 (cookie flags), AC-INFO-01 (a public read: nothing is refused;
+the failed `auth` of its error-path case leaves AC-WS-02's signals) and AC-SES-01b, 02 and 04
+(a normal sign-in or refresh: nothing is attacked, so nothing is signalled). AC-MFA-05 shares
+the `auth.mfa_failed` path. "None" in the alert column is the recorded state, not a target:
+alerting on these signals is a detection-rule decision.
 
 ## Findings
 
@@ -309,14 +321,21 @@ a detection-rule decision.
   accept any string, which hid it. Repro: AC-INV-05 / AC-INV-06 against the registry-validating
   writer in `tests/security/auth/_stack.py`. Regression: those cases and
   `tests/unit/audit/test_router_actions_registered.py`. Owner: backend (auth-rbac). Maps to U19.
-- **F-4 (design gap, STRIDE: Spoofing, severity Low-Medium; decision pending).** AC-WS-02, U13: a
-  WS `auth` frame replayed on a second socket is accepted while the session is live. The cause is
-  that of F-2: the frame carries the bearer access token, which is not bound to a connection,
-  address or user agent. U13's mitigation text only promises rejection for a frame _without_ a
-  live session, so the behaviour matches its letter but not the threat it names.
-  - Decision needed from the Architect and the Owner: accept it as an extension of F-2, or bind
-    the WS identity to a single-use, short-lived WS ticket minted over REST. Owner: Architect +
-    Owner. Tracking: #298 (QA record); no separate public issue until decided (C-12.13).
+- **F-4 (design gap, STRIDE: Spoofing, severity Low-Medium) — ACCEPTED** (#2701 delegation
+  (6284192190), LANE-28 2026-10-22 21:47Z and 22:15Z). AC-WS-02, U13: a WS `auth` frame replayed
+  on a second socket is accepted while the session is live. The cause is that of F-2: the frame
+  carries the bearer access token, which is not bound to a connection, address or user agent.
+  U13's mitigation text only promises rejection for a frame _without_ a live session, so the
+  behaviour matches its letter but not the threat it names.
+  - Decision (a), accepted now: F-2's envelope bounds it on a private, Tailscale-only, TLS-only
+    deployment: a socket closes at its token's real expiry (#2265), a logout or revocation
+    closes every socket of the session (the `RevocationHub`), and E17 rates the replay Medium
+    with a Low residual (WS-S01, WS-S02). No code change; AC-WS-02 keeps its expectation.
+  - Residual risk, accepted with it: while a session is live, a socket's identity rests on its
+    bearer token, not on the connection, until the token's TTL, a logout or a revocation ends it.
+    Owner: Architect + Owner; review date 2027-01-22 (C-12.1).
+  - Decision (b), R2 hardening: bind the frame to the connection, #4202. Owner: Architect +
+    Owner.
   - Reproduction steps are withheld from this public repository (`SECURITY.md` §1; #298 Security
     notes): they belong in a private advisory or the private security folder (Security engineer),
     not here. AC-WS-02 is the automated case.
@@ -327,12 +346,17 @@ a detection-rule decision.
     (`api/users.py`), then refresh with the pre-change cookie. It should be refused, but no code path
     rotates or revokes it. Found by code review; not run here, because a role change under a live
     session is part of the env-only HTTP sweep (#2105).
-- **F-6 (gap, STRIDE: Repudiation, severity Medium, P1; E09-X04 R-5; tracked as #2111).** No
-  scheduled job runs the audit hash-chain verifier: `verify()` runs only on demand
-  (`POST /admin/audit/verify`), so an out-of-band edit is found only when someone asks. Maps to U14
-  and U20; #298 AC5 depends on it. Owner: Security; E43-T10 (#1238) verifies the fix.
-  - Repro: in `candleviewer/` only `POST /admin/audit/verify` (`api/audit.py`) calls the verifier;
-    `audit/checkpoint.py` records the head hash without verifying the chain.
+- **F-6 (gap, STRIDE: Repudiation, severity Medium, P1; E09-X04 R-5; tracked as #2111) — REMEDIED
+  by #3017, #3059 and #3872.** No scheduled job ran the audit hash-chain verifier: `verify()` ran
+  only on demand (`POST /admin/audit/verify`), so an out-of-band edit was found only when someone
+  asked. Maps to U14 and U20; #298 AC5 depends on it. Owner: Security; E43-T10 (#1238) verifies
+  the fix.
+  - Remedy: #3017 added the start-up and nightly verify job, #3059 pages when no run has passed
+    for 26 hours, and #3872 runs the real verifier on that schedule from `create_app`. AC5 on
+    Postgres 16, `test_audit_verify_runner_pg.py::test_scheduled_run_finds_a_row_altered_behind_the_chain_and_the_next_run_still_happens`
+    (see "The nightly chain verifier" above).
+  - Repro (before #3872): in `candleviewer/` only `POST /admin/audit/verify` (`api/audit.py`)
+    called the verifier; `audit/checkpoint.py` recorded the head hash without verifying the chain.
 - **F-7 (gap, STRIDE: Elevation of privilege, severity Low; E09-X04 R-3; tracked as #2109) — FIXED
   by #2124.** SR-027 grants `Viewer` first and elevates separately, but an invite could carry
   `manager`. Since #2124 (Owner decision AC on #1778) an invite grants `viewer` only: `POST /users`
@@ -340,12 +364,29 @@ a detection-rule decision.
   (AC-INV-06), both audited. #2109 was closed after QA passed (2026-10-16). Owner: Architect + Owner.
   - Repro (before #2124): an Owner invited with `"roles": ["manager"]`; redeeming it activated a
     Manager.
-- **F-8 (design gap, STRIDE: Information disclosure, severity Low; decision pending).** U26:
-  `/healthz` and the pre-auth WS `welcome` carry build metadata (`git_sha`, the version) to any
-  client. That is contract behaviour (`security: []` on the health probes; `23-ws-protocol.md`
-  §4.2), while U26's mitigation says only the Owner sees build metadata.
-  - Decision needed from the Architect and the Owner: amend U26 (mesh-only exposure accepted) or
-    drop the metadata from unauthenticated responses. Tracking: #298 (QA record), as for F-4.
+- **F-8 (design gap, STRIDE: Information disclosure, severity Low) — FIXED for the WS `welcome`
+  by the #298 close-out; the health probes PENDING (#4221, then #4222); the metrics endpoint
+  PENDING (#4206)** (#2701 delegation (6284192190), LANE-28 2026-10-22 21:47Z and 22:15Z; the
+  split, LANE-29 2026-10-23 00:17Z; U26 relaxed, LANE-30 2026-10-23 01:24Z). U26: the public
+  health probes (`/healthz`, `/readyz`) and the pre-auth WS `welcome` carried the git sha and the
+  version to any client, while U26's mitigation said only the Owner sees build metadata.
+  - Decision: redact. Before authentication only the build label (the version) is exposed; the
+    sha only after it, in `auth_ok` (`23-ws-protocol.md` §4.3), to every authenticated role,
+    Viewer and Manager included. U26 is relaxed from Owner-only to authenticated-only, as
+    `getBuildInfo` already gives it by contract (`22-api-openapi.yaml`), and its residual is
+    accepted: review date 2027-01-22 (C-12.1).
+  - Fix, the WS half: the `welcome` drops the sha, and `auth_ok` gains it as an optional, additive
+    cv.v1 member. Regression: AC-INFO-01 (`test_build_info_abuse.py`) and the unit cases of
+    `test_app_wiring.py`, `test_lifecycle.py` and `test_lifecycle_socket.py`.
+  - Pending, the REST half: the probes keep the sha until the deploy smoke test reads the deployed
+    sha from the container (#4221); their redaction and AC-INFO-01's probe cases are #4222. Until
+    #4222 and #4206 land, the probes and the metrics endpoint leave the build pre-auth to every
+    mesh peer, as `welcome` did. One middleware guards every route, `/ws` included
+    (`net/middleware.py`).
+  - Residual, outside this fix: the metrics endpoint's access policy inside the mesh, an Owner
+    decision (#4206).
+  - Residual, `post-ga` hardening: build info `ADMIN_READ`-only across `getBuildInfo` and
+    `auth_ok`; it rides #4222.
   - Reproduction steps are withheld from this public repository, as for F-4.
 - **O-1..O-4 (observability gaps, STRIDE: Repudiation, severity Low).** Each attack was defended,
   but the defence was partly invisible (see "Observability per case"):
@@ -363,6 +404,6 @@ a detection-rule decision.
     answer is the same 404.
   - O-4 (closed by #2319): identity claims in an invite redemption body are refused (400) as
     before, and now audited (`identity_tamper`) and counted, as role claims are.
-- No P0 finding; F-6 (#2111) is P1. No executed case escalated privilege. Risk register: the
-  "E09-X02 abuse cases" notes under RSK-020 and RSK-021 in `docs/plan/32-risk-register.md`. The
-  Security-engineer sign-off comment is not done here.
+- No P0 finding; the P1, F-6 (#2111), is remedied. No executed case escalated privilege. Risk
+  register: the "E09-X02 abuse cases" notes under RSK-020 and RSK-021 in
+  `docs/plan/32-risk-register.md`. The Security-engineer sign-off comment is not done here.

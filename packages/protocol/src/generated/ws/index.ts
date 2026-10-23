@@ -55,6 +55,10 @@ export interface CvWsV1AuthOkSchemaJson {
    */
   token_expires_at_ms: number;
   kill_switch?: KillSwitch;
+  /**
+   * The exact build (CV_GIT_SHA), sent only after authentication (E09-X02 F-8; §4.3).
+   */
+  git_sha?: string;
 }
 export interface KillSwitch {
   engaged: boolean;
@@ -2124,6 +2128,9 @@ export interface CvWsV1WelcomeSchemaJson {
   protocol: "cv.v1";
   encoding: "msgpack" | "json";
   server_version: string;
+  /**
+   * Not sent (E09-X02 F-8): the exact build comes only after authentication, as auth_ok.git_sha (§4.3). Kept declared and optional, as cv.v1 admits it.
+   */
   git_sha?: string;
   connection_id: string;
   /**

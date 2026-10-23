@@ -85,7 +85,6 @@ def _welcome() -> dict[str, Any]:
     return welcome_payload(
         encoding="json",
         server_version="1.0.0",
-        git_sha="abc",
         connection_id="ws_1",
         server_time_ms=1,
         client_clock_ms=None,

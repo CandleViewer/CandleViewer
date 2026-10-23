@@ -502,7 +502,6 @@ def welcome_payload(
     *,
     encoding: str,
     server_version: str,
-    git_sha: str,
     connection_id: str,
     server_time_ms: int,
     client_clock_ms: object,
@@ -512,15 +511,15 @@ def welcome_payload(
     heartbeat_timeout_s: float = HEARTBEAT_TIMEOUT_S,
     max_inbound_frame_bytes: int = MAX_INBOUND_FRAME_BYTES,
 ) -> dict[str, Any]:
-    """§4.2 body. `clock_skew_ms` = server time - client `clock_ms` (reported, never corrected);
-    omitted when the client sent no §13 `epochMs` clock (`client_epoch_ms`). `limits` advertises
-    what the gateway enforces: the inbound cap is the gateway's own, which
-    `CV_WS_MAX_INBOUND_FRAME_BYTES` may lower."""
+    """§4.2 body. It states the build label (`server_version`) and never the git sha, which only
+    `auth_ok` carries, after authentication (§4.3; E09-X02 F-8). `clock_skew_ms` = server time -
+    client `clock_ms` (reported, never corrected); omitted when the client sent no §13 `epochMs`
+    clock (`client_epoch_ms`). `limits` advertises what the gateway enforces: the inbound cap is
+    the gateway's own, which `CV_WS_MAX_INBOUND_FRAME_BYTES` may lower."""
     p: dict[str, Any] = {
         "protocol": "cv.v1",
         "encoding": encoding,
         "server_version": server_version,
-        "git_sha": git_sha,
         "connection_id": connection_id,
         "server_time_ms": server_time_ms,
         "auth_required": True,
