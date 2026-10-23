@@ -165,6 +165,7 @@ STRIP_EXPANDED = {
     "compact": 80,
     "comfortable": 108,
 }  # three rows + the step; drawn collapsed by default
+NOTICE = {"compact": 24, "comfortable": 32}  # the S21 / S23 notice slot (spec 2)
 GAP_TOKEN = {"compact": "space.2", "comfortable": "space.3"}
 CH = {"Time": 12, "Price": 9, "Size": 6, "Notional": 6, "Side": 4, "side glyph": 1, "tier mark": 1}
 MONO_EM = 0.60  # (heuristic) JetBrains Mono's nominal advance, printed as an estimate
@@ -235,11 +236,16 @@ color.buy.default|color.surface.raised|NON_TEXT
 color.sell.default|color.surface.raised|NON_TEXT
 color.buy.default|color.buy.subtle|NON_TEXT
 color.sell.default|color.sell.subtle|NON_TEXT""")
-# H. string gates: the catalogue strings, the label word, the shared contract-gap sentence, hygiene
+# H. string gates: the catalogue strings, the label word, the T2 reasons and notices (E09-D09 3.2 /
+# 10 verbs for settings:write and workspaces:write), the shared contract-gap sentence, hygiene
 MUST = (
     "Paused — 412 prints buffered",
     "No prints above 10 000 USDT in the last 5 min",
     "(estimated)",
+    "Your role can't change settings.",
+    "Your role can't save workspaces.",
+    "Read-only — your role can't change settings.",
+    "Read-only — your role can't save workspaces.",
 )
 SHARED = "Research PRs never edit `22`."
 FORBIDDEN = {
@@ -380,6 +386,7 @@ def main(argv: list[str] | None = None) -> int:
     chs = sum(CH.values())
     tape: dict[str, Any] = {"row_px": row, "font_px": fs, "slots": SLOTS, "ch": CH, "ch_total": chs}
     tape.update({"mono_em": MONO_EM, "strip_expanded_px": STRIP_EXPANDED, "gap_px": step})
+    tape["notice_px"] = NOTICE
     tape.update({"frames": {}, "rates": {}, "rows_600": {d: 600 // r for d, r in row.items()}})
     say(f"- slots per density (the step {step}): {SLOTS}; strip expanded {STRIP_EXPANDED}")
     for name, (h, top, bottom) in FRAMES.items():
@@ -387,8 +394,12 @@ def main(argv: list[str] | None = None) -> int:
         log = {d: panel - sum(SLOTS[d].values()) for d in row}
         n = {d: log[d] // row[d] for d in row}
         over = {d: DOM_MAX - v - DIVIDERS for d, v in n.items()}
+        # S21 / S23: the notice slot takes one row from the log
+        noticed = {d: (log[d] - NOTICE[d]) // row[d] for d in row}
         tape["frames"][name] = {"panel_px": panel, "log_px": log, "rows": n, "overscan": over}
+        tape["frames"][name]["rows_with_notice"] = noticed
         say(f"- {name}: panel {panel} px, log {log} px, rows {n}, overscan {over}")
+        say(f"  with the {NOTICE} px notice slot (S21 / S23): rows {noticed}")
     ok600 = "MATCH" if tape["rows_600"] == w["rows_visible"] else "DIFF"
     say(f"- 600 px panel: rows {tape['rows_600']} (e22_d01 {w['rows_visible']}) {ok600}")
     tape["min_width_px"] = {
