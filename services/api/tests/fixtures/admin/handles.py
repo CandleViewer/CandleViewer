@@ -17,7 +17,7 @@ from typing import Final, Literal
 #: The namespace every fixture id is derived in (`uuid5`), so an id never changes between runs.
 _NAMESPACE: Final = uuid.UUID("0e42a0c1-9620-4d1f-8e4a-ad31f1c7e962")
 
-#: Bybit's key restriction on a new sub-account: no API key in its first 48 hours.
+#: The exchange's key restriction on a new sub-account: no API key in its first 48 hours.
 KEY_RESTRICTION: Final = timedelta(hours=48)
 
 #: How long LOCKED-L stays locked after the seed's `now`.
@@ -76,7 +76,8 @@ class FixtureAccount:
 
     @property
     def exchange_uid(self) -> str:
-        return f"fixture-{self.handle.lower()}"
+        """Digits only, as the `ea_uid_fmt` check requires, and derived from the account's id."""
+        return str(self.id.int % 10**12)
 
 
 OWNER: Final = FixtureUser("OWNER", "owner", "active")
@@ -110,8 +111,8 @@ GRANTS: Final[dict[str, tuple[str, ...]]] = {
     "MGR-MANY": ("SUB-S", "SUB-T", "SUB-U"),
 }
 
-#: The catalogued flags the plan's cases set, and their values. The catalogue holds boolean flags
-#: only (the plan's Q-9). `trading.live_enabled` stays off: the live gate is blocked.
+#: The flags the plan's cases set, as `candleviewer/admin/flags/catalogue.py` holds them (boolean
+#: flags only), and their values. `trading.live_enabled` stays off: the live gate is blocked.
 FLAGS: Final[dict[str, bool]] = {
     "trading.live_enabled": False,
     "rules.graph_editor": True,

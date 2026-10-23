@@ -1,49 +1,29 @@
 """Integration (E42-Q01, #962): the admin fixtures on a migrated Postgres 16.
 
-The seed passes its own checks, a second run changes no row, and a database not named for tests is
-refused before anything is written. Needs Docker (testcontainers); not run locally while the bench
-runner holds the VPS. CI `integration` runs it.
+The seed passes its own checks, a second run changes no row (nor any row's version), and a database
+not named for tests is refused. Needs Docker (testcontainers); CI `integration` runs it.
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
-from testcontainers.postgres import PostgresContainer
 
 from candleviewer.db import models as m
 from tests.fixtures.admin.handles import ACCOUNTS, FLAGS, USERS
 from tests.fixtures.admin.seed import FixtureRefused, check_admin_world, seed_admin_world
+from tests.integration import _refused
 
 pytestmark = pytest.mark.integration
 
-_ROOT = Path(__file__).resolve().parents[3]
+pg_dsn = _refused.pg_dsn  # the module-scoped Postgres 16, migrated; its database is named `test`
 _NOW = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
-
-
-@pytest.fixture(scope="module")
-def pg_dsn() -> Iterator[str]:
-    with PostgresContainer("postgres:16-alpine") as container:  # its database is named `test`
-        dsn = container.get_connection_url().replace("postgresql+psycopg2", "postgresql+asyncpg")
-        subprocess.run(
-            [sys.executable, "-m", "alembic", "upgrade", "head"],
-            cwd=_ROOT,
-            env={
-                **os.environ,
-                "CV_PG_DSN": dsn.replace("postgresql+asyncpg", "postgresql+psycopg"),
-            },
-            check=True,
-        )
-        yield dsn
+_XMIN = sa.cast(sa.column("xmin"), sa.Text).label("xmin")  # a rewrite, even of an equal row, shows
 
 
 @pytest.fixture
@@ -61,24 +41,26 @@ async def _seed(engine: AsyncEngine) -> None:
 
 
 async def _rows(conn: AsyncConnection) -> dict[str, list[tuple[Any, ...]]]:
-    """Every fixture row of every table the seed writes, in a fixed order."""
+    """Every fixture row of every table the seed writes or a trigger makes, with its `xmin`, in a
+    fixed order. The default profile of each account (`trg_ea_default_profile`) has a random id."""
     users, accounts = [u.id for u in USERS], [a.id for a in ACCOUNTS]
-    reads = {
-        "users": sa.select(m.users).where(m.users.c.id.in_(users)),
-        "user_roles": sa.select(m.user_roles).where(m.user_roles.c.user_id.in_(users)),
-        "user_invites": sa.select(m.user_invites).where(m.user_invites.c.user_id.in_(users)),
-        "exchange_accounts": sa.select(m.exchange_accounts).where(
-            m.exchange_accounts.c.id.in_(accounts)
-        ),
-        "user_account_access": sa.select(m.user_account_access).where(
-            m.user_account_access.c.user_id.in_(users)
-        ),
-        "feature_flags": sa.select(m.feature_flags).where(m.feature_flags.c.key.in_(list(FLAGS))),
-    }
-    return {
-        name: sorted((tuple(row) for row in (await conn.execute(read)).all()), key=str)
-        for name, read in reads.items()
-    }
+    profiles = m.account_profiles
+    own = sa.select(profiles.c.id).where(profiles.c.exchange_account_id.in_(accounts))
+    reads: list[tuple[sa.Table, sa.Column[Any], Any]] = [
+        (m.users, m.users.c.id, users),
+        (m.user_roles, m.user_roles.c.user_id, users),
+        (m.user_invites, m.user_invites.c.user_id, users),
+        (m.exchange_accounts, m.exchange_accounts.c.id, accounts),
+        (m.user_account_access, m.user_account_access.c.user_id, users),
+        (m.feature_flags, m.feature_flags.c.key, list(FLAGS)),
+        (profiles, profiles.c.exchange_account_id, accounts),
+        (m.account_profile_revisions, m.account_profile_revisions.c.profile_id, own),
+    ]
+    snapshot = {}
+    for table, column, ids in reads:
+        rows = (await conn.execute(sa.select(table, _XMIN).where(column.in_(ids)))).all()
+        snapshot[table.name] = sorted((tuple(row) for row in rows), key=str)
+    return snapshot
 
 
 async def test_the_seeded_world_passes_its_own_checks(engine: AsyncEngine) -> None:
