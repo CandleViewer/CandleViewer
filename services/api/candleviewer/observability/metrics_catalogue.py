@@ -2960,6 +2960,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E16",
         exported=True,
     ),
+    _s(
+        "recorder_status_cache_age_seconds",
+        "gauge",
+        "seconds",
+        (),
+        "Seconds since the 1 Hz recording status was last computed (+Inf before the first).",
+        "> 10 s (warning)",
+        _L,
+        "E16",
+        exported=True,
+    ),
     # --- Roll-off (E16-T05); served by recorder.metrics.export_recorder_metrics (#3794) -------
     # `stream`: a roll-off or downsample stream; `reason`: a closed set of archive, drop and run
     # outcomes (`recorder/rolloff.py`).

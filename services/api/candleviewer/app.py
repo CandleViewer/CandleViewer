@@ -150,6 +150,7 @@ from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_r
 from candleviewer.api.recorder_purge import make_recorder_purge_router
 from candleviewer.api.recording_reports import make_recording_reports_router
 from candleviewer.api.recording_retention import make_recording_retention_router
+from candleviewer.api.recording_status import make_recording_status_router
 from candleviewer.api.recording_symbols import make_recording_symbols_router
 from candleviewer.api.response_headers import NoSniff
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
@@ -307,6 +308,7 @@ from candleviewer.recorder.control import StoredRecordingControl
 from candleviewer.recorder.coverage import CoverageService
 from candleviewer.recorder.metrics import current_write_backlog_rows, export_recorder_metrics
 from candleviewer.recorder.service import RecorderService
+from candleviewer.recorder.status import RecordingStatusCache
 from candleviewer.replay.metrics import export_replay_metrics
 from candleviewer.replay.service import ReplayService
 from candleviewer.replay.sessions_service import LANE as REPLAY_LANE
@@ -2514,6 +2516,16 @@ def create_app(
             audit_resolver,
             _LazyAuditEmitter(ctx.audit),
         )
+    )
+    # The recording status, computed once a second (the WS runtime starts and stops it):
+    # `not_deployed` until the recorder runtime binds `app.state.recording_runtime` (#2188).
+    app.state.recording_runtime = None
+    recording_status = RecordingStatusCache(
+        lambda: app.state.recording_runtime, app.state.disk_budget
+    )
+    app.state.ws_runtime.recorder_status = recording_status
+    app.include_router(
+        make_recording_status_router(recording_status, audit_resolver, _LazyAuditEmitter(ctx.audit))
     )
     # E16-T05: nightly roll-off composition (constructed only; scheduling is flag-gated).
     app.state.rolloff_job = build_rolloff_job(

@@ -9,9 +9,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Any, Final, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 
 from candleviewer.recorder.models import Actor
+
+if TYPE_CHECKING:
+    from candleviewer.recorder.policy import PolicyConfig
 
 RecordReason = Literal[
     "manual", "chart_open", "position_open", "rule_dependency", "alert_dependency"
@@ -47,6 +50,9 @@ class RecordedEntry:  # `RecordedSymbol`; `reasons` is never empty, top first
     disk_bytes: int | None = None
     rows_last_hour: int | None = None
     lag_ms: int | None = None
+    dropped_messages: int | None = None  # the status fields (`RecordingStatus.symbols`)
+    resyncs_last_hour: int | None = None
+    last_event_at: datetime | None = None
 
     @property
     def reason(self) -> RecordReason:
@@ -82,10 +88,23 @@ class EntrySpec:  # an add or an update; `None` keeps a setting (or takes its de
 
 
 @dataclass(frozen=True, slots=True)
+class Connection:  # one upstream stream of `RecordingStatus.connections`
+    endpoint: str
+    state: Literal["connecting", "connected", "degraded", "disconnected"]
+    subscribed_topics: int
+    connected_since: datetime | None
+    reconnects_last_hour: int
+    last_ping_ms: int
+
+
+@dataclass(frozen=True, slots=True)
 class ControlStatus:  # a bound runtime's live status, before the R-I2 view
     entries: tuple[RecordedEntry, ...] = ()
     ingest_rate_msgs_per_sec: int = 0
     write_backlog_rows: int = 0
+    overall: Literal["healthy", "degraded", "warning", "down"] = "healthy"
+    connections: tuple[Connection, ...] = ()
+    policy: PolicyConfig | None = None  # the policy it runs with; `None` sends none
 
 
 class RecordingReads(Protocol):  # a lookup answers `None` for no such entry
