@@ -1644,9 +1644,13 @@ class ConnectionRegistry:
             await self._write_rows(rows)
 
     async def user_disabled(self, user_id: uuid.UUID) -> int:
-        """§9.5: a disabled user gets `bye user_disabled` + close 4403 on every socket. #3413:
-        first the user is remembered and the version advances, so a socket still in its
-        handshake reads its principal again (SR-189) and the gateway refuses its registration.
+        """§9.5: a disabled user gets `bye user_disabled` + close 4403 on every socket, including
+        one on which it views as another user (#3085). That socket is registered under its
+        target, so it is found by its viewer (`_pop_views_by`) and is closed and counted as the
+        user's own are. A socket viewing as the disabled user ends its view instead, with `bye
+        view_as_expired` (§9.6), and is not counted. #3413: first the user is remembered and the
+        version advances, so a socket still in its handshake reads its principal again (SR-189)
+        and the gateway refuses its registration.
 
         One observation of `auth_revocation_latency_seconds` when there is any socket (SR-029,
         #3415), on `services.clock`, as the revocation hub makes one for a session's closes:
@@ -1668,7 +1672,7 @@ class ConnectionRegistry:
         and it propagates."""
         self._changed_at = next(self._versions)  # SR-189: also for a socket mid-handshake
         self._remember_disabled(user_id)  # before the closes, which suspend
-        entries = self._conns.pop(user_id, [])
+        entries = [*self._conns.pop(user_id, []), *self._pop_views_by(user_id)]
         if not entries:
             return 0
         started = self.services.clock()
@@ -1677,7 +1681,9 @@ class ConnectionRegistry:
                 closer = self._closers.pop(id(authz), None)
                 authz.release_all()
                 try:
-                    if authz.viewing:  # §9.6: the viewed target is gone, the viewer is not
+                    # §9.6: the viewed target is gone, the viewer is not; a socket the disabled
+                    # user views with is its own, under whichever target it is registered
+                    if authz.viewing and authz.viewer_user_id != user_id:
                         bye = lifecycle_bye("view_as_expired", now_ms=self._clock_ms())
                     else:
                         ws_revoked_total.labels(reason="user_disabled").inc()
@@ -1694,6 +1700,24 @@ class ConnectionRegistry:
         finally:
             auth_revocation_latency_seconds.observe(self.services.clock() - started)
         return len(entries)
+
+    def _pop_views_by(self, viewer_id: uuid.UUID) -> list[tuple[ConnectionAuthz, Any, Any]]:
+        """§9.6 (#3085): the sockets on which `viewer_id` views as another user, under whichever
+        target they are registered (`register` keys a viewing socket by its target), removed from
+        their lists as `user_disabled` removes the user's own. One pass over the registry: a
+        disable is rare, and the gateway bounds each user's sockets. Their closers are popped
+        with the closes, as the user's own are."""
+        found: list[tuple[ConnectionAuthz, Any, Any]] = []
+        for key, entries in list(self._conns.items()):
+            kept = [e for e in entries if e[0].viewer_user_id != viewer_id]
+            if len(kept) == len(entries):
+                continue
+            found += [e for e in entries if e[0].viewer_user_id == viewer_id]
+            if kept:
+                self._conns[key] = kept
+            else:
+                del self._conns[key]
+        return found
 
     def _close_failed(self, user_id: uuid.UUID) -> None:
         """One failed per-user close, called from the handler of its exception (#3635). Counted

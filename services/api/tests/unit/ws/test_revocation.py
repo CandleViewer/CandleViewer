@@ -35,6 +35,7 @@ from candleviewer.ws.revocation import (
     bye_frame,
     user_disabled_bye,
     ws_revocation_close_failures_total,
+    ws_revoked_total,
 )
 from tests.unit.ws._auth_rig import BASE_MS, Sock
 
@@ -989,3 +990,108 @@ async def test_user_disabled_cancelled_close_propagates_and_counts_nothing(
             await caller
     assert close_failures() == before
     assert [e for e in logs if e["event"] == _USER_CLOSE_FAILED] == []
+
+
+# -- a disabled viewer's viewing sockets, which the registry holds under their targets (#3085) ---
+
+_VIEWER = uuid.UUID(int=0x5703)
+_BYSTANDER = uuid.UUID(int=0x5704)  # another viewer of the same target
+
+
+async def test_a_disabled_viewers_viewing_socket_gets_user_disabled_and_4403() -> None:
+    """§9.5: a disabled user's every socket is closed, and the viewer is the user here. Its viewing
+    socket is registered under its target (`register`), so the per-user close finds it by its
+    viewer."""
+    registry, viewing = _user_registry(_Clock()), _Socket()
+    _connect(registry, viewing.close, _USER, viewer=_VIEWER)
+    assert await registry.user_disabled(_VIEWER) == 1
+    assert viewing.closes == [(user_disabled_bye(_NOW_MS), CLOSE_USER_DISABLED)]
+
+
+async def test_a_disabled_viewers_sockets_on_two_targets_are_both_closed() -> None:
+    registry, on_user, on_other = _user_registry(_Clock()), _Socket(), _Socket()
+    _connect(registry, on_user.close, _USER, viewer=_VIEWER)
+    _connect(registry, on_other.close, _OTHER_USER, viewer=_VIEWER)
+    await registry.user_disabled(_VIEWER)
+    assert (len(on_user.closes), len(on_other.closes)) == (1, 1)
+
+
+async def test_a_disabled_viewers_viewing_socket_counts_as_a_user_disabled_revocation() -> None:
+    """As the user's own sockets do: read before and after, as the counter is global."""
+    registry = _user_registry(_Clock())
+    _connect(registry, _Socket().close, _USER, viewer=_VIEWER)
+    revoked = ws_revoked_total.labels(reason="user_disabled")
+    before = revoked._value.get()
+    await registry.user_disabled(_VIEWER)
+    assert revoked._value.get() == before + 1
+
+
+async def test_a_disabled_viewers_viewing_socket_leaves_the_registry() -> None:
+    registry = _user_registry(_Clock())
+    _connect(registry, _Socket().close, _USER, viewer=_VIEWER)
+    await registry.user_disabled(_VIEWER)
+    assert registry._conns == {}
+
+
+async def test_a_disabled_viewers_viewing_socket_drops_its_closer() -> None:
+    registry = _user_registry(_Clock())
+    _connect(registry, _Socket().close, _USER, viewer=_VIEWER)
+    await registry.user_disabled(_VIEWER)
+    assert registry._closers == {}
+
+
+async def test_a_disabled_viewers_close_leaves_the_targets_own_socket_open() -> None:
+    """The target is not disabled: its own socket, registered under the same id, stays open and
+    registered."""
+    registry, own = _user_registry(_Clock()), _Socket()
+    own_authz = _connect(registry, own.close, _USER)
+    _connect(registry, _Socket().close, _USER, viewer=_VIEWER)
+    await registry.user_disabled(_VIEWER)
+    assert (own.closes, [entry[0] for entry in registry._conns[_USER]]) == ([], [own_authz])
+
+
+async def test_a_disabled_viewers_close_leaves_another_viewers_socket_open() -> None:
+    registry, bystander = _user_registry(_Clock()), _Socket()
+    bystander_authz = _connect(registry, bystander.close, _USER, viewer=_BYSTANDER)
+    _connect(registry, _Socket().close, _USER, viewer=_VIEWER)
+    await registry.user_disabled(_VIEWER)
+    assert (bystander.closes, [e[0] for e in registry._conns[_USER]]) == ([], [bystander_authz])
+
+
+async def test_a_disabled_viewers_own_and_viewing_sockets_are_one_scraped_latency_observation(
+    scraped: Scraped,
+) -> None:
+    """The one observation of the per-user close covers both kinds: here two closes of 3 s on the
+    registry's clock, the viewer's own socket and the one viewing as another user."""
+    clock = _Clock()
+
+    async def slow(frame: dict[str, Any], code: int) -> None:
+        clock.now += 3.0
+
+    registry = _user_registry(clock)
+    _connect(registry, slow, _VIEWER)
+    _connect(registry, slow, _USER, viewer=_VIEWER)
+    before = _observed(scraped)
+    assert await registry.user_disabled(_VIEWER) == 2
+    assert _grew(scraped, before) == pytest.approx([1.0, 6.0])
+
+
+async def test_a_failed_close_of_a_disabled_viewers_viewing_socket_is_counted(
+    close_failures: Callable[[], float],
+) -> None:
+    registry = _user_registry(_Clock())
+    _connect(registry, _gone, _USER, viewer=_VIEWER)
+    before = close_failures()
+    with capture_logs():  # the failure is logged (#3635)
+        assert await registry.user_disabled(_VIEWER) == 1
+    assert close_failures() == before + 1
+
+
+async def test_a_failed_close_of_a_viewing_socket_is_logged_for_the_disabled_viewer() -> None:
+    """The line names the user that was disabled, the viewer, not the target the socket held."""
+    registry = _user_registry(_Clock())
+    _connect(registry, _gone, _USER, viewer=_VIEWER)
+    with capture_logs() as logs:
+        await registry.user_disabled(_VIEWER)
+    (line,) = [e for e in logs if e["event"] == _USER_CLOSE_FAILED]
+    assert line["user_id"] == str(_VIEWER)

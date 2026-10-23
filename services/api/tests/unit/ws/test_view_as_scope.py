@@ -6,7 +6,8 @@ account scope, and the socket is registered under the target, so the target's ow
 changes reach it. The viewer acts: the socket's audit rows name the viewer, and its per-user
 quotas (rebuilds, indicator instances) are the viewer's, so a viewer cannot spend the target's.
 The registry never lets a viewing socket take an Owner's snapshot (a target is never an Owner),
-and a disable of the target ends the view (`view_as_expired`), not the viewer (`user_disabled`).
+and a disable of the target ends the view (`view_as_expired`), not the viewer (`user_disabled`);
+a disable of the viewer closes its viewing sockets `user_disabled`, as its own.
 A viewing close is no revocation of the socket's own: `cv_ws_revoked_total` does not move.
 """
 
@@ -100,6 +101,19 @@ async def test_a_disable_of_the_viewed_target_ends_the_view_not_the_viewer() -> 
         assert (await rig.auth(sock, "good-1"))["t"] == "auth_ok"
         assert await rig.registry.user_disabled(_TARGET) == 1
         assert bye_of(await sock.sent.get()) == ("bye", "view_as_expired", 4403)
+        hang_up(sock)
+        await handler
+
+
+async def test_a_disable_of_the_viewer_closes_its_viewing_socket_user_disabled() -> None:
+    """§9.5: the viewer is the disabled user, and the socket, registered under the target, is
+    still the viewer's: `bye user_disabled`, 4403, though the view's target is not disabled."""
+    rig, sock = _viewing(), Sock()
+    async with asyncio.timeout(DEADLINE_S):
+        handler = await rig.open(sock)
+        assert (await rig.auth(sock, "good-1"))["t"] == "auth_ok"
+        assert await rig.registry.user_disabled(_VIEWER) == 1
+        assert bye_of(await sock.sent.get()) == ("bye", "user_disabled", 4403)
         hang_up(sock)
         await handler
 
