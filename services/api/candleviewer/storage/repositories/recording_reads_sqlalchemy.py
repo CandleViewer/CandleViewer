@@ -15,7 +15,10 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 
-_RECORDED: Final = (
+#: Literal SQL only (no concatenation): `_PAGE` and `_ONE` repeat the column list, the JOIN and
+#: the env/removed prefix; a unit test pins both copies to one tuple of column expressions.
+#: `:hidden`: the reasons whose rows (and their sessions) a restricted view leaves out.
+_PAGE: Final = sa.text(
     "SELECT rs.id::text AS id, rs.symbol::text AS symbol, rs.reason::text AS reason, rs.pinned, "
     "rs.streams::text[] AS streams, rs.orderbook_depth AS depth, rs.retention_days, "
     "rs.added_by::text AS added_by, ls.state AS session_state, "
@@ -24,17 +27,24 @@ _RECORDED: Final = (
     "WHERE s.symbol = rs.symbol AND s.recorded_symbol_id = rs.id "
     "ORDER BY s.started_at DESC, s.id DESC LIMIT 1) ls ON true "
     "WHERE rs.env = CAST(:env AS exchange_env) AND rs.removed_at IS NULL "
-)
-#: `:hidden`: the reasons whose rows (and their sessions) a restricted view leaves out.
-_PAGE: Final = sa.text(
-    _RECORDED + "AND rs.reason::text <> ALL(CAST(:hidden AS text[])) "
+    "AND rs.reason::text <> ALL(CAST(:hidden AS text[])) "
     "AND (CAST(:state AS text) IS NULL OR COALESCE(ls.state, 'idle') = CAST(:state AS text)) "
     "AND (CAST(:reason AS text) IS NULL OR rs.reason::text = CAST(:reason AS text)) "
     "AND (CAST(:pinned AS boolean) IS NULL OR rs.pinned = CAST(:pinned AS boolean)) "
     "AND (CAST(:a_key AS text) IS NULL OR (rs.symbol::text, rs.id) > "
     "(CAST(:a_key AS text), CAST(:a_id AS uuid))) ORDER BY rs.symbol::text, rs.id LIMIT :limit"
 )
-_ONE: Final = sa.text(_RECORDED + "AND rs.id = CAST(:id AS uuid)")
+_ONE: Final = sa.text(
+    "SELECT rs.id::text AS id, rs.symbol::text AS symbol, rs.reason::text AS reason, rs.pinned, "
+    "rs.streams::text[] AS streams, rs.orderbook_depth AS depth, rs.retention_days, "
+    "rs.added_by::text AS added_by, ls.state AS session_state, "
+    "ls.started_at AS session_started_at FROM recorded_symbols rs LEFT JOIN LATERAL ("
+    "SELECT s.state::text AS state, s.started_at FROM recording_sessions s "
+    "WHERE s.symbol = rs.symbol AND s.recorded_symbol_id = rs.id "
+    "ORDER BY s.started_at DESC, s.id DESC LIMIT 1) ls ON true "
+    "WHERE rs.env = CAST(:env AS exchange_env) AND rs.removed_at IS NULL "
+    "AND rs.id = CAST(:id AS uuid)"
+)
 _SESSIONS: Final = sa.text(
     "SELECT s.id::text AS id, s.recorded_symbol_id::text AS recorded_symbol_id, "
     "s.symbol::text AS symbol, s.state::text AS state, s.started_at, s.ended_at, "
