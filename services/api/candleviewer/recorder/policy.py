@@ -430,7 +430,10 @@ class RecordingPolicy:
         """The 1 s evaluation tick: only symbols with a due start (delay elapsed or a
         cap-refused start), grace deadline or error retry are reconciled."""
         for symbol in [sym for sym, s in self._syms.items() if self._due(sym, s)]:
-            await self._reconcile(symbol)
+            try:
+                await self._reconcile(symbol)
+            except Exception as exc:  # a symbol whose row write fails must not starve the rest
+                logger().error("recorder_reconcile_failed", symbol=symbol, error=type(exc).__name__)
 
     def _due(self, symbol: str, s: _Sym) -> bool:
         now = self._now()

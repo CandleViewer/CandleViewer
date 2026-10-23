@@ -196,6 +196,26 @@ async def test_a_failed_start_write_starts_nothing_and_the_next_tick_retries(
     assert policy.leaf("BTCUSDT") == "recording" and store.active("BTCUSDT") is not None
 
 
+async def test_a_symbol_that_raises_does_not_starve_the_tick(
+    policy: RecordingPolicy, store: Mem, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store.fail.add("upsert_auto")
+    for symbol in ("BTCUSDT", "ETHUSDT"):
+        with pytest.raises(OSError, match="pg down"):
+            await policy.on_position_opened(symbol, "p1")
+    store.fail.clear()
+    real = policy._reconcile
+
+    async def reconcile(symbol: str) -> None:
+        if symbol == "BTCUSDT":
+            raise OSError("poison")
+        await real(symbol)
+
+    monkeypatch.setattr(policy, "_reconcile", reconcile)
+    await policy.tick()
+    assert policy.leaf("ETHUSDT") == "recording"
+
+
 async def test_a_stop_soft_removes_the_auto_row(
     policy: RecordingPolicy, store: Mem, clock: FakeClock
 ) -> None:
