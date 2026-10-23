@@ -123,6 +123,9 @@ def targeted() -> dict[str, str]:
     g1 = {"node_id": "g1", "op": "all_of", "children": [{**cmp, "right": {"const": 10**20}}, c2]}
     notional = {"max_notional_per_fire": "1000.00", "max_daily_notional": "2000.0"}
     decimals = edited(conditions={**cmp, "tolerance": "0.10"}, limits=notional)
+    deep: dict[str, Any] = {"node_id": "g3", "op": "all_of", "children": [cmp]}  # form.py:37
+    for nid, op in (("g2", "any_of"), ("g1", "all_of")):
+        deep = {"node_id": nid, "op": op, "children": [deep]}
     t = {
         "edge/base": dump(BASE),
         "edge/uuid-uppercase": dump(edited(rule_id="00000000-0000-4000-8000-0000000000AB")),
@@ -137,6 +140,7 @@ def targeted() -> dict[str, str]:
         "edge/presentation-and-metadata": dump(shown),
         "edge/renumbering": dump(edited(actions=acts, conditions={**cmp, "node_id": "zz"})),
         "edge/big-integers": dump(edited(conditions=g1)),
+        "edge/boolean-three-levels": dump(edited(conditions=deep)),
         "edge/decimal-strings": dump(decimals),
         "edge/numeric-string-const": dump(edited(right="1.50")),
         "edge/const-true": dump(edited(right=True)),

@@ -1,5 +1,6 @@
 import type { RuleIr as GeneratedRuleIr } from "@candleviewer/protocol/rule-ir";
 import { describe, expect, expectTypeOf, it } from "vitest";
+import type * as Api from "../src/index.js";
 import type { RuleGraphErrorCode, RuleIr } from "../src/index.js";
 
 // The public entry is the package's contract: pin what it exports at runtime. The RuleIr and
@@ -41,5 +42,21 @@ describe("the public entry", () => {
       | "SCHEMA_VIOLATION"
       | "MULTIPLE_SINKS"
     >();
+  });
+
+  it("re-exports the port types, each by its name", () => {
+    type Named = [
+      Api.Connect,
+      Api.DanglingPort,
+      Api.FormReason,
+      Api.MetricUnit,
+      Api.MetricValueType,
+      Api.NodeKind,
+    ];
+    expectTypeOf<Api.PortType>().toEqualTypeOf<
+      "boolean" | "number" | "price" | "side" | "action" | "trigger"
+    >();
+    expectTypeOf<Named>().not.toBeAny();
+    expectTypeOf<Api.NodePorts["kind"]>().toEqualTypeOf<Api.NodeKind>();
   });
 });

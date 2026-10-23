@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { toGraph } from "../src/adapter/toGraph.js";
 import { toIr } from "../src/adapter/toIr.js";
 import { findCycles } from "../src/analysis/cycles.js";
+import { findDanglingPorts } from "../src/analysis/dangling.js";
 import { isFormRepresentable } from "../src/analysis/formSubset.js";
 import { findOrphans } from "../src/analysis/orphans.js";
 import type { GraphEdge, GraphModel, GraphNode } from "../src/model.js";
@@ -55,6 +56,7 @@ describe("findCycles and findOrphans", () => {
     const [xy, xz] = [edge("y", "x"), edge("z", "x")]; // y and z each feed x, which feeds both
     expect(only(xy, edge("x", "y"), xz, edge("x", "z"))).toEqual(["x", "y", "x"]);
     expect(only(xz, edge("x", "z"), xy, edge("x", "y"))).toEqual(["x", "z", "x"]);
+    expect(only(edge("p", "x"), xy, edge("x", "y"))).toEqual(["x", "y", "x"]); // x's first input is clean
   });
 
   it("search without recursion: a cycle through 50 000 nodes", () => {
@@ -68,6 +70,9 @@ describe("findCycles and findOrphans", () => {
     ["a chain to nothing, in node order", plus([c8, c9], edge("c8", "c9")), ["c8", "c9"]],
     ["a cycle no action reaches", plus([c8, c9], ...loop89), ["c8", "c9"]],
     ["a condition fed to an action's other port", plus([c9], edge("c9", "a1")), ["c9"]],
+    ["a temporal node that feeds nothing", plus([{ ...c9, data: { kind: "temporal" } }]), ["c9"]],
+    ["a sum that feeds nothing", plus([{ ...c9, data: { kind: "arithmetic" } }]), ["c9"]],
+    ["a when edge into a non-action", plus([c8, c9], edge("c8", "c9", "when")), ["c8", "c9"]],
     ["none on a cycle through the root", plus([], edge("g1", "c1", "right2")), []],
     ["none when the actions hang off a root each", perRoot, []],
     ["each gate and condition, not the trigger, a comment or an action", bare, ["g1", "c1", "c2"]],
@@ -77,7 +82,8 @@ describe("findCycles and findOrphans", () => {
 
   it("refuse what is no graph: no lists, an edge with no ids, a node of no kind", () => {
     const odd = [null, { ...edge("c1", "g1"), source: 7 }, { ...edge("c1", "g1"), target: null }];
-    for (const graph of [null, { ...G, edges: "x" }, ...odd.map((e) => plus([], e as never))]) {
+    const lists = [{ edges: "x" }, { edges: null }, { nodes: null }].map((o) => ({ ...G, ...o }));
+    for (const graph of [null, ...lists, ...odd.map((e) => plus([], e as never))]) {
       for (const find of [findCycles, findOrphans]) expect(() => find(graph as never)).toThrow(SV);
     }
     expect(() => findOrphans(plus([{ ...c9, type: "gate" } as never]))).toThrow(SV); // portsOf's
@@ -98,25 +104,70 @@ const wait = (id: string, op: string, child: object) => ({ ...T, node_id: id, op
 const sum = (id: string, ...xs: object[]) => ({ node_id: id, op: "add", operands: [ONE, ...xs] });
 const [c1, c2, c3] = [cmp("c1"), cmp("c2"), cmp("c3")];
 const cx = cmp("c1", { left: sum("x1") }); // c1 with a sum on its left
-// form.py's words (:23-87); the vectors hold each to the server's own output but `deep` (:37).
+const nest = cmp("c1", { left: sum("x1", sum("x2")), right: sum("x3", sum("x2")) }); // x2 shared
+const under = all("g1", wait("t1", "sustained_for", c1), any("g2", c1, c2)); // c1 shared
+// form.py's words (:23-87); the vectors hold each to the server's own output.
 const W = {
   sum: (id: string, at: string) => `${id}: arithmetic operand in '${at}' (graph-only construct)`,
   op: (id: string, op: string) => `${id}: boolean op '${op}' is graph-only`,
   deep: (id: string, op: string) => `${id}: boolean '${op}' nested deeper than two levels`,
   temporal: (id: string, op: string) => `${id}: temporal op '${op}' is graph-only`,
   wrap: (id: string) => `${id}: temporal node must directly wrap a comparison`,
+  inside: (id: string) => `${id}: boolean nested inside root any_of (exceeds subset)`,
   fan: (i: string, n: number) => `${i}: node fans out to ${n} consumers (shared node, graph-only)`,
 };
 
+const freeze = <T>(v: T): T => {
+  if (typeof v === "object" && v !== null) Object.values(v).forEach(freeze);
+  return Object.freeze(v);
+};
+describe("purity", () => {
+  it("leave a deep-frozen graph and IR as they are", () => {
+    const [graph, ir] = [freeze(structuredClone(G)), freeze(structuredClone(doc("edge/base")))];
+    for (const f of [findCycles, findOrphans, findDanglingPorts, toIr]) {
+      expect(() => f(graph)).not.toThrow();
+    }
+    expect(() => isFormRepresentable(ir)).not.toThrow();
+  });
+});
+
 describe("isFormRepresentable", () => {
   const judged = vectors.filter((v) => v.form_reasons !== undefined);
+  it("judges every vector the server hashed", () => {
+    expect(judged).toHaveLength(vectors.filter((v) => v.canonical !== undefined).length);
+  });
   it.each(judged)("give $name the server's form verdict, node ids and words alike (AC3)", (v) => {
     expect(said(JSON.parse(v.ir) as RuleIr)).toEqual(v.form_reasons);
   });
 
-  const refused = vectors.filter((v) => v.name.startsWith("refused/") && v.js);
+  const numeric = (v: V) => v.name.startsWith("refused/tolerance-"); // out of range or 65 wide
+  const refused = vectors.filter((v) => v.name.startsWith("refused/") && v.js && !numeric(v));
   it.each(refused)("refuse $name, as the server does, as a SCHEMA_VIOLATION", (v) => {
     expect(() => isFormRepresentable(JSON.parse(v.ir) as RuleIr)).toThrow(SV);
+  });
+
+  // The server's model takes these (refused: value, by its hash) and form.py reads no number.
+  it.each(vectors.filter(numeric))("judge $name, refused only for a number's form", (v) => {
+    expect(said(JSON.parse(v.ir) as RuleIr)).toEqual([]);
+  });
+
+  it("judge a rule as the server returns it: form.py reads no number (1E-7, C-Q1)", () => {
+    const limits = { max_notional_per_fire: "1E-7" }; // a Decimal, as compile returns it
+    expect(said({ ...rule({ ...c1, tolerance: "1E-7" }), limits })).toEqual([]);
+    const actions = [{ ...BASE.actions[0], params: { size: 1e21 } }]; // a JSON number, 1e+21
+    expect(said({ ...BASE, actions } as never)).toEqual([]);
+  });
+
+  it("keep to the shape: refuse a wrong type, a bad UUID and an IR over the bounds", () => {
+    const wide = Object.fromEntries(Array.from({ length: 20_000 }, (_, i) => [`k${i}`, i]));
+    let deep: object = {};
+    for (let i = 0; i < 70; i++) deep = { a: deep };
+    let far: object = deep; // 100 000 levels: refused by the bound, not a stack overflow
+    for (let i = 70; i < 100_000; i++) far = { a: far };
+    const over = [wide, deep, far].map((params) => ({ actions: [{ ...BASE.actions[0], params }] }));
+    const odd = [{ name: 5 }, { version: "1" }, { limits: { cooldown_ms: "5" } }, { rule_id: "x" }];
+    for (const edit of [...odd, ...over])
+      expect(() => said({ ...BASE, ...edit } as never)).toThrow(SV);
   });
 
   // One row per graph-only construct (24 §11.4) and per way form.py meets one; the vectors above
@@ -130,6 +181,10 @@ describe("isFormRepresentable", () => {
     ["an all_of under the root all_of", all("g1", all("g2", c1)), [W.deep("g2", "all_of")]],
     ["a sum under sustained_for", wait("t1", "sustained_for", cx), [W.sum("c1", "left")]],
     ["fan-out: a node used three times", all("g1", c1, any("g2", c1, c1)), [W.fan("c1", 3)]],
+    ["an any_of in a root any_of", any("g1", any("g2", c1, c2)), [W.inside("g2")]],
+    ["a graph-only gate's children, unread", nOf("g1", cx, c2), [W.op("g1", "n_of")]],
+    ["fan-out in sums", nest, [W.sum("c1", "left"), W.sum("c1", "right"), W.fan("x2", 2)]],
+    ["fan-out under a temporal node", under, [W.fan("c1", 2)]],
   ] as const)("name %s, in the server's words (AC3)", (_case, conditions, reasons) => {
     expect(said(rule(conditions))).toEqual(reasons);
   });

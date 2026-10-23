@@ -18,7 +18,8 @@ const BASE = doc("edge/base"); // condition c1 (gt, inline operands), action a1
 const based = (edit: object) => ({ ...BASE, ...edit }) as RuleIr;
 const G = toGraph(doc("corpus/07_sys_time_stop")); // trigger, a1, a2, g1 all_of [c1, c2]
 const SV = "SCHEMA_VIOLATION";
-const LONE: GraphNode = { id: "c9", type: "condition", data: { kind: "comparison", op: "x" } };
+const IS_TRUE = { kind: "comparison", op: "is_true", left: 0 }; // one operand, given inline
+const LONE: GraphNode = { id: "c9", type: "condition", data: IS_TRUE };
 const X9 = { ...LONE, id: "x9", data: { kind: "arithmetic", op: "abs", operands: [{ const: 1 }] } };
 const node = (id: string) => G.nodes.find((n) => n.id === id) as GraphNode;
 function edge(source: string, target: string, targetPort: string): GraphEdge {
@@ -88,6 +89,12 @@ describe("toGraph then toIr", () => {
     const { nodes, edges } = toGraph(doc("corpus/28_shared_atr_band"));
     expect(nodes.filter((n) => n.id === "c1")).toHaveLength(1);
     expect(edges.filter((e) => e.source === "c1").map((e) => e.target)).toEqual(["g2", "g3"]);
+  });
+
+  it("name a node by its graph id, whatever node_id its data carries, as the server does", () => {
+    const stray = swap({ ...node("c1"), data: { ...node("c1").data, node_id: "zz" } });
+    const gate = toIr(stray).ir["conditions"] as { children: unknown }; // graph.py: {**data, node_id}
+    expect(ids(gate.children)).toEqual(["c1", "c2"]);
   });
 
   it("take the action order from the nodes and list order from the edges, never ids", () => {
@@ -199,9 +206,27 @@ describe("toIr refuses", () => {
   const unlisted = swap({ ...node("g1"), data: { children: "x" } });
   const unfed = { ...unlisted, edges: G.edges.filter((e) => e.source === "g1") };
   const alone = { ...G, nodes: [node("trigger")], edges: [] };
+  const loop = edge("g1", "c1", "right2"); // a cycle through the root, met with another fault
+  const twoT = { ...plus({ ...node("trigger"), id: "t2" }), edges: [...G.edges, loop] };
+  const noFeed = { ...G, edges: [...G.edges.slice(0, 3), loop] };
+  const twoRoots = wired(loop, edge("c1", "a2", "when"));
   const note = { id: "k1", type: "comment", data: {} } as GraphNode; // a comment is no node either
   const noted = { ...alone, nodes: [...alone.nodes, note] };
   const toGate = swap({ ...node("g1"), data: { op: "all_of" } }, edge("x9", "g1", "in"));
+  const two = { ...toGate, nodes: [...toGate.nodes, X9], edges: [...toGate.edges, right2] };
+  const noLeft = swap({ ...node("c1"), data: { kind: "comparison", op: "gt", right: {} } });
+  const noChild = swap({ ...node("c2"), data: { kind: "temporal", op: "sustained_for" } });
+  const bare = { ...toGate, nodes: toGate.nodes.slice(0, 4), edges: unfed.edges }; // no c1, c2
+  const between = swap({ ...node("c1"), data: { ...node("c1").data, op: "between" } });
+  const noLeftT2 = { ...noLeft, nodes: [...noLeft.nodes, { ...node("trigger"), id: "t2" }] };
+  const noLeftRoots = { ...noLeft, edges: [...noLeft.edges, edge("c1", "a2", "when")] };
+  const noLeftA2 = { ...noLeft, edges: noLeft.edges.slice(0, 3) }; // nor an edge into a2
+  const reversed = { ...noLeftA2, nodes: [...noLeftA2.nodes].reverse() };
+  const noAction = { ...actionless, nodes: noLeft.nodes.filter((n) => n.type !== "action") };
+  const emptyGate = { ...bare, nodes: [...bare.nodes, ...noLeft.nodes.slice(4)] }; // c1, c2 too
+  const c2NoLeft = { ...node("c2"), data: { kind: "comparison", op: "lt", right: {} } };
+  const twiceA1 = swap(c2NoLeft, edge("g1", "a1", "when")); // a1 fed twice, c2 with no left
+  const loopNoAction = { ...actionless, edges: [...inner, loop] };
 
   it("a cycle, naming its path, rather than emit an IR (AC4)", () => {
     const message = "The graph has a cycle: g1 -> c1 -> g1.";
@@ -211,10 +236,25 @@ describe("toIr refuses", () => {
 
   it.each([
     ["a cycle that misses the root", crossed, "CYCLE_DETECTED", ["c1", "c2"]],
-    ["actions fed by two roots", wired(edge("c1", "a2", "when")), "MULTIPLE_SINKS", ["g1", "c1"]],
-    ["actions fed by a root each", perAction, "MULTIPLE_SINKS", ["g1", "c1"]],
+    ["a cycle and two triggers", twoT, "CYCLE_DETECTED", ["g1", "c1"]],
+    ["a cycle and an action no condition feeds", noFeed, "CYCLE_DETECTED", ["g1", "c1"]],
+    ["a cycle and actions fed by two roots", twoRoots, "CYCLE_DETECTED", ["g1", "c1"]],
+    ["actions fed by two roots", wired(edge("c1", "a2", "when")), "MULTIPLE_SINKS", ["a2"]],
+    ["actions fed by a root each", perAction, "MULTIPLE_SINKS", ["c1", "g1"]],
     ["an action fed twice by its root", wired(edge("g1", "a1", "when")), "MULTIPLE_SINKS", ["a1"]],
     ["an action no condition feeds", { ...G, edges: G.edges.slice(0, 3) }, "DANGLING_PORT", ["a2"]],
+    ["a comparison with no left operand", noLeft, "DANGLING_PORT", ["c1"]],
+    ["a temporal node with no child", noChild, "DANGLING_PORT", ["c2"]],
+    ["a gate with no list and no edge", bare, "DANGLING_PORT", ["g1"]],
+    ["between with no right2", between, "DANGLING_PORT", ["c1"]],
+    ["an empty input and two triggers", noLeftT2, "DANGLING_PORT", ["c1"]],
+    ["an empty input and actions fed by two roots", noLeftRoots, "MULTIPLE_SINKS", ["a2"]],
+    ["two empty inputs: the first in code point order", noLeftA2, "DANGLING_PORT", ["a2"]],
+    ["two empty inputs, the nodes reversed: by code point", reversed, "DANGLING_PORT", ["a2"]],
+    ["no action, and an empty input", noAction, "ORPHAN_NODE", ["g1", "c1", "c2"]],
+    ["an empty gate and an empty input: by code point", emptyGate, "DANGLING_PORT", ["c1"]],
+    ["an action fed twice and an empty input: by code point", twiceA1, "MULTIPLE_SINKS", ["a1"]],
+    ["a cycle and no action", loopNoAction, "CYCLE_DETECTED", ["c1", "g1"]],
     ["a condition no action follows", plus(LONE), "ORPHAN_NODE", ["c9"]],
     ["no action", actionless, "ORPHAN_NODE", ["g1", "c1", "c2"]],
     ["a trigger alone, no node to the server (graph.py:85-87)", alone, SV, [], "list of nodes"],
@@ -226,21 +266,38 @@ describe("toIr refuses", () => {
     ["a condition of an action's kind", plus({ ...LONE, data: { kind: "action" } }), SV, ["c9"]],
     ["a condition with no data", plus({ id: "c9", type: "condition" } as GraphNode), SV, ["c9"]],
     ["a gate with no data", swap({ id: "g1", type: "logicGate" } as GraphNode), SV, ["g1"]],
+    ["a node with no type", plus({ id: "z", data: {} } as never), SV, ["z"]],
+    ["an action with no type", plus({ id: "z", data: node("a1").data } as never), SV, ["z"]],
     ["a node that is no object", plus(null as unknown as GraphNode), SV, []],
     ["a node whose id is no text", plus({ ...LONE, id: 7 } as unknown as GraphNode), SV, []],
     ["an edge from no node", wired(edge("zz", "g1", "in")), SV, ["zz", "g1"]],
     ["an edge into no node", wired(edge("c1", "zz", "in")), SV, ["c1", "zz"]],
     ["an edge to a port its node lacks", wired(edge("c1", "a1", "in")), SV, ["c1", "a1"]],
+    ["an edge to an inherited name", wired(edge("c1", "a1", "toString")), SV, ["c1", "a1"]],
     ["an edge out of an action", wired(edge("a1", "g1", "in")), SV, ["a1", "g1"]],
     ["an edge that is no object", wired(null as unknown as GraphEdge), SV, []],
     ["an input fed twice", wired(right2, right2), SV, ["c1"]],
-    ["a true or false result fed to a number", wired(right2), SV, ["c2", "c1"], "as a number."],
+    [
+      "a true or false result fed to a number",
+      wired(right2),
+      SV,
+      ["c2", "c1"],
+      "Edge c2>c1: A true or false result",
+    ],
     ["a number fed to a gate", { ...toGate, nodes: [...toGate.nodes, X9] }, SV, ["x9", "g1"]],
+    ["an unfit edge first in the list", { ...G, edges: [right2, ...G.edges] }, SV, ["c2", "c1"]],
+    ["two unfit edges: the first in edge order", two, SV, ["x9", "g1"]],
     ["an input both inline and fed", wired(edge("c2", "c1", "left")), SV, ["c1"]],
     ["more list edges than empty slots", wired(in1), SV, ["g1"]],
-    ["fewer list edges than empty slots", fewer, "DANGLING_PORT", ["g1"], "'in' input"],
+    [
+      "fewer list edges than empty slots",
+      fewer,
+      "DANGLING_PORT",
+      ["g1"],
+      "Node g1 is missing its 'in' input.",
+    ],
     ["a list that is no list", swap({ ...node("g1"), data: { children: "x" } }), SV, ["g1"]],
-    ["a list that is no list, though no edge fills it", unfed, SV, ["g1"]],
+    ["a list that is no list, though no edge fills it", unfed, "DANGLING_PORT", ["g1"]],
     ["a graph with no node list", { ...G, nodes: "x" } as unknown as GraphModel, SV, [], "lists"],
     ["no graph at all", null as unknown as GraphModel, SV, [], "one trigger"],
     ["exactly 1 000 nodes, past the cap", plus(...Array<GraphNode>(994).fill(LONE)), SV, ["c9"]],
@@ -257,7 +314,7 @@ describe("toIr refuses", () => {
   });
 
   it("a layout that is no object, as toGraph refuses one with no list of comments", () => {
-    for (const bad of [null, 5]) expect(() => toIr(G, bad as never)).toThrow(refusal(SV, {}));
+    for (const bad of [null, 5, []]) expect(() => toIr(G, bad as never)).toThrow(refusal(SV, {}));
     for (const bad of [{}, { comments: [null] }, 5]) {
       expect(() => toGraph(BASE, bad as never)).toThrow(refusal(SV, {}));
     }
@@ -271,13 +328,17 @@ describe("toIr refuses", () => {
     const open = (id: string) => ({ ...LONE, id, data: { ...LONE.data, left: null, right: null } });
     const start = [node("trigger"), node("a1")];
     const [x, root] = [{ ...LONE, id: "x" }, edge("g0", "a1", "when")];
-    // 1 300 uses of a node whose null inputs a sum fills (19 530 values); 5 of a 1 000-slot gate
+    // 1 300 uses of a node whose null inputs a sum fills (19 530 values); 4 of a 1 000-slot gate
     const shared = [gate("g0", 1_300), open("c1"), X9];
-    const wide = [gate("g0", 5), gate("g1", 1_000), x];
+    const wide = [gate("g0", 4), gate("g1", 1_000), x];
     const fills = [root, ...fan(1_300, "c1", "g0"), ...pair("x9", "c1")];
     expect(() => toIr({ ...G, nodes: [...start, ...shared], edges: fills })).not.toThrow();
-    const edges = [root, ...fan(5, "g1", "g0"), ...fan(1_000, "x", "g1")];
+    const tick = { ...LONE, id: "t9", data: { kind: "temporal", op: "x", child: null } };
+    const nest = [root, ...fan(2_800, "t9", "g0"), edge("x", "t9", "child")]; // 19 630 values: the
+    const ticks = [gate("g0", 2_800), tick, x]; //   refund of each null child decides it
+    expect(() => toIr({ ...G, nodes: [...start, ...ticks], edges: nest })).not.toThrow();
+    const edges = [root, ...fan(4, "g1", "g0"), ...fan(1_000, "x", "g1")];
     expect(() => toIr({ ...G, nodes: [...start, ...wide], edges })).not.toThrow();
-    expect(() => toIr(chain(2, 71, { ...LONE.data, node_id: "x" }))).not.toThrow(); // 15 437 values
+    expect(() => toIr(chain(2, 70, { ...LONE.data, node_id: "x" }))).not.toThrow(); // 19 910 values
   });
 });

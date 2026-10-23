@@ -1,5 +1,6 @@
-// The server's `dec_str` (services/api/candleviewer/rules/ir/canonical.py:61-65) for what a client
+// The server's `dec_str` (services/api/candleviewer/rules/ir/canonical.py:81-93) for what a client
 // sends; a value with no form to mirror gives undefined.
+const MAX_PLAIN_WIDTH = 64; // domain/plain_decimal.py: its sign, digits and point
 
 /** Plain notation of `digits` x 10^`exponent`: no exponent, no trailing fractional zero, "0" for 0. */
 function plain(negative: boolean, digits: string, exponent: number): string | undefined {
@@ -19,7 +20,7 @@ function plain(negative: boolean, digits: string, exponent: number): string | un
         ? `${coefficient.slice(0, exp)}.${coefficient.slice(exp)}`
         : `0.${"0".repeat(-exp - coefficient.length)}${coefficient}`;
   const out = negative ? `-${body}` : body;
-  return out.length > 64 ? undefined : out; // its sign, digits and point: MAX_PLAIN_WIDTH
+  return out.length > MAX_PLAIN_WIDTH ? undefined : out;
 }
 
 /**

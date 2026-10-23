@@ -27,7 +27,7 @@ describe("PORT_COMPAT and canConnect", () => {
     expect(canConnect(from, to)).toEqual(connects ? { ok: true } : { ok: false, reason: cell });
   });
 
-  // OQ9, as the coordinator ruled: E09-D09 §3.1's reason rule (docs/design/E09/E09-D09.md:85).
+  // E09-D09 §3.1's reason rule (E09-D09.md:85), its 60 characters raised to 80 by the OQ9 ruling.
   it("give each refused pair its own sentence: one, a full stop, 80 characters, no data", () => {
     const reasons = PAIRS.filter(([, , connects]) => !connects).map(([from, to]) => {
       const reason = String(PORT_COMPAT[from][to]);
@@ -79,6 +79,8 @@ describe("portsOf", () => {
     expect(() => of("action", null)).toThrow(SV);
     expect(() => portsOf({ id: 7, type: "action", data: {} } as never)).toThrow(SV);
     expect(() => portsOf(null as never)).toThrow(SV);
+    expect(() => of("condition")).toThrow(SV); // a condition with no data
+    expect(() => of("gate", {})).toThrow(expect.objectContaining({ nodeIds: ["n1"] }));
   });
 });
 
@@ -90,9 +92,14 @@ describe("portTypeOfMetric", () => {
     const own = ["price", "enum", "bool"].map((unit) =>
       portTypeOfMetric(unit as MetricUnit, "enum"),
     );
-    expect(own).toEqual(["price", "side", "boolean"]); // the unit decides, as build.py:32-38
+    expect(own).toEqual(["price", "side", "boolean"]); // by the unit, not build.py's types
     for (const unit of NUMBERS) expect(portTypeOfMetric(unit, "number"), unit).toBe("number");
     expect(portTypeOfMetric("price", "series")).toBeUndefined(); // a series is not one value
+    for (const u of ["enum", "ratio"] as const)
+      expect(portTypeOfMetric(u, "series")).toBeUndefined();
+    expect(portTypeOfMetric("price", "number")).toBe("price"); // the registry's own pairs
+    expect(portTypeOfMetric("enum", "enum")).toBe("side");
+    expect(portTypeOfMetric("bool", "bool")).toBe("boolean");
     for (const unit of ["usd", "constructor"]) {
       expect(portTypeOfMetric(unit as MetricUnit, "number"), unit).toBeUndefined();
     }

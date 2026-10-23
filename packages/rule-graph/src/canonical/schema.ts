@@ -62,7 +62,7 @@ function tagOf(union: readonly Node[], value: Data): string | undefined {
   return BOOLEAN_OPS.has(op) ? "BooleanNode" : TEMPORAL_OPS.has(op) ? "TemporalNode" : "Comparison";
 }
 
-function text(value: string, all: readonly Node[], path: string): string {
+function text(value: string, all: readonly Node[], path: string, exact: boolean): string {
   if (LONE_SURROGATE.test(value)) refuse(path, "text with a lone surrogate has no UTF-8 form");
   const strings = all.filter((arm) => arm.type === "string");
   // Plain text in the union wins and is kept as sent (pydantic's smart union: str is exact).
@@ -73,11 +73,12 @@ function text(value: string, all: readonly Node[], path: string): string {
     return UUID.test(value) ? value.toLowerCase() : refuse(path, "a UUID must be hyphenated");
   }
   if (strings.length === 0) refuse(path, "text is not allowed here");
+  if (!exact) return value; // decimal text, whatever its form
   return decimalOfText(value) ?? refuse(path, "only plain decimal text is mirrored");
 }
 
 /** A model: no unknown or missing field, and each absent field's default. */
-function model(value: Data, node: Node, path: string): Map<string, Canonical> {
+function model(value: Data, node: Node, path: string, exact: boolean): Map<string, Canonical> {
   const properties = node.properties as Props; // every model lists its fields
   const unknown = Object.keys(value).find((key) => !Object.hasOwn(properties, key));
   if (unknown !== undefined) refuse(`${path}.${unknown}`, "not a field of the rule IR");
@@ -87,12 +88,12 @@ function model(value: Data, node: Node, path: string): Map<string, Canonical> {
   for (const [key, field] of Object.entries(properties)) {
     // `limits` and metric `params` default to their factory's {} (models.py:101, :288).
     const given = Object.hasOwn(value, key) ? value[key] : "default" in field ? field.default : {};
-    out.set(key, walk(given, field, `${path}.${key}`));
+    out.set(key, walk(given, field, `${path}.${key}`, exact));
   }
   return out;
 }
 
-function walk(value: unknown, node: Node, path: string): Canonical {
+function walk(value: unknown, node: Node, path: string, exact: boolean): Canonical {
   const all = arms(node);
   const arm = (type: string) => all.find((a) => a.type === type);
   if (value === null) return arm("null") ? null : refuse(path, "null is not allowed here");
@@ -100,11 +101,13 @@ function walk(value: unknown, node: Node, path: string): Canonical {
   // boolean, are pinned by no vector and refused; an integer takes no fraction (int_from_float).
   if (typeof value === "boolean" && arm("boolean")) return value;
   if (typeof value === "number" && (arm("number") || (arm("integer") && Number.isInteger(value)))) {
+    if (!exact) return ""; // a number, whatever its value
     return decimalOfNumber(value) ?? refuse(path, "the number has no canonical decimal form");
   }
-  if (typeof value === "string") return text(value, all, path);
+  if (typeof value === "string") return text(value, all, path, exact);
   const items = Array.isArray(value) ? arm("array")?.items : undefined;
-  if (items) return Array.from(value as unknown[], (item, i) => walk(item, items, `${path}[${i}]`));
+  if (items)
+    return Array.from(value as unknown[], (item, i) => walk(item, items, `${path}[${i}]`, exact));
   const union = all.find((a) => a.oneOf !== undefined)?.oneOf;
   const extra = arm("object")?.additionalProperties; // false for a model, else the values' schema
   if (!isData(value) || (union === undefined && extra === undefined)) {
@@ -112,21 +115,27 @@ function walk(value: unknown, node: Node, path: string): Canonical {
   }
   if (union !== undefined) {
     const tag = tagOf(union, value);
-    return tag ? model(value, def(tag), path) : refuse(path, "no operand or condition kind fits");
+    return tag
+      ? model(value, def(tag), path, exact)
+      : refuse(path, "no operand or condition kind fits");
   }
-  if (extra === false) return model(value, arm("object") as Node, path);
+  if (extra === false) return model(value, arm("object") as Node, path, exact);
   const out = new Map<string, Canonical>();
   for (const [key, item] of Object.entries(value)) {
     if (LONE_SURROGATE.test(key)) refuse(path, "a key with a lone surrogate has no UTF-8 form");
-    out.set(key, walk(item, extra === true ? {} : (extra as Node), `${path}.${key}`));
+    out.set(key, walk(item, extra === true ? {} : (extra as Node), `${path}.${key}`, exact));
   }
   return out;
 }
 
-/** The bounds, then `Rule.model_validate(ir).model_dump()`, normalised. */
-export function dump(ir: unknown): Map<string, Canonical> {
+/**
+ * The bounds, then `Rule.model_validate(ir).model_dump()`, normalised. With `exact` false, only
+ * the shape is checked: decimal text is not parsed and a number is taken as it is, as form.py
+ * reads no number.
+ */
+export function dump(ir: unknown, exact = true): Map<string, Canonical> {
   checkBounds(ir);
-  return walk(ir, RULE_IR_SCHEMA as Node, "$") as Map<string, Canonical>; // the root is a model
+  return walk(ir, RULE_IR_SCHEMA as Node, "$", exact) as Map<string, Canonical>; // a model
 }
 
 /** Refuses a value of more than MAX_VALUES values, or deeper than MAX_DEPTH, as the server does. */

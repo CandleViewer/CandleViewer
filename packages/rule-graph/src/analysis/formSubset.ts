@@ -11,11 +11,13 @@ const OPERANDS = ["left", "right", "right2"];
 const has = (v: unknown, key: string): v is Tree => isTree(v) && Object.hasOwn(v, key);
 
 /**
- * Why the form editor cannot show `ir`, node by node in form.py's order; none when it can. An IR
- * the canonical mirror cannot read is refused (SCHEMA_VIOLATION), as `canonicalise` refuses it.
+ * Why the form editor cannot show `ir`, node by node in form.py's order; `[]`, AC3's true, when it
+ * can. An IR whose shape the canonical mirror cannot read is refused (SCHEMA_VIOLATION); its
+ * numbers are not read, as form.py reads none, so a rule as the server returns it is judged too
+ * (a Decimal as `1E-7`, C-Q1).
  */
 export function isFormRepresentable(ir: RuleIr): FormReason[] {
-  dump(ir);
+  dump(ir, false);
   const out: FormReason[] = [];
   const say = (n: Tree, reason: string) => out.push({ nodeId: n["node_id"] as string, reason });
   const operands = (n: Tree) => {
