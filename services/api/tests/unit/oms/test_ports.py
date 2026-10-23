@@ -62,6 +62,7 @@ from candleviewer.oms.fakes import (
 )
 from candleviewer.oms.ports import (
     FAILED,
+    INTERIM_PORT_LABELS,
     INTERIM_PORTS_METRIC,
     PASSED,
     PORT_NAMES,
@@ -586,7 +587,8 @@ def test_announce_counts_a_real_port_as_zero_and_logs_nothing_for_it() -> None:
 
 def test_announce_registers_the_gauge_from_its_catalogue_entry() -> None:
     [spec] = [s for s in CATALOGUE if s.name == INTERIM_PORTS_METRIC]
-    assert (spec.kind, spec.labels, spec.max_series) == ("gauge", ("port",), len(PORT_NAMES))
+    assert (spec.kind, spec.labels, spec.max_series) == ("gauge", ("port",), 6)
+    assert INTERIM_PORT_LABELS == (*PORT_NAMES, "kill_switch", "machine_event_sink")
     assert (spec.status, spec.owner_epic) == ("planned", "E29")
     metrics = Metrics("demo")
     announce_interim_ports(SubmissionPorts.interim(now=lambda: NOW), metrics=metrics)

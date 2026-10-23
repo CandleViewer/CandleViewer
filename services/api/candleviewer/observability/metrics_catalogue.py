@@ -2587,13 +2587,14 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "gauge",
         "ports",
         ("port",),
-        "Order-path ports served by an interim implementation (#913 ruling R4), set once at "
-        "startup: 1 per interim port (sizer, stop_resolver, risk_gate, arm_records), 0 per real "
-        "one. The interim risk gate and arm records refuse every live order.",
+        "Order-path ports served by an interim implementation (#913 ruling R4; slice 3), set once "
+        "at startup: 1 per interim port (sizer, stop_resolver, risk_gate, arm_records, "
+        "kill_switch, machine_event_sink), 0 per real one. The interim risk gate and arm records "
+        "refuse every live order; the interim kill switch admits.",
         "> 0 on env=live (dashboard)",
         _P,
         "E29",
-        max_series=4,
+        max_series=6,
     ),
     _s(
         "oms_submit_rejected_total",
@@ -2606,7 +2607,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "store_unavailable, audit_unavailable or internal_error > 0 for 5 min (page)",
         _P,
         "E29",
-        max_series=20,
+        max_series=21,
     ),
     _s(
         "oms_clock_drift_blocked_total",
