@@ -14,7 +14,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 
 - [ ] **Final Penpot link** — file CandleViewer DS, page `E16-D02 SCR-140 Recorder`, board
       `CMP-177 · RecorderStatusRow — states`: link and PNGs in `E16-D02.md` §"Penpot boards"; PNG per state under
-      `docs/design/E16/img/`. Pending: the boards are drawn in the next Penpot slots.
+      `docs/design/E16/img/`. Pending: the boards land in the boards PR, which closes #323 (this text merges first).
 - [ ] **Variants × States matrix** — every state of the shipped spec is a Penpot variant and a Storybook story; table 1.
       Pending with the boards.
 - [x] **Keyboard table** — table variant inside the CMP-049 grid (↑ ↓ rows, ← → into the row's controls); standalone
@@ -44,7 +44,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
       `text.tertiary` on `color.surface.hover`). That is a security-owned `tools/` change,
       which lands with the CMP-177 build (E16-S01) or a small tools PR. The CVD simulation is attached with
       the boards
-- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — on the PR
+- [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — on the boards PR
 - [ ] **Sign-off** — owner `approved` comment or merged spec PR
 
 ### Table 1 — Variants × States
