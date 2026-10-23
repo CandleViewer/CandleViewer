@@ -1340,6 +1340,21 @@ def test_w5_gives_every_phase_the_cli_window_and_refuses_a_pong_delay(
     assert code == 0 and "W5: per_family" in capsys.readouterr().out
 
 
+def test_w5_judge_rereads_a_saved_directory_to_the_answer_w5_wrote_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def tree() -> dict[Path, bytes]:
+        return {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+
+    monkeypatch.setattr(runner, "execute", lambda p, k6: w5_phase(p))
+    monkeypatch.setattr(runner, "k6_binary", lambda: "k6")
+    runner.cmd_w5(args(out_dir=tmp_path, duration_s=30.0, warmup_s=10.0))
+    saved = tree()
+    capsys.readouterr()
+    assert runner.cmd_w5_judge(argparse.Namespace(dir=str(tmp_path))) == 0
+    assert capsys.readouterr().out == saved[tmp_path / "w5.json"].decode() and tree() == saved
+
+
 LOST_T1, LATE_T0 = {"missing": ["t1"]}, {"timed_out_ms": [15000, 15000], "retried": ["t0"]}
 OUT, KEPT = "a boundary scrape timed out, left out", "scrapes timed out"
 ONE_TIMEOUT = {"timed_out_ms": [15000]}

@@ -6,6 +6,7 @@
     uv run python -m bench.ws.runner run smoke --duration-s 120 --warmup-s 20
     uv run python -m bench.ws.runner selfcheck [--duration-s 180]
     uv run python -m bench.ws.runner w5 --out-dir DIR
+    uv run python -m bench.ws.runner w5-judge DIR         # re-judge a saved W5 directory, offline
     uv run python -m bench.ws.runner judge DIR            # re-judge a saved run
     uv run python -m bench.ws.runner gate DIR DIR DIR     # C-13.9: 5 % on the median of 3 runs
     uv run python -m bench.ws.runner repro DIR_A DIR_B    # AC 5: within 15 %, or a named source
@@ -832,6 +833,33 @@ def cmd_w5(a: argparse.Namespace) -> int:
     return 1 if left_out else w5.exit_code(answer)
 
 
+def cmd_w5_judge(a: argparse.Namespace) -> int:
+    """Re-judge a saved W5 directory (`w5 --out-dir DIR`) offline: the phases `cmd_w5` builds, from
+    the saved files alone, through `w5.analyze`. It prints the answer as JSON and writes nothing
+    (the notes a live run adds about scrapes that timed out are not repeated)."""
+    phases: list[w5.Phase] = []
+    left_out: list[str] = []
+    for ph in profiles.load()["w5"]["phases"]:
+        out = Path(a.dir) / ph["name"]
+        if not out.is_dir():  # `analyze` names a mixed phase the directory does not hold
+            continue
+        res, facts = judge(out)
+        if facts.get("scrapes", {}).get("missing"):
+            left_out.append(ph["name"])
+            continue
+        _, summ, t0, t1 = load_run(out)
+        prof, status = facts["resolved"], "INVALID" if res.invalid else res.status
+        phases.append(
+            w5.Phase(
+                ph["name"], tuple(prof["families"]), int(prof["rtt_delay_ms"]), summ,
+                budgets.delta(t0, t1), facts["steady_s"], status, facts.get("steady_actual_s"),
+            )
+        )  # fmt: skip
+    answer = w5.analyze(phases, left_out)
+    print(json.dumps(answer, indent=2, default=str))
+    return w5.exit_code(answer)
+
+
 def cmd_record(a: argparse.Namespace) -> int:
     res, facts = judge(Path(a.dir))
     if why := not_recordable(res, facts):
@@ -933,6 +961,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     add("selfcheck", cmd_selfcheck, runs=True)
     add("w5", cmd_w5, runs=True)
+    add("w5-judge", cmd_w5_judge).add_argument("dir")
     add("judge", cmd_judge).add_argument("dir")
     add("record", cmd_record).add_argument("dir")
     add("gate", cmd_gate).add_argument("dirs", nargs="+")
