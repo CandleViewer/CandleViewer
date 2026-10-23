@@ -13,9 +13,10 @@ in `E05-D02-data-display.md` §6 and drawn on Penpot page `10 Components — Ato
 focus ring and the CMP-002 IconButton that CMP-011 and CMP-033 nest are reviewed in slice 1's audit
 (`E05-D02-a11y-audit.md`).
 
-**Method.** Every ratio below was computed for this review from the token files in `packages/ui/tokens` (dark, light
-and high contrast, layered as `verify_tokens.py` layers them; WCAG 2.x relative luminance). They match the specs'
-own figures; where a spec lists failing surfaces incompletely, the table gives the full set. A dimmed state blends the
+**Method.** Every ratio below was computed for this review from the token files in `packages/ui/tokens` as #3925
+left them (`a0132de01`, their last change; dark, light and high contrast, layered as `verify_tokens.py` layers
+them; WCAG 2.x relative luminance). They match the specs' own figures; where a spec lists failing surfaces
+incompletely, the table gives the full set. A dimmed state blends the
 colour at `opacity.disabled` (0.45) over its surface. "The seven tiers" are `color.surface.app`, `canvas`, `raised`,
 `overlay`, `hover`, `selected` and `sunken`. The keyboard and name/role rows summarise the full tables in
 `E05-D02-data-display.md` §6. "§5 En" points at that document's owner decisions; "slice 1 A3" at `E05-D02.md` §6.
@@ -30,6 +31,8 @@ colour at `opacity.disabled` (0.45) over its surface. "The seven tiers" are `col
 | Colour never alone | 05 §4; brief §6 rule 1        | **Pass**: a glyph shape, word, sign, slope, dot count, dashed outline or label carries every state.                                                                                                                                                             |
 | Motion             | 05 §7; brief §7               | **Pass**: nothing in this slice animates; every change is instant in both modes.                                                                                                                                                                                |
 | Contrast           | 05 §5                         | **Open**: 14 `colorBySign` text pairs fail 4.5:1 (§5 E1); the non-text pairs below 3:1 in §4 are not relied on for meaning.                                                                                                                                     |
+| Text resize        | 05 §5.7; brief §4             | **Specified** in each component's "Resize & overflow" line (`E05-D02-data-display.md` §6; slice 1 §3 item 11): heights are minimums at 112–150 % text and 200 % zoom; numbers never wrap or truncate; data-sized marks keep their size.                         |
+| Forced colors      | 05 §8.1 (Windows, P0)         | **Specified** in each component's "Forced colors" line (`E05-D02-data-display.md` §6; slice 1 §3 item 12): text, glyphs and strokes take system colours (links LinkText); shapes keep a border or a CanvasText fill; only the legend swatch keeps its colour.   |
 | CVD                | 05 §4.2                       | **Not run here** beyond dE76 spot checks: E05-D04's formal review (§5).                                                                                                                                                                                         |
 
 ## 2. Keyboard path, role and name
@@ -53,7 +56,7 @@ colour at `opacity.disabled` (0.45) over its surface. "The seven tiers" are `col
 
 | Component | Focus visibility                                                                                                       | Target size                                                                                         | Colour never alone                                                                                                                                 | Motion pair                                                               |
 | --------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| CMP-011   | Estimated chip: the CMP-039 ring around the pill. Removable: the nested CMP-002 ring, which touches the label (§5 E7). | Remove button 24 × 24 (32 × 32 comfortable); the estimated chip is 24 px tall and wider than 24 px. | Status tones: the glyph shape and the word; estimated: the dashed outline and the literal word (light warning and danger fills match, slice 1 A6). | None: instant.                                                            |
+| CMP-011   | Estimated chip: the CMP-039 ring around the pill. Removable: the nested CMP-002 ring, which touches the label (§5 E7). | Remove button 24 × 24 (32 × 32 comfortable); the estimated chip is 24 px tall and wider than 24 px. | Status tones: the glyph shape and the word; estimated: the dashed outline and the literal word (light warning and danger glyph colours match, A6). | None: instant.                                                            |
 | CMP-012   | Not focusable.                                                                                                         | Not interactive; it must not shrink or cover its host's target.                                     | The numeral and the host's word; a dot always sits beside a word (and a glyph).                                                                    | None: no pulse, bounce or count-up.                                       |
 | CMP-013   | Not focusable.                                                                                                         | Not interactive.                                                                                    | Not applicable: no colour carries meaning (interim neutral fill, §5 E2).                                                                           | None.                                                                     |
 | CMP-018   | Not focusable.                                                                                                         | Not interactive.                                                                                    | Not applicable.                                                                                                                                    | None.                                                                     |
@@ -64,13 +67,14 @@ colour at `opacity.disabled` (0.45) over its surface. "The seven tiers" are `col
 | CMP-030   | Not focusable.                                                                                                         | Not interactive.                                                                                    | Not applicable: the label is text.                                                                                                                 | None.                                                                     |
 | CMP-032   | Not focusable.                                                                                                         | Not interactive.                                                                                    | The filled-dot count (shape) and the label; one hue.                                                                                               | None.                                                                     |
 | CMP-033   | The nested CMP-002 ring (28 × 28).                                                                                     | 24 × 24 (32 × 32 comfortable).                                                                      | Copied: the `check` glyph replaces `copy` (a shape change) and the announcement says so.                                                           | None: instant glyph swaps; the 2 s revert is a timed state, not motion.   |
-| CMP-037   | Not focusable.                                                                                                         | Not interactive (a row becomes a 32 px target only if click-to-filter is added).                    | The label names what each swatch keys; direction tokens add ▲ or ▼.                                                                                | None.                                                                     |
+| CMP-037   | Not focusable.                                                                                                         | Not interactive (only click-to-filter would make a row a target: 24 px compact, 32 px comfortable). | The label names what each swatch keys; direction tokens add ▲ or ▼.                                                                                | None.                                                                     |
 
 ## 4. Contrast pairs each component introduces
 
 Text needs 4.5:1 (WCAG 1.4.3); glyphs, data marks and focus indicators need 3:1 (WCAG 1.4.11). Values per theme
 read app / canvas / raised / overlay / hover / selected / sunken where seven are given. **Bold** marks a pair below
-its bar. The CMP-039 ring is at least 4.72:1 (dark, high contrast) and 4.81:1 (light) on every tier (slice 1 audit).
+its bar. The CMP-039 ring is at least 4.72:1 (dark), 4.81:1 (light) and 12.26:1 (high contrast, white since #3925)
+on every tier (slice 1 audit).
 
 | Component        | Pair                                                                                                | Dark                                               | Light                                                            | High contrast                                    | Needs | Result                                                                                                                    |
 | ---------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------- |
@@ -83,8 +87,8 @@ its bar. The CMP-039 ring is at least 4.72:1 (dark, high contrast) and 4.81:1 (l
 | CMP-011          | Neutral outline `border.default` against canvas                                                     | 1.50                                               | 1.31                                                             | 3.03                                             | —     | Not relied on: the label is the content                                                                                   |
 | CMP-012          | Count numeral `text.primary` on each tone's fill                                                    | 9.86–12.22                                         | 14.37–15.62                                                      | 11.16–13.83                                      | 4.5   | Pass                                                                                                                      |
 | CMP-012          | Count outline (`neutral.default`, `status.*.strong`) against canvas and raised                      | ≥ 5.62                                             | ≥ 3.39 (success)                                                 | ≥ 5.62                                           | 3     | Pass                                                                                                                      |
-| CMP-012          | Dot (`status.*.default`, `neutral.default`) on app and canvas, the specified surfaces               | ≥ 3.63 (danger)                                    | ≥ 3.22 (warning, danger)                                         | ≥ 3.63 (danger)                                  | 3     | Pass                                                                                                                      |
-| CMP-012          | Dot on the other tiers                                                                              | danger 2.92 hover, 2.43 selected                   | warning, danger 2.999 raised to 2.46; info 2.86 selected, sunken | danger 2.92 hover, 2.43 selected                 | 3     | **Below 3:1 off app and canvas**: a redundant cue beside its glyph and word (§5 E11)                                      |
+| CMP-012          | Dot (`status.*.default`, `neutral.default`) on app and canvas, the specified surfaces               | ≥ 3.63 (danger)                                    | ≥ 3.22 (warning)                                                 | ≥ 4.30 (danger)                                  | 3     | Pass                                                                                                                      |
+| CMP-012          | Dot on the other tiers                                                                              | danger 2.92 hover, 2.43 selected                   | warning 2.999 (raised) to 2.46; info 2.86 on selected and sunken | danger 2.87 selected                             | 3     | **Below 3:1 off app and canvas**: a redundant cue beside its glyph and word (§5 E11)                                      |
 | CMP-013          | Initials `text.primary` on `neutral.subtle`                                                         | 12.22                                              | 14.37                                                            | 13.83                                            | 4.5   | Pass                                                                                                                      |
 | CMP-013          | Avatar disc `neutral.subtle` against the seven tiers                                                | 1.00–1.43                                          | 1.00–1.25                                                        | 1.00–1.43                                        | —     | Not relied on: the initials and the name carry it; the disc vanishes on `surface.hover`                                   |
 | CMP-018, CMP-030 | Rule `border.subtle` against the seven tiers                                                        | 1.31 / 1.24 / 1.17 / 1.09 / 1.00 / 1.20 / 1.43     | 1.25 / 1.17 / 1.09 / 1.00 / 1.00 / 1.12 / 1.12                   | as dark                                          | —     | Not relied on (spacing and the `separator` role carry the grouping); invisible on light overlay and on hover (slice 1 A4) |
@@ -115,8 +119,9 @@ Not reviewed in this pre-review: the PR adds no CVD exports, and the formal CVD 
 §13.3 item 3). The specs ran dE76 spot checks with `docs/research/_tools/cvd_simulate.py`, and this review re-ran the
 pairs below with the same tool. Structurally, no slice-2 state depends on hue alone:
 
-- **Status tones** (CMP-011, CMP-012) are told apart by glyph shape and word. Light warning and danger fills and dots
-  are identical (dE76 0 for every vision type, slice 1 A6), and dark info and success dots are 11.9 apart under
+- **Status tones** (CMP-011, CMP-012) are told apart by glyph shape and word. Light warning and danger glyphs and
+  outlines (`.strong`) are identical (dE76 0 for every vision type, slice 1 A6), while their dots are 56.6 apart
+  (34.5 under tritanopia) and their chip fills 18.8 (9.5); dark info and success dots are 11.9 apart under
   tritanopia.
 - **Direction** (CMP-020, CMP-024) is carried by the + or − sign and by the slope. The buy and sell strokes are only
   8.3 (dark), 16.1 (light) and 5.8 (high contrast) apart under deuteranopia.
@@ -131,12 +136,12 @@ pairs below with the same tool. Structurally, no slice-2 state depends on hue al
 ## 6. Findings for the owner and E05-D04
 
 1. `colorBySign` text fails 4.5:1 in 14 tier pairs (dark sell from raised to selected; dark and high-contrast zero on
-   selected; light buy and sell on overlay, hover, selected and sunken): text-grade tokens in #3896's token pass
-   (§5 E1). Until they land, the brief §12 contrast item stays open.
-2. Status dots fall below 3:1 off app and canvas (light warning and danger 2.46–2.999, light info 2.86, dark and
-   high-contrast danger 2.43–2.92). The spec places dots on app and canvas only, always beside a glyph and a word
-   (§5 E11); the identical light warning and danger hues are slice 1 A6.
-3. Light filled confidence dots are 2.86:1 on selected and sunken; the label names the level (§5 E17).
+   selected; light buy and sell on overlay, hover, selected and sunken): text-grade tokens in the next E05 token
+   pass (§5 E1). Until they land, the brief §12 contrast item stays open.
+2. Status dots fall below 3:1 off app and canvas (light warning 2.46–2.999, light info 2.86, dark danger 2.43–2.92,
+   high-contrast danger 2.87 on selected). The spec places dots on app and canvas only, always beside a glyph and a
+   word (§5 E11); the identical light warning and danger glyph colours (`.strong`) are slice 1 A6.
+3. Light filled confidence dots are 2.86:1 on selected and sunken (§4); the label names the level (§5 E17).
 4. Dividers (`color.border.subtle`) are 1.00–1.43:1, and invisible on light overlays and on hover in both themes:
    slice 1 A4.
 5. The legend swatch outline is 1.57–1.91:1; it only marks the zero stop (§5 E16).
@@ -155,4 +160,4 @@ pairs below with the same tool. Structurally, no slice-2 state depends on hue al
 §13 · `docs/plan/15-component-catalogue.md` §0.3 · `docs/design/E05/E05-D02-data-display.md` (§4 exceptions, §5
 decisions, §6 component specifications, §7 QA checklist) · `docs/design/E05/E05-D02-a11y-audit.md` (slice 1, the
 CMP-039 ring and CMP-002) · `packages/ui/tokens/` and `packages/ui/tokens/tests/verify_tokens.py` ·
-`docs/research/_tools/cvd_simulate.py` · #3896 (label-on-fill token retune).
+`docs/research/_tools/cvd_simulate.py` · #3925 (#3896's label-on-fill retune; the token state measured here).
