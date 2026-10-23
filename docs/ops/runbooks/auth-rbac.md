@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript, and was corrected 2026-10-23 from its cold run (#2494, E09-X04); the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051; §4, §10 and the known gaps were updated 2026-10-21 for #3009 (the lane's exit, ADR-0037 Amendment 1); §4's backstop paragraph names the two classifying middleware since 2026-10-22 (#3085 S7); §1, §10 and the known gaps were updated 2026-10-22 for #2914's PR C (the login routes' rows on the lane, ADR-0037 Amendment 2). Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript, and was corrected 2026-10-23 from its cold run (#2494, E09-X04) and from the reviews of #4254 and #300; the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051; §4, §10 and the known gaps were updated 2026-10-21 for #3009 (the lane's exit, ADR-0037 Amendment 1); §4's backstop paragraph names the two classifying middleware since 2026-10-22 (#3085 S7); §1, §10 and the known gaps were updated 2026-10-22 for #2914's PR C (the login routes' rows on the lane, ADR-0037 Amendment 2). Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -420,15 +420,17 @@ The repository's compose files (`infra/compose/`) run the fake backend and set n
 `CV_AUTH_RECOVERY_HMAC_KEY_HEX` nor a KEK for `api`: with them alone the run exits 2, and no boot
 ever enrolled a KEK check value, so the stack must add both and run the real backend (its own
 override file or environment). The #2494 drill's stack also needed `CV_STORAGE_BACKEND=real`, the
-auth keys and pepper, a volume at `/data` holding a `parquet` directory owned and writable by uid
-10001 (the cold tier's root, `/data/parquet`: the real backend's storage creates nothing and refuses
-to start without it), `CV_MESH_CIDRS_CSV` naming the compose
-network (without it the healthcheck itself gets `403`), and `CV_ALLOWED_ORIGINS` for a client's
-WebSocket. Every compose command then warns that the secrets' `uid`, `gid` and `mode` are not
-supported outside Swarm mode: expected, since the host files carry them (the audit lane key, below).
+auth keys and pepper, a volume at `/data` owned by uid 10001 and holding a `parquet` directory (the
+cold tier's root, `/data/parquet`: the real backend's storage creates nothing and refuses to start
+without it; a clean stop also writes `/data/admin-jobs/`, and a recording `/data/recorder-wal`),
+`CV_MESH_CIDRS_CSV` naming the compose network (without it the healthcheck itself gets `403`), and
+`CV_ALLOWED_ORIGINS` for a client's WebSocket. Every compose command then warns that the secrets'
+`uid`, `gid` and `mode` are not supported outside Swarm mode: expected, since the host files carry
+them (the audit lane key, below).
 
 1. Record the incident in its ticket before you start: who, when, why, and who has the host. Every
-   run pages (R8), refused ones included, and the pages need that context.
+   run that writes its attempt record pages (R8), refused ones included, and the pages need that
+   context.
 2. Stop cv-api and check that it is down:
 
    ```bash
@@ -454,14 +456,17 @@ supported outside Swarm mode: expected, since the host files carry them (the aud
    not take them: they reach `audit_log` at the next cv-api boot. A refusal names its reason (table
    above): fix it and run again; each run is a new attempt with records of its own. The run's id is
    the `run_id` of its `breakglass.run_ended` JSON line (`breakglass.refused_unjournaled` when the
-   journal could not be opened: a 4, or a 5 for a held run lock), and the `request_id` of its
+   journal could not be opened: a 4, or a 5 for a held run lock; for a 6,
+   `breakglass.attempt_unrecorded` or `breakglass.outcome_unrecorded`), and the `request_id` of its
    records. A `host_fs_unavailable` (4) shows its cause as
    `[redacted:key-shape]`: check `CV_AUDIT_WAL_PATH` and the volume (The audit volume, below). Its
    attempt and refusal still reach `audit_log`, written straight to Postgres. With no usable
    journal and Postgres unreachable too, a 4 or 5 ends
-   `Audit: no record could be written (pre-audit refusal)`: nothing was checked or changed, and no
-   record of the run exists (C-2.9's bounded exception); the JSON line names the reason. To read a
-   run's records and the event (read-only):
+   `Audit: no record could be written (pre-audit refusal)` (as does a 6 whose attempt record
+   failed): nothing was checked or changed, no record of the run exists, and so it does not page.
+   That is the documented pre-audit refusal of #2119's S3 criterion, a residual of the threat model
+   (`docs/security/threat-models/e09-auth-rbac.md` §3.6.1); the JSON line names the reason. To read
+   a run's records and the event (read-only):
 
    ```bash
    $COMPOSE exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
@@ -487,19 +492,22 @@ supported outside Swarm mode: expected, since the host files carry them (the aud
    Each reset raises its own event, so a second, mistaken reset leaves a second one, and the CLI's
    `system event N raised` names the event's id, not a count.
 
-**Alerts (R8).** `AuthBreakGlassAttempted` pages for every run, refused ones included;
-`AuthBreakGlassUsed` pages while a reset's event is unresolved; `AuthBreakGlassStateReadFailing` is
-a ticket when cv-api cannot read that state (their sections in `docs/plan/07-release-and-prr.md`).
-main-orchestrator ruled this routing (page, page, ticket) on 2026-10-17 under the owner's
-delegation; it awaits the owner's confirmation on #2119. A severity is one label in
-`infra/prometheus/alerts`.
+**Alerts (R8).** `AuthBreakGlassAttempted` pages for every run that writes its attempt record,
+refused ones included (it counts `auth.break_glass_attempt` rows, so a pre-audit refusal does not
+page); `AuthBreakGlassUsed` pages while a reset's event is unresolved;
+`AuthBreakGlassStateReadFailing` is a ticket when cv-api cannot read that state (their sections in
+`docs/plan/07-release-and-prr.md`). main-orchestrator ruled this routing (page, page, ticket) on
+2026-10-17 under the owner's delegation; it awaits the owner's confirmation on #2119. A severity is
+one label in `infra/prometheus/alerts`.
 
-**Drilling the refusals (#2494).** Outside `live` only, since every run pages (R8). Run each
-injection with `-T`, so that a run which passes the
-check under test stops at `no_tty` (11) and never reaches the prompt. Leaving the KEK variables
-unset is not "no KEK": they default to the compose secret's path, so a mounted KEK still loads and
-the proof passes. Point the handle at an absent path instead; a relative audit path drills 4. Each
-still writes an attempt and a refusal record:
+**Drilling the refusals (#2494).** Outside `live` only: a `live` run needs an unused code from the
+sealed recovery envelope and resets the real Owner. A drill outside `live` pages too, since the
+rule has no environment filter and Alertmanager routes by severity alone: every run that writes
+its attempt record pages (R8), so warn the on-call first. Run each injection with `-T`, so that a
+run which passes the check under test stops at `no_tty` (11) and never reaches the prompt. Leaving
+the KEK variables unset is not "no KEK": they default to the compose secret's path, so a mounted
+KEK still loads and the proof passes. Point the handle at an absent path instead; a relative audit
+path drills 4. Each still writes an attempt and a refusal record:
 
 ```bash
 $COMPOSE run -T --rm --no-deps -e CV_KEK_HANDLE=/run/secrets/absent_kek --entrypoint python api -m candleviewer.breakglass --owner <owner>   # 9 kek_unproven
@@ -902,7 +910,7 @@ Proven end to end in process on the deployed app
 sessions included. `services/api/tests/security/auth/test_disable_user_drill.py` drives the same
 route from the manager's side: a private subscription's `bye` and close, and the measured time from
 the `DELETE` to the `bye`. The dev-stack drill (E09-X04, #2494) is recorded in
-`docs/security/reviews/e09-auth-review.md` section 4 with #300's second PR.
+`docs/security/reviews/e09-auth-review.md` section 4.
 
 ## 5. Audit-chain verification failure
 
@@ -1520,9 +1528,10 @@ boot's `previous_kid` is gone, and destroy the old secret file.
 
 ## Execution record
 
-§3 was run cold by a non-author on 2026-10-23, on a dev compose stack on the real backend (#2494;
-the record goes into `docs/security/reviews/e09-auth-review.md` section 4 with #300's second PR).
-Not executed on staging: no staging host exists (#1778 item A); the staging run is tracked in #2298. Security review of §3/§5 exists as an agent review on #2115; Ops review is recorded on #2343.
+§3 was run cold by a non-author on 2026-10-23, on a dev compose stack on the real backend (#2494),
+and is recorded in `docs/security/reviews/e09-auth-review.md` section 3. Not executed on staging:
+no staging host exists (#1778 item A); the staging run is tracked in #2298. Security review of
+§3/§5 exists as an agent review on #2115; Ops review is recorded on #2343.
 
 The audit lane's drill (§12, §13; ADR-0037 S4b-2a, #3009) is an in-process test, not a non-author's walk of those
 sections on a staging host: `services/api/tests/unit/audit/test_lane_drill.py` runs the real `AuditService` over an
