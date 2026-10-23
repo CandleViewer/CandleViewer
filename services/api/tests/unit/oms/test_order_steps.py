@@ -521,9 +521,28 @@ def test_each_trigger_is_recorded_with_the_kind_and_source_24_names() -> None:
     with no `source` of its own keeps its default. The table and `_KINDS` name the same
     triggers."""
     table = _kind_table()
-    assert set(table) == set(steps._KINDS) and len(table) == 23
+    assert set(table) == set(steps._KINDS) and len(table) == 24
     for trigger, want in table.items():
         assert steps.event_kind(_step("submitted", "submitted", trigger)) == want, trigger
+
+
+@pytest.mark.parametrize(
+    ("extra", "source"),
+    [({}, "ws_private"), ({"pass_id": "p1", "source": "reconcile"}, "reconcile")],
+)
+async def test_terms_changed_step_writes_the_terms_with_an_exchange_push_event(
+    extra: dict[str, str], source: str, writer: OrderStepWriter, db: InMemoryOrderStore
+) -> None:
+    """24 Sec.8.3 rule 7, INV-B1-q: a terms step is an `exchange_push` that keeps its state, from
+    the path that met it, and writes the terms its push names as the machine took them, and only
+    those: a push naming only the trigger price leaves the row's quantity as it was."""
+    await _submitted(writer)
+    push = {"exchange_order_id": "x1", "trigger_price": "61000", "updated_time": 2} | extra
+    ctx = {"exchange_order_id": "x1", "trigger_price": "61000", "qty": "5"}
+    await writer(_step("submitted", "submitted", "TERMS_CHANGED", push, **ctx))
+    row = await db.get(ACCOUNT, ORDER_ID)
+    assert row is not None and (row.trigger_price, row.qty) == (Decimal(61000), Decimal(1))
+    assert (await _events(db))[-1] == (3, "exchange_push", source, "accepted", "accepted", None)
 
 
 # -- E29-T04: the first persist, the create's idempotency and the entry's recorded stops ----------
@@ -721,6 +740,7 @@ partially_filled  expired           EXPIRE                  waiting
 partially_filled  filled            EXEC                    -
 partially_filled  killed            KILL                    waiting
 partially_filled  partially_filled  EXEC                    -
+partially_filled  partially_filled  TERMS_CHANGED           -
 partially_filled  quarantined       FAULT                   -
 quarantined       cancelled         RECON_FOUND_CANCELLED   waiting
 quarantined       filled            RECON_FOUND_FILLED      answered
@@ -737,6 +757,7 @@ submitted         held              MISMATCH                waiting
 submitted         killed            KILL                    waiting
 submitted         partially_filled  EXEC                    -
 submitted         quarantined       FAULT                   -
+submitted         submitted         TERMS_CHANGED           -
 submitted         triggered         TRIGGERED               -
 submitted         unknown           TRANSPORT_FAULT         -
 submitting        held              done.invoke.place       waiting
@@ -751,6 +772,7 @@ triggered         expired           EXPIRE                  void
 triggered         filled            EXEC                    -
 triggered         killed            KILL                    waiting
 triggered         partially_filled  EXEC                    -
+triggered         triggered         TERMS_CHANGED           -
 unknown           cancelled         RECON_FOUND_CANCELLED   waiting
 unknown           filled            RECON_FOUND_FILLED      answered
 unknown           held              MISMATCH                waiting

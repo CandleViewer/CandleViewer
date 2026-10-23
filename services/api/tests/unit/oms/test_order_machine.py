@@ -2331,6 +2331,7 @@ B1_RECORDS: dict[str, tuple[str, Outcome, Severity]] = {
     "kill_cancel_lost": ("orders.cancel", "failure", "error"),
     "guard_denied": ("oms.reconcile_anomaly", "denied", "error"),
     "reconcile_anomaly": ("oms.reconcile_anomaly", "denied", "error"),
+    "terms_refused": ("oms.reconcile_anomaly", "denied", "error"),
 }
 
 

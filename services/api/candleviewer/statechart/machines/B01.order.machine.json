@@ -1,6 +1,6 @@
 {
   "id": "order",
-  "version": 4,
+  "version": 5,
   "strictConfig": true,
   "maxIterations": 500,
   "actionErrorPolicy": "rollback",
@@ -220,6 +220,21 @@
             "FAULT": {
               "target": "#order.lifecycle.quarantined"
             },
+            "TERMS_CHANGED": [
+              {
+                "target": "#order.lifecycle.submitted",
+                "guard": "recorded_terms_changed",
+                "reenter": true,
+                "actions": [
+                  "adopt_terms"
+                ]
+              },
+              {
+                "actions": [
+                  "audit_terms_refused"
+                ]
+              }
+            ],
             "KILL": [
               {
                 "guard": "is_recorded_stop",
@@ -271,6 +286,21 @@
                 "adopt_remote_cancel"
               ]
             },
+            "TERMS_CHANGED": [
+              {
+                "target": "#order.lifecycle.triggered",
+                "guard": "recorded_terms_changed",
+                "reenter": true,
+                "actions": [
+                  "adopt_terms"
+                ]
+              },
+              {
+                "actions": [
+                  "audit_terms_refused"
+                ]
+              }
+            ],
             "KILL": [
               {
                 "guard": "is_recorded_stop",
@@ -333,6 +363,21 @@
                 "adopt_remote_cancel"
               ]
             },
+            "TERMS_CHANGED": [
+              {
+                "target": "#order.lifecycle.partially_filled",
+                "guard": "recorded_terms_changed",
+                "reenter": true,
+                "actions": [
+                  "adopt_terms"
+                ]
+              },
+              {
+                "actions": [
+                  "audit_terms_refused"
+                ]
+              }
+            ],
             "KILL": [
               {
                 "guard": "is_recorded_stop",

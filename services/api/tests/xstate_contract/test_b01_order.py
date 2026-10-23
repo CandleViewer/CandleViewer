@@ -110,6 +110,12 @@ INVARIANTS: dict[str, str | tuple[str, ...]] = {
         "test_b01_order_recorded_stop.py::test_a_cancel_reaches_a_recorded_stop_only_through_the_cancel_service",
         "test_b01_order_recorded_stop.py::test_a_recorded_stop_replays_from_its_first_row",
     ),
+    "INV-B1-q": (
+        "test_b01_order_recorded_stop.py::test_inv_b1_q_terms_move_only_by_a_written_step_property",
+        "test_b01_order_recorded_stop.py::test_terms_changed_in_a_live_state_writes_one_step_and_moves_the_terms",
+        "test_b01_order_recorded_stop.py::test_terms_changed_not_taken_changes_nothing_and_records_terms_refused",
+        "test_b01_order_recorded_stop.py::test_terms_changed_hydration_replays_the_written_step",
+    ),
 }
 
 
@@ -403,7 +409,7 @@ async def test_b01_bindings_schemas_guards_and_audits() -> None:
     finally:
         b01.set_audit_hook(None)
     want = [{"audit_kill": "halted_by_kill"}.get(n, n[6:]) for n in audits]
-    assert len(audits) == 12 and [c.args[0] for c in hook.await_args_list] == want
+    assert len(audits) == 13 and [c.args[0] for c in hook.await_args_list] == want
 
 
 @_HYP
