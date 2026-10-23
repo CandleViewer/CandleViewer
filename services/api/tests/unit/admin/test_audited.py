@@ -245,7 +245,8 @@ def test_the_admin_mutations_declare_the_records_they_write(
 
 def test_contract_unrecorded_is_declared_only_where_a_review_allowed_it() -> None:
     """A write the contract records nothing for is an exemption from C-2.9, so each new use is a
-    reviewed edit of this set (C-10.2), not a declaration that passes on its own (S4-SEC-09)."""
+    reviewed edit of this set (C-10.2), not a declaration that passes on its own (S4-SEC-09). It
+    is empty: the one use, `ViewAsService.clear`, never had a caller and went (#3085 S14)."""
     found = {
         (cls.__module__, f"{cls.__qualname__}.{name}")
         for cls in _admin_classes()
@@ -253,7 +254,7 @@ def test_contract_unrecorded_is_declared_only_where_a_review_allowed_it() -> Non
         if (declared := declaration(member)) is not None
         and declared.exempt == "contract_unrecorded"
     }
-    assert found == {("candleviewer.admin.view_as", "ViewAsService.clear")}
+    assert found == set()
 
 
 _PACKAGE = Path(candleviewer.__file__).resolve().parent

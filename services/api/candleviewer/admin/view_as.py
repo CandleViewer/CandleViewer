@@ -418,17 +418,6 @@ class ViewAsService:
         then the bounded record. A late write before then could race it (`recorded_late`)."""
         return timedelta(seconds=self._close_timeout_s + self._record_timeout_s)
 
-    @audit_exempt("contract_unrecorded")
-    async def clear(self, record: SessionRecord, *, now: datetime) -> SessionRecord | None:
-        """Let go of `record`'s held context, one that has ended: the row, or `None` when nothing
-        applied (no context, a live one, or one already cleared). A pending end stays until its
-        record is written. A clear has no record of its own (22 `endViewAs`): the end that it
-        follows wrote `admin.view_as_ended`, or the sweeper will."""
-        state = record.view_as
-        if state is None:
-            return None
-        return await self._store.clear_view_as(str(record.id), state.context_id, now=now)
-
     async def _ended(self, row: SessionRecord, context_id: UUID, why: CloseReason) -> None:
         """This call's write ended the context: close the session's sockets, bounded, then hand
         over the record. A failed close is logged by its context, never raised: the end stands."""

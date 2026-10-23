@@ -347,22 +347,18 @@ async def test_late_record_writes_recorded_late_and_marks_it_recorded() -> None:
         await rig.service.write_end_record(record, late=True)  # a live context has no end yet
 
 
-async def test_clear_keeps_a_pending_end_and_a_lost_end_closes_nothing() -> None:
+async def test_an_end_that_lost_to_an_earlier_one_closes_nothing_and_records_nothing() -> None:
     rig = _Rig()
     record = await rig.viewing()  # a snapshot read before the end below
-    assert await rig.service.clear(record, now=_at(1)) is None  # a live context is not cleared
     rig.runner.full = True
     assert await rig.service.end(record, reason=ViewAsEndReason.ENDED, now=_at(5))
     ended = rig.repo.sessions[str(record.id)]
 
     assert not await rig.service.end(record, reason=ViewAsEndReason.SESSION_ENDED, now=_at(6))
     assert not await rig.service.end(ended, reason=ViewAsEndReason.SESSION_ENDED, now=_at(6))
-    cleared = await rig.service.clear(record, now=_at(6))
 
     assert len(rig.ports.closed) == 1 and rig.runner.tasks == []
-    assert cleared is not None and cleared.view_as == rig.held(record)
-    assert rig.held(record).cleared_at == _at(6) and rig.held(record).end_pending
-    assert rig.held(record).phase(now=_at(6)) is ViewAsPhase.NONE
+    assert rig.held(record).end_pending
 
 
 @pytest.mark.parametrize(
