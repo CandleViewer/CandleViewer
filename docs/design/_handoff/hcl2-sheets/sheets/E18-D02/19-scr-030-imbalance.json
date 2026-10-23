@@ -1,0 +1,5392 @@
+{
+ "board": {
+  "name": "E18-D02 / 19 scr-030-imbalance",
+  "w": 2144,
+  "x": 9600,
+  "y": 5100,
+  "o": {
+   "dir": "row",
+   "align": "start",
+   "fill": "color.surface.canvas",
+   "pad": "space.inset.lg",
+   "gap": "space.inset.lg"
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "SCR-030∕fp-imbalance",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "§0 frame 'SCR-030/fp-imbalance' · compact; imbalance both on; Bid × Ask (D: delta); crops at the compact pitch and each level's row height (§3)"
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance",
+   "node": {
+    "t": "board",
+    "name": "crops",
+    "w": 1280,
+    "h": 800,
+    "note": "1:1 crops of the SCR-030 plot, placed on the frame",
+    "kids": [
+     {
+      "t": "text",
+      "name": "caption",
+      "chars": "1:1 crops of the SCR-030 plot at 1280 × 800 compact: pitch 119 px (7 px lane, 3 px body + 1 px gap, 101 px cells, 7 px lane); rows 17.6 / 9.5 / 7.0 px at L0 / L1 / L2 · Bid × Ask; D: Delta, pitch 58.2 px (40.2 px cells)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 1232,
+      "x": 24,
+      "y": 20
+     },
+     {
+      "t": "text",
+      "name": "A title",
+      "chars": "×3 buy stack 64,010.0–64,012.9 · zone state × level",
+      "typo": "type.ui.body-strong",
+      "color": "color.text.primary",
+      "x": 24,
+      "y": 52
+     },
+     {
+      "t": "text",
+      "name": "A head active",
+      "chars": "active · 3 px",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "x": 148,
+      "y": 80
+     },
+     {
+      "t": "text",
+      "name": "A head tested",
+      "chars": "tested · 2 px",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "x": 371,
+      "y": 80
+     },
+     {
+      "t": "text",
+      "name": "A head broken",
+      "chars": "broken · 1 px",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "x": 594,
+      "y": 80
+     },
+     {
+      "t": "board",
+      "name": "A row L0",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "level",
+        "chars": "L0 · 17.6 px rows",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 116
+       },
+       {
+        "t": "text",
+        "name": "outline",
+        "chars": "outline: the ask side-cell",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 116
+       }
+      ],
+      "w": 116,
+      "x": 24,
+      "y": 104
+     },
+     {
+      "t": "board",
+      "name": "A L0 · active",
+      "o": {
+       "fill": "color.surface.app",
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "bar 13:35",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 88,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 52.8,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         },
+         {
+          "t": "board",
+          "name": "outlines",
+          "kids": [
+           {
+            "t": "rect",
+            "name": "o2b",
+            "w": 44,
+            "h": 15.6,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 67,
+            "y": 53.8
+           },
+           {
+            "t": "rect",
+            "name": "i2b",
+            "w": 41,
+            "h": 12.6,
+            "o": {
+             "fill": "color.surface.app"
+            },
+            "x": 68.5,
+            "y": 55.3
+           },
+           {
+            "t": "rect",
+            "name": "o3b",
+            "w": 44,
+            "h": 15.6,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 67,
+            "y": 36.2
+           },
+           {
+            "t": "rect",
+            "name": "i3b",
+            "w": 41,
+            "h": 12.6,
+            "o": {
+             "fill": "color.surface.app"
+            },
+            "x": 68.5,
+            "y": 37.7
+           },
+           {
+            "t": "rect",
+            "name": "o4b",
+            "w": 44,
+            "h": 15.6,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 67,
+            "y": 18.6
+           },
+           {
+            "t": "rect",
+            "name": "i4b",
+            "w": 41,
+            "h": 12.6,
+            "o": {
+             "fill": "color.surface.app"
+            },
+            "x": 68.5,
+            "y": 20.1
+           }
+          ],
+          "w": 119,
+          "h": 88,
+          "x": 0,
+          "y": 0,
+          "note": "imbalance outlines: o = 1.5 px ink frame, i = the cell's background inside it"
+         },
+         {
+          "t": "board",
+          "name": "cells",
+          "kids": [
+           {
+            "t": "text",
+            "name": "r1",
+            "chars": "52 ×     77",
+            "typo": "type.num.xs",
+            "color": "color.text.primary",
+            "x": 42,
+            "y": 73.2
+           },
+           {
+            "t": "text",
+            "name": "r2",
+            "chars": "38 ×    176",
+            "typo": "type.num.xs",
+            "color": "color.text.primary",
+            "x": 42,
+            "y": 55.6
+           },
+           {
+            "t": "text",
+            "name": "r3",
+            "chars": "61 ×    228",
+            "typo": "type.num.xs",
+            "color": "color.text.primary",
+            "x": 42,
+            "y": 38
+           },
+           {
+            "t": "text",
+            "name": "r4",
+            "chars": "44 ×    190",
+            "typo": "type.num.xs",
+            "color": "color.text.primary",
+            "x": 42,
+            "y": 20.4
+           },
+           {
+            "t": "text",
+            "name": "r5",
+            "chars": "3 ×     18",
+            "typo": "type.num.xs",
+            "color": "color.text.primary",
+            "x": 48,
+            "y": 2.8
+           }
+          ],
+          "w": 119,
+          "h": 88,
+          "x": 0,
+          "y": 0
+         },
+         {
+          "t": "board",
+          "name": "marks",
+          "o": {
+           "clip": false
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "bracket 1",
+            "w": 3,
+            "h": 52.8,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 114,
+            "y": 17.6,
+            "note": "buy stack 3 levels, active (3 px); labels on hover, focus, selection"
+           },
+           {
+            "t": "rect",
+            "name": "bracket 1 top",
+            "w": 2,
+            "h": 3,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 112,
+            "y": 17.6
+           },
+           {
+            "t": "rect",
+            "name": "bracket 1 bottom",
+            "w": 2,
+            "h": 3,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 112,
+            "y": 67.4
+           }
+          ],
+          "w": 119,
+          "h": 88,
+          "x": 0,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 88,
+        "x": 0,
+        "y": 0,
+        "note": "bar 13:35: bid_ask L0 box; rows r1-r5 from 64,009.0; 3 flags, 1 stacks"
+       },
+       {
+        "t": "board",
+        "name": "labels",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label 13:35",
+          "chars": "×3 buy",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 119,
+          "y": 20.4,
+          "note": "the short label on free space beside the newest bar"
+         }
+        ],
+        "w": 207,
+        "h": 88,
+        "x": 0,
+        "y": 0,
+        "note": "labels above the columns"
+       }
+      ],
+      "w": 207,
+      "h": 88,
+      "note": "1:1 crop of the plot: 1 bar(s) × 5 rows of 17.60 px (L0, bid_ask), pitch 119 px, 88 px free margin right of the newest bar; bar 13:35 (§4.1), the ×3 buy stack active",
+      "x": 148.0,
+      "y": 104.0
+     },
+     {
+      "t": "board",
+      "name": "A L0 · tested",
+      "o": {
+       "fill": "color.surface.app",
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "bar 13:35",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 88,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 52.8,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         },
+         {
+          "t": "board",
+          "name": "outlines",
+          "kids": [
+           {
+            "t": "rect",
+            "name": "o2b",
+            "w": 44,
+            "h": 15.6,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 67,
+            "y": 53.8
+           },
+           {
+            "t": "rect",
+            "name": "i2b",
+            "w": 41,
+            "h": 12.6,
+            "o": {
+             "fill": "color.surface.app"
+            },
+            "x": 68.5,
+            "y": 55.3
+           },
+           {
+            "t": "rect",
+            "name": "o3b",
+            "w": 44,
+            "h": 15.6,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 67,
+            "y": 36.2
+           },
+           {
+            "t": "rect",
+            "name": "i3b",
+            "w": 41,
+            "h": 12.6,
+            "o": {
+             "fill": "color.surface.app"
+            },
+            "x": 68.5,
+            "y": 37.7
+           },
+           {
+            "t": "rect",
+            "name": "o4b",
+            "w": 44,
+            "h": 15.6,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 67,
+            "y": 18.6
+           },
+           {
+            "t": "rect",
+            "name": "i4b",
+            "w": 41,
+            "h": 12.6,
+            "o": {
+             "fill": "color.surface.app"
+            },
+            "x": 68.5,
+            "y": 20.1
+           }
+          ],
+          "w": 119,
+          "h": 88,
+          "x": 0,
+          "y": 0,
+          "note": "imbalance outlines: o = 1.5 px ink frame, i = the cell's background inside it"
+         },
+         {
+          "t": "board",
+          "name": "cells",
+          "kids": [
+           {
+            "t": "text",
+            "name": "r1",
+            "chars": "52 ×     77",
+            "typo": "type.num.xs",
+            "color": "color.text.primary",
+            "x": 42,
+            "y": 73.2
+           },
+           {
+            "t": "text",
+            "name": "r2",
+            "chars": "38 ×    176",
+            "typo": "type.num.xs",
+            "color": "color.text.primary",
+            "x": 42,
+            "y": 55.6
+           },
+           {
+            "t": "text",
+            "name": "r3",
+            "chars": "61 ×    228",
+            "typo": "type.num.xs",
+            "color": "color.text.primary",
+            "x": 42,
+            "y": 38
+           },
+           {
+            "t": "text",
+            "name": "r4",
+            "chars": "44 ×    190",
+            "typo": "type.num.xs",
+            "color": "color.text.primary",
+            "x": 42,
+            "y": 20.4
+           },
+           {
+            "t": "text",
+            "name": "r5",
+            "chars": "3 ×     18",
+            "typo": "type.num.xs",
+            "color": "color.text.primary",
+            "x": 48,
+            "y": 2.8
+           }
+          ],
+          "w": 119,
+          "h": 88,
+          "x": 0,
+          "y": 0
+         },
+         {
+          "t": "board",
+          "name": "marks",
+          "o": {
+           "clip": false
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "bracket 1",
+            "w": 2,
+            "h": 52.8,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 114,
+            "y": 17.6,
+            "note": "buy stack 3 levels, tested (2 px); labels on hover, focus, selection"
+           },
+           {
+            "t": "rect",
+            "name": "bracket 1 top",
+            "w": 2,
+            "h": 2,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 112,
+            "y": 17.6
+           },
+           {
+            "t": "rect",
+            "name": "bracket 1 bottom",
+            "w": 2,
+            "h": 2,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 112,
+            "y": 68.4
+           }
+          ],
+          "w": 119,
+          "h": 88,
+          "x": 0,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 88,
+        "x": 0,
+        "y": 0,
+        "note": "bar 13:35: bid_ask L0 box; rows r1-r5 from 64,009.0; 3 flags, 1 stacks"
+       },
+       {
+        "t": "board",
+        "name": "labels",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label 13:35",
+          "chars": "×3 buy tested",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 118,
+          "y": 20.4,
+          "note": "the short label on free space beside the newest bar"
+         }
+        ],
+        "w": 207,
+        "h": 88,
+        "x": 0,
+        "y": 0,
+        "note": "labels above the columns"
+       }
+      ],
+      "w": 207,
+      "h": 88,
+      "note": "1:1 crop of the plot: 1 bar(s) × 5 rows of 17.60 px (L0, bid_ask), pitch 119 px, 88 px free margin right of the newest bar; bar 13:35 (§4.1), the ×3 buy stack tested",
+      "x": 371.0,
+      "y": 104.0
+     },
+     {
+      "t": "board",
+      "name": "A L0 · broken",
+      "o": {
+       "fill": "color.surface.app",
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "bar 13:35",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 88,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 52.8,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         },
+         {
+          "t": "board",
+          "name": "outlines",
+          "kids": [
+           {
+            "t": "rect",
+            "name": "o2b",
+            "w": 44,
+            "h": 15.6,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 67,
+            "y": 53.8
+           },
+           {
+            "t": "rect",
+            "name": "i2b",
+            "w": 41,
+            "h": 12.6,
+            "o": {
+             "fill": "color.surface.app"
+            },
+            "x": 68.5,
+            "y": 55.3
+           },
+           {
+            "t": "rect",
+            "name": "o3b",
+            "w": 44,
+            "h": 15.6,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 67,
+            "y": 36.2
+           },
+           {
+            "t": "rect",
+            "name": "i3b",
+            "w": 41,
+            "h": 12.6,
+            "o": {
+             "fill": "color.surface.app"
+            },
+            "x": 68.5,
+            "y": 37.7
+           },
+           {
+            "t": "rect",
+            "name": "o4b",
+            "w": 44,
+            "h": 15.6,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 67,
+            "y": 18.6
+           },
+           {
+            "t": "rect",
+            "name": "i4b",
+            "w": 41,
+            "h": 12.6,
+            "o": {
+             "fill": "color.surface.app"
+            },
+            "x": 68.5,
+            "y": 20.1
+           }
+          ],
+          "w": 119,
+          "h": 88,
+          "x": 0,
+          "y": 0,
+          "note": "imbalance outlines: o = 1.5 px ink frame, i = the cell's background inside it"
+         },
+         {
+          "t": "board",
+          "name": "cells",
+          "kids": [
+           {
+            "t": "text",
+            "name": "r1",
+            "chars": "52 ×     77",
+            "typo": "type.num.xs",
+            "color": "color.text.primary",
+            "x": 42,
+            "y": 73.2
+           },
+           {
+            "t": "text",
+            "name": "r2",
+            "chars": "38 ×    176",
+            "typo": "type.num.xs",
+            "color": "color.text.primary",
+            "x": 42,
+            "y": 55.6
+           },
+           {
+            "t": "text",
+            "name": "r3",
+            "chars": "61 ×    228",
+            "typo": "type.num.xs",
+            "color": "color.text.primary",
+            "x": 42,
+            "y": 38
+           },
+           {
+            "t": "text",
+            "name": "r4",
+            "chars": "44 ×    190",
+            "typo": "type.num.xs",
+            "color": "color.text.primary",
+            "x": 42,
+            "y": 20.4
+           },
+           {
+            "t": "text",
+            "name": "r5",
+            "chars": "3 ×     18",
+            "typo": "type.num.xs",
+            "color": "color.text.primary",
+            "x": 48,
+            "y": 2.8
+           }
+          ],
+          "w": 119,
+          "h": 88,
+          "x": 0,
+          "y": 0
+         },
+         {
+          "t": "board",
+          "name": "marks",
+          "o": {
+           "clip": false
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "bracket 1",
+            "w": 1,
+            "h": 52.8,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 114,
+            "y": 17.6,
+            "note": "buy stack 3 levels, broken (1 px); labels on hover, focus, selection"
+           },
+           {
+            "t": "rect",
+            "name": "bracket 1 top",
+            "w": 2,
+            "h": 1,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 112,
+            "y": 17.6
+           },
+           {
+            "t": "rect",
+            "name": "bracket 1 bottom",
+            "w": 2,
+            "h": 1,
+            "o": {
+             "fill": "color.text.primary"
+            },
+            "x": 112,
+            "y": 69.4
+           }
+          ],
+          "w": 119,
+          "h": 88,
+          "x": 0,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 88,
+        "x": 0,
+        "y": 0,
+        "note": "bar 13:35: bid_ask L0 box; rows r1-r5 from 64,009.0; 3 flags, 1 stacks"
+       },
+       {
+        "t": "board",
+        "name": "labels",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label 13:35",
+          "chars": "×3 buy broken",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 117,
+          "y": 20.4,
+          "note": "the short label on free space beside the newest bar"
+         }
+        ],
+        "w": 207,
+        "h": 88,
+        "x": 0,
+        "y": 0,
+        "note": "labels above the columns"
+       }
+      ],
+      "w": 207,
+      "h": 88,
+      "note": "1:1 crop of the plot: 1 bar(s) × 5 rows of 17.60 px (L0, bid_ask), pitch 119 px, 88 px free margin right of the newest bar; bar 13:35 (§4.1), the ×3 buy stack broken",
+      "x": 594.0,
+      "y": 104.0
+     },
+     {
+      "t": "board",
+      "name": "A row L1",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "level",
+        "chars": "L1 · 9.5 px rows",
+        "typo": "type.ui.label",
+        "color": "color.text.primary",
+        "w": 116
+       },
+       {
+        "t": "text",
+        "name": "outline",
+        "chars": "half outline: right for buy",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 116
+       }
+      ],
+      "w": 116,
+      "x": 24,
+      "y": 224
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "A L1 · active",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": false
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "bar 13:35",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 47.6,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "body",
+        "w": 3,
+        "h": 28.5,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 7,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "outlines",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "o2b",
+          "w": 48.5,
+          "h": 7.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 62.5,
+          "y": 29.5
+         },
+         {
+          "t": "rect",
+          "name": "i2b",
+          "w": 45.5,
+          "h": 4.5,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 64,
+          "y": 31
+         },
+         {
+          "t": "rect",
+          "name": "o3b",
+          "w": 48.5,
+          "h": 7.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 62.5,
+          "y": 20
+         },
+         {
+          "t": "rect",
+          "name": "i3b",
+          "w": 45.5,
+          "h": 4.5,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 64,
+          "y": 21.5
+         },
+         {
+          "t": "rect",
+          "name": "o4b",
+          "w": 48.5,
+          "h": 7.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 62.5,
+          "y": 10.5
+         },
+         {
+          "t": "rect",
+          "name": "i4b",
+          "w": 45.5,
+          "h": 4.5,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 64,
+          "y": 12
+         }
+        ],
+        "w": 119,
+        "h": 47.6,
+        "x": 0,
+        "y": 0,
+        "note": "imbalance outlines: o = 1.5 px ink frame, i = the cell's background inside it"
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "text",
+          "name": "r1",
+          "chars": "▲ +25",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": 36.8
+         },
+         {
+          "t": "text",
+          "name": "r2",
+          "chars": "▲ +138",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 72,
+          "y": 27.3
+         },
+         {
+          "t": "text",
+          "name": "r3",
+          "chars": "▲ +167",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 72,
+          "y": 17.8
+         },
+         {
+          "t": "text",
+          "name": "r4",
+          "chars": "▲ +146",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 72,
+          "y": 8.3
+         },
+         {
+          "t": "text",
+          "name": "r5",
+          "chars": "▲ +15",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": -1.2
+         }
+        ],
+        "w": 119,
+        "h": 47.6,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "marks",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "bracket 1",
+          "w": 3,
+          "h": 28.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 114,
+          "y": 9.5,
+          "note": "buy stack 3 levels, active (3 px); labels on hover, focus, selection"
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 top",
+          "w": 2,
+          "h": 3,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 112,
+          "y": 9.5
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 bottom",
+          "w": 2,
+          "h": 3,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 112,
+          "y": 35.1
+         }
+        ],
+        "w": 119,
+        "h": 47.6,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 47.6,
+      "x": 0,
+      "y": 0,
+      "note": "bar 13:35: bid_ask L1 box; rows r1-r5 from 64,009.0; 3 flags, 1 stacks"
+     },
+     {
+      "t": "board",
+      "name": "labels",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label 13:35",
+        "chars": "×3 buy",
+        "typo": "type.num.xs",
+        "color": "color.text.primary",
+        "x": 119,
+        "y": 8.3,
+        "note": "the short label on free space beside the newest bar"
+       }
+      ],
+      "w": 207,
+      "h": 47.6,
+      "x": 0,
+      "y": 0,
+      "note": "labels above the columns"
+     }
+    ],
+    "w": 207,
+    "h": 47.6,
+    "note": "1:1 crop of the plot: 1 bar(s) × 5 rows of 9.51 px (L1, bid_ask), pitch 119 px, 88 px free margin right of the newest bar; bar 13:35 (§4.1), the ×3 buy stack active",
+    "x": 148.0,
+    "y": 224.0
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "A L1 · tested",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": false
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "bar 13:35",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 47.6,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "body",
+        "w": 3,
+        "h": 28.5,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 7,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "outlines",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "o2b",
+          "w": 48.5,
+          "h": 7.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 62.5,
+          "y": 29.5
+         },
+         {
+          "t": "rect",
+          "name": "i2b",
+          "w": 45.5,
+          "h": 4.5,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 64,
+          "y": 31
+         },
+         {
+          "t": "rect",
+          "name": "o3b",
+          "w": 48.5,
+          "h": 7.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 62.5,
+          "y": 20
+         },
+         {
+          "t": "rect",
+          "name": "i3b",
+          "w": 45.5,
+          "h": 4.5,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 64,
+          "y": 21.5
+         },
+         {
+          "t": "rect",
+          "name": "o4b",
+          "w": 48.5,
+          "h": 7.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 62.5,
+          "y": 10.5
+         },
+         {
+          "t": "rect",
+          "name": "i4b",
+          "w": 45.5,
+          "h": 4.5,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 64,
+          "y": 12
+         }
+        ],
+        "w": 119,
+        "h": 47.6,
+        "x": 0,
+        "y": 0,
+        "note": "imbalance outlines: o = 1.5 px ink frame, i = the cell's background inside it"
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "text",
+          "name": "r1",
+          "chars": "▲ +25",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": 36.8
+         },
+         {
+          "t": "text",
+          "name": "r2",
+          "chars": "▲ +138",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 72,
+          "y": 27.3
+         },
+         {
+          "t": "text",
+          "name": "r3",
+          "chars": "▲ +167",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 72,
+          "y": 17.8
+         },
+         {
+          "t": "text",
+          "name": "r4",
+          "chars": "▲ +146",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 72,
+          "y": 8.3
+         },
+         {
+          "t": "text",
+          "name": "r5",
+          "chars": "▲ +15",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": -1.2
+         }
+        ],
+        "w": 119,
+        "h": 47.6,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "marks",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "bracket 1",
+          "w": 2,
+          "h": 28.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 114,
+          "y": 9.5,
+          "note": "buy stack 3 levels, tested (2 px); labels on hover, focus, selection"
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 top",
+          "w": 2,
+          "h": 2,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 112,
+          "y": 9.5
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 bottom",
+          "w": 2,
+          "h": 2,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 112,
+          "y": 36.1
+         }
+        ],
+        "w": 119,
+        "h": 47.6,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 47.6,
+      "x": 0,
+      "y": 0,
+      "note": "bar 13:35: bid_ask L1 box; rows r1-r5 from 64,009.0; 3 flags, 1 stacks"
+     },
+     {
+      "t": "board",
+      "name": "labels",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label 13:35",
+        "chars": "×3 buy tested",
+        "typo": "type.num.xs",
+        "color": "color.text.primary",
+        "x": 118,
+        "y": 8.3,
+        "note": "the short label on free space beside the newest bar"
+       }
+      ],
+      "w": 207,
+      "h": 47.6,
+      "x": 0,
+      "y": 0,
+      "note": "labels above the columns"
+     }
+    ],
+    "w": 207,
+    "h": 47.6,
+    "note": "1:1 crop of the plot: 1 bar(s) × 5 rows of 9.51 px (L1, bid_ask), pitch 119 px, 88 px free margin right of the newest bar; bar 13:35 (§4.1), the ×3 buy stack tested",
+    "x": 371.0,
+    "y": 224.0
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "A L1 · broken",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": false
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "bar 13:35",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 47.6,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "body",
+        "w": 3,
+        "h": 28.5,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 7,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "outlines",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "o2b",
+          "w": 48.5,
+          "h": 7.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 62.5,
+          "y": 29.5
+         },
+         {
+          "t": "rect",
+          "name": "i2b",
+          "w": 45.5,
+          "h": 4.5,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 64,
+          "y": 31
+         },
+         {
+          "t": "rect",
+          "name": "o3b",
+          "w": 48.5,
+          "h": 7.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 62.5,
+          "y": 20
+         },
+         {
+          "t": "rect",
+          "name": "i3b",
+          "w": 45.5,
+          "h": 4.5,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 64,
+          "y": 21.5
+         },
+         {
+          "t": "rect",
+          "name": "o4b",
+          "w": 48.5,
+          "h": 7.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 62.5,
+          "y": 10.5
+         },
+         {
+          "t": "rect",
+          "name": "i4b",
+          "w": 45.5,
+          "h": 4.5,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 64,
+          "y": 12
+         }
+        ],
+        "w": 119,
+        "h": 47.6,
+        "x": 0,
+        "y": 0,
+        "note": "imbalance outlines: o = 1.5 px ink frame, i = the cell's background inside it"
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "text",
+          "name": "r1",
+          "chars": "▲ +25",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": 36.8
+         },
+         {
+          "t": "text",
+          "name": "r2",
+          "chars": "▲ +138",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 72,
+          "y": 27.3
+         },
+         {
+          "t": "text",
+          "name": "r3",
+          "chars": "▲ +167",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 72,
+          "y": 17.8
+         },
+         {
+          "t": "text",
+          "name": "r4",
+          "chars": "▲ +146",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 72,
+          "y": 8.3
+         },
+         {
+          "t": "text",
+          "name": "r5",
+          "chars": "▲ +15",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": -1.2
+         }
+        ],
+        "w": 119,
+        "h": 47.6,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "marks",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "bracket 1",
+          "w": 1,
+          "h": 28.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 114,
+          "y": 9.5,
+          "note": "buy stack 3 levels, broken (1 px); labels on hover, focus, selection"
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 top",
+          "w": 2,
+          "h": 1,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 112,
+          "y": 9.5
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 bottom",
+          "w": 2,
+          "h": 1,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 112,
+          "y": 37.1
+         }
+        ],
+        "w": 119,
+        "h": 47.6,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 47.6,
+      "x": 0,
+      "y": 0,
+      "note": "bar 13:35: bid_ask L1 box; rows r1-r5 from 64,009.0; 3 flags, 1 stacks"
+     },
+     {
+      "t": "board",
+      "name": "labels",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label 13:35",
+        "chars": "×3 buy broken",
+        "typo": "type.num.xs",
+        "color": "color.text.primary",
+        "x": 117,
+        "y": 8.3,
+        "note": "the short label on free space beside the newest bar"
+       }
+      ],
+      "w": 207,
+      "h": 47.6,
+      "x": 0,
+      "y": 0,
+      "note": "labels above the columns"
+     }
+    ],
+    "w": 207,
+    "h": 47.6,
+    "note": "1:1 crop of the plot: 1 bar(s) × 5 rows of 9.51 px (L1, bid_ask), pitch 119 px, 88 px free margin right of the newest bar; bar 13:35 (§4.1), the ×3 buy stack broken",
+    "x": 594.0,
+    "y": 224.0
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "A row L2",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "level",
+      "chars": "L2 · 7.0 px rows",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 116
+     },
+     {
+      "t": "text",
+      "name": "outline",
+      "chars": "no outline",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 116
+     }
+    ],
+    "w": 116,
+    "x": 24,
+    "y": 304
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "A L2 · active",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": false
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "bar 13:35",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 35.2,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "body",
+        "w": 3,
+        "h": 21.1,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 7,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "r1",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.tertiary"
+          },
+          "x": 11,
+          "y": 28.2
+         },
+         {
+          "t": "rect",
+          "name": "r1n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 28.2
+         },
+         {
+          "t": "rect",
+          "name": "r2",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 21.1
+         },
+         {
+          "t": "rect",
+          "name": "r2n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 21.1
+         },
+         {
+          "t": "rect",
+          "name": "r3",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 14.1
+         },
+         {
+          "t": "rect",
+          "name": "r3n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 14.1
+         },
+         {
+          "t": "rect",
+          "name": "r4",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 7
+         },
+         {
+          "t": "rect",
+          "name": "r4n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 7
+         },
+         {
+          "t": "rect",
+          "name": "r5",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.border.default"
+          },
+          "x": 11,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "r5n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 35.2,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "marks",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "bracket 1",
+          "w": 3,
+          "h": 21.1,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 114,
+          "y": 7,
+          "note": "buy stack 3 levels, active (3 px); labels on hover, focus, selection"
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 top",
+          "w": 2,
+          "h": 3,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 112,
+          "y": 7
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 bottom",
+          "w": 2,
+          "h": 3,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 112,
+          "y": 25.2
+         }
+        ],
+        "w": 119,
+        "h": 35.2,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 35.2,
+      "x": 0,
+      "y": 0,
+      "note": "bar 13:35: bid_ask L2 box; rows r1-r5 from 64,009.0; 3 flags, 1 stacks"
+     },
+     {
+      "t": "board",
+      "name": "labels",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label 13:35",
+        "chars": "×3 buy",
+        "typo": "type.num.xs",
+        "color": "color.text.primary",
+        "x": 119,
+        "y": 4.6,
+        "note": "the short label on free space beside the newest bar"
+       }
+      ],
+      "w": 207,
+      "h": 35.2,
+      "x": 0,
+      "y": 0,
+      "note": "labels above the columns"
+     }
+    ],
+    "w": 207,
+    "h": 35.2,
+    "note": "1:1 crop of the plot: 1 bar(s) × 5 rows of 7.04 px (L2, bid_ask), pitch 119 px, 88 px free margin right of the newest bar; bar 13:35 (§4.1), the ×3 buy stack active",
+    "x": 148.0,
+    "y": 304.0
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "A L2 · tested",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": false
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "bar 13:35",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 35.2,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "body",
+        "w": 3,
+        "h": 21.1,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 7,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "r1",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.tertiary"
+          },
+          "x": 11,
+          "y": 28.2
+         },
+         {
+          "t": "rect",
+          "name": "r1n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 28.2
+         },
+         {
+          "t": "rect",
+          "name": "r2",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 21.1
+         },
+         {
+          "t": "rect",
+          "name": "r2n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 21.1
+         },
+         {
+          "t": "rect",
+          "name": "r3",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 14.1
+         },
+         {
+          "t": "rect",
+          "name": "r3n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 14.1
+         },
+         {
+          "t": "rect",
+          "name": "r4",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 7
+         },
+         {
+          "t": "rect",
+          "name": "r4n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 7
+         },
+         {
+          "t": "rect",
+          "name": "r5",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.border.default"
+          },
+          "x": 11,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "r5n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 35.2,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "marks",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "bracket 1",
+          "w": 2,
+          "h": 21.1,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 114,
+          "y": 7,
+          "note": "buy stack 3 levels, tested (2 px); labels on hover, focus, selection"
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 top",
+          "w": 2,
+          "h": 2,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 112,
+          "y": 7
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 bottom",
+          "w": 2,
+          "h": 2,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 112,
+          "y": 26.2
+         }
+        ],
+        "w": 119,
+        "h": 35.2,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 35.2,
+      "x": 0,
+      "y": 0,
+      "note": "bar 13:35: bid_ask L2 box; rows r1-r5 from 64,009.0; 3 flags, 1 stacks"
+     },
+     {
+      "t": "board",
+      "name": "labels",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label 13:35",
+        "chars": "×3 buy tested",
+        "typo": "type.num.xs",
+        "color": "color.text.primary",
+        "x": 118,
+        "y": 4.6,
+        "note": "the short label on free space beside the newest bar"
+       }
+      ],
+      "w": 207,
+      "h": 35.2,
+      "x": 0,
+      "y": 0,
+      "note": "labels above the columns"
+     }
+    ],
+    "w": 207,
+    "h": 35.2,
+    "note": "1:1 crop of the plot: 1 bar(s) × 5 rows of 7.04 px (L2, bid_ask), pitch 119 px, 88 px free margin right of the newest bar; bar 13:35 (§4.1), the ×3 buy stack tested",
+    "x": 371.0,
+    "y": 304.0
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "A L2 · broken",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": false
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "bar 13:35",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 35.2,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "body",
+        "w": 3,
+        "h": 21.1,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 7,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "r1",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.tertiary"
+          },
+          "x": 11,
+          "y": 28.2
+         },
+         {
+          "t": "rect",
+          "name": "r1n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 28.2
+         },
+         {
+          "t": "rect",
+          "name": "r2",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 21.1
+         },
+         {
+          "t": "rect",
+          "name": "r2n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 21.1
+         },
+         {
+          "t": "rect",
+          "name": "r3",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 14.1
+         },
+         {
+          "t": "rect",
+          "name": "r3n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 14.1
+         },
+         {
+          "t": "rect",
+          "name": "r4",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 7
+         },
+         {
+          "t": "rect",
+          "name": "r4n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 7
+         },
+         {
+          "t": "rect",
+          "name": "r5",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.border.default"
+          },
+          "x": 11,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "r5n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 35.2,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "marks",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "bracket 1",
+          "w": 1,
+          "h": 21.1,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 114,
+          "y": 7,
+          "note": "buy stack 3 levels, broken (1 px); labels on hover, focus, selection"
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 top",
+          "w": 2,
+          "h": 1,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 112,
+          "y": 7
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 bottom",
+          "w": 2,
+          "h": 1,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 112,
+          "y": 27.2
+         }
+        ],
+        "w": 119,
+        "h": 35.2,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 35.2,
+      "x": 0,
+      "y": 0,
+      "note": "bar 13:35: bid_ask L2 box; rows r1-r5 from 64,009.0; 3 flags, 1 stacks"
+     },
+     {
+      "t": "board",
+      "name": "labels",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label 13:35",
+        "chars": "×3 buy broken",
+        "typo": "type.num.xs",
+        "color": "color.text.primary",
+        "x": 117,
+        "y": 4.6,
+        "note": "the short label on free space beside the newest bar"
+       }
+      ],
+      "w": 207,
+      "h": 35.2,
+      "x": 0,
+      "y": 0,
+      "note": "labels above the columns"
+     }
+    ],
+    "w": 207,
+    "h": 35.2,
+    "note": "1:1 crop of the plot: 1 bar(s) × 5 rows of 7.04 px (L2, bid_ask), pitch 119 px, 88 px free margin right of the newest bar; bar 13:35 (§4.1), the ×3 buy stack broken",
+    "x": 594.0,
+    "y": 304.0
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "A prices L0",
+    "o": {
+     "clip": false
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "p1",
+      "chars": "64,009.0",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 3.2,
+      "y": 72.6
+     },
+     {
+      "t": "text",
+      "name": "p2",
+      "chars": "64,010.0",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 3.2,
+      "y": 55
+     },
+     {
+      "t": "text",
+      "name": "p3",
+      "chars": "64,011.0",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 3.2,
+      "y": 37.4
+     },
+     {
+      "t": "text",
+      "name": "p4",
+      "chars": "64,012.0",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 3.2,
+      "y": 19.8
+     },
+     {
+      "t": "text",
+      "name": "p5",
+      "chars": "64,013.0",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 3.2,
+      "y": 2.2
+     }
+    ],
+    "w": 60,
+    "h": 88,
+    "note": "the crop's price labels (CMP-188's style)",
+    "x": 805.0,
+    "y": 104.0
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "text",
+    "name": "A footnote",
+    "chars": "Bar 13:35's hand-picked values (§4.1) · the short label on the free margin beside the newest bar",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 148,
+    "y": 356
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "text",
+    "name": "B title",
+    "chars": "Keyboard focus on a stack level",
+    "typo": "type.ui.body-strong",
+    "color": "color.text.primary",
+    "x": 885,
+    "y": 52
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "text",
+    "name": "B head",
+    "chars": "L0 · active",
+    "typo": "type.ui.label",
+    "color": "color.text.primary",
+    "x": 885,
+    "y": 80
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "B L0 · keyboard focus on 64,011.0",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": false
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "bar 13:35",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "cursor column left",
+        "w": 2,
+        "h": 88,
+        "o": {
+         "fill": "color.focus.ring"
+        },
+        "x": 0,
+        "y": 0,
+        "note": "E06-D03 D10's full-height column, cut by the crop (left edge)"
+       },
+       {
+        "t": "rect",
+        "name": "cursor column right",
+        "w": 2,
+        "h": 88,
+        "o": {
+         "fill": "color.focus.ring"
+        },
+        "x": 117,
+        "y": 0,
+        "note": "E06-D03 D10's full-height column, cut by the crop (right edge)"
+       },
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 88,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "body",
+        "w": 3,
+        "h": 52.8,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 7,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "outlines",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "o2b",
+          "w": 44,
+          "h": 15.6,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 67,
+          "y": 53.8
+         },
+         {
+          "t": "rect",
+          "name": "i2b",
+          "w": 41,
+          "h": 12.6,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 68.5,
+          "y": 55.3
+         },
+         {
+          "t": "rect",
+          "name": "o3b",
+          "w": 44,
+          "h": 15.6,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 67,
+          "y": 36.2
+         },
+         {
+          "t": "rect",
+          "name": "i3b",
+          "w": 41,
+          "h": 12.6,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 68.5,
+          "y": 37.7
+         },
+         {
+          "t": "rect",
+          "name": "o4b",
+          "w": 44,
+          "h": 15.6,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 67,
+          "y": 18.6
+         },
+         {
+          "t": "rect",
+          "name": "i4b",
+          "w": 41,
+          "h": 12.6,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 68.5,
+          "y": 20.1
+         }
+        ],
+        "w": 119,
+        "h": 88,
+        "x": 0,
+        "y": 0,
+        "note": "imbalance outlines: o = 1.5 px ink frame, i = the cell's background inside it"
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "text",
+          "name": "r1",
+          "chars": "52 ×     77",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 42,
+          "y": 73.2
+         },
+         {
+          "t": "text",
+          "name": "r2",
+          "chars": "38 ×    176",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 42,
+          "y": 55.6
+         },
+         {
+          "t": "text",
+          "name": "r3",
+          "chars": "61 ×    228",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 42,
+          "y": 38
+         },
+         {
+          "t": "text",
+          "name": "r4",
+          "chars": "44 ×    190",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 42,
+          "y": 20.4
+         },
+         {
+          "t": "text",
+          "name": "r5",
+          "chars": "3 ×     18",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 48,
+          "y": 2.8
+         }
+        ],
+        "w": 119,
+        "h": 88,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "marks",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "bracket 1",
+          "w": 3,
+          "h": 52.8,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 114,
+          "y": 17.6,
+          "note": "buy stack 3 levels, active (3 px); labels on hover, focus, selection"
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 top",
+          "w": 2,
+          "h": 3,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 112,
+          "y": 17.6
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 bottom",
+          "w": 2,
+          "h": 3,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 112,
+          "y": 67.4
+         },
+         {
+          "t": "rect",
+          "name": "level box",
+          "w": 119,
+          "h": 17.6,
+          "o": {
+           "stroke": "color.focus.ring",
+           "strokeWidth": "border.focus",
+           "strokeAlign": "center"
+          },
+          "x": 0,
+          "y": 35.2,
+          "note": "the level box: the selected level's 2 px focus ring (§8.1 L740-741), centred on the level's edges between its outline and its neighbours' (D6 L156; local: the kit draws it inner)"
+         }
+        ],
+        "w": 119,
+        "h": 88,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 88,
+      "x": 0,
+      "y": 0,
+      "note": "bar 13:35: bid_ask L0 box; rows r1-r5 from 64,009.0; 3 flags, 1 stacks"
+     },
+     {
+      "t": "board",
+      "name": "labels",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "full label 13:35",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.xs",
+         "fill": "color.surface.raised",
+         "radius": "radius.control"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "×3 buy stack 64,010.0-64,012.9 active",
+          "typo": "type.num.xs",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 16,
+        "note": "the full label: hover, focus, selection (D5; OQ-5)",
+        "x": 119,
+        "y": 18.4,
+        "abs": true
+       }
+      ],
+      "w": 363,
+      "h": 88,
+      "x": 0,
+      "y": 0,
+      "note": "labels above the columns"
+     }
+    ],
+    "w": 363,
+    "h": 88,
+    "note": "1:1 crop of the plot: 1 bar(s) × 5 rows of 17.60 px (L0, bid_ask), pitch 119 px, 244 px free margin right of the newest bar; the data cursor on bar 13:35, the level box on 64,011.0 (a stack level): the full label",
+    "x": 885.0,
+    "y": 104.0
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "text",
+    "name": "B caption",
+    "chars": "The level box on 64,011.0 in the cursor column. The full label shows on hover, on keyboard focus of a stack level and while Focus imbalance or an SCR-056 locate selects the stack.",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 363,
+    "x": 885,
+    "y": 200
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "text",
+    "name": "D title",
+    "chars": "One-number mode (Delta)",
+    "typo": "type.ui.body-strong",
+    "color": "color.text.primary",
+    "x": 885,
+    "y": 256
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "text",
+    "name": "D head",
+    "chars": "L0 · active",
+    "typo": "type.ui.label",
+    "color": "color.text.primary",
+    "x": 885,
+    "y": 284
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "D L0 · delta",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": false
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "bar 13:35",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 88,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "body",
+        "w": 3,
+        "h": 52.8,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 7,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "outlines",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "o2b",
+          "w": 18.1,
+          "h": 15.6,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 32.1,
+          "y": 53.8
+         },
+         {
+          "t": "rect",
+          "name": "i2b",
+          "w": 15.1,
+          "h": 12.6,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 33.6,
+          "y": 55.3
+         },
+         {
+          "t": "rect",
+          "name": "o3b",
+          "w": 18.1,
+          "h": 15.6,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 32.1,
+          "y": 36.2
+         },
+         {
+          "t": "rect",
+          "name": "i3b",
+          "w": 15.1,
+          "h": 12.6,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 33.6,
+          "y": 37.7
+         },
+         {
+          "t": "rect",
+          "name": "o4b",
+          "w": 18.1,
+          "h": 15.6,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 32.1,
+          "y": 18.6
+         },
+         {
+          "t": "rect",
+          "name": "i4b",
+          "w": 15.1,
+          "h": 12.6,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 33.6,
+          "y": 20.1
+         }
+        ],
+        "w": 58.2,
+        "h": 88,
+        "x": 0,
+        "y": 0,
+        "note": "imbalance outlines: o = 1.5 px ink frame, i = the cell's background inside it"
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "text",
+          "name": "r1",
+          "chars": "▲ +25",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 18.2,
+          "y": 73.2
+         },
+         {
+          "t": "text",
+          "name": "r2",
+          "chars": "▲ +138",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 12.2,
+          "y": 55.6
+         },
+         {
+          "t": "text",
+          "name": "r3",
+          "chars": "▲ +167",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 12.2,
+          "y": 38
+         },
+         {
+          "t": "text",
+          "name": "r4",
+          "chars": "▲ +146",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 12.2,
+          "y": 20.4
+         },
+         {
+          "t": "text",
+          "name": "r5",
+          "chars": "▲ +15",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 18.2,
+          "y": 2.8
+         }
+        ],
+        "w": 58.2,
+        "h": 88,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "marks",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "bracket 1",
+          "w": 3,
+          "h": 52.8,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 53.2,
+          "y": 17.6,
+          "note": "buy stack 3 levels, active (3 px); labels on hover, focus, selection"
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 top",
+          "w": 2,
+          "h": 3,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 51.2,
+          "y": 17.6
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 bottom",
+          "w": 2,
+          "h": 3,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 51.2,
+          "y": 67.4
+         }
+        ],
+        "w": 58.2,
+        "h": 88,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 58.2,
+      "h": 88,
+      "x": 0,
+      "y": 0,
+      "note": "bar 13:35: delta L0 box; rows r1-r5 from 64,009.0; 3 flags, 1 stacks"
+     },
+     {
+      "t": "board",
+      "name": "labels",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label 13:35",
+        "chars": "×3 buy",
+        "typo": "type.num.xs",
+        "color": "color.text.primary",
+        "x": 58.2,
+        "y": 20.4,
+        "note": "the short label on free space beside the newest bar"
+       }
+      ],
+      "w": 106.2,
+      "h": 88,
+      "x": 0,
+      "y": 0,
+      "note": "labels above the columns"
+     }
+    ],
+    "w": 106.2,
+    "h": 88,
+    "note": "1:1 crop of the plot: 1 bar(s) × 5 rows of 17.60 px (L0, delta), pitch 58.2 px, 48 px free margin right of the newest bar; bar 13:35 (§4.1) in the one-number mode delta: the right-half outline, the active bracket, '×3 buy'",
+    "x": 885.0,
+    "y": 308.0
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "D prices L0",
+    "o": {
+     "clip": false
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "p1",
+      "chars": "64,009.0",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 3.2,
+      "y": 72.6
+     },
+     {
+      "t": "text",
+      "name": "p2",
+      "chars": "64,010.0",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 3.2,
+      "y": 55
+     },
+     {
+      "t": "text",
+      "name": "p3",
+      "chars": "64,011.0",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 3.2,
+      "y": 37.4
+     },
+     {
+      "t": "text",
+      "name": "p4",
+      "chars": "64,012.0",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 3.2,
+      "y": 19.8
+     },
+     {
+      "t": "text",
+      "name": "p5",
+      "chars": "64,013.0",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 3.2,
+      "y": 2.2
+     }
+    ],
+    "w": 60,
+    "h": 88,
+    "note": "the crop's price labels (CMP-188's style)",
+    "x": 995.2,
+    "y": 308.0
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "text",
+    "name": "D caption",
+    "chars": "The flagged side's half at L0 too: one-number modes look the same at L0 and L1. Right for buy, so position still names the side. A's bar 13:35 in Delta.",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 184.8,
+    "x": 1071.2,
+    "y": 308
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "text",
+    "name": "C title",
+    "chars": "×3 sell stack 64,001.0–64,003.9 in the older bar 13:15, tested",
+    "typo": "type.ui.body-strong",
+    "color": "color.text.primary",
+    "x": 24,
+    "y": 404
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "C row L0",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "level",
+      "chars": "L0 · 17.6 px rows",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 116
+     },
+     {
+      "t": "text",
+      "name": "outline",
+      "chars": "outline: the bid side-cell",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 116
+     }
+    ],
+    "w": 116,
+    "x": 24,
+    "y": 440
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "C L0",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": false
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "bar 13:10",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 88,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "body",
+        "w": 3,
+        "h": 88,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 7,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "outlines",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "o2s",
+          "w": 47,
+          "h": 15.6,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 12,
+          "y": 53.8
+         },
+         {
+          "t": "rect",
+          "name": "i2s",
+          "w": 44,
+          "h": 12.6,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 13.5,
+          "y": 55.3
+         }
+        ],
+        "w": 119,
+        "h": 88,
+        "x": 0,
+        "y": 0,
+        "note": "imbalance outlines: o = 1.5 px ink frame, i = the cell's background inside it"
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "text",
+          "name": "r1",
+          "chars": "90 ×     66",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 42,
+          "y": 73.2
+         },
+         {
+          "t": "text",
+          "name": "r2",
+          "chars": "89 ×     60",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 42,
+          "y": 55.6
+         },
+         {
+          "t": "text",
+          "name": "r3",
+          "chars": "133 ×      4",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 36,
+          "y": 38
+         },
+         {
+          "t": "text",
+          "name": "r4",
+          "chars": "182 ×    127",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 36,
+          "y": 20.4
+         },
+         {
+          "t": "text",
+          "name": "r5",
+          "chars": "50 ×    191",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 42,
+          "y": 2.8
+         }
+        ],
+        "w": 119,
+        "h": 88,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 88,
+      "x": 0,
+      "y": 0,
+      "note": "bar 13:10: bid_ask L0 box; rows r1-r5 from 64,000.0; 1 flags, 0 stacks"
+     },
+     {
+      "t": "board",
+      "name": "bar 13:15",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 88,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "outlines",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "o2s",
+          "w": 47,
+          "h": 15.6,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 12,
+          "y": 53.8
+         },
+         {
+          "t": "rect",
+          "name": "i2s",
+          "w": 44,
+          "h": 12.6,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 13.5,
+          "y": 55.3
+         },
+         {
+          "t": "rect",
+          "name": "o3s",
+          "w": 47,
+          "h": 15.6,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 12,
+          "y": 36.2
+         },
+         {
+          "t": "rect",
+          "name": "i3s",
+          "w": 44,
+          "h": 12.6,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 13.5,
+          "y": 37.7
+         },
+         {
+          "t": "rect",
+          "name": "o4s",
+          "w": 47,
+          "h": 15.6,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 12,
+          "y": 18.6
+         },
+         {
+          "t": "rect",
+          "name": "i4s",
+          "w": 44,
+          "h": 12.6,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 13.5,
+          "y": 20.1
+         }
+        ],
+        "w": 119,
+        "h": 88,
+        "x": 0,
+        "y": 0,
+        "note": "imbalance outlines: o = 1.5 px ink frame, i = the cell's background inside it"
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "text",
+          "name": "r1",
+          "chars": "42 ×    129",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 42,
+          "y": 73.2
+         },
+         {
+          "t": "text",
+          "name": "r2",
+          "chars": "172 ×    103",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 36,
+          "y": 55.6
+         },
+         {
+          "t": "text",
+          "name": "r3",
+          "chars": "117 ×     28",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 36,
+          "y": 38
+         },
+         {
+          "t": "text",
+          "name": "r4",
+          "chars": "97 ×     12",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 42,
+          "y": 20.4
+         },
+         {
+          "t": "text",
+          "name": "r5",
+          "chars": "194 ×     28",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 36,
+          "y": 2.8
+         }
+        ],
+        "w": 119,
+        "h": 88,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "marks",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "bracket 1",
+          "w": 2,
+          "h": 52.8,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 3,
+          "y": 17.6,
+          "note": "sell stack 3 levels, tested (2 px); labels on hover, focus, selection"
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 top",
+          "w": 2,
+          "h": 2,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 5,
+          "y": 17.6
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 bottom",
+          "w": 2,
+          "h": 2,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 5,
+          "y": 68.4
+         }
+        ],
+        "w": 119,
+        "h": 88,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 88,
+      "x": 119,
+      "y": 0,
+      "note": "bar 13:15: bid_ask L0 box; rows r1-r5 from 64,000.0; 3 flags, 1 stacks"
+     },
+     {
+      "t": "board",
+      "name": "bar 13:20",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 88,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "body",
+        "w": 3,
+        "h": 88,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 7,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "text",
+          "name": "r1",
+          "chars": "146 ×     89",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 36,
+          "y": 73.2
+         },
+         {
+          "t": "text",
+          "name": "r2",
+          "chars": "52 ×    102",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 42,
+          "y": 55.6
+         },
+         {
+          "t": "text",
+          "name": "r3",
+          "chars": "124 ×     50",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 36,
+          "y": 38
+         },
+         {
+          "t": "text",
+          "name": "r4",
+          "chars": "71 ×    153",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 42,
+          "y": 20.4
+         },
+         {
+          "t": "text",
+          "name": "r5",
+          "chars": "5 ×     78",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 48,
+          "y": 2.8
+         }
+        ],
+        "w": 119,
+        "h": 88,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 88,
+      "x": 238,
+      "y": 0,
+      "note": "bar 13:20: bid_ask L0 box; rows r1-r5 from 64,000.0; 0 flags, 0 stacks"
+     }
+    ],
+    "w": 357,
+    "h": 88,
+    "note": "1:1 crop of the plot: 3 bar(s) × 5 rows of 17.60 px (L0, bid_ask), pitch 119 px; bars 13:10 | 13:15 | 13:20 of the base grid, the 13:15 ×3 sell stack tested",
+    "x": 148,
+    "y": 440.0
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "text",
+    "name": "C caption L0",
+    "chars": "No free space beside an older bar and digits on the row above: no label. Elsewhere it shows on hover, focus and selection, and the weight carries the state (2 px: tested). 13:10's isolated sell flag at 64,001.0 is outlined, with no bracket (min_stack 3).",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 663,
+    "x": 593,
+    "y": 440
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "C row L1",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "level",
+      "chars": "L1 · 9.5 px rows",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 116
+     },
+     {
+      "t": "text",
+      "name": "outline",
+      "chars": "half outline: left for sell",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 116
+     }
+    ],
+    "w": 116,
+    "x": 24,
+    "y": 560
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "C L1",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": false
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "bar 13:10",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 47.6,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "body",
+        "w": 3,
+        "h": 47.6,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 7,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "outlines",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "o2s",
+          "w": 48.5,
+          "h": 7.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 12,
+          "y": 29.5
+         },
+         {
+          "t": "rect",
+          "name": "i2s",
+          "w": 45.5,
+          "h": 4.5,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 13.5,
+          "y": 31
+         }
+        ],
+        "w": 119,
+        "h": 47.6,
+        "x": 0,
+        "y": 0,
+        "note": "imbalance outlines: o = 1.5 px ink frame, i = the cell's background inside it"
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "text",
+          "name": "r1",
+          "chars": "▼ -24",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": 36.8
+         },
+         {
+          "t": "text",
+          "name": "r2",
+          "chars": "▼ -29",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": 27.3
+         },
+         {
+          "t": "text",
+          "name": "r3",
+          "chars": "▼ -129",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 72,
+          "y": 17.8
+         },
+         {
+          "t": "text",
+          "name": "r4",
+          "chars": "▼ -55",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": 8.3
+         },
+         {
+          "t": "text",
+          "name": "r5",
+          "chars": "▲ +141",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 72,
+          "y": -1.2
+         }
+        ],
+        "w": 119,
+        "h": 47.6,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 47.6,
+      "x": 0,
+      "y": 0,
+      "note": "bar 13:10: bid_ask L1 box; rows r1-r5 from 64,000.0; 1 flags, 0 stacks"
+     },
+     {
+      "t": "board",
+      "name": "bar 13:15",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 47.6,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "outlines",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "o2s",
+          "w": 48.5,
+          "h": 7.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 12,
+          "y": 29.5
+         },
+         {
+          "t": "rect",
+          "name": "i2s",
+          "w": 45.5,
+          "h": 4.5,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 13.5,
+          "y": 31
+         },
+         {
+          "t": "rect",
+          "name": "o3s",
+          "w": 48.5,
+          "h": 7.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 12,
+          "y": 20
+         },
+         {
+          "t": "rect",
+          "name": "i3s",
+          "w": 45.5,
+          "h": 4.5,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 13.5,
+          "y": 21.5
+         },
+         {
+          "t": "rect",
+          "name": "o4s",
+          "w": 48.5,
+          "h": 7.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 12,
+          "y": 10.5
+         },
+         {
+          "t": "rect",
+          "name": "i4s",
+          "w": 45.5,
+          "h": 4.5,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 13.5,
+          "y": 12
+         }
+        ],
+        "w": 119,
+        "h": 47.6,
+        "x": 0,
+        "y": 0,
+        "note": "imbalance outlines: o = 1.5 px ink frame, i = the cell's background inside it"
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "text",
+          "name": "r1",
+          "chars": "▲ +87",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": 36.8
+         },
+         {
+          "t": "text",
+          "name": "r2",
+          "chars": "▼ -69",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": 27.3
+         },
+         {
+          "t": "text",
+          "name": "r3",
+          "chars": "▼ -89",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": 17.8
+         },
+         {
+          "t": "text",
+          "name": "r4",
+          "chars": "▼ -85",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": 8.3
+         },
+         {
+          "t": "text",
+          "name": "r5",
+          "chars": "▼ -166",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 72,
+          "y": -1.2
+         }
+        ],
+        "w": 119,
+        "h": 47.6,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "marks",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "bracket 1",
+          "w": 2,
+          "h": 28.5,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 3,
+          "y": 9.5,
+          "note": "sell stack 3 levels, tested (2 px); labels on hover, focus, selection"
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 top",
+          "w": 2,
+          "h": 2,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 5,
+          "y": 9.5
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 bottom",
+          "w": 2,
+          "h": 2,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 5,
+          "y": 36.1
+         }
+        ],
+        "w": 119,
+        "h": 47.6,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 47.6,
+      "x": 119,
+      "y": 0,
+      "note": "bar 13:15: bid_ask L1 box; rows r1-r5 from 64,000.0; 3 flags, 1 stacks"
+     },
+     {
+      "t": "board",
+      "name": "bar 13:20",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 47.6,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "body",
+        "w": 3,
+        "h": 47.6,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 7,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "text",
+          "name": "r1",
+          "chars": "▼ -57",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": 36.8
+         },
+         {
+          "t": "text",
+          "name": "r2",
+          "chars": "▲ +50",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": 27.3
+         },
+         {
+          "t": "text",
+          "name": "r3",
+          "chars": "▼ -74",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": 17.8
+         },
+         {
+          "t": "text",
+          "name": "r4",
+          "chars": "▲ +82",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": 8.3
+         },
+         {
+          "t": "text",
+          "name": "r5",
+          "chars": "▲ +73",
+          "typo": "type.num.xs",
+          "color": "color.text.primary",
+          "x": 78,
+          "y": -1.2
+         }
+        ],
+        "w": 119,
+        "h": 47.6,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 47.6,
+      "x": 238,
+      "y": 0,
+      "note": "bar 13:20: bid_ask L1 box; rows r1-r5 from 64,000.0; 0 flags, 0 stacks"
+     }
+    ],
+    "w": 357,
+    "h": 47.6,
+    "note": "1:1 crop of the plot: 3 bar(s) × 5 rows of 9.51 px (L1, bid_ask), pitch 119 px; bars 13:10 | 13:15 | 13:20 of the base grid, the 13:15 ×3 sell stack tested",
+    "x": 148,
+    "y": 560.0
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "text",
+    "name": "C caption L1",
+    "chars": "Left for sell and right for buy, so position still names the side.",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 663,
+    "x": 593,
+    "y": 560
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "C row L2",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "level",
+      "chars": "L2 · 7.0 px rows",
+      "typo": "type.ui.label",
+      "color": "color.text.primary",
+      "w": 116
+     },
+     {
+      "t": "text",
+      "name": "outline",
+      "chars": "no outline",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 116
+     }
+    ],
+    "w": 116,
+    "x": 24,
+    "y": 640
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "C L2",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": false
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "bar 13:10",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 35.2,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "body",
+        "w": 3,
+        "h": 35.2,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 7,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "r1",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.tertiary"
+          },
+          "x": 11,
+          "y": 28.2
+         },
+         {
+          "t": "rect",
+          "name": "r1n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 11,
+          "y": 33.2
+         },
+         {
+          "t": "rect",
+          "name": "r2",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.tertiary"
+          },
+          "x": 11,
+          "y": 21.1
+         },
+         {
+          "t": "rect",
+          "name": "r2n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 11,
+          "y": 26.2
+         },
+         {
+          "t": "rect",
+          "name": "r3",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 14.1
+         },
+         {
+          "t": "rect",
+          "name": "r3n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 11,
+          "y": 19.1
+         },
+         {
+          "t": "rect",
+          "name": "r4",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 7
+         },
+         {
+          "t": "rect",
+          "name": "r4n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 11,
+          "y": 12.1
+         },
+         {
+          "t": "rect",
+          "name": "r5",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "r5n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 35.2,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 35.2,
+      "x": 0,
+      "y": 0,
+      "note": "bar 13:10: bid_ask L2 box; rows r1-r5 from 64,000.0; 1 flags, 0 stacks"
+     },
+     {
+      "t": "board",
+      "name": "bar 13:15",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 35.2,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "r1",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 28.2
+         },
+         {
+          "t": "rect",
+          "name": "r1n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 28.2
+         },
+         {
+          "t": "rect",
+          "name": "r2",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 21.1
+         },
+         {
+          "t": "rect",
+          "name": "r2n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 11,
+          "y": 26.2
+         },
+         {
+          "t": "rect",
+          "name": "r3",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 14.1
+         },
+         {
+          "t": "rect",
+          "name": "r3n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 11,
+          "y": 19.1
+         },
+         {
+          "t": "rect",
+          "name": "r4",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 7
+         },
+         {
+          "t": "rect",
+          "name": "r4n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 11,
+          "y": 12.1
+         },
+         {
+          "t": "rect",
+          "name": "r5",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "r5n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 11,
+          "y": 5
+         }
+        ],
+        "w": 119,
+        "h": 35.2,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "marks",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "bracket 1",
+          "w": 2,
+          "h": 21.1,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 3,
+          "y": 7,
+          "note": "sell stack 3 levels, tested (2 px); labels on hover, focus, selection"
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 top",
+          "w": 2,
+          "h": 2,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 5,
+          "y": 7
+         },
+         {
+          "t": "rect",
+          "name": "bracket 1 bottom",
+          "w": 2,
+          "h": 2,
+          "o": {
+           "fill": "color.text.primary"
+          },
+          "x": 5,
+          "y": 26.2
+         },
+         {
+          "t": "board",
+          "name": "label 1",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "fill": "color.surface.raised",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "×3 sell tested",
+            "typo": "type.num.xs",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16,
+          "note": "the short label on a digit-free row above the stack; on the raised fill (local: it reads over the L2 band)",
+          "x": 9,
+          "y": -4.5
+         }
+        ],
+        "w": 119,
+        "h": 35.2,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 35.2,
+      "x": 119,
+      "y": 0,
+      "note": "bar 13:15: bid_ask L2 box; rows r1-r5 from 64,000.0; 3 flags, 1 stacks"
+     },
+     {
+      "t": "board",
+      "name": "bar 13:20",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "wick",
+        "w": 1,
+        "h": 35.2,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 8,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "body",
+        "w": 3,
+        "h": 35.2,
+        "o": {
+         "fill": "color.text.secondary"
+        },
+        "x": 7,
+        "y": 0
+       },
+       {
+        "t": "board",
+        "name": "cells",
+        "kids": [
+         {
+          "t": "rect",
+          "name": "r1",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 28.2
+         },
+         {
+          "t": "rect",
+          "name": "r1n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 11,
+          "y": 33.2
+         },
+         {
+          "t": "rect",
+          "name": "r2",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 21.1
+         },
+         {
+          "t": "rect",
+          "name": "r2n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 21.1
+         },
+         {
+          "t": "rect",
+          "name": "r3",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 14.1
+         },
+         {
+          "t": "rect",
+          "name": "r3n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 11,
+          "y": 19.1
+         },
+         {
+          "t": "rect",
+          "name": "r4",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 7
+         },
+         {
+          "t": "rect",
+          "name": "r4n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 7
+         },
+         {
+          "t": "rect",
+          "name": "r5",
+          "w": 101,
+          "h": 6,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 11,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "r5n",
+          "w": 1,
+          "h": 1,
+          "o": {
+           "fill": "color.surface.app"
+          },
+          "x": 111,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 35.2,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "w": 119,
+      "h": 35.2,
+      "x": 238,
+      "y": 0,
+      "note": "bar 13:20: bid_ask L2 box; rows r1-r5 from 64,000.0; 0 flags, 0 stacks"
+     }
+    ],
+    "w": 357,
+    "h": 35.2,
+    "note": "1:1 crop of the plot: 3 bar(s) × 5 rows of 7.04 px (L2, bid_ask), pitch 119 px; bars 13:10 | 13:15 | 13:20 of the base grid, the 13:15 ×3 sell stack tested",
+    "x": 148,
+    "y": 640.0
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "text",
+    "name": "C caption L2",
+    "chars": "At L2 there is no outline: the bracket carries the stack, its label on a digit-free row above the stack.",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "w": 663,
+    "x": 593,
+    "y": 640
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "C prices L0",
+    "o": {
+     "clip": false
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "p1",
+      "chars": "64,000.0",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 3.2,
+      "y": 72.6
+     },
+     {
+      "t": "text",
+      "name": "p2",
+      "chars": "64,001.0",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 3.2,
+      "y": 55
+     },
+     {
+      "t": "text",
+      "name": "p3",
+      "chars": "64,002.0",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 3.2,
+      "y": 37.4
+     },
+     {
+      "t": "text",
+      "name": "p4",
+      "chars": "64,003.0",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 3.2,
+      "y": 19.8
+     },
+     {
+      "t": "text",
+      "name": "p5",
+      "chars": "64,004.0",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 3.2,
+      "y": 2.2
+     }
+    ],
+    "w": 60,
+    "h": 88,
+    "note": "the crop's price labels (CMP-188's style)",
+    "x": 509.0,
+    "y": 440.0
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "board",
+    "name": "C times",
+    "o": {
+     "clip": false
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "t 13:10",
+      "chars": "13:10",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 43,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "t 13:15",
+      "chars": "13:15",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 162,
+      "y": 0
+     },
+     {
+      "t": "text",
+      "name": "t 13:20",
+      "chars": "13:20",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 281,
+      "y": 0
+     }
+    ],
+    "w": 357,
+    "h": 13.2,
+    "note": "the crop's time labels (CMP-189's style)",
+    "x": 148,
+    "y": 683.2
+   }
+  },
+  {
+   "into": "SCR-030∕fp-imbalance/crops",
+   "node": {
+    "t": "text",
+    "name": "C footnote",
+    "chars": "Base grid bars 13:10 | 13:15 | 13:20 (generator values, §3), rows 64,000.0–64,004.0",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 148,
+    "y": 704.4
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotation cards",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.inset.lg"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "notes card",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.md",
+       "pad": "space.inset.lg",
+       "fill": "color.surface.raised",
+       "radius": "radius.card"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "block-11",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Notes",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Only the imbalance marks are drawn: 13:35's POC rail on 64,011.0 (§4.1 L222), the VA ticks, the forming cap and the ledges are boards 20 and 21's (D6, D7 L156-157), so B's announcement still says 'point of control, forming' (§8.1 L731). A, B and D show 13:35 with a free margin (88 / 244 / 48 px, fewer bars in view); at board 01's ten bars it is 18 px and the label waits for hover, focus or selection (§3 L181, L185). Edge levels are not compared (§4.1 L233): `24` §4.2's zero_policy would flag sell at 13:35's high, 64,013.0 (carry pending). Not drawn (no frame row asks): label collisions and the last-price band (L295-297); adjacent opposite runs, two brackets (L294); L1's '· delta only' and the L2 badge (boards 16, 33). Greyscale and forced-colors keep each signal's geometry or word (§8.3 L760-761, L771-772); hi-fi is E18-D03's.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       }
+      ],
+      "w": 400,
+      "note": "annotation, not a frame or an inset: the Notes block beside the frame, so the board fits its slot"
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.raised",
+     "radius": "radius.card"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "SCR-030/fp-imbalance: outline L0, half outline L1, bracket L0–L2, zone states",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "source",
+      "chars": "Source: spec §4.4 L280-298, D5 L155, QA R4 L125, §3 L179-180 and L197-198, §8.1 L731 and L740-741 · §0 L61 · state: imbalance both on; the zone state server-told (GAP-18)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "annotation blocks",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "block-01",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "State and trigger",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Imbalance both on (QA R4 L125; SCR-032's defaults, §6.1 L458-459). The zoom picks the level: 40 / 74 / 100 rows → 17.6 / 9.5 / 7.0 px, L0 / L1 / L2 (§3 L197-198); the zone state is server-told (pending GAP-18, L288-289). A: the ×3 buy stack per state and level, its label beside the newest bar; B: focus on a stack level; C: a sell stack in an older bar (L290-292); D: the one-number mode Delta at L0 (L284-285).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-02",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Decision ids",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "D5 (L155): outline at L0, the flagged side's half at L1 and in the one-number modes (left sell, right buy), none at L2; the bracket in the stack's lane, weight by state; labels where free space fits, else on hover, focus and selection. D6 (L156): inside out at one edge, the level box last (B). D3 (L153), D4 (L154); QA R4, Q8 (L125); OQ-5 open (L924).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-03",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Roles",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Market data, the same for every session, in demo and live (§5 L408). No gated control here, so no T2: the marks are canvas, not controls (§9 L777-778). The cell menu the keyboard path opens keeps §4.8's T2 items for a Viewer (L360-367): board 24.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-04",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Keyboard path",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Tab → … → legend → plot, one roving stop (§8.1 L721-724). ← / → bars (L729); ↑ / ↓ levels: on a stack level the full label shows (§4.4 L292-293); Shift+F10 or the Menu key opens the cell menu, Focus imbalance first (PROPOSED: no keymap entry yet, GAP-12; L734, §4.8 L358-359); Enter expands ≤ 40 levels (L732); Esc clears the level (L735).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-05",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Focus",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "B: the level box, a ≥ 2 px ring around 64,011.0 in the cursor column (§8.1 L740-741), and the full label at the bracket's top end. Cells under 24 px are `05` §3.4 item 7's exception; SCR-045 is the alternative (L741).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-06",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Announcement (text, region, when)",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "↑ / ↓ onto 64,011.0: polite, in the chart root's one cursor live region (role=\"status\", atomic; E06-D03 D4, D5), at once on the press (§8.1 L731): '64,011.0 to 64,011.9, bid 61, ask 228, delta plus 167, buy imbalance 600 percent, part of a 3-level buy stack, point of control, forming'. At L2 it adds 'footprint at low detail' (§8.2 L749); a newly formed stack is announced, forming-cell updates never (L749-750).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-07",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Copy keys",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "No spec keys (stack.short / .tested / .broken / .full are kit ids). Verbatim: '×3 buy', '×3 buy tested' (§4.4 L289), '×3 buy broken' (L290), '×3 buy stack 64,010.0-64,012.9 active' (L292); C's '×3 sell tested' fills that pattern with 'sell' (§18 L956 '×N buy | sell': copy gap). Canvas glyph set: a hyphen in the range (L293-294).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-08",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Data source",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "`24` §4.2-§4.3 at ratio 3.0, min_stack 3 (§4.1 L233-235). A, B, D: §4.1's hand-picked 13:35 (L220-224), buy at 3.1 / 6.0 / 3.4 → ×3 buy 64,010.0–64,012.9, 600 %. C: the base grid's 13:15 (footprint.mjs, seed '20260928', §3 L171-173), sell at 3.5 / 9.8 / 6.1 → ×3 sell 64,001.0–64,003.9, 975 %; 13:10's isolated sell at 64,001.0, 22.3. SCR-056's worked tested and broken rows (§7 L665-666) have no cells and the tested one lies above the window, so C uses the generator's 13:15 stack. Wire: `22` FootprintImbalance (`23` §14.4); zone state GAP-18 (L913); estimated is false, so no chip (L298).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-09",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Budget",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "No per-cell DOM: the marks are canvas quads and SDF text (§9 L777-778) and add no cells (400 at L0; budget 2,500: §3 L185, L202-203). Labels need ≈ 230 px (full) or 37–87 px (short) against a 14 px lane gap (OQ-5 L924): free space only.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-10",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Event",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "None for the marks. SCR-032's Save emits chart.footprint_settings_changed (§6.7 L655) with the outline and bracket switches (§6.2 L518-519; GAP-6 L901).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "SYNTHETIC data · page E18-D02 · board 19 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 368
+     }
+    ],
+    "w": 400
+   }
+  }
+ ],
+ "export": "docs/design/E18/img/E18-D02-19-scr-030-imbalance.png",
+ "notes": {
+  "sources": [
+   "spec §4.4 L280-298, D5 L155, QA R4 L125, §3 L179-180 and L197-198, §8.1 L731 and L740-741 · §0 L61 · state: imbalance both on; the zone state server-told (GAP-18)",
+   "generator <hcl-worker-2 scratch>/sheets/E18-D02/gen/gen_19.py",
+   "spec §3 L169-207 (chrome, pitches, rows, cell heights, bar counts, levels, SYNTHETIC data)",
+   "E11-D02 §2 / §6 (chrome sizes, axis types, insets per density; cited by spec §3 L176-178)",
+   "packages/chart-engine/bench/fixtures/footprint.mjs + bars.mjs (seed '20260928', the bench CLI default, run-bench.mjs:41; spec §3 L171-173)",
+   "spec §4.1 L211-246 (the column anatomy, the slot table)",
+   "24 §4.2-§4.5 (diagonal imbalance, stacks, unfinished auction, POC and value area; cited by spec §1.3)",
+   "spec §4.4 L280-298 (outline, bracket, zone weights, labels)",
+   "spec §4.2 L248-267 (cell modes, levels, width floors, the notch)",
+   "spec §0 L22-95 (boards, frames, sizes, densities, export, footer)"
+  ],
+  "copy_keys": [
+   "stack.short",
+   "stack.tested",
+   "stack.broken",
+   "stack.full"
+  ],
+  "copy_gaps": [
+   "'×3 sell tested' (C, L2) fills §4.4's label with the 13:15 stack's side; no spec line writes a sell label (§18 L956: '×N buy | sell').",
+   "§4.4 gives the chart label no weight or grey per zone state (SCR-056's semibold / regular is §7.1 L678): every label is ink; the bracket's weight and the word carry the state.",
+   "Where the full label sits is not stated (L292-293): drawn at the bracket's top end in place of the short label, on the raised fill (kit); without a free margin its ≈ 230 px would cover the next bar's cells.",
+   "The bracket's end ticks are '2 px … toward it' (L288) with no thickness: drawn as thick as the bracket (kit).",
+   "At L1 the right-aligned delta (≈ 48 px in the 10 px cell type) nearly fills the 50.5 px half the outline covers; §4.4 does not say the number sits inside it (E18-K01 measures the floors).",
+   "REVIEW QUESTION (spec author; E18-K01, E18-D03): at L1's 9.5 px rows (§3 L197) the 1.5 px outline, 1 px inside the side-cell (§4.5 L303), leaves 4.5 px inside, under the 10 px digits (about 7 px tall): its top and bottom strokes cross the delta's digits (the offline preview shows it). §4.4 L284-285 keeps the outline at L1; the spec does not say how the digits clear it.",
+   "REVIEW QUESTION (spec author; E18-K01): in `delta` at its 40.2 px floor (§4.2 L263-264; §3 L199) the half the outline covers is 20.1 px, and a three-digit delta ('▲ +167', 36 px at 6.0 px a glyph) runs 1.2-37.2 px into the cell: the half outline's left stroke crosses its digits (D). §4.4 L284-285 outlines the half in the one-number modes; the spec does not say how the number clears it.",
+   "At 7.0 px rows (L2) the 10 px label is taller than the row it sits on (L290-291); E18-K01 checks it reads.",
+   "SCR-056's worked tested and broken rows (§7 L665-666: 13:20 ×4 sell 64,031.0–64,034.9 tested; 13:05 ×5 buy 63,988.0–63,992.9 broken) have no cells, and the tested one lies above the 40-row window (63,974.0–64,013.0), so C uses the generator's 13:15 ×3 sell 64,001.0–64,003.9 at 975 %, tested: boards 19, 13-15 and 49 show different tested stacks. For E25-D02 (#668) and E18-D05 (#499): one worked tested stack with cells.",
+   "seed '20260928' (the bench CLI default) and cellsPerBar 40: §3 L172 names the generator but no seed; its default is 25 cells per bar"
+  ],
+  "live_checks": [
+   "No inst nodes on this board: every part is a kit composition (nothing to verify against the library).",
+   "L1 crops: the outline's strokes cross the 10 px digits at 9.5 px rows, and the ▲ of a right-aligned delta meets the right-half outline's left edge (≈ 1.5 px apart by the kit's metrics); check how both read at scale 1 (Copy gaps: REVIEW QUESTION).",
+   "A: the 3 / 2 / 1 px bracket weights stay distinct at scale 1 (no half-pixel blur) across the three columns.",
+   "B: the level box reads back with strokeAlignment 'center' (set locally); the ring sits between 64,011.0's outline and its neighbours'; all three outlines read with the ring on.",
+   "B: the cursor column is two 2 × 88 px edges (x 0 and 117) with no top or bottom edge; the level box's sides (x −1 to 1, 118 to 120) meet them, and the 3 px bracket (x 114-117) stays clear.",
+   "C L2: the label pill overhangs the crop's top row by about 4.5 px (the crop is not clipped); check it clears the bracket's top tick in the left lane.",
+   "D: the half outline's left stroke (column x 32.1-33.6) crosses the '1' of '▲ +146', '▲ +167' and '▲ +138'; check how the digits read at scale 1 (Copy gaps: REVIEW QUESTION).",
+   "The notes card wraps its text at 368 px like the annotation column; its top aligns with the frame's.",
+   "cell digits: auto-width texts at a computed x (JetBrains Mono 0.6 em): check each side's digits share a right edge and the × column lines up; ▲ / ▼ must come from JetBrains Mono",
+   "rename frame 'SCR-030∕fp-imbalance' to 'SCR-030/fp-imbalance' after the board's last section (Penpot shows 'SCR-030 / fp-imbalance')",
+   "root: after the first section the root must read back exactly as the sheet's board.name"
+  ],
+  "deviations": [
+   "The frame is a sheet of 1:1 crops of the SCR-030 plot, not one chart: a 1280 × 800 pane holds one zoom level and §0 L61's row asks for L0, L1, L2 and three zone states at once. The chrome (toolbar, status row, strip row, legend, gutters, time strip) is board 01's; each crop is the plot at §3's compact geometry with its level's row height (§3 L179-180, L197-198). B's cursor column is drawn as its two 2 px edges (x 0 and 117): E06-D03 D10's column runs the pane's full height and the crop cuts it, so it has no top or bottom edge here (the kit's closed box read as a ring around the five levels).",
+   "B's level box is a 2 px ring centred on the level's edges (set locally; the kit's _marks() draws it inner): its band (crop y 34.2-36.2 and 51.8-53.8) fills the gap between 64,011.0's outline (36.2-51.8, 1 px inside the side-cell, §4.5 L303) and its neighbours' (ending 34.2, starting 53.8), so the level box comes last at one edge and covers no outline (D6 L156). Drawn inner, it covered 1.0 px of each 1.5 px horizontal stroke.",
+   "Only the imbalance marks are drawn (outline, bracket, label): SCR-032's defaults also draw the POC rail, VA ticks, forming cap and unfinished-auction ledge (§6.2 L520-522), boards 20 and 21's (§0 L62-63); bar 13:35 is drawn without its cap, so the three zone states read on one stack.",
+   "A's, B's and D's crops give the newest bar a free margin (88 px; 244 px for B's full label; 48 px for D's '×3 buy') so §4.4 L290's placement shows; at board 01's ten bars it is 18 px (1,208 − 10 × 119: §3 L181, L185), under '×3 buy' (≈ 36 px), so there the label waits for hover, focus or selection.",
+   "D is drawn here: §4.4, board 19's section, is where the one-number modes' half outline is ruled (L284-285; D5 L155), and neither board 16's row (§0 L58) nor §4.2 carries outlines. D is A's column in `delta` at L0 (pitch 58.2 px with the 40.2 px floor, §3 L199-201), active, with the right half outlined on 64,010.0-64,012.0 and '×3 buy' in its free margin.",
+   "Edge levels are not compared (the kit's imbalances(edges='skip') and its 'edges' note, here with the carry): `24` §4.2's zero-denominator rule (treat_as_min, the default) treats a missing neighbour outside the bar as zero volume, so 13:35's high 64,013.0 (bid 3 over no ask: 3 / 0.001 = 3,000 ≥ 3.0) would flag sell, outlining its bid side-cell at L0 and its left half at L1 and in D. The board follows §4.1 L233's three outlined cells. Carry for PR #4180, not raised from this offline sheet (board 19 review #5, as board 06 review #5): (a) an A-row in `24` §4.2, 'footprint edge levels are not compared'; or (b) draw 64,013.0's sell outline in A, B and D and correct §4.1 L233's count.",
+   "The Notes block sits on an annotation card beside the frame (the kit's insets column, named 'annotation cards' as board 07's): with it in the 400 px column the board is about 1,824 px tall, over its 1,700 px page slot (k.board()'s check, the build notes' grid). §0 L36-37 lists no inset for board 19; the card is not one.",
+   "C is bars 13:10 | 13:15 | 13:20 of the base grid's scene (e18kit.scene(10, anatomy=True): footprint.mjs values, §3 L171-173; boards 01-06, §4.1 L235-236) at rows 64,000.0–64,004.0: the spec gives no sell-stack cells (SCR-056's worked rows, §7 L665-666, have none). The crop's flags equal the whole bars' flags in those rows (checked); candle bodies are clamped to the crop (13:15's lies below it: the wick only).",
+   "Zone states are SYNTHETIC (no source tells them yet: GAP-18 L913): A draws §4.1's stack in each state for comparison, with L289-290's labels; C draws the 13:15 stack tested.",
+   "C's L2 label sits over the 64,004.0 band (strong: the dark grey); its 16 px pill on the 7.0 px row reaches about 4.5 px above that row and into the stack's top row: set on the raised fill with 4 px padding, as the kit draws the full label; hi-fi (E18-D03) owns the label over cells.",
+   "The crops' price and time labels are local (the kit's gutter and time strip are pane-wide): the axis type in the dark grey, every row priced at L0 as §4.1's sketch labels them (L220-224), right of the crop where the gutter sits.",
+   "B's full label sits on the raised fill with 4 px side padding (kit), so it reads over cells where no free margin is left; hi-fi (E18-D03) owns its treatment.",
+   "Captions inside the frame are board chrome naming each crop's level, state and rule (listed under Board chrome with their sources), not product copy.",
+   "notes.copy_keys lists e18kit COPY ids (stack.short / .tested / .broken / .full), not spec keys: the spec keys none of these strings (new copy is PROPOSED for E18-D05's copy deck unless quoted, L18); the Copy keys block says so and quotes each string at its line.",
+   "The root's fill color.surface.canvas is added to the tokens list here (e18kit's board() builds the root from ROOT_O without node(), so its LOG misses it on every board).",
+   "The base scene's 40 rows span 63,974.0-64,013.0: the top row is the forming bar's high as §4.1 draws it (L219-220, the cap above 64,013.0); §3 L192-194 fixes 40 rows of 1.0 USDT but no prices.",
+   "Candle bodies of generator bars are bars.mjs's open and close (same seed) scaled into the 40-row window; every bar spans the window (§3 L193: every row traded), so the wick runs top to bottom; the body is filled (its form is E12-D06's, §4.1 D3).",
+   "Kit geometry for marks the spec sizes only in part: POC rails 1 px on the level's top and bottom edges across the candle strip and the cells; VA ticks 2 px thick (6 px long, D6) at VAH's top edge and VAL's bottom edge; bracket end ticks as thick as the bracket; the cap spans the cells; folded columns draw brackets and VA ticks over the cells' outer edge (D4).",
+   "An imbalance outline is two rects: a 1.5 px ink frame (§4.4 L282: a token stroke is 1 or 2 px) and an inner rect in the cell's background; the digits draw over both.",
+   "Frames are named as §0 names them ('SCR-030/fp-anatomy'), and cvsheet splits section paths on '/', so frame() names the node with U+2215 '∕' for '/' while sections address inside it; the live renderer renames each frame to its §0 name after the board's last section (live check)."
+  ],
+  "data": [
+   "SYNTHETIC: footprint.mjs generateFootprintCells(seed toSeed32('20260928') ^ 0x9e3779b9, cellsPerBar 40) and bars.mjs generateBars(toSeed32('20260928')); bar k = k-th back from 13:35",
+   "hand-picked anatomy values (§3 L173, §4.1 L220-224) on the 13:25, 13:30 and 13:35 bars"
+  ],
+  "tokens": [
+   "type.ui.caption",
+   "color.text.secondary",
+   "type.ui.body-strong",
+   "color.text.primary",
+   "type.ui.label",
+   "space.stack.xs",
+   "color.surface.app",
+   "type.num.xs",
+   "color.text.tertiary",
+   "color.border.default",
+   "type.num.sm",
+   "color.focus.ring",
+   "border.focus",
+   "space.inset.xs",
+   "color.surface.raised",
+   "radius.control",
+   "type.ui.body",
+   "space.stack.md",
+   "type.ui.heading-md",
+   "space.inset.lg",
+   "radius.card",
+   "color.surface.canvas"
+  ]
+ }
+}

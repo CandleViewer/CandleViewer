@@ -1,0 +1,1119 @@
+{
+ "board": {
+  "name": "E18-D02 / 15 scr-056-rows-2560-comfort",
+  "w": 3008,
+  "x": 27600,
+  "y": 18700,
+  "o": {
+   "dir": "row",
+   "align": "start",
+   "fill": "color.surface.canvas",
+   "pad": "space.inset.lg",
+   "gap": "space.inset.lg"
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "SCR-056∕rows",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "SCR-056 panel (neutral frame)",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.sm",
+       "pad": "space.panel.padding",
+       "fill": "color.surface.app",
+       "radius": "radius.card",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "Imbalances BTCUSDT 5m",
+        "typo": "type.ui.heading-sm",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "board",
+        "name": "filter row",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.lg",
+         "justify": "space-between"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-005 Checkbox (composition) · Only unfilled (hide broken)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "check mark",
+            "o": {
+             "radius": "radius.control",
+             "stroke": "color.text.primary",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "check",
+              "icon": "check",
+              "color": "color.text.primary",
+              "size": "size.icon",
+              "x": 0,
+              "y": 0
+             }
+            ],
+            "w": 16,
+            "h": 16
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Only unfilled (hide broken)",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 32,
+          "note": "checked"
+         },
+         {
+          "t": "text",
+          "name": "caption",
+          "chars": "Showing 2 of 3 stacks · 1 broken hidden",
+          "typo": "type.ui.body",
+          "color": "color.text.secondary",
+          "note": "polite once per change"
+         }
+        ],
+        "w": 2536
+       },
+       {
+        "t": "board",
+        "name": "CMP-049 Table (composition)",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "header",
+          "o": {
+           "dir": "row",
+           "fill": "color.surface.raised"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "h · col.time",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Time",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 227,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "h · col.side",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Side and depth",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 551,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "h · col.range",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md",
+             "justify": "end"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Price range",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 616,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "h · col.ratio",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md",
+             "justify": "end"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Max ratio",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 324,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "h · col.age",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Age",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 259,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "h · col.status",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Status",
+              "typo": "type.ui.body",
+              "color": "color.text.secondary"
+             }
+            ],
+            "w": 519,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "h · menu",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-002 IconButton (composition) · header ⋯ (as sketched)",
+              "o": {
+               "dir": "row",
+               "justify": "center",
+               "align": "center"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "menu ⋯",
+                "icon": "more-horizontal",
+                "color": "color.text.secondary",
+                "size": "size.icon"
+               }
+              ],
+              "w": 32,
+              "h": 32,
+              "note": "icon-only, 32 x 32 at comfortable (E11-D04 L101); its label: a copy gap"
+             }
+            ],
+            "w": 40,
+            "h": 32,
+            "note": "the sketch's header [⋯] (L663); no name or action in §7 (copy gap)"
+           }
+          ],
+          "w": 2536,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "row 1 · 13:35",
+          "o": {
+           "dir": "row"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "c1",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "13:35",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 227,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "c2",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "▲ BUY stack ×3",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 551,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "c3",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md",
+             "justify": "end"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "64,010.0–64,012.9",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 616,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "c4",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md",
+             "justify": "end"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "600 %",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 324,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "c5",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "4 min",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 259,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "c6",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Active, forming",
+              "typo": "type.ui.body-strong",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 519,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "c7",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-002 IconButton (composition) · row menu",
+              "o": {
+               "dir": "row",
+               "justify": "center",
+               "align": "center"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "menu ⋯",
+                "icon": "more-horizontal",
+                "color": "color.text.secondary",
+                "size": "size.icon"
+               }
+              ],
+              "w": 32,
+              "h": 32,
+              "note": "icon-only, 32 x 32 at comfortable (E11-D04 L101); its label: a copy gap"
+             }
+            ],
+            "w": 40,
+            "h": 32
+           }
+          ],
+          "w": 2536,
+          "h": 32,
+          "note": "active, forming"
+         },
+         {
+          "t": "board",
+          "name": "row 2 · 13:20",
+          "o": {
+           "dir": "row"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "c1",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "13:20",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 227,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "c2",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "▼ SELL stack ×4",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 551,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "c3",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md",
+             "justify": "end"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "64,031.0–64,034.9",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 616,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "c4",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md",
+             "justify": "end"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "420 %",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 324,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "c5",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "19 min",
+              "typo": "type.num.base",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 259,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "c6",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.md"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "value",
+              "chars": "Tested",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             }
+            ],
+            "w": 519,
+            "h": 32
+           },
+           {
+            "t": "board",
+            "name": "c7",
+            "o": {
+             "dir": "row",
+             "justify": "center"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-002 IconButton (composition) · row menu",
+              "o": {
+               "dir": "row",
+               "justify": "center",
+               "align": "center"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "menu ⋯",
+                "icon": "more-horizontal",
+                "color": "color.text.secondary",
+                "size": "size.icon"
+               }
+              ],
+              "w": 32,
+              "h": 32,
+              "note": "icon-only, 32 x 32 at comfortable (E11-D04 L101); its label: a copy gap"
+             }
+            ],
+            "w": 40,
+            "h": 32
+           }
+          ],
+          "w": 2536,
+          "h": 32,
+          "note": "tested"
+         }
+        ],
+        "w": 2536,
+        "note": "a real table; Enter or a click locates on SCR-030 and focus stays here (D13)"
+       },
+       {
+        "t": "board",
+        "name": "E25-D02 band",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.sm",
+         "padY": "space.inset.xs",
+         "radius": "radius.control",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "text",
+          "chars": "[ E25-D02 (#668): thresholds, stack depth, \"alert on new\" and the panel's own states ]",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 2536,
+        "note": "E25-D02 owns the panel's thresholds, stack depth, alert on new and its own states (§1.2)"
+       }
+      ],
+      "w": 2560,
+      "h": 1440,
+      "note": "SCR-056 rows in a neutral panel frame (§1.2 L109-112; sketch L661), maximised in the frame (§3 L177)"
+     }
+    ],
+    "w": 2560,
+    "h": 1440,
+    "note": "§0 frame 'SCR-056/rows' · comfortable; the rows at rest; 'Only unfilled (hide broken)' on; 2 of 3 stacks shown (§7 L660-668)"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.raised",
+     "radius": "radius.card"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "SCR-056/rows · 2560 × 1440 · comfortable",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "source",
+      "chars": "Source: spec §7 L658-691 (sketch L660-668, §7.1 L671-685, §7.2 L687-691), §1.2 L109-112, §0 L57; other docs' lines at ab72dc423 · state: the rows at rest, 'Only unfilled (hide broken)' on, 2 of 3 stacks shown",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "annotation blocks",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "block-01",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "State and trigger",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "§0 L57: the E18-owned rows at rest in a neutral panel frame (§1.2 L109-112), maximised. Trigger: the panel open on BTCUSDT 5m (E25-T06's stack points, L684). 'Only unfilled' on: 2 of 3 stacks shown (L664-665), 13:05 Broken hidden and counted (L666). A BTCUSDT 5m SCR-030 pane is open behind the maximised panel, so rows locate (none: board 51's reason under the caption). The locate is T2 by state only before the loaded history (§7.3 L701-703). Panel size and column widths are the board's: §7 sets neither (E25-D02).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-02",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Decision ids",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "D13 (L163): a real table, status by weight and word, 'Only unfilled' hides broken only, Enter locates, focus stays · D7 (L157): 'forming' · D5, §4.4 L288-289: active · tested · broken, bracket 3 / 2 / 1 px · D1 (L151): sizes, greyscale.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-03",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Roles",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Every role sees the rows (SCR-020 RBAC: all, `14` L485). The closed row menu is §4.8's set (L682-683): Create alert, Add note, Horizontal line and Replay are T2 without their write grant (§6.5 L607-617), never hidden; Copy level as TSV always enabled (L366). No gated control here.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-04",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Keyboard path",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Tab: the checkbox → the table (CMP-049: ↑ / ↓ rows, `15` L501); E25-D02's controls: #668's. Enter or a click locates the row on SCR-030 (§7.3 L695). The row's ⋯ opens the row menu at its first enabled item (Shift+F10 or the Menu key: PROPOSED until a keymap entry exists, GAP-12; §4.8 L358-359); Esc returns to the row (E11-D04 L303).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-05",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Focus",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "None drawn: the rows at rest (selected: board 49; located: board 51). After a locate focus stays in the table (L699); a push never moves it (`05` L96); a dissolved row goes, the count updates (L681); rows never aria-disabled (L705).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-06",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Announcement (text, region, when)",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Polite live region, once per filter change: 'Showing 2 of 3 stacks · 1 broken hidden' (§7.2 L690-691; `05` L188). Locate: 'Located on the chart: BUY stack ×3, 64,010.0–64,012.9, 13:35', polite, once (L699-700). Never: Age, a forming row's changes (L677, L681). Read with its cell, not announced: 'ask 228 vs bid 38, ratio 6.0 to 1' (L675-676).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-07",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Copy keys",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "s056.title L661 · s056.only, s056.caption L662 · col.time … col.status L663 · st.forming L664 · st.tested L678 · s056.e25 L667 (kit ids); unkeyed: PROPOSED for E18-D05 (L18, L937).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-08",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Data source",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "SYNTHETIC (QA G8): the sketch's rows (L664-666); 13:35 is §4.1's ×3 buy stack, max 228 / 38 = 600 % (L233-235). Live: metrics.{symbol} stack points (L684); Status: an E25-T06 field (L677); detail (MetricPoint.meta, no schema) and identity GAP-11 (L684-685). Fields: created_ts, price_low–price_high, ratio_max, bid_volume / ask_volume, Age (L673-677).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-09",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Budget",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "A virtualised table bounded at 2,000 rows (§9 L780); `14` L1258: a 2,000-event ring buffer, ≤ 4 Hz, 1.5 ms. Updates: E25-T06 within 200 ms, E18-S08 coalesced at ≤ 10 Hz (L680).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-10",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Event",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "A row's Enter or click: imbalance.event_clicked, 'jumps the chart to the bar' (`14` L1259). The filter names none; the panel's controls and their events are E25-D02's (L111-112).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-11",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Notes",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Non-colour carriers: ▲ / ▼ and BUY / SELL (§7.1 L673-674); weight and word (§8.3 L761); the caption count (L769). The chart keeps broken zones (L690). 'Est.' unreachable: no v1 source sets estimated (L709-711). Sketch label '(neutral panel frame)' (L661); band: #668's placeholder (L667); header ⋯ (L663) as sketched, no action in §7. 200 % zoom and text scale: §7 names no reflow (`16` L128): spec gap, for E18-D02 §7.1 or E25-D02 (#668).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-12",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Components",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "CMP-049 Table, CMP-005 Checkbox, CMP-002 IconButton (the ⋯), CMP-019 Icon (check, ⋯), CMP-041 Menu (row menu, closed; T2 items: CMP-079 RbacGate, CMP-019 lock; A-38 L890).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "SYNTHETIC data · page E18-D02 · board 15 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 368
+     }
+    ],
+    "w": 400
+   }
+  }
+ ],
+ "export": "docs/design/E18/img/E18-D02-15-scr-056-rows-2560-comfort.png",
+ "notes": {
+  "sources": [
+   "spec §1.2 L105-116 (the SCR-056 split: the E18-owned rows in a neutral panel frame; E25-D02 owns the panel)",
+   "spec §2 D13 L163, D7 L157, D5 L155, D1 L151; §4.4 L287-290 (zone weights); §4.8 L355-373 (the row menu's set; Shift+F10 / Menu key PROPOSED until a keymap entry exists, L358-359)",
+   "spec §6.5 L604-617 (T2, for the row menu's gated items); §7.3 L693-705 (locate; T2 before the loaded history; no matching pane); §8.3 L753-772; §9 L780; §12 L838; §15 OQ-8 L927; §16 L938",
+   "Non-spec line numbers are read in the working tree at ab72dc423 (each cited file clean against HEAD), not at the spec Key's e69a9200c (there `14` Performance is L1251 and `16` rule 1 is L124):",
+   "`14` SCR-056 L1240-1262 (performance L1258, analytics L1259, wireframes L1261); SCR-020 RBAC L485",
+   "`15` §0.3 rule 6 L40; CMP-002 IconButton L59-66; CMP-049 Table L494-501; `16` §3 L111-128 (row heights, rules 1 and 4); `05` §3.4 L95-96, §6.3 L188",
+   "E11-D04 §2 L93-106 (its CMP-049 table per density: comfortable 32 px rows, 12 px cell padding, type.num.base numbers, type.ui.body header and caption, 32 × 32 action buttons), D4 L117 and L225 (numbers right-aligned), L190, L221, L303 (the row's ⋯, the actions-column header ⋯, the row menu's keys); E11-D02 §6 L216 (comfortable: type.num.base / type.ui.body, space.3 12)",
+   "board 13's generator gen_13.py (the same frame at 1280 × 800 comfortable): its column-fit, header-⋯ and comfortable-table rules",
+   "spec §7 L658-715 (SCR-056 rows, filter, locate, the CMP-227 variant)",
+   "spec §0 L22-95 (boards, frames, sizes, densities, export, footer)"
+  ],
+  "copy_keys": [
+   "s056.caption",
+   "s056.title",
+   "s056.only",
+   "col.time",
+   "col.side",
+   "col.range",
+   "col.ratio",
+   "col.age",
+   "col.status",
+   "st.active",
+   "st.forming",
+   "st.tested",
+   "s056.e25"
+  ],
+  "copy_gaps": [
+   "The 13:20 ▼ SELL stack ×4 row's Max ratio description: §7.1 L675-676 gives the form (bid first for sell; its ratio part follows from 420 %: 'ratio 4.2 to 1') and the 13:35 row's 'ask 228 vs bid 38, ratio 6.0 to 1', but no bid / ask volumes for this stack: E25-T06's bid_volume / ask_volume live, E18-D05 for the SYNTHETIC figure. An accessible description: not drawn.",
+   "The row ⋯'s accessible name: E18-D02 gives none, and CMP-002's label is mandatory (`15` L62); E11-D04 names SCR-045's 'Actions for 13:58' (the row's time; E11-D04 L190, L303), so 'Actions for 13:35' would be its analogue, for E18-D05 to key. An icon-only button: no visible text.",
+   "The header's [⋯] (sketch L663): §7 gives it no name and no action; E11-D04's actions-column header ⋯ opens the column picker (E11-D04 L221), and the panel's own controls are E25-D02's (§1.2 L111-112). Drawn as sketched, without behaviour.",
+   "The table's accessible name: §7.1 and `14` SCR-056 give none (a CMP-049 semantic table needs one); the panel title 'Imbalances BTCUSDT 5m' is the nearest visible label. Owner: E25-D02 (the panel) or E18-D05.",
+   "Spec gap (not copy): §7 does not name the table's keyboard model in the panel (its Tab stop or stops; APG grid or focusable rows); `15` CMP-049 tests row navigation by ↑ / ↓ (L501) and `05` §3.4 item 2 (L95) makes a composite table one roving Tab stop.",
+   "Spec gap (not copy): §7.2 L690-691 says the caption is 'announced politely' but names no live-region node.",
+   "Spec gap (not copy): §7 states no 200 % zoom or text-scale reflow for this table (`16` §3 rule 4, L128, makes the reflow a required state of every CMP-049 table); not drawn, stated in the board's Notes. For E18-D02 §7.1 or E25-D02 (#668).",
+   "Spec gap (not copy): §7.3 does not say what locate does while SCR-056 is maximised over its target pane; OQ-8 (L927, owner E25-D02) covers only which pane is the target when several match. This board takes a matching pane as open behind the panel (the State block)."
+  ],
+  "live_checks": [
+   "No inst node on this board: every control is a composition (kit 'compose'), so no library set, variant prop or text layer needs verifying.",
+   "Glyphs: ▲ ▼ × in type.ui.body (Inter) and the en dash – in type.num.base (JetBrains Mono) render, no fallback box.",
+   "Icons: icon/check (color.text.primary) in the checked box and icon/more-horizontal × 3 (color.text.secondary: the header's and the two rows', each centred in a 32 × 32 CMP-002 IconButton composition) bind as the registry glyphs.",
+   "After relayout: the header and both rows are 2,536 px wide with no padding of their own, cells 227 / 551 / 616 / 324 / 259 / 519 / 40 px, each data cell padded 12 px each side (space.inset.md); the three 32 × 32 IconButtons centre in the last column at the panel's inner right edge.",
+   "Price range and Max ratio headers and values end at their cells' right padding (justify end); Time, Side and depth, Age and Status start at their left padding.",
+   "One line each: 'Active, forming' (type.ui.body-strong), '▼ SELL stack ×4' (type.ui.body) and '64,031.0–64,034.9' (type.num.base) in their cells; no header label (type.ui.body) wraps.",
+   "The filter row: the caption (type.ui.body) at the panel's inner right edge (justify space-between), centred on the 32 px checkbox row; the panel's 1 px light-grey edge shows on all four sides inside the frame's clip.",
+   "'Active, forming' (type.ui.body-strong) reads heavier than 'Tested' (type.ui.body) at scale 1: weight is the status's second carrier (L678).",
+   "rename frame 'SCR-056∕rows' to 'SCR-056/rows' after the board's last section (Penpot shows 'SCR-056 / rows')",
+   "root: after the first section the root must read back exactly as the sheet's board.name"
+  ],
+  "deviations": [
+   "The SCR-056 panel is drawn maximised in the 2560 × 1440 frame (2,560 × 1,440), as §3 L177 draws SCR-030's chart panel: §0 L30-32 and §7 give the frame size and 'a neutral panel frame' (L661; §1.2 L110) but no panel size, and a docked workspace narrows it. With two rows shown the panel is empty below the E25-D02 band. The locate target, a BTCUSDT 5m SCR-030 pane, is taken as open behind the panel (the State block), so every row locates and §7.3's shared reason under the caption (L704-705) is not drawn; board 51 draws it.",
+   "Column widths: §7 gives the columns, not their widths (the kit's COLS_056 note). The kit's 616 px of data columns are about the sketch's proportions (L663); gen_15.py fit_columns() scales them × 4.052 to 227 / 551 / 616 / 324 / 259 / 519 px so the table spans the panel's 2,536 px inner width (no header or row padding at comfortable, comfort_table()) with the kit's 40 px [⋯] column at its right edge, as the sketch draws it (L663-665), board 13's rule; the kit's builder keeps 656 px of columns in any width. At this width the cells' words sit far apart; whether the panel caps its table's width is E25-D02's (the panel layout, §1.2 L111-112).",
+   "The header's [⋯] (sketch L663) is drawn as the rows' ⋯: the more-horizontal glyph in the dark grey in a 32 × 32 CMP-002 IconButton composition centred in the row-menu column (gen_15.py header_menu() and icon_buttons(); board 13 draws the bare glyph); the kit's header leaves that cell empty. §7 gives it no name and no action (copy gaps).",
+   "Each ⋯ is a CMP-002 IconButton composition, 32 × 32 (E11-D04 L101: comfortable action buttons; `15` L61: 'icon-only affordance (… row actions)'), its glyph centred, no fill or edge at rest, centred in the 40 px row-menu column (4 px each side, the column unpadded): the kit draws a bare CMP-019 glyph.",
+   "Comfortable follows one rule over the whole table, E11-D04 §2's comfortable column for its CMP-049 table (E11-D04 L97-101; E11-D02 D6, §6 L216, steps the chrome the same way): a 32 px header, rows and checkbox (size.row.comfortable; 24 px at compact, `16` §3 L113-114); type.num.base numbers (Time, Price range, Max ratio, Age); type.ui.body header labels, filter caption, side words and checkbox label; 12 px padding each side of every data cell (E11-D04's space.3 12, bound as space.inset.md) and none on the header and rows (gen_15.py comfort_table(), as board 13: the kit's table draws type.num.sm numbers, type.ui.label headers, a type.ui.caption caption and 4 + 8 px padding at both densities); the 40 px [⋯] column holds E11-D04's 32 × 32 action button, unpadded. The status words keep the kit's type.ui.body-strong / type.ui.body; the title and the E25-D02 band (a placeholder, not table copy) keep the kit's type; the panel's 12 px padding is E11-D04's comfortable panel inset. `16` §3 rule 1 (L125) changes spacing only: if the owner rules it to the letter, the type returns to compact's and only the padding steps.",
+   "Price range and Max ratio, header and values, are end-aligned in their cells (gen_15.py align_numbers()): prices and percentages are 'right-aligned in tables' (`15` §0.3 rule 6, L40; E11-D04 D4 L117, L225); Time, Side and depth, Age and Status keep the start. The kit's imbalance_table() aligns every cell to the start (boards 12-14 and 49-52: a kit-owner change).",
+   "The 13:05 ▲ BUY stack ×5 row (L666, '(… Broken: hidden)') is not drawn: 'Only unfilled (hide broken)' hides it (§7.2 L689); the caption counts it (L690-691) and the State block names it. A broken row's look (regular weight, the row's text in secondary emphasis, L678-679) is board 49's.",
+   "'(neutral panel frame)' (L661) is the sketch's label for the frame, not UI copy: it is drawn as the panel's neutral chrome (a 1 px light-grey edge on the paper) and named in the annotation.",
+   "The kit names its table node 'CMP-049 table (composition)'; this board renames it 'CMP-049 Table (composition)', `15` L494's name (kit imbalance_table(): a kit-owner change for the other boards).",
+   "Every control, chip, button, field, menu, tooltip, drawer and dialog is a composition named '<CMP id> <Name> (composition)': the wireframes are greys only and cvsheet v1 cannot recolour an instance.",
+   "'Active in semibold' (§7.1 L678) is drawn in type.ui.body-strong (medium): no semibold 13 px token exists; the word carries the state.",
+   "Frames are named as §0 names them ('SCR-030/fp-anatomy'), and cvsheet splits section paths on '/', so frame() names the node with U+2215 '∕' for '/' while sections address inside it; the live renderer renames each frame to its §0 name after the board's last section (live check)."
+  ],
+  "data": [
+   "Rows: the §7 sketch's (L664-666), SYNTHETIC (QA G8; the footer): 13:35 ▲ BUY ×3 64,010.0–64,012.9 600 % 4 min Active, forming; 13:20 ▼ SELL ×4 64,031.0–64,034.9 420 % 19 min Tested; hidden by the filter: 13:05 ▲ BUY ×5 63,988.0–63,992.9 350 % 34 min Broken.",
+   "The 13:35 stack is §4.1's anatomy stack: buy flags 190 / 61 = 3.1, 228 / 38 = 6.0, 176 / 52 = 3.4 at imbalance_ratio 3.0, ×3 64,010.0–64,012.9 (L233-235); its max ratio 6.0 = 600 % (§7.1 L675-676)."
+  ],
+  "tokens": [
+   "type.ui.heading-sm",
+   "color.text.primary",
+   "size.icon",
+   "radius.control",
+   "border.hairline",
+   "type.ui.body",
+   "space.inset.xs",
+   "type.ui.caption",
+   "color.text.secondary",
+   "space.inset.lg",
+   "type.ui.label",
+   "space.inset.sm",
+   "color.surface.raised",
+   "type.ui.body-strong",
+   "color.border.default",
+   "space.stack.sm",
+   "space.panel.padding",
+   "color.surface.app",
+   "radius.card",
+   "space.stack.xs",
+   "space.stack.md",
+   "type.ui.heading-md",
+   "color.surface.canvas",
+   "space.inset.md",
+   "type.num.base"
+  ]
+ }
+}

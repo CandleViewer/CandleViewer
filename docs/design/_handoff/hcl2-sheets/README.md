@@ -1,5 +1,7 @@
 # hcl-worker-2's board sheets, drawn by the hpe lanes
 
+**READY (07:4xZ, 2026-10-23): #4180 batch 1 (30 boards, section below) for an idle hpe window, under the orchestrator's [DESIGN-THROUGHPUT] pull order (#4180, then #4193). Everything else stays on HOLD.** Earlier banner:
+
 **HOLD (02:2xZ, 2026-10-23): draw nothing from this folder until the orchestrator names a batch for your window.**
 
 - #4138 (E42-D03) and #4178 (E32-D02) are back in their standing-T2 gate (orchestrator, 01:38Z). The sheets of any
@@ -205,3 +207,43 @@ Batch 4 (boards 30–41, 95): notes paths scrubbed in batch 4 the same way in `3
 ## #4178 (E32-D02): 13 wireframe boards (added 01:4xZ, 2026-10-23)
 
 Page `E32-D02`. Sheets `sheets/E32-D02/01-…` to `13-…`, drawn in order (board 01 first: it binds the names, the floor treatment and the T2 gate). Greyscale wireframes (the dark theme's semantic greys, no hue). Board names and exports come from each sheet (`E32-D02 / NN <slug>` → `docs/design/E32/img/E32-D02-NN-<slug>.png`). Boards 04, 06, 07 and 13 also get greyscale and deuteranopia renders (`docs/design/_tools/cvd_sim.py`, `<stem>-greyscale.png`, `<stem>-deuteranopia.png`). Notes paths scrubbed in: `01-legend-and-entry.json`, `02-scr064-editing.json`.
+
+## #4180 (E18-D02): batch 1, 30 wireframe boards — READY (07:4xZ, 2026-10-23)
+
+Page `E18-D02`. Greyscale, token-free wireframes (spec §0: the three greys, the focus ring and black text; every board's
+footer says SYNTHETIC data). Draw in this order; each sheet's `board.name` is the board name and its `export` the PNG
+path, relative to the PR branch's checkout root. Boards 01, 04, 07 and 16, and 25–26, 32–33, 35, 38–40, 42–53 follow in
+later batches. The sheets are big (footprint grids): expect long section calls.
+
+| # | Sheet (`sheets/…`) | Board name | Sections | PNG path |
+| --- | --- | --- | --- | --- |
+| 1 | `E18-D02/02-scr-030-grid-1280-comfortable.json` | `E18-D02 / 02 scr-030-grid-1280-comfortable` | 34 | `docs/design/E18/img/E18-D02-02-scr-030-grid-1280-comfortable.png` |
+| 2 | `E18-D02/03-scr-030-grid-1280-dense.json` | `E18-D02 / 03 scr-030-grid-1280-dense` | 15 | `docs/design/E18/img/E18-D02-03-scr-030-grid-1280-dense.png` |
+| 3 | `E18-D02/05-scr-030-grid-2560-comfortable.json` | `E18-D02 / 05 scr-030-grid-2560-comfortable` | 33 | `docs/design/E18/img/E18-D02-05-scr-030-grid-2560-comfortable.png` |
+| 4 | `E18-D02/06-scr-030-grid-2560-dense.json` | `E18-D02 / 06 scr-030-grid-2560-dense` | 27 | `docs/design/E18/img/E18-D02-06-scr-030-grid-2560-dense.png` |
+| 5 | `E18-D02/08-scr-032-dialog-1280-comfort.json` | `E18-D02 / 08 scr-032-dialog-1280-comfort` | 52 | `docs/design/E18/img/E18-D02-08-scr-032-dialog-1280-comfort.png` |
+| 6 | `E18-D02/09-scr-032-dialog-2560-compact.json` | `E18-D02 / 09 scr-032-dialog-2560-compact` | 34 | `docs/design/E18/img/E18-D02-09-scr-032-dialog-2560-compact.png` |
+| 7 | `E18-D02/10-scr-032-dialog-2560-comfort.json` | `E18-D02 / 10 scr-032-dialog-2560-comfort` | 34 | `docs/design/E18/img/E18-D02-10-scr-032-dialog-2560-comfort.png` |
+| 8 | `E18-D02/11-cmp-228-preview-densities.json` | `E18-D02 / 11 cmp-228-preview-densities` | 3 | `docs/design/E18/img/E18-D02-11-cmp-228-preview-densities.png` |
+| 9 | `E18-D02/12-scr-056-rows-1280-compact.json` | `E18-D02 / 12 scr-056-rows-1280-compact` | 2 | `docs/design/E18/img/E18-D02-12-scr-056-rows-1280-compact.png` |
+| 10 | `E18-D02/13-scr-056-rows-1280-comfort.json` | `E18-D02 / 13 scr-056-rows-1280-comfort` | 2 | `docs/design/E18/img/E18-D02-13-scr-056-rows-1280-comfort.png` |
+| 11 | `E18-D02/14-scr-056-rows-2560-compact.json` | `E18-D02 / 14 scr-056-rows-2560-compact` | 2 | `docs/design/E18/img/E18-D02-14-scr-056-rows-2560-compact.png` |
+| 12 | `E18-D02/15-scr-056-rows-2560-comfort.json` | `E18-D02 / 15 scr-056-rows-2560-comfort` | 2 | `docs/design/E18/img/E18-D02-15-scr-056-rows-2560-comfort.png` |
+| 13 | `E18-D02/17-scr-030-display-modes.json` | `E18-D02 / 17 scr-030-display-modes` | 59 | `docs/design/E18/img/E18-D02-17-scr-030-display-modes.png` |
+| 14 | `E18-D02/18-scr-030-width-floors-60-bars.json` | `E18-D02 / 18 scr-030-width-floors-60-bars` | 162 | `docs/design/E18/img/E18-D02-18-scr-030-width-floors-60-bars.png` |
+| 15 | `E18-D02/19-scr-030-imbalance.json` | `E18-D02 / 19 scr-030-imbalance` | 35 | `docs/design/E18/img/E18-D02-19-scr-030-imbalance.png` |
+| 16 | `E18-D02/20-scr-030-markers.json` | `E18-D02 / 20 scr-030-markers` | 15 | `docs/design/E18/img/E18-D02-20-scr-030-markers.png` |
+| 17 | `E18-D02/21-scr-030-forming-bar.json` | `E18-D02 / 21 scr-030-forming-bar` | 15 | `docs/design/E18/img/E18-D02-21-scr-030-forming-bar.png` |
+| 18 | `E18-D02/22-scr-030-tooltip.json` | `E18-D02 / 22 scr-030-tooltip` | 25 | `docs/design/E18/img/E18-D02-22-scr-030-tooltip.png` |
+| 19 | `E18-D02/23-scr-030-cell-drawer.json` | `E18-D02 / 23 scr-030-cell-drawer` | 17 | `docs/design/E18/img/E18-D02-23-scr-030-cell-drawer.png` |
+| 20 | `E18-D02/24-scr-030-cell-menu.json` | `E18-D02 / 24 scr-030-cell-menu` | 30 | `docs/design/E18/img/E18-D02-24-scr-030-cell-menu.png` |
+| 21 | `E18-D02/27-scr-030-loading.json` | `E18-D02 / 27 scr-030-loading` | 26 | `docs/design/E18/img/E18-D02-27-scr-030-loading.png` |
+| 22 | `E18-D02/28-scr-030-streaming.json` | `E18-D02 / 28 scr-030-streaming` | 16 | `docs/design/E18/img/E18-D02-28-scr-030-streaming.png` |
+| 23 | `E18-D02/29-scr-030-stale.json` | `E18-D02 / 29 scr-030-stale` | 16 | `docs/design/E18/img/E18-D02-29-scr-030-stale.png` |
+| 24 | `E18-D02/30-scr-030-disconnected.json` | `E18-D02 / 30 scr-030-disconnected` | 17 | `docs/design/E18/img/E18-D02-30-scr-030-disconnected.png` |
+| 25 | `E18-D02/31-scr-030-empty-history.json` | `E18-D02 / 31 scr-030-empty-history` | 10 | `docs/design/E18/img/E18-D02-31-scr-030-empty-history.png` |
+| 26 | `E18-D02/34-scr-030-low-gpu.json` | `E18-D02 / 34 scr-030-low-gpu` | 42 | `docs/design/E18/img/E18-D02-34-scr-030-low-gpu.png` |
+| 27 | `E18-D02/36-scr-030-recompute-failed.json` | `E18-D02 / 36 scr-030-recompute-failed` | 15 | `docs/design/E18/img/E18-D02-36-scr-030-recompute-failed.png` |
+| 28 | `E18-D02/37-scr-030-symbol-paused.json` | `E18-D02 / 37 scr-030-symbol-paused` | 16 | `docs/design/E18/img/E18-D02-37-scr-030-symbol-paused.png` |
+| 29 | `E18-D02/41-scr-032-data-source.json` | `E18-D02 / 41 scr-032-data-source` | 2 | `docs/design/E18/img/E18-D02-41-scr-032-data-source.png` |
+| 30 | `E18-D02/44-scr-032-rebuild-failed.json` | `E18-D02 / 44 scr-032-rebuild-failed` | 25 | `docs/design/E18/img/E18-D02-44-scr-032-rebuild-failed.png` |

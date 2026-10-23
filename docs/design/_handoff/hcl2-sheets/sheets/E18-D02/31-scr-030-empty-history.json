@@ -1,0 +1,4436 @@
+{
+ "board": {
+  "name": "E18-D02 / 31 scr-030-empty-history",
+  "w": 3024,
+  "x": 0,
+  "y": 10200,
+  "o": {
+   "dir": "row",
+   "align": "start",
+   "fill": "color.surface.canvas",
+   "pad": "space.inset.lg",
+   "gap": "space.inset.lg"
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "SCR-030∕fp-empty-history",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "§0 frame 'SCR-030/fp-empty-history' · compact; SCR-030 1280 x 800 compact; 10 kline bars 07:05-07:50 and the 07:55 candle strip, wholly before the 08:00 recording start; no cells",
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-221 toolbar (composition)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.sm",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "symbol",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "BTCUSDT",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "caret",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 20
+         },
+         {
+          "t": "board",
+          "name": "interval",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "5m",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "caret",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 20
+         },
+         {
+          "t": "board",
+          "name": "chart type",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Candle",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "caret",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 20
+         },
+         {
+          "t": "board",
+          "name": "CMP-222 [FP] toggle (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "fill": "color.surface.selected"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "FP",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 20,
+          "note": "CMP-222: aria-pressed, name \"Footprint\", hint F (§4.9 L377)"
+         },
+         {
+          "t": "board",
+          "name": "Ind",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Ind",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 20
+         },
+         {
+          "t": "board",
+          "name": "Draw",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "radius": "radius.control",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "Draw",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 20
+         },
+         {
+          "t": "board",
+          "name": "Chart | Table (segmented)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "Chart",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner",
+             "fill": "color.surface.selected"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Chart",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 20
+           },
+           {
+            "t": "board",
+            "name": "Table",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Table",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 20
+           }
+          ],
+          "h": 20
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "overflow ⋯",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.xs",
+         "radius": "radius.control",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "glyph",
+          "icon": "more-horizontal",
+          "color": "color.text.primary",
+          "size": "size.icon"
+         }
+        ],
+        "h": 20
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.default"
+        },
+        "x": 0,
+        "y": 23,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "status row (E11-D02)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.sm",
+       "justify": "space-between",
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "left",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-075 env badge (composition) · DEMO",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.xs",
+           "radius": "radius.badge",
+           "stroke": "color.text.primary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "DEMO",
+            "typo": "type.ui.caption",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 16,
+          "note": "never colour-only: the word carries the environment"
+         },
+         {
+          "t": "text",
+          "name": "last",
+          "chars": "last 64,011.0",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "text",
+          "name": "spread",
+          "chars": "spread 0.1",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         }
+        ]
+       },
+       {
+        "t": "board",
+        "name": "right",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "countdown",
+          "chars": "bar close 0:41",
+          "typo": "type.ui.label",
+          "color": "color.text.primary",
+          "note": "CMP-226 countdown (§4.6 L314)"
+         }
+        ]
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.default"
+        },
+        "x": 0,
+        "y": 23,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "strip row (E12-D02)",
+      "o": {
+       "dir": "row",
+       "padX": "space.inset.sm",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "message",
+        "o": {
+         "dir": "row",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "message",
+          "chars": "Order flow from 2026-10-18 08:00 UTC; earlier bars from exchange klines",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         }
+        ]
+       },
+       {
+        "t": "rect",
+        "name": "divider",
+        "w": 1280,
+        "h": 1,
+        "o": {
+         "fill": "color.border.default"
+        },
+        "x": 0,
+        "y": 23,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 24,
+      "note": "the partial-history line (`14` SCR-030 E12 matrix): not announced; in the chart's accessible description; on color.surface.raised (E12-D02 L75)"
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-030∕fp-empty-history",
+   "node": {
+    "t": "board",
+    "name": "pane",
+    "o": {
+     "dir": "row",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-223 drawing rail",
+      "o": {
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "edge",
+        "w": 1,
+        "h": 704,
+        "o": {
+         "fill": "color.border.default"
+        },
+        "x": 23,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 24,
+      "h": 704,
+      "note": "E14's tools, not drawn"
+     },
+     {
+      "t": "board",
+      "name": "plot",
+      "o": {
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "bar 07:05",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 528,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 0,
+        "y": 0,
+        "note": "bar 07:05: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 07:10",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 334.4,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 369.6
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 119,
+        "y": 0,
+        "note": "bar 07:10: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 07:15",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 140.8,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 563.2
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 238,
+        "y": 0,
+        "note": "bar 07:15: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 07:20",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 422.4,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 357,
+        "y": 0,
+        "note": "bar 07:20: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 07:25",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 476,
+        "y": 0,
+        "note": "bar 07:25: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 07:30",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 528,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 595,
+        "y": 0,
+        "note": "bar 07:30: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 07:35",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 35.2,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 668.8
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 714,
+        "y": 0,
+        "note": "bar 07:35: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 07:40",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 833,
+        "y": 0,
+        "note": "bar 07:40: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 07:45",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 492.8,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 211.2
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 952,
+        "y": 0,
+        "note": "bar 07:45: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 07:50",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 158.4,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 545.6
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 1071,
+        "y": 0,
+        "note": "bar 07:50: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 07:55",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 492.8,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 18,
+        "h": 704,
+        "x": 1190,
+        "y": 0,
+        "note": "bar 07:55: the next kline, cut to the 18 px the plot shows (its lane, its candle strip in it, D3); a scrolled-back window: the past continues right; no cells (before the recording start), no time label"
+       },
+       {
+        "t": "board",
+        "name": "overlays",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-199 legend (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.xs",
+           "fill": "color.surface.raised",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "pane bar",
+            "w": 2,
+            "h": 14,
+            "o": {
+             "fill": "color.text.primary"
+            }
+           },
+           {
+            "t": "text",
+            "name": "pane",
+            "chars": "Price",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "caret",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           },
+           {
+            "t": "rect",
+            "name": "swatch",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.secondary"
+            },
+            "note": "a filled square: footprint (E11-D02 §7.5)"
+           },
+           {
+            "t": "text",
+            "name": "footprint row",
+            "chars": "FP Bid × Ask · rows 10 ticks · BTC",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "menu ⋯",
+            "icon": "more-horizontal",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 24,
+          "note": "the legend's roving stop; ⋯ opens the cell types, Box / Profile (Alt+F), Footprint settings…",
+          "x": 8,
+          "y": 8,
+          "abs": true
+         }
+        ],
+        "w": 1208,
+        "h": 704,
+        "x": 0,
+        "y": 0,
+        "note": "stack labels, the legend block, the corner badge and plot overlays, above the columns"
+       }
+      ],
+      "w": 1208,
+      "h": 704,
+      "note": "10 kline candles 07:05-07:50 and the 07:55 kline's candle strip in the 18 px right of them, no cells: no order flow here (§5 L401); pitch 119 px, rows 40 of 17.6 px; the footprint layer is on with nothing to draw"
+     },
+     {
+      "t": "board",
+      "name": "CMP-188 price gutter",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "edge",
+        "w": 1,
+        "h": 704,
+        "o": {
+         "fill": "color.border.default"
+        },
+        "x": 0,
+        "y": 0,
+        "abs": true
+       },
+       {
+        "t": "text",
+        "name": "p2",
+        "chars": "63,975.0",
+        "typo": "type.num.sm",
+        "color": "color.text.secondary",
+        "x": -8.8,
+        "y": 671
+       },
+       {
+        "t": "text",
+        "name": "p7",
+        "chars": "63,980.0",
+        "typo": "type.num.sm",
+        "color": "color.text.secondary",
+        "x": -8.8,
+        "y": 583
+       },
+       {
+        "t": "text",
+        "name": "p12",
+        "chars": "63,985.0",
+        "typo": "type.num.sm",
+        "color": "color.text.secondary",
+        "x": -8.8,
+        "y": 495
+       },
+       {
+        "t": "text",
+        "name": "p17",
+        "chars": "63,990.0",
+        "typo": "type.num.sm",
+        "color": "color.text.secondary",
+        "x": -8.8,
+        "y": 407
+       },
+       {
+        "t": "text",
+        "name": "p22",
+        "chars": "63,995.0",
+        "typo": "type.num.sm",
+        "color": "color.text.secondary",
+        "x": -8.8,
+        "y": 319
+       },
+       {
+        "t": "text",
+        "name": "p27",
+        "chars": "64,000.0",
+        "typo": "type.num.sm",
+        "color": "color.text.secondary",
+        "x": -8.8,
+        "y": 231
+       },
+       {
+        "t": "text",
+        "name": "p32",
+        "chars": "64,005.0",
+        "typo": "type.num.sm",
+        "color": "color.text.secondary",
+        "x": -8.8,
+        "y": 143
+       },
+       {
+        "t": "text",
+        "name": "p37",
+        "chars": "64,010.0",
+        "typo": "type.num.sm",
+        "color": "color.text.secondary",
+        "x": -8.8,
+        "y": 55
+       }
+      ],
+      "w": 48,
+      "h": 704,
+      "note": "labels every 5 rows (5.0 USDT)"
+     }
+    ],
+    "w": 1280,
+    "h": 704
+   }
+  },
+  {
+   "into": "SCR-030∕fp-empty-history",
+   "node": {
+    "t": "board",
+    "name": "CMP-189 time strip",
+    "o": {
+     "fill": "color.surface.app"
+    },
+    "kids": [
+     {
+      "t": "rect",
+      "name": "edge",
+      "w": 1280,
+      "h": 1,
+      "o": {
+       "fill": "color.border.default"
+      },
+      "x": 0,
+      "y": 0,
+      "abs": true
+     },
+     {
+      "t": "text",
+      "name": "clock",
+      "chars": "UTC 13:39:19",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 8,
+      "y": 5.4
+     },
+     {
+      "t": "text",
+      "name": "t 07:10",
+      "chars": "07:10",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 186,
+      "y": 5.4
+     },
+     {
+      "t": "text",
+      "name": "t 07:15",
+      "chars": "07:15",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 305,
+      "y": 5.4
+     },
+     {
+      "t": "text",
+      "name": "t 07:20",
+      "chars": "07:20",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 424,
+      "y": 5.4
+     },
+     {
+      "t": "text",
+      "name": "t 07:25",
+      "chars": "07:25",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 543,
+      "y": 5.4
+     },
+     {
+      "t": "text",
+      "name": "t 07:30",
+      "chars": "07:30",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 662,
+      "y": 5.4
+     },
+     {
+      "t": "text",
+      "name": "t 07:35",
+      "chars": "07:35",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 781,
+      "y": 5.4
+     },
+     {
+      "t": "text",
+      "name": "t 07:40",
+      "chars": "07:40",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 900,
+      "y": 5.4
+     },
+     {
+      "t": "text",
+      "name": "t 07:45",
+      "chars": "07:45",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 1019,
+      "y": 5.4
+     },
+     {
+      "t": "text",
+      "name": "t 07:50",
+      "chars": "07:50",
+      "typo": "type.num.sm",
+      "color": "color.text.secondary",
+      "x": 1138,
+      "y": 5.4
+     },
+     {
+      "t": "board",
+      "name": "cluster auto | fit | >",
+      "o": {
+       "dir": "row"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "segment · auto",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.xs",
+         "justify": "center",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner",
+         "fill": "color.surface.selected"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "auto",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 20
+       },
+       {
+        "t": "board",
+        "name": "segment · fit",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.xs",
+         "justify": "center",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "fit",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 20
+       },
+       {
+        "t": "board",
+        "name": "segment · >",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.xs",
+         "justify": "center",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": ">",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 20
+       }
+      ],
+      "h": 20,
+      "x": 1208.7,
+      "y": 2,
+      "abs": true
+     }
+    ],
+    "w": 1280,
+    "h": 24,
+    "note": "time labels every 5 min"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "insets",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.inset.lg"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "inset A · never recorded, kline candles, recording:write",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "caption",
+        "chars": "Inset A · never recorded, kline candles drawn, a session holding recording:write: the strip carries reason 1a with Record this symbol (§5 L401). 1:1 crop: chrome and the pane's top 104 px",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 1280
+       },
+       {
+        "t": "board",
+        "name": "body",
+        "o": {
+         "fill": "color.surface.app",
+         "clip": true,
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner"
+        },
+        "w": 1280,
+        "h": 176,
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-221 toolbar (composition)",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "justify": "space-between",
+           "fill": "color.surface.app"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "left",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "symbol",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "BTCUSDT",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "icon",
+                "name": "caret",
+                "icon": "chevron-down",
+                "color": "color.text.secondary",
+                "size": "size.icon"
+               }
+              ],
+              "h": 20
+             },
+             {
+              "t": "board",
+              "name": "interval",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "5m",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "icon",
+                "name": "caret",
+                "icon": "chevron-down",
+                "color": "color.text.secondary",
+                "size": "size.icon"
+               }
+              ],
+              "h": 20
+             },
+             {
+              "t": "board",
+              "name": "chart type",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Candle",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               },
+               {
+                "t": "icon",
+                "name": "caret",
+                "icon": "chevron-down",
+                "color": "color.text.secondary",
+                "size": "size.icon"
+               }
+              ],
+              "h": 20
+             },
+             {
+              "t": "board",
+              "name": "CMP-222 [FP] toggle (composition)",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "fill": "color.surface.selected"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "FP",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 20,
+              "note": "CMP-222: aria-pressed, name \"Footprint\", hint F (§4.9 L377)"
+             },
+             {
+              "t": "board",
+              "name": "Ind",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Ind",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 20
+             },
+             {
+              "t": "board",
+              "name": "Draw",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Draw",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 20
+             },
+             {
+              "t": "board",
+              "name": "Chart | Table (segmented)",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "Chart",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs",
+                 "padX": "space.inset.sm",
+                 "radius": "radius.control",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner",
+                 "fill": "color.surface.selected"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Chart",
+                  "typo": "type.ui.label",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 20
+               },
+               {
+                "t": "board",
+                "name": "Table",
+                "o": {
+                 "dir": "row",
+                 "gap": "space.inset.xs",
+                 "padX": "space.inset.sm",
+                 "radius": "radius.control",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "label",
+                  "chars": "Table",
+                  "typo": "type.ui.label",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "h": 20
+               }
+              ],
+              "h": 20
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "overflow ⋯",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.xs",
+             "radius": "radius.control",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "icon",
+              "name": "glyph",
+              "icon": "more-horizontal",
+              "color": "color.text.primary",
+              "size": "size.icon"
+             }
+            ],
+            "h": 20
+           },
+           {
+            "t": "rect",
+            "name": "divider",
+            "w": 1280,
+            "h": 1,
+            "o": {
+             "fill": "color.border.default"
+            },
+            "x": 0,
+            "y": 23,
+            "abs": true
+           }
+          ],
+          "w": 1280,
+          "h": 24,
+          "x": 0,
+          "y": 0,
+          "abs": true
+         },
+         {
+          "t": "board",
+          "name": "status row (E11-D02)",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "justify": "space-between",
+           "fill": "color.surface.app"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "left",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-075 env badge (composition) · DEMO",
+              "o": {
+               "dir": "row",
+               "padX": "space.inset.xs",
+               "radius": "radius.badge",
+               "stroke": "color.text.primary",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "word",
+                "chars": "DEMO",
+                "typo": "type.ui.caption",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 16,
+              "note": "never colour-only: the word carries the environment"
+             },
+             {
+              "t": "text",
+              "name": "last",
+              "chars": "last 64,011.0",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "text",
+              "name": "spread",
+              "chars": "spread 0.1",
+              "typo": "type.ui.label",
+              "color": "color.text.secondary"
+             }
+            ]
+           },
+           {
+            "t": "board",
+            "name": "right",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "countdown",
+              "chars": "bar close 0:41",
+              "typo": "type.ui.label",
+              "color": "color.text.primary",
+              "note": "CMP-226 countdown (§4.6 L314)"
+             }
+            ]
+           },
+           {
+            "t": "rect",
+            "name": "divider",
+            "w": 1280,
+            "h": 1,
+            "o": {
+             "fill": "color.border.default"
+            },
+            "x": 0,
+            "y": 23,
+            "abs": true
+           }
+          ],
+          "w": 1280,
+          "h": 24,
+          "x": 0,
+          "y": 24,
+          "abs": true
+         },
+         {
+          "t": "board",
+          "name": "strip row (E12-D02)",
+          "o": {
+           "dir": "row",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.raised"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "message",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.sm"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "message",
+              "chars": "History starts when you record BTCUSDT — recording has not begun yet.",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "board",
+              "name": "CMP-001 Button (composition) · Record this symbol",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Record this symbol",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 20,
+              "note": "shown only when the session holds recording:write (§5 L401; E09-D09 §2.3): Enter / Space open SCR-140 (/admin/recorder?symbol=BTCUSDT; E11-D04 §11.2 row 1a), a route change; no Dismiss (§5 L401 names this action alone; copy gap)"
+             }
+            ]
+           },
+           {
+            "t": "rect",
+            "name": "divider",
+            "w": 1280,
+            "h": 1,
+            "o": {
+             "fill": "color.border.default"
+            },
+            "x": 0,
+            "y": 23,
+            "abs": true
+           }
+          ],
+          "w": 1280,
+          "h": 24,
+          "note": "one message (E12-D02 D-7); on color.surface.raised (E12-D02 L75)",
+          "x": 0,
+          "y": 48,
+          "abs": true
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "insets/inset A · never recorded, kline candles, recording:write/body",
+   "node": {
+    "t": "board",
+    "name": "pane",
+    "o": {
+     "dir": "row",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-223 drawing rail",
+      "o": {
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "edge",
+        "w": 1,
+        "h": 704,
+        "o": {
+         "fill": "color.border.default"
+        },
+        "x": 23,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 24,
+      "h": 704,
+      "note": "E14's tools, not drawn"
+     },
+     {
+      "t": "board",
+      "name": "plot",
+      "o": {
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "bar 12:50",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 334.4,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 369.6
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 0,
+        "y": 0,
+        "note": "bar 12:50: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 12:55",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 140.8,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 563.2
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 119,
+        "y": 0,
+        "note": "bar 12:55: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:00",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 422.4,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 238,
+        "y": 0,
+        "note": "bar 13:00: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:05",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 357,
+        "y": 0,
+        "note": "bar 13:05: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:10",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 528,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 476,
+        "y": 0,
+        "note": "bar 13:10: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:15",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 35.2,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 668.8
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 595,
+        "y": 0,
+        "note": "bar 13:15: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:20",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 714,
+        "y": 0,
+        "note": "bar 13:20: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:25",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 492.8,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 211.2
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 833,
+        "y": 0,
+        "note": "bar 13:25: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:30",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 158.4,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 545.6
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 952,
+        "y": 0,
+        "note": "bar 13:30: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:35",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 492.8,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 1071,
+        "y": 0,
+        "note": "bar 13:35: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "overlays",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-199 legend (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.xs",
+           "fill": "color.surface.raised",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "pane bar",
+            "w": 2,
+            "h": 14,
+            "o": {
+             "fill": "color.text.primary"
+            }
+           },
+           {
+            "t": "text",
+            "name": "pane",
+            "chars": "Price",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "caret",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           },
+           {
+            "t": "rect",
+            "name": "swatch",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.secondary"
+            },
+            "note": "a filled square: footprint (E11-D02 §7.5)"
+           },
+           {
+            "t": "text",
+            "name": "footprint row",
+            "chars": "FP Bid × Ask · rows 10 ticks · BTC",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "menu ⋯",
+            "icon": "more-horizontal",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 24,
+          "note": "the legend's roving stop; ⋯ opens the cell types, Box / Profile (Alt+F), Footprint settings…",
+          "x": 8,
+          "y": 8,
+          "abs": true
+         }
+        ],
+        "w": 1208,
+        "h": 704,
+        "x": 0,
+        "y": 0,
+        "note": "stack labels, the legend block, the corner badge and plot overlays, above the columns"
+       }
+      ],
+      "w": 1208,
+      "h": 704,
+      "note": "10 kline candles, no cells: no order flow here (§5 L401); pitch 119 px, rows 40 of 17.6 px; the footprint layer is on with nothing to draw"
+     },
+     {
+      "t": "board",
+      "name": "CMP-188 price gutter",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "edge",
+        "w": 1,
+        "h": 704,
+        "o": {
+         "fill": "color.border.default"
+        },
+        "x": 0,
+        "y": 0,
+        "abs": true
+       },
+       {
+        "t": "text",
+        "name": "p37",
+        "chars": "64,010.0",
+        "typo": "type.num.sm",
+        "color": "color.text.secondary",
+        "x": -8.8,
+        "y": 55
+       }
+      ],
+      "w": 48,
+      "h": 704,
+      "note": "labels every 5 rows (5.0 USDT)"
+     }
+    ],
+    "w": 1280,
+    "h": 704,
+    "x": 0,
+    "y": 72,
+    "abs": true
+   }
+  },
+  {
+   "into": "insets",
+   "node": {
+    "t": "board",
+    "name": "inset B · never recorded, kline candles, a non-owner",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "caption",
+      "chars": "Inset B · the same without recording:write (a Viewer; a Manager under the ruling): T2's sentence form, the sentence alone, no button, no lock (§5 L401; §6.5 L617). 1:1 crop as A",
+      "typo": "type.ui.label",
+      "color": "color.text.secondary",
+      "w": 1280
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "fill": "color.surface.app",
+       "clip": true,
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner"
+      },
+      "w": 1280,
+      "h": 176,
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-221 toolbar (composition)",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.sm",
+         "justify": "space-between",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "left",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "symbol",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "BTCUSDT",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "icon",
+              "name": "caret",
+              "icon": "chevron-down",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             }
+            ],
+            "h": 20
+           },
+           {
+            "t": "board",
+            "name": "interval",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "5m",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "icon",
+              "name": "caret",
+              "icon": "chevron-down",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             }
+            ],
+            "h": 20
+           },
+           {
+            "t": "board",
+            "name": "chart type",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Candle",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "icon",
+              "name": "caret",
+              "icon": "chevron-down",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             }
+            ],
+            "h": 20
+           },
+           {
+            "t": "board",
+            "name": "CMP-222 [FP] toggle (composition)",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner",
+             "fill": "color.surface.selected"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "FP",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 20,
+            "note": "CMP-222: aria-pressed, name \"Footprint\", hint F (§4.9 L377)"
+           },
+           {
+            "t": "board",
+            "name": "Ind",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Ind",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 20
+           },
+           {
+            "t": "board",
+            "name": "Draw",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Draw",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 20
+           },
+           {
+            "t": "board",
+            "name": "Chart | Table (segmented)",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "Chart",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "fill": "color.surface.selected"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Chart",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 20
+             },
+             {
+              "t": "board",
+              "name": "Table",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Table",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 20
+             }
+            ],
+            "h": 20
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "overflow ⋯",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.xs",
+           "radius": "radius.control",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "glyph",
+            "icon": "more-horizontal",
+            "color": "color.text.primary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 20
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1280,
+          "h": 1,
+          "o": {
+           "fill": "color.border.default"
+          },
+          "x": 0,
+          "y": 23,
+          "abs": true
+         }
+        ],
+        "w": 1280,
+        "h": 24,
+        "x": 0,
+        "y": 0,
+        "abs": true
+       },
+       {
+        "t": "board",
+        "name": "status row (E11-D02)",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.sm",
+         "justify": "space-between",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "left",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-075 env badge (composition) · DEMO",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.xs",
+             "radius": "radius.badge",
+             "stroke": "color.text.primary",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "DEMO",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 16,
+            "note": "never colour-only: the word carries the environment"
+           },
+           {
+            "t": "text",
+            "name": "last",
+            "chars": "last 64,011.0",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "spread",
+            "chars": "spread 0.1",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "right",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "countdown",
+            "chars": "bar close 0:41",
+            "typo": "type.ui.label",
+            "color": "color.text.primary",
+            "note": "CMP-226 countdown (§4.6 L314)"
+           }
+          ]
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1280,
+          "h": 1,
+          "o": {
+           "fill": "color.border.default"
+          },
+          "x": 0,
+          "y": 23,
+          "abs": true
+         }
+        ],
+        "w": 1280,
+        "h": 24,
+        "x": 0,
+        "y": 24,
+        "abs": true
+       },
+       {
+        "t": "board",
+        "name": "strip row (E12-D02)",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "message",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "message",
+            "chars": "History starts when you record BTCUSDT — recording has not begun yet.",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "T2 sentence form",
+            "chars": "Only the owner can start recording.",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary",
+            "note": "T2's sentence form (E09-D09 §2.2): the reason sentence alone, no button and no lock glyph; rbac.owner_only (the 18:30Z ruling; §5 L401); plain text, not a Tab stop; emits nothing"
+           }
+          ]
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1280,
+          "h": 1,
+          "o": {
+           "fill": "color.border.default"
+          },
+          "x": 0,
+          "y": 23,
+          "abs": true
+         }
+        ],
+        "w": 1280,
+        "h": 24,
+        "note": "one message (E12-D02 D-7): reason 1a, then T2's sentence form for a session without recording:write; on color.surface.raised (E12-D02 L75)",
+        "x": 0,
+        "y": 48,
+        "abs": true
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "insets/inset B · never recorded, kline candles, a non-owner/body",
+   "node": {
+    "t": "board",
+    "name": "pane",
+    "o": {
+     "dir": "row",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-223 drawing rail",
+      "o": {
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "edge",
+        "w": 1,
+        "h": 704,
+        "o": {
+         "fill": "color.border.default"
+        },
+        "x": 23,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 24,
+      "h": 704,
+      "note": "E14's tools, not drawn"
+     },
+     {
+      "t": "board",
+      "name": "plot",
+      "o": {
+       "fill": "color.surface.app"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "bar 12:50",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 334.4,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 369.6
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 0,
+        "y": 0,
+        "note": "bar 12:50: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 12:55",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 140.8,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 563.2
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 119,
+        "y": 0,
+        "note": "bar 12:55: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:00",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 422.4,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 238,
+        "y": 0,
+        "note": "bar 13:00: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:05",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 357,
+        "y": 0,
+        "note": "bar 13:05: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:10",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 528,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 476,
+        "y": 0,
+        "note": "bar 13:10: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:15",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 35.2,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 668.8
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 595,
+        "y": 0,
+        "note": "bar 13:15: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:20",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 714,
+        "y": 0,
+        "note": "bar 13:20: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:25",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 492.8,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 211.2
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 833,
+        "y": 0,
+        "note": "bar 13:25: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:30",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 158.4,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 545.6
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 952,
+        "y": 0,
+        "note": "bar 13:30: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "bar 13:35",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "wick",
+          "w": 1,
+          "h": 704,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 8,
+          "y": 0
+         },
+         {
+          "t": "rect",
+          "name": "body",
+          "w": 3,
+          "h": 492.8,
+          "o": {
+           "fill": "color.text.secondary"
+          },
+          "x": 7,
+          "y": 0
+         }
+        ],
+        "w": 119,
+        "h": 704,
+        "x": 1071,
+        "y": 0,
+        "note": "bar 13:35: kline candle in its strip (D3); no cells, no marks"
+       },
+       {
+        "t": "board",
+        "name": "overlays",
+        "o": {
+         "clip": false
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-199 legend (composition)",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.xs",
+           "fill": "color.surface.raised",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "pane bar",
+            "w": 2,
+            "h": 14,
+            "o": {
+             "fill": "color.text.primary"
+            }
+           },
+           {
+            "t": "text",
+            "name": "pane",
+            "chars": "Price",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "caret",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           },
+           {
+            "t": "rect",
+            "name": "swatch",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.text.secondary"
+            },
+            "note": "a filled square: footprint (E11-D02 §7.5)"
+           },
+           {
+            "t": "text",
+            "name": "footprint row",
+            "chars": "FP Bid × Ask · rows 10 ticks · BTC",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "menu ⋯",
+            "icon": "more-horizontal",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 24,
+          "note": "the legend's roving stop; ⋯ opens the cell types, Box / Profile (Alt+F), Footprint settings…",
+          "x": 8,
+          "y": 8,
+          "abs": true
+         }
+        ],
+        "w": 1208,
+        "h": 704,
+        "x": 0,
+        "y": 0,
+        "note": "stack labels, the legend block, the corner badge and plot overlays, above the columns"
+       }
+      ],
+      "w": 1208,
+      "h": 704,
+      "note": "10 kline candles, no cells: no order flow here (§5 L401); pitch 119 px, rows 40 of 17.6 px; the footprint layer is on with nothing to draw"
+     },
+     {
+      "t": "board",
+      "name": "CMP-188 price gutter",
+      "o": {
+       "clip": false
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "edge",
+        "w": 1,
+        "h": 704,
+        "o": {
+         "fill": "color.border.default"
+        },
+        "x": 0,
+        "y": 0,
+        "abs": true
+       },
+       {
+        "t": "text",
+        "name": "p37",
+        "chars": "64,010.0",
+        "typo": "type.num.sm",
+        "color": "color.text.secondary",
+        "x": -8.8,
+        "y": 55
+       }
+      ],
+      "w": 48,
+      "h": 704,
+      "note": "labels every 5 rows (5.0 USDT)"
+     }
+    ],
+    "w": 1280,
+    "h": 704,
+    "x": 0,
+    "y": 72,
+    "abs": true
+   }
+  },
+  {
+   "into": "insets",
+   "node": {
+    "t": "board",
+    "name": "inset C · never recorded, nothing to draw, a non-owner",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "caption",
+      "chars": "Inset C · never recorded, nothing to draw, a non-owner: SCR-047 1a replaces the pane stack; T2's sentence form in E11-D04 D12's words (OQ-10); the footprint adds nothing (§5 L401). 1280 × 800",
+      "typo": "type.ui.label",
+      "color": "color.text.secondary",
+      "w": 1280
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "fill": "color.surface.app",
+       "clip": true,
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-221 toolbar (composition)",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.sm",
+         "justify": "space-between",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "left",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "symbol",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "BTCUSDT",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "icon",
+              "name": "caret",
+              "icon": "chevron-down",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             }
+            ],
+            "h": 20
+           },
+           {
+            "t": "board",
+            "name": "interval",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "5m",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "icon",
+              "name": "caret",
+              "icon": "chevron-down",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             }
+            ],
+            "h": 20
+           },
+           {
+            "t": "board",
+            "name": "chart type",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Candle",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "icon",
+              "name": "caret",
+              "icon": "chevron-down",
+              "color": "color.text.secondary",
+              "size": "size.icon"
+             }
+            ],
+            "h": 20
+           },
+           {
+            "t": "board",
+            "name": "CMP-222 [FP] toggle (composition)",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner",
+             "fill": "color.surface.selected"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "FP",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 20,
+            "note": "CMP-222: aria-pressed, name \"Footprint\", hint F (§4.9 L377)"
+           },
+           {
+            "t": "board",
+            "name": "Ind",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Ind",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 20
+           },
+           {
+            "t": "board",
+            "name": "Draw",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "padX": "space.inset.sm",
+             "radius": "radius.control",
+             "stroke": "color.border.default",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Draw",
+              "typo": "type.ui.label",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 20
+           },
+           {
+            "t": "board",
+            "name": "Chart | Table (segmented)",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "Chart",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner",
+               "fill": "color.surface.selected"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Chart",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 20
+             },
+             {
+              "t": "board",
+              "name": "Table",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs",
+               "padX": "space.inset.sm",
+               "radius": "radius.control",
+               "stroke": "color.border.default",
+               "strokeWidth": "border.hairline",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Table",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 20
+             }
+            ],
+            "h": 20
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "overflow ⋯",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.xs",
+           "radius": "radius.control",
+           "stroke": "color.border.default",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "glyph",
+            "icon": "more-horizontal",
+            "color": "color.text.primary",
+            "size": "size.icon"
+           }
+          ],
+          "h": 20
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1280,
+          "h": 1,
+          "o": {
+           "fill": "color.border.default"
+          },
+          "x": 0,
+          "y": 23,
+          "abs": true
+         }
+        ],
+        "w": 1280,
+        "h": 24,
+        "x": 0,
+        "y": 0,
+        "abs": true
+       },
+       {
+        "t": "board",
+        "name": "status row (E11-D02)",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.sm",
+         "justify": "space-between",
+         "fill": "color.surface.app"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "left",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "CMP-075 env badge (composition) · DEMO",
+            "o": {
+             "dir": "row",
+             "padX": "space.inset.xs",
+             "radius": "radius.badge",
+             "stroke": "color.text.primary",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "word",
+              "chars": "DEMO",
+              "typo": "type.ui.caption",
+              "color": "color.text.primary"
+             }
+            ],
+            "h": 16,
+            "note": "never colour-only: the word carries the environment"
+           },
+           {
+            "t": "text",
+            "name": "last",
+            "chars": "last 64,011.0",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "text",
+            "name": "spread",
+            "chars": "spread 0.1",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ]
+         },
+         {
+          "t": "board",
+          "name": "right",
+          "o": {
+           "dir": "row",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "countdown",
+            "chars": "bar close 0:41",
+            "typo": "type.ui.label",
+            "color": "color.text.primary",
+            "note": "CMP-226 countdown (§4.6 L314)"
+           }
+          ]
+         },
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1280,
+          "h": 1,
+          "o": {
+           "fill": "color.border.default"
+          },
+          "x": 0,
+          "y": 23,
+          "abs": true
+         }
+        ],
+        "w": 1280,
+        "h": 24,
+        "x": 0,
+        "y": 24,
+        "abs": true
+       },
+       {
+        "t": "board",
+        "name": "strip row (E12-D02)",
+        "o": {
+         "dir": "row",
+         "padX": "space.inset.sm",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "divider",
+          "w": 1280,
+          "h": 1,
+          "o": {
+           "fill": "color.border.default"
+          },
+          "x": 0,
+          "y": 23,
+          "abs": true
+         }
+        ],
+        "w": 1280,
+        "h": 24,
+        "note": "empty when idle: SCR-047 carries the reason (one voice, E11-D04 §11.3); on color.surface.raised (E12-D02 L75)",
+        "x": 0,
+        "y": 48,
+        "abs": true
+       },
+       {
+        "t": "board",
+        "name": "pane-stack region (SCR-047)",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "fill": "color.surface.canvas",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-026 EmptyState (composition) · 1a · non-owner",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "gap": "space.stack.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "heading",
+            "chars": "History starts when you record BTCUSDT — recording has not begun yet.",
+            "typo": "type.ui.heading-sm",
+            "color": "color.text.primary",
+            "note": "h3 in the panel's heading hierarchy"
+           },
+           {
+            "t": "text",
+            "name": "cause",
+            "chars": "CandleViewer keeps only the data it records; nothing is missing or broken.",
+            "typo": "type.ui.body",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "text",
+            "name": "explanatory sentence",
+            "chars": "You can't start recording with your role — ask the owner to record BTCUSDT.",
+            "typo": "type.ui.body",
+            "color": "color.text.secondary",
+            "note": "E11-D04 D12's non-owner sentence (OQ-10 L929): CMP-026 cta omitted, description carries it"
+           },
+           {
+            "t": "board",
+            "name": "CMP-021 Link (composition) · Learn more",
+            "o": {
+             "dir": "column",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Learn more",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "rect",
+              "name": "underline",
+              "w": 68,
+              "h": 1,
+              "o": {
+               "fill": "color.text.primary"
+              }
+             }
+            ],
+            "note": "underlined link: the underline carries 'link' (E11-D04 §11.1, L619); → the recorder explanation"
+           },
+           {
+            "t": "text",
+            "name": "live sentence",
+            "chars": "Live data is streaming now.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "note": "where true (E11-D04 §11.3): the ticker is Live"
+           }
+          ],
+          "note": "SCR-047 reason 1a (E11-D04 §11.2): no canvas element, no GL context (§11.1)"
+         }
+        ],
+        "w": 1280,
+        "h": 728,
+        "note": "SCR-047 replaces the pane stack: no pane, gutter or time strip; no canvas, no GL context",
+        "x": 0,
+        "y": 72,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 800
+     }
+    ]
+   }
+  },
+  {
+   "into": "insets",
+   "node": {
+    "t": "board",
+    "name": "inset D · never recorded, nothing to draw, the owner",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "caption",
+      "chars": "Inset D · the same for the owner: SCR-047 1a's block with Record this symbol (E11-D04 §11.2). 1:1 crop of C's pane-stack region around the block",
+      "typo": "type.ui.label",
+      "color": "color.text.secondary",
+      "w": 1280
+     },
+     {
+      "t": "board",
+      "name": "body",
+      "o": {
+       "fill": "color.surface.canvas",
+       "clip": true,
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "pane-stack region (SCR-047) · crop",
+        "o": {
+         "dir": "column",
+         "align": "center",
+         "fill": "color.surface.canvas",
+         "justify": "center"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-026 EmptyState (composition) · 1a · owner",
+          "o": {
+           "dir": "column",
+           "align": "center",
+           "gap": "space.stack.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "heading",
+            "chars": "History starts when you record BTCUSDT — recording has not begun yet.",
+            "typo": "type.ui.heading-sm",
+            "color": "color.text.primary",
+            "note": "h3 in the panel's heading hierarchy"
+           },
+           {
+            "t": "text",
+            "name": "cause",
+            "chars": "CandleViewer keeps only the data it records; nothing is missing or broken.",
+            "typo": "type.ui.body",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "board",
+            "name": "CMP-001 Button (composition) · Record this symbol",
+            "o": {
+             "dir": "row",
+             "padX": "space.button.paddingX",
+             "radius": "radius.control",
+             "justify": "center",
+             "fill": "color.text.primary"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Record this symbol",
+              "typo": "type.ui.label",
+              "color": "color.text.inverse"
+             }
+            ],
+            "h": 24,
+            "note": "primary; → SCR-140 (/admin/recorder?symbol=BTCUSDT), shown only with recording:write"
+           },
+           {
+            "t": "board",
+            "name": "CMP-021 Link (composition) · Learn more",
+            "o": {
+             "dir": "column",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "text",
+              "name": "label",
+              "chars": "Learn more",
+              "typo": "type.ui.body",
+              "color": "color.text.primary"
+             },
+             {
+              "t": "rect",
+              "name": "underline",
+              "w": 68,
+              "h": 1,
+              "o": {
+               "fill": "color.text.primary"
+              }
+             }
+            ],
+            "note": "underlined link: the underline carries 'link' (E11-D04 §11.1, L619); → the recorder explanation"
+           },
+           {
+            "t": "text",
+            "name": "live sentence",
+            "chars": "Live data is streaming now.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "note": "where true (E11-D04 §11.3): the ticker is Live"
+           }
+          ],
+          "note": "SCR-047 reason 1a (E11-D04 §11.2): no canvas element, no GL context (§11.1)"
+         }
+        ],
+        "w": 1280,
+        "h": 216,
+        "note": "the band of the 1280 x 728 pane-stack region around the centred block (1:1)",
+        "x": 0,
+        "y": 0,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 216
+     }
+    ]
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.raised",
+     "radius": "radius.card"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "SCR-030/fp-empty-history: before recording start; never recorded, with or without klines (a non-owner: T2's sentence form)",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "source",
+      "chars": "Source: spec §5 L401 · §0 L73 · §6.5 L604-617 (T2, the sentence form) · OQ-10 L929 · E11-D04 §11 (SCR-047 1a)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "annotation blocks",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "block-01",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "State and trigger",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Frame: the window is wholly before the recording start, 2026-10-18 08:00 UTC: kline candles, no cells; the strip names the first recorded timestamp (§5 L401; `11` global AC 7; C-2.14).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         },
+         {
+          "t": "text",
+          "name": "value-2",
+          "chars": "A, B: never recorded, kline candles drawn: the strip carries reason 1a; A (`recording:write`) adds Record this symbol, B T2's sentence form, the sentence alone (E09-D09 §2.2).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         },
+         {
+          "t": "text",
+          "name": "value-3",
+          "chars": "C, D: never recorded, nothing to draw: SCR-047 1a replaces the pane stack (no canvas, no GL); the footprint adds nothing. C a non-owner (T2's sentence form in D12's words), D the owner.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-02",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Decision ids",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "D2, D16 (E12-D02's strip row); §1.4 (by permission leg); A-14; OQ-10 (both non-owner sentences); E09-D09 §2.4, C-3; E11-D04 D12.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-03",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Roles",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Frame: any session; the footprint layer adds no gated control ([Draw] and the rail are E14-D02's). A, D: hold `recording:write` (the Owner by the 18:30Z ruling; a Manager while `22` stands, §1.4), read from the session, never the role name (§6.5 L606; CMP-079 RbacGate). B, C: without it (a Viewer; a Manager under the ruling): B `rbac.owner_only` (E09-D09 §2.4), C E11-D04 D12's sentence (OQ-10).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-04",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Keyboard path",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Tab: toolbar ([FP], Chart | Table) → status chips → the strip's action (A: Record this symbol (no Dismiss: §5 L401, copy gap); Enter / Space open SCR-140) → legend → left gutter → plot → … → cluster (§8.1 L721-724); frame and B: no strip stop. C, D: toolbar → status chips → the block (D: Record this symbol, then Learn more; C: Learn more); [FP] stays operable (§5 L409).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-05",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Focus",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Not moved by the state (E12-D02 D-11); none drawn. ← / → read the kline bar summary (§8.1 L729); no level box: ↑ / ↓ and Enter (§8.1 L731-732) find no levels (no cells) and expand nothing; the spec gives no announcement for that case (copy gap, E18-S11). C, D: the heading (h3) is not a stop.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-06",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Announcement (text, region, when)",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Frame: none; the strip line joins the chart's accessible description (`14` E12 matrix, partial-history). A, B: none named (copy gap). C, D: the heading, politely, when it follows a user action (`14` matrix, empty).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-07",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Copy keys",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Keyed: `rbac.owner_only` (B; E09-D09 §3.1). Unkeyed, verbatim: §5 L401's strip lines and `Record this symbol`; chrome §4.1 L215-227, §4.9 L380 (kit ids: empty.from, mode.bid_ask, legend.fp, legend.pane, empty.never, empty.record, why.owner_record, unit.btc, tb.* (8), status.* (3), time.* (4), env.demo).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         },
+         {
+          "t": "text",
+          "name": "value-2",
+          "chars": "Unkeyed, verbatim: SCR-047 1a's cause, link and live sentences, E11-D04 §11.2 L342, L351 (local ids: e11.1a.cause, e11.1a.explanatory, e11.1a.learn, e11.live; C: e11.1a.explanatory).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-08",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Data source",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Frame: kline bars before `meta.recording_started_at` carry null delta and footprint (E12-D02 §3). A-D: `recorded` false, `recording_started_at` null (`GET /instruments/{symbol}`, E11-D04 §11.2). SYNTHETIC: bars.mjs candles; A, B the base grid's (12:50-13:35), the frame's relabelled 07:05-07:55.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-09",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Budget",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "0 cells drawn (10 × 40 window, §3 L185); no per-cell DOM (§9). C, D: no canvas, no GL context (E11-D04 §11.1).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-10",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Event",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "None at rest; chart.footprint_toggled only on [FP] (§4.9 L379). C, D: chart.empty_state_shown {not_recorded, explanatory | cta, liveStreaming} once per entry (E11-D04 D14). B emits nothing.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-11",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Notes",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "The 08:00 boundary lies right of the window (board 32); the 07:55 kline's candle strip fills the 18 px margin. The strip lines run 88 (A) and 105 (B) characters against E12-D02's 'about 80' (L75).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "SYNTHETIC data · page E18-D02 · board 31 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 368
+     }
+    ],
+    "w": 400
+   }
+  }
+ ],
+ "export": "docs/design/E18/img/E18-D02-31-scr-030-empty-history.png",
+ "notes": {
+  "sources": [
+   "spec §0 L73 (board 31: SCR-030/fp-empty-history; 1280 × 800 · compact; §5) and L37 (it holds insets)",
+   "spec §5 L392-401 (the state row), L409 ([FP] operable under SCR-047); §1.4 L136-143; §6.4 L568 (the recording start, 2026-10-18 08:00 UTC); §6.5 L604-617 (T2, the sentence form L617); §8.1 L719-732 (the Tab order L721-724, `Dismiss` L722; ↑ / ↓ L731, Enter L732); §9 L776-777; §12 L830; A-14 L866; OQ-10 L929",
+   "E11-D04 §11.1-§11.3 L336-352 (SCR-047 1a: anatomy, copy, live sentence), D14 L405 (analytics), §18 L612-625 (its text colours)",
+   "E09-D09 §2.2 L49 (the sentence form), §2.4 L73-74 (Record this symbol → rbac.owner_only), §3.1 L83-90 (the key `rbac.owner_only`), §8 L210 (CMP-026 cta omitted), C-3 L456",
+   "E12-D02 §2 L75 (the strip row, color.surface.raised), L81 (empty: no pane, gutter or time strip; the strip stays), §3 L95 (klines before the recording start), D-11 L35 (focus never moved by a system event), L272 (the partial-history-time strip line)",
+   "`14` §0.5 rule 3 L83; SCR-030 E12 matrix L703 (partial-history), L706 (empty), L709 (a transient outcome notice takes the strip until `Dismiss`); `11` global AC 7 L48; `13` §14 L459; CONSTITUTION C-2.14 L172",
+   "E14-D02 L132, L144 (the drawing rail and `[Draw]`: E14-D02's controls, T2 for a Viewer)",
+   "spec §3 L169-207 (chrome, pitches, rows, cell heights, bar counts, levels, SYNTHETIC data)",
+   "E11-D02 §2 / §6 (chrome sizes, axis types, insets per density; cited by spec §3 L176-178)",
+   "packages/chart-engine/bench/fixtures/footprint.mjs + bars.mjs (seed '20260928', the bench CLI default, run-bench.mjs:41; spec §3 L171-173)",
+   "spec §4.9 L375-388 (CMP-222 [FP], the legend row, SCR-042)",
+   "spec §4.1 L211-246 (the column anatomy, the slot table)",
+   "spec §0 L22-95 (boards, frames, sizes, densities, export, footer)",
+   "spec §6.5 L604-625 (T2 and the role / state rows); standing gate G-T2 (briefs/standing-gates.md)"
+  ],
+  "copy_keys": [
+   "empty.from",
+   "mode.bid_ask",
+   "legend.fp",
+   "legend.pane",
+   "tb.chart",
+   "tb.table",
+   "tb.symbol",
+   "tb.interval",
+   "tb.type",
+   "tb.fp",
+   "tb.ind",
+   "tb.draw",
+   "status.last",
+   "status.spread",
+   "status.countdown",
+   "time.clock",
+   "time.auto",
+   "time.fit",
+   "time.live",
+   "empty.never",
+   "empty.record",
+   "why.owner_record"
+  ],
+  "copy_gaps": [
+   "Bar times 07:05-07:55 (the frame): the spec gives no times for a window wholly before the recording start; the board draws ten whole 5m columns 07:05-07:50 and, in the 18 px right of them, the 07:55 kline's candle strip (that kline closes at 08:00, the strip's timestamp), so the window ends about 07:55:45 and the recording-start boundary (board 32) is out of view.",
+   "No date on the time axis: the frame's bars are on 2026-10-18 while the clock reads 'UTC 13:39:19' (now); a day marker is E11-D02's time-axis format, not given by this spec; the strip names the date.",
+   "E12-D02's frame `SCR-030/partial-history-time` words the line '…; earlier bars come from exchange klines' (E12-D02 L272); the spec (L401) and `14`'s E12 matrix (L703) say '…; earlier bars from exchange klines': the board draws the spec's.",
+   "SCR-047 1a's cause sentence, `Learn more` and the live-data sentence are E11-D04 §11.2's (L342, L351), drawn by reference (§5 L401: 'nothing to draw: SCR-047 1a (E11-D04 D12's …)'); E16-D05 finalises the deck (E11-D04 L1014).",
+   "OQ-10 (L929): two non-owner sentences, E11-D04 D12's 'You can't start recording with your role — ask the owner to record BTCUSDT.' on SCR-047 1a (inset C) and `rbac.owner_only` 'Only the owner can start recording.' on the strip (inset B), both drawn until it closes.",
+   "The announcement of the never-recorded strip line (insets A, B): the spec and `14`'s matrix name none; the board treats it as the partial-history line (not announced; in the chart's accessible description).",
+   "§8.1 L722 lists `Record this symbol`, then `Dismiss`; §5 L401 gives this line none and `14` L709 ties `Dismiss` to transient outcome notices, so A and B draw none and the line stays while the state holds; route: §8.1 L722 → '(`Retry`, then `Dismiss`; or `Record this symbol`)'.",
+   "Strip length: reason 1a is 69 characters; with Record this symbol (A) 88, with the T2 sentence (B) 105, against E12-D02's 'about 80 characters' (L75). Both fit one 24 px row at 1280 × 800 compact; the strip's 200 % zoom reflow is not specified (E12-D02's row).",
+   "The legend's footprint row in a window with no cells: §4.9 L380-382 gives no variant, so it reads as at L0, 'FP Bid × Ask · rows 10 ticks · BTC' (the layer is on).",
+   "↑ / ↓ and Enter on a kline-only bar (the frame, A, B): §8.1 L731-732 move the level box and expand up to 40 level nodes, but such a bar has none: they find no levels (no cells) and expand nothing; the spec gives no announcement for that case (copy gap, E18-S11).",
+   "SCR-047's mirror label and the block's spacing are E11-D04's (L336); the block's 12 px gaps are the kit's.",
+   "Candles: bars.mjs with the bench CLI's default seed '20260928' (run-bench.mjs:41): §3 L171-173 names the generator but no seed (the kit's scene() gap, kept for the candles)."
+  ],
+  "live_checks": [
+   "Insets A, B and D: each 'body' (clip on) must clip its placed chart rows at the crop height (176 / 176 / 216 px); the pane's wicks run past it by design.",
+   "Every inset 'body': the inner hairline (color.border.default) must draw on the body's edge without moving its placed rows.",
+   "Frame: the 'bar 07:55' column (18 × 704 at plot x 1190, clip off) must show its wick at plot x 1198 and its body at x 1197-1200, inside the plot and left of the price gutter.",
+   "Insets C and D: the pane-stack region (a flex column, align and justify centre) must centre the SCR-047 block; the Learn more underline (1 px rect at the kit's estimated width) must match the rendered label width.",
+   "Inset B: the T2 sentence must sit on the strip's one row after reason 1a, in color.text.secondary, with no lock glyph and no control.",
+   "rename frame 'SCR-030∕fp-empty-history' to 'SCR-030/fp-empty-history' after the board's last section (Penpot shows 'SCR-030 / fp-empty-history')",
+   "root: after the first section the root must read back exactly as the sheet's board.name"
+  ],
+  "deviations": [
+   "Frame: the kit's candles, k.scene(11) (bars.mjs bars 0-10, seed '20260928', bar k = the k-th back from the newest; bars 0-9 are the base grid's, boards 01-06), relabelled 07:05-07:55, none forming: the ten whole columns 07:05-07:50 are bars 10-1 and the 18 px right of them hold bar 0's lane and candle strip (07:55; margin_column(): the kit's bar_column() at x 1190 cut to the visible 18 px; no time label, it would sit under the price gutter). Every bar spans the 40-row window (§3 L192-193's 400-tick bar), so each wick runs top to bottom; the kit's candles-only path (level 'L3', no marks; k.panel() uses it for fp='off' and 'pending') draws them, with [FP] on and the legend's footprint row kept.",
+   "Insets A and B are 1:1 crops of a 1280 × 800 compact chart: the toolbar, status row and strip, and the pane's top 104 px (the legend and the candles' tops); the live window 12:50-13:35 of every SCR-030 board. Price labels wholly below the crop are dropped (7 in A, 7 in B).",
+   "Inset D is a 1:1 crop of inset C's pane-stack region (1280 × 728) around the centred block, for the owner.",
+   "Every inset body has a hairline edge (k.LINE: color.border.default, border.hairline, inner, so nothing moves): the board root and the SCR-047 region share color.surface.canvas, and the edge shows each 1:1 crop's extent (board presentation, not a product edge).",
+   "The strip row (E12-D02's (S)) is on color.surface.raised (E12-D02 L75) in the frame and every inset: raise_strip() sets it, because the kit's strip_row() fills it with the paper (a kit-wide fix for its owner; board 03 does the same).",
+   "T2's sentence form (B; C's E11-D04 D12 sentence) draws no lock glyph and no control: E09-D09 §2.2 'the reason sentence stands alone, no button'; the standing gate's G-T2.1d 'the sentence form has no glyph and no button'; the sentence in the reason grey (color.text.secondary).",
+   "SCR-047's live-data glyph (color.data-confidence.live.indicator, E11-D04 L624) is a hue token: not drawn (greyscale); the words carry it (E11-D04 §11.3).",
+   "The Learn more link is underlined with a 1 px ink rule (cvsheet v1 texts have no underline; E11-D04 §11.1: the underline says 'link').",
+   "Local helpers in gen_31.py (e18kit.py not edited): pin_docs(), the LOCAL copy deck, crop(), margin_column(), raise_strip(), strip_sentence_form(), strip_record(), scr047_block(), scr047_chassis(), link(), inset_box(), key_groups(), strip_lengths(), prune_log(), the .md writer.",
+   "The Learn more link is drawn in ink: E11-D04's color.text.link (L619) is not one of the board's greys; the underline carries 'link'.",
+   "The base scene's 40 rows span 63,974.0-64,013.0: the top row is the forming bar's high as §4.1 draws it (L219-220, the cap above 64,013.0); §3 L192-194 fixes 40 rows of 1.0 USDT but no prices.",
+   "Candle bodies of generator bars are bars.mjs's open and close (same seed) scaled into the 40-row window; every bar spans the window (§3 L193: every row traded), so the wick runs top to bottom; the body is filled (its form is E12-D06's, §4.1 D3).",
+   "The legend row and the corner badge sit on a raised fill so they read over the cells.",
+   "Price labels sit at E11-D02 §5's density gap (40 / 48 / 32 px) on whole-price steps; a label wider than §3's 48 / 56 px gutter floor (L177) extends left into the plot's free margin (memo §3.0: the bar counts are upper bounds).",
+   "Every control, chip, button, field, menu, tooltip, drawer and dialog is a composition named '<CMP id> <Name> (composition)': the wireframes are greys only and cvsheet v1 cannot recolour an instance.",
+   "Frames are named as §0 names them ('SCR-030/fp-anatomy'), and cvsheet splits section paths on '/', so frame() names the node with U+2215 '∕' for '/' while sections address inside it; the live renderer renames each frame to its §0 name after the board's last section (live check)."
+  ],
+  "data": [
+   "Frame: bars.mjs generateBars(toSeed32('20260928')) bars 0-10 (k.scene(11): bar k = the k-th back from the newest) scaled into the 63,974.0-64,013.0 window, relabelled 07:05-07:55 (2026-10-18): the ten whole columns 07:05-07:50 are bars 10-1 (bars 9-1 are the base grid's 12:50-13:30 candles) and the 07:55 margin candle is bar 0 (the base grid's 13:35); no footprint cells drawn (none exist before the recording start).",
+   "Insets A, B: the base grid's candles (bars 9-0) at the live times 12:50-13:35 (13:35 the forming kline; no cap: the cap is a footprint mark). C, D: no bars.",
+   "The scenes' footprint.mjs cells exist only to give each candle its full-window wick extent; the candles-only path draws none of them."
+  ],
+  "tokens": [
+   "type.ui.label",
+   "color.text.primary",
+   "space.inset.sm",
+   "color.border.default",
+   "color.surface.app",
+   "color.text.secondary",
+   "size.icon",
+   "space.inset.xs",
+   "color.surface.raised",
+   "radius.control",
+   "type.num.sm",
+   "border.hairline",
+   "color.surface.selected",
+   "type.ui.caption",
+   "radius.badge",
+   "space.stack.xs",
+   "type.ui.heading-sm",
+   "type.ui.body",
+   "space.stack.md",
+   "color.surface.canvas",
+   "color.text.inverse",
+   "space.button.paddingX",
+   "type.ui.heading-md",
+   "space.inset.lg",
+   "radius.card"
+  ]
+ }
+}

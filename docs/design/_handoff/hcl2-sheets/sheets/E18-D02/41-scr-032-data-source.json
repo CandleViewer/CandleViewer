@@ -1,0 +1,1155 @@
+{
+ "board": {
+  "name": "E18-D02 / 41 scr-032-data-source",
+  "w": 3024,
+  "x": 0,
+  "y": 13600,
+  "o": {
+   "dir": "row",
+   "align": "start",
+   "fill": "color.surface.canvas",
+   "pad": "space.inset.lg",
+   "gap": "space.inset.lg"
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "frames",
+    "o": {
+     "dir": "row",
+     "wrap": "wrap",
+     "gap": "space.inset.lg",
+     "align": "start"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "SCR-032∕data-source",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-043 dialog (composition) · the Data source group only",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.dialog",
+         "shadow": "elevation.dialog",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner",
+         "pad": "space.dialog.padding"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "section · data source",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "rule",
+            "w": 496,
+            "h": 1,
+            "o": {
+             "fill": "color.border.default"
+            }
+           },
+           {
+            "t": "text",
+            "name": "head · DATA SOURCE — rebuilds stored cells, audited",
+            "chars": "DATA SOURCE — rebuilds stored cells, audited",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "board",
+            "name": "row · sources",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "wrap": "wrap",
+             "rowGap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-006 radio (composition) · Traded volume",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "radio mark",
+                "kids": [
+                 {
+                  "t": "ellipse",
+                  "name": "ring",
+                  "w": 16,
+                  "h": 16,
+                  "o": {
+                   "stroke": "color.text.primary",
+                   "strokeWidth": "border.hairline"
+                  },
+                  "x": 0,
+                  "y": 0
+                 },
+                 {
+                  "t": "ellipse",
+                  "name": "dot",
+                  "w": 8,
+                  "h": 8,
+                  "o": {
+                   "fill": "color.text.primary"
+                  },
+                  "x": 4,
+                  "y": 4
+                 }
+                ],
+                "w": 16,
+                "h": 16
+               },
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Traded volume",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24,
+              "note": "checked"
+             },
+             {
+              "t": "board",
+              "name": "CMP-006 radio (composition) · Aggregated volume, window",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "radio mark",
+                "kids": [
+                 {
+                  "t": "ellipse",
+                  "name": "ring",
+                  "w": 16,
+                  "h": 16,
+                  "o": {
+                   "stroke": "color.text.primary",
+                   "strokeWidth": "border.hairline"
+                  },
+                  "x": 0,
+                  "y": 0
+                 }
+                ],
+                "w": 16,
+                "h": 16
+               },
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Aggregated volume, window",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24
+             },
+             {
+              "t": "board",
+              "name": "CMP-008 NumericStepperInput (composition) · 50 ms",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "input",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.xs",
+                 "radius": "radius.control",
+                 "justify": "end",
+                 "fill": "color.surface.app",
+                 "stroke": "color.text.tertiary",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "50",
+                  "typo": "type.num.sm",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "w": 40,
+                "h": 24
+               },
+               {
+                "t": "text",
+                "name": "unit",
+                "chars": "ms",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24,
+              "note": "the window, drawn as the sketch's [ 50 ] ms (L470); CMP-008 per A-37 (L889); its well 40 × 24 px (`16` §3 L113; §6.1 L496)"
+             },
+             {
+              "t": "board",
+              "name": "CMP-006 radio (composition) · Trade count (prints)",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "radio mark",
+                "kids": [
+                 {
+                  "t": "ellipse",
+                  "name": "ring",
+                  "w": 16,
+                  "h": 16,
+                  "o": {
+                   "stroke": "color.text.primary",
+                   "strokeWidth": "border.hairline"
+                  },
+                  "x": 0,
+                  "y": 0
+                 }
+                ],
+                "w": 16,
+                "h": 16
+               },
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Trade count (prints)",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24
+             }
+            ],
+            "w": 496
+           },
+           {
+            "t": "board",
+            "name": "absent input",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-069 i (composition)",
+              "o": {
+               "dir": "row",
+               "justify": "center",
+               "radius": "radius.control"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "glyph",
+                "icon": "info",
+                "color": "color.text.primary",
+                "size": "size.icon"
+               }
+              ],
+              "w": 24,
+              "h": 24,
+              "note": "a focusable disclosure, aria-expanded false (§6.3 L548-550)"
+             },
+             {
+              "t": "text",
+              "name": "R7",
+              "chars": "Order (per-order arrival) isn't offered: Bybit publishes trades and book levels, not individual orders (no L3/MBO feed), so it cannot be computed — Trade count counts prints, which is exact.",
+              "typo": "type.ui.label",
+              "color": "color.text.primary",
+              "w": 464
+             }
+            ],
+            "w": 496,
+            "note": "QA R7 verbatim, always visible; the order option is absent from the DOM (§6.3)"
+           }
+          ],
+          "w": 496
+         }
+        ],
+        "w": 544,
+        "note": "SCR-032 (CMP-043: role dialog, aria-modal, focus trap, Esc closes) shown as its Data source group only (§6.3 L551-552); the i closed",
+        "x": 24,
+        "y": 32,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 800,
+      "note": "§0 frame 'SCR-032/data-source' · compact; the default state; the group and R7's sentence with the i closed, nothing else of the dialog (§6.3 L551-552; AC 3 is judged here)"
+     },
+     {
+      "t": "board",
+      "name": "SCR-032∕data-source-method",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "fill": "color.surface.app",
+       "clip": true
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-043 dialog (composition) · the Data source group only",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "fill": "color.surface.raised",
+         "radius": "radius.dialog",
+         "shadow": "elevation.dialog",
+         "stroke": "color.border.default",
+         "strokeWidth": "border.hairline",
+         "strokeAlign": "inner",
+         "pad": "space.dialog.padding"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "section · data source",
+          "o": {
+           "dir": "column",
+           "align": "start",
+           "gap": "space.stack.xs"
+          },
+          "kids": [
+           {
+            "t": "rect",
+            "name": "rule",
+            "w": 496,
+            "h": 1,
+            "o": {
+             "fill": "color.border.default"
+            }
+           },
+           {
+            "t": "text",
+            "name": "head · DATA SOURCE — rebuilds stored cells, audited",
+            "chars": "DATA SOURCE — rebuilds stored cells, audited",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           },
+           {
+            "t": "board",
+            "name": "row · sources",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "wrap": "wrap",
+             "rowGap": "space.inset.xs"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-006 radio (composition) · Traded volume",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "radio mark",
+                "kids": [
+                 {
+                  "t": "ellipse",
+                  "name": "ring",
+                  "w": 16,
+                  "h": 16,
+                  "o": {
+                   "stroke": "color.text.primary",
+                   "strokeWidth": "border.hairline"
+                  },
+                  "x": 0,
+                  "y": 0
+                 },
+                 {
+                  "t": "ellipse",
+                  "name": "dot",
+                  "w": 8,
+                  "h": 8,
+                  "o": {
+                   "fill": "color.text.primary"
+                  },
+                  "x": 4,
+                  "y": 4
+                 }
+                ],
+                "w": 16,
+                "h": 16
+               },
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Traded volume",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24,
+              "note": "checked"
+             },
+             {
+              "t": "board",
+              "name": "CMP-006 radio (composition) · Aggregated volume, window",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "radio mark",
+                "kids": [
+                 {
+                  "t": "ellipse",
+                  "name": "ring",
+                  "w": 16,
+                  "h": 16,
+                  "o": {
+                   "stroke": "color.text.primary",
+                   "strokeWidth": "border.hairline"
+                  },
+                  "x": 0,
+                  "y": 0
+                 }
+                ],
+                "w": 16,
+                "h": 16
+               },
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Aggregated volume, window",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24
+             },
+             {
+              "t": "board",
+              "name": "CMP-008 NumericStepperInput (composition) · 50 ms",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "input",
+                "o": {
+                 "dir": "row",
+                 "padX": "space.inset.xs",
+                 "radius": "radius.control",
+                 "justify": "end",
+                 "fill": "color.surface.app",
+                 "stroke": "color.text.tertiary",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "value",
+                  "chars": "50",
+                  "typo": "type.num.sm",
+                  "color": "color.text.primary"
+                 }
+                ],
+                "w": 40,
+                "h": 24
+               },
+               {
+                "t": "text",
+                "name": "unit",
+                "chars": "ms",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24,
+              "note": "the window, drawn as the sketch's [ 50 ] ms (L470); CMP-008 per A-37 (L889); its well 40 × 24 px (`16` §3 L113; §6.1 L496)"
+             },
+             {
+              "t": "board",
+              "name": "CMP-006 radio (composition) · Trade count (prints)",
+              "o": {
+               "dir": "row",
+               "gap": "space.inset.xs"
+              },
+              "kids": [
+               {
+                "t": "board",
+                "name": "radio mark",
+                "kids": [
+                 {
+                  "t": "ellipse",
+                  "name": "ring",
+                  "w": 16,
+                  "h": 16,
+                  "o": {
+                   "stroke": "color.text.primary",
+                   "strokeWidth": "border.hairline"
+                  },
+                  "x": 0,
+                  "y": 0
+                 }
+                ],
+                "w": 16,
+                "h": 16
+               },
+               {
+                "t": "text",
+                "name": "label",
+                "chars": "Trade count (prints)",
+                "typo": "type.ui.label",
+                "color": "color.text.primary"
+               }
+              ],
+              "h": 24
+             }
+            ],
+            "w": 496
+           },
+           {
+            "t": "board",
+            "name": "absent input",
+            "o": {
+             "dir": "row",
+             "gap": "space.inset.xs",
+             "align": "start"
+            },
+            "kids": [
+             {
+              "t": "board",
+              "name": "CMP-069 i (composition)",
+              "o": {
+               "dir": "row",
+               "justify": "center",
+               "radius": "radius.control",
+               "fill": "color.surface.selected",
+               "stroke": "color.focus.ring",
+               "strokeWidth": "border.focus",
+               "strokeAlign": "inner"
+              },
+              "kids": [
+               {
+                "t": "icon",
+                "name": "glyph",
+                "icon": "info",
+                "color": "color.text.primary",
+                "size": "size.icon"
+               }
+              ],
+              "w": 24,
+              "h": 24,
+              "note": "a focusable disclosure, aria-expanded true (§6.3 L548-550); focused (focus-visible): the ring is an inner stroke"
+             },
+             {
+              "t": "board",
+              "name": "note and method",
+              "o": {
+               "dir": "column",
+               "align": "start",
+               "gap": "space.stack.sm"
+              },
+              "kids": [
+               {
+                "t": "text",
+                "name": "R7",
+                "chars": "Order (per-order arrival) isn't offered: Bybit publishes trades and book levels, not individual orders (no L3/MBO feed), so it cannot be computed — Trade count counts prints, which is exact.",
+                "typo": "type.ui.label",
+                "color": "color.text.primary",
+                "w": 464
+               },
+               {
+                "t": "board",
+                "name": "CMP-069 InfoPanel (composition) · method",
+                "o": {
+                 "dir": "column",
+                 "align": "start",
+                 "gap": "space.stack.xs",
+                 "pad": "space.inset.sm",
+                 "radius": "radius.card",
+                 "fill": "color.surface.app",
+                 "stroke": "color.border.default",
+                 "strokeWidth": "border.hairline",
+                 "strokeAlign": "inner"
+                },
+                "kids": [
+                 {
+                  "t": "text",
+                  "name": "placeholder 1",
+                  "chars": "[ E18-D05 (#499): what each source counts ]",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary",
+                  "w": 448,
+                  "note": "copy gap: the method's part 1 as §6.3 L548-550 names it; no text is written (E18-D05)"
+                 },
+                 {
+                  "t": "text",
+                  "name": "placeholder 2",
+                  "chars": "[ E18-D05 (#499): why per-order arrival needs a per-order feed ]",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary",
+                  "w": 448,
+                  "note": "copy gap: the method's part 2 as §6.3 L548-550 names it; no text is written (E18-D05)"
+                 },
+                 {
+                  "t": "text",
+                  "name": "placeholder 3",
+                  "chars": "[ E18-D05 (#499): why exact sources carry no (estimated) badge (C-2.13; 14 §0.5 rule 2) ]",
+                  "typo": "type.ui.caption",
+                  "color": "color.text.secondary",
+                  "w": 448,
+                  "note": "copy gap: the method's part 3 as §6.3 L548-550 names it; no text is written (E18-D05)"
+                 }
+                ],
+                "w": 464,
+                "note": "the i's disclosure region, expanded: aria-controls of the i; static text, read in order, never live"
+               }
+              ],
+              "w": 464
+             }
+            ],
+            "w": 496,
+            "note": "QA R7 verbatim, always visible; the order option is absent from the DOM (§6.3); the i expanded (aria-expanded true): its region under the sentence"
+           }
+          ],
+          "w": 496
+         }
+        ],
+        "w": 544,
+        "note": "SCR-032 (CMP-043: role dialog, aria-modal, focus trap, Esc closes) shown as its Data source group only (§6.3 L551-552); the i open",
+        "x": 24,
+        "y": 32,
+        "abs": true
+       }
+      ],
+      "w": 1280,
+      "h": 800,
+      "note": "§0 frame 'SCR-032/data-source-method' · compact; the same with the i opened: CMP-069's method region under the sentence (§6.3 L548-550, L552)"
+     }
+    ],
+    "w": 2576
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.raised",
+     "radius": "radius.card"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "SCR-032/data-source (i closed; AC 3) · SCR-032/data-source-method (i open)",
+      "typo": "type.ui.heading-md",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "source",
+      "chars": "Source: spec §6.3 L541-558 · §0 L83 (1280 × 800 compact) · AC 3 (L846, L945) · §6.1 L468-473, L489-498 · §6.2 L529-530 · §6.5 L606-624",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "annotation blocks",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "block-01",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "State and trigger",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Frame 1, SCR-032/data-source: the default state (§6.3 L551-552): Traded volume checked, 50 ms, nothing staged, the i closed; the group and R7's sentence, nothing else of the dialog (opened from the legend's ⋯, L383).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         },
+         {
+          "t": "text",
+          "name": "value-2",
+          "chars": "Frame 2, SCR-032/data-source-method: the i opened (L552): expanded (aria-expanded true; selected fill); CMP-069's region holds the method (L548-550).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         },
+         {
+          "t": "text",
+          "name": "value-3",
+          "chars": "AC 3 is judged on frame 1 (L552-555): from the sentence alone a reader says the option is missing on purpose, the exchange does not publish individual orders, Trade count is the exact alternative; T6 records whether the i was opened.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-02",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Decision ids",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "D9 (Data source last, ruled off, L492-493); D11 (a source stages, sends nothing, §6.4 L576); answers Q3; QA R7; A-4, A-5, A-7; A-35; A-37; OQ-2.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-03",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Roles",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Drawn for a session holding recording:write (the owner under the 18:30Z ruling, §1.4; OQ-1): the radios and the window enabled.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         },
+         {
+          "t": "text",
+          "name": "value-2",
+          "chars": "Gated legs, drawn elsewhere: no recording:write → the group, window included, T2 (L621; board 45); offline → T2 (L624; board 53); a rebuild running → board 43 (L588). T2 (§6.5 L606-617): CMP-079; aria-disabled, never disabled (Tab stop kept); lock + full label mid grey, reason under; an arrow stages nothing, re-shows the reason, one polite announcement.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         },
+         {
+          "t": "text",
+          "name": "value-3",
+          "chars": "Every session sees the sentence and the i (L546 'always visible'; L621); the Order option is absent from the DOM, not T2 (L550).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-04",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Keyboard path",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Tab (L489-491): … the sources (one stop, roving; arrows stage, send nothing, ◆: §6.4 L576) → the window field (Enter commits it only; editing stages a rebuild, L577) → the i (disclosure, E18-S05; Enter or Space toggles: APG, heuristic) → the footer. Esc = Cancel: drops a staged source, reverts display settings, closes (§6.4 L579-580); focus returns to the legend row's ⋯ (L491).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-05",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Focus",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Frame 1: none in the crop (initial focus: the checked Cell type radio, L489). Frame 2: the ring on the i, which keeps focus once open; the method follows it.",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-06",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Announcement (text, region, when)",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "None named: the sentence is static text (L546), not a live region; the i reads collapsed or expanded; nothing is named for opening it (E18-D04, §16 L936). Each source reads a one-line accessible description (§6.3 L544-545; not given: copy gap).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-07",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Copy keys",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Kit copy ids, no spec keys (E18-D05 keys them): sec.source (sketch L469); src.traded, src.agg, window.value, unit.ms, src.count (L470); src.r7 (QA R7, L546-548); frame 2: three method placeholders (L548-550; copy gap).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-08",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Data source",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Sources: CMP-109 inputSource only: aggTrades for Traded and Aggregated volume alike, numTrades for Trade count (A-35); no field in 24 or 22 (GAP-1, GAP-5); applies by a rebuild (§6.2 L529).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         },
+         {
+          "t": "text",
+          "name": "value-2",
+          "chars": "Window: PROPOSED orderflow.footprint.agg_window_ms, 50 ms drawn, 0–100 ms; rebuild (L530; GAP-5).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-09",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Budget",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "—: no chart, no preview here (L551-552); a source stages and sends nothing until a rebuild is confirmed (D11; §6.4 L576).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-10",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Event",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "None at rest or on the i. A confirmed rebuild writes the audit record market.footprint_recompute_requested (§6.7 L656; GAP-13; board 42).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       },
+       {
+        "t": "board",
+        "name": "block-11",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Notes",
+          "typo": "type.ui.label",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "text",
+          "name": "value-1",
+          "chars": "Components: CMP-043 Dialog (crop), CMP-006 RadioGroup, CMP-008 NumericStepperInput (A-37), CMP-069 InfoPanel; gated legs add CMP-079 RbacGate, CMP-019 Icon lock (A-38).",
+          "typo": "type.ui.body",
+          "color": "color.text.primary",
+          "w": 368
+         }
+        ],
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "SYNTHETIC data · page E18-D02 · board 41 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 368
+     }
+    ],
+    "w": 400
+   }
+  }
+ ],
+ "export": "docs/design/E18/img/E18-D02-41-scr-032-data-source.png",
+ "notes": {
+  "sources": [
+   "spec §0 L26-39, L83 (board 41: two frames, 1280 × 800 compact, §6.3; no inset, L36-37)",
+   "spec §6.3 L551-558 (AC 3 on board 41, units, OQ-2)",
+   "spec §6.1 L468-473 (the sketch's DATA SOURCE rows), L479-481, L489-498 (frame, keys, order, scope)",
+   "spec §6.2 L502, L529-530 (the Data source and Aggregation window backings)",
+   "spec §6.4 L576-580, L586-588, L593 (staging, Cancel and Esc, the press, the running-rebuild T2, announcements)",
+   "spec §6.5 L606-624 (T2; the no-recording:write and offline rows); standing gate G-T2",
+   "spec §6.7 L655-656 (events); §12 L836, L846; §13 A-4, A-5, A-7, A-35, A-37 (L856-859, L887, L889); §14 L892-914 and §13 L849-890 (no CMP-069 row yet: the two routing requests); §15 OQ-2 (L921); §16 L936-937; §17 L945; L18 (new copy is PROPOSED for E18-D05's copy deck)",
+   "ticket E18-D02 AC 3 and E18-S05 (Scope, Accessibility notes), docs/plan/backlog/E18.json",
+   "memo L235 (R7), L358 (T6); `11` US-FP-005 L1587; `14` L82, L778; `15` CMP-006 L100, CMP-008 L115-119, CMP-043 L444, CMP-069 L674-678; `16` §3 L113 (a compact field is 24 px); CONSTITUTION C-2.13 L168",
+   "spec §6.3 L541-558 (three sources, the absent order input)",
+   "spec §0 L22-95 (boards, frames, sizes, densities, export, footer)"
+  ],
+  "copy_keys": [
+   "window.value",
+   "sec.source",
+   "unit.ms",
+   "src.traded",
+   "src.agg",
+   "src.count",
+   "src.r7"
+  ],
+  "copy_gaps": [
+   "The method (frame 2): §6.3 L548-550 names its three parts — what each source counts, why per-order arrival needs a per-order feed, why exact sources carry no (estimated) badge (C-2.13; `14` §0.5 rule 2) — and writes no text. The placeholders' 'E18-D05 (#499)' tag rests on L18 alone (new copy is PROPOSED for E18-D05's copy deck): §14 (L892-914) has no GAP row for the method and §16's E18-D05 line (L937) hands over only 'every copy marked PROPOSED'. Routing request for the spec author (to raise on PR #4180; this offline round posts nothing, so no GAP id exists to cite): a §14 GAP row 'the CMP-069 method text for SCR-032's data source → E18-D05 (#499), E18-S05 (#630)'. Facts it can quote: §6.3 L543-545 (Aggregated volume merges prints at the same price, side and millisecond within 0–100 ms; Trade count counts prints); E18-S05 Scope (traded volume: 'cells count quantity'; number of trades: 'print counts instead of quantity'); R7's sentence; C-2.13 L168 ('Bybit provides no L3/MBO feed'); §4.4 L298 and §7.4 L710 (FootprintImbalance.estimated is false for every v1 source).",
+   "CMP-069's title (`15` L677 `title` prop) and the i's accessible name: not given; neither is drawn.",
+   "Each source's one-line accessible description (L544-545): not given; not drawn (an accessible description, not visible text).",
+   "No announcement is named for opening or closing the i (§6.3; E18-D04's policy table, §16 L936).",
+   "The window's '50' is the sketch's (L470) and §6.2 L530's '50 ms drawn'; the spec states no default within 0–100 ms."
+  ],
+  "live_checks": [
+   "Frame 1: the crop at x 24, y 32, about 544 × 143 px, hugging the group; nothing else in the frame.",
+   "Frame 2: the crop about 544 × 214 px; the i expanded (the color.surface.selected fill) with its 2 px focus-ring inner stroke; CMP-069's region under the sentence, its left edge on the sentence's (x 28 in the group), three placeholder lines in type.ui.caption, dark grey.",
+   "R7's sentence: 3 lines at 464 px by the kit's estimate in both frames; if Penpot wraps it differently, it must wrap the same in both frames (same node, same width).",
+   "The sources row: one line at 496 px (493 px est., a 3 px margin); an offline HTML preview with a wider fallback font wrapped 'Trade count (prints)' to a second line, the window field staying beside 'Aggregated volume, window': if Penpot wraps it too, that is the dialog's own wrap at this width (boards 07-10 use the same kit row), not a defect.",
+   "No inst node on this board: every control is a composition, so there is no library set, variant or text layer to verify.",
+   "rename frame 'SCR-032∕data-source' to 'SCR-032/data-source' after the board's last section (Penpot shows 'SCR-032 / data-source')",
+   "rename frame 'SCR-032∕data-source-method' to 'SCR-032/data-source-method' after the board's last section (Penpot shows 'SCR-032 / data-source-method')",
+   "root: after the first section the root must read back exactly as the sheet's board.name"
+  ],
+  "deviations": [
+   "The window field is named 'CMP-008 NumericStepperInput (composition)': A-37 (L889) names SCR-032's window field as CMP-008 and `14` SCR-032's components list CMP-008 (`14` L778); e18kit's field() names any non-select field CMP-007 TextInput. Drawn as the sketch's '[ 50 ] ms' (L470), no step buttons.",
+   "The window field's well is 24 px tall (`16` §3 L113: a compact field is 24 px; §6.1 L496: every target is ≥ 24 × 24 px), not e18kit field()'s d.row − 4 = 20 px (review/41 #2): e18kit.py is not edited, so the lift is local to this board. The sources row stays 24 px, so the crops, the row's one-line fit and R7's wrap do not move.",
+   "No chart panel behind the dialog in either frame: §6.3 L551-552 draws 'the group and the sentence … and nothing else of the dialog', and AC 3 is judged 'from the sentence alone' (L553); boards 07-10 draw the dialog over the chart (L481).",
+   "The group sits on a crop of the CMP-043 surface (raised fill, light hairline, radius.dialog, elevation.dialog) padded 24 px (space.dialog.padding) at the dialog's top-left anchor (x 24, y 32: the drawing rail's width and half the 64 px §6.1 L479 leaves, as board 08 places SCR-032), not at its y inside the whole dialog: the crop holds the group alone, and frame 2's open method would run past the dialog's estimated bottom (at compact the whole dialog is about 715 px of the 736 px allowed).",
+   "The group keeps the controls column's width (496 px, e18kit CTRL_W), as SCR-032's boards draw it, so R7's sentence wraps as it does in the dialog; the §6.1 sketch runs the Data source rows across the dialog's width (L468-473).",
+   "Frame 2's focus ring on the i is a 2 px color.focus.ring inner stroke on its 24 × 24 target (as e18kit's menu() rings a focused item), not k.ring()'s 4 px wrapper, so the sentence keeps its place and its wrap in both frames.",
+   "CMP-069's region sits in the note's column under the sentence (x 28 in the group), not at the group's left edge where scr032_source(method=…) appends it: the disclosure's content follows its i and note.",
+   "The method's text is not written (copy gap): three bracketed placeholders, each tagged 'E18-D05 (#499)', name the parts §6.3 L548-550 lists, in the spec's own sketch convention for content another ticket owns (L667); type.ui.caption in the dark grey, never the middle grey (kept for T2, §6.5 L614).",
+   "`15` CMP-069 (L678: 'opens as CMP-046 Drawer (non-modal)') differs from §6.3 L548 and E18-S05 ('a focusable disclosure, not a hover-only tooltip'): drawn inline, as the spec says. §13 has no A-row for CMP-069, so the conflict is not routed yet. Routing request for the spec author (to raise on PR #4180; this offline round posts nothing, so no A-id exists to cite): an A-row '`15` CMP-069 (678) `opens as CMP-046 Drawer (non-modal)` → in SCR-032 an inline disclosure under its note (E18-S05) → `15` owner'.",
+   "Every control, chip, button, field, menu, tooltip, drawer and dialog is a composition named '<CMP id> <Name> (composition)': the wireframes are greys only and cvsheet v1 cannot recolour an instance.",
+   "Frames are named as §0 names them ('SCR-030/fp-anatomy'), and cvsheet splits section paths on '/', so frame() names the node with U+2215 '∕' for '/' while sections address inside it; the live renderer renames each frame to its §0 name after the board's last section (live check)."
+  ],
+  "data": [
+   "No chart and no SYNTHETIC cell data on this board; the only number is the window's 50 ms (L470; §6.2 L530 '50 ms drawn').",
+   "The default state: Traded volume checked (§6.3 L543 'Traded volume (default)'; §6.2 L529), nothing staged, a session holding recording:write (§1.4)."
+  ],
+  "tokens": [
+   "color.border.default",
+   "type.ui.label",
+   "color.text.secondary",
+   "type.num.sm",
+   "color.text.primary",
+   "space.inset.xs",
+   "radius.control",
+   "color.surface.app",
+   "color.text.tertiary",
+   "border.hairline",
+   "size.icon",
+   "space.stack.xs",
+   "color.surface.raised",
+   "radius.dialog",
+   "elevation.dialog",
+   "space.dialog.padding",
+   "color.surface.selected",
+   "type.ui.caption",
+   "space.inset.sm",
+   "radius.card",
+   "space.stack.sm",
+   "color.focus.ring",
+   "border.focus",
+   "type.ui.body",
+   "space.stack.md",
+   "space.inset.lg",
+   "type.ui.heading-md",
+   "color.surface.canvas"
+  ]
+ }
+}
