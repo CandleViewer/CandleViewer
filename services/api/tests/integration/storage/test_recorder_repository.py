@@ -25,6 +25,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 from candleviewer.storage.testing import StaticGapReader
+from tests.unit.recorder._fakes import FakeAudit
 
 pytestmark = pytest.mark.integration
 
@@ -165,7 +166,7 @@ async def test_e16_t04_session_gap_coverage_round_trip(
     repo = SqlAlchemyRecorderRepository(SqlAlchemyRelationalRepository(dsns[1]))
     t0 = to_us(datetime(2026, 9, 1, tzinfo=UTC))
     clock = [t0]
-    dead = SessionManager(repo, now_us=lambda: clock[0])
+    dead = SessionManager(repo, now_us=lambda: clock[0], audit=FakeAudit())
     ev = RecorderSetChanged(symbol="BTCUSDT", change="added", reason="manual",
                             reasons=("manual",), priority=300, auto_evictable=False,
                             ts_event=t0)  # fmt: skip
@@ -176,8 +177,10 @@ async def test_e16_t04_session_gap_coverage_round_trip(
                                     last=datetime(2026, 9, 1, 1, tzinfo=UTC))  # fmt: skip
     restart = to_us(datetime(2026, 9, 1, 1, 5, tzinfo=UTC))
     clock[0] = restart
-    fresh = SessionManager(repo, now_us=lambda: clock[0])
+    audit = FakeAudit()
+    fresh = SessionManager(repo, now_us=lambda: clock[0], audit=audit)
     assert await fresh.recover_on_startup(restart) == 1
+    assert audit.actions() == ["recorder.stop"]  # C-2.9: the close is audited, never skipped
     assert await repo.list_live_sessions() == []
     svc = CoverageService(repo, now_us=lambda: clock[0])
     (cov,) = await svc.coverage("BTCUSDT", ["trades"], t0, restart)
