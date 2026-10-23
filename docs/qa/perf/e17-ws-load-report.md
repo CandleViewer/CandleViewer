@@ -1,13 +1,18 @@
 # E17 WS load profiles and W5 report (E17-Q03, #568)
 
-Status: **harness delivered; the recorded profile runs are pending.** The profiles, the fixture backend, the k6
-client, the verdict, the baseline gate and the self-check are built and were validated on short runs (below).
-Profiles A, B and C have not been run for their full durations, so no §16.3 budget has a recorded number yet and
-W5 is not answered yet. No number in the budget tables of this file is invented: a row says `pending` until a
-recorded run fills it. The recorded runs are made on the self-hosted bench runner `cv-bench-01` by the
-dispatch-only workflow `.github/workflows/perf-ws-load.yml`, which must be on `main` before that runner can run
-it; the follow-up that carries their numbers writes the W5 answer and the §16.3 column below. The W5 and §16.3
-rows are ready to fill.
+Status: **recorded readings (2026-10-23, round 3 and a quiet window): profile A passed on the quiet run, B failed in all three runs, C read over two budgets with the host not quiet (not attributable to the code), W5 is answered, and one warn-only baseline (A) is recorded.** The harness (profiles,
+fixture backend, k6 client, verdict, baseline gate, self-check) ran the full profiles on the bench runner, by the
+dispatch-only workflow `.github/workflows/perf-ws-load.yml`, flag on, k6 at `/ws`, with `main`'s harness at each
+dispatched commit (table "Recorded runs" below). Profile A's three round-3 runs were valid and missed budgets #6
+and #3 while other work ran on the host the bench runner shares; one A run in the host-quiet window passed every
+budget (fan-out p95 11.8 ms), which names the source of the spread. Profile B's harness verdict was FAIL in all
+three runs (the backend did not answer `/metrics` in time, and validity guards tripped too; see the note under the budget table). Profile C ran three valid runs of 30 min in round 3 and three more in the quiet window, and
+read over #6 and the local tick-to-pixel line in both sets, with the host not quiet (see the caveat under the budget table). W5 is
+answered from run 39912100280 by the rule as fixed after that run, and the quiet-window W5 run replicates the
+answer (below). `runner record` refuses a run that is not PASS, so the one baseline is A's quiet run, warn-only;
+B and C have none. No number in this file is invented: a cell reads `not run` or `FAIL` where no valid
+reading exists, and each figure is one run's reading or, for a set of three, the median of its valid runs, read from the
+run's `result.json`.
 
 The harness lives in `services/api/bench/ws/` and `tests/load/ws/`. This file is where its results are written
 and is linked from `qa/plans/e17-ws-conformance.md` §4. The ticket named `docs/qa/test-plans/e17-ws-protocol.md`,
@@ -128,18 +133,49 @@ Warm-up (5 min, 20 s for the smoke) comes before the steady window and is never 
    own runs only: every run records its loop (`loop` in `run.json`, and in a baseline), and the gate compares a run
    with a baseline only when both record the same one, never across loops or when either side records none.
 
-## Budgets: the §16.3 column the Results PR writes (a recorded run fills it)
+## Budgets: the §16.3 column of the recorded runs
 
-| Row                              | Source          | Target / hard fail      | Q03, flag on | Q03, flag off | Verdict |
-| -------------------------------- | --------------- | ----------------------- | ------------ | ------------- | ------- |
-| Fan-out add-on p95               | 06 #6, 23 §16.3 | <= 20 ms                | pending      | pending       | pending |
-| Tick to decode p95 / p99, trades | 06 #3           | < 100 ms / < 250 ms     | pending      | pending       | pending |
-| Tick to pixel, local, p95        | 23 §16.3        | < 40 ms / > 120 ms      | pending      | pending       | pending |
-| Bandwidth, reference workspace   | 23 §16.3        | < 350 KiB/s / > 1 MiB/s | pending      | pending       | pending |
-| Full re-snapshot, bytes and time | 23 §16.3        | < 700 KiB, < 400 ms     | pending      | pending       | pending |
-| `upstream_desync` per topic-hour | 23 §16.3        | < 1 / > 5               | pending      | pending       | pending |
-| Resyncs from backpressure, gaps  | ticket          | 0                       | pending      | pending       | pending |
-| Event-loop lag p95 / p99         | C-14.2          | < 50 ms / < 100 ms      | pending      | pending       | pending |
+| Row                              | Source          | Target / hard fail      | Q03, flag on                                  | Q03, flag off | Verdict                             |
+| -------------------------------- | --------------- | ----------------------- | --------------------------------------------- | ------------- | ----------------------------------- |
+| Fan-out add-on p95               | 06 #6, 23 §16.3 | <= 20 ms                | A 11.8 / B FAIL / C 28.8 ms                   | not run       | C miss, not attributable; A pass    |
+| Tick to decode p95 / p99, trades | 06 #3           | < 100 ms / < 250 ms     | A 25 / 48, B FAIL, C 43 / 125 ms              | not run       | pass (A, C)                         |
+| Tick to pixel, local, p95        | 23 §16.3        | < 40 ms / > 120 ms      | A 25 / B FAIL / C 43 ms                       | not run       | C > 40 ms, not attributable; A pass |
+| Bandwidth, reference workspace   | 23 §16.3        | < 350 KiB/s / > 1 MiB/s | A 8.9 / B FAIL / C 8.8 KiB/s                  | not run       | pass (A, C)                         |
+| Full re-snapshot, bytes and time | 23 §16.3        | < 700 KiB, < 400 ms     | A 15.8 KiB, 79 ms / B FAIL / C n/a (no probe) | not run       | pass (A)                            |
+| `upstream_desync` per topic-hour | 23 §16.3        | < 1 / > 5               | A 0 / B FAIL / C 0 /h (by construction)       | not run       | pass (A, C)                         |
+| Resyncs from backpressure, gaps  | ticket          | 0                       | A 0, 0 / B FAIL / C 0, 0                      | not run       | pass (A, C)                         |
+| Event-loop lag p95 / p99         | C-14.2          | < 50 ms / < 100 ms      | A 22.8 / 58.2, B FAIL, C 56 / 191 ms          | not run       | miss (reported): C                  |
+
+`B FAIL` is the harness verdict of profile B's three runs: FAIL in all three (exit code 1). The hard check
+`scrape.metrics_timeout` failed (the backend did not answer `/metrics` within 15 s in 7, 42 and 40 of 62 scrapes), and
+validity guards tripped as well (run 1: no re-snapshot sample and 9 unplanned closes; run 2: the feeder behind its
+schedule and 2 `cv_errors`; run 3: the feeder behind its schedule and 1 unplanned close), so in runs 2 and 3 the load was below its
+schedule (run 1's feeder ratio was not judged: its first scrape timed out). Budgets were judged and missed: trades tick-to-decode p95 8237, 8527 and 7609 ms; fan-out p95 at the top
+bucket (250 ms) in runs 2 and 3 (run 1 did not judge it: its first scrape timed out); full re-snapshot 50,660 and
+46,936 ms (runs 2 and 3); backpressure resyncs 22,605, 129,331 and 121,879. These are readings of a backend that was not
+answering its scrapes, so they are not put in the cells. The backend's event-loop lag read 1,000 ms (the top bucket) at p95 and p99 in runs 2 and 3, and B's `variance.other_cores` (about 6.0) equals the passing round-2 A runs, so host load does not explain it; whether B's shape, the feeder on the same loop or the gateway sets this is left to the follow-up AC 2 names. Flag off was not run (the control is the lead's call). A is the one run made
+in the host-quiet window (run 40007981025, 1 h, `main` at `1b69803c3d3e`); C is the median of the three runs of the
+quiet-window dispatch (run 39981663972, `main` at `13c5a83ca630`). A single run is never mixed into a median of
+three. Its readings: fan-out p95 11.8 ms (p99 33.9), trades tick-to-decode p95 25 ms and p99 48 ms (with the
+window wait, 100 and 118 ms), event-loop lag p95 22.8 and p99 58.2 ms (reported). C's three quiet-window runs read
+fan-out p95 32.1, 28.8 and 26.1 ms (budget 20 ms, missed in all three); trades tick-to-decode p95 43, 45 and 41 ms
+and p99 140, 125 and 100 ms; tick-to-pixel p95, equal to the tick-to-decode reading by construction, 43, 45 and 41
+ms (the 40 ms line missed in all three); event-loop lag p95 55.8, 58.1 and 49.97 ms and p99 191, 192 and 158 ms
+(reported, never gating); with the window wait, trades p95 117, 116 and 114 ms (p99 209, 196 and 183).
+
+**Round 3's loaded-host readings, kept as the evidence of the spread.** A (run 39950162313, three valid runs of 1 h,
+`main` at `d0d43743b2c7`) read fan-out p95 23.9, 75.4 and 48.3 ms (budget 20 ms, missed in all three); trades
+tick-to-decode p95 37, 88 and 70 ms and p99 120, 286 and 227 ms (the 250 ms p99 limit missed in run 2); tick-to-pixel
+p95 passed the 40 ms line in run 1 only; event-loop lag p95 43, 97 and 86 ms; the median of those three runs would
+read fan-out 48 ms, trades 70 / 227 ms, re-snapshot 15.8 KiB in 182 ms, so the budgets were missed under
+contention and met on the quiet run (see AC 5). C's round-3 runs (run 39900923629, `main` at `c5e5aa3d4ff2`) read
+fan-out p95 24.0, 27.6 and 28.3 ms, tick-to-pixel p95 41, 41 and 47 ms, event-loop lag p95 47, 49.6 and 50.7 ms.
+
+**Profile C's caveat.** C is recorded as bench quiet, host not quiet. Both of C's legs, round 3 and the quiet-window
+re-run (15:50 to 17:36 UTC), were measured with the bench runner quiet but not the host it shares: the re-run (15:50 to 17:36 UTC) ended
+before the host-quiet hold began (18:55 UTC). C's misses (fan-out p95 median 28.8 ms against 20, tick-to-pixel 43 ms against 40) are not
+attributable to the code; A's host-quiet run passed every budget. A single host-quiet C run follows later as an
+appendix; its reading is appended to #568's closing comment and to #399, not to this PR.
 
 Not measurable on main: footprint and heatmap frames in the re-snapshot and bandwidth rows (no producer), and the
 decode and fps rows of §16.3 (the browser's). Two rows can pass with little behind them and say so in every report:
@@ -184,36 +220,90 @@ bars frame none, so for book and bars the cost is the interval between two relea
 stream, the longest an update waits in the window (`cv_hold_ms_book`, `cv_hold_ms_bars`). A family without such a
 sample is left out, never read as 0 ms.
 
-**Recommendation: pending.** (keep the fixed x2 and x4, or per-family multipliers; the reasons the rule gave.)
+**Recommendation: per-family multipliers (run 39912100280, re-judged).** The run's own verdict on the rule then in
+force was `no_data`: `mixed-healthy` and `mixed-lagging` were left out because the judge took the worst class
+announced over the whole socket life, and each cohort had a few brief round-trip excursions (5 and 3 announcements
+of the x4 class, against a cohort held in its intended class for 98.1 % and 99.9 % of the probe samples), so no family had a row. The rule was then fixed to judge the class held for most of the steady window
+(#4287, `bench/ws/w5.py`; no metric's meaning changed, `HARNESS_VERSION` stays `e17-q03/1`), and the same
+artefact was re-judged offline with it: `applied_class` is now the planned class in all three mixed phases, nothing
+is skipped, and the answer is per-family multipliers. Reasons the rule gave: book carries 54 % of the bytes but only
+27 % relief at x4; trades carries 27 % of the bytes but only 24 % relief at x4; the efficiency spread is 2.6x across
+the families. Proposed (lagging, x4): book (x1, x1), trades (x1, x1), bars (x2, x4). The re-judge is not a second
+run: the data are one run's. A second run is below.
+
+**Replication (run 39997358579, quiet window, `main` at `4cc2f502f954`, which contains #4287).** Its own verdict
+is `no_data`, and not from the class rule: the class judge passed all three mixed phases (the cohorts held
+`healthy`, `lagging` and the x4 class for 98.4 %, 99.8 % and 100 % of the probe samples, and no phase was
+`overflowing`). The `mixed-saturated` phase was left out by the general clock-skew check (a corrected skew of 6.0
+ms against the 5 ms limit; the run is on one host clock, so the 6 ms is the fastest hello's transit asymmetry read
+in whole k6 milliseconds), and with that phase gone no family had a row in both classes. With that one check
+waived offline, on a copy and not by a rule change (the check is unchanged on `main`), the run gives the same
+answer: bars 20 % of the bytes, 54.5 % relief at x4, 721 ms; book 54 %, 27.3 %, 144 ms; trades 27 %, 23.7 %, 282
+ms; efficiency spread 2.5x; proposed unchanged. The two runs agree to within 1 point of relief and 5 ms of cost.
+Its CPU readings above the idle baseline (0.161) are book 0.300 and 0.279, trades 0.104 and 0.085, bars 0.180 and
+0.136 (healthy, x4 class). The recorded answer is the first run's, re-judged; the second supports it and is not
+itself green.
 
 | Family | Share of healthy bytes | Relief at x4 | Staleness cost | Efficiency | Merged updates per frame | Proposed (lagging, saturated) |
 | ------ | ---------------------- | ------------ | -------------- | ---------- | ------------------------ | ----------------------------- |
-| book   | pending                | pending      | pending        | pending    | pending                  | pending                       |
-| trades | pending                | pending      | pending        | pending    | pending                  | pending                       |
-| bars   | pending                | pending      | pending        | pending    | pending                  | pending                       |
+| book   | 54 %                   | 27 %         | 141 ms         | 0.0019 /ms | 2.9                      | (x1, x1)                      |
+| trades | 27 %                   | 24 %         | 283 ms         | 0.0008 /ms | 1.0                      | (x1, x1)                      |
+| bars   | 20 %                   | 54 %         | 717 ms         | 0.0008 /ms | 12.1                     | (x2, x4)                      |
 
 | Backend CPU, core-seconds per second above the idle baseline | healthy | saturated |
 | ------------------------------------------------------------ | ------- | --------- |
-| book                                                         | pending | pending   |
-| trades                                                       | pending | pending   |
-| bars                                                         | pending | pending   |
+| book                                                         | 0.229   | 0.174     |
+| trades                                                       | 0.052   | 0.057     |
+| bars                                                         | 0.153   | 0.124     |
+
+The idle baseline is 0.168 core-seconds per second. Efficiency is relief per millisecond of staleness cost.
 
 Multipliers that adapt at run time, per topic, need a signal from the product (a separate design, not built
-here). The recommendation and its numbers are handed to E17-T07 and written into 23 §16.6 W5 by the Results
-PR after the recorded runs.
+here). The recommendation and its numbers are handed to E17-T07 and are written into 23 §16.6 W5 by this change.
 
 ## Acceptance criteria
 
-| AC  | How it is verified                                                                                                                   | State   |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------ | ------- |
-| 1   | Profile A, 1 h, flag on: rows #6 and #3 above                                                                                        | pending |
-| 2   | Profile B, 1 h: every row above and zero backpressure resyncs                                                                        | pending |
-| 3   | A bandwidth over 1 MiB/s fails the run with the metric named: `test_bandwidth_over_one_mib_a_second_fails_the_run_naming_the_metric` | pass    |
-| 4   | W5 answered from data                                                                                                                | pending |
-| 5   | A second same-profile run within 15 %, or a named variance source: `runner repro`                                                    | pending |
+| AC  | How it is verified                                                                                                                   | State                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Profile A, 1 h, flag on: rows #6 and #3 above                                                                                        | pass on the quiet run (40007981025): #6 p95 11.8 ms, #3 p95 / p99 25 / 48 ms. Round 3's three loaded runs missed (#6 p95 23.9 / 75.4 / 48.3 ms; #3 p99 286 ms in run 2), see AC 5                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 2   | Profile B, 1 h: every row above and zero backpressure resyncs                                                                        | open: FAIL x3 (the backend did not answer `/metrics` in 7, 42 and 40 of 62 scrapes; validity guards also tripped; in runs 2 and 3 the load was below its schedule; the backend's event-loop lag read 1,000 ms at p95 and p99 in those runs)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 3   | A bandwidth over 1 MiB/s fails the run with the metric named: `test_bandwidth_over_one_mib_a_second_fails_the_run_naming_the_metric` | pass                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 4   | W5 answered from data                                                                                                                | pass: per-family multipliers, from run 39912100280 re-judged with the fixed rule; the quiet-window run 39997358579 replicates it with one generic check waived offline                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 5   | A second same-profile run within 15 %, or a named variance source: `runner repro`                                                    | source named, with a caveat: A's round-3 run 1 against runs 2 and 3 differs by far more than 15 % (fan-out p95 +215 % and +102 %); the source is load on the host the bench runner shares, reported by a lane sharing it (the harness cannot see by whom). Round 3's A runs ran about 12:01 to 15:17 UTC in that window and missed; the host-quiet A run ran inside the 18:55 to 20:10 UTC hold (about 19:01 to 20:06 UTC) and passed (fan-out p95 11.8 ms). No WS or bars product code changed between round 3's A and the quiet A run (no file under `candleviewer/ws`, `candleviewer/bars` or `candleviewer/bus` differs between `d0d43743b2c7` and `1b69803c3d3e`; other modules did change, and the bench files that changed are the W5 judge, #4287, and the bench runner). `variance.other_cores` does not separate them: round 2's A runs passed at about 6.0, as high as round 3's. `main` also moved between round 2 (`362590b9371e`) and round 3 (`d0d43743b2c7`), and WS code changed in between; that was not checked here (the check above covers round 3's A to the quiet A only) |
 
 The self-check (an ASGI send delay inside the fan-out span must fail budget #6 by name) is
 `runner selfcheck`; its offline twin is `test_an_inflated_fanout_fails_budget_6_which_is_the_self_check`.
+
+## Recorded runs (2026-10-23; flag on, `/ws`)
+
+Every run is on the bench runner, `bench-runner` machine profile, loop `asyncio`, k6 v2.3.0, harness `e17-q03/1`.
+Run ids are those of `perf-ws-load.yml`. "Valid" means no validity guard tripped; a valid run can still miss a budget.
+"Round 2" is the set of dispatches of 22 Oct; "round 3" is the first set of 23 Oct; "quiet window" is the later set, 15:50 to 20:10 UTC.
+
+| Profile | Run id      | `main` commit  | Finished (UTC)               | Valid  | Result                                                                                                                                                                                                                                                                                                                                    |
+| ------- | ----------- | -------------- | ---------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| B       | 39881322465 | `ede2113b87fb` | 02:04, 03:09, 04:15          | 0 of 3 | round 3, first leg: FAIL x3: the backend did not answer `/metrics` within 15 s in 7, 42 and 40 of 62 scrapes; also run 1: no re-snapshot sample, 9 unplanned closes; run 2: feeder behind its schedule (1,361,196 of 1,912,379 slots), 2 `cv_errors`; run 3: feeder behind its schedule (1,372,032 of 1,921,400 slots), 1 unplanned close |
+| A       | 39740753214 | `362590b9371e` | 08:34, 09:39, 10:45 (22 Oct) | 2 of 3 | round 2: every budget met in all three (fan-out p95 15.4, 13.7 and 14.8 ms; trades tick-to-decode p95 37, 34 and 33 ms); run 3 INVALID on the clock-skew guard then in force (18.0 ms by the max-over-hellos estimator); not a baseline, and not the code of round 3                                                                      |
+| C       | 39900923629 | `c5e5aa3d4ff2` | 05:08, 05:44, 06:19          | 3 of 3 | round 3: budgets missed (fan-out p95, tick-to-pixel p95); bench quiet, host not quiet: not attributable to the code                                                                                                                                                                                                                       |
+| W5      | 39912100280 | `31dde330f071` | 07:46 (10 phases)            | n/a    | round 3: `no_data` on the rule then in force; re-judged offline above                                                                                                                                                                                                                                                                     |
+| A       | 39950162313 | `d0d43743b2c7` | 13:06, 14:11, 15:17          | 3 of 3 | round 3: budgets missed in all three runs (above), under contention                                                                                                                                                                                                                                                                       |
+| C       | 39981663972 | `13c5a83ca630` | 16:26, 17:01, 17:36          | 3 of 3 | quiet window: budgets missed in all three runs (fan-out p95, tick-to-pixel p95); bench quiet, host not quiet: not attributable to the code (see the caveat under the budget table)                                                                                                                                                        |
+| W5      | 39997358579 | `4cc2f502f954` | 18:57 (10 phases)            | n/a    | quiet window: `no_data` (one phase left out by the clock-skew check); same answer with that check waived offline                                                                                                                                                                                                                          |
+| A       | 40007981025 | `1b69803c3d3e` | 20:06                        | 1 of 1 | quiet window, host quiet: PASS, every budget met; the run behind the baseline                                                                                                                                                                                                                                                             |
+
+An earlier A dispatch of round 3 (run 39928968295) was cancelled at 11:25 UTC by a service restart on the bench
+runner and left no artefact. The quiet window's first A dispatch (run 40007634911, three runs) was cancelled at once
+and re-dispatched with one run. An earlier round's A run (39666312188) was INVALID in all three runs on the
+clock-skew guard, which a later change corrected; it is not a reading. The `variance.other_cores` field reads 5.5,
+5.9 and 5.7 for round 3's A runs, 6.2, 6.2 and 5.9 for round 3's C, 5.7, 5.7 and 6.1 for the quiet-window C, 5.9, 5.9 and 6.0
+for round 2's A runs and 3.0 for the quiet A run. No CPU quota was applied (`cgroup` `none`; the backend was held by cpuset 0-3
+only), so there is no quota counter to read: the host was shared and the harness cannot see by whom. Since round 2's A runs
+read about 6.0 and passed, the field does not by itself separate a passing run from a missing one.
+
+**Baseline.** `runner record` wrote `services/api/bench/baselines/e17/A.json` from the quiet A run (40007981025):
+`harness_version` `e17-q03/1`, `gate` `warn-only`, `run_profile` `full` (steady 3600 s), loop `asyncio`, `main` at
+`1b69803c3d3e`. It is a first reading, not a gate: promoting it to `gated` needs a second same-profile run
+(06 7.4) in its own reviewed change. B and C have no PASS run, so they have no baseline.
 
 ## Harness validation runs (not budget results)
 
