@@ -12,7 +12,7 @@ from candleviewer.recorder.models import SYSTEM_ACTOR
 from candleviewer.recorder.policy import PolicyConfig, RecordingPolicy, user_actor
 from candleviewer.statechart import build
 from candleviewer.statechart.factory import default_clock
-from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock
+from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, Mem
 
 OWNER = user_actor("owner-1")
 
@@ -27,17 +27,22 @@ async def _stop_cycle(p: RecordingPolicy, clock: FakeClock) -> None:
 async def test_two_policies_audit_to_their_own_sink_and_env(clock: FakeClock) -> None:
     live_audit, demo_audit = FakeAudit(), FakeAudit()
     live = RecordingPolicy(
-        disk_refuses=bool, bus=FakeBus(), audit=live_audit, env="live", now=clock
+        disk_refuses=bool, bus=FakeBus(), audit=live_audit, env="live", now=clock, recorded=Mem()
     )
     live.positions_reloaded()
     demo = RecordingPolicy(
-        disk_refuses=bool, bus=FakeBus(), audit=demo_audit, env="demo", now=clock
+        disk_refuses=bool, bus=FakeBus(), audit=demo_audit, env="demo", now=clock, recorded=Mem()
     )
     try:
         await live.on_position_opened("BTCUSDT", "p1")
         await demo.stop()  # stopping one policy must not detach the other's hook
         demo = RecordingPolicy(
-            disk_refuses=bool, bus=FakeBus(), audit=demo_audit, env="demo", now=clock
+            disk_refuses=bool,
+            bus=FakeBus(),
+            audit=demo_audit,
+            env="demo",
+            now=clock,
+            recorded=Mem(),
         )
         demo.positions_reloaded()
         await _stop_cycle(demo, clock)
@@ -111,7 +116,9 @@ async def test_trigger_refs_kept_per_reason(
 
 
 async def test_chart_flood_cannot_starve_position(clock: FakeClock) -> None:
-    p = RecordingPolicy(disk_refuses=bool, bus=FakeBus(), audit=FakeAudit(), env="demo", now=clock)
+    p = RecordingPolicy(
+        disk_refuses=bool, bus=FakeBus(), audit=FakeAudit(), env="demo", now=clock, recorded=Mem()
+    )
     p.positions_reloaded()
     try:
         for i in range(1_024):
@@ -127,7 +134,13 @@ async def test_chart_flood_cannot_starve_position(clock: FakeClock) -> None:
 async def test_refused_manual_add_leaves_no_residue(clock: FakeClock) -> None:
     cfg = PolicyConfig(max_symbols=1)
     p = RecordingPolicy(
-        disk_refuses=bool, bus=FakeBus(), audit=FakeAudit(), env="demo", now=clock, config=cfg
+        disk_refuses=bool,
+        bus=FakeBus(),
+        audit=FakeAudit(),
+        env="demo",
+        now=clock,
+        config=cfg,
+        recorded=Mem(),
     )
     p.positions_reloaded()
     try:

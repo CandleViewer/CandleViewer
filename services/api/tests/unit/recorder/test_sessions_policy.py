@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 from candleviewer.recorder.policy import RecordingPolicy
 from candleviewer.recorder.sessions import SessionManager, startup_reconcile, to_dt, to_us
-from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock
+from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, Mem
 from tests.unit.recorder._session_fakes import MemRecorderStore, UsClock
 
 T0 = to_us(datetime(2026, 9, 14, tzinfo=UTC))
@@ -24,7 +24,9 @@ async def test_crash_recovery_then_warmup_gate_opens_and_only_then_stops(
                                       started_at=to_dt(T0))  # fmt: skip
     await store.touch_session_events(sid, first=to_dt(T0), last=to_dt(T0 + 5_000_000))
     del dead  # process killed
-    p = RecordingPolicy(disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock)
+    p = RecordingPolicy(
+        disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock, recorded=Mem()
+    )
     try:
         await p.on_position_opened("ETHUSDT", "p1")
         await p.on_position_closed("ETHUSDT", "p1")
@@ -58,7 +60,9 @@ async def test_policy_forwards_b11_state_entries_to_the_session_mirror(
 ) -> None:
     store = MemRecorderStore()
     mgr = SessionManager(store, now_us=UsClock(T0), audit=audit)
-    p = RecordingPolicy(disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock)
+    p = RecordingPolicy(
+        disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock, recorded=Mem()
+    )
     p.positions_reloaded()
     p.observe_states(mgr.on_b11_state)
     try:
@@ -81,7 +85,9 @@ async def test_mirror_failure_never_fails_the_chart(
     async def broken(symbol: str, hook: str, ctx: object) -> None:
         raise OSError("pg down")
 
-    p = RecordingPolicy(disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock)
+    p = RecordingPolicy(
+        disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock, recorded=Mem()
+    )
     p.positions_reloaded()
     p.observe_states(broken)  # type: ignore[arg-type]
     try:

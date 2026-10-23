@@ -468,6 +468,12 @@ async def test_set_pinned_toggles_by_id_and_bumps_updated_at(repo: Repo, conn: C
     assert _state(conn, rid)["pinned"] is False
 
 
+async def test_set_pinned_to_the_value_the_row_holds_returns_true(repo: Repo) -> None:
+    rid = await _manual(repo)
+    assert await repo.set_pinned(rid, False) is True  # already unpinned
+    assert await repo.set_pinned(rid, True) and await repo.set_pinned(rid, True) is True
+
+
 async def test_set_pinned_with_a_missing_id_returns_false(repo: Repo) -> None:
     assert await repo.set_pinned(str(uuid.uuid4()), True) is False
 

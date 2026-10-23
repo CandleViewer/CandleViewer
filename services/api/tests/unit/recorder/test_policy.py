@@ -6,7 +6,7 @@ import pytest
 
 from candleviewer.recorder.errors import InvalidRecordedSymbolError, RecorderSymbolLimitError
 from candleviewer.recorder.policy import PolicyConfig, RecordingPolicy, user_actor
-from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock
+from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, Mem
 
 OWNER = user_actor("owner-1")
 
@@ -161,7 +161,9 @@ async def test_policy_autorecord_disabled_gates_chart_only(
     clock: FakeClock, bus: FakeBus, audit: FakeAudit
 ) -> None:
     cfg = PolicyConfig(autorecord_enabled=False)
-    p = RecordingPolicy(disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock, config=cfg)
+    p = RecordingPolicy(
+        disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock, config=cfg, recorded=Mem()
+    )
     p.positions_reloaded()
     try:
         await p.on_chart_opened("SOLUSDT", "c1")
@@ -182,6 +184,7 @@ async def test_policy_capacity_guard(clock: FakeClock, bus: FakeBus, audit: Fake
         env="demo",
         now=clock,
         config=PolicyConfig(max_symbols=1),
+        recorded=Mem(),
     )
     p.positions_reloaded()
     try:

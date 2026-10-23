@@ -6,8 +6,8 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from candleviewer.recorder.policy import PolicyConfig, RecordingPolicy
-from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock
+from candleviewer.recorder.policy import RecordingPolicy
+from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, MemRecordedStore
 
 
 @pytest.fixture
@@ -21,16 +21,27 @@ def bus() -> FakeBus:
 
 
 @pytest.fixture
-def audit() -> FakeAudit:
-    return FakeAudit()
+def trace() -> list[str]:
+    """The order of the store's calls and the audit's emits."""
+    return []
+
+
+@pytest.fixture
+def audit(trace: list[str]) -> FakeAudit:
+    return FakeAudit(trace)
+
+
+@pytest.fixture
+def store(trace: list[str]) -> MemRecordedStore:
+    return MemRecordedStore(trace)
 
 
 @pytest.fixture
 async def policy(
-    clock: FakeClock, bus: FakeBus, audit: FakeAudit
+    clock: FakeClock, bus: FakeBus, audit: FakeAudit, store: MemRecordedStore
 ) -> AsyncIterator[RecordingPolicy]:
     p = RecordingPolicy(
-        disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock, config=PolicyConfig()
+        disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock, recorded=store
     )
     p.positions_reloaded()
     yield p

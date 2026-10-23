@@ -37,7 +37,7 @@ from tests.unit.recorder._budget_fakes import (
     FakeSeriesStore,
     make_budget,
 )
-from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock
+from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, Mem
 from tests.unit.recorder._session_fakes import UsClock
 from tests.unit.recorder._writer_helpers import (
     T0,
@@ -185,6 +185,7 @@ async def test_disk_pressure_refuses_new_chart_recording_only(
         now=clock,
         config=PolicyConfig(),
         disk_refuses=lambda: pressure[0],
+        recorded=Mem(),
     )
     p.positions_reloaded()
     try:
@@ -209,7 +210,9 @@ async def test_disk_pressure_refuses_new_chart_recording_only(
 async def test_position_open_assumes_open_until_positions_reload(
     bus: FakeBus, audit: FakeAudit
 ) -> None:
-    p = RecordingPolicy(disk_refuses=bool, bus=bus, audit=audit, env="demo", now=FakeClock())
+    p = RecordingPolicy(
+        disk_refuses=bool, bus=bus, audit=audit, env="demo", now=FakeClock(), recorded=Mem()
+    )
     try:
         assert p.position_open("BTCUSDT")  # warm-up: the position cache is not authoritative
         p.positions_reloaded()

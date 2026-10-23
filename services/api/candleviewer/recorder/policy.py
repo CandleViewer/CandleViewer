@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Protocol
 
@@ -126,6 +126,28 @@ class AuditSink(Protocol):
     ) -> None: ...
 
 
+#: What `clear_manual` did to the active manual row (restates M10's `ManualCleared`: M11 may not
+#: import the SQLAlchemy module that defines it, ADR-0003).
+ManualCleared = Literal["demoted", "removed", "absent"]
+
+
+class RecordedStore(Protocol):
+    """The `recorded_symbols` writes the policy needs. `SqlAlchemyRecorderRepository` (M10)
+    conforms and is injected, so M11 imports no storage driver. `env` is never defaulted: a
+    default would let a demo process write the `live` row (#2726)."""
+
+    async def get_by_symbol(self, symbol: str, env: str) -> dict[str, Any] | None: ...
+    async def upsert_auto(self, symbol: str, reason: str, ref: dict[str, str], env: str) -> str: ...
+    async def add_reason_ref(self, recorded_id: str, ref: dict[str, str]) -> bool: ...
+    async def remove_reason_ref(self, recorded_id: str, ref: dict[str, str]) -> bool: ...
+    async def soft_remove(self, recorded_id: str) -> bool: ...
+    async def upsert_manual(
+        self, symbol: str, added_by: str | None, streams: Sequence[str], depth: int | None, env: str
+    ) -> dict[str, Any]: ...
+    async def clear_manual(self, symbol: str, env: str) -> ManualCleared: ...
+    async def set_pinned(self, recorded_id: str, pinned: bool) -> bool: ...
+
+
 #: (symbol, B11 hook name, chart context) -> None; see `RecordingPolicy.observe_states`.
 StateObserver = Callable[[str, str, Mapping[str, object]], Awaitable[None]]
 
@@ -207,9 +229,11 @@ class RecordingPolicy:
         env: str,
         now: Callable[[], float],
         disk_refuses: Callable[[], bool],
+        recorded: RecordedStore,
         config: PolicyConfig | None = None,
     ) -> None:
         self._bus, self._audit, self._env, self._now = bus, audit, env, now
+        self._recorded = recorded
         #: E16-T07 `DiskBudget.refuses_auto_record`: a plain bool, read on each new start.
         self._disk_refuses = disk_refuses
         self._cfg = config or PolicyConfig()
