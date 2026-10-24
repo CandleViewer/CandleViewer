@@ -6,24 +6,27 @@ the rules module (`evaluator/engine.py`, `runner.py`, `manager.py`, `validator.p
 `api/rules_crud.py`, `api/rules.py`), `keymap.json`, `21`, `22`, `24`, the E35-D01 memo, the merged
 E35-D02 / E36-D03 specs and this ticket's spec AS TEXT and prints, with a source label on every row:
 (1) the WCAG 2.x ratio of every fg / bg pair the four screens render in dark / light / high-contrast
-(`themes.json` layering) against the role's bar — `rejected-*`, `decorative` and `composite` rows
-are reported, never gated; (2) every token the spec and the handoff bind, resolved or MISSING; (3)
-which pairs `pairs.mjs` registers and which are PROPOSED; (4) the shipped facts the boards and the
-section 6 mapping quote, parsed from file text — every shipped `skipped_reason` literal must have a
-section 6 row; (5) the copy gates — the memo's CA rows byte-for-byte by status, CA-27 and CA-29
-verbatim, the #4118 string, no banned UI word, no private path or host (generic patterns), dangling
-`C-x.y` / `CMP-nnn` / `SCR-nnn` ids, every section 6 sentence at most 80 characters and free of
-exception text, the stop pair tighten-only (the drawn F18 row applies the tighter of the two moves,
-SC-10's clause; an F18 sentence that no longer parses FAILs), BQ-8's no-loosen statement and
-BQ-17's LIVE step-up sentence present in sections 2, 3 and 11, every `24` section 8.6 code (the
-retCode table and `OmsErrorCode`) mapped, the resolver never arming, and the cite check — a cited
-`file:line` whose quoted fragment moved WARNs with the current line and FAILs only when the
-fragment is gone; (6) the counts. `--check` re-derives every `<!-- audit:NAME=VALUE -->` marker in
-the spec. `--selftest` holds mutated copies of the spec in memory (a section 6 row dropped, a CA
-quote altered, the looser stop applied, the no-loosen statement loosened, the LIVE step-up sentence
-dropped, a section 8.6 code unmapped, the memo's F18 example unparsable, a cite's line number moved,
-a cite's fragment removed or made ambiguous): the spec must pass, the moved cite must WARN and
-every other mutation must FAIL.
+(`themes.json` layering) against the role's bar — the pairs are parsed from the spec's section 13
+table (no copy is held here) and every row's three ratio cells, verdict and `pairs.mjs` column must
+equal the values re-derived from the token JSON and `pairs.mjs`; `rejected-*`, `decorative` and
+`composite` rows are reported, never gated; (2) every token the spec and the handoff bind, resolved
+or MISSING; (3) which pairs `pairs.mjs` registers and which are PROPOSED; (4) the shipped facts the
+boards and the section 6 mapping quote, parsed from file text — every shipped `skipped_reason`
+literal must have a section 6 row; (5) the copy gates — the memo's CA rows byte-for-byte by status,
+CA-27 and CA-29 verbatim, the #4118 string, no banned UI word, no private path or host (generic
+patterns), dangling `C-x.y` / `CMP-nnn` / `SCR-nnn` ids, every section 6 sentence at most 80
+characters and free of exception text, the stop pair tighten-only (the drawn F18 row applies the
+tighter of the two moves, SC-10's clause; an F18 sentence that no longer parses FAILs), BQ-8's
+no-loosen statement and BQ-17's LIVE step-up sentence present in sections 2, 3 and 11, every `24`
+section 8.6 code (the retCode table and `OmsErrorCode`) mapped, the resolver never arming, and the
+cite check — a cited `file:line` whose quoted fragment moved WARNs with the current line and FAILs
+only when the fragment is gone; (6) the counts. `--check` re-derives every
+`<!-- audit:NAME=VALUE -->` marker in the spec. `--selftest` holds mutated copies of the spec in
+memory (a section 6 row dropped, a CA quote altered, a section 13 ratio cell or token changed, the
+looser stop applied, the no-loosen statement loosened, the LIVE step-up sentence dropped, a section
+8.6 code unmapped, the memo's F18 example unparsable, a cite's line number moved, a cite's fragment
+removed or made ambiguous): the spec must pass, the moved cite must WARN and every other mutation
+must FAIL.
 
 Usage: python3 -I docs/design/_tools/e35_d03_diagnostics_audit.py [--json] [--check] [--selftest]
 """
@@ -56,6 +59,8 @@ THEMES: dict[str, tuple[str, ...]] = {
     "high-contrast": (PRIM, DARK, HC),
 }
 BAR: dict[str, float | None] = {"text": 4.5, "non-text": 3.0, "hc-text": 7.0}
+# (themes, the pairs `pairs.mjs` registers): what section 13's cells are re-derived from
+Measure = tuple[dict[str, dict[str, object]], set[tuple[str, str]]]
 MULTI = re.MULTILINE
 CA_VERBATIM = ("CA-27", "CA-29")  # the sentences the spec quotes byte-for-byte (BQ-7, BQ-17)
 NEW_STRING = "Turns itself off after 5 errors in a row — you re-arm it."
@@ -92,52 +97,13 @@ CITE = re.compile(r"`([A-Z]\d{2}-D\d{2})\.md:(\d+)` \"([^\"]+)\"")
 CA_ROW = re.compile(r'^\| (CA-\d+b?)(?: \([^)]*\))? +\| [^|]+\| "(.*?)" +\| ([a-z-]+)', MULTI)
 MAP_ROW = re.compile(r'^\| `([^`]+)` +\| ([a-z_-]+) +\| [^|]+\| "([^"]*)"', MULTI)
 MARKER = re.compile(r"<!-- audit:([A-Za-z0-9_.\-]+)=([^ >]+) -->")
-# element | fg | bg | role — every pair the four screens draw (spec section 13, rows in order).
-PAIRS_TABLE = """
-SCR-086 title, table text, option labels | color.text.primary | color.surface.overlay | text
-consequence sentences, the validity reason | color.text.secondary | color.surface.overlay | text
-T2 label + lock (Set priority, Disarm one) | color.text.tertiary | color.surface.raised | text
-T2 reason sentence | color.text.secondary | color.surface.raised | text
-the conflict row (amber) | color.text.primary | color.status.warning.subtle | text
-the conflict row glyph | color.status.warning.strong | color.status.warning.subtle | non-text
-the risk band text | color.text.primary | color.surface.sunken | text
-the risk band glyph | color.status.info.strong | color.surface.sunken | non-text
-selected radio ring, checked box | color.action.primary.default | color.surface.overlay | non-text
-Apply, Import (primary) | color.text.on-action | color.action.primary.default | text
-the refusal line (T4), the failed check | color.text.primary | color.status.danger.subtle | text
-the refusal glyph | color.status.danger.strong | color.status.danger.subtle | non-text
-focus ring on the dialog | color.focus.ring | color.surface.overlay | non-text
-SCR-087 odd rows on the canvas | color.text.primary | color.surface.canvas | text
-SCR-087 captions, the meta line | color.text.secondary | color.surface.canvas | text
-even rows, the expanded row, the nested table | color.text.primary | color.surface.raised | text
-second lines on raised, the snapshot note | color.text.secondary | color.surface.raised | text
-a hovered row | color.text.primary | color.surface.hover | text
-a selected row | color.text.primary | color.surface.selected | text
-a selected row's second line | color.text.secondary | color.surface.selected | text
-the failed row, the CMP-234 entries | color.text.primary | color.status.danger.subtle | text
-the Done glyph on raised | color.status.success.strong | color.surface.raised | non-text
-the Done glyph on the canvas | color.status.success.strong | color.surface.canvas | non-text
-the Failed glyph on raised | color.status.danger.strong | color.surface.raised | non-text
-the Failed glyph on the canvas | color.status.danger.strong | color.surface.canvas | non-text
-the Skipped dash, the checkbox border | color.text.tertiary | color.surface.raised | non-text
-DEMO glyph | color.env.demo | color.surface.raised | non-text
-LIVE glyph | color.env.live | color.surface.raised | non-text
-the environment word (7:1, memo 9d A7) | color.text.primary | color.surface.raised | hc-text
-the engine-restart marker | color.text.secondary | color.surface.sunken | text
-the new-firings pill, the verification strip | color.text.primary | color.status.info.subtle | text
-the pill glyph | color.status.info.strong | color.status.info.subtle | non-text
-the strip's check glyph | color.status.success.strong | color.status.info.subtle | non-text
-the pre text (SCR-088) | color.text.primary | color.surface.sunken | text
-the masked account token | color.text.secondary | color.surface.sunken | text
-the Order / Audit / Replay links | color.text.link | color.surface.canvas | text
-the links on a failed row | color.text.link | color.status.danger.subtle | text
-the LIVE glyph on a failed row | color.env.live | color.status.danger.subtle | non-text
-focus ring on the canvas | color.focus.ring | color.surface.canvas | non-text
-focus ring on raised | color.focus.ring | color.surface.raised | non-text
-tertiary on a selected row (never) | color.text.tertiary | color.surface.selected | rejected-text
-E09-D09 T2 keeps text.tertiary (never) | color.text.disabled | color.surface.raised | rejected-text
-the row hairline | color.border.default | color.surface.raised | decorative
-"""
+# a section 13 row: # | `fg` on `bg` | role | dark | light | hc | verdict | pairs.mjs | where
+PAIR_ROW = re.compile(
+    r"^\| (\d+) +\| `([a-z0-9.-]+)` on `([a-z0-9.-]+)` +\| ([a-z-]+) +\| ([\d.]+) +\| ([\d.]+) +"
+    r"\| ([\d.]+) +\| ([^|]+?) +\| (registered|PROPOSED) +\| ([^|]+?) +\|$",
+    MULTI,
+)
+CELL_TOLERANCE = 0.0051  # a two-decimal cell may differ from the exact ratio by half a unit
 BINDINGS = (
     "color.surface.app", "color.surface.canvas", "color.surface.raised", "color.surface.overlay",
     "color.surface.hover", "color.surface.selected", "color.surface.sunken", "color.text.primary",
@@ -177,6 +143,16 @@ FRAME_SECTIONS = (
 MUTATIONS: dict[str, tuple[str, str, str]] = {
     "a section 6 row dropped": ("| `stale_data`", "| `stale_datum`", "FAIL"),
     "a CA quote altered": ("controls always go first.", "controls usually go first.", "FAIL"),
+    "a section 13 ratio cell altered": (
+        "| 5.59  | 5.50  | 5.59  |",
+        "| 9.99  | 5.50  | 5.59  |",
+        "FAIL",
+    ),
+    "a section 13 token swapped": (
+        "`color.env.live` on `color.status.danger.subtle`",
+        "`color.env.live` on `color.surface.raised`",
+        "FAIL",
+    ),
     "the looser stop applied": (
         "stop 61,400.0 → 62,300.0 · ✓",
         "stop 61,400.0 → 62,000.2 · ✓",
@@ -198,10 +174,6 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "a cite's fragment gone": ("CITE-FRAG", "", "FAIL"),
     "a cite's fragment ambiguous": ("CITE-AMBIG", "", "FAIL"),
 }
-
-
-def rows(table: str) -> list[list[str]]:
-    return [[c.strip() for c in ln.split(" | ")] for ln in table.strip("\n").splitlines() if ln]
 
 
 def read(p: Path) -> str:
@@ -409,10 +381,14 @@ def ids_resolve(name: str, t: str) -> list[str]:
 
 
 def gates(
-    spec: str, hand: str, memo: dict[str, tuple[str, list[str]]], facts: dict[str, Any]
+    spec: str,
+    hand: str,
+    memo: dict[str, tuple[str, list[str]]],
+    facts: dict[str, Any],
+    measure: Measure,
 ) -> tuple[list[str], list[str]]:
     """The copy gates over the spec and the handoff; returns (failures, cite warnings)."""
-    bad: list[str] = []
+    bad: list[str] = matrix_cells(spec, *measure)
     sec = spec_sections(spec)
     deck, s6 = sec.get("11", ""), sec.get("6", "")
     if NEW_STRING not in deck:
@@ -493,43 +469,85 @@ def mutate(spec: str, old: str, new: str) -> str:
 
 
 def selftest(
-    spec: str, hand: str, memo: dict[str, tuple[str, list[str]]], facts: dict[str, Any]
+    spec: str,
+    hand: str,
+    memo: dict[str, tuple[str, list[str]]],
+    facts: dict[str, Any],
+    measure: Measure,
 ) -> tuple[bool, list[str]]:
-    bad, warns = gates(spec, hand, memo, facts)
+    bad, warns = gates(spec, hand, memo, facts, measure)
     out, ok = [f"spec: {'pass' if not bad else 'FAIL ' + str(bad)}"], not bad
     for name, (old, new, want) in MUTATIONS.items():
         if old == "F18-GONE":  # the memo's sentence stops parsing: the gate must not fail open
-            b2, w2 = gates(spec, hand, memo, {**facts, "f18": {}})
+            b2, w2 = gates(spec, hand, memo, {**facts, "f18": {}}, measure)
         else:
             mutated = mutate(spec, old, new)
-            b2, w2 = gates(mutated, hand, memo, facts) if mutated != spec else (bad, warns)
+            b2, w2 = gates(mutated, hand, memo, facts, measure) if mutated != spec else (bad, warns)
         got = "FAIL" if len(b2) > len(bad) else "WARN" if len(w2) > len(warns) else "pass"
         ok = ok and got == want
         out.append(f"mutation {name}: {got} (expected {want})")
     return ok, out
 
 
+def measured(
+    themes: dict[str, dict[str, object]],
+    registered: set[tuple[str, str]],
+    fg: str,
+    bg: str,
+    role: str,
+) -> tuple[dict[str, float], str, str]:
+    """The ratios per theme, the verdict against the role's bar and the `pairs.mjs` column."""
+    ratios = {th: contrast(resolve(t, fg), resolve(t, bg)) for th, t in themes.items()}
+    bar = BAR.get(role)
+    if bar is None:
+        verdict = "reported, not gated" if role == "decorative" else "rejected, never drawn"
+    else:
+        verdict = "PASS" if all(r >= bar for r in ratios.values()) else "FAIL"
+    return ratios, verdict, "registered" if (fg, bg) in registered else "PROPOSED"
+
+
+def matrix_cells(
+    spec: str, themes: dict[str, dict[str, object]], registered: set[tuple[str, str]]
+) -> list[str]:
+    """Section 13's cells re-derived: every ratio, verdict and `pairs.mjs` column, rows in order."""
+    if not spec:
+        return []
+    found = PAIR_ROW.findall(spec_sections(spec).get("13", ""))
+    bad = [] if found else ["section 13 has no parsable matrix row"]
+    for i, (num, fg, bg, role, *cells, verdict, reg, _where) in enumerate(found, 1):
+        if int(num) != i:
+            bad.append(f"section 13 row {num}: out of order (expected {i})")
+        if role not in BAR and role not in ("decorative", "rejected-text"):
+            bad.append(f"section 13 row {num}: unknown role {role}")
+            continue
+        ratios, want, want_reg = measured(themes, registered, fg, bg, role)
+        for th, cell in zip(ratios, cells, strict=True):
+            if abs(float(cell) - ratios[th]) > CELL_TOLERANCE:
+                bad.append(f"section 13 row {num} {th}: {cell} vs measured {ratios[th]:.2f}")
+        if verdict != want:
+            bad.append(f"section 13 row {num}: verdict {verdict} vs {want}")
+        if reg != want_reg:
+            bad.append(f"section 13 row {num}: pairs.mjs {reg} vs {want_reg}")
+    return bad
+
+
 def matrix_rows(
-    themes: dict[str, dict[str, object]], registered: set[tuple[str, str]]
+    themes: dict[str, dict[str, object]], registered: set[tuple[str, str]], spec: str
 ) -> tuple[list[dict[str, object]], list[str], dict[str, int]]:
     matrix: list[dict[str, object]] = []
     out: list[str] = []
     n = {"gated": 0, "proposed": 0, "fails": 0}
-    for element, fg, bg, role in rows(PAIRS_TABLE):
-        ratios = {th: contrast(resolve(t, fg), resolve(t, bg)) for th, t in themes.items()}
-        bar = BAR.get(role)
-        if bar is None:
-            verdict = "reported, not gated" if role == "decorative" else "rejected, never drawn"
-        else:
+    for row in PAIR_ROW.findall(spec_sections(spec).get("13", "")):
+        fg, bg, role, element = row[1], row[2], row[3], row[9]
+        ratios, verdict, reg = measured(themes, registered, fg, bg, role)
+        if BAR.get(role) is not None:
             n["gated"] += 1
-            verdict = "PASS" if all(r >= bar for r in ratios.values()) else "FAIL"
             n["fails"] += verdict == "FAIL"
-            n["proposed"] += (fg, bg) not in registered
-        reg = "registered" if (fg, bg) in registered else "PROPOSED"
-        row: dict[str, object] = {"fg": fg, "bg": bg, "role": role, "verdict": verdict}
-        row.update({"pairs": reg, "where": element})
-        row.update({k: round(v, 2) for k, v in ratios.items()})
-        matrix.append(row)
+            n["proposed"] += reg == "PROPOSED"
+        entry: dict[str, object] = {"fg": fg, "bg": bg, "role": role, "verdict": verdict}
+        entry.update({"pairs": reg, "where": element})
+        entry.update({k: round(v, 2) for k, v in ratios.items()})
+        matrix.append(entry)
         shown = " / ".join(show(r) for r in ratios.values())
         out.append(f"{fg} on {bg} | {role} | {shown} | {verdict} | {reg} | {element}")
     return matrix, out, n
@@ -617,14 +635,15 @@ def main(argv: list[str]) -> int:
     facts, memo = shipped(), memo_copy()
     spec = read(SPEC) if SPEC.exists() else ""
     hand = read(HANDOFF) if HANDOFF.exists() else ""
+    pairs_src = read(ROOT / "tools" / "contrast" / "pairs.mjs")
+    registered = set(re.findall(r'fg:\s*"([^"]+)",\s*bg:\s*"([^"]+)"', pairs_src))
+    measure: Measure = (themes, registered)
     if "--selftest" in argv:
-        passed, lines = selftest(spec, hand, memo, facts)
+        passed, lines = selftest(spec, hand, memo, facts, measure)
         print("\n".join(lines))
         print(f"--selftest: {'ok' if passed else 'FAIL'} — {len(MUTATIONS)} mutations in memory")
         return 0 if passed else 1
-    pairs_src = read(ROOT / "tools" / "contrast" / "pairs.mjs")
-    registered = set(re.findall(r'fg:\s*"([^"]+)",\s*bg:\s*"([^"]+)"', pairs_src))
-    matrix, out, n = matrix_rows(themes, registered)
+    matrix, out, n = matrix_rows(themes, registered, spec)
     out.insert(0, "## 1. Measured matrix (fg on bg | role | dark / light / hc | verdict | pairs)")
     alpha = float(resolve(themes["dark"], "opacity.disabled"))
     comp: dict[str, float] = {}
@@ -659,13 +678,13 @@ def main(argv: list[str]) -> int:
     out.append("\n## 4. Shipped facts (parsed from text)")
     out += facts_lines(facts)
     out.append("\n## 5. Copy gates")
-    bad, warns = gates(spec, hand, memo, facts) if spec else (["spec missing"], [])
+    bad, warns = gates(spec, hand, memo, facts, measure) if spec else (["spec missing"], [])
     out += [f"WARN {w}" for w in warns]
     out.append(
-        "OK — CA-27 / CA-29 verbatim, memo rows byte-equal by status, the #4118 string, every "
-        "shipped code mapped, no sentence over 80 or with exception text, no banned UI word, no "
-        "private path, ids resolve, cites found, the stop pair tighten-only, BQ-8 / BQ-17 "
-        "sentences present, every 24 §8.6 code mapped, no arm here"
+        "OK — section 13's cells re-derived, CA-27 / CA-29 verbatim, memo rows byte-equal by "
+        "status, the #4118 string, every shipped code mapped, no sentence over 80 or with "
+        "exception text, no banned UI word, no private path, ids resolve, cites found, the stop "
+        "pair tighten-only, BQ-8 / BQ-17 sentences present, every 24 §8.6 code mapped, no arm here"
         if not bad
         else "\n".join("FAIL " + b for b in bad)
     )
