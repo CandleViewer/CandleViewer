@@ -71,15 +71,18 @@ def _own_rows(conn: psycopg.Connection[Any]) -> tuple[int, int]:
     return (0, 0) if row is None else (int(row[0]), int(row[1]))
 
 
-def _require_chain_trigger(conn: psycopg.Connection[Any]) -> None:
+def _require_chain_trigger(conn: psycopg.Connection[Any], *, rolled_back: bool = False) -> None:
     """`FixtureCheckError` unless the chain trigger is enabled (`tgenabled = 'O'`): one found off
-    is reported, never repaired here."""
+    is reported, never repaired here. `rolled_back`: the read follows the bulk load's own ENABLE,
+    inside its transaction, which this error rolls back, restoring the trigger as it was."""
     guard = conn.execute(_GUARD).fetchone()
     if guard is None or guard[0] != "O":
-        raise FixtureCheckError(
-            "trg_audit_chain is not enabled on audit_log; "
-            "enable it with: ALTER TABLE audit_log ENABLE TRIGGER trg_audit_chain"
+        recovery = (
+            "the load rolled back with its rows, so the trigger is as it was before it"
+            if rolled_back
+            else "enable it with: ALTER TABLE audit_log ENABLE TRIGGER trg_audit_chain"
         )
+        raise FixtureCheckError(f"trg_audit_chain is not enabled on audit_log; {recovery}")
 
 
 def _require_mode(present: int, genesis: int, chained: bool) -> None:
@@ -123,6 +126,7 @@ def load_audit_10m(
             _require_mode(present, genesis, chained)
             return rows
         if present:
+            _require_chain_trigger(conn)  # a partial set is reported with the trigger's state first
             raise FixtureCheckError(
                 f"AUDIT-10M: {present} of its {rows} rows are present; audit rows can never be "
                 "removed (C-5.7), so load it into a fresh test database"
@@ -137,7 +141,7 @@ def load_audit_10m(
                 conn.execute(_DISABLE)
                 _run(conn, seed, sql)
                 conn.execute(_ENABLE)
-                _require_chain_trigger(conn)  # read after ENABLE, before the commit
+                _require_chain_trigger(conn, rolled_back=True)  # after ENABLE, before the commit
         conn.execute("ANALYZE audit_log")
         count, _ = _own_rows(conn)
     if count != rows:

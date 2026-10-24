@@ -359,21 +359,25 @@ load_audit_10m(psycopg_dsn)  # about 30 to 45 minutes through the chain trigger
   pushes the altered entry out of an unbounded verify's window, and a bulk-loaded database must not also
   host AUDIT-CORRUPT: its verify reports the first bulk row, not the victim.
 - **Locks:** a chained batch holds the chain's advisory lock while it inserts its 250,000 rows (about a
-  minute), so no other audit writer runs during a load. The bulk load holds `audit_log`'s table lock for
-  the whole load. Both are for test databases only. The loader takes a session advisory lock on its own
-  connection, so two loaders never both load: the second waits, then finds the rows.
+  minute), so no other audit writer runs during a batch; each batch commits on its own, so another
+  writer can run between two. The bulk load holds `audit_log`'s table lock for the whole load. Both are
+  for test databases only. The loader takes a session advisory lock on its own connection, so two
+  loaders never both load: the second waits, then finds the rows.
 - **The bulk load is one transaction:** it reads the trigger's state, runs `DISABLE TRIGGER`, the inserts
   and `ENABLE TRIGGER`, reads the state again, and only then commits. An error, a cancellation or a
   killed loader rolls the trigger state back with the rows, and a trigger found off before the load or
   after it is a `FixtureCheckError` that commits nothing. `DISABLE TRIGGER` needs the table's owner (the
   role that ran the migrations: the test container's user), not a superuser. Every run, the second
   included, ends with `trg_audit_chain` enabled or a `FixtureCheckError`; a trigger found off is not
-  repaired, so enable it with `ALTER TABLE audit_log ENABLE TRIGGER trg_audit_chain`.
+  repaired, so enable it with `ALTER TABLE audit_log ENABLE TRIGGER trg_audit_chain`. The one
+  exception is a bulk load that finds it off after its own `ENABLE`: the rollback has restored it, and
+  the message says so, with no recovery line.
 - **Idempotent:** a second run in the same mode finds the dataset's rows and loads nothing. A call in the
   other mode is refused with `FixtureCheckError` naming both modes: a bulk set holds the genesis
-  `prev_hash` on every row, a chained set on at most its first. A partly loaded dataset is refused too:
-  audit rows can never be removed (C-5.7), so load into a fresh test database. The dataset's rows are
-  those labelled `user_00` to `user_49`: no other seed may use that label shape.
+  `prev_hash` on every row, a chained set on at most its first. A partly loaded dataset is refused too,
+  once its trigger is read (one found off is reported first): audit rows can never be removed (C-5.7),
+  so load into a fresh test database. The dataset's rows are those labelled `user_00` to `user_49`: no
+  other seed may use that label shape.
 - **Test databases only:** a database not named for tests is refused with `FixtureRefused` before any
   read. No test loads 10 M rows: `tests/unit/test_admin_audit_10m_fixture.py` checks the batches, the SQL
   and the guards over a fake, and `tests/integration/admin/test_admin_audit_10m_pg.py` loads 600 rows in

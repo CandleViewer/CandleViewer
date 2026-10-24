@@ -16,6 +16,7 @@ import pytest
 
 from bench.audit_index.ci_spike import USERS, generate_rows_sql, seed_users_sql
 from candleviewer.observability.redaction import redact_text
+from tests.fixtures.admin import audit_10m
 from tests.fixtures.admin.audit_10m import (
     BATCH,
     OWN_LABEL,
@@ -335,8 +336,8 @@ def test_a_cancelled_bulk_load_rolls_back_never_commits_and_propagates(
 
 @pytest.mark.parametrize(
     ("chained", "present"),
-    [(True, 0), (False, 0), (False, 4)],
-    ids=["chained-load", "bulk-load", "second-run"],
+    [(True, 0), (False, 0), (False, 4), (False, 3)],
+    ids=["chained-load", "bulk-load", "second-run", "partial-set"],  # the last: B3's re-check N4
 )
 def test_a_trigger_found_off_is_a_check_error_with_its_recovery_and_writes_nothing(
     monkeypatch: pytest.MonkeyPatch, chained: bool, present: int
@@ -354,6 +355,30 @@ def test_a_trigger_a_load_leaves_off_is_a_check_error(
     _script(monkeypatch, stuck=True)
     with pytest.raises(FixtureCheckError, match="trg_audit_chain is not enabled"):
         load_audit_10m(_DSN, 4, 4, chained=chained)
+
+
+@pytest.mark.parametrize(
+    ("chained", "says", "never_says"),
+    [
+        (True, "enable it with: ALTER TABLE", "rolled back"),
+        (False, "rolled back", "enable it with"),
+    ],
+    ids=["chained: left off", "bulk: its own enable rolled back"],
+)
+def test_the_recovery_line_is_given_only_for_a_trigger_that_nothing_rolled_back(
+    monkeypatch: pytest.MonkeyPatch, chained: bool, says: str, never_says: str
+) -> None:
+    """B3's re-check N5: a bulk load's failed ENABLE is rolled back with its transaction, so the
+    trigger is as it was and no recovery applies; a chained load never toggles the trigger."""
+    _script(monkeypatch, stuck=True)
+    with pytest.raises(FixtureCheckError) as failed:
+        load_audit_10m(_DSN, 4, 4, chained=chained)
+    assert (says in str(failed.value), never_says in str(failed.value)) == (True, False)
+
+
+def test_the_loaders_lock_key_is_outside_the_chains_int4_range() -> None:
+    """B3's re-check N1: the chain takes `hashtext('audit_log')`, an int4 sign-extended."""
+    assert not -(2**31) <= audit_10m._LOCK < 2**31
 
 
 def test_a_bulk_load_that_finds_the_trigger_off_before_its_commit_commits_nothing(

@@ -257,6 +257,9 @@ async def test_the_seed_holds_over_the_rows_the_apps_boot_makes(
     ]
     twap = loaded[UNREADABLE]
     assert verdicts == [False] * 4
+    # the app reads the override rows it must ignore: each safety flag's owner and MGR-M, both true
+    overrides = [(loaded[k].role_overrides, loaded[k].user_overrides) for k in SAFETY]
+    assert overrides == [({"owner": True}, {manager.id: True})] * len(SAFETY)
     assert twap.value == UNREADABLE_VALUE
     assert resolve(specs[UNREADABLE], twap, user_id=owner.id, roles=frozenset({"owner"})) is False
 
