@@ -301,6 +301,7 @@ _STATEMENTS: dict[str, Any] = {
     "transition_statement": mod.transition_statement(_STEP),
     "fill_statement": mod.fill_statement(_FILL),
     "settle_entry_stops_statement": mod.settle_entry_stops_statement(ACCOUNT, ORDER, "void", T0),
+    "lock_entry_stops_statement": mod.lock_entry_stops_statement(ACCOUNT, ORDER),
     "environment_accounts_statement": mod.environment_accounts_statement("demo"),
     "list_unfinished_statement": mod.list_unfinished_statement([ACCOUNT], 4097),
 }
@@ -313,10 +314,11 @@ def test_the_statement_set_is_pinned() -> None:
 
 @pytest.mark.parametrize("name", sorted(_STATEMENTS))
 def test_every_statement_but_create_and_the_id_check_is_account_scoped(name: str) -> None:
-    """The entry-stop settle is scoped by its own table's account (E29-T04)."""
+    """The entry-stop settle and its lock are scoped by their own table's account (E29-T04)."""
     sql = _sql(_STATEMENTS[name])
+    entry_stops = {"settle_entry_stops_statement", "lock_entry_stops_statement"}
     scoped = "orders.exchange_account_id = $" in sql or (
-        name == "settle_entry_stops_statement" and "recorded_stops.exchange_account_id = $" in sql
+        name in entry_stops and "recorded_stops.exchange_account_id = $" in sql
     )
     assert scoped is (name not in mod.UNSCOPED)
 
@@ -1114,13 +1116,38 @@ def test_a_void_never_meets_a_fill_its_order_holds(settle: Any) -> None:
 
 async def test_a_step_settles_its_entry_stops_in_its_own_transaction() -> None:
     """R10: after the compare-and-set and the event, before the one commit, so the void's own
-    check (SEC-2A-01) reads the totals this step wrote."""
-    rel = _Rel(_LOCKED, _CAS, _EVENT, _Result())
+    check (SEC-2A-01) reads the totals this step wrote; the rows locked first, in id order."""
+    rel = _Rel(_LOCKED, _CAS, _EVENT, _Result(), _Result())
     move = step(_HELD, "cancelled", entry_stops="void")
     await _store(rel).transition(move)
     verbs = [_sql(stmt).split()[:2] for stmt in rel.statements]
     assert verbs == [["SELECT", "orders.order_link_id,"], ["UPDATE", "orders"],
-                     ["INSERT", "INTO"], ["UPDATE", "recorded_stops"]]  # fmt: skip
+                     ["INSERT", "INTO"], ["SELECT", "recorded_stops.id"],
+                     ["UPDATE", "recorded_stops"]]  # fmt: skip
+    assert _sql(rel.statements[-2]) == _sql(mod.lock_entry_stops_statement(ACCOUNT, ORDER))
     assert rel.commits == 1
     assert move.event.event_ts in _bound(rel.statements[-1])  # the step's own time
     assert _NO_FILL in " ".join(_sql(rel.statements[-1]).split())
+
+
+def test_the_entry_stops_lock_takes_the_orders_pending_entry_rows_in_id_order() -> None:
+    """The 06:38Z ruling: a step locks its entry's rows as the complete read's writes lock a
+    key's (`ORDER BY id FOR UPDATE`), in their own account (C-12.4), so the two never take them
+    in opposite orders (40P01)."""
+    stmt = mod.lock_entry_stops_statement(ACCOUNT, ORDER)
+    sql = " ".join(_sql(stmt).split())
+    assert sql.startswith("SELECT recorded_stops.id FROM recorded_stops WHERE ")
+    assert sql.endswith(" ORDER BY recorded_stops.id FOR UPDATE")
+    for term in ("exchange_account_id = $", "order_id = $", "source = $", "status = $"):
+        assert f"recorded_stops.{term}" in sql
+    assert _bound(stmt) == [ACCOUNT, ORDER, "entry_attach", "pending"]
+
+
+async def test_a_fill_that_answers_its_entry_stops_locks_them_first_too() -> None:
+    """`commit_fill` runs the same step (`commit_step`): its rows locked, then answered."""
+    answering = replace(_FILL, step=replace(_FILL.step, entry_stops="answered"))
+    rel = _Rel(*_FILL_SCRIPT, _Result(), _Result())
+    await ex.SqlAlchemyExecutionStore(cast(Any, rel)).commit_fill(answering)
+    assert [_sql(stmt).split()[0] for stmt in rel.statements[-2:]] == ["SELECT", "UPDATE"]
+    assert _sql(rel.statements[-2]) == _sql(mod.lock_entry_stops_statement(ACCOUNT, ORDER))
+    assert rel.commits == 1
