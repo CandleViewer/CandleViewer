@@ -836,3 +836,18 @@ async def test_an_add_whose_row_a_racing_stop_removed_is_404_audited_as_denied()
     assert (gone.status_code, gone.json()["code"]) == (404, "not_found")
     assert [(a, r["outcome"], r["reason"]) for a, r in env.audit] == [
         ("recorder.start", "denied", "not_recorded")]  # fmt: skip
+
+
+@pytest.mark.parametrize("method", ["patch", "post"])
+async def test_retention_days_on_a_pinned_row_without_an_unpin_is_ignored(method: str) -> None:
+    """A pin keeps forever and nulls `retention_days` (22), so days named on a pinned row with no
+    `pinned: false` change nothing: `200`, `retention_days` stays null, no record."""
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT", pinned=True)
+    env = _Env(fake, *W, elevated=True)
+    url, body = ((_one(entry.id), {"retention_days": 7}) if method == "patch"
+                 else (_ADD, {"symbol": "BTCUSDT", "retention_days": 7}))  # fmt: skip
+    kept = await env.http.request(method, url, json=body)
+    assert (kept.status_code, kept.json()["pinned"], kept.json()["retention_days"]) == (
+        200, True, None)  # fmt: skip
+    assert fake.entries["BTCUSDT"] == entry and env.actions() == []

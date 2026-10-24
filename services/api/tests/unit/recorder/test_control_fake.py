@@ -23,6 +23,7 @@ from candleviewer.recorder.errors import (
 from candleviewer.recorder.errors import RecorderInvalidUpdateError as InvalidUpdate
 from candleviewer.recorder.errors import RecorderSymbolNotManualError as NotManual
 from candleviewer.recorder.models import SYSTEM_ACTOR, Actor
+from candleviewer.recorder.policy import PolicyControlSurface
 from tests.unit.recorder import _control_fakes as fakes
 from tests.unit.recorder._fakes import surface_mismatches
 
@@ -31,6 +32,12 @@ USER = Actor(kind="user", id="u-1")
 
 def test_the_fake_mirrors_the_policy_control_surface() -> None:
     assert surface_mismatches(fakes.FakeRecorder, RuntimePolicy) == []
+
+
+def test_the_s3c_surface_differs_from_mains_only_in_set_pin() -> None:
+    """Holds until the rebase onto #2188 S3c, which brings `set_pin`'s view and retention to
+    `PolicyControlSurface` (then `RuntimePolicy` is that surface and this test goes)."""
+    assert set(surface_mismatches(RuntimePolicy, PolicyControlSurface)) == {"set_pin"}
 
 
 class _Sink(list[tuple[str, dict[str, Any]]]):
