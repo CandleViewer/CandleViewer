@@ -42,6 +42,30 @@ class RetentionRule:
     symbol: str | None = None  # None = global default
 
 
+@dataclass(frozen=True, slots=True)
+class RowReading:
+    """A `retention_policies` row read by its `action` (#2188). `hot_days`: the window before the
+    roll-off moves a day to Parquet (and the klines hot boundary); `total_days`: the delete horizon
+    the row states, `None` = none, so the stream's §7 default governs."""
+
+    hot_days: int
+    total_days: int | None
+
+
+def read_policy_row(action: str, retain_days: int) -> RowReading:
+    """The one reading of a row, taken by the roll-off and the klines boundary
+    (`SqlAlchemyRecorderRepository`) and by the reaper's facts (`PgRetentionFacts`), so they cannot
+    disagree on it (21 §3.6.3). `drop`: `retain_days` is the TOTAL horizon, and the hot window too,
+    so the day still leaves QuestDB through the verified roll-off (21 §5.3) and the reaper then
+    deletes it at `retain_days`, not at the §7 total. `archive_parquet`: the hot window; the delete
+    horizon stays the §7 total, never shorter than the hot window. Any other action, or a `drop`
+    whose `retain_days` is below 1 (the DDL's `rp_days` refuses it), reads as `archive_parquet`
+    (fail closed: today's reading). A pinned symbol is outside it: each reader checks the pin."""
+    if action == "drop" and retain_days >= 1:
+        return RowReading(retain_days, retain_days)
+    return RowReading(retain_days, None)
+
+
 def default_seed_path() -> Path:
     return (
         Path(__file__).resolve().parents[5] / "backend" / "db" / "seeds" / "retention_defaults.yaml"

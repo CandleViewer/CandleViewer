@@ -38,6 +38,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     query_failure,
     sqlstate_of,
 )
+from candleviewer.storage.retention.policy import RowReading, read_policy_row
 
 #: Hard default retention (days) when neither a symbol nor a default policy exists.
 HARD_DEFAULT_RETAIN_DAYS = 30
@@ -222,15 +223,22 @@ _MARK_BACKFILLED = sa.text(
     "WHERE id = :id RETURNING 1"
 )
 # Pinned symbol -> infinite (NULL); else symbol-scoped; else default; else caller's hard default.
+# The row's `action` comes with its `retain_days`: `read_policy_row` reads the pair.
 _RESOLVE = sa.text(
-    "SELECT retain_days FROM ("
-    "SELECT NULL::integer AS retain_days, 0 AS ord WHERE EXISTS ("
+    "SELECT retain_days, action FROM ("
+    "SELECT NULL::integer AS retain_days, NULL::text AS action, 0 AS ord WHERE EXISTS ("
     "SELECT 1 FROM recorded_symbols WHERE symbol = :symbol AND pinned AND removed_at IS NULL) "
     "UNION ALL "
-    "SELECT retain_days, CASE WHEN scope = 'symbol' THEN 1 ELSE 2 END AS ord "
+    "SELECT retain_days, action::text, CASE WHEN scope = 'symbol' THEN 1 ELSE 2 END AS ord "
     "FROM retention_policies WHERE stream = CAST(:stream AS stream_kind) AND enabled "
     "AND (scope = 'default' OR symbol = :symbol)) AS r ORDER BY ord LIMIT 1"
 )
+
+
+def _reading(row: dict[str, Any]) -> RowReading | None:
+    """`read_policy_row` of the row `_RESOLVE` chose; `None` is its pinned sentinel (infinite)."""
+    days = row["retain_days"]
+    return None if days is None else read_policy_row(str(row["action"]), int(days))
 
 
 class SqlAlchemyRecorderRepository:
@@ -516,12 +524,21 @@ class SqlAlchemyRecorderRepository:
         return bool(await self._all(_MARK_BACKFILLED, {"id": gap_id, "source": source}))
 
     async def resolve_policy(self, symbol: str, stream: str) -> int | None:
-        """Retention days for (symbol, stream); `None` is the infinite sentinel (pinned)."""
+        """The roll-off's hot window in days for (symbol, stream); `None` is infinite (pinned)."""
         rows = await self._all(_RESOLVE, {"symbol": symbol, "stream": stream})
-        return HARD_DEFAULT_RETAIN_DAYS if not rows else rows[0]["retain_days"]
+        if not rows:
+            return HARD_DEFAULT_RETAIN_DAYS
+        reading = _reading(rows[0])
+        return None if reading is None else reading.hot_days
+
+    async def policy_reading(self, symbol: str, stream: str) -> RowReading | None:
+        """`read_policy_row` of the EXPLICIT rule that wins for (symbol, stream), through the
+        mapping the reaper's facts use; `None` when there is none, or the symbol is pinned."""
+        rows = await self._all(_RESOLVE, {"symbol": symbol, "stream": stream})
+        return _reading(rows[0]) if rows else None
 
     async def explicit_policy_days(self, symbol: str, stream: str) -> int | None:
-        """Days of an EXPLICIT enabled rule for (symbol, stream); `None` when no rule exists (or
-        the rule is infinite) — unlike `resolve_policy`, never the 30 d repository default."""
-        rows = await self._all(_RESOLVE, {"symbol": symbol, "stream": stream})
-        return None if not rows else rows[0]["retain_days"]
+        """The klines boundary's hot window in days of an EXPLICIT enabled rule for (symbol,
+        stream); `None` when there is none (or it is infinite), never the 30 d default."""
+        reading = await self.policy_reading(symbol, stream)
+        return None if reading is None else reading.hot_days
