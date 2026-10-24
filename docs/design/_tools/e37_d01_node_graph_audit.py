@@ -28,6 +28,7 @@ Usage: python3 -I docs/design/_tools/e37_d01_node_graph_audit.py [--json]
 from __future__ import annotations
 
 import importlib
+import io
 import json
 import re
 import sys
@@ -118,8 +119,8 @@ CITES: dict[tuple[str, int], str] = {
     ("14", 1868): "auto-layout result reviewed on a 60-node graph",
     ("14", 1874): "which editor it opens in.",
     ("14", 1877): "'Opens in the form editor'",
-    ("14", 1971): "the round-trip diff as a path table",
-    ("14", 3058): "082 (node list)",
+    ("14", 1973): "the round-trip diff as a path table",
+    ("14", 3062): "082 (node list)",
     ("10", 90): "Will happily learn a node-graph editor if it is faster than a form",
     ("10", 94): "Occasional wrist strain",
     ("10", 131): "keyboard-first operation",
@@ -1007,6 +1008,9 @@ USAGE = (
 
 
 def main(argv: list[str]) -> int:
+    # The report holds non-ASCII text ("✓", "—"): write UTF-8 whatever the console code page is.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8")
     if "--check" in argv:
         if argv.index("--check") + 1 >= len(argv) or (
             "--protocol" in argv and argv.index("--protocol") + 1 >= len(argv)
