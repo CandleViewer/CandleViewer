@@ -9,7 +9,7 @@ import inspect
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -424,7 +424,7 @@ async def test_the_history_read_ends_now_so_a_newer_request_past_a_week_of_the_o
 ) -> None:  # fmt: skip
     """Opus Major (H2b): with no end the adapter reads the 7 days from `start` only, so a newer
     request's fired stop went unread and its rows were voided `in_flight_resolved`."""
-    port = Capped(now_us=lambda: NOW_US + 8 * DAY_US)
+    port = Capped(environment="live", now_us=lambda: NOW_US + 8 * DAY_US)
     rig = build(port=port, now=NOW + timedelta(days=8))
     old = request_rows()
     late = NOW + timedelta(days=8, seconds=-60)
@@ -433,7 +433,7 @@ async def test_the_history_read_ends_now_so_a_newer_request_past_a_week_of_the_o
     rig.port.seed_position(flat())
     fired_at = NOW_US + 8 * DAY_US - 30 * SECOND_US
     rig.port.seed_order(fired("stop_loss", Decimal("59000"), created_at=fired_at), uid=UID)
-    held, answered = await rig.resolve()
+    held, answered = await rig.resolve(ref(environment="live"))
     assert held.held == SPAN_HELD and answered.outcome == "answered"
     asked = [c.request for c in rig.port.calls if c.method == "order_history"]
     assert asked == [(None, None, T0_US - 5 * SECOND_US, NOW_US + 8 * DAY_US)]
@@ -442,18 +442,19 @@ async def test_the_history_read_ends_now_so_a_newer_request_past_a_week_of_the_o
 async def test_an_entry_is_looked_up_by_its_bound_id_from_5_s_before_it_was_stored() -> None:
     """Opus Major (H2b): the default window missed a filled entry older than a week, and the read
     voided its rows `in_flight_resolved`, unpaged; the bound id from `created_ts` finds it."""
-    port = Capped(now_us=lambda: NOW_US + 8 * DAY_US)
+    port = Capped(environment="live", now_us=lambda: NOW_US + 8 * DAY_US)
     rig = build(port=port, now=NOW + timedelta(days=8))
     venue = exchange_order(new_order(), state="filled", filled_qty=Decimal("0.010"))
     row = await rig.entry(exchange_order_id=venue.exchange_order_id)
     rig.port.seed_order(venue, uid=UID)
     sl, tp = rig.store.rows = list(request_rows(source="entry_attach", order_id=row.id))
     rig.port.seed_position(position(stop_loss=STOP))
-    (decision,) = await rig.resolve()
+    (decision,) = await rig.resolve(ref(environment="live"))
     assert decision.outcome == "entry_filled_stop_absent"
     assert rig.store.moves() == {sl.id: "in_force", tp.id: "entry_filled_stop_absent"}
-    asked = [c.request for c in rig.port.calls if c.method == "order_history"]
-    assert (None, venue.exchange_order_id, T0_US - 5 * SECOND_US, None) in asked
+    asked = [cast(tuple[Any, ...], c.request)[:3] for c in rig.port.calls
+             if c.method == "order_history"]  # fmt: skip
+    assert asked == [(None, venue.exchange_order_id, T0_US - 5 * SECOND_US)]  # end: 7 d on
 
 
 @pytest.mark.parametrize(("pos", "outcome"), [(flat(), "held"), (position(), "voided")])
@@ -520,6 +521,12 @@ async def test_a_store_call_that_does_not_answer_in_its_bound_raises() -> None:
         await rig.resolve()
 
 
+async def resolved(resolver: StopResolver, port: FakeTradingPort) -> Any:
+    decisions = await resolver.resolve_key(port, ref(), KEY, bound_s=10.0)
+    assert decisions is not None
+    return decisions
+
+
 async def test_the_resolver_runs_over_the_recorded_stops_facade_and_its_in_memory_store() -> None:
     """H1's real store through `RecordedStopRepository`: the put replaces the row in force, a
     void's hook is given its state by the store, and nothing is left listed."""
@@ -537,14 +544,14 @@ async def test_the_resolver_runs_over_the_recorded_stops_facade_and_its_in_memor
     await stops.put_in_force(ACCOUNT, first, at=T0)
     second = await stops.record(pair(position_marker="m2"), write_ahead=sc.audited)
     port.seed_position(position(stop_loss=STOP, take_profit=TP))
-    (decision,) = await resolver.resolve_key(port, ref(), KEY, bound_s=10.0)
+    (decision,) = await resolved(resolver, port)
     assert decision.outcome == "in_force"
     held = await stops.in_force_for_key(ACCOUNT, SYMBOL, 0)
     assert {r.id for r in held} == {r.id for r in second}
     assert await stops.waiting_for_key(ACCOUNT, SYMBOL, 0, now=NOW, bound_s=10.0) == ()
     third = await stops.record(pair(position_marker="m3"), write_ahead=sc.audited)
     port.seed_position(position())
-    (decision,) = await resolver.resolve_key(port, ref(), KEY, bound_s=10.0)
+    (decision,) = await resolved(resolver, port)
     assert decision.outcome == "in_flight_resolved"
     assert audit.hooks == [("in_flight_resolved", None, tuple(r.id for r in third))]
     assert await stops.waiting_for_key(ACCOUNT, SYMBOL, 0, now=NOW, bound_s=10.0) == ()
