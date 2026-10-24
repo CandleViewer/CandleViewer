@@ -441,6 +441,12 @@ class SqlAlchemyOrderStore(CappedStore):
             result = await uow.session.execute(list_unfinished_statement(accounts, limit))
             return tuple(order_row(row) for row in result.mappings())
 
+    async def environment_accounts(self, environment: Environment) -> tuple[UUID, ...]:
+        """`UnfinishedOrders`: every account of the environment, whatever its status."""
+        async with self._unit_of_work() as uow:
+            found = await uow.session.execute(environment_accounts_statement(environment))
+            return tuple(UUID(str(row["id"])) for row in found.mappings())
+
     async def link_id_taken(self, order_link_id: str) -> bool:
         async with self._unit_of_work() as uow:
             result = await uow.session.execute(link_taken_statement(order_link_id))

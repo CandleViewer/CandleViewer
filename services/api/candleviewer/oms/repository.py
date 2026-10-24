@@ -494,9 +494,11 @@ class RecordedStopRepository:
         `SWEEP_REASON`, ids only). It never voids a row blind (C-2.6): an order's killed after its
         send, one's that ended out of `unknown` and one's whose end the exchange did not confirm
         unfilled stay `pending`, waiting for the complete read. Slice 3's startup wiring
-        (`oms_wiring.py`) calls it once per process, with `EVERY_ACCOUNT`, before the order machines
-        hydrate and before order entry opens: a never-sent order is an orphan only while no request
-        can still send it. `AuditNotDurable` when the audit outlasts its bound, with nothing voided.
+        (`oms_wiring.py`) calls it once per account of the process's own environment, never with
+        `EVERY_ACCOUNT` (C-2.11: another environment's process may be sending its entry, whose stops
+        must stay `pending`, C-2.6), before the order machines hydrate and before order entry
+        opens: a never-sent order is an orphan only while no request can still send it.
+        `AuditNotDurable` when the audit outlasts its bound, with nothing voided.
         Logged as one WARNING line with the count per account, and a line per row at INFO
         (SEC-2A-07)."""
         try:

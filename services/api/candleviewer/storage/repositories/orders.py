@@ -531,3 +531,8 @@ class UnfinishedOrders(Protocol):
         """The orders in `UNFINISHED_STATES` of every account of `environment`, a disabled or
         soft-deleted one's too, oldest first, at most `limit` (`require_limit`, before any read)."""
         ...
+
+    async def environment_accounts(self, environment: Environment) -> tuple[UUID, ...]:
+        """The ids of every account of `environment`, a disabled or soft-deleted one's too: the
+        startup sweep's account set (20 Sec.6.2 step 2)."""
+        ...
