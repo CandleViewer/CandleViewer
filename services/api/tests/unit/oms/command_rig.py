@@ -47,6 +47,7 @@ from candleviewer.storage.repositories.orders import (
     NewOrderEvent,
     OrderRow,
 )
+from candleviewer.storage.repositories.recorded_stops import NewRecordedStop
 from tests.unit.oms.order_rig import Notices
 
 ACCOUNT = AccountId(UUID("5b1c9d2e-7f30-4a6b-8c4d-2e3f4a5b6c7d"))
@@ -371,3 +372,27 @@ def build_rig(
         port, demo, live, store, orders, stops, accounts, audits, chosen, credentials, switches,
         health, halt, now, monotonic, notices, metrics,
     )  # fmt: skip
+
+
+async def earlier_request(rig: Rig) -> None:
+    """A trading-stop request of the key, in flight since `T0` (the store's clock)."""
+    earlier = NewRecordedStop(
+        id=uuid5(NAMESPACE_URL, "earlier"),
+        exchange_account_id=ACCOUNT,
+        symbol=SYMBOL,
+        position_idx=0,
+        position_side="Buy",
+        kind="stop_loss",
+        source="trading_stop",
+        order_id=None,
+        tpsl_mode="Full",
+        trigger_price=Decimal("57000"),
+        size=None,
+        audit_record_id=uuid5(NAMESPACE_URL, "earlier-record"),
+        actor_user_id=None,
+    )
+
+    async def audited(_rows: Any) -> None:
+        return None
+
+    await rig.stops.record([earlier], write_ahead=audited)
