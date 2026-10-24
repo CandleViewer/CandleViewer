@@ -55,8 +55,9 @@ cap, its cooldown, its metric and its pages) is slice H3's.
    whether its stored order `WAITING_ENTRY` holds; and, for a Partial side or a Full side whose
    position is flat (Q3), the open orders of the symbol and the order history from 5 s before the
    oldest request, but no earlier than `MAX_HISTORY_WINDOWS` weeks back, to now (the adapter reads
-   every 7-day window between, inside the read's bound; an older request is held by the span
-   rule, or decided where the position shows no stop), kept to the key and the TP/SL kinds. One
+   every 7-day window between, inside the read's bound; a miss older than that is held as a span
+   miss while the position is flat or on the other side and shows a stop; while it is open on
+   the row's side the miss decides, as inside the span), kept to the key and the TP/SL kinds. One
    that fails or does not answer decides nothing (None). The venue's retention comes from its
    port's `ExchangeCapabilities.order_retention_days` (demo 7 d, less rule 6's day; none on
    live), never an environment check (24 Sec.14.2 rule 3). The read keeps no state between calls:
@@ -157,7 +158,8 @@ type EntryState = Literal["resting", "filled", "gone", "unseen"]
 #: void of an unseen entry on a position open with no stop at all (the 06:38Z ruling).
 type PageReason = Literal["entry_filled_stop_absent", "entry_unseen"]
 #: A void's write-ahead hook (`ResolveWriteAhead`, H1): awaited before the commit, with the rows
-#: and the `position_state` the store was given (None but for `entry_filled_stop_absent`).
+#: and the `position_state` the store was given (None but for `entry_filled_stop_absent` and a
+#: paged `in_flight_resolved` void, `entry_unseen`).
 VoidWriteAhead = ResolveWriteAhead
 
 #: Why a request is held for reconciliation (`RequestDecision.held`, the log line's text).
