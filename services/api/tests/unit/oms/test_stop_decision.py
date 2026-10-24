@@ -337,9 +337,13 @@ def test_an_unseen_entry_voided_on_a_position_with_no_stop_at_all_pages() -> Non
     assert other_side.pages == (sl.id,) and other_side.page == UNSEEN_PAGE
     gone = one((sl, tp), position(), "gone")
     assert gone.pages == () and gone.page is None
+    alone = one((tp,), position(), "unseen")  # no stop-loss row to page: no page text either
+    assert alone.pages == () and alone.page is None and alone.page_reason is None
+    assert decision.page_reason == "entry_unseen" and gone.page_reason is None
     fill = one((sl, tp), position(take_profit=TP), "filled")
     assert fill.pages == (sl.id,) and fill.page == FILL_PAGE
     assert FILL_PAGE.split(":")[0] == "entry_filled_stop_absent"
+    assert fill.page_reason == "entry_filled_stop_absent"
 
 
 def test_answered_rows_a_read_leaves_listed_carry_the_entry_hold() -> None:
