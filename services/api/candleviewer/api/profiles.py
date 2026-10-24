@@ -1,7 +1,7 @@
 """The profile reads (E28-T02, #906 slice D1c): `listAccountProfiles`, `getAccountProfile`.
 
 The session (401), then `accounts:read` on the permission alone (`Scope.NONE`: a refusal is a 403,
-audited as `rbac.denied` when its record can be written), then the store (503 on the fake
+audited as `rbac.denied`, else logged by ids and class), then the store (503 on the fake
 backend). The account scope is the stores' own, in SQL (`auth.scopes.account_scope`, SR-051), so
 an account outside the caller's grants answers as a missing one: one unaudited 404 per operation
 (PF-I06). Each read resolves the account first, in that scope, for the environment its documents
@@ -151,7 +151,11 @@ def make_profiles_router(
                 emitter=OnAccount(NamesSession(audit, auth, request), account_id),
                 actor_ip=source_ip(request.scope), request_id=current_request_uuid(),
             )  # fmt: skip
-        except (ForbiddenError, AuditError, RuntimeError):  # an unaudited refusal still refuses
+        except ForbiddenError:
+            return _forbidden(Permission.ACCOUNTS_READ)
+        except (AuditError, RuntimeError) as exc:  # unrecordable: logged, and still refused
+            ids = {"actor_user_id": str(principal.user_id), "account_id": str(account_id)}
+            _log().warning("profile_read_denial_unaudited", **ids, error=type(exc).__name__)
             return _forbidden(Permission.ACCOUNTS_READ)
         if reads is None or accounts is None:
             return problem("store_unavailable", "Profiles are not available on this backend.")

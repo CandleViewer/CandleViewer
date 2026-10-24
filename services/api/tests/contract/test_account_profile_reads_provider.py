@@ -13,7 +13,7 @@ import json
 import re
 import uuid
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -22,6 +22,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
+from sqlalchemy.exc import OperationalError
 from structlog.testing import capture_logs
 
 import candleviewer.app as appmod
@@ -31,6 +32,7 @@ from candleviewer.accounts.profiles import AccountProfile, profile_from_row, pro
 from candleviewer.api.deny_by_default import served_operations
 from candleviewer.api.profile_projection import profile_document
 from candleviewer.api.profiles import make_profiles_router
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
 from candleviewer.storage.repositories.account_profiles import AccountProfileRow
@@ -60,18 +62,27 @@ ENV = {GRANTED: "demo", FOREIGN: "live", EMPTIED: "testnet"}
 #: A viewer stripped of every permission: the forbidden-role case.
 BARE = PrincipalSnapshot(user_id_of("viewer"), frozenset({"viewer"}), frozenset())
 _AT = datetime(2026, 10, 20, 9, tzinfo=UTC)
+#: A row's last update, an hour after it was written: each stamp has one place in a document.
+_LATER = _AT + timedelta(hours=1)
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "profiles"
 
 
 def _row(fixture: str, account: uuid.UUID, n: int, **changes: Any) -> AccountProfileRow:
-    """The fixture re-homed onto `account` as profile `n`, its row written at `_AT`."""
+    """The fixture re-homed onto `account` as profile `n`, its row written at `_AT` and updated
+    at `_LATER`."""
     raw = json.loads((_FIXTURES / f"{fixture}.json").read_text(encoding="utf-8"))
     ids = {"profile_id": uuid.UUID(int=n), "account_id": account}
     p = AccountProfile.model_validate({**raw, **changes, **ids})
     return AccountProfileRow(
         id=p.profile_id, exchange_account_id=account, version=p.version, values=profile_values(p),
-        created_by=None, updated_by=None, created_at=_AT, updated_at=_AT, deleted_at=None,
+        created_by=None, updated_by=None, created_at=_AT, updated_at=_LATER, deleted_at=None,
     )  # fmt: skip
+
+
+class _Cancelled(Exception):
+    """A driver's `query_canceled` (a statement timeout), its SQLSTATE where asyncpg names it."""
+
+    sqlstate = "57014"
 
 
 class Store:
@@ -163,11 +174,15 @@ def _scope(actor: str) -> object:
 
 
 def _denied(record: dict[str, Any], resp: Any, actor: str, reason: str) -> None:
-    """`rbac.denied` naming the account, the actor, its session (#4174) and the request."""
-    named = ("action", "object_kind", "object_id", "reason", "actor_user_id", "session_id")
+    """`rbac.denied` naming the account, the actor, its session (#4174) and the request: a denied
+    warning labelled with the actor's id, as `enforce` writes it."""
+    named = (
+        "action", "object_kind", "object_id", "reason", "actor_user_id", "session_id", "outcome",
+        "severity", "actor_label",
+    )  # fmt: skip
     assert [record[key] for key in named] == [
         "rbac.denied", "exchange_account", str(GRANTED), reason, user_id_of(actor),
-        session_id_of(actor),
+        session_id_of(actor), "denied", "warning", str(user_id_of(actor)),
     ]  # fmt: skip
     assert str(record["request_id"]) == resp.headers["x-correlation-id"]
 
@@ -286,7 +301,8 @@ def test_a_caller_without_accounts_read_is_403_audited_and_never_reaches_the_sto
 
 
 @pytest.mark.parametrize(
-    ("item", "gated"), [(False, "account"), (False, "profiles"), (True, "profiles")]
+    ("item", "gated"),
+    [(False, "account"), (False, "profiles"), (True, "account"), (True, "profiles")],
 )
 def test_the_stores_owner_gate_refusing_an_owner_is_403_and_audited(
     served: Served, item: bool, gated: str
@@ -304,26 +320,30 @@ def test_the_stores_owner_gate_refusing_an_owner_is_403_and_audited(
     assert (record["actor_ip"], _denials()) == ("127.0.0.1", before + 1)
 
 
+@pytest.mark.parametrize("error", [RuntimeError, AuditUnavailable])
 def test_a_refusal_whose_record_cannot_be_written_still_refuses(
-    served: Served, monkeypatch: pytest.MonkeyPatch
+    served: Served, monkeypatch: pytest.MonkeyPatch, error: type[Exception]
 ) -> None:
-    """A read never answers on an audit record: `enforce`'s refusal and the owner gate's stay 403
-    when their record fails; the gate's lost record is logged by ids and class only."""
+    """A read never answers on an audit record: the owner gate's refusal and `enforce`'s stay 403
+    when their record fails (the writer not started, or its WAL unwritable), each logged by ids
+    and class only."""
     world, store = served
 
     async def down(*_args: Any, **_kwargs: Any) -> None:
-        raise RuntimeError("the audit writer is not started")
+        raise error("the record was not written")
 
     monkeypatch.setattr(world.audit, "emit", down)
     store.gated.add("account")
     with capture_logs() as logs:
         gated = read(world, "owner", GRANTED)
-    monkeypatch.setattr(world.resolver, "snapshot", lambda _actor: BARE)
-    assert [gated.status_code, read(world, "viewer", GRANTED).status_code] == [403, 403]
-    ids = {"actor_user_id": str(user_id_of("owner")), "account_id": str(GRANTED)}
+        monkeypatch.setattr(world.resolver, "snapshot", lambda _actor: BARE)
+        bare = read(world, "viewer", GRANTED)
+    assert [gated.status_code, bare.status_code] == [403, 403]
     assert [log for log in logs if log["event"] == "profile_read_denial_unaudited"] == [
-        {"event": "profile_read_denial_unaudited", "log_level": "warning", **ids,
-         "error": "RuntimeError"},
+        {"event": "profile_read_denial_unaudited", "log_level": "warning",
+         "actor_user_id": str(user_id_of(actor)), "account_id": str(GRANTED),
+         "error": error.__name__}
+        for actor in ("owner", "viewer")
     ]  # fmt: skip
 
 
@@ -332,6 +352,7 @@ def test_a_refusal_whose_record_cannot_be_written_still_refuses(
     ("kind", "error", "logged", "sqlstate"),
     [
         ("account", ConnectionRefusedError(), "ConnectionRefusedError", None),  # the driver's
+        ("account", OperationalError("SELECT 1", {}, _Cancelled()), "OperationalError", "57014"),
         ("account", AccountsStoreError(), "AccountsError", None),
         ("profiles", StorageTierUnavailable("down"), "StorageTierUnavailable", None),
         ("profiles", StorageQueryFailed("57014"), "StorageQueryFailed", "57014"),  # a timeout
@@ -372,16 +393,19 @@ def test_an_error_that_is_no_outage_is_a_500(served: Served) -> None:
     assert "defect" not in resp.text
 
 
+@pytest.mark.parametrize("wired", ["neither", "profiles", "accounts"])
 def test_without_a_store_the_reads_are_503_after_the_same_checks(
-    served: Served, monkeypatch: pytest.MonkeyPatch
+    served: Served, monkeypatch: pytest.MonkeyPatch, wired: str
 ) -> None:
-    """The fake backend wires no store: an admitted caller gets 503, a caller without
-    `accounts:read` still 403, and with no resolver wired every call is 501."""
-    world, _ = served
+    """The fake backend wires no store, and one reader alone is none: an admitted caller gets 503,
+    a caller without `accounts:read` still 403, and with no resolver wired every call is 501."""
+    world, store = served
+    reads = ProfilesRepository(cast(Any, store), cache=None) if wired == "profiles" else None
+    accounts = store if wired == "accounts" else None
 
     def client(resolver: Any) -> TestClient:
         app = FastAPI()
-        app.include_router(make_profiles_router(None, None, world.audit, resolver))
+        app.include_router(make_profiles_router(reads, accounts, world.audit, resolver))
         return TestClient(app)
 
     storeless, path = client(world.resolver), f"/exchange-accounts/{GRANTED}/profiles"
@@ -393,3 +417,4 @@ def test_without_a_store_the_reads_are_503_after_the_same_checks(
         assert client(None).get(sent, headers=bearer("owner")).status_code == 501
     monkeypatch.setattr(world.resolver, "snapshot", lambda _actor: BARE)
     assert storeless.get(path, headers=bearer("viewer")).status_code == 403
+    assert store.seen == []  # a reader wired alone is never read
