@@ -277,14 +277,12 @@ AMEND_AUDIT_GRACE_S: Final = 1.0
 #: lands just inside it still leaves `_settle_stop` time to settle the rows (review fold 2).
 AMEND_SETTLE_RESERVE_S: Final = 0.5
 #: A read that failed before the amend's send (the 10:18Z ruling): `STORE_UNAVAILABLE` (as the
-#: cancel's) with this reason, retried after the one wait the cancel's and the amend's share, 1 s
-#: (the 11:34Z ruling; S4-B1's follow-up exports the same name).
+#: cancel's) with this reason, retried after `STORE_UNAVAILABLE_RETRY_AFTER_S`, the one wait the
+#: cancel's and the amend's share (the 11:34Z ruling).
 STORE_UNAVAILABLE_REASON: Final = "store_unavailable"
-STORE_UNAVAILABLE_RETRY_AFTER_S: Final = 1.0
-#: The amend's answer when the port cannot sign for the order's account before its send: refused
-#: (`AccountScopeDenied`) or with no active key. No outage, so no retry (the 11:34Z ruling, B;
-#: S4-B1's follow-up exports the same name for the cancel).
-ACCOUNT_UNAVAILABLE: Final = "ACCOUNT_UNAVAILABLE"
+#: The amend's audit reason for `ACCOUNT_UNAVAILABLE`: the port cannot sign for the order's
+#: account before its send (refused, or with no active key). No outage, so no retry (the 11:34Z
+#: ruling, B).
 ACCOUNT_UNAVAILABLE_REASON: Final = "account_unavailable"
 _NO_ACTIVE_KEY: Final = "no_active_key"
 #: How old a create a restart resumes may be and still be re-sent where history never expires
