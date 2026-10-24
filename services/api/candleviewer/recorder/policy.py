@@ -21,8 +21,9 @@ is exempt from auto-eviction (E16-T07), like a manual entry. A pin alone does no
 recording; it only protects a symbol that is recording or recorded.
 
 Warm-up gate: until `positions_reloaded()` is called, no stop decision is taken (grace
-expiry or pre-emption), because the position cache may not be authoritative yet
-(#2188 opens the gate after the startup reconcile).
+expiry or pre-emption), because the position view may not be authoritative yet. `startup_reconcile`
+(sessions.py) opens it last (#2188), once the rows and positions are adopted (both refused after)
+and `reconcile_all` has run.
 
 Rows (`recorded_symbols`, #2188): a manual add, remove, update or pin is validated, then audited
 (write-ahead, C-2.9), then written to the injected `RecordedStore`, then applied to memory, all
@@ -52,6 +53,7 @@ from candleviewer.observability.context import current_request_uuid
 from candleviewer.recorder.errors import (
     InvalidRecordedSymbolError,
     InvalidRecorderActorError,
+    RecorderGateOpenError,
     RecorderInvalidUpdateError,
     RecorderSymbolLimitError,
     RecorderSymbolNotManualError,
@@ -165,10 +167,11 @@ ManualCleared = Literal["demoted", "removed", "absent"]
 
 
 class RecordedStore(Protocol):
-    """The `recorded_symbols` writes the policy needs. `SqlAlchemyRecorderRepository` (M10)
-    conforms and is injected, so M11 imports no storage driver. `env` is never defaulted: a
-    default would let a demo process write the `live` row (#2726)."""
+    """The `recorded_symbols` reads and writes the policy needs. `SqlAlchemyRecorderRepository`
+    (M10) conforms and is injected, so M11 imports no storage driver. `env` is never defaulted: a
+    default would let a demo process write, or read, the `live` rows (#2726)."""
 
+    async def list_recorded(self, env: str) -> list[dict[str, Any]]: ...
     async def get_by_symbol(self, symbol: str, env: str) -> dict[str, Any] | None: ...
     async def upsert_auto(self, symbol: str, reason: str, ref: dict[str, str], env: str) -> str: ...
     async def add_reason_ref(self, recorded_id: str, ref: dict[str, str]) -> bool: ...
@@ -294,6 +297,10 @@ class _Sym:
     stop_cause: str | None = None
     error_attempts: int = 0
     retry_at: float | None = None
+    #: The reason an auto row held in the last run (`adopt_recorded`); `_reconcile` starts it.
+    resumed: Reason | None = None
+    #: The reason `_resume` started it for: what its records name until another is published.
+    resumed_from: Reason | None = None
 
     def refs(self, reason: Reason) -> list[str]:
         """Trigger refs per reason (not last-writer-wins)."""
@@ -617,10 +624,67 @@ class RecordingPolicy:
         """Open the warm-up gate: the position cache now reflects the exchange."""
         self._positions_ready = True
 
+    # --- startup (#2188): `sessions.startup_reconcile` runs these in order --------------------
+
+    async def load_recorded(self) -> list[dict[str, Any]]:
+        """This env's active rows: startup's one read of `recorded_symbols`, scoped to the
+        policy's own env so that no caller can widen it (#2726)."""
+        return await self._recorded.list_recorded(self._env)
+
+    async def adopt_recorded(self, rows: Sequence[Mapping[str, Any]]) -> None:
+        """Take back what the rows say this env was recording: a manual row is its entry again (a
+        NULL `added_by`, its user deleted, is the policy's own), an auto row is resumed and lingers
+        in `reconcile_all` (no trigger of a dead process is live), `pinned` is restored. Another
+        env's row and a soft-removed one are skipped. Nothing starts here."""
+        async with self._lock:
+            self._require_warmup()
+            for row in rows:
+                symbol = str(row["symbol"])
+                if row["env"] != self._env or row.get("removed_at") is not None:
+                    logger().warning("recorder_adopt_skipped", symbol=symbol, env=row["env"])
+                    continue  # `load_recorded` scopes both; this keeps a wrong read out
+                if row["reason"] not in PRECEDENCE:  # a rule or alert dependency: none of ours
+                    logger().warning("recorder_adopt_skipped", symbol=symbol, reason=row["reason"])
+                    continue
+                s = self._protected(symbol)
+                s.pinned = bool(row["pinned"])
+                if row["reason"] == "manual":
+                    adder = SYSTEM_ACTOR if row["added_by"] is None else user_actor(row["added_by"])
+                    s.manual = _Manual(adder, tuple(row["streams"]), row["orderbook_depth"])
+                else:
+                    s.resumed = row["reason"]
+
+    async def adopt_positions(self, pairs: Sequence[tuple[str, str]]) -> None:
+        """Take the `(symbol, position id)` pairs the position source reports open, as
+        `on_position_opened` does (no chart cap) but starting nothing: `reconcile_all` does."""
+        async with self._lock:
+            self._require_warmup()
+            for symbol, position_id in pairs:
+                self._protected(symbol).positions.add(position_id)
+
+    async def reconcile_all(self) -> None:
+        """Reconcile every adopted symbol once, due or not; run before the gate opens, so that
+        nothing stops. A symbol that fails is logged and starves no other."""
+        await self._reconcile_each(list(self._syms))
+
+    def _require_warmup(self) -> None:
+        if self._positions_ready:
+            raise RecorderGateOpenError("the warm-up gate is open: startup adoption is over")
+
+    def _protected(self, symbol: str) -> _Sym:
+        """`_sym` for a position or manual symbol; the bound being full is an incident, loud."""
+        s = self._sym(symbol, kind="protected")
+        if s is None:
+            raise InvalidRecordedSymbolError(f"more than {MAX_PROTECTED} protected symbols")
+        return s
+
     async def tick(self) -> None:
         """The 1 s evaluation tick: only symbols with a due start (delay elapsed or a
         cap-refused start), grace deadline or error retry are reconciled."""
-        for symbol in [sym for sym, s in self._syms.items() if self._due(sym, s)]:
+        await self._reconcile_each([sym for sym, s in self._syms.items() if self._due(sym, s)])
+
+    async def _reconcile_each(self, symbols: Sequence[str]) -> None:
+        for symbol in symbols:
             try:
                 await self._reconcile(symbol)
             except Exception as exc:  # a symbol whose row write fails must not starve the rest
@@ -643,6 +707,8 @@ class RecordingPolicy:
                 await self._retry_error(symbol, s)
                 await self._publish(symbol)
                 return
+            if s.resumed is not None:
+                await self._resume(symbol, s)
             want = self._desired(s)
             if self._cfg.autorecord_enabled and s.charts and self.leaf(symbol) == "lingering":
                 want.add("chart_open")  # continuing an existing session is not a new start
@@ -743,6 +809,20 @@ class RecordingPolicy:
             s.started_reasons.add(reason)
             s.refused.pop(reason, None)
             s.linger_deadline = None
+
+    async def _resume(self, symbol: str, s: _Sym) -> None:
+        """Start B11 for the reason an adopted auto row held, so the reconcile that follows lingers
+        it (the grace runs from now). Not a new start: no cap or disk refusal, which would leave
+        the row for good, and no row write. A symbol held now starts the normal way."""
+        reason, s.resumed = s.resumed, None
+        if reason is None or self._desired(s) or symbol in self._charts:
+            return  # held now, or restored from its snapshot (it keeps its chart)
+        self._register(symbol, (await build(MACHINE, clock=default_clock(), lane=LANE)).interpreter)
+        if await self._send_recording(
+            symbol, "REASON_ADDED", reason=reason, symbol=symbol, streams=[]
+        ):
+            s.started_reasons.add(reason)
+            s.resumed_from = reason
 
     async def _refuse(
         self, symbol: str, s: _Sym, reason: Reason, cause: RefusalCause = "symbol_cap"
@@ -870,7 +950,10 @@ class RecordingPolicy:
         )
 
     def _last_reason(self, symbol: str) -> Reason:
-        return self._published.get(symbol, "chart_open")
+        """The reason a symbol holding none is named for: the one last published, else the one a
+        resumed row held, else `chart_open`."""
+        s = self._syms.get(symbol)
+        return self._published.get(symbol) or (s.resumed_from if s else None) or "chart_open"
 
     def effective_set(self) -> dict[str, EffectiveEntry]:
         out = {sym: self._entry(sym) for sym in self._charts}
@@ -925,7 +1008,7 @@ class RecordingPolicy:
         s = self._syms.get(symbol) or _Sym()
         raw = context.get("reasons")
         held = [r for r in PRECEDENCE if isinstance(raw, list) and r in raw]
-        reason: Reason = held[0] if held else self._published.get(symbol, "chart_open")
+        reason: Reason = held[0] if held else self._last_reason(symbol)
         cause = s.stop_cause if name == "unsubscribe" else None
         await self._audit_emit(
             "recorder.start" if name == "subscribe" else "recorder.stop",

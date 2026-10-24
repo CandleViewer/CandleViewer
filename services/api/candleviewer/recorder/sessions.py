@@ -18,8 +18,9 @@ Gap sources (cause, `recording_gaps.cause`):
 - `backpressure_drop`: written by the StreamWriter itself on the live session this module
   opens (its buffered gaps flush once `open` has run).
 
-Startup order (#2188): `recover_on_startup()` -> B11 snapshot restore -> OMS position cache
-reload -> `policy.positions_reloaded()` — see `startup_reconcile`.
+Startup order (#2188): `recover_on_startup()` -> B11 snapshot restore -> the policy adopts its
+env's `recorded_symbols` rows and the open positions -> `reconcile_all()` ->
+`policy.positions_reloaded()` — see `startup_reconcile`.
 
 Every external await is bounded by `store_timeout_s`; the clock is injected (epoch µs).
 """
@@ -461,24 +462,46 @@ class SessionManager:
                     )
 
 
-class WarmupGate(Protocol):
+class PositionSeed(Protocol):
+    """Where the recorder learns its open positions at startup (#2188). The recorder owns the
+    port; whoever has the positions implements it, built for one env (the call takes none). A pair
+    is `(symbol, position id)`, the id `on_position_opened` takes and a row's
+    `{"kind": "position", "id": ...}` ref names. `None`: no source is deployed."""
+
+    async def open_positions(self) -> Sequence[tuple[str, str]] | None: ...
+
+
+class StartupPolicy(Protocol):
+    """What `startup_reconcile` calls on `RecordingPolicy`."""
+
+    async def load_recorded(self) -> Sequence[Mapping[str, Any]]: ...
+    async def adopt_recorded(self, rows: Sequence[Mapping[str, Any]]) -> None: ...
+    async def adopt_positions(self, pairs: Sequence[tuple[str, str]]) -> None: ...
+    async def reconcile_all(self) -> None: ...
     def positions_reloaded(self) -> None: ...
 
 
 async def startup_reconcile(
     sessions: SessionManager,
-    gate: WarmupGate,
+    policy: StartupPolicy,
     *,
     process_start_us: int,
-    restore_b11: Callable[[], Awaitable[None]] | None = None,
-    reload_positions: Callable[[], Awaitable[None]] | None = None,
+    restore_b11: Callable[[], Awaitable[None]],
+    seed: PositionSeed,
 ) -> None:
-    """#2188 startup order: (1) crash-close stale sessions, (2) restore B11 snapshots, (3)
-    reload the OMS position cache, and only then (4) open the policy's warm-up gate. A failure
-    in any step leaves the gate CLOSED (no grace-expiry stop on a stale position view)."""
+    """#2188 startup order, every step required: (1) crash-close the stale sessions, (2) restore
+    the B11 snapshots, (3) adopt the policy's env's rows, (4) seed the open positions (`None`: no
+    source is deployed, so the gate opens on none, with a warning), (5) reconcile every symbol, and
+    only then (6) open the warm-up gate. A step that raises leaves the gate CLOSED (no grace-expiry
+    stop on a stale position view) and, as steps 3 and 4 start nothing, no session open: the caller
+    retries the whole startup. The injected store, source and restore bound their own awaits."""
     await sessions.recover_on_startup(process_start_us)
-    if restore_b11 is not None:
-        await restore_b11()
-    if reload_positions is not None:
-        await reload_positions()
-    gate.positions_reloaded()
+    await restore_b11()
+    await policy.adopt_recorded(await policy.load_recorded())
+    positions = await seed.open_positions()
+    if positions is None:
+        logger().warning("recorder_positions_source_not_deployed")
+    else:
+        await policy.adopt_positions(positions)
+    await policy.reconcile_all()
+    policy.positions_reloaded()

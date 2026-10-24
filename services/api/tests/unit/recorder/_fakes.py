@@ -93,6 +93,10 @@ class MemRecordedStore:
         row = self.rows.get(recorded_id)
         return None if row is None or row["removed"] else row
 
+    async def list_recorded(self, env: str) -> list[dict[str, Any]]:
+        await self._enter("list_recorded")
+        return [dict(r) for r in self.rows.values() if r["env"] == env and not r["removed"]]
+
     async def get_by_symbol(self, symbol: str, env: str) -> dict[str, Any] | None:
         await self._enter("get_by_symbol")
         return self.active(symbol, env)
@@ -152,6 +156,20 @@ class MemRecordedStore:
 
 
 Mem = MemRecordedStore  # short, so the `RecordingPolicy(...)` call sites stay on three lines
+
+
+class FakeSeed:
+    """A `PositionSeed`: the `(symbol, position id)` pairs it reports, or None (no source)."""
+
+    def __init__(self, pairs: Sequence[tuple[str, str]] | None = ()) -> None:
+        self.pairs = pairs
+
+    async def open_positions(self) -> Sequence[tuple[str, str]] | None:
+        return self.pairs
+
+
+async def no_restore() -> None:
+    """A startup's restore step with no B11 snapshot to restore."""
 
 
 def _shape(member: Callable[..., object]) -> tuple[inspect.Signature, bool] | None:

@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 from candleviewer.recorder.policy import RecordingPolicy
 from candleviewer.recorder.sessions import SessionManager, startup_reconcile, to_dt, to_us
-from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, Mem
+from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, Mem, no_restore
 from tests.unit.recorder._session_fakes import MemRecorderStore, UsClock
 
 T0 = to_us(datetime(2026, 9, 14, tzinfo=UTC))
@@ -36,13 +36,15 @@ async def test_crash_recovery_then_warmup_gate_opens_and_only_then_stops(
         start = T0 + 60_000_000
         order: list[str] = []
 
-        async def reload_positions() -> None:
-            await p.tick()
-            order.append(f"positions:{p.leaf('ETHUSDT')}")  # still gated while reloading
+        class Seed:
+            async def open_positions(self) -> list[tuple[str, str]]:
+                await p.tick()
+                order.append(f"positions:{p.leaf('ETHUSDT')}")  # still gated while it reads
+                return []
 
         mgr = SessionManager(store, now_us=UsClock(start), audit=FakeAudit())
-        await startup_reconcile(mgr, p, process_start_us=start,
-                                reload_positions=reload_positions)  # fmt: skip
+        await startup_reconcile(mgr, p, process_start_us=start, restore_b11=no_restore,
+                                seed=Seed())  # fmt: skip
         s = store.sessions[sid]
         assert s["end_reason"] == "process_restart" and to_us(s["ended_at"]) == start
         assert store.gap_windows("process_restart") == [

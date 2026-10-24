@@ -7,10 +7,13 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from functools import reduce
 from pathlib import Path
 from typing import Any, Literal, cast
+from unittest.mock import AsyncMock, Mock
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.audit.writer import AuditWriter
 from candleviewer.exchange.bybit.public_ws import stream_for_topic
@@ -189,36 +192,46 @@ async def test_crash_recovery_without_events_gaps_from_started_at() -> None:
     assert all(lo == T0 for _, lo, _, _ in store.gap_windows("process_restart"))
 
 
-class _Gate:
-    def __init__(self, log: list[str]) -> None:
-        self.log = log
+_ORDER = [
+    "sessions.recover_on_startup", "restore", "policy.load_recorded", "policy.adopt_recorded",
+    "seed.open_positions", "policy.adopt_positions", "policy.reconcile_all",
+    "policy.positions_reloaded",
+]  # fmt: skip
 
-    def positions_reloaded(self) -> None:
-        self.log.append("gate")
+
+async def _startup(failing: str | None = None, positions: list[Any] | None = None) -> list[str]:
+    """`startup_reconcile` over mocks that record every call in order; `failing` names the one
+    that raises. Returns the calls made, by name."""
+    m = AsyncMock()
+    m.policy.positions_reloaded = Mock()  # the one sync step
+    m.policy.load_recorded.return_value = []
+    m.seed.open_positions.return_value = positions
+    if failing is not None:
+        reduce(getattr, failing.split("."), m).side_effect = OSError(f"{failing} down")
+    try:
+        await startup_reconcile(m.sessions, m.policy, process_start_us=T0, restore_b11=m.restore,
+                                seed=m.seed)  # fmt: skip
+    except OSError:
+        assert failing is not None
+    return [name for name, _, _ in m.mock_calls]
 
 
-async def test_startup_reconcile_opens_gate_last_and_not_on_failure() -> None:
-    """#2188 order: crash-close -> B11 restore -> positions reload -> gate."""
-    store, log = MemRecorderStore(), []
-    mgr = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit())
+async def test_startup_reconcile_runs_every_step_in_order_and_opens_the_gate_last() -> None:
+    assert await _startup(positions=[("ETHUSDT", "p1")]) == _ORDER
 
-    async def restore() -> None:
-        log.append("restore")
 
-    async def reload() -> None:
-        log.append("positions")
+@pytest.mark.parametrize("failing", _ORDER[:-1])
+async def test_a_failing_startup_step_stops_the_rest_and_leaves_the_gate_closed(
+    failing: str,
+) -> None:
+    assert await _startup(failing, positions=[]) == _ORDER[: _ORDER.index(failing) + 1]
 
-    await startup_reconcile(mgr, _Gate(log), process_start_us=T0, restore_b11=restore,
-                            reload_positions=reload)  # fmt: skip
-    assert log == ["restore", "positions", "gate"]
 
-    async def boom() -> None:
-        raise OSError("oms down")
-
-    log.clear()
-    with pytest.raises(OSError):
-        await startup_reconcile(mgr, _Gate(log), process_start_us=T0, reload_positions=boom)
-    assert "gate" not in log
+async def test_a_position_source_that_is_not_deployed_is_logged_and_the_gate_still_opens() -> None:
+    with capture_logs() as logs:
+        calls = await _startup(positions=None)
+    assert calls == [name for name in _ORDER if name != "policy.adopt_positions"]
+    assert [e["event"] for e in logs] == ["recorder_positions_source_not_deployed"]
 
 
 async def test_stop_closes_all_live_sessions_as_shutdown() -> None:
