@@ -3,30 +3,33 @@ Sec.3.3.11, 24-internal-schemas.md Sec.8.4 "The pipeline's own rules", 20-archit
 and Sec.12.1).
 
 `ResolvingStopGate` is the runtime's one `StopRequestGate`, asked before an entry's first persist
-(`submit.py`) and before `attach_stop` records its request (`commands.py`). `clear(key, wait_s=)`
-reads the key's rows waiting for the complete read (`RecordedStopRepository.waiting_for_key`),
-within `STOP_GATE_READ_TIMEOUT_S` (a read that fails or is late is `StoreUnavailable`); with none,
-the key is clear. Otherwise it joins the key's resolution (`StopResolver.resolve_key`, a task the
-gate owns) or starts one: one per key, at most `MAX_RESOLUTIONS` in the process, the last kept for
-an attach (C-2.18; a reserve, as C-12.7 keeps one). An entry that finds the others taken, or its
-key cooling, is refused without asking the venue; an attach (`wait_s` above zero) may take the kept
-slot and is never held by the cooldown. It waits up to `wait_s` (an entry not at all: 409 at once,
-`Retry-After: 5`, the read running on for its retry) and returns once the resolution has ended and
-a fresh read lists nothing; else `StopRequestPending(5)`. A resolution that cleared nothing, failed
-or not, cools its key for `STOP_REQUEST_RETRY_AFTER_S` on the injected monotonic clock.
+(`submit.py`) and before `attach_stop` records its request (`commands.py`). `clear(key, wait_s=,
+protective=)` reads the key's rows waiting for the complete read
+(`RecordedStopRepository.waiting_for_key`), within `STOP_GATE_READ_TIMEOUT_S` (a read that fails or
+is late is `StoreUnavailable`); with none, the key is clear. Otherwise it joins the key's resolution
+(`StopResolver.resolve_key`, a task the gate owns) or starts one: one per key, at most
+`MAX_RESOLUTIONS` in the process, the last kept for an attach (C-2.18; a reserve, as C-12.7 keeps
+one). An entry that finds the others taken, or its key cooling, is refused without asking the
+venue; an attach (`protective`) may take the kept slot and is never held by the cooldown. It waits
+up to `wait_s` (an entry not at all: 409 at once, `Retry-After: 5`, the read running on for its
+retry) and returns once the resolution has ended and a fresh read lists nothing; else
+`StopRequestPending(5)`. A resolution that wrote nothing (no move but `kept` or an answer its row
+had), failed or not, cools its key for `STOP_REQUEST_RETRY_AFTER_S` on the injected monotonic clock.
 
 Each decision counts `oms_stop_resolutions_total{outcome}`, a read that decided nothing
-`read_failed`; each stop-loss voided `entry_filled_stop_absent` on its open position pages (C-2.6).
-A key `held_for_reconciliation` logs `oms_stop_request_held` once per hold, and pages once per hold
-for a `restore` request (E29-T06's) or a hold through `WAITING_ENTRY` whose read shows the position
-open with no stop at all (a C-2.6 exposure only E29-T06's pass clears); a hold ends once its key is
-found clear or held no more. Pages name ids only.
+`read_failed`; each stop-loss voided `entry_filled_stop_absent` on its open position pages (C-2.6),
+counted and paged as its void commits, so a later write's failure loses neither. A key
+`held_for_reconciliation` logs `oms_stop_request_held` once per hold (counted so then if no
+decision of it was, Q3), and pages once per hold for a `restore` request (E29-T06's) or a hold
+through `WAITING_ENTRY` whose read shows the position open with no stop at all (a C-2.6 exposure
+only E29-T06's pass clears); a hold ends once its key is found clear or held no more. Pages name
+ids only; a gate task's unexpected error is logged by its type.
 
 The startup floor (Q7): every unanswered row created before the runtime started (`started_at`, from
-the database's clock) waits whatever its age: each read passes `bound_s = min(bound, now - start)`,
-at least zero, with its own `now`, so the cutoff is `max(now - bound, start)` and no app-versus-
-database skew files a live writer's row as waiting. Until the start is known, `clear` is
-`StoreUnavailable`. `aclose()` cancels and awaits every resolution the gate runs.
+the database's clock) waits whatever its age: each listing passes its own `now`, never before the
+start, and `bound_s = min(bound, now - start)`, so the cutoff is `max(now - bound, start)`, the app
+clock behind the database's or not. Until the start is known, `clear` is `StoreUnavailable`.
+`aclose()` cancels and awaits every resolution the gate runs.
 """
 
 from __future__ import annotations
@@ -160,14 +163,16 @@ class ResolvingStopGate:
         self._holds: OrderedDict[PositionKey, set[str]] = OrderedDict()
         self._closed = False
 
-    async def clear(self, key: PositionKey, *, wait_s: float = 0.0) -> None:
+    async def clear(
+        self, key: PositionKey, *, wait_s: float = 0.0, protective: bool = False
+    ) -> None:
         """Return when `key` may take a stop request; else `StopRequestPending`, or
         `StoreUnavailable` when its rows cannot be read (module docstring)."""
         if not await self._waiting(key):
             return
         task = self._running.get(key)
         if task is None or task.done():
-            task = self._start(key, wait_s > 0)  # an attach waits: it is protective
+            task = self._start(key, protective)
         if task is not None and wait_s > 0:
             done, _ = await asyncio.wait([task], timeout=wait_s)  # shared: a wait never cancels it
             if done and not await self._waiting(key):
@@ -184,19 +189,22 @@ class ResolvingStopGate:
         if tasks:
             await asyncio.wait(tasks)  # their cancellation is their end; the caller's propagates
 
-    def _floor(self, now: datetime) -> float | None:
+    def _listing(self) -> tuple[datetime, float] | None:
+        """A listing's `now`, never before the start (CR-S3H3A-05), and its `bound_s`, so the
+        cutoff is `max(now - bound, start)`; None until the start is known."""
         start = self._started_at
         if start is None:
             return None
-        return max(0.0, min(self._bound_s, (now - start).total_seconds()))
+        now = max(self._now(), start)
+        return now, min(self._bound_s, (now - start).total_seconds())
 
     async def _waiting(self, key: PositionKey) -> bool:
         """Whether a row of `key` waits for the complete read; a key found clear ends its hold."""
-        now = self._now()
-        bound = self._floor(now)
+        listing = self._listing()
         try:
-            if bound is None:  # nothing is judged before the floor is read: fail closed
+            if listing is None:  # nothing is judged before the floor is read: fail closed
                 raise StoreUnavailable
+            now, bound = listing
             async with asyncio.timeout(self._read_timeout_s):
                 rows = await self._rows.waiting_for_key(
                     key.account_id, key.symbol, key.position_idx, now=now, bound_s=bound
@@ -226,15 +234,23 @@ class ResolvingStopGate:
     def _ended(self, key: PositionKey, task: asyncio.Task[None]) -> None:
         if self._running.get(key) is task:
             del self._running[key]
+        _failed(task)
 
     async def _resolve(self, key: PositionKey) -> None:
+        counted: list[RequestDecision] = []
+
+        def voided(decision: RequestDecision) -> None:  # as its void commits (CR-S3H3A-04)
+            counted.append(decision)
+            self._tell(key, decision)
+
         decisions: tuple[RequestDecision, ...] | None = None
         try:
             async with asyncio.timeout(self._resolution_timeout_s):
                 account = await self._accounts.trading_account(key.account_id)
-                port, now = self._port_for(account.environment), self._now()
+                port = self._port_for(account.environment)
+                now, bound = self._listing() or (self._now(), None)
                 decisions = await self._resolver.resolve_key(
-                    port, account, key, bound_s=self._floor(now), now=now
+                    port, account, key, bound_s=bound, now=now, committed=voided
                 )
         except Exception as exc:  # the task's own end, logged and counted; a cancel goes through
             failure = type(exc).__name__
@@ -242,11 +258,12 @@ class ResolvingStopGate:
         if decisions is None:
             self._outcomes.labels("read_failed").inc()
         else:
-            self._announce(key, decisions)
-        if decisions is None or (
-            decisions and all(m == "kept" for d in decisions for _, m in d.moves)
-        ):
-            self._cool(key)  # it cleared nothing; one that found nothing waiting cleared the key
+            for decision in decisions:
+                if all(decision is not done for done in counted):
+                    self._tell(key, decision)
+            self._hold(key, decisions)
+        if decisions is None or (decisions and not _wrote(decisions)):
+            self._cool(key)  # it wrote nothing; one that found nothing waiting cleared the key
 
     def _cool(self, key: PositionKey) -> None:
         now = self._monotonic()
@@ -257,17 +274,19 @@ class ResolvingStopGate:
         if len(self._cooling) > MAX_HOLDS:
             self._cooling.popitem(last=False)
 
-    def _announce(self, key: PositionKey, decisions: Sequence[RequestDecision]) -> None:
-        """Count each decision, page each void that pages, and announce a hold once."""
-        where = f"account {key.account_id} {key.symbol} position_idx {key.position_idx}"
-        for decision in decisions:
-            self._outcomes.labels(decision.outcome).inc()
-            # the read names why it pages (`page_reason`, typed): a filled entry's void or
-            # `entry_unseen`; the page carries the read's own text after the reason
-            reason = decision.page_reason or "entry_filled_stop_absent"
-            what = (decision.page or FILL_PAGE).partition(": ")[2]
-            for record_id in decision.pages:
-                self._page(f"oms_stop_{reason}: C-2.6 exposure, {where}, {record_id}: {what}")
+    def _tell(self, key: PositionKey, decision: RequestDecision) -> None:
+        """Count a decision and page each void of it that pages: the read names why
+        (`page_reason`, typed: a filled entry's void or `entry_unseen`), the page carries the
+        read's own text after the reason."""
+        self._outcomes.labels(decision.outcome).inc()
+        reason = decision.page_reason or "entry_filled_stop_absent"
+        what = (decision.page or FILL_PAGE).partition(": ")[2]
+        for record_id in decision.pages:
+            self._page(f"oms_stop_{reason}: C-2.6 exposure, {_where(key)}, {record_id}: {what}")
+
+    def _hold(self, key: PositionKey, decisions: Sequence[RequestDecision]) -> None:
+        """Announce a hold once: logged, counted `held_for_reconciliation` if no decision of it
+        was (Q3: the refusal shows there), and paged for a restore or an exposure."""
         held = [d for d in decisions if d.held is not None]
         told = self._holds.pop(key, set())
         if not held:
@@ -288,6 +307,9 @@ class ResolvingStopGate:
                 "oms_stop_request_held", account_id=str(key.account_id), symbol=key.symbol,
                 position_idx=key.position_idx, reasons=reasons,
             )  # fmt: skip
+            if all(d.outcome != "held_for_reconciliation" for d in decisions):
+                self._outcomes.labels("held_for_reconciliation").inc()
+        where = _where(key)
         if "restore" in new:
             self._page(f"oms_stop_restore_held: held_for_reconciliation, {where}, E29-T06's")
         if "exposed" in new:
@@ -299,3 +321,24 @@ class ResolvingStopGate:
             self._pager.raise_alert("page", summary, machine_kind="order")
         except Exception as exc:  # the page is lost, never what it pages on
             _log().critical("oms_pager_failed", summary=summary, failure=type(exc).__name__)
+
+
+def _where(key: PositionKey) -> str:
+    return f"account {key.account_id} {key.symbol} position_idx {key.position_idx}"
+
+
+def _wrote(decisions: Sequence[RequestDecision]) -> bool:
+    """Whether a move wrote its row: any but `kept` and an answer the row already had."""
+    return any(
+        move != "kept" and not (move == "answered" and row.answered_at is not None)
+        for decision in decisions
+        for row, move in decision.moves
+    )
+
+
+def _failed(task: asyncio.Task[None]) -> None:
+    """A gate task's unexpected error, logged by its type, not left for asyncio's "never
+    retrieved" (CR-S3H3A-08); a cancel is how a task ends."""
+    if not task.cancelled() and (error := task.exception()) is not None:
+        failure = type(error).__name__
+        _log().error("oms_stop_gate_task_failed", task=task.get_name(), failure=failure)

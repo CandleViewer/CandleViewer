@@ -535,10 +535,14 @@ class StopRequestGate(Protocol):
     persist, and `attach_stop` before its record. `clear` returns when the key may take a request,
     and raises `StopRequestPending` while a row of the key waits for the complete read, which
     S3-H's `stop_gate.ResolvingStopGate` starts: an entry is refused at once (`wait_s` 0), an
-    attach after waiting up to `wait_s` for that read (24 Sec.8.4). The caller bounds the call as
-    any other (`commands.PORT_TIMEOUT_S`, C-2.18), whatever the gate bounds itself."""
+    attach after waiting up to `wait_s` for that read (24 Sec.8.4). An attach says it is
+    `protective`: it may take the read's slot kept for it and no cooldown holds it. The caller
+    bounds the call as any other (`commands.PORT_TIMEOUT_S`, C-2.18), whatever the gate bounds
+    itself."""
 
-    async def clear(self, key: PositionKey, *, wait_s: float = 0.0) -> None: ...
+    async def clear(
+        self, key: PositionKey, *, wait_s: float = 0.0, protective: bool = False
+    ) -> None: ...
 
 
 class WaitingRows(Protocol):
@@ -570,7 +574,8 @@ class RefuseWhileWaiting:
     or does not answer within `timeout_s`, refuses too (`StoreUnavailable`): no stop request leaves
     unchecked. `bound_s` is how long an unanswered request holds its key before it waits for the
     complete read, the stop request's bound (`oms_wiring.OmsBounds.stop_request_s`). It starts no
-    read, so it never waits: `wait_s` is the resolving gate's, which replaces it once wired."""
+    read, so it never waits: `wait_s` and `protective` are the resolving gate's, which replaces it
+    once wired."""
 
     def __init__(
         self,
@@ -585,7 +590,9 @@ class RefuseWhileWaiting:
         self._bound_s = bound_s
         self._timeout_s = timeout_s
 
-    async def clear(self, key: PositionKey, *, wait_s: float = 0.0) -> None:
+    async def clear(
+        self, key: PositionKey, *, wait_s: float = 0.0, protective: bool = False
+    ) -> None:
         try:
             async with asyncio.timeout(self._timeout_s):
                 waiting = await self._rows.waiting_for_key(
