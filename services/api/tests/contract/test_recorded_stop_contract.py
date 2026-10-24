@@ -236,9 +236,7 @@ def test_an_unanswered_request_is_resolved_by_a_read_before_the_next_stop_reques
         "a complete read after the request's timeout shows neither the stop nor an order that "
         "matches it nor a resting entry that carries it (the position, and, for a Partial side "
         "or for a Full side whose position the read shows flat or on the other side, the open "
-        "orders and the order history from 5 s before the request (no further back than 4 weeks, "
-        "`MAX_HISTORY_WINDOWS`: a miss older than that is held as a span miss), where a "
-        "Full-mode stop that "
+        "orders and the order history from 5 s before the request, where a Full-mode stop that "
         "already fired is an order that matches it, never a reason to void the record, and "
         "where, while the position is open on the record's side, a matching order that history "
         "shows ended with no fill (cancelled, deactivated or rejected) is the stop absent, not "
@@ -262,9 +260,7 @@ def test_the_complete_read_ends_each_case_on_the_row_as_ruled() -> None:
         "and its stop absent (below)",
         "for a Partial side or for a Full side whose position the read shows flat or on the "
         "other side, the open orders and the order history from 5 s before the request, a "
-        "history read covering only the venue's spans, 24 §14.1, and reaching back no further "
-        "than 4 weeks (`MAX_HISTORY_WINDOWS`), a miss older than that held as a span miss): a "
-        "read that shows its stop "
+        "history read covering only the venue's spans, 24 §14.1): a read that shows its stop "
         "puts it `in_force`, as above (a native trail shown only by its distance and "
         "activation price, never by the trigger it moves; while `Position` carries no "
         "activation price, `[O-4]`, a trail request whose position shows a trail by its "
@@ -331,10 +327,11 @@ def test_the_complete_read_ends_each_case_on_the_row_as_ruled() -> None:
         "and the complete read's (`in_flight_resolved`, and `entry_filled_stop_absent`, whose "
         "record carries `position_state`, `open` (a position on the row's side) or `flat` "
         "(none on its side, the other side's included), so a naked window that a close or a "
-        "liquidation ended stays on the record unpaged; and the `in_flight_resolved` void of an "
-        "entry the read did not find where a miss proves nothing, while the position is open "
-        "with no stop at all, whose record carries `position_state` too and which pages "
-        "`entry_unseen`, no stop), is audited write-ahead too",
+        "liquidation ended stays on the record unpaged; and, for a stop-loss side, the "
+        "`in_flight_resolved` void of an entry the read did not find where a miss proves "
+        "nothing, while the position is open with no stop at all, whose record carries "
+        "`position_state` too and which pages `entry_unseen`, no stop), is audited write-ahead "
+        "too",
     )
     rules = _words(_INTERNAL_DOC.split("**The pipeline's own rules", 1)[1].split("**8.4.1 ", 1)[0])
     assert not _missing(
