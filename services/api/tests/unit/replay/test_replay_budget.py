@@ -282,3 +282,21 @@ async def test_budget_breathe_yields_even_when_wake_is_already_set_in_debt() -> 
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+
+
+async def test_budget_one_long_charge_is_counted_in_full_but_bounds_the_debt() -> None:
+    """A 5 s suspension charged at once (a sink that held the lane) is visible in the loop
+    series, yet the debt it leaves holds no lane longer than 0.25 s / share."""
+    time = FakeTime()
+    budget = _budget(time)
+    slow, other = budget.lane("slow"), budget.lane("other")
+    work0 = _sample("replay_loop_seconds_total")
+    _work(time, slow, 5.0)
+
+    held_slow = await slow.breathe()
+    _work(time, other, BURST + SLICE)
+    held_other = await other.breathe()
+
+    assert _sample("replay_loop_seconds_total") - work0 == pytest.approx(5.0 + BURST + SLICE)
+    assert 0.0 < held_slow <= 0.25 / SHARE
+    assert 0.0 < held_other <= 0.25 / SHARE
