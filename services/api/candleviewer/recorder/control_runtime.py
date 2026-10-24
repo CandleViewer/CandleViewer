@@ -35,7 +35,7 @@ from candleviewer.recorder.errors import (
     RecorderSymbolNotRecordedError,
 )
 from candleviewer.recorder.models import Actor
-from candleviewer.recorder.policy import PolicyConfig, RefusalCause
+from candleviewer.recorder.policy import MAX_PROTECTED, PolicyConfig, RefusalCause
 from candleviewer.recorder.status import Budget
 
 #: Reasons, top first (`RecordReason`); a live position outranks a chart (`RecordRefusal`).
@@ -44,8 +44,6 @@ _ORDER: Final[tuple[rc.RecordReason, ...]] = (
 )  # fmt: skip
 _STOPS: Final[tuple[rc.Refusal, ...]] = ("position_open", "chart_open")
 _PAGE: Final = 100
-#: Pages read for one full listing: the policy's chart bound plus its protected one (C-2.18).
-_MAX_PAGES: Final = 21
 #: Symbols counted, and stopped rows remembered, at most (the least recently seen go first).
 MAX_SYMBOLS: Final = 1024
 _MINUTE_S: Final = 60
@@ -109,7 +107,9 @@ class RecorderWiring(Protocol):
     @property
     def rows(self) -> rc.RecordedRows: ...
     @property
-    def budget(self) -> Budget | None: ...
+    def budget(self) -> Budget | None:
+        """Unused by the runtime control: the status cache reads `app.state.disk_budget`."""
+
     @property
     def env(self) -> str: ...
 
@@ -175,6 +175,9 @@ class RuntimeRecordingControl:
         """`config` is the policy's own (the status reports it); `now` is the wall clock."""
         self._policy, self._rows, self._env = wiring.policy, wiring.rows, wiring.env
         self._config, self._default_days = config, default_retention_days
+        #: Pages read for one full listing: the policy's chart bound plus its protected one
+        #: (C-2.18), so a listing never stops short of the rows the policy can hold.
+        self._max_pages = math.ceil((config.max_chart_symbols + MAX_PROTECTED) / _PAGE) + 1
         self.windows = HourWindows(now)
         self._stopped: OrderedDict[str, rc.RecordedEntry] = OrderedDict()
 
@@ -202,7 +205,7 @@ class RuntimeRecordingControl:
     async def _stored(self) -> list[rc.RecordedEntry]:
         out: list[rc.RecordedEntry] = []
         after: tuple[str, str] | None = None
-        for _ in range(_MAX_PAGES):
+        for _ in range(self._max_pages):
             rows = await self._rows.recorded_page(
                 env=self._env, state=None, reason=None, pinned=None, hidden=(), after=after,
                 limit=_PAGE,
@@ -256,8 +259,9 @@ class RuntimeRecordingControl:
     # --- writes ---------------------------------------------------------------------
 
     def _target(self, entry: rc.RecordedEntry, spec: rc.EntrySpec) -> tuple[bool, int | None]:
-        """The pin and `retention_days` after `spec`: a pin nulls it (22); an unpin takes the
-        named days or the default; a row already unpinned keeps its days unless they are named."""
+        """The pin and `retention_days` after `spec`: a pin nulls it (22), so days named on a row
+        that stays pinned are ignored; an unpin takes the named days or the default; a row already
+        unpinned keeps its days unless they are named."""
         pinned = entry.pinned if spec.pinned is None else spec.pinned
         if pinned:
             return True, None

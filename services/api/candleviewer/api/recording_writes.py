@@ -363,8 +363,9 @@ def make_recording_writes_router(
     ) -> Response:
         """`pinned` or `retention_days` under the `recorder` step-up (04 row 9); `streams` and
         `depth` alone without (row 8). The policy records `recorder.update` (update_manual) and
-        `retention.change` (set_pin, set_retention) ahead of its store. The answer reports the
-        stored values; it promises no change to a running session."""
+        `retention.change` (set_pin, set_retention) ahead of its store. `retention_days` on a
+        row that stays pinned is ignored: a pin keeps forever (22 nulls the days). The answer
+        reports the stored values; it promises no change to a running session."""
         body, call = await begin(request, "updateRecordedSymbol", _update,
                                  lambda b: bool(b.model_fields_set & _RETAINS))  # fmt: skip
         if call.replayed is not None:

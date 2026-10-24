@@ -30,6 +30,7 @@ from typing import Any, ClassVar, cast
 import structlog
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.datastructures import State
 from starlette.types import ASGIApp
 
 from candleviewer.account_fixture_wiring import AccountFixture, build_account_fixture
@@ -544,7 +545,7 @@ def _oms_state(runtime: OmsRuntime | None) -> str | None:
 
 
 def bind_recording_runtime(
-    state: Any, wiring: RecorderWiring | None, config: PolicyConfig, default_retention_days: int
+    state: State, wiring: RecorderWiring | None, config: PolicyConfig, default_retention_days: int
 ) -> None:
     """E16-T08 S9 (#492): with #2188's composed recorder, one `RuntimeRecordingControl` serves
     the recorded-set reads, the writes and the status (`state` is `app.state`). Without it nothing
