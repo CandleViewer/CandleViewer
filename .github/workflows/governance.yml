@@ -8,11 +8,12 @@ name: governance
 #   - a >=85% line coverage gate on scripts/** (CONSTITUTION.md §9 #3),
 #   - job-duration measurement against the 90 s budget, recorded as a
 #     GitHub Actions annotation.
-# Owning ticket: E01-Q02. #3789: three jobs in parallel instead of one. `governance-checks` runs
-# the checks, the canary and the reports; two `governance-tests` shards run the unit tests
-# (tools/ci/governance_shards.py splits the files by measured weight); `governance` needs all
-# three, combines the shards' coverage, applies the 85% gate and fails unless every job passed,
-# so the `governance` check still means the whole set. Each job checks its own duration.
+# Owning ticket: E01-Q02. #3789: parallel jobs instead of one. `governance-checks` runs the
+# checks, the canary and the reports; the `governance-tests` shards run the unit tests
+# (tools/ci/governance_shards.py splits the files by measured duration; #4365: four shards,
+# because two ran at the 90 s budget); `governance` needs all of them, combines the shards'
+# coverage, applies the 85% gate and fails unless every job passed, so the `governance` check
+# still means the whole set. Each job checks its own duration.
 
 on:
   pull_request:
@@ -166,15 +167,18 @@ jobs:
           fi
 
   governance-tests:
-    # The unit tests, in two shards of about equal measured weight (#3789): one job ran them in
-    # 55-69 s of a 90 s budget. Each shard writes raw coverage data only; `governance` combines it.
-    name: governance-tests (${{ matrix.shard }}/2)
+    # The unit tests, in four shards of about equal measured duration (#3789, #4365): one job ran
+    # them in 55-69 s of a 90 s budget, two shards then sat at the budget as the suite grew. Each
+    # shard writes raw coverage data only; `governance` combines it. `total` is the one place the
+    # shard count is set; the job name, the split script call and the summary all read it.
+    name: governance-tests (${{ matrix.shard }}/${{ matrix.total }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
+        total: [4] # keep in sync with the shard list above (a pin test checks it)
     steps:
       - name: "Record job start time (perf budget <=90s, E01-Q02)"
         id: gov_start
@@ -206,6 +210,7 @@ jobs:
         run: python -m pip install --quiet -r scripts/requirements-ci.txt
 
       - name: Governance script unit tests, one shard (coverage data for the 85% gate)
+        id: pytest
         env:
           # Line coverage only (no branch config anywhere), so coverage.py can
           # measure with sys.monitoring on 3.13: identical per-file results,
@@ -216,12 +221,23 @@ jobs:
           COVERAGE_CORE: sysmon
           COVERAGE_FILE: coverage-shard-${{ matrix.shard }}
           SHARD: ${{ matrix.shard }}
+          TOTAL: ${{ matrix.total }}
         run: |
           set -euo pipefail
-          listing=$(python tools/ci/governance_shards.py "$SHARD" 2)
+          listing=$(python tools/ci/governance_shards.py "$SHARD" "$TOTAL")
           mapfile -t files <<< "$listing"
+          # The pytest wall time and file count go to the job summary (budget step below), so
+          # growth shows before a shard misses the budget; a failing run still reports them.
+          pytest_start_ns=$(date +%s%N)
+          status=0
           python -m pytest "${files[@]}" -q -n auto --dist worksteal \
-            --cov=scripts --cov-report= --cov-fail-under=0
+            --cov=scripts --cov-report= --cov-fail-under=0 || status=$?
+          pytest_end_ns=$(date +%s%N)
+          {
+            echo "pytest_ms=$(( (pytest_end_ns - pytest_start_ns) / 1000000 ))"
+            echo "test_files=${#files[@]}"
+          } >> "$GITHUB_OUTPUT"
+          exit "$status"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
@@ -229,7 +245,7 @@ jobs:
           name: governance-coverage-${{ matrix.shard }}
           path: coverage-shard-${{ matrix.shard }}
           if-no-files-found: error
-          retention-days: 5 # a later "Re-run failed jobs" of `governance` still finds both shards
+          retention-days: 5 # a later "Re-run failed jobs" of `governance` still finds every shard
 
       - name: Job duration budget (<=BUDGET_MS, E01-Q02)
         if: always()
@@ -237,16 +253,22 @@ jobs:
         env:
           BUDGET_MS: "90000"
           START_NS: ${{ steps.gov_start.outputs.start_ns }}
+          SHARD: ${{ matrix.shard }}
+          TOTAL: ${{ matrix.total }}
+          PYTEST_MS: ${{ steps.pytest.outputs.pytest_ms }}
+          TEST_FILES: ${{ steps.pytest.outputs.test_files }}
         run: |
           end_ns=$(date +%s%N)
           duration_ms=$(( (end_ns - START_NS) / 1000000 ))
-          echo "$GITHUB_JOB job duration: ${duration_ms}ms (budget ${BUDGET_MS}ms)"
+          echo "$GITHUB_JOB shard ${SHARD}/${TOTAL} job duration: ${duration_ms}ms (budget ${BUDGET_MS}ms)"
           {
-            echo "### $GITHUB_JOB duration"
-            echo "| metric | ms |"
+            echo "### $GITHUB_JOB shard ${SHARD}/${TOTAL} duration"
+            echo "| metric | value |"
             echo "|---|---|"
-            echo "| wall time | ${duration_ms} |"
-            echo "| budget | ${BUDGET_MS} |"
+            echo "| wall time (ms) | ${duration_ms} |"
+            echo "| pytest wall time (ms) | ${PYTEST_MS:-n/a} |"
+            echo "| test files | ${TEST_FILES:-n/a} |"
+            echo "| budget (ms) | ${BUDGET_MS} |"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::notice title=$GITHUB_JOB job duration::${duration_ms}ms (budget ${BUDGET_MS}ms)"
           if [ "$duration_ms" -gt "$BUDGET_MS" ]; then
@@ -255,7 +277,7 @@ jobs:
           fi
 
   governance:
-    # The check people and tools read: green only when the checks and both test shards passed
+    # The check people and tools read: green only when the checks and every test shard passed
     # and the shards' combined coverage of scripts/** is at least 85% (CONSTITUTION.md §9 #3).
     name: governance
     needs: [governance-checks, governance-tests]
@@ -285,11 +307,21 @@ jobs:
         with:
           pattern: governance-coverage-*
           merge-multiple: true
+          path: ${{ runner.temp }}/gov-coverage
 
       - name: Combined coverage of scripts/** (>=85% gate)
+        env:
+          COV_DIR: ${{ runner.temp }}/gov-coverage
         run: |
           set -euo pipefail
-          python -m coverage combine coverage-shard-1 coverage-shard-2
+          # The combine reads only the downloaded shard files, and all four must be there.
+          shopt -s nullglob
+          files=("$COV_DIR"/coverage-shard-*)
+          [ "${#files[@]}" -eq 4 ] || {
+            echo "::error::expected 4 shard coverage files in $COV_DIR, found ${#files[@]}"
+            exit 1
+          }
+          python -m coverage combine "${files[@]}"
           python -m coverage report -m --fail-under=85
 
       - name: Every governance job passed
@@ -298,7 +330,7 @@ jobs:
           CHECKS: ${{ needs.governance-checks.result }}
           TESTS: ${{ needs.governance-tests.result }}
         run: |
-          echo "governance-checks: $CHECKS; governance-tests (both shards): $TESTS"
+          echo "governance-checks: $CHECKS; governance-tests (all shards): $TESTS"
           [ "$CHECKS" = success ] && [ "$TESTS" = success ]
 
       - name: Job duration budget (<=BUDGET_MS, E01-Q02)
