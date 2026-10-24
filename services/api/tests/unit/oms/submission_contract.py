@@ -115,7 +115,10 @@ class Harness:
     share-locked re-check refuse it from now on (SR-E28-15); `held` counts a persist's anchor,
     group, leg, order and recorded-stop rows as stored; `move_stop` makes a lifecycle move no store
     writes yet (`in_force`, `replaced` or `ended`), as `trg_rs_guard` and `rs_times` admit it;
-    `bind_stop` an exchange order id no store binds yet, as `trg_rs_guard` admits the one bind."""
+    `bind_stop` an exchange order id no store binds yet, as `trg_rs_guard` admits the one bind;
+    `twin_stop` a row of a stop's request values and age (`created_at`) under another id, which one
+    request per transaction never writes; `tick` makes the next row younger, as Postgres's `now()`
+    does and the fake's standing clock does not."""
 
     submissions: SubmissionStore
     anchors: IdempotencyAnchorStore
@@ -129,6 +132,8 @@ class Harness:
     held: Callable[[FirstPersist, NewOrder], tuple[int, ...]]
     move_stop: Callable[[UUID, str], None]
     bind_stop: Callable[[UUID, str], None]
+    twin_stop: Callable[[UUID, UUID], None]
+    tick: Callable[[], None]
 
 
 def link() -> str:

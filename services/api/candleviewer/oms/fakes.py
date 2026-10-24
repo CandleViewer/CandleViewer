@@ -1002,12 +1002,17 @@ class InMemoryRecordedStopStore:
         _bindable((exchange_order_id,))
         stops = self._db._stops
         old, new = stops.get(predecessor_id), stops.get(successor_id)
+        holds = (account_id, exchange_order_id)
+        held = {
+            r.id for r in stops.values() if (r.exchange_account_id, r.exchange_order_id) == holds
+        }
         live = LIVE_STOP_STATUSES
         if not (
             old and new and old.exchange_account_id == new.exchange_account_id == account_id
-            and old.status in live and old.released_at is None
-            and old.exchange_order_id == exchange_order_id
+            and old.status in live and old.released_at is None and held == {old.id}  # one holder
             and new.status in live and new.released_at is None and new.exchange_order_id is None
+            and (new.symbol, new.position_idx, new.kind) == (old.symbol, old.position_idx, old.kind)
+            and (new.created_at, new.id) > (old.created_at, old.id)
         ):  # fmt: skip
             raise RecordedStopNotBindable
         released = replace(old, exchange_order_id=None, released_at=at)

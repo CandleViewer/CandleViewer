@@ -23,10 +23,16 @@ from candleviewer.exchange.base.models import AccountRef
 from candleviewer.oms import fakes
 from candleviewer.oms.fakes import InMemoryOrderStore as Fake
 from candleviewer.oms.fakes import InMemoryRecordedStopStore, InMemorySubmissionStore
+from candleviewer.oms.repository import RecordedStopRepository
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories import recorded_stops, user_roles_sqlalchemy
 from candleviewer.storage.repositories.orders import NewOrder
-from candleviewer.storage.repositories.recorded_stops import EVERY_ACCOUNT, StopStatus, SweptStop
+from candleviewer.storage.repositories.recorded_stops import (
+    EVERY_ACCOUNT,
+    RecordedStopStore,
+    StopStatus,
+    SweptStop,
+)
 from candleviewer.storage.repositories.recorded_stops_sqlalchemy import (
     SqlAlchemyRecordedStopStore,
 )
@@ -42,6 +48,7 @@ from tests.unit.oms.submission_contract import (
     EVENT,
     NOTHING,
     T0,
+    TICK,
     Bounded,
     Harness,
     SubmissionContract,
@@ -91,6 +98,17 @@ def bind_stop(fake: Fake, record_id: UUID, exchange_order_id: str) -> None:
     fake._stops[record_id] = replace(fake._stops[record_id], exchange_order_id=exchange_order_id)
 
 
+def twin_stop(fake: Fake, record_id: UUID, twin_id: UUID) -> None:
+    """A row of `record_id`'s request values and age under another id, unbound."""
+    fake._stops[twin_id] = replace(fake._stops[record_id], id=twin_id, exchange_order_id=None)
+
+
+def tick(fake: Fake) -> None:
+    """The next row the fake writes is a microsecond younger."""
+    now = fake._clock() + TICK
+    fake._clock = lambda: now
+
+
 class TestInMemorySubmissionStores(SubmissionContract, StoreReadsContract):
     @pytest.fixture
     def fake(self) -> Fake:
@@ -111,6 +129,8 @@ class TestInMemorySubmissionStores(SubmissionContract, StoreReadsContract):
             held=lambda first, order: held(fake, first, order),
             move_stop=lambda record_id, status: move_stop(fake, record_id, status),
             bind_stop=lambda record_id, xid: bind_stop(fake, record_id, xid),
+            twin_stop=lambda record_id, twin_id: twin_stop(fake, record_id, twin_id),
+            tick=lambda: tick(fake),
         )  # fmt: skip
 
     async def test_a_leg_on_an_account_never_seeded_passes_the_environment_trigger(
@@ -189,6 +209,23 @@ class TestInMemoryRecordedStopResolution(RecordedStopContract):
     def fake(self) -> Fake:
         ticks = count()
         return Fake(clock=lambda: T0 + timedelta(microseconds=next(ticks)))
+
+
+@pytest.mark.parametrize(
+    "store",
+    [
+        RecordedStopStore,
+        SqlAlchemyRecordedStopStore,
+        InMemoryRecordedStopStore,
+        RecordedStopRepository,
+    ],
+    ids=lambda store: store.__name__,
+)
+def test_no_recorded_stop_store_binds_on_its_own(store: type) -> None:
+    """24 Sec.8.3 rule 7: a first holder binds in the transaction that materialises its order, a
+    successor in `release_and_bind`. A bind of its own would leave a record unbound for good when
+    a crash falls between the order's insert and the bind."""
+    assert not hasattr(store, "bind")
 
 
 def test_the_hooks_default_bounds_are_the_adapters() -> None:

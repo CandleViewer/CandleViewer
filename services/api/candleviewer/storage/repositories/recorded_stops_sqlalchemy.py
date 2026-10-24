@@ -192,15 +192,28 @@ def release_statement(
     return stmt.values(exchange_order_id=sa.null(), released_at=at).returning(*STOP_COLUMNS)
 
 
-def bind_statement(account_id: UUID, record_id: UUID, exchange_order_id: str) -> sa.Update:
-    """The successor's bind (`trg_rs_guard` admits that one bind), run after the release of its
-    predecessor: a live row that holds none and was never released."""
+def bind_statement(
+    account_id: UUID, record_id: UUID, exchange_order_id: str, released: RecordedStopRow
+) -> sa.Update:
+    """The successor's bind (`trg_rs_guard` admits that one bind), run after the release of
+    `released`: a live row that holds none and was never released, a later row (`created_at`, then
+    `id`) of `released`'s side (symbol, `position_idx`, kind), while no row of the account holds
+    the id (one holder, never two)."""
+    other = recorded_stops.alias("held")
+    held: sa.Select[Any] = sa.select(sa.literal_column("1")).where(
+        other.c.exchange_account_id == account_id, other.c.exchange_order_id == exchange_order_id
+    )
     stmt = sa.update(recorded_stops).where(
         _S.exchange_account_id == account_id,
         _S.id == record_id,
         _S.exchange_order_id.is_(None),
         _S.released_at.is_(None),
         _holds(_S.status, LIVE_STOP_STATUSES),
+        sa.type_coerce(_S.symbol, sa.Text) == released.symbol,  # no DOMAIN operator class
+        _S.position_idx == released.position_idx,
+        _S.kind == released.kind,
+        sa.tuple_(_S.created_at, _S.id) > (released.created_at, released.id),
+        ~sa.exists(held),
     )
     return stmt.values(exchange_order_id=exchange_order_id).returning(*STOP_COLUMNS)
 
@@ -506,7 +519,7 @@ class SqlAlchemyRecordedStopStore(CappedStore):
             if not freed:
                 raise RecordedStopNotBindable
             old = stop_row(freed[0])
-            take = bind_statement(account_id, successor_id, exchange_order_id)
+            take = bind_statement(account_id, successor_id, exchange_order_id, old)
             taken = list((await uow.session.execute(take)).mappings())
             if not taken:
                 raise RecordedStopNotBindable
