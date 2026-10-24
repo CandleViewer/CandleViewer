@@ -7,6 +7,7 @@ declare const range: Range;
 declare const stream: { write(chunk: string): void };
 declare const label: string;
 declare const css: string;
+declare const parser: { parseHTMLUnsafe(html: string): Document };
 
 export function sinks(): void {
   el.innerHTML = label; // ruleid: cv-drawings-text-to-html-sink
@@ -27,6 +28,21 @@ export function sinks(): void {
   el.setAttribute("title", `Drawing ${label}`); // ruleid: cv-drawings-text-to-html-sink
   link.href = "/d/" + label; // ruleid: cv-drawings-text-to-html-sink
   link.title = `Drawing ${label}`; // ruleid: cv-drawings-text-to-html-sink
+  el["innerHTML"] = label; // ruleid: cv-drawings-text-to-html-sink
+  const sink = "innerHTML";
+  el[sink] = label; // ruleid: cv-drawings-text-to-html-sink
+  el["outerHTML"] = label; // ruleid: cv-drawings-text-to-html-sink
+  el["insertAdjacentHTML"]("beforeend", label); // ruleid: cv-drawings-text-to-html-sink
+  el.setHTMLUnsafe(label); // ruleid: cv-drawings-text-to-html-sink
+  el["setHTMLUnsafe"](label); // ruleid: cv-drawings-text-to-html-sink
+  parser.parseHTMLUnsafe(label); // ruleid: cv-drawings-text-to-html-sink
+  frame["srcdoc"] = label; // ruleid: cv-drawings-text-to-html-sink
+  frame.setAttribute("srcDoc", label); // ruleid: cv-drawings-text-to-html-sink
+  el.style["cssText"] = css; // ruleid: cv-drawings-text-to-html-sink
+  link.setAttribute("HREF", "/d/" + label); // ruleid: cv-drawings-text-to-html-sink
+  el.setAttribute("src", `/img/${label}`); // ruleid: cv-drawings-text-to-html-sink
+  el.ariaDescription = "Drawing " + label; // ruleid: cv-drawings-text-to-html-sink
+  el.style = "color: " + css; // ruleid: cv-drawings-text-to-html-sink
 }
 
 // The text-node forms the message points to, and what a naive rule on the same words would flag:
@@ -44,4 +60,8 @@ export function safe(): void {
   el.style.color = css; // ok: cv-drawings-text-to-html-sink
   sheet.insertRule("li { color: red }"); // ok: cv-drawings-text-to-html-sink
   el.setAttribute("style", "display: none"); // ok: cv-drawings-text-to-html-sink
+  el.style["cssText"] = ""; // ok: cv-drawings-text-to-html-sink
+  el["textContent"] = label; // ok: cv-drawings-text-to-html-sink
+  el.textContent = "Drawing " + label; // ok: cv-drawings-text-to-html-sink
+  el.className = "row " + label; // ok: cv-drawings-text-to-html-sink
 }

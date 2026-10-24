@@ -2,7 +2,8 @@
 # user content. Syntactic, not taint: a text sink that builds a string is flagged whatever it is built
 # from; a raw variable is not "built". Beyond `cv-shell-dangerously-set-inner-html` (whose scope has no
 # literal drawing path nor the engine layer) it adds `document.write`, `createContextualFragment`,
-# `srcdoc`, string-built URL, name and style attributes, and CSS strings.
+# `srcdoc`, `setHTMLUnsafe`, each sink named by a string key, string-built URL, name and style
+# attributes, and CSS strings.
 rules:
   - id: cv-drawings-text-to-html-sink
     languages: [typescript, javascript]
@@ -28,6 +29,13 @@ rules:
       - pattern: $X.innerHTML = $V
       - pattern: $X.outerHTML = $V
       - pattern: $X.insertAdjacentHTML(...)
+      # The same sinks named by a string key, which `no-unsanitized` does not read either.
+      - pattern: $X["innerHTML"] = $V
+      - pattern: $X["outerHTML"] = $V
+      - pattern: $X["insertAdjacentHTML"](...)
+      - pattern: $X.setHTMLUnsafe(...)
+      - pattern: $X["setHTMLUnsafe"](...)
+      - pattern: $D.parseHTMLUnsafe(...)
       - pattern: $R.createContextualFragment(...)
       - patterns:
           - pattern-either:
@@ -39,14 +47,21 @@ rules:
       - pattern: <$EL ... srcDoc={...} ... />
       - pattern: "{..., srcDoc: ..., ...}"
       - pattern: $X.srcdoc = $V
-      - pattern: $X.setAttribute("srcdoc", ...)
+      - pattern: $X["srcdoc"] = $V
+      - patterns:
+          - pattern: $X.setAttribute($N, ...)
+          - metavariable-regex:
+              metavariable: $N
+              regex: '(?i)^["'']srcdoc["'']$'
       # CSS strings: the CSSOM (`style.color = ...`, `setProperty`) takes a value, not a string of rules.
       - patterns:
           - pattern-either:
               - pattern: $X.cssText = $V
+              - pattern: $X["cssText"] = $V
               - pattern: $S.insertRule($V, ...)
               - pattern: $X.setAttribute("style", $V)
           - pattern-not: $X.cssText = "..."
+          - pattern-not: $X["cssText"] = "..."
           - pattern-not: $S.insertRule("...", ...)
           - pattern-not: $X.setAttribute("style", "...")
       # URL, accessible-name and style attributes built by concatenation or templating. A literal, a call,
@@ -71,14 +86,14 @@ rules:
               - pattern: "$E.setAttribute($N, `...${$X}...`)"
           - metavariable-regex:
               metavariable: $N
-              regex: '^["''](?:href|src|style|aria-label|aria-description|title)["'']$'
+              regex: '(?i)^["''](?:href|src|style|aria-label|aria-description|title)["'']$'
       - patterns:
           - pattern-either:
               - pattern: $E.$P = $X + $Y
               - pattern: "$E.$P = `...${$X}...`"
           - metavariable-regex:
               metavariable: $P
-              regex: "^(?:href|src|title|ariaLabel|ariaDescription)$"
+              regex: "^(?:href|src|style|title|ariaLabel|ariaDescription)$"
     paths:
       include:
         - "apps/web/src/features/drawings/**"

@@ -1,8 +1,9 @@
 # CI security gates for the drawings persistence surface (E14-X03)
 
 > Owner: `@CandleViewer/security`. Ticket: E14-X03 (#549), in three slices (PR-1 persistence, PR-2
-> render guards, PR-3 DAST). Threat model: `docs/security/threat-models/E14-drawings.md` (DR1, DR6 to
-> DR10, DR12, DR20, DR21, DR23, DR29, DR30, section 4). Programme rules: `docs/plan/04-security-program.md` section 12.2 (Semgrep composition,
+> render guards, PR-3 DAST). Threat model: `docs/security/threat-models/E14-drawings.md` (DR1, DR5 to
+> DR7, DR9, DR10, DR12, DR20, DR21, DR23, DR29, DR30, section 4; DR8, the SDF text layer, has no gate
+> here). Programme rules: `docs/plan/04-security-program.md` section 12.2 (Semgrep composition,
 > CI-SEC-006 suppressions) and 16.2 (exceptions). This page explains each gate; the rule YAML is the
 > source of truth for what is matched.
 
@@ -25,7 +26,7 @@
 in the same job: no workflow change, no new required-check name (C-9.1); `ERROR` blocks
 (`security_gate.py`), so the whole-tree scan keeps `services/api` at zero unsuppressed findings.
 
-**PR-2 owns the pin of the four exceptions below, and its CI step.** The pin is
+**PR-3 owns the pin of the four exceptions below, and its CI step.** The pin will be
 `scripts/tests/test_e14_security_gates.py` (it also pins each rule's metadata, scope and doc
 section). It needs the `semgrep` binary, which CI's governance shards do not have, so it would skip
 there; the CI step is a `semgrep scan --disable-nosem` of the five rules over
@@ -128,11 +129,13 @@ E15-T01's spec decision on #402, SR-E14-09).
 - **Protects:** DR6 (stored XSS), DR7 (the accessible-name path), DR9 (a style value in CSS);
   SR-E14-01, SR-E14-02, SR-E14-04. A label, a note and a template name are user text and the server
   encodes none of it: safety lives at the sink.
-- **Matches:** raw HTML (`dangerouslySetInnerHTML`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`),
-  `document.write(ln)`, `createContextualFragment`, `srcdoc`, CSS strings (`cssText`, `insertRule`,
-  `setAttribute("style", ...)` with a non-literal), and `href`, `src`, `style`, `aria-label`,
-  `aria-description` or `title` built by `+` or a template with a substitution (JSX, `setAttribute`, a
-  DOM property, `createElement` props). Scope: the paths of
+- **Matches:** raw HTML (`dangerouslySetInnerHTML`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`,
+  `setHTMLUnsafe`, `parseHTMLUnsafe`), `document.write(ln)`, `createContextualFragment`, `srcdoc`,
+  CSS strings (`cssText`, `insertRule`, `setAttribute("style", ...)` with a non-literal), each also
+  named by a string key (`el["innerHTML"] = s`, a local constant key included, which `no-unsanitized`
+  does not read), and `href`, `src`, `style`, `aria-label`, `aria-description` or `title` built by `+`
+  or a template with a substitution (JSX, `setAttribute` with the name in any case, a DOM property,
+  `createElement` props). Scope: the paths of
   `tools/ci/no-inline-suppression-paths.json`. The message points to a React text child,
   `textContent` or `setAttribute(name, raw)`, never to stripping characters (it breaks RTL text and
   emoji).
@@ -144,10 +147,13 @@ E15-T01's spec decision on #402, SR-E14-09).
   without a substitution, a `style` object (the CSSOM path), a `data-*` attribute. It is syntactic:
   `aria-label={`${kind} ${label}`}` fires whatever it is built from (use `{label}` or
   `aria-labelledby`); with the scope removed it finds 5 such `aria-label`s in the frontend, none at
-  a raw-HTML sink. Not seen: a conditional of templates, `.join`, `DOMParser`, `setHTMLUnsafe`, a
-  raw `href` from data. Fixture-proven until E14-S08.
+  a raw-HTML sink. Not seen: a conditional of templates, `.join`, `DOMParser`, a raw `href` from data,
+  deliberate reflection (`Reflect.set(el, "innerHTML", s)`, a property descriptor's `set.call`), a
+  `document` reached through an alias or a cast, an attribute name held in a variable, and `.mts` or
+  `.cts` files, which Semgrep does not read (the lint ban covers them). Fixture-proven until E14-S08.
 - **Deliberate-regression fixture:** `.semgrep/tests/cv-drawings-text-to-html-sink/` (a `ruleid` per
-  sink and root; the shell rule alone misses 29 of its 35).
+  sink, form and root; the shell rule alone misses 43 of its 49, every string-key,
+  `setHTMLUnsafe`, `style` and attribute-name form among them).
 
 ## cv-drawings-pixel-geometry-ts
 
@@ -162,13 +168,17 @@ E15-T01's spec decision on #402, SR-E14-09).
 
 ## The drawing render-path lint ban
 
-- **Protects:** DR6, SR-E14-01. `apps/web/eslint.config.mjs` sets `react/no-danger` and
-  `no-unsanitized/method` and `/property` to error for `src/features/drawings`, `src/drawings` and
-  `src/objecttree`, with `linterOptions.noInlineConfig`: an `eslint-disable` there is inert and ESLint
-  warns that it has no effect, which `--max-warnings=0` fails. Elsewhere a directive still works.
+- **Protects:** DR6, SR-E14-01. `apps/web/eslint.config.mjs` sets `no-unsanitized/method` and
+  `/property` to error for `src/features/drawings`, `src/drawings` and `src/objecttree` (`.ts`, `.tsx`,
+  `.mts` and `.cts`) and `react/no-danger` for their `.ts` and `.tsx`, with
+  `linterOptions.noInlineConfig`: an `eslint-disable` or an `/* eslint <rule>: off */` there is inert
+  and ESLint warns that it has no effect, which `--max-warnings=0` fails. Elsewhere a directive still
+  works. `packages/chart-engine/eslint.config.mjs` sets `noInlineConfig` for `src/layers/drawings`, so
+  no comment there lifts C-2.16's DOM ban either.
 - **Proof:** `apps/web/test/features/drawings-lint-ban.test.ts` lints a virtual file under each path
-  with the app's config; `projectService` refuses a virtual file even under the tsconfig `include`,
-  so each is named in `allowDefaultProject`. No block in `packages/ui`: no object-tree component
+  with the app's config, `.mts` and `.cts` probes, and an engine-layer probe with the engine's
+  config; `projectService` refuses a virtual file even under the tsconfig `include`, so each is named
+  in `allowDefaultProject`. No block in `packages/ui`: no object-tree component
   exists there. When one does, add its path to the list and a block to that config.
 
 ## tools/ci/check_no_inline_suppressions.py
@@ -176,15 +186,18 @@ E15-T01's spec decision on #402, SR-E14-09).
 - **Protects:** DR6, SR-E14-01: no silent suppression of the guards above; run by `_job-js.yml`'s
   `lint` job.
 - **Matches:** in source files under the paths of `tools/ci/no-inline-suppression-paths.json`, a
-  comment holding `eslint-disable[-next-line|-line]`, `@ts-ignore`, `@ts-expect-error` or
-  `nosemgrep` that is no reviewed annotation: `reason=<token> owner=@<handle> review=YYYY-MM-DD` in
-  the same comment (the grammar and 180-day cap of `tools/ci/suppressions.py`, CI-SEC-006).
-- **Does not match:** a word in a string, a Markdown file, a directory symlink, `@ts-nocheck`
-  (typescript-eslint bans it) or `/* eslint rule: off */` (inert under `noInlineConfig`). An
-  annotated `eslint-disable` in `apps/web` still fails the lint: it is inert, so it warns.
+  comment holding `eslint-disable[-next-line|-line]`, an ESLint config comment such as
+  `/* eslint no-console: off */`, `@ts-ignore`, `@ts-expect-error`, `nosemgrep` or `nosem` that is no
+  reviewed annotation: `reason=<token> owner=@<handle> review=YYYY-MM-DD` in the same comment (the
+  grammar and 180-day cap of `tools/ci/suppressions.py`, CI-SEC-006). A marker that opens a line inside a block comment counts:
+  ESLint reads `/*`, a newline and `eslint-disable` as a directive.
+- **Does not match:** a word in a string, a Markdown file, a directory symlink or `@ts-nocheck`
+  (typescript-eslint bans it). An annotated `eslint-disable` in a listed path still fails the lint:
+  it is inert, so it warns.
 - **Extending:** add a glob to the JSON. Tests keep the lists honest: the Semgrep rule's
   `paths.include` equals it, the ESLint proof lints a file under each `apps/web` entry, and a
-  tripwire fails when a `drawing*` directory or `object-tree*` name appears under `apps/*/src` or
+  tripwire fails when a `drawing*` directory (camel-cased `drawingTools` too) or `object-tree*` name
+  appears under `apps/*/src` or
   `packages/*/src` outside it. Fixture: `scripts/tests/test_check_no_inline_suppressions.py`.
 
 ## Budget

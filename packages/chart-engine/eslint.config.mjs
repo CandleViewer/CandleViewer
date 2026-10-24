@@ -110,6 +110,12 @@ export default tseslint.config(
     rules: { "@typescript-eslint/no-require-imports": "off" },
   },
   {
+    // E14-X03 (#549; DR6, SR-E14-01): no inline comment lifts a rule in the drawing layer, C-2.16's
+    // DOM ban among them. tools/ci/no-inline-suppression-paths.json lists the same path.
+    files: ["src/layers/drawings/**/*.{ts,mts,cts}"],
+    linterOptions: { noInlineConfig: true },
+  },
+  {
     files: ["src/worker/**/*.ts"],
     rules: {
       // The worker glue is the one place OffscreenCanvas/postMessage globals

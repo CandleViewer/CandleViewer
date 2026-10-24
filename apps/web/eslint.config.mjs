@@ -54,17 +54,24 @@ export default tseslint.config(
   // --max-warnings=0 fails. Keep these globs equal to tools/ci/no-inline-suppression-paths.json.
   {
     files: [
-      "src/features/drawings/**/*.{ts,tsx}",
-      "src/drawings/**/*.{ts,tsx}",
-      "src/objecttree/**/*.{ts,tsx}",
+      "src/features/drawings/**/*.{ts,tsx,mts,cts}",
+      "src/drawings/**/*.{ts,tsx,mts,cts}",
+      "src/objecttree/**/*.{ts,tsx,mts,cts}",
     ],
     plugins: { "no-unsanitized": noUnsanitized },
     linterOptions: { noInlineConfig: true },
     rules: {
-      "react/no-danger": "error",
       "no-unsanitized/method": "error",
       "no-unsanitized/property": "error",
     },
+  },
+  {
+    files: [
+      "src/features/drawings/**/*.{ts,tsx}",
+      "src/drawings/**/*.{ts,tsx}",
+      "src/objecttree/**/*.{ts,tsx}",
+    ],
+    rules: { "react/no-danger": "error" },
   },
   // E17-T04 S5e-2 (ADR-0005; 50-security): the shared worker's code has no page, so it names none of a page's globals.
   {

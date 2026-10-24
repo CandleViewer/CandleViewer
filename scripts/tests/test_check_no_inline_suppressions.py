@@ -28,8 +28,14 @@ FORMS = [
     "// @ts-ignore{a}",
     "// @ts-expect-error{a}",
     "// nosemgrep: cv-drawings-text-to-html-sink{a}",
+    "// nosem{a}",
+    "// NOSEMGREP{a}",
+    "// NoSemgrep: cv-drawings-text-to-html-sink{a}",
+    "/* eslint no-restricted-globals: off{a} */",
 ]
-MARKER = re.compile(r"eslint-disable(?:-next-line|-line)?|@ts-ignore|@ts-expect-error|nosemgrep")
+MARKER = re.compile(
+    r"eslint-disable(?:-next-line|-line)?|@ts-ignore|@ts-expect-error|(?i:nosem(?:grep)?)|eslint(?= )"
+)
 
 
 def _check(root: Path, capsys: pytest.CaptureFixture[str], files: dict[str, str], *paths: str):
@@ -51,6 +57,20 @@ def test_a_bare_suppression_fails_naming_file_line_and_marker(tmp_path, capsys, 
     assert code == 1 and marker
     assert f"{SCOPE}/deep/a.tsx:2: {marker.group(0)}: suppression missing reason, owner" in err
     assert "DR6, SR-E14-01" in err
+
+
+@pytest.mark.parametrize(
+    "lines", [["/*", "eslint-disable react/no-danger", "*/"], ["/**", " * @ts-ignore", " */"]]
+)
+def test_a_marker_opening_a_line_inside_a_block_comment_counts(tmp_path, capsys, lines):
+    text = "\n".join(["export const a = 1;", *lines, "export const b = 2;"])
+    code, err = _check(tmp_path, capsys, {f"{SCOPE}/a.ts": text})
+    assert code == 1 and f"{SCOPE}/a.ts:3: " in err
+
+
+def test_a_marker_opening_a_block_comment_line_takes_its_annotation(tmp_path, capsys):
+    text = f"/*\neslint-disable react/no-danger -- {OK}\n*/\nexport const a = 1;\n"
+    assert _check(tmp_path, capsys, {f"{SCOPE}/a.ts": text}) == (0, "")
 
 
 @pytest.mark.parametrize("form", FORMS)
@@ -141,8 +161,9 @@ def test_the_repository_is_clean() -> None:
 
 
 def _unlisted(root: Path, paths: list[str]) -> list[str]:
-    """Drawing or object-tree code (a `drawing*` dir, an `object-tree*` name) not in `paths`."""
-    named = re.compile(r"(?i)^drawings?(?:[-_.]|$)|^object-?tree")
+    """Drawing or object-tree code (a `drawing*` dir, camel-cased too, an `object-tree*` name) not
+    in `paths`."""
+    named = re.compile(r"^[Dd]rawings?(?:[-_.A-Z0-9]|$)|(?i:^object-?tree)")
     missing: list[str] = []
     for src in [*root.glob("apps/*/src"), *root.glob("packages/*/src")]:
         for dirpath, dirnames, filenames in os.walk(src):
@@ -160,6 +181,8 @@ def test_the_tripwire_names_drawing_and_object_tree_code_outside_the_list(tmp_pa
     for rel in [
         f"{SCOPE}/a.ts",  # listed
         "apps/web/src/features/drawings-legacy/a.ts",
+        "apps/web/src/features/drawingTools/a.ts",
+        "apps/web/src/features/drawingsheet/a.ts",  # one word: not drawing code
         "apps/web/src/objecttree/a.ts",
         "packages/ui/src/components/ObjectTree.tsx",
         "packages/chart-engine/src/layers/drawings/a.ts",
@@ -168,6 +191,7 @@ def test_the_tripwire_names_drawing_and_object_tree_code_outside_the_list(tmp_pa
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text("", encoding="utf-8")
     assert _unlisted(tmp_path, [f"{SCOPE}/**"]) == [
+        "apps/web/src/features/drawingTools",
         "apps/web/src/features/drawings-legacy",
         "apps/web/src/objecttree",
         "packages/chart-engine/src/layers/drawings",

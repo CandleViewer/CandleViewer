@@ -2,10 +2,12 @@
 """E14-X03 (#549; DR6, SR-E14-01): no silent suppression in the drawing render paths.
 
 Under the globs of `tools/ci/no-inline-suppression-paths.json` (relative to the repo root; a ticket
-that adds drawing or object-tree code extends the list), a comment holding `eslint-disable`,
-`@ts-ignore`, `@ts-expect-error` or `nosemgrep` fails unless it is a reviewed annotation in the
-repo's form (`tools/ci/suppressions.py`, CI-SEC-006): `reason=<token> owner=@<handle>
-review=YYYY-MM-DD` in the same comment, the review at most 180 days away.
+that adds drawing or object-tree code extends the list), a comment holding `eslint-disable`, an
+ESLint config comment (`/* eslint <rule>: off */`), `@ts-ignore`, `@ts-expect-error`, `nosemgrep`
+or `nosem` fails unless it is a reviewed annotation in the repo's form (`tools/ci/suppressions.py`,
+CI-SEC-006): `reason=<token> owner=@<handle> review=YYYY-MM-DD` in the same comment, the review at
+most 180 days away. A marker that opens a line inside a block comment counts too: ESLint reads
+`/*` + newline + `eslint-disable` as a directive.
 
 Usage: python tools/ci/check_no_inline_suppressions.py [--root DIR] [--config FILE] [--today DATE]
 Exit: 0 clean, 1 an unreviewed suppression, 2 a bad config. Stdlib only.
@@ -30,11 +32,13 @@ from tools.ci.suppressions import field_problems  # noqa: E402 - sys.path first 
 CONFIG = "tools/ci/no-inline-suppression-paths.json"
 SOURCE_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"})
 SKIP_DIRS = frozenset({"node_modules", "dist", "coverage", ".turbo"})
-# The marker anywhere in a comment: a word in a string is not one, a prose mention is (rephrase it).
-MARKER_RE = re.compile(
-    r"(?://|/\*)[^\n]*?(?P<marker>\beslint-disable(?:-next-line|-line)?\b|@ts-ignore\b"
-    r"|@ts-expect-error\b|\bnosemgrep\b)(?P<rest>[^\n]*)"
+_MARKERS = (
+    r"\beslint-disable(?:-next-line|-line)?\b|@ts-ignore\b|@ts-expect-error\b|(?i:\bnosem(?:grep)?\b)"
+    r"|\beslint(?=\s+[@\w/-]+\s*:)"  # a config comment: `/* eslint no-console: off */`
 )
+# The marker anywhere in a comment, or opening a line inside a block comment: a word in a string is
+# not one, a prose mention is (rephrase it).
+MARKER_RE = re.compile(rf"(?:(?://|/\*)[^\n]*?|^\s*\*?\s*)(?P<marker>{_MARKERS})(?P<rest>[^\n]*)")
 _GLOB_TOKENS = ((r"**/", "(?:.*/)?"), (r"**", ".*"), (r"*", "[^/]*"), (r"?", "[^/]"))
 
 
