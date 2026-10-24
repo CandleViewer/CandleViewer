@@ -60,8 +60,9 @@ in section 1.
 The handles below are fixed here. The fixture slices define each one as an idempotent seed script under
 `services/api/tests/fixtures/admin/`, with a README line saying how to load it. A handle that writes audit
 rows or sealed snapshots (AUDIT-10M, AUDIT-CORRUPT, AUDIT-KEY-ENTRY, AUDIT-SECRET-MARKER,
-AUDIT-CONCURRENT, SC-FORGED-SEAL), or an Owner role row and `trading.live_enabled` outside the API
-(OOB-WRITES), loads only into a database named for tests: audit tables are append-only (C-5.7), so rows
+AUDIT-CONCURRENT, SC-FORGED-SEAL, BACKUP-TAMPERED, BACKUP-THEN-REVOKED), an Owner role row and
+`trading.live_enabled` outside the API (OOB-WRITES), or a demoted Owner (BACKUP-THEN-REVOKED) loads only
+into a database named for tests: audit tables are append-only (C-5.7), so rows
 loaded anywhere else could never be removed, and a stray Owner row or a set live gate would stay as a
 standing privilege. E42-X03's threat model asks this plan for the seeds that need state outside the API:
 AC-ADM-09 (FLAG-OVERRIDE-ROWS), AC-ADM-15 (any audit rows: AUDIT-10M), AC-ADM-16 (AUDIT-CONCURRENT),
@@ -107,8 +108,8 @@ replaced by one that raises `AuditUnavailable` for that record only, as
 | FLAG-OVERRIDE-ROWS                    | An override row on a safety flag, and an unreadable flag row (AC-ADM-09)                                                                   |
 | HEALTH-SUB002-WS-DOWN, HEALTH-TIMEOUT | Health payloads: `sub_002`'s private WebSocket down; the health read timing out                                                            |
 | BACKUP-VERIFY-FAILED, BACKUPS-NONE    | The latest backup failing verification; no backup at all                                                                                   |
-| BACKUP-THEN-REVOKED                   | A backup, then later revocations it predates (AC-ADM-24; with #3084)                                                                       |
-| BACKUP-TAMPERED                       | A backup whose artefact digest differs from its bound record (AC-ADM-25)                                                                   |
+| BACKUP-THEN-REVOKED                   | A backup, then later revocations it predates (AC-ADM-24; with #3084); audit records, test database only, a database of its own             |
+| BACKUP-TAMPERED                       | A backup whose artefact digest differs from its bound record (AC-ADM-25); audit records, test database only, a database of its own         |
 | GROUP-G                               | An enabled trade group with an open group trade; blocked: the trade-group routes are not mounted (AD-S07-04)                               |
 | SC-CHAIN-TRIPS                        | A machine of a kind with a public entity id, restored with `chain_trips` above 0                                                           |
 | SC-FORGED-SEAL                        | A persisted snapshot whose seal fails; it loads only into a test database                                                                  |
