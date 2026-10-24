@@ -192,6 +192,8 @@ CITED_TABLE = """
 24 | 2881 | ### 10.7 Bracket
 24 | 2889 | breakeven_offset_ticks: int = 2
 24 | 2350 | ### 9.2 Per-account profile
+24 | 2379 | require_native_sl: Literal[True] = True
+24 | 2381 | sl_offset_unit: Literal["ticks","percent","atr"]
 24 | 2441 | | `stop_loss.unit`
 28 | 1660 | ### B1.2 States
 28 | 2183 | ### B2.2 States
@@ -207,6 +209,8 @@ CITED_TABLE = """
 16 | 483 | ### 11.4 Per-component handoff checklist
 13 | 237 | 1-3 TP levels with % split
 13 | 242 | trading-stop TP/SL set atomically after entry fill
+E33-D03 | 79 | an OCO leg never counts as the position's native stop
+E33-D03 | 85 | may add / must not change" list
 """
 POINTERS = ("E32-D03.md](../design/E32/E32-D03.md)",)
 DOC_NAMES = (
@@ -222,6 +226,8 @@ DOC_NAMES = (
     "28-statechart-catalogue.md",
 )
 DOCS = {n[:2]: PLAN / n for n in DOC_NAMES}
+# The merged design spec this spec cites by file:line (E33-D03 at its merge commit; unchanged since).
+DOCS["E33-D03"] = DESIGN / "E33" / "E33-D03.md"
 # The four consumers the ticket names (SCR-131 is the per-account profile editor, `14` :2600).
 CONSUMERS = ("SCR-060", "SCR-064", "SCR-069", "SCR-131")
 # section | pattern — the counted rows per spec section (start, end, regex).
@@ -746,7 +752,8 @@ def main(argv: list[str]) -> int:
         fill = blend(resolve(tk, "color.action.primary.default"), over, 0.45)
         composite[th] = round(contrast(label, fill), 2)
     out.append(
-        f"validity composite (Place at opacity.disabled over the overlay; not gated): {composite}"
+        "validity composite (the Place label at opacity.disabled against its own fill at "
+        f"opacity.disabled, both over the overlay; not gated): {composite}"
     )
     out.append("\n## 2. Token bindings (token | dark / light / hc)")
     missing = [tok for tok in BINDINGS if resolve(themes["dark"], tok) == "MISSING"]
