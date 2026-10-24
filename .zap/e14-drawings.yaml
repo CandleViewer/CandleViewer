@@ -1,0 +1,81 @@
+# E14-X03 (#549, AC4): the OWASP ZAP plan for /drawings, /drawings/batch and /drawings/{drawingId},
+# authenticated as a synthetic Manager (a Viewer cannot write drawings, DR38) with a real TOTP
+# method, against the throwaway stack of _dast-low-priv.yml (called by dast-drawings-nightly.yml),
+# never a live exchange. A synthetic Owner's drawing stands there with the fixed id of
+# .zap/e14-drawings-seed.json, and the cut contract's `{drawingId}` example names it
+# (security/zap/nightly_plans.py): the scan's PUT and DELETE aim at a row the Manager does not own,
+# and security/zap/drawings_isolation.py finds it unchanged and unlisted for the Manager after the
+# scan (DR20, DR21). Never run as it is: nightly_plans.py writes the plan from it. The Manager's
+# bearer and SR-041 CSRF pair come from ZAP_AUTH_TOKEN and ZAP_CSRF_TOKEN at run time
+# (security/zap/mint_sessions.py); security/zap/role_session.js (ZAP_PROFILE=drawings) adds them to
+# each request to the surface and to /me, the liveness check. No credential is committed.
+env:
+  contexts:
+    - name: drawings
+      urls: ["${ZAP_TARGET}/drawings"]
+      includePaths:
+        - "${ZAP_TARGET}/drawings([/?].*)?"
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+jobs:
+  - type: script # the Manager's session, from the environment (security/zap/role_session.js)
+    parameters:
+      action: add
+      type: httpsender
+      engine: "ECMAScript : Graal.js"
+      name: cv-role-session
+      source: /zap/wrk/security/zap/role_session.js # the checkout, mounted at /zap/wrk
+  # Tuning, before any request: the documented 404 (a missing, deleted or foreign drawing, DR20) and
+  # batch 409 (DR21) are the CONTRACT (22-api), not findings. Only the alert ZAP raises purely
+  # because a 4xx came back is filtered, and only on these paths; injection rules never are.
+  - type: alertFilter
+    alertFilters:
+      # reason: "Application Error Disclosure" matches the RFC 7807 text of a documented refusal
+      - ruleId: 90022
+        newRisk: "False Positive"
+        url: ".*/drawings([/?].*)?"
+        urlRegex: true
+        evidence: 'problem\+json|not_found|conflict|target_unavailable|version_conflict|id_unavailable|validation_failed|payload_too_large|invalid_cursor'
+        evidenceRegex: true
+  - type: requestor
+    name: session-live-before-scan
+    requests:
+      - url: "${ZAP_TARGET}/me"
+        method: GET
+        responseCode: 200 # a 401 here fails the run: an unauthenticated scan is no clean scan
+  - type: openapi
+    parameters:
+      apiFile: /zap/wrk/docs/plan/22-api-openapi.yaml # replaced by the cut drawings-openapi.yaml
+      context: drawings
+      targetUrl: "${ZAP_TARGET}"
+  # The import, at most 2 minutes of passive wait and at most 8 of active scan stay inside the
+  # 12-minute access token (ADR-0020), so the after-scan /me still holds the scan's live bearer.
+  - type: passiveScan-wait
+    parameters: { maxDuration: 2 }
+  - type: activeScan
+    parameters:
+      context: drawings
+      maxScanDurationInMins: 8
+    policyDefinition:
+      defaultStrength: Medium
+      defaultThreshold: "Off"
+      rules:
+        - { id: 40018, name: SQL injection, strength: High, threshold: Low }
+        - { id: 40012, name: Cross-site scripting (reflected), strength: Medium, threshold: Low }
+        - { id: 40014, name: Cross-site scripting (persistent), strength: Medium, threshold: Low }
+        - { id: 90020, name: Remote OS command injection, strength: Medium, threshold: Low }
+        - { id: 6, name: Path traversal, strength: Medium, threshold: Low }
+        - { id: 90035, name: Server-side template injection, strength: Medium, threshold: Low }
+  - type: requestor
+    name: session-live-after-scan
+    requests:
+      - url: "${ZAP_TARGET}/me"
+        method: GET
+        responseCode: 200
+  - type: report
+    parameters:
+      { template: traditional-json, reportDir: /zap/wrk/zap-reports, reportFile: drawings-manager }
+    risks: [high, medium, low, info]
+# A body over 64 KiB (the single-body cap) is no plan literal: test_drawings_abuse_exhaustion.py covers it.

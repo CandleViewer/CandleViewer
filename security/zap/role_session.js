@@ -16,9 +16,10 @@ var CSRF = System.getenv("ZAP_CSRF_TOKEN");
 var ADMIN = /^\/((admin|users)(\/[^?]*)?|me)([?].*)?$/;
 var RULES = /^\/(rules(\/[^?]*)?|schemas\/rule-ir\.json|me)([?].*)?$/;
 var MARKET = /^\/(market\/(klines|bars)(\/[^?]*)?|me)([?].*)?$/;
+var DRAWINGS = /^\/(drawings(\/[^?]*)?|me)([?].*)?$/;
+var SURFACES = { admin: ADMIN, rules: RULES, market: MARKET, drawings: DRAWINGS };
 var PROFILE = System.getenv("ZAP_PROFILE") || "admin";
-var SURFACE =
-  PROFILE === "admin" ? ADMIN : PROFILE === "rules" ? RULES : PROFILE === "market" ? MARKET : null;
+var SURFACE = Object.prototype.hasOwnProperty.call(SURFACES, PROFILE) ? SURFACES[PROFILE] : null;
 // A dot segment in the path, `.` or `..` (a URI may also write a dot as `%2e`), never in the
 // query: a server or proxy that resolved it would send the request off the surface above, so no
 // session goes along it. A separator around it may also be written `%2f`, `%5c` or `\`, and a `;`
