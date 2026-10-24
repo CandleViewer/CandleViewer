@@ -17,6 +17,7 @@ async def routes(store, owner, body, raw):
     await store().apply_batch(owner, [{"op": "create"}])  # ruleid: cv-drawings-unbounded-geometry
     unchecked = DrawingIn.model_construct(symbol="BTCUSDT")  # ruleid: cv-drawings-unbounded-geometry
     moved = body.model_copy(update={"geometry": {}})  # ruleid: cv-drawings-unbounded-geometry
+    swapped = dataclasses.replace(fields, geometry={"points": []})  # ruleid: cv-drawings-unbounded-geometry
     same = body.model_copy()  # ok: cv-drawings-unbounded-geometry
     parsed = _parse(DrawingIn, raw)  # ok: cv-drawings-unbounded-geometry
     await store().update(owner, "id", _fields(parsed), if_match=None)  # ok: cv-drawings-unbounded-geometry

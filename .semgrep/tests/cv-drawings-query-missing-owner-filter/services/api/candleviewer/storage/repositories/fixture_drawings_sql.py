@@ -22,6 +22,10 @@ _CORRELATED = sa.text(  # ruleid: cv-drawings-query-missing-owner-filter
     "DELETE FROM layouts WHERE id IN (SELECT id FROM layouts WHERE deleted_at IS NOT NULL "
     "AND NOT EXISTS (SELECT 1 FROM drawings d WHERE d.layout_id = layouts.id))"
 )
+_TRANSFER = sa.text("UPDATE drawings SET owner_user_id = CAST(:owner AS uuid), label = :label WHERE id = CAST(:id AS uuid)")  # ruleid: cv-drawings-query-missing-owner-filter
+_COPY = sa.text("INSERT INTO drawings (id, owner_user_id) SELECT :new, CAST(:owner AS uuid) FROM drawings WHERE id = :id")  # ruleid: cv-drawings-query-missing-owner-filter
+_RAW = sa.text(r"SELECT id FROM drawings WHERE id = :id")  # ruleid: cv-drawings-query-missing-owner-filter
+_PREFIXED = sa.text(u"SELECT id FROM drawings WHERE id = :id")  # ruleid: cv-drawings-query-missing-owner-filter
 
 
 async def raw(conn):
@@ -44,6 +48,7 @@ _PREDICATE_SPLIT = sa.text(  # ok: cv-drawings-query-missing-owner-filter
     "DELETE FROM drawings WHERE id = ANY(CAST(:ids AS uuid[])) AND owner_user_id = "
     "CAST(:owner AS uuid)"
 )
+_RAW_SCOPED = sa.text(r"SELECT id FROM drawings WHERE id = :id AND owner_user_id = CAST(:owner AS uuid)")  # ok: cv-drawings-query-missing-owner-filter
 _INSERT_MANY = sa.text(  # ok: cv-drawings-query-missing-owner-filter
     "INSERT INTO drawings (id, owner_user_id) SELECT n_id, CAST(:owner AS uuid) "
     "FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS r(n_id uuid)"

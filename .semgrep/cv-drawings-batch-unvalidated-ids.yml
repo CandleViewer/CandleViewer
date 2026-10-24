@@ -2,8 +2,8 @@
 # UPDATE or DELETE of existing rows. `apply_batch` runs `_SNAPSHOT` (owner-scoped, FOR UPDATE),
 # `_first_failure`, then `_UPDATE_MANY` and `_SOFT_DELETE_MANY`; `_INSERT_MANY` is not listed (a
 # create touches no existing row). One function is read: a snapshot taken in a helper is not seen.
-# In the API the batch goes to the store whole. `def` and `for` patterns only: a bare `async def`
-# pattern matches nothing in a file with PEP 695 generics, as api/drawings.py has (X03-F4).
+# In the API the batch goes to the store whole (any receiver). `def` and `for` patterns only: a bare
+# `async def` matches nothing in a file with PEP 695 generics, as api/drawings.py has (#3549).
 rules:
   - id: cv-drawings-batch-unvalidated-ids
     languages: [python]
@@ -40,9 +40,9 @@ rules:
               - pattern-inside: |
                   [... for $OP in $OPS]
           - pattern-either:
-              - pattern: store().update(...)
-              - pattern: store().soft_delete(...)
-              - pattern: store().create(...)
+              - pattern: $R.update(...)
+              - pattern: $R.soft_delete(...)
+              - pattern: $R.create(...)
           - metavariable-regex:
               metavariable: $OPS
               regex: '^(?:\w+\.)*(?:ops|operations)$'

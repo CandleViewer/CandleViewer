@@ -13,6 +13,7 @@ def core(did, owner, label):
     sa.select(drawings).where(drawings.c.id == did)  # ruleid: cv-drawings-query-missing-owner-filter
     sa.update(drawings).where(drawings.c.id == did).values(label=label)  # ruleid: cv-drawings-query-missing-owner-filter
     sa.delete(drawings).where(drawings.c.id == did)  # ruleid: cv-drawings-query-missing-owner-filter
+    sa.select(drawings).where(drawings.c.owner_user_id != owner)  # ruleid: cv-drawings-query-missing-owner-filter
     sa.select(drawings).where(drawings.c.owner_user_id == owner, drawings.c.id == did)  # ok: cv-drawings-query-missing-owner-filter
     sa.delete(drawings).where(sa.and_(drawings.c.id == did, drawings.c.owner_user_id == owner))  # ok: cv-drawings-query-missing-owner-filter
     sa.select(layouts).where(layouts.c.id == did)  # ok: cv-drawings-query-missing-owner-filter

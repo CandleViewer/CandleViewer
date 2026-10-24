@@ -1,7 +1,7 @@
 # E14-X03 (#549), DR1, SR-051/SR-040. Search mode: the schema arm (an owner field on a request model)
 # is structural and one rule has one mode. The flow arms read "request data" from an expression's
-# text (REQ: `request.query_params|path_params|headers|json()|...`, an attribute of `body`, `op`,
-# `payload`..., a `model_validate`/`_parse(...)` result); `request` alone is none, so
+# text (REQ: `request.query_params|path_params|headers|json()|...`, an attribute or `[...]` of
+# `body`, `op`, `payload`..., a `model_validate`/`_parse(...)` result); `request` alone is none, so
 # `caller(request, ...)` stays clean. Followed: an owner-named variable; not any other name.
 rules:
   - id: cv-drawings-owner-from-body
@@ -16,8 +16,8 @@ rules:
       Rule doc: docs/plan/security/ci-gates-e14.md#cv-drawings-owner-from-body.
     metadata:
       rule-id: cv-drawings-owner-from-body
-      dr: [DR1, DR12, DR20]
-      sr: SR-051
+      dr: [DR1]
+      sr: SR-051, SR-040
       references:
         - docs/security/threat-models/E14-drawings.md DR1 (section 5), section 3 (TB1 to TB2)
         - services/api/candleviewer/api/drawings.py
@@ -44,7 +44,7 @@ rules:
               regex: "^(?:create|get|update|soft_delete|list_page|apply_batch|exists_for_other_owner)$"
           - metavariable-regex:
               metavariable: $O
-              regex: '(?s)^.*?(?:\b(?:request|req)\s*\.\s*(?:query_params|path_params|headers|cookies|json|body|form|stream)\b|\b(?:body|op|payload|data|params|query|q)\s*\.\s*\w+|\bmodel_validate(?:_json)?\b|\b_parse\s*\()'
+              regex: '(?s)^.*?(?:\b(?:request|req)\s*\.\s*(?:query_params|path_params|headers|cookies|json|body|form|stream)\b|\b(?:body|op|payload|data|params|query|q)\s*\.\s*\w+|\b(?:body|op|payload|data|params|query|q)\s*\[|\bmodel_validate(?:_json)?\b|\b_parse\s*\()'
       # An owner keyword or an owner key of a dict, given request data.
       - patterns:
           - pattern-either:
@@ -54,7 +54,7 @@ rules:
               - pattern: '{..., "owner": $O, ...}'
           - metavariable-regex:
               metavariable: $O
-              regex: '(?s)^.*?(?:\b(?:request|req)\s*\.\s*(?:query_params|path_params|headers|cookies|json|body|form|stream)\b|\b(?:body|op|payload|data|params|query|q)\s*\.\s*\w+|\bmodel_validate(?:_json)?\b|\b_parse\s*\()'
+              regex: '(?s)^.*?(?:\b(?:request|req)\s*\.\s*(?:query_params|path_params|headers|cookies|json|body|form|stream)\b|\b(?:body|op|payload|data|params|query|q)\s*\.\s*\w+|\b(?:body|op|payload|data|params|query|q)\s*\[|\bmodel_validate(?:_json)?\b|\b_parse\s*\()'
       # An owner-named variable or attribute assigned from request data.
       - patterns:
           - pattern: $OWN = $RHS
@@ -63,7 +63,7 @@ rules:
               regex: '^(?:\w+\.)*(?:owner|owner_id|owner_user_id|user_id|uid)$'
           - metavariable-regex:
               metavariable: $RHS
-              regex: '(?s)^.*?(?:\b(?:request|req)\s*\.\s*(?:query_params|path_params|headers|cookies|json|body|form|stream)\b|\b(?:body|op|payload|data|params|query|q)\s*\.\s*\w+|\bmodel_validate(?:_json)?\b|\b_parse\s*\()'
+              regex: '(?s)^.*?(?:\b(?:request|req)\s*\.\s*(?:query_params|path_params|headers|cookies|json|body|form|stream)\b|\b(?:body|op|payload|data|params|query|q)\s*\.\s*\w+|\b(?:body|op|payload|data|params|query|q)\s*\[|\bmodel_validate(?:_json)?\b|\b_parse\s*\()'
     paths:
       include:
         - "services/api/candleviewer/api/drawings*.py"

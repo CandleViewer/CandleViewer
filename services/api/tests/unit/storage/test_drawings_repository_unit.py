@@ -123,7 +123,8 @@ def test_every_statement_is_owner_scoped_except_the_unscoped_ones(name: str) -> 
     }:  # no WHERE clause: the owner is written as a bound value
         assert "CAST(:owner AS uuid)" in text
     elif name not in mod.UNSCOPED:
-        assert "owner_user_id = CAST(:owner AS uuid)" in text
+        where = text.partition(" WHERE ")[2]  # a SET list that moves the owner scopes nothing
+        assert "owner_user_id = CAST(:owner AS uuid)" in where
 
 
 def test_only_three_statements_are_unscoped() -> None:

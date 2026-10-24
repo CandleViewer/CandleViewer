@@ -1,7 +1,7 @@
 # E14-X03 (#549), DR29/DR30/DR10, SR-040, threat model section 4. The bounds live in
 # `DrawingIn._tool_rules`, `POINT_COUNTS` and the caps of `api/drawings_models.py`; the repository
 # validates no geometry or style (the DB check `dr_geom` wants only an object with `points`). So this
-# is a tripwire on the four roads round the validator, not a proof that a value is validated.
+# is a tripwire on the roads round the validator, not a proof that a value is validated.
 # `DrawingFields(` is built only by `_fields(body)`; `_ListQuery` ignores unknown query parameters on
 # purpose (as FastAPI does) and is excepted by name.
 rules:
@@ -10,10 +10,10 @@ rules:
     severity: ERROR
     message: >-
       A drawing reaches the store round the bounded request models (DR29, DR30, DR10; SR-040):
-      `DrawingFields(` built outside `_fields`, `model_construct(...)` or `model_copy(update=...)`
-      (neither validates), a request model with `extra="allow"` or `"ignore"` (models are closed,
-      `extra="forbid"`), or a dict display handed to the store. Parse with `DrawingIn` / `BatchIn`
-      and build the fields with `_fields(body)` only.
+      `DrawingFields(` built outside `_fields` or changed by `dataclasses.replace(...)`,
+      `model_construct(...)` or `model_copy(update=...)` (none validates), a request model with
+      `extra="allow"` or `"ignore"` (models are closed, `extra="forbid"`), or a dict display handed
+      to the store. Parse with `DrawingIn` / `BatchIn`, build the fields with `_fields(body)` only.
       Rule doc: docs/plan/security/ci-gates-e14.md#cv-drawings-unbounded-geometry.
     metadata:
       rule-id: cv-drawings-unbounded-geometry
@@ -30,6 +30,7 @@ rules:
                 ...
       - pattern: $X.model_construct(...)
       - pattern: $X.model_copy(..., update=$U, ...)
+      - pattern: dataclasses.replace(...)
       - patterns:
           - pattern-either:
               - pattern: ConfigDict(..., extra="allow", ...)

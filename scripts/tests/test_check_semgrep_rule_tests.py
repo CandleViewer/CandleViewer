@@ -302,9 +302,8 @@ def test_check_tree_needs_an_ok_line_somewhere(
     fires_only = {_AUTH: "a()  # ruleid: cv-example\n", _FLAGS: "b()  # ruleid: cv-example\n"}
     (failure,) = _check(tmp_path, monkeypatch, fires_only, {_AUTH: {1}, _FLAGS: {1}})
     assert _NO_OK in failure
-    assert (
-        _check(tmp_path / "ok", monkeypatch, _FILES, {_AUTH: {1}}) == []
-    )  # one `ok` line is enough
+    one_ok = fires_only | {_FLAGS: "b()  # ok: cv-example\n"}  # a ruleid-only and an ok-only file
+    assert _check(tmp_path / "ok", monkeypatch, one_ok, {_AUTH: {1}}) == []  # one `ok` is enough
 
 
 @pytest.mark.parametrize(

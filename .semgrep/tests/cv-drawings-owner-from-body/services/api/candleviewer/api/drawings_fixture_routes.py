@@ -8,8 +8,9 @@ def _parse[M: BaseModel](model: type[M], text: str) -> M:
     return model.model_validate_json(text)
 
 
-async def owner_from_the_request(request, store, did, fields):
+async def owner_from_the_request(request, store, did, fields, data):
     owner = request.query_params["owner"]  # ruleid: cv-drawings-owner-from-body
+    owner = data["owner"]  # ruleid: cv-drawings-owner-from-body
     await store().list_page(request.query_params["user"], symbol="BTCUSDT")  # ruleid: cv-drawings-owner-from-body
     await store().soft_delete((await request.json())["u"], did)  # ruleid: cv-drawings-owner-from-body
     body = _parse(DrawingIn, "{}")
