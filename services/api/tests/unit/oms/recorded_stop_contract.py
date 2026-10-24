@@ -125,44 +125,35 @@ class RecordedStopContract:
                                         write_ahead=audit)  # fmt: skip
         assert await now_of(h, (*prior, *rows)) == before
 
-    @pytest.mark.parametrize("outcome", ["answered", "in_flight_resolved",
-                                         "entry_filled_stop_absent"])  # fmt: skip
+    @pytest.mark.parametrize("outcome", ["answered", "replaced", "in_flight_resolved", ABSENT])
     @pytest.mark.parametrize("answered", [False, True])
-    async def test_a_resolve_answers_or_voids_whatever_answered_at(
+    async def test_a_resolve_answers_replaces_or_voids_whatever_answered_at(
         self, h: Harness, outcome: Any, answered: bool
     ) -> None:
-        """Audited before the commit (inside the hook every reader still sees the rows as they
-        were), the record carrying the outcome and, for `entry_filled_stop_absent` only, the
-        position's state (CR-S3H0-08); an answer stamps only a NULL `answered_at`."""
+        """Audited before the commit, when hooked (inside the hook every reader still sees the rows
+        as they were; a void needs it); `position_state` is the `entry_filled_stop_absent` void's
+        alone (CR-S3H0-08); an answer, and a replace, stamp only a NULL `answered_at`."""
         account, profile = h.new_account()
         rows = await request(h, account, profile, answered=answered)
-        seen: list[tuple[Any, tuple[RecordedStopRow, ...]]] = []
+        seen: list[tuple[tuple[RecordedStopRow, ...], tuple[RecordedStopRow, ...]]] = []
 
-        async def audit(record: Any) -> None:
-            seen.append((record, await now_of(h, rows)))
+        async def audit(done: tuple[RecordedStopRow, ...]) -> None:
+            seen.append((done, await now_of(h, rows)))
 
-        state = "flat" if outcome == "entry_filled_stop_absent" else None
-        wrong = {None: "open", "flat": None}[state]
+        state, wrong = ("flat", None) if outcome == ABSENT else (None, "open")
         for writer in (repo(h), h.stops):  # refused before anything, by the facade and the store
             with pytest.raises(ValueError, match="position_state"):
                 await writer.resolve(account, rows, outcome, at=AT, position_state=wrong,
                                      write_ahead=audit)  # fmt: skip
-            if outcome != "answered":  # C-2.9: no void unaudited
+            if outcome in ("in_flight_resolved", ABSENT):  # C-2.9: no void unaudited
                 with pytest.raises(ValueError, match="audited write-ahead"):
                     await writer.resolve(account, rows, outcome, at=AT, position_state=state)
         done = await repo(h).resolve(account, rows, outcome, at=AT, position_state=state,
                                      write_ahead=audit)  # fmt: skip
-        [(record, inside)] = seen
-        assert (record.rows, record.outcome, record.position_state, inside) == (
-            done, outcome, state, rows
-        )  # fmt: skip
-        assert await now_of(h, rows) == done
-        stamp = T0 if answered else (AT if outcome == "answered" else None)
-        voided = outcome != "answered"
-        assert (
-            shape(done)
-            == [("void" if voided else "pending", stamp, None, AT if voided else None)] * 2
-        )
+        assert seen == [(done, rows)] and await now_of(h, rows) == done
+        stamp = T0 if answered else (None if outcome in ("in_flight_resolved", ABSENT) else AT)
+        status = {"answered": "pending", "replaced": "replaced"}.get(outcome, "void")
+        assert shape(done) == [(status, stamp, None, None if status == "pending" else AT)] * 2
 
     async def test_the_waiting_keys_are_the_keys_waiting_for_key_lists(self, h: Harness) -> None:
         """Oldest row's key first; never a row inside its bound, an answered one, or another
