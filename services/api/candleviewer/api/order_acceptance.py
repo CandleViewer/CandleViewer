@@ -26,7 +26,7 @@ from candleviewer.domain.primitives import Environment
 from candleviewer.oms.submit import RECONCILING, SubmitOutcome
 from candleviewer.storage.repositories.orders import ORDER_STATE_OF, NewOrder, OrderRow
 
-__all__ = ["UNRESOLVED", "first_acceptance", "replayed_acceptance"]
+__all__ = ["UNRESOLVED", "first_acceptance", "order_body", "replayed_acceptance"]
 
 #: The B1 states whose create has no known outcome yet (22 `OrderAcceptance.reconciling`).
 UNRESOLVED: Final = frozenset({"validated", "submitting", "unknown", "quarantined"})
@@ -41,10 +41,11 @@ def _text(value: Decimal | None) -> str | None:
     return None if value is None else format(value, "f")
 
 
-def _order(
+def order_body(
     row: NewOrder | OrderRow, group_id: UUID | None, env: Environment, state: str, chart: str | None
 ) -> Body:
-    """22 `Order`: the row's own members, in 22's vocabulary."""
+    """22 `Order`: the row's own members, in 22's vocabulary; the exit routes' `202` too (E29-T04
+    slice 4)."""
     leg_id = row.trade_group_leg_id
     return {
         "id": str(row.id), "exchange_account_id": str(row.exchange_account_id),
@@ -99,7 +100,7 @@ def first_acceptance(outcome: SubmitOutcome, env: Environment) -> Body:
     if written is None or outcome.replayed:
         raise ValueError("a first answer is rendered from the rows its persist wrote")
     row, group = written.order, written.group
-    order = _order(row, outcome.trade_group_id, env, _STORED.get(chart or "", row.state), chart)
+    order = order_body(row, outcome.trade_group_id, env, _STORED.get(chart or "", row.state), chart)
     answer: Body = {"trade_group": None, "order": None, "reconciling": chart in UNRESOLVED}
     if group is None:
         return answer | {"order": order}
@@ -128,7 +129,7 @@ def replayed_acceptance(
         raise ValueError("a repeat is rendered with the group its outcome names, or none")
     chart = row.lifecycle_state
     unresolved = outcome.lifecycle == RECONCILING or chart is None or chart in UNRESOLVED
-    order = _order(row, group_id, env, row.state, chart)
+    order = order_body(row, group_id, env, row.state, chart)
     answer: Body = {"trade_group": None, "order": None, "reconciling": unresolved}
     if found is None:
         return answer | {"order": order}
