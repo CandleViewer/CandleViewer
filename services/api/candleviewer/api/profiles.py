@@ -10,7 +10,7 @@ delete in between) is that same 404. A store's live-owner gate refusing an Owner
 and audited (`not_owner`); an outage or an unreadable stored row is 503, logged by its class and
 SQLSTATE only (C-12.6); any other error is a defect (500). The list is one page (a C3 exemption)
 with no `ETag`; a profile answers its weak `ETag`. The profile writes (#906 D2) reuse `problem`,
-`OnAccount` and `not_owner`.
+`OnAccount` and `not_owner`; `_STATUS` holds their codes too (D2-3), `validation_failed` at 422.
 """
 
 from __future__ import annotations
@@ -47,7 +47,9 @@ from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 _RETRY_AFTER_S: Final = 5
 _STATUS: Final = {
     "not_found": 404, "forbidden": 403, "store_unavailable": 503, "not_implemented": 501,
-    "unauthenticated": 401,
+    "unauthenticated": 401, "validation_failed": 422, "conflict": 409,
+    "idempotency_key_reuse": 409, "version_conflict": 412, "precondition_required": 428,
+    "payload_too_large": 413, "audit_unavailable": 503, "instrument_cache_unavailable": 503,
 }  # fmt: skip
 
 

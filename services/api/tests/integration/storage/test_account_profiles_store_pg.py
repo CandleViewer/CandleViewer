@@ -203,7 +203,7 @@ async def test_the_bootstrap_default_lists_first_and_a_created_profile_round_tri
         TakeProfitRung(qty_pct=Decimal("0.5"), r=Decimal("3")),
     )
     wanted = _profile(account, name="Scalp", tp_ladder=ladder, version=9)
-    created = await repo.create_profile(owner, account, wanted)
+    created = (await repo.create_profile(owner, account, wanted)).profile
     assert created.version == 1 and created.tp_ladder == ladder
     assert created.model_dump(exclude={"version", "updated_at"}) == wanted.model_dump(
         exclude={"version", "updated_at"}
@@ -223,12 +223,12 @@ async def test_every_write_bumps_the_version_once_and_leaves_its_revision(
     repo: ProfilesRepository, owner: OwnerScope, pg_dsn: str
 ) -> None:
     account = _account(pg_dsn)
-    created = await repo.create_profile(owner, account, _profile(account))
+    created = (await repo.create_profile(owner, account, _profile(account))).profile
     narrowed = created.model_copy(update={"max_open_positions": 1})
     updated = await repo.update_profile(
         owner, account, created.profile_id, narrowed, expected_version=1
     )
-    assert updated.version == 2 and updated.max_open_positions == 1
+    assert updated.profile.version == 2 and updated.profile.max_open_positions == 1
     at_one = await repo.get_revision(owner, account, created.profile_id, 1)
     assert at_one.max_open_positions == created.max_open_positions and at_one.version == 1
     deleted = await repo.delete_profile(owner, account, created.profile_id, expected_version=2)
@@ -249,7 +249,7 @@ async def test_a_stale_if_match_is_refused_and_writes_nothing(
     repo: ProfilesRepository, owner: OwnerScope, pg_dsn: str
 ) -> None:
     account = _account(pg_dsn)
-    created = await repo.create_profile(owner, account, _profile(account))
+    created = (await repo.create_profile(owner, account, _profile(account))).profile
     ids = (account, created.profile_id)
     await repo.update_profile(owner, *ids, created.model_copy(update={"leverage": Decimal("2")}),
                               expected_version=1)  # fmt: skip
@@ -265,7 +265,7 @@ async def test_the_default_moves_only_by_set_default_and_is_never_deleted(
     and the account is never left without one."""
     account = _account(pg_dsn)
     bootstrap = (await repo.list_profiles(owner, account))[0]
-    alternate = await repo.create_profile(owner, account, _profile(account))
+    alternate = (await repo.create_profile(owner, account, _profile(account))).profile
     with pytest.raises(AccountRuleError) as moved_by_edit:
         await repo.update_profile(owner, account, alternate.profile_id,
                                   alternate.model_copy(update={"is_default": True}),
@@ -295,8 +295,8 @@ async def test_two_concurrent_moves_at_one_binding_version_admit_exactly_one(
     """D7 under concurrency (#906 0d): the account row lock orders the two moves, and the second,
     at the version the first moved past, is refused, so exactly one default remains: the first's."""
     account = _account(pg_dsn)
-    a = await repo.create_profile(owner, account, _profile(account, name="A"))
-    b = await repo.create_profile(owner, account, _profile(account, name="B"))
+    a = (await repo.create_profile(owner, account, _profile(account, name="A"))).profile
+    b = (await repo.create_profile(owner, account, _profile(account, name="B"))).profile
     results = await asyncio.gather(
         repo.set_default_profile(owner, account, a.profile_id, expected_binding_version=1),
         repo.set_default_profile(owner, account, b.profile_id, expected_binding_version=1),
@@ -430,7 +430,7 @@ async def test_a_default_move_and_require_live_never_deadlock(
         )
 
     account = _account(pg_dsn)
-    target = await repo.create_profile(owner, account, _profile(account))
+    target = (await repo.create_profile(owner, account, _profile(account))).profile
     states = await _interleave(
         pg_dsn,
         *live_check(account, target),
@@ -440,7 +440,7 @@ async def test_a_default_move_and_require_live_never_deadlock(
     assert states == (None, None)
     assert await _binding(repo, owner, account) == (target.profile_id, 2)
     other = _account(pg_dsn)
-    theirs = await repo.create_profile(owner, other, _profile(other))
+    theirs = (await repo.create_profile(owner, other, _profile(other))).profile
 
     async def share_first(pool: SqlAlchemyRelationalRepository) -> None:
         """The move's own statements, the account lock taken `FOR SHARE` instead."""
@@ -467,7 +467,7 @@ async def test_a_create_waits_for_a_default_move_at_the_account_row(
     a second default is refused at once by `ux_ap_default` (23505), never left waiting on the
     move's uncommitted rows; the move then commits."""
     account = _account(pg_dsn)
-    target = await repo.create_profile(owner, account, _profile(account))
+    target = (await repo.create_profile(owner, account, _profile(account))).profile
     second = profile_values(_profile(account, name="Second", is_default=True))
     states = await _interleave(
         pg_dsn,
@@ -487,7 +487,7 @@ async def test_a_tag_read_before_a_move_never_lands_even_back_on_the_same_profil
     and back to A, a move at B's version is stale although it names the profile A was then."""
     account = _account(pg_dsn)
     (a,) = await repo.list_profiles(owner, account)
-    b = await repo.create_profile(owner, account, _profile(account, name="B"))
+    b = (await repo.create_profile(owner, account, _profile(account, name="B"))).profile
     there = await repo.set_default_profile(owner, account, b.profile_id, expected_binding_version=1)
     assert there.version == 2 and await _binding(repo, owner, account) == (b.profile_id, 2)
     back = await repo.set_default_profile(owner, account, a.profile_id, expected_binding_version=2)
@@ -505,7 +505,7 @@ async def test_a_move_at_a_binding_version_ahead_of_the_binding_is_stale_and_mov
     moves the account's ceiling (D7) and the default stays the bootstrap's at version 1."""
     account = _account(pg_dsn)
     (bootstrap,) = await repo.list_profiles(owner, account)
-    alternate = await repo.create_profile(owner, account, _profile(account))
+    alternate = (await repo.create_profile(owner, account, _profile(account))).profile
     with pytest.raises(AccountVersionConflictError):
         await repo.set_default_profile(
             owner, account, alternate.profile_id, expected_binding_version=2
@@ -541,7 +541,7 @@ async def test_two_concurrent_updates_at_one_version_admit_exactly_one(
 ) -> None:
     """The If-Match compare-and-set holds when two writes race: the second sees version 2."""
     account = _account(pg_dsn)
-    created = await repo.create_profile(owner, account, _profile(account))
+    created = (await repo.create_profile(owner, account, _profile(account))).profile
     ids = (account, created.profile_id)
     results = await asyncio.gather(
         *(
@@ -552,8 +552,8 @@ async def test_two_concurrent_updates_at_one_version_admit_exactly_one(
         return_exceptions=True,
     )  # fmt: skip
     assert sorted(type(r).__name__ for r in results) == [
-        "AccountProfile",
         "AccountVersionConflictError",
+        "StoredProfile",
     ]
     assert (await repo.get_profile(owner, *ids)).version == 2
 
@@ -564,7 +564,7 @@ async def test_the_write_ahead_hook_runs_in_the_write_and_a_failure_leaves_no_tr
     """C-2.9: the hook sees the row before and after, inside the write's transaction; when it
     fails, the profile, its version and its history are exactly as they were."""
     account = _account(pg_dsn)
-    created = await repo.create_profile(owner, account, _profile(account))
+    created = (await repo.create_profile(owner, account, _profile(account))).profile
     ids = (account, created.profile_id)
     seen: list[tuple[int | None, int]] = []
 
@@ -596,7 +596,7 @@ async def test_a_default_move_hands_the_hook_both_rows_and_a_refusal_moves_nothi
     history and the binding's version (#906 0d) as they were."""
     account = _account(pg_dsn)
     (bootstrap,) = await repo.list_profiles(owner, account)
-    alternate = await repo.create_profile(owner, account, _profile(account))
+    alternate = (await repo.create_profile(owner, account, _profile(account))).profile
     state = (
         "SELECT id, version, is_default FROM account_profiles WHERE exchange_account_id = %s "
         "ORDER BY id"
@@ -637,7 +637,7 @@ async def test_a_soft_deleted_profile_is_gone_from_every_read_and_write(
     the live default. The default leads the list even when another name sorts first."""
     account = _account(pg_dsn)
     await repo.create_profile(owner, account, _profile(account, name="Alpha"))
-    gone = await repo.create_profile(owner, account, _profile(account, name="Gone"))
+    gone = (await repo.create_profile(owner, account, _profile(account, name="Gone"))).profile
     await repo.delete_profile(owner, account, gone.profile_id, expected_version=1)
     listed = await repo.list_profiles(owner, account)
     assert [p.name for p in listed] == ["Default", "Alpha"]
@@ -673,7 +673,7 @@ async def test_an_owner_scope_held_by_a_non_owner_is_denied(
     impostor = OwnerScope(_user(pg_dsn, "manager"))
     account = _account(pg_dsn)
     (bootstrap,) = await repo.list_profiles(owner, account)
-    other = await repo.create_profile(owner, account, _profile(account, name="Other"))
+    other = (await repo.create_profile(owner, account, _profile(account, name="Other"))).profile
     with pytest.raises(AccountScopeDeniedError):
         await repo.list_profiles(impostor, account)
     with pytest.raises(AccountScopeDeniedError):
@@ -709,7 +709,7 @@ async def test_a_profile_is_reachable_only_under_its_own_account(
     """IDOR (C-12.4, SR-051, SEC-1B-03): account B's profile, addressed under account A's path,
     is missing to every read and write, for the owner and for a grant that holds both."""
     a, b = _account(pg_dsn), _account(pg_dsn)
-    theirs = await repo.create_profile(owner, b, _profile(b))
+    theirs = (await repo.create_profile(owner, b, _profile(b))).profile
     pid = theirs.profile_id
     as_a = theirs.model_copy(update={"account_id": a, "max_open_positions": 1})
     misses = [
@@ -804,7 +804,7 @@ async def test_a_relaxing_replace_commits_its_notice_with_it(
     """SR-E28-01: the hook's notice is one `system_events` row that the replace's own transaction
     writes (the profile row's `xmin`), of ids and columns, never a value. A narrowing adds none."""
     account = _account(pg_dsn)
-    created = await repo.create_profile(owner, account, _profile(account))
+    created = (await repo.create_profile(owner, account, _profile(account))).profile
     corr = uuid.uuid4()
 
     async def judges(
@@ -838,7 +838,7 @@ async def test_a_hook_that_refuses_leaves_neither_the_change_nor_a_notice(
     log pins that the notices follow every hook)."""
     account = _account(pg_dsn)
     (bootstrap,) = await repo.list_profiles(owner, account)
-    target = await repo.create_profile(owner, account, _profile(account))
+    target = (await repo.create_profile(owner, account, _profile(account))).profile
     calls: list[uuid.UUID] = []
 
     async def answers_then_refuses(
@@ -865,7 +865,7 @@ async def test_a_relaxing_move_commits_one_notice_naming_both_profiles(
     move's transaction: one `xmin` with both profiles and the account's binding."""
     account = _account(pg_dsn)
     (bootstrap,) = await repo.list_profiles(owner, account)
-    target = await repo.create_profile(owner, account, _profile(account))
+    target = (await repo.create_profile(owner, account, _profile(account))).profile
     demoted: list[AccountProfileRow] = []
 
     async def judges(

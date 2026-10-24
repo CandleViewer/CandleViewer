@@ -47,6 +47,7 @@ from candleviewer.storage.repositories.accounts import OwnerScope
 
 _FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "profiles"
 _T = datetime(2026, 10, 20, 9, tzinfo=UTC)
+_CREATED = 1_792_486_800_000_000  # `_T` in microseconds
 _OWNER = OwnerScope(uuid4())
 
 
@@ -265,7 +266,7 @@ async def test_a_profile_naming_another_path_is_not_found_and_writes_nothing(cal
 async def test_create_sends_the_stored_values_and_returns_the_database_version() -> None:
     repo, store, cache, bumps = _repo(_row(version=1))
     created = await repo.create_profile(_OWNER, _P.account_id, _P)
-    assert created.version == 1 and bumps.total == 0
+    assert created.profile.version == 1 and bumps.total == 0
     name, args, _ = store.calls[0]
     assert name == "create_profile"
     assert args == (_OWNER, _P.account_id, _P.profile_id, profile_values(_P))
@@ -277,7 +278,8 @@ async def test_update_passes_the_expected_version_and_counts_one_bump() -> None:
     updated = await repo.update_profile(
         _OWNER, _P.account_id, _P.profile_id, _P, expected_version=3
     )
-    assert updated.version == 4 and bumps.total == 1 and cache.invalidated == [_P.account_id]
+    assert updated.profile.version == 4 and bumps.total == 1
+    assert cache.invalidated == [_P.account_id]
     assert store.calls[0][2] == {"expected_version": 3, "write_ahead": None}
 
 
@@ -337,6 +339,42 @@ async def test_every_write_hands_its_write_ahead_hook_to_the_store(write: str) -
     repo, store, _, _ = _repo(_WRITES[write][1])
     await _write(repo, write, write_ahead=hook)
     assert store.calls[0][2]["write_ahead"] is hook
+
+
+_BAD: dict[str, Any] = {"allowed_symbols": ("btcusdt",)}  # the model's refusal, not a CHECK's
+_MOVE: Any = _WRITES["set_default"][1]
+
+
+@pytest.mark.parametrize(
+    ("write", "answer"),
+    [
+        ("create", _row(version=1, **_BAD)),
+        ("update", _row(version=4, **_BAD)),
+        ("delete", _row(version=4, **_BAD)),
+        ("set_default", dataclasses.replace(_MOVE, profile=_row(version=4, **_BAD))),
+        ("set_default", dataclasses.replace(_MOVE, previous=_row(_profile(name="B"), **_BAD))),
+    ],
+    ids=["create", "update", "delete", "move-target", "move-previous"],
+)
+async def test_a_write_answers_its_stored_row_and_an_unreadable_one_fails_closed(
+    write: str, answer: object
+) -> None:
+    """#906 D2-3: a create and a replace answer the model with its row's `created_at`, for their
+    documents; a written row the model cannot read is `ProfileUnavailableError` from every write
+    (SR-E28-24), unchained and logged by its class alone, with the account invalidated: the write
+    committed, so its caller answers 503, never a 500."""
+    if write in ("create", "update"):
+        row: Any = _WRITES[write][1]
+        repo, _, _, _ = _repo(row)
+        assert await _write(repo, write) == StoredProfile(profile_from_row(row), _CREATED)
+    repo, _, cache, _ = _repo(answer)
+    with structlog.testing.capture_logs() as logs, pytest.raises(ProfileUnavailableError) as ei:
+        await _write(repo, write)
+    assert ei.value.__cause__ is None and ei.value.__suppress_context__
+    assert [(log["event"], log["error"]) for log in logs] == [
+        ("profile.read_failed_closed", "ValidationError")
+    ]
+    assert cache.invalidated == [_P.account_id]
 
 
 @pytest.mark.parametrize("refused", [False, True], ids=["committed", "refused"])
@@ -481,4 +519,4 @@ async def test_without_a_cache_or_metric_the_repository_still_works() -> None:
     repo = ProfilesRepository(_Store(_row(version=4)), cache=None)
     assert (
         await repo.update_profile(_OWNER, _P.account_id, _P.profile_id, _P, expected_version=None)
-    ).version == 4
+    ).profile.version == 4

@@ -25,7 +25,7 @@ from pydantic import BaseModel, ValidationError
 
 from candleviewer.accounts.models import ExchangeEnv
 from candleviewer.accounts.profile_input import check_profile_input, map_profile_input
-from candleviewer.accounts.profile_validator import profile_warnings
+from candleviewer.accounts.profile_validator import ProfileWarning, profile_warnings
 from candleviewer.accounts.profiles import AccountProfile, profile_from_row
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.profile_projection import (
@@ -247,6 +247,23 @@ def test_a_reads_warnings_are_profile_warnings_entries_and_closed(fixture: str, 
             validate_example("/components/schemas/ProfileWarning", {**entry, "extra": "x"})
         with pytest.raises(ValidationError, match="extra_forbidden"):
             api.ProfileWarning.model_validate({**entry, "extra": "x"})
+
+
+def test_a_writes_document_carries_the_writes_warnings() -> None:
+    """#906 D2-3: a write answers its second pass's warnings, judged against the listing, never
+    the read's, none included; `None` keeps the read's."""
+    p = _profile("fixed_notional")
+    read = profile_document(p, created_at=_CREATED, environment=ExchangeEnv.DEMO)
+    none = ProfileWarning("no_symbols", "Allows no symbol, so it sizes nothing.", "allowed_symbols")
+    assert read["warnings"] == [w.to_dict() for w in profile_warnings(p)] != []
+    cases: list[tuple[tuple[ProfileWarning, ...] | None, object]] = [
+        ((none,), [none.to_dict()]), ((), []), (None, read["warnings"])
+    ]  # fmt: skip
+    for warnings, answered in cases:
+        doc = profile_document(
+            p, created_at=_CREATED, environment=ExchangeEnv.DEMO, warnings=warnings
+        )
+        assert doc == {**read, "warnings": answered}
 
 
 def _dec(low: str, high: str, places: int) -> st.SearchStrategy[Decimal]:
