@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from candleviewer import budget_wiring
 from candleviewer.budget_wiring import (
     HOT_STREAMS,
+    METER_PART_BUDGET_S,
     FileSeriesStore,
     VolumeMeter,
     _OneThread,
@@ -25,7 +26,13 @@ from candleviewer.budget_wiring import (
     recording_refusal,
     written_by_symbol,
 )
-from candleviewer.recorder.budget import US_PER_DAY, BudgetConfig, DiskBudget, Point
+from candleviewer.recorder.budget import (
+    BREAKDOWN_TIMEOUT_S,
+    US_PER_DAY,
+    BudgetConfig,
+    DiskBudget,
+    Point,
+)
 from candleviewer.recorder.metrics import recorder_bytes_written_total
 from candleviewer.recorder.models import DiskPressureLevel
 from candleviewer.settings import Settings
@@ -170,7 +177,13 @@ def test_disk_settings_default_to_the_k01_cap_and_refuse_the_hatch_outside_testn
 class _Repo:
     at = datetime(2026, 10, 1, tzinfo=UTC)
 
-    async def list_recorded(self) -> list[dict[str, object]]:
+    def __init__(self) -> None:
+        self.envs: list[str] = []
+
+    async def list_recorded(self, env: str = "live") -> list[dict[str, object]]:
+        self.envs.append(env)
+        if env != "demo":  # another environment's rows are never read for demo
+            return [{"symbol": "LIVEUSDT", "pinned": True}]
         return [{"symbol": "BTCUSDT", "pinned": True}, {"symbol": "ETHUSDT", "pinned": False}]
 
     async def gaps_in(self, symbol: str, lo: datetime, hi: datetime) -> list[dict[str, object]]:
@@ -181,10 +194,27 @@ class _Repo:
 async def test_gap_pin_and_written_sources() -> None:
     repo = cast(Any, _Repo())
     us = int(_Repo.at.timestamp()) * 1_000_000
-    assert await recorded_gaps(repo, 0, 2 * us) == [(us, us + 1_000_000)]
-    assert await pinned_symbols(repo) == {"BTCUSDT"}
+    assert await recorded_gaps(repo, "demo", 0, 2 * us) == [(us, us + 1_000_000)]
+    assert await pinned_symbols(repo, "demo") == {"BTCUSDT"}
+    assert set(repo.envs) == {"demo"}
     recorder_bytes_written_total.labels(symbol="ZZWIRINGUSDT", stream="trades").inc(5)
     assert written_by_symbol()["ZZWIRINGUSDT"] >= 5
+
+
+def test_parquet_usage_refuses_a_root_that_is_not_a_directory(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="recording root missing"):
+        parquet_usage(tmp_path / "unmounted")  # never a fresh (0, {})
+
+
+async def test_a_missing_recording_root_fails_the_breakdown_pass(tmp_path: Path) -> None:
+    meter = VolumeMeter(tmp_path / "unmounted", None)
+    with pytest.raises(FileNotFoundError):  # a failed part, never a measured 0
+        await meter.breakdown()
+    await meter.close()
+
+
+def test_a_meter_part_budget_fits_inside_the_breakdown_timeout() -> None:
+    assert METER_PART_BUDGET_S < BREAKDOWN_TIMEOUT_S
 
 
 async def test_one_thread_consumes_a_late_result_instead_of_restarting() -> None:
