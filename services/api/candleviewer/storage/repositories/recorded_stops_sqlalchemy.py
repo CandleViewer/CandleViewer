@@ -48,7 +48,11 @@ from uuid import UUID
 import sqlalchemy as sa
 
 from candleviewer.db.models import order_events, orders, recorded_stops
-from candleviewer.storage.repositories.orders import require_aware, typed_fields
+from candleviewer.storage.repositories.orders import (
+    require_aware,
+    require_exchange_order_id,
+    typed_fields,
+)
 from candleviewer.storage.repositories.orders_sqlalchemy import (
     OMS_STATEMENT_TIMEOUT_MS,
     CappedStore,
@@ -83,8 +87,8 @@ from candleviewer.storage.repositories.user_roles_sqlalchemy import (
 
 __all__ = [
     "STOP_COLUMNS", "STOP_FIELDS", "SYSTEM_STATEMENTS", "UNSCOPED", "SqlAlchemyRecordedStopStore",
-    "for_order_statement", "in_given_order", "insert_stops_statement",
-    "live_for_key_statement", "lock_stops_statement",
+    "for_exchange_order_statement", "for_order_statement", "in_given_order",
+    "insert_stops_statement", "live_for_key_statement", "lock_stops_statement",
     "settle_statement", "stop_row", "void_orphans_statement", "waiting_for_key_statement",
 ]  # fmt: skip
 
@@ -136,6 +140,15 @@ def settle_statement(
 def for_order_statement(account_id: UUID, order_id: UUID) -> sa.Select[Any]:
     stmt = sa.select(*STOP_COLUMNS).where(
         _S.exchange_account_id == account_id, _S.order_id == order_id
+    )
+    return stmt.order_by(_S.created_at, _S.id)
+
+
+def for_exchange_order_statement(account_id: UUID, exchange_order_id: str) -> sa.Select[Any]:
+    """21 Sec.13.1 row 46: the account's rows bound to the id, any status, oldest first; the
+    partial `ix_rs_exch_id` serves it."""
+    stmt = sa.select(*STOP_COLUMNS).where(
+        _S.exchange_account_id == account_id, _S.exchange_order_id == exchange_order_id
     )
     return stmt.order_by(_S.created_at, _S.id)
 
@@ -296,6 +309,15 @@ class SqlAlchemyRecordedStopStore(CappedStore):
         self, account_id: UUID, symbol: str, position_idx: int
     ) -> tuple[RecordedStopRow, ...]:
         stmt = live_for_key_statement(account_id, symbol, position_idx)
+        async with self._unit_of_work() as uow:
+            result = await uow.session.execute(stmt)
+            return tuple(stop_row(m) for m in result.mappings())
+
+    async def for_exchange_order(
+        self, account_id: UUID, exchange_order_id: str
+    ) -> tuple[RecordedStopRow, ...]:
+        require_exchange_order_id(exchange_order_id)
+        stmt = for_exchange_order_statement(account_id, exchange_order_id)
         async with self._unit_of_work() as uow:
             result = await uow.session.execute(stmt)
             return tuple(stop_row(m) for m in result.mappings())

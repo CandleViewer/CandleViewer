@@ -344,12 +344,24 @@ class RecordedStopStore(Protocol):
         self, account_id: UUID, symbol: str, position_idx: int
     ) -> tuple[RecordedStopRow, ...]:
         """The key's live rows, oldest first (`created_at`, then `id`): the `pending` and
-        `in_force` ones (`LIVE_STOP_STATUSES`, 21 Sec.13.1 row 45), whatever their source, bound to
-        an exchange order or not, released or not: the matcher of 24 Sec.8.8 rule 6 skips a row
-        with an id or a `released_at`, the store never filters on either. Empty outside the
-        account. Bounded by construction: `ux_rs_in_force` allows one row in force per key and
-        kind, `ux_rs_in_flight` one unanswered stop-loss, and a position read puts an answered row
-        in force or replaces it, so no `LIMIT`."""
+        `in_force` ones (`LIVE_STOP_STATUSES`, 21 Sec.13.1 row 45; 24 Sec.8.8 rule 6 has step 3c
+        match TP/SL orders against in-force records and open pending ones), whatever their source,
+        bound to an exchange order or not, released or not. The store filters on neither: a caller
+        sees each row's binding as 24 Sec.8.3 rule 7 leaves it, cleared only by a successor's
+        bind. Empty outside the account. Bounded by construction: `ux_rs_in_force` allows one row
+        in force per key and kind, `ux_rs_in_flight` one unanswered stop-loss, and a position
+        read puts an answered row in force or replaces it, so no `LIMIT`."""
+        ...
+
+    async def for_exchange_order(
+        self, account_id: UUID, exchange_order_id: str
+    ) -> tuple[RecordedStopRow, ...]:
+        """The account's rows bound to the exchange order id, any status, oldest first (21
+        Sec.13.1 row 46, `ix_rs_exch_id`): an ended row keeps its id, so a stop that closed its
+        position still pairs; a released row holds none. 24 Sec.8.3 rule 7 admits one holder at a
+        time, but `ix_rs_exch_id` is not unique, so the store reports whatever it holds. The exact
+        text, as `get_by_exchange_order_id`, which also refuses an id that is not 1 to
+        `MAX_EXCHANGE_ORDER_ID_CHARS` characters of text; empty outside the account."""
         ...
 
     async def waiting_for_key(

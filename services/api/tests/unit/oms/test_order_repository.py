@@ -528,6 +528,14 @@ async def test_live_for_key_passes_the_key_through_and_logs_nothing() -> None:
     assert store.calls == [("live_for_key", (ACCOUNT, "BTCUSDT", 1))]
 
 
+async def test_the_rows_bound_to_an_exchange_order_are_read_in_its_account() -> None:
+    store = _AnyStore((STOP_ROW,))
+    with capture_logs() as logs:
+        rows = await RecordedStopRepository(cast(Any, store)).for_exchange_order(ACCOUNT, "x-1")
+    assert rows == (STOP_ROW,) and logs == []
+    assert store.calls == [("for_exchange_order", (ACCOUNT, "x-1"))]
+
+
 async def test_a_stop_request_in_flight_refuses_the_next_one_and_logs_nothing() -> None:
     error = OrderConstraintError("ux_rs_in_flight")
     with capture_logs() as logs, pytest.raises(StopRequestInFlight) as err:

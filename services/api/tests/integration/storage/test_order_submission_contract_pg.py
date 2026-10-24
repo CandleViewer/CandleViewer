@@ -148,6 +148,11 @@ def _move_stop(dsn: str, record_id: uuid.UUID, status: str) -> None:
     _sql(dsn, _MOVES[status], record_id)
 
 
+def _bind_stop(dsn: str, record_id: uuid.UUID, exchange_order_id: str) -> None:
+    sql = "UPDATE recorded_stops SET exchange_order_id = %s WHERE id = %s"
+    _sql(dsn, sql, exchange_order_id, record_id)
+
+
 @pytest_asyncio.fixture
 async def h(pg_dsn: str) -> AsyncIterator[Harness]:
     """The stores on one pool, as `cv_app`; every user, account and profile a new row."""
@@ -172,6 +177,7 @@ async def h(pg_dsn: str) -> AsyncIterator[Harness]:
             bounded=bounded,
             held=lambda first, order: _held(pg_dsn, first, order),
             move_stop=lambda record_id, status: _move_stop(pg_dsn, record_id, status),
+            bind_stop=lambda record_id, xid: _bind_stop(pg_dsn, record_id, xid),
         )
     finally:
         await rel.dispose()

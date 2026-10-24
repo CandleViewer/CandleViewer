@@ -135,6 +135,8 @@ AMENDABLE: Final = ("qty", "price", "trigger_price", "take_profit", "stop_loss")
 UX_ORDERS_LINK: Final = "ux_orders_link"
 #: Upper bound of one `list_for_order` page.
 MAX_EVENT_PAGE: Final = 500
+#: The exchange's order id, 1 to 64 characters, as the adapter's `ExchangeOrderId` (a test pins it).
+MAX_EXCHANGE_ORDER_ID_CHARS: Final = 64
 
 
 def require_money(column: str, value: Decimal, precision: int = 38, scale: int = 18) -> None:
@@ -164,6 +166,14 @@ def require_limit(limit: int) -> None:
     """A read's bound on its rows (C-2.18): an int of at least 1, never a bool."""
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
         raise ValueError("limit must be an int of at least 1")
+
+
+def require_exchange_order_id(value: object) -> None:
+    """`ValueError`, before any statement, unless `value` is text of 1 to
+    `MAX_EXCHANGE_ORDER_ID_CHARS` characters: `None` would read `IS NULL`, an arbitrary unbound
+    row. Names no value."""
+    if not (isinstance(value, str) and 1 <= len(value) <= MAX_EXCHANGE_ORDER_ID_CHARS):
+        raise ValueError(f"an order id is text of 1 to {MAX_EXCHANGE_ORDER_ID_CHARS} characters")
 
 
 def check_fields(
@@ -490,7 +500,8 @@ class OrderStore(Protocol):
         """The account's order bound to this exchange order id, in any state (`ux_orders_exch_id`,
         21 Sec.13.1 row 12): 24 Sec.8.12's pairing step 1. A final row's push is Sec.8.2's S6
         anomaly, so it is read, not hidden. The exact text; another account's order reads as
-        missing, and an unbound order is never found."""
+        missing, and an unbound order is never found. `ValueError` before any statement unless
+        the id is text of 1 to `MAX_EXCHANGE_ORDER_ID_CHARS` characters."""
         ...
 
     async def list_open(

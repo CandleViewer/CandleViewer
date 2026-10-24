@@ -389,6 +389,7 @@ class InMemoryOrderStore:
     async def get_by_exchange_order_id(
         self, account_id: UUID, exchange_order_id: str
     ) -> Row | None:
+        port.require_exchange_order_id(exchange_order_id)
         await asyncio.sleep(0)
         _bindable((exchange_order_id,))  # the statement's value is bound before it runs
         rows = self._rows(account_id)
@@ -962,6 +963,17 @@ class InMemoryRecordedStopStore:
         live = (r for r in self._db._stops.values() if r.status in LIVE_STOP_STATUSES)
         mine = (r for r in live if (r.exchange_account_id, r.symbol, r.position_idx) == key)
         return tuple(sorted(mine, key=_age))
+
+    async def for_exchange_order(
+        self, account_id: UUID, exchange_order_id: str
+    ) -> tuple[RecordedStopRow, ...]:
+        port.require_exchange_order_id(exchange_order_id)
+        await asyncio.sleep(0)
+        _bindable((exchange_order_id,))  # the statement's value is bound before it runs
+        mine = (r for r in self._db._stops.values() if r.exchange_account_id == account_id)
+        return tuple(
+            sorted((r for r in mine if r.exchange_order_id == exchange_order_id), key=_age)
+        )
 
     async def waiting_for_key(
         self,

@@ -126,6 +126,7 @@ def _built() -> dict[str, Any]:
         "settle_statement": mod.settle_statement(_ACCOUNT, [_SL, _TP], "answered", _T),
         "for_order_statement": mod.for_order_statement(_ACCOUNT, _ORDER),
         "live_for_key_statement": mod.live_for_key_statement(_ACCOUNT, "BTCUSDT", 0),
+        "for_exchange_order_statement": mod.for_exchange_order_statement(_ACCOUNT, "x-1"),
         "void_orphans_statement": mod.void_orphans_statement(EVERY_ACCOUNT, _T),
         "waiting_for_key_statement": mod.waiting_for_key_statement(
             _ACCOUNT, "BTCUSDT", 0, now=_T, bound_s=5.0
@@ -162,6 +163,18 @@ def test_live_for_key_statement_reads_one_keys_live_statuses_as_literals_oldest_
         assert f"recorded_stops.{column} = $" in where
     assert "recorded_stops.status IN ('in_force', 'pending')" in where
     assert "exchange_order_id" not in where and "released_at" not in where
+    assert sql.endswith("ORDER BY recorded_stops.created_at, recorded_stops.id")
+
+
+def test_for_exchange_order_statement_reads_the_accounts_rows_for_the_id_any_status() -> None:
+    """21 Sec.13.1 row 46: `ix_rs_exch_id`'s two columns, the exact id (no `LIKE`, no folding), no
+    status, oldest first."""
+    sql = _sql(_built()["for_exchange_order_statement"])
+    where = sql.split(" WHERE ", 1)[1]
+    assert where.startswith(
+        "recorded_stops.exchange_account_id = $1::UUID AND recorded_stops.exchange_order_id = $2::"
+    )
+    assert "status" not in where and "LIKE" not in where and "lower(" not in where
     assert sql.endswith("ORDER BY recorded_stops.created_at, recorded_stops.id")
 
 
@@ -351,6 +364,19 @@ async def test_live_for_key_maps_rows_in_the_order_read_and_commits_nothing() ->
     rows = await _store(rel).live_for_key(_ACCOUNT, "BTCUSDT", 0)
     assert [(row.id, row.status) for row in rows] == [(_TP, "pending"), (_SL, "in_force")]
     assert isinstance(rows[0].exchange_account_id, uuid.UUID) and rel.commits == 0
+
+
+async def test_for_exchange_order_maps_the_rows_read_and_commits_nothing() -> None:
+    rel = _Rel([_row(_SL, exchange_order_id="x-1")])
+    [row] = await _store(rel).for_exchange_order(_ACCOUNT, "x-1")
+    assert (row.id, row.exchange_order_id, rel.commits) == (_SL, "x-1", 0)
+
+
+async def test_a_read_with_an_id_the_table_cannot_hold_runs_no_statement() -> None:
+    rel = _Rel()
+    with pytest.raises(ValueError, match="1 to 64 characters"):
+        await _store(rel).for_exchange_order(_ACCOUNT, "")
+    assert rel.statements == []
 
 
 # -- R10: the startup sweep ----------------------------------------------------------------------

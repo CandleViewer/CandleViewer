@@ -25,12 +25,14 @@ from types import SimpleNamespace
 from typing import Any, cast, get_args
 
 import pytest
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import CheckConstraint, DateTime, Numeric, TextClause
 from sqlalchemy.engine import Dialect, make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from candleviewer.db import models
+from candleviewer.exchange.base.models import ExchangeOrderId
 from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
 from candleviewer.storage.repositories import executions_sqlalchemy as ex
 from candleviewer.storage.repositories import orders as port
@@ -113,6 +115,29 @@ def test_open_states_are_the_ix_orders_open_predicate() -> None:
     index = next(i for i in models.orders.indexes if i.name == "ix_orders_open")
     predicate = str(index.dialect_options["postgresql"]["where"])
     assert set(OPEN_STATES) == set(re.findall(r"'(\w+)'", predicate))
+
+
+@pytest.mark.parametrize("length", [0, 1, port.MAX_EXCHANGE_ORDER_ID_CHARS, 65])
+def test_the_longest_exchange_order_id_is_the_adapters(length: int) -> None:
+    """The stores mirror the adapter's `ExchangeOrderId` (1 to 64 characters), and no other."""
+    text = "x" * length
+    try:
+        TypeAdapter(ExchangeOrderId).validate_python(text)
+        adapter_takes = True
+    except ValidationError:
+        adapter_takes = False
+    try:
+        port.require_exchange_order_id(text)
+        store_takes = True
+    except ValueError:
+        store_takes = False
+    assert store_takes is adapter_takes is (1 <= length <= 64)
+
+
+@pytest.mark.parametrize("value", [None, 7, b"x"])
+def test_an_exchange_order_id_that_is_not_text_is_refused_naming_no_value(value: Any) -> None:
+    with pytest.raises(ValueError, match="text of 1 to 64 characters"):
+        port.require_exchange_order_id(value)
 
 
 def test_rows_and_inserts_follow_the_table_columns() -> None:
@@ -670,6 +695,16 @@ async def test_reads_map_rows_and_absence() -> None:
     bound = await store.get_by_exchange_order_id(ACCOUNT, "x-1")
     assert bound == OrderRow(**_order_row(exchange_order_id="x-1"))
     assert await store.get_by_exchange_order_id(ACCOUNT, "x-2") is None and rel.commits == 0
+
+
+@pytest.mark.parametrize("text", [None, "", "x" * 65], ids=["none", "empty", "overlong"])
+async def test_a_read_by_an_exchange_order_id_no_order_can_hold_runs_no_statement(
+    text: Any,
+) -> None:
+    rel = _Rel()
+    with pytest.raises(ValueError, match="1 to 64 characters"):
+        await _store(rel).get_by_exchange_order_id(ACCOUNT, text)
+    assert rel.units == []
 
 
 async def test_append_outside_the_account_is_not_found_and_writes_nothing() -> None:
