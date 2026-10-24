@@ -238,7 +238,7 @@ def test_20_starts_the_oms_after_account_health_and_sweeps_before_ready() -> Non
     assert not _missing(
         _RUNTIME,
         "Status: this text, down to the startup self-check, is the contract of #913 slice 3 "
-        "(sub-slices B to G); nothing serves it until they land.",
+        "(sub-slices B to H); nothing serves it until they land.",
         "The lifespan starts the runtime after the account health runtime, then E29-T05's",
         "`placeOrder` answers `503 oms_not_ready` with `Retry-After`",
         "must fit a deploy's 60 s `/readyz` smoke window",
