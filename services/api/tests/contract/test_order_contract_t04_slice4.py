@@ -512,12 +512,13 @@ def test_an_account_it_cannot_send_for_and_cancel_alls_counting_are_as_ruled() -
     )
     errors = _between(_INTERNAL_DOC, "### 8.6 Error mapping", "### 8.7 ")
     assert (
-        "is routed as a ticket too, so one case raises one notice (a `quarantined` order's "
-        "request keeps paging;" in errors
+        "One case gives the operator exactly one notice: for a user's cancel the "
+        "`order_already_terminal` ticket, which carries the request" in errors
     )
     assert not _missing(
         _between(_ARCH, "OMS order alerts (E29-T03, E29-T04;", "\n"),
-        "is routed as a ticket for the reason `already_terminal`, so one case raises one notice",
+        "one case raises exactly one ticket, the alert carrying the request for a user's cancel "
+        "and the request alone for a KILL's bound `110001`",
         "Until E29-T06 / T08 the `oms_unknown_orders` page also counts an order parked by",
     )
     assert (
@@ -538,9 +539,8 @@ def test_an_account_it_cannot_send_for_and_cancel_alls_counting_are_as_ruled() -
         "`503 store_unavailable` when the scope itself cannot be read, nothing sent",
     )
     threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
-    assert (
-        "the foreign-stop cancel, which E29-T06 builds (the `untracked` rows it acts on exist "
-        "only there; #913 slice 4 ruling Q8)" in _words(threat.read_text(encoding="utf-8"))
+    assert "the OMS cancel service, which E29-T06 builds and E29-T07's route calls" in _words(
+        threat.read_text(encoding="utf-8")
     )
 
 
@@ -616,3 +616,34 @@ def test_the_contract_lens_fold_defines_once_and_closes_the_gaps() -> None:
     assert "a narrowing of a request no route served yet" in _INTERNAL_DOC
     conflict = _words(_COMPONENTS["responses"]["OrderExitConflict"]["description"])
     assert "On `cancelAllOrders` only the two idempotency codes apply" in conflict
+
+
+def test_the_1230z_rulings_word_the_deadline_the_retryable_flags_and_an_unbound_kill() -> None:
+    """The orchestrator's 12:30Z rulings: vw3's readings 3 and 4 for cancel-all, and S4-B1's
+    final names: an unbound KILL's `110001` (`not_held_unbound`, paged, not done), the account
+    refusal's two sources and the KILL result's in-flight count."""
+    assert not _missing(
+        _CANCEL_ALL,
+        "reports `timeout`, which replaces any failure it met before, so the retryable signal wins",
+        "`retryable` is true for `store_unavailable`, `timeout` and `exchange_rate_limited`, and "
+        "false for `exchange_unavailable`, `conflict`, `account_unavailable` and `exchange_error`",
+    )
+    errors = _between(_INTERNAL_DOC, "### 8.6 Error mapping", "### 8.7 ")
+    assert not _missing(
+        errors,
+        "its `request_reconciliation` carries the reason `not_held_unbound` and pages, and the "
+        "cancel counts as not done in the KILL's result",
+        "Only a cancel's `NotFoundError` reads as already terminal",
+    )
+    assert "a paged `request_reconciliation` with the reason `not_held_unbound`" in _RECORDS
+    assert not _missing(
+        _EXITS,
+        "(its `AccountScopeDenied`, or `OrderEntryRefused` with `no_active_key`)",
+        "those still in flight included (a re-sent KILL reports its own)",
+    )
+    routes = _between(_ARCH, "OMS order alerts (E29-T03, E29-T04;", "\n")
+    assert "as does an unbound KILL cancel's, reason `not_held_unbound`" in routes
+    assert (
+        "the request itself going only to the internal seam E29-T06's job consumes, never "
+        "ticketed on its own; for a KILL's bound `110001` the request alone, as a ticket" in errors
+    )
