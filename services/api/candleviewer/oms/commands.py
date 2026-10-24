@@ -1188,15 +1188,6 @@ class OmsCommandPort:
         if sides and stop is None:  # an entry carries its native stop (C-2.6): never sent bare
             rule = "native_stop_required"
             return await self._amend_refused(row, b01.NATIVE_STOP_REQUIRED, rule, detail)
-        if stop is not None:  # Q4: every stop recorded or sent, a re-paired one too
-            in_force = await self._bounded(
-                self._stops.live_for_key(row.exchange_account_id, row.symbol, row.position_idx)
-            )
-            loose = ratchet_refusal(
-                side=row.side, requested=stop, current=row.stop_loss, in_force=in_force
-            )
-            if loose is not None:
-                return await self._amend_refused(row, STOP_LOOSENING_REFUSED, loose, detail)
         account = await self._account(row)
         request = AmendOrderRequest(
             account=account,
@@ -1216,6 +1207,16 @@ class OmsCommandPort:
             key = PositionKey(account.account_id, row.symbol, row.position_idx)
             try:
                 await self._bounded(self._gate.clear(key))
+                # Q4 on every stop recorded or sent, a re-paired one too, read after the gate
+                # cleared the key and just before the record (fold m2)
+                in_force = await self._bounded(
+                    self._stops.live_for_key(row.exchange_account_id, row.symbol, row.position_idx)
+                )
+                loose = ratchet_refusal(
+                    side=row.side, requested=stop, current=row.stop_loss, in_force=in_force
+                )
+                if loose is not None:
+                    return await self._amend_refused(row, STOP_LOOSENING_REFUSED, loose, detail)
                 recorded = await self._record_amend(row, stop, take_profit, detail, sides)
             except (StopRequestPending, StopRequestInFlight) as held:
                 _log().warning("oms_amend_stop_key_held", order_link_id=row.order_link_id)
