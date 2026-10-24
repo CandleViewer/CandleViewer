@@ -24,6 +24,9 @@ from pydantic import (
     Field,
     RootModel,
     SecretStr,
+    StrictBool,
+    StrictFloat,
+    Strict,
 )
 
 
@@ -51,6 +54,18 @@ string on the wire, but is a real `decimal.Decimal` in Python — money and
 size/price fields must never round-trip through float."""
 
 
+def _json_integer(value: object) -> object:
+    """JSON Schema's `integer` is a number with no fractional part, so `5.0` is `5`; anything else
+    goes to the strict `int` check, which refuses a string, a boolean and `5.5` (#906 slice G2a)."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+JsonInt = Annotated[int, Strict(), BeforeValidator(_json_integer)]
+"""A JSON Schema `integer`: an `int`, or a float with no fractional part, and nothing else."""
+
+
 class Symbol(RootModel[str]):
     root: Annotated[
         str,
@@ -62,8 +77,8 @@ class Symbol(RootModel[str]):
     ]
 
 
-class Count(RootModel[int]):
-    root: Annotated[int, Field(ge=0, le=2400)]
+class Count(RootModel[JsonInt]):
+    root: Annotated[JsonInt, Field(ge=0, le=2400)]
 
 
 class TelemetryBucketCounts(BaseModel):
@@ -87,8 +102,8 @@ class FrontendTelemetry(BaseModel):
         TelemetryBucketCounts,
         Field(description="Edges ms: 0.1, 0.25, 0.5, 1, 2, 4, 5, 10, +Inf (9 slots)."),
     ]
-    fe_dropped_frames_total: Annotated[int, Field(ge=0, le=2400)]
-    fe_gpu_memory_mb: Annotated[float | None, Field(ge=0.0, le=65536.0)] = None
+    fe_dropped_frames_total: Annotated[JsonInt, Field(ge=0, le=2400)]
+    fe_gpu_memory_mb: Annotated[StrictFloat | None, Field(ge=0.0, le=65536.0)] = None
 
 
 class Error(BaseModel):
@@ -114,7 +129,7 @@ class Error(BaseModel):
 
 
 class Exchange(BaseModel):
-    ret_code: int | None = None
+    ret_code: JsonInt | None = None
     ret_msg: str | None = None
     endpoint: str | None = None
     request_id: str | None = None
@@ -123,7 +138,7 @@ class Exchange(BaseModel):
 class Problem(BaseModel):
     type: Annotated[AnyUrl, Field(description="`https://candleviewer.local/errors/{code}`.")]
     title: str
-    status: Annotated[int, Field(ge=400, le=599)]
+    status: Annotated[JsonInt, Field(ge=400, le=599)]
     detail: str | None = None
     instance: Annotated[
         str | None,
@@ -138,7 +153,7 @@ class Problem(BaseModel):
         None
     )
     required_permissions: list[str] | None = None
-    retry_after_seconds: int | None = None
+    retry_after_seconds: JsonInt | None = None
     idle_locked_at: Annotated[
         AwareDatetime | None,
         Field(
@@ -188,15 +203,15 @@ class Problem(BaseModel):
 
 class PageMeta(BaseModel):
     next_cursor: str | None = None
-    has_more: bool
+    has_more: StrictBool
     count: Annotated[
-        int,
+        JsonInt,
         Field(
             description="Items in this page (not the total, which is never computed for unbounded sets)."
         ),
     ]
     total: Annotated[
-        int | None, Field(description="Present only where a cheap exact count exists.")
+        JsonInt | None, Field(description="Present only where a cheap exact count exists.")
     ] = None
 
 
@@ -207,7 +222,7 @@ class Page(BaseModel):
 
 class InstrumentsPageMeta(PageMeta):
     cache_age_s: Annotated[
-        float, Field(description="Seconds since this snapshot was last fetched from Bybit.")
+        StrictFloat, Field(description="Seconds since this snapshot was last fetched from Bybit.")
     ]
     stale_since: Annotated[
         AwareDatetime | None,
@@ -216,8 +231,8 @@ class InstrumentsPageMeta(PageMeta):
 
 
 class CoverageHole(BaseModel):
-    start_us: Annotated[int, Field(description="Gap start, exchange epoch microseconds.")]
-    end_us: Annotated[int, Field(description="Gap end, exchange epoch microseconds.")]
+    start_us: Annotated[JsonInt, Field(description="Gap start, exchange epoch microseconds.")]
+    end_us: Annotated[JsonInt, Field(description="Gap end, exchange epoch microseconds.")]
 
 
 class DataMeta(PageMeta):
@@ -262,9 +277,9 @@ class LoginRequest(BaseModel):
 class TokenBundle(BaseModel):
     access_token: str
     token_type: Literal["Bearer"]
-    expires_in: Annotated[int, Field(description="Access-token lifetime in seconds (600).")]
+    expires_in: Annotated[JsonInt, Field(description="Access-token lifetime in seconds (600).")]
     refresh_expires_in: Annotated[
-        int | None,
+        JsonInt | None,
         Field(
             description='Refresh-token lifetime in seconds (2592000). For an enrolment-only session it counts down to that session\'s absolute expiry, at most 900 (see "Enrolment-only session").\n'
         ),
@@ -281,7 +296,7 @@ class MfaChallengeResponse(BaseModel):
     status: Literal["mfa_required"]
     mfa_token: str
     methods: list[Literal["totp", "webauthn", "recovery_code"]]
-    expires_in: int
+    expires_in: JsonInt
     webauthn_challenge: dict[str, Any] | None = None
 
 
@@ -296,7 +311,7 @@ class MfaVerifyRequest(BaseModel):
         Field(description="TOTP digits or a recovery code.", pattern="^[0-9A-Za-z-]{6,32}$"),
     ] = None
     webauthn_assertion: dict[str, Any] | None = None
-    remember_device_days: Annotated[int, Field(ge=0, le=30)] = 0
+    remember_device_days: Annotated[JsonInt, Field(ge=0, le=30)] = 0
 
 
 class MfaEnrollRequest(BaseModel):
@@ -327,7 +342,7 @@ class MfaMethod(BaseModel):
     id: UUID | None = None
     kind: Literal["totp", "webauthn", "recovery_code"] | None = None
     label: str | None = None
-    active: bool | None = None
+    active: StrictBool | None = None
     created_at: AwareDatetime | None = None
     last_used_at: AwareDatetime | None = None
 
@@ -345,9 +360,9 @@ class Argon2Params(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    m: Annotated[int, Field(description="Memory cost in KiB (65536 = 64 MiB).", ge=1)]
-    t: Annotated[int, Field(description="Time cost (passes over memory).", ge=1)]
-    p: Annotated[int, Field(description="Parallelism (lanes).", ge=1)]
+    m: Annotated[JsonInt, Field(description="Memory cost in KiB (65536 = 64 MiB).", ge=1)]
+    t: Annotated[JsonInt, Field(description="Time cost (passes over memory).", ge=1)]
+    p: Annotated[JsonInt, Field(description="Parallelism (lanes).", ge=1)]
 
 
 class ChangePasswordRequest(BaseModel):
@@ -388,7 +403,7 @@ class SessionState(BaseModel):
         ),
     ]
     idle_timeout_s: Annotated[
-        int,
+        JsonInt,
         Field(
             description="Idle timeout of this session in seconds (per user, 5 to 60 minutes).",
             ge=300,
@@ -396,7 +411,7 @@ class SessionState(BaseModel):
         ),
     ]
     locked: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="True once `idle_deadline` has passed; only `POST /auth/unlock` clears it."
         ),
@@ -416,7 +431,7 @@ class UserSession(BaseModel):
     created_at: AwareDatetime | None = None
     last_seen_at: AwareDatetime | None = None
     expires_at: AwareDatetime | None = None
-    current: bool | None = None
+    current: StrictBool | None = None
 
 
 class User(BaseModel):
@@ -433,13 +448,13 @@ class User(BaseModel):
     roles: list[Literal["owner", "manager", "viewer"]]
     status: Literal["invited", "active", "disabled", "locked"]
     mfa_enabled: Annotated[
-        bool | None,
+        StrictBool | None,
         Field(
             description="The user has at least one confirmed, unrevoked MFA method. Always present in `AuthenticatedResponse` and `SessionInfo`.\n"
         ),
     ] = None
     mfa_required: Annotated[
-        bool | None,
+        StrictBool | None,
         Field(
             description='MFA is mandatory for this user; C-12.2 requires it for every user. Always present in `AuthenticatedResponse` and `SessionInfo`. While `mfa_enabled` is false, every session of the user is enrolment-only (see "Enrolment-only session"): clients test exactly `mfa_required === true && mfa_enabled === false`.\n'
         ),
@@ -479,7 +494,7 @@ class Role(BaseModel):
     name: Literal["owner", "manager", "viewer"] | None = None
     description: str | None = None
     permissions: list[str] | None = None
-    user_count: int | None = None
+    user_count: JsonInt | None = None
 
 
 class AccountAccessGrantInput(BaseModel):
@@ -513,14 +528,14 @@ class AccountHealth(BaseModel):
         ),
     ]
     heartbeat_age_ms: Annotated[
-        int | None,
+        JsonInt | None,
         Field(
             description="Milliseconds since the last authenticated private-WS heartbeat; `null` before the first.",
             ge=0,
         ),
     ]
     rest_only: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="True while `degraded`; rule actions that need sub-second reaction are flagged."
         ),
@@ -535,7 +550,7 @@ class AccountHealth(BaseModel):
 
 class WalletBalance(BaseModel):
     is_paper: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="True when the paper matcher produced this record rather than the exchange. Orthogonal to `environment` (24-internal-schemas.md section 1.2)."
         ),
@@ -620,7 +635,7 @@ class UpdateExchangeAccountRequest(BaseModel):
     )
     label: Annotated[str | None, Field(max_length=80)] = None
     enabled: Annotated[
-        bool | None,
+        StrictBool | None,
         Field(
             description="`false` disables the account; with open exposure it needs the `open_exposure` query choice."
         ),
@@ -678,7 +693,7 @@ class ApiKey(BaseModel):
             description="Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the exchange rejected the key's credential (exchange refusal codes `10003` or `10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not signable.\n"
         ),
     ]
-    read_only: bool | None = None
+    read_only: StrictBool | None = None
     expires_at: AwareDatetime | None = None
     created_at: AwareDatetime | None = None
     last_verified_at: AwareDatetime | None = None
@@ -703,7 +718,7 @@ class CreateApiKeyRequest(BaseModel):
     api_key: Annotated[SecretStr, Field(max_length=128, min_length=8)]
     api_secret: Annotated[SecretStr, Field(max_length=256, min_length=8)]
     label: Annotated[str | None, Field(max_length=80)] = None
-    read_only: bool = False
+    read_only: StrictBool = False
     expected_uid: Annotated[
         str | None,
         Field(description="Must equal the account's `exchange_uid`; mismatch is rejected."),
@@ -753,9 +768,9 @@ class RotateApiKeyRequest(BaseModel):
 
 
 class Rest(BaseModel):
-    ok: bool | None = None
-    latency_ms: int | None = None
-    ret_code: int | None = None
+    ok: StrictBool | None = None
+    latency_ms: JsonInt | None = None
+    ret_code: JsonInt | None = None
     error: (
         Literal[
             "auth_error",
@@ -773,8 +788,8 @@ class Rest(BaseModel):
 
 
 class Websocket(BaseModel):
-    ok: bool | None = None
-    latency_ms: int | None = None
+    ok: StrictBool | None = None
+    latency_ms: JsonInt | None = None
     error: (
         Literal[
             "auth_error",
@@ -809,7 +824,7 @@ class Offset(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ]
-    atr_period: Annotated[int, Field(description="Used when `unit=atr`.", ge=2, le=200)] = 14
+    atr_period: Annotated[JsonInt, Field(description="Used when `unit=atr`.", ge=2, le=200)] = 14
     atr_bar_type: (
         Literal["time", "tick", "volume", "range", "delta", "renko", "pnf", "heikin_ashi"] | None
     ) = None
@@ -876,7 +891,7 @@ class Sizing(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    round_to_lot: bool = True
+    round_to_lot: StrictBool = True
 
 
 class RiskCaps(BaseModel):
@@ -899,7 +914,7 @@ class RiskCaps(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    max_open_positions: Annotated[int | None, Field(ge=0, le=100)] = None
+    max_open_positions: Annotated[JsonInt | None, Field(ge=0, le=100)] = None
     max_position_notional_usd: Annotated[
         str | None,
         Field(
@@ -908,9 +923,9 @@ class RiskCaps(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    max_orders_per_minute: Annotated[int | None, Field(ge=1, le=600)] = None
-    max_consecutive_losses: Annotated[int | None, Field(ge=1, le=50)] = None
-    lockout_minutes_after_breach: Annotated[int, Field(ge=0, le=1440)] = 60
+    max_orders_per_minute: Annotated[JsonInt | None, Field(ge=1, le=600)] = None
+    max_consecutive_losses: Annotated[JsonInt | None, Field(ge=1, le=50)] = None
+    lockout_minutes_after_breach: Annotated[JsonInt, Field(ge=0, le=1440)] = 60
 
 
 class ProfileSymbolPattern(RootModel[str]):
@@ -974,7 +989,7 @@ class ProfileStopLoss(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = "10"
-    atr_period: Annotated[int, Field(ge=2, le=200)] = 14
+    atr_period: Annotated[JsonInt, Field(ge=2, le=200)] = 14
     atr_multiple: Annotated[
         str,
         Field(
@@ -1052,12 +1067,12 @@ class ProfileRiskCaps(BaseModel):
             description="Percent of equity lost in a day, at least 0.1 and at most 50 (SCR-131)."
         ),
     ] = None
-    max_open_positions: Annotated[int | None, Field(ge=1, le=50)] = None
-    max_concurrent_orders: Annotated[int | None, Field(ge=1, le=500)] = None
+    max_open_positions: Annotated[JsonInt | None, Field(ge=1, le=50)] = None
+    max_concurrent_orders: Annotated[JsonInt | None, Field(ge=1, le=500)] = None
     max_leverage_cap: Annotated[
         Decimal | None, Field(description="At least 1, at most 100, and at least `leverage`.")
     ] = None
-    max_orders_per_minute: Annotated[int, Field(ge=1, le=600)] = 30
+    max_orders_per_minute: Annotated[JsonInt, Field(ge=1, le=600)] = 30
 
 
 class ProfileWarning(BaseModel):
@@ -1082,7 +1097,7 @@ class ProfileWarning(BaseModel):
             pattern="^[A-Z0-9]{2,20}USDT$",
         ),
     ] = None
-    estimated: Annotated[bool, Field(description="Derived from an estimate (C10).")] = False
+    estimated: Annotated[StrictBool, Field(description="Derived from an estimate (C10).")] = False
 
 
 class AccountProfileInput(BaseModel):
@@ -1099,14 +1114,14 @@ class AccountProfileInput(BaseModel):
         ),
     ]
     is_default: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="The account's default, its ceiling (decision D7). A profile write never changes it: the default binding moves only through its own operation (`setAccountDefaultProfile`), so `true` on a create, or on a replace a value other than the stored one, is refused (`default_has_own_operation`).\n"
         ),
     ] = False
-    enabled: Annotated[bool, Field(description="A disabled profile sizes nothing.")] = True
+    enabled: Annotated[StrictBool, Field(description="A disabled profile sizes nothing.")] = True
     trading_enabled: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="The profile sizes orders only when set, and then bounds every cap (decision D11)."
         ),
@@ -1137,7 +1152,7 @@ class AccountProfileInput(BaseModel):
     ] = []
     risk_caps: ProfileRiskCaps | None = None
     all_symbols: Annotated[
-        bool,
+        StrictBool,
         Field(description="Allows every listed USDT linear perpetual, with no `allowed_symbols`."),
     ] = False
     allowed_symbols: Annotated[
@@ -1163,9 +1178,9 @@ class AccountProfileInput(BaseModel):
         ),
     ] = True
     default_time_in_force: Literal["GTC", "IOC", "FOK", "PostOnly"] = "GTC"
-    reduce_only_default: bool = False
+    reduce_only_default: StrictBool = False
     slippage_tolerance_bps: Annotated[
-        int,
+        JsonInt,
         Field(description="The slippage a market order may take, in basis points.", ge=0, le=1000),
     ] = 10
 
@@ -1179,7 +1194,7 @@ class AccountProfile(BaseModel):
             description="It is the account's environment, so a client can badge it wherever profiles are listed (C-2.11), and it is never writable.\n"
         ),
     ]
-    version: Annotated[int, Field(ge=1)]
+    version: Annotated[JsonInt, Field(ge=1)]
     created_at: AwareDatetime
     updated_at: AwareDatetime
     warnings: list[ProfileWarning]
@@ -1202,7 +1217,7 @@ class AccountDefaultBinding(BaseModel):
         ),
     ]
     profile_id: UUID
-    version: Annotated[int, Field(ge=1)]
+    version: Annotated[JsonInt, Field(ge=1)]
 
 
 class Instrument(BaseModel):
@@ -1228,7 +1243,7 @@ class Instrument(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ]
-    price_scale: int | None = None
+    price_scale: JsonInt | None = None
     qty_step: Annotated[
         str,
         Field(
@@ -1277,15 +1292,16 @@ class Instrument(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    funding_interval_minutes: int | None = None
+    funding_interval_minutes: JsonInt | None = None
     launch_time: AwareDatetime | None = None
-    copy_trading: bool | None = None
+    copy_trading: StrictBool | None = None
     revision: Annotated[
-        int | None, Field(description="Increments whenever Bybit changes the instrument metadata.")
+        JsonInt | None,
+        Field(description="Increments whenever Bybit changes the instrument metadata."),
     ] = None
     updated_at: AwareDatetime | None = None
     delisted: Annotated[
-        bool | None,
+        StrictBool | None,
         Field(description="Derived: true when `status` is not `Trading` or `PreLaunch`."),
     ] = None
     status_reason: Annotated[
@@ -1295,7 +1311,7 @@ class Instrument(BaseModel):
 
 
 class RiskLimitTier(BaseModel):
-    tier: int | None = None
+    tier: JsonInt | None = None
     risk_limit_value: Annotated[
         str | None,
         Field(
@@ -1332,7 +1348,7 @@ class RiskLimitTier(BaseModel):
 
 class InstrumentDetail(Instrument):
     risk_limit_tiers: list[RiskLimitTier] | None = None
-    recorded: bool | None = None
+    recorded: StrictBool | None = None
     recording_started_at: AwareDatetime | None = None
     stale_since: Annotated[
         AwareDatetime | None,
@@ -1471,19 +1487,19 @@ class Ticker(BaseModel):
     ] = None
     next_funding_time: AwareDatetime | None = None
     ts: AwareDatetime | None = None
-    stale: bool | None = None
+    stale: StrictBool | None = None
 
 
 class Bar(BaseModel):
     index: Annotated[
-        int | None,
+        JsonInt | None,
         Field(
             description="Bar index, strictly increasing within (series, generation) (24 §3.1). Always present on /market/bars; `t` may repeat for non-time bars (#2014).",
             ge=0,
         ),
     ] = None
     generation: Annotated[
-        int | None,
+        JsonInt | None,
         Field(
             description="ADR-0033 series generation (= epoch): an opaque id that a builder cold start or a rebuild replaces, normally with a higher one; index restarts inside it. Compare for equality only: a change in either direction is a new epoch. Never read it as a time. Always present on /market/bars.",
             ge=0,
@@ -1541,9 +1557,10 @@ class Bar(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    trades: int | None = None
+    trades: JsonInt | None = None
     confirm: Annotated[
-        bool | None, Field(description="False for the in-progress bar (Bybit `confirm` semantics).")
+        StrictBool | None,
+        Field(description="False for the in-progress bar (Bybit `confirm` semantics)."),
     ] = None
     delta: Decimal | None = None
     cvd: Decimal | None = None
@@ -1609,7 +1626,7 @@ class FootprintCell(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    trades: int | None = None
+    trades: JsonInt | None = None
 
 
 class FootprintImbalance(BaseModel):
@@ -1630,14 +1647,14 @@ class FootprintImbalance(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    stacked: bool | None = None
-    stack_size: int | None = None
-    estimated: bool = False
+    stacked: StrictBool | None = None
+    stack_size: JsonInt | None = None
+    estimated: StrictBool = False
 
 
 class UnfinishedAuction(BaseModel):
-    high: bool | None = None
-    low: bool | None = None
+    high: StrictBool | None = None
+    low: StrictBool | None = None
 
 
 class FootprintBar(Bar):
@@ -1691,7 +1708,7 @@ class FootprintResponse(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    price_grouping: int | None = None
+    price_grouping: JsonInt | None = None
     bars: list[FootprintBar]
     meta: DataMeta
 
@@ -1737,7 +1754,7 @@ class ProfileRow(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    tpo_count: int | None = None
+    tpo_count: JsonInt | None = None
 
 
 class ProfilePeriod(BaseModel):
@@ -1776,7 +1793,7 @@ class ProfilePeriod(BaseModel):
         ),
     ] = None
     naked_poc: Annotated[
-        bool | None,
+        StrictBool | None,
         Field(description="True while this period's POC has not been retraded by a later bar."),
     ] = None
     rows: list[ProfileRow] | None = None
@@ -1822,9 +1839,9 @@ class PublicTrade(BaseModel):
         Literal["buy", "sell"] | None,
         Field(description="Taker/aggressor side, taken directly from Bybit `S`."),
     ] = None
-    is_block_trade: bool | None = None
+    is_block_trade: StrictBool | None = None
     cluster_size: Annotated[
-        int | None, Field(description="Number of raw prints merged when clustering is on.")
+        JsonInt | None, Field(description="Number of raw prints merged when clustering is on.")
     ] = None
     tick_direction: Literal["PlusTick", "ZeroPlusTick", "MinusTick", "ZeroMinusTick"] | None = None
 
@@ -1847,12 +1864,12 @@ class OrderbookSnapshot(BaseModel):
         ),
     ]
     depth: Literal[1, 50, 200, 500]
-    u: Annotated[int, Field(description="Monotonic update id from Bybit.")]
-    seq: Annotated[int, Field(description="Cross-topic sequence from Bybit.")]
+    u: Annotated[JsonInt, Field(description="Monotonic update id from Bybit.")]
+    seq: Annotated[JsonInt, Field(description="Cross-topic sequence from Bybit.")]
     ts: AwareDatetime
     bids: Annotated[list[Bid], Field(description="[price, size], descending.")]
     asks: Annotated[list[Ask], Field(description="[price, size], ascending.")]
-    stale: bool | None = None
+    stale: StrictBool | None = None
 
 
 class HeatmapResponse(BaseModel):
@@ -1866,19 +1883,21 @@ class HeatmapResponse(BaseModel):
     ] = None
     from_: Annotated[AwareDatetime | None, Field(alias="from")] = None
     to: AwareDatetime | None = None
-    time_bucket_ms: int | None = None
-    price_grouping: int | None = None
+    time_bucket_ms: JsonInt | None = None
+    price_grouping: JsonInt | None = None
     times: list[AwareDatetime] | None = None
     prices: list[Decimal] | None = None
     bid_matrix: Annotated[
-        list[list[float]] | None, Field(description="Row-major [price][time] resting bid size.")
+        list[list[StrictFloat]] | None,
+        Field(description="Row-major [price][time] resting bid size."),
     ] = None
     ask_matrix: Annotated[
-        list[list[float]] | None, Field(description="Row-major [price][time] resting ask size.")
+        list[list[StrictFloat]] | None,
+        Field(description="Row-major [price][time] resting ask size."),
     ] = None
-    max_value: float | None = None
+    max_value: StrictFloat | None = None
     normalize: Literal["none", "column", "window"] | None = None
-    estimated: bool = False
+    estimated: StrictBool = False
 
 
 class MetricPoint(BaseModel):
@@ -1916,7 +1935,7 @@ class MetricSeries(BaseModel):
         "liquidation_intensity",
     ]
     estimated: Annotated[
-        bool | None, Field(description="True for heuristic metrics (arch P10).")
+        StrictBool | None, Field(description="True for heuristic metrics (arch P10).")
     ] = None
     params: dict[str, Any] | None = None
     unit: Annotated[
@@ -1977,14 +1996,14 @@ class Liquidation(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    cluster_size: int | None = None
+    cluster_size: JsonInt | None = None
 
 
 class Interval(BaseModel):
     from_: Annotated[AwareDatetime | None, Field(alias="from")] = None
     to: AwareDatetime | None = None
     tier: Literal["questdb", "parquet"] | None = None
-    rows: int | None = None
+    rows: JsonInt | None = None
 
 
 class Gap(BaseModel):
@@ -2049,7 +2068,7 @@ class RecordedSymbol(BaseModel):
         ),
     ]
     reason: Literal["manual", "chart_open", "position_open", "rule_dependency", "alert_dependency"]
-    pinned: bool | None = None
+    pinned: StrictBool | None = None
     state: Literal["idle", "starting", "recording", "degraded", "stopping", "stopped", "error"]
     streams: (
         list[
@@ -2068,12 +2087,12 @@ class RecordedSymbol(BaseModel):
     ) = None
     depth: Literal[1, 50, 200, 500] | None = None
     started_at: AwareDatetime | None = None
-    retention_days: int | None = None
-    disk_bytes: int | None = None
-    rows_last_hour: int | None = None
-    lag_ms: int | None = None
+    retention_days: JsonInt | None = None
+    disk_bytes: JsonInt | None = None
+    rows_last_hour: JsonInt | None = None
+    lag_ms: JsonInt | None = None
     added_by: UUID | None = None
-    lingering: bool | None = None
+    lingering: StrictBool | None = None
     linger_until: AwareDatetime | None = None
     refusal: Annotated[
         Literal["symbol_cap", "disk_pressure", "chart_open", "position_open"] | None,
@@ -2084,7 +2103,7 @@ class RecordedSymbol(BaseModel):
 
 
 class Estimate(BaseModel):
-    daily_bytes_estimate: int | None = None
+    daily_bytes_estimate: JsonInt | None = None
     basis: Annotated[
         str | None, Field(examples=["~0.5-0.75 GB/day/symbol compressed at depth 200"])
     ] = None
@@ -2128,8 +2147,8 @@ class AddRecordedSymbolRequest(BaseModel):
         Field(min_length=1),
     ] = ["trades", "orderbook_delta", "tickers", "liquidations"]
     depth: Literal[1, 50, 200, 500] = 200
-    pinned: bool = False
-    retention_days: Annotated[int | None, Field(ge=1, le=3650)] = 30
+    pinned: StrictBool = False
+    retention_days: Annotated[JsonInt | None, Field(ge=1, le=3650)] = 30
 
 
 class UpdateRecordedSymbolRequest(BaseModel):
@@ -2153,17 +2172,17 @@ class UpdateRecordedSymbolRequest(BaseModel):
         Field(min_length=1),
     ] = None
     depth: Literal[1, 50, 200, 500] | None = None
-    pinned: bool | None = None
-    retention_days: Annotated[int | None, Field(ge=1, le=3650)] = None
+    pinned: StrictBool | None = None
+    retention_days: Annotated[JsonInt | None, Field(ge=1, le=3650)] = None
 
 
 class Connection(BaseModel):
     endpoint: str | None = None
     state: Literal["connecting", "connected", "degraded", "disconnected"] | None = None
-    subscribed_topics: int | None = None
+    subscribed_topics: JsonInt | None = None
     connected_since: AwareDatetime | None = None
-    reconnects_last_hour: int | None = None
-    last_ping_ms: int | None = None
+    reconnects_last_hour: JsonInt | None = None
+    last_ping_ms: JsonInt | None = None
 
 
 class Symbol1(BaseModel):
@@ -2178,12 +2197,12 @@ class Symbol1(BaseModel):
     state: (
         Literal["idle", "starting", "recording", "degraded", "stopping", "stopped", "error"] | None
     ) = None
-    lag_ms: int | None = None
-    rows_last_hour: int | None = None
-    dropped_messages: int | None = None
-    resyncs_last_hour: int | None = None
+    lag_ms: JsonInt | None = None
+    rows_last_hour: JsonInt | None = None
+    dropped_messages: JsonInt | None = None
+    resyncs_last_hour: JsonInt | None = None
     last_event_at: AwareDatetime | None = None
-    lingering: bool | None = None
+    lingering: StrictBool | None = None
     linger_until: AwareDatetime | None = None
     refusal: Annotated[
         Literal["symbol_cap", "disk_pressure", "chart_open", "position_open"] | None,
@@ -2194,19 +2213,19 @@ class Symbol1(BaseModel):
 
 
 class RecorderPolicySettings(BaseModel):
-    autostart_delay_s: Annotated[int, Field(ge=0)]
-    autostop_grace_s: Annotated[int, Field(ge=0)]
-    max_symbols: Annotated[int, Field(ge=1)]
-    warn_pct: Annotated[int, Field(ge=1, le=100)]
-    autostop_pct: Annotated[int, Field(ge=1, le=100)]
-    halt_pct: Annotated[int, Field(ge=1, le=100)]
-    autorecord_enabled: bool
+    autostart_delay_s: Annotated[JsonInt, Field(ge=0)]
+    autostop_grace_s: Annotated[JsonInt, Field(ge=0)]
+    max_symbols: Annotated[JsonInt, Field(ge=1)]
+    warn_pct: Annotated[JsonInt, Field(ge=1, le=100)]
+    autostop_pct: Annotated[JsonInt, Field(ge=1, le=100)]
+    halt_pct: Annotated[JsonInt, Field(ge=1, le=100)]
+    autorecord_enabled: StrictBool
 
 
 class Tier(BaseModel):
     tier: Literal["questdb", "parquet", "postgres"] | None = None
-    used_bytes: int | None = None
-    retention_days: int | None = None
+    used_bytes: JsonInt | None = None
+    retention_days: JsonInt | None = None
 
 
 class Symbol2(BaseModel):
@@ -2218,21 +2237,21 @@ class Symbol2(BaseModel):
             pattern="^[A-Z0-9]{2,20}USDT$",
         ),
     ] = None
-    used_bytes: int | None = None
-    daily_growth_bytes: int | None = None
-    pinned: bool | None = None
+    used_bytes: JsonInt | None = None
+    daily_growth_bytes: JsonInt | None = None
+    pinned: StrictBool | None = None
 
 
 class StorageUsage(BaseModel):
-    disk_total_bytes: int | None = None
-    disk_used_bytes: int | None = None
-    disk_free_bytes: int | None = None
+    disk_total_bytes: JsonInt | None = None
+    disk_used_bytes: JsonInt | None = None
+    disk_free_bytes: JsonInt | None = None
     projected_full_at: AwareDatetime | None = None
-    daily_growth_bytes: int | None = None
+    daily_growth_bytes: JsonInt | None = None
     tiers: list[Tier] | None = None
     symbols: list[Symbol2] | None = None
     generated_at: AwareDatetime | None = None
-    cap_bytes: Annotated[int | None, Field(ge=1)] = None
+    cap_bytes: Annotated[JsonInt | None, Field(ge=1)] = None
     level: Literal[0, 1, 2, 3] | None = None
     write_gate: Literal["open", "closed"] | None = None
     write_gate_reason: Annotated[
@@ -2241,7 +2260,7 @@ class StorageUsage(BaseModel):
             description="Why the write gate is closed, null when open. **Open-ended for readers:** adding a value is an additive change (C-6.3)."
         ),
     ] = None
-    accelerate_retention: bool | None = None
+    accelerate_retention: StrictBool | None = None
 
 
 class RetentionPolicyInput(BaseModel):
@@ -2255,10 +2274,10 @@ class RetentionPolicyInput(BaseModel):
         "open_interest",
         "funding",
     ]
-    retain_days: Annotated[int, Field(ge=1, le=3650)]
+    retain_days: Annotated[JsonInt, Field(ge=1, le=3650)]
     action: Literal["drop", "archive_parquet", "downsample", "pin"]
     symbol: Annotated[Symbol | None, Field(description="Null = global default.")] = None
-    applies_to_pinned: bool = False
+    applies_to_pinned: StrictBool = False
 
 
 class RetentionPolicy(RetentionPolicyInput):
@@ -2297,10 +2316,10 @@ class RecordingSession(BaseModel):
         ]
         | None
     ) = None
-    depth: int | None = None
-    rows: int | None = None
-    bytes: int | None = None
-    gap_count: int | None = None
+    depth: JsonInt | None = None
+    rows: JsonInt | None = None
+    bytes: JsonInt | None = None
+    gap_count: JsonInt | None = None
 
 
 class CreateReplaySessionRequest(BaseModel):
@@ -2311,7 +2330,7 @@ class CreateReplaySessionRequest(BaseModel):
     from_: Annotated[AwareDatetime, Field(alias="from")]
     to: AwareDatetime
     speed: Annotated[
-        float,
+        StrictFloat,
         Field(description="0 = as fast as possible (used by rule simulation).", ge=0.0, le=100.0),
     ] = 1
     streams: (
@@ -2331,7 +2350,7 @@ class CreateReplaySessionRequest(BaseModel):
     ) = None
     depth: Literal[1, 50, 200, 500] = 200
     paper_account_id: UUID | None = None
-    autostart: bool = False
+    autostart: StrictBool = False
 
 
 class ReplaySession(BaseModel):
@@ -2341,7 +2360,7 @@ class ReplaySession(BaseModel):
     from_: Annotated[AwareDatetime | None, Field(alias="from")] = None
     to: AwareDatetime | None = None
     cursor_ts: AwareDatetime | None = None
-    speed: float | None = None
+    speed: StrictFloat | None = None
     streams: (
         list[
             Literal[
@@ -2357,11 +2376,11 @@ class ReplaySession(BaseModel):
         ]
         | None
     ) = None
-    depth: int | None = None
+    depth: JsonInt | None = None
     paper_account_id: UUID | None = None
     created_by: UUID | None = None
     created_at: AwareDatetime | None = None
-    progress_pct: Annotated[float | None, Field(ge=0.0, le=100.0)] = None
+    progress_pct: Annotated[StrictFloat | None, Field(ge=0.0, le=100.0)] = None
     error: str | None = None
 
 
@@ -2370,10 +2389,10 @@ class ReplayControlRequest(BaseModel):
         extra="forbid",
     )
     action: Literal["play", "pause", "seek", "step", "set_speed", "restart"]
-    speed: Annotated[float | None, Field(ge=0.0, le=100.0)] = None
+    speed: Annotated[StrictFloat | None, Field(ge=0.0, le=100.0)] = None
     to: Annotated[AwareDatetime | None, Field(description="Required for `seek`.")] = None
-    step_events: Annotated[int | None, Field(ge=1, le=100000)] = None
-    step_ms: Annotated[int | None, Field(ge=1, le=3600000)] = None
+    step_events: Annotated[JsonInt | None, Field(ge=1, le=100000)] = None
+    step_ms: Annotated[JsonInt | None, Field(ge=1, le=3600000)] = None
 
 
 class TriggerSpec(BaseModel):
@@ -2406,7 +2425,7 @@ class Oco(BaseModel):
     ] = None
     other_trigger: TriggerSpec | None = None
     cancel_timeout_ms: Annotated[
-        int,
+        JsonInt,
         Field(
             description="Max time to cancel the loser after the winner's fill notice arrives on the WS.",
             ge=100,
@@ -2427,19 +2446,19 @@ class Iceberg(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    refresh_on_fill_pct: Annotated[float, Field(ge=1.0, le=100.0)] = 100
-    randomize_display_pct: Annotated[float, Field(ge=0.0, le=50.0)] = 0
+    refresh_on_fill_pct: Annotated[StrictFloat, Field(ge=1.0, le=100.0)] = 100
+    randomize_display_pct: Annotated[StrictFloat, Field(ge=0.0, le=50.0)] = 0
 
 
 class Twap(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    duration_seconds: Annotated[int | None, Field(ge=10, le=86400)] = None
-    slices: Annotated[int | None, Field(ge=2, le=500)] = None
-    randomize_pct: Annotated[float, Field(ge=0.0, le=50.0)] = 0
+    duration_seconds: Annotated[JsonInt | None, Field(ge=10, le=86400)] = None
+    slices: Annotated[JsonInt | None, Field(ge=2, le=500)] = None
+    randomize_pct: Annotated[StrictFloat, Field(ge=0.0, le=50.0)] = 0
     limit_offset_ticks: Annotated[
-        int | None, Field(description="Omit for market slices.", ge=0, le=1000)
+        JsonInt | None, Field(description="Omit for market slices.", ge=0, le=1000)
     ] = None
 
 
@@ -2447,18 +2466,18 @@ class Chase(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    offset_ticks: Annotated[int, Field(ge=0, le=100)] = 0
-    max_chases: Annotated[int, Field(ge=1, le=500)] = 20
-    max_slippage_ticks: Annotated[int | None, Field(ge=1, le=10000)] = None
-    repricing_interval_ms: Annotated[int, Field(ge=50, le=10000)] = 250
-    fallback_to_market: bool = False
+    offset_ticks: Annotated[JsonInt, Field(ge=0, le=100)] = 0
+    max_chases: Annotated[JsonInt, Field(ge=1, le=500)] = 20
+    max_slippage_ticks: Annotated[JsonInt | None, Field(ge=1, le=10000)] = None
+    repricing_interval_ms: Annotated[JsonInt, Field(ge=50, le=10000)] = 250
+    fallback_to_market: StrictBool = False
 
 
 class Scaled(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    levels: Annotated[int | None, Field(ge=2, le=50)] = None
+    levels: Annotated[JsonInt | None, Field(ge=2, le=50)] = None
     from_price: Annotated[
         str | None,
         Field(
@@ -2562,8 +2581,8 @@ class PlaceOrderRequest(BaseModel):
         ),
     ] = None
     time_in_force: Literal["GTC", "IOC", "FOK", "PostOnly"] | None = None
-    reduce_only: bool = False
-    close_on_trigger: bool = False
+    reduce_only: StrictBool = False
+    close_on_trigger: StrictBool = False
     position_idx: Annotated[
         Literal[0, 1, 2] | None, Field(description="Required in hedge mode (1 = long, 2 = short).")
     ] = None
@@ -2640,13 +2659,13 @@ class CancelAllRequest(BaseModel):
         | None
     ) = None
     exclude_reduce_only: Annotated[
-        bool, Field(description="Protects TP/SL exits from a blanket cancel.")
+        StrictBool, Field(description="Protects TP/SL exits from a blanket cancel.")
     ] = True
 
 
 class Order(BaseModel):
     is_paper: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="True when the paper matcher produced this record rather than the exchange. Orthogonal to `environment` (24-internal-schemas.md section 1.2)."
         ),
@@ -2770,9 +2789,9 @@ class Order(BaseModel):
     price: Decimal | None = None
     avg_fill_price: Decimal | None = None
     time_in_force: Literal["GTC", "IOC", "FOK", "PostOnly"] | None = None
-    reduce_only: bool | None = None
-    close_on_trigger: bool | None = None
-    position_idx: int | None = None
+    reduce_only: StrictBool | None = None
+    close_on_trigger: StrictBool | None = None
+    position_idx: JsonInt | None = None
     trigger_price: Decimal | None = None
     trigger_by: Literal["LastPrice", "MarkPrice", "IndexPrice"] | None = None
     trigger_direction: Literal["rise", "fall"] | None = None
@@ -2800,7 +2819,7 @@ class OrderEvent(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    id: int | None = None
+    id: JsonInt | None = None
     kind: Annotated[
         Literal[
             "local_create",
@@ -2834,7 +2853,7 @@ class TradeGroupDefinitionMember(BaseModel):
     )
     exchange_account_id: UUID
     enabled: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="A disabled member stays in the definition, and a ticket does not target it."
         ),
@@ -2913,7 +2932,8 @@ class Overrides(BaseModel):
     tpsl_mode: Literal["Full", "Partial"] | None = None
     position_idx: Literal[0, 1, 2] | None = None
     skip: Annotated[
-        bool, Field(description="Keep the leg in the group for auditability but do not send it.")
+        StrictBool,
+        Field(description="Keep the leg in the group for auditability but do not send it."),
     ] = False
 
 
@@ -2980,13 +3000,13 @@ class CreateTradeGroupRequest(BaseModel):
         "reverse",
         "algo_child",
     ] = "entry"
-    reduce_only: bool = False
+    reduce_only: StrictBool = False
     atomicity: Literal["best_effort", "all_or_none"] = "best_effort"
     compensate: Annotated[
         Literal["none", "flatten_filled"],
         Field(description="Applies when `all_or_none` fails after sending."),
     ] = "none"
-    max_concurrent_legs: Annotated[int, Field(ge=1, le=20)] = 5
+    max_concurrent_legs: Annotated[JsonInt, Field(ge=1, le=20)] = 5
     defaults: Defaults | None = None
     algo: AlgoSpec | None = None
     legs: Annotated[
@@ -3073,14 +3093,14 @@ class LegError(BaseModel):
             description="Persisted as `rejection_message`: the OMS's own text for `code`, never the exchange's `ret_msg` (SR-E29-09)."
         ),
     ] = None
-    exchange_ret_code: int | None = None
-    retryable: bool | None = None
+    exchange_ret_code: JsonInt | None = None
+    retryable: StrictBool | None = None
 
 
 class Totals(BaseModel):
-    requested_legs: int | None = None
-    submitted_legs: int | None = None
-    rejected_legs: int | None = None
+    requested_legs: JsonInt | None = None
+    submitted_legs: JsonInt | None = None
+    rejected_legs: JsonInt | None = None
     filled_qty: Annotated[
         str | None,
         Field(
@@ -3151,34 +3171,34 @@ class AmendTradeGroupRequest(BaseModel):
 
 class Result(BaseModel):
     exchange_account_id: UUID | None = None
-    ok: bool | None = None
-    affected: int | None = None
+    ok: StrictBool | None = None
+    affected: JsonInt | None = None
     error: LegError | None = None
 
 
 class BulkAccountResult(BaseModel):
     results: list[Result] | None = None
-    requested: int | None = None
-    succeeded: int | None = None
+    requested: JsonInt | None = None
+    succeeded: JsonInt | None = None
 
 
 class Result1(BaseModel):
     leg_id: UUID | None = None
     exchange_account_id: UUID | None = None
-    ok: bool | None = None
-    affected: int | None = None
+    ok: StrictBool | None = None
+    affected: JsonInt | None = None
     error: LegError | None = None
 
 
 class BulkLegResult(BaseModel):
     trade_group_id: UUID | None = None
     results: list[Result1] | None = None
-    requested: int | None = None
-    succeeded: int | None = None
+    requested: JsonInt | None = None
+    succeeded: JsonInt | None = None
 
 
 class KillSwitch(BaseModel):
-    engaged: bool
+    engaged: StrictBool
     scope: Literal["global", "accounts"]
     exchange_account_ids: list[UUID] | None = None
     engaged_at: AwareDatetime | None = None
@@ -3190,12 +3210,12 @@ class SetKillSwitchRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    engaged: bool
+    engaged: StrictBool
     scope: Literal["global", "accounts"]
     exchange_account_ids: list[UUID] | None = None
-    cancel_open_orders: bool = True
-    flatten_positions: bool = False
-    disarm_rules: bool = True
+    cancel_open_orders: StrictBool = True
+    flatten_positions: StrictBool = False
+    disarm_rules: StrictBool = True
     reason: Annotated[str, Field(max_length=280, min_length=3)]
 
 
@@ -3204,15 +3224,15 @@ class Failure(BaseModel):
         extra="forbid",
     )
     exchange_account_id: UUID | None = None
-    ok: bool | None = None
-    affected: int | None = None
+    ok: StrictBool | None = None
+    affected: JsonInt | None = None
     error: LegError | None = None
 
 
 class Actions(BaseModel):
-    orders_cancelled: int | None = None
-    positions_flattened: int | None = None
-    rules_disarmed: int | None = None
+    orders_cancelled: JsonInt | None = None
+    positions_flattened: JsonInt | None = None
+    rules_disarmed: JsonInt | None = None
     failures: Annotated[
         list[Failure] | None,
         Field(
@@ -3228,7 +3248,7 @@ class KillSwitchResult(BaseModel):
 
 class Position(BaseModel):
     is_paper: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="True when the paper matcher produced this record rather than the exchange. Orthogonal to `environment` (24-internal-schemas.md section 1.2)."
         ),
@@ -3316,7 +3336,7 @@ class Position(BaseModel):
     ] = None
     tpsl_mode: Literal["Full", "Partial"] | None = None
     native_stop_present: Annotated[
-        bool | None,
+        StrictBool | None,
         Field(
             description="False is an alarm condition; the OMS re-asserts the stop and raises a critical alert."
         ),
@@ -3496,7 +3516,7 @@ class ReversePositionRequest(BaseModel):
 
 class Execution(BaseModel):
     is_paper: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="True when the paper matcher produced this record rather than the exchange. Orthogonal to `environment` (24-internal-schemas.md section 1.2)."
         ),
@@ -3556,7 +3576,7 @@ class Execution(BaseModel):
         ),
     ] = None
     fee_coin: str | None = None
-    is_maker: bool | None = None
+    is_maker: StrictBool | None = None
     exec_type: Literal["Trade", "AdlTrade", "Funding", "BustTrade", "Settle"] | None = None
     exec_pnl: Annotated[
         str | None,
@@ -3645,7 +3665,7 @@ class RuleOperand1(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    const: str | float | bool
+    const: str | StrictFloat | StrictBool
 
 
 class RuleMetricRef(BaseModel):
@@ -3701,24 +3721,24 @@ class RuleAction(BaseModel):
     ]
     on_error: Literal["abort_remaining", "continue", "retry_once"] = "abort_remaining"
     targets: Literal["scope_accounts", "originating_account", "all_accounts"] = "scope_accounts"
-    dry_run_only: bool = False
+    dry_run_only: StrictBool = False
 
 
 class RuleLimits(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    once: bool = False
+    once: StrictBool = False
     once_per: Literal["position", "day", "group", "rule_lifetime"] | None = None
-    cooldown_ms: Annotated[int, Field(ge=0)] = 1000
-    max_fires_per_hour: Annotated[int, Field(ge=1)] = 60
-    max_fires_per_day: Annotated[int, Field(ge=1)] = 500
-    max_actions_per_fire: Annotated[int, Field(ge=1, le=10)] = 10
+    cooldown_ms: Annotated[JsonInt, Field(ge=0)] = 1000
+    max_fires_per_hour: Annotated[JsonInt, Field(ge=1)] = 60
+    max_fires_per_day: Annotated[JsonInt, Field(ge=1)] = 500
+    max_actions_per_fire: Annotated[JsonInt, Field(ge=1, le=10)] = 10
     max_notional_per_fire: Decimal | None = None
     max_daily_notional: Decimal | None = None
-    require_confirmation: bool = False
-    evaluation_timeout_ms: Annotated[int, Field(ge=10, le=5000)] = 250
-    kill_switch_on_error_count: Annotated[int, Field(ge=1)] = 5
+    require_confirmation: StrictBool = False
+    evaluation_timeout_ms: Annotated[JsonInt, Field(ge=10, le=5000)] = 250
+    kill_switch_on_error_count: Annotated[JsonInt, Field(ge=1)] = 5
 
 
 class RuleTrigger(BaseModel):
@@ -3741,12 +3761,14 @@ class RuleTrigger(BaseModel):
         "on_liquidation",
     ]
     timeframe: Annotated[str | None, Field(description="Required for `on_bar_close`.")] = None
-    interval_ms: Annotated[int | None, Field(description="Required for `on_timer`.", ge=100)] = None
+    interval_ms: Annotated[
+        JsonInt | None, Field(description="Required for `on_timer`.", ge=100)
+    ] = None
     cron: Annotated[
         str | None, Field(description="Required for `on_schedule`; 5-field UTC cron.")
     ] = None
     metric: Annotated[str | None, Field(description="Required for `on_metric_change`.")] = None
-    debounce_ms: Annotated[int, Field(ge=0)] = 0
+    debounce_ms: Annotated[JsonInt, Field(ge=0)] = 0
 
 
 class RuleBindings(BaseModel):
@@ -3771,11 +3793,11 @@ class Rule(BaseModel):
     editor: Literal["form", "graph"] | None = None
     tags: list[str] | None = None
     active_version_id: UUID | None = None
-    version: int | None = None
+    version: JsonInt | None = None
     bindings: RuleBindings | None = None
     last_run_at: AwareDatetime | None = None
     last_run_status: Literal["running", "ok", "error", "aborted", "throttled"] | None = None
-    fire_count_24h: int | None = None
+    fire_count_24h: JsonInt | None = None
     created_by: UUID | None = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
@@ -3785,15 +3807,15 @@ class LastSimulation(BaseModel):
     run_id: UUID | None = None
     ir_hash: str | None = None
     completed_at: AwareDatetime | None = None
-    fires: int | None = None
+    fires: JsonInt | None = None
 
 
 class RuleVersion(BaseModel):
     id: UUID | None = None
     rule_id: UUID | None = None
-    version: int | None = None
+    version: JsonInt | None = None
     ir_hash: str | None = None
-    is_active: bool | None = None
+    is_active: StrictBool | None = None
     created_by: UUID | None = None
     created_at: AwareDatetime | None = None
     note: str | None = None
@@ -3834,14 +3856,14 @@ class RuleValidationIssue(BaseModel):
 
 
 class RuleValidationResult(BaseModel):
-    valid: bool
+    valid: StrictBool
     errors: list[RuleValidationIssue]
     warnings: list[RuleValidationIssue]
     referenced_variables: list[str] | None = None
     referenced_actions: list[str] | None = None
-    estimated_evaluations_per_minute: int | None = None
+    estimated_evaluations_per_minute: JsonInt | None = None
     blocks_arming: Annotated[
-        bool | None,
+        StrictBool | None,
         Field(description="True when any error or open safety warning refuses mode=armed."),
     ] = None
 
@@ -3856,7 +3878,7 @@ class SimulateRuleRequest(BaseModel):
     replay_session_id: UUID | None = None
     symbols: list[Symbol] | None = None
     exchange_account_ids: list[UUID] | None = None
-    speed: Annotated[float, Field(ge=0.0, le=100.0)] = 0
+    speed: Annotated[StrictFloat, Field(ge=0.0, le=100.0)] = 0
     starting_equity_usd: Annotated[
         str | None,
         Field(
@@ -3871,7 +3893,7 @@ class Action(BaseModel):
     ts: AwareDatetime | None = None
     action: str | None = None
     params: dict[str, Any] | None = None
-    would_have_succeeded: bool | None = None
+    would_have_succeeded: StrictBool | None = None
     symbol: Annotated[
         str | None,
         Field(
@@ -3889,13 +3911,13 @@ class RuleSimulationResult(BaseModel):
     version_id: UUID | None = None
     from_: Annotated[AwareDatetime | None, Field(alias="from")] = None
     to: AwareDatetime | None = None
-    evaluations: int | None = None
-    fires: int | None = None
-    suppressed_by_guard: int | None = None
+    evaluations: JsonInt | None = None
+    fires: JsonInt | None = None
+    suppressed_by_guard: JsonInt | None = None
     actions: list[Action] | None = None
     hypothetical_pnl_delta_usd: Decimal | None = None
     errors: list[str] | None = None
-    duration_ms: int | None = None
+    duration_ms: JsonInt | None = None
 
 
 class RuleRun(BaseModel):
@@ -3906,14 +3928,14 @@ class RuleRun(BaseModel):
     status: Literal["running", "ok", "error", "aborted", "throttled"] | None = None
     started_at: AwareDatetime | None = None
     finished_at: AwareDatetime | None = None
-    evaluations: int | None = None
-    fires: int | None = None
-    errors: int | None = None
+    evaluations: JsonInt | None = None
+    fires: JsonInt | None = None
+    errors: JsonInt | None = None
     error_message: str | None = None
 
 
 class RuleEvent(BaseModel):
-    id: int | None = None
+    id: JsonInt | None = None
     ts: AwareDatetime | None = None
     kind: (
         Literal[
@@ -3931,7 +3953,7 @@ class RuleEvent(BaseModel):
 
 
 class AlertDelivery(BaseModel):
-    id: int | None = None
+    id: JsonInt | None = None
     alert_id: UUID | None = None
     channel: Literal["in_app", "email", "webhook", "push", "desktop"] | None = None
     status: Literal["queued", "sent", "failed", "suppressed", "acked"] | None = None
@@ -4020,12 +4042,12 @@ class JournalTrade(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    duration_seconds: int | None = None
+    duration_seconds: JsonInt | None = None
     outcome: Literal["win", "loss", "breakeven", "open"] | None = None
-    rating: Annotated[int | None, Field(ge=1, le=5)] = None
+    rating: Annotated[JsonInt | None, Field(ge=1, le=5)] = None
     tags: list[str] | None = None
     setup: str | None = None
-    notes_count: int | None = None
+    notes_count: JsonInt | None = None
 
 
 class Mistake(RootModel[str]):
@@ -4036,7 +4058,7 @@ class UpdateJournalTradeRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    rating: Annotated[int | None, Field(ge=1, le=5)] = None
+    rating: Annotated[JsonInt | None, Field(ge=1, le=5)] = None
     tags: list[Tag] | None = None
     setup: Annotated[str | None, Field(max_length=200)] = None
     mistakes: list[Mistake] | None = None
@@ -4058,10 +4080,10 @@ class Note(NoteInput):
 
 
 class Totals1(BaseModel):
-    trades: int | None = None
-    wins: int | None = None
-    losses: int | None = None
-    breakeven: int | None = None
+    trades: JsonInt | None = None
+    wins: JsonInt | None = None
+    losses: JsonInt | None = None
+    breakeven: JsonInt | None = None
     win_rate: Annotated[
         str | None,
         Field(
@@ -4150,8 +4172,8 @@ class Totals1(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    longest_win_streak: int | None = None
-    longest_loss_streak: int | None = None
+    longest_win_streak: JsonInt | None = None
+    longest_loss_streak: JsonInt | None = None
 
 
 class EquityCurveItem(BaseModel):
@@ -4176,7 +4198,7 @@ class EquityCurveItem(BaseModel):
 
 class Row(BaseModel):
     key: str | None = None
-    trades: int | None = None
+    trades: JsonInt | None = None
     win_rate: Annotated[
         str | None,
         Field(
@@ -4228,7 +4250,7 @@ class WorkspaceInput(BaseModel):
         ),
     ]
     is_default: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="At most one live default per user; `true` clears the previous default in the same transaction."
         ),
@@ -4240,7 +4262,8 @@ class WorkspaceInput(BaseModel):
         ),
     ] = "workspace.default"
     sort_order: Annotated[
-        int, Field(description="Client-defined tab order; ties break by `id`.", ge=0, le=32767)
+        JsonInt,
+        Field(description="Client-defined tab order; ties break by `id`.", ge=0, le=32767),
     ] = 0
 
 
@@ -4248,15 +4271,15 @@ class Workspace(BaseModel):
     id: UUID
     user_id: UUID
     name: str
-    is_default: bool
+    is_default: StrictBool
     icon_token: Annotated[
         Literal["workspace.default"],
         Field(
             description="Design-system icon token for the workspace (a token name, never a URL or markup).\n**Open-ended for readers:** clients must tolerate values they do not know, so adding a token\nis an additive change (C-6.3). Writers must send a listed value; the server keeps the same\nallow-list. `workspace.default` is the only token until the design-system icon registry\n(CMP-019) publishes workspace icons.\n"
         ),
     ]
-    sort_order: Annotated[int, Field(ge=0, le=32767)]
-    layout_count: Annotated[int, Field(description="Live layouts.", ge=0, le=32)]
+    sort_order: Annotated[JsonInt, Field(ge=0, le=32767)]
+    layout_count: Annotated[JsonInt, Field(description="Live layouts.", ge=0, le=32)]
     created_at: AwareDatetime
     updated_at: Annotated[
         AwareDatetime,
@@ -4266,8 +4289,8 @@ class Workspace(BaseModel):
     ]
 
 
-class Size(RootModel[float]):
-    root: Annotated[float, Field(gt=0.0, le=1.0)]
+class Size(RootModel[StrictFloat]):
+    root: Annotated[StrictFloat, Field(gt=0.0, le=1.0)]
 
 
 class LayoutGridLeaf(BaseModel):
@@ -4276,7 +4299,7 @@ class LayoutGridLeaf(BaseModel):
     )
     type: Literal["leaf"]
     slot: Annotated[
-        int, Field(description="`slot_index` of a pane in the same layout.", ge=0, le=15)
+        JsonInt, Field(description="`slot_index` of a pane in the same layout.", ge=0, le=15)
     ]
 
 
@@ -4302,9 +4325,9 @@ class PaneSettingValue1(RootModel[str]):
     ]
 
 
-class PaneSettingValue2(RootModel[int]):
+class PaneSettingValue2(RootModel[JsonInt]):
     root: Annotated[
-        int,
+        JsonInt,
         Field(
             description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised like `WorkspaceInput.name` (the name strip set and trimming), except that an empty result is kept; a lone surrogate is rule `invalid_unicode`. Numbers, also inside arrays, lie within ±1e15, so they read back with the same kind and value. A non-zero number must have |x| ≥ 1e-15 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
             ge=-1000000000000000,
@@ -4313,9 +4336,9 @@ class PaneSettingValue2(RootModel[int]):
     ]
 
 
-class PaneSettingValue3(RootModel[float]):
+class PaneSettingValue3(RootModel[StrictFloat]):
     root: Annotated[
-        float,
+        StrictFloat,
         Field(
             description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised like `WorkspaceInput.name` (the name strip set and trimming), except that an empty result is kept; a lone surrogate is rule `invalid_unicode`. Numbers, also inside arrays, lie within ±1e15, so they read back with the same kind and value. A non-zero number must have |x| ≥ 1e-15 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
             ge=-1000000000000000.0,
@@ -4328,19 +4351,19 @@ class PaneSettingValue41(RootModel[str]):
     root: Annotated[str, Field(max_length=256)]
 
 
-class PaneSettingValue42(RootModel[int]):
-    root: Annotated[int, Field(ge=-1000000000000000, le=1000000000000000)]
+class PaneSettingValue42(RootModel[JsonInt]):
+    root: Annotated[JsonInt, Field(ge=-1000000000000000, le=1000000000000000)]
 
 
-class PaneSettingValue43(RootModel[float]):
-    root: Annotated[float, Field(ge=-1000000000000000.0, le=1000000000000000.0)]
+class PaneSettingValue43(RootModel[StrictFloat]):
+    root: Annotated[StrictFloat, Field(ge=-1000000000000000.0, le=1000000000000000.0)]
 
 
 class PaneSettingValue4(
-    RootModel[list[PaneSettingValue41 | PaneSettingValue42 | PaneSettingValue43 | bool]]
+    RootModel[list[PaneSettingValue41 | PaneSettingValue42 | PaneSettingValue43 | StrictBool]]
 ):
     root: Annotated[
-        list[PaneSettingValue41 | PaneSettingValue42 | PaneSettingValue43 | bool],
+        list[PaneSettingValue41 | PaneSettingValue42 | PaneSettingValue43 | StrictBool],
         Field(
             description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised like `WorkspaceInput.name` (the name strip set and trimming), except that an empty result is kept; a lone surrogate is rule `invalid_unicode`. Numbers, also inside arrays, lie within ±1e15, so they read back with the same kind and value. A non-zero number must have |x| ≥ 1e-15 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
             max_length=32,
@@ -4364,7 +4387,7 @@ class PaneConfig(BaseModel):
             PaneSettingValue1
             | PaneSettingValue2
             | PaneSettingValue3
-            | bool
+            | StrictBool
             | PaneSettingValue4
             | None,
         ]
@@ -4381,7 +4404,7 @@ class LayoutPaneInput(BaseModel):
         extra="forbid",
     )
     slot_index: Annotated[
-        int,
+        JsonInt,
         Field(description="Unique within the layout (`422` rule `duplicate_slot`).", ge=0, le=15),
     ]
     pane_kind: Annotated[
@@ -4435,7 +4458,7 @@ class LayoutPaneInput(BaseModel):
 
 
 class LayoutPane(BaseModel):
-    slot_index: Annotated[int, Field(ge=0, le=15)]
+    slot_index: Annotated[JsonInt, Field(ge=0, le=15)]
     pane_kind: Annotated[
         Literal[
             "chart",
@@ -4469,10 +4492,10 @@ class LayoutPane(BaseModel):
 class Footprint(BaseModel):
     cell_type: Literal["volume", "bid_ask", "delta", "delta_total"] | None = None
     display_mode: Literal["profile", "box"] | None = None
-    price_grouping: int | None = None
-    imbalance_ratio: float | None = None
-    min_stack: int | None = None
-    show_unfinished_auctions: bool | None = None
+    price_grouping: JsonInt | None = None
+    imbalance_ratio: StrictFloat | None = None
+    min_stack: JsonInt | None = None
+    show_unfinished_auctions: StrictBool | None = None
 
 
 class Indicator(BaseModel):
@@ -4483,8 +4506,8 @@ class Indicator(BaseModel):
 
 class PriceScale(BaseModel):
     mode: Literal["linear", "logarithmic", "percent"] | None = None
-    auto_fit: bool | None = None
-    right_margin_bars: int | None = None
+    auto_fit: StrictBool | None = None
+    right_margin_bars: JsonInt | None = None
 
 
 class Config(BaseModel):
@@ -4518,7 +4541,7 @@ class Config(BaseModel):
 
 class ChartTemplateInput(BaseModel):
     name: Annotated[str, Field(max_length=80, min_length=1)]
-    shared: bool = False
+    shared: StrictBool = False
     config: Annotated[
         Config,
         Field(
@@ -4556,9 +4579,9 @@ class DrawingPoint(BaseModel):
     ]
 
 
-class Level(RootModel[float]):
+class Level(RootModel[StrictFloat]):
     root: Annotated[
-        float,
+        StrictFloat,
         Field(
             description="A non-zero number must have |x| ≥ 1e-6 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
             ge=-1000.0,
@@ -4572,8 +4595,8 @@ class DrawingGeometry(BaseModel):
         extra="forbid",
     )
     points: Annotated[list[DrawingPoint], Field(max_length=500, min_length=1)]
-    extend_left: bool | None = None
-    extend_right: bool | None = None
+    extend_left: StrictBool | None = None
+    extend_right: StrictBool | None = None
     levels: Annotated[
         list[Level] | None,
         Field(
@@ -4607,16 +4630,16 @@ class DrawingStyle(BaseModel):
     colour: Annotated[str | None, Field(pattern="^#[0-9a-fA-F]{6}$")] = None
     fill_colour: Annotated[str | None, Field(pattern="^#[0-9a-fA-F]{6}$")] = None
     fill_opacity: Annotated[
-        float | None,
+        StrictFloat | None,
         Field(
             description="A non-zero number must have |x| ≥ 1e-6 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
             ge=0.0,
             le=1.0,
         ),
     ] = None
-    width: Annotated[int | None, Field(ge=1, le=8)] = None
+    width: Annotated[JsonInt | None, Field(ge=1, le=8)] = None
     dash: Literal["solid", "dashed", "dotted"] | None = None
-    font_size: Annotated[int | None, Field(ge=8, le=48)] = None
+    font_size: Annotated[JsonInt | None, Field(ge=8, le=48)] = None
 
 
 class DrawingInput(BaseModel):
@@ -4684,9 +4707,9 @@ class DrawingInput(BaseModel):
             min_length=1,
         ),
     ] = None
-    locked: bool = False
-    visible: bool = True
-    z_index: Annotated[int, Field(ge=-32768, le=32767)] = 0
+    locked: StrictBool = False
+    visible: StrictBool = True
+    z_index: Annotated[JsonInt, Field(ge=-32768, le=32767)] = 0
 
 
 class Drawing(BaseModel):
@@ -4736,9 +4759,9 @@ class Drawing(BaseModel):
     geometry: DrawingGeometry
     style: DrawingStyle
     label: str | None
-    locked: bool
-    visible: bool
-    z_index: Annotated[int, Field(ge=-32768, le=32767)]
+    locked: StrictBool
+    visible: StrictBool
+    z_index: Annotated[JsonInt, Field(ge=-32768, le=32767)]
     created_at: AwareDatetime
     updated_at: Annotated[
         AwareDatetime,
@@ -4834,12 +4857,12 @@ class IndicatorPreset(BaseModel):
     style: IndicatorPresetStyle
     pane_target: Literal["overlay", "subpane"]
     is_builtin: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="Set by the server only: `true` for the seeded built-ins, which never change (`403`, rule `builtin_immutable`)."
         ),
     ]
-    is_favourite: bool
+    is_favourite: StrictBool
     created_at: AwareDatetime
     updated_at: AwareDatetime
 
@@ -4847,20 +4870,20 @@ class IndicatorPreset(BaseModel):
 class Appearance(BaseModel):
     theme: Literal["dark", "light", "system"] | None = None
     density: Literal["compact", "comfortable", "spacious"] | None = None
-    font_scale: Annotated[float | None, Field(ge=0.75, le=2.0)] = None
-    reduce_motion: bool | None = None
-    high_contrast: bool | None = None
+    font_scale: Annotated[StrictFloat | None, Field(ge=0.75, le=2.0)] = None
+    reduce_motion: StrictBool | None = None
+    high_contrast: StrictBool | None = None
 
 
 class Accessibility(BaseModel):
     reduced_motion: Literal["system", "on", "off"] | None = None
     increased_contrast: Literal["system", "on", "off"] | None = None
-    disable_canvas_animation: bool | None = None
-    always_show_tables: bool | None = None
-    thick_focus_ring: bool | None = None
+    disable_canvas_animation: StrictBool | None = None
+    always_show_tables: StrictBool | None = None
+    thick_focus_ring: StrictBool | None = None
     announce_prices: Literal["off", "significant", "always"] | None = None
     verbosity: Literal["low", "normal", "high"] | None = None
-    keyboard_only: bool | None = None
+    keyboard_only: StrictBool | None = None
 
 
 class Chart(BaseModel):
@@ -4868,26 +4891,26 @@ class Chart(BaseModel):
         Literal["time", "tick", "volume", "range", "delta", "renko", "pnf", "heikin_ashi"] | None
     ) = None
     default_param: str | None = None
-    crosshair_sync: bool | None = None
-    bar_close_countdown: bool | None = None
+    crosshair_sync: StrictBool | None = None
+    bar_close_countdown: StrictBool | None = None
     price_scale_mode: Literal["linear", "logarithmic", "percent"] | None = None
 
 
 class Orderflow(BaseModel):
     heatmap_bid_colour: str | None = None
     heatmap_ask_colour: str | None = None
-    imbalance_ratio: float | None = None
-    min_stack: int | None = None
-    value_area_pct: float | None = None
+    imbalance_ratio: StrictFloat | None = None
+    min_stack: JsonInt | None = None
+    value_area_pct: StrictFloat | None = None
     big_trade_threshold_mode: Literal["absolute", "relative", "zscore"] | None = None
-    big_trade_k: float | None = None
+    big_trade_k: StrictFloat | None = None
 
 
 class Trading(BaseModel):
-    one_click_armed: bool | None = None
-    arm_timeout_seconds: int | None = None
-    confirm_market_orders: bool | None = None
-    confirm_flatten: bool | None = None
+    one_click_armed: StrictBool | None = None
+    arm_timeout_seconds: JsonInt | None = None
+    confirm_market_orders: StrictBool | None = None
+    confirm_flatten: StrictBool | None = None
     default_environment: Annotated[
         Literal["live", "demo", "testnet"] | None,
         Field(
@@ -4898,16 +4921,16 @@ class Trading(BaseModel):
 
 
 class Notifications(BaseModel):
-    desktop_enabled: bool | None = None
-    email_enabled: bool | None = None
+    desktop_enabled: StrictBool | None = None
+    email_enabled: StrictBool | None = None
     webhook_url: str | None = None
     quiet_hours: dict[str, Any] | None = None
 
 
 class Data(BaseModel):
-    default_depth: int | None = None
-    stale_badge_after_ms: int | None = None
-    max_history_bars: int | None = None
+    default_depth: JsonInt | None = None
+    stale_badge_after_ms: JsonInt | None = None
+    max_history_bars: JsonInt | None = None
 
 
 class FieldMeta(BaseModel):
@@ -4954,10 +4977,10 @@ class HotkeyBinding(BaseModel):
         ),
     ]
     scope: Literal["global", "chart", "dom", "tape", "orders", "positions"]
-    requires_arm: Annotated[bool, Field(description="Forced true for order-sending actions.")] = (
-        True
-    )
-    confirm: bool = False
+    requires_arm: Annotated[
+        StrictBool, Field(description="Forced true for order-sending actions.")
+    ] = True
+    confirm: StrictBool = False
     params: dict[str, Any] | None = None
 
 
@@ -4973,13 +4996,13 @@ class HotkeyBindingAuditInput(BaseModel):
     command_id: Annotated[str, Field(max_length=64, pattern="^[a-z0-9_]+([.][a-z0-9_]+){1,3}$")]
     before: Annotated[str, Field(max_length=64)]
     after: Annotated[str, Field(max_length=64)]
-    acknowledged_unsafe: bool
+    acknowledged_unsafe: StrictBool
 
 
 class HotkeyProfile(HotkeyProfileInput):
     id: UUID | None = None
     owner_user_id: UUID | None = None
-    is_active: bool | None = None
+    is_active: StrictBool | None = None
     updated_at: AwareDatetime | None = None
 
 
@@ -5000,7 +5023,7 @@ class Detail(BaseModel):
 
 class AuditEntry(BaseModel):
     id: Annotated[
-        int,
+        JsonInt,
         Field(
             description="Chain position (`audit_log.id`); increasing, not contiguous. Informational."
         ),
@@ -5062,7 +5085,7 @@ class Component(BaseModel):
             description="`not_deployed` = module not built yet; ranks as healthy for `overall`. Rank: down > warning > degraded > healthy."
         ),
     ] = None
-    latency_ms: int | None = None
+    latency_ms: JsonInt | None = None
     latency_unit: Literal["ms"] | None = None
     detail: str | None = None
     last_good_at: AwareDatetime | None = None
@@ -5078,14 +5101,14 @@ class HealthReport(BaseModel):
     version: str | None = None
     git_sha: str | None = None
     environment: str | None = None
-    uptime_seconds: int | None = None
+    uptime_seconds: JsonInt | None = None
     server_time: AwareDatetime | None = None
     clock_offset_ms: Annotated[
-        int | None,
+        JsonInt | None,
         Field(description="null until exchange time sync (E08) lands; never a fabricated 0."),
     ] = None
     components: list[Component] | None = None
-    alerts_active: int | None = None
+    alerts_active: JsonInt | None = None
 
 
 class Override(BaseModel):
@@ -5121,7 +5144,7 @@ class FeatureFlag(BaseModel):
         ),
     ] = None
     unreadable: Annotated[
-        bool | None,
+        StrictBool | None,
         Field(
             description="`true` when this flag's stored row is unreadable (malformed, or a kind mismatch): the flag alone resolves to its fail-closed value, and a `PUT` with a valid value repairs it (E42-T03). Sent only as `true`.\n"
         ),
@@ -5193,10 +5216,10 @@ class Backup(BaseModel):
     status: Literal["running", "ok", "failed", "verified", "restored"] | None = None
     started_at: AwareDatetime | None = None
     finished_at: AwareDatetime | None = None
-    size_bytes: int | None = None
+    size_bytes: JsonInt | None = None
     location: str | None = None
     checksum_sha256: str | None = None
-    encrypted: bool | None = None
+    encrypted: StrictBool | None = None
     retention_until: AwareDatetime | None = None
     verified_at: AwareDatetime | None = None
     error: Annotated[
@@ -5251,10 +5274,10 @@ class AuditExportResult(BaseModel):
             pattern="^[A-Za-z0-9+/]{43}=$",
         ),
     ]
-    compressed: bool
-    size_bytes: Annotated[int, Field(ge=0)]
+    compressed: StrictBool
+    size_bytes: Annotated[JsonInt, Field(ge=0)]
     row_count: Annotated[
-        int,
+        JsonInt,
         Field(
             description="Entry lines in the file: the whole span, including entries flagged as outside the window. The header line is not counted.",
             ge=0,
@@ -5262,8 +5285,8 @@ class AuditExportResult(BaseModel):
     ]
     from_: Annotated[AwareDatetime, Field(alias="from", description="Requested inclusive start.")]
     to: Annotated[AwareDatetime, Field(description="Requested exclusive end.")]
-    first_id: int | None = None
-    last_id: int | None = None
+    first_id: JsonInt | None = None
+    last_id: JsonInt | None = None
     expires_at: Annotated[
         AwareDatetime, Field(description="The artefact is deleted after this instant.")
     ]
@@ -5303,7 +5326,7 @@ class AuditSigningKey(BaseModel):
         ),
     ]
     verified: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="True only once M2 has opened the key's sealed seed and found that it derives `public_key` (the seal binds it, ADR-0039 decision 4); a key failing that check is refused, paged and never signs. Retiring a key destroys its seed (ADR-0039 Q3), so a retired key is never `verified`. No verifier relies on this mark."
         ),
@@ -5378,14 +5401,14 @@ class Me(BaseModel):
         list[Account1], Field(description="Accounts the caller may see, with the granted mode.")
     ]
     session: Session | None = None
-    onboarding_complete: bool | None = None
+    onboarding_complete: StrictBool | None = None
 
 
 class Account2(BaseModel):
     exchange_account_id: UUID | None = None
-    orders_per_minute_limit: int | None = None
-    orders_per_minute_used: int | None = None
-    rate_budget_pct_used: Annotated[float | None, Field(ge=0.0, le=100.0)] = None
+    orders_per_minute_limit: JsonInt | None = None
+    orders_per_minute_used: JsonInt | None = None
+    rate_budget_pct_used: Annotated[StrictFloat | None, Field(ge=0.0, le=100.0)] = None
     daily_loss_usd: Annotated[
         str | None,
         Field(
@@ -5402,7 +5425,7 @@ class Account2(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    open_positions: int | None = None
+    open_positions: JsonInt | None = None
     lockout_until: AwareDatetime | None = None
 
 
@@ -5420,8 +5443,8 @@ class Item(BaseModel):
 
 
 class OnboardingChecklist(BaseModel):
-    complete: bool
-    dismissed: bool
+    complete: StrictBool
+    dismissed: StrictBool
     items: list[Item]
 
 
@@ -5532,7 +5555,7 @@ class ScannerRow(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    recording: bool | None = None
+    recording: StrictBool | None = None
     coverage: Annotated[
         Literal["recorded", "live_only"],
         Field(
@@ -5578,8 +5601,8 @@ class ExchangeRecordFields(BaseModel):
     ] = None
     price: Decimal | None = None
     time_in_force: Literal["GTC", "IOC", "FOK", "PostOnly"] | None = None
-    reduce_only: bool | None = None
-    close_on_trigger: bool | None = None
+    reduce_only: StrictBool | None = None
+    close_on_trigger: StrictBool | None = None
     position_idx: Literal[0, 1, 2] | None = None
     trigger_price: Decimal | None = None
     trigger_by: Literal["LastPrice", "MarkPrice", "IndexPrice"] | None = None
@@ -5683,7 +5706,7 @@ class ExchangeRecordFields(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    is_maker: bool | None = None
+    is_maker: StrictBool | None = None
 
 
 class Rejection(BaseModel):
@@ -5707,7 +5730,7 @@ class Leg1(BaseModel):
     exchange_account_id: UUID
     account_label: str | None = None
     account_profile_id: UUID | None = None
-    would_submit: bool
+    would_submit: StrictBool
     resolved: ResolvedLegParams | None = None
     estimated_margin_usd: Annotated[
         str | None,
@@ -5729,8 +5752,8 @@ class Leg1(BaseModel):
 
 
 class Totals2(BaseModel):
-    accounts_targeted: int | None = None
-    accounts_submittable: int | None = None
+    accounts_targeted: JsonInt | None = None
+    accounts_submittable: JsonInt | None = None
     total_qty: Annotated[
         str | None,
         Field(
@@ -5787,7 +5810,7 @@ class Totals3(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    open_positions: int | None = None
+    open_positions: JsonInt | None = None
     gross_notional_usd: Annotated[
         str | None,
         Field(
@@ -5797,7 +5820,7 @@ class Totals3(BaseModel):
         ),
     ] = None
     positions_without_native_stop: Annotated[
-        int | None,
+        JsonInt | None,
         Field(
             description="MUST be zero in steady state; any non-zero value is a violation of the native-stop safety invariant and is surfaced as a critical banner.\n"
         ),
@@ -5845,9 +5868,9 @@ class Account3(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    cap_utilisation_pct: Annotated[float | None, Field(ge=0.0)] = None
-    open_positions: int | None = None
-    frozen: bool | None = None
+    cap_utilisation_pct: Annotated[StrictFloat | None, Field(ge=0.0)] = None
+    open_positions: JsonInt | None = None
+    frozen: StrictBool | None = None
     lockout: Lockout | None = None
 
 
@@ -5865,28 +5888,28 @@ class RiskSummary(BaseModel):
 
 
 class Iceberg1(BaseModel):
-    enabled: bool = True
-    min_reloads: Annotated[int, Field(ge=2, le=50)] = 3
-    price_tolerance_ticks: Annotated[int, Field(ge=0, le=10)] = 0
-    window_ms: Annotated[int, Field(ge=200, le=60000)] = 5000
+    enabled: StrictBool = True
+    min_reloads: Annotated[JsonInt, Field(ge=2, le=50)] = 3
+    price_tolerance_ticks: Annotated[JsonInt, Field(ge=0, le=10)] = 0
+    window_ms: Annotated[JsonInt, Field(ge=200, le=60000)] = 5000
 
 
 class StopRun(BaseModel):
-    enabled: bool = True
-    lookback_bars: Annotated[int, Field(ge=2, le=500)] = 20
-    penetration_ticks: Annotated[int, Field(ge=1, le=100)] = 2
-    reversal_pct: Annotated[float, Field(ge=0.0, le=100.0)] = 60
+    enabled: StrictBool = True
+    lookback_bars: Annotated[JsonInt, Field(ge=2, le=500)] = 20
+    penetration_ticks: Annotated[JsonInt, Field(ge=1, le=100)] = 2
+    reversal_pct: Annotated[StrictFloat, Field(ge=0.0, le=100.0)] = 60
 
 
 class Absorption(BaseModel):
-    enabled: bool = True
-    min_volume_multiple: Annotated[float, Field(ge=1.0, le=50.0)] = 3
-    max_price_move_ticks: Annotated[int, Field(ge=0, le=50)] = 1
+    enabled: StrictBool = True
+    min_volume_multiple: Annotated[StrictFloat, Field(ge=1.0, le=50.0)] = 3
+    max_price_move_ticks: Annotated[JsonInt, Field(ge=0, le=50)] = 1
 
 
 class Exhaustion(BaseModel):
-    enabled: bool = True
-    min_delta_divergence: Annotated[float, Field(ge=0.0)] = 0.5
+    enabled: StrictBool = True
+    min_delta_divergence: Annotated[StrictFloat, Field(ge=0.0)] = 0.5
 
 
 class BigTrade(BaseModel):
@@ -5899,7 +5922,7 @@ class BigTrade(BaseModel):
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
     ] = None
-    percentile: Annotated[float, Field(ge=50.0, le=99.99)] = 99
+    percentile: Annotated[StrictFloat, Field(ge=50.0, le=99.99)] = 99
 
 
 class DetectorConfig(BaseModel):
@@ -5924,9 +5947,9 @@ class DetectorMethodology(BaseModel):
 
 class Signal(BaseModel):
     name: str | None = None
-    value: float | None = None
-    weight: float | None = None
-    contribution: float | None = None
+    value: StrictFloat | None = None
+    weight: StrictFloat | None = None
+    contribution: StrictFloat | None = None
     direction: Literal["supports", "opposes", "neutral"] | None = None
 
 
@@ -5940,7 +5963,7 @@ class RegimeExplanation(BaseModel):
         ),
     ]
     regime: Literal["trending_up", "trending_down", "ranging", "volatile_expansion", "compression"]
-    confidence: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
+    confidence: Annotated[StrictFloat | None, Field(ge=0.0, le=1.0)] = None
     as_of: AwareDatetime | None = None
     signals: list[Signal]
 
@@ -5952,16 +5975,16 @@ class Signal1(BaseModel):
     unit: str | None = None
     enum_values: list[str] | None = None
     params_schema: dict[str, Any] | None = None
-    requires_recording: bool = False
-    estimated: bool = False
+    requires_recording: StrictBool = False
+    estimated: StrictBool = False
     description: str | None = None
     valid_range: str | None = None
-    warmup_bars: int | None = None
-    deterministic: bool | None = None
+    warmup_bars: JsonInt | None = None
+    deterministic: StrictBool | None = None
     confidence: Literal["exact", "estimated"] | None = None
     dependencies: list[str] | None = None
     when_unavailable: str | None = None
-    available: bool = True
+    available: StrictBool = True
     unavailable_reason: str | None = None
     missing_dependency: dict[str, Any] | None = None
     recorder_action: dict[str, Any] | None = None
@@ -5969,7 +5992,7 @@ class Signal1(BaseModel):
 
 class Operator(BaseModel):
     id: str | None = None
-    arity: Annotated[int | None, Field(ge=1, le=3)] = None
+    arity: Annotated[JsonInt | None, Field(ge=1, le=3)] = None
     operand_types: list[str] | None = None
     result_type: str | None = None
 
@@ -5979,16 +6002,16 @@ class Action1(BaseModel):
     display_name: str | None = None
     params_schema: dict[str, Any] | None = None
     required_permissions: list[str]
-    requires_step_up: bool = False
-    idempotent: bool | None = None
-    guarded: bool | None = None
+    requires_step_up: StrictBool = False
+    idempotent: StrictBool | None = None
+    guarded: StrictBool | None = None
     targets: dict[str, str] | None = None
-    available: bool = True
-    simulate_only: bool = False
+    available: StrictBool = True
+    simulate_only: StrictBool = False
     restriction: str | None = None
     notes: str | None = None
     loosens_risk: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="Always false: no rule may loosen a stop, and an action that could is refused for every role (`stop_loosening`, 24-internal-schemas.md section 8.8 rule 5). The field stays until the 24-internal-schemas.md section 19.26 follow-up retires it.\n"
         ),
@@ -6013,7 +6036,7 @@ class RuleVocabulary(BaseModel):
     actions: list[Action1]
     guards: list[Guard]
     triggers: list[Trigger] | None = None
-    vocabulary_version: int | None = None
+    vocabulary_version: JsonInt | None = None
     arm_live_permission: str | None = None
 
 
@@ -6078,38 +6101,38 @@ class AdminSliceStatus(BaseModel):
 
 
 class Users(AdminSliceStatus):
-    total: int | None = None
-    active: int | None = None
-    without_mfa: int | None = None
+    total: JsonInt | None = None
+    active: JsonInt | None = None
+    without_mfa: JsonInt | None = None
 
 
 class Accounts(AdminSliceStatus):
-    total: int | None = None
-    enabled: int | None = None
-    keys_expiring_30d: int | None = None
-    keys_invalid: int | None = None
+    total: JsonInt | None = None
+    enabled: JsonInt | None = None
+    keys_expiring_30d: JsonInt | None = None
+    keys_invalid: JsonInt | None = None
 
 
 class Recorder(AdminSliceStatus):
-    symbols_recording: int | None = None
-    symbols_degraded: int | None = None
-    lag_seconds_p99: float | None = None
+    symbols_recording: JsonInt | None = None
+    symbols_degraded: JsonInt | None = None
+    lag_seconds_p99: StrictFloat | None = None
 
 
 class Storage(AdminSliceStatus):
-    used_bytes: int | None = None
-    free_bytes: int | None = None
-    days_until_full: float | None = None
+    used_bytes: JsonInt | None = None
+    free_bytes: JsonInt | None = None
+    days_until_full: StrictFloat | None = None
 
 
 class Trading1(AdminSliceStatus):
-    live_enabled: bool | None = None
-    kill_switch_engaged: bool | None = None
-    open_positions: int | None = None
+    live_enabled: StrictBool | None = None
+    kill_switch_engaged: StrictBool | None = None
+    open_positions: JsonInt | None = None
 
 
 class Incidents(AdminSliceStatus):
-    open: int | None = None
+    open: JsonInt | None = None
 
 
 class AdminOverview(BaseModel):
@@ -6129,7 +6152,7 @@ class AdminOverview(BaseModel):
         ),
     ] = None
     trading: Trading1 | None = None
-    incidents_open: int | None = None
+    incidents_open: JsonInt | None = None
     incidents: Incidents | None = None
 
 
@@ -6142,17 +6165,17 @@ class PerSymbolItem(BaseModel):
             pattern="^[A-Z0-9]{2,20}USDT$",
         ),
     ] = None
-    used_bytes: int | None = None
-    daily_growth_bytes: int | None = None
-    pinned: bool | None = None
-    retention_days: int | None = None
+    used_bytes: JsonInt | None = None
+    daily_growth_bytes: JsonInt | None = None
+    pinned: StrictBool | None = None
+    retention_days: JsonInt | None = None
 
 
 class Storage1(AdminSliceStatus):
-    used_bytes: int | None = None
-    free_bytes: int | None = None
-    daily_growth_bytes: int | None = None
-    days_until_full: float | None = None
+    used_bytes: JsonInt | None = None
+    free_bytes: JsonInt | None = None
+    daily_growth_bytes: JsonInt | None = None
+    days_until_full: StrictFloat | None = None
     per_symbol: list[PerSymbolItem] | None = None
     projection_basis: Annotated[
         Literal["measured", "estimated", "nothing_recorded"] | None,
@@ -6161,7 +6184,7 @@ class Storage1(AdminSliceStatus):
         ),
     ] = None
     estimated: Annotated[
-        bool | None,
+        StrictBool | None,
         Field(
             description="`true` iff `projection_basis` is `estimated`; otherwise `false` or omitted."
         ),
@@ -6169,17 +6192,17 @@ class Storage1(AdminSliceStatus):
 
 
 class Ingestion(AdminSliceStatus):
-    messages_per_sec: float | None = None
-    queue_depth: int | None = None
-    dropped_last_hour: int | None = None
+    messages_per_sec: StrictFloat | None = None
+    queue_depth: JsonInt | None = None
+    dropped_last_hour: JsonInt | None = None
 
 
 class RateBudgetItem(BaseModel):
     exchange_account_id: UUID | None = None
     label: str | None = None
-    limit_per_minute: int | None = None
-    peak_used_per_minute: int | None = None
-    utilisation_pct: float | None = None
+    limit_per_minute: JsonInt | None = None
+    peak_used_per_minute: JsonInt | None = None
+    utilisation_pct: StrictFloat | None = None
 
 
 class SubaccountCapacity(AdminSliceStatus):
@@ -6190,11 +6213,11 @@ class SubaccountCapacity(AdminSliceStatus):
         ),
     ] = None
     cap: Annotated[
-        int | None,
+        JsonInt | None,
         Field(description="5 for `regular`, 20 for `business_kyc`, `null` while unrecorded."),
     ] = None
     used: Annotated[
-        int | None,
+        JsonInt | None,
         Field(
             description="Most non-deleted sub-accounts in the process environment (live in production; C-2.11) under any one main account (`exchange_accounts.kind = sub`): the cap binds exchange UIDs, per main. The process environment is `CV_ENV`, the process-scope key (`20-architecture.md` §7.2), not the per-session `/session/environment` switch.\n",
             ge=0,
@@ -6219,7 +6242,7 @@ class Incident(BaseModel):
     status: Literal["open", "acknowledged", "resolved"]
     title: Annotated[str | None, Field(max_length=200)] = None
     detail: Annotated[str | None, Field(max_length=2000)] = None
-    occurrences: Annotated[int | None, Field(ge=1)] = None
+    occurrences: Annotated[JsonInt | None, Field(ge=1)] = None
     first_seen_at: AwareDatetime
     last_seen_at: AwareDatetime
     acknowledged_by: UUID | None = None
@@ -6258,21 +6281,23 @@ class StatechartMachine(BaseModel):
         ),
     ]
     lock_matches: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="Whether `machine_hash` equals the committed `machine_hashes.lock` entry."
         ),
     ]
     chain_trips: Annotated[
-        int,
+        JsonInt,
         Field(
             description="The snapshot's `chain_trips` count; above 0 the machine is latched degraded.",
             ge=0,
         ),
     ]
-    degraded: Annotated[bool, Field(description="`chain_trips > 0`; cleared only by an operator.")]
+    degraded: Annotated[
+        StrictBool, Field(description="`chain_trips > 0`; cleared only by an operator.")
+    ]
     deferred_depth: Annotated[
-        int | None,
+        JsonInt | None,
         Field(
             description="Deferred events held in the snapshot (`onUnhandled: defer`); `null` if it carries no deferred list.\n",
             ge=0,
@@ -6286,7 +6311,7 @@ class RecentEvent(BaseModel):
     phase: Literal["ahead", "commit", "fault"]
     from_states: list[str] | None = None
     to_states: list[str] | None = None
-    faulted: bool | None = None
+    faulted: StrictBool | None = None
     occurred_at: AwareDatetime
 
 
@@ -6295,7 +6320,7 @@ class StatechartMachineDetail(BaseModel):
     events: AdminSliceStatus | None = None
     machine: StatechartMachine | None = None
     context_summary: Annotated[
-        dict[str, str | float | bool | None] | None,
+        dict[str, str | StrictFloat | StrictBool | None] | None,
         Field(description="Redacted scalar context; only the keys allowed for the kind."),
     ] = None
     configuration: Annotated[
@@ -6341,17 +6366,17 @@ class StatechartKindSummary(BaseModel):
             description="Structural environment selector (arch P9). Mirrors the Postgres type `exchange_env`."
         ),
     ]
-    machines: Annotated[int, Field(ge=1)]
+    machines: Annotated[JsonInt, Field(ge=1)]
     by_state: Annotated[
-        dict[str, int],
+        dict[str, JsonInt],
         Field(description="Live machines per published `state`; a state with none is left out."),
     ]
-    chain_trips: Annotated[int, Field(description="Sum over the machines.", ge=0)]
+    chain_trips: Annotated[JsonInt, Field(description="Sum over the machines.", ge=0)]
     degraded_machines: Annotated[
-        int, Field(description="Machines whose `chain_trips` latch is set.", ge=0)
+        JsonInt, Field(description="Machines whose `chain_trips` latch is set.", ge=0)
     ]
     dropped_receipts: Annotated[
-        int | None,
+        JsonInt | None,
         Field(
             description="`cv_machine_dropped_receipts_total` for the kind since process start (the library counts per interpreter and never persists it); `null` when the metric cannot be read.\n",
             ge=0,
@@ -6416,26 +6441,27 @@ class Key(BaseModel):
             description="Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the exchange rejected the key's credential (exchange refusal codes `10003` or `10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not signable.\n"
         ),
     ] = None
-    age_days: int | None = None
+    age_days: JsonInt | None = None
     expires_at: AwareDatetime | None = None
     withdrawal_permission_present: Annotated[
-        bool | None, Field(description="MUST be false; true raises a critical finding immediately.")
+        StrictBool | None,
+        Field(description="MUST be false; true raises a critical finding immediately."),
     ] = None
-    ip_whitelist_matches_expected: bool | None = None
+    ip_whitelist_matches_expected: StrictBool | None = None
     last_verified_at: AwareDatetime | None = None
 
 
 class Auth(BaseModel):
-    users_without_mfa: int | None = None
-    failed_logins_24h: int | None = None
-    denied_requests_24h: int | None = None
-    active_elevated_sessions: int | None = None
+    users_without_mfa: JsonInt | None = None
+    failed_logins_24h: JsonInt | None = None
+    denied_requests_24h: JsonInt | None = None
+    active_elevated_sessions: JsonInt | None = None
 
 
 class Audit(BaseModel):
     last_chain_verification_at: AwareDatetime | None = None
-    chain_intact: bool | None = None
-    entries_total: int | None = None
+    chain_intact: StrictBool | None = None
+    entries_total: JsonInt | None = None
 
 
 class Finding(BaseModel):
@@ -6463,7 +6489,7 @@ class KekRewrapRequest(BaseModel):
         ),
     ]
     to_version: Annotated[
-        int,
+        JsonInt,
         Field(
             description="The environment's current KEK version; rows move from `to_version - 1`. The maximum is that of the `integer` column `kek_versions.version`.\n",
             ge=2,
@@ -6486,34 +6512,35 @@ class KekRewrapResult(BaseModel):
         ),
     ]
     from_version: Annotated[
-        int, Field(description="The previous KEK version, `to_version - 1`.", ge=1, le=2147483646)
+        JsonInt,
+        Field(description="The previous KEK version, `to_version - 1`.", ge=1, le=2147483646),
     ]
-    to_version: Annotated[int, Field(ge=2, le=2147483647)]
+    to_version: Annotated[JsonInt, Field(ge=2, le=2147483647)]
     resumed: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="True when this run opened with `security.kek_rotation_resumed`: an earlier run had already moved rows of this rotation and unrevoked API key rows were still left at `from_version`. False when it opened with `security.kek_rotation_started`: no earlier run had moved a row, or no row was left to move.\n"
         ),
     ]
     rewrapped: Annotated[
-        int, Field(description="API key rows this run moved to `to_version`.", ge=0)
+        JsonInt, Field(description="API key rows this run moved to `to_version`.", ge=0)
     ]
     remaining: Annotated[
-        int,
+        JsonInt,
         Field(
             description="Rows of the environment still at `from_version` after this run: unrevoked API key rows, failed rows included, plus auth keyring rows and the environment's audit export signing keys still holding a seed (`audit_signing_keys`, ADR-0039 decision 6, Q3), which only the rotation boot moves.\n",
             ge=0,
         ),
     ]
     failed: Annotated[
-        int,
+        JsonInt,
         Field(
             description="API key rows this run could not re-wrap. Each stays at `from_version` and is audited as `security.kek_rotation_failed`.\n",
             ge=0,
         ),
     ]
     complete: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="True when the run ended with `security.kek_rotated`: no unrevoked API key row, no auth keyring row and no signing key holding a seed is left at `from_version`, and no row failed. False when it ended with `security.kek_rotation_incomplete`.\n"
         ),
@@ -6574,7 +6601,7 @@ class SessionInfo(BaseModel):
         ),
     ] = None
     clock_offset_ms: Annotated[
-        int | None,
+        JsonInt | None,
         Field(
             description="Backend clock minus Bybit server time; |offset| > 1000 ms is an incident."
         ),
@@ -6601,7 +6628,7 @@ class CreateUserRequest(BaseModel):
             min_length=1,
         ),
     ]
-    mfa_required: bool = True
+    mfa_required: StrictBool = True
     account_access: list[AccountAccessGrantInput] | None = None
 
 
@@ -6633,7 +6660,7 @@ class ExchangeAccount(BaseModel):
     margin_mode: Literal["cross", "isolated", "portfolio"] | None = None
     active_profile_id: UUID | None = None
     balance: WalletBalance | None = None
-    balance_stale: bool | None = None
+    balance_stale: StrictBool | None = None
     balance_stale_since: Annotated[
         AwareDatetime | None,
         Field(
@@ -6643,7 +6670,7 @@ class ExchangeAccount(BaseModel):
     health: Annotated[
         AccountHealth | None, Field(description="`null` until the account is monitored.")
     ] = None
-    enabled: bool = True
+    enabled: StrictBool = True
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
 
@@ -6656,8 +6683,8 @@ class AccountConsequenceSummary(BaseModel):
     open_positions: Annotated[
         list[Position], Field(description="Every open position, with its native stop-loss state.")
     ]
-    working_orders: Annotated[int, Field(description="Orders working on the exchange.", ge=0)]
-    running_algos: Annotated[int, Field(description="Emulated algos still running.", ge=0)]
+    working_orders: Annotated[JsonInt, Field(description="Orders working on the exchange.", ge=0)]
+    running_algos: Annotated[JsonInt, Field(description="Emulated algos still running.", ge=0)]
     assigned_users: Annotated[
         list[AssignedUser],
         Field(description="Users granted this account through `user_account_access`."),
@@ -6681,16 +6708,16 @@ class OpenExposureProblem(Problem):
 
 
 class KeyVerification(BaseModel):
-    passed: bool
+    passed: StrictBool
     uid: str | None = None
     uta: Annotated[
-        bool | None,
+        StrictBool | None,
         Field(
             description="From the key-info `uta` field; the deprecated `unified` field is never read."
         ),
     ] = None
     read_only: Annotated[
-        bool | None,
+        StrictBool | None,
         Field(description="From the key-info `readOnly` field, which alone decides write access."),
     ] = None
     permissions: Annotated[
@@ -6701,7 +6728,7 @@ class KeyVerification(BaseModel):
         ),
     ] = None
     withdraw_enabled: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="Must be false; a true value causes rejection. Sent only once the key's rights were read, never as a default (`KeyVerificationNotRead`)."
         ),
@@ -6714,7 +6741,7 @@ class KeyVerification(BaseModel):
         ),
     ] = None
     ip_whitelist_matches_egress: Annotated[
-        bool | None,
+        StrictBool | None,
         Field(
             description="True only when the whitelist is non-empty and every entry is the configured egress IP itself (no wildcard, no range)."
         ),
@@ -6725,8 +6752,8 @@ class KeyVerification(BaseModel):
             description="The deployment's configured egress IP (`CV_EGRESS_IP`), the one address a key's IP whitelist may hold; `null` while none is configured. It comes from configuration, never from a request header. It is the address the Owner adds to the key's whitelist at the exchange when the exchange refused the egress IP or `ip_whitelist_matches_egress` is false (US-ACCT-003). Confidential: served only to a caller holding `keys:manage` or `keys:read`, and never written to an audit record or used as a metric label.\n"
         ),
     ] = None
-    clock_offset_ms: int | None = None
-    probe_ret_code: int | None = None
+    clock_offset_ms: JsonInt | None = None
+    probe_ret_code: JsonInt | None = None
     warnings: list[Literal["key_expiring_soon", "clock_skew"]] | None = None
 
 
@@ -6753,7 +6780,7 @@ class ApiKeyRotation(BaseModel):
 
 class KeyTestResult(BaseModel):
     passed: Annotated[
-        bool | None,
+        StrictBool | None,
         Field(
             description="True only when the verification passed, the REST probe succeeded and, with `include_ws`, the private WS `auth` succeeded.\n"
         ),
@@ -6783,10 +6810,10 @@ class RecordingStatus(BaseModel):
     ] = None
     connections: list[Connection] | None = None
     symbols: list[Symbol1] | None = None
-    ingest_rate_msgs_per_sec: int | None = None
-    write_backlog_rows: int | None = None
+    ingest_rate_msgs_per_sec: JsonInt | None = None
+    write_backlog_rows: JsonInt | None = None
     generated_at: AwareDatetime | None = None
-    role_restricted: bool | None = None
+    role_restricted: StrictBool | None = None
     policy: RecorderPolicySettings | None = None
 
 
@@ -6820,7 +6847,7 @@ class TradeGroupLeg(BaseModel):
         | None
     ) = None
     sequence_no: Annotated[
-        int | None,
+        JsonInt | None,
         Field(
             description="Deterministic submission order within the group, so a partial fan-out is reproducible."
         ),
@@ -6852,7 +6879,7 @@ class TradeGroupLeg(BaseModel):
     avg_entry_price: Decimal | None = None
     avg_exit_price: Decimal | None = None
     native_sl_confirmed: Annotated[
-        bool | None,
+        StrictBool | None,
         Field(
             description="True once the exchange has acknowledged a native stop-loss on this leg. The safety invariant (arch P4) requires this to become true for every filled leg; a filled leg with `false` is an alertable condition, not a cosmetic gap.\n"
         ),
@@ -6877,7 +6904,7 @@ class TradeGroupLeg(BaseModel):
 
 class TradeGroup(BaseModel):
     is_paper: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="True when the paper matcher produced this record rather than the exchange. Orthogonal to `environment` (24-internal-schemas.md section 1.2)."
         ),
@@ -6933,7 +6960,7 @@ class OrderAcceptance(BaseModel):
     trade_group: TradeGroup | None
     order: Order | None
     reconciling: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="True when, as of the answer, the answered order is unresolved, its `lifecycle_state` `validated`, `submitting`, `unknown` or `quarantined`, or its state could not be read; a first answer included, and a repeat's too. A replay of a stored answer (`Idempotency-Replayed: true`) is that answer, so its value is as of the first one. False for every other state, `held` included. A separate member, because `OrderLifecycleState` mirrors the database enum and has no such value.\n"
         ),
@@ -6955,7 +6982,7 @@ class LayoutGridTabset(BaseModel):
     type: Literal["tabset"]
     children: Annotated[list[LayoutGridLeaf], Field(max_length=16, min_length=1)]
     active: Annotated[
-        int, Field(description="Index of the visible tab in `children`.", ge=0, le=15)
+        JsonInt, Field(description="Index of the visible tab in `children`.", ge=0, le=15)
     ] = 0
 
 
@@ -6999,7 +7026,7 @@ class IndicatorPresetInput(BaseModel):
         ),
     ] = "overlay"
     is_favourite: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="Starred in the indicator picker. A built-in is starred by saving a copy of it (`createIndicatorPreset`), possible only once `listIndicators` lists the built-in's indicator."
         ),
@@ -7027,7 +7054,7 @@ class Job(BaseModel):
         ),
     ] = None
     status: Literal["queued", "running", "succeeded", "failed", "cancelled"] | None = None
-    progress_pct: Annotated[float | None, Field(ge=0.0, le=100.0)] = None
+    progress_pct: Annotated[StrictFloat | None, Field(ge=0.0, le=100.0)] = None
     started_at: AwareDatetime | None = None
     finished_at: AwareDatetime | None = None
     result: Annotated[
@@ -7062,7 +7089,7 @@ class IndicatorDescriptor(BaseModel):
         ),
     ]
     estimated: Annotated[
-        bool, Field(description="True for heuristic signals that infer unobservable intent.")
+        StrictBool, Field(description="True for heuristic signals that infer unobservable intent.")
     ] = False
     params_schema: Annotated[
         dict[str, Any],
@@ -7079,7 +7106,7 @@ class IndicatorDescriptor(BaseModel):
         ),
     ] = None
     warmup_bars: Annotated[
-        int | None,
+        JsonInt | None,
         Field(
             description="Closed bars before the first value at `defaults` (`24-internal-schemas.md` §7.4); it grows with period-like parameters. An output is `null` before it, never 0.\n",
             ge=0,
@@ -7116,7 +7143,7 @@ class ExchangeCallRecord(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    event_id: Annotated[int, Field(description="The `OrderEvent.id` it belongs to.")]
+    event_id: Annotated[JsonInt, Field(description="The `OrderEvent.id` it belongs to.")]
     at: AwareDatetime
     transport: Annotated[
         Literal["rest", "ws_trade", "ws_private"],
@@ -7148,10 +7175,10 @@ class ExchangeCallRecord(BaseModel):
             pattern="^[a-z][a-z0-9._-]*$",
         ),
     ] = None
-    http_status: int | None = None
-    ret_code: int | None = None
+    http_status: JsonInt | None = None
+    ret_code: JsonInt | None = None
     ret_msg: Annotated[str | None, Field(max_length=2048)] = None
-    latency_ms: Annotated[int | None, Field(ge=0)] = None
+    latency_ms: Annotated[JsonInt | None, Field(ge=0)] = None
     request_redacted: ExchangeRecordFields | None = None
     response_redacted: ExchangeRecordFields | None = None
 
@@ -7236,7 +7263,7 @@ class RuleComparisonNode(BaseModel):
     ] = None
     set_values: list[str] | None = None
     tolerance: Annotated[
-        float | None, Field(description="Equality tolerance for float comparisons.")
+        StrictFloat | None, Field(description="Equality tolerance for float comparisons.")
     ] = None
 
 
@@ -7250,7 +7277,7 @@ class RuleBooleanNode(BaseModel):
         list[RuleComparisonNode | RuleBooleanNode | RuleTemporalNode],
         Field(max_length=32, min_length=1),
     ]
-    n: Annotated[int | None, Field(description="Required for `n_of`.", ge=1)] = None
+    n: Annotated[JsonInt | None, Field(description="Required for `n_of`.", ge=1)] = None
 
 
 class RuleTemporalNode(BaseModel):
@@ -7265,8 +7292,8 @@ class RuleTemporalNode(BaseModel):
             description="A node in the boolean DAG: a comparison leaf, a boolean combinator, or a temporal window. Every node carries a stable `node_id`, which is what lets the node-graph editor attach coordinates in `graph_layout` without putting cosmetics in the IR.\n"
         ),
     ]
-    window_ms: Annotated[int, Field(ge=100, le=86400000)]
-    min_count: Annotated[int, Field(ge=1)] = 1
+    window_ms: Annotated[JsonInt, Field(ge=100, le=86400000)]
+    min_count: Annotated[JsonInt, Field(ge=1)] = 1
 
 
 class RuleIr(BaseModel):
@@ -7356,7 +7383,7 @@ class AlertInput(BaseModel):
     severity: Literal["debug", "info", "warning", "error", "critical"] | None = None
     expires_at: AwareDatetime | None = None
     webhook_url: AnyUrl | None = None
-    enabled: bool = True
+    enabled: StrictBool = True
 
 
 class WorkspaceDetail(Workspace):
@@ -7414,13 +7441,15 @@ class LayoutInput(BaseModel):
         Field(description="Required when `grid_preset` is `custom`, otherwise `null` or omitted."),
     ] = None
     crosshair_sync: Annotated[
-        bool,
+        StrictBool,
         Field(description="Layout default for crosshair sync between panes of one sync group."),
     ] = True
-    level_sync: Annotated[bool, Field(description="Layout default for price-level sync.")] = False
-    symbol_sync: Annotated[bool, Field(description="Layout default for symbol sync.")] = False
+    level_sync: Annotated[StrictBool, Field(description="Layout default for price-level sync.")] = (
+        False
+    )
+    symbol_sync: Annotated[StrictBool, Field(description="Layout default for symbol sync.")] = False
     hotkey_slot: Annotated[
-        int | None,
+        JsonInt | None,
         Field(
             description="`Ctrl+1..9` binding; unique among the workspace's live layouts (`409 conflict`, rule `hotkey_slot_taken`).",
             ge=1,
@@ -7428,7 +7457,7 @@ class LayoutInput(BaseModel):
         ),
     ] = None
     is_default: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="At most one live default per workspace; `true` clears the previous default in the same transaction."
         ),
@@ -7454,11 +7483,11 @@ class Layout(BaseModel):
         ),
     ]
     grid_spec: LayoutGridSpec | None
-    crosshair_sync: bool
-    level_sync: bool
-    symbol_sync: bool
-    hotkey_slot: Annotated[int | None, Field(ge=1, le=9)]
-    is_default: bool
+    crosshair_sync: StrictBool
+    level_sync: StrictBool
+    symbol_sync: StrictBool
+    hotkey_slot: Annotated[JsonInt | None, Field(ge=1, le=9)]
+    is_default: StrictBool
     panes: Annotated[
         list[LayoutPane], Field(description="Ordered by `slot_index` ascending.", max_length=16)
     ]
@@ -7476,12 +7505,12 @@ class LayoutPreset(BaseModel):
     name: str
     description: str | None
     is_builtin: Annotated[
-        bool,
+        StrictBool,
         Field(
             description="Always `true`: the catalogue is static. User-saved presets are layouts with a `hotkey_slot`."
         ),
     ]
-    pane_count: Annotated[int, Field(ge=0, le=16)]
+    pane_count: Annotated[JsonInt, Field(ge=0, le=16)]
     layout: LayoutInput
 
 
@@ -7503,7 +7532,7 @@ class WorkspaceBundle(BaseModel):
 class Alert(AlertInput):
     id: UUID | None = None
     owner_user_id: UUID | None = None
-    fire_count: int | None = None
+    fire_count: JsonInt | None = None
     last_fired_at: AwareDatetime | None = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None

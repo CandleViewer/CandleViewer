@@ -10,6 +10,8 @@ generator has no native "this string is money" concept, so we patch it here
 rather than accept float/str drift on the backend. That type enforces the contract's `Decimal`
 pattern on the raw input, and a member the contract defaults and does not mark nullable refuses
 `null` (`--strict-nullable`): the generated models are no laxer than the contract (#906 slice G).
+A REST boolean, integer or number takes only its JSON type (`--strict-types`), and an integer keeps
+`5.0`, which the contract's `type: integer` takes too (`_patch_json_integer`, #906 slice G2a).
 
 It also writes `candleviewer/api/_generated/contract_subset.json` (#2555): the pruned copy of
 the REST contract that the app reads at runtime, since the API image ships no `docs/plan`.
@@ -101,8 +103,30 @@ string on the wire, but is a real `decimal.Decimal` in Python — money and
 size/price fields must never round-trip through float."""
 '''
 
+# The REST run only: a boolean, integer or number member takes its JSON type and no coercion (`1`,
+# `"yes"` or `"true"` is no boolean, `"5"` no integer, `"1.5"` no number). The WS run passes none.
+_STRICT_SCALARS = ("--strict-types", "bool", "int", "float")
 
-def _run_datamodel_codegen(*, input_path: Path, input_file_type: str, output_path: Path) -> None:
+# What `StrictInt` becomes. pydantic's refuses `5.0`, but JSON Schema's `integer` is any number with
+# no fractional part, so the contract takes it. `Strict()` still refuses a string, a boolean and
+# `5.5`, and a `Field(ge=, le=)` bound applies as before.
+_JSON_INTEGER_SOURCE = '''\
+def _json_integer(value: object) -> object:
+    """JSON Schema's `integer` is a number with no fractional part, so `5.0` is `5`; anything else
+    goes to the strict `int` check, which refuses a string, a boolean and `5.5` (#906 slice G2a)."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+JsonInt = Annotated[int, Strict(), BeforeValidator(_json_integer)]
+"""A JSON Schema `integer`: an `int`, or a float with no fractional part, and nothing else."""
+'''
+
+
+def _run_datamodel_codegen(
+    *, input_path: Path, input_file_type: str, output_path: Path, extra: tuple[str, ...] = ()
+) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     init_file = output_path.parent / "__init__.py"
     if not init_file.exists():
@@ -135,6 +159,7 @@ def _run_datamodel_codegen(*, input_path: Path, input_file_type: str, output_pat
         "--formatters",
         "black",
         "isort",
+        *extra,
     ]
     subprocess.run(  # noqa: S603 — fixed argv, no shell, trusted cmd
         cmd, cwd=SERVICE_ROOT, check=True
@@ -203,9 +228,27 @@ def _patch_decimal_money_type(source: str) -> str:
     return patched
 
 
+def _patch_json_integer(source: str) -> str:
+    """Swaps pydantic's `StrictInt` for `JsonInt` (see `_JSON_INTEGER_SOURCE`) everywhere the
+    `--strict-types int` run used it, and defines `JsonInt` before the first model."""
+    if re.search(r"\bStrictInt\b", source) is None:
+        return source  # no integer members in this document (the WS run passes no flag)
+    if "    StrictInt,\n" not in source:
+        raise RuntimeError(
+            "generate_protocol_models: `StrictInt` is used but not imported on a line of its own — "
+            "datamodel-code-generator's output shape changed; update _patch_json_integer."
+        )
+    before_validator = "" if "    BeforeValidator,\n" in source else "    BeforeValidator,\n"
+    imported = source.replace("    StrictInt,\n", "    Strict,\n" + before_validator, 1)
+    patched = re.sub(r"\bStrictInt\b", "JsonInt", imported)
+    first_model = patched.index("\nclass ") + 1
+    return patched[:first_model] + _JSON_INTEGER_SOURCE + "\n\n" + patched[first_model:]
+
+
 def _write(path: Path, header: str, source: str) -> None:
     body = _strip_generator_banner(source)
     body = _patch_decimal_money_type(body)
+    body = _patch_json_integer(body)
     path.write_text(header + body, encoding="utf-8", newline="\n")
 
 
@@ -222,7 +265,12 @@ def _contract_builder() -> ModuleType:
 
 
 def generate() -> None:
-    _run_datamodel_codegen(input_path=OPENAPI_SPEC, input_file_type="openapi", output_path=REST_OUT)
+    _run_datamodel_codegen(
+        input_path=OPENAPI_SPEC,
+        input_file_type="openapi",
+        output_path=REST_OUT,
+        extra=_STRICT_SCALARS,
+    )
     raw_rest = REST_OUT.read_text(encoding="utf-8")
     _write(REST_OUT, REST_HEADER, raw_rest)
 

@@ -155,8 +155,8 @@ async def _post(payload: object) -> httpx.Response:
 
 @pytest.mark.parametrize(
     "bad",
-    ["abc", "1E+9999999", "9" * 100_000 + "x", 1.5, True],
-    ids=["abc", "exp", "long", "num", "bool"],
+    ["abc", "1E+9999999", "9" * 100_000 + "x", 1.5, True, ["a b c"], {"k": "a b c"}],
+    ids=["abc", "exp", "long", "num", "bool", "list", "object"],
 )
 async def test_post_with_a_bad_decimal_answers_the_project_422_with_a_bounded_body(
     bad: object,
@@ -170,7 +170,7 @@ async def test_post_with_a_bad_decimal_answers_the_project_422_with_a_bounded_bo
     assert len(response.content) < 4096
     assert re.search(r"(.)\1{9999}", response.text) is None
     # The message is the validator's constant one: it never echoes what the client sent.
-    assert not isinstance(bad, str) or bad[:20] not in response.text
+    assert str(bad)[:20] not in response.text
 
 
 @pytest.mark.parametrize("sent", ["12.5", None])

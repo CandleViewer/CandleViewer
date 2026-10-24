@@ -80,7 +80,7 @@ def _problem(code: str, **extra: Any) -> JSONResponse:
 
 
 async def _body(request: Request) -> api.KekRewrapRequest | JSONResponse:
-    """The body, checked strictly (`to_version` a JSON integer, no string or float), or its `422`.
+    """The body, checked strictly (`to_version` a JSON integer, no string, no fraction), or a `422`.
     Never echoed: no value, and no name of a member the contract lacks (`field` empty)."""
     raw = bytearray()
     async for chunk in request.stream():
