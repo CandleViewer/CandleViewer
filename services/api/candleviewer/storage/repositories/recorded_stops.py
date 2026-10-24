@@ -49,10 +49,10 @@ from candleviewer.storage.repositories.orders import (
 __all__ = [
     "EVERY_ACCOUNT", "LIVE_STOP_STATUSES", "MAX_MARKER_CHARS", "REFUSED_BY", "REFUSED_ENTRY",
     "SWEEP_REASON", "UNSENT_ENTRY", "UX_RS_IN_FLIGHT", "UX_RS_IN_FORCE", "WAITING_ENTRY",
-    "FillPosition", "InForce", "InForceWriteAhead", "InsertWriteAhead", "NewRecordedStop",
-    "RecordedStopRow", "RecordedStopStore", "ResolveOutcome", "ResolveWriteAhead", "Resolved",
-    "SettleWriteAhead", "StaleRecordedStop", "StopEnd", "StopKind", "StopOutcome", "StopSource",
-    "StopStatus", "SweepScope", "SweepWriteAhead", "SweptStop", "check_in_force", "check_request",
+    "FillPosition", "InForce", "InsertWriteAhead", "NewRecordedStop", "RecordedStopRow",
+    "RecordedStopStore", "ResolveOutcome", "ResolveWriteAhead", "SettleWriteAhead",
+    "StaleRecordedStop", "StopEnd", "StopKind", "StopOutcome", "StopSource", "StopStatus",
+    "SweepScope", "SweepWriteAhead", "SweptStop", "check_in_force", "check_request",
     "check_resolve", "request_cutoff",
 ]  # fmt: skip
 
@@ -72,8 +72,9 @@ StopEnd = Literal["in_force", "answered_unread"]
 #: Sec.3.3.11). Both of the last two make the row `void`.
 StopOutcome = Literal["answered", "refused", "not_shown"]
 #: How `resolve` settles pending rows: `answered` stamps a NULL `answered_at`, keeping them pending;
-#: the others void them, each its audit's reason (`entry_filled_stop_absent`: the Q1 ruling).
-ResolveOutcome = Literal["answered", "in_flight_resolved", "entry_filled_stop_absent"]
+#: `replaced` (a row of the key and kind already in force) stamps it too; the others void them,
+#: each its audit's reason (`entry_filled_stop_absent`: the Q1 ruling).
+ResolveOutcome = Literal["answered", "replaced", "in_flight_resolved", "entry_filled_stop_absent"]
 #: Whether the position was open or flat when its filled entry's side was voided (CR-S3H0-08).
 FillPosition = Literal["open", "flat"]
 #: One request in flight per position (21 Sec.3.3.11): a second writer's insert is refused.
@@ -304,23 +305,10 @@ SettleWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
 InsertWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
 
 
-#: A `put_in_force` hook, awaited before the commit with every row it changed (replaced first), a
-#: `sl.modified` / `tp.modified` record per row; one that fails or is late leaves every row as is.
-InForceWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
-
-
-@dataclass(frozen=True, slots=True)
-class Resolved:
-    """What a `resolve` hook records, a record per row, ids only: the rows as resolved, the
-    outcome (a void's reason) and, for `entry_filled_stop_absent` alone, the position's state."""
-
-    rows: tuple[RecordedStopRow, ...]
-    outcome: ResolveOutcome
-    position_state: FillPosition | None
-
-
-#: A `resolve` hook, awaited as an `InForceWriteAhead` is.
-ResolveWriteAhead = Callable[[Resolved], Awaitable[None]]
+#: A `put_in_force` or `resolve` hook, awaited before the commit with every row it changed (replaced
+#: first), a `sl.modified` / `tp.modified` record per row (a void's built with its reason and
+#: `position_state`); one that fails or is late leaves every row as it was.
+ResolveWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,7 +345,8 @@ def check_resolve(
     require_aware("at", at)
     if (outcome == "entry_filled_stop_absent") != (position_state is not None):
         raise ValueError("position_state is the entry_filled_stop_absent void's, and only its")
-    if outcome != "answered" and write_ahead is None:  # 21 Sec.3.3.11: no void unaudited
+    voids = outcome not in ("answered", "replaced")
+    if voids and write_ahead is None:  # 21 Sec.3.3.11: no void unaudited
         raise ValueError("a void is audited write-ahead (C-2.9): no hook was given")
 
 
@@ -480,7 +469,7 @@ class RecordedStopStore(Protocol):
         rows: Sequence[RecordedStopRow],
         *,
         at: datetime,
-        write_ahead: InForceWriteAhead | None = None,
+        write_ahead: ResolveWriteAhead | None = None,
     ) -> InForce:
         """A read showed `rows`' stops (21 Sec.3.3.11): one transaction locks the key's live rows in
         id order, compare-and-sets `rows` (`StaleRecordedStop`), marks `replaced` first the row in
@@ -500,5 +489,5 @@ class RecordedStopStore(Protocol):
     ) -> tuple[RecordedStopRow, ...]:
         """Answer or void pending rows, answered or not, each side on its own (CR-S3H0-02), by
         compare-and-set on `(status, answered_at)` as read (`StaleRecordedStop`, nothing written).
-        `check_resolve` first; the hook gets a `Resolved` record, awaited bounded before commit."""
+        `check_resolve` first; the hook is awaited bounded before the commit."""
         ...

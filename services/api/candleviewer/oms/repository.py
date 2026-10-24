@@ -69,7 +69,6 @@ from candleviewer.storage.repositories.recorded_stops import (
     UX_RS_IN_FLIGHT,
     FillPosition,
     InForce,
-    InForceWriteAhead,
     InsertWriteAhead,
     NewRecordedStop,
     RecordedStopRow,
@@ -555,7 +554,7 @@ class RecordedStopRepository:
         rows: Sequence[RecordedStopRow],
         *,
         at: datetime,
-        write_ahead: InForceWriteAhead | None = None,
+        write_ahead: ResolveWriteAhead | None = None,
     ) -> InForce:
         """`RecordedStopStore.put_in_force`; `AuditNotDurable` for a hook past its bound."""
         try:
