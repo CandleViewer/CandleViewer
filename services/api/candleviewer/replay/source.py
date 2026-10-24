@@ -14,11 +14,13 @@ bytes, whichever binds first, counting every batch the source keeps for its cons
 ones, the one the producer holds (being built, or waiting for a queue slot) and the one the
 consumer is iterating. A batch ends at its event count or at its share of the bytes less the
 largest row the request can produce, so it never exceeds the share; the queue has two slots
-fewer than there are batches in all. `buffered_events` is what is queued. The producer yields to
-the event loop after every batch (C-2.17: merging a batch of 1 024 events took 1-3 ms here). The
-consumer owns its own yields: `__anext__` suspends only to wait for a batch, so a loop that awaits
-nothing else drains a full read-ahead in one turn (E26-T03's clock is to yield every 256
-deliveries).
+fewer than there are batches in all. `buffered_events` is what is queued. The producer breathes
+on the session's loop-budget lane after every batch (C-2.17, #2668 G1: merging a batch of 1 024
+events took 1-3 ms here), so a fill is held, like the clock, while replay is over its share of
+the loop; it charges the lane before every other await (the queue, and the merge's storage reads
+and yields) and starts it again after. The consumer owns its own yields: `__anext__` suspends
+only to wait for a batch, so a loop that awaits nothing else drains a full read-ahead in one turn
+(the replay clock breathes every `yield_slice_s`).
 
 **Memory ceiling.** `memory_ceiling_bytes` is the session's estimated budget: the read-ahead
 takes `readahead_bytes` of it and the merge's cursors share the rest, each read capped at its
@@ -56,6 +58,7 @@ import structlog
 
 from candleviewer.observability import spawn
 from candleviewer.observability.metrics import Gauge
+from candleviewer.replay.budget import FREE_LANE, LoopLane
 from candleviewer.replay.errors import ReplayConfigInvalid, ReplayError, ReplayInternalError
 from candleviewer.replay.merge import (
     DEFAULT_IO_TIMEOUT_S,
@@ -185,9 +188,16 @@ class ReplaySource:
     close it (`async with`)."""
 
     def __init__(
-        self, request: ReplayRequest, tiers: ReplayTiers, *, config: ReadAheadConfig | None = None
+        self,
+        request: ReplayRequest,
+        tiers: ReplayTiers,
+        *,
+        config: ReadAheadConfig | None = None,
+        lane: LoopLane | None = None,
     ) -> None:
+        """`lane` is the session's loop-budget lane; `None` (tests and benches) only yields."""
         cfg = config or ReadAheadConfig()
+        self._lane = FREE_LANE if lane is None else lane
         request = ReplayRequest.model_validate(request.model_dump())
         self._plan = _plan(cfg, request)
         self._merge = RecordedMerge(
@@ -197,6 +207,7 @@ class ReplaySource:
             window_us=cfg.window_us,
             max_window_us=cfg.max_window_us,
             io_timeout_s=cfg.io_timeout_s,
+            lane=self._lane,
         )
         self._stop_timeout_s = cfg.io_timeout_s
         self._queue: asyncio.Queue[_Queued] = asyncio.Queue(maxsize=self._plan.slots)
@@ -313,6 +324,8 @@ class ReplaySource:
 
     async def _produce(self) -> None:
         outcome: _Failed | _Mark = _Mark.END
+        lane = self._lane
+        lane.start()
         try:
             batches = self._merge.batches(
                 max_events=self._plan.batch_events, max_bytes=self._plan.cut_bytes
@@ -321,12 +334,16 @@ class ReplaySource:
                 async for batch in batches:
                     if self._done:  # closed while a read was in flight: queue nothing for it
                         return
+                    lane.charge()
                     await self._queue.put(batch)  # blocks while full: storage reads stop
+                    lane.start()
                     self._queued += len(batch)
                     replay_readahead_depth.inc(len(batch))
-                    await asyncio.sleep(0)  # C-2.17: a batch is 1-3 ms of merge work, not a fill
+                    await lane.breathe()  # C-2.17: a batch is 1-3 ms of merge work, not a fill
         except Exception as exc:  # reaches the consumer after every batch queued before it
             outcome = _failure(exc)
+        finally:
+            lane.charge()
         if self._done:
             return
         await self._queue.put(outcome)

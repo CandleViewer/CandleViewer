@@ -957,6 +957,27 @@ docker compose -f infra/compose/docker-compose.yml stats --no-stream api
 docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep -i 'slow' | tail -20
 ```
 
+<a id="alert-replayloopsharehigh"></a>
+
+### ReplayLoopShareHigh
+
+| Element               | Detail                                                                                                                |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | Loop time charged to replay above 1.2 × `replay_loop_share_ratio` (`CV_REPLAY_LOOP_SHARE`) for 5 minutes. Ticket.     |
+| 2. User impact        | Order entry, the gateway and ingestion share the api's event loop with replay; they run slower while it holds more.   |
+| 3. What is still safe | Native stop-losses. Replay sessions still play, below their requested speed.                                          |
+| 5. Remediation        | Find the work that is not charged (a sink or read that blocks the loop); pause replay sessions; file a bug naming it. |
+| 6. Escalation         | Owner within one working session; at once if `EventLoopLagHigh` also fires.                                           |
+| 7. Verify recovery    | Charged rate at or below the share for 15 minutes.                                                                    |
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: rate at or under the share.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=sum by (env)(rate(replay_loop_seconds_total[1m]))'
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=replay_loop_share_ratio'
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=replay_budget_waiters'
+```
+
 <a id="alert-diskhigh"></a>
 
 ### DiskHigh

@@ -71,6 +71,7 @@ from typing import Any, Final, Literal
 import structlog
 
 from candleviewer.observability.metrics import Counter, Histogram
+from candleviewer.replay.budget import FREE_LANE, LoopLane
 from candleviewer.replay.errors import (
     ReplayConfigInvalid,
     ReplayError,
@@ -286,7 +287,11 @@ class RecordedMerge:
         window_us: int = DEFAULT_WINDOW_US,
         max_window_us: int = DEFAULT_MAX_WINDOW_US,
         io_timeout_s: float = DEFAULT_IO_TIMEOUT_S,
+        lane: LoopLane = FREE_LANE,
     ) -> None:
+        """`lane`: the session's loop-budget lane (#2668 G1), charged before every storage await
+        (not restarted after it: the reader's own decoding stays charged, and so does its wait,
+        the safe direction) and breathed on at every yield of a gap-marker build."""
         if window_us < 1 or max_window_us < window_us:
             raise ReplayConfigInvalid("read windows need 1 µs <= window_us <= max_window_us")
         if not (math.isfinite(io_timeout_s) and io_timeout_s > 0):
@@ -297,6 +302,7 @@ class RecordedMerge:
         self._tiers = tiers
         self._max_window_us = max_window_us
         self._io_timeout_s = io_timeout_s
+        self._lane = lane
         self._budget_bytes = budget_bytes
         self._tier: Tier | None = None
         self._started = False
@@ -474,6 +480,7 @@ class RecordedMerge:
         """Every storage await is time-bounded; a failure becomes one typed error carrying the
         storage error's code, never its text. Raised after the handler, so neither `__cause__`
         nor `__context__` keeps a storage error whose text or chain may hold a path (RP-I02)."""
+        self._lane.charge()  # another task of the session may run (and restart the lane) meanwhile
         try:
             async with asyncio.timeout(self._io_timeout_s):
                 return await awaitable
@@ -509,7 +516,9 @@ class RecordedMerge:
         found: dict[_Key, _Entry] = {}
         for n, gap in enumerate(rows):
             if n and n % _MARKER_YIELD_EVERY == 0:
-                await asyncio.sleep(0)  # C-2.17: never hold the loop for a whole 8 192-row table
+                await (
+                    self._lane.breathe()
+                )  # C-2.17: never hold the loop for a whole 8 192-row table
             if gap.symbol != symbol or gap.stream not in req.streams:
                 continue
             if gap.start_us >= end_us or gap.end_us <= start_us:

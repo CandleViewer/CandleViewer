@@ -61,6 +61,11 @@ class Pacer:
         self.anchor_ts = self.skip_until = max(ts_us, self.position(wall))
         self.anchor_wall = wall
 
+    def delay(self, seconds: float) -> None:
+        """Slide the whole schedule `seconds` later (a loop-budget hold): what was due is due
+        that much later, so a hold is never caught up in a burst."""
+        self.anchor_wall += seconds
+
     def late(self, ts_us: int, *, wall: float, max_lag_s: float) -> float:
         """Lateness in seconds of the event at `ts_us` delivered at `wall`. Beyond `max_lag_s`
         the clock slows: it re-anchors at the event (never back into a skipped stretch), and the
