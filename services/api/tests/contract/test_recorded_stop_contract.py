@@ -20,6 +20,7 @@ from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH
 _PLAN = OPENAPI_SPEC_PATH.parent
 _DOC = (_PLAN / "21-database-schema.md").read_text(encoding="utf-8")
 _INTERNAL_DOC = (_PLAN / "24-internal-schemas.md").read_text(encoding="utf-8")
+_ARCH = (_PLAN / "20-architecture.md").read_text(encoding="utf-8")
 _SECTION = _DOC.split("#### 3.3.11 `recorded_stops`", 1)[1].split("\n### 3.4 ", 1)[0]
 _TABLE_DDL = _SECTION.split("CREATE TABLE recorded_stops (", 1)[1].split("\n);", 1)[0]
 _GUARD = _SECTION.split("CREATE FUNCTION rs_guard()", 1)[1].split("```", 1)[0]
@@ -166,8 +167,9 @@ def test_an_entry_row_is_voided_only_once_the_exchange_confirms_its_entry_unfill
     )
     assert not _missing(
         _words(_SECTION),
-        "it becomes `void` only once the exchange confirms that its entry ended unfilled, or once "
-        "its entry is known never to have been sent",
+        "it becomes `void` only once the exchange confirms that its entry ended unfilled, once "
+        "its entry is known never to have been sent, or once a complete read shows its entry "
+        "filled and its stop absent",
         "a step that cannot know whether the entry filled leaves them `pending`, waiting for the "
         "complete read: B1's own fill count can lag a fill the exchange holds back",
         "voids the pending rows of an entry never placed, audited `sl.modified` (`tp.modified` "
@@ -221,9 +223,10 @@ def test_an_unanswered_request_is_resolved_by_a_read_before_the_next_stop_reques
         "§8.8 rule 6",
         "a read that shows its stop puts it `in_force`, as above",
         "one that shows neither the stop nor an order that matches it nor a resting entry that "
-        "carries it makes it `void`, audited `sl.modified` (`tp.modified` for a take-profit side) "
-        "with reason `in_flight_resolved`",
-        "The two rows of one request are answered together",
+        "carries it nor a fill of its entry makes it `void`, audited `sl.modified` "
+        "(`tp.modified` for a take-profit side) with reason `in_flight_resolved`",
+        "The two rows of one request come from one INSERT and share its `created_at`; a "
+        "request the read did not find filled is answered in one decision and never half voided",
         "no row is ever resolved by a time-based expiry",
         "The writer of its request owns the resolution: E29-T04 for an entry's attach and the "
         "trading-stop path, E29-T06 for its 24 §8.5 step 5 restore",
@@ -231,8 +234,174 @@ def test_an_unanswered_request_is_resolved_by_a_read_before_the_next_stop_reques
     rule = _words(_INTERNAL_DOC.split("6. **The recorded stop (SR-E29-06", 1)[1].split("\n", 1)[0])
     assert (
         "a complete read after the request's timeout shows neither the stop nor an order that "
-        "matches it nor a resting entry that carries it (the position, and for a Partial side the "
-        "open orders and the order history since the request)" in rule
+        "matches it nor a resting entry that carries it (the position, and, for a Partial side "
+        "or for a Full side whose position the read shows flat or on the other side, the open "
+        "orders and the order history from 5 s before the request, where a Full-mode stop that "
+        "already fired is an order that matches it, never a reason to void the record, and "
+        "where, while the position is open on the record's side, a matching order that history "
+        "shows ended with no fill (cancelled, deactivated or rejected) is the stop absent, not "
+        "a match, while one that filled matches whatever its end status)" in rule
+    )
+
+
+def test_the_complete_read_ends_each_case_on_the_row_as_ruled() -> None:
+    """#913 S3-H rulings (issuecomment-6376192722), with the code lens's folds on #4353: Q1, a fill
+    of the entry ends the wait durably on the row (`replaced`, or `void` with
+    `entry_filled_stop_absent`, a stop-loss's paged while its position is open), no memo; Q3, the
+    history read when flat or on the other side, a fired Full-mode stop a match, and the key held
+    through `WAITING_ENTRY` visible until E29-T06 resolves it; the read's order (stop, match,
+    resting entry, fill, none); Q2, Q6 to Q10 as the plan recommended. 21 owns the rows, 24 the
+    read and the pipeline, 20 the startup, the stop and the metric."""
+    section = _words(_SECTION)
+    assert not _missing(
+        section,
+        "it becomes `void` only once the exchange confirms that its entry ended unfilled, once its "
+        "entry is known never to have been sent, or once a complete read shows its entry filled "
+        "and its stop absent (below)",
+        "for a Partial side or for a Full side whose position the read shows flat or on the "
+        "other side, the open orders and the order history from 5 s before the request, a "
+        "history read covering only the venue's spans, 24 §14.1): a read that shows its stop "
+        "puts it `in_force`, as above (a native trail shown only by its distance and "
+        "activation price, never by the trigger it moves; while `Position` carries no "
+        "activation price, `[O-4]`, a trail request whose position shows a trail by its "
+        "distance is held, counted as `held_for_reconciliation` and logged once, until "
+        "E29-T06's pass or until `Position` carries the activation price, E29-K01, and a "
+        "position that shows no stop at all is never held on this rule)",
+        "one that shows an order that matches it, open or in that history (a Full-mode stop "
+        "that already fired among them, never taken for a foreign order), answers it and "
+        "leaves it `pending` for E29-T05 to materialise (24 §8.3 rule 7), a Partial side going "
+        "in force only once that row exists, except that while the position is open on the "
+        "row's side a matching order the history shows ended with no fill (cancelled, "
+        "deactivated or rejected) is the stop absent, not a match, and a matching order that "
+        "filled matches whatever its end status; one that shows a fill of its entry, and "
+        "neither its stop nor an order that matches it nor a resting entry that carries it, is "
+        "decided as a waiting row's fill is (below), so an unanswered entry that filled is "
+        "never voided `in_flight_resolved`",
+        "from what the exchange shows, each side on its own (Bybit holds a position's "
+        "stop-loss and take-profit as separate facts, so one can be present without the other) "
+        "and in this order: a read that shows its stop puts it `in_force`; one that shows an "
+        "order that matches it answers it and leaves it `pending`, as above; one that shows "
+        "its entry still resting with the stop attached keeps it, its request still in flight; "
+        "one that shows a fill of its entry ends the wait on the row itself, never in memory: "
+        "`replaced` when a later row of its key and kind is in force (by that later row's "
+        "transaction for an answered row, or by the read's own write for an unanswered one), "
+        "and otherwise `void` with reason `entry_filled_stop_absent`, audited as above and "
+        "counted, and paged for a stop-loss side while the position is open on its side, since "
+        "a filled entry whose stop-loss is not on its open position is a C-2.6 exposure: the read "
+        "clears the key for the protective re-attach (B1's `sl_missing`) and places no stop "
+        "itself; and one that shows none of these makes it `void`, with the unanswered row's "
+        "reason (`in_flight_resolved`)",
+        "A row the read answered while its entry's order ended without knowing its fill still "
+        "waits through that order (`WAITING_ENTRY`, the settle table's \"waiting for the complete "
+        'read" row), so its key stays refused, counted as `held_for_reconciliation` '
+        "(`20-architecture.md` §12.1) and logged once per key, and paged once per hold when the "
+        "read shows its position open with no stop at all, a C-2.6 exposure only that pass "
+        "clears; E29-T06's pass must resolve those rows (24 §8.5)",
+        "when a read shows one side, that side goes in force and the other is answered, the "
+        "next read answering it should a crash come between the two writes. A filled entry's "
+        "sides are each decided as above.",
+        "Putting a row in force, or replacing one, stamps `answered_at` if it is still NULL",
+        "The read runs once per key at a time and at most 8 at once in the process (C-2.18), "
+        "one of the 8 kept for an attach's read, as C-12.7 keeps a reserve for the protective "
+        "paths; one that fails, or does not answer within its bounds (5 s a venue read, 15 s "
+        "the whole read), decides nothing, and a key whose read cleared nothing, failed or "
+        "not, waits 5 s, the refusal's `Retry-After`, before an entry's request asks the venue "
+        "again, while an attach takes the reserved slot or joins the read already running on "
+        "its key",
+        "At startup the read also runs eagerly, for the waiting keys of the process environment's "
+        "accounts, after `void_orphans` and without holding `ready` (`20-architecture.md` §6.2), "
+        "and every unanswered row created before the runtime started waits for it whatever its "
+        "age: the startup floor, its start read from the database's clock",
+        "A `restore` row's read is E29-T06's: the gate keeps its key refused and pages it once.",
+        "A history miss decides nothing only where it can hide a match: a row whose request is "
+        "older than the venue's 24 h span and whose position is flat or on the other side, or "
+        "a demo row past the venue's 7 d less 24 §8.3 rule 6's one-day margin, that no read "
+        "shows matched is held, counted as `held_for_reconciliation` and logged once, and "
+        "E29-T06's pass resolves it (24 §8.5); inside the spans a miss decides, and so does a "
+        "live miss past them while the position is open on the row's side, as live keeps "
+        "filled orders in its history; a key whose position, open on either side, shows no "
+        "stop at all is never held on this rule.",
+        "E29-T06's pass also resolves the rows held through `WAITING_ENTRY`, which no read of "
+        "E29-T04's can decide",
+        "and the complete read's (`in_flight_resolved`, and `entry_filled_stop_absent`, whose "
+        "record carries `position_state`, `open` (a position on the row's side) or `flat` "
+        "(none on its side, the other side's included), so a naked window that a close or a "
+        "liquidation ended stays on the record unpaged), is audited write-ahead too",
+    )
+    rules = _words(_INTERNAL_DOC.split("**The pipeline's own rules", 1)[1].split("**8.4.1 ", 1)[0])
+    assert not _missing(
+        rules,
+        "answers `409 stop_request_in_flight` at once with `Retry-After: 5` and starts that read, "
+        "which runs on after the answer so the client's retry can find the key resolved",
+        "an attach (B1's `attach_stop`, §8.9's path) waits up to 2 s for the read, then is "
+        "refused as the entry is, B1 landing in `sl_missing`",
+    )
+    rule = _words(_INTERNAL_DOC.split("6. **The recorded stop (SR-E29-06", 1)[1].split("\n", 1)[0])
+    assert (
+        "A complete read that shows a fill of its entry, waiting or unanswered, and neither "
+        "its stop nor an order that matches it nor the entry still resting, ends the wait on "
+        "the record itself (`21-database-schema.md` §3.3.11), each side on its own: replaced "
+        "when a later record of its kind is in force, and otherwise void with reason "
+        "`entry_filled_stop_absent`, paged for a stop-loss while its position is open on its "
+        "side, a C-2.6 exposure: the read clears the key so the protective re-attach can "
+        "leave, and places no stop itself" in rule
+    )
+    assert (
+        "whether a position read echoes a trail's activation price (`activePrice`), and whether "
+        "a re-sent armed trail is re-based at the market)" in rule
+    )
+    reconciliation = _INTERNAL_DOC.split("### 8.5 Reconciliation algorithm", 1)[1]
+    reconciliation = _words(reconciliation.split("### 8.6 ", 1)[0])
+    assert (
+        "- **The recorded stops held for reconciliation (E29-T04 S3-H, `21-database-schema.md` "
+        "§3.3.11).** A row the complete read answered while its entry's order ended without "
+        "knowing its fill keeps its key refused "
+        '(`oms_stop_resolutions_total{outcome="held_for_reconciliation"}`, `20-architecture.md` '
+        "§12.1), and so do a row a history miss past the venue's span could not decide and a "
+        "trail request held while `Position` carries no activation price: this pass must resolve "
+        "exactly those rows (a trail request once its own position read carries the activation "
+        "price, E29-K01, `[O-4]`, and until then it stays held and visible), from its own reads "
+        "of the entry's fill and the position's stop, as the complete read decides them; until "
+        "it does, each such key stays refused and visible, never released silently. A held row "
+        "whose position is open with no stop at all comes first: this pass reconciles it before "
+        "anything else, and the protective attach follows that decision in the same pass "
+        "(C-2.6)." in reconciliation
+    )
+    runtime = _words(_ARCH.split("**OMS runtime (E29-T04 slice 3, #913).**", 1)[1])
+    assert not _missing(
+        runtime,
+        "is the contract of #913 slice 3 (sub-slices B to H)",
+        "Then it starts the complete read for those accounts' waiting stop requests "
+        "(`21-database-schema.md` §3.3.11) and goes on without waiting for it: the read never "
+        "holds `ready`, so a venue outage at boot holds no order entry, and the hydration's "
+        "re-attaches join it; an account the binding refuses (soft-deleted, or keyless) is paged "
+        "and its keys stay refused, never read;",
+        "cancels what remains, the startup task and the complete read's tasks",
+    )
+    metrics = _ARCH.split("### 12.1 ", 1)[1].split("### 12.2 ", 1)[0]
+    name = "`oms_stop_resolutions_total{outcome}`"
+    [row] = [line for line in metrics.splitlines() if name in line]
+    listed = row.split("by outcome, a closed set:", 1)[1]
+    outcomes = (
+        "in_force",
+        "replaced",
+        "answered",
+        "entry_resting",
+        "in_flight_resolved",
+        "entry_filled_stop_absent",
+        "held_for_reconciliation",
+        "read_failed",
+    )
+    assert all(f"`{outcome}`" in listed for outcome in outcomes)
+    assert "| counter |" in row
+    assert not _missing(
+        _words(row),
+        "**page on a stop-loss's `entry_filled_stop_absent` while its position is open on its "
+        "side**, a C-2.6 exposure, **and once per hold on a key held through `WAITING_ENTRY` "
+        "whose position is open with no stop at all**, a C-2.6 exposure only that pass clears",
+        "its catalogue entry lands with S3-H's gate (H3)",
+        "a trail request stays held until that pass or until `Position` carries the activation "
+        "price, E29-K01",
     )
 
 
