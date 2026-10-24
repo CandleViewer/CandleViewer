@@ -299,7 +299,8 @@ def test_the_complete_read_ends_each_case_on_the_row_as_ruled() -> None:
         "clears; E29-T06's pass must resolve those rows (24 §8.5)",
         "when a read shows one side, that side goes in force and the other is answered, the "
         "next read answering it should a crash come between the two writes. A filled entry's "
-        "sides are each decided as above.",
+        "sides are each decided as above. An entry partly filled and still resting is decided "
+        "as a fill for its filled part, the open part being what C-2.6 protects.",
         "Putting a row in force, or replacing one, stamps `answered_at` if it is still NULL",
         "The read runs once per key at a time and at most 8 at once in the process (C-2.18), "
         "one of the 8 kept for an attach's read, as C-12.7 keeps a reserve for the protective "
