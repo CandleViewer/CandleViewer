@@ -205,18 +205,20 @@ E15-T01's spec decision on #402, SR-E14-09).
 - **Protects:** DR5 (spoofing: a test-only handle in a production bundle), SR-E14-10.
   `__cvEngine.projectForTest` (E14-Q03) projects chart coordinates to pixels for a test; on a
   production page a script could use it to spoof where a drawing sits.
-- **Matches:** a `.js` or `.html` file of `apps/web/dist` that holds an identifier of
-  `tools/ci/prod-bundle-forbidden-handles.json`, as a substring (`__cvEngineDebug` counts as
-  `__cvEngine`). It runs in `_job-js.yml`'s `build` job right after the web build and reads that dist
-  (no second build); a failure names the file, line, column, identifier, DR5 and SR-E14-10. A dist with
-  no `.js` or `.html` file fails, so a missing build never passes. E14-Q03 adds its names to the
-  manifest and a positive control (an E2E build that exposes the handle).
+- **Matches:** a script file (`.js`, `.mjs`, `.cjs`) or an `.html` file of `apps/web/dist` that holds
+  an identifier of `tools/ci/prod-bundle-forbidden-handles.json`, as a substring (`__cvEngineDebug`
+  counts as `__cvEngine`). It runs in `_job-js.yml`'s `build` job right after the web build and reads
+  that dist (no second build); a failure names the file, line, column, identifier, DR5 and SR-E14-10.
+  A dist with no script file fails, whatever `.html` it holds, so a missing or half-written build never
+  passes. E14-Q03 adds its names to the manifest and a positive control (an E2E build that exposes
+  the handle).
 - **Does not match:** source maps (`sourcesContent` holds the source of a correctly gated handle),
   other file types, a name built at run time. `release.yml`'s `build-sign-installer` has no web-build
   step (it only needs `apps/web/dist` to exist), so the guard sits where that build is made; a release
   is cut from `main`, which passed it.
 - **Deliberate-regression fixture:** `scripts/tests/test_check_prod_bundle_handles.py` builds
-  synthetic dists: a handle in a `.js` fails, one only in a `.map` passes, a clean dist passes.
+  synthetic dists: a handle in a `.js`, `.mjs` or `.cjs` fails, one only in a `.map` passes, a clean
+  dist passes, and one with no script file fails.
 
 ## test_drawings_nosniff.py
 

@@ -68,6 +68,18 @@ def test_a_dist_with_nothing_to_scan_fails_closed(tmp_path, capsys, files):
     assert guard.main(["--dist", str(tmp_path / "missing")]) == 2  # no build at all
 
 
+def test_a_dist_with_html_but_no_script_file_fails_closed(tmp_path, capsys):
+    code, _, err = _run(tmp_path, capsys, {"index.html": "<html></html>\n"})
+    assert code == 2 and "no script file" in err  # a half-written build is not a clean one
+
+
+@pytest.mark.parametrize("suffix", [".mjs", ".cjs"])
+def test_a_handle_in_an_mjs_or_cjs_chunk_fails(tmp_path, capsys, suffix):
+    chunk = {f"assets/chunk-1a{suffix}": "window.__cvEngine = {};\n"}
+    code, _, err = _run(tmp_path, capsys, {"index.html": "<html></html>\n"} | chunk)
+    assert code == 1 and f"assets/chunk-1a{suffix}:1:8: '__cvEngine'" in err
+
+
 def test_the_manifest_extends_and_a_bad_one_is_refused(tmp_path, capsys):
     entry = {"identifier": "__cvDebugBus", "threat": "DR5", "requirement": "SR-E14-10"}
     manifest = tmp_path / "m.json"
