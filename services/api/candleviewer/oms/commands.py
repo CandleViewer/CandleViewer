@@ -1175,7 +1175,8 @@ class OmsCommandPort:
         detail["position_idx"] = str(row.position_idx)
         requested = _amend_terms(command.terms)
         if requested is None:  # as B1 refuses terms it could not stage: nothing is sent
-            return {"ok": False, "error_code": OmsErrorCode.INSTRUMENT_FILTER.value}
+            code = OmsErrorCode.INSTRUMENT_FILTER.value
+            return await self._amend_refused(row, code, "terms_not_staged", detail)
         if row.provenance != "placed":  # a recorded stop's TP/SL order is not the user's to amend
             return await self._amend_refused(row, ORDER_NOT_AMENDABLE, "not_amendable", detail)
         sides = {side: value for side, value in requested.items() if side in TPSL_SIDES}
