@@ -32,9 +32,9 @@ stop row (the startup sweep's first step, retried with it); each listing passes 
 never before the start, and `bound_s = min(bound, now - start)`, so the cutoff is `max(now - bound,
 start)`, the app clock behind the database's or not. Until the start is known, `clear` is
 `StoreUnavailable` and a resolution decides nothing (`read_failed`): a read with no bound would void
-blind. `start_pass(account)` is 20 Sec.6.2 step 2's eager pass over one account's
-waiting keys, never awaited: an account the binding refuses is paged there, its keys never read.
-`aclose()` cancels and awaits every task the gate owns.
+blind. `start_pass(account)` is 20 Sec.6.2 step 2's eager pass over one account's waiting keys,
+never awaited, one per account at a time: an account the binding refuses is paged there, its keys
+never read. `aclose()` cancels and awaits every task the gate owns.
 """
 
 from __future__ import annotations
@@ -165,7 +165,7 @@ class ResolvingStopGate:
         counter = metrics.counter(spec.name, spec.help, spec.labels, max_series=spec.max_series)
         self._outcomes = counter
         self._running: dict[PositionKey, asyncio.Task[None]] = {}
-        self._passes: set[asyncio.Task[None]] = set()
+        self._passes: dict[UUID, asyncio.Task[None]] = {}
         self._cooling: OrderedDict[PositionKey, float] = OrderedDict()
         self._holds: OrderedDict[PositionKey, set[str]] = OrderedDict()
         self._freed = asyncio.Event()
@@ -212,16 +212,19 @@ class ResolvingStopGate:
         raise StopRequestPending(retry_after_s=STOP_REQUEST_RETRY_AFTER_S)
 
     def start_pass(self, account_id: UUID) -> None:
-        """20 Sec.6.2 step 2's eager pass over the account's waiting keys, owned, never awaited."""
-        if not self._closed:
-            task = spawn(self._pass(account_id), name="oms-stop-pass")
-            self._passes.add(task)
-            task.add_done_callback(self._passes.discard)
+        """20 Sec.6.2 step 2's eager pass over the account's waiting keys, owned, never awaited;
+        one per account at a time, so the sweep's retries add none while it runs (C-2.18)."""
+        running = self._passes.get(account_id)
+        if self._closed or (running is not None and not running.done()):
+            return
+        task = spawn(self._pass(account_id), name="oms-stop-pass")
+        self._passes[account_id] = task
+        task.add_done_callback(partial(self._passed, account_id))
 
     async def aclose(self) -> None:
         """Cancel and await every resolution and pass (20 Sec.6.2 `stop()`); none starts after."""
         self._closed = True
-        tasks = [*self._passes, *self._running.values()]
+        tasks = [*self._passes.values(), *self._running.values()]
         for task in tasks:
             task.cancel()
         if tasks:
@@ -281,6 +284,11 @@ class ResolvingStopGate:
             del self._running[key]
         _failed(task)
         self._freed.set()
+
+    def _passed(self, account_id: UUID, task: asyncio.Task[None]) -> None:
+        if self._passes.get(account_id) is task:
+            del self._passes[account_id]
+        _failed(task)
 
     async def _resolve(self, key: PositionKey) -> None:
         counted: list[RequestDecision] = []
