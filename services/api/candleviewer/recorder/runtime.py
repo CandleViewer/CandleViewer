@@ -22,7 +22,7 @@ from candleviewer.observability import spawn
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.recorder.policy import RecordingPolicy
 from candleviewer.recorder.sessions import PositionSeed, SessionManager, startup_reconcile
-from candleviewer.recorder.writer import StreamWriter
+from candleviewer.recorder.writer import RecorderWalVolumeError, StreamWriter
 
 MODULE: Final = "recorder"
 TICK_S: Final = 1.0  # the policy's evaluation tick (20 §3.8)
@@ -44,6 +44,7 @@ class RuntimeBounds:
     retry_base_s: float  # the first wait between startups; it doubles up to `retry_cap_s`
     retry_cap_s: float
     max_attempts: int  # failed startups after which health is degraded (the retries go on)
+    gate_closed_alert_s: float  # N: the gate closed longer than this is degraded health
 
 
 class RecorderRuntime:
@@ -56,6 +57,7 @@ class RecorderRuntime:
         restore_b11: Callable[[], Awaitable[None]],
         seed: PositionSeed,
         process_start_us: int,
+        env: str,
         clock: Callable[[], float],
         sleep: Callable[[float], Awaitable[None]],
         rng: Callable[[], float],
@@ -63,7 +65,7 @@ class RecorderRuntime:
     ) -> None:
         """`clock` is monotonic seconds, `rng` a uniform draw in [0, 1) (the backoff's jitter)."""
         self._policy, self._sessions, self._writer = policy, sessions, writer
-        self._restore_b11, self._seed = restore_b11, seed
+        self._restore_b11, self._seed, self._env = restore_b11, seed, env
         self._start_us, self._bounds = process_start_us, bounds
         self._clock, self._sleep, self._rng = clock, sleep, rng
         self._task: asyncio.Task[None] | None = None
@@ -72,6 +74,7 @@ class RecorderRuntime:
         self._done = False
         self._attempts = 0  # failed startups
         self._last_error: type[Exception] | None = None
+        self._source_deployed = True  # False: the seed answered `None` (no positions source)
 
     async def start(self) -> None:
         if self._task is None:
@@ -108,20 +111,32 @@ class RecorderRuntime:
         rewrite its row, so the control surface refuses them (SEC-4, #2188; wired in S4b)."""
         return self._done
 
+    def recorded_symbols(self) -> frozenset[str]:
+        """The policy's effective set: lingering symbols are still recorded."""
+        return frozenset(self._policy.effective_set())
+
     def health(self) -> HealthReport:
         """`stopped` before `start()` and after `stop()`, else the startup's state in `detail`
         (error classes only, never a message: `/readyz` is anonymous). Degraded: past
-        `max_attempts`."""
+        `max_attempts`, a WAL volume refusal (SR-096), the gate closed longer than N, or the task
+        ended. A positions source that is not deployed is shown with its env, not degraded: it is
+        the accepted risk until E29-T06 provides one."""
         task, b, err, failed = self._task, self._bounds, self._last_error, self._attempts
         if task is None:
             return HealthReport(module=MODULE, status=HealthStatus.STOPPED)
         state = "pending" if not failed else "degraded" if failed >= b.max_attempts else "retrying"
-        facts = ["startup=done" if self._done else f"startup={state}"]
-        if err is not None:
-            facts.append(f"attempts={failed} last_error={err.__name__}")
-        degraded = err is not None and state == "degraded"
-        status = HealthStatus.DEGRADED if degraded else HealthStatus.OK
-        return HealthReport(module=MODULE, status=status, detail=" ".join(facts))
+        overdue = not self._done and self._clock() - self._t0 > b.gate_closed_alert_s
+        no_source = self._done and not self._source_deployed
+        facts = [
+            "startup=done" if self._done else f"startup={state}",
+            f"attempts={failed} last_error={err.__name__}" if err else "",
+            f"positions_source=not_deployed env={self._env}" if no_source else "",
+            f"gate_closed_over={b.gate_closed_alert_s:g}s" if overdue else "",
+            "task_ended" if task.done() else "",
+        ]
+        stuck = err is not None and (state == "degraded" or err is RecorderWalVolumeError)
+        status = HealthStatus.DEGRADED if stuck or overdue or task.done() else HealthStatus.OK
+        return HealthReport(module=MODULE, status=status, detail=" ".join(f for f in facts if f))
 
     async def _run(self) -> None:
         delay = min(self._bounds.retry_base_s, self._bounds.retry_cap_s)
@@ -141,7 +156,7 @@ class RecorderRuntime:
                     await self._writer.start()
                 self._writer_up = True
             async with asyncio.timeout(b.startup_timeout_s):
-                await startup_reconcile(
+                positions = await startup_reconcile(
                     self._sessions,
                     self._policy,
                     process_start_us=self._start_us,
@@ -150,15 +165,16 @@ class RecorderRuntime:
                 )
         except Exception as exc:  # the gate stays closed; a CancelledError is not one
             self._attempts, self._last_error = self._attempts + 1, type(exc)
-            logger().warning(
+            volume = isinstance(exc, RecorderWalVolumeError)  # nothing may record on this volume
+            (logger().critical if volume else logger().warning)(
                 "recorder_startup_failed",
                 attempt=self._attempts,
                 error=type(exc).__name__,
                 gate_closed_s=int(self._clock() - self._t0),
             )
             return False
-        self._done, self._last_error = True, None
-        logger().info("recorder_startup_done", failed_attempts=self._attempts)
+        self._done, self._last_error, self._source_deployed = True, None, positions is not None
+        logger().info("recorder_startup_done", env=self._env, failed_attempts=self._attempts)
         return True
 
     async def _tick(self) -> None:

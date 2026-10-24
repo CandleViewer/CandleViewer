@@ -494,13 +494,14 @@ async def startup_reconcile(
     process_start_us: int,
     restore_b11: Callable[[], Awaitable[None]],
     seed: PositionSeed,
-) -> None:
+) -> Sequence[tuple[str, str]] | None:
     """#2188 startup order, every step required: (1) crash-close the stale sessions, (2) restore
     the B11 snapshots, (3) adopt the policy's env's rows, (4) seed the open positions (`None`: no
     source is deployed, so the gate opens on none, with a warning), (5) reconcile every symbol, and
     only then (6) open the warm-up gate. A step that raises leaves the gate CLOSED (no grace-expiry
     stop on a stale position view) and, as steps 3 and 4 start nothing, no session open: the caller
-    retries the whole startup. The injected store, source and restore bound their own awaits."""
+    retries the whole startup. The injected store, source and restore bound their own awaits.
+    Returns the seed's answer (`None`: no source is deployed), for the caller's health."""
     await sessions.recover_on_startup(process_start_us)
     await restore_b11()
     await policy.adopt_recorded(await policy.load_recorded())
@@ -511,3 +512,4 @@ async def startup_reconcile(
         await policy.adopt_positions(positions)
     await policy.reconcile_all()
     policy.positions_reloaded()
+    return positions

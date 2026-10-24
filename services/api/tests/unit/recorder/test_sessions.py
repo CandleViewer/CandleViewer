@@ -237,7 +237,9 @@ async def test_a_position_source_that_is_not_deployed_is_logged_and_the_gate_sti
     with capture_logs() as logs:
         calls = await _startup(positions=None)
     assert calls == [name for name in _ORDER if name != "policy.adopt_positions"]
-    assert [e["event"] for e in logs] == ["recorder_positions_source_not_deployed"]
+    assert [(e["event"], e["log_level"]) for e in logs] == [
+        ("recorder_positions_source_not_deployed", "warning")
+    ]
 
 
 async def test_stop_closes_all_live_sessions_as_shutdown() -> None:
