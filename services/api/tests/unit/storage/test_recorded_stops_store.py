@@ -656,6 +656,8 @@ def test_the_complete_reads_statements_lock_in_id_order_and_keep_answered_at_onc
     assert _sets(answer) == _STAMP.replace("$2", "$1")
     void = mod.resolve_statement(_ACCOUNT, rows, "entry_filled_stop_absent", _T)
     assert _sets(void) == "status=$1::VARCHAR, closed_at=$2::TIMESTAMP WITH TIME ZONE"
+    gone = mod.resolve_statement(_ACCOUNT, rows, "replaced", _T)
+    assert _sets(gone) == f"status=$1::VARCHAR, {_STAMP}, closed_at=$3::TIMESTAMP WITH TIME ZONE"
     assert _sql(void).count("recorded_stops.answered_at IS NOT DISTINCT FROM ") == 2
     keys = _sql(mod.waiting_keys_statement(_ACCOUNT, now=_T, bound_s=5.0))
     assert "recorded_stops.answered_at IS NULL AND recorded_stops.created_at <= $" in keys
@@ -723,13 +725,13 @@ async def test_a_resolve_locks_then_sets_every_row_or_none_audited_before_its_co
     rel = _Rel([], [_row(_TP, kind="take_profit", **voided), _row(_SL, **voided)])
     seen: list[tuple[list[uuid.UUID], int]] = []
 
-    async def audit(record: Any) -> None:
-        seen.append(([row.id for row in record.rows], record.position_state, rel.commits))
+    async def audit(rows: tuple[RecordedStopRow, ...]) -> None:
+        seen.append(([row.id for row in rows], rel.commits))
 
     rows = _rows(_row(_SL), _row(_TP, kind="take_profit"))
     done = await _store(rel).resolve(_ACCOUNT, rows, "entry_filled_stop_absent", at=_T,
                                      position_state="open", write_ahead=audit)  # fmt: skip
-    assert [r.id for r in done] == [_SL, _TP] and seen == [([_SL, _TP], "open", 0)]
+    assert [r.id for r in done] == [_SL, _TP] and seen == [([_SL, _TP], 0)]
     assert rel.commits == 1
     assert "FOR UPDATE" in _sql(rel.statements[0])
     stale = _Rel([], [_row(_SL)])
