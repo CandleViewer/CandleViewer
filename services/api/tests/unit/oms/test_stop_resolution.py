@@ -37,6 +37,7 @@ from candleviewer.oms.stop_resolution import (
 )
 from candleviewer.storage.repositories import recorded_stops
 from candleviewer.storage.repositories.orders import ORDER_STATE_OF, NewOrderEvent, OrderRow
+from candleviewer.storage.repositories.orders_sqlalchemy import OMS_STATEMENT_TIMEOUT_MS
 from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 from tests.unit.oms import submission_contract as sc
 from tests.unit.oms.command_rig import (
@@ -529,9 +530,11 @@ async def test_a_request_years_old_reads_a_bounded_history_and_still_decides(
 
 def test_the_store_bound_outlasts_the_stop_audit_bound_so_its_error_is_the_audits() -> None:
     """Opus Minor: the store-call bound is the stop audit's bound plus a margin, so a late audit
-    reaches H3 as `AuditNotDurable`, never as this bound's `TimeoutError`."""
+    surfaces as the audit's own error, never as this bound's `TimeoutError`: `AuditNotDurable`
+    through `RecordedStopRepository`, the only layer that maps the store's `WriteAheadTimeout`."""
     margin = stop_resolution.STORE_TIMEOUT_S - recorded_stops.STOP_AUDIT_TIMEOUT_S
-    assert margin >= 5.0  # the lock and the update (2 s each, OMS_STATEMENT_TIMEOUT_MS) and slack
+    statements_s = 2 * OMS_STATEMENT_TIMEOUT_MS / 1000  # the lock and the update before the hook
+    assert margin > statements_s and margin >= 5.0
     assert "PageReason" in stop_resolution.__all__
     default = inspect.signature(StopResolver).parameters["store_timeout_s"].default
     assert default == stop_resolution.STORE_TIMEOUT_S
