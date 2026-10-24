@@ -1015,6 +1015,10 @@ class OmsCommandPort:
             symbol=row.symbol,
             position_idx=_POSITION_IDX[row.position_idx],
             stop_loss=stop,
+            # read ahead of the gate: after its wait (4 s at most) a take-profit moved at the venue
+            # meanwhile is sent back as read, never the stop (CR-S3H3B-04); a fresh read, bounded
+            # at `PORT_TIMEOUT_S`, would not fit with the gate and `SUBMIT_TIMEOUT_S` in B1's
+            # attempt (`CV_COMMAND_TIMEOUT`)
             take_profit=_kept_take_profit(before),
         )
         by = self._deadline(self._submit_timeout_s)  # a raise leaves the row in flight

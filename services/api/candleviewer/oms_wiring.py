@@ -1248,11 +1248,11 @@ class OmsRuntime:
 
     async def stop(self) -> None:
         """Clear `ready`; give the submits in flight at most `CV_OMS_DRAIN_S`; cancel what remains
-        and the startup task; then close the facade (it unwires B1's ports), the command port, the
-        stop gate (its complete reads cancelled), the sink it owns, the trading port and its pool,
-        each isolated, within its share of what is left, and all by `OMS_STOP_RESERVE_S` after the
-        drain, inside the OMS module's 15 s grace (20 Sec.6.2). The shared profile cache is its
-        owner's to close."""
+        and the startup task; then close the stop gate (its complete reads and passes cancelled
+        with the startup task, before the machines), the facade (it unwires B1's ports), the
+        command port, the sink it owns, the trading port and its pool, each isolated, within its
+        share of what is left, and all by `OMS_STOP_RESERVE_S` after the drain, inside the OMS
+        module's 15 s grace (20 Sec.6.2). The shared profile cache is its owner's to close."""
         self._ready.clear()
         self._stopping = True
         pending = await _drained(set(self._running), self._settings.oms_drain_s)
@@ -1476,8 +1476,8 @@ class OmsRuntime:
                 now_us=self._now_us, registry=self._registry, max_machines=self._max,
             )  # fmt: skip
             closers[:0] = [
+                ("stop_gate", gate.aclose),  # first: its reads end with the startup task's
                 ("machines", machines.stop), ("commands", commands.aclose),
-                ("stop_gate", gate.aclose),  # its reads use the port and the pool, closed after
             ]  # fmt: skip
             self._phase = "pipeline"
             anchors = AnchorService(
@@ -1491,7 +1491,7 @@ class OmsRuntime:
                 None if tickers is None else ReferenceDemand(tickers, monotonic=self._monotonic)
             )
             if demand is not None:
-                closers.insert(2, ("ticker_demand", demand.close))
+                closers.insert(3, ("ticker_demand", demand.close))  # after the commands
             deps = SubmissionDeps(
                 accounts=accounts,
                 instruments=InstrumentsBinding(ingestion.instruments),
@@ -1517,7 +1517,7 @@ class OmsRuntime:
             if owned is not None:
                 self._phase = "sink_start"
                 await owned.start()
-                closers.insert(2, ("sink", owned.stop))
+                closers.insert(3, ("sink", owned.stop))  # after the commands
         except BaseException:
             await _closed(closers, asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S)
             raise
