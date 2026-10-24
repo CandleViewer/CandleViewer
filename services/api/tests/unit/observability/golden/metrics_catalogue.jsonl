@@ -291,6 +291,7 @@
 ["replay_events_read_total", "counter", ["stream", "tier"], "live", "E26"]
 ["replay_gap_warnings_total", "counter", [], "live", "E26"]
 ["replay_loop_seconds_total", "counter", [], "live", "E26"]
+["replay_loop_share_ratio", "gauge", [], "live", "E26"]
 ["replay_readahead_depth", "gauge", [], "live", "E26"]
 ["replay_source_read_seconds", "histogram", ["tier"], "live", "E26"]
 ["rule_autodisarm_total", "counter", [], "planned", "E35"]

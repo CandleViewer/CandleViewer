@@ -58,8 +58,9 @@ def rig(
 ) -> Rig:
     t = time or FakeTime()
     src, snk, obs = stream or ListStream(items), sink or RecordingSink(t), RecordingObserver()
+    end = T0 + end_s * SECOND
     clock = ReplayClock(
-        src, snk, obs, time=t, start_us=T0, end_us=T0 + end_s * SECOND, speed=speed, config=config
+        src, snk, obs, time=t, start_us=T0, end_us=end, speed=speed, config=config, budget_lane=None
     )
     return Rig(clock, src, snk, obs, t)
 
@@ -131,7 +132,9 @@ async def test_a_destroy_cancelled_again_still_closes_the_source_exactly_once() 
                 raise
 
     stream, obs, time = ListStream(every_second(3)), RecordingObserver(), FakeTime(auto=False)
-    clock = ReplayClock(stream, StuckSink(time), obs, time=time, start_us=T0, end_us=T0 + SECOND)
+    clock = ReplayClock(
+        stream, StuckSink(time), obs, time=time, start_us=T0, end_us=T0 + SECOND, budget_lane=None
+    )
 
     async def session() -> None:
         async with clock:

@@ -51,7 +51,7 @@ def _work(time: FakeTime, lane: BudgetLane, seconds: float) -> None:
 @pytest.mark.parametrize(
     ("share", "burst_s"),
     [
-        (0.0, 0.05), (-0.25, 0.05), (0.5000001, 0.05), (float("inf"), 0.05),
+        (0.0, 0.05), (0.0099, 0.05), (-0.25, 0.05), (0.5000001, 0.05), (float("inf"), 0.05),
         (float("nan"), 0.05), (0.25, 0.0049), (0.25, 0.251),
     ],
 )  # fmt: skip
@@ -61,8 +61,8 @@ def test_budget_outside_its_bounds_is_refused(share: float, burst_s: float) -> N
         ReplayLoopBudget(share, burst_s, FakeTime())
 
 
-@pytest.mark.parametrize("share", [1e-9, 0.5])
-def test_budget_takes_any_share_above_zero_up_to_one_half(share: float) -> None:
+@pytest.mark.parametrize("share", [0.01, 0.5])
+def test_budget_takes_any_share_from_one_hundredth_up_to_one_half(share: float) -> None:
     assert ReplayLoopBudget(share, BURST, FakeTime()).share == share
 
 

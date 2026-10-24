@@ -158,3 +158,11 @@ def test_pacer_due_is_monotonic_and_round_trips_through_position(
     assert dues == sorted(dues)
     for t, d in zip(ordered, dues, strict=True):
         assert abs(pacer.position(d) - t) <= 2
+
+
+def test_pacer_delay_slides_every_due_and_the_position_later() -> None:
+    """A loop-budget hold (#2668 G1): the schedule moves later as a whole, never caught up."""
+    pacer = Pacer(2.0, wall=10.0, ts_us=0)
+    pacer.delay(0.5)
+    assert pacer.due(US_PER_S) == 11.0 and pacer.position(10.5) == 0
+    assert pacer.late(US_PER_S, wall=11.0, max_lag_s=0.25) == 0.0
