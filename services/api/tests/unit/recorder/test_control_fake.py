@@ -61,11 +61,16 @@ async def test_the_cap_an_idempotent_re_add_and_an_update_only_of_a_manual_entry
 
 async def test_pin_unpin_and_a_stop_that_lingers_keeping_its_pin() -> None:
     fake = fakes.FakeRecorder()
-    await fake.add_manual("BTCUSDT", USER)
+    for symbol in ("BTCUSDT", "ETHUSDT"):
+        await fake.add_manual(symbol, USER)
     await fake.set_pin("BTCUSDT", True, USER)
-    await fake.remove_manual("BTCUSDT", USER)
+    for symbol in ("BTCUSDT", "ETHUSDT"):
+        await fake.remove_manual(symbol, USER)
     stopped = fake.entries["BTCUSDT"]
     assert stopped.pinned and stopped.lingering
     assert stopped.linger_until == fakes.NOW + fakes.GRACE == fake.linger_until("BTCUSDT")
-    await fake.set_pin("BTCUSDT", False, USER)
-    assert not fake.entries["BTCUSDT"].pinned and fake.linger_until("ETHUSDT") is None
+    for symbol in ("BTCUSDT", "ETHUSDT"):
+        fake.lapse(symbol)  # a pinned row is demoted and kept; an unpinned one is soft-removed
+    assert (list(fake.entries), fake.entries["BTCUSDT"].state) == (["BTCUSDT"], "stopped")
+    await fake.set_pin("BTCUSDT", False, USER)  # unpinning the idle row soft-removes it
+    assert fake.entries == {} and fake.linger_until("BTCUSDT") is None
