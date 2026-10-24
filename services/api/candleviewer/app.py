@@ -35,6 +35,7 @@ from starlette.types import ASGIApp
 from candleviewer.account_fixture_wiring import AccountFixture, build_account_fixture
 from candleviewer.account_health_wiring import wire_account_health
 from candleviewer.accounts.key_age import KeyRotationPolicy
+from candleviewer.accounts.repository import AccountsRepository
 from candleviewer.accounts.service import AccountsService
 from candleviewer.admin.account_access import AccountAccessService
 from candleviewer.admin.backups.gate import BackupJobGate
@@ -146,6 +147,7 @@ from candleviewer.api.notifications import make_notifications_router
 from candleviewer.api.onboarding import make_onboarding_router
 from candleviewer.api.onboarding_checklist import StepResult, bybit_key_restriction
 from candleviewer.api.openapi_publish import install_contract_openapi
+from candleviewer.api.profiles import make_profiles_router
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
 from candleviewer.api.recorder_purge import make_recorder_purge_router
 from candleviewer.api.recording_reports import make_recording_reports_router
@@ -2197,6 +2199,23 @@ def create_app(
     # the facade over both, with the T01 counters (real backend only). The lifespan disposes of it.
     profiles = wire_profiles(resolved, metrics_facade)
     app.state.profiles = profiles
+    # #906 D1c: `listAccountProfiles` and `getAccountProfile`, inside the caller's grants: the
+    # session resolver loads them (a test may inject its own), and each read resolves its account
+    # first through the M13 store built above for `ctx.accounts`' row gauges (real backend only).
+    profiles_resolver: SnapshotResolver | None = principal_resolver
+    if profiles_resolver is None and identity is not None:
+        profiles_resolver = SessionSnapshotResolver(
+            lambda: ctx.auth.sessions, identity, grants=True
+        )
+    app.include_router(
+        make_profiles_router(
+            None if profiles is None else profiles.repository,
+            None if accounts_counts is None else AccountsRepository(accounts_counts),
+            _LazyAuditEmitter(ctx.audit),
+            profiles_resolver,
+            auth=ctx.auth,  # a refusal names the caller's session (#4174)
+        )
+    )
     # E27-T04 (#837): per-account health and the wallet cache, on both backends; the lifespan starts
     # and stops it, and `ctx.accounts.account_health` is its `feed`, the private-WS consumer's. It
     # serves the `wallet` topic built above, and its key standing reads the self-check's results
