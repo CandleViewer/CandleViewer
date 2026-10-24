@@ -38,6 +38,7 @@ ORDER_ROWS = [
     ("Filled", "GTC", None), ("Filled", "IOC", None),
     ("Triggered", "GTC", "TRIGGERED"),
     ("Cancelled", "GTC", "REMOTE_CANCELLED"), ("Cancelled", "PostOnly", "REMOTE_CANCELLED"),
+    ("Cancelled", "RPI", "REMOTE_CANCELLED"),
     ("PartiallyFilledCanceled", "GTC", "REMOTE_CANCELLED"),
     ("Deactivated", "GTC", "REMOTE_CANCELLED"), ("Deactivated", "IOC", "REMOTE_CANCELLED"),
     ("Rejected", "FOK", "REMOTE_CANCELLED"),
@@ -175,6 +176,21 @@ def test_exec_payload_passes_b1s_exec_schema_and_names_the_rows_pairing_keys() -
     }  # fmt: skip
 
 
+def test_payloads_pass_every_id_through_unsanitised_for_b1_to_judge() -> None:
+    """Derived: ids with a leading or trailing space and a control character. The mapping
+    sanitises nothing (OM-T04), so B1's `text_id` judges exactly what the venue sent."""
+    odd = " 0ab1bdf7-4219\u0001 "
+    fill = _as(_one(raw("execution")), Execution).model_copy(
+        update={"exec_id": odd, "exchange_order_id": odd}
+    )
+    paid = pm.exec_payload(fill, order_id=ROW_ID, order_link_id=odd)
+    assert (paid["exec_id"], paid["exchange_order_id"], paid["order_link_id"]) == (odd, odd, odd)
+    pushed = _order(orderStatus="Cancelled", timeInForce="GTC")
+    order = _as(pushed, Order).model_copy(update={"exchange_order_id": odd})
+    sent = pm.push_payload(order, order_link_id=odd, ts_event=pushed.ts_event)
+    assert (sent["exchange_order_id"], sent["order_link_id"]) == (odd, odd)
+
+
 def test_exec_payload_empty_fee_currency_is_left_out() -> None:
     """Derived: B1 keeps no empty text, and the step writer stores USDT for none."""
     fill = _as(_one(push("execution", row("execution") | {"feeCurrency": ""})), Execution)
@@ -189,7 +205,8 @@ def test_exec_payload_empty_fee_currency_is_left_out() -> None:
      ("SessionSettlePnl", "not_a_trade"), ("fast", "fast_execution"), ("wallet", "wallet")],
 )  # fmt: skip
 def test_route_row_b1_takes_nothing_from_names_why(kind: str, reason: Any) -> None:
-    """Derived: each non-trade type from the documented fill; the fast fill is as transcribed."""
+    """Derived: each non-trade type from the documented fill, and a USDT wallet row; the fast
+    fill is as transcribed."""
     frames = {"fast": raw("execution-fast"), "wallet": push("wallet", usdt_wallet())}
     frame = frames.get(kind) or push("execution", row("execution") | {"execType": kind})
     assert pm.route(_one(frame)) == pm.NoB1Event(reason)
@@ -212,19 +229,32 @@ def test_route_open_position_reads_lost_exactly_when_it_has_no_stop(
     """C-2.6: a naked position is read as one. Derived: an open short, with and without a stop."""
     routed = _position(**OPEN | {"stopLoss": stop})
     assert isinstance(routed, pm.ForProtection)
-    assert (routed.reading.event, routed.reading.stop_loss) == (event, kept)
+    reading = routed.reading
+    assert (reading.event, reading.stop_loss, reading.size) == (event, kept, Decimal("0.5"))
 
 
 @pytest.mark.parametrize(
-    "over", [{}, OPEN, OPEN | {"stopLoss": "29000"}], ids=["flat", "lost", "observed"]
+    ("over", "stop", "size"),
+    [({}, None, "0"), (OPEN, None, "0.5"), (OPEN | {"stopLoss": "29000"}, "29000", "0.5")],
+    ids=["flat", "lost", "observed"],
 )
-def test_reading_payload_each_reading_passes_b1s_reading_schema(over: dict[str, str]) -> None:
-    """Derived: a flat row (as transcribed), an open row with no stop and one with a stop."""
+def test_reading_payload_is_the_readings_exact_dict_and_passes_b1s_schema(
+    over: dict[str, str], stop: str | None, size: str
+) -> None:
+    """Derived: a flat row (as transcribed), an open row with no stop and one with a stop. B1's
+    reading schemas require no key, so the exact dict is what pins the stop and the size."""
     routed = _position(**over)
     assert isinstance(routed, pm.ForProtection)
     payload = pm.reading_payload(routed.reading)
     SCHEMA[routed.reading.event].validate(payload)
-    assert payload["updated_time"] == 1697682317038  # ms
+    assert payload == {"updated_time": 1697682317038, "stop_loss": stop, "size": size}  # ms
+
+
+def test_route_payload_of_no_known_kind_is_refused_not_read_as_a_wallet_row() -> None:
+    """Derived: a payload past `PrivateEvent`'s validator (built unvalidated) is a defect."""
+    event = _one(push("wallet", usdt_wallet())).model_copy(update={"payload": object()})
+    with pytest.raises(AssertionError):
+        pm.route(event)
 
 
 def test_route_three_fills_in_one_message_are_three_execs_in_row_order() -> None:

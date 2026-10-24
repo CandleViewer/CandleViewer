@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from types import MappingProxyType
-from typing import Final, Literal
+from typing import Final, Literal, assert_never
 from uuid import UUID
 
 from candleviewer.domain.primitives import TsUs
@@ -25,6 +25,7 @@ from candleviewer.exchange.base.models import (
     Order,
     Position,
     PrivateEvent,
+    Wallet,
 )
 
 from .ports import PositionKey, ProtectionReading
@@ -108,7 +109,9 @@ def route(event: PrivateEvent) -> Route:
         return ForProtection(PositionKey(p.account_id, p.symbol, p.position_idx), reading(p))
     if isinstance(p, FastExecution):
         return NoB1Event("fast_execution")
-    return NoB1Event("wallet")  # PrivateEvent's validator: the payload is its kind's
+    if isinstance(p, Wallet):
+        return NoB1Event("wallet")
+    assert_never(p)  # a payload of no known kind is a defect, never read as a wallet row
 
 
 def push_time_ms(order: Order, ts_event: TsUs) -> int:

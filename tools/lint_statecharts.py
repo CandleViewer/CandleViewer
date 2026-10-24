@@ -59,11 +59,14 @@ ALLOWED_REMINT_MODULES = {"gateway.py"}
 # import-linter contract (module-contracts.toml hotpath_statechart): the replay
 # session service beside them drives B12 and imports the statechart package.
 # `ws.` (E17-T08, ws_statechart): the trailing dot keeps the composition root `ws_wiring.py` out.
+# The private stream's row mapping and pairing (E29-T05) are listed as in that contract too.
 HOTPATH_MODULE_PREFIXES = (
     "candleviewer.book",
     "candleviewer.bars",
     "candleviewer.orderflow",
     "candleviewer.oms.hotpath",
+    "candleviewer.oms.pairing",
+    "candleviewer.oms.push_mapping",
     "candleviewer.rules.evaluator",
     "candleviewer.replay.clock",
     "candleviewer.replay.injector",
