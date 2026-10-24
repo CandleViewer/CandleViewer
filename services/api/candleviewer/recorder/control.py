@@ -1,8 +1,9 @@
 """`RecordingControl`, the recorder's port for the recording routes and WS topic (E16-T08, #492).
 Until a runtime is bound (#2188), only reads exist: `StoredRecordingControl` maps Postgres rows
 from the row port `RecordedRows` (M10), and what only a runtime knows (lingering, refusals, size,
-rows, lag) stays unset, never guessed. Writes have no implementation yet (503). The restricted
-view (`HIDDEN_CAUSES`, `restricted_view`) is defined here once, for the routes and the topic."""
+rows, lag) stays unset, never guessed. Once one is, `control_runtime.RuntimeRecordingControl`
+serves reads and writes. The restricted view (`HIDDEN_CAUSES`, `restricted_view`) is defined here
+once, for the routes and the topic."""
 
 from __future__ import annotations
 
@@ -87,6 +88,7 @@ class EntrySpec:  # an add or an update; `None` keeps a setting (or takes its de
     depth: int | None = None
     pinned: bool | None = None
     retention_days: int | None = None
+    default_retention: bool = False  # `retention_days: null` named: back to the global default
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,16 +121,19 @@ class RecordingControl(RecordingReads, Protocol):  # `add` also returns the entr
     # the global default). Each write is recorded by the policy ahead of the store (C-2.9).
     # `remove` ends the manual reason; while a `STOP_CAUSES` member holds, and without `force`,
     # it changes nothing and raises `StopRefused`; `update` refuses with `ChangeRefused`.
-    async def add(self, symbol: str, spec: EntrySpec,
-                  actor: Actor) -> tuple[RecordedEntry, RecordedEntry | None]: ...  # fmt: skip
+    # `restricted` is the caller's view, from the server-side principal only (C-12.4), never
+    # from a request: an unpin or a lower retention it does not cover raises `RelaxRefused`
+    # before any write, and an add onto a row it hides is a join (`held_hidden`).
+    async def add(self, symbol: str, spec: EntrySpec, actor: Actor, *,
+                  restricted: bool) -> tuple[RecordedEntry, RecordedEntry | None]: ...  # fmt: skip
     # `add` raises the policy's `RecorderInvalidUpdateError` and `RecorderSymbolLimitError`
     # unchanged (the route maps them), where `update` maps its refusals to a port error. It
     # forwards `spec.streams` and `spec.depth` as given: a join names the stored row's own.
-    async def update(self, entry_id: str, spec: EntrySpec,
-                     actor: Actor) -> RecordedEntry | None: ...  # fmt: skip
+    async def update(self, entry_id: str, spec: EntrySpec, actor: Actor, *,
+                     restricted: bool) -> RecordedEntry | None: ...  # fmt: skip
     async def remove(self, entry_id: str, actor: Actor, *,
                      force: bool = False) -> RecordedEntry | None: ...  # fmt: skip
-    async def pin(self, entry_id: str, pinned: bool, actor: Actor, *,
+    async def pin(self, entry_id: str, pinned: bool, actor: Actor, *, restricted: bool,
                   retention_days: int | None = None) -> RecordedEntry | None: ...  # fmt: skip
     # `status` entries carry the STORED row's streams and depth, never the policy's `()`/`None`.
     async def status(self) -> ControlStatus: ...
@@ -156,6 +161,16 @@ class StopRefused(Exception):
     def __init__(self, causes: tuple[Refusal, ...]) -> None:
         super().__init__(*causes)
         self.causes = causes
+
+
+class RelaxRefused(Exception):
+    """An unpin or a lower retention the caller's view does not cover: a cause it does not see
+    holds the row (ruled 05:10Z, #2188 S3c). Nothing changed; `recorded`: the policy wrote the
+    denied record (else the caller writes it)."""
+
+    def __init__(self, symbol: str, *, recorded: bool) -> None:
+        super().__init__(symbol)
+        self.recorded = recorded
 
 
 class ChangeRefused(Exception):
