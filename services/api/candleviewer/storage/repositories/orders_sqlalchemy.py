@@ -72,7 +72,6 @@ from candleviewer.db.models import (
     roles,
     trade_group_legs,
     trade_groups,
-    user_account_access,
     user_roles,
     users,
 )
@@ -121,6 +120,19 @@ _O = orders.c
 _E = order_events.c
 ORDER_COLUMNS: Final = tuple(_O[f.name] for f in fields(OrderRow))
 EVENT_COLUMNS: Final = tuple(_E[name] for name in EVENT_FIELDS)
+#: SR-051's grant on the account the enclosing `exchange_accounts` row is, viewing (UL-F2) and
+#: unfrozen, as `account_profiles_sqlalchemy` spells it; `_TRADE_GRANT` trades too, which
+#: `uaa_trade_implies_view` keeps inside viewing. Text, as the grant fence admits a reader no
+#: other form (`test_grant_readers_honour_can_view.py`).
+_VIEW_GRANT: Final = (
+    "EXISTS (SELECT 1 FROM user_account_access uaa WHERE uaa.user_id = CAST(:caller AS uuid) "
+    "AND uaa.exchange_account_id = exchange_accounts.id AND uaa.can_view AND NOT uaa.frozen)"
+)
+_TRADE_GRANT: Final = (
+    "EXISTS (SELECT 1 FROM user_account_access uaa WHERE uaa.user_id = CAST(:caller AS uuid) "
+    "AND uaa.exchange_account_id = exchange_accounts.id AND uaa.can_view AND NOT uaa.frozen "
+    "AND uaa.can_trade)"
+)
 #: Statements without an `orders.exchange_account_id` filter (see the module docstring); tested.
 UNSCOPED: Final = frozenset({
     "create_statement", "link_taken_statement", "environment_accounts_statement",
@@ -225,15 +237,34 @@ def list_unfinished_statement(account_ids: Iterable[UUID], limit: int) -> sa.Sel
 
 
 def scope_clause(
-    scope: AccountScope, environment: Environment, *, trade: bool
+    scope: AccountScope,
+    environment: Environment,
+    account_id: sa.ColumnElement[Any],
+    *,
+    trade: bool,
 ) -> sa.ColumnElement[bool]:
-    """C-12.4, written once for the exit routes (E29-T04 slice 4): the `exchange_accounts` rows
-    `scope` reaches in `environment`, not deleted. An Owner's while its user holds a live owner
-    role; a grant's among the scope's ids while the user's `user_account_access` row lets it view,
-    unfrozen, and trade too when `trade`: SR-051's predicates (`accounts_sqlalchemy`), so a stale
-    snapshot only narrows. A grant scope with no id reaches nothing."""
+    """C-12.4, written once for the exit routes (E29-T04 slice 4): an `EXISTS` over the
+    `exchange_accounts` row `account_id` names, not deleted, of `environment`, which `scope`
+    reaches (`_reaches`). The row is read through `select_from` as the account table's surface
+    fence admits a reader (`test_account_env_write_once_surface.py`), and as
+    `account_profiles_sqlalchemy.account_visible` reads it."""
     ea = exchange_accounts.c
-    live = (ea.deleted_at.is_(None), ea.env == environment)
+    row = sa.select(sa.literal(1)).select_from(exchange_accounts).where(ea.id == account_id)
+    return row.where(*_live(environment), _reaches(scope, trade=trade)).exists()
+
+
+def _live(environment: Environment) -> tuple[sa.ColumnElement[bool], ...]:
+    """The enclosing `exchange_accounts` row is not deleted and of `environment`."""
+    ea = exchange_accounts.c
+    return ea.deleted_at.is_(None), ea.env == environment
+
+
+def _reaches(scope: AccountScope, *, trade: bool) -> sa.ColumnElement[bool]:
+    """`scope` on the enclosing `exchange_accounts` row: an Owner's while its user holds a live
+    owner role; a grant's among the scope's ids while the user's `user_account_access` row lets
+    it view, unfrozen, and trade too when `trade` (`_VIEW_GRANT`, `_TRADE_GRANT`): SR-051's
+    predicates (`accounts_sqlalchemy`), so a stale snapshot only narrows. A grant scope with no id
+    reaches nothing."""
     if isinstance(scope, OwnerScope):
         ur, role, user = user_roles.c, roles.c, users.c
         held = user_roles.join(roles, role.id == ur.role_id).join(users, user.id == ur.user_id)
@@ -241,14 +272,11 @@ def scope_clause(
             ur.user_id == scope.user_id, role.name == "owner", user.deleted_at.is_(None),
             user.status == "active", sa.or_(ur.expires_at.is_(None), ur.expires_at > sa.func.now()),
         )  # fmt: skip
-        return sa.and_(*live, owner.exists())
+        return owner.exists()
     if not scope.account_ids:
         return sa.false()
-    access = user_account_access.c
-    grant = [access.user_id == scope.user_id, access.exchange_account_id == ea.id, access.can_view]
-    grant += [sa.not_(access.frozen), *([access.can_trade] if trade else [])]
-    granted = ea.id.in_(sorted(scope.account_ids))
-    return sa.and_(*live, granted, sa.select(access.user_id).where(*grant).exists())
+    grant = sa.text(_TRADE_GRANT if trade else _VIEW_GRANT).bindparams(caller=str(scope.user_id))
+    return sa.and_(exchange_accounts.c.id.in_(sorted(scope.account_ids)), grant)
 
 
 def in_scope_statement(
@@ -256,25 +284,24 @@ def in_scope_statement(
 ) -> sa.Select[Any]:
     """`get_in_scope`'s one statement: the order with its leg's group and profile, its creator
     (its group's, else its anchor's, which `COALESCE` reads for an order with no group only) and
-    whether the scope may trade its account, only where `scope_clause` holds; beside it, the
-    account of the order holding the id, whatever the scope (another environment's or a deleted
-    account's too), for the refusal's audit alone (ruling Q12). So one row answers, and only the
-    holding account leaves the database for an out-of-scope id."""
+    whether the scope may trade its account, only where `scope_clause` holds over the order's
+    account; beside it, the account of the order holding the id, whatever the scope (another
+    environment's or a deleted account's too), for the refusal's audit alone (ruling Q12). So one
+    row answers, and only the holding account leaves the database for an out-of-scope id."""
     legs, groups, anchors = trade_group_legs.c, trade_groups.c, idempotency_anchors.c
     anchored = sa.select(anchors.created_by).where(anchors.order_id == _O.id).limit(1)
-    tree = (
-        orders.join(exchange_accounts, exchange_accounts.c.id == _O.exchange_account_id)
-        .outerjoin(trade_group_legs, legs.id == _O.trade_group_leg_id)
-        .outerjoin(trade_groups, groups.id == legs.trade_group_id)
+    tree = orders.outerjoin(trade_group_legs, legs.id == _O.trade_group_leg_id).outerjoin(
+        trade_groups, groups.id == legs.trade_group_id
     )
+    account = _O.exchange_account_id
     scoped = (
         sa.select(
             *ORDER_COLUMNS, legs.trade_group_id, legs.account_profile_id.label("profile_id"),
             sa.func.coalesce(groups.created_by, anchored.scalar_subquery()).label("created_by"),
-            scope_clause(scope, environment, trade=True).label("can_trade"),
+            scope_clause(scope, environment, account, trade=True).label("can_trade"),
         )
         .select_from(tree)
-        .where(_O.id == order_id, scope_clause(scope, environment, trade=False))
+        .where(_O.id == order_id, scope_clause(scope, environment, account, trade=False))
         .subquery("scoped")
     )  # fmt: skip
     held = orders.alias("held")
@@ -286,10 +313,11 @@ def in_scope_statement(
 def accounts_in_scope_statement(
     scope: AccountScope, environment: Environment, requested: Collection[UUID]
 ) -> sa.Select[Any]:
-    """`accounts_in_scope`'s one statement: the accounts of `environment` the scope may trade
-    (`scope_clause`), among `requested` when it names any, by id."""
+    """`accounts_in_scope`'s one statement: the accounts of `environment`, not deleted, the scope
+    may trade (`_reaches`), among `requested` when it names any, by id."""
     ea = exchange_accounts.c
-    stmt = sa.select(ea.id).where(scope_clause(scope, environment, trade=True))
+    stmt = sa.select(ea.id).select_from(exchange_accounts)
+    stmt = stmt.where(*_live(environment), _reaches(scope, trade=True))
     if requested:
         stmt = stmt.where(ea.id.in_(sorted(set(requested))))
     return stmt.order_by(ea.id)

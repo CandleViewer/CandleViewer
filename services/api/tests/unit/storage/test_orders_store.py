@@ -326,22 +326,26 @@ def test_every_statement_but_create_and_the_id_check_is_account_scoped(name: str
     scoped = "orders.exchange_account_id = $" in sql or (
         name in entry_stops and "recorded_stops.exchange_account_id = $" in sql
     )
-    scoped |= name in _BY_PRINCIPAL and "user_account_access.user_id = $" in sql
+    scoped |= name in _BY_PRINCIPAL and "uaa.user_id = CAST($" in sql
     assert scoped is (name not in mod.UNSCOPED)
 
 
 def test_the_exit_reads_hold_the_owner_or_the_grant_predicate_in_sql() -> None:
     """E29-T04 slice 4 (C-12.4): `scope_clause`, once: a live account of the environment, then a
     live owner role, or a grant among the snapshot's ids whose live row lets it view, unfrozen,
-    and trade for the trade flag; the anchor read only for an order with no group (`coalesce`)."""
+    and trade for the trade flag; the anchor read only for an order with no group (`coalesce`).
+    The order's account is an `EXISTS` over its own `exchange_accounts` row, never a join of the
+    table (its surface fence), and the grant SR-051's text (the grant fence, UL-F2)."""
     live = "exchange_accounts.deleted_at IS NULL AND exchange_accounts.env = $"
+    row = "FROM exchange_accounts \nWHERE exchange_accounts.id = orders.exchange_account_id AND "
     owner = _sql(mod.in_scope_statement(OwnerScope(USER), ORDER, "demo"))
-    assert live in owner and "user_account_access" not in owner
+    assert live in owner and "user_account_access" not in owner and owner.count(row) == 2
     assert "WHERE user_roles.user_id = $" in owner and "roles.name = $" in owner
     grant = _sql(_STATEMENTS["in_scope_statement"])
     assert live in grant and "exchange_accounts.id IN ($" in grant and "user_roles" not in grant
-    assert grant.count("user_account_access.can_view AND NOT user_account_access.frozen") == 2
-    assert grant.count("user_account_access.can_trade") == 1  # the `can_trade` column alone
+    assert grant.count(row) == 2 and "JOIN exchange_accounts" not in grant
+    assert grant.count("uaa.can_view AND NOT uaa.frozen") == 2
+    assert grant.count("uaa.can_trade") == 1  # the `can_trade` column alone
     assert "coalesce(trade_groups.created_by, (SELECT idempotency_anchors.created_by" in grant
     assert grant.endswith(") AS scoped ON true")
     nothing = _sql(mod.accounts_in_scope_statement(GrantScope(USER, frozenset()), "demo", ()))
