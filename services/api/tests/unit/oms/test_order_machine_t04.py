@@ -3,27 +3,38 @@ stores: `start(first=...)` reaches the step writer's first persist, a refused st
 is a typed OMS error and never a foreign one, the native-stop backstop is logged and counted, the
 `oms_unknown_orders` gauge follows the live machines, and `abandon` ends a never-sent order.
 Slice 2b: `settled`, the pipeline's wait on the create's outcome, which follows a resync and reads
-the row of an order whose machine is gone."""
+the row of an order whose machine is gone. Slice 4 (S4-B1): `version`, the order's last step's
+`event_seq`, and `command(expected_seq=)`, checked under the order's lock after every other gate,
+and a cancel through the real command port, landing where B1 says."""
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.exchange.base.errors import NotFoundError, OmsErrorCode, RateBudgetExceededError
+from candleviewer.exchange.base.fakes import FakeReject
+from candleviewer.oms.commands import ACCOUNT_UNAVAILABLE, STORE_UNAVAILABLE
 from candleviewer.oms.errors import (
+    AccountScopeDenied,
     AnchorTaken,
     IllegalTransition,
+    OrderEntryRefused,
     OrderNotLoaded,
     OrderStepRefused,
+    VersionConflict,
 )
 from candleviewer.oms.fakes import InMemoryOrderStore
 from candleviewer.oms.repository import SubmissionRepository
+from candleviewer.oms_wiring import NO_ACTIVE_KEY
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.idempotency_anchors import NewAnchor
@@ -33,6 +44,7 @@ from candleviewer.storage.repositories.submissions import (
     FirstPersist,
     FirstPersisted,
 )
+from tests.unit.oms import command_rig as cr
 from tests.unit.oms.order_rig import (
     ACCOUNT,
     GATES,
@@ -40,6 +52,7 @@ from tests.unit.oms.order_rig import (
     T0,
     Rig,
     build_rig,
+    fill_of,
     gated,
     order_of,
     placed,
@@ -371,3 +384,335 @@ async def test_settled_reads_the_row_of_a_machine_closed_while_in_the_state(rig:
         await rig.facade._close(o, publish=False)
     assert await waiting == "submitting"
     gate.set()
+
+
+# --- the version (E29-T04 S4-B1; the S4 ruling Q5's `ETag`): `version`, `command(expected_seq=)` --
+
+
+async def test_the_version_is_the_last_steps_seq_and_follows_each_step_a_fill_included(
+    rig: Rig,
+) -> None:
+    """Q5: the seq of `"<orderId>:<seq>"` is the `event_seq` of the order's last committed step,
+    its last `order_events` row: each step moves it, a fill included, and an order with no
+    machine (none yet, or evicted once final) has none."""
+    order = order_of()
+    assert rig.facade.version(order.id) is None
+    await rig.start(order)
+    seen = [rig.facade.version(order.id)]
+    await rig.facade.command(ACCOUNT, order.id, "SEND", actor="user")
+    await rig.quiet()
+    seen.append(rig.facade.version(order.id))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+    seen.append(rig.facade.version(order.id))
+    events = await rig.events.list_for_order(ACCOUNT, order.id)
+    assert seen == [0, 2, 3] and [event.seq for event in events] == [0, 1, 2, 3]
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.6"))
+    await rig.quiet()
+    assert rig.facade.state(order.id) is None and rig.facade.version(order.id) is None
+
+
+async def test_a_stale_expected_seq_is_a_conflict_with_nothing_sent_written_or_moved(
+    rig: Rig,
+) -> None:
+    """Q5: after every other gate (legality first: 409 and 422 before 412), a version that has
+    moved on refuses the command with `VersionConflict`, nothing sent or written; the current one
+    admits it."""
+    unsent = order_of(2)
+    await rig.start(unsent)
+    with pytest.raises(IllegalTransition):
+        await rig.facade.command(ACCOUNT, unsent.id, "CANCEL", actor="user", expected_seq=99)
+    order = await rig.submitted()
+    seq = rig.facade.version(order.id)
+    assert seq is not None
+    with capture_logs() as logs, pytest.raises(VersionConflict):
+        await rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user", expected_seq=seq - 1)
+    assert [log["event"] for log in logs] == ["oms_version_conflict"]
+    assert rig.facade.state(order.id) == ("submitted", "not_required")
+    assert rig.facade.version(order.id) == seq and "cancel" not in rig.commands.kinds()
+    await rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user", expected_seq=seq)
+    await rig.quiet()
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and row.lifecycle_state == "cancelled"
+    assert rig.commands.kinds().count("cancel") == 1
+
+
+async def test_the_version_is_checked_under_the_orders_lock(rig: Rig) -> None:
+    """Q5's atomic home: a command that read the version, then waited on the order's lock while
+    a fill committed, meets the new version once it holds the lock, and sends nothing."""
+    order = await rig.submitted()
+    seq = rig.facade.version(order.id)
+    o = rig.facade._orders[order.id]
+    async with o.lock:
+        fill = asyncio.create_task(
+            rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+        )
+        cancel = asyncio.create_task(
+            rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user", expected_seq=seq)
+        )
+        for _ in range(64):
+            await asyncio.sleep(0)
+        assert not fill.done() and not cancel.done()
+    await fill
+    with pytest.raises(VersionConflict):
+        await cancel
+    assert seq is not None and rig.facade.version(order.id) == seq + 1
+    assert "cancel" not in rig.commands.kinds()
+
+
+@pytest.fixture
+async def wired(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[tuple[Rig, cr.Rig]]:
+    """The facade on the real command port over the fake venue (`command_rig`), one store."""
+    monkeypatch.setattr(b01, "_ATTEMPTS", OrderedDict())
+    venue = cr.build_rig()
+    out = build_rig(venue.store)
+    b01.set_ports(dataclasses.replace(b01._ports, commands=venue.port))  # `stop()` unwires it
+    yield out, venue
+    await out.facade.stop()
+
+
+async def _placed(rig: Rig, venue: cr.Rig, seq: int = 0) -> NewOrder:
+    """An order sent once through the real port, resting at the fake venue: `submitted`."""
+    order = cr.new_order(seq=seq)
+    venue.port.expect(order)
+    await rig.facade.start(order, environment="demo", gates=GATES)
+    await rig.facade.command(cr.ACCOUNT, order.id, "SEND", actor="user")
+    await rig.quiet()
+    return order
+
+
+def _answers(*outcomes: Any) -> Any:
+    """The venue's answers to the next cancels, in order."""
+    return lambda venue, _mp: venue.demo.script("cancel_order", *outcomes)
+
+
+def _unread(target: str, name: str) -> Any:
+    """The port's read before its send fails, as a store that is down does."""
+    down = AsyncMock(side_effect=StorageTierUnavailable("postgres"))
+    return lambda venue, mp: mp.setattr(getattr(venue, target), name, down)
+
+
+def _verdict(answer: Mapping[str, Any] | None) -> Any:
+    """What an exit's watch was answered: None, `ok`, the refusal's code, or why the order parks."""
+    return None if answer is None else answer.get("error_code") or answer.get("unknown") or "ok"
+
+
+def _refused(error: Exception) -> Any:
+    """The account read refuses, as the wiring's binding does an account out of scope or keyless."""
+    refuse = AsyncMock(side_effect=error)
+    return lambda venue, mp: mp.setattr(venue.accounts, "trading_account", refuse)
+
+
+_DENIED, _KEYLESS = AccountScopeDenied(), OrderEntryRefused(NO_ACTIVE_KEY)
+_GONE = FakeReject(OmsErrorCode.ORDER_NOT_FOUND, 110001)  # the venue does not hold the order
+_REFUSED = FakeReject(OmsErrorCode.INSTRUMENT_FILTER, 110017)
+_TICKET = [("request_reconciliation", {"reason": "already_terminal", "alerted": True}),
+           ("alert", {"alert": "order_already_terminal", "exchange_ret_code": 110001})]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("prepare", "landed", "answered", "sent", "notices"),
+    [(_answers(), "cancelled", "ok", 1, []),
+     (_answers(_REFUSED), "submitted", "INSTRUMENT_FILTER", 1, []),
+     (_answers(cr.outage()), "unknown", None, 1, [("alert", {"alert": "order_unknown"})]),
+     (_answers(_GONE), "unknown", "already_terminal", 1, _TICKET),
+     (_unread("orders", "get_by_link_id"), "submitted", STORE_UNAVAILABLE, 0, []),
+     (_unread("accounts", "trading_account"), "submitted", STORE_UNAVAILABLE, 0, []),
+     (_refused(_DENIED), "submitted", ACCOUNT_UNAVAILABLE, 0, []),
+     (_refused(_KEYLESS), "submitted", ACCOUNT_UNAVAILABLE, 0, [])],
+    ids=["accepted", "refused", "raised", "already_terminal", "row_unread", "account_unread",
+         "scope_denied", "no_key"],
+)  # fmt: skip
+async def test_a_cancel_through_the_port_lands_where_b1_says_and_answers_its_watch(
+    wired: tuple[Rig, cr.Rig], prepare: Any, landed: str, answered: Any, sent: int, notices: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    """S4-B1 end to end on the facade: the current version admits the exit's `CANCEL`, B1's
+    `cancel_pending` sends it once through the real port, and the order lands `cancelled`, back
+    live on a refusal (INV-B1-j), a read that failed before the send or an account that refuses
+    its read (`ACCOUNT_UNAVAILABLE`, ruling B), nothing sent, or
+    `unknown` when the call raised (Q11), never sent again, the watch answering None. The venue's
+    110001 lands `unknown`, never `submitted`: reconciliation is asked for the order, its alert is
+    a ticket with the code, and its watch says why it parks (the S4-B1 rulings)."""
+    rig, venue = wired
+    order = await _placed(rig, venue)
+    prepare(venue, monkeypatch)
+    watch = venue.port.expect_exit(order.id, "cancel")
+    seq = rig.facade.version(order.id)
+    await rig.facade.command(cr.ACCOUNT, order.id, "CANCEL", actor="user", expected_seq=seq)
+    await rig.quiet()
+    row = await venue.orders.get(cr.ACCOUNT, order.id)
+    assert row is not None and row.lifecycle_state == landed and watch.answered
+    assert _verdict(await watch.answer()) == answered
+    assert venue.calls().count("cancel_order") == sent
+    got = [(n.kind, n.order_id, dict(n.detail)) for n in rig.notices.got]
+    assert got == [(kind, order.id, detail) for kind, detail in notices]
+
+
+@pytest.mark.parametrize(
+    ("prepare", "reason", "severity", "refusal", "asked", "sent", "paged"),
+    [(_answers(_REFUSED), "refused", "error", "110017", 0, 1, "INSTRUMENT_FILTER"),
+     (_answers(RateBudgetExceededError("dry")), "rate_budget_exceeded", "error",
+      "RATE_BUDGET_EXCEEDED", 0, 1, "RATE_BUDGET_EXCEEDED"),
+     (_answers(_GONE), "already_terminal", "warning", "110001", 1, 1, None),
+     (_unread("orders", "get_by_link_id"), "refused", "error", STORE_UNAVAILABLE, 0, 0,
+      STORE_UNAVAILABLE),
+     (_refused(_DENIED), "refused", "error", ACCOUNT_UNAVAILABLE, 0, 0, ACCOUNT_UNAVAILABLE),
+     (_refused(_KEYLESS), "refused", "error", ACCOUNT_UNAVAILABLE, 0, 0, ACCOUNT_UNAVAILABLE)],
+    ids=["refused", "no_token", "already_terminal", "row_unread", "scope_denied", "no_key"],
+)  # fmt: skip
+async def test_a_kills_cancel_the_venue_does_not_take_is_audited_with_its_code(
+    wired: tuple[Rig, cr.Rig], prepare: Any, reason: str, severity: str, refusal: str,
+    asked: int, sent: int, paged: str | None, monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    """C-2.9, the S4-B1 rulings: a KILL's cancel the venue refuses, no rate token lets out, or a
+    failed or refused read (`ACCOUNT_UNAVAILABLE`) keeps from the venue, is an `orders.cancel`
+    failure with its code; one the venue does not hold (110001) is a warning that claims no end,
+    and reconciliation is asked for it, its request naming the reason the router tickets. The KILL
+    stays final; nothing is sent again, and every cancel not done pages in the KILL's result (one
+    the venue does not hold, bound, is done and pages nothing)."""
+    rig, venue = wired
+    order = await _placed(rig, venue)
+    prepare(venue, monkeypatch)
+    assert await rig.facade.kill("kill switch") == ()
+    await rig.quiet()
+    kills = [r for r in rig.audit.records if r.reason.startswith("kill_cancel_")]
+    got = [(r.reason[12:], r.outcome, r.severity, r.detail["refusal"]) for r in kills]
+    assert got == [(reason, "failure", severity, refusal)]
+    asked_for = [n for n in rig.notices.got if n.kind == "request_reconciliation"]
+    ticketed = {"reason": b01.ALREADY_TERMINAL}  # the one reason the router tickets (ruling A)
+    assert [(n.order_id, dict(n.detail)) for n in asked_for] == [(order.id, ticketed)] * asked
+    assert venue.calls().count("cancel_order") == sent
+    pages = [call for call in rig.pager.calls if call.startswith("kill:")]
+    assert pages == ([] if paged is None else [f"kill: 1 cancels not done: {paged} 1"])
+
+
+@pytest.mark.parametrize(
+    ("unread", "counts", "paged"),
+    [(0, {"sent": 3}, []),
+     (2, {"sent": 1, STORE_UNAVAILABLE: 2}, [f"kill: 2 cancels not done: {STORE_UNAVAILABLE} 2"])],
+    ids=["all_sent", "two_unread"],
+)  # fmt: skip
+async def test_a_kills_result_counts_its_cancels_by_outcome_and_pages_those_not_done(
+    wired: tuple[Rig, cr.Rig], unread: int, counts: Any, paged: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The orchestrator's 10:29Z condition: the KILL's own result counts its cancels by outcome,
+    so cancels a store failure kept from the venue page as `n cancels not done` with their code,
+    never as a clean KILL, and their orders, unread, send nothing (fail closed)."""
+    rig, venue = wired
+    orders = [await _placed(rig, venue, seq) for seq in range(3)]
+    read, down = venue.orders.get_by_link_id, {o.order_link_id for o in orders[:unread]}
+
+    async def flaky(account_id: Any, link: str) -> Any:  # the store is down for `down`'s rows
+        if link in down:
+            raise StorageTierUnavailable("postgres")
+        return await read(account_id, link)
+
+    monkeypatch.setattr(venue.orders, "get_by_link_id", flaky)
+    with capture_logs() as logs:
+        assert await rig.facade.kill("kill switch") == ()
+    [result] = [e for e in logs if e["event"] == "oms_kill_result"]
+    assert (result["cancels"], result["not_done"]) == (counts, unread)
+    assert [call for call in rig.pager.calls if call.startswith("kill:")] == paged
+    assert venue.calls().count("cancel_order") == 3 - unread
+
+
+async def test_a_kill_that_relied_on_an_in_flight_cancel_pages_when_that_cancel_goes_unsent(
+    wired: tuple[Rig, cr.Rig], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The S4-B1 re-check's Finding 1: a KILL that lands while a user's cancel is in flight sets no
+    cancel outcome of its own, so its result counts that order `in_flight`, never clean. When that
+    cancel then answers `STORE_UNAVAILABLE` the order is live again, and the re-sent KILL's own
+    cancel, which cannot read the row either, pages as `n cancels not done`, once."""
+    rig, venue = wired
+    order = await _placed(rig, venue)
+    gate = asyncio.Event()
+
+    async def store_down(account_id: Any, link: str) -> Any:  # the read waits, then fails
+        await gate.wait()
+        raise StorageTierUnavailable("postgres")
+
+    monkeypatch.setattr(venue.orders, "get_by_link_id", store_down)
+    seq = rig.facade.version(order.id)
+    await rig.facade.command(cr.ACCOUNT, order.id, "CANCEL", actor="user", expected_seq=seq)
+    for _ in range(64):  # the cancel is sent and waits on its read
+        await asyncio.sleep(0)
+    live = rig.facade._orders[order.id]
+    with capture_logs() as logs:
+        assert await rig.facade.kill("kill switch") == ()
+    [result] = [e for e in logs if e["event"] == "oms_kill_result"]
+    assert (result["cancels"], result["not_done"], result["in_flight"]) == ({}, 0, 1)
+    assert not [call for call in rig.pager.calls if call.startswith("kill:")]
+    gate.set()  # the in-flight cancel's read fails, and the re-sent KILL's with it
+    await rig.quiet()
+    page = f"kill: 1 cancels not done: {STORE_UNAVAILABLE} 1"
+    assert [call for call in rig.pager.calls if call.startswith("kill:")] == [page]
+    rig.facade._kill_result([live])  # an order's cancel is counted once, whichever result is first
+    assert [call for call in rig.pager.calls if call.startswith("kill:")] == [page]
+
+
+@pytest.mark.parametrize(
+    ("bound", "audited", "reason", "paged"),
+    [(True, ("kill_cancel_already_terminal", "warning"), "already_terminal", []),
+     (False, ("kill_cancel_refused", "error"), "not_held_unbound",
+      ["kill: 1 cancels not done: not_held_unbound 1"])],
+    ids=["bound", "unbound"],
+)  # fmt: skip
+async def test_a_kills_cancel_the_venue_does_not_hold_is_done_only_if_it_named_the_bound_id(
+    wired: tuple[Rig, cr.Rig], bound: bool, audited: tuple[str, str], reason: str, paged: Any
+) -> None:
+    """The S4-B1 re-check's Finding 2 (24 Sec.14.2 rule 11): a 110001 means the order is gone only
+    for a cancel that named the bound exchange order id: done, a ticket. One that named the
+    `order_link_id` alone, from an order whose create may still be on the wire, is not done: its
+    record says the venue refused it, never that the order ended, reconciliation is asked under its
+    own reason, a page, and the KILL's result pages it."""
+    rig, venue = wired
+    if not bound:
+        venue.demo.script("place_order", cr.outage())  # the create's outcome is open: no bound id
+    order = await _placed(rig, venue)
+    venue.demo.script("cancel_order", _GONE)
+    with capture_logs() as logs:
+        assert await rig.facade.kill("kill switch") == ()
+    await rig.quiet()
+    [result] = [e for e in logs if e["event"] == "oms_kill_result"]
+    assert result["cancels"] == {reason: 1}
+    kills = [(r.reason, r.severity, r.detail["refusal"]) for r in rig.audit.records
+             if r.reason.startswith("kill_cancel_")]  # fmt: skip
+    assert kills == [(*audited, "110001")] and venue.calls().count("cancel_order") == 1
+    asked = [
+        (n.order_id, dict(n.detail)) for n in rig.notices.got if n.kind == "request_reconciliation"
+    ]
+    assert asked == [(order.id, {"reason": reason})]
+    assert [call for call in rig.pager.calls if call.startswith("kill:")] == paged
+
+
+async def test_a_not_found_out_of_place_is_a_transport_fault_and_pages(
+    wired: tuple[Rig, cr.Rig],
+) -> None:
+    """The S4-B1 re-check's Finding 3: only the cancel's own `onError` reads a 110001 as an order
+    the venue does not hold. One out of `place` (a lookup) is a transport fault: `unknown`, the
+    `order_unknown` alert, which pages, and no request for reconciliation."""
+    rig, venue = wired
+    venue.demo.script("place_order", NotFoundError("no such order", exchange_ret_code=110001))
+    order = await _placed(rig, venue)
+    row = await venue.orders.get(cr.ACCOUNT, order.id)
+    assert row is not None and row.lifecycle_state == "unknown"
+    assert [(n.kind, dict(n.detail)) for n in rig.notices.got] == [
+        ("alert", {"alert": "order_unknown"})
+    ]
+
+
+async def test_a_kills_cancel_answered_with_no_mapping_is_audited_failed_and_the_kill_stands(
+    wired: tuple[Rig, cr.Rig], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The S4-B1 re-check's Finding 6: the port's answer is read inside the KILL's bound, so one
+    that is no mapping is a `kill_cancel_failed`, audited, never an error out of `killed`'s entry
+    that would roll the KILL back and un-kill the order."""
+    rig, venue = wired
+    order = await _placed(rig, venue)
+    monkeypatch.setattr(venue.port, "cancel", AsyncMock(return_value=None))
+    assert await rig.facade.kill("kill switch") == ()
+    await rig.quiet()
+    row = await venue.orders.get(cr.ACCOUNT, order.id)
+    assert row is not None and row.lifecycle_state == "killed"
+    kills = [r.reason for r in rig.audit.records if r.reason.startswith("kill_cancel_")]
+    assert kills == ["kill_cancel_failed"]
