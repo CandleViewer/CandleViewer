@@ -1,5 +1,5 @@
 """#492 S9: `RuntimeRecordingControl` over the real `RecordingPolicy` (in memory), its rows read
-back from the policy's store, a relax guard standing in for #2188 S3c's, and a fake feed. Status
+back from the policy's store (with #2188 S3c's relax guard), and a fake feed. Status
 entries carry the stored streams and depth, the live reasons, `start_refusal` first in
 `refusals`, `linger_until` from the policy's wall clock, and rolling-hour counts; a join is
 `held_hidden` and keeps the row's settings; an unpin or a lower retention the view does not cover
@@ -28,7 +28,6 @@ from candleviewer.recorder.control_runtime import HourWindows, RuntimeRecordingC
 from candleviewer.recorder.policy import PolicyConfig, RecordingPolicy, user_actor
 from candleviewer.recorder.status import Budget, RecordingStatusCache
 from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, Mem
-from tests.unit.recorder._s3c_policy import S3cPolicy
 
 NOW = datetime(2026, 10, 24, 12, 0, tzinfo=UTC)
 OWNER, USER = user_actor("00000000-0000-4000-8000-000000000001"), user_actor("u-2")
@@ -39,7 +38,12 @@ class _Rows:
     """The row port over the policy's in-memory store, as `SqlAlchemyRecordingReads` reads it."""
 
     def __init__(self, store: Mem) -> None:
-        self.store, self.states, self.writes = store, dict[str, str](), list[Any]()
+        self.store, self.states = store, dict[str, str]()
+
+    @property
+    def writes(self) -> list[str]:
+        """The policy's `retention_days` writes so far (its store's trace)."""
+        return [op for op in self.store.trace if op == "set_retention"]
 
     def _out(self, r: dict[str, Any]) -> dict[str, Any]:
         state = self.states.get(r["symbol"])
@@ -63,7 +67,7 @@ class _Rows:
 
 @dataclass(frozen=True)
 class _Wiring:  # #2188 S4b's `RecorderWiring`, field for field
-    policy: S3cPolicy
+    policy: RecordingPolicy
     rows: _Rows
     budget: Budget | None
     env: str
@@ -76,16 +80,9 @@ async def env(clock: FakeClock, bus: FakeBus, audit: FakeAudit, store: Mem) -> A
     policy = RecordingPolicy(bus=bus, audit=audit, env="demo", now=clock, recorded=store,
                              disk_refuses=lambda: disk[0], config=CONFIG)  # fmt: skip
     policy.positions_reloaded()
-    rows = _Rows(store)
-
-    async def days(row_id: str, value: int | None) -> bool:
-        rows.writes.append((row_id, value))
-        store.rows[row_id]["retention_days"] = value
-        return True
-
-    p = S3cPolicy(policy, days, default_days=30)
+    p, rows = policy, _Rows(store)
     control = RuntimeRecordingControl(
-        _Wiring(p, rows, None, "demo"), config=CONFIG, default_retention_days=30,
+        _Wiring(p, rows, None, "demo"), config=CONFIG,
         now=lambda: datetime.fromtimestamp(clock.t, UTC),
     )  # fmt: skip
     cache = RecordingStatusCache(lambda: control, None)
@@ -188,7 +185,8 @@ async def test_a_restricted_view_may_raise_retention_and_relax_a_row_it_fully_se
     lowered = await env.c.update(entry.id, rc.EntrySpec(retention_days=7), USER, restricted=True)
     assert lowered is not None and lowered.retention_days == 7
     kept = await env.c.pin(entry.id, False, USER, restricted=True)  # already unpinned: kept
-    assert kept is not None and kept.retention_days == 7 and env.rows.writes[-1] == (entry.id, 7)
+    assert kept is not None and kept.retention_days == 7
+    assert env.rows.store.rows[entry.id]["retention_days"] == 7 and len(env.rows.writes) == 2
     pinned = await env.c.pin(entry.id, True, OWNER, restricted=False, retention_days=9)
     assert pinned is not None and (pinned.pinned, pinned.retention_days) == (True, None)
 
@@ -242,10 +240,10 @@ def test_the_hour_windows_are_bounded() -> None:
 def test_the_composition_binds_the_runtime_only_when_the_wiring_exists(env: Any) -> None:
     state = State({"recording_control": "stored", "recording_writer": None,
                    "recording_runtime": None})  # fmt: skip
-    bind_recording_runtime(state, None, CONFIG, 30)
+    bind_recording_runtime(state, None, CONFIG)
     assert (state.recording_control, state.recording_writer, state.recording_runtime) == (
         "stored", None, None)  # fmt: skip
-    bind_recording_runtime(state, _Wiring(env.p, env.rows, None, "demo"), CONFIG, 30)
+    bind_recording_runtime(state, _Wiring(env.p, env.rows, None, "demo"), CONFIG)
     bound = state.recording_writer
     assert isinstance(bound, RuntimeRecordingControl)
     assert state.recording_control is bound is state.recording_runtime
