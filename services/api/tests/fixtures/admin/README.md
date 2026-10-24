@@ -191,6 +191,40 @@ async def test_verify_reports_the_victim(pg_dsn: str, tmp_path: Path) -> None:
   Postgres 16, and `tests/unit/test_admin_corrupt_chain_fixture.py` shows each guard on a fake
   connection.
 
+## The flag overrides (FLAG-OVERRIDE-ROWS)
+
+Into a migrated test database that holds slice A's world, from `services/api`:
+
+```python
+from tests.fixtures.admin.flag_overrides import check_flag_overrides, seed_flag_overrides
+
+async with engine.begin() as conn:
+    await seed_flag_overrides(conn)
+    await check_flag_overrides(conn)
+```
+
+- **What it writes**, into `feature_flags` and `feature_flag_overrides`, as a database writer would,
+  for AC-ADM-09 (AD-S05-N03):
+  - a role override (`owner`) and a user override (MGR-M), both `true`, on each safety flag,
+    `trading.live_enabled` and the kill switch `maintenance.mode`: neither takes an override, so each
+    resolves to its stored `false` for both;
+  - an unreadable row: `algo.twap` stored as the string `"on"`, which no boolean flag can hold, with
+    a role override (`owner`) of `true`. Readable, it would resolve `true` for an Owner; unreadable,
+    it fails closed to `false`, its override ignored. Slice A's flags are not touched, and no other
+    handle reads `algo.twap`.
+- **The world first:** it needs OWNER, MGR-M and the live gate's row (`world.py` checks them) and
+  never writes them. A missing one is a `FixtureCheckError` naming it, before any row is written.
+  `maintenance.mode` is not slice A's: the seed adds its row, `false` and a kill switch, if it has
+  none, and leaves a value already stored.
+- **Idempotent and self-checking:** the unreadable value is an `ON CONFLICT DO UPDATE` that writes
+  only a different value, the overrides `DO NOTHING`, so a second run changes no row.
+  `check_flag_overrides` builds each flag as the store holds it from the rows read back, and asserts
+  with the app's own `resolve` that each caller gets the closed value: each safety flag its stored
+  `false`, `algo.twap` its fail-closed `false`. It names a changed value, a lost override, or an
+  unreadable row made readable.
+- **Test databases only:** both refuse a database not named `test` or `*_test`, with
+  `FixtureRefused` and before a row is read.
+
 ## The degraded snapshot (SC-CHAIN-TRIPS)
 
 ```python
