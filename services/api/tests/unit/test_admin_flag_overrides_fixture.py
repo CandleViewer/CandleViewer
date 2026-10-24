@@ -9,12 +9,15 @@ import dataclasses
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import asyncpg
 
 from candleviewer.admin.flags.catalogue import FLAGS as CATALOGUE
 from candleviewer.admin.flags.registry import LIVE_ENABLED, MAINTENANCE_MODE, value_matches
 from candleviewer.admin.flags.resolver import StoredFlag, resolve
 from candleviewer.db import models as m
 from candleviewer.observability.redaction import redact_text
+from tests.fixtures.admin import flag_overrides
 from tests.fixtures.admin.flag_overrides import (
     OVERRIDES,
     REASON,
@@ -23,13 +26,15 @@ from tests.fixtures.admin.flag_overrides import (
     check_flag_overrides,
     seed_flag_overrides,
 )
-from tests.fixtures.admin.handles import FLAGS, USERS, fixture_id, user
+from tests.fixtures.admin.handles import FLAGS, USERS, account, fixture_id, user
 from tests.fixtures.admin.seed import FixtureCheckError, FixtureRefused
+from tests.fixtures.admin.world import require_world
 from tests.unit._admin_fake_db import FakeDb
 
 _SPECS = {spec.key: spec for spec in CATALOGUE}
 _OWNER, _MGR_M = user("OWNER"), user("MGR-M")
 _SAFETY = [LIVE_ENABLED, MAINTENANCE_MODE]  # the live gate and a kill switch: no override takes
+_PG = asyncpg.dialect()  # type: ignore[no-untyped-call]  # SQLAlchemy leaves the dialect untyped
 
 
 def _world() -> FakeDb:
@@ -55,10 +60,26 @@ async def test_the_check_passes_the_rows_the_seed_made(seeded: FakeDb) -> None:
     await check_flag_overrides(seeded.conn)
 
 
-async def test_the_seed_leaves_the_live_gates_row_as_it_found_it(seeded: FakeDb) -> None:
+async def test_the_seed_stores_each_flag_it_concerns_as_documented(seeded: FakeDb) -> None:
     stored = {r["key"]: r["default_value"] for r in seeded.tables["feature_flags"]}
     assert stored == {LIVE_ENABLED: False, MAINTENANCE_MODE: False, UNREADABLE: UNREADABLE_VALUE}
-    assert seeded.row("feature_flags", key=LIVE_ENABLED).keys() == {"id", "key", "default_value"}
+
+
+async def test_the_seed_sends_no_update_and_no_delete(seeded: FakeDb) -> None:
+    assert [s for s in seeded.shapes if s.lstrip().upper().startswith(("UPDATE", "DELETE"))] == []
+
+
+async def test_only_the_unreadable_flags_row_is_written_over_on_a_conflict(seeded: FakeDb) -> None:
+    """A safety flag's stored value is not the seed's to set: its insert does nothing on a
+    conflict, and only the unreadable row's writes its value over a stored one."""
+    upserts = [
+        stmt.compile().params["key"]
+        for stmt in seeded.statements
+        if isinstance(stmt, sa.Insert)
+        and stmt.table is m.feature_flags
+        and "DO UPDATE" in str(stmt.compile(dialect=_PG))
+    ]
+    assert upserts == [UNREADABLE]
 
 
 async def test_the_seed_makes_maintenance_mode_the_kill_switch_row_the_app_makes(
@@ -74,7 +95,14 @@ async def _refuses(db: FakeDb, named: str) -> None:
 
 
 @pytest.mark.parametrize("key", _SAFETY)
-@pytest.mark.parametrize("named", ["{} for MGR-M resolves True, not False", "{}: is stored True"])
+@pytest.mark.parametrize(
+    "named",
+    [
+        "{} for MGR-M resolves True, not False",
+        "{} for OWNER resolves True, not False",
+        "{}: is stored True",
+    ],
+)
 async def test_the_check_names_a_safety_flag_stored_true(
     seeded: FakeDb, key: str, named: str
 ) -> None:
@@ -83,14 +111,45 @@ async def test_the_check_names_a_safety_flag_stored_true(
 
 
 @pytest.mark.parametrize("key", _SAFETY)
-async def test_the_check_names_a_lost_override_of_a_safety_flag(seeded: FakeDb, key: str) -> None:
-    seeded.tables["feature_flag_overrides"].remove(_override(seeded, key, user_id=_MGR_M.id))
+async def test_the_check_names_a_safety_flag_stored_as_no_boolean(seeded: FakeDb, key: str) -> None:
+    seeded.row("feature_flags", key=key)["default_value"] = "off"  # resolves closed, all the same
+    await _refuses(seeded, f"{key}: is stored 'off', not False")
+
+
+async def test_each_safety_verdict_is_the_apps_resolve(
+    seeded: FakeDb, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(flag_overrides, "resolve", lambda *_args, **_kwargs: True)
+    with pytest.raises(FixtureCheckError) as raised:
+        await check_flag_overrides(seeded.conn)
+    named = [f"{k} for {who} resolves True" for k in _SAFETY for who in ("MGR-M", "OWNER")]
+    assert [n for n in named if n not in str(raised.value)] == []
+
+
+@pytest.mark.parametrize("key", _SAFETY)
+@pytest.mark.parametrize("lost", ["user", "role"])
+async def test_the_check_names_a_lost_override_of_a_safety_flag(
+    seeded: FakeDb, key: str, lost: str
+) -> None:
+    target = (
+        {"user_id": _MGR_M.id}
+        if lost == "user"
+        else {"role_id": seeded.row("roles", name="owner")["id"]}
+    )
+    seeded.tables["feature_flag_overrides"].remove(_override(seeded, key, **target))
     await _refuses(seeded, f"{key}: its override rows are not owner and MGR-M")
 
 
 async def test_the_check_names_an_override_turned_off(seeded: FakeDb) -> None:
     role = seeded.row("roles", name="owner")["id"]
     _override(seeded, UNREADABLE, role_id=role)["value"] = False
+    await _refuses(seeded, f"{UNREADABLE}: its override rows are not owner alone, true")
+
+
+async def test_the_check_names_a_user_override_on_the_unreadable_flag(seeded: FakeDb) -> None:
+    flag = seeded.row("feature_flags", key=UNREADABLE)["id"]
+    stray = {"feature_flag_id": flag, "user_id": _MGR_M.id, "value": True}
+    seeded.tables["feature_flag_overrides"].append(stray)
     await _refuses(seeded, f"{UNREADABLE}: its override rows are not owner alone, true")
 
 
@@ -126,6 +185,13 @@ async def test_a_world_without_its_rows_is_named_and_nothing_is_written() -> Non
     with pytest.raises(FixtureCheckError, match=r"lacks OWNER, MGR-M, trading\.live_enabled"):
         await seed_flag_overrides(db.conn)
     assert [s for s in db.shapes if s.startswith("INSERT")] == []
+
+
+async def test_the_world_names_a_missing_account() -> None:
+    held = FakeDb(exchange_accounts=[{"id": account("SUB-S").id}])
+    await require_world(held.conn, accounts=("SUB-S",))
+    with pytest.raises(FixtureCheckError, match=r"lacks SUB-T: run seed_admin_world first"):
+        await require_world(held.conn, accounts=("SUB-S", "SUB-T"))
 
 
 def test_the_unreadable_flag_is_a_catalogued_boolean_that_takes_overrides() -> None:
