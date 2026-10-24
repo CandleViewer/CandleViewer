@@ -254,3 +254,31 @@ async def test_budget_metrics_count_loop_work_holds_and_waiters() -> None:
 
 def test_budget_lane_keeps_its_key() -> None:
     assert _budget(FakeTime()).lane("session-1").key == "session-1"
+
+
+async def test_budget_breathe_yields_even_when_wake_is_already_set_in_debt() -> None:
+    """A set wake skips the hold, never the yield: every `breathe` lets the loop run once."""
+    time = FakeTime(auto=False)
+    budget = _budget(time)
+    _indebt(time, budget)
+    lane, wake, ticks = budget.lane("woken"), asyncio.Event(), 0
+    wake.set()
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    task = asyncio.create_task(ticker())
+    await asyncio.sleep(0)
+    try:
+        before = ticks
+        for _ in range(100):
+            _work(time, lane, SLICE)
+            assert await lane.breathe(wake) == 0.0
+        assert ticks - before >= 100
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
