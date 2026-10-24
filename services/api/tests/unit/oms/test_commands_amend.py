@@ -20,11 +20,14 @@ from candleviewer.exchange.base.errors import OmsErrorCode, RateBudgetExceededEr
 from candleviewer.exchange.base.fakes import FakeReject
 from candleviewer.exchange.base.models import AmendOrderRequest, OrderAck
 from candleviewer.oms import commands as oc
+from candleviewer.oms.errors import StoreUnavailable
 from candleviewer.oms.order_machine import OrderAuditRecord
 from candleviewer.oms.ports import KeyedRecord
 from candleviewer.oms_wiring import STOP_REQUEST_BOUND_S
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT
+from candleviewer.storage.errors import StorageError
+from candleviewer.storage.repositories.orders import OrderStoreError
 from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.command_rig import T0, T0_US, Rig
@@ -332,7 +335,8 @@ async def test_one_deadline_ends_all_of_an_amend(
     hung: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Fold m3: `AMEND_TIMEOUT_S` bounds the whole amend inside B1's `CV_COMMAND_TIMEOUT`, as
-    `CANCEL_TIMEOUT_S` bounds a cancel: a call it ends raises (`unknown`, never re-sent)."""
+    `CANCEL_TIMEOUT_S` bounds a cancel. A read it ends before the send is `STORE_UNAVAILABLE`
+    (the 10:18Z ruling); the venue call it ends raises (`unknown`, never re-sent)."""
     rig = cr.build_rig(amend_timeout_s=0.05, port_timeout_s=60.0, submit_timeout_s=60.0)
     order = await _live(rig)
     target = {"stored_row": (rig.orders, "get"), "account": (rig.accounts, "trading_account")}
@@ -344,12 +348,16 @@ async def test_one_deadline_ends_all_of_an_amend(
         task.cancel()
         await asyncio.wait([task])
         pytest.fail("the amend outlasted its deadline")
+    if hung != "venue":
+        assert task.result() == _UNAVAILABLE
+        return
     with pytest.raises(TimeoutError):
         task.result()
 
 
 def test_the_amend_bound_is_inside_b1s_and_only_ever_tightened() -> None:
-    assert oc.AMEND_TIMEOUT_S < CV_COMMAND_TIMEOUT
+    """The refusal's audit has its grace past the amend's bound, still inside B1's."""
+    assert oc.AMEND_TIMEOUT_S + oc.AMEND_AUDIT_GRACE_S < CV_COMMAND_TIMEOUT
     with pytest.raises(ValueError, match="tightened"):
         cr.build_rig(amend_timeout_s=oc.AMEND_TIMEOUT_S + 1)
 
@@ -362,3 +370,53 @@ def test_the_send_belt_refuses_a_side_at_or_below_zero_critically(side: str) -> 
     with capture_logs() as logs, pytest.raises(ValueError, match="not a price above zero"):
         oc._check_amend_stops(request)
     assert [log["log_level"] for log in logs] == ["critical"]
+
+
+_UNAVAILABLE: dict[str, Any] = {"ok": False, "error_code": "STORE_UNAVAILABLE", "retry_after_s": 5}
+
+
+async def _raises(exc: BaseException) -> Any:
+    raise exc
+
+
+@pytest.mark.parametrize(
+    ("read", "exc"),
+    [("stored_row", StorageError("down")), ("account", StoreUnavailable()),
+     ("gate", StoreUnavailable()), ("live_for_key", OrderStoreError("down")),
+     ("gate", TimeoutError())],
+)  # fmt: skip
+async def test_a_read_that_fails_before_the_send_answers_store_unavailable(
+    rig: Rig, read: str, exc: BaseException, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 10:18Z ruling: nothing sent, the order unchanged and live, audited ahead."""
+    order = await _live(rig)
+    before = await rig.orders.get(order.exchange_account_id, order.id)
+    target = {"stored_row": (rig.orders, "get"), "account": (rig.accounts, "trading_account")}
+    target |= {"gate": (rig.port._gate, "clear"), "live_for_key": (rig.stops, "live_for_key")}
+    monkeypatch.setattr(*target[read], lambda *_a, **_k: _raises(exc))
+    assert await rig.port.amend(_amend(order, stop_loss="58500")) == _UNAVAILABLE
+    assert rig.demo.calls == [] and _rows(rig) == []
+    assert rig.audits.actions() == [("orders.amend", "store_unavailable")]
+    assert await rig.orders.get(order.exchange_account_id, order.id) == before
+
+
+async def test_a_store_unavailable_refusal_whose_audit_fails_raises(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-2.9: never answered unrecorded."""
+    order = await _live(rig)
+    monkeypatch.setattr(rig.port._gate, "clear", lambda *_a: _raises(StoreUnavailable()))
+    rig.audits.refuse = RuntimeError("the audit did not land")
+    with pytest.raises(RuntimeError):
+        await rig.port.amend(_amend(order, stop_loss="58500"))
+    assert rig.demo.calls == []
+
+
+async def test_a_cancellation_before_the_send_propagates(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    order = await _live(rig)
+    monkeypatch.setattr(rig.port._gate, "clear", lambda *_a: _raises(asyncio.CancelledError()))
+    with pytest.raises(asyncio.CancelledError):
+        await rig.port.amend(_amend(order, stop_loss="58500"))
+    assert rig.demo.calls == [] and rig.audits.written == []
