@@ -15,7 +15,6 @@ figure passed through for the guard (#2877 ruling 2), and the request's records 
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import hmac
 import inspect
@@ -49,9 +48,7 @@ from candleviewer.oms.errors import (
     OrderInvalid,
     ProtectionReadingsUnavailable,
     ReconciliationUnavailable,
-    StopRequestPending,
     StopUnitUnsupported,
-    StoreUnavailable,
 )
 from candleviewer.oms.fakes import (
     FakeClockHealth,
@@ -66,7 +63,6 @@ from candleviewer.oms.ports import (
     INTERIM_PORTS_METRIC,
     PASSED,
     PORT_NAMES,
-    STOP_REQUEST_RETRY_AFTER_S,
     AccountNoticeReason,
     AccountNotices,
     ArmToken,
@@ -93,7 +89,6 @@ from candleviewer.oms.ports import (
     ProtectionReadings,
     RateReading,
     ReconciliationRequests,
-    RefuseWhileWaiting,
     ResyncReason,
     SizedOrder,
     SizingRequest,
@@ -111,7 +106,6 @@ from candleviewer.risk.models import RiskDecision, RiskRefusal
 from candleviewer.settings import Environment as ProcessEnvironment
 from candleviewer.statechart.bindings import b01_order
 from candleviewer.storage.errors import StorageTierUnavailable
-from candleviewer.storage.repositories.orders import OrderStoreError
 
 ACCOUNT = AccountId(UUID("7d3c9a10-28a1-4c1e-9e01-0000000000a2"))
 SESSION = UUID("5e551011-0000-4000-8000-000000000001")
@@ -667,62 +661,7 @@ def test_a_rate_reading_admits_with_no_delay_and_refuses_with_one() -> None:
 # --- the command port's collaborators (`commands.OmsCommandPort`) --------------------------------
 
 
-class _Rows:
-    """`WaitingRows`: answers `rows`, raises `error`, or never answers when `hang`; keeps asks."""
-
-    def __init__(self, rows: tuple[Any, ...] = (), *, error: BaseException | None = None) -> None:
-        self.rows, self.error, self.hang = rows, error, False
-        self.asked: list[tuple[Any, ...]] = []
-
-    async def waiting_for_key(
-        self,
-        account_id: UUID,
-        symbol: str,
-        position_idx: int,
-        *,
-        now: datetime,
-        bound_s: float | None,
-    ) -> tuple[Any, ...]:
-        self.asked.append((account_id, symbol, position_idx, now, bound_s))
-        if self.hang:
-            await asyncio.Event().wait()
-        if self.error is not None:
-            raise self.error
-        return self.rows
-
-
 _KEY = PositionKey(AccountId(UUID(int=7)), "BTCUSDT", 0)
-_NOW = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
-
-
-_BOUND_S = 10.0  # the stop request's bound the runtime passes (`OmsBounds.stop_request_s`)
-
-
-async def test_the_interim_gate_clears_a_key_no_row_waits_on() -> None:
-    rows = _Rows()
-    await RefuseWhileWaiting(rows, now=lambda: _NOW, bound_s=_BOUND_S).clear(_KEY)
-    assert rows.asked == [(UUID(int=7), "BTCUSDT", 0, _NOW, _BOUND_S)]
-
-
-async def test_the_interim_gate_refuses_while_a_row_of_the_key_waits() -> None:
-    """Q-A and Q-D: 409 `stop_request_in_flight` at once, with `Retry-After: 5`."""
-    gate = RefuseWhileWaiting(_Rows(("a waiting row",)), now=lambda: _NOW, bound_s=_BOUND_S)
-    with capture_logs() as logs, pytest.raises(StopRequestPending) as refused:
-        await gate.clear(_KEY)
-    assert refused.value.retry_after_s == STOP_REQUEST_RETRY_AFTER_S == 5
-    assert [(log["event"], log["rows"]) for log in logs] == [("oms_stop_request_waiting", 1)]
-
-
-@pytest.mark.parametrize(
-    "error", [StorageTierUnavailable("down"), OrderStoreError("refused"), None], ids=str
-)
-async def test_the_interim_gate_refuses_when_it_cannot_read(error: BaseException | None) -> None:
-    """Fail closed: no stop request leaves unchecked (`StoreUnavailable`, 503)."""
-    rows = _Rows(error=error)
-    rows.hang = error is None
-    gate = RefuseWhileWaiting(rows, now=lambda: _NOW, bound_s=_BOUND_S, timeout_s=0.01)
-    with pytest.raises(StoreUnavailable):
-        await gate.clear(_KEY)
 
 
 async def test_no_handover_store_hands_nothing_over() -> None:

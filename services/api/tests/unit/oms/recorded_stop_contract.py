@@ -1,20 +1,29 @@
 """What slice 3's complete read writes to the recorded stops (E29-T04 #913, S3-H; 21 Sec.3.3.11),
 through `RecordedStopRepository`, on the fakes (`test_submission_fake.py`) and on Postgres
-(`test_recorded_stop_resolution_pg.py`): `h` is the submission contract's harness."""
+(`test_recorded_stop_resolution_pg.py`): `h` is the submission contract's harness. H3's gate end to
+end there too (`StopGateContract`): a row waiting through its entry put in force, and a void
+audited ahead of its commit."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Final, Literal
 from uuid import UUID, uuid4
 
 import pytest
 
+from candleviewer.domain.primitives import AccountId
+from candleviewer.exchange.base.fakes import FakeTradingPort
+from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.errors import AuditNotDurable
-from candleviewer.oms.repository import RecordedStopRepository
+from candleviewer.oms.fakes import InMemoryTradingAccounts
+from candleviewer.oms.ports import KeyedRecord, PositionKey, SubmitAudit
+from candleviewer.oms.repository import OrderRepository, RecordedStopRepository
+from candleviewer.oms.stop_gate import ResolvingStopGate, StopVoidAudit
+from candleviewer.oms.stop_resolution import CompleteRead, StopResolver
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.recorded_stops import (
     FillPosition,
@@ -22,6 +31,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     ResolveWriteAhead,
     StaleRecordedStop,
 )
+from tests.unit.oms import command_rig as cr
 from tests.unit.oms import submission_contract as sc
 from tests.unit.oms.submission_contract import T0, Harness
 
@@ -200,6 +210,10 @@ class RecordedStopContract:
                 await repo(h).resolve(account, other, "answered", at=AT)
         assert await now_of(h, rows) == before
 
+    async def test_the_database_clock_reads_an_aware_time(self, h: Harness) -> None:
+        """The startup floor's start (S3-H's Q7), through the facade."""
+        assert (await repo(h).database_now()).tzinfo is not None
+
     async def test_the_waiting_keys_are_the_keys_waiting_for_key_lists(self, h: Harness) -> None:
         """Oldest row's key first; never a row inside its bound, an answered one, or another
         account's."""
@@ -239,3 +253,60 @@ class RecordedStopContract:
         statuses = [{ABSENT: "void"}.get(end, end) for end in ends]
         assert [r.status for r in await now_of(h, held)] == statuses
         assert await repo(h).waiting_keys(account, now=sc.LATE, bound_s=5.0) == ()
+
+
+def gate(
+    h: Harness, account: UUID, audit: SubmitAudit, venue: FakeTradingPort, now: datetime
+) -> ResolvingStopGate:
+    """H3's gate over the harness's stores and `venue` at `now`, its startup floor an hour back."""
+    ref = cr.ref(AccountId(account))  # a demo account, with the demo key's id
+    resolver = StopResolver(
+        repo(h), CompleteRead(OrderRepository(h.orders)), StopVoidAudit(audit), now=lambda: now
+    )
+    return ResolvingStopGate(
+        repo(h), resolver, accounts=InMemoryTradingAccounts(ref), port_for=lambda _env: venue,
+        bound_s=sc.BOUND_S, now=lambda: now, monotonic=lambda: 0.0, metrics=Metrics("demo"),
+        started_at=now - timedelta(hours=1),
+    )  # fmt: skip
+
+
+class Audit:
+    """`SubmitAudit` noting each record with the rows' statuses another reader sees meanwhile."""
+
+    def __init__(self, h: Harness, rows: tuple[RecordedStopRow, ...]) -> None:
+        self.h, self.rows, self.seen = h, rows, list[tuple[str, list[str]]]()
+
+    def record_id(self, action: str, name: str) -> UUID:
+        raise AssertionError("a void's record is named by its hook")
+
+    async def write(self, record: Any) -> None:
+        assert isinstance(record, KeyedRecord)
+        self.seen.append((record.reason, [r.status for r in await now_of(self.h, self.rows)]))
+
+
+class StopGateContract:
+    async def test_a_row_waiting_through_its_entry_is_put_in_force_by_the_gate(
+        self, h: Harness
+    ) -> None:
+        """Its entry held, its stop and take-profit on the open position: the attach's wait
+        returns once the read put both sides in force."""
+        account, profile = h.new_account()
+        rows = await request(h, account, profile, moves=HELD)
+        venue = FakeTradingPort(environment="demo", now_us=lambda: cr.T0_US)
+        venue.seed_position(cr.position(AccountId(account), stop_loss=sc.SL, take_profit=sc.TP))
+        now = rows[0].created_at + timedelta(seconds=1)
+        key = PositionKey(AccountId(account), "BTCUSDT", 0)
+        await gate(h, account, Audit(h, rows), venue, now).clear(key, wait_s=5.0)
+        assert [r.status for r in await now_of(h, rows)] == ["in_force", "in_force"]
+
+    async def test_a_void_is_audited_before_its_commit(self, h: Harness) -> None:
+        """In flight past its bound, nothing shown: each side's `in_flight_resolved` record lands
+        while every reader still sees the rows pending."""
+        account, profile = h.new_account()
+        rows = await request(h, account, profile, answered=False)
+        venue, audit = FakeTradingPort(environment="demo", now_us=lambda: cr.T0_US), Audit(h, rows)
+        now = rows[0].created_at + timedelta(seconds=sc.BOUND_S + 1)  # past the bound, in the span
+        key = PositionKey(AccountId(account), "BTCUSDT", 0)
+        await gate(h, account, audit, venue, now).clear(key, wait_s=5.0)
+        assert audit.seen == [("in_flight_resolved", ["pending", "pending"])] * 2
+        assert [r.status for r in await now_of(h, rows)] == ["void", "void"]
