@@ -20,13 +20,15 @@ from structlog.testing import capture_logs
 from candleviewer.exchange.base.errors import ServiceUnavailableError
 from candleviewer.exchange.base.fakes import FakeTradingPort
 from candleviewer.exchange.base.models import AccountRef, Order, Position
-from candleviewer.oms import commands, stop_resolution
+from candleviewer.oms import commands, fakes, stop_resolution
+from candleviewer.oms.errors import AuditNotDurable
 from candleviewer.oms.fakes import InMemoryOrderStore, InMemoryRecordedStopStore
 from candleviewer.oms.repository import RecordedStopRepository
 from candleviewer.oms.stop_resolution import (
     ENTRY_HELD,
     SPAN_HELD,
     TRAIL_HELD,
+    UNSEEN_PAGE,
     CompleteRead,
     PositionState,
     StopResolver,
@@ -62,6 +64,7 @@ from tests.unit.oms.test_stop_decision import (
 NOW = T0 + timedelta(seconds=30)
 NOW_US = T0_US + 30 * SECOND_US
 DAY_US = 86_400 * SECOND_US
+ADAPTER_WINDOWS = 106  # `exchange.bybit.trading._MAX_WINDOWS`
 UID = "100001"
 
 
@@ -164,6 +167,8 @@ class Capped(FakeTradingPort):
             start = end - 7 * DAY_US
         elif end is None:
             end = start + 7 * DAY_US
+        elif end - start > ADAPTER_WINDOWS * 7 * DAY_US:  # `trading._windows` refuses it too
+            raise ValueError("the window is longer than the exchange keeps")
         return list(
             await super().order_history(account, order_link_id=order_link_id,
                                         exchange_order_id=exchange_order_id, start=start, end=end)
@@ -459,17 +464,94 @@ async def test_an_entry_is_looked_up_by_its_bound_id_from_5_s_before_it_was_stor
 
 @pytest.mark.parametrize(("pos", "outcome"), [(flat(), "held"), (position(), "voided")])
 async def test_an_entry_not_found_past_the_span_is_unseen(pos: Position, outcome: str) -> None:
-    """Its miss proves nothing: held unless the position shows no stop at all; inside the span
-    the same miss is `gone` (`test_an_entry_not_stored_or_not_found_is_gone`)."""
+    """Its miss proves nothing: held where a miss is (flat past the span); voided on a position
+    with no stop at all, paged (the 06:38Z ruling) with the void audited with its state; logged
+    once as unseen, by its `order_link_id` alone (Fable Minor)."""
     rig = build(now=NOW + timedelta(days=2))
     row = await rig.entry()
-    rig.store.rows = list(request_rows(source="entry_attach", order_id=row.id))
+    sl, tp = rig.store.rows = list(request_rows(source="entry_attach", order_id=row.id))
     rig.port.seed_position(pos)
-    (decision,) = await rig.resolve()
+    with capture_logs() as logs:
+        (decision,) = await rig.resolve()
+    unseen = [e for e in logs if e["event"] == "oms_stop_read_entry_unseen"]
+    assert unseen == [
+        {"event": "oms_stop_read_entry_unseen", "log_level": "warning",
+         "order_link_id": row.order_link_id}
+    ]  # fmt: skip
     if outcome == "held":
         assert decision.held == SPAN_HELD and rig.store.calls == []
     else:
+        assert decision.outcome == "in_flight_resolved" and decision.pages == (sl.id,)
+        assert decision.page == UNSEEN_PAGE
+        assert rig.store.calls == [("resolve", (sl.id, tp.id), "in_flight_resolved", "open")]
+        assert rig.audit.hooks == [("in_flight_resolved", "open", (sl.id, tp.id))]
+
+
+@pytest.mark.parametrize("environment", ["live", "demo"])
+async def test_an_unseen_entry_on_a_position_open_with_a_foreign_stop_decides_as_gone(
+    environment: Literal["live", "demo"],
+) -> None:
+    """Fold 2, Opus Major: 2 d on, past the live span and inside a demo retention, a position
+    open on the row's side with a stop that is not the row's decides; no page, no state."""
+    port = FakeTradingPort(environment=environment, now_us=lambda: NOW_US + 2 * DAY_US)
+    rig = build(port=port, now=NOW + timedelta(days=2))
+    row = await rig.entry()
+    sl, tp = rig.store.rows = list(request_rows(source="entry_attach", order_id=row.id))
+    rig.port.seed_position(position(stop_loss=Decimal("59000")))
+    (decision,) = await rig.resolve(ref(environment=environment))
+    assert decision.outcome == "in_flight_resolved" and decision.pages == ()
+    assert rig.store.calls == [("resolve", (sl.id, tp.id), "in_flight_resolved", None)]
+
+
+@pytest.mark.parametrize(("pos", "outcome"), [(flat(), "held"), (position(), "voided")])
+async def test_a_request_years_old_reads_a_bounded_history_and_still_decides(
+    pos: Position, outcome: str
+) -> None:
+    """Fold 2, Fable Major: the history read starts no earlier than MAX_HISTORY_WINDOWS weeks
+    back, so the adapter's walk stays inside its cap and the read's bound: a flat key 3 years on
+    is held (`SPAN_HELD`), never a read that fails each time; open with no stop, it decides."""
+    later = NOW + timedelta(days=3 * 365)
+    now_us = NOW_US + 3 * 365 * DAY_US
+    rig = build(port=Capped(environment="live", now_us=lambda: now_us), now=later)
+    rig.store.rows = list(request_rows())
+    rig.port.seed_position(pos)
+    (decision,) = await rig.resolve(ref(environment="live"))
+    if outcome == "held":
+        assert decision.held == SPAN_HELD
+    else:
         assert decision.outcome == "in_flight_resolved"
+    weeks = stop_resolution.MAX_HISTORY_WINDOWS
+    assert 4 <= weeks <= 5
+    asked = [c.request for c in rig.port.calls if c.method == "order_history"]
+    assert asked == [(None, None, now_us - weeks * 7 * DAY_US, now_us)]
+
+
+def test_the_store_bound_outlasts_the_stop_audit_bound_so_its_error_is_the_audits() -> None:
+    """Opus Minor: the store-call bound is the stop audit's bound plus a margin, so a late audit
+    reaches H3 as `AuditNotDurable`, never as this bound's `TimeoutError`."""
+    margin = stop_resolution.STORE_TIMEOUT_S - fakes.STOP_AUDIT_TIMEOUT_S
+    assert margin >= 1.0
+    default = inspect.signature(StopResolver).parameters["store_timeout_s"].default
+    assert default == stop_resolution.STORE_TIMEOUT_S
+
+
+async def test_a_late_void_audit_reaches_the_caller_as_audit_not_durable() -> None:
+    db = InMemoryOrderStore(clock=lambda: T0)
+    stops = RecordedStopRepository(InMemoryRecordedStopStore(db, audit_timeout_s=0.01))
+
+    class Hangs(Audit):
+        def hook(self, reason: VoidReason) -> VoidWriteAhead:
+            async def write(rows: Any, state: PositionState | None) -> None:
+                await asyncio.Event().wait()
+
+            return write
+
+    resolver = StopResolver(stops, CompleteRead(db), Hangs(), now=lambda: NOW)
+    port = FakeTradingPort(now_us=lambda: NOW_US)
+    await stops.record([sc.trading_stop(ACCOUNT, trigger_price=STOP)], write_ahead=sc.audited)
+    port.seed_position(position())
+    with pytest.raises(AuditNotDurable):
+        await resolver.resolve_key(port, ref(), KEY, bound_s=10.0)
 
 
 async def test_an_entry_partly_filled_and_still_resting_is_the_fill_case() -> None:
