@@ -1034,26 +1034,37 @@ carries a warning annotation titled `regression-guard (non-required)`, and the j
   `signature-verification-failed`. Never re-run with `--no-...` to bypass
   this — investigate why `main.yml`'s own sign step produced (or the
   registry served) an unverifiable digest.
-- **CI-DEP-002** (smoke test failed / timed out): `/healthz` or `/readyz`
-  never returned `status: "ok"` within the timeout, or the running `api`
-  container's `CV_GIT_SHA` could not be read (no running `api` container,
-  more than one, or `docker compose ps` / `docker inspect` failed, timed
-  out or printed anything but that one entry; the message says which and
-  never repeats what docker printed). On dev this triggers
+- **CI-DEP-002** (smoke test failed / timed out): `docker compose up` failed
+  (with `--no-build`, for example when the verified image can neither be
+  pulled nor found on the host), `/healthz` or `/readyz` never returned
+  `status: "ok"` within the timeout, or the running `api` container's image
+  id or the verified image's id could not be read (no running `api`
+  container, more than one, or `docker compose ps -q api`,
+  `docker inspect --type container` or `docker image inspect` failed, timed
+  out or printed anything but one id). The message says which query; it
+  never repeats what docker printed on stdout, and a failed query's message
+  carries at most 300 characters of its stderr. Each query is bounded at
+  20 s, so a docker daemon that hangs can use up the smoke window. On dev this triggers
   automatic redeploy of the last known-good digest (`rolled-back` ledger
   entry); on staging it stops and alerts — roll back manually (§8). Check
   the container logs for a stuck boot-time migration (advisory lock,
   E03-T10) first; a long CI-DEP-002 wait is often a CI-DEP-004 in disguise.
-- **CI-DEP-003** (sha mismatch after deploy): the container came up healthy
-  but the running `api` container's `CV_GIT_SHA` is not the sha we just
-  deployed, so it was not recreated from this deploy's `.env` ("deploy
-  succeeded, old container still running"); the error names both values.
-  See the container with `docker compose ... ps api` (the `-f` files and
-  `--profile core` the deploy used), recreate it with
-  `docker compose ... up -d --force-recreate api` and re-run the deploy.
-  To read the value by hand use the `docker inspect` template in
-  `tools/ci/deploy_dev.py` (`_INSPECT_SHA_TEMPLATE`), which prints only that
-  variable: the container's whole environment holds the stack's credentials.
+- **CI-DEP-003** (image mismatch after deploy): the probes are ok, but the
+  running `api` container's image id is not the image id of the verified
+  `<ref>@<digest>`; the error names both ids. The smoke test compares
+  `docker inspect --type container --format '{{.Image}}' <container>` (the
+  one container `docker compose ... ps -q api` lists) with
+  `docker image inspect --format '{{.Id}}' <ref>@<digest>`. Both are the
+  docker daemon's image ids (the image config digest on the classic image
+  store, the manifest or index digest on the containerd image store), so
+  compare them with each other, never with the registry digest. Look from
+  the repo root with
+  `docker compose -f infra/compose/docker-compose.yml -f infra/compose/docker-compose.deploy.yml --profile core ps api`
+  (the deploy's `infra/compose/.env` supplies the image variables). Dev
+  rolls back automatically (§8). If the mismatch persists, find what else
+  pins the `api` image: `docker compose ... config --images` prints only
+  the image names (plain `config` prints the environment, credentials
+  included).
 - **CI-DEP-004** (migration lock timeout): the boot-time Alembic advisory
   lock (E03-T10) did not release within its own timeout, so the container
   never reaches `/readyz`. Surfaces here as a CI-DEP-002 smoke timeout;
@@ -1139,22 +1150,28 @@ section in the same sprint — do not just work around it and move on.
   `release/*`, SR-141). Both call `tools/ci/deploy_dev.py`, which
   `cosign verify`s the digest immediately before applying it, renders
   `infra/compose/.env` from `infra/compose/.env.example`, runs
-  `docker compose ... up -d --wait`, smoke-tests `/healthz` + `/readyz` and
-  asserts the running `api` container's `CV_GIT_SHA` matches, then appends
-  a record to
+  `docker compose ... up -d --wait --no-build` with the deploy overlay
+  `infra/compose/docker-compose.deploy.yml` (the `api` service runs the
+  verified `<ref>@<digest>`), smoke-tests `/healthz` + `/readyz` and checks
+  that the running `api` container's image id is the verified image's
+  (CI-DEP-003 otherwise), then appends a record to
   `deployments/ledger.jsonl` (sha, digest, environment, actor, timestamp,
   outcome, duration) — committed by the workflow for auditability until
   E04's observability lands.
 - **Dev** auto-rolls-back on a failed smoke test: the previous `success`
-  ledger entry's digest is looked up and redeployed automatically. Both
-  outcomes (`smoke-failed` then `rolled-back`) land in the ledger.
+  ledger entry's digest is looked up, verified and deployed automatically
+  through the same overlay, and the smoke test checks that the running
+  `api` container's image id is that digest's. Both outcomes
+  (`smoke-failed` or `sha-mismatch`, then `rolled-back`) land in the ledger.
 - **Staging never auto-rolls-back** (a half-rolled-back staging environment
   mid-soak is harder to reason about than a stopped one) — a failed smoke
   test stops the job; roll back manually by dispatching
   `deploy-staging.yml` with `rollback_to_digest` set to the previous
   digest (find it via `grep '"environment":"staging"' deployments/ledger.jsonl | tail -5`
   or the digest recorded in `main.yml`'s `image-supply-chain-evidence`
-  artifact / SBOM-diff job summary).
+  artifact / SBOM-diff job summary). That rollback is a deploy of the
+  previous digest: it runs through the same overlay, and the smoke test
+  checks its image id.
 - Rollback never runs a down-migration (ADR-0013 rule 9): migrations are
   additive expand/contract, so redeploying an older image against the
   current schema is always safe; the deploy script does not invoke

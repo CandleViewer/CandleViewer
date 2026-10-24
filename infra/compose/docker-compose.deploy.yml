@@ -1,0 +1,13 @@
+# infra/compose/docker-compose.deploy.yml — the dev and staging deploys' overlay (E03-T09, #4249).
+#
+# tools/ci/deploy_dev.py applies this file last, over the base file only, and runs compose with
+# `--no-build`: the api service runs the image the deploy has just verified with cosign, by
+# digest. deploy_dev.py supplies both variables, in compose's environment and in .env, and compose
+# refuses to start while either is unset or empty. Not for local development: use
+# docker-compose.dev.yml. infra/scripts/lint_compose.py checks this file: only the api service,
+# its image pinned by these two variables, a pull policy and a read-only root filesystem.
+services:
+  api:
+    image: "${CV_API_IMAGE_REF:?set by tools/ci/deploy_dev.py}@${CV_IMAGE_DIGEST:?set by tools/ci/deploy_dev.py}"
+    pull_policy: always
+    read_only: true
