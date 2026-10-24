@@ -1,20 +1,35 @@
-"""Integration (E42-Q01, #962): FLAG-OVERRIDE-ROWS on a migrated Postgres 16.
+"""Integration (E42-Q01, #962): the seeds of slice B4a on a migrated Postgres 16:
+FLAG-OVERRIDE-ROWS, OOB-WRITES and SC-FORGED-SEAL.
 
-The seed passes its own check and leaves slice A's rows as it found them; a second run changes no
-row (nor any row's version); a re-seed over a changed world puts its own rows back and leaves a
-stored kill switch as it is; the seed holds over the rows the app's own boot makes; and a database
-not named for tests is refused. Needs Docker (testcontainers); CI `integration` runs it.
+FLAG-OVERRIDE-ROWS passes its own check and leaves slice A's rows as it found them; a second run
+changes no row (nor any row's version); a re-seed over a changed world puts its own rows back and
+leaves a stored kill switch as it is; and the seed holds over the rows the app's own boot makes.
+OOB-WRITES passes its own check and a second run changes no row; SC-FORGED-SEAL's second run
+rewrites its one row (an upsert) and the check passes again. Each seed refuses a database not named
+for tests.
+
+OOB-WRITES leaves MGR-M an Owner and the live gate set, so it runs in a database of its own,
+`oob_test`, migrated after a stand-in `cv_app` gets the default privileges that
+`infra/scripts/pg_bootstrap.sql` gives the app's role: the migrations' own revokes then apply to it,
+as in a deployment. A test shows the writes are made with its privileges. Needs Docker
+(testcontainers); CI `integration` runs it.
 """
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
+from functools import partial
+from pathlib import Path
 from typing import Any
 
 import psycopg
 import pytest
 import sqlalchemy as sa
+from sqlalchemy import exc as sa_exc
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from candleviewer.admin.flags.catalogue import FLAGS as CATALOGUE
@@ -22,8 +37,10 @@ from candleviewer.admin.flags.registry import LIVE_ENABLED, MAINTENANCE_MODE
 from candleviewer.admin.flags.resolver import resolve
 from candleviewer.db import models as m
 from candleviewer.flags_wiring import stored_flag
+from candleviewer.statechart_wiring import SnapshotAdapter
 from candleviewer.storage.repositories.flags_sqlalchemy import FlagSeed, SqlAlchemyFlagRepository
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
+from candleviewer.storage.repositories.statechart_sqlalchemy import SqlAlchemySnapshotStore
 from tests.fixtures.admin.flag_overrides import (
     SAFETY,
     UNREADABLE,
@@ -31,7 +48,10 @@ from tests.fixtures.admin.flag_overrides import (
     check_flag_overrides,
     seed_flag_overrides,
 )
+from tests.fixtures.admin.forged_seal import check_forged_seal, seed_forged_seal
 from tests.fixtures.admin.handles import FLAGS, fixture_id, user
+from tests.fixtures.admin.latched_machine import ENTITY_ID, KIND
+from tests.fixtures.admin.oob_writes import BACKUP_ID, check_oob_writes, seed_oob_writes
 from tests.fixtures.admin.seed import (
     FixtureCheckError,
     FixtureRefused,
@@ -46,16 +66,71 @@ pytestmark = pytest.mark.integration
 pg_dsn = _refused.pg_dsn  # the module-scoped Postgres 16, migrated; database and login `test`
 _NOW = datetime(2026, 10, 23, 19, 0, tzinfo=UTC)
 _XMIN = sa.cast(sa.column("xmin"), sa.Text).label("xmin")  # a rewrite, even of an equal row, shows
+_API = Path(__file__).resolve().parents[3]  # services/api: where `alembic.ini` lives
 _F, _O = m.feature_flags, m.feature_flag_overrides
 #: The rows this seed writes: the flags it concerns, and every override.
 _SEEDED = ((_F, _F.c.key.in_([LIVE_ENABLED, MAINTENANCE_MODE, UNREADABLE])), (_O, sa.true()))
 #: Slice A's flag rows, the live gate's among them: the seed reads them and never writes them.
 _WORLD = ((_F, _F.c.key.in_(list(FLAGS))),)
+_MGR_M = user("MGR-M").id
+
+
+class _Keys:
+    """`HmacKeys` with one test key, never a real one."""
+
+    def current(self) -> str:
+        return "k1"
+
+    def key(self, key_id: str) -> bytes:
+        return {"k1": b"\x01" * 32}[key_id]
 
 
 def _admin(dsn: str) -> psycopg.Connection[Any]:
     """The container's superuser, on its database named for tests: it makes roles and databases."""
     return connect_test_database(dsn.replace("postgresql+asyncpg", "postgresql"))
+
+
+@pytest.fixture(scope="module")
+def oob_dsn(pg_dsn: str) -> str:
+    """OOB-WRITES' own database, named for tests: a stand-in `cv_app` gets the bootstrap's default
+    privileges before `alembic upgrade head`, so each migration's revoke from it applies."""
+    with _admin(pg_dsn) as c:
+        c.execute(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'cv_app') THEN "
+            "CREATE ROLE cv_app NOLOGIN; END IF; END $$"
+        )
+        c.execute("DROP DATABASE IF EXISTS oob_test")
+        c.execute("CREATE DATABASE oob_test")
+    dsn = pg_dsn.rsplit("/", 1)[0] + "/oob_test"
+    with _admin(dsn) as c:
+        c.execute("GRANT USAGE ON SCHEMA public TO cv_app")
+        c.execute(
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO cv_app"
+        )
+        c.execute(
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO cv_app"
+        )
+    migrate = dsn.replace("postgresql+asyncpg", "postgresql+psycopg")
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=_API,
+        env={**os.environ, "CV_PG_DSN": migrate},
+        check=True,
+        timeout=120,
+    )
+    return dsn
+
+
+@pytest.fixture
+async def oob_engine(oob_dsn: str) -> AsyncIterator[AsyncEngine]:
+    created = create_async_engine(oob_dsn)
+    try:
+        async with created.begin() as conn:
+            await seed_admin_world(conn, now=_NOW)
+        yield created
+    finally:
+        await created.dispose()
 
 
 @pytest.fixture(scope="module")
@@ -188,3 +263,71 @@ async def test_the_seed_holds_over_the_rows_the_apps_boot_makes(
 
 async def test_the_flag_seed_is_refused_on_a_database_not_named_for_tests(other_dsn: str) -> None:
     await _is_refused_elsewhere(other_dsn, seed_flag_overrides)
+
+
+async def test_the_oob_writes_pass_their_check_and_a_second_seed_changes_none(
+    oob_engine: AsyncEngine,
+) -> None:
+    uaa, f, b = m.user_account_access, m.feature_flags, m.backups
+    reads = (
+        (m.user_roles, m.user_roles.c.user_id == _MGR_M),
+        (uaa, uaa.c.user_id == _MGR_M),
+        (f, f.c.key == LIVE_ENABLED),
+        (b, b.c.id == BACKUP_ID),
+    )
+    async with oob_engine.begin() as conn:
+        await seed_oob_writes(conn, now=_NOW)
+    async with oob_engine.connect() as conn:
+        await check_oob_writes(conn)
+    before = await _rows(oob_engine, *reads)
+    async with oob_engine.begin() as conn:
+        await seed_oob_writes(conn, now=_NOW)
+    assert await _rows(oob_engine, *reads) == before
+
+
+async def test_the_oob_writes_are_made_with_the_app_roles_privileges(
+    oob_dsn: str, oob_engine: AsyncEngine
+) -> None:
+    with _admin(oob_dsn) as c:
+        c.execute("REVOKE UPDATE ON feature_flags FROM cv_app")
+    try:
+        with pytest.raises(sa_exc.DBAPIError, match="permission denied for table feature_flags"):
+            async with oob_engine.begin() as conn:
+                await seed_oob_writes(conn, now=_NOW)
+    finally:
+        with _admin(oob_dsn) as c:
+            c.execute("GRANT UPDATE ON feature_flags TO cv_app")
+
+
+async def test_the_stand_in_holds_what_the_migrations_leave_the_apps_role(oob_dsn: str) -> None:
+    """The migrations revoke `UPDATE` on the audit chain from `cv_app`, as from the real role."""
+    with _admin(oob_dsn) as c:
+        held = c.execute(
+            "SELECT has_table_privilege('cv_app', 'audit_log', 'UPDATE'), "
+            "has_table_privilege('cv_app', 'feature_flags', 'UPDATE')"
+        ).fetchone()
+    assert held == (False, True)
+
+
+async def test_the_oob_seed_is_refused_on_a_database_not_named_for_tests(other_dsn: str) -> None:
+    await _is_refused_elsewhere(other_dsn, partial(seed_oob_writes, now=_NOW))
+
+
+async def test_the_forged_row_is_left_out_and_a_second_seed_keeps_it_so(
+    rel: SqlAlchemyRelationalRepository,
+) -> None:
+    await seed_forged_seal(rel, _Keys(), now=_NOW)
+    await check_forged_seal(rel, _Keys(), now=_NOW)
+    await seed_forged_seal(rel, _Keys(), now=_NOW)  # an upsert: it rewrites the one row
+    await check_forged_seal(rel, _Keys(), now=_NOW)  # still one row, still forged, still left out
+    rows = await SnapshotAdapter(SqlAlchemySnapshotStore(rel)).snapshots()
+    assert [(r.machine_kind, r.entity_id) for r in rows].count((KIND, ENTITY_ID)) == 1
+
+
+async def test_the_forged_seed_is_refused_on_a_database_not_named_for_tests(other_dsn: str) -> None:
+    other = SqlAlchemyRelationalRepository(other_dsn, "fixture")
+    try:
+        with pytest.raises(FixtureRefused):
+            await seed_forged_seal(other, _Keys(), now=_NOW)
+    finally:
+        await other.dispose()

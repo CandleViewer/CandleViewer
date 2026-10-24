@@ -81,7 +81,8 @@ def _changes(text: str) -> bool:
 def _secret_shaped_lines(text: str) -> list[int]:
     """For each window of `text` that the redactor changes, the number of the line that completes
     the window's first secret-shaped text, as the redactor reads it: a label's value, on the label's
-    line or past blank lines, or a key or token shape. Two secrets in one window give one number.
+    line or past blank lines, or a key or token shape. A window gives one number, so two secrets
+    close together may give one.
     Numbers only, so that a failure never prints the text. A single line over the cut is reported
     too, as it fails closed."""
     lines = text.splitlines()
