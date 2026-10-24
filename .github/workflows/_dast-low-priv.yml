@@ -167,8 +167,10 @@ jobs:
           python3 security/zap/mint_sessions.py --target "$ZAP_TARGET" --username "$ZAP_OWNER_USER" \
             --password-env ZAP_OWNER_PASSWORD --totp-secret-file "$RUNNER_TEMP/cv/owner.totp" \
             --out "$RUNNER_TEMP/cv/owner-seed.env"
+          # The rows the check compares against stay out of the scan's writable mount ($WORK).
           python3 security/zap/drawings_isolation.py seed --target "$ZAP_TARGET" \
-            --session "$RUNNER_TEMP/cv/owner-seed.env" --fixture "$ZAP_FIXTURE" --out "$WORK/owner-rows.json"
+            --session "$RUNNER_TEMP/cv/owner-seed.env" --fixture "$ZAP_FIXTURE" \
+            --out "$RUNNER_TEMP/cv/owner-rows.json"
 
       - name: Write the plan (nightly_plans.py, importing the contract cut to the surface)
         run: uv run --frozen --project services/api python security/zap/nightly_plans.py --profile "$ZAP_PROFILE" --out "$WORK"
@@ -208,14 +210,17 @@ jobs:
               --out "$RUNNER_TEMP/cv/$who-check.env"
           done
           python3 security/zap/drawings_isolation.py verify --target "$ZAP_TARGET" \
-            --owner-session "$RUNNER_TEMP/cv/owner-check.env" --seeded "$WORK/owner-rows.json" \
-            --manager-session "$RUNNER_TEMP/cv/$ZAP_ROLE-check.env"
+            --owner-session "$RUNNER_TEMP/cv/owner-check.env" \
+            --manager-session "$RUNNER_TEMP/cv/$ZAP_ROLE-check.env" \
+            --seeded "$RUNNER_TEMP/cv/owner-rows.json"
 
-      - name: Keep the API's log with the plan and report
+      - name: Keep the API's log and the Owner's rows with the plan and report
         if: always()
         run: |
           mkdir -p "$WORK"
-          if [ -f "$RUNNER_TEMP/cv/api.log" ]; then cp "$RUNNER_TEMP/cv/api.log" "$WORK/api.log"; fi
+          for kept in api.log owner-rows.json; do # after the check has read the rows
+            if [ -f "$RUNNER_TEMP/cv/$kept" ]; then cp "$RUNNER_TEMP/cv/$kept" "$WORK/$kept"; fi
+          done
 
       - name: No session value in the plan, logs or report (else nothing is uploaded)
         id: scrub

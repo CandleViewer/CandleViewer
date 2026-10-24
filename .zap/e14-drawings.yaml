@@ -3,9 +3,10 @@
 # method, against the throwaway stack of _dast-low-priv.yml (called by dast-drawings-nightly.yml),
 # never a live exchange. A synthetic Owner's drawing stands there with the fixed id of
 # .zap/e14-drawings-seed.json, and the cut contract's `{drawingId}` example names it
-# (security/zap/nightly_plans.py): the scan's PUT and DELETE aim at a row the Manager does not own,
-# and security/zap/drawings_isolation.py finds it unchanged and unlisted for the Manager after the
-# scan (DR20, DR21). Never run as it is: nightly_plans.py writes the plan from it. The Manager's
+# (security/zap/nightly_plans.py): the scan's PUT and DELETE aim at a row the Manager does not own.
+# After the scan, security/zap/drawings_isolation.py sends the Manager's own PUT, DELETE and batch
+# writes to it, which must be refused, and finds it unchanged and unlisted for the Manager (DR12,
+# DR20, DR21). Never run as it is: nightly_plans.py writes the plan from it. The Manager's
 # bearer and SR-041 CSRF pair come from ZAP_AUTH_TOKEN and ZAP_CSRF_TOKEN at run time
 # (security/zap/mint_sessions.py); security/zap/role_session.js (ZAP_PROFILE=drawings) adds them to
 # each request to the surface and to /me, the liveness check. No credential is committed.
@@ -27,9 +28,11 @@ jobs:
       engine: "ECMAScript : Graal.js"
       name: cv-role-session
       source: /zap/wrk/security/zap/role_session.js # the checkout, mounted at /zap/wrk
-  # Tuning, before any request: the documented 404 (a missing, deleted or foreign drawing, DR20) and
-  # batch 409 (DR21) are the CONTRACT (22-api), not findings. Only the alert ZAP raises purely
-  # because a 4xx came back is filtered, and only on these paths; injection rules never are.
+  # Tuning, before any request: the surface's documented refusals are the CONTRACT (22-api), not
+  # findings: the foreign 404 not_found (DR20), the batch 409 conflict with target_unavailable,
+  # version_conflict or id_unavailable (DR21), and invalid_cursor, payload_too_large and
+  # validation_failed. Only the alert ZAP raises purely because a 4xx came back is filtered, only
+  # on these paths and only with one of these codes as its evidence; injection rules never are.
   - type: alertFilter
     alertFilters:
       # reason: "Application Error Disclosure" matches the RFC 7807 text of a documented refusal
@@ -37,7 +40,7 @@ jobs:
         newRisk: "False Positive"
         url: ".*/drawings([/?].*)?"
         urlRegex: true
-        evidence: 'problem\+json|not_found|conflict|target_unavailable|version_conflict|id_unavailable|validation_failed|payload_too_large|invalid_cursor'
+        evidence: "not_found|conflict|target_unavailable|version_conflict|id_unavailable|validation_failed|payload_too_large|invalid_cursor"
         evidenceRegex: true
   - type: requestor
     name: session-live-before-scan
@@ -60,6 +63,10 @@ jobs:
       maxScanDurationInMins: 8
     policyDefinition:
       defaultStrength: Medium
+      # Off: only the rules below run (the market and rules plans keep ZAP's defaults at Medium),
+      # so the 8 minutes go to injection. 40014 attacks only the stored sinks that 40016 and 40017
+      # find, and they do not run: it tests nothing here, as in the admin plan. Stored text's sink
+      # is the SPA (DR6), whose gates are the Semgrep sink rule and test_drawings_nosniff.py.
       defaultThreshold: "Off"
       rules:
         - { id: 40018, name: SQL injection, strength: High, threshold: Low }

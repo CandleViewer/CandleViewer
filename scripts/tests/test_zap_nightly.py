@@ -317,8 +317,9 @@ def test_no_template_holds_a_literal_over_the_single_body_cap() -> None:
 
 
 def test_the_drawings_filter_waives_only_the_documented_refusals_on_its_own_paths() -> None:
-    """The documented 404 and batch 409 (DR20, DR21) raise 90022 on their problem+json text:
-    only that alert, on `/drawings*`, and only with a registered code as its evidence."""
+    """The surface's documented refusals (22-api; the 404 DR20, the batch 409 DR21) raise 90022 on
+    their problem text: only that alert, on `/drawings*`, and only with one of their codes as its
+    evidence, never the problem media type alone."""
     jobs = TEMPLATES["drawings"]["jobs"]
     kinds = [job["type"] for job in jobs]
     assert kinds.index("alertFilter") < kinds.index("requestor")
@@ -328,6 +329,7 @@ def test_the_drawings_filter_waives_only_the_documented_refusals_on_its_own_path
     assert entry["urlRegex"] is True and entry["evidenceRegex"] is True
     assert all(re.search(entry["evidence"], c) for c in ("not_found", "target_unavailable"))
     assert not re.search(entry["evidence"], "Traceback (most recent call last)")
+    assert not re.search(entry["evidence"], "application/problem+json")
 
 
 def test_the_rules_filter_ends_one_false_positive_and_no_other_traversal() -> None:
@@ -471,6 +473,17 @@ def test_each_nightly_calls_the_low_privilege_workflow_with_its_own_files(profil
     assert job["uses"] == "./.github/workflows/_dast-low-priv.yml"
     assert job["with"] == {"profile": profile, **files}
     assert (ROOT / files["baseline"]).is_file()
+
+
+def test_the_fixture_a_nightly_seeds_is_the_one_its_plan_aims_at() -> None:
+    """The caller's `fixture` makes the Owner's rows and `nightly_plans.SEEDS` aims the plan's
+    examples at them: two names for one file, or the scan aims at a row the seed never made."""
+    seeded = {}
+    for profile in CALLERS:
+        (job,) = _caller(profile)["jobs"].values()
+        if "fixture" in job["with"]:
+            seeded[profile] = ROOT / job["with"]["fixture"]
+    assert seeded == plans.SEEDS
 
 
 @pytest.mark.parametrize("profile", sorted(CALLERS))
@@ -687,6 +700,18 @@ def test_the_seed_signs_the_owner_in_before_it_seeds_and_a_failed_mint_seeds_not
     assert _run_step(tmp_path, _SEED) == (0, ["mint_sessions", "drawings_isolation"])
     assert (tmp_path / "calls.users").read_text(encoding="utf-8").split() == ["owner-user"]
     assert _run_step(tmp_path / "b", _SEED, mint_sessions_rc=1) == (1, ["mint_sessions"])
+
+
+def test_the_owners_rows_stay_out_of_the_scans_mount_until_the_check_has_read_them() -> None:
+    """The scan mounts `$WORK` writable: the rows the check compares against are written and read
+    under `$RUNNER_TEMP/cv`, and copied beside the report only after the check, for the artefact."""
+    steps, rows = _steps(), '"$RUNNER_TEMP/cv/owner-rows.json"'
+    assert f"--out {rows}" in steps[_SEED]["run"] and f"--seeded {rows}" in steps[_VERIFY]["run"]
+    assert "$WORK/" not in steps[_SEED]["run"] + steps[_VERIFY]["run"]
+    names = list(steps)
+    (keep,) = [name for name in names if name.startswith("Keep the API's log")]
+    assert names.index(keep) > names.index(_VERIFY) and steps[keep]["if"] == "always()"
+    assert "for kept in api.log owner-rows.json; do" in steps[keep]["run"]
 
 
 @pytest.mark.parametrize(("isolation", "code"), [(0, 0), (1, 1)])

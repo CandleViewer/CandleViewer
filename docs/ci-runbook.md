@@ -248,9 +248,12 @@ These two nightlies file no issue yet (#4151): look at the run.
 `dast-drawings` (E14-X03, `dast-drawings-nightly.yml`, through `_dast-low-priv.yml` as a synthetic
 Manager with a seeded Owner) reads the same, plus two steps: "Seed the Owner's rows" (a failed
 sign-in, or `POST /drawings/batch` with the status named) and "The Owner's rows are unchanged and the
-scan role cannot list them", whose `::error` lines name the drawing: "changed" or "gone" is a
-cross-owner write that succeeded, "the Manager lists the Owner's drawing" a cross-owner read. Treat
-either as High (DR12, DR20, DR21), never as a baseline entry. It files no issue either.
+scan role cannot list them", whose `::error` lines name the drawing. "A cross-owner write" (one of
+the Manager's own probes answered 2xx), "changed" or "gone" is a cross-owner write that succeeded,
+"the Manager lists the Owner's drawing" a cross-owner read: treat each as High (DR12, DR20, DR21),
+never as a baseline entry. "The probe never reached the owner check" (a probe refused for another
+reason, such as a 422 or a 404 without `not_found`) means the check proved nothing that night: fix
+the probe or the stack, as for a failed sign-in. It files no issue either.
 
 ## 3. Reading the `ci-required` resolver summary
 
