@@ -3891,7 +3891,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists; so is one on an account whose grant is frozen. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF, and is a scope answer in one case only: on `amendOrder` and `cancelOrder`, an order on an account the caller holds a view-only grant on is `403 account_scope_denied`, as the caller can read that order already, so the answer discloses nothing (#913 slice 4 ruling Q7). There a Manager's request on an order another user created is `403 forbidden`, and an order no person created is the Owner's alone (04-security-program.md section 7.2.2 rows 12 and 13; ruling Q6). */
         orderId: components["parameters"]["OrderId"];
       };
       cookie?: never;
@@ -3902,36 +3902,96 @@ export interface paths {
     post?: never;
     /**
      * Cancel a single order
-     * @description Maps to `POST /v5/order/cancel`. Cancelling an already-terminal order is idempotent and returns `202` with the current state rather than an error.
+     * @description Maps to `POST /v5/order/cancel`, in the `critical` lane. Cancelling an already-terminal
+     *     order is idempotent and returns `202` with the current state rather than an error, as does
+     *     an order whose cancel is in flight (`cancel_pending`). An order not acknowledged yet or with
+     *     an amend in flight (`validated`, `submitting`, `amend_pending`) is cancelled once that step
+     *     settles, waited for at most `CV_COMMAND_TIMEOUT` (24-internal-schemas.md section 8.2), and
+     *     one still unsettled then is `409 conflict`. An order in `unknown`, `quarantined`, `held` or
+     *     `untracked` is refused with `409 conflict` and nothing is sent: reconciliation decides it,
+     *     and until E29-T06 an `unknown` order is cancelled only by a KILL (#913 slice 4 ruling Q8). A
+     *     recorded stop's row (24-internal-schemas.md section 8.8 rule 6) is refused by the command
+     *     port (`NATIVE_STOP_REQUIRED`), answered `403 risk_limit_breached`, while its position is
+     *     open, or while the position cannot be read (fail closed); once the position is flat the row
+     *     can be cancelled (ruling Q9). A KILL never cancels such a row.
+     *
+     *     A cancel never meets the arm token, the `trading.oms_enabled` flag, live trading enabled,
+     *     the B18 kill switch or the order-entry gate (the C-2.6 carve-out under `Forbidden`). The
+     *     answer (ruling Q11): `202` with the order once the exchange took the cancel;
+     *     `502 exchange_error` with `exchange.ret_code` when it refused it, the order kept live;
+     *     `429 exchange_rate_limited` with `Retry-After` when no rate token was free within the
+     *     `critical` lane's 5 s wait, inside the cancel's 9 s bound, nothing sent; and `202` with the
+     *     order `unknown` when the outcome is not known, never re-sent. An order the exchange reports
+     *     already terminal (`110001`) is no refusal: the exchange is the truth, so the cancel answers
+     *     `202` with the order `unknown`, never re-sent, until reconciliation ends it with the
+     *     exchange's state (24-internal-schemas.md section 8.6; the orchestrator's S4-B1 ruling of
+     *     2026-10-24). A read the cancel needs before anything is sent (the stored row or the account)
+     *     that fails answers `503 store_unavailable` with `Retry-After`: nothing was sent, so the
+     *     order stays live and cancellable, never `unknown`, which only a venue call already started
+     *     can leave (the S4-B1 ruling of 10:29Z).
      */
     delete: operations["cancelOrder"];
     options?: never;
     head?: never;
     /**
      * Amend price, quantity, trigger or attached TP/SL
-     * @description Maps to `POST /v5/order/amend`. Amendment is refused with `order_not_amendable` when the
-     *     order is terminal or already has a cancel/amend in flight. Omitted fields are left
-     *     untouched; sending `null` for `take_profit`/`stop_loss` clears them — except that the
-     *     stop-loss of an entry (classified by its effect, as on `placeOrder`, never by its
-     *     `intent`: SR-E29-01) can never be cleared while the leg is open (C-2.6, arch P4),
-     *     which returns `validation_failed` / `native_stop_required`.
+     * @description Maps to `POST /v5/order/amend`. An amend is taken only while the order rests at the
+     *     exchange, `submitted` or `partially_filled`: in any other state (final, an amend or a cancel
+     *     in flight, not acknowledged yet, triggered or unresolved), and on a recorded stop's row, it
+     *     is refused with `422 order_not_amendable` and nothing is sent. Omitted fields are left
+     *     untouched, and nothing is cleared: `take_profit: null` is refused with `validation_failed` /
+     *     `tpsl_clear_unsupported`, and the stop-loss of an entry (classified by its effect, as on
+     *     `placeOrder`, never by its `intent`: SR-E29-01) is never cleared, for good (C-2.6, arch P4):
+     *     `stop_loss: null` on it is refused, which returns `validation_failed` /
+     *     `native_stop_required`. A take-profit or stop-loss change is taken only on an entry under
+     *     `tpsl_mode: Full` with no fill: after a fill (the position's stop is then
+     *     `setPositionTpSl`'s), under `tpsl_mode: Partial` and on a reduce-only order it is
+     *     `validation_failed` / `tpsl_after_fill`, `tpsl_partial_mode` or `reduce_only_tpsl` (#913
+     *     slice 4 ruling Q3). An `Offset` is resolved to a price server-side as on `placeOrder`, from
+     *     the amended price, else the order's, else its trigger price. A `qty` not above the filled
+     *     quantity is `validation_failed` / `qty_not_above_filled`, and the amended terms meet the
+     *     instrument's limits as on `placeOrder` (`tick_size_violation`, `lot_size_violation`);
+     *     `errors[]` lists every rule that fails.
      *
      *     A `stop_loss` moved to loosen it on an entry is refused with `403 risk_limit_breached`,
      *     whatever the caller's role, before any send: compared with the stop it replaces, a long
      *     entry's stop may only rise and a short entry's only fall, before the fill and after it
-     *     (the ratchet `amendTradeGroup` applies). The one way to loosen a stop is the owner's
-     *     override on `setPositionTpSl` (24-internal-schemas.md section 8.8 rule 5). A tightening
-     *     is never refused by this check (C-2.6; section 8.10).
+     *     (the ratchet `amendTradeGroup` applies). The one check, at the recorded-stop writer,
+     *     compares the request with the order's current stop and with its position's recorded stop
+     *     in force (Full mode, same side) (24-internal-schemas.md section 8.8 rule 6; ruling Q4).
+     *     The one way to loosen a stop is the owner's override on `setPositionTpSl`
+     *     (24-internal-schemas.md section 8.8 rule 5). A tightening is never refused by this check
+     *     (C-2.6; section 8.10).
      *
      *     Amending only one side of a TP/SL pair breaks Bybit's OCO pairing (digest 06 §19); the
-     *     server therefore re-sends both sides whenever either changes, and records the paired
-     *     amend in `order_events`.
+     *     server therefore re-sends both sides whenever either changes, the unchanged one at its
+     *     current value, records the paired amend in `order_events`, and records the stop it
+     *     requests as the entry's own before the send (ruling Q2).
+     *
+     *     An amend that raises the quantity of an order that is not reduce-only, or moves a
+     *     conditional entry's trigger, increases exposure: it meets every check `placeOrder` meets,
+     *     the `trading.oms_enabled` flag, live trading enabled, the B18 kill switch, the order-entry
+     *     gate and, on a live account, the arm token. Every other amend meets none of them (the
+     *     C-2.6 carve-out under `Forbidden`; ruling Q10).
      *
      *     `If-Match` takes the order's `ETag` from an answer about it (`placeOrder`'s `202` or this
      *     route's). The `ETag` is opaque and changes with every step the order takes, each
-     *     `order_events` row (an accepted amend, a fill, any change of state): when the order has
-     *     changed since, the amend is refused with `412 version_conflict` and nothing is sent;
-     *     without `If-Match` it applies to the order as it stands.
+     *     `order_events` row (an accepted amend, a fill, any change of state), and with nothing else
+     *     (a `protection` step leaves it): when the order has changed since, the amend is refused with
+     *     `412 version_conflict` and nothing is sent; without `If-Match` it applies to the order as it
+     *     stands (last write wins). `*`, a list of tags, a weak or unparseable tag and another order's
+     *     tag are `412` too. The checks come in this order: the order's scope (`404`, or `403` as
+     *     `OrderId` says), whether it takes an amend (`422`), then `If-Match` (`412`), compared under
+     *     the order's lock right before the send (ruling Q5).
+     *
+     *     The answer (ruling Q11): `202` with the order and its new `ETag` once the exchange took the
+     *     amend; `502 exchange_error` with `exchange.ret_code` when it refused it, the order kept live
+     *     on its prior terms; `429 exchange_rate_limited` with `Retry-After` when no rate token was
+     *     free, nothing sent; and `202` with the order `unknown` when the outcome is not known, never
+     *     re-sent. A read the amend needs before anything is sent (the stored order, the account or
+     *     the gate) that fails answers `503 store_unavailable` with `Retry-After`: nothing was sent,
+     *     so the order stays live and cancellable, never `unknown`, which only a venue call already
+     *     started can leave (the orchestrator's S4-B1 ruling of 2026-10-24 10:18Z).
      */
     patch: operations["amendOrder"];
     trace?: never;
@@ -3941,7 +4001,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists; so is one on an account whose grant is frozen. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF, and is a scope answer in one case only: on `amendOrder` and `cancelOrder`, an order on an account the caller holds a view-only grant on is `403 account_scope_denied`, as the caller can read that order already, so the answer discloses nothing (#913 slice 4 ruling Q7). There a Manager's request on an order another user created is `403 forbidden`, and an order no person created is the Owner's alone (04-security-program.md section 7.2.2 rows 12 and 13; ruling Q6). */
         orderId: components["parameters"]["OrderId"];
       };
       cookie?: never;
@@ -3970,15 +4030,32 @@ export interface paths {
     put?: never;
     /**
      * Cancel all open orders matching a filter
-     * @description Fans out `POST /v5/order/cancel-all` per account (Bybit rate cost: 1 req/s per account
-     *     for `linear` cancel-all — the fan-out scheduler serialises accordingly).
+     * @description Cancels the orders the filter selects on each account in scope, each by its own order
+     *     command, written ahead and audited (24-internal-schemas.md section 8.4; #913 slice 4
+     *     ruling Q1). Only an unrestricted request (`intents` empty, `exclude_reduce_only: false`)
+     *     is folded into `POST /v5/order/cancel-all`, per account and symbol, and only where an
+     *     open-orders read shows each plain order resting there selected; any other is cancelled
+     *     order by order. The exchange allows one cancel-all per second per account for `linear`,
+     *     and the server keeps to it (24-internal-schemas.md section 8.7). Selected: the orders the
+     *     OMS placed (`provenance` `placed`; never a recorded stop's row) in `submitted`,
+     *     `triggered` or `partially_filled`, on `symbol` when set, with an `intent` in `intents`
+     *     when it is not empty, a reduce-only order only with `exclude_reduce_only: false`. Like
+     *     every cancel it never meets the arm token or the `trading_disabled` checks (C-2.6).
      *
      *     Scope is settled before anything is sent (SR-E29-13): an empty `exchange_account_ids`
      *     means the caller's granted accounts, and one listed id outside them, or one that does
      *     not exist, refuses the whole request alike with `403 account_scope_denied`: nothing is
-     *     cancelled, no exchange call is made, and the refusal is audited. Once the scope check
-     *     passes, `results` reports exchange outcomes only: one account's exchange error does not
-     *     undo another account's cancels, so the status is `200` with per-account results.
+     *     cancelled, no exchange call is made, and the refusal is audited. A Manager's grants here
+     *     are the ones that allow trading, with every OMS order on them, another user's included
+     *     (04-security-program.md section 7.2.2 row 14). Once the scope check passes, `results`
+     *     reports exchange outcomes only: one account's exchange error does not undo another
+     *     account's cancels, so the status is `200` with per-account results. At most five accounts
+     *     are worked at once, one order at a time on each, within a 20 s deadline. An account is
+     *     `ok` when every order selected on it ended; else `error` gives its first failure:
+     *     `exchange_error` with `exchange_ret_code`, `exchange_rate_limited`, `exchange_unavailable`
+     *     when an outcome is not known (that order `unknown`, never re-sent), or `timeout`,
+     *     `retryable: true`, when the deadline cut it short. `affected` counts the orders
+     *     cancelled.
      */
     post: operations["cancelAllOrders"];
     delete?: never;
@@ -6673,10 +6750,10 @@ export interface components {
       trade_group_id?: string;
     };
     CancelAllRequest: {
-      /** @description Empty means the caller's granted accounts; one id outside them, or one that does not exist, refuses the whole request (SR-E29-13). */
+      /** @description Empty means the caller's granted accounts that allow trading (an Owner's: every account of the environment); one id outside them, or one that does not exist, refuses the whole request (SR-E29-13). */
       exchange_account_ids?: string[];
       /**
-       * @description Protects TP/SL exits from a blanket cancel.
+       * @description Leaves reduce-only exits out of a blanket cancel; a recorded stop's row is never cancelled here, whatever this says (24-internal-schemas.md section 8.8 rule 6).
        * @default true
        */
       exclude_reduce_only: boolean;
@@ -10966,7 +11043,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. A `trading_disabled` body without `reason` is this response's plain `Problem`, never a `TradingDisabledProblem` (whose `reason` is required), so a client tells the gate's refusal by that member. On `placeOrder` and `amendOrder` the three come after the idempotency lookup (see the order of the checks under Idempotency in `info.description`), so the exact repeat of an accepted request gets its stored outcome instead. On `placeOrder` the `trading.oms_enabled` flag, while off, also refuses with `trading_disabled` and no `reason`, after the lookup and ahead of the three (#913 slice 3 ruling Q3), an admission that opens or increases exposure only: an order whose body says `reduce_only` passes it (21-database-schema.md section 10.7). On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `previewTradeGroup`, `cancelAllOrders`, `closeAllPositions`, `createTradeGroupDefinition` and `updateTradeGroupDefinition` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). */
+    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. A `trading_disabled` body without `reason` is this response's plain `Problem`, never a `TradingDisabledProblem` (whose `reason` is required), so a client tells the gate's refusal by that member. On `placeOrder` and `amendOrder` the three come after the idempotency lookup (see the order of the checks under Idempotency in `info.description`), so the exact repeat of an accepted request gets its stored outcome instead. On `placeOrder`, and on an `amendOrder` that increases exposure (#913 slice 4 ruling Q10), the `trading.oms_enabled` flag, while off, also refuses with `trading_disabled` and no `reason`, after the lookup and ahead of the three (#913 slice 3 ruling Q3), an admission that opens or increases exposure only: an order whose body says `reduce_only` passes it (21-database-schema.md section 10.7). On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `previewTradeGroup`, `cancelAllOrders`, `closeAllPositions`, `createTradeGroupDefinition` and `updateTradeGroupDefinition` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). */
     Forbidden: {
       headers: {
         [name: string]: unknown;
@@ -11053,6 +11130,16 @@ export interface components {
       };
       content: {
         "application/problem+json": components["schemas"]["OrderExchangeProblem"];
+      };
+    };
+    /** @description A conflict on `amendOrder`, `cancelOrder` or `cancelAllOrders`, nothing sent: `idempotency_key_reuse`; `idempotency_in_flight` with `Retry-After: 1` (see Idempotency); `stop_request_in_flight` with `Retry-After`, an amend's stop write meeting a stop request still in flight on the position; or `conflict`, for an order whose machine is latched degraded until the operator acknowledges it (CV-C63) and the cancel states `cancelOrder` names (#913 slice 4 rulings Q8, Q11). */
+    OrderExitConflict: {
+      headers: {
+        "Retry-After": components["headers"]["RetryAfter"];
+        [name: string]: unknown;
+      };
+      content: {
+        "application/problem+json": components["schemas"]["Problem"];
       };
     };
     /** @description The request body or the number of batch operations exceeds the operation's ceiling (`payload_too_large`). Checked before per-item validation. */
@@ -11369,7 +11456,7 @@ export interface components {
      *     store (no `Idempotency-Replayed`).
      */
     OpenExposure: components["schemas"]["OpenExposureChoice"];
-    /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+    /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists; so is one on an account whose grant is frozen. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF, and is a scope answer in one case only: on `amendOrder` and `cancelOrder`, an order on an account the caller holds a view-only grant on is `403 account_scope_denied`, as the caller can read that order already, so the answer discloses nothing (#913 slice 4 ruling Q7). There a Manager's request on an order another user created is `403 forbidden`, and an order no person created is the Owner's alone (04-security-program.md section 7.2.2 rows 12 and 13; ruling Q6). */
     OrderId: string;
     /** @description The position's account is read from its stored row (SR-E29-13). A position on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
     PositionId: string;
@@ -11412,6 +11499,8 @@ export interface components {
     ETag: string;
     /** @description True when the response was replayed from the idempotency store. */
     IdempotencyReplayed: boolean;
+    /** @description `"<orderId>:<seq>"`, a strong tag of the order answered: its id and the `seq` of its latest `order_events` row (`21-database-schema.md` section 3.3.5), the last committed one, which is the order facade's `version()`, so it changes with each lifecycle step the order takes and with nothing else: a step of the order's `protection` region and B1's internal arms write no such row and leave it as it was. A final order's answer carries none, and neither does an answer given during a resync window, when the facade reports no version (as its `state()` reports none). A client sends it back whole as `If-Match` on `amendOrder`, which compares it under the order's lock (#913 slice 4 ruling Q5; the S4-B1 rulings of 2026-10-24). */
+    OrderETag: string;
     /** @description `W/"<id>:<version>"` of the profile answered. Send it as `If-Match` on `updateAccountProfile` and `deleteAccountProfile`: the server compares the id and the version it names, so the weak tag matches. */
     ProfileETag: string;
     /** @description Requests permitted in the current window. */
@@ -17193,10 +17282,10 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Accepted into the OMS, never a fill: every order the request created, with its state (`OrderAcceptance`). `ETag`, the created order's version for `If-Match` on `amendOrder`, is sent once `amendOrder` defines and checks it (#913 slice 4, ruling Q11); until then the `202` carries none. */
+      /** @description Accepted into the OMS, never a fill: every order the request created, with its state (`OrderAcceptance`), and its `ETag` (`OrderETag`) for `If-Match` on `amendOrder`, on the first answer and on both replays, the 24 h record's stored tag and the anchor's current one; an order already final carries none (#913 slice 4 ruling Q5). */
       202: {
         headers: {
-          ETag: components["headers"]["ETag"];
+          ETag: components["headers"]["OrderETag"];
           "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           [name: string]: unknown;
         };
@@ -17254,7 +17343,7 @@ export interface operations {
       };
       header?: never;
       path: {
-        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists; so is one on an account whose grant is frozen. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF, and is a scope answer in one case only: on `amendOrder` and `cancelOrder`, an order on an account the caller holds a view-only grant on is `403 account_scope_denied`, as the caller can read that order already, so the answer discloses nothing (#913 slice 4 ruling Q7). There a Manager's request on an order another user created is `403 forbidden`, and an order no person created is the Owner's alone (04-security-program.md section 7.2.2 rows 12 and 13; ruling Q6). */
         orderId: components["parameters"]["OrderId"];
       };
       cookie?: never;
@@ -17291,7 +17380,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
-        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists; so is one on an account whose grant is frozen. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF, and is a scope answer in one case only: on `amendOrder` and `cancelOrder`, an order on an account the caller holds a view-only grant on is `403 account_scope_denied`, as the caller can read that order already, so the answer discloses nothing (#913 slice 4 ruling Q7). There a Manager's request on an order another user created is `403 forbidden`, and an order no person created is the Owner's alone (04-security-program.md section 7.2.2 rows 12 and 13; ruling Q6). */
         orderId: components["parameters"]["OrderId"];
       };
       cookie?: never;
@@ -17307,8 +17396,12 @@ export interface operations {
           "application/json": components["schemas"]["Order"];
         };
       };
+      400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      409: components["responses"]["OrderExitConflict"];
+      429: components["responses"]["RateLimited"];
+      501: components["responses"]["NotImplemented"];
       502: components["responses"]["OrderExchangeError"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -17360,7 +17453,7 @@ export interface operations {
         "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
-        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists; so is one on an account whose grant is frozen. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF, and is a scope answer in one case only: on `amendOrder` and `cancelOrder`, an order on an account the caller holds a view-only grant on is `403 account_scope_denied`, as the caller can read that order already, so the answer discloses nothing (#913 slice 4 ruling Q7). There a Manager's request on an order another user created is `403 forbidden`, and an order no person created is the Owner's alone (04-security-program.md section 7.2.2 rows 12 and 13; ruling Q6). */
         orderId: components["parameters"]["OrderId"];
       };
       cookie?: never;
@@ -17371,20 +17464,24 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Amend accepted. */
+      /** @description Amend accepted, with the order's new `ETag`; a replay carries the stored one. */
       202: {
         headers: {
-          ETag: components["headers"]["ETag"];
+          ETag: components["headers"]["OrderETag"];
           [name: string]: unknown;
         };
         content: {
           "application/json": components["schemas"]["Order"];
         };
       };
+      400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      409: components["responses"]["OrderExitConflict"];
       412: components["responses"]["PreconditionFailed"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
+      501: components["responses"]["NotImplemented"];
       502: components["responses"]["OrderExchangeError"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -17394,7 +17491,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
+        /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists; so is one on an account whose grant is frozen. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF, and is a scope answer in one case only: on `amendOrder` and `cancelOrder`, an order on an account the caller holds a view-only grant on is `403 account_scope_denied`, as the caller can read that order already, so the answer discloses nothing (#913 slice 4 ruling Q7). There a Manager's request on an order another user created is `403 forbidden`, and an order no person created is the Owner's alone (04-security-program.md section 7.2.2 rows 12 and 13; ruling Q6). */
         orderId: components["parameters"]["OrderId"];
       };
       cookie?: never;
@@ -17448,7 +17545,10 @@ export interface operations {
           "application/json": components["schemas"]["BulkAccountResult"];
         };
       };
+      400: components["responses"]["BadRequest"];
       403: components["responses"]["Forbidden"];
+      409: components["responses"]["OrderExitConflict"];
+      501: components["responses"]["NotImplemented"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
