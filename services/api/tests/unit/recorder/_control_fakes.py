@@ -1,6 +1,7 @@
-"""Fakes for the #492 recording tests (no I/O, no clock). `FakeRecorder` mirrors #2188's agreed
-`PolicyControlSurface` member for member until its S2b and S3 land, and serves reads over it.
-Like the policy, it records each write through `audit` before the row changes (none on a raise)."""
+"""Fakes for the #492 recording tests (no I/O, no clock). `FakeRecorder` mirrors #2188's
+`PolicyControlSurface` member for member, raises its errors, and serves reads over it. Like the
+policy, it checks the actor and the settings first, then records each write through `audit` in
+the policy's shape before the row changes (none on a raise, none for a change to nothing)."""
 
 from __future__ import annotations
 
@@ -9,7 +10,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 
 from candleviewer.recorder import control as rc
-from candleviewer.recorder.errors import InvalidRecorderActorError, RecorderError
+from candleviewer.recorder.errors import InvalidRecorderActorError, RecorderSymbolNotManualError
+from candleviewer.recorder.errors import RecorderInvalidUpdateError as InvalidUpdate
 from candleviewer.recorder.errors import RecorderSymbolLimitError as LimitError
 from candleviewer.recorder.errors import RecorderSymbolNotRecordedError as NotRecorded
 from candleviewer.recorder.models import Actor
@@ -19,20 +21,6 @@ from candleviewer.recorder.sessions import DEFAULT_STREAMS
 NOW: Final = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
 GRACE: Final = timedelta(minutes=30)
 STREAMS: Final = ("trades", "orderbook_delta", "tickers", "liquidations")  # the add's default
-DEPTHS: Final = frozenset({1, 50, 200, 500})
-
-
-class RecorderSymbolNotManualError(RecorderError):
-    """Mirrors #2188 S2b's `candleviewer.recorder.errors.RecorderSymbolNotManualError`."""
-
-
-class RecorderManualChangeError(RecorderError):
-    """A placeholder for #2188 S2b's typed refusal of an invalid `update_manual` (its name is
-    S2b's to choose): `field` and `rule` say what the policy refused."""
-
-    def __init__(self, field: str, rule: str) -> None:
-        super().__init__(field, rule)
-        self.field, self.rule = field, rule
 
 
 def _user(actor: Actor) -> None:
@@ -47,17 +35,18 @@ class FakeRecorder:
         self.max_symbols = max_symbols
         self.status_fields: dict[str, Any] = {}  # `ControlStatus` beside its entries
         self.audit: Any = None  # the policy's injected `AuditSink`; `None`: no records
-        self.stream_names = frozenset(STREAMS) | {"orderbook_snapshot", "klines", "open_interest",
-                                                  "funding"}  # fmt: skip
+        self.adders: dict[str, str] = {}  # symbol -> the user who made it manual
 
     async def _record(self, action: str, symbol: str, actor: Actor, reason: str,
+                      before: dict[str, str | None] | None = None,
                       **extra: str | bool | None) -> None:  # fmt: skip
         user, label = actor.id if actor.kind == "user" else None, f"{actor.kind}:{actor.id}"
         after = {"symbol": symbol, "reason": reason, "actor": actor.id, **extra}
-        if self.audit is not None:
-            await self.audit.emit(action, actor_label=label, actor_user_id=user, after_state=after,
+        if self.audit is not None:  # the policy's `_audit_emit`, keyword for keyword
+            await self.audit.emit(action, actor_label=label, actor_user_id=user,
                                   object_kind="recorded_symbol", object_id=symbol, reason=reason,
-                                  env="demo", outcome="success")  # fmt: skip
+                                  before_state=before, after_state=after, env="demo",
+                                  outcome="success")  # fmt: skip
 
     def put(self, symbol: str, *reasons: rc.RecordReason, **fields: Any) -> rc.RecordedEntry:
         """Seed (or replace) an entry recording for `reasons`; ids follow creation order."""
@@ -87,6 +76,7 @@ class FakeRecorder:
         streams, depth = streams or DEFAULT_STREAMS, depth or (old.depth if old and held else 200)
         await self._record("recorder.start", symbol, actor, "manual",
                            trigger_ref=f"manual:{actor.id}")  # fmt: skip
+        self.adders[symbol] = actor.id
         row = old or self.put(symbol, added_by=actor.id, state="starting")
         reasons = ("manual", *(r for r in held if r != "manual"))  # a re-add keeps the rest
         self.entries[symbol] = replace(row, reasons=reasons, streams=streams, depth=depth,
@@ -94,10 +84,13 @@ class FakeRecorder:
                                        linger_until=None)  # fmt: skip
 
     async def remove_manual(self, symbol: str, actor: Actor) -> None:
+        _user(actor)
         e = self.entries.get(symbol)
         if e is not None and "manual" in e.reasons and not e.lingering:
             rest = tuple(r for r in e.reasons if r != "manual")
-            await self._record("recorder.stop", symbol, actor, "manual")
+            adder = self.adders.pop(symbol, e.added_by)
+            await self._record("recorder.stop", symbol, actor, "manual",
+                               trigger_ref=f"manual:{adder}")  # fmt: skip
             self.entries[symbol] = replace(e, reasons=rest or e.reasons, lingering=not rest,
                                            linger_until=None if rest else NOW + GRACE)  # fmt: skip
 
@@ -124,16 +117,16 @@ class FakeRecorder:
                             streams: tuple[str, ...] | None = None,
                             depth: int | None = None) -> None:  # fmt: skip
         _user(actor)
-        if depth is not None and depth not in DEPTHS:
-            raise RecorderManualChangeError("depth", "depth_allowed")
-        if streams is not None and (not streams or not set(streams) <= self.stream_names):
-            raise RecorderManualChangeError("streams", "stream_names")
+        _check_settings(streams, depth)
         e = self.entries.get(symbol)
         if e is None or "manual" not in e.reasons or e.lingering:
             raise RecorderSymbolNotManualError(symbol)
         streams, depth = streams or e.streams, depth or e.depth
-        await self._record("recorder.update", symbol, actor, "manual", streams=",".join(streams),
-                           depth=str(depth))  # fmt: skip
+        if (streams, depth) == (e.streams, e.depth):
+            return  # a change to nothing: no write, no record
+        held = {"streams": ",".join(e.streams), "depth": None if e.depth is None else str(e.depth)}
+        await self._record("recorder.update", symbol, actor, "manual", held,
+                           streams=",".join(streams), depth=str(depth))  # fmt: skip
         self.entries[symbol] = replace(e, streams=streams, depth=depth)
 
     def position_open(self, symbol: str) -> bool:
@@ -199,8 +192,8 @@ class FakeRecorder:
                 await self.update_manual(symbol, actor, streams=spec.streams, depth=spec.depth)
             except RecorderSymbolNotManualError:
                 raise rc.ChangeRefused("not_manual") from None
-            except RecorderManualChangeError as exc:
-                raise rc.ChangeRefused(exc.rule, exc.field) from None
+            except InvalidUpdate:
+                raise rc.ChangeRefused(*rc.setting_rule(spec.depth)) from None
         return await self._settle(symbol, spec, actor)
 
     async def remove(
