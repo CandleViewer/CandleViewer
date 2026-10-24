@@ -305,7 +305,8 @@ def make_recording_writes_router(
             rule = {"field": "symbol", "rule": "listed_instrument", "message": "Not listed."}
             raise common.Problem(422, BAD, "The symbol is not a listed instrument.", errors=[rule])
         spec, status = _spec(body), await call.control.status()
-        held = next((e for e in status.entries if e.symbol == body.symbol), None)
+        rows = (e for e in status.entries if e.symbol == body.symbol and e.id)  # a row: an id
+        held = next(rows, None)
         held_id = None if held is None else held.id
         if held is not None and view(call, held) is None:  # held only by a cause outside the view
             if not held.streams:  # no stored streams to keep: the policy would name its default
