@@ -225,8 +225,7 @@ def lock_key_statement(account_id: UUID, symbol: str, position_idx: int) -> sa.S
 def to_replace(
     locked: Sequence[Mapping[Any, Any]], rows: Sequence[RecordedStopRow]
 ) -> tuple[UUID, ...] | None:
-    """The locked rows a `put_in_force` of `rows` replaces: per kind, the row in force and the
-    answered pending rows older than it. None when a row is not locked as read (lost race)."""
+    """Per kind, the row in force and older answered rows; None if a row is not locked as read."""
     by_id = {UUID(str(m["id"])): m for m in locked}
     read = {row.id: (row.kind, "pending", row.answered_at) for row in rows}
     held = {i: (m["kind"], m["status"], m["answered_at"]) for i, m in by_id.items()}

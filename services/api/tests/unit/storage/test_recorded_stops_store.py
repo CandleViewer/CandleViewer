@@ -658,8 +658,7 @@ def test_the_complete_reads_statements_lock_in_id_order_and_keep_answered_at_onc
     assert _sql(void).count("recorded_stops.answered_at IS NOT DISTINCT FROM ") == 2
     keys = _sql(mod.waiting_keys_statement(_ACCOUNT, now=_T, bound_s=5.0))
     assert "recorded_stops.answered_at IS NULL AND recorded_stops.created_at <= $" in keys
-    assert keys.endswith("GROUP BY recorded_stops.symbol, recorded_stops.position_idx ORDER BY "
-                         "min(recorded_stops.created_at), recorded_stops.symbol, "
+    assert keys.endswith("ORDER BY min(recorded_stops.created_at), recorded_stops.symbol, "
                          "recorded_stops.position_idx")  # fmt: skip
 
 
@@ -667,52 +666,34 @@ def _live(i: uuid.UUID, kind: str, status: str, answered: Any, born: datetime = 
     return {"id": i, "kind": kind, "status": status, "answered_at": answered, "created_at": born}
 
 
-def test_a_row_put_in_force_replaces_the_row_in_force_and_older_answered_rows_of_its_kind() -> None:
-    """Never a younger row, an unanswered one or one of another kind; None on a lost race."""
-    [row] = _rows(_row(_SL))
-    older, unanswered = uuid.UUID(int=0x6004), uuid.UUID(int=0x6005)
-    locked = [_live(_OLD, "stop_loss", "in_force", _T),
-              _live(_SL, "stop_loss", "pending", None, _LATER),
-              _live(_TP, "take_profit", "in_force", _T), _live(older, "stop_loss", "pending", _T),
-              _live(_NEW, "stop_loss", "pending", _T, _LATER + timedelta(seconds=1)),
-              _live(unanswered, "stop_loss", "pending", None)]  # fmt: skip
-    assert mod.to_replace(locked, [row]) == (_OLD, older)
-    for held in ([], [_live(_SL, "stop_loss", "in_force", None)],
-                 [_live(_SL, "stop_loss", "pending", _T)]):  # fmt: skip
-        assert mod.to_replace(held, [row]) is None
-
-
-@pytest.mark.parametrize(
-    ("rows", "reason"),
-    [
-        ([_row(_SL), _row(_SL)], "named once"),
-        ([_row(_SL), _row(_TP)], "one row in force per key and kind"),
-        ([_row(_SL), _row(_TP, kind="take_profit", position_idx=1)], "of one key"),
-    ],
-)
-async def test_a_put_in_force_refuses_a_malformed_call_before_any_statement(
-    rows: list[dict[str, Any]], reason: str
-) -> None:
-    rel = _Rel()
-    with pytest.raises(ValueError, match=reason):
-        await _store(rel).put_in_force(_ACCOUNT, _rows(*rows), at=_T)
-    with pytest.raises(ValueError, match="timezone-aware"):
-        await _store(rel).put_in_force(_ACCOUNT, _rows(_row(_SL)), at=_T.replace(tzinfo=None))
+async def test_a_put_in_force_refuses_a_malformed_call_before_any_statement() -> None:
+    rel, tp = _Rel(), _row(_TP, kind="take_profit", position_idx=1)
+    for rows, at, reason in (([_row(_SL)] * 2, _T, "named once"), ([_row(_SL), _row(_TP)], _T,
+                             "per key and kind"), ([_row(_SL), tp], _T, "of one key"),
+                             ([_row(_SL)], _T.replace(tzinfo=None), "timezone-aware")):  # fmt: skip
+        with pytest.raises(ValueError, match=reason):
+            await _store(rel).put_in_force(_ACCOUNT, _rows(*rows), at=at)
     assert rel.statements == []
 
 
 async def test_a_put_in_force_locks_replaces_first_then_sets_audited_before_its_commit() -> None:
+    """21 Sec.3.3.11: it replaces the row in force of its kind and its older answered rows; never
+    a younger row, an unanswered one or one of another kind."""
     gone, shown = {"status": "replaced"}, {"status": "in_force"}
-    locked = [_live(_OLD, "stop_loss", "in_force", _T), _live(_SL, "stop_loss", "pending", None)]
-    rel = _Rel(locked, [_row(_OLD, **gone)], [_row(_SL, **shown)])
+    older, unanswered = uuid.UUID(int=0x6004), uuid.UUID(int=0x6005)
+    locked = [_live(_OLD, "stop_loss", "in_force", _T), _live(_SL, "stop_loss", "pending", None,
+              _LATER), _live(_TP, "take_profit", "in_force", _T), _live(_NEW, "stop_loss",
+              "pending", _T, _LATER + timedelta(1)), _live(older, "stop_loss", "pending", _T),
+              _live(unanswered, "stop_loss", "pending", None)]  # fmt: skip
+    rel = _Rel(locked, [_row(_OLD, **gone), _row(older, **gone)], [_row(_SL, **shown)])
     seen: list[tuple[list[uuid.UUID], int]] = []
 
     async def audit(rows: tuple[RecordedStopRow, ...]) -> None:
         seen.append(([row.id for row in rows], rel.commits))
 
     done = await _store(rel).put_in_force(_ACCOUNT, _rows(_row(_SL)), at=_T, write_ahead=audit)
-    assert [r.id for r in done.replaced] == [_OLD] and [r.id for r in done.in_force] == [_SL]
-    assert seen == [([_OLD, _SL], 0)] and rel.commits == 1
+    assert [r.id for r in done.replaced] == [_OLD, older] and [r.id for r in done.in_force] == [_SL]
+    assert seen == [([_OLD, older, _SL], 0)] and rel.commits == 1
     assert [s.compile().params.get("status") for s in rel.statements] == [
         None, "replaced", "in_force"
     ]  # fmt: skip

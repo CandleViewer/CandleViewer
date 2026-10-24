@@ -544,8 +544,7 @@ class RecordedStopRepository:
         at: datetime,
         write_ahead: InForceWriteAhead | None = None,
     ) -> InForce:
-        """`RecordedStopStore.put_in_force`: `StaleRecordedStop` on a lost race, and
-        `AuditNotDurable` for a hook past its bound, each with nothing written."""
+        """`RecordedStopStore.put_in_force`; `AuditNotDurable` for a hook past its bound."""
         try:
             with self._timer.measure("recorded_stops"):
                 done = await self._store.put_in_force(

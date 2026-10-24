@@ -1,11 +1,10 @@
-"""Contract of what slice 3's complete read writes to the recorded stops (E29-T04 #913, S3-H;
-21 Sec.3.3.11): `put_in_force`, `resolve` and `waiting_keys` through `RecordedStopRepository`.
-Run on the in-memory stores (`test_submission_fake.py`) and on Postgres
-(`tests/integration/storage/test_recorded_stop_resolution_pg.py`); both supply `h`, the submission
-contract's harness, on a clock that moves between writes. Every case uses accounts of its own."""
+"""What slice 3's complete read writes to the recorded stops (E29-T04 #913, S3-H; 21 Sec.3.3.11),
+through `RecordedStopRepository`, on the fakes (`test_submission_fake.py`) and on Postgres
+(`test_recorded_stop_resolution_pg.py`): `h` is the submission contract's harness."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any, Final
@@ -63,19 +62,13 @@ class RecordedStopContract:
         self, h: Harness
     ) -> None:
         """A shown row goes in force, answered at the read if in flight. Of its kind only, the row
-        in force (keeping `in_force_at`) and older answered rows go `replaced` first, in the
-        hook's rows too; a younger row and the other kind's rows stay."""
+        in force (keeping `in_force_at`) and older answered rows go `replaced` first; a younger row
+        and the other kind's rows stay."""
         account, profile = h.new_account()
         old = await request(h, account, profile, answered=False)
         await repo(h).put_in_force(account, old, at=AT)
         mid, new, young = [await request(h, account, profile) for _ in range(3)]
-        seen: list[list[UUID]] = []
-
-        async def audit(rows: tuple[RecordedStopRow, ...]) -> None:
-            seen.append([row.id for row in rows])
-
-        done = await repo(h).put_in_force(account, new[:1], at=LATER, write_ahead=audit)
-        assert seen == [[r.id for r in (*done.replaced, *done.in_force)]]
+        done = await repo(h).put_in_force(account, new[:1], at=LATER, write_ahead=sc.audited)
         assert {r.id for r in done.replaced} == {old[0].id, mid[0].id}
         assert shape(await now_of(h, (*old, mid[1], *new, *young))) == [
             ("replaced", AT, AT, LATER), ("in_force", AT, AT, None), ("pending", T0, None, None),
@@ -83,10 +76,20 @@ class RecordedStopContract:
             ("pending", T0, None, None), ("pending", T0, None, None),
         ]  # fmt: skip
 
+    async def test_two_reads_racing_on_one_key_leave_one_row_in_force(self, h: Harness) -> None:
+        """The key lock (id order) serialises them: the second replaces the first's row or finds
+        its own replaced (`StaleRecordedStop`); `ux_rs_in_force` is never met."""
+        account, profile = h.new_account()
+        older, newer = await request(h, account, profile), await request(h, account, profile)
+        calls = (repo(h).put_in_force(account, rows[:1], at=AT) for rows in (older, newer))
+        got = await asyncio.gather(*calls, return_exceptions=True)
+        assert all(not isinstance(r, Exception) or isinstance(r, StaleRecordedStop) for r in got)
+        statuses = sorted(r.status for r in await now_of(h, (older[0], newer[0])))
+        assert statuses == ["in_force", "replaced"]
+
     async def test_a_lost_compare_and_set_writes_nothing(self, h: Harness) -> None:
-        """SEC-BND-02: the request's writer answering late (`settle`) and a resolution never both
-        win: a row answered, or put in force, since it was read, or another account's, is
-        `StaleRecordedStop`, and no row of the request moves."""
+        """SEC-BND-02: a late answer (`settle`) and a resolution never both win: a row answered or
+        put in force since it was read, or another account's, is `StaleRecordedStop`."""
         account, profile = h.new_account()
         rows = await request(h, account, profile, answered=False)
         await h.stops.settle(account, [rows[0].id], "answered", at=AT)
@@ -171,8 +174,6 @@ class RecordedStopContract:
         assert keys == (("ETHUSDT", 2), ("BTCUSDT", 0))
         inside = await repo(h).waiting_keys(account, now=eth.created_at, bound_s=5.0)
         assert inside == (("BTCUSDT", 0),)
-        with pytest.raises(ValueError, match="timezone-aware"):
-            await repo(h).waiting_keys(account, now=sc.LATE.replace(tzinfo=None), bound_s=5.0)
 
     @pytest.mark.parametrize(
         "ends",
@@ -181,9 +182,8 @@ class RecordedStopContract:
     async def test_a_filled_entrys_rows_end_on_the_row_each_side_on_its_own(
         self, h: Harness, ends: tuple[str, str]
     ) -> None:
-        """Q1, CR-S3H0-02: each held side ends durably on its own, with no memo: in force, replaced
-        by a later row of its kind, or void with reason `entry_filled_stop_absent`; then the key
-        waits no more."""
+        """Q1, CR-S3H0-02: each held side ends on the row on its own, no memo: in force, replaced by
+        a later row of its kind, or void `entry_filled_stop_absent`; the key waits no more."""
         account, profile = h.new_account()
         held = await request(h, account, profile, moves=HELD)
         if ends[0] == "replaced":

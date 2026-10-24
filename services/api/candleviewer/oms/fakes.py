@@ -1072,8 +1072,7 @@ class InMemoryRecordedStopStore:
         return done
 
     def _as_read(self, account_id: UUID, rows: Sequence[RecordedStopRow]) -> list[RecordedStopRow]:
-        """The stored rows, each still the account's, `pending`, of its kind and with the
-        `answered_at` it was read with; else `StaleRecordedStop`."""
+        """The stored rows if each is as read (account, kind, `pending`, `answered_at`)."""
         held = [self._db._stops.get(row.id) for row in rows]
         if any(
             h is None
