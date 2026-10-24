@@ -72,6 +72,16 @@ def _reason(standings: KeyStandings, account: UUID = ACC) -> str | None:
     return None if refusal is None else refusal.reason
 
 
+def test_the_standing_is_read_once_its_first_good_tracking_read_has_landed() -> None:
+    """#913 slice 3E: the OMS startup waits on it, and a failed read never gets here."""
+    clock = FakeClock()
+    standings = KeyStandings(_Job(), interval_s=HOUR, stale_after_s=STALE_S, clock=clock)
+    assert standings.read_once is False
+    standings.observe([])
+    clock.mono += STALE_S + 1
+    assert standings.read_once is True  # however old it is now
+
+
 def test_an_account_the_last_read_did_not_list_has_no_standing_and_is_refused() -> None:
     standings, _, _ = _world()
     assert standings.standing(ACC_B) is None and _reason(standings, ACC_B) == "no_active_key"

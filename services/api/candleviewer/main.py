@@ -121,7 +121,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     feature_flags = scrub_task = audit_verify = disk_budget = rule_prune = funding_task = None
     bars_runtime = kline_refresh = audit_flush = overrides = health_registry = None
     account_health = ws_runtime = lost_jobs = view_as_flush = view_as_sweeper = None
-    audit_exports = None
+    audit_exports = oms_runtime = None
     alert_tasks: list[Any] = []
     metrics_runtime: MetricsRuntime | None = None
     try:
@@ -208,6 +208,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         account_health = getattr(app.state, "account_health", None)
         if account_health is not None:  # E27-T04 (#837): once `start_all` has brought modules up
             account_health.start()
+        oms_runtime = getattr(app.state, "oms_runtime", None)
+        if oms_runtime is not None:  # #913 slice 3E: after account health; its sweep is a task
+            await oms_runtime.start()
         lost_jobs = getattr(app.state, "admin_jobs_lost", None)
         if lost_jobs is not None:  # E42-T05 (#966 Q10): the jobs the last clean stop left behind
             await lost_jobs.load()
@@ -243,6 +246,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             # sweeper.
             if ws_runtime is not None:
                 await teardown.run("ws_runtime", ws_runtime.stop)
+            # #913 slice 3E: the OMS runtime next, so no other step delays its drain past the stop
+            # budget (SEC-S3B1-02); E29-T05's private-stream consumer will stop just before it.
+            if oms_runtime is not None:
+                await teardown.run("oms_runtime", oms_runtime.stop)
             user_disable = getattr(app.state, "user_disable", None)
             if user_disable is not None:  # E42-T04 S6: steps in flight use what `stop_all` stops
                 await teardown.run("user_disable", user_disable.drain)  # each ends by its deadline

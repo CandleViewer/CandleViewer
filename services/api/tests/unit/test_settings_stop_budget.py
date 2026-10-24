@@ -28,6 +28,7 @@ from candleviewer.settings import (
     CLOSE_FLUSH_TIMEOUT_S,
     MIN_DRAIN_TIMEOUT_S,
     MIN_STOP_BUDGET_S,
+    OMS_STOP_RESERVE_S,
     SHUTDOWN_TICKS_S,
     STOP_SLACK_S,
     TEARDOWN_BUDGET_S,
@@ -66,6 +67,33 @@ def test_default_settings_fit_the_default_budget() -> None:
     )
     assert _needed_s(s) == pytest.approx(28.2)  # 5 grace + 2 flush + 5 drain + 16 module + 0.2
     assert _needed_s(s) <= s.api_stop_budget_s
+
+
+@pytest.mark.parametrize("budget_s", [MIN_STOP_BUDGET_S, 30, 45])
+@pytest.mark.parametrize("grace_ms", [0, 5_000, 15_000])
+@pytest.mark.parametrize("drain_s", [MIN_DRAIN_TIMEOUT_S, 5, 10])
+@pytest.mark.parametrize("oms_drain_s", [1.0, 10.0])
+def test_a_config_whose_shutdown_could_kill_the_oms_stop_is_refused(
+    budget_s: int, grace_ms: int, drain_s: int, oms_drain_s: float
+) -> None:
+    """SEC-S3B1-02 (#913 slice 3E): the OMS runtime's stop runs first after the gateway's and
+    takes at most `CV_OMS_DRAIN_S` + `OMS_STOP_RESERVE_S`, so no accepted config lets the budget
+    end before it does, its journal included: one that would is refused."""
+    oms_ends_s = (
+        grace_ms / 1000 + CLOSE_FLUSH_TIMEOUT_S + drain_s + SHUTDOWN_TICKS_S
+        + oms_drain_s + OMS_STOP_RESERVE_S
+    )  # fmt: skip
+    terms: dict[str, Any] = {
+        "api_stop_budget_s": budget_s,
+        "ws_shutdown_grace_ms": grace_ms,
+        "uvicorn_drain_timeout_s": drain_s,
+        "oms_drain_s": oms_drain_s,
+    }
+    try:
+        Settings(**terms)
+    except ValidationError:
+        return
+    assert oms_ends_s <= budget_s
 
 
 def test_a_60s_grace_cannot_fit_the_default_budget_and_the_message_names_every_term() -> None:

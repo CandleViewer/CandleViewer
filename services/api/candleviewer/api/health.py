@@ -75,6 +75,7 @@ def make_health_router(
     secrets_health: Callable[[], HealthReport] | None = None,
     accounts_health: Callable[[], HealthReport] | None = None,
     storage_health: Callable[[], StorageHealthReport] | None = None,
+    oms_state: Callable[[], str | None] | None = None,
 ) -> APIRouter:
     """Bind the health/metrics routes to a concrete `Settings` instance.
 
@@ -126,6 +127,11 @@ def make_health_router(
             if rep.status is not HealthStatus.STOPPED:
                 ok = rep.status is HealthStatus.OK
                 checks.append(ReadyCheck(name="accounts", ok=ok, detail=rep.detail))
+        # #913 slice 3E: the OMS runtime's state alone (20 Sec.6.2), while it runs; `/readyz` is
+        # anonymous, so no posture
+        if oms_state is not None and (state := oms_state()) is not None:
+            ok = state == "ok"
+            checks.append(ReadyCheck(name="oms", ok=ok, detail="" if ok else state))
         if storage_health is not None:  # #3874: one check per real tier, its latest probe
             storage = storage_health()
             checks.extend(

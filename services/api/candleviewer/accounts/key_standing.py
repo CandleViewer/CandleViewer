@@ -145,6 +145,13 @@ class KeyStandings:
         self._rejections = {a: r for a, r in self._rejections.items() if a in self._accounts}
         self._read_at = self._clock.monotonic()
 
+    @property
+    def read_once(self) -> bool:
+        """Whether a good tracking read has been taken: the OMS startup waits for the first (#913,
+        20-architecture.md 6.2 step 1), so a create a restart resumes is not refused for want of
+        it."""
+        return self._read_at != float("-inf")
+
     def standing(self, account_id: UUID) -> KeyStanding | None:
         """The account's standing now; `None` if the last good read did not list it or is older
         than `stale_after_s`. A rejection that a later pass has cleared is dropped here."""

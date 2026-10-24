@@ -65,6 +65,7 @@ _BOOT = (
     "log_level_overrides.start",
     "health_registry.start",
     "account_health.start",
+    "oms_runtime.start",
     "metrics_facade.add_process_collectors",
     "MetricsRuntime",
     "metrics_runtime.start",
