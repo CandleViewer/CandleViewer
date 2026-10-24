@@ -10,7 +10,9 @@ RULED class word, no "app-managed" in UI copy, T2 reasons within 60 characters, 
 every cited id and `file:line` still valid, C-2.6 on every position-opening frame); (6) the counts
 and the fixture arithmetic (the E32-D01 ladder tool's formulas re-implemented; nothing typed twice).
 `--json` feeds the check-nums script; `--check` re-derives the spec's `audit:` markers;
-`--self-test` mutation-tests the cite rule (moved line = WARN; vanished or ambiguous = FAIL).
+`--self-test` mutation-tests the cite rule (moved line = WARN; vanished or ambiguous = FAIL) and
+the section 3 frame gates on this spec (a present-tense stop marker on one pre-send row = one
+FAIL; the viewer row without its stop = one FAIL).
 Exit 1 on a gated FAIL or a failed gate.
 
 Usage: python3 -I docs/design/_tools/e32_d03_bracket_builder_audit.py [--json|--check|--self-test]
@@ -47,7 +49,7 @@ FORBIDDEN = (
     r"team-i[d]=",
     r"file-i[d]=",
 )
-# The class word the lane retired from user copy (RULED 2026-10-24); checked on the UI sections.
+# The class word the orchestrator's ruling retired from user copy (RULED 2026-10-24); UI sections.
 BANNED_COPY = (r"app-managed",)
 RULED_WORD = "Emulated · run by CandleViewer, not Bybit"
 NOTE_DRAFT = (
@@ -59,7 +61,29 @@ STOP_LABEL = "Stop-loss (required)"
 HOLDER = "held by Bybit"
 # C-2.6: every position-opening frame of section 3 names the stop and its holder (or the wire flag).
 STOP_MARKERS = (HOLDER, "native_sl_confirmed", STOP_LABEL)
-NON_OPENING = ("viewer-read-only", "E33 extension point")
+NON_OPENING = ("E33 extension point",)
+# The twelve pre-send rows of section 3: no exchange stop exists yet. `sl.holder` "held by Bybit
+# (exchange)" is the custodian word and stays verbatim; a marker or free sentence is state-true:
+# "held by Bybit once placed" (or no stop / wrong side / not sent), never the present tense.
+PRE_SEND = (
+    "empty",
+    "editing",
+    "editing · TP ladder",
+    "editing · LIVE arm",
+    "validating",
+    "validating · beyond liquidation",
+    "validating · stop empty",
+    "validating · ladder not splittable",
+    "blocked",
+    "error",
+    "error · outcome unknown",
+    "viewer-read-only",
+)
+PRESENT_HELD = (
+    r"held by Bybit(?! once placed| \(exchange\))",
+    r"stop [\d,.]+ held by Bybit(?! once)",
+)
+CLASS_RE = r"\*\*(?:T2|T4|validity|status|outcome|T1|—)\*\*"
 # element | fg | bg | role — every pair the screen draws (spec section 11, rows in order).
 PAIRS_TABLE = """
 dialog body, field values, the validation line | color.text.primary | color.surface.overlay | text
@@ -226,7 +250,7 @@ DOC_NAMES = (
     "28-statechart-catalogue.md",
 )
 DOCS = {n[:2]: PLAN / n for n in DOC_NAMES}
-# The merged design spec this spec cites by file:line (E33-D03 at its merge commit; unchanged since).
+# The merged design spec this spec cites by file:line (E33-D03 at its merge commit; unchanged).
 DOCS["E33-D03"] = DESIGN / "E33" / "E33-D03.md"
 # The four consumers the ticket names (SCR-131 is the per-account profile editor, `14` :2600).
 CONSUMERS = ("SCR-060", "SCR-064", "SCR-069", "SCR-131")
@@ -603,6 +627,62 @@ def quoted(cell: str) -> list[str]:
     return [s for s in re.findall(r'"((?:[^"\\]|\\.)*)"', cell) if s]
 
 
+def frame_gates(s3: str) -> list[str]:
+    """Section 3, row by row: C-2.6 (every position-opening frame names its stop), the CMP-158
+    line, one class, and the tense gate (no present-tense "held by Bybit" marker on a pre-send
+    row: before `native_sl_confirmed` the stop is "held by Bybit once placed")."""
+    bad: list[str] = []
+    frames = re.findall(r"^\| \d+ +\| `SCR-069 / ([^`]+)` +\|[^\n]*", s3, MULTI)
+    for row in re.finditer(r"^\| \d+ +\| `SCR-069 / ([^`]+)` +\|([^\n]*)", s3, MULTI):
+        name, rest = row.group(1), row.group(2)
+        opening = not any(name.startswith(x) for x in NON_OPENING)
+        if opening and not any(mk in rest for mk in STOP_MARKERS):
+            bad.append(f"spec section 3: `{name}` opens a position and names no held stop (C-2.6)")
+        if name != "E33 extension point" and "CMP-158" not in rest:
+            bad.append(f"spec section 3: `{name}` lacks the CMP-158 line")
+        if not re.search(CLASS_RE, rest):
+            bad.append(f"spec section 3: `{name}` names no class")
+        if name in PRE_SEND:
+            hits = sorted({m.start() for p in PRESENT_HELD for m in re.finditer(p, rest)})
+            if hits:
+                at = rest[max(hits[0] - 20, 0) : hits[0] + 30]
+                bad.append(f"spec section 3: `{name}` is pre-send but says present-tense {at!r}")
+    if len(frames) != len(set(frames)):
+        bad.append("spec section 3: a frame name repeats")
+    return bad
+
+
+def self_test_frames() -> list[str]:
+    """Mutation-test the frame gates on this spec: the head is clean; one present-tense marker
+    on one pre-send row is exactly one FAIL; the viewer row without its stop is exactly one FAIL;
+    a present-tense marker on a post-confirm row (`submitting`) is no FAIL."""
+    s3 = section(SPEC.read_text(encoding="utf-8"), 3, 4)
+    bad: list[str] = []
+    if frame_gates(s3):
+        bad.append("self-test: the head's section 3 must pass the frame gates")
+    draft = '"stop 63,900.0 held by Bybit once placed"'
+    rows3 = s3.split("\n")
+    for want, name, old, new in (
+        (1, "editing`", draft, '"stop 63,900.0 held by Bybit"'),
+        (1, "viewer-read-only`", "", ""),
+        (0, "submitting`", "held by Bybit", "held by Bybit"),
+    ):
+        hit = [i for i, ln in enumerate(rows3) if f"`SCR-069 / {name}" in ln]
+        if len(hit) != 1 or old not in rows3[hit[0]]:  # "" plants on any row
+            bad.append(f"self-test: cannot plant the {name[:-1]} mutation")
+            continue
+        mutated = rows3.copy()
+        if old:
+            mutated[hit[0]] = mutated[hit[0]].replace(old, new)
+        else:  # strip every stop marker from the row
+            for mk in STOP_MARKERS:
+                mutated[hit[0]] = mutated[hit[0]].replace(mk, "—")
+        got = len(frame_gates("\n".join(mutated)))
+        if got != want:
+            bad.append(f"self-test: the {name[:-1]} mutation gave {got} FAIL, not {want}")
+    return bad
+
+
 def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, str]) -> list[str]:
     bad: list[str] = []
     constitution = (ROOT / "CONSTITUTION.md").read_text(encoding="utf-8")
@@ -635,19 +715,7 @@ def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, s
         for s in quoted(cell):
             if len(s) > 60 or not s.endswith(".") or re.search(r"\d", s):
                 bad.append(f"T2 reason {key}: {len(s)} chars; stop {s.endswith('.')}")
-    s3 = section(spec, 3, 4)
-    frames = re.findall(r"^\| \d+ +\| `SCR-069 / ([^`]+)` +\|[^\n]*", s3, MULTI)
-    for row in re.finditer(r"^\| \d+ +\| `SCR-069 / ([^`]+)` +\|([^\n]*)", s3, MULTI):
-        name, rest = row.group(1), row.group(2)
-        opening = not any(name.startswith(x) for x in NON_OPENING)
-        if opening and not any(mk in rest for mk in STOP_MARKERS):
-            bad.append(f"spec section 3: `{name}` opens a position and names no held stop (C-2.6)")
-        if name != "E33 extension point" and "CMP-158" not in rest:
-            bad.append(f"spec section 3: `{name}` lacks the CMP-158 line")
-        if not re.search(r"\*\*(?:T2|validity|status|outcome|T1|—)\*\*", rest):
-            bad.append(f"spec section 3: `{name}` names no class")
-    if len(frames) != len(set(frames)):
-        bad.append("spec section 3: a frame name repeats")
+    bad += frame_gates(section(spec, 3, 4))
     s5 = section(spec, 5, 6)
     bad += [f"spec section 5: consumer {c} is not specified" for c in CONSUMERS if c not in s5]
     lines = {k: v.split("\n") for k, v in t.items()}
@@ -710,11 +778,10 @@ def flatten(d: object, prefix: str = "") -> dict[str, object]:
 
 def main(argv: list[str]) -> int:
     if "--self-test" in argv:
-        bad = self_test()
-        print(
-            "self-test: "
-            + ("clean (moved → WARN, gone → FAIL, ambiguous → FAIL)" if not bad else "\n".join(bad))
-        )
+        bad = self_test() + self_test_frames()
+        msg = "clean (cite: moved → WARN, gone → FAIL, ambiguous → FAIL; frames: pre-send "
+        msg += "present tense → 1 FAIL, viewer without its stop → 1 FAIL, post-confirm → 0)"
+        print("self-test: " + (msg if not bad else "\n".join(bad)))
         return 1 if bad else 0
     themes = {k: load_theme(k) for k in THEMES}
     t = {k: p.read_text(encoding="utf-8") for k, p in DOCS.items()}
@@ -771,7 +838,8 @@ def main(argv: list[str]) -> int:
         "OK — every E32-D02 section 3.8 key byte-equal; the CMP-158 sentence and v.sl.required "
         "verbatim; the RULED class word present; no retired word in UI copy; every rbac reason "
         "within 60 characters; every position-opening frame names its held stop (C-2.6); no "
-        "private text; every C / CMP / SCR id exists; every cited text found once"
+        "private text; no present-tense stop marker on a pre-send row; every C / CMP / SCR id "
+        "exists; every cited text found once"
     )
     out.append("\n## 5. String gates: " + (ok if not bad else "\n".join("FAIL " + b for b in bad)))
     out += [f"WARN cited line drifted: {w}" for w in CITE_WARN]
