@@ -67,7 +67,7 @@ from .ports import PositionKey
 
 __all__ = [
     "ENTRY_HELD", "FILL_PAGE", "HISTORY_LEAD_S", "HISTORY_SPAN_S", "RESTORE_HELD", "SPAN_HELD",
-    "TRAIL_HELD", "UNSEEN_PAGE", "EntryState", "Move", "Outcome", "PositionState",
+    "TRAIL_HELD", "UNSEEN_PAGE", "EntryState", "Move", "Outcome", "PageReason", "PositionState",
     "Reading", "RequestDecision", "StopRequest", "VoidReason", "decide", "full_shows",
     "group_requests", "order_matches", "position_state", "shows_no_stop", "trail_unreadable",
 ]  # fmt: skip
@@ -99,6 +99,9 @@ type PositionState = Literal["open", "flat"]
 #: `filled` (any fill, a partly filled entry still resting included), `gone` (ended unfilled, not
 #: found, or not the row's order), or `unseen` (not found where a miss proves nothing).
 type EntryState = Literal["resting", "filled", "gone", "unseen"]
+#: Why a decision pages (`RequestDecision.page_reason`): the fill void of an open stop-loss, or the
+#: void of an unseen entry on a position open with no stop at all (the 06:38Z ruling).
+type PageReason = Literal["entry_filled_stop_absent", "entry_unseen"]
 
 #: Why a request is held for reconciliation (`RequestDecision.held`, the log line's text).
 TRAIL_HELD: Final = (
@@ -175,6 +178,8 @@ class RequestDecision:
     held: str | None = None
     #: Why `pages` pages (`FILL_PAGE`, `UNSEEN_PAGE`); None when nothing pages.
     page: str | None = None
+    #: The same, typed, for code to branch on: None when nothing pages.
+    page_reason: PageReason | None = None
 
 
 # --- grouping and the pure matchers ----------------------------------------------------------
@@ -364,7 +369,9 @@ def _moves(request: StopRequest, reading: Reading, later: frozenset[StopKind]) -
     voided = _whole(request, state, "in_flight_resolved", "in_flight_resolved")
     if entry == "unseen" and _no_stop(reading):  # the 06:38Z ruling: void, and page
         stops = tuple(r.id for r in rows if r.kind == "stop_loss")
-        return replace(voided, pages=stops, page=UNSEEN_PAGE)
+        if not stops:
+            return voided
+        return replace(voided, pages=stops, page=UNSEEN_PAGE, page_reason="entry_unseen")
     return voided
 
 
@@ -436,4 +443,9 @@ def _decision(
         for r, move in moves
         if move == "entry_filled_stop_absent" and r.kind == "stop_loss" and state == "open"
     )
-    return RequestDecision(request, outcome, moves, state, pages, page=FILL_PAGE if pages else None)
+    if not pages:
+        return RequestDecision(request, outcome, moves, state)
+    reason: PageReason = "entry_filled_stop_absent"
+    return RequestDecision(
+        request, outcome, moves, state, pages, page=FILL_PAGE, page_reason=reason
+    )
