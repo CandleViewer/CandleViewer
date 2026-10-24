@@ -438,7 +438,8 @@ UL3-T1)
   with its absolute unlock time. Audit: none (a read).
 - **AD-S03-N05 A stale grant set re-grants a revoked account** (`integration`, `e2e`; 22
   `setUserAccountAccess`; E42-S03 technical notes; Q-16): OWNER and OWNER-2 each hold a live `users`
-  grace, and every save carries `acknowledge_unknown_positions=true` (§1). OWNER loads MGR-MANY's grants (SUB-S, SUB-T, SUB-U); OWNER-2 then removes
+  grace, and every save carries `acknowledge_unknown_positions=true` (§1). OWNER loads MGR-MANY's
+  grants (SUB-S, SUB-T, SUB-U); OWNER-2 then removes
   SUB-S and saves; OWNER, whose page still lists SUB-S, changes SUB-U's level and saves, the payload
   being the complete set (replace semantics). The route takes no `If-Match`, so the
   save answers `200` with the stored set, SUB-S included, and SUB-S is a live grant again (its soft-revoked
@@ -876,7 +877,8 @@ fails")
   permission scoping, IP whitelisting, profile creation and limits, and the invite, marking each
   completed step. The invite is a redeemable link, and its step is challenged when no `users` grace is
   live (SR-025; AD-S02-N06).
-- Audit: each step's own record: the sub-account's `accounts.create`, the key's `api_key.import`, the profile's `profile.created` and
+- Audit: each step's own record: the sub-account's `accounts.create`, the key's `api_key.import`,
+  the profile's `profile.created` and
   `profile.bound`, the grant's `users.access_change` and the invite's `users.invited`; the onboarding
   records E42-S07 names are not registered: see Q-22.
 - End: the invite link is redeemed or revoked (`users.invite_revoked`), so none outlives the case.
@@ -899,8 +901,9 @@ flow"; D02 D8)
 
 **AD-S07-04 Disable a trade group** (`e2e`, `integration`; E42-S07 "Disable a trade group")
 
-- **Blocked:** the trade-group routes (`/trade-groups`) are `not_mounted` on this `main`
-  (`tests/contract/rbac/matrix.yaml`), so GROUP-G cannot be made or changed through the API.
+- **Blocked:** the trade-group routes (the `/trade-group-definitions*` and `/trade-groups*` blocks)
+  are `not_mounted` on this `main` (`tests/contract/rbac/matrix.yaml`), so GROUP-G cannot be made or
+  changed through the API.
 - Pre: GROUP-G, enabled, with an open group trade.
 - Steps: disable G.
 - Expected: G leaves the ticket's targets, and the positions opened through G stay fully manageable. The
@@ -912,7 +915,8 @@ flow"; D02 D8)
 **AD-S07-05 A membership change keeps the open trade's snapshot** (`integration`; E42-S07 "Membership change
 during an open trade")
 
-- **Blocked** with AD-S07-04: the same routes.
+- **Blocked** with AD-S07-04: a membership change is `PUT /trade-group-definitions/{definitionId}`,
+  `not_mounted` with the rest of the two blocks.
 - Pre: GROUP-G with an open group trade.
 - Steps: change G's membership.
 - Expected: the open trade keeps its original membership. The group version its detail should show has
@@ -1001,9 +1005,11 @@ registered chart"; 22 `exportStatechart`)
 - Audit: none beyond `admin.area_entered`.
 
 **AD-T07-N01 A snapshot whose seal fails is left out** (`security`; 22 `listStatecharts`): Pre:
-SC-FORGED-SEAL (see §1), on a test database, in process only (see the section's note). It is left out of the list, `snapshots` says `error` with a
-fixed reason, and a critical event is raised once per machine, environment and snapshot. Audit: none
-beyond `admin.area_entered`; the critical event is a `system_events` row, not an audit record.
+SC-FORGED-SEAL (see §1), on a test database, in process only (see the section's note). It is left
+out of the list, and `snapshots` says `error` with a fixed reason. The critical event's half is
+**blocked** until the `system_events` store lands (`admin/inspector.py`, the section's note): a critical
+event is then raised once per machine, environment and snapshot. Audit: none beyond
+`admin.area_entered`; the critical event is a `system_events` row, not an audit record.
 
 **AD-T07-N02 A machine the caller may not see is invisible** (`contract`, `security`; 22 `listStatecharts`,
 `getStatechart`; C-12.4): the inspector is the Owner's (`admin:read`), so a Manager or Viewer gets
@@ -1120,13 +1126,13 @@ catalogue's, and it is measured between server timestamps.
 Each charter is timeboxed, within `03-testing-strategy.md` §11.2's 60 to 120 minutes. A charter ends with
 notes, the defects filed and the coverage it reached.
 
-| Charter                                                                                                                                                                                                  | Timebox | What would make this a finding                                                                                                                                                  |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **CH-AD-1** Try to see data outside your scope as a manager: deep links with foreign ids, the scope selector, `/me`, WebSocket subscriptions, the own-redacted audit view, exports                       | 90 min  | Any byte of another user's or an ungranted account's data; or a foreign id answered differently from a missing one                                                              |
-| **CH-AD-2** Try to make the audit log look editable: SCR-135 and SCR-136 controls, every HTTP verb on `/admin/audit*`, the export, a detail view edited in the browser, the chain check on AUDIT-CORRUPT | 60 min  | Any control or verb that changes a record; any affordance that suggests editing; a verify of AUDIT-CORRUPT that reports an intact chain or another `first_bad_id`               |
-| **CH-AD-3** Try to reach an admin screen without elevation: deep links, the back button after a cancelled gate, a second tab, a grace lapsing mid-load, a view-as session                                | 60 min  | A step-up-gated action that succeeds with no live grace or bound grant; a state change or admin call with no record; an Owner-only route not refused `403` in a view-as session |
-| **CH-AD-4** Try to lose form content by letting the step-up lapse, on every admin form                                                                                                                   | 60 min  | A form whose content is lost, that saves twice, or that saves without passing the gate                                                                                          |
-| **CH-AD-5** Try to make two tiles block each other: SCR-120 with subsystems slowed, failing and flapping                                                                                                 | 60 min  | One tile's failure or slowness delays another past 800 ms; a retry that blocks the page                                                                                         |
+| Charter                                                                                                                                                                                                  | Timebox | What would make this a finding                                                                                                                                                       |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **CH-AD-1** Try to see data outside your scope as a manager: deep links with foreign ids, the scope selector, `/me`, WebSocket subscriptions, the own-redacted audit view, exports                       | 90 min  | Any byte of another user's or an ungranted account's data; or a foreign id answered differently from a missing one                                                                   |
+| **CH-AD-2** Try to make the audit log look editable: SCR-135 and SCR-136 controls, every HTTP verb on `/admin/audit*`, the export, a detail view edited in the browser, the chain check on AUDIT-CORRUPT | 60 min  | Any control or verb that changes a record; any affordance that suggests editing; a verify of AUDIT-CORRUPT that reports an intact chain or another `first_bad_id`                    |
+| **CH-AD-3** Try to reach an admin screen without elevation: deep links, the back button after a cancelled gate, a second tab, a grace lapsing mid-load, a view-as session                                | 60 min  | A step-up-gated action that succeeds with no live grace or bound grant; a state change or admin-area call with no record; an Owner-only route not refused `403` in a view-as session |
+| **CH-AD-4** Try to lose form content by letting the step-up lapse, on every admin form                                                                                                                   | 60 min  | A form whose content is lost, that saves twice, or that saves without passing the gate                                                                                               |
+| **CH-AD-5** Try to make two tiles block each other: SCR-120 with subsystems slowed, failing and flapping                                                                                                 | 60 min  | One tile's failure or slowness delays another past 800 ms; a retry that blocks the page                                                                                              |
 
 CH-AD-2's chain check runs on AUDIT-CORRUPT, in a test database only, never on staging: a stored record
 changed there would permanently break an append-only, hash-chained log.
@@ -1408,8 +1414,8 @@ guess. A question marked (answered) stays, so the numbers do not move.
   within 2 s of the commit. AD-S05-01 asserts the story's ≤10 s until they agree.
 - **Q-22:** E42-S07's scope names actions the registry does not hold: `user.onboarding_started`,
   `user.onboarding_resumed`, `user.onboarding_completed`, `trade_group.enabled`, `trade_group.disabled`,
-  `trade_group.renamed`, `trade_group.reordered` and `trade_group.membership_changed`; the registry
-  holds E28's `tradegroup.updated` neither, which AD-S07-04 and AD-S07-05 name. And `22` has no
+  `trade_group.renamed`, `trade_group.reordered` and `trade_group.membership_changed`; nor does the
+  registry hold E28's `tradegroup.updated`, which AD-S07-04 and AD-S07-05 name. And `22` has no
   group-level enable or disable, no per-user allowlist (`enabled` is per member) and no group version:
   neither `TradeGroup` nor `TradeGroupDefinition` carries one, though the story wants the trade detail
   to show the version a trade used. AD-S07-01 to AD-S07-05 assert the records the steps' own operations
@@ -1433,7 +1439,8 @@ guess. A question marked (answered) stays, so the numbers do not move.
   `HealthReport.components[]` only (state, number, detail, last good); per-account private-WebSocket
   rows, REST latency per class and per-UID budgets are SCR-147's (`CapacityReport.rate_budget`), so is
   the ingestion queue depth (`CapacityReport.ingestion.queue_depth`), and database sizes are SCR-142's;
-  neither D02 nor `22` has a field for error rates; `22` carries `uptime_seconds`, which D02 does not draw. The drill-down is a history disclosure with a table
+  neither D02 nor `22` has a field for error rates; `22` carries `uptime_seconds`, which D02 does not
+  draw. The drill-down is a history disclosure with a table
   alternative and the incident-log link, not recent errors and reconnects. The single `bybit_private_ws`
   row covers every account, with a fixed "what stops" sentence and no separate remediation hint, not a
   tile for `sub_002`. AD-S06-01 to AD-S06-03 assert what D02 draws; the rest waits for the story or the

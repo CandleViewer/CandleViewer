@@ -79,8 +79,9 @@ def _changes(text: str) -> bool:
 
 
 def _secret_shaped_lines(text: str) -> list[int]:
-    """The number of each line of `text` that completes a secret-shaped text, as the redactor
-    reads it: a label's value, on the label's line or past blank lines, or a key or token shape.
+    """For each window of `text` that the redactor changes, the number of the line that completes
+    the window's first secret-shaped text, as the redactor reads it: a label's value, on the label's
+    line or past blank lines, or a key or token shape. Two secrets in one window give one number.
     Numbers only, so that a failure never prints the text. A single line over the cut is reported
     too, as it fails closed."""
     lines = text.splitlines()
@@ -101,7 +102,7 @@ def _secret_shaped_lines(text: str) -> list[int]:
     return sorted(found)
 
 
-def test_no_readme_paragraph_is_secret_shaped() -> None:
+def test_no_readme_window_is_secret_shaped() -> None:
     flagged = _secret_shaped_lines(_README.read_text(encoding="utf-8"))
     assert flagged == []  # line numbers, never the text
 
@@ -120,6 +121,37 @@ def test_the_readme_scan_catches_a_label_with_its_value_past_the_line_end(
     text: str, flagged: list[int]
 ) -> None:
     assert _secret_shaped_lines(text) == flagged
+
+
+_PROSE = "Plain prose."  # 13 characters a line, with its line end
+_LONG_LABEL = " ".join([_PROSE] * 45) + " password:"  # one line of 594 characters
+
+
+@pytest.mark.parametrize(
+    ("text", "flagged"),
+    [
+        # 1,989 characters of lines first: the first window ends after the label, before its value
+        ("\n".join([_PROSE] * 153 + ["password:", "not-a-value-1"]), [155]),
+        # 1,398 characters first, then a long label line: the next window must start in the prose
+        ("\n".join([_PROSE] * 107 + ["Prose.", _LONG_LABEL, "not-a-value-1"]), [110]),
+    ],
+    ids=["after-a-full-window", "a-long-label-line-after-most-of-a-window"],
+)
+def test_the_readme_scan_catches_a_label_and_its_value_across_a_window_end(
+    text: str, flagged: list[int]
+) -> None:
+    assert _secret_shaped_lines(text) == flagged  # only an overlapping next window holds both
+
+
+def test_the_readme_scan_reports_the_line_that_ends_the_secret_not_the_window() -> None:
+    text = "password:\nnot-a-value-1\n" + "\n".join([_PROSE] * 50)
+    assert _secret_shaped_lines(text) == [2]
+
+
+def test_the_readme_scan_reports_a_single_line_over_the_cut() -> None:
+    line = " ".join([_PROSE] * 400)
+    assert len(line) > 4119
+    assert _secret_shaped_lines(line) == [1]
 
 
 def test_the_readme_scan_does_not_flag_a_long_paragraph_for_its_length() -> None:

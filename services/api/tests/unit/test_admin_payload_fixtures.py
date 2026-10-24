@@ -136,7 +136,8 @@ def test_every_component_of_a_health_payload_has_the_keys_the_server_sends(name:
 @pytest.mark.parametrize("name", _HEALTH)
 def test_a_component_was_last_good_as_the_registry_stamps_it(name: str) -> None:
     """The registry stamps `last_good_at` on a healthy or not_deployed run only: a component in
-    any other state was last good at an earlier run, or never, and one in either was good now."""
+    any other state was last good at an earlier run, or never, and one in either was good now.
+    "Now" is the fixtures' `server_time`; the registry stamps each at its own probe's reading."""
     report = _load(name)
     now = datetime.fromisoformat(report["server_time"])
     good = {"healthy", "not_deployed"}

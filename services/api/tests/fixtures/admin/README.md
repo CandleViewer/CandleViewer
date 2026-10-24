@@ -128,8 +128,8 @@ payload = json.loads(Path("tests/fixtures/admin/payloads/health_degraded.json").
 | `overview_recorder_hang.json` | HEALTH-RECORDER-HANG  | `AdminOverview`: the recorder slice `error`, `timed out after 300 ms`    |
 
 - **Ten components, not fifteen:** a real `GET /admin/health` sends five rows more than a health
-  payload, which holds the ten required components only: `hot_tier_write_behind`, `ingestion`,
-  `secrets`, `bars` and `bars_writer`, which `app.py` registers. No plan case reads them.
+  payload, which holds the ten required components only. The five more are `hot_tier_write_behind`,
+  `ingestion`, `secrets`, `bars` and `bars_writer`, which `app.py` registers. No plan case reads them.
 - **No stack switch makes a health payload:** on this `main` the registry holds `oms`, `rule_engine`,
   `recorder`, `bybit_rest` and `bybit_private_ws` as `not_deployed` placeholders, so a state of
   theirs, HEALTH-SUB002-WS-DOWN's degraded `bybit_private_ws` included, is a harness's, served in
@@ -172,7 +172,8 @@ async def test_verify_reports_the_victim(pg_dsn: str, tmp_path: Path) -> None:
 - **The verify range must hold the victim:** a body of `{}` verifies only the newest 1,000,000 ids
   (`audit_verify_max_span`; each entry takes two ids), about 500,000 entries. A chain with more rows
   after the victim than that needs a `from_id` at or below the victim's id and within
-  `audit_verify_max_span` of it, since the range then runs that many ids on, to the head.
+  `audit_verify_max_span` of it: the range then holds that many ids from `from_id` on, or stops at
+  the head if that is nearer (`audit/query.py`).
 - **Who can run it:** altering a row behind the chain needs the owner of `audit_log` (the role that
   ran the migrations), as an attacker holding the owner role would: the test container's user. The
   app's role holds no `UPDATE`. The append-only trigger is off inside one transaction only, so a
