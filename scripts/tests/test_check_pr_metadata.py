@@ -1041,3 +1041,129 @@ def test_closing_refs_count_nodes_the_token_cannot_read():
     node = {"number": 5, "repository": {"nameWithOwner": "o/r"}}
     hidden = _refs(totalCount=2, nodes=[None, node])  # null: a node the token may not read
     assert m.online_closing_refs(lambda q, v: hidden, "o/r", "7") == ["o/r#5", "+1 more"]
+
+
+# --- #4435: CHANGELOG.md changes only in a changelog sync PR (PR-CHANGELOG-001) ---------------
+
+_CL = (
+    "# Changelog\n\n## Unreleased\n\n### Fixes\n- **a**: one (1111111)\n"
+    "\n### Security\n- Hardened a path (#10)\n\n## 0.1.0 — 2026-10-01\n\n### Fixes\n- old (#1)\n"
+)
+_FIX = "- **oms-execution**: a new fix (2222222)"
+_SEC = "- Hardened the key path against a side channel (#20)"
+
+
+def _with(line, after="- Hardened a path (#10)", text=_CL):
+    return text.replace(after + "\n", f"{after}\n{line}\n", 1)
+
+
+def _changelog_run(title, paths, head, number=20, base=_CL):
+    p = {**pr(title=title), "number": number}
+    return run(p, rows(*[("1", "0", path) for path in paths]), changelog=(base, head))
+
+
+def test_a_feature_pr_that_edits_the_changelog_is_refused_naming_the_footer_and_the_ticket():
+    """Scenario: A feature PR that edits CHANGELOG.md is refused by the gate."""
+    head = _with(_FIX, after="- **a**: one (1111111)")
+    errs, _ = _changelog_run("feat(oms-execution): add a thing", ["src/a.py", "CHANGELOG.md"], head)
+    (err,) = [e for e in errs if e.startswith("PR-CHANGELOG-001")]
+    assert "`Changelog: <one-line" in err and "#4435" in err and "07 §3" in err
+
+
+@pytest.mark.parametrize(
+    "title", ["docs(changelog): update unreleased", "docs(docs): sync the Unreleased section"]
+)
+def test_a_sync_pr_passes_the_gate(title):
+    """Scenario: A sync PR passes the gate: a `docs` title and CHANGELOG.md its only file, whatever
+    the sync changed there (the scope rule is PR-TITLE-003's, apart)."""
+    head = _with(_FIX, after="- **a**: one (1111111)").replace("- Hardened a path (#10)\n", "")
+    assert m.changelog_edit_errors(title, 9, [m.CHANGELOG_PATH], _CL, head) == []
+    errs, _ = _changelog_run("docs(docs): sync the Unreleased section", ["CHANGELOG.md"], head)
+    assert "PR-CHANGELOG-001" not in codes(errs)
+
+
+@pytest.mark.parametrize(
+    ("head", "number"),
+    [
+        (_with(_SEC), 20),
+        (_with(_SEC.replace("(#20)", "(#20) (#20)")), 20),
+        (_with(_SEC + "\n- Also the token path (#20)"), 20),
+    ],
+)
+def test_a_security_fix_may_add_its_own_impact_only_lines(head, number):
+    """07 §3: the fixing PR writes its impact-only Security line itself, ending with its `(#N)`."""
+    paths = ["src/a.py", "CHANGELOG.md"]
+    errs, _ = _changelog_run("fix(auth-rbac): harden a path", paths, head, number)
+    assert "PR-CHANGELOG-001" not in codes(errs)
+
+
+@pytest.mark.parametrize(
+    ("head", "number"),
+    [
+        (_with(_SEC.replace("(#20)", "(#21)")), 20),  # another PR's number
+        (_with(_SEC), None),  # no PR number to own it
+        (_with(_SEC.replace("(#20)", "(#20) trailing")), 20),  # the number not at the end
+        (_with(_SEC, after="- **a**: one (1111111)"), 20),  # under Fixes, not Security
+        (_with(_SEC, after="- old (#1)"), 20),  # in a released section
+        (_with(_SEC).replace("- **a**: one (1111111)\n", ""), 20),  # also removes a line
+        (_with(_SEC).replace("- Hardened a path (#10)", "- Hardened a path, reworded (#10)"), 20),
+        (_with(""), 20),  # a blank line
+        (_with("### Security"), 20),  # a heading, not an entry
+        (_with(_SEC.removeprefix("- ")), 20),  # no bullet
+        (_with(_SEC.replace("(#20)", "(#None)")), None),  # no number, whatever the line says
+        (_CL, 20),  # the file listed as changed, its lines the same (its mode, a final newline)
+        (_with(_SEC + "\n- And another PR's line (#21)"), 20),  # one own line, one not
+    ],
+)
+def test_any_other_edit_by_a_non_sync_pr_is_refused(head, number):
+    paths = ["src/a.py", "CHANGELOG.md"]
+    errs, _ = _changelog_run("fix(auth-rbac): harden a path", paths, head, number)
+    assert "PR-CHANGELOG-001" in codes(errs)
+
+
+def test_a_security_line_added_to_a_released_section_is_refused():
+    base = _CL + "\n### Security\n- Hardened an old path (#2)\n"  # 0.1.0's own Security
+    head = _with(_SEC, after="- Hardened an old path (#2)", text=base)
+    paths = ["src/a.py", "CHANGELOG.md"]
+    errs, _ = _changelog_run("fix(auth-rbac): harden a path", paths, head, base=base)
+    assert "PR-CHANGELOG-001" in codes(errs)
+
+
+def test_a_pr_of_another_type_that_changes_only_the_changelog_is_no_sync_pr():
+    head = _with(_FIX, after="- **a**: one (1111111)")
+    errs, _ = _changelog_run("fix(oms-execution): a bullet by hand", ["CHANGELOG.md"], head)
+    assert "PR-CHANGELOG-001" in codes(errs)
+
+
+def test_a_docs_pr_that_changes_another_file_too_is_no_sync_pr():
+    head = _with(_FIX, after="- **a**: one (1111111)")
+    errs, _ = _changelog_run("docs(docs): sync and a note", ["CHANGELOG.md", "docs/a.md"], head)
+    assert "PR-CHANGELOG-001" in codes(errs)
+
+
+def test_a_pr_that_leaves_the_changelog_alone_is_not_judged_on_it():
+    assert m.changelog_edit_errors("feat(ui): a pane", 9, ["src/a.py"], _CL, "anything") == []
+
+
+def test_main_reads_the_changelog_at_the_merge_base_and_at_the_head(repo, monkeypatch, capsys):
+    root, _ = repo
+    (root / "CHANGELOG.md").write_text(_CL)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "base changelog")
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR_NUMBER", "20")
+    _git(root, "checkout", "-qb", "fix")
+    (root / "src").mkdir()
+    (root / "src/a.py").write_text("x\n")
+    (root / "CHANGELOG.md").write_text(_with(_SEC))
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "head")
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    own = {**pr(title="fix(auth-rbac): harden a path"), "number": 20}
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, head, own)) == 0
+    (root / "CHANGELOG.md").write_text(_with(_FIX, after="- **a**: one (1111111)"))
+    _git(root, "commit", "-qam", "a hand-added fix bullet")
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, head, own)) == 1
+    assert "PR-CHANGELOG-001" in capsys.readouterr().err
