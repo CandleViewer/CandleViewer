@@ -6007,9 +6007,12 @@ paths:
         and neither is one a `110001` parks in `unknown` (the venue no longer holds it resting;
         24-internal-schemas.md section 8.6), `exchange_unavailable` being for an outcome the
         command port raised on.
-        At the deadline an account not finished reports `timeout`: a cancel already sent stays
-        with its order and is never sent again, and `affected` counts only the orders that ended
-        cancelled by then. An order outside the selection, one whose cancel is already in flight
+        At the deadline an account not finished reports `timeout`, which replaces any failure it
+        met before, so the retryable signal wins: a cancel already sent stays with its order and
+        is never sent again, and `affected` counts only the orders that ended cancelled by then.
+        `retryable` is true for `store_unavailable`, `timeout` and `exchange_rate_limited`, and
+        false for `exchange_unavailable`, `conflict`, `account_unavailable` and `exchange_error`
+        (the orchestrator's ruling of 2026-10-24 12:30Z). An order outside the selection, one whose cancel is already in flight
         (`cancel_pending`), one not acknowledged yet or with an amend in flight (`validated`,
         `submitting`, `amend_pending`), or one in `unknown`, `quarantined`, `held` or `untracked`
         (until E29-T06 an `unknown` order is cancelled only by a KILL), is not sent anything and
