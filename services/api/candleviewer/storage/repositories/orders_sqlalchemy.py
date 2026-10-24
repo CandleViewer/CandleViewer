@@ -254,8 +254,9 @@ def in_scope_statement(
     """`get_in_scope`'s one statement: the order with its leg's group and profile, its creator
     (its group's, else its anchor's, which `COALESCE` reads for an order with no group only) and
     whether the scope may trade its account, only where `scope_clause` holds; beside it, the
-    account of the order holding the id, whatever the scope, for the refusal's audit (ruling Q12).
-    So one row answers, and no column of an order outside the scope leaves the database."""
+    account of the order holding the id, whatever the scope (another environment's or a deleted
+    account's too), for the refusal's audit alone (ruling Q12). So one row answers, and only the
+    holding account leaves the database for an out-of-scope id."""
     legs, groups, anchors = trade_group_legs.c, trade_groups.c, idempotency_anchors.c
     anchored = sa.select(anchors.created_by).where(anchors.order_id == _O.id).limit(1)
     tree = (

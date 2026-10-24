@@ -21,7 +21,8 @@ __all__ = ["NO_VERSION", "expected_seq", "order_etag"]
 
 #: The version an `If-Match` naming no version of the order expects: no `event_seq` is negative.
 NO_VERSION: Final = -1
-#: One strong tag, the order's id as `str(UUID)` writes it and a bigint's digits, no leading zero.
+#: One strong tag, the order's id as `str(UUID)` writes it and a seq of up to 19 digits, no leading
+#: zero; one past a bigint's range is a seq no version equals.
 _TAG: Final = re.compile(
     r'"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):(0|[1-9][0-9]{0,18})"'
 )
