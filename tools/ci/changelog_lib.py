@@ -31,9 +31,10 @@ _HEADER_RE = re.compile(
     r"^(?P<type>[a-z]+)(?:\((?P<scope>[^)]+)\))?(?P<bang>!)?:\s*(?P<subject>.+)$"
 )
 _BREAKING_FOOTER_RE = re.compile(r"^BREAKING[ -]CHANGE:\s*(.+)$", re.MULTILINE)
-_CHANGELOG_FOOTER_RE = re.compile(r"^Changelog:\s*(.+)$", re.MULTILINE)
+# `[ \t]*`, never `\s*`: an empty footer line must not take the next line as its summary.
+_CHANGELOG_FOOTER_RE = re.compile(r"^Changelog:[ \t]*(\S.*)$", re.MULTILINE)
 # #4435 (07 §3): a security fix's impact-only summary; the sync renders it under Security.
-_SECURITY_FOOTER_RE = re.compile(r"^Changelog-Security:\s*(.+)$", re.MULTILINE)
+_SECURITY_FOOTER_RE = re.compile(r"^Changelog-Security:[ \t]*(.*)$", re.MULTILINE)
 _PR_NUMBER_RE = re.compile(r"\(#(\d+)\)")
 _MERGE_COMMIT_RE = re.compile(r"^Merge (pull request|branch|remote-tracking branch)\b")
 
@@ -100,6 +101,7 @@ class ParsedCommit:
     category: Category | None = None
     bump: Bump = Bump.NONE
     security_summary: str | None = None
+    security_rejected: str | None = None  # a footer dropped (empty or failed the wording check)
 
     def security_line(self) -> str:
         """The `Changelog-Security:` summary as a bullet ending with the PR's `(#N)` (or sha7)."""
@@ -115,14 +117,25 @@ class ParsedCommit:
         return f"- {scope_part}{self.subject}{suffix}"
 
 
-def security_footer(text: str) -> str | None:
-    """The `Changelog-Security:` summary in `text`, or None. A summary that fails
-    `check_security_wording` is None too, so it never reaches CHANGELOG.md."""
-    found = _SECURITY_FOOTER_RE.search(text or "")
+def _visible(text: str) -> str:
+    """`text` without what GitHub does not render: HTML comments and fenced or indented code.
+    Mirrors the first three steps of `tools/ci/check_pr_metadata.py` `strip_markup` (not imported:
+    that script is the gate's own, and its inline-span step would alter a summary's backticks)."""
+    text = re.sub(r"<!--.*?(?:-->|\Z)", "", text, flags=re.S)
+    text = re.sub(r"(```|~~~).*?(?:\1|\Z)", "", text, flags=re.S)
+    return re.sub(r"^(?: {4}|\t).*$", "", text, flags=re.M)
+
+
+def security_footer(text: str) -> tuple[str | None, str | None]:
+    """(kept, rejected) for the visible `Changelog-Security:` footer in `text`. A summary that is
+    empty or fails `check_security_wording` is rejected, so it never reaches CHANGELOG.md."""
+    found = _SECURITY_FOOTER_RE.search(_visible(text or ""))
     if found is None:
-        return None
+        return None, None
     summary = found.group(1).strip()
-    return summary if check_security_wording([summary]).ok else None
+    if summary and check_security_wording([summary]).ok:
+        return summary, None
+    return None, summary
 
 
 def parse_commit(sha: str, message: str) -> ParsedCommit:
@@ -165,10 +178,12 @@ def parse_commit(sha: str, message: str) -> ParsedCommit:
         bump = Bump.NONE
         category = None
 
+    kept, rejected = security_footer(body)
     return ParsedCommit(
         sha=sha,
         subject_line=header,
-        security_summary=security_footer(body),
+        security_summary=kept,
+        security_rejected=rejected,
         is_conventional=True,
         type=commit_type,
         scope=scope,
@@ -209,7 +224,7 @@ def build_changelog_update(commits: list[ParsedCommit]) -> ChangelogUpdate:
             update.triggering_breaking_commits.append(commit.sha or commit.subject_line)
         if commit.security_summary is not None:
             # A security fix is called out by its impact-only line alone: the type bullet
-            # would publish the subject. A breaking change keeps its own bullet.
+            # would list the same commit twice. A breaking change keeps its own bullet.
             update.entries.setdefault(Category.SECURITY, []).append(commit.security_line())
             if commit.breaking:
                 update.entries.setdefault(Category.BREAKING, []).append(commit.changelog_line())
@@ -238,12 +253,13 @@ def check_changelog_fragment(title: str, body: str) -> FragmentCheckResult:
 
     Acceptance scenario "A PR without a usable changelog line is blocked".
     """
-    footer = _SECURITY_FOOTER_RE.search(body or "")
-    if footer and not check_security_wording([footer.group(1)]).ok:
+    body = _visible(body or "")
+    kept, rejected = security_footer(body)
+    if rejected is not None:
         return FragmentCheckResult(
             ok=False,
             reason=(
-                "The 'Changelog-Security:' footer fails the Security wording check. "
+                "The 'Changelog-Security:' footer is empty or fails the Security wording check. "
                 "Keep it to the impact (docs/plan/07-release-and-prr.md §3); the detail stays in "
                 "the internal finding tracker."
             ),
@@ -256,7 +272,7 @@ def check_changelog_fragment(title: str, body: str) -> FragmentCheckResult:
     if _HEADER_RE.match(title.strip()):
         return FragmentCheckResult(ok=True)
 
-    if _CHANGELOG_FOOTER_RE.search(body or "") or footer:
+    if _CHANGELOG_FOOTER_RE.search(body) or kept is not None:
         return FragmentCheckResult(ok=True)
 
     return FragmentCheckResult(
