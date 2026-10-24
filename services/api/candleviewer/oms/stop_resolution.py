@@ -54,17 +54,20 @@ cap, its cooldown, its metric and its pages) is slice H3's.
    squatter's fill is never the entry's, and `unseen` when not found where a miss proves nothing;
    whether its stored order `WAITING_ENTRY` holds; and, for a Partial side or a Full side whose
    position is flat (Q3), the open orders of the symbol and the order history from 5 s before the
-   oldest request to now (the adapter reads every 7-day window between), kept to the key and the
-   TP/SL kinds. One that fails or does not answer decides nothing (None). The venue's retention
-   comes from its port's `ExchangeCapabilities.order_retention_days` (demo 7 d, less rule 6's
-   day; none on live), never an environment check (24 Sec.14.2 rule 3). The read keeps no state
-   between calls: the cooldown and the attach's reserved slot are H3's gate's.
-5. **The writes** (`StopResolver`), each store call bounded at `READ_TIMEOUT_S`: answers, then
+   oldest request, but no earlier than `MAX_HISTORY_WINDOWS` weeks back, to now (the adapter reads
+   every 7-day window between, inside the read's bound; an older request is held by the span
+   rule, or decided where the position shows no stop), kept to the key and the TP/SL kinds. One
+   that fails or does not answer decides nothing (None). The venue's retention comes from its
+   port's `ExchangeCapabilities.order_retention_days` (demo 7 d, less rule 6's day; none on
+   live), never an environment check (24 Sec.14.2 rule 3). The read keeps no state between calls:
+   the cooldown and the attach's reserved slot are H3's gate's.
+5. **The writes** (`StopResolver`), each store call bounded at `STORE_TIMEOUT_S`: answers, then
    each request's rows in force (whose transaction also replaces the older answered rows of
    their kind), then the read's own `replaced` rows (an unanswered row, or one whose successor
    was already in force), then the voids, each audited write-ahead (C-2.9), the store giving the
-   hook its `position_state`. A write that fails or loses its compare-and-set raises; the key is
-   read again on the next request.
+   hook its `position_state` (a fill void's, and a paged unseen entry's, the 06:38Z ruling). A
+   write that fails or loses its compare-and-set raises; the key is read again on the next
+   request.
 
 Nothing here ends a row, materialises one, binds or releases an `exchange_order_id` or tells B1 a
 stop was seen or lost (INV-B1-f).
@@ -94,21 +97,32 @@ from candleviewer.storage.repositories.recorded_stops import (
 )
 
 from .commands import LIVE_HISTORY_SPAN_S, found_view
+from .fakes import STOP_AUDIT_TIMEOUT_S
 from .ports import PositionKey
 from .routing import read_position
 
 __all__ = [
-    "ENTRY_HELD", "FILL_PAGE", "HISTORY_LEAD_S", "HISTORY_SPAN_S", "READ_TIMEOUT_S",
-    "RESTORE_HELD", "SPAN_HELD", "TRAIL_HELD", "UNSEEN_PAGE", "WHOLE_READ_TIMEOUT_S",
-    "CompleteRead", "EntryOrders", "EntryState", "Move", "Outcome", "PageReason", "PositionState",
-    "Reading", "RequestDecision", "ResolutionStore", "StopRequest", "StopResolver", "VoidAudit",
-    "VoidReason", "VoidWriteAhead", "decide", "entry_view", "full_shows", "group_requests",
-    "order_matches", "position_state", "shows_no_stop", "trail_unreadable",
+    "ENTRY_HELD", "FILL_PAGE", "HISTORY_LEAD_S", "HISTORY_SPAN_S", "MAX_HISTORY_WINDOWS",
+    "READ_TIMEOUT_S", "RESTORE_HELD", "SPAN_HELD", "STORE_MARGIN_S", "STORE_TIMEOUT_S",
+    "TRAIL_HELD", "UNSEEN_PAGE", "WHOLE_READ_TIMEOUT_S", "CompleteRead", "EntryOrders",
+    "EntryState", "Move", "Outcome", "PositionState", "Reading", "RequestDecision",
+    "ResolutionStore", "StopRequest", "StopResolver", "VoidAudit", "VoidReason", "VoidWriteAhead",
+    "decide", "entry_view", "full_shows", "group_requests", "order_matches", "position_state",
+    "shows_no_stop", "trail_unreadable",
 ]  # fmt: skip
 
 #: Each venue read's bound, and the whole read's, in seconds (the orchestrator's 00:47Z spec).
 READ_TIMEOUT_S: Final = 5.0
 WHOLE_READ_TIMEOUT_S: Final = 15.0
+#: Each store call's bound (21 Sec.3.3.5): the stop audit's write-ahead bound
+#: (`STOP_AUDIT_TIMEOUT_S`, the recorded stops' `WRITE_AHEAD_TIMEOUT_S`) plus a margin for the
+#: statements around it, so a late audit reaches the caller as the store's `AuditNotDurable`, and
+#: only a store call stuck elsewhere (a lock wait, the pool) as this bound's `TimeoutError`.
+STORE_MARGIN_S: Final = 2.0
+STORE_TIMEOUT_S: Final = STOP_AUDIT_TIMEOUT_S + STORE_MARGIN_S
+#: How many of the venue's 7-day history windows one read may walk (Fable, fold 2): 4 weeks, so
+#: the adapter's walk stays far inside its cap (106) and the read's bound.
+MAX_HISTORY_WINDOWS: Final = 4
 #: The order history is read from this long before the request (21 Sec.3.3.11).
 HISTORY_LEAD_S: Final = 5.0
 #: The venue's history span (24 Sec.14.1, `commands.LIVE_HISTORY_SPAN_S`): an ended order older
@@ -167,6 +181,7 @@ _STOP_ORDERS: Final = frozenset({"partial_stop_loss", "trailing_stop"})
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _LEAD_US: Final = round(HISTORY_LEAD_S * 1_000_000)
 _DAY_US: Final = 86_400_000_000
+_WEEK_US: Final = 7 * _DAY_US
 _PARTIAL_KIND: Final[Mapping[StopKind, str]] = {
     "stop_loss": "partial_stop_loss",
     "take_profit": "partial_take_profit",
@@ -644,7 +659,8 @@ class CompleteRead:
         rows = [row for request in requests for row in request.rows]
         if not any(r.tpsl_mode == "Partial" or position_state(r, position) == "flat" for r in rows):
             return Reading(position, entries, waiting_entries=frozenset(waiting))
-        start = _us(min(r.created_at for r in rows)) - _LEAD_US
+        oldest = _us(min(r.created_at for r in rows)) - _LEAD_US
+        start = max(oldest, now_us - MAX_HISTORY_WINDOWS * _WEEK_US)  # a bounded walk
         open_now = await self._one(port.open_orders(account, key.symbol))
         history = await self._one(port.order_history(account, start=start, end=now_us))
         place = (key.account_id, key.symbol, key.position_idx)
@@ -672,7 +688,10 @@ class CompleteRead:
         start = _us(row.created_ts) - _LEAD_US
         found = await self._find(port, account, row, start)
         if found is None:
-            return "unseen" if start < proves_from_us else "gone"
+            if start < proves_from_us:  # a miss there proves nothing (Fable Minor: logged)
+                _log().warning("oms_stop_read_entry_unseen", order_link_id=row.order_link_id)
+                return "unseen"
+            return "gone"
         order, source = found
         bound = row.exchange_order_id
         try:
@@ -732,7 +751,7 @@ class StopResolver:
         audit: VoidAudit,
         *,
         now: Callable[[], datetime],
-        store_timeout_s: float = READ_TIMEOUT_S,
+        store_timeout_s: float = STORE_TIMEOUT_S,
     ) -> None:
         self._store = store
         self._read = read
@@ -744,8 +763,9 @@ class StopResolver:
         self, port: TradingPort, account: AccountRef, key: PositionKey, *, bound_s: float | None
     ) -> tuple[RequestDecision, ...] | None:
         """The key's decisions, written; None when the read decided nothing (`read_failed`).
-        A store read or write that fails, or outlasts its bound (`TimeoutError`), raises, with
-        what was written before it kept."""
+        A store read or write that fails raises, with what was written before it kept: a void
+        audit past its bound as `AuditNotDurable`, a store call past `STORE_TIMEOUT_S` as
+        `TimeoutError`, a lost compare-and-set as `StaleRecordedStop`."""
         if account.account_id != key.account_id:
             raise ValueError("the account resolved is the key's (C-12.4)")
         now = self._now()
@@ -803,7 +823,8 @@ class StopResolver:
             for reason in _VOIDS:
                 voided = [r for r, m in d.moves if m == reason]
                 if voided:
-                    state = d.position_state if reason == "entry_filled_stop_absent" else None
+                    stated = reason == "entry_filled_stop_absent" or d.page == UNSEEN_PAGE
+                    state = d.position_state if stated else None
                     await self._bounded(
                         self._store.resolve(
                             account_id,

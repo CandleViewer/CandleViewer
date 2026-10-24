@@ -513,17 +513,17 @@ async def test_a_request_years_old_reads_a_bounded_history_and_still_decides(
     later = NOW + timedelta(days=3 * 365)
     now_us = NOW_US + 3 * 365 * DAY_US
     rig = build(port=Capped(environment="live", now_us=lambda: now_us), now=later)
-    rig.store.rows = list(request_rows())
+    rig.store.rows = list(request_rows(tpsl_mode="Partial", size=Decimal("0.010")))  # read
     rig.port.seed_position(pos)
     (decision,) = await rig.resolve(ref(environment="live"))
-    if outcome == "held":
-        assert decision.held == SPAN_HELD
-    else:
-        assert decision.outcome == "in_flight_resolved"
     weeks = stop_resolution.MAX_HISTORY_WINDOWS
     assert 4 <= weeks <= 5
     asked = [c.request for c in rig.port.calls if c.method == "order_history"]
     assert asked == [(None, None, now_us - weeks * 7 * DAY_US, now_us)]
+    if outcome == "held":
+        assert decision.held == SPAN_HELD
+    else:
+        assert decision.outcome == "in_flight_resolved"
 
 
 def test_the_store_bound_outlasts_the_stop_audit_bound_so_its_error_is_the_audits() -> None:
