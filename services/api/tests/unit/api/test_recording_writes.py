@@ -21,6 +21,9 @@ from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.recorder import control as rc
 from candleviewer.recorder import policy
+from candleviewer.recorder.errors import RecorderInvalidUpdateError
+from candleviewer.recorder.models import Actor
+from candleviewer.recorder.sessions import DEFAULT_STREAMS
 from tests.unit.recorder._control_fakes import NOW, STREAMS, FakeRecorder
 
 W = ("recording:read", "recording:write")
@@ -283,26 +286,104 @@ async def test_a_non_owner_reads_its_write_through_the_restricted_view() -> None
     assert not fake.entries["XRPUSDT"].pinned
 
 
+_JOINS: list[dict[str, Any]] = [
+    {},
+    {"pinned": False},
+    {"retention_days": 7},
+    {"pinned": False, "retention_days": 7},
+    {"pinned": True},
+    {"depth": 500, "streams": ["trades"]},
+]
+
+
+@pytest.mark.parametrize("kept", [{"pinned": True}, {"retention_days": 90}])
+@pytest.mark.parametrize("extra", _JOINS)
 @pytest.mark.parametrize("cause", sorted(rc.HIDDEN_CAUSES))
-async def test_a_non_owner_re_add_of_a_row_its_view_hides_is_a_hidden_refusal(cause: Any) -> None:
-    """Restricted refusal parity: `201` and the fresh-add body, byte for byte, but nothing
-    changes; the route writes its own record ahead (denied, `held_hidden`, ids only)."""
-    fresh, fake = _Env(None, *W, owner=False), FakeRecorder()
-    held = fake.put("SOLUSDT", cause, pinned=True, depth=500, streams=("trades",),
-                    started_at=NOW, refusals=(cause,))  # fmt: skip
+async def test_a_non_owner_re_add_of_a_row_its_view_hides_joins_it_and_keeps_its_settings(
+    cause: Any, extra: dict[str, Any], kept: dict[str, Any]
+) -> None:
+    """Ruling (iii): the caller's manual cause joins the row through the normal add, `200` with
+    the row as the caller's view shows it. A join changes none of the row's settings (no lower
+    retention, no unpin), and the route records no retention change the join does not make."""
+    fake = FakeRecorder()
+    held = fake.put("SOLUSDT", cause, depth=50, streams=("trades", "tickers"), started_at=NOW,
+                    refusals=(cause,), **kept)  # fmt: skip
+    env = _Env(fake, *W, owner=False, elevated=True)
+    joined = await env.add(symbol="SOLUSDT", **extra)
+    row = fake.entries["SOLUSDT"]
+    assert (joined.status_code, row.reasons) == (200, ("manual", cause))
+    assert cause not in joined.text and "estimate" not in joined.json()
+    assert joined.json() == (await env.http.get(f"/recording/symbols/{held.id}")).json()
+    assert (row.pinned, row.retention_days, row.depth, row.streams) == (
+        held.pinned, held.retention_days, 50, ("trades", "tickers"))  # fmt: skip
+    record = env.audit[0][1]  # the policy's own add record, the joined cause in it
+    assert (env.actions(), record["outcome"], record["reason"]) == (
+        ["recorder.start"], "success", "manual")  # fmt: skip
+    assert record["after_state"]["trigger_ref"] == f"manual:{env.caller.user_id}"
+
+
+@pytest.mark.parametrize("cause", sorted(rc.HIDDEN_CAUSES))
+async def test_a_join_at_the_cap_is_200_and_the_owner_sees_the_joined_cause(cause: Any) -> None:
+    """A join adds no row, so the cap does not refuse it; the Owner's view names the caller's
+    manual cause on the row the hidden cause held."""
+    fake = FakeRecorder(max_symbols=1)
+    held = fake.put("SOLUSDT", cause, streams=STREAMS, refusals=(cause,))
     env = _Env(fake, *W, owner=False)
-    env.caller = fresh.caller
-    first, again = await fresh.add(symbol="SOLUSDT"), await env.add(symbol="SOLUSDT")
-    assert (again.status_code, again.content) == (201, first.content)
-    assert fake.entries["SOLUSDT"] == held and len(env.audit) == 1
-    action, record = env.audit[0]
-    assert (action, record["outcome"], record["reason"], record["object_id"]) == (
-        "recorder.start", "denied", "held_hidden", held.id)  # fmt: skip
-    assert "before_state" not in record and "after_state" not in record
-    env.fail_audit = True  # write-ahead: no record, no answer
-    assert (await env.add(symbol="SOLUSDT")).status_code == 503
-    seen = await _Env(fake, *W).add(symbol="SOLUSDT")  # the Owner's re-add is a real one
-    assert (seen.status_code, seen.json()["pinned"], seen.json()["depth"]) == (200, True, 500)
+    assert (await env.add(symbol="SOLUSDT")).status_code == 200
+    seen = (await _Env(fake, *W).http.get(f"/recording/symbols/{held.id}")).json()
+    assert (seen["reason"], seen["added_by"], seen["refusal"]) == (
+        "manual", str(env.caller.user_id), cause)  # fmt: skip
+
+
+async def test_the_fake_promotes_a_held_row_as_the_policy_does() -> None:
+    """`add_manual` on a row another cause holds (upsert_manual's promotion): the named streams,
+    else the policy's default; the named depth, else the row's; the pin, retention kept."""
+    fake = FakeRecorder()
+    fake.put("SOLUSDT", "chart_open", depth=50, streams=("trades",), pinned=True)
+    await fake.add_manual("SOLUSDT", Actor(kind="user", id="u-1"))
+    row = fake.entries["SOLUSDT"]
+    assert (row.streams, row.depth, row.pinned, row.added_by) == (DEFAULT_STREAMS, 50, True, "u-1")
+
+
+async def test_an_add_naming_retention_days_the_policy_refuses_writes_only_the_denied_twin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`RecorderInvalidUpdateError` refuses before the policy records: the route's retention
+    record and its denied twin, no `recorder.start`, `422`."""
+    monkeypatch.setattr(policy, "STREAM_KINDS", frozenset({"trades"}))
+    env = _Env(None, *W, elevated=True)
+    refused = await env.add(symbol="SOLUSDT", streams=["tickers"], retention_days=7)
+    assert (refused.status_code, refused.json()["code"]) == (422, "validation_failed")
+    assert refused.json()["errors"][0]["rule"] == "stream_names" and env.fake.entries == {}
+    assert [(a, r.get("outcome"), r.get("reason")) for a, r in env.audit] == [
+        ("retention.change", None, None),
+        ("retention.change", "denied", "stream_names"),
+    ]
+
+
+@pytest.mark.parametrize("streams", [None, ("trades",), ("trades", "no_such_kind")])
+@pytest.mark.parametrize("depth", [None, 200, 7, True, "500"])
+def test_setting_rule_names_the_field_the_policy_check_refuses(streams: Any, depth: Any) -> None:
+    """The route's `rc.setting_rule` and the policy's `_check_settings` name the same field."""
+    try:
+        policy._check_settings(streams, depth)
+    except RecorderInvalidUpdateError as exc:
+        named = "depth" if str(exc).startswith("depth") else "streams"
+        assert rc.setting_rule(depth)[1] == named
+    else:
+        assert streams is None or "no_such_kind" not in streams
+
+
+async def test_a_re_add_naming_the_retention_days_the_row_has_still_records_the_request() -> None:
+    """As PUT and PATCH do: the record stands for the request, not for a change of value."""
+    fake = FakeRecorder()
+    fake.put("BTCUSDT", retention_days=7)
+    env = _Env(fake, *W, elevated=True)
+    assert (await env.add(symbol="BTCUSDT", retention_days=7)).status_code == 200
+    route = env.audit[0][1]
+    assert env.actions() == ["retention.change"]
+    assert (route["before_state"], route["after_state"]) == (
+        {"retention_days": 7}, {"retention_days": 7})  # fmt: skip
 
 
 @pytest.mark.parametrize(
