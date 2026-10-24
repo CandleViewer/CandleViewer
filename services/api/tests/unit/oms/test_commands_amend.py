@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
@@ -282,3 +283,28 @@ async def test_terms_b1_would_not_stage_are_refused_locally(
     answer = await rig.port.amend(_amend(order, **terms))
     assert answer == _NO | {"error_code": OmsErrorCode.INSTRUMENT_FILTER.value}
     assert rig.demo.calls == []
+
+
+async def test_an_amend_hands_its_answer_to_the_exit_watch(rig: Rig) -> None:
+    """As B1's cancel: the exit service's watch gets the answer B1 got, spent once."""
+    order = await _live(rig)
+    watch = rig.port.expect_exit(order.id, "amend", request_id=uuid4())
+    answer = await rig.port.amend(_amend(order, price="60500"))
+    assert answer["ok"] is True and watch.answered and await watch.answer() == answer
+
+
+async def test_an_amend_that_raises_answers_its_watch_none(rig: Rig) -> None:
+    """Q11: the order goes `unknown`, never re-sent; the exit service reads None."""
+    order = await _live(rig)
+    watch = rig.port.expect_exit(order.id, "amend")
+    rig.demo.script("amend_order", TransportError("cut off"))
+    with pytest.raises(TransportError):
+        await rig.port.amend(_amend(order, price="60500"))
+    assert watch.answered and await watch.answer() is None
+
+
+async def test_a_cancel_watch_is_not_spent_by_an_amend(rig: Rig) -> None:
+    order = await _live(rig)
+    watch = rig.port.expect_exit(order.id, "cancel")
+    await rig.port.amend(_amend(order, price="60500"))
+    assert not watch.answered
