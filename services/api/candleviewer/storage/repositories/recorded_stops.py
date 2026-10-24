@@ -76,7 +76,8 @@ StopOutcome = Literal["answered", "refused", "not_shown"]
 #: `replaced` (a row of the key and kind already in force) stamps it too; the others void them,
 #: each its audit's reason (`entry_filled_stop_absent`: the Q1 ruling).
 ResolveOutcome = Literal["answered", "replaced", "in_flight_resolved", "entry_filled_stop_absent"]
-#: Whether the position was open or flat when its filled entry's side was voided (CR-S3H0-08).
+#: Whether the position was open or flat when its filled entry's side was voided (CR-S3H0-08), or
+#: when an unseen entry's rows were voided on a position with no stop (the 06:38Z ruling).
 FillPosition = Literal["open", "flat"]
 #: One request in flight per position (21 Sec.3.3.11): a second writer's insert is refused.
 UX_RS_IN_FLIGHT: Final = "ux_rs_in_flight"
@@ -310,8 +311,9 @@ InsertWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
 #: `sl.modified` / `tp.modified` record per row; one that fails or is late leaves every row as it
 #: was.
 InForceWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
-#: A `resolve` hook, as `InForceWriteAhead`, given the call's `position_state` too (None but for
-#: `entry_filled_stop_absent`, CR-S3H0-08), so a void's record names the state the void was given.
+#: A `resolve` hook, as `InForceWriteAhead`, given the call's `position_state` too (always for
+#: `entry_filled_stop_absent`, CR-S3H0-08; optionally for `in_flight_resolved`; never otherwise), so
+#: a void's record names the state the void was given.
 ResolveWriteAhead = Callable[[tuple[RecordedStopRow, ...], FillPosition | None], Awaitable[None]]
 
 
@@ -342,13 +344,16 @@ def check_resolve(
     write_ahead: ResolveWriteAhead | None,
 ) -> None:
     """`ValueError` before any statement for rows named twice or none, a naive `at`, a
-    `position_state` missing for `entry_filled_stop_absent` or given for another outcome
-    (CR-S3H0-08), or a void with no hook (C-2.9)."""
+    `position_state` missing for `entry_filled_stop_absent` (CR-S3H0-08) or given for an answer
+    or a replace (`in_flight_resolved` may carry one: the 06:38Z ruling), or a void with no hook
+    (C-2.9)."""
     if not rows or len({row.id for row in rows}) != len(rows):
         raise ValueError("a resolve names each row of the request once")
     require_aware("at", at)
-    if (outcome == "entry_filled_stop_absent") != (position_state is not None):
-        raise ValueError("position_state is the entry_filled_stop_absent void's, and only its")
+    if outcome == "entry_filled_stop_absent" and position_state is None:
+        raise ValueError("position_state is required for an entry_filled_stop_absent void")
+    if outcome in ("answered", "replaced") and position_state is not None:
+        raise ValueError("position_state is a void's, never an answer's or a replace's")
     voids = outcome not in ("answered", "replaced")
     if voids and write_ahead is None:  # 21 Sec.3.3.11: no void unaudited
         raise ValueError("a void is audited write-ahead (C-2.9): no hook was given")
