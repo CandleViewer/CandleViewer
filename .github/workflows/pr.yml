@@ -197,9 +197,11 @@ jobs:
               - 'tools/a11y/**/*.py'
               - 'packages/fixtures/**'
               - '.github/workflows/_job-coverage.yml'
-              # Python under docs/ (design-audit tools, research scripts) is scanned by the same
-              # Semgrep/Bandit lane; #4325 merged a design tool green without it (#4348).
-              - 'docs/**/*.py'
+              # Scanned tools that services/api/tests exercises, the only Python tests the py lane
+              # runs: a change to one must run those tests and the scan (#4355).
+              - 'tools/fixtures/**'
+              - 'tools/gen/**'
+              - 'tools/rbac/**'
             engine:
               - 'packages/chart-engine/**'
               - 'packages/rule-graph/**'
@@ -311,6 +313,22 @@ jobs:
               - '.gitignore'
               - '.env.example'
               - 'scripts/requirements-ci.txt'
+              # Python the product scan reads that no other security-starting filter selects. No
+              # py-lane suite needs these to start: governance (every PR) tests the zap, triage,
+              # ga_defects, contracts and errorcodes tools, and the contract lane (`protocol`) also
+              # runs the last two; nothing in CI tests .claude/hooks or spikes/storage. A change to
+              # one starts the scan (#4355).
+              - '.claude/hooks/**'
+              - 'security/zap/**'
+              - 'spikes/storage/**'
+              - 'tools/contracts/**'
+              - 'tools/errorcodes/**'
+              - 'tools/ga_defects/**'
+              - 'tools/triage/**'
+              # Python under docs/ (the design-audit tools) is scanned too; #4325 merged a design
+              # tool green without the scan (#4348). It sat in `py` until the py lane, which runs
+              # nothing for docs, made every boards PR's merge group run it (#4355).
+              - 'docs/**/*.py'
 
   # --- Gates (#3076): one step per always-on or sub-minute gate. A step's id is its
   # `ci-required` lane and `gates` exports its outcome under it, so each gate is judged as its
