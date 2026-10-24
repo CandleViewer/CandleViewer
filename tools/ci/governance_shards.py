@@ -6,11 +6,13 @@ coverage data, so the 85% gate on `scripts/**` still judges the whole suite. The
 ones `pytest scripts/tests scripts/gh/tests` collects: recursive, pytest's default `python_files`
 (scripts/pytest.ini sets no other), no `__pycache__` or dot directories, as
 `tools/ci/py_test_lanes.py` lists services/api's. Files go greedily, heaviest first, to the
-lightest shard. `WEIGHTS` holds the measured cost of the heaviest files (test-seconds on 4 CPUs,
-CI-like: no semgrep binary, coverage on; 2026-10-19), and any other file costs `DEFAULT_WEIGHT`,
-about the median of the rest. So a new, renamed or moved file always lands in a shard, and the
-split is deterministic for a given set of files; stale weights cost balance, never coverage.
-`python tools/ci/governance_shards.py 1 2` prints shard 1 of 2, one path per line, relative to
+lightest shard. `WEIGHTS` holds the measured cost, in seconds, of every file that took 0.5 s or
+more (one sequential run of `pytest -n 0 --durations=0` with coverage on, setup and teardown
+included; 2026-10-24: 5,959 tests, 174 s), and any other file costs `DEFAULT_WEIGHT`, about the
+median of the rest. Refresh the table when a shard's `pytest wall time` in the job summary creeps
+up. So a new, renamed or moved file always lands in a shard, and the split is deterministic for a
+given set of files; stale weights cost balance, never coverage.
+`python tools/ci/governance_shards.py 1 4` prints shard 1 of 4, one path per line, relative to
 the repository root. Stdlib only.
 """
 
@@ -24,20 +26,42 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SUITES = ("scripts/tests", "scripts/gh/tests")
 PYTHON_FILES = ("test_*.py", "*_test.py")  # pytest's default; scripts/pytest.ini sets no other
-DEFAULT_WEIGHT = 0.2
+DEFAULT_WEIGHT = 0.1
 WEIGHTS: dict[str, float] = {
-    "scripts/tests/test_backlog_validate_check.py": 15.7,
-    "scripts/tests/test_event_coverage.py": 10.0,
-    "scripts/tests/test_dependabot_alert_gate.py": 6.8,
-    "scripts/tests/test_pr_yml_gates.py": 5.8,
-    "scripts/tests/test_pr_yml_path_filters.py": 4.8,
-    "scripts/tests/test_error_registry.py": 4.3,
-    "scripts/tests/test_check_gen_freshness.py": 3.9,
-    "scripts/tests/test_check_secrets_hygiene.py": 3.2,
-    "scripts/tests/test_pr_yml_merge_group.py": 2.9,
-    "scripts/tests/test_check_required_check_reconciliation.py": 2.7,
-    "scripts/tests/test_check_accepted_risk_expiry.py": 2.5,
-    "scripts/tests/test_security_lane.py": 2.5,
+    "scripts/tests/test_e12_security_gates.py": 48.98,
+    "scripts/tests/test_pr_gate.py": 33.17,
+    "scripts/tests/test_backlog_validate_check.py": 12.11,
+    "scripts/tests/test_event_coverage.py": 6.33,
+    "scripts/tests/test_check_auth_semgrep.py": 5.72,
+    "scripts/tests/test_pr_yml_path_filters.py": 5.09,
+    "scripts/tests/test_error_registry.py": 4.76,
+    "scripts/tests/test_pr_yml_gates.py": 4.12,
+    "scripts/tests/test_zap_admin.py": 3.82,
+    "scripts/tests/test_migration_lint.py": 3.66,
+    "scripts/tests/test_pr_yml_merge_group.py": 3.55,
+    "scripts/tests/test_check_secrets_hygiene.py": 3.46,
+    "scripts/tests/test_check_gen_freshness.py": 3.18,
+    "scripts/tests/test_dependabot_alert_gate.py": 3.13,
+    "scripts/tests/test_zap_nightly.py": 2.61,
+    "scripts/tests/test_check_required_check_reconciliation.py": 2.57,
+    "scripts/tests/test_perf_ingestion_nightly.py": 2.56,
+    "scripts/tests/test_relayroom_scripts.py": 1.97,
+    "scripts/tests/test_check_accepted_risk_expiry.py": 1.94,
+    "scripts/tests/test_security_lane.py": 1.88,
+    "scripts/tests/test_pr_metadata_yml.py": 1.57,
+    "scripts/tests/test_pnpm_effective_policy.py": 1.25,
+    "scripts/tests/test_codeowners_backend_paths.py": 1.25,
+    "scripts/tests/test_security_gate.py": 1.15,
+    "scripts/tests/test_allowed_postinstall_runner.py": 1.08,
+    "scripts/tests/test_perf_ws_load.py": 1.02,
+    "scripts/tests/test_check_pr_metadata.py": 0.93,
+    "scripts/tests/test_ws_contracts.py": 0.91,
+    "scripts/tests/test_fuzz_nightly_budget.py": 0.91,
+    "scripts/tests/test_perf_storage_nightly.py": 0.77,
+    "scripts/tests/test_prepull_images.py": 0.68,
+    "scripts/tests/test_nightly_issue.py": 0.62,
+    "scripts/tests/test_web_tests_build_deps.py": 0.53,
+    "scripts/tests/test_check_backlog_twin_eol.py": 0.52,
 }
 
 
