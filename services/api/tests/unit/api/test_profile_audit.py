@@ -20,6 +20,7 @@ from uuid import UUID
 
 import pytest
 
+from candleviewer.accounts.models import ExchangeEnv
 from candleviewer.accounts.profile_caps import PROFILE_CAPS
 from candleviewer.accounts.profile_input import ProfileFieldError
 from candleviewer.accounts.profiles import AccountProfile, profile_values
@@ -43,7 +44,7 @@ from candleviewer.storage.repositories.user_roles_sqlalchemy import bounded_writ
 
 _USER, _ACCOUNT, _PROFILE = (UUID(int=n) for n in (1, 2, 3))
 _REQUEST = UUID("6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b")
-_ACTOR = ProfileActor(_USER, "100.64.0.7", _REQUEST, "demo")
+_ACTOR = ProfileActor(_USER, "100.64.0.7", _REQUEST, ExchangeEnv.DEMO)
 _T = datetime(2026, 10, 24, 9, tzinfo=UTC)
 _CAPS = tuple(cap.column for cap in PROFILE_CAPS)
 _FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "profiles" / "risk_based.json"
@@ -131,13 +132,15 @@ def test_a_records_profile_is_every_stored_column_with_its_version_and_account()
     assert json.loads(json.dumps(state)) == state
 
 
-async def test_a_create_is_one_profile_created_record_ahead_of_its_commit() -> None:
+@pytest.mark.parametrize("env", list(ExchangeEnv))
+async def test_a_create_is_one_profile_created_record_ahead_of_its_commit(env: ExchangeEnv) -> None:
+    """Every record carries the account's environment, whichever it is (C-2.11)."""
     writer, created = _Writer(), _row(version=1)
-    assert (
-        await _ahead(ProfileAudit(writer, _ACTOR, _ACCOUNT).audit_created()(None, created)) is None
-    )
+    actor = dataclasses.replace(_ACTOR, env=env)
+    hook = ProfileAudit(writer, actor, _ACCOUNT).audit_created()
+    assert await _ahead(hook(None, created)) is None
     state = {"after_state": profile_state(created), "outcome": "success", "severity": "info"}
-    assert writer.records == [("profile.created", _on(_PROFILE) | state)]
+    assert writer.records == [("profile.created", _on(_PROFILE) | {"env": env} | state)]
 
 
 @pytest.mark.parametrize(
@@ -187,9 +190,9 @@ async def test_a_record_with_no_profile_before_it_is_refused_unwritten(hook: str
     [
         ([_SHAPE, _NATIVE], _PROFILE, [("native_stop_mandatory", [_NATIVE])]),
         (
-            [_lev(0), _lev(1), _NOTIONAL, _lev(2)],
+            [_NOTIONAL, _lev(0), _lev(1), _lev(2)],  # first named, last by name: the order kept
             _PROFILE,
-            [("max_leverage", [_lev(0), _lev(1), _lev(2)]), ("min_notional", [_NOTIONAL])],
+            [("min_notional", [_NOTIONAL]), ("max_leverage", [_lev(0), _lev(1), _lev(2)])],
         ),
         ([_SHAPE, _SHAPE], _PROFILE, []),
         ([_NATIVE, _SHAPE], None, [("native_stop_mandatory", [_NATIVE])]),
@@ -219,6 +222,19 @@ async def test_a_refused_save_is_one_record_per_audited_rule_and_none_for_shape(
         for rule, entries in records
     ]  # fmt: skip
     assert writer.records == [("profile.save_refused", record) for record in expected]
+
+
+async def test_a_refused_saves_record_holds_its_own_rules_entries_alone() -> None:
+    """D2-2's R1S-01: even called directly, the record holds `reason`'s entries only, so no shape
+    entry, with its client-chosen `field`, reaches it."""
+    writer = _Writer()
+    await ProfileAudit(writer, _ACTOR, _ACCOUNT).save_refused(
+        "native_stop_mandatory", [_SHAPE, _NATIVE, _lev(0)], profile_id=_PROFILE
+    )
+    [(_, record)] = writer.records
+    assert record["after_state"] == {
+        "exchange_account_id": str(_ACCOUNT), "count": 1, "errors": [_NATIVE.to_dict()],
+    }  # fmt: skip
 
 
 @pytest.mark.parametrize("reason", ["step_up", "stop_defines_r", "max_leverage "])
@@ -264,7 +280,8 @@ async def test_a_record_past_its_bound_is_refused_and_a_hook_past_the_stores_is_
     audit = ProfileAudit(_Writer(hangs=True), _ACTOR, _ACCOUNT)
     monkeypatch.setattr(mod, "AUDIT_TIMEOUT_S", 0)
     with pytest.raises(ProfileAuditRefused) as refused:
-        await audit.save_refused("native_stop_mandatory", [_NATIVE], profile_id=_PROFILE)
+        async with asyncio.timeout(2):  # without its bound the record would hang: fail instead
+            await audit.save_refused("native_stop_mandatory", [_NATIVE], profile_id=_PROFILE)
     assert isinstance(refused.value.__cause__, TimeoutError)
     for write in _writes(audit)[:-1]:
         with pytest.raises(WriteAheadTimeout):

@@ -10,7 +10,8 @@ never maps as its own; a hook past the store's bound is its `WriteAheadTimeout`.
 writes one `profile.save_refused` per audited rule it names, none for shape alone, its reason
 checked first (#4087 R1S-03) and its record bounded by `AUDIT_TIMEOUT_S`, as no transaction bounds
 it (the 17:25Z ruling (3)). The edge answers either refusal `503 audit_unavailable`. A state's names
-meet no secret or PII name of `audit.redact`, and nothing here logs (C-12.6).
+meet no secret or PII name of `audit.redact`, and nothing here logs (C-12.6). The writer
+re-serialises a string that parses as JSON, so a `name` such as `[1, 2]` is recorded as `[1,2]`.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from decimal import Decimal
 from typing import Any, Final, Protocol
 from uuid import UUID
 
+from candleviewer.accounts.models import ExchangeEnv
 from candleviewer.accounts.profile_input import ProfileFieldError
 from candleviewer.accounts.profile_relaxing import looser_caps, widens_symbols
 from candleviewer.api.profile_projection import plain
@@ -61,7 +63,7 @@ class ProfileActor:
     user_id: UUID
     ip: str | None
     request_id: UUID | None
-    env: str
+    env: ExchangeEnv
 
 
 def _stored(value: object) -> object:
@@ -124,13 +126,15 @@ class ProfileAudit:
         self, reason: str, entries: Sequence[ProfileFieldError], *, profile_id: UUID | None
     ) -> None:
         """A refused save's record of one rule: its `after` the account, the rule's entry count and
-        its first `SAVE_REFUSED_SHOWN` entries. A create, with no profile yet, names the account."""
+        its first `SAVE_REFUSED_SHOWN` entries, of `reason` alone whatever else `entries` holds. A
+        create, with no profile yet, names the account."""
         if reason not in PROFILE_SAVE_REFUSED_REASONS:  # before anything is written
             raise UnknownSaveRefusedReason("not a profile.save_refused reason")
         if profile_id is None:  # a create: no profile yet
             on = self._on(self._account, "exchange_account")
         else:
             on = self._on(profile_id)
+        entries = [entry for entry in entries if entry.rule == reason]  # never a shape entry
         shown = [entry.to_dict() for entry in entries[:SAVE_REFUSED_SHOWN]]
         after = {"exchange_account_id": str(self._account), "count": len(entries), "errors": shown}
         await _written(

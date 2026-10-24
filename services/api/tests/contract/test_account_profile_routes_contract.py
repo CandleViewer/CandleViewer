@@ -435,9 +435,7 @@ def test_a_move_is_audited_unbound_then_bound_and_a_looser_cap_is_relaxing() -> 
     )
     assert [words for words in (*said, *_ZERO_RULE) if words not in put] == []
     assert {"profile.bound", "profile.unbound"} <= AUDIT_ACTIONS
-    doc = (ROOT / "docs/plan/24-internal-schemas.md").read_text(encoding="utf-8").splitlines()
-    lead = "The `profile.*` records (E28-T02, #906)"
-    (records,) = [line for line in doc if line.startswith(lead)]
+    records = _records()
     kept = (
         "`setAccountDefaultProfile`",
         "`relaxing`",
