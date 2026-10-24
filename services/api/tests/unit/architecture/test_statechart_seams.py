@@ -9,7 +9,8 @@
   where it gates on its own latch: the OMS facade, the order path's one gate). When the OMS adopts
   the persistence bundle, it must pass `latch=persistence.latch` into `OrderMachines(...)` or switch
   its site to `LatchAdmission`: a restore latches into the bundle's latch, which the facade's own
-  latch would otherwise never see (review round 1, security-4; C-2.21).
+  latch would otherwise never see (review round 1, security-4; C-2.21). Every `OrderMachines(`
+  call names its `latch=`, so the bundle's cannot be forgotten (CR-S3E1-01).
 
 Both scan the parsed code (`ast`) of every module under `candleviewer/` but the Alembic revisions
 (which build neither, and one of which holds an escape `ast` warns about), so a new site is
@@ -69,6 +70,12 @@ def test_every_gateway_construction_names_its_admission() -> None:
         "recorder/policy.py", "replay/sessions_service.py", "rules/lifecycle.py",
     }  # fmt: skip
     assert len(sites) == 9
+
+
+def test_every_order_machines_construction_names_its_latch() -> None:
+    sites = _calls("OrderMachines")
+    assert {rel for rel, _ in sites} == {"oms_wiring.py"}  # the one composition site
+    assert [rel for rel, call in sites if "latch" not in {k.arg for k in call.keywords}] == []
 
 
 def test_the_oms_gateway_admits_everything_its_facades_latch_is_the_gate() -> None:

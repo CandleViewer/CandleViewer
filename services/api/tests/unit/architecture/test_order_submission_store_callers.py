@@ -29,6 +29,8 @@ B1's step writer) and decides its anchor through `oms/idempotency.py`: its princ
 slice 3's route took from the authenticated session after its admission, never a request field,
 every row it writes is the request's own account's (`TradingAccounts` resolved it by id alone,
 SR-E27-21), and no route reaches it but that one, after scope, the arm token and the replay lookup.
+`oms_wiring.py` (slice 3E, C-12.4) builds the Postgres adapters and the M14 facades over them
+for the OMS runtime alone, and mounts no route.
 """
 
 from __future__ import annotations
@@ -56,6 +58,7 @@ ALLOWED = frozenset(
         "oms/order_steps.py",
         "oms/repository.py",
         "oms/submit.py",
+        "oms_wiring.py",
         "storage/repositories/idempotency_anchors.py",
         "storage/repositories/idempotency_anchors_sqlalchemy.py",
         "storage/repositories/recorded_stops.py",
