@@ -666,7 +666,8 @@ async def test_patch_of_streams_and_depth_needs_no_step_up_and_is_audited_ahead(
     assert (patched.status_code, patched.json()["streams"], patched.json()["depth"]) == (
         200, ["tickers"], 50)  # fmt: skip
     record = env.audit[0][1]  # the policy's record (update_manual); the route writes none
-    assert (env.actions(), "before_state" in record) == (["recorder.update"], False)
+    assert (env.actions(), record["before_state"]) == (
+        ["recorder.update"], {"streams": "trades", "depth": "200"})  # fmt: skip
     after = {"symbol": "BTCUSDT", "reason": "manual", "actor": str(env.caller.user_id),
              "streams": "tickers", "depth": "50"}  # fmt: skip
     assert record["after_state"] == after
@@ -678,6 +679,7 @@ async def test_patch_of_streams_and_depth_needs_no_step_up_and_is_audited_ahead(
 @pytest.mark.parametrize(
     ("body", "actions"),
     [({"pinned": True}, ["retention.change"]), ({"retention_days": 7}, ["retention.change"]),
+     ({"pinned": True, "retention_days": 7}, ["retention.change"]),
      ({"depth": 1, "pinned": True}, ["recorder.update", "retention.change"])],
 )  # fmt: skip
 async def test_patch_of_pinned_or_retention_days_needs_the_recorder_step_up(
@@ -709,16 +711,21 @@ async def test_patch_of_an_entry_without_manual_is_409_and_an_empty_one_is_422()
         assert (await env.http.patch(_one(entry.id), json=bad)).status_code == 422
 
 
-async def test_a_change_the_policy_refuses_as_invalid_is_422_and_changes_nothing() -> None:
+async def test_a_change_the_policy_refuses_as_invalid_is_422_and_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The policy's own check (`RecorderInvalidUpdateError`), on PATCH and on an add."""
     fake = FakeRecorder()
     entry = fake.put("BTCUSDT", streams=("trades",))
-    fake.stream_names = frozenset({"trades"})
+    monkeypatch.setattr(policy, "STREAM_KINDS", frozenset({"trades"}))
     env = _Env(fake, *W)
     refused = await env.http.patch(_one(entry.id), json={"streams": ["tickers"]})
     assert (refused.status_code, refused.json()["code"]) == (422, "validation_failed")
     assert refused.json()["errors"][0] == {"field": "streams", "rule": "stream_names",
                                            "message": "Refused by the recorder."}  # fmt: skip
-    assert fake.entries["BTCUSDT"] == entry and env.actions() == []
+    added = await env.add(symbol="ETHUSDT", streams=["tickers"])
+    assert (added.status_code, added.json()["code"]) == (422, "validation_failed")
+    assert fake.entries == {"BTCUSDT": entry} and env.actions() == []
 
 
 async def test_a_null_retention_days_without_an_unpin_is_422() -> None:
