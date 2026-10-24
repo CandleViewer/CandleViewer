@@ -224,6 +224,9 @@ class SessionManager:
         self._cfg = config
         self._invalidate = invalidate or (lambda _symbol: None)
         self._live: dict[str, _Live] = {}
+        #: Stale sessions audited by this process and not closed yet: a retried recovery must
+        #: not append their append-only record again (SEC-A5, C-2.9).
+        self._audited: set[str] = set()
         self._lock = asyncio.Lock()
 
     # -- queries -------------------------------------------------------------------------------
@@ -434,7 +437,8 @@ class SessionManager:
         """Close every session of this env a dead process left open: `end_reason='process_restart'`
         and one gap per stream from `last_event_ts` (else `started_at`) to process start. Another
         env's open sessions are not ours to close (C-2.11). Must run before any session is opened
-        by this process. Returns the number closed."""
+        by this process. Returns the number closed. A retry (the runtime retries a failed startup)
+        does not audit a session twice: only its close failed."""
         async with self._lock:
             env = self._cfg.env
             rows = await self._call(lambda: self._store.list_live_sessions(env))
@@ -447,10 +451,13 @@ class SessionManager:
                 # until then `started_at` (overstates, never understates, the loss).
                 last = row.get("last_event_ts") or row["started_at"]
                 lo = to_us(last)
-                await self._audit_restart(symbol, sid, lo, process_start_us)
+                if sid not in self._audited:  # a failed close is retried: audited once, not per try
+                    await self._audit_restart(symbol, sid, lo, process_start_us)
+                    self._audited.add(sid)
                 for s in row.get("streams") or DEFAULT_STREAMS:
                     await self._gap(symbol, sid, str(s), lo, process_start_us, "process_restart")
                 await self._close_row(sid, "process_restart", process_start_us)
+                self._audited.discard(sid)
                 closed += 1
                 logger().warning("recorder_session_crash_closed", symbol=symbol, session_id=sid)
             return closed

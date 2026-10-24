@@ -12,6 +12,7 @@ The bounds, the clock, `sleep` and `rng` are injected: no default hides a produc
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Final
@@ -20,6 +21,7 @@ import structlog
 
 from candleviewer.observability import spawn
 from candleviewer.observability.health import HealthReport, HealthStatus
+from candleviewer.recorder.control import HIDDEN_CAUSES
 from candleviewer.recorder.policy import RecordingPolicy
 from candleviewer.recorder.sessions import PositionSeed, SessionManager, startup_reconcile
 from candleviewer.recorder.writer import RecorderWalVolumeError, StreamWriter
@@ -36,7 +38,8 @@ def logger() -> structlog.stdlib.BoundLogger:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeBounds:
-    """Every bound is required: the composition root chooses them."""
+    """Every bound is required: the composition root chooses them. One that would make a loop hot,
+    a timeout instant or unbounded, or the alert unreachable is refused, naming its field."""
 
     start_timeout_s: float  # the writer's start, its inline WAL replay included
     startup_timeout_s: float  # the whole of one `startup_reconcile`: a hung seed or restore
@@ -45,6 +48,16 @@ class RuntimeBounds:
     retry_cap_s: float
     max_attempts: int  # failed startups after which health is degraded (the retries go on)
     gate_closed_alert_s: float  # N: the gate closed longer than this is degraded health
+
+    def __post_init__(self) -> None:
+        for name in ("start_timeout_s", "startup_timeout_s", "tick_timeout_s", "retry_base_s",
+                     "retry_cap_s", "gate_closed_alert_s"):  # fmt: skip
+            if not 0 < getattr(self, name) < math.inf:
+                raise ValueError(f"{name} must be positive and finite")
+        if self.retry_cap_s < self.retry_base_s:
+            raise ValueError("retry_cap_s must not be below retry_base_s")
+        if self.max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
 
 
 class RecorderRuntime:
@@ -86,12 +99,20 @@ class RecorderRuntime:
         quarter of `grace_s` (so the four fit the bound the supervisor puts on `stop`), each run
         whatever the one before did. `wait`, not `await task`: the task's cancellation is not
         ours. The writer's own flush bound is half its share, so its spill path runs before the
-        cut."""
+        cut. A cancellation that reaches this stop is held until the last step has run, then
+        re-raised, as `Supervisor._stop_each` does (#3361): the sessions still close."""
         share = grace_s / 4
+        held: BaseException | None = None
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
-            await asyncio.wait({task}, timeout=share)
+            try:
+                _, pending = await asyncio.wait({task}, timeout=share)
+            except BaseException as exc:  # this stop was cut while it waited
+                held = exc
+            else:
+                if pending:  # it ignores its cancel: nothing else here would say so
+                    logger().error("recorder_stop_failed", step="task", error="TimeoutError")
         steps: tuple[_Step, ...] = (
             ("writer", lambda: self._writer.stop(share / 2)),
             ("sessions", self._sessions.stop),
@@ -101,8 +122,22 @@ class RecorderRuntime:
             try:
                 async with asyncio.timeout(share):
                     await call()
-            except Exception as exc:  # a failing or hung step never skips the next
+            except BaseException as exc:  # a failing, hung or cut step never skips the next
+                if held is None and not isinstance(exc, Exception):
+                    held = exc
                 logger().error("recorder_stop_failed", step=step, error=type(exc).__name__)
+                if step == "writer":
+                    self._log_unpersisted_gaps()
+        if held is not None:
+            raise held
+
+    def _log_unpersisted_gaps(self) -> None:
+        """The writer was cut before it could save its gap windows (a stalled store), the only
+        evidence of a hole in the recording (C-2.14): log each as its own stop would. No I/O."""
+        for (symbol, stream), (first, last) in self._writer.pending_gaps().items():
+            logger().critical(
+                "recorder_gap_unpersisted", symbol=symbol, stream=stream, start=first, end=last
+            )
 
     @property
     def startup_complete(self) -> bool:
@@ -112,8 +147,14 @@ class RecorderRuntime:
         return self._done
 
     def recorded_symbols(self) -> frozenset[str]:
-        """The policy's effective set: lingering symbols are still recorded."""
-        return frozenset(self._policy.effective_set())
+        """The policy's effective set (a lingering symbol is still recorded), less a symbol
+        recorded for a hidden cause alone (`control.HIDDEN_CAUSES`, R-I2): `/rules/vocabulary`
+        would reveal an open position (SEC-A2). A lingering entry holds none: its last decides."""
+        return frozenset(
+            symbol
+            for symbol, entry in self._policy.effective_set().items()
+            if not frozenset(entry.reasons or (entry.reason,)) <= HIDDEN_CAUSES
+        )
 
     def health(self) -> HealthReport:
         """`stopped` before `start()` and after `stop()`, else the startup's state in `detail`
@@ -165,8 +206,13 @@ class RecorderRuntime:
                 )
         except Exception as exc:  # the gate stays closed; a CancelledError is not one
             self._attempts, self._last_error = self._attempts + 1, type(exc)
-            volume = isinstance(exc, RecorderWalVolumeError)  # nothing may record on this volume
-            (logger().critical if volume else logger().warning)(
+            if isinstance(exc, RecorderWalVolumeError):  # nothing may record on this volume
+                log = logger().critical
+            elif self._attempts >= b.max_attempts:  # health is degraded now: say so
+                log = logger().error
+            else:
+                log = logger().warning
+            log(
                 "recorder_startup_failed",
                 attempt=self._attempts,
                 error=type(exc).__name__,

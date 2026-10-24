@@ -1,11 +1,13 @@
 """#2188 S4a: `RecorderRuntime` over mock collaborators, an injected clock and sleep: the startup
 retries with the gate closed, the tick, the ordered stop and the health. The real startup runs
 against the mocks (the real policy and sessions are S3a's tests). No test sleeps: the runtime
-parks in `Sleep` until the test lets it go."""
+parks in `Sleep` until the test lets it go. The last section holds what both lenses asked for:
+cancellation, the clocks, the bounds, a stop under a cut, and what R-I2 hides."""
 
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from typing import Any, cast
@@ -15,6 +17,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.observability.health import HealthStatus
+from candleviewer.recorder.models import PRIORITY, EffectiveEntry, Reason
 from candleviewer.recorder.runtime import TICK_S, RecorderRuntime, RuntimeBounds
 from candleviewer.recorder.service import RecorderService
 from candleviewer.recorder.sessions import startup_reconcile
@@ -58,6 +61,7 @@ class Rig:
         self.clock, self.sleep, self.m = FakeClock(), Sleep(), AsyncMock()
         self.m.policy.positions_reloaded = Mock()  # the one sync step
         self.m.policy.effective_set = Mock(return_value={})
+        self.m.writer.pending_gaps = Mock(return_value={})  # the windows the writer has not saved
         self.m.policy.load_recorded.return_value = []
         self.m.seed.open_positions.return_value = []
         self.rt = RecorderRuntime(
@@ -79,11 +83,33 @@ async def rig(request: pytest.FixtureRequest) -> AsyncIterator[Rig]:
     rng = over.pop("rng", lambda: 1.0)
     r = Rig(replace(BOUNDS, **over), rng)
     yield r
-    await r.rt.stop(0.4)  # a task the test left running
+    # a task the test left running ends here; a stop that hangs fails the test instead
+    await asyncio.wait_for(r.rt.stop(0.4), 5)
 
 
 async def _hang(*_: object) -> None:
     await asyncio.Event().wait()  # never returns: only a timeout ends it
+
+
+async def _stubborn(*_: object) -> None:
+    try:
+        await _hang()
+    except asyncio.CancelledError:
+        await _hang()  # ignores the first cancel: a second one ends it
+
+
+def _alive() -> bool:
+    """Whether the runtime's task is still running."""
+    return any(t.get_name() == "recorder-runtime" and not t.done() for t in asyncio.all_tasks())
+
+
+def _entry(symbol: str, reasons: tuple[Reason, ...], last: Reason | None = None) -> EffectiveEntry:
+    """An effective-set entry: `reasons` held (top first), or none while lingering (`last`)."""
+    top = last or reasons[0]
+    return EffectiveEntry(
+        symbol=symbol, reason=top, reasons=reasons, priority=PRIORITY[top],
+        auto_evictable=top != "manual", lingering=not reasons, pinned=False,
+    )  # fmt: skip
 
 
 async def test_start_returns_before_the_startup_finishes_while_a_slow_wal_replay_runs(
@@ -260,9 +286,188 @@ async def test_the_service_delegates_to_an_attached_runtime_and_is_a_scaffold_wi
     await svc.stop(1.0)
     assert svc.health().status is HealthStatus.STOPPED
     svc.attach_runtime(rig.rt)
-    rig.m.policy.effective_set.return_value = {"BTCUSDT": object()}  # the policy's effective set
+    rig.m.policy.effective_set.return_value = {"BTCUSDT": _entry("BTCUSDT", ("manual",))}
     await svc.start(ctx)  # the runtime's start: its task, not its startup
     await rig.sleep.parked()
     assert (svc.recorded_symbols(), svc.health().detail) == (frozenset({"BTCUSDT"}), "startup=done")
     await svc.stop(4.0)
     assert rig.names[-3:] == STOP and svc.health().status is HealthStatus.STOPPED
+    assert rig.m.writer.stop.call_args.args == (0.5,)  # the supervisor's grace, in quarters, halved
+
+
+async def test_the_gate_stays_closed_and_a_second_start_adds_no_task_while_the_reconcile_runs(
+    rig: Rig,
+) -> None:
+    release = asyncio.Event()
+    rig.m.restore.side_effect = release.wait  # a restore that parks: the reconcile is running
+    await rig.rt.start()
+    await rig.rt.start()  # a second start while it runs would run a second startup
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert rig.names == ["writer.start", "restore"] and not rig.rt.startup_complete
+    release.set()
+    await rig.sleep.parked()
+    assert rig.names[:3] == ["writer.start", "restore", GATE] and rig.rt.startup_complete
+
+
+@pytest.mark.parametrize("rig", [{"start_timeout_s": 0.01}], indirect=True)
+@pytest.mark.parametrize(("kind", "error"), [("raises", "OSError"), ("hangs", "TimeoutError")])
+async def test_a_failed_or_hung_writer_start_is_retried(rig: Rig, kind: str, error: str) -> None:
+    async def bad_once() -> None:
+        rig.m.writer.start.side_effect = None  # the retry's start returns
+        if kind == "raises":
+            raise OSError("disk")
+        await _hang()  # only `start_timeout_s` ends it
+
+    rig.m.writer.start.side_effect = bad_once
+    await rig.rt.start()
+    await rig.sleep.parked()  # the attempt failed: the runtime is in its backoff
+    assert rig.rt.health().detail == f"startup=retrying attempts=1 last_error={error}"
+    rig.sleep.go()
+    await rig.sleep.parked()  # the writer was started again, and the startup passed
+    assert rig.names.count("writer.start") == 2 and rig.rt.startup_complete
+
+
+async def test_the_gate_closed_alert_does_not_fire_once_the_startup_is_done(rig: Rig) -> None:
+    await rig.rt.start()
+    await rig.sleep.parked()
+    rig.clock.advance(BOUNDS.gate_closed_alert_s + 1)  # well past N, but the gate is open
+    h = rig.rt.health()
+    assert (h.status, h.detail) == (HealthStatus.OK, "startup=done")
+
+
+@pytest.mark.parametrize("rig", [{"max_attempts": 99}], indirect=True)
+async def test_the_gate_closed_clock_runs_from_start_and_not_from_each_attempt(rig: Rig) -> None:
+    rig.m.restore.side_effect = OSError("pg down")  # every attempt fails
+    await rig.rt.start()
+    for _ in range(4):
+        await rig.sleep.parked()  # in the backoff after a failed attempt
+        rig.clock.advance(160)  # each attempt and its wait take a while
+        rig.sleep.go()
+    delay = await rig.sleep.parked()  # the fifth has failed, 640 s after the start
+    h = rig.rt.health()
+    assert delay == BOUNDS.retry_cap_s  # the retries are at the cap
+    detail = "startup=retrying attempts=5 last_error=OSError gate_closed_over=600s"
+    assert (h.status, h.detail) == (HealthStatus.DEGRADED, detail)  # over N, not over the bound
+
+
+async def test_a_failed_startup_warns_until_the_bound_and_errors_from_it(rig: Rig) -> None:
+    rig.m.restore.side_effect = [OSError("pg down")] * 5 + [None]
+    with capture_logs() as logs:
+        await rig.rt.start()
+        for _ in range(5):
+            await rig.sleep.parked()
+            rig.sleep.go()
+        await rig.sleep.parked()
+    failed = [
+        (e["attempt"], e["log_level"]) for e in logs if e["event"] == "recorder_startup_failed"
+    ]
+    assert failed == [(1, "warning"), (2, "warning"), (3, "warning"), (4, "error"), (5, "error")]
+
+
+@pytest.mark.parametrize("where", ["restore", "retry_sleep", "tick"])
+async def test_stop_cancels_a_running_startup_backoff_or_tick(rig: Rig, where: str) -> None:
+    if where == "restore":
+        rig.m.restore.side_effect = _hang  # the attempt never returns
+    elif where == "tick":
+        rig.m.policy.tick.side_effect = _hang  # the startup passed, the first tick never returns
+    else:
+        rig.m.restore.side_effect = OSError("pg down")  # the runtime sits in its backoff
+    alive: list[bool] = []
+    rig.m.writer.stop.side_effect = lambda *_: alive.append(_alive())
+    await rig.rt.start()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    with capture_logs() as logs:
+        await asyncio.wait_for(rig.rt.stop(0.4), 2)
+    assert alive == [False]  # the writer stops only once the task has ended
+    failures = [e["event"] for e in logs if e["event"].endswith("_failed")]
+    assert failures == [] and not _alive() and rig.names[-3:] == STOP  # a cancel is no failure
+
+
+@pytest.mark.parametrize("where", ["task", "writer"])
+async def test_a_cut_stop_still_stops_the_rest_then_reraises(rig: Rig, where: str) -> None:
+    entered = asyncio.Event()
+
+    async def stall(*_: object) -> None:
+        entered.set()
+        await _hang()
+
+    if where == "writer":
+        rig.m.writer.stop.side_effect = stall
+    else:  # the task ignores its cancel, so the stop is still waiting for it
+        rig.m.restore.side_effect = _stubborn
+        await rig.rt.start()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    stopping = asyncio.ensure_future(rig.rt.stop(4.0))
+    for _ in range(20):
+        await asyncio.sleep(0)  # the stop is waiting for the task, or in the writer step
+    if where == "writer":
+        assert entered.is_set()
+    stopping.cancel()  # the supervisor's cut
+    with pytest.raises(asyncio.CancelledError):
+        await stopping
+    assert rig.names[-3:] == STOP  # the sessions and the policy stopped all the same
+    for task in [t for t in asyncio.all_tasks() if t.get_name() == "recorder-runtime"]:
+        task.cancel()  # a stubborn task ends on its second cancel
+        await asyncio.wait({task}, timeout=1)
+
+
+async def test_a_stop_logs_a_task_that_ignores_its_cancel_past_its_share(rig: Rig) -> None:
+    rig.m.restore.side_effect = _stubborn
+    await rig.rt.start()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    with capture_logs() as logs:
+        await asyncio.wait_for(rig.rt.stop(0.04), 2)  # its share is 10 ms
+    assert [(e["step"], e["error"]) for e in logs] == [("task", "TimeoutError")]
+    assert rig.names[-3:] == STOP  # the steps still ran
+    (zombie,) = [t for t in asyncio.all_tasks() if t.get_name() == "recorder-runtime"]
+    zombie.cancel()  # the second cancel
+    await asyncio.wait({zombie}, timeout=1)
+
+
+@pytest.mark.parametrize(("stall", "logged"), [(True, True), (False, False)])
+async def test_a_cut_writer_stop_logs_unpersisted_gaps(rig: Rig, stall: bool, logged: bool) -> None:
+    rig.m.writer.pending_gaps.return_value = {("BTCUSDT", "trades"): (10, 20)}
+    rig.m.writer.stop.side_effect = _hang if stall else None  # a stalled store: nothing is saved
+    rig.m.sessions.stop.side_effect = OSError("pg down")  # a failing step that is not the writer's
+    with capture_logs() as logs:
+        await asyncio.wait_for(rig.rt.stop(0.04), 2)
+    window = {"event": "recorder_gap_unpersisted", "log_level": "critical", "symbol": "BTCUSDT",
+              "stream": "trades", "start": 10, "end": 20}  # fmt: skip
+    assert [e for e in logs if e["event"] == "recorder_gap_unpersisted"] == [window] * logged
+
+
+@pytest.mark.parametrize(
+    ("reasons", "last", "shown"),
+    [
+        (("manual",), None, True),
+        (("position_open",), None, False),  # a position alone: R-I2 hides it from `rules:read`
+        (("position_open", "chart_open"), None, True),  # a visible cause holds as well
+        ((), "position_open", False),  # lingering: its last reason decides
+        ((), "chart_open", True),
+    ],
+)
+async def test_recorded_symbols_leaves_out_a_symbol_recorded_for_a_position_alone(
+    rig: Rig, reasons: tuple[Reason, ...], last: Reason | None, shown: bool
+) -> None:
+    rig.m.policy.effective_set.return_value = {
+        "BTCUSDT": _entry("BTCUSDT", ("manual",)),
+        "ETHUSDT": _entry("ETHUSDT", reasons, last),
+    }
+    assert rig.rt.recorded_symbols() == ({"BTCUSDT", "ETHUSDT"} if shown else {"BTCUSDT"})
+
+
+_FIELDS = ("start_timeout_s", "startup_timeout_s", "tick_timeout_s", "retry_base_s",
+           "retry_cap_s", "gate_closed_alert_s")  # fmt: skip
+_REFUSED = [({f: bad}, f) for f in _FIELDS for bad in (0, -7.5, math.nan, math.inf)]
+_REFUSED += [({"retry_cap_s": 0.5}, "retry_cap_s"), ({"max_attempts": 0}, "max_attempts")]
+
+
+@pytest.mark.parametrize(("change", "field"), _REFUSED)
+def test_a_bad_bound_is_refused_naming_only_its_field(change: dict[str, float], field: str) -> None:
+    with pytest.raises(ValueError, match=field) as refused:
+        replace(BOUNDS, **change)
+    assert str(change[field]) not in str(refused.value)  # the field, never the value

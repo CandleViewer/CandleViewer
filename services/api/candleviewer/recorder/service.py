@@ -36,8 +36,8 @@ class RecorderService:
         self._runtime = runtime
 
     def recorded_symbols(self) -> frozenset[str]:
-        """Symbols with an active recording: the policy's effective set (lingering ones included)
-        once a runtime is attached, else empty."""
+        """Symbols with an active recording: the policy's effective set (lingering ones included,
+        a position-only one left out: R-I2) once a runtime is attached, else empty."""
         return frozenset() if self._runtime is None else self._runtime.recorded_symbols()
 
     async def start(self, ctx: AppContext) -> None:
