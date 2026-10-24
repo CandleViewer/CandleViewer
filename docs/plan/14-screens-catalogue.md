@@ -1945,6 +1945,7 @@ Drag preview                Drop zones
 - **Performance:** Conflict detection runs server-side at arm time and on rule save; results return in <=1 s for 500 rules.
 - **Analytics/audit:** `rule.conflict_detected` `{ruleIds, scope, kind}`, `rule.conflict_resolved` `{choice}`, `rule.priority_changed` - **audited**.
 - **Design sign-off acceptance checklist:** [ ] conflict kinds drawn (opposing actions, duplicate stops, overlapping flatten, priority ambiguity) [ ] resolution choices (set priority, narrow scope, disarm one) with consequences [ ] 'arm anyway' is available but requires an explicit acknowledgement [ ] no-conflict state
+- **Design (hi-fi):** [E35-D03.md](../design/E35/E35-D03.md) §2–§3 · [E35-D03-handoff.md](../design/E35/E35-D03-handoff.md) (E35-D03; owner approval pending; the four conflict kinds with one consequence sentence per resolution, the ordered list with Move up / Move down in place of a numeric priority, the non-reorderable risk band, "Arm anyway" behind an acknowledgement that returns to SCR-085, the no-conflict outcome; the conflict shape, kind and precedence write are contract gaps, PROPOSED; CMP-159's resolver variant PROPOSED for E35-D05; Penpot page by name + id in the spec).
 
 ### SCR-087 — Rule fire history / execution log
 
@@ -1957,6 +1958,7 @@ Drag preview                Drop zones
 - **Performance:** History is a virtualised, cursor-paginated table over `GET /api/v1/rules/{ruleId}/runs`; live firings append over `rules`; 10k rows scroll without exceeding 8 ms scripting per frame.
 - **Analytics/audit:** Each firing is itself an audit record `rule.fired` `{ruleId, version, trigger, metricSnapshot, actions, results, environment}`; the screen emits `rule.history_viewed`, `rule.history_exported`, `rule.fire_detail_opened` (analytics).
 - **Design sign-off acceptance checklist:** [ ] columns (time, rule version, trigger, metric snapshot, actions attempted, results, environment) drawn [ ] failed-action rows with the exchange reason [ ] filter by outcome and environment [ ] link from a firing to the resulting order/audit record [ ] export [ ] empty state
+- **Design (hi-fi):** [E35-D03.md](../design/E35/E35-D03.md) §4–§6 (E35-D03; owner approval pending; the page at R-164 with the eight-column dense grid, the expanded row's nested condition table, the new-firings pill, failed rows with the exchange reason, the engine-restart marker, filters, export and the empty states; the plain-language mapping of every skipped and blocked reason in §6; the runs / events routes are in the contract and not yet shipped, the missing fields recorded as gaps; CMP-156's live variant PROPOSED for E35-D05).
 
 ### SCR-088 — Rule IR inspector (advanced)
 
@@ -1968,6 +1970,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `rule.ir_viewed`, `rule.ir_copied` (analytics).
 - **Design sign-off acceptance checklist:** [ ] canonical IR shown read-only with a copy control [ ] the diff view used by the round-trip check drawn [ ] version and compiler-version stamps shown [ ] it is clearly labelled advanced/diagnostic [ ] error state when compilation fails, naming the offending node/row
 - **Design (hi-fi):** [E36-D03.md](../design/E36/E36-D03.md) §5–§6 (E36-D03; owner approval pending; the compiled IR as stored (not the canonical hash form `22` promises — a contract gap, PROPOSED) with copy / export and its described-by note, the tree alternative (CMP-240 PROPOSED per E13-D02), the round-trip diff as a path table, the version / compiler / IR / hash stamps, the compile-failure and quarantined states; the >100 KB pending treatment).
+- **Design (hi-fi, E35-D03 delta):** [E35-D03.md](../design/E35/E35-D03.md) §7 (E35-D03; owner approval pending; adds to E36-D03 §5–§6 the drawn CMP-240 tree, account ids masked for display with the copy and the hash left as stored, the downloadable round-trip diff and the graph-node compile-failure inset).
 
 ### SCR-089 — Rule import / export
 
@@ -1980,6 +1983,7 @@ Drag preview                Drop zones
 - **Stories:** US-RULE-001, US-LAY-007.
 - **Design sign-off acceptance checklist:** [ ] export selection (single / selected / all) with a scope-stripping note [ ] the exported bundle never contains account ids, keys or armed state - stated and verified [ ] import preview with per-rule accept/skip [ ] version-mismatch handling [ ] imported rules always land disarmed - stated and verified [ ] validation failure list
 - **Design (hi-fi):** [E36-D03.md](../design/E36/E36-D03.md) §7–§8 (E36-D03; owner approval pending; export as one `cv-rule-bundle/1` per rule with the privacy note in the UI and the verifying tests named, an import pre-check with the shipped accept / skip reasons keyed by code and an Import results list, "imported rules always land disarmed, on demo"; the export / import operations and a dry run are a contract gap, PROPOSED).
+- **Design (hi-fi, E35-D03 delta):** [E35-D03.md](../design/E35/E35-D03.md) §8 (E35-D03; owner approval pending; adds to E36-D03 §7–§8 the export verification strip computed from the returned bundle, the per-file import checkbox, version-mismatch rows, the results list's "disarmed, on demo" per rule and CMP-234 as the validation-failure list).
 
 ---
 
