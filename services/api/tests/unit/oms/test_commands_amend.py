@@ -69,7 +69,7 @@ def _rows(rig: Rig) -> list[RecordedStopRow]:
 
 
 def _sent(rig: Rig) -> list[AmendOrderRequest]:
-    return [call.request for call in rig.demo.calls if call.method == "amend_order"]
+    return [call.request for call in rig.demo.calls if isinstance(call.request, AmendOrderRequest)]
 
 
 @pytest.fixture
@@ -362,6 +362,13 @@ async def test_q3_refusals_answer_their_code_audited_with_nothing_sent(
     assert answer == {"ok": False, "error_code": code}
     assert rig.demo.calls == [] and _rows(rig) == []
     assert rig.audits.actions() == [("orders.amend", code.lower())]
+
+
+async def test_a_take_profit_change_on_an_order_with_no_stop_is_never_sent_bare(rig: Rig) -> None:
+    order = await _live(rig, stop_loss=None)
+    answer = await rig.port.amend(_amend(order, take_profit="65000"))
+    assert answer == {"ok": False, "error_code": b01.NATIVE_STOP_REQUIRED}
+    assert rig.demo.calls == [] and _rows(rig) == []
 
 
 async def test_a_recorded_stops_row_is_never_amended_here(rig: Rig) -> None:
