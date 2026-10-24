@@ -95,7 +95,7 @@ async def test_recorded_rows_read_back_as_the_events_the_recorder_wrote(
                 sinks.__getitem__,
                 FakeStore(),
                 FakeEvents(),
-                WriterConfig(wal_dir=tmp_path / "wal"),
+                WriterConfig(wal_dir=tmp_path / "wal", env="live"),
                 clock=clock,
                 wall_clock_us=lambda: 0,
                 disk_gate=OPEN_GATE,

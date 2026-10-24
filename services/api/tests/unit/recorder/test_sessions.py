@@ -27,7 +27,7 @@ from candleviewer.recorder.sessions import (
     to_us,
 )
 from tests.unit.recorder._fakes import FakeAudit
-from tests.unit.recorder._session_fakes import MemRecorderStore, UsClock
+from tests.unit.recorder._session_fakes import DEMO, LIVE, MemRecorderStore, UsClock
 
 T0 = to_us(datetime(2026, 9, 14, 10, 0, tzinfo=UTC))
 
@@ -41,9 +41,15 @@ def _added(
     )  # fmt: skip
 
 
+async def _crashed(store: MemRecorderStore, cfg: SessionConfig) -> None:
+    """BTCUSDT's session, opened in `cfg`'s env by a process that was then killed."""
+    mgr = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit(), config=cfg)
+    await mgr.on_set_changed(_added())
+
+
 async def _mgr() -> tuple[SessionManager, MemRecorderStore, UsClock, list[str]]:
     store, clock, inval = MemRecorderStore(), UsClock(T0), []
-    mgr = SessionManager(store, now_us=clock, config=SessionConfig(), invalidate=inval.append,
+    mgr = SessionManager(store, now_us=clock, config=LIVE, invalidate=inval.append,
                          topics=stream_for_topic, audit=FakeAudit())  # fmt: skip
     await mgr.on_set_changed(_added())
     return mgr, store, clock, inval
@@ -165,7 +171,7 @@ async def test_writer_seq_jumps_become_seq_jump_gaps_and_bounds_touch_session() 
 async def test_crash_recovery_closes_process_restart_with_gap_from_last_event() -> None:
     """Gherkin: Crash leaves no open session (chaos #12)."""
     store = MemRecorderStore()
-    dead = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit())
+    dead = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit(), config=LIVE)
     await dead.on_set_changed(_added())
     sid = dead.live_session("BTCUSDT")
     assert sid is not None
@@ -173,21 +179,21 @@ async def test_crash_recovery_closes_process_restart_with_gap_from_last_event() 
     await store.touch_session_events(sid, first=to_dt(T0 + 1), last=to_dt(T0 + 7_000_000))
     # process killed (no stop()); a new process starts 2 minutes later
     start = T0 + 120_000_000
-    fresh = SessionManager(store, now_us=UsClock(start), audit=FakeAudit())
+    fresh = SessionManager(store, now_us=UsClock(start), audit=FakeAudit(), config=LIVE)
     assert await fresh.recover_on_startup(start) == 1
     s = store.sessions[sid]
     assert s["end_reason"] == "process_restart" and to_us(s["ended_at"]) == start
     wins = store.gap_windows("process_restart")
     assert {w[0] for w in wins} == set(DEFAULT_STREAMS)
     assert all(lo == T0 + 7_000_000 and hi == start for _, lo, hi, _ in wins)
-    assert await store.list_live_sessions() == []
+    assert await store.list_live_sessions("live") == []
 
 
 async def test_crash_recovery_without_events_gaps_from_started_at() -> None:
     store = MemRecorderStore()
-    dead = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit())
+    dead = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit(), config=LIVE)
     await dead.on_set_changed(_added())
-    fresh = SessionManager(store, now_us=UsClock(T0 + 5), audit=FakeAudit())
+    fresh = SessionManager(store, now_us=UsClock(T0 + 5), audit=FakeAudit(), config=LIVE)
     await fresh.recover_on_startup(T0 + 5)
     assert all(lo == T0 for _, lo, _, _ in store.gap_windows("process_restart"))
 
@@ -248,15 +254,15 @@ async def test_writer_buffered_gaps_flush_once_session_opens(tmp_path: Path) -> 
 
     store = MemRecorderStore()
     w = StreamWriter(
-        lambda _s: FakeSink(), store, FakeEvents(), WriterConfig(wal_dir=tmp_path / "wal"),
-        clock=lambda: 0.0, wall_clock_us=lambda: T0, fsync=FsyncCounter(),
-        disk_gate=OPEN_GATE,
+        lambda _s: FakeSink(), store, FakeEvents(),
+        WriterConfig(wal_dir=tmp_path / "wal", env="live"),
+        clock=lambda: 0.0, wall_clock_us=lambda: T0, fsync=FsyncCounter(), disk_gate=OPEN_GATE,
     )  # fmt: skip
     await w.open()
     w._gaps[("BTCUSDT", "trades")] = [T0, T0 + 1_000]  # a dropped window (see writer tests)
     await w.flush_gaps()
     assert store.gaps == [] and w.pending_gaps()
-    mgr = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit())
+    mgr = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit(), config=LIVE)
     await mgr.on_set_changed(_added())
     await w.flush_gaps()
     assert store.gap_windows() == [("trades", T0, T0 + 1_000, "backpressure_drop")]
@@ -275,7 +281,7 @@ def test_adapter_stream_for_topic_normalises_venue_topics() -> None:
 
 async def test_without_resolver_every_health_event_is_socket_wide() -> None:
     store, clock = MemRecorderStore(), UsClock(T0)
-    mgr = SessionManager(store, now_us=clock, audit=FakeAudit())
+    mgr = SessionManager(store, now_us=clock, audit=FakeAudit(), config=LIVE)
     await mgr.on_set_changed(_added())
     await mgr.on_feed_health("anything", "degraded")
     clock.advance_s(2)
@@ -323,11 +329,11 @@ async def test_crash_recovery_is_audited_write_ahead_as_system_recorder() -> Non
     `system:recorder`, each written BEFORE its own session's gap rows."""
     log: list[str] = []
     store, symbols = _LoggingStore(log), ("BTCUSDT", "ETHUSDT")
-    dead = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit())
+    dead = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit(), config=LIVE)
     for symbol in symbols:
         await dead.on_set_changed(_added(symbol))
     audit = _Audit(log)
-    fresh = SessionManager(store, now_us=UsClock(T0 + 9), audit=audit)
+    fresh = SessionManager(store, now_us=UsClock(T0 + 9), audit=audit, config=LIVE)
     assert await fresh.recover_on_startup(T0 + 9) == 2
     gaps = len(DEFAULT_STREAMS)
     assert log == [f"{kind}:{s}" for s in symbols for kind in ["audit"] + ["gap"] * gaps]
@@ -340,11 +346,11 @@ async def test_crash_recovery_is_audited_write_ahead_as_system_recorder() -> Non
 
 async def test_crash_recovery_audit_failure_leaves_session_open() -> None:
     store = MemRecorderStore()
-    await SessionManager(store, now_us=UsClock(T0), audit=FakeAudit()).on_set_changed(_added())
-    fresh = SessionManager(store, now_us=UsClock(T0 + 9), audit=_Audit([], fail=True))
+    await _crashed(store, LIVE)
+    fresh = SessionManager(store, now_us=UsClock(T0 + 9), audit=_Audit([], fail=True), config=LIVE)
     with pytest.raises(OSError):
         await fresh.recover_on_startup(T0 + 9)
-    assert store.gaps == [] and len(await store.list_live_sessions()) == 1
+    assert store.gaps == [] and len(await store.list_live_sessions("live")) == 1
 
 
 class _StalledAudit:
@@ -373,8 +379,8 @@ async def _stalled_recovery(audit: _StalledAudit) -> MemRecorderStore:
     """Crash recovery whose `recorder.stop` audit outlives `store_timeout_s` (0 s: the
     in-memory store never suspends, so only the stalled audit reaches the deadline)."""
     store = MemRecorderStore()
-    await SessionManager(store, now_us=UsClock(T0), audit=FakeAudit()).on_set_changed(_added())
-    cfg = SessionConfig(store_timeout_s=0.0)
+    await _crashed(store, LIVE)
+    cfg = SessionConfig(env="live", store_timeout_s=0.0)
     fresh = SessionManager(store, now_us=UsClock(T0 + 9), config=cfg, audit=audit)
     with pytest.raises(TimeoutError):
         await fresh.recover_on_startup(T0 + 9)
@@ -389,7 +395,7 @@ async def test_crash_recovery_audit_timeout_fails_recovery_and_leaves_session_op
     audit = _StalledAudit()
     store = await _stalled_recovery(audit)
     assert audit.entered.is_set() and audit.cancelled
-    assert store.gaps == [] and len(await store.list_live_sessions()) == 1
+    assert store.gaps == [] and len(await store.list_live_sessions("live")) == 1
     assert audit.records == []
 
 
@@ -399,23 +405,23 @@ async def test_crash_recovery_audit_timeout_fails_recovery_and_leaves_session_op
 def test_session_manager_built_without_audit_raises_type_error() -> None:
     store, clock = MemRecorderStore(), UsClock(T0)
     with pytest.raises(TypeError, match="audit"):
-        SessionManager(store, now_us=clock)  # type: ignore[call-arg]  # the default is gone
+        SessionManager(store, now_us=clock, config=LIVE)  # type: ignore[call-arg]  # the default is gone
 
 
 def test_session_manager_built_with_audit_none_raises_value_error_naming_the_reason() -> None:
     store, clock = MemRecorderStore(), UsClock(T0)
     with pytest.raises(ValueError, match=r"crash-recovery `recorder\.stop` audit.*C-2\.9"):
-        SessionManager(store, now_us=clock, audit=None)  # type: ignore[arg-type]  # a runtime None
+        SessionManager(store, now_us=clock, audit=None, config=LIVE)  # type: ignore[arg-type]  # a runtime None
 
 
 async def test_crash_recovery_writes_the_stop_audit_record_for_the_session_it_closes() -> None:
     """The path that used to skip its audit silently when none was wired (#2188): the closed
     session now always has its `recorder.stop` record, with the exact gap window."""
     store, audit = MemRecorderStore(), FakeAudit()
-    await SessionManager(store, now_us=UsClock(T0), audit=FakeAudit()).on_set_changed(_added())
+    await _crashed(store, LIVE)
     (sid,) = store.sessions
     start = T0 + 120_000_000
-    fresh = SessionManager(store, now_us=UsClock(start), audit=audit)
+    fresh = SessionManager(store, now_us=UsClock(start), audit=audit, config=LIVE)
     assert await fresh.recover_on_startup(start) == 1
     after_state = {
         "symbol": "BTCUSDT", "recording_session_id": sid, "reason": "process_restart",
@@ -432,9 +438,8 @@ async def test_crash_recovery_writes_the_stop_audit_record_for_the_session_it_cl
 
 async def test_the_stop_record_carries_the_managers_env() -> None:
     store, audit = MemRecorderStore(), FakeAudit()
-    await SessionManager(store, now_us=UsClock(T0), audit=FakeAudit()).on_set_changed(_added())
-    cfg = SessionConfig(env="demo")
-    fresh = SessionManager(store, now_us=UsClock(T0 + 9), config=cfg, audit=audit)
+    await _crashed(store, DEMO)
+    fresh = SessionManager(store, now_us=UsClock(T0 + 9), config=DEMO, audit=audit)
     await fresh.recover_on_startup(T0 + 9)
     assert audit.envs() == [("recorder.stop", "demo")]
 
@@ -444,8 +449,9 @@ async def test_the_stop_record_keeps_its_after_state_through_the_audit_writers_b
 ) -> None:
     """M19's redactor blanks a `session_id` key as a credential name; this record must survive."""
     store, audit = MemRecorderStore(), FakeAudit()
-    await SessionManager(store, now_us=UsClock(T0), audit=FakeAudit()).on_set_changed(_added())
-    await SessionManager(store, now_us=UsClock(T0 + 9), audit=audit).recover_on_startup(T0 + 9)
+    await _crashed(store, LIVE)
+    fresh = SessionManager(store, now_us=UsClock(T0 + 9), audit=audit, config=LIVE)
+    await fresh.recover_on_startup(T0 + 9)
     ((action, kw),) = audit.records
     built = AuditWriter(cast(Any, object()), str(tmp_path / "audit.wal")).build(action, **kw)
     assert built.after_state == kw["after_state"]

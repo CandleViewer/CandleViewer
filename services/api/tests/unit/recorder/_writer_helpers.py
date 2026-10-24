@@ -67,25 +67,35 @@ class FakeStore:
     def __init__(self) -> None:
         self.counters: list[tuple[str, dict[str, int]]] = []
         self.gaps: list[dict[str, object]] = []
+        self.envs: list[str] = []  # the env each write named
         self.fail = False
         #: False = no live recording session (E16-T04 has not opened one yet).
         self.session = True
 
-    async def add_session_counters(self, symbol: str, **kw: int) -> bool:
+    async def add_session_counters(self, symbol: str, *, env: str, **kw: int) -> bool:
         if self.fail:
             raise ConnectionError("pg down")
         if not self.session:
             return False
+        self.envs.append(env)
         self.counters.append((symbol, kw))
         return True
 
     async def record_live_gap(
-        self, *, symbol: str, stream: str, gap_start: datetime, gap_end: datetime, cause: str
+        self,
+        *,
+        symbol: str,
+        env: str,
+        stream: str,
+        gap_start: datetime,
+        gap_end: datetime,
+        cause: str,
     ) -> bool:
         if self.fail:
             raise ConnectionError("pg down")
         if not self.session:
             return False
+        self.envs.append(env)
         self.gaps.append(
             {"symbol": symbol, "stream": stream, "start": gap_start, "end": gap_end, "cause": cause}
         )
@@ -114,7 +124,8 @@ async def make_writer(
     """A writer whose five lanes share one per-table `FakeSink` (it fails/delays per table)."""
     sink = sink or FakeSink()
     store, events, clock = FakeStore(), FakeEvents(), FakeClock()
-    config = WriterConfig(wal_dir=tmp_path / "wal", **cfg)  # type: ignore[arg-type]
+    base: dict[str, object] = {"wal_dir": tmp_path / "wal", "env": "live"}  # `cfg` may say another
+    config = WriterConfig(**base | cfg)  # type: ignore[arg-type]
     w = StreamWriter(
         lambda _stream: sink,
         store,

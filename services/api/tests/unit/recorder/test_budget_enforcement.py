@@ -70,7 +70,7 @@ def _writer(gate: Gate) -> tuple[StreamWriter, FakeSink, FakeStore, FakeClock]:
         lambda _stream: sink,
         store,
         FakeEvents(),
-        WriterConfig(wal_dir=Path("unused-wal")),
+        WriterConfig(wal_dir=Path("unused-wal"), env="live"),
         clock=clock,
         wall_clock_us=lambda: T0,
         fsync=FsyncCounter(),

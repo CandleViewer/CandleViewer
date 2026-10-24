@@ -24,7 +24,7 @@ from candleviewer.recorder.intervals import (
 from candleviewer.recorder.sessions import SessionManager, to_dt, to_us
 from candleviewer.storage.models import StreamKind
 from tests.unit.recorder._fakes import FakeAudit
-from tests.unit.recorder._session_fakes import MemRecorderStore, UsClock
+from tests.unit.recorder._session_fakes import LIVE, MemRecorderStore, UsClock
 
 S = 1_000_000
 
@@ -84,7 +84,9 @@ _ev = st.lists(
 async def test_property_coverage_plus_gaps_equals_sessions(events: list[tuple[str, int]]) -> None:
     store, clock = MemRecorderStore(), UsClock(_us(2026, 9, 1))
     t_start = clock.t
-    mgr = SessionManager(store, now_us=clock, topics=stream_for_topic, audit=FakeAudit())
+    mgr = SessionManager(
+        store, now_us=clock, topics=stream_for_topic, audit=FakeAudit(), config=LIVE
+    )
     from tests.unit.recorder.test_sessions import _added
 
     await mgr.on_set_changed(_added())
@@ -95,7 +97,9 @@ async def test_property_coverage_plus_gaps_equals_sessions(events: list[tuple[st
         elif kind == "up":
             await mgr.on_feed_health("publicTrade.BTCUSDT", "healthy")
         elif kind == "crash":
-            mgr = SessionManager(store, now_us=clock, topics=stream_for_topic, audit=FakeAudit())
+            mgr = SessionManager(
+                store, now_us=clock, topics=stream_for_topic, audit=FakeAudit(), config=LIVE
+            )
             await mgr.recover_on_startup(clock.t)
             await mgr.on_set_changed(_added())
     clock.advance_s(1)

@@ -76,6 +76,10 @@ def _repo(
     return SqlAlchemyRecorderRepository(rel), rel  # type: ignore[arg-type]
 
 
+#: What each statement that finds sessions by symbol or by state carries (C-2.11, #2726's class).
+_IN_ENV = "rs.env = CAST(:env AS exchange_env)"
+
+
 async def test_list_and_get_pass_env() -> None:
     repo, rel = _repo([{"symbol": "BTCUSDT"}])
     assert await repo.list_recorded("live") == [{"symbol": "BTCUSDT"}]
@@ -86,12 +90,12 @@ async def test_list_and_get_pass_env() -> None:
 
 async def test_get_by_symbol_none_when_absent() -> None:
     repo, _ = _repo([])
-    assert await repo.get_by_symbol("ETHUSDT") is None
+    assert await repo.get_by_symbol("ETHUSDT", "live") is None
 
 
 async def test_upsert_auto_serialises_ref_and_returns_id() -> None:
     repo, rel = _repo([{"id": "abc"}])
-    got = await repo.upsert_auto("BTCUSDT", "chart_open", {"kind": "chart", "id": "c1"})
+    got = await repo.upsert_auto("BTCUSDT", "chart_open", {"kind": "chart", "id": "c1"}, "live")
     assert got == "abc"
     assert json.loads(rel.calls[0][1]["ref"]) == {"kind": "chart", "id": "c1"}
     assert rel.calls[0][1]["reason"] == "chart_open"
@@ -260,12 +264,15 @@ async def test_resolve_policy_sql_orders_pinned_then_symbol_then_default() -> No
 async def test_add_session_counters_targets_live_session_as_deltas() -> None:
     repo, rel = _repo([{"?column?": 1}])
     ok = await repo.add_session_counters(
-        "BTCUSDT", messages_received=5, messages_dropped=1, bytes_written=900, reconnect_count=0
-    )
+        "BTCUSDT", env="demo", messages_received=5, messages_dropped=1, bytes_written=900,
+        reconnect_count=0,
+    )  # fmt: skip
     sql, params = rel.calls[0]
     assert ok and "messages_received = messages_received + :rx" in sql
-    assert "state IN ('starting','recording','degraded')" in sql
-    assert params == {"symbol": "BTCUSDT", "rx": 5, "dropped": 1, "bytes": 900, "reconnects": 0}
+    assert "state IN ('starting','recording','degraded')" in sql and _IN_ENV in sql
+    assert params == {
+        "symbol": "BTCUSDT", "env": "demo", "rx": 5, "dropped": 1, "bytes": 900, "reconnects": 0
+    }  # fmt: skip
 
 
 async def test_record_live_gap_false_without_live_session() -> None:
@@ -273,6 +280,7 @@ async def test_record_live_gap_false_without_live_session() -> None:
     start = datetime(2026, 10, 1, tzinfo=UTC)
     ok = await repo.record_live_gap(
         symbol="BTCUSDT",
+        env="demo",
         stream="trades",
         gap_start=start,
         gap_end=start.replace(second=1),
@@ -280,7 +288,7 @@ async def test_record_live_gap_false_without_live_session() -> None:
     )
     sql, params = rel.calls[0]
     assert not ok and "INSERT INTO recording_gaps" in sql and "CAST(:stream AS stream_kind)" in sql
-    assert params["cause"] == "backpressure_drop"
+    assert _IN_ENV in sql and (params["env"], params["cause"]) == ("demo", "backpressure_drop")
 
 
 async def test_e16_t04_session_and_gap_methods_plumb_params() -> None:
@@ -300,7 +308,8 @@ async def test_e16_t04_session_and_gap_methods_plumb_params() -> None:
     assert await repo.set_session_state("s", "degraded")
     assert await repo.touch_session_events("s", first=t0, last=t1)
     assert "COALESCE(first_event_ts" in rel.calls[-1][0]
-    assert await repo.list_live_sessions() == [{"id": "s", "first": t0}]
+    assert await repo.list_live_sessions("demo") == [{"id": "s", "first": t0}]
+    assert rel.calls[-1][1] == {"env": "demo"} and _IN_ENV in rel.calls[-1][0]
     assert await repo.sessions_in("BTCUSDT", t0, t1)
     assert await repo.gaps_in("BTCUSDT", t0, t1)
     assert rel.calls[-1][1] == {"symbol": "BTCUSDT", "lo": t0, "hi": t1}

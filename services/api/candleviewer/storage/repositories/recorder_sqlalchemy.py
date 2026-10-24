@@ -161,28 +161,36 @@ _RECORD_GAP = sa.text(
     "cause) VALUES (CAST(:sid AS uuid), :symbol, CAST(:stream AS stream_kind), :gs, :ge, "
     ":cause) RETURNING id"
 )
-# E16-T03 StreamWriter: both target the symbol's live session (ix_recs_live), newest first.
+# E16-T03 StreamWriter: both target the symbol's live session in `:env` (ix_recs_live), newest
+# first. A session's env is its recorded row's (`recording_sessions` has no `env`, 21 Sec.3.6.2),
+# so a statement that finds sessions by symbol or state, `_LIVE_SESSIONS` too, joins that row and
+# binds the env, cast: without it, it reaches another env's sessions (C-2.11, #2726's class). The
+# gap insert keeps its derived table: Postgres types `:symbol` from the first place it meets it.
 _ADD_COUNTERS = sa.text(
     "UPDATE recording_sessions SET messages_received = messages_received + :rx, "
     "messages_dropped = messages_dropped + :dropped, bytes_written = bytes_written + :bytes, "
     "reconnect_count = reconnect_count + :reconnects WHERE id = "
-    "(SELECT id FROM recording_sessions WHERE symbol = :symbol "
-    "AND state IN ('starting','recording','degraded') ORDER BY started_at DESC LIMIT 1)"
-    " RETURNING 1"
+    "(SELECT s.id FROM recording_sessions s JOIN recorded_symbols rs "
+    "ON rs.id = s.recorded_symbol_id AND rs.env = CAST(:env AS exchange_env) "
+    "WHERE s.symbol = :symbol AND s.state IN ('starting','recording','degraded') "
+    "ORDER BY s.started_at DESC LIMIT 1) RETURNING 1"
 )
 _RECORD_LIVE_GAP = sa.text(
     "INSERT INTO recording_gaps (recording_session_id, symbol, stream, gap_start, gap_end, "
     "cause) SELECT s.id, :symbol, CAST(:stream AS stream_kind), :gs, :ge, :cause FROM "
-    "(SELECT id FROM recording_sessions WHERE symbol = :symbol "
-    "AND state IN ('starting','recording','degraded') ORDER BY started_at DESC LIMIT 1)"
-    " AS s RETURNING id"
+    "(SELECT r.id FROM recording_sessions r JOIN recorded_symbols rs "
+    "ON rs.id = r.recorded_symbol_id AND rs.env = CAST(:env AS exchange_env) "
+    "WHERE r.symbol = :symbol AND r.state IN ('starting','recording','degraded') "
+    "ORDER BY r.started_at DESC LIMIT 1) AS s RETURNING id"
 )
 # --- E16-T04 sessions / gaps / coverage ------------------------------------------------------
+# A soft-removed row's open session is still its env's to close, so no `removed_at` condition.
 _LIVE_SESSIONS = sa.text(
-    "SELECT id::text AS id, symbol::text AS symbol, state::text AS state, "
-    "streams::text[] AS streams, started_at, ended_at, first_event_ts, last_event_ts, "
-    "end_reason FROM recording_sessions "
-    "WHERE state IN ('starting','recording','degraded','stopping') ORDER BY started_at"
+    "SELECT s.id::text AS id, s.symbol::text AS symbol, s.state::text AS state, "
+    "s.streams::text[] AS streams, s.started_at, s.ended_at, s.first_event_ts, "
+    "s.last_event_ts, s.end_reason FROM recording_sessions s JOIN recorded_symbols rs "
+    "ON rs.id = s.recorded_symbol_id AND rs.env = CAST(:env AS exchange_env) "
+    "WHERE s.state IN ('starting','recording','degraded','stopping') ORDER BY s.started_at"
 )
 _CLOSE_SESSION_AT = sa.text(
     "UPDATE recording_sessions SET ended_at = GREATEST(started_at, :ended), "
@@ -268,16 +276,14 @@ class SqlAlchemyRecorderRepository:
             passing = exc  # stripped in place by the unit of work; re-raised after the handler
         raise passing
 
-    async def list_recorded(self, env: str = "live") -> list[dict[str, Any]]:
+    async def list_recorded(self, env: str) -> list[dict[str, Any]]:
         return await self._all(_LIST, {"env": env})
 
-    async def get_by_symbol(self, symbol: str, env: str = "live") -> dict[str, Any] | None:
+    async def get_by_symbol(self, symbol: str, env: str) -> dict[str, Any] | None:
         rows = await self._all(_GET, {"symbol": symbol, "env": env})
         return rows[0] if rows else None
 
-    async def upsert_auto(
-        self, symbol: str, reason: str, ref: dict[str, str], env: str = "live"
-    ) -> str:
+    async def upsert_auto(self, symbol: str, reason: str, ref: dict[str, str], env: str) -> str:
         """Insert an auto-record row, or append `ref` to the active row's reasons."""
         rows = await self._all(
             _UPSERT_AUTO,
@@ -400,14 +406,17 @@ class SqlAlchemyRecorderRepository:
         self,
         symbol: str,
         *,
+        env: str,
         messages_received: int,
         messages_dropped: int,
         bytes_written: int,
         reconnect_count: int,
     ) -> bool:
-        """Add counter deltas to the symbol's live session (E16-T03). False = no live session."""
+        """Add counter deltas to the symbol's live session in `env` (E16-T03), never another
+        env's. False = no live session."""
         params = {
             "symbol": symbol,
+            "env": env,
             "rx": messages_received,
             "dropped": messages_dropped,
             "bytes": bytes_written,
@@ -416,11 +425,20 @@ class SqlAlchemyRecorderRepository:
         return bool(await self._all(_ADD_COUNTERS, params))
 
     async def record_live_gap(
-        self, *, symbol: str, stream: str, gap_start: datetime, gap_end: datetime, cause: str
+        self,
+        *,
+        symbol: str,
+        env: str,
+        stream: str,
+        gap_start: datetime,
+        gap_end: datetime,
+        cause: str,
     ) -> bool:
-        """Insert a gap on the symbol's live session (E16-T03). False = no live session."""
+        """Insert a gap on the symbol's live session in `env` (E16-T03), never another env's.
+        False = no live session."""
         params = {
             "symbol": symbol,
+            "env": env,
             "stream": stream,
             "gs": gap_start,
             "ge": gap_end,
@@ -430,9 +448,10 @@ class SqlAlchemyRecorderRepository:
 
     # --- E16-T04 ------------------------------------------------------------------------------
 
-    async def list_live_sessions(self) -> list[dict[str, Any]]:
-        """Sessions not yet closed (`starting|recording|degraded|stopping`), oldest first."""
-        return await self._all(_LIVE_SESSIONS, {})
+    async def list_live_sessions(self, env: str) -> list[dict[str, Any]]:
+        """`env`'s sessions not yet closed (`starting|recording|degraded|stopping`), oldest first:
+        the crash recovery's read, so it closes no other env's session (C-2.11)."""
+        return await self._all(_LIVE_SESSIONS, {"env": env})
 
     async def open_session_at(
         self,

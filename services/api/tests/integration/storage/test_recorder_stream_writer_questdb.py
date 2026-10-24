@@ -66,7 +66,7 @@ async def test_stream_writer_rows_commit_on_real_questdb(
             sinks.__getitem__,
             FakeStore(),
             FakeEvents(),
-            WriterConfig(wal_dir=tmp_path / "wal"),
+            WriterConfig(wal_dir=tmp_path / "wal", env="live"),
             clock=clock,
             wall_clock_us=lambda: 0,
             disk_gate=OPEN_GATE,

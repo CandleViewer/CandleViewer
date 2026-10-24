@@ -194,12 +194,14 @@ class RowSink(Protocol):
 
 
 class RecorderStore(Protocol):
-    """Postgres side (`SqlAlchemyRecorderRepository` conforms): the symbol's live session."""
+    """Postgres side (`SqlAlchemyRecorderRepository` conforms): the symbol's live session in `env`,
+    never another env's (C-2.11)."""
 
     async def add_session_counters(
         self,
         symbol: str,
         *,
+        env: str,
         messages_received: int,
         messages_dropped: int,
         bytes_written: int,
@@ -207,7 +209,14 @@ class RecorderStore(Protocol):
     ) -> bool: ...
 
     async def record_live_gap(
-        self, *, symbol: str, stream: str, gap_start: datetime, gap_end: datetime, cause: str
+        self,
+        *,
+        symbol: str,
+        env: str,
+        stream: str,
+        gap_start: datetime,
+        gap_end: datetime,
+        cause: str,
     ) -> bool: ...
 
 
@@ -363,6 +372,9 @@ class WriterConfig:
     """`CV_RECORDER_WAL_*` (20-architecture.md §7.2) and the §3.8 batching thresholds."""
 
     wal_dir: Path
+    #: The env this process records for: its gap and counter writes reach that env's sessions only
+    #: (C-2.11). No default: a `live` one would put a demo process's writes on the live sessions.
+    env: str
     wal_max_bytes: int = 1 << 30
     flush_rows: int = 10_000
     flush_interval_s: float = 0.2
@@ -398,6 +410,7 @@ def writer_config_from_settings(settings: Settings, **overrides: object) -> Writ
     `check_wal_volume` is never vacuous by default."""
     base: dict[str, object] = {
         "wal_dir": Path(settings.recorder_wal_dir),
+        "env": settings.environment.value,
         "wal_max_bytes": settings.recorder_wal_max_bytes,
         "protected_paths": default_protected_paths(settings),
     }
@@ -898,6 +911,7 @@ class StreamWriter:
             async with asyncio.timeout(self._cfg.store_timeout_s):
                 ok = await self._store.record_live_gap(
                     symbol=symbol,
+                    env=self._cfg.env,
                     stream=STREAM_KIND[stream],
                     gap_start=gap_start,
                     gap_end=gap_end,
@@ -921,6 +935,7 @@ class StreamWriter:
                 async with asyncio.timeout(self._cfg.store_timeout_s):
                     ok = await self._store.add_session_counters(
                         symbol,
+                        env=self._cfg.env,
                         messages_received=snap.received,
                         messages_dropped=snap.dropped,
                         bytes_written=snap.bytes_written,
