@@ -25,6 +25,7 @@ purpose (see its section).
 | `audit_session.py`   | The checked pool and real audit writer the writer-based seeds write through                     |
 | `secret_marker.py`   | AUDIT-SECRET-MARKER: `seed_secret_marker`, an entry whose states carry a marker to redact       |
 | `concurrent_rows.py` | AUDIT-CONCURRENT: `seed_concurrent_rows`, 1,000 audit rows from two connections, one raw        |
+| `backup_worlds.py`   | BACKUP-TAMPERED and BACKUP-THEN-REVOKED: a usable backup each, with the records a restore reads |
 | `payloads/`          | The health reports and the overview, as JSON bodies of the contract's models                    |
 | `README.md`          | This file                                                                                       |
 
@@ -97,7 +98,7 @@ async with engine.begin() as conn:
 | -------------------- | ----------------------------------------------------------------------------------- |
 | BACKUP-VERIFIED      | A backup three days before `now`, verified by `checksum`: the last verified one     |
 | BACKUP-VERIFY-FAILED | The latest backup, an hour before `now`, `failed` with the code `checksum_mismatch` |
-| BACKUPS-NONE         | A world seeded without `seed_backups`: an empty catalogue                           |
+| BACKUPS-NONE         | A world with no backup row at all: none of the backup handles seeded                |
 
 - **Idempotent:** `ON CONFLICT (id) DO NOTHING`: a second run, whatever its `now`, keeps the first's.
 - **Self-checking:** `check_backups` raises `FixtureCheckError` naming each difference: a value that
@@ -109,6 +110,10 @@ async with engine.begin() as conn:
 - **Test databases only:** both refuse a database not named `test` or `*_test`, with `FixtureRefused`
   and before anything else is sent: the app's role cannot delete a backup row. `seed_backups` needs
   a `now` with a timezone (`ValueError` otherwise); `check_backups` takes none.
+- **One database per backup handle:** `check_backups` holds the catalogue to these two rows and no other,
+  and BACKUP-TAMPERED and BACKUP-THEN-REVOKED (below) each need a catalogue of their own row alone.
+  Never load one beside another, or beside `seed_backups`: a world holding any backup handle's row is
+  not BACKUPS-NONE either.
 
 ## The payloads
 
@@ -300,6 +305,72 @@ await check_forged_seal(relational, keys, now=now)
   any read.
 - `tests/integration/admin/test_admin_fixture_b4a_pg.py` runs the three seeds on Postgres 16,
   OOB-WRITES in its own database as `cv_app` through a stand-in role.
+
+## The tampered backup (BACKUP-TAMPERED)
+
+```python
+from datetime import UTC, datetime
+
+from tests.fixtures.admin.backup_worlds import check_backup_tampered, seed_backup_tampered
+
+await seed_backup_tampered(pg_dsn, tmp_path, now=datetime.now(UTC))  # tmp_path: the writer's WAL
+await check_backup_tampered(pg_dsn)
+```
+
+- **One database per backup handle:** this world shares a database with neither `seed_backups` nor
+  BACKUP-THEN-REVOKED. The seed refuses, before it writes, a catalogue that holds another backup, naming it.
+- **What it writes,** for AC-ADM-25 (AD-S06-05's third arm): a backup row two days before `now`, `verified`,
+  encrypted and kept, whose digest is not the one its run's record bound. That record is a `backup.run` at
+  `stage: finished`, written through the real audit writer with the engine's own builder, as the system
+  actor of a scheduled run; it binds `BOUND_DIGEST`. A restore reads the bound digest from the record,
+  never from the row (`admin/backups/evidence.py`), so the guard finds the two differ and refuses the
+  backup as `backup_not_usable`, arranged as `test_restore_guard.py` arranges it. Both digests are synthetic
+  sha256 values of fixed names, and no artefact exists behind the row.
+- **Idempotent and self-checking:** the row is `ON CONFLICT (id) DO NOTHING` and a record the trail holds is
+  not written again, so a second run writes nothing, whatever its `now`. `check_backup_tampered` raises
+  `FixtureCheckError` naming each value of the row that differs, as `check_backups` names them, and unless
+  the backup's successful `stage: finished` records bind exactly `BOUND_DIGEST`. It reads only its own row
+  and records.
+- **Test databases only, and no world needed:** a database not named `test` or `*_test` is refused with
+  `FixtureRefused` before anything is read or written, and before a writer is built. The record's actor is
+  the system, so no row of slice A's world is read.
+
+## The backup then revoked (BACKUP-THEN-REVOKED)
+
+```python
+from tests.fixtures.admin.backup_worlds import check_backup_then_revoked, seed_backup_then_revoked
+
+await seed_backup_then_revoked(pg_dsn, tmp_path, now=now)  # slice A's world first
+await check_backup_then_revoked(pg_dsn)
+```
+
+- **One database per backup handle:** as BACKUP-TAMPERED's, which this world never shares a database with.
+- **What it writes,** for AC-ADM-24, which waits on #3084 and the Owner's decision D7: a backup the restore
+  guard admits, three days before `now`. Its `backup.run` record binds the row's digest and a `covers_to`
+  that the row holds too, and a passing `backup.verified` record stands beside it. After `covers_to` come
+  two revocations, each with the record the app writes (OWNER is the actor):
+  - **A grant revoked:** MGR-M's grant on SUB-S, with `can_view` and `can_trade` false: the soft revocation
+    of `users.access_change` and the disable cascade. `user_account_access` has no `revoked_at`, and
+    `frozen` is the risk freeze, which a revocation never writes. Its record, two days before `now`, is
+    built by the app's own function: the grants before and after.
+  - **A role removed:** OWNER-2's `owner` role is replaced by `viewer`, as the role route does it, so a
+    `roles.revoke` (`owner`) and a `roles.grant` (`viewer`) follow an hour after. It is the
+    highest-privilege role, so a restore that brings it back is the worst rollback; the owner floor allows
+    it, since OWNER stays an Owner; and no other handle is OWNER-2, so the case has two independent
+    revocations. A removed role leaves nothing in the rows but its absence, so its record is the evidence.
+- **The world first:** it needs OWNER, OWNER-2, MGR-M and SUB-S (`world.py`) and never writes them; a missing
+  one is a `FixtureCheckError` naming it, before any write. `check_admin_world` fails after it, by design:
+  it names the revoked grant and the replaced role. Seed the world and check it first, in a database of its
+  own.
+- **Idempotent and self-checking:** rows are conditional or `DO NOTHING` and a record the trail holds is not
+  written again, so a second run writes nothing; `now` must be the first's, as a record's time is not
+  refreshed. `check_backup_then_revoked` raises `FixtureCheckError` naming each fact that does not hold: the
+  row's values, `covers_to` equal to when its run ended, the record binding the row's digest and
+  `covers_to`, one passing `backup.verified`, one `users.access_change` and one `roles.revoke` after
+  `covers_to`, the grant soft-revoked, and OWNER-2's roles `viewer` alone.
+- **Test databases only:** a database not named for tests is refused before anything is read or written.
+- `tests/integration/admin/test_admin_fixture_b4b_pg.py` runs both seeds on Postgres 16 and reads the
+  records back with the app's own evidence reader, as the restore guard does.
 
 ## The secret marker (AUDIT-SECRET-MARKER)
 
