@@ -1,0 +1,9 @@
+{
+  "description": "The drawing render paths (E14-X03, #549): no eslint-disable, @ts-ignore, @ts-expect-error or nosemgrep without a reviewed annotation. Extend it when a ticket adds drawing or object-tree code; keep it equal to the paths of .semgrep/cv-drawings-text-to-html-sink.yml.",
+  "paths": [
+    "apps/web/src/features/drawings/**",
+    "apps/web/src/drawings/**",
+    "apps/web/src/objecttree/**",
+    "packages/chart-engine/src/layers/drawings/**"
+  ]
+}
