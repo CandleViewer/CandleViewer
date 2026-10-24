@@ -19,6 +19,12 @@ from structlog.testing import capture_logs
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms import ExecutionRepository
+from candleviewer.oms.commands import (
+    ACCOUNT_UNAVAILABLE,
+    POSITION_UNREAD,
+    STOP_REQUEST_PENDING,
+    STORE_UNAVAILABLE,
+)
 from candleviewer.oms.errors import (
     IllegalTransition,
     OrderBufferFull,
@@ -984,6 +990,28 @@ async def test_a_lost_stop_pages_and_hands_the_position_to_b8(rig: Rig) -> None:
     await rig.quiet()
     lost = {"updated_time": 200, "stop_loss": None, "size": "0.4"}
     await rig.facade.push(ACCOUNT, order.id, "SL_LOST", lost)
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_missing")
+    assert rig.notices.kinds() == ["alert", "request_fallback_sl"]
+    assert rig.notices.got[0].detail == {"alert": "SL_ATTACH_FAILED"}
+
+
+@pytest.mark.parametrize(
+    "code", [ACCOUNT_UNAVAILABLE, POSITION_UNREAD, STOP_REQUEST_PENDING, STORE_UNAVAILABLE]
+)
+async def test_an_attach_answered_unsent_pages_and_hands_the_position_to_b8(
+    rig: Rig, code: str
+) -> None:
+    """S4-H, C-2.6 (the native-SL assertion): each failure the command port answers before its
+    send, with no reading, lands the stop `sl_missing`, never `sl_present`, with the
+    `SL_ATTACH_FAILED` alert and B8's fallback request (24 Sec.8.8 rule 3)."""
+
+    async def unsent(_command: b01.Command) -> Mapping[str, Any]:
+        return {"ok": False, "error_code": code}
+
+    rig.commands.on_attach = unsent
+    order = await rig.submitted()
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+    await rig.quiet()
     assert rig.facade.state(order.id) == ("partially_filled", "sl_missing")
     assert rig.notices.kinds() == ["alert", "request_fallback_sl"]
     assert rig.notices.got[0].detail == {"alert": "SL_ATTACH_FAILED"}

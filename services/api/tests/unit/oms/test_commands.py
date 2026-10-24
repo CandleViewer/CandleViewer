@@ -69,8 +69,11 @@ from candleviewer.oms.commands import (
     NEVER_SENT_ALERT,
     PARTIAL_STOP_UNSUPPORTED,
     PORT_TIMEOUT_S,
+    POSITION_UNREAD,
     RECORDED_STOP_READ_S,
     RESEND_REFUSED,
+    STOP_NOT_SENT,
+    STOP_REQUEST_PENDING,
     STORE_UNAVAILABLE,
     STORE_UNAVAILABLE_RETRY_AFTER_S,
     SUBMIT_TIMEOUT_S,
@@ -86,10 +89,7 @@ from candleviewer.oms.errors import (
     HandoverUnavailable,
     OmsNotReady,
     OrderEntryRefused,
-    Problem,
     ResendRefused,
-    StopRequestInFlight,
-    StopRequestPending,
     StoreUnavailable,
     TradingDisabled,
     problem_for,
@@ -111,7 +111,7 @@ from candleviewer.statechart.config import (
     CV_PERSIST_TIMEOUT,
 )
 from candleviewer.storage.errors import StorageQueryFailed
-from candleviewer.storage.repositories.orders import NewOrder, OrderRow
+from candleviewer.storage.repositories.orders import NewOrder, OrderRow, OrderStoreError
 from tests.unit.oms.command_rig import (
     ACCOUNT,
     DAY_US,
@@ -1250,8 +1250,8 @@ async def test_an_attach_whose_settle_fails_answers_the_exchange_and_leaves_its_
 
 async def test_a_stop_gate_that_does_not_answer_is_bounded_and_nothing_is_recorded() -> None:
     """CR-2B1-03 (C-2.18): the gate's call is bounded as any other, whatever the gate bounds
-    itself, so a gate that never answers ends the attach with `TimeoutError` (B1's
-    `sl_missing`), with nothing recorded or sent."""
+    itself, so a gate that never answers ends the attach as a store it cannot reach (S4-H:
+    `STORE_UNAVAILABLE`, B1's `sl_missing`), with no stop recorded and nothing sent."""
 
     class _Stuck:
         async def clear(
@@ -1263,9 +1263,8 @@ async def test_a_stop_gate_that_does_not_answer_is_bounded_and_nothing_is_record
     order = await _filled(rig)
     rig.demo.seed_position(position())
     task = await _within(rig.port.attach_stop(_attach(order)), 5.0)
-    with pytest.raises(TimeoutError):
-        task.result()
-    assert rig.calls() == ["positions"] and _rows(rig) == [] and rig.audits.written == []
+    _not_sent(rig, task.result(), STORE_UNAVAILABLE, order)
+    assert rig.calls() == ["positions"] and _rows(rig) == []
 
 
 async def test_an_attach_sends_while_the_switches_refuse_and_the_clock_halt_stands() -> None:
@@ -1302,30 +1301,31 @@ async def test_a_row_waiting_for_the_complete_read_holds_the_attach_until_its_re
     ]  # fmt: skip
 
 
-async def test_an_attach_whose_key_stays_held_is_refused_as_an_entry_is() -> None:
-    """Q-A and Q-D: a key its read cannot clear (a `restore` row, E29-T06's) is 409
-    `stop_request_in_flight`, `Retry-After: 5`, nothing recorded or sent: B1's `sl_missing`."""
+async def test_an_attach_whose_key_stays_held_is_answered_and_sends_nothing() -> None:
+    """Q-A and Q-D, S4-H: a key its read cannot clear (a `restore` row, E29-T06's) is the gate's
+    `StopRequestPending`, answered `STOP_REQUEST_PENDING`, nothing recorded or sent: B1's
+    `sl_missing`."""
     rig = build_rig()
     order = await _filled(rig)
     rig.demo.seed_position(position())
     await _earlier_request(rig, "restore")
     rig.now.us = T0_US + round(STOP_REQUEST_BOUND_S * 1_000_000)
-    with pytest.raises(StopRequestPending) as refused:
-        await rig.port.attach_stop(_attach(order))
-    assert refused.value.retry_after_s == 5
-    assert problem_for(refused.value) == Problem(409, "stop_request_in_flight", retry_after=True)
+    with capture_logs() as logs:
+        answer = await rig.port.attach_stop(_attach(order))
+    _not_sent(rig, answer, STOP_REQUEST_PENDING, order, logs)
     assert rig.calls() == ["positions"] and len(_rows(rig)) == 1
 
 
 async def test_a_request_in_flight_inside_its_bound_refuses_the_insert() -> None:
-    """Q2: inside its bound the row is not waiting; the second request meets it at the insert."""
+    """Q2, S4-H: inside its bound the row is not waiting; the second request meets it at the
+    insert (`StopRequestInFlight`), answered `STOP_REQUEST_PENDING`, nothing sent."""
     rig = build_rig()
     order = await _filled(rig)
     rig.demo.seed_position(position())
     await _earlier_request(rig)
     rig.now.us = T0_US + 1_000_000
-    with pytest.raises(StopRequestInFlight):
-        await rig.port.attach_stop(_attach(order))
+    answer = await rig.port.attach_stop(_attach(order))
+    _not_sent(rig, answer, STOP_REQUEST_PENDING, order)
     assert rig.calls() == ["positions"] and len(_rows(rig)) == 1
 
 
@@ -1404,6 +1404,138 @@ async def test_the_attach_answer_is_a_reading_b1s_guard_takes() -> None:
     answer = await rig.port.attach_stop(_attach(order))
     assert b01.sl_attach_ok({"stop_loss": "58000"}, SimpleNamespace(data=answer))
     assert not b01.sl_attach_ok({"stop_loss": "57000"}, SimpleNamespace(data=answer))
+
+
+# --- S4-H: a failure before the send, answered with nothing sent (C-2.6, C-2.9) ------------------
+
+
+def _not_sent(rig: Any, answer: Mapping[str, Any], code: str, order: Any, logs: Any = None) -> None:
+    """The S4-H answer: `code` and no reading, so B1's `sl_attach_ok` denies it (`sl_missing`);
+    its `sl.attached` denied record last, ids only; and, when captured, one `oms_stop_not_sent`
+    naming the reason and the order, never a price or a size."""
+    assert answer == {"ok": False, "error_code": code}
+    assert not b01.sl_attach_ok({"stop_loss": "58000"}, SimpleNamespace(data=answer))
+    record, _sent_before = rig.audits.written[-1]
+    assert isinstance(record, OrderAuditRecord)
+    assert (record.action, record.outcome, record.severity, record.reason) == (
+        "sl.attached", "denied", "error", code.lower(),
+    )  # fmt: skip
+    assert (record.order_id, record.account_id) == (order.id, order.exchange_account_id)
+    assert dict(record.detail) == {
+        "order_link_id": order.order_link_id, "symbol": order.symbol, "position_idx": "0",
+    }  # fmt: skip
+    if logs is not None:
+        [log] = [log for log in logs if log["event"] == STOP_NOT_SENT]
+        assert {key: log[key] for key in ("log_level", "reason", "order_link_id", "symbol")} == {
+            "log_level": "error", "reason": code.lower(), "order_link_id": order.order_link_id,
+            "symbol": order.symbol,
+        }  # fmt: skip
+        assert log["position_idx"] == 0 and not {"stop_loss", "price", "size"} & set(log)
+
+
+@pytest.mark.parametrize(
+    ("refusal", "code"),
+    [
+        (AccountScopeDenied(), ACCOUNT_UNAVAILABLE),
+        (StoreUnavailable(), STORE_UNAVAILABLE),
+        (OrderStoreError("the account's row is unreadable"), STORE_UNAVAILABLE),
+    ],
+    ids=["refused", "store-refusal", "store-error"],
+)
+async def test_an_attach_whose_account_cannot_be_had_is_answered_and_sends_nothing(
+    refusal: Exception, code: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S4-H: an account the OMS cannot send for (soft-deleted, no active key) or cannot read is
+    answered, not raised: nothing read at the venue, recorded or sent (24 Sec.8.8 rule 3)."""
+    rig = build_rig()
+    order = await _filled(rig)
+
+    async def refuses(_account_id: Any) -> Any:
+        raise refusal
+
+    monkeypatch.setattr(rig.accounts, "trading_account", refuses)
+    with capture_logs() as logs:
+        answer = await rig.port.attach_stop(_attach(order))
+    _not_sent(rig, answer, code, order, logs)
+    assert rig.demo.calls == [] and _rows(rig) == []
+
+
+async def test_an_attach_whose_position_cannot_be_read_is_answered_and_sends_nothing() -> None:
+    """S4-H, 24 Sec.8.8 rule 5: no blind send, which could replace a tighter stop set outside the
+    OMS; the read's failure is answered `POSITION_UNREAD`, nothing recorded or sent."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.script("positions", ServiceUnavailableError("the venue is restarting"))
+    with capture_logs() as logs:
+        answer = await rig.port.attach_stop(_attach(order))
+    _not_sent(rig, answer, POSITION_UNREAD, order, logs)
+    assert rig.calls() == ["positions"] and _rows(rig) == []
+
+
+async def test_an_attach_whose_gate_cannot_read_the_store_is_answered_and_sends_nothing() -> None:
+    """S4-H: the gate's `StoreUnavailable` (its rows unread) is answered `STORE_UNAVAILABLE`."""
+
+    class _Unread:
+        async def clear(
+            self, key: PositionKey, *, wait_s: float = 0.0, protective: bool = False
+        ) -> None:
+            raise StoreUnavailable
+
+    rig = build_rig(gate=_Unread())
+    order = await _filled(rig)
+    rig.demo.seed_position(position())
+    answer = await rig.port.attach_stop(_attach(order))
+    _not_sent(rig, answer, STORE_UNAVAILABLE, order)
+    assert rig.calls() == ["positions"] and _rows(rig) == []
+
+
+async def test_an_attach_whose_record_cannot_be_written_is_answered_and_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S4-H: the request's row not written (the store down, its audit in the same transaction
+    rolled back with it) is answered `STORE_UNAVAILABLE`, its denial audited on its own."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.seed_position(position())
+
+    async def down(*_args: object, **_kwargs: object) -> Any:
+        raise OrderStoreError("the store is down")
+
+    monkeypatch.setattr(rig.stops, "record", down)
+    answer = await rig.port.attach_stop(_attach(order))
+    _not_sent(rig, answer, STORE_UNAVAILABLE, order)
+    assert rig.calls() == ["positions"] and rig.audits.actions() == [
+        ("sl.attached", "store_unavailable")
+    ]
+
+
+async def test_an_attach_whose_stored_row_cannot_be_read_still_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S4-H: with no row there is no order to name, so the read's failure is raised (B1's
+    `sl_missing`), nothing audited or sent."""
+    rig = build_rig()
+    order = await _filled(rig)
+
+    async def down(*_args: object, **_kwargs: object) -> Any:
+        raise OrderStoreError("the store is down")
+
+    monkeypatch.setattr(rig.orders, "get", down)
+    with pytest.raises(OrderStoreError):
+        await rig.port.attach_stop(_attach(order))
+    assert rig.demo.calls == [] and rig.audits.written == []
+
+
+async def test_an_attach_whose_denial_cannot_be_audited_raises_and_sends_nothing() -> None:
+    """S4-H, C-2.9: no answer without its record; the failure is logged first, and raised."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.script("positions", ServiceUnavailableError("the venue is restarting"))
+    rig.audits.refuse = RuntimeError("the audit lane refused")
+    with capture_logs() as logs, pytest.raises(RuntimeError, match="audit lane"):
+        await rig.port.attach_stop(_attach(order))
+    assert [log["reason"] for log in logs if log["event"] == STOP_NOT_SENT] == ["position_unread"]
+    assert rig.calls() == ["positions"] and _rows(rig) == []
 
 
 # --- no stop or take-profit that is no price above zero is sent (#2877 ruling 2, C-2.6) ---------
