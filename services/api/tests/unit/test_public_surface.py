@@ -233,6 +233,9 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "ReplayTierStraddle",
         "ReplayTiers",
         "SourceTier",
+        # E26 G1 (#2668): the deployment-wide replay loop budget and a session's lane of it.
+        "ReplayLoopBudget",
+        "BudgetLane",
         # E26-T03: the replay clock, its playback ports, config and speeds (24 Sec.13.7).
         "ReplayClock",
         "STEP",
