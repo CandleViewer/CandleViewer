@@ -1,8 +1,9 @@
-"""#492 S7: `POST /recording/symbols` and `PUT /recording/symbols/{id}/pin` over a bare app, the
-fake control behind them. RBAC first (403 with `rbac.denied`, AC5), a user actor, the per-user
-write limit (429), the key and body (422), the store (503), the `recorder` step-up where a write
-changes retention, a replay, the entry in the settings' env (404), then the write, which the
-policy records ahead of the store. A non-Owner reads every answer through the restricted view."""
+"""#492 S7 and S8: `POST /recording/symbols`, `PUT …/{id}/pin`, `PATCH` and `DELETE …/{id}`
+over a bare app, the fake control behind them. RBAC first (403 with `rbac.denied`, AC5), a user
+actor, the per-user write limit (429), the key and body (422), the store (503), the `recorder`
+step-up where a write changes retention, a replay, the entry in the settings' env (404), then
+the write, which the policy records ahead of the store. A non-Owner reads every answer through
+the restricted view, and a refused stop by restricted refusal parity."""
 
 from __future__ import annotations
 
@@ -28,6 +29,10 @@ from tests.unit.recorder._control_fakes import NOW, STREAMS, FakeRecorder
 
 W = ("recording:read", "recording:write")
 _ADD, _PIN = "/recording/symbols", "/recording/symbols/{}/pin"
+
+
+def _one(entry_id: str) -> str:
+    return f"/recording/symbols/{entry_id}"
 
 
 class _Env:
@@ -256,7 +261,11 @@ class _OtherEnv(FakeRecorder):
         return None
 
 
-_WRITES_BY_ID = [("PUT", "/pin", {"pinned": True})]
+_WRITES_BY_ID = [
+    ("PUT", "/pin", {"pinned": True}),
+    ("PATCH", "", {"depth": 50}),
+    ("DELETE", "", None),
+]
 
 
 @pytest.mark.parametrize(("method", "suffix", "body"), _WRITES_BY_ID)
@@ -282,8 +291,10 @@ async def test_a_non_owner_reads_its_write_through_the_restricted_view() -> None
     assert env.actions() == []  # an authorized re-add of a manual entry: no record
     hidden = fake.put("XRPUSDT", "position_open")
     env.elevated = True
-    assert (await env.http.put(_PIN.format(hidden.id), json={"pinned": True})).status_code == 404
-    assert not fake.entries["XRPUSDT"].pinned
+    for method, suffix, body in _WRITES_BY_ID:  # every write by id: the hidden row is no row
+        answer = await env.http.request(method, f"{_one(hidden.id)}{suffix}", json=body)
+        assert (answer.status_code, answer.json()["code"]) == (404, "not_found")
+    assert fake.entries["XRPUSDT"] == hidden and env.actions() == []
 
 
 class _Spied(FakeRecorder):
@@ -484,3 +495,285 @@ async def test_an_add_naming_retention_days_records_it_ahead_as_put_and_patch_do
         assert (route["before_state"], route["after_state"]) == (
             {"retention_days": None}, {"retention_days": extra["retention_days"]})  # fmt: skip
         assert route["request_id"] == env.caller.request_id
+
+
+# -- S8: PATCH and DELETE ---------------------------------------------------------------------
+
+
+async def test_a_stop_answers_204_and_the_row_then_lingers_until_the_grace_ends() -> None:
+    """Q1: the manual reason ends at once; the row reads `lingering` with `linger_until`."""
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT")
+    env = _Env(fake, *W)
+    key = {"Idempotency-Key": str(uuid.uuid4())}
+    stopped, again = [await env.http.delete(_one(entry.id), headers=key) for _ in range(2)]
+    assert (stopped.status_code, stopped.content, again.status_code) == (204, b"", 204)
+    row = (await env.http.get(_one(entry.id))).json()
+    assert (row["lingering"], row["linger_until"]) == (True, "2026-10-23T12:30:00Z")
+    assert env.actions() == ["recorder.stop"]  # the policy's record; the route writes none
+    assert (env.audit[0][1]["object_id"], env.audit[0][1]["outcome"]) == ("BTCUSDT", "success")
+
+
+async def test_a_stop_is_recorded_ahead_and_a_refused_record_stops_nothing() -> None:
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT")
+    env = _Env(fake, *W)
+    env.fail_audit = True
+    refused = await env.http.delete(_one(entry.id))
+    assert (refused.status_code, refused.json()["code"]) == (503, "audit_unavailable")
+    assert fake.entries["BTCUSDT"] == entry and not fake.entries["BTCUSDT"].lingering
+
+
+async def test_a_pinned_stop_keeps_its_pin_and_lists_as_stopped_after_the_grace() -> None:
+    """Q4: a stop never drops the pin; the row stays, `stopped` and pinned."""
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT", pinned=True)
+    env = _Env(fake, *W)
+    assert (await env.http.delete(_one(entry.id))).status_code == 204
+    fake.lapse("BTCUSDT")
+    row = (await env.http.get(_one(entry.id))).json()
+    assert (row["state"], row["pinned"]) == ("stopped", True)
+
+
+@pytest.mark.parametrize(
+    ("query", "rule"),
+    [("purge_data=true", "use_purge_route"), ("purge_data=1", "use_purge_route"),
+     ("force=maybe", "bool_parsing")],
+)  # fmt: skip
+async def test_purge_data_on_a_stop_is_refused_with_use_purge_route(query: str, rule: str) -> None:
+    """Q3: `purgeRecordedData` is the one path that deletes recorded data."""
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT")
+    env = _Env(fake, *W)
+    refused = await env.http.delete(f"{_one(entry.id)}?{query}")
+    assert (refused.status_code, refused.json()["code"]) == (422, "validation_failed")
+    assert refused.json()["errors"][0]["rule"] == rule
+    assert fake.entries["BTCUSDT"] == entry and env.actions() == []
+    assert (await env.http.delete(f"{_one(entry.id)}?purge_data=false")).status_code == 204
+
+
+async def test_a_live_trigger_refuses_the_stop_with_409_and_force_ends_the_manual_reason() -> None:
+    fake = FakeRecorder()
+    entry = fake.put("ETHUSDT", "manual", "chart_open", refusals=("chart_open",))
+    env = _Env(fake, *W)
+    refused = await env.http.delete(_one(entry.id))
+    assert (refused.status_code, refused.json()["code"], refused.json()["refusal"]) == (
+        409, "conflict", "chart_open")  # fmt: skip
+    assert fake.entries["ETHUSDT"].reasons == ("manual", "chart_open")
+    forced = await env.http.delete(_one(entry.id), params={"force": "true"})
+    assert forced.status_code == 204 and fake.entries["ETHUSDT"].reasons == ("chart_open",)
+    assert env.actions() == ["recorder.stop", "recorder.stop"]  # the refusal, then the policy's
+    assert [record["outcome"] for _, record in env.audit] == ["denied", "success"]
+
+
+async def test_a_refused_stop_whose_record_cannot_be_written_is_503() -> None:
+    fake = FakeRecorder()
+    entry = fake.put("ETHUSDT", "manual", "chart_open", refusals=("chart_open",))
+    env = _Env(fake, *W)
+    env.fail_audit = True
+    refused = await env.http.delete(_one(entry.id))
+    assert (refused.status_code, refused.json()["code"]) == (503, "audit_unavailable")
+    assert fake.entries["ETHUSDT"] == entry
+
+
+async def test_a_key_first_used_without_force_is_409_with_it_or_on_another_id() -> None:
+    """The fingerprint covers the method, the path with its query, and the body."""
+    fake = FakeRecorder()
+    first, other = fake.put("BTCUSDT"), fake.put("ETHUSDT")
+    env = _Env(fake, *W)
+    key = {"Idempotency-Key": str(uuid.uuid4())}
+    assert (await env.http.delete(_one(first.id), headers=key)).status_code == 204
+    for path, params in ((_one(first.id), {"force": "true"}), (_one(other.id), {})):
+        reused = await env.http.delete(path, params=params, headers=key)
+        assert (reused.status_code, reused.json()["code"]) == (409, "idempotency_key_reuse")
+    assert "manual" in fake.entries["ETHUSDT"].reasons and env.actions() == ["recorder.stop"]
+
+
+class _Counted(FakeRecorder):
+    """Counts the lookups the routes make."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.looked_up: list[str] = []
+
+    async def get(self, entry_id: str) -> Any:
+        self.looked_up.append(entry_id)
+        return await super().get(entry_id)
+
+
+@pytest.mark.parametrize(("method", "suffix", "body"), _WRITES_BY_ID)
+async def test_a_malformed_id_never_reaches_the_lookup(method: str, suffix: str, body: Any) -> None:
+    fake = _Counted()
+    env = _Env(fake, *W, elevated=True)
+    answer = await env.http.request(method, f"/recording/symbols/not-a-uuid{suffix}", json=body)
+    assert (answer.status_code, fake.looked_up, env.actions()) == (404, [], [])
+
+
+class _Racing(FakeRecorder):
+    """A trigger arrives between the lookup and the stop: the port refuses what the route saw
+    no cause for."""
+
+    async def get(self, entry_id: str) -> Any:
+        found = await super().get(entry_id)
+        return None if found is None else dataclasses.replace(found, refusals=())
+
+
+async def _refused_stop(
+    kind: type[FakeRecorder], owner: bool, *causes: Any
+) -> tuple[_Env, httpx.Response]:
+    fake = kind()
+    entry = fake.put("SOLUSDT", "manual", *causes, refusals=causes)
+    env = _Env(fake, *W, owner=owner)
+    return env, await env.http.delete(_one(entry.id))
+
+
+@pytest.mark.parametrize("kind", [FakeRecorder, _Racing])
+@pytest.mark.parametrize("visible", [(), ("chart_open",)])
+async def test_restricted_refusal_parity(kind: type[FakeRecorder], visible: Any) -> None:
+    """(a) A non-Owner's refused stop reads the same for every hidden cause (and as if none
+    held), (b) the Owner's names the cause, (c) the audit row names it for both."""
+    seen: set[bytes] = set()
+    for cause in sorted(rc.HIDDEN_CAUSES):
+        for owner in (True, False):
+            env, answer = await _refused_stop(kind, owner, cause, *visible)
+            assert (answer.status_code, answer.json()["code"]) == (409, "conflict")
+            assert (env.audit[-1][1]["outcome"], env.audit[-1][1]["reason"]) == ("denied", cause)
+            if owner:
+                assert answer.json()["refusal"] == cause
+            else:
+                seen.add(answer.content)
+    if visible:
+        seen.add((await _refused_stop(kind, False, *visible))[1].content)
+    assert len(seen) == 1
+    assert not any(cause in seen.pop().decode() for cause in rc.HIDDEN_CAUSES)
+
+
+async def test_the_refusal_reads_the_one_hidden_cause_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(d) The routes keep no table of their own: widening the one `recorder.control` holds (and
+    the WS topic imports) changes what a refused stop names for a non-Owner."""
+    assert not hasattr(writes, "HIDDEN_CAUSES")
+    named = (await _refused_stop(FakeRecorder, False, "chart_open"))[1].json()
+    monkeypatch.setattr(rc, "HIDDEN_CAUSES", rc.HIDDEN_CAUSES | {"chart_open"})
+    unnamed = (await _refused_stop(FakeRecorder, False, "chart_open"))[1].json()
+    assert (named["refusal"], "refusal" in unnamed) == ("chart_open", False)
+
+
+async def test_patch_of_streams_and_depth_needs_no_step_up_and_is_audited_ahead() -> None:
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT", streams=("trades",))
+    env = _Env(fake, *W)
+    patched = await env.http.patch(_one(entry.id), json={"streams": ["tickers"], "depth": 50})
+    assert (patched.status_code, patched.json()["streams"], patched.json()["depth"]) == (
+        200, ["tickers"], 50)  # fmt: skip
+    record = env.audit[0][1]  # the policy's record (update_manual); the route writes none
+    assert (env.actions(), record["before_state"]) == (
+        ["recorder.update"], {"streams": "trades", "depth": "200"})  # fmt: skip
+    after = {"symbol": "BTCUSDT", "reason": "manual", "actor": str(env.caller.user_id),
+             "streams": "tickers", "depth": "50"}  # fmt: skip
+    assert record["after_state"] == after
+    env.fail_audit = True
+    refused = await env.http.patch(_one(entry.id), json={"depth": 1})
+    assert refused.status_code == 503 and fake.entries["BTCUSDT"].depth == 50
+
+
+@pytest.mark.parametrize(
+    ("body", "actions"),
+    [({"pinned": True}, ["retention.change"]), ({"retention_days": 7}, ["retention.change"]),
+     ({"pinned": True, "retention_days": 7}, ["retention.change"]),
+     ({"depth": 1, "pinned": True}, ["recorder.update", "retention.change"])],
+)  # fmt: skip
+async def test_patch_of_pinned_or_retention_days_needs_the_recorder_step_up(
+    body: Any, actions: list[str]
+) -> None:
+    """A retention change is recorded as `retention.change`: by the policy for a pin, by the
+    route for `retention_days` alone (no policy member records it)."""
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT")
+    env = _Env(fake, *W)
+    refused = await env.http.patch(_one(entry.id), json=body)
+    assert (refused.status_code, refused.json()["code"]) == (403, "step_up_required")
+    assert fake.entries["BTCUSDT"] == entry and env.actions() == []
+    env.elevated = True
+    assert (await env.http.patch(_one(entry.id), json=body)).status_code == 200
+    assert env.actions() == actions
+
+
+async def test_patch_of_an_entry_without_manual_is_409_and_an_empty_one_is_422() -> None:
+    fake = FakeRecorder()
+    entry = fake.put("ETHUSDT", "chart_open")
+    env = _Env(fake, *W)
+    refused = await env.http.patch(_one(entry.id), json={"depth": 50})
+    assert (refused.status_code, refused.json()["code"]) == (409, "conflict")
+    assert (env.actions(), env.audit[-1][1]["outcome"], env.audit[-1][1]["reason"]) == (
+        ["recorder.update"], "denied", "not_manual")  # fmt: skip
+    assert fake.entries["ETHUSDT"].depth == 200
+    for bad in ({}, {"depth": 7}, {"streams": []}, {"archive_path": "/x"}):
+        assert (await env.http.patch(_one(entry.id), json=bad)).status_code == 422
+
+
+async def test_a_change_the_policy_refuses_as_invalid_is_422_and_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The policy's own check (`RecorderInvalidUpdateError`), on PATCH and on an add."""
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT", streams=("trades",))
+    monkeypatch.setattr(policy, "STREAM_KINDS", frozenset({"trades"}))
+    env = _Env(fake, *W)
+    refused = await env.http.patch(_one(entry.id), json={"streams": ["tickers"]})
+    assert (refused.status_code, refused.json()["code"]) == (422, "validation_failed")
+    assert refused.json()["errors"][0] == {"field": "streams", "rule": "stream_names",
+                                           "message": "Refused by the recorder."}  # fmt: skip
+    added = await env.add(symbol="ETHUSDT", streams=["tickers"])
+    assert (added.status_code, added.json()["code"]) == (422, "validation_failed")
+    assert fake.entries == {"BTCUSDT": entry} and env.actions() == []
+
+
+async def test_a_null_retention_days_without_an_unpin_is_422() -> None:
+    """`null` restores the default only with `pinned: false`; alone it would change nothing."""
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT", retention_days=9)
+    env = _Env(fake, *W, elevated=True)
+    for body in ({"retention_days": None}, {"retention_days": None, "depth": 50}):
+        refused = await env.http.patch(_one(entry.id), json=body)
+        assert refused.json()["errors"][0]["rule"] == "retention_days_null_needs_unpin"
+    assert fake.entries["BTCUSDT"] == entry and env.actions() == []
+    unpinned = await env.http.patch(_one(entry.id), json={"retention_days": None, "pinned": False})
+    assert unpinned.status_code == 200
+
+
+@pytest.mark.parametrize("days", [7, None])
+async def test_patch_of_retention_days_with_an_unpin_that_changes_no_pin_is_recorded(
+    days: int | None,
+) -> None:
+    """`retention_days` named while `pinned` is not true: no policy member records it, so the
+    route writes its own `retention.change` ahead of the store (a refused record stores none)."""
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT", retention_days=9)
+    env = _Env(fake, *W, elevated=True)
+    body = {"pinned": False, "retention_days": days}
+    env.fail_audit = True
+    refused = await env.http.patch(_one(entry.id), json=body)
+    assert (refused.status_code, refused.json()["code"]) == (503, "audit_unavailable")
+    assert fake.entries["BTCUSDT"] == entry
+    env.fail_audit = False
+    stored = await env.http.patch(_one(entry.id), json=body)
+    assert (stored.status_code, stored.json()["retention_days"]) == (200, days)
+    assert env.actions() == ["retention.change"]  # the pin is unchanged: the policy writes none
+    record = env.audit[0][1]
+    assert (record["before_state"], record["after_state"]) == (
+        {"retention_days": 9}, {"retention_days": days})  # fmt: skip
+
+
+async def test_a_refused_mixed_patch_writes_the_denied_twin_of_the_route_retention_record() -> None:
+    fake = FakeRecorder()
+    entry = fake.put("ETHUSDT", "chart_open")
+    env = _Env(fake, *W, elevated=True)
+    refused = await env.http.patch(_one(entry.id), json={"retention_days": 7, "depth": 50})
+    assert (refused.status_code, refused.json()["code"]) == (409, "conflict")
+    assert fake.entries["ETHUSDT"] == entry
+    records = [(a, r.get("outcome"), r.get("reason")) for a, r in env.audit]
+    assert records == [("retention.change", None, None),
+                       ("retention.change", "denied", "not_manual"),
+                       ("recorder.update", "denied", "not_manual")]  # fmt: skip

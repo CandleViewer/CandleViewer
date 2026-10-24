@@ -13,8 +13,8 @@ import time
 import uuid
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Coroutine
-from dataclasses import dataclass
-from typing import Annotated, Any, Final
+from dataclasses import dataclass, replace
+from typing import Annotated, Any, Final, NoReturn
 
 from fastapi import APIRouter, Path, Request, Response
 from fastapi.responses import JSONResponse
@@ -108,6 +108,12 @@ class _Pin(BaseModel):
     retention_days: Annotated[int, Field(ge=1, le=3650)] | None = None
 
 
+class _Stop(BaseModel):  # unknown parameters are ignored, as FastAPI's own are
+    model_config = ConfigDict(frozen=True, extra="ignore")
+    purge_data: bool = False
+    force: bool = False
+
+
 @dataclass(frozen=True, slots=True)
 class _Call:  # an admitted write: who, as which actor, against which control, under which key
     p: AuditPrincipal
@@ -126,6 +132,33 @@ def _json[B: BaseModel](model: type[B]) -> Callable[[Request, bytes], B]:
             raise common.Problem(422, BAD, "Invalid body.", errors=format_errors(exc)) from None
 
     return parse
+
+
+def _update(request: Request, raw: bytes) -> api.UpdateRecordedSymbolRequest:
+    """`retention_days: null` restores the default only with `pinned: false` (22)."""
+    body = _json(api.UpdateRecordedSymbolRequest)(request, raw)
+    if not body.model_fields_set:
+        raise common.Problem(422, BAD, "The body names nothing to change.")
+    if "retention_days" in body.model_fields_set and body.retention_days is None:
+        if body.pinned is not False:
+            rule = {"field": "retention_days", "rule": "retention_days_null_needs_unpin",
+                    "message": "Null restores the default only with pinned: false."}  # fmt: skip
+            raise common.Problem(422, BAD, "Invalid body.", errors=[rule])
+    return body
+
+
+def _stop(request: Request, _raw: bytes) -> bool:
+    """`force`; `purge_data=true` is refused (ruling Q3): only `purgeRecordedData` deletes data."""
+    try:
+        query = _Stop.model_validate(dict(request.query_params))
+    except ValidationError as exc:
+        raise common.Problem(422, BAD, "Invalid query.", errors=format_errors(exc)) from None
+    if query.purge_data:
+        rule = {"field": "purge_data", "rule": "use_purge_route", "message": "Deprecated."}
+        raise common.Problem(
+            422, BAD, "A stop deletes no data; use the purge route.", errors=[rule]
+        )
+    return query.force
 
 
 def _missing() -> common.Problem:
@@ -235,6 +268,19 @@ def make_recording_writes_router(
             **fields, severity=Severity.INFO if refused is None else Severity.WARNING,
         ))  # fmt: skip
 
+    async def audit_refusal(
+        call: _Call, entry: rc.RecordedEntry, causes: tuple[rc.Refusal, ...]
+    ) -> NoReturn:
+        """`409` for a refused stop. The audit names the real cause; the body names it to the
+        Owner, and to anyone else only a cause their view shows (restricted refusal parity)."""
+        held = replace(entry, refusals=causes)
+        cause = rc.stop_refusal(held) or "conflict"
+        await _audit(call, "recorder.stop", entry.symbol, entry.id, cause)
+        named = rc.stop_refusal(held, restricted=not call.p.is_owner)
+        extra = {} if named is None else {"refusal": named}
+        raise common.Problem(409, ErrorCode.CONFLICT, "An auto-record trigger holds the symbol.",
+                             **extra)  # fmt: skip
+
     @router.post("/recording/symbols")
     async def add_recorded_symbol(request: Request) -> Response:
         body, call = await begin(request, "addRecordedSymbol", _json(api.AddRecordedSymbolRequest),
@@ -295,5 +341,55 @@ def make_recording_writes_router(
             await _audit(call, "retention.change", entry.symbol, entry.id, "not_recorded")
             raise _missing()
         return done(call, JSONResponse(_dump(shown(call, pinned))))
+
+    @router.patch("/recording/symbols/{recordedSymbolId}")
+    async def update_recorded_symbol(
+        request: Request, entry_id: Annotated[str, Path(alias="recordedSymbolId")]
+    ) -> Response:
+        """`pinned` or `retention_days` under the `recorder` step-up (04 row 9); `streams` and
+        `depth` alone without (row 8). The policy records `recorder.update` (update_manual) and
+        a pin's `retention.change` (set_pin); `retention_days` with no pin, which no policy
+        member records, the route records ahead of the store, with its denied twin when the
+        policy refuses the change. The answer reports the stored values; it promises no change
+        to a running session."""
+        body, call = await begin(request, "updateRecordedSymbol", _update,
+                                 lambda b: bool(b.model_fields_set & _RETAINS))  # fmt: skip
+        if call.replayed is not None:
+            return call.replayed
+        entry, spec = await visible(call, entry_id), _spec(body)
+        if intent := "retention_days" in body.model_fields_set and not spec.pinned:
+            await _audit(call, "retention.change", entry.symbol, entry.id,
+                          before_state={"retention_days": entry.retention_days},
+                          after_state={"retention_days": spec.retention_days})  # fmt: skip
+        try:
+            updated = await _stored(call.control.update(entry.id, spec, call.actor))
+        except rc.ChangeRefused as refused:
+            if intent:  # the route's retention record gets its denied twin
+                await _audit(call, "retention.change", entry.symbol, entry.id, refused.rule)
+            if refused.rule != "not_manual":  # the policy's own check of the change
+                raise _invalid(refused.rule, refused.field) from None
+            await _audit(call, "recorder.update", entry.symbol, entry.id, refused.rule)
+            msg = "Streams and depth change only on a manually recorded symbol."
+            raise common.Problem(409, ErrorCode.CONFLICT, msg) from None
+        return done(call, JSONResponse(_dump(shown(call, updated))))
+
+    @router.delete("/recording/symbols/{recordedSymbolId}")
+    async def remove_recorded_symbol(
+        request: Request, entry_id: Annotated[str, Path(alias="recordedSymbolId")]
+    ) -> Response:
+        """Ends the manual reason: `204`, the row then lingers until the grace window ends (Q1);
+        a pin stays (Q4). Refused while a trigger holds, unless `force`. No step-up: it changes
+        no retention and deletes nothing."""
+        force, call = await begin(request, "removeRecordedSymbol", _stop, lambda _f: False)
+        if call.replayed is not None:
+            return call.replayed
+        entry = await visible(call, entry_id)
+        if not force and rc.stop_refusal(entry) is not None:  # refused before remove_manual
+            await audit_refusal(call, entry, entry.refusals)
+        try:  # the policy writes `recorder.stop` ahead of the row (remove_manual)
+            await _stored(call.control.remove(entry.id, call.actor, force=force))
+        except rc.StopRefused as refused:  # a trigger came after the lookup
+            await audit_refusal(call, entry, refused.causes)
+        return done(call, Response(status_code=204))
 
     return router

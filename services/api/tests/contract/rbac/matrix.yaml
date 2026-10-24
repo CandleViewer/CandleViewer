@@ -1151,15 +1151,13 @@ operations:
     permissions: ['recording:write']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   PATCH /recording/symbols/{recordedSymbolId}:
     permissions: ['recording:write']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   PUT /recording/symbols/{recordedSymbolId}/pin:
     permissions: ['recording:write']

@@ -30,6 +30,8 @@ _STARTED: Final = frozenset({"recording", "degraded", "stopping", "stopped", "er
 #: names, as a reason or as a refusal. Each reads as if it did not hold, so no restricted body
 #: differs by which of them holds, or whether one does; the Owner's view names them.
 HIDDEN_CAUSES: Final[frozenset[str]] = frozenset({"position_open"})
+#: The refusals of a stop: an auto-record trigger still holds (`force` overrides them).
+STOP_CAUSES: Final[frozenset[str]] = frozenset({"chart_open", "position_open"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +117,8 @@ class RecordingReads(Protocol):  # a lookup answers `None` for no such entry
 class RecordingControl(RecordingReads, Protocol):  # `add` also returns the entry it re-added
     # (`None`: it created one). A pin keeps forever; an unpin takes `retention_days` (`None`:
     # the global default). Each write is recorded by the policy ahead of the store (C-2.9).
+    # `remove` ends the manual reason; while a `STOP_CAUSES` member holds, and without `force`,
+    # it changes nothing and raises `StopRefused`; `update` refuses with `ChangeRefused`.
     async def add(self, symbol: str, spec: EntrySpec,
                   actor: Actor) -> tuple[RecordedEntry, RecordedEntry | None]: ...  # fmt: skip
     # `add` raises the policy's `RecorderInvalidUpdateError` and `RecorderSymbolLimitError`
@@ -122,7 +126,8 @@ class RecordingControl(RecordingReads, Protocol):  # `add` also returns the entr
     # forwards `spec.streams` and `spec.depth` as given: a join names the stored row's own.
     async def update(self, entry_id: str, spec: EntrySpec,
                      actor: Actor) -> RecordedEntry | None: ...  # fmt: skip
-    async def remove(self, entry_id: str, actor: Actor) -> RecordedEntry | None: ...
+    async def remove(self, entry_id: str, actor: Actor, *,
+                     force: bool = False) -> RecordedEntry | None: ...  # fmt: skip
     async def pin(self, entry_id: str, pinned: bool, actor: Actor, *,
                   retention_days: int | None = None) -> RecordedEntry | None: ...  # fmt: skip
     # `status` entries carry the STORED row's streams and depth, never the policy's `()`/`None`.
@@ -143,6 +148,30 @@ def setting_rule(depth: object) -> tuple[str, str]:
     if depth is not None and (type(depth) is not int or depth not in ORDERBOOK_DEPTHS):
         return "depth_allowed", "depth"
     return "stream_names", "streams"
+
+
+class StopRefused(Exception):
+    """`remove` refused, nothing changed: `causes` hold (every one, top first)."""
+
+    def __init__(self, causes: tuple[Refusal, ...]) -> None:
+        super().__init__(*causes)
+        self.causes = causes
+
+
+class ChangeRefused(Exception):
+    """`update` refused, nothing changed: `rule` says why, `not_manual` (streams and depth
+    change only on a manual entry) or the rule of the invalid `field`."""
+
+    def __init__(self, rule: str, field: str | None = None) -> None:
+        super().__init__(rule, field)
+        self.rule, self.field = rule, field
+
+
+def stop_refusal(entry: RecordedEntry, *, restricted: bool = False) -> Refusal | None:
+    """The top cause refusing `entry`'s stop, as a view names it: a restricted view names only a
+    visible one, so its refusal is the same whichever hidden cause holds, or none (R-I2)."""
+    hidden = HIDDEN_CAUSES if restricted else frozenset()
+    return next((c for c in entry.refusals if c in STOP_CAUSES and c not in hidden), None)
 
 
 def restricted_view(entry: RecordedEntry) -> RecordedEntry | None:

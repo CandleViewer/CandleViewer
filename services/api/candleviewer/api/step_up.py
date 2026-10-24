@@ -574,21 +574,18 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     # issueBackupDownload (04 §7.2.2 row 52a, E42-T05 BK-10): the same no-grace class, one fresh
     # code per link; its handler spends the grant after the 404, the 501 and the hourly limit.
     ("POST", "/admin/backups/{backupId}/download", "backups"),
-    # #2738 (SR-025, 04 §7.2.2 rows 8, 9 and 9a). Not mounted yet: the E16-T08 (#492) PR that
-    # mounts them must drop them from the registry test's `_PENDING_HANDLER_GATES` (it fails
-    # while a listed route is mounted), add the handler test, and demand `recorder` elevation
-    # on every branch that changes retention or deletes recorded data; the rest is row 8.
-    # - addRecordedSymbol: `pinned: true` or a non-default `retention_days`; a re-add must not
-    #   change the retention of data kept from an earlier recording either. A plain add (the
-    #   rules vocabulary's `{symbol}` hint) passes.
+    # #2738 (SR-025, 04 §7.2.2 rows 8 and 9), served by E16-T08 (#492, `recording_writes.py`):
+    # the handler demands `recorder` elevation on every branch that changes retention; the rest
+    # is row 8. Proven by `test_recording_writes.py`.
+    # - addRecordedSymbol: `pinned` or `retention_days` in the body, whatever the value, so a
+    #   re-add cannot change the retention of data kept from an earlier recording either. A
+    #   plain add (the rules vocabulary's `{symbol}` hint) passes.
     # - updateRecordedSymbol: `pinned` or `retention_days` in the body (streams, depth: row 8).
-    # - removeRecordedSymbol: `purge_data=true`, after the owner-only check, as the purge route
-    #   orders them. Open for E16-T08 and security: stopping a pinned symbol drops its pin for
-    #   the reaper (pins are read only from rows not removed), so either refuse that until it
-    #   is unpinned through the gated pin route, or gate that branch as well.
+    # removeRecordedSymbol is no step-up route (the registry test's allow-list says why): a stop
+    # ends the manual reason only, keeps a pin, and refuses `purge_data=true`; 22 names no
+    # step-up for it either.
     ("POST", "/recording/symbols", "recorder"),
     ("PATCH", "/recording/symbols/{recordedSymbolId}", "recorder"),
-    ("DELETE", "/recording/symbols/{recordedSymbolId}", "recorder"),
     # #3083 (AD-F01): the PR that mounts one drops it from `_PENDING_HANDLER_GATES` and adds the
     # handler test.
     # - setFeatureFlag (E42-T03, #964): the class is chosen after request validation, under the
