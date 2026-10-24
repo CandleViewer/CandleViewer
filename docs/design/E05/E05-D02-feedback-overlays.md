@@ -28,10 +28,10 @@ slice meets them, §5.2 records each clash.
 **Key.** `05`, `14`, `15`, `16`, `17` are the `docs/plan/` documents by number; D09 is `docs/design/E09/E09-D09.md`, D08
 `docs/design/E09/E09-D08.md`. This branch's base is `origin/main` `b8212be90`, where the merged specs are read unless a
 line says otherwise. `path:line` references are at `origin/main` `5a382efec`, except the specs that merged or changed
-after it: E30-D03 and its handoff (as its boards PR left them), E30-D04, E10-D03, E13-D04 and its handoff, E14-D03 and
-its handoff, E14-D07, E29-D02 and E29-D03 are cited at the previous base `2b25eff38`, and E11-D07, E11-D09 and its
-handoff, E13-D05, E14-D04 and its handoff, E14-D05 and its handoff, E22-D03, E25-D02, E27-D02 and E36-D04 at this base;
-E14-D02, changed only by its boards PR, stays at `5a382efec`; slices 2 and 3 are cited by section.
+after it: E30-D03 and its handoff (as its boards PR left them), E30-D04 and its handoff, E10-D03, E13-D04 and its
+handoff, E14-D03 and its handoff, E14-D07, E29-D02 and E29-D03 are cited at the previous base `2b25eff38`, and E11-D07,
+E11-D09 and its handoff, E13-D05, E14-D04 and its handoff, E14-D05 and its handoff, E22-D03, E25-D02, E27-D02 and
+E36-D04 at this base; E14-D02, changed only by its boards PR, stays at `5a382efec`; slices 2 and 3 are cited by section.
 
 ## 1. What this slice specifies
 
@@ -294,16 +294,16 @@ slices 1–3 keep their resolution.
     start edge, which SCR-077's class line and its board draw without (`E30-D03.md:200`; board
     `E30-D03-04-scr-077-anatomy.png`, one uniform fill), so that one banner box serves both: E30-D03 follows at its next
     revision.
-  - **CMP-028 and E30-D04 §2.3 and §9 (aligned).** The `unprotected` banner is a CMP-028 `danger` with a 4 px hatched
-    edge, the shield-off glyph, a sustained `role="alert"` and two actions, not dismissible while the stop is missing
-    (`E30-D04.md:184`–`:185`; CR-5, `:254`; `E30-D02.md:300`; `15` CMP-107 States): CMP-028 gains `edge?` and `actions?`
-    (also E29-D03 CR-1, `E29-D03.md:536`), and §6 H5 cites §2.3; `pattern.hatch.unprotected` (E05-T01) and §3.3's glyphs
-    (E05-T06) wait for their owners, drawn meanwhile by CR-5's geometry and the tone glyph. The banner appears, persists
-    and leaves in one frame (`E30-D04.md:188`), so its dismissal is a cut, not CMP-028's fade. E30-D02 §10's accepted
-    banner speaks assertively for accepted, partially filled and filled alike (`E30-D02.md:280`), where E30-D04 §9
-    splits it, `role="alert"` once for a fill or a partial fill (`05` §6.2's "order filled") and `role="status"` for
-    accepted-not-yet-filled (`E30-D04.md:377`; `E30-D04-handoff.md:90`, `:363`), as CMP-028's success cell reads:
-    E30-D02 follows E30-D04 §9 at its next revision.
+  - **CMP-028 and E30-D04 §2.3 and §9 (aligned; E30-D02 following on §9).** The `unprotected` banner is a CMP-028
+    `danger` with a 4 px hatched edge, the shield-off glyph, a sustained `role="alert"` and two actions, not dismissible
+    while the stop is missing (`E30-D04.md:184`–`:185`; CR-5, `:254`; `E30-D02.md:300`; `15` CMP-107 States): CMP-028
+    gains `edge?` and `actions?` (also E29-D03 CR-1, `E29-D03.md:536`), and §6 H5 cites §2.3;
+    `pattern.hatch.unprotected` (E05-T01) and §3.3's glyphs (E05-T06) wait for their owners, drawn meanwhile by CR-5's
+    geometry and the tone glyph. The banner appears, persists and leaves in one frame (`E30-D04.md:188`), so its
+    dismissal is a cut, not CMP-028's fade. E30-D02 §10's accepted banner speaks assertively for accepted, partially
+    filled and filled alike (`E30-D02.md:280`), where E30-D04 §9 splits it, `role="alert"` once for a fill or a partial
+    fill (`05` §6.2's "order filled") and `role="status"` for accepted-not-yet-filled (`E30-D04.md:377`;
+    `E30-D04-handoff.md:90`, `:363`), as CMP-028's success cell reads: E30-D02 follows E30-D04 §9 at its next revision.
   - **CMP-027 and CMP-028 as E11-D09 and E22-D03 draw them (kept, their owners following).** E11-D09 R-70 draws
     SCR-048's error card as a CMP-027 on a `color.surface.raised` card with a 4 px `color.status.danger.strong` rule,
     its code on a `color.surface.sunken` chip and Retry a CMP-001 `primary` beside two `secondary` actions and a link
@@ -362,7 +362,7 @@ slices 1–3 keep their resolution.
     two or three other verbs (`E15-D02.md:391`, `:401`, `:417`), to CMP-044 and finds it two-button (`:737`; `14:654`):
     a CMP-044 has one Confirm, so SCR-029 is a CMP-043 `role="alertdialog"` whose footer carries its verbs, Cancel first
     and focused (conventions 32). E15-D02 and `14` SCR-029 follow at their next revisions.
-  - **The motion of popovers, menus and dialogs (put to you: §6 H21; eight kept).** Merged after the pin, E14-D04's
+  - **The motion of popovers, menus and dialogs (put to you: §6 H21; nine kept).** Merged after the pin, E14-D04's
     property popover opens and closes with brief §7's dialog recipe, scale + fade (`E14-D04.md:308`, `:683`;
     `E14-D04-handoff.md:15`, `:103`), and E11-D09 row 39 fades the legend's "+N more" popover and the SCR-043 menus in
     over `fast` / `standard` (`E11-D09.md:490`; `E11-D09-handoff.md:101`; from E11-D03 §12.4, `E11-D03.md:492`), as
@@ -378,9 +378,12 @@ slices 1–3 keep their resolution.
     (`E13-D02.md:443`) and CMP-045 slides in (E40-D02 §8); E14-D03's rail tooltip, shown with no transition
     (`E14-D03-handoff.md:81`), where CMP-016 fades in; E09-D08 row 44's toast, on `standard` (`E09-D08.md:143`), where
     CMP-045 enters on `decelerate`; E11-D04 §17.5's banners and cards, which fade in over `fast` (`E11-D04.md:545`),
-    where CMP-027 and CMP-028 appear at once; E16-D02's disk bar, eased on `decelerate` (`E16-D02.md:536`), where
-    CMP-023 moves on `standard`; and E39-D02's CMP-138 meter fill, moved over `fast` (`E39-D02.md:193`), where CMP-023,
-    whose contract `15` CMP-138 extends, moves over `normal` / `standard`.
+    where CMP-027 and CMP-028 appear at once; E04-D01 §4's ops banners, cross-faded over 200 ms on each state change
+    (`E04-D01.md:204`–`:210`; SCR-152's global banner is a CMP-028, `:147`–`:149`), where CMP-028's content changes at 0
+    ms in both modes (E08-D11 D1; E42-D05 §5.2 already supersedes the cross-fade for SCR-143 and SCR-144,
+    `E42-D05.md:297`); E16-D02's disk bar, eased on `decelerate` (`E16-D02.md:536`), where CMP-023 moves on `standard`;
+    and E39-D02's CMP-138 meter fill, moved over `fast` (`E39-D02.md:193`), where CMP-023, whose contract `15` CMP-138
+    extends, moves over `normal` / `standard`.
   - **CMP-017, CMP-043, CMP-044 and CMP-045 at 200 % (put to you: §6 H33).** Eight specs merged after the pin keep a
     dialog's footer to one row at 200 %, where conventions 39 lets it wrap so a full-intent label is never cut (E30-D03
     §13): E10-D03 (`E10-D03.md:467`), E11-D09 §8.8 for SCR-031, a CMP-043 `lg` (`E11-D09.md:816`; R-57, `:162`), E13-D04
@@ -459,31 +462,32 @@ slices 1–3 keep their resolution.
     focus (conventions 32): a choice that holds the user's commit is a CMP-044 `standard` whose Cancel is "Keep
     Candles", or the strip's callout reached by Tab.
   - **The sweep's clashes** (each points at its bullet above or its §6 H-item; † merged or changed after the pin):
-    E08-D05 (H1, H21, H37) and its handoff (H21, H37), E08-D06 (H1, H37; its full-height drawer, kept) and its handoff
-    (H1), E08-D07 (H33), E09-D02 (a lock's `Esc`, aligned), E09-D03 and its audit (the countdown, kept), E09-D06 and
-    E09-D08 (a lock's `Esc`, aligned; E09-D08's toast easing, kept), E10-D02 (H26), E10-D03† (its bullet; H1, H6,
-    H20–H22, H26, H28, H33, H35), E11-D02 (H21), E11-D03 (H21; its tooltip easing and `Space`, kept), E11-D04 (its error
-    card and its fades, kept), E11-D06 (H21), E11-D09† (H21, H33; R-70 and `Space`, kept) and its handoff† (H21),
-    E12-D02 (its callout's focus, kept), E12-D03 (its checked item, aligned; `Space`, kept) and its handoff (H21),
-    E13-D02 (H27, H33; its D17 and D24 dialogs and the docked drawer, aligned), E13-D03 (H1, H6) and its handoff (H21),
-    E13-D04† (H21, H27, H33) and its handoff† (H21), E13-D05† (H21, H27, H28, H31, H33; the docked drawer, aligned),
-    E14-D02† (H11, H27; the docked drawer, aligned), E14-D03† (H16, H33) and its handoff† (its rail tooltip, kept),
-    E14-D04† (H11, H21, H27, H33, H34; two kept) and its handoff† (H21, H34), E14-D07† (H6, H24, H27, H28, H33; two
-    kept; the docked drawer, aligned), E15-D02 (its bullet), E16-D02 (H12, H32, H33; its bar's easing, kept) and its
-    handoff (H12), E17-D02 (H1, H5), E18-D02 (H33), E22-D02 (H33), E22-D03† (H33; its S18 strip, kept), E25-D02† (its
-    bullet; H33, H36, H37; `Enter`, aligned), E27-D02† (H24, H32, H33), E29-D02† (the CMP-041 and CMP-044 bullets,
-    aligned; H32), E29-D03† (the CMP-028 bullet, aligned; H31), E30-D02 (aligned in the CMP-027, CMP-028 and CMP-038
-    bullets; H2, H26), E30-D03† (the CMP-044, CMP-027 and CMP-046 bullets; H24, H31) and its handoff† (H21), E30-D04†
-    (the CMP-044, CMP-028, CMP-038 and CMP-046 bullets; H5, H21, H24), E32-D02 (`Enter`, aligned), E36-D02 (H10, H32),
-    E36-D03 (H21, H31, H33) and its handoff (H21), E36-D04† (H10, H31–H33; `Enter`, aligned), E39-D02 (its meter fill,
-    kept) and its handoff (H33), E39-D03 and its handoff (H21, H23), E40-D02 (H6, H26), E42-D02 (H1, H24, H32), E42-D03
-    (H22, H24, H33), E42-D04 (H21, H22, H24, H33; its tooltip easing, kept) and E42-D05 (H33): 62 specs.
-  - **The sweep's consistent specs** (†, as above): E02-D01, E04-D01, E05-D01, E06-D02, E06-D03, E08-D01 to E08-D04,
+    E04-D01 (its banner cross-fade, kept), E08-D05 (H1, H21, H37) and its handoff (H21, H37), E08-D06 (H1, H37; its
+    full-height drawer, kept) and its handoff (H1), E08-D07 (H33), E09-D02 (a lock's `Esc`, aligned), E09-D03 and its
+    audit (the countdown, kept), E09-D06 and E09-D08 (a lock's `Esc`, aligned; E09-D08's toast easing, kept), E10-D02
+    (H26), E10-D03† (its bullet; H1, H6, H20–H22, H26, H28, H33, H35), E11-D02 (H21), E11-D03 (H21; its tooltip easing
+    and `Space`, kept), E11-D04 (its error card and its fades, kept), E11-D06 (H21), E11-D09† (H21, H33; R-70 and
+    `Space`, kept) and its handoff† (H21), E12-D02 (its callout's focus, kept), E12-D03 (its checked item, aligned;
+    `Space`, kept) and its handoff (H21), E13-D02 (H27, H33; its D17 and D24 dialogs and the docked drawer, aligned),
+    E13-D03 (H1, H6) and its handoff (H21), E13-D04† (H21, H27, H33) and its handoff† (H21), E13-D05† (H21, H27, H28,
+    H31, H33; the docked drawer, aligned), E14-D02† (H11, H27; the docked drawer, aligned), E14-D03† (H16, H33) and its
+    handoff† (its rail tooltip, kept), E14-D04† (H11, H21, H27, H33, H34; two kept) and its handoff† (H21, H34),
+    E14-D07† (H6, H24, H27, H28, H33; two kept; the docked drawer, aligned), E15-D02 (its bullet), E16-D02 (H12, H32,
+    H33; its bar's easing, kept) and its handoff (H12), E17-D02 (H1, H5), E18-D02 (H33), E22-D02 (H33), E22-D03† (H33;
+    its S18 strip, kept), E25-D02† (its bullet; H33, H36, H37; `Enter`, aligned), E27-D02† (H24, H32, H33), E29-D02†
+    (the CMP-041 and CMP-044 bullets, aligned; H32), E29-D03† (the CMP-028 bullet, aligned; H31), E30-D02 (aligned in
+    the CMP-027, CMP-028 and CMP-038 bullets, its accepted banner's role following E30-D04 §9; H2, H26), E30-D03† (the
+    CMP-044, CMP-027 and CMP-046 bullets; H24, H31) and its handoff† (H21), E30-D04† (the CMP-044, CMP-028, CMP-038 and
+    CMP-046 bullets; H5, H21, H24), E32-D02 (`Enter`, aligned), E36-D02 (H10, H32), E36-D03 (H21, H31, H33) and its
+    handoff (H21), E36-D04† (H10, H31–H33; `Enter`, aligned), E39-D02 (its meter fill, kept) and its handoff (H33),
+    E39-D03 and its handoff (H21, H23), E40-D02 (H6, H26), E42-D02 (H1, H24, H32), E42-D03 (H22, H24, H33), E42-D04
+    (H21, H22, H24, H33; its tooltip easing, kept) and E42-D05 (H33): 63 specs.
+  - **The sweep's consistent specs** (†, as above): E02-D01, E05-D01, E06-D02, E06-D03, E08-D01 to E08-D04,
     E08-D11, E09-D03's QA checklist, E09-D04, E09-D09, E10's research findings, E11-D05 and its handoff, E11-D07†,
     E14-D05† and its handoff† (agreeing, in the CMP-016 bullet), E14-D06† and its handoff†, E14-D07's handoff†, E17-D01,
     E17-D02's handoff, E17-D03†, E22-D03's handoff†, E24-D02, E25-D01, E25-D05 and its handoff, E26-D02 and its handoff,
     E29-D01, E30-D04's handoff†, E36-D02's handoff, E39-D01 and its audit, E47-S07, the E40 alerts review
-    (`a11y/e40-alerts-a11y-review.md`) and the E15 layout flows (`specs/e15-layout-flows.md`): 40 specs.
+    (`a11y/e40-alerts-a11y-review.md`) and the E15 layout flows (`specs/e15-layout-flows.md`): 39 specs.
 
 ## 6. Decisions for the owner (collected)
 
@@ -950,10 +954,10 @@ clauses (H20).
   prompt (H36), the warnings and load failures of E25-D02, E08-D05 and E08-D06 (H37), E08-D06 D-14's full-height modal
   drawer, §5.2's kept items for E30-D03, E11-D03 (its tooltip easing and `Space`, with E11-D09's K-120 and E12-D03's
   D3-3), E11-D04 and E11-D09 (SCR-048's card; E11-D04's fades), E14-D04, E14-D07, E22-D03 (S18's strip), E27-D02,
-  E09-D08, E12-D02, E14-D03, E16-D02, E39-D02 (its meter fill), E15-D02 (its Cancel-last footers, and its SCR-029 on
-  CMP-044 with `14` SCR-029's Type and Components lines), E09-D03 and its audit (SCR-001's polite countdown) and
-  E42-D04, and E10-D03's, E13-D05's and E14-D07's items of §5.2 (H1, H6, H20, H22, H26, H28; E10-D03's §7 cells
-  `:275`–`:276` against its Q13); E40-D02 §4.2's light edge (H6) to its DS-CR-2.
+  E09-D08, E12-D02, E14-D03, E16-D02, E39-D02 (its meter fill), E04-D01 (its banner cross-fade), E15-D02 (its
+  Cancel-last footers, and its SCR-029 on CMP-044 with `14` SCR-029's Type and Components lines), E09-D03 and its audit
+  (SCR-001's polite countdown) and E42-D04, and E10-D03's, E13-D05's and E14-D07's items of §5.2 (H1, H6, H20, H22, H26,
+  H28; E10-D03's §7 cells `:275`–`:276` against its Q13); E40-D02 §4.2's light edge (H6) to its DS-CR-2.
 
 ## 7. Components
 
