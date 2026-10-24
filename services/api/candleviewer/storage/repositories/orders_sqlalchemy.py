@@ -3,10 +3,10 @@
 SQLAlchemy Core over `db.models.orders` and `db.models.order_events`: every value is a bound
 parameter and nothing is built from strings. Reads select the explicit allow-lists `ORDER_COLUMNS`
 and `EVENT_COLUMNS`, never `*`. Every statement filters on `orders.exchange_account_id` (C-12.4),
-or for the entry-stop settle on `recorded_stops.exchange_account_id`, except those in `UNSCOPED`:
-the insert, which writes the account it is given, the 24 Sec.8.3 rule 5 yes/no over the global
-`ux_orders_link`, and E29-T04's startup hydration read (21 Sec.13.1 row 49), whose two statements
-read one environment's accounts, then their unfinished orders. A unit test pins that set.
+or for the entry-stop settle and its lock on `recorded_stops.exchange_account_id`, except those in
+`UNSCOPED`: the insert, which writes the account it is given, the 24 Sec.8.3 rule 5 yes/no over the
+global `ux_orders_link`, and E29-T04's startup hydration read (21 Sec.13.1 row 49), whose two
+statements read one environment's accounts, then their unfinished orders. A unit test pins that set.
 
 `create` writes the order and its first event (`seq` 0) in one statement, a data-modifying CTE:
 one round trip in one transaction (#845 performance notes). `append` first locks the order row
@@ -22,7 +22,10 @@ commits; a missed compare-and-set raises `StaleOrderState` and rolls back (24 Se
 send's step counts `submit_attempts` up in SQL, and a step that names `entry_stops` settles its
 entry's recorded stops (`settle_entry_stops_statement`, scoped by `recorded_stops`' account and the
 order) before that commit, in the same transaction (E29-T04, 21 Sec.3.3.11); a void there also
-needs the order to hold no recorded fill, read after the step's own update (SEC-2A-01).
+needs the order to hold no recorded fill, read after the step's own update (SEC-2A-01). It locks
+those rows first, in id order (`lock_entry_stops_statement`), as the complete read's writes lock a
+key's rows (`recorded_stops_sqlalchemy`), which never lock the order row the step holds: a step and
+a read meeting on one entry's rows never wait on each other in a cycle (40P01, the 06:38Z ruling).
 Before any statement, `transition` refuses a fill's event and `filled`, `append` a fill's event
 (`require_no_fill`): a fill comes with its execution.
 
@@ -271,6 +274,19 @@ def settle_entry_stops_statement(
     return stmt.where(~sa.exists(filled)).values(status="void", closed_at=at)
 
 
+def lock_entry_stops_statement(account_id: UUID, order_id: UUID) -> sa.Select[Any]:
+    """The entry's attach rows still pending, `FOR UPDATE` in id order: the settle's rows, locked
+    in the order the complete read's writes lock them (module docstring)."""
+    rs = recorded_stops.c
+    stmt = sa.select(rs.id).where(
+        rs.exchange_account_id == account_id,
+        rs.order_id == order_id,
+        rs.source == "entry_attach",
+        rs.status == "pending",
+    )
+    return stmt.order_by(rs.id).with_for_update()
+
+
 def list_events_statement(
     account_id: UUID, order_id: UUID, after_seq: int, limit: int
 ) -> sa.Select[Any]:
@@ -307,7 +323,8 @@ async def commit_step(
     stmt = append_statement(step.account_id, step.order_id, step.event)
     states = {"from_state": step.from_state, "to_state": step.to_state}
     event = (await uow.session.execute(stmt.values(states))).mappings().one()
-    if step.entry_stops is not None:
+    if step.entry_stops is not None:  # its rows locked in id order first, as a read locks them
+        await uow.session.execute(lock_entry_stops_statement(step.account_id, step.order_id))
         settle = settle_entry_stops_statement(
             step.account_id, step.order_id, step.entry_stops, step.event.event_ts
         )
@@ -488,6 +505,7 @@ __all__ = [
     "environment_accounts_statement", "fill_statement", "get_by_exchange_statement",
     "get_by_link_statement", "get_statement",
     "link_taken_statement", "list_events_statement", "list_open_statement",
-    "list_unfinished_statement", "lock_order", "lock_statement", "order_row",
+    "list_unfinished_statement", "lock_entry_stops_statement", "lock_order", "lock_statement",
+    "order_row",
     "require_audit_bound", "settle_entry_stops_statement", "transition_statement",
 ]  # fmt: skip
