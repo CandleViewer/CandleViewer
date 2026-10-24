@@ -18,7 +18,9 @@ recovery sentences are present verbatim, the two loosening sentences #4137 super
 no local path or host, and - with ``--pr-body`` - no closing keyword; (6) the per-frame gates of
 the orchestrator's ruling (the state-3 and state-2 badges, no trigger edge, the T2 anatomy on
 every gated write with every keyed reason at most 60 characters, the native stop field on every
-position-opening action node); (7) the structure counts (``<!-- audit:NAME=VALUE -->`` markers).
+position-opening action node), the four indicator words verbatim in the Word cell of their frame
+row and in the copy deck, and an ``Arm…`` class named on every frame row (the pre-PR lens's F-8
+and F-1); (7) the structure counts (``<!-- audit:NAME=VALUE -->`` markers).
 
 ``--json`` prints one object (the board script's NUM / TERMS and check-nums consume it).
 ``--check <spec> [--pr-body FILE]`` re-derives every marker, runs every gate and the cite check:
@@ -350,6 +352,7 @@ CITES: dict[tuple[str, int], str] = {
     ): "`graph_layout` is persisted separately and excluded from the canonical IR hash",
     ("E09-D09", 32): "### 2.1 The decision rule",
     ("E09-D09", 46): "### 2.2 The four treatments",
+    ("E09-D09", 48): "- **T1 Enabled.**",
     ("E09-D09", 49): "- **T2 Disabled with a visible reason (D4).**",
     ("E09-D09", 83): "### 3.1 The keys",
     ("E09-D09", 89): '`rbac.permission`        | "Your role can\'t {verb}."',
@@ -370,6 +373,8 @@ CITES: dict[tuple[str, int], str] = {
     ("E36-D02", 42): "## 0. The planned boards",
     ("E36-D02", 79): "| The lane agreements",
     ("E36-D02", 101): "## 3. The state inventory",
+    ("E36-D02", 105): "| **02-1 draft** (S1)",
+    ("E36-D02", 107): "| **02-3 valid** (S2)",
     ("E36-D02", 109): "| **02-5 armed** (ARMED-DEMO)",
     ("E36-D02", 110): "| **02-6 vocabulary-unavailable**",
     (
@@ -500,6 +505,8 @@ CITES: dict[tuple[str, int], str] = {
     ("errors.ts", 9): "`NOT_FORM_REPRESENTABLE`: the rule uses a graph-only construct",
     ("errors.ts", 12): "`MULTIPLE_SINKS`: the actions hang off more than one condition",
     ("toGraph.ts", 50): '{ id: "trigger", type: "trigger"',
+    ("keymap.json", 266): '"id": "chart.undo"',
+    ("keymap.json", 275): '"id": "chart.redo"',
     ("keymap.json", 565): '"id": "rules.save_draft"',
     ("keymap.json", 584): '"id": "rules.validate"',
     ("keymap.json", 599): '"id": "rules.graph_mode"',
@@ -690,6 +697,20 @@ INDICATOR_WORDS = (
     "Unsupported in form view",
     "Round-trip mismatch",
     "Not verified",
+)
+# The pre-PR lens's F-8: each of the four words must stand verbatim in the Word cell of its §4 frame
+# row and in §15's "Indicator words" line, not merely somewhere in the spec.
+WORD_FRAMES = (
+    ("round-trip-identical", "Round-trips ✓"),
+    ("round-trip-graph-only", "Unsupported in form view"),
+    ("round-trip-mismatch", "Round-trip mismatch"),
+    ("round-trip-unverified", "Not verified"),
+)
+# The pre-PR lens's F-1: every `SCR-082 / …` row of §3 and §4 names `Arm…`'s class - a T2 key, the
+# validity look, the armed frame's `Disarm`, or an enabled `Arm…` that names the satisfied new-rule
+# gate (`24` §11.7).
+ARM_CLASS = re.compile(
+    r"`Arm…` (?:T2 `rule\.[a-z_.]+`|V \"|→ `Disarm`|T1 — the new-rule gate satisfied \(`24`:3483\))"
 )
 FORM_STATE2 = "Graph-only construct — read-only here"  # the form's word: quoted only in C-rows
 QUOTING = ("D02-C", "memo A9", "memo C17", "`11`:3734", "`14`:1823")  # rows that may quote a source
@@ -1158,6 +1179,21 @@ def check_strings(spec: str, st: dict[str, Any]) -> list[str]:
     for key, string in st["reason_rows"]:
         if not string.endswith("."):
             out.append(f"FAIL reason {key} has no full stop")
+    s3 = section(spec, "## 3. ", "## 4. ")
+    s4 = section(spec, "## 4. ", "## 5. ")
+    for frame, word in WORD_FRAMES:
+        row = next((r for r in s4.split("\n") if r.startswith(f"| `SCR-082 / {frame}`")), "")
+        cells = re.split(r"(?<!\\)\|", row)
+        if len(cells) < 4 or f"**{word}**" not in cells[3]:
+            out.append(f"FAIL the Word cell of `SCR-082 / {frame}` lacks the verbatim {word!r}")
+    s15 = section(spec, "## 15. ", "## 16. ")
+    words_line = next((r for r in s15.split("\n") if r.startswith("- **Indicator words:**")), "")
+    for _, word in WORD_FRAMES:
+        if f'"{word}"' not in words_line:
+            out.append(f"FAIL the Indicator words line of the copy deck lacks {word!r}")
+    for row in (s3 + s4).split("\n"):
+        if row.startswith("| `SCR-082 / ") and not ARM_CLASS.search(row):
+            out.append(f"FAIL frame row {row.split('`')[1]} names no `Arm…` class")
     return out
 
 
