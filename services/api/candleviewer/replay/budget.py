@@ -25,7 +25,8 @@ time, charging since the last `start()` or `charge()` of any of them never doubl
 `time.thread_time`: garbage collection, page faults and syscalls inside a turn hold the loop
 just as much as Python code does, and thread time would not see them. A turn that suspends
 inside a sink without charging first is charged the suspension too. That overcharge only makes
-replay yield more, which is the safe direction for the loop's other work.
+replay yield more, which is the safe direction for the loop's other work; one charge adds at most
+`MAX_CHARGE_S` of debt, so one long suspension cannot hold every session for long.
 
 **Metrics** (served by `replay.metrics`): `replay_loop_seconds_total` is the loop time charged to
 replay, `replay_budget_held_seconds_total` the wall time lanes were held, and
@@ -50,6 +51,13 @@ MIN_SHARE: Final = 0.05
 MAX_SHARE: Final = 0.75
 MIN_BURST_S: Final = 0.005
 MAX_BURST_S: Final = 0.25
+#: The most one charge adds to the debt. Real loop work between two breathes is a few ms (the
+#: clock yields after `yield_slice_s`); a charge past this is a suspension inside a sink, or a
+#: whole-loop pause that already cost every task. Charging it in full would hold every replay
+#: session (the bucket is process-wide) for charge / share; capped, the hold is at most
+#: MAX_CHARGE_S / share (1 s at the default share). The full charge still reaches
+#: `replay_loop_seconds_total`, so the overrun stays visible.
+MAX_CHARGE_S: Final = 0.25
 #: Debt below this counts as paid, so float rounding never schedules a needless hold.
 _EPS: Final = 1e-9
 
@@ -108,7 +116,7 @@ class ReplayLoopBudget:
 
     def _charge(self, seconds: float) -> None:
         self._refill()
-        self._tokens -= seconds
+        self._tokens -= min(seconds, MAX_CHARGE_S)
         replay_loop_seconds_total.inc(seconds)
 
     def _free(self) -> bool:
