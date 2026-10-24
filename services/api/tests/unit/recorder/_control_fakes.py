@@ -14,6 +14,7 @@ from candleviewer.recorder.errors import RecorderSymbolLimitError as LimitError
 from candleviewer.recorder.errors import RecorderSymbolNotRecordedError as NotRecorded
 from candleviewer.recorder.models import Actor
 from candleviewer.recorder.policy import RefusalCause, _check_settings
+from candleviewer.recorder.sessions import DEFAULT_STREAMS
 
 NOW: Final = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
 GRACE: Final = timedelta(minutes=30)
@@ -64,13 +65,15 @@ class FakeRecorder:
         if old is None and len(self.entries) >= self.max_symbols:  # a re-add is never capped
             raise LimitError(f"max {self.max_symbols} recorded symbols")
         held = () if old is None or old.lingering else old.reasons
-        streams, depth = streams or ("trades",), depth or 200
+        # upsert_manual: the policy names its default streams; no depth keeps a promoted row's
+        streams, depth = streams or DEFAULT_STREAMS, depth or (old.depth if old and held else 200)
         await self._record("recorder.start", symbol, actor, "manual",
                            trigger_ref=f"manual:{actor.id}")  # fmt: skip
         row = old or self.put(symbol, added_by=actor.id, state="starting")
         reasons = ("manual", *(r for r in held if r != "manual"))  # a re-add keeps the rest
         self.entries[symbol] = replace(row, reasons=reasons, streams=streams, depth=depth,
-                                       lingering=False, linger_until=None)  # fmt: skip
+                                       added_by=actor.id, lingering=False,
+                                       linger_until=None)  # fmt: skip
 
     async def remove_manual(self, symbol: str, actor: Actor) -> None:
         e = self.entries.get(symbol)

@@ -117,6 +117,8 @@ class RecordingControl(RecordingReads, Protocol):  # `add` also returns the entr
     # the global default). Each write is recorded by the policy ahead of the store (C-2.9).
     async def add(self, symbol: str, spec: EntrySpec,
                   actor: Actor) -> tuple[RecordedEntry, RecordedEntry | None]: ...  # fmt: skip
+    # `add` raises the policy's `RecorderInvalidUpdateError` and `RecorderSymbolLimitError`
+    # unchanged (the route maps them), where `update` maps its refusals to a port error.
     async def update(self, entry_id: str, spec: EntrySpec,
                      actor: Actor) -> RecordedEntry | None: ...  # fmt: skip
     async def remove(self, entry_id: str, actor: Actor) -> RecordedEntry | None: ...

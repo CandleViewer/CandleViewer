@@ -140,17 +140,6 @@ def _spec(body: BaseModel) -> rc.EntrySpec:
                         named.get("pinned"), named.get("retention_days"))  # fmt: skip
 
 
-def _fresh(held: rc.RecordedEntry, body: api.AddRecordedSymbolRequest, actor: Actor,
-           spec: rc.EntrySpec) -> rc.RecordedEntry:  # fmt: skip
-    """A re-add refused because a hidden cause alone holds the row reads as a fresh add
-    (restricted refusal parity): the request's settings, none of the row's."""
-    days, streams = None if spec.pinned else spec.retention_days, tuple(body.streams)
-    refusals = tuple(r for r in held.refusals if r not in rc.HIDDEN_CAUSES)
-    return rc.RecordedEntry(held.id, held.symbol, ("manual",), "starting", bool(spec.pinned),
-                            streams, body.depth, None, days, actor.id, lingering=False,
-                            refusals=refusals)  # fmt: skip
-
-
 def _invalid(rule: str, field: str | None) -> common.Problem:
     """`422` for a change the policy's own check refuses, naming its field and rule."""
     named = {"field": field, "rule": rule, "message": "Refused by the recorder."}
@@ -257,13 +246,11 @@ def make_recording_writes_router(
             raise common.Problem(422, BAD, "The symbol is not a listed instrument.", errors=[rule])
         spec, status = _spec(body), await call.control.status()
         held = next((e for e in status.entries if e.symbol == body.symbol), None)
-        held_id = None if held is None else held.id
-        if held is not None and view(call, held) is None:  # a hidden refusal: nothing changes
-            await _record(call, "recorder.start", body.symbol, held.id, "held_hidden")
-            out = _dump(_fresh(held, body, call.actor, spec))
-            out["estimate"] = {"basis": _BASIS, "warning": _DEEP if body.depth == 500 else None}
-            return done(call, JSONResponse(out, 201))
-        if intent := "retention_days" in body.model_fields_set and not spec.pinned:
+        held_id, intent = None if held is None else held.id, False
+        if held is not None and view(call, held) is None:  # held only by a cause outside the view
+            spec = rc.EntrySpec(held.streams, held.depth)  # a join adds a cause, changes no setting
+        # Recorded even when it names the row's own value: it records the request, as PUT, PATCH.
+        elif intent := "retention_days" in body.model_fields_set and not spec.pinned:
             await _record(call, "retention.change", body.symbol, held_id,
                           before_state={"retention_days": held.retention_days if held else None},
                           after_state={"retention_days": spec.retention_days})  # fmt: skip
