@@ -370,12 +370,11 @@ def make_cancel_all_router(
                 outcome = await service.run(
                     accounts, asked, actor=caller.actor, request_id=caller.request_id
                 )
-                body = _result(outcome)
+                out = JSONResponse(_result(outcome), 200)
+                kept.put(*held, StoredResponse(digest, 200, bytes(out.body), None))
             except Exception as exc:  # a defect: each cancel already sent stays with B1
                 page("orders_cancel_all_failed", error=type(exc).__name__)
                 return refused(OmsError("cancel-all's run failed"))
-            out = JSONResponse(body, 200)
-            kept.put(*held, StoredResponse(digest, 200, bytes(out.body), None))
             return out
 
         try:

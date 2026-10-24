@@ -32,7 +32,7 @@ from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.app import create_app
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission
-from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.observability.correlation import CorrelationMiddleware
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.cancel_all import (
@@ -67,6 +67,8 @@ from tests.unit.api.test_orders_route import (
 OTHER_KEY = UUID("6c1f0e2d-3b4a-4c5d-8e6f-7a8b9c0d1e2f")
 MISSING = UUID("a1000000-0000-4000-8000-0000000000ee")  # no such account
 NO_GRANT = UUID("4b000000-0000-4000-8000-000000000004")  # a Manager granted no account
+VIEW_ONLY = UUID("4b000000-0000-4000-8000-000000000005")  # a Manager who may only view ACCOUNT
+FROZEN = UUID("4b000000-0000-4000-8000-000000000006")  # a Manager whose ACCOUNT grant is frozen
 _RESULT = Draft202012Validator(
     schema("BulkAccountResult"), format_checker=Draft202012Validator.FORMAT_CHECKER
 )
@@ -195,11 +197,22 @@ class _Broken:
 
 
 def _principals() -> Principals:
-    """`test_orders_route`'s principals, and a Manager who may write orders but holds no grant."""
+    """`test_orders_route`'s principals, and Managers who may write orders but hold no grant, a
+    view-only grant or a frozen one on ACCOUNT, each its own user, as each is its own grant row
+    to the store's scope (the security look's Low 3)."""
     principals = Principals()
     trade = frozenset({Permission.ORDERS_WRITE, Permission.ORDERS_READ})
-    bare = PrincipalSnapshot(NO_GRANT, frozenset({"manager"}), trade)
-    principals.tokens["no_grant"] = TradingPrincipal(SESSION, bare)
+    managers = {
+        "no_grant": PrincipalSnapshot(NO_GRANT, frozenset({"manager"}), trade),
+        "view_only_grant": PrincipalSnapshot(
+            VIEW_ONLY, frozenset({"manager"}), trade, (AccountGrant(ACCOUNT, True, False, False),)
+        ),
+        "frozen_grant": PrincipalSnapshot(
+            FROZEN, frozenset({"manager"}), trade, (AccountGrant(ACCOUNT, True, True, True),)
+        ),
+    }
+    for token, snapshot in managers.items():
+        principals.tokens[token] = TradingPrincipal(SESSION, snapshot)
     return principals
 
 
@@ -332,9 +345,11 @@ async def test_a_body_refused_before_the_scope_answers_whatever_ids_it_names() -
         ("manager", (ACCOUNT, FOREIGN)),  # one foreign id refuses the whole request
         ("manager", (FOREIGN,)),
         ("owner", (ACCOUNT, MISSING)),  # one that does not exist, alike
-        ("no_grant", (ACCOUNT,)),  # a Manager with no trade grant
+        ("no_grant", (ACCOUNT,)),  # a Manager with no grant at all
+        ("view_only_grant", (ACCOUNT,)),  # one who may view the account but not trade it
+        ("frozen_grant", (ACCOUNT,)),  # one whose grant is frozen
     ],
-    ids=["foreign_among_granted", "foreign_alone", "missing", "no_trade_grant"],
+    ids=["foreign_among_granted", "foreign_alone", "missing", "no_grant", "view_only", "frozen"],
 )
 async def test_a_listed_account_out_of_scope_refuses_the_whole_request(
     who: str, ids: tuple[UUID, ...]
@@ -350,7 +365,10 @@ async def test_a_listed_account_out_of_scope_refuses_the_whole_request(
     assert denied["after_state"] == {
         "operation": "cancel_all", "exchange_account_ids": [str(i) for i in ids],
     }  # fmt: skip
-    who_id = {"manager": MANAGER, "owner": USER, "no_grant": NO_GRANT}[who]
+    who_id = {
+        "manager": MANAGER, "owner": USER, "no_grant": NO_GRANT, "view_only_grant": VIEW_ONLY,
+        "frozen_grant": FROZEN,
+    }[who]  # fmt: skip
     assert (denied["actor_user_id"], denied["session_id"]) == (who_id, SESSION)
     assert world.records() == [] and authz_denied() == before + 1
     assert world.refused("account_scope_denied") == 1
