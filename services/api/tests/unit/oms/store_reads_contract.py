@@ -2,10 +2,11 @@
 order id (`OrderStore.get_by_exchange_order_id`, 21 Sec.13.1 row 12), a position key's live
 recorded stops (`RecordedStopStore.live_for_key`, row 45), the recorded stops bound to an
 exchange order (`for_exchange_order`, row 46) and a stop's successor taking that binding
-(`release_and_bind`, 24 Sec.8.3 rule 7). A mixin beside `SubmissionContract`, on its `h`, run on
-the in-memory stores (`test_submission_fake.py`) and on Postgres
-(`test_order_submission_contract_pg.py`), so the fake reads what Postgres reads (C-13.3). Every
-case works in accounts of its own, so a shared database never mixes them."""
+(`release_and_bind`, 24 Sec.8.3 rule 7); and the exit routes' scoped reads (E29-T04 slice 4,
+`get_in_scope` and `accounts_in_scope`), the scope in one SQL predicate (C-12.4). A mixin beside
+`SubmissionContract`, on its `h`, run on the in-memory stores (`test_submission_fake.py`) and on
+Postgres (`test_order_submission_contract_pg.py`), so the fake reads what Postgres reads (C-13.3).
+Every case works in accounts of its own, so a shared database never mixes them."""
 
 from __future__ import annotations
 
@@ -18,7 +19,13 @@ from uuid import UUID, uuid4
 import pytest
 
 from candleviewer.storage.errors import StorageQueryFailed
-from candleviewer.storage.repositories.orders import NewOrder
+from candleviewer.storage.repositories.accounts import AccountScope, GrantScope, OwnerScope
+from candleviewer.storage.repositories.orders import (
+    AccountsOutOfScope,
+    NewOrder,
+    OutOfScope,
+    ScopedOrder,
+)
 from candleviewer.storage.repositories.recorded_stops import (
     RecordedStopNotBindable,
     RecordedStopRow,
@@ -474,3 +481,133 @@ class StoreReadsContract:
         await h.stops.release_and_bind(
             account, old.id, new.id, XID, at=RELEASED, write_ahead=audited
         )
+
+    # -- the exit routes' scope (E29-T04 slice 4; 24 Sec.8.4 "The exit routes", step 4) --
+
+    async def test_get_in_scope_owner_and_trade_grant_read_the_order_its_group_and_creator(
+        self, h: Harness
+    ) -> None:
+        """Ruling Q6: an entry's creator is its group's `created_by`; the leg names its profile."""
+        creator, owner, manager, (account, profile) = (*_users(h, 3), h.new_account())
+        first, order = entry(creator, account, profile)
+        await h.submissions.create_first(first, order, EVENT)
+        h.owner(owner)
+        h.grant(manager, account, True, False)
+        assert first.group is not None
+        for scope in (OwnerScope(owner), GrantScope(manager, frozenset({account}))):
+            got = await h.orders.get_in_scope(scope, order.id, environment="demo")
+            assert isinstance(got, ScopedOrder) and got.order.id == order.id
+            seen = (got.trade_group_id, got.profile_id, got.created_by, got.can_trade)
+            assert seen == (first.group.id, profile, creator, True)
+
+    async def test_get_in_scope_a_view_only_grant_reads_an_order_it_may_not_trade(
+        self, h: Harness
+    ) -> None:
+        """Ruling Q7: answered 403 by the exit service, as the caller reads the order already; a
+        reduce-only order has no group, so its creator is its anchor's."""
+        creator, viewer, (account, _) = (*_users(h, 2), h.new_account())
+        first, order = reduce_only(creator, account)
+        await h.submissions.create_first(first, order, EVENT)
+        h.grant(viewer, account, False, False)
+        got = await h.orders.get_in_scope(
+            GrantScope(viewer, frozenset({account})), order.id, environment="demo"
+        )
+        assert isinstance(got, ScopedOrder)
+        assert (got.trade_group_id, got.profile_id, got.created_by, got.can_trade) == (
+            None, None, creator, False,
+        )  # fmt: skip
+
+    @pytest.mark.parametrize(
+        "case", ["no_grant", "frozen", "deleted", "other_environment", "not_in_the_snapshot"]
+    )
+    async def test_get_in_scope_outside_the_scope_reads_only_the_holders_account(
+        self, h: Harness, case: str
+    ) -> None:
+        """SR-E29-13: no row leaves the scope; the account that holds the id is for the audit of
+        the 404 alone (ruling Q12). An Owner reads no deleted or other environment's order."""
+        user = h.new_user()
+        account, _ = h.elsewhere() if case == "other_environment" else h.new_account()
+        first, order = reduce_only(h.new_user(), account)
+        await h.submissions.create_first(first, order, EVENT)
+        if case != "no_grant":
+            h.grant(user, account, True, case == "frozen")
+        if case == "deleted":
+            h.refuse(account, "account_not_live")
+        ids = frozenset({uuid4() if case == "not_in_the_snapshot" else account})
+        scopes: list[AccountScope] = [GrantScope(user, ids)]
+        if case in ("deleted", "other_environment"):
+            h.owner(owner := h.new_user())
+            scopes.append(OwnerScope(owner))
+        for scope in scopes:
+            assert await h.orders.get_in_scope(scope, order.id, environment="demo") == OutOfScope(
+                account
+            )
+
+    async def test_get_in_scope_a_missing_id_or_a_user_who_is_no_owner_reads_none(
+        self, h: Harness
+    ) -> None:
+        """SR-051's owner predicate: an `OwnerScope` is the live owner role's, not the type's."""
+        account, _ = h.new_account()
+        first, order = reduce_only(h.new_user(), account)
+        await h.submissions.create_first(first, order, EVENT)
+        h.owner(owner := h.new_user())
+        missing = await h.orders.get_in_scope(OwnerScope(owner), uuid4(), environment="demo")
+        assert missing == OutOfScope(None)
+        posing = await h.orders.get_in_scope(OwnerScope(h.new_user()), order.id, environment="demo")
+        assert posing == OutOfScope(account)
+
+    async def test_accounts_in_scope_none_requested_is_the_environments_trade_grants(
+        self, h: Harness
+    ) -> None:
+        """An Owner's are every live account of the environment, a frozen grant's too."""
+        user, owner = _users(h, 2)
+        names = ("trade", "view", "frozen", "deleted")
+        held = {name: h.new_account()[0] for name in names} | {"live": h.elsewhere()[0]}
+        for name, account in held.items():
+            h.grant(user, account, name != "view", name == "frozen")
+        h.refuse(held["deleted"], "account_not_live")
+        scope = GrantScope(user, frozenset(held.values()))
+        assert await h.orders.accounts_in_scope(scope, "demo", ()) == (held["trade"],)
+        h.owner(owner)
+        reach = set(await h.orders.accounts_in_scope(OwnerScope(owner), "demo", ()))
+        assert {held["trade"], held["view"], held["frozen"]} <= reach
+        assert not {held["deleted"], held["live"]} & reach
+
+    @pytest.mark.parametrize(
+        "case", ["foreign", "view_only", "frozen", "deleted", "other_environment", "missing"]
+    )
+    async def test_accounts_in_scope_one_account_outside_refuses_the_whole_request(
+        self, h: Harness, case: str
+    ) -> None:
+        """SR-E29-13, all or nothing; a request inside it is answered as asked, once each."""
+        user, (granted, _) = h.new_user(), h.new_account()
+        h.grant(user, granted, True, False)
+        other = uuid4()
+        if case != "missing":
+            other = (h.elsewhere() if case == "other_environment" else h.new_account())[0]
+        if case not in ("foreign", "missing"):
+            h.grant(user, other, case != "view_only", case == "frozen")
+        if case == "deleted":
+            h.refuse(other, "account_not_live")
+        scope = GrantScope(user, frozenset({granted, other}))
+        with pytest.raises(AccountsOutOfScope):
+            await h.orders.accounts_in_scope(scope, "demo", (granted, other))
+        assert await h.orders.accounts_in_scope(scope, "demo", (granted, granted)) == (granted,)
+
+    async def test_accounts_in_scope_the_owner_names_live_accounts_of_the_environment_only(
+        self, h: Harness
+    ) -> None:
+        (mine, _), (deleted, _), (live, _) = h.new_account(), h.new_account(), h.elsewhere()
+        h.refuse(deleted, "account_not_live")
+        h.owner(owner := h.new_user())
+        scope = OwnerScope(owner)
+        assert await h.orders.accounts_in_scope(scope, "demo", (mine,)) == (mine,)
+        for outside in (deleted, live, uuid4()):
+            with pytest.raises(AccountsOutOfScope):
+                await h.orders.accounts_in_scope(scope, "demo", (mine, outside))
+        with pytest.raises(AccountsOutOfScope):  # a user who is no owner reaches nothing
+            await h.orders.accounts_in_scope(OwnerScope(h.new_user()), "demo", (mine,))
+
+
+def _users(h: Harness, n: int) -> list[UUID]:
+    return [h.new_user() for _ in range(n)]

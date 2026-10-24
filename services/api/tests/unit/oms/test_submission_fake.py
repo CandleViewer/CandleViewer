@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import CheckConstraint
 
 from candleviewer.db import models
-from candleviewer.domain.primitives import AccountId
+from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.models import AccountRef
 from candleviewer.oms import fakes
 from candleviewer.oms.fakes import InMemoryOrderStore as Fake
@@ -74,12 +74,12 @@ def accounts() -> tuple[UUID, UUID]:
     return uuid4(), uuid4()
 
 
-def demo_account(fake: Fake) -> tuple[UUID, UUID]:
+def demo_account(fake: Fake, environment: Environment = "demo") -> tuple[UUID, UUID]:
     """A demo account, as the Postgres harness makes one, its environment seeded from its
     `AccountRef` (`trg_tgl_env`, SEC-2B1-03), and its profile, of which the fake holds the id."""
     account, profile = accounts()
     ref = AccountRef(
-        account_id=AccountId(account), uid="100001", environment="demo", key_ref=str(uuid4())
+        account_id=AccountId(account), uid="100001", environment=environment, key_ref=str(uuid4())
     )
     fake.submissions.seed_account(ref)
     return account, profile
@@ -131,6 +131,10 @@ class TestInMemorySubmissionStores(SubmissionContract, StoreReadsContract):
             bind_stop=lambda record_id, xid: bind_stop(fake, record_id, xid),
             twin_stop=lambda record_id, twin_id: twin_stop(fake, record_id, twin_id),
             tick=lambda: tick(fake),
+            grant=lambda user, account, trade, frozen: fake.seed_access(
+                user, account, trade=trade, frozen=frozen
+            ),
+            owner=fake.seed_owner, elsewhere=lambda: demo_account(fake, "live"),
         )  # fmt: skip
 
     async def test_a_leg_on_an_account_never_seeded_passes_the_environment_trigger(
