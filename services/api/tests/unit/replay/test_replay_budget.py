@@ -14,6 +14,7 @@ import pytest
 from prometheus_client import REGISTRY
 
 from candleviewer.replay import BudgetLane, LoopTime, ReplayConfigInvalid, ReplayLoopBudget
+from candleviewer.replay.budget import MAX_CHARGE_S
 from tests.unit.replay._time import FakeTime
 
 SLICE = 0.002  # the clock's longest turn (ClockConfig.yield_slice_s)
@@ -311,8 +312,8 @@ async def test_budget_one_long_charge_is_counted_in_full_but_bounds_the_debt() -
     held_other = await other.breathe()
 
     assert _sample("replay_loop_seconds_total") - work0 == pytest.approx(5.0 + BURST + SLICE)
-    assert 0.0 < held_slow <= 0.25 / SHARE
-    assert 0.0 < held_other <= 0.25 / SHARE
+    assert 0.0 < held_slow <= MAX_CHARGE_S / SHARE
+    assert 0.0 < held_other <= MAX_CHARGE_S / SHARE
 
 
 def test_budget_is_built_with_loop_time_outside_a_running_loop() -> None:

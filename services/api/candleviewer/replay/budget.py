@@ -63,7 +63,9 @@ MAX_BURST_S: Final = 0.25
 #: whole-loop pause that already cost every task. Charging it in full would hold every replay
 #: session (the bucket is process-wide) for charge / share; capped, the hold is at most
 #: MAX_CHARGE_S / share (1 s at the default share). The full charge still reaches
-#: `replay_loop_seconds_total`, so the overrun stays visible.
+#: `replay_loop_seconds_total`, so the overrun stays visible. A turn that itself holds the loop
+#: past this (a long synchronous decode) is undercharged too, so the share holds for turns up to
+#: MAX_CHARGE_S; such a turn already breaks C-2.17 and shows in that counter.
 MAX_CHARGE_S: Final = 0.25
 #: Debt below this counts as paid, so float rounding never schedules a needless hold.
 _EPS: Final = 1e-9
