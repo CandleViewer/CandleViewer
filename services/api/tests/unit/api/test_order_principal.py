@@ -246,3 +246,114 @@ def test_place_order_is_neither_an_own_operation_nor_a_protective_write() -> Non
     place_order = ("POST", "/orders")
     protective = {operation for operation, _ticket in PROTECTIVE_WRITES.values()}
     assert place_order not in OWN_OPERATIONS and place_order not in protective
+
+
+# --- A protective write in a live view-as context carries the target's RBAC: 22's View-as session
+# --- admits it "only when both the viewer's own RBAC and the target's `x-rbac` allow it" (the
+# --- orchestrator's ruling of 2026-10-24 22:50Z).
+
+#: The target's one trade grant and one view-only grant.
+TARGET_TRADE, TARGET_VIEW = uuid.UUID(int=10), uuid.UUID(int=11)
+
+
+class _Users:
+    """The identity reads of the viewer (`USER`, an Owner) and of `TARGET` (a Manager), each by its
+    own id; `target` overrides the target's row (`None`: no such user)."""
+
+    def __init__(self, target: dict[str, Any] | None = None, *, missing: bool = False) -> None:
+        self.target = {"roles": ["manager"], "status": "active"} if target is None else target
+        self.missing, self.asked = missing, list[str]()
+
+    async def user(self, user_id: str) -> dict[str, Any]:
+        self.asked.append(user_id)
+        if user_id == str(USER):
+            return {"roles": ["owner"], "status": "active"}
+        assert user_id == str(TARGET)
+        if self.missing:
+            raise LookupError(user_id)
+        return self.target
+
+    async def session_info(self, user_id: str) -> dict[str, Any]:
+        if user_id == str(USER):
+            return {"permissions": [p.value for p in Permission]}
+        return {"permissions": ["orders:write", "orders:read"]}
+
+
+class _UserGrants:
+    """Each user's trade grants; `fails` makes the target's read fail as a store's does."""
+
+    def __init__(self, fails: BaseException | None = None) -> None:
+        self.fails, self.asked = fails, list[uuid.UUID]()
+
+    async def load_trade_grants(
+        self, user_id: uuid.UUID
+    ) -> list[tuple[uuid.UUID, bool, bool, bool]]:
+        self.asked.append(user_id)
+        assert user_id == TARGET  # an Owner's grants are never read
+        if self.fails is not None:
+            raise self.fails
+        return [(TARGET_TRADE, True, True, False), (TARGET_VIEW, True, False, False)]
+
+
+def _as(phase: ViewAsPhase = ViewAsPhase.LIVE, subject: uuid.UUID = USER) -> ViewAsRequestContext:
+    """The guard's stamp: `subject` is the viewer for a write it passed, the target for a read."""
+    return ViewAsRequestContext(
+        viewer_user_id=USER, viewer_session_id=SESSION, viewer_label="owner-anna",
+        target_user_id=TARGET, context_id=CONTEXT, subject_user_id=subject, phase=phase,
+    )  # fmt: skip
+
+
+def _viewing(users: _Users | None = None, grants: _UserGrants | None = None) -> Any:
+    return _resolver(_Sessions(view_as=_live()), users or _Users(), grants or _UserGrants())
+
+
+async def test_a_protective_write_in_a_live_context_carries_the_targets_rbac() -> None:
+    """The principal is the viewer's, who acts; `target` is what the target may do, for the
+    route's second check: its permissions and its trade grants, read as the viewer's are."""
+    principal = await _viewing().resolve(_request(stamp=_as()))
+    assert principal is not None and principal.snapshot.user_id == USER
+    assert principal.snapshot.is_owner and principal.target is not None
+    assert (principal.target.user_id, principal.target.roles) == (TARGET, frozenset({"manager"}))
+    assert principal.target.permissions == {Permission.ORDERS_WRITE, Permission.ORDERS_READ}
+    allowed = {g.exchange_account_id for g in principal.target.account_grants if g.can_trade}
+    assert allowed == {TARGET_TRADE}
+
+
+async def test_in_the_hold_a_protective_write_runs_in_the_viewers_own_scope() -> None:
+    users = _Users()
+    principal = await _viewing(users).resolve(_request(stamp=_as(ViewAsPhase.HELD)))
+    assert principal is not None and principal.target is None and str(TARGET) not in users.asked
+
+
+async def test_a_live_read_is_the_targets_principal_with_no_second_check() -> None:
+    principal = await _viewing().resolve(_request(stamp=_as(subject=TARGET)))
+    assert principal is not None and principal.snapshot.user_id == TARGET
+    assert principal.target is None
+
+
+async def test_a_session_with_no_context_carries_no_target() -> None:
+    principal = await _resolver().resolve(_request())
+    assert principal is not None and principal.target is None
+
+
+@pytest.mark.parametrize(
+    "users",
+    [
+        _Users(missing=True),
+        _Users({"roles": ["manager"], "status": "disabled"}),
+        _Users({"roles": ["not_a_role"], "status": "active"}),
+    ],
+    ids=["missing", "disabled", "unknown_role"],
+)
+async def test_a_target_who_cannot_act_allows_nothing(users: _Users) -> None:
+    """Fail closed: a target the context outlived holds no permission and no grant, so the
+    route's second check refuses every protective write."""
+    principal = await _viewing(users).resolve(_request(stamp=_as()))
+    assert principal is not None and principal.target is not None
+    assert (principal.target.permissions, principal.target.account_grants) == (frozenset(), ())
+
+
+async def test_a_target_whose_grants_cannot_be_read_is_the_stores_unavailability() -> None:
+    grants = _UserGrants(fails=StorageTierUnavailable("postgres unreachable (OSError)"))
+    with pytest.raises(StoreUnavailable):
+        await _viewing(grants=grants).resolve(_request(stamp=_as()))
