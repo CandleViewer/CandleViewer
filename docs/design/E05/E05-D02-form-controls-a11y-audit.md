@@ -148,7 +148,9 @@ tritanopia); structurally, no slice-3 state depends on hue alone:
 10. A `legend` is not in the heading list: CMP-065's legend wraps a heading (§6 G14).
 11. Out-of-range days are inactive (2.81:1 light at 0.45) and the caption names the range in words.
 12. A T2 field's lock leads its value inside the well, and its label keeps `color.text.secondary` (8.14:1 or more on
-    the host surfaces), as E30-D04 §2.5 (2) draws the order ticket's fields (spec conventions 24, §5.2).
+    the host surfaces), as E30-D04 §2.5 (2) draws the order ticket's fields (spec conventions 24, §5.2); four merged
+    specs lead the field's label with the lock instead, in `color.text.tertiary` (5.20:1 or more): an owner decision
+    (spec §6 G23).
 13. An option the form's own rules make unavailable keeps its reason and stays arrow-reachable (E30-D04 §17's validity
     look); its dimmed label (2.81–4.14:1) is reported, not gated, and its reason line carries the state (spec
     conventions 26).
