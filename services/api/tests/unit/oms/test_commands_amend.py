@@ -228,15 +228,35 @@ async def test_a_looser_stop_is_refused_in_the_writer_before_any_record_or_send(
     assert (record.action, record.reason) == ("orders.amend", "looser_than_order")
 
 
-async def test_a_stop_looser_than_the_record_in_force_is_refused(rig: Rig) -> None:
-    order = await _live(rig)
+async def _in_force(rig: Rig, price: str) -> None:
+    """A Full-mode stop-loss record in force for the key at `price`."""
     await _earlier_request(rig)
     (row,) = _rows(rig)
     in_force: dict[str, Any] = {"status": "in_force", "answered_at": T0, "in_force_at": T0}
-    rig.store._stops[row.id] = replace(row, trigger_price=Decimal("58800"), **in_force)
-    answer = await rig.port.amend(_amend(order, stop_loss="58500"))
+    rig.store._stops[row.id] = replace(row, trigger_price=Decimal(price), **in_force)
+
+
+@pytest.mark.parametrize(
+    "terms", [{"stop_loss": "58500"}, {"take_profit": "65000"}], ids=["sl", "tp_only"]
+)
+async def test_a_stop_looser_than_the_record_in_force_is_refused(
+    rig: Rig, terms: dict[str, str]
+) -> None:
+    """Fold M1: whatever stop is recorded or sent is ratcheted, the re-paired one of a TP-only
+    amend too (the order's 58000 under a record of 58800)."""
+    order = await _live(rig)
+    await _in_force(rig, "58800")
+    answer = await rig.port.amend(_amend(order, **terms))
     assert answer == _NO | {"error_code": oc.STOP_LOOSENING_REFUSED}
     assert rig.demo.calls == [] and rig.audits.actions() == [("orders.amend", "looser_than_record")]
+    assert len(_rows(rig)) == 1  # the record in force alone: nothing recorded
+
+
+async def test_the_re_paired_side_is_audited_as_unchanged(rig: Rig) -> None:
+    order = await _live(rig)
+    await rig.port.amend(_amend(order, take_profit="65000"))
+    changed = {r.action: r.detail.get("changed") for r, _ in rig.audits.written}
+    assert changed == {"sl.modified": "false", "tp.modified": "true"}
 
 
 @pytest.mark.parametrize(
