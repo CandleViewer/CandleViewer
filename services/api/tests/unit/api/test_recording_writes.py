@@ -121,9 +121,8 @@ async def test_the_cap_is_422_and_a_re_add_answers_200_with_the_row() -> None:
     assert list(env.fake.entries) == ["BTCUSDT"] and env.actions() == ["recorder.start"] * 2
     assert env.audit[-1][1].items() >= {("outcome", "denied"), ("reason", "recorder_symbol_limit")}
     env.elevated, env.audit = True, []
-    await env.add(symbol="ETHUSDT", retention_days=7)  # the retention record's denied twin first
+    await env.add(symbol="ETHUSDT", retention_days=7)  # no row: the policy records no retention
     assert [(a, r.get("outcome"), r.get("reason")) for a, r in env.audit] == [
-        ("retention.change", None, None), ("retention.change", "denied", "recorder_symbol_limit"),
         ("recorder.start", "denied", "recorder_symbol_limit")]  # fmt: skip
 
 
@@ -218,7 +217,7 @@ async def test_a_pin_always_needs_the_recorder_step_up_and_the_policy_records_it
 
 
 async def test_an_unpin_is_audited_before_the_store_and_a_refused_record_changes_nothing() -> None:
-    """ETHUSDT: `retention_days` with no pin change; no policy member records it, the route does."""
+    """ETHUSDT: `retention_days` with no pin change, which the policy records (#2188 S3c)."""
     fake, days = FakeRecorder(), {"pinned": False, "retention_days": 7}
     entry = fake.put("BTCUSDT", state="stopped", pinned=True)
     kept = fake.put("ETHUSDT", retention_days=9)
@@ -230,8 +229,8 @@ async def test_an_unpin_is_audited_before_the_store_and_a_refused_record_changes
     assert fake.entries == {"BTCUSDT": entry, "ETHUSDT": kept}
     env.fail_audit = False
     assert (await env.http.put(_PIN.format(kept.id), json=days)).json()["retention_days"] == 7
-    after = [(a, r["before_state"], r["after_state"]) for a, r in env.audit]
-    assert after == [("retention.change", {"retention_days": 9}, {"retention_days": 7})]
+    after = [(a, r["before_state"], r["after_state"]["retention_days"]) for a, r in env.audit]
+    assert after == [("retention.change", {"retention_days": "9"}, "7")]
     unpinned = await env.http.put(_PIN.format(entry.id), json=days)
     assert (unpinned.json()["pinned"], unpinned.json()["retention_days"]) == (False, 7)
     assert "BTCUSDT" not in fake.entries  # an idle row unpinned goes
@@ -240,9 +239,10 @@ async def test_an_unpin_is_audited_before_the_store_and_a_refused_record_changes
 class _Gone(FakeRecorder):
     """The row goes between the lookup and the pin: the policy finds no active row."""
 
-    async def set_pin(self, symbol: str, pinned: bool, actor: Any) -> None:
+    async def set_pin(self, symbol: str, pinned: bool, actor: Any, *, restricted: bool,
+                      retention_days: int | None = None) -> None:  # fmt: skip
         self.entries.clear()
-        await super().set_pin(symbol, pinned, actor)  # raises: no active row
+        await super().set_pin(symbol, pinned, actor, restricted=restricted)  # no active row
 
 
 async def test_a_pin_of_a_row_gone_since_the_lookup_is_404_audited_as_denied() -> None:
@@ -304,9 +304,9 @@ class _Spied(FakeRecorder):
         super().__init__()
         self.specs: list[rc.EntrySpec] = []
 
-    async def add(self, symbol: str, spec: rc.EntrySpec, actor: Any) -> Any:
+    async def add(self, symbol: str, spec: rc.EntrySpec, actor: Any, *, restricted: bool) -> Any:
         self.specs.append(spec)
-        return await super().add(symbol, spec, actor)
+        return await super().add(symbol, spec, actor, restricted=restricted)
 
 
 _JOINS: list[dict[str, Any]] = [
@@ -432,20 +432,17 @@ async def test_the_fake_promotes_a_held_row_as_the_policy_does() -> None:
     assert (row.streams, row.depth, row.pinned, row.added_by) == (DEFAULT_STREAMS, 50, True, "u-1")
 
 
-async def test_an_add_naming_retention_days_the_policy_refuses_writes_only_the_denied_twin(
+async def test_an_add_naming_retention_days_the_policy_refuses_records_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`RecorderInvalidUpdateError` refuses before the policy records: the route's retention
-    record and its denied twin, no `recorder.start`, `422`."""
+    """`RecorderInvalidUpdateError` refuses before the policy records anything, the retention
+    too (#2188 S3c: the policy, not the route, records it): `422`, no record."""
     monkeypatch.setattr(policy, "STREAM_KINDS", frozenset({"trades"}))
     env = _Env(None, *W, elevated=True)
     refused = await env.add(symbol="SOLUSDT", streams=["tickers"], retention_days=7)
     assert (refused.status_code, refused.json()["code"]) == (422, "validation_failed")
     assert refused.json()["errors"][0]["rule"] == "stream_names" and env.fake.entries == {}
-    assert [(a, r.get("outcome"), r.get("reason")) for a, r in env.audit] == [
-        ("retention.change", None, None),
-        ("retention.change", "denied", "stream_names"),
-    ]
+    assert env.audit == []
 
 
 @pytest.mark.parametrize("streams", [None, ("trades",), ("trades", "no_such_kind")])
@@ -461,28 +458,26 @@ def test_setting_rule_names_the_field_the_policy_check_refuses(streams: Any, dep
         assert streams is None or "no_such_kind" not in streams
 
 
-async def test_a_re_add_naming_the_retention_days_the_row_has_still_records_the_request() -> None:
-    """As PUT and PATCH do: the record stands for the request, not for a change of value."""
+async def test_a_re_add_naming_the_retention_days_the_row_has_records_nothing() -> None:
+    """One record per write, the policy's: a re-add that changes nothing writes none."""
     fake = FakeRecorder()
     fake.put("BTCUSDT", retention_days=7)
     env = _Env(fake, *W, elevated=True)
     assert (await env.add(symbol="BTCUSDT", retention_days=7)).status_code == 200
-    route = env.audit[0][1]
-    assert env.actions() == ["retention.change"]
-    assert (route["before_state"], route["after_state"]) == (
-        {"retention_days": 7}, {"retention_days": 7})  # fmt: skip
+    assert env.actions() == []
 
 
 @pytest.mark.parametrize(
     ("extra", "actions"),
-    [({"retention_days": 7}, ["retention.change", "recorder.start"]),
-     ({"pinned": False, "retention_days": None}, ["retention.change", "recorder.start"]),
+    [({"retention_days": 7}, ["recorder.start", "retention.change"]),
+     ({"pinned": False, "retention_days": None}, ["recorder.start"]),
      ({"pinned": True, "retention_days": 7}, ["recorder.start", "retention.change"])],
 )  # fmt: skip
-async def test_an_add_naming_retention_days_records_it_ahead_as_put_and_patch_do(
+async def test_an_add_naming_retention_days_has_the_policy_record_it_after_the_add(
     extra: Any, actions: list[str]
 ) -> None:
-    """The route's own `retention.change` unless a pin (the policy's record) names it."""
+    """The policy records the add, then the pin or the retention (#2188 S3c), each ahead of its
+    store; the route writes none of its own. A default already held changes and records none."""
     env = _Env(None, *W, elevated=True)
     env.caller, env.fail_audit = dataclasses.replace(env.caller, request_id=uuid.uuid4()), True
     refused = await env.add(symbol="SOLUSDT", **extra)
@@ -490,11 +485,6 @@ async def test_an_add_naming_retention_days_records_it_ahead_as_put_and_patch_do
     env.fail_audit = False
     assert (await env.add(symbol="SOLUSDT", **extra)).status_code == 201
     assert env.actions() == actions
-    if actions[0] == "retention.change":
-        route = env.audit[0][1]
-        assert (route["before_state"], route["after_state"]) == (
-            {"retention_days": None}, {"retention_days": extra["retention_days"]})  # fmt: skip
-        assert route["request_id"] == env.caller.request_id
 
 
 # -- S8: PATCH and DELETE ---------------------------------------------------------------------
@@ -747,8 +737,8 @@ async def test_a_null_retention_days_without_an_unpin_is_422() -> None:
 async def test_patch_of_retention_days_with_an_unpin_that_changes_no_pin_is_recorded(
     days: int | None,
 ) -> None:
-    """`retention_days` named while `pinned` is not true: no policy member records it, so the
-    route writes its own `retention.change` ahead of the store (a refused record stores none)."""
+    """`retention_days` named while `pinned` is not true: the policy's `set_retention` records
+    it ahead of its store (a refused record stores none); the route writes none of its own."""
     fake = FakeRecorder()
     entry = fake.put("BTCUSDT", retention_days=9)
     env = _Env(fake, *W, elevated=True)
@@ -760,13 +750,13 @@ async def test_patch_of_retention_days_with_an_unpin_that_changes_no_pin_is_reco
     env.fail_audit = False
     stored = await env.http.patch(_one(entry.id), json=body)
     assert (stored.status_code, stored.json()["retention_days"]) == (200, days)
-    assert env.actions() == ["retention.change"]  # the pin is unchanged: the policy writes none
+    assert env.actions() == ["retention.change"]  # the pin is unchanged: the retention's only
     record = env.audit[0][1]
-    assert (record["before_state"], record["after_state"]) == (
-        {"retention_days": 9}, {"retention_days": days})  # fmt: skip
+    assert (record["before_state"], record["after_state"]["retention_days"]) == (
+        {"retention_days": "9"}, None if days is None else str(days))  # fmt: skip
 
 
-async def test_a_refused_mixed_patch_writes_the_denied_twin_of_the_route_retention_record() -> None:
+async def test_a_refused_mixed_patch_records_only_the_refusal() -> None:
     fake = FakeRecorder()
     entry = fake.put("ETHUSDT", "chart_open")
     env = _Env(fake, *W, elevated=True)
@@ -774,6 +764,58 @@ async def test_a_refused_mixed_patch_writes_the_denied_twin_of_the_route_retenti
     assert (refused.status_code, refused.json()["code"]) == (409, "conflict")
     assert fake.entries["ETHUSDT"] == entry
     records = [(a, r.get("outcome"), r.get("reason")) for a, r in env.audit]
-    assert records == [("retention.change", None, None),
-                       ("retention.change", "denied", "not_manual"),
-                       ("recorder.update", "denied", "not_manual")]  # fmt: skip
+    assert records == [("recorder.update", "denied", "not_manual")]
+
+
+# -- S9: the relax guard (ruled 05:10Z; #2188 S3c) --------------------------------------------
+
+_RELAXES = [(_PIN, "put", {"pinned": False}), (_PIN, "put", {"pinned": False, "retention_days": 7}),
+            ("/recording/symbols/{}", "patch", {"retention_days": 7}),
+            ("/recording/symbols/{}", "patch", {"pinned": False})]  # fmt: skip
+
+
+@pytest.mark.parametrize(("path", "method", "body"), _RELAXES)
+@pytest.mark.parametrize("cause", sorted(rc.HIDDEN_CAUSES))
+async def test_a_non_owner_unpin_or_lower_retention_of_a_row_a_hidden_cause_holds_is_403(
+    path: str, method: str, body: dict[str, Any], cause: Any
+) -> None:
+    """Refused before any write, one denied `retention.change`; a request flag or header that
+    claims the Owner's view widens nothing (the view is the principal's, C-12.4)."""
+    fake = FakeRecorder()
+    pinned = body.get("pinned") is False
+    entry = fake.put("BTCUSDT", "manual", cause, pinned=pinned, retention_days=None if pinned
+                     else 60)  # fmt: skip
+    env = _Env(fake, *W, owner=False, elevated=True)
+    url = path.format(entry.id)
+    for flags in ({}, {"params": {"restricted": "false"}},
+                  {"headers": {"X-Restricted": "false", "X-View-As": "owner"}}):  # fmt: skip
+        refused = await env.http.request(method, url, json=body, **flags)
+        assert (refused.status_code, refused.json()["code"]) == (403, "forbidden")
+        assert (
+            refused.json()["detail"] == "Only the owner can unpin this row or lower its retention."
+        )
+        assert cause not in refused.text
+    assert fake.entries["BTCUSDT"] == entry
+    assert [(a, r["outcome"], r["reason"]) for a, r in env.audit] == [
+        ("retention.change", "denied", "relax_refused")] * 3  # fmt: skip
+    smuggled = await env.http.request(method, url, json=body | {"restricted": False})
+    assert smuggled.status_code == 422  # no body field names the view
+    owner = _Env(fake, *W, elevated=True)
+    assert (await owner.http.request(method, url, json=body)).status_code == 200
+
+
+async def test_a_relax_the_policy_refuses_after_the_ports_check_is_recorded_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The view changed between the port's check and the policy's: the policy's denied record
+    is the only one, and the answer the same `403`."""
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT", "manual", "position_open", pinned=True)
+    answers = iter([True, False])
+    monkeypatch.setattr(fake, "relax_allowed", lambda symbol, *, restricted: next(answers))
+    env = _Env(fake, *W, owner=False, elevated=True)
+    refused = await env.http.put(_PIN.format(entry.id), json={"pinned": False})
+    assert (refused.status_code, refused.json()["code"]) == (403, "forbidden")
+    assert [(a, r["outcome"], r["actor_label"]) for a, r in env.audit] == [
+        ("retention.change", "denied", f"user:{env.caller.actor_id}")]  # the policy's  # fmt: skip
+    assert fake.entries["BTCUSDT"] == entry
