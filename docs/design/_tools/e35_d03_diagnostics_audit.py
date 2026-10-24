@@ -14,12 +14,16 @@ section 6 row; (5) the copy gates — the memo's CA rows byte-for-byte by status
 verbatim, the #4118 string, no banned UI word, no private path or host (generic patterns), dangling
 `C-x.y` / `CMP-nnn` / `SCR-nnn` ids, every section 6 sentence at most 80 characters and free of
 exception text, the stop pair tighten-only (the drawn F18 row applies the tighter of the two moves,
-SC-10's clause), the resolver never arming, and the cite check — a cited
+SC-10's clause; an F18 sentence that no longer parses FAILs), BQ-8's no-loosen statement and
+BQ-17's LIVE step-up sentence present in sections 2, 3 and 11, every `24` section 8.6 code (the
+retCode table and `OmsErrorCode`) mapped, the resolver never arming, and the cite check — a cited
 `file:line` whose quoted fragment moved WARNs with the current line and FAILs only when the
 fragment is gone; (6) the counts. `--check` re-derives every `<!-- audit:NAME=VALUE -->` marker in
 the spec. `--selftest` holds mutated copies of the spec in memory (a section 6 row dropped, a CA
-quote altered, a cite's line number moved, a cite's fragment removed): the spec must pass, the first
-two must FAIL, the moved cite must WARN and the gone cite must FAIL.
+quote altered, the looser stop applied, the no-loosen statement loosened, the LIVE step-up sentence
+dropped, a section 8.6 code unmapped, the memo's F18 example unparsable, a cite's line number moved,
+a cite's fragment removed or made ambiguous): the spec must pass, the moved cite must WARN and
+every other mutation must FAIL.
 
 Usage: python3 -I docs/design/_tools/e35_d03_diagnostics_audit.py [--json] [--check] [--selftest]
 """
@@ -60,6 +64,18 @@ GENERIC_ERROR = "Evaluation failed — see the audit record."  # BQ-11: one sent
 ERROR_CODES = ("evaluation_timeout", "{ExceptionName}", "auto_disabled:{error}")
 ERROR_PROBES = ('"evaluation_timeout"', "type(exc).__name__", 'f"auto_disabled:{error}"')
 TIGHTEN = "Later checks can still tighten the stop."
+# Required strings, each in sections 2, 3 and 11: BQ-8's plain no-loosen statement (C-2.6) and
+# BQ-17's LIVE step-up sentence (the resolver returns to Arm rule; it never arms).
+STOP_PAIR_RULE = (
+    "No option here loosens the stop-loss at Bybit. Each rule can only tighten it or leave it; "
+    "whichever goes first, the tighter stop stands."
+)
+LIVE_RETURN = (
+    "Applying this returns you to Arm rule, where LIVE needs your password, a code and the "
+    "word LIVE."
+)
+REQUIRED = (("BQ-8", STOP_PAIR_RULE), ("BQ-17", LIVE_RETURN))
+REQUIRED_IN = ("2", "3", "11")
 # Words the UI copy (sections 6 and 11) never carries (memo SC-1, SC-15, section 7; #4137).
 BANNED_UI = ("backtest", "emulated stop", "Panic", "triggered", "widen")
 # Private paths and hosts never belong in a public file: generic patterns only — no personal word
@@ -166,6 +182,18 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
         "stop 61,400.0 → 62,000.2 · ✓",
         "FAIL",
     ),
+    "the stop-pair statement loosened": (
+        "No option here loosens the stop-loss at Bybit.",
+        "Any option here may loosen the stop-loss at Bybit.",
+        "FAIL",
+    ),
+    "the LIVE step-up sentence dropped": (
+        "returns you to Arm rule, where LIVE needs your password, a code and the word LIVE.",
+        "arms the LIVE version at once.",
+        "FAIL",
+    ),
+    "a 24 section 8.6 code unmapped": ("| `MARKET_CLOSED`", "| `MARKET_CLOSEDX`", "FAIL"),
+    "the memo's F18 example unparsable": ("F18-GONE", "", "FAIL"),
     "a cite's line moved": ("CITE-LINE", "", "WARN"),
     "a cite's fragment gone": ("CITE-FRAG", "", "FAIL"),
     "a cite's fragment ambiguous": ("CITE-AMBIG", "", "FAIL"),
@@ -277,6 +305,7 @@ def shipped() -> dict[str, Any]:
     audit24 = grab(r"### 15.5 Audited action vocabulary.*?\n\n(.*?)\n\n", schemas, "", re.DOTALL)
     retcodes = schemas[schemas.index("### 8.6 Error mapping") : schemas.index("### 8.7 Rate")]
     retrows = [ln for ln in retcodes.splitlines() if re.match(r"\| (?:`\d|any other)", ln)]
+    members = set(re.findall(r'^\s+([A-Z][A-Z_]+) = "\1"', retcodes, MULTI))
     events = api22[api22.index("operationId: listRuleRunEvents") :][:4000]
     f18 = F18.search(read(MEMO))
     keymap = read(ROOT / "apps" / "web" / "src" / "keymap" / "keymap.json")
@@ -308,7 +337,9 @@ def shipped() -> dict[str, Any]:
         ),
         "skipped_comment_24": grab(r"skipped_reason: str \| None\s*# ([a-z_|.]+)", schemas),
         "audited_rule_keys": re.findall(r"`(rule\.[a-z_]+)`", audit24),
-        "oms_codes": sorted(set(re.findall(r"`([A-Z][A-Z_]+)`", "\n".join(retrows))) - {"OK"}),
+        "oms_codes": sorted(
+            (set(re.findall(r"`([A-Z][A-Z_]+)`", "\n".join(retrows))) | members) - {"OK"}
+        ),
         "rules_commands": sorted(set(re.findall(r'"(rules\.[a-z_]+)"', keymap))),
         "privacy_note": grab(privacy, read(DESIGN / "E36" / "E36-D03.md")),
         "ca21_d02": grab(r'\| CA-21 +\| [^|]+\| "([^"]+)"', read(DESIGN / "E35" / "E35-D02.md")),
@@ -413,6 +444,9 @@ def gates(
             bad.append(f"section 6 sentence carries exception text: {code}")
         if kind == "exchange" and code not in facts["oms_codes"]:
             bad.append(f"section 6 exchange code not in 24 §8.6: {code}")
+    for code in facts["oms_codes"]:
+        if code not in codes:
+            bad.append(f"section 6 has no row for the 24 §8.6 code {code}")
     for code in ERROR_CODES:
         if not any(c == code and s == GENERIC_ERROR for c, _k, s in maps):
             bad.append(f"section 6: {code} must map to the one generic sentence (BQ-11)")
@@ -424,6 +458,10 @@ def gates(
     pair = next((ln for ln in rows3 if ln.startswith("| `SCR-086/conflicts-stop-pair`")), "")
     if "tighten" not in pair or TIGHTEN not in pair:
         bad.append("the stop-pair frame does not state the tighten-only rule (BQ-8, C-2.6)")
+    for ruling, text in REQUIRED:
+        for n in REQUIRED_IN:
+            if text not in sec.get(n, ""):
+                bad.append(f"section {n} lacks the required {ruling} sentence: {text[:40]}…")
     if re.search(r"Apply (?:arms|also arms)", spec):
         bad.append("the resolver must never arm (BQ-17)")
     # SC-10's clause (BQ-7): the F18 row applies the tighter of the two stop moves (a long: higher)
@@ -436,6 +474,8 @@ def gates(
         row1 = next((ln for ln in s4 if "row 1" in ln and "→" in ln), "")
         if f"→ {tighter}" not in row1 or f"→ {looser}" in row1:
             bad.append(f"the readable row must apply the tighter stop move {tighter} (SC-10)")
+    else:
+        bad.append("the memo's F18 example no longer parses: the SC-10 row gate cannot run")
     warns, fails = cite_check(spec)
     return bad + fails, warns
 
@@ -458,8 +498,11 @@ def selftest(
     bad, warns = gates(spec, hand, memo, facts)
     out, ok = [f"spec: {'pass' if not bad else 'FAIL ' + str(bad)}"], not bad
     for name, (old, new, want) in MUTATIONS.items():
-        mutated = mutate(spec, old, new)
-        b2, w2 = gates(mutated, hand, memo, facts) if mutated != spec else (bad, warns)
+        if old == "F18-GONE":  # the memo's sentence stops parsing: the gate must not fail open
+            b2, w2 = gates(spec, hand, memo, {**facts, "f18": {}})
+        else:
+            mutated = mutate(spec, old, new)
+            b2, w2 = gates(mutated, hand, memo, facts) if mutated != spec else (bad, warns)
         got = "FAIL" if len(b2) > len(bad) else "WARN" if len(w2) > len(warns) else "pass"
         ok = ok and got == want
         out.append(f"mutation {name}: {got} (expected {want})")
@@ -586,8 +629,9 @@ def main(argv: list[str]) -> int:
     alpha = float(resolve(themes["dark"], "opacity.disabled"))
     comp: dict[str, float] = {}
     for th, t in themes.items():
-        primary, overlay = resolve(t, "color.action.primary.default"), resolve(
-            t, "color.surface.overlay"
+        primary, overlay = (
+            resolve(t, "color.action.primary.default"),
+            resolve(t, "color.surface.overlay"),
         )
         fill = composite(primary, overlay, alpha)
         comp[th] = round(
@@ -620,7 +664,8 @@ def main(argv: list[str]) -> int:
     out.append(
         "OK — CA-27 / CA-29 verbatim, memo rows byte-equal by status, the #4118 string, every "
         "shipped code mapped, no sentence over 80 or with exception text, no banned UI word, no "
-        "private path, ids resolve, cites found, the stop pair tighten-only, no arm here"
+        "private path, ids resolve, cites found, the stop pair tighten-only, BQ-8 / BQ-17 "
+        "sentences present, every 24 §8.6 code mapped, no arm here"
         if not bad
         else "\n".join("FAIL " + b for b in bad)
     )
