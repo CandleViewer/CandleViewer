@@ -9,9 +9,10 @@ high-contrast (`themes.json` layering) against the role's bar; `rejected-*`, `de
 (3) the pure arithmetic the boards quote (the TWAP schedule, the iceberg floor, the chase bound and
 the rate projections); (4) the plan facts the frames quote, parsed from text (`22` bounds vs `24`
 defaults, the `24` defaults the frames override, the two catalogue validation strings, the three
-memo caveats); (5) the copy gates on the spec, the reduce-only CMP-158 sentence, and every
-`file:line` the spec cites by number (the row text must still sit there); (6) the counts the
-boards and the draft quote. Exit 1 on a gated FAIL or a failed gate.
+memo caveats); (5) the copy gates on the spec, the reduce-only CMP-158 sentence, every drawn
+override and wire difference named in D02-C7, every reused reason over E09-D09's 60 characters
+named in a C-row, and every `file:line` the spec cites by number (the row text must still sit
+there); (6) the counts the boards and the draft quote. Exit 1 on a gated FAIL or a failed gate.
 
 Usage: python3 -I docs/design/_tools/e33_d02_algo_builders_audit.py [--json] [--check]
        [--extra FILE ...]
@@ -61,7 +62,16 @@ class Facts(TypedDict):
 
 BOUND = r"(minimum|maximum|default): ([^,}\s]+)"
 # `24` defaults the frames override (D02-C7): field -> the drawn default; `24`'s own is parsed.
-DRAWN_24 = {"catch_up": "proportional", "final_market_sweep": "leave as limit (no sweep)"}
+DRAWN_24 = {
+    "catch_up": "proportional",
+    "final_market_sweep": "leave as limit (no sweep)",
+    "reprice_interval_ms": "500",
+    "max_repricings": "120 (derived: timeout / interval)",
+}
+# Drawn values `22` cannot carry (D02-C7): AlgoSpec sub-block -> field -> what the frames draw.
+DRAWN_VS_22 = {"chase": {"offset_ticks": "signed (the -1 tick example, BQ-11)"}}
+# E09-D09 :85's reason rule: one sentence, at most 60 characters, a full stop, never data.
+REASON_MAX = 60
 # Plan lines the spec cites by number at its pinned `origin/main` (`file:line` -> a substring of
 # that line; re-pinned by content at the round-1 approval fold: `24` +3 from #4358 / #4319).
 # `14` lines after SCR-066 :1545 shift by the pointer lines this PR inserts above them, so a `14`
@@ -78,19 +88,29 @@ CITED: tuple[tuple[str, int, str], ...] = (
     ("14", 1564, "stops and notifies"),
     ("14", 1567, "repriced 7 times"),
     ("14", 1568, "refuses configurations projected to exceed"),
+    ("14", 1699, "never scrolled away or covered by a modal"),
+    ("22", 263, "View-as session (read-only, #3085)"),
+    ("22", 265, "AD-F03 of the E42 threat model"),
     ("22", 281, "**Read-only.**"),
     ("22", 291, "**Protective writes (C-2.6).**"),
     ("22", 6258, "twapExit:"),
+    ("22", 17975, "offset_ticks: { type: integer, minimum: 0"),
+    ("22", 17976, "max_chases: { type: integer"),
+    ("22", 17978, "repricing_interval_ms: { type: integer"),
     ("23", 898, "`algo:{algo_id}`"),
     ("24", 2091, "### 8.8 Safety invariant"),
     ("24", 2730, "class AlgoState(BaseModel):"),
     ("24", 2826, "catch_up"),
     ("24", 2832, "`final_market_sweep` (default `true`)"),
+    ("24", 2843, "offset_ticks: int = 0"),
+    ("24", 2845, "reprice_interval_ms: int = 200"),
+    ("24", 2847, "max_repricings: int = 200"),
     ("28", 3371, "| `working` | `CHILD_CANCELLED` |"),
     ("28", 3373, "| `working` | `WS_DISCONNECT` |"),
     ("28", 3384, "| `cooling_down` | `COOLDOWN_DUE` |"),
     ("28", 3725, "| `armed` | `WS_DISCONNECT` |"),
     ("28", 3730, "| `price_blocked` | `PRICE_OK` |"),
+    ("28", 3734, "| `price_blocked` | _always_ |"),
     ("28", 3735, "| `paused` | `RESUME` |"),
     ("28", 4088, "| `working` | `RATE_BUDGET_EXHAUSTED` |"),
     ("28", 4090, "| `working` | `WS_DISCONNECT` |"),
@@ -358,6 +378,11 @@ def plan_facts() -> Facts:
             "drawn": DRAWN_24["final_market_sweep"],
         },
     }
+    for name in ("reprice_interval_ms", "max_repricings"):
+        overrides[name] = {
+            "24": defaults["ChaseParams"].get(name, "MISSING"),
+            "drawn": DRAWN_24[name],
+        }
     caveats: dict[str, str] = {}
     for k in ("TWAP", "Iceberg", "Chase"):
         m = re.search(rf"- \*\*{k}:\*\* \"(.+?)\"\n", memo, re.DOTALL)
@@ -424,6 +449,27 @@ def gates(files: list[Path], facts: Facts, spec: str) -> list[str]:
         for f, rest in frames
         if f == "SCR-066/reduce-only" and "stop.algo_builder.reduce_only" not in rest
     ]
+    c7 = next((ln for ln in spec.splitlines() if ln.startswith("| D02-C7 ")), "")
+    for name, over in facts["overrides_24"].items():
+        if over["24"] == "MISSING":
+            bad.append(f"`24`: the overridden default {name} is gone")
+        if f"`{name}`" not in c7:
+            bad.append(f"spec D02-C7: the drawn override of `24` {name} is not named")
+    for sub, fields in DRAWN_VS_22.items():
+        for name in fields:
+            if "minimum 0" not in facts["bounds_22"].get(sub, {}).get(name, ""):
+                bad.append(f"`22` {sub}.{name}: minimum 0 gone (re-read D02-C7)")
+            if f"`{sub}.{name}`" not in c7:
+                bad.append(f"spec D02-C7: the drawn {sub}.{name} vs `22` is not named")
+    c_rows = "\n".join(ln for ln in spec.splitlines() if ln.startswith("| D02-C"))
+    for key, text in re.findall(
+        r"^\| `(lockout|frozen|algo\.submit\.link_down)` +\| \"([^\"]+)\"", deck, MULTI
+    ):
+        too_long, no_stop = len(text) > REASON_MAX, not text.endswith(".")
+        if (too_long or no_stop) and f"`{key}`" not in c_rows:
+            bad.append(
+                f"spec: reason `{key}` breaks E09-D09's rule ({len(text)} chars) with no C-row"
+            )
     bad += cited_lines()
     for f in files:
         t = f.read_text(encoding="utf-8")
