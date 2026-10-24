@@ -169,8 +169,8 @@ The workflow also runs a **canary self-test** (`python scripts/gov_self_test.py 
 replays every checker above against a deliberately-broken fixture tree under
 `scripts/tests/fixtures/self_test/` and asserts each one fails — the guard against a green `governance`
 check that has silently stopped checking anything — and a **coverage gate** over all of `scripts/**`:
-two `governance-tests` shards run the unit tests with `--cov=scripts`, and the `governance` job
-combines their data and fails under 85% (#3789). Each of its three jobs measures its own duration
+four `governance-tests` shards run the unit tests with `--cov=scripts`, and the `governance` job
+combines their data and fails under 85% (#3789, #4365). Each of its jobs measures its own duration
 against a 90 s budget, recorded as a `::notice` annotation on every run; exceeding it fails that job
 (`::error` annotation). Per-run artefacts (CODEOWNERS ownership report, backlog per-epic summary) are
 uploaded as the `governance-reports` artefact for diffable history across runs.

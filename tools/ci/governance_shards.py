@@ -9,9 +9,15 @@ ones `pytest scripts/tests scripts/gh/tests` collects: recursive, pytest's defau
 lightest shard. `WEIGHTS` holds the measured cost, in seconds, of every file that took 0.5 s or
 more (one sequential run of `pytest -n 0 --durations=0` with coverage on, setup and teardown
 included; 2026-10-24: 5,959 tests, 174 s), and any other file costs `DEFAULT_WEIGHT`, about the
-median of the rest. Refresh the table when a shard's `pytest wall time` in the job summary creeps
-up. So a new, renamed or moved file always lands in a shard, and the split is deterministic for a
-given set of files; stale weights cost balance, never coverage.
+median of the rest. So a new, renamed or moved file always lands in a shard, and the split is
+deterministic for a given set of files; stale weights cost balance, never coverage.
+
+Two rules for whoever edits the table. (a) A file that is not in the table falls to the
+lightest shard and is never dropped; `test_the_shards_partition_every_test_file` (in
+`scripts/tests/test_governance_shards.py`) asserts every governance test file maps to exactly
+one shard. (b) The pytest wall time each shard prints in its job summary is the signal to
+re-measure the table: refresh it when one shard's time creeps up.
+
 `python tools/ci/governance_shards.py 1 4` prints shard 1 of 4, one path per line, relative to
 the repository root. Stdlib only.
 """
