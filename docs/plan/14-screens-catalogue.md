@@ -1583,6 +1583,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** **Audited:** `algo.oco_created` `{symbol, legs, qty, accountIds}`, `algo.oco_leg_filled`, `algo.oco_leg_cancelled`, `algo.oco_race_resolved` `{winner, resolutionMs}`, `algo.oco_residual_detected` (high severity), `algo.oco_cancelled|completed|failed`.
 - **Design sign-off acceptance checklist:** [ ] entry+bracket and standalone-OCO variants drawn [ ] 'emulated - Bybit has no OCO' stated prominently [ ] race-resolution behaviour explained in the dialog [ ] residual-risk state (app offline during a fill) drawn with what the user must do [ ] the mandatory native SL floor is shown as always-present and non-removable [ ] validation messages drawn
 - **UX research (E32-D01):** [e32-brackets-ladders.md](../design/research/e32-brackets-ladders.md) §4 R1, R3, §7 (E32-D01; heuristic research, recommendations PROPOSED pending the owner's sessions: the bracket rendered as the server's one object with one status and one cancel, the residual-risk disclosure in three classes with an "(app-managed)" text marker instead of the `(estimated)` chip; DCR-6 against E32-D02).
+- **Design (hi-fi, OCO half):** [E33-D03.md](../design/E33/E33-D03.md) §2–§4 · [E33-D03-handoff.md](../design/E33/E33-D03-handoff.md) (E33-D03; owner approval pending; the entry pair and the standalone exit pair on E32-D02's bracket chassis, the race-resolution paragraph, the residual-risk note as a persistent note for the server-side outage cases, the plain TP + SL refusal with its route to native TP/SL, the validation messages, every gated control disabled with its visible reason; the OCO parameter model and the "app offline" key recorded as contradictions for the catalogue owner; Penpot page by name + id in the spec).
 
 ### SCR-070 — Algo monitor panel
 
@@ -1606,6 +1607,7 @@ Drag preview                Drop zones
 - **Components:** CMP-023 Progress Bar, CMP-049 Table, CMP-055 FilterBar, CMP-118 AlgoProgressCard, CMP-123 FlattenAllButton, CMP-227 EstimatedBadge.
 - **Stories:** US-ALGO-010.
 - **Design sign-off acceptance checklist:** [ ] every algo type rendered with its type-specific progress metric [ ] running / paused / degraded / completed / failed rows drawn [ ] bulk 'pause all' and 'cancel all' with a confirmation restating the count [ ] degraded banner explaining that algos suspend while the backend is reconnecting and native stops still protect [ ] empty state [ ] every control confirmed to emit an audit event
+- **Design (hi-fi):** [E33-D03.md](../design/E33/E33-D03.md) §5–§10 (E33-D03; owner approval pending; the panel and the SCR-063 Algos tab, one row per algo kind plus the orphan rows, the state vocabulary with its causes and each run's orders at Bybit, the two disconnect cases, the bulk confirmations with per-item results, the 100-row density frame; the algo control verbs and the run projection recorded as contract gaps for E33-T02; the "coalesced to 2 Hz" and audit-key lines recorded as contradictions for the catalogue owner).
 
 ### SCR-071 — Risk dashboard
 
