@@ -50,6 +50,7 @@ from candleviewer.storage.repositories.orders import (
     OutOfScope,
     ScopedOrder,
 )
+from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 
 from .classify import stop_errors, take_profit_errors
 from .commands import (
@@ -100,7 +101,6 @@ from .ports import (
     SubmitAudit,
     TradingSwitches,
 )
-from .repository import RecordedStopRepository
 from .routing import retry_after
 from .stop_ratchet import ratchet_refusal, tpsl_scope_refusal
 from .validator import Validator
@@ -110,7 +110,7 @@ __all__ = [
     "NOT_ORDER_CREATOR",
     "SETTLE_TIMEOUT_S", "TRANSITION_TIMEOUT_S", "VIEW_ONLY", "AmendTerms", "CancelReason",
     "ExitCaller", "ExitCommands", "ExitDeps", "ExitMachines", "ExitOperation", "ExitOrders",
-    "ExitOutcome", "InFlightGuard", "OrderExits", "OutcomeKind", "UnknownReason",
+    "ExitOutcome", "InFlightGuard", "LiveStops", "OrderExits", "OutcomeKind", "UnknownReason",
     "risk_increasing",
 ]  # fmt: skip
 
@@ -325,7 +325,7 @@ def risk_increasing(row: OrderRow, terms: AmendTerms) -> bool:
         return False
     raised = terms.qty is not None and terms.qty.is_finite() and terms.qty > row.qty
     moves = ((terms.price, row.price), (terms.trigger_price, row.trigger_price))
-    return raised or any(new is not None and new != old for new, old in moves)
+    return raised or any(new is not None and new.is_finite() and new != old for new, old in moves)
 
 
 class ExitMachines(Protocol):
@@ -381,6 +381,16 @@ class ExitOrders(Protocol):
     ) -> tuple[UUID, ...]: ...
 
 
+class LiveStops(Protocol):
+    """The recorded-stop repository as the exits read it: one key's records in force, for an
+    amend's ratchet (ruling Q4), and nothing it records, settles or sweeps; so this module names
+    none of the store-callers fence's surface (`test_order_submission_store_callers.py`)."""
+
+    async def live_for_key(
+        self, account_id: UUID, symbol: str, position_idx: int
+    ) -> tuple[RecordedStopRow, ...]: ...
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ExitDeps:
     """What the composition root (`oms_wiring`) builds the exits over: the facade and the command
@@ -390,7 +400,7 @@ class ExitDeps:
     machines: ExitMachines
     commands: ExitCommands
     orders: ExitOrders
-    stops: RecordedStopRepository
+    stops: LiveStops
     audit: SubmitAudit
     instruments: Instruments
     profiles: Profiles
@@ -727,6 +737,8 @@ class OrderExits:
     ) -> ExitOutcome:
         """`amendOrder`'s admission and send (module docstring) for an order `scope` returned;
         `expected_seq` is `If-Match`'s version (`api.order_etag.expected_seq`), None without one."""
+        if self._closed:
+            return _CLOSED
         row, actor, rid = scoped.order, caller.actor, caller.request_id
         held = self._d.machines.state(row.id)
         if row.provenance != "placed" or held is None or held[0] not in _AMENDABLE:
@@ -754,6 +766,8 @@ class OrderExits:
         detail = {"operation": "amend", "terms": changed, "order_link_id": row.order_link_id}
         if not await self._record(row, "orders.amend", "success", "user", detail, actor, rid):
             return _problem(503, "audit_unavailable", "The amend could not be recorded.")
+        if self._closed:  # `aclose` ran while the intent was written: nothing starts
+            return await self.deny(row, "amend", _CLOSED, actor=actor, request_id=rid)
         send = self._send(
             row, "amend", "AMEND", payload, actor=actor, request_id=rid,
             expected_seq=expected_seq, terms=taken,
@@ -763,12 +777,15 @@ class OrderExits:
     async def _checked(
         self, row: OrderRow, terms: AmendTerms
     ) -> tuple[SizedOrder, Instrument, bool] | ExitOutcome:
-        """The body (400), every rule that fails listed: the amended order, sized as it would be
-        sent, its instrument, and whether it names a TP/SL side."""
+        """The body (400), every rule that fails listed (22 `amendOrder`): Q3's and the quantity's,
+        then, on the amended terms, the stop's and the take-profit's, and, once those hold so the
+        order can be sized, the instrument's limits; `validation_failed` when rules of both kinds
+        fail. Answers the amended order, sized as it would be sent, its instrument, and whether it
+        names a TP/SL side."""
         figures = {"qty": terms.qty, "price": terms.price, "trigger_price": terms.trigger_price}
         sides = dict(terms.sides or {})
         if not sides and all(value is None for value in figures.values()):
-            return _invalid("body", "required", "Name at least one term to amend.")
+            return _invalid("body", "nothing_to_amend", "Name at least one term to amend.")
         odd = [key for key, value in figures.items() if value is not None and not value.is_finite()]
         if odd:  # as `Validator.check_order` names it: never compared
             return _invalid(odd[0], "finite", "Each term amended is a finite number.")
@@ -776,9 +793,7 @@ class OrderExits:
         rule = tpsl_scope_refusal(
             named, reduce_only=row.reduce_only, tpsl_mode=row.tpsl_mode, filled_qty=row.cum_exec_qty
         )
-        if rule is not None:
-            return _tpsl_refused(rule, sides)
-        errors: list[FieldError] = []
+        errors: list[FieldError] = [] if rule is None else [_tpsl_error(rule, sides)]
         qty = row.qty if terms.qty is None else terms.qty
         if not qty > row.cum_exec_qty:
             errors.append(
@@ -795,12 +810,14 @@ class OrderExits:
         except _UNREAD:
             return _store()
         if instrument is None or instrument.symbol != row.symbol:
-            return _invalid("symbol", "listed", "No instrument is listed under this symbol.")
+            unlisted = FieldError("symbol", "listed", "No instrument is listed under this symbol.")
+            return _refused(OrderInvalid(errors=[*errors, unlisted]))
         price = row.price if terms.price is None else terms.price
         trigger = row.trigger_price if terms.trigger_price is None else terms.trigger_price
         reference = price if price is not None else trigger
         if reference is None:
-            return _invalid("price", "required", "The order has no price to measure from.")
+            unpriced = FieldError("price", "required", "The order has no price to measure from.")
+            return _refused(OrderInvalid(errors=[*errors, unpriced]))
         side, stop, take_profit = _SIDES[row.side], row.stop_loss, row.take_profit
         effect = OrderEffect.REDUCE if row.reduce_only else OrderEffect.ENTRY
         resolver = self._d.stop_resolver
@@ -817,10 +834,10 @@ class OrderExits:
                 )  # fmt: skip
         except OrderInvalid as exc:  # a unit the resolver cannot resolve
             errors.extend(exc.errors)
-        errors += stop_errors(effect=effect, side=side, reference_price=reference, stop=stop)
-        errors += take_profit_errors(side=side, reference_price=reference, take_profit=take_profit)
-        if errors:
-            return _refused(OrderInvalid(errors=errors))
+        sided = stop_errors(effect=effect, side=side, reference_price=reference, stop=stop)
+        sided += take_profit_errors(side=side, reference_price=reference, take_profit=take_profit)
+        if sided:  # no order `SizedOrder` holds (C-2.6): the instrument's limits not judged
+            return _refused(OrderInvalid(errors=[*errors, *sided]))
         try:
             sized = SizedOrder(
                 account_id=AccountId(row.exchange_account_id), environment=self._env,
@@ -829,11 +846,17 @@ class OrderExits:
                 reduce_only=row.reduce_only, intent=row.intent, effect=effect, stop_loss=stop,
                 take_profit=take_profit,
             )  # fmt: skip
-            self._d.validator.check_terms(sized, instrument=instrument)
-        except OrderRefused as exc:
-            return _refused(exc)
         except ValueError:  # a figure `SizedOrder` itself refuses (a reference not above zero)
-            return _invalid("price", "min_price", "The amended terms are no order to send.")
+            unsized = FieldError("price", "min_price", "The amended terms are no order to send.")
+            return _refused(OrderInvalid(errors=[*errors, unsized]))
+        try:
+            self._d.validator.check_terms(sized, instrument=instrument)
+        except OrderRefused as exc:  # beside a rule above, both kinds: `validation_failed`
+            if not errors:
+                return _refused(exc)
+            errors.extend(exc.errors)
+        if errors:
+            return _refused(OrderInvalid(errors=errors))
         return sized, instrument, bool(sides)
 
     async def _ratchet(self, row: OrderRow, stop: Decimal | None) -> ExitOutcome | None:
@@ -951,12 +974,17 @@ def _text(value: Decimal) -> str:
     return out.rstrip("0").rstrip(".") if "." in out else out
 
 
-def _tpsl_refused(rule: str, sides: Mapping[str, object]) -> ExitOutcome:
-    """Q3's refusal, on the side its rule names: a clear's own, else the stop if named."""
+def _tpsl_error(rule: str, sides: Mapping[str, object]) -> FieldError:
+    """Q3's rule, on the side it names: a clear's own, else the stop if named."""
     named = "stop_loss" if "stop_loss" in sides or not sides else "take_profit"
     field = {"native_stop_required": "stop_loss", "tpsl_clear_unsupported": "take_profit"}
     message = "The order takes no such take-profit or stop-loss change."
-    return _invalid(field.get(rule, named), rule, message)
+    return FieldError(field.get(rule, named), rule, message)
+
+
+def _tpsl_refused(rule: str, sides: Mapping[str, object]) -> ExitOutcome:
+    """Q3's refusal (`_tpsl_error`)."""
+    return _refused(OrderInvalid(errors=(_tpsl_error(rule, sides),)))
 
 
 def _taken_not(kind: ExitKind, error: BaseException) -> ExitOutcome:
