@@ -106,3 +106,9 @@ pinned, because `include_pinned` covers only the purged symbol. The job result a
 while planning (shared or pinned) never reach that re-check: they are counted in the write-ahead
 record as `window.protected` and listed in `protected` (`{partition, reason}`) in the job result
 and the closing record. Poll `GET /admin/jobs/{job_id}`.
+
+## Recording stays refused on a single `/data` mount
+
+The default `CV_BARS_STATE_ROOT` is a sibling of `CV_PARQUET_ROOT`, so one `/data` mount puts both on
+the same filesystem and recording stays refused (`recording_volume_shared`, disk pressure level 3)
+until `CV_PARQUET_ROOT` is its own filesystem (`24-internal-schemas.md` §13.4.1).

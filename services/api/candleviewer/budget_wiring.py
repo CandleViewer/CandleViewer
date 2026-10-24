@@ -56,7 +56,10 @@ def logger() -> structlog.stdlib.BoundLogger:
 
 def parquet_usage(root: Path) -> tuple[int, dict[str, int]]:
     """Bytes under the cold root, and per `symbol=` partition (exact). Blocking: run off-loop.
-    Symlinks are never followed (`os.walk` default, `lstat`)."""
+    Symlinks are never followed (`os.walk` default, `lstat`). A root that is not a directory
+    (an unmounted volume) raises: it is a failed part, never a measured `(0, {})`."""
+    if not root.is_dir():
+        raise FileNotFoundError("recording root missing")
     total = 0
     per: dict[str, int] = {}
     for dirpath, _dirs, files in os.walk(root):
@@ -230,17 +233,18 @@ def _us(at: datetime) -> int:
 
 
 async def recorded_gaps(
-    repo: SqlAlchemyRecorderRepository, lo_us: int, hi_us: int
+    repo: SqlAlchemyRecorderRepository, env: str, lo_us: int, hi_us: int
 ) -> list[tuple[int, int]]:
-    """`recording_gaps` windows (all recorded symbols) overlapping `[lo_us, hi_us)`."""
+    """`recording_gaps` windows (`env`'s recorded symbols, C-2.11) overlapping `[lo_us, hi_us)`."""
     lo, hi = (datetime.fromtimestamp(t / US_PER_S, tz=UTC) for t in (lo_us, hi_us))
-    symbols = [str(r["symbol"]) for r in await repo.list_recorded()]
+    symbols = [str(r["symbol"]) for r in await repo.list_recorded(env)]
     rows = [g for s in symbols for g in await repo.gaps_in(s, lo, hi)]
     return [(_us(g["gap_start"]), _us(g["gap_end"])) for g in rows]
 
 
-async def pinned_symbols(repo: SqlAlchemyRecorderRepository) -> frozenset[str]:
-    return frozenset(str(r["symbol"]) for r in await repo.list_recorded() if r.get("pinned"))
+async def pinned_symbols(repo: SqlAlchemyRecorderRepository, env: str) -> frozenset[str]:
+    rows = await repo.list_recorded(env)
+    return frozenset(str(r["symbol"]) for r in rows if r.get("pinned"))
 
 
 def shared_volume(recording: Path, protected: Sequence[Path]) -> list[str]:
@@ -304,8 +308,8 @@ def build_disk_budget(
         env=settings.environment.value,
         config=config,
         now_us=lambda: time.time_ns() // 1_000,
-        gaps=partial(recorded_gaps, recorder_repo),
-        pinned=partial(pinned_symbols, recorder_repo),
+        gaps=partial(recorded_gaps, recorder_repo, settings.environment.value),
+        pinned=partial(pinned_symbols, recorder_repo, settings.environment.value),
         store=FileSeriesStore(root, settings.environment.value),
         recording_refused=refusal is not None,
     )
