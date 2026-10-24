@@ -23,21 +23,26 @@ from candleviewer.admin.overview.service import OverviewSnapshot, StorageHeadroo
 from candleviewer.admin.overview.slices import AdminSlice
 from candleviewer.api._generated.openapi_models import AdminOverview, HealthReport
 from candleviewer.api.health_report import render_report
+from candleviewer.health_wiring import SECRETS
 from candleviewer.observability import health_probes as probes
 from candleviewer.observability.redaction import redact_text
 
 _PAYLOADS = Path(__file__).resolve().parents[1] / "fixtures" / "admin" / "payloads"
 _DEGRADED, _OUTAGE = "health_degraded.json", "health_outage.json"
 _DOWN, _HANG = "overview_recorder_down.json", "overview_recorder_hang.json"
-_HEALTH, _OVERVIEWS = [_DEGRADED, _OUTAGE], [_DOWN, _HANG]
 _MODELS: dict[str, type[BaseModel]] = {
     _DEGRADED: HealthReport,
     _OUTAGE: HealthReport,
     _DOWN: AdminOverview,
     _HANG: AdminOverview,
 }
-#: The names a `HealthRegistry` built as `app.py` builds one reports (`app.py` adds `secrets` too).
-_PROBES = (probes.HOT_TIER_WRITE_BEHIND, probes.INGESTION, probes.BARS, probes.BARS_WRITER)
+#: Every payload is held to its producer's tests, by its model: a payload added to `_MODELS` is
+#: in one of these, and `test_every_payload_is_held_to_a_producer` fails one that is in neither.
+_HEALTH = [name for name, model in _MODELS.items() if model is HealthReport]
+_OVERVIEWS = [name for name, model in _MODELS.items() if model is AdminOverview]
+#: The names a `HealthRegistry` built as `app.py` builds one reports: the ten required components
+#: and the five more `app.py` registers. A real `GET /admin/health` sends all fifteen.
+_PROBES = (probes.HOT_TIER_WRITE_BEHIND, probes.INGESTION, SECRETS, probes.BARS, probes.BARS_WRITER)
 _REGISTRY_NAMES = {*probes.REQUIRED_COMPONENTS, *_PROBES}
 #: The overview's slices as the service reads them, and what each holds when it is `ok`.
 _SLICES = {f.name for f in fields(OverviewSnapshot)} - {"generated_at"}
@@ -78,6 +83,10 @@ def _server_keys() -> tuple[set[str], set[str]]:
 
 def test_every_payload_on_disk_has_a_model() -> None:
     assert sorted(p.name for p in _PAYLOADS.glob("*.json")) == sorted(_MODELS)
+
+
+def test_every_payload_is_held_to_a_producer() -> None:
+    assert sorted([*_HEALTH, *_OVERVIEWS]) == sorted(_MODELS)
 
 
 @pytest.mark.parametrize("name", sorted(_MODELS))
@@ -122,6 +131,22 @@ def test_a_health_payload_has_the_report_keys_the_server_sends(name: str) -> Non
 def test_every_component_of_a_health_payload_has_the_keys_the_server_sends(name: str) -> None:
     keys = _server_keys()[1]
     assert [c["name"] for c in _load(name)["components"] if set(c) != keys] == []
+
+
+@pytest.mark.parametrize("name", _HEALTH)
+def test_a_component_was_last_good_as_the_registry_stamps_it(name: str) -> None:
+    """The registry stamps `last_good_at` on a healthy or not_deployed run only: a component in
+    any other state was last good at an earlier run, or never, and one in either was good now."""
+    report = _load(name)
+    now = datetime.fromisoformat(report["server_time"])
+    good = {"healthy", "not_deployed"}
+    stamped = {
+        c["name"]: None if c["last_good_at"] is None else datetime.fromisoformat(c["last_good_at"])
+        for c in report["components"]
+    }
+    now_good = {c["name"] for c in report["components"] if stamped[c["name"]] == now}
+    assert now_good == {c["name"] for c in report["components"] if c["state"] in good}
+    assert [n for n, at in stamped.items() if at is not None and at > now] == []
 
 
 def test_the_degraded_payloads_only_component_not_healthy_is_the_degraded_private_stream() -> None:

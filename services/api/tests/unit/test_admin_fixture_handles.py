@@ -67,22 +67,38 @@ def test_no_fixture_value_is_secret_shaped(value: str) -> None:
     assert redact_text(value) == value
 
 
+#: A window of whole lines, and how far each starts after the one before, in characters. Both are
+#: far under the redactor's cut: it changes any text over 4,119 characters, secret-shaped or not, so
+#: a whole file cannot be scanned at once. Two lines less than `_WINDOW - _STEP` characters apart
+#: share a window, blank lines between them kept: the redactor reads a label's value past them.
+_WINDOW, _STEP = 2000, 500
+
+
+def _changes(text: str) -> bool:
+    return redact_text(text) != text
+
+
 def _secret_shaped_lines(text: str) -> list[int]:
-    """The first line number of each blank-line-separated paragraph of `text` that the redactor
-    changes: numbers only, so that a failure never prints the text. A paragraph is far under the
-    redactor's cut, which a whole file is not, and it keeps a label at a line's end with its value
-    on the next line together, which a line by line scan splits."""
-    found: list[int] = []
-    paragraph: list[str] = []
-    for number, line in enumerate([*text.splitlines(), ""], start=1):  # a closing blank line
-        if line.strip():
-            paragraph.append(line)
-            continue
-        joined = "\n".join(paragraph)
-        if paragraph and redact_text(joined) != joined:
-            found.append(number - len(paragraph))
-        paragraph = []
-    return found
+    """The number of each line of `text` that completes a secret-shaped text, as the redactor
+    reads it: a label's value, on the label's line or past blank lines, or a key or token shape.
+    Numbers only, so that a failure never prints the text. A single line over the cut is reported
+    too, as it fails closed."""
+    lines = text.splitlines()
+    found: set[int] = set()
+    first = 0
+    while first < len(lines):
+        last, size = first + 1, len(lines[first]) + 1
+        while last < len(lines) and size + len(lines[last]) + 1 <= _WINDOW:
+            size += len(lines[last]) + 1
+            last += 1
+        if _changes("\n".join(lines[first:last])):
+            ends = (e for e in range(first + 1, last + 1) if _changes("\n".join(lines[first:e])))
+            found.add(next(ends))  # the shortest start of the window that the redactor changes
+        start, skipped = first, 0
+        while first < last and (skipped < _STEP or first == start):
+            skipped += len(lines[first]) + 1  # on by `_STEP` characters, and one line at least
+            first += 1
+    return sorted(found)
 
 
 def test_no_readme_paragraph_is_secret_shaped() -> None:
@@ -90,9 +106,26 @@ def test_no_readme_paragraph_is_secret_shaped() -> None:
     assert flagged == []  # line numbers, never the text
 
 
-def test_the_readme_scan_catches_a_label_with_its_value_on_the_next_line() -> None:
-    text = "A fine paragraph.\n\nSee below.\npassword:\nnot-a-value-1\n"
-    assert _secret_shaped_lines(text) == [3]
+@pytest.mark.parametrize(
+    ("text", "flagged"),
+    [
+        ("A fine paragraph.\n\nSee below.\npassword:\nnot-a-value-1\n", [5]),
+        ("A fine paragraph.\n\nSee below.\npassword:\n\nnot-a-value-1\n", [6]),
+        ("A fine paragraph.\n\nSee below.\npassword:\n\n\n\nnot-a-value-1\n", [8]),
+        ("\n".join(["Plain prose."] * 400 + ["password: not-a-value-1"]), [401]),
+    ],
+    ids=["next-line", "after-a-blank-line", "after-three-blank-lines", "late-in-a-long-file"],
+)
+def test_the_readme_scan_catches_a_label_with_its_value_past_the_line_end(
+    text: str, flagged: list[int]
+) -> None:
+    assert _secret_shaped_lines(text) == flagged
+
+
+def test_the_readme_scan_does_not_flag_a_long_paragraph_for_its_length() -> None:
+    paragraph = "\n".join(f"A plain line of prose, number {i}." for i in range(300))  # over the cut
+    assert len(paragraph) > 4119
+    assert _secret_shaped_lines(paragraph) == []
 
 
 async def test_the_placeholder_hash_verifies_no_password() -> None:

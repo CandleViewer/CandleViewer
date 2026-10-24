@@ -270,6 +270,20 @@ def test_the_victim_is_the_fourth_entry() -> None:
     assert [i for i, reason in data.entries.items() if reason == FORGED] == [victim] == [ids[3]]
 
 
+@pytest.mark.parametrize("present", [ENTRIES - 1, ENTRIES + 1])
+def test_a_chain_of_fewer_or_more_than_the_fixtures_entries_is_refused_unaltered(
+    present: int,
+) -> None:
+    """The count guard of `_alter`, one entry either side of the fixture's seven: a chain of
+    another length is not the one the fixture wrote, so no victim is chosen and nothing changes."""
+    data = _data(*[None] * present)
+    conn = _Conn("test", data)
+    with pytest.raises(FixtureCheckError, match=f"holds {present} fixture entries, not {ENTRIES}"):
+        _alter(conn)
+    assert [s for s in conn.statements if "TRIGGER" in s or s.startswith("UPDATE")] == []
+    assert FORGED not in data.entries.values()
+
+
 @pytest.mark.parametrize("present", [0, 3, ENTRIES])
 async def test_only_the_missing_entries_are_written(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, present: int

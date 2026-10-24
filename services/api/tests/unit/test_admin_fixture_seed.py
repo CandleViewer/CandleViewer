@@ -219,6 +219,14 @@ _BACKUP_SPOILS = [
     (_VERIFIED, "kind", "pg_dump", "BACKUP-VERIFIED: kind is 'pg_dump', not 'pg_basebackup'"),
     (_VERIFIED, "verify_method", None, "BACKUP-VERIFIED: verify_method is None, not 'checksum'"),
     (_VERIFIED, "verified_at", None, "BACKUP-VERIFIED: verified_at is 'NULL', not 'set'"),
+    (_VERIFIED, "deleted_at", _NOW, "BACKUP-VERIFIED: deleted_at is 'set', not 'NULL'"),
+    (_FAILED, "deleted_at", _NOW, "BACKUP-VERIFY-FAILED: deleted_at is 'set', not 'NULL'"),
+    (_VERIFIED, "size_bytes", 1, "BACKUP-VERIFIED: size_bytes is 1, not 1073741824"),
+    (_FAILED, "size_bytes", None, "BACKUP-VERIFY-FAILED: size_bytes is None, not 1073741824"),
+    (_VERIFIED, "finished_at", None, "BACKUP-VERIFIED: finished_at after started_at is 'NULL'"),
+    (_FAILED, "finished_at", _NOW, "finished_at after started_at is '1:00:00', not '0:10:00'"),
+    (_FAILED, "triggered_by", "manual", "triggered_by is 'manual', not 'schedule'"),
+    (_VERIFIED, "encrypted", False, "BACKUP-VERIFIED: encrypted is False, not True"),
 ]
 
 
