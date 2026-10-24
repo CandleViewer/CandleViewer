@@ -26,6 +26,7 @@ from structlog.testing import capture_logs
 import candleviewer.replay.sessions_service as sessions_service
 import candleviewer.statechart.bindings.b12_replay as b12
 from candleviewer.replay.sessions_service import (
+    DestroyOutcome,
     ReplayChartError,
     ReplayLimits,
     ReplayQuotaExceededError,
@@ -53,6 +54,7 @@ USER_A = "0b6a4b7e-6f0e-4c1a-9a51-6a7b1c2d3e4f"
 USER_B = "5d1f8e2a-3b4c-4d5e-8f60-718293a4b5c6"
 T0 = datetime(2026, 9, 1, tzinfo=UTC)
 T1 = T0 + timedelta(hours=1)
+DONE, GONE = DestroyOutcome.DESTROYED, DestroyOutcome.GONE
 GAP = [to_us(T0) + 60_000_000, to_us(T0) + 61_000_000]  # one recorder gap inside the window
 
 
@@ -131,6 +133,7 @@ def make_env(
     *,
     cap: int = 2,
     batch: int = 50,
+    lifetime: timedelta = timedelta(hours=24),
     repo: FakeReplaySessionRepository | None = None,
     clock: FakeClock | None = None,
     **kw: Any,
@@ -139,7 +142,7 @@ def make_env(
     env = Env(clock=clock, repo=repo or FakeReplaySessionRepository(clock))
     limits = ReplayLimits(
         idle_ttl=timedelta(hours=2), max_sessions_per_user=cap, max_window=timedelta(hours=24),
-        reclaim_batch=batch,
+        reclaim_batch=batch, max_lifetime=lifetime,
     )  # fmt: skip
     env.svc = ReplaySessionService(
         env.repo, coverage=env.coverage, audit=env.audit, handles=env.handles,
@@ -157,6 +160,25 @@ async def state_in_db(env: Env, user: str, sid: str) -> ReplayState:
     row = await env.repo.get(user, sid)
     assert row is not None
     return row.state
+
+
+class FakeSleep:
+    """The service's injected timer: records each wait and moves the fake clock by it (no real
+    sleep). `after[n]` runs once the n-th wait has elapsed. The reclaim cadence parks, so a
+    started service never sweeps on its own."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        self.clock, self.waits = clock, cast(list[float], [])
+        self.after: dict[int, Callable[[], None]] = {}
+
+    async def __call__(self, seconds: float) -> None:
+        if seconds >= 60:
+            await asyncio.Event().wait()
+        self.waits.append(seconds)
+        self.clock.advance(seconds=seconds)
+        if (then := self.after.get(len(self.waits))) is not None:
+            then()
+        await asyncio.sleep(0)
 
 
 async def until(pred: Callable[[], Awaitable[bool]]) -> None:
@@ -337,16 +359,22 @@ async def test_concurrent_creates_cannot_both_pass_the_quota() -> None:
     assert len(env.handles.acquired) == 1
 
 
-async def test_seek_out_of_finished_rechecks_the_quota_rp_d03() -> None:
+@pytest.mark.parametrize(
+    ("event", "payload", "state"),
+    [("RANGE_END", None, "finished"), ("SOURCE_ERROR", {"error": "Boom"}, "error")],
+)
+async def test_seek_out_of_finished_or_error_rechecks_the_quota_rp_d03(
+    event: str, payload: dict[str, object] | None, state: str
+) -> None:
     env = make_env(cap=1)
     sid = (await env.s.create(USER_A, request(), prepare=True)).id
     await env.s.transition(USER_A, sid, "PLAY")
-    await env.s.transition(USER_A, sid, "RANGE_END")  # `finished` holds no buffer
+    await env.s.transition(USER_A, sid, event, payload)  # `finished`/`error` hold no buffer
     other = await env.repo.create(replace(request(), id=str(uuid.uuid4()), user_id=USER_A))
     await env.repo.update_state(USER_A, other.id, state=ReplayState.PAUSED)  # live elsewhere
     with pytest.raises(ReplayQuotaExceededError):
         await env.s.transition(USER_A, sid, "SEEK", SEEK_T0)
-    assert env.s.state_of(sid) == "finished"
+    assert env.s.state_of(sid) == state
 
 
 @pytest.mark.parametrize(
@@ -605,7 +633,7 @@ async def _playing(env: Env) -> str:
 async def test_destroy_of_a_playing_session_releases_its_handles_once() -> None:
     env = make_env()
     sid = await _playing(env)
-    assert await env.s.destroy(USER_A, sid) is True
+    assert await env.s.destroy(USER_A, sid) is DONE
     row = await env.repo.get(USER_A, sid)
     assert row is not None and row.state is ReplayState.DESTROYED and row.finished_at is not None
     assert env.handles.released[sid] == 1 and env.s.state_of(sid) is None
@@ -615,7 +643,7 @@ async def test_concurrent_destroys_destroy_once() -> None:
     env = make_env()
     sid = await _playing(env)
     racing = await asyncio.gather(env.s.destroy(USER_A, sid), env.s.destroy(USER_A, sid))
-    assert sorted(racing) == [False, True] and await env.s.destroy(USER_A, sid) is False
+    assert sorted(racing) == [DONE, GONE] and await env.s.destroy(USER_A, sid) is GONE
     assert env.handles.released[sid] == 1
 
 
@@ -665,25 +693,124 @@ async def test_destroy_cancels_a_buffering_session_first(monkeypatch: pytest.Mon
     monkeypatch.setitem(b12.SERVICES, "seek_and_prime", _gated(asyncio.Event()))
     env = make_env()
     sid = (await env.s.create(USER_A, request(), prepare=True)).id  # held in `buffering`
-    assert await env.s.destroy(USER_A, sid) is True  # CANCEL, then DESTROY (B12.3)
+    assert await env.s.destroy(USER_A, sid) is DONE  # CANCEL, then DESTROY (B12.3)
     assert env.handles.released[sid] == 1
     assert await state_in_db(env, USER_A, sid) is ReplayState.DESTROYED
 
 
-async def test_destroy_during_a_running_step_has_no_side_effects(
+def _stepping(monkeypatch: pytest.MonkeyPatch, gate: asyncio.Event) -> tuple[Env, FakeSleep]:
+    monkeypatch.setitem(b12.SERVICES, "emit_one_step", _gated(gate))
+    clock = FakeClock(datetime(2026, 10, 1, tzinfo=UTC))
+    env = make_env(clock=clock, sleep=(sleep := FakeSleep(clock)))
+    return env, sleep
+
+
+async def test_destroy_waits_for_a_step_that_ends_inside_the_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gate = asyncio.Event()
-    monkeypatch.setitem(b12.SERVICES, "emit_one_step", _gated(gate))
-    env = make_env()
+    env, sleep = _stepping(monkeypatch, gate)
     sid = (await env.s.create(USER_A, request(), prepare=True)).id
     await env.s.transition(USER_A, sid, "STEP")
-    with pytest.raises(ReplaySessionIllegalUpdateError):
-        await env.s.destroy(USER_A, sid)
+    sleep.after[3] = gate.set  # the step ends 150 ms into the wait
+    assert await env.s.destroy(USER_A, sid) is DONE
+    assert sum(sleep.waits) < sessions_service._STEP_WAIT_S <= 0.9
+    assert env.handles.released[sid] == 1
+    assert await state_in_db(env, USER_A, sid) is ReplayState.DESTROYED
+
+
+async def test_a_step_slower_than_the_bound_is_destroyed_when_it_ends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = asyncio.Event()
+    env, sleep = _stepping(monkeypatch, gate)
+    await env.s.start()  # the mirror task finishes the destroy
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.transition(USER_A, sid, "STEP")
+    assert await env.s.destroy(USER_A, sid) is DestroyOutcome.DESTROYING
+    assert sum(sleep.waits) == pytest.approx(sessions_service._STEP_WAIT_S)
     assert env.handles.released[sid] == 0 and env.s.state_of(sid) == "stepping"
-    assert "replay.session.destroyed" not in env.audit.actions()  # refused before the audit
+    assert "replay.session.destroyed" not in env.audit.actions()  # nothing recorded yet
+    waited = len(sleep.waits)
+    assert await env.s.destroy(USER_A, sid) is DestroyOutcome.DESTROYING  # no second wait
+    with pytest.raises(ReplaySessionIllegalUpdateError):
+        await env.s.transition(USER_A, sid, "PLAY")  # a session being destroyed takes no control
+    assert len(sleep.waits) == waited and env.s.refusals.counts == {}
     gate.set()
-    assert await env.s.destroy(USER_A, sid) is True
+
+    async def destroyed() -> bool:
+        return await state_in_db(env, USER_A, sid) is ReplayState.DESTROYED
+
+    await until(destroyed)
+    assert env.handles.released[sid] == 1 and env.s.state_of(sid) is None
+    rows = [
+        (kw["reason"], kw["actor_label"]) for a, kw in env.audit.rows if a.endswith("destroyed")
+    ]
+    assert rows == [("client", f"user:{USER_A}")]
+    assert await env.s.destroy(USER_A, sid) is GONE
+    await env.s.stop()
+
+
+async def test_stop_logs_each_destroy_still_waiting_on_a_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = asyncio.Event()
+    env, _sleep = _stepping(monkeypatch, gate)
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.transition(USER_A, sid, "STEP")
+    assert await env.s.destroy(USER_A, sid) is DestroyOutcome.DESTROYING
+    with capture_logs() as logs:
+        await env.s.stop()  # the intent is held in memory only: a restart drops it
+    pending = [e for e in logs if e["event"] == "replay_session_destroy_pending"]
+    assert pending == [
+        {"event": "replay_session_destroy_pending", "session_id": sid, "user_id": USER_A,
+         "log_level": "warning"},
+    ]  # fmt: skip
+
+
+async def test_the_sweep_retries_a_deferred_destroy_that_failed_with_its_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = asyncio.Event()
+    env, _sleep = _stepping(monkeypatch, gate)
+    await env.s.start()
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.transition(USER_A, sid, "STEP")
+    assert await env.s.destroy(USER_A, sid) is DestroyOutcome.DESTROYING
+    env.audit.fail = True  # the mirror task's completion cannot write its record
+    with capture_logs() as logs:
+        gate.set()
+
+        async def failed() -> bool:
+            return any(e["event"] == "replay_session_mirror_failed" for e in logs)
+
+        await until(failed)
+    assert env.s.state_of(sid) == "paused" and env.handles.released[sid] == 0
+    env.audit.fail = False
+    assert await env.s.reclaim_idle(env.clock()) == 1  # not idle, not old: the pending intent
+    assert await env.s.reclaim_idle(env.clock()) == 0
+    assert env.handles.released[sid] == 1
+    assert await state_in_db(env, USER_A, sid) is ReplayState.DESTROYED
+    rows = [
+        (kw["reason"], kw["actor_label"]) for a, kw in env.audit.rows if a.endswith("destroyed")
+    ]
+    assert rows == [("client", f"user:{USER_A}")]
+    await env.s.stop()
+
+
+async def test_the_sweep_waits_no_longer_than_the_bound_on_a_running_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = asyncio.Event()
+    env, sleep = _stepping(monkeypatch, gate)
+    stuck = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.transition(USER_A, stuck, "STEP")
+    idle = (await env.s.create(USER_A, request())).id
+    env.clock.advance(hours=3)
+    assert await env.s.reclaim_idle(env.clock()) == 1  # `idle` destroyed; `stuck` is destroying
+    assert await env.s.reclaim_idle(env.clock()) == 0
+    assert sum(sleep.waits) == pytest.approx(sessions_service._STEP_WAIT_S)  # one wait in all
+    assert env.s.state_of(stuck) == "stepping" and env.s.state_of(idle) is None
 
 
 class _LosesOneDestroyWrite(FakeReplaySessionRepository):
@@ -707,7 +834,7 @@ async def test_a_destroy_retry_completes_after_a_lost_write() -> None:
     sid = (await env.s.create(USER_A, request())).id
     with pytest.raises(ConnectionError):
         await env.s.destroy(USER_A, sid)
-    assert await env.s.destroy(USER_A, sid) is True  # revived from the live row, then destroyed
+    assert await env.s.destroy(USER_A, sid) is DONE  # revived from the live row, then destroyed
     assert await state_in_db(env, USER_A, sid) is ReplayState.DESTROYED
     assert env.handles.released[sid] == 2  # each acquired set released once
 
@@ -721,7 +848,7 @@ async def test_on_ended_hears_every_destroy_with_its_reason() -> None:
 
     env = make_env(on_ended=on_ended)
     sid = (await env.s.create(USER_A, request())).id
-    assert await env.s.destroy(USER_A, sid) is True
+    assert await env.s.destroy(USER_A, sid) is DONE
     env.clock.advance(hours=3)
     other = (await env.s.create(USER_A, request())).id
     env.clock.advance(hours=3)
@@ -736,7 +863,7 @@ async def test_a_failing_on_ended_listener_is_logged_by_exception_type_only() ->
     env = make_env(on_ended=on_ended)
     sid = (await env.s.create(USER_A, request())).id
     with capture_logs() as logs:
-        assert await env.s.destroy(USER_A, sid) is True
+        assert await env.s.destroy(USER_A, sid) is DONE
     failed = [e for e in logs if e["event"] == "replay_session_ended_failed"]
     assert failed == [
         {"event": "replay_session_ended_failed", "session_id": sid, "error": "RuntimeError",
@@ -756,7 +883,7 @@ async def test_a_hanging_on_ended_listener_does_not_hold_up_destroy(
     env = make_env(on_ended=on_ended)
     sid = (await env.s.create(USER_A, request())).id
     async with asyncio.timeout(2):  # an unbounded listener would hang the destroy here
-        assert await env.s.destroy(USER_A, sid) is True
+        assert await env.s.destroy(USER_A, sid) is DONE
 
 
 async def test_reclaim_idle_destroys_exactly_the_idle_set_once() -> None:
@@ -792,27 +919,84 @@ async def test_a_control_call_postpones_idle_reclaim() -> None:
     assert await env.s.reclaim_idle(env.clock()) == 0
 
 
-async def test_a_state_change_postpones_idle_reclaim() -> None:
+@pytest.mark.parametrize("loop", [False, True])
+async def test_a_state_change_the_chart_made_does_not_postpone_idle_reclaim(loop: bool) -> None:
+    env = make_env()
+    sid = (await env.s.create(USER_A, request(loop_enabled=loop), prepare=True)).id
+    await env.s.transition(USER_A, sid, "PLAY")
+    env.clock.advance(minutes=90)
+    row = await env.s.transition(USER_A, sid, "RANGE_END")  # a clock event: a new state
+    assert row.state is (ReplayState.PAUSED if loop else ReplayState.FINISHED)  # loop: rewound
+    env.clock.advance(minutes=31)
+    assert await env.s.reclaim_idle(env.clock()) == 1
+
+
+async def test_a_speed_change_the_chart_made_does_not_postpone_idle_reclaim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def slow_clock(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
+        context["speed"] = context["speed"] / 2  # what the replay clock does on a slow reader
+
+    monkeypatch.setitem(b12.ACTIONS, "slow_clock", slow_clock)
     env = make_env()
     sid = (await env.s.create(USER_A, request(), prepare=True)).id
     await env.s.transition(USER_A, sid, "PLAY")
     env.clock.advance(minutes=90)
-    await env.s.transition(USER_A, sid, "RANGE_END")  # a clock event: no touch, a new state
+    row = await env.s.transition(USER_A, sid, "CONSUMER_SLOW")
+    assert row.speed == Decimal("0.5")
+    env.clock.advance(minutes=31)
+    assert await env.s.reclaim_idle(env.clock()) == 1
+
+
+async def test_a_client_speed_change_postpones_idle_reclaim() -> None:
+    env = make_env()
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.transition(USER_A, sid, "PLAY")
+    env.clock.advance(minutes=90)
+    await env.s.transition(USER_A, sid, "SET_SPEED", {"speed": 2})
     env.clock.advance(minutes=60)
     assert await env.s.reclaim_idle(env.clock()) == 0
-
-
-async def test_one_failing_session_does_not_stop_the_reclaim_sweep(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setitem(b12.SERVICES, "emit_one_step", _gated(asyncio.Event()))
-    env = make_env()
-    stuck = (await env.s.create(USER_A, request(), prepare=True)).id
-    await env.s.transition(USER_A, stuck, "STEP")  # a step that never completes refuses DESTROY
-    idle = (await env.s.create(USER_A, request())).id
-    env.clock.advance(hours=3)
+    env.clock.advance(minutes=61)
     assert await env.s.reclaim_idle(env.clock()) == 1
-    assert env.s.state_of(stuck) == "stepping" and env.s.state_of(idle) is None
+
+
+async def test_a_session_past_the_max_lifetime_is_destroyed_despite_control_calls() -> None:
+    env = make_env()
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    for _ in range(24):
+        env.clock.advance(hours=1)
+        await env.s.transition(USER_A, sid, "STEP")  # the client is active the whole time
+        assert await env.s.reclaim_idle(env.clock()) == 0
+    env.clock.advance(seconds=1)
+    await env.s.transition(USER_A, sid, "STEP")
+    assert await env.s.reclaim_idle(env.clock()) == 1
+    assert await env.s.reclaim_idle(env.clock()) == 0  # INV-B12-e
+    rows = [
+        (kw["reason"], kw["actor_label"]) for a, kw in env.audit.rows if a.endswith("destroyed")
+    ]
+    assert rows == [("max_lifetime", "system:replay-reclaimer")]
+    assert env.handles.released[sid] == 1
+
+
+async def test_a_row_past_both_cutoffs_gets_one_reason_in_bounded_batches() -> None:
+    env = make_env(cap=3, batch=2)
+    for _ in range(3):
+        await env.s.create(USER_A, request())
+    env.clock.advance(hours=25)  # idle for 25 h and older than 24 h: the lifetime wins
+    assert [await env.s.reclaim_idle(env.clock()) for _ in range(3)] == [2, 1, 0]
+    reasons = [kw["reason"] for a, kw in env.audit.rows if a == "replay.session.destroyed"]
+    assert reasons == ["max_lifetime"] * 3
+
+
+async def test_one_failing_session_does_not_stop_the_reclaim_sweep() -> None:
+    env = make_env(repo=_LosesOneDestroyWrite())
+    sids = {(await env.s.create(USER_A, request())).id for _ in range(2)}
+    env.clock.advance(hours=3)
+    with capture_logs() as logs:
+        assert await env.s.reclaim_idle(env.clock()) == 1  # one destroy write is lost
+    skipped = [e["session_id"] for e in logs if e["event"] == "replay_session_reclaim_skipped"]
+    assert len(skipped) == 1 and set(skipped) < sids
+    assert await env.s.reclaim_idle(env.clock()) == 1  # the next sweep retries it
 
 
 async def test_the_reclaimer_runs_as_a_tracked_task_until_stopped() -> None:

@@ -898,6 +898,7 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_BACKUP_ROOT`                 | path   | unset                     | process | the backup volume, written only by the backup engine and the only place artefacts are read (E42-T05); rules below |
 | `CV_REPLAY_IDLE_TTL_S`           | float  | `7200`                    | process | replay session with no control call this long is DESTROYed (`idle_reclaim`)                                         |
 | `CV_REPLAY_RECLAIM_INTERVAL_S`   | float  | `60`                      | process | idle-reclaim sweep cadence (one bounded batch per sweep)                                                            |
+| `CV_REPLAY_MAX_LIFETIME_S`       | float  | `86400`                   | process | replay session older than this is DESTROYed (`max_lifetime`) whatever its activity; 3600-604800, never off          |
 | `CV_REPLAY_MAX_SESSIONS_PER_USER` | int   | `2`                       | process | open replay sessions per user; create / `PREPARE` past it refused                                                   |
 | `CV_REPLAY_MAX_WINDOW_HOURS`     | int    | `24`                      | process | replay window cap; a longer window is a 422 before any I/O                                                          |
 | `CV_REPLAY_LOOP_SHARE`           | float  | `0.25`                    | process | replay's share of the event loop, all sessions (#2668 G1, C-2.17); above 0, at most 0.5, no off value (C-4.14)      |

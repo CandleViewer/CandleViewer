@@ -13,9 +13,10 @@ Row mirror (24 §13.7): `replay_sessions.state` takes every chart state. B12 dec
 only on `playing`, so the row follows the interpreter's state-entry notification (`subscribe`):
 written before a control call returns, and by one tracked mirror task for invoke completions that
 arrive later. The bindings publish plain values through a per-interpreter hook; the service audits
-`error` from it. Idle reclaim and client destroy both send `DESTROY` (#624 decision): `destroyed` is
-the only final state, so the paper account and source handles are released exactly once
-(INV-B12-e) and a second destroy is a no-op.
+`error` from it. Idle reclaim, the maximum lifetime and client destroy all send `DESTROY` (#624
+decision): `destroyed` is the only final state, so the paper account and source handles are
+released exactly once (INV-B12-e) and a second destroy is a no-op. Idle means no client call:
+changes the chart makes on its own (a clock event, a slowdown) never postpone the reclaim (G6).
 
 M12 may not import `recorder`, `audit` or `paper` (CONSTITUTION §3): coverage, audit, the paper
 account grant and the session handles are ports the composition root injects.
@@ -31,6 +32,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any, Final, Protocol, cast
 
 import structlog
@@ -72,7 +74,7 @@ _SETTLE_YIELDS: Final = 64
 _IO_TIMEOUT_S: Final = 10.0
 #: Actor of chart-observed rows (`replay.session.error`): the chart, not a user or the reclaimer.
 _CHART_ACTOR: Final = "system:replay-chart"
-#: Actor of `replay.session.destroyed{reason=idle_reclaim}`.
+#: Actor of `replay.session.destroyed{reason=idle_reclaim|max_lifetime}`.
 _RECLAIM_ACTOR: Final = "system:replay-reclaimer"
 _SYMBOL: Final = re.compile(r"[A-Z0-9]{4,20}")
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
@@ -84,7 +86,11 @@ _EVENTS: Final[dict[str, frozenset[str]]] = {
     "RANGE_END": frozenset(), "CONSUMER_SLOW": frozenset(), "SOURCE_ERROR": frozenset({"error"}),
 }  # fmt: skip
 _SOURCE_EVENTS: Final = frozenset({"RANGE_END", "CONSUMER_SLOW", "SOURCE_ERROR"})
-_REASONS: Final = frozenset({"client", "idle_reclaim"})
+_REASONS: Final = frozenset({"client", "idle_reclaim", "max_lifetime"})
+#: How long `destroy` waits for a running step (B12 handles no event in `stepping`) before it
+#: answers `DESTROYING`: under AC-12's 1 s. Polled through the injected `sleep`.
+_STEP_WAIT_S: Final = 0.9
+_STEP_POLL_S: Final = 0.05
 #: States with an invoked service (`seek`, `step`) whose completion arrives later (B12.4).
 _INVOKING: Final = frozenset({"buffering", "stepping"})
 
@@ -169,7 +175,7 @@ class SnapshotSource(Protocol):
     async def load(self, key: MachineKey) -> SealedSnapshot | None: ...
 
 
-#: `(session_id, user_id, reason)` once a session is destroyed (`client` | `idle_reclaim`): the
+#: `(session_id, user_id, reason)` once a session is destroyed (one of `_REASONS`): the
 #: seam E26-T05's WS layer uses to revoke the session's subscriptions with
 #: `replay_session_ended` (#624 reclaim AC). No-op until it is wired; failures are logged.
 SessionEnded = Callable[[str, str, str], Awaitable[None]]
@@ -184,6 +190,22 @@ class ReplayLimits:
     max_window: timedelta
     reclaim_interval_s: float = 60.0
     reclaim_batch: int = 50
+    #: `CV_REPLAY_MAX_LIFETIME_S`: a session older than this is destroyed whatever its activity.
+    max_lifetime: timedelta = timedelta(days=1)
+
+
+class DestroyOutcome(StrEnum):
+    """What `destroy` did. `DESTROYING`: a step was still running after `_STEP_WAIT_S`; the
+    session takes no more control calls and is destroyed when the step ends. PROPOSED, not in
+    `22-api-openapi.yaml` yet (C-6.1): a `DELETE` route answers 202 for it, 204 for `DESTROYED`.
+    Residual (G6): the DESTROYING intent is held in memory; a process restart drops it (`stop`
+    logs `replay_session_destroy_pending`); the sweep recovers the session within `idle_ttl`,
+    recorded as `idle_reclaim`. The durable mark (a column or an accepted-destroy audit action)
+    is E26-T05's, before the `DELETE` route answers 202."""
+
+    DESTROYED = "destroyed"
+    DESTROYING = "destroying"
+    GONE = "gone"  # already destroyed: a no-op (INV-B12-e)
 
 
 def to_us(ts: datetime) -> int:
@@ -246,6 +268,8 @@ class _Live:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     unsubscribe: Callable[[], None] | None = None
     done: bool = False
+    #: The reason of a destroy waiting for a running step to end (`DestroyOutcome.DESTROYING`).
+    destroying: str | None = None
 
     @property
     def key(self) -> str:
@@ -340,6 +364,10 @@ class ReplaySessionService:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         for live in list(self._live.values()):
+            if live.destroying and not live.done:  # the intent is memory-only (G6 residual)
+                logger().warning(
+                    "replay_session_destroy_pending", session_id=live.id, user_id=live.user_id
+                )
             await self._retire(live, persist=True)
 
     @property
@@ -376,6 +404,8 @@ class ReplaySessionService:
                     async with live.lock:
                         if self._live.get(sid) is live:
                             await self._sync(live)
+                            if live.destroying and leaf_of(live.interp) != "stepping":
+                                await self._destroy(live, live.destroying)  # the step ended
                 except Exception as exc:
                     logger().error(
                         "replay_session_mirror_failed", session_id=sid, error=type(exc).__name__
@@ -453,7 +483,7 @@ class ReplaySessionService:
         if live is None:
             raise ReplaySessionIllegalUpdateError(_canon(session_id) or "", ReplayState.DESTROYED)
         async with live.lock:
-            if live.done:
+            if live.done or live.destroying:  # being destroyed: no more control
                 raise ReplaySessionIllegalUpdateError(live.id, ReplayState.DESTROYED)
             await self._settle(live)  # a queued invoke completion lands before `can()` reads
             facts = b12.facts(live.interp.context)
@@ -483,61 +513,99 @@ class ReplaySessionService:
                     raise
                 return await self._sync(live, control=event not in _SOURCE_EVENTS)
 
-    async def destroy(self, user_id: str, session_id: str, *, reason: str = "client") -> bool:
-        """Send `DESTROY`, audited write-ahead with `reason` (`client` | `idle_reclaim`).
+    async def destroy(
+        self, user_id: str, session_id: str, *, reason: str = "client"
+    ) -> DestroyOutcome:
+        """Send `DESTROY`, audited write-ahead with `reason` (one of `_REASONS`).
 
         B12.3 handles `DESTROY` only in created/paused/finished/error, so a `playing` session is
-        paused and a `buffering` one cancelled first (a `stepping` step is let finish; if it has
-        not, this refuses and the next sweep retries). The handles are released exactly once
-        and the interpreter is always retired, even when mirroring the row fails: the row then
-        stays live and a retry revives and destroys it. `on_ended` is told in every case.
-        False when already destroyed (INV-B12-e)."""
+        paused and a `buffering` one cancelled first. B12 handles nothing in `stepping`, so a
+        running step gets up to `_STEP_WAIT_S` to end; a slower one returns `DESTROYING`, takes no
+        more control calls, and the mirror task destroys it (same audit and release path) once
+        the step ends. The handles are released exactly once and the interpreter is always
+        retired, even when mirroring the row fails: the row then stays live and a retry revives
+        and destroys it. `on_ended` is told in every case. `GONE` when already destroyed.
+
+        The bounded wait holds `live.lock`, so the mirror task and the serial sweep can be held up
+        by up to `_STEP_WAIT_S` per stepping session (no deadlock: nothing else is awaited under
+        it). The DESTROYING intent is held in memory; a process restart drops it; the sweep
+        recovers the session within `idle_ttl`, recorded as `idle_reclaim` (durable mark: E26-T05,
+        see `DestroyOutcome`). Routes never pass `reason`: it is for the reclaimer only."""
         if reason not in _REASONS:
-            raise ReplaySessionValidationError("reason must be 'client' or 'idle_reclaim'")
+            raise ReplaySessionValidationError(f"reason must be one of {sorted(_REASONS)}")
         live = await self._owned(user_id, session_id)
         if live is None:
-            return False
+            return DestroyOutcome.GONE
         async with live.lock:
             if live.done:
-                return False
-            interp = live.interp
+                return DestroyOutcome.GONE
             await self._settle(live)
-            if interp.can("PAUSE"):
-                await self._send_replay(live, "PAUSE")
-            if interp.can("CANCEL"):
-                await self._send_replay(live, "CANCEL")
-            if not interp.can("DESTROY"):
-                raise ReplaySessionIllegalUpdateError(live.id, ReplayState(leaf_of(interp)))
-            after = {"symbol": live.symbol, "state": "destroyed", "reason": reason}
-            actor = None if reason == "client" else _RECLAIM_ACTOR
-            await self._emit("replay.session.destroyed", live.id, live.user_id, after, actor=actor)
-            await self._send_replay(live, "DESTROY", reason=reason)
-            live.done = True
-            try:
-                await self._release(live)
-                await self._sync(live)
-            finally:
-                await self._retire(live)
-                await self._ended(live, reason)
-        return True
+            if live.destroying is None:  # a pending destroy has had its wait
+                for _ in range(round(_STEP_WAIT_S / _STEP_POLL_S)):
+                    if leaf_of(live.interp) != "stepping":
+                        break
+                    await self._sleep(_STEP_POLL_S)
+                    await self._settle(live)
+            if leaf_of(live.interp) == "stepping":
+                live.destroying = live.destroying or reason
+                return DestroyOutcome.DESTROYING
+            await self._destroy(live, live.destroying or reason)
+        return DestroyOutcome.DESTROYED
+
+    async def _destroy(self, live: _Live, reason: str) -> None:
+        """Wind down, audit, `DESTROY`, release, mirror, retire (caller holds `live.lock`)."""
+        interp = live.interp
+        if interp.can("PAUSE"):
+            await self._send_replay(live, "PAUSE")
+        if interp.can("CANCEL"):
+            await self._send_replay(live, "CANCEL")
+        if not interp.can("DESTROY"):
+            raise ReplaySessionIllegalUpdateError(live.id, ReplayState(leaf_of(interp)))
+        after = {"symbol": live.symbol, "state": "destroyed", "reason": reason}
+        actor = None if reason == "client" else _RECLAIM_ACTOR
+        await self._emit("replay.session.destroyed", live.id, live.user_id, after, actor=actor)
+        await self._send_replay(live, "DESTROY", reason=reason)
+        live.done = True
+        try:
+            await self._release(live)
+            await self._sync(live)
+        finally:
+            await self._retire(live)
+            await self._ended(live, reason)
 
     async def reclaim_idle(self, now: datetime) -> int:
-        """Destroy (`idle_reclaim`) every non-terminal session with no control call for
-        `idle_ttl`, read from the repository (`list_non_terminal_since`), so a row this process
-        does not hold (one left in created/finished/error by a restart) is revived and destroyed
-        through `destroy` like any other. The row's `updated_at` is the one activity mark (every
-        control call and state change writes it). One bounded batch per call; a destroyed row
-        is no longer listed, so a second pass is a no-op (INV-B12-e). Returns the count."""
-        cutoff = now - self._limits.idle_ttl
-        batch = self._limits.reclaim_batch
-        idle = await self._io("repository", self._repo.list_non_terminal_since(cutoff, batch))
-        reclaimed = 0
-        for row in idle:
+        """Destroy every non-terminal session idle for `idle_ttl` (`idle_reclaim`) or older than
+        `max_lifetime` (`max_lifetime`, which wins when both hold), from one bounded repository
+        read (`list_reclaimable`). A row this process does not hold (one left in
+        created/finished/error by a restart) is revived and destroyed through `destroy` like any
+        other. `updated_at` is the last client call (`_sync`). A destroyed row is no longer
+        listed, so a second pass is a no-op (INV-B12-e). Held sessions with a pending destroy
+        whose step has ended (its completion failed) are retried first, with their own reason,
+        so a failed completion waits at most one sweep interval. Returns the count destroyed."""
+        born = now - self._limits.max_lifetime
+        pending = [
+            (live.user_id, live.id, live.destroying)
+            for live in list(self._live.values())  # bounded by the per-user quota
+            if live.destroying and not live.done and leaf_of(live.interp) != "stepping"
+        ]
+        due = self._repo.list_reclaimable(
+            now - self._limits.idle_ttl, born, self._limits.reclaim_batch
+        )
+        listed = [
+            (r.user_id, r.id, "max_lifetime" if r.created_at < born else "idle_reclaim")
+            for r in await self._io("repository", due)
+        ]
+        reclaimed, seen = 0, set[str]()
+        for uid, sid, reason in pending + listed:
+            if sid in seen:  # once per pass; `destroy` itself is exactly-once (INV-B12-e)
+                continue
+            seen.add(sid)
             try:
-                reclaimed += await self.destroy(row.user_id, row.id, reason="idle_reclaim")
-            except Exception as exc:  # e.g. a step still running: the next sweep retries
+                outcome = await self.destroy(uid, sid, reason=reason)
+                reclaimed += outcome is DestroyOutcome.DESTROYED
+            except Exception as exc:  # e.g. a lost row write: the next sweep retries
                 logger().warning(
-                    "replay_session_reclaim_skipped", session_id=row.id, error=type(exc).__name__
+                    "replay_session_reclaim_skipped", session_id=sid, error=type(exc).__name__
                 )
         return reclaimed
 
@@ -705,15 +773,18 @@ class ReplaySessionService:
                 )
                 live.cursor = cursor
             if (speed := Decimal(str(facts["speed"]))) != live.speed:
-                await self._io("repository", repo.update_speed(uid, sid, speed=speed))
+                await self._io(
+                    "repository", repo.update_speed(uid, sid, speed=speed, activity=control)
+                )
                 live.speed = speed
-            if control:  # a control call is activity even when the state comes back the same
+            if control:  # a client call is activity even when the state comes back the same
                 await self._io("repository", repo.touch(uid, sid, now))
         if state is not live.state:
             error = str(facts["error"] or "source_error") if state is ReplayState.ERROR else None
-            await self._io(
-                "repository", repo.update_state(uid, sid, state=state, error_message=error)
-            )
+            change = repo.update_state(
+                uid, sid, state=state, error_message=error, activity=control
+            )  # a change the chart made alone (clock event, invoke completion) is not activity
+            await self._io("repository", change)
             logger().info(
                 "replay_session_transition", session_id=sid, user_id=uid, symbol=live.symbol,
                 from_state=live.state.value, to_state=state.value,

@@ -66,10 +66,12 @@ ROW_COLUMNS = (
     _C.bookmarks, _C.loop_enabled, _C.events_emitted, _C.gap_warnings, _C.error_message,
     _C.created_at, _C.updated_at, _C.finished_at,
 )  # fmt: skip
-IDLE_COLUMNS = (_C.id, _C.user_id, _C.symbol, _C.state, _C.paper_account_id, _C.updated_at)
+IDLE_COLUMNS = (
+    _C.id, _C.user_id, _C.symbol, _C.state, _C.paper_account_id, _C.updated_at, _C.created_at,
+)  # fmt: skip
 
 #: Statements allowed to omit the `user_id` filter (see module docstring); tested.
-UNSCOPED = frozenset({"idle_statement", "open_idle_statement"})
+UNSCOPED = frozenset({"idle_statement", "reclaim_statement"})
 
 _LIVE_VALUES = sorted(s.value for s in LIVE_STATES)
 _TERMINAL_VALUES = sorted(s.value for s in TERMINAL_STATES)
@@ -145,13 +147,16 @@ def open_count_statement(uid: uuid.UUID) -> sa.Select[Any]:
     )
 
 
-def open_idle_statement(before: datetime, limit: int) -> sa.Select[Any]:
-    """System-only sweep over every non-terminal row. No index covers `created`/`finished`/`error`
-    by `updated_at`, so Postgres scans the table: one bounded batch per sweep interval over a
-    table of the owner's and a few managers' sessions."""
+def reclaim_statement(
+    idle_before: datetime, created_before: datetime, limit: int
+) -> sa.Select[Any]:
+    """System-only sweep over every non-terminal row past either cutoff (idle or lifetime). No
+    index covers `created`/`finished`/`error` by `updated_at`, so Postgres scans the table: one
+    bounded batch per sweep interval over a table of the owner's and a few managers' sessions."""
+    past = sa.or_(_C.updated_at < idle_before, _C.created_at < created_before)
     return (
         sa.select(*IDLE_COLUMNS)
-        .where(_C.state.not_in(_TERMINAL_VALUES), _C.updated_at < before)
+        .where(_C.state.not_in(_TERMINAL_VALUES), past)
         .order_by(_C.updated_at, _C.id)
         .limit(limit)
     )
@@ -187,6 +192,7 @@ def _to_idle(m: Mapping[Any, Any]) -> IdleReplaySession:
         state=ReplayState(m["state"]),
         paper_account_id=None if m["paper_account_id"] is None else str(m["paper_account_id"]),
         updated_at=m["updated_at"],
+        created_at=m["created_at"],
     )
 
 
@@ -311,6 +317,7 @@ class SqlAlchemyReplaySessionRepository:
         expected_state: ReplayState | None = None,
         finished: bool = False,
         error_message: str | None = None,
+        activity: bool = True,
     ) -> ReplaySessionRow:
         target = ReplayState(state)
         expected = None if expected_state is None else ReplayState(expected_state)
@@ -318,12 +325,13 @@ class SqlAlchemyReplaySessionRepository:
         finished_at, message = state_columns(
             target, now=now, finished=finished, error_message=error_message
         )
-        values = {
+        values: dict[str, Any] = {
             "state": target.value,
-            "updated_at": _bump(now),
             "finished_at": finished_at,
             "error_message": message,
         }
+        if activity:
+            values["updated_at"] = _bump(now)
         return _to_row(await self._write(user_id, session_id, values, expected))
 
     async def update_cursor(
@@ -345,9 +353,11 @@ class SqlAlchemyReplaySessionRepository:
         await self._write(user_id, session_id, values, columns=(_C.id,))
 
     async def update_speed(
-        self, user_id: str, session_id: str, *, speed: Decimal
+        self, user_id: str, session_id: str, *, speed: Decimal, activity: bool = True
     ) -> ReplaySessionRow:
-        values = {"speed": speed, "updated_at": _bump(self._clock())}
+        values: dict[str, Any] = {"speed": speed}
+        if activity:
+            values["updated_at"] = _bump(self._clock())
         return _to_row(await self._write(user_id, session_id, values))
 
     async def touch(self, user_id: str, session_id: str, at: datetime) -> None:
@@ -374,12 +384,14 @@ class SqlAlchemyReplaySessionRepository:
             result = await uow.session.execute(idle_statement(before, clamp_limit(limit)))
             return [_to_idle(m) for m in result.mappings()]
 
-    async def list_non_terminal_since(
-        self, before: datetime, limit: int
+    async def list_reclaimable(
+        self, idle_before: datetime, created_before: datetime, limit: int
     ) -> list[IdleReplaySession]:
-        require_aware(before, "before")
+        require_aware(idle_before, "idle_before")
+        require_aware(created_before, "created_before")
+        stmt = reclaim_statement(idle_before, created_before, clamp_limit(limit))
         async with self._relational.unit_of_work() as uow:
-            result = await uow.session.execute(open_idle_statement(before, clamp_limit(limit)))
+            result = await uow.session.execute(stmt)
             return [_to_idle(m) for m in result.mappings()]
 
     async def delete(self, user_id: str, session_id: str) -> bool:
@@ -432,5 +444,5 @@ async def _refuse(
 __all__ = [
     "IDLE_COLUMNS", "ROW_COLUMNS", "UNSCOPED", "SqlAlchemyReplaySessionRepository",
     "count_statement", "get_statement", "idle_statement", "list_statement", "open_count_statement",
-    "open_idle_statement", "update_statement",
+    "reclaim_statement", "update_statement",
 ]  # fmt: skip
