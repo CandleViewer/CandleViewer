@@ -1,14 +1,15 @@
 """The admission the order routes share (E29-T04 #913; 24-internal-schemas.md Sec.8.4).
 
-`POST /orders` (`api/orders.py`) and the exit routes (`DELETE` / `PATCH /orders/{orderId}`,
-`POST /orders/cancel-all`) admit a request the same way, so these steps live once, here
-(#913 slice 4, S4-D1): the principal (`resolve_principal`), step 2's RBAC refusal
-(`rbac_refusal`), a body read under its cap and parsed once (`read_capped`, `parse_json_object`),
-the `Idempotency-Key` (`idempotency_key`), the 24 h record of first `2xx` answers (`replay_key`,
-`replay_cached`; the fingerprint is `api/idempotency.request_fingerprint`), the problems no
-`PROBLEMS` row names (`problem`), the records' actor (`submit_actor`) and an `rbac.denied` record
-naming the account it concerns (`OnAccount`). No log line, exception or problem carries the key or
-the fingerprint (C-12.6).
+`POST /orders` (`api/orders.py`) admits a request through these steps, and the exit routes
+stacked on this module will too (`DELETE` / `PATCH /orders/{orderId}`, S4-D1b and S4-D2b;
+`POST /orders/cancel-all`, S4-E), so they live once, here (#913 slice 4, S4-D1a): the principal
+(`resolve_principal`), step 2's RBAC refusal (`rbac_refusal`), a body read under its cap and
+parsed once (`read_capped`, `parse_json_object`), the `Idempotency-Key` (`idempotency_key`), the
+24 h record of first `2xx` answers (`replay_key`, `replay_cached`; the fingerprint is
+`api/idempotency.request_fingerprint`), the problems no `PROBLEMS` row names (`problem`), a 422's
+field errors through the redaction rules (`field_errors`), the records' actor (`submit_actor`)
+and an `rbac.denied` record naming the account it concerns (`OnAccount`). No log line, exception
+or problem carries the key or the fingerprint (C-12.6).
 """
 
 from __future__ import annotations

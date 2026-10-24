@@ -292,13 +292,13 @@ def make_orders_router(
         error: OmsError, caller: _Caller, step: str, env: str | None
     ) -> Response:
         """A refusal from step 4 on: counted and recorded before it is answered (C-2.9)."""
-        problem = problem_for(error)
+        refusal = problem_for(error)
         gate = error.reason if isinstance(error, OrderEntryRefused) else None
         record = RequestRecord(
             DISABLED_BY_POLICY if gate else SUBMIT_ACTION, caller.account_id, "exchange_account",
-            caller.account_id, "denied", "error" if problem.status >= 500 else "warning",
-            gate or problem.code, caller.actor,
-            {"step": step, "code": problem.code, "environment": env}, caller.request_id,
+            caller.account_id, "denied", "error" if refusal.status >= 500 else "warning",
+            gate or refusal.code, caller.actor,
+            {"step": step, "code": refusal.code, "environment": env}, caller.request_id,
         )  # fmt: skip
         try:
             async with asyncio.timeout(STORE_TIMEOUT_S):
@@ -306,9 +306,9 @@ def make_orders_router(
         except Exception as exc:  # no refusal is answered unrecorded; the key stays unbound
             rejected.labels(PROBLEMS[AuditNotDurable].code).inc()
             failure = type(exc).__name__
-            _log().error("orders_refusal_unrecorded", code=problem.code, step=step, error=failure)
+            _log().error("orders_refusal_unrecorded", code=refusal.code, step=step, error=failure)
             return order_problem(AuditNotDurable("the refusal's record did not land"))
-        rejected.labels(problem.code).inc()
+        rejected.labels(refusal.code).inc()
         return order_problem(error, pager=paging)
 
     async def scope_denied(caller: _Caller) -> Response:
