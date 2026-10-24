@@ -161,6 +161,32 @@ async def test_held_read_refused_view_as_expired() -> None:
     assert [r["reason"] for r in gate.refused()] == ["view_as_expired"]
 
 
+@pytest.mark.parametrize(
+    ("method", "template"),
+    [
+        ("POST", "/orders"),
+        ("PUT", "/alerts/{alertId}"),
+        ("PATCH", "/users/{userId}"),
+        ("DELETE", "/alerts/{alertId}"),
+    ],
+)
+async def test_held_write_refused_view_as_expired_and_changes_nothing(
+    method: str, template: str
+) -> None:
+    """The held branch is the read's too (22 "Expiry and the hold": whatever its method): a write
+    answers `403 view_as_expired`, not `view_as_read_only`, one record names it, its route never
+    runs and the row holds the context it held."""
+    gate = _Gate()
+    record = await gate.rig.viewing()
+    held = gate.rig.held(record)
+    gate.rig.clock.now = _at(31)  # past `expires_at`: held
+    response = await gate.call(method, _path(template), record)
+    assert _code(response) == (403, "view_as_expired") and gate.seen == []
+    refusals = [(r["reason"], r["after_state"]) for r in gate.refused()]
+    assert refusals == [("view_as_expired", {"method": method, "path": template})]
+    assert gate.rig.held(record) == held
+
+
 def _contract_own_operations() -> set[tuple[str, str]]:
     """The own operations the contract's "View-as session" section lists, read from its prose:
     each `METHOD /path`, and a bare `METHOD` sharing the path that follows it."""

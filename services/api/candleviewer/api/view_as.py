@@ -18,7 +18,9 @@ answers its surrogate username and a null display name.
 DELETE leaves it (`ViewAsService.leave`): one conditional write ends a live context and clears
 it, or clears a held one, and only an end writes `admin.view_as_ended`, which the service writes
 and never waits on. These routes write no audit record of their own: a clear has none, and
-neither has a call with nothing to leave (C-2.9). `leave` answers `None` when nothing applied, so
+neither has a call with nothing to leave (C-2.9). The record of the end names the address the
+request came from (`actor_ip`, `api.csrf.source_ip`, as the other routes' records do), as the
+start's does (its admin principal's). `leave` answers `None` when nothing applied, so
 the route re-reads the session: one revoked since (a refresh rotated it away, or a logout)
 answers `401`, never `204`, for a rotated session's successor still carries the context (the
 client re-authenticates onto it and retries); any other answers `204`, nothing to leave.
@@ -51,6 +53,7 @@ from pydantic import ValidationError
 from candleviewer.admin.errors import ViewAsStartUnavailable
 from candleviewer.admin.http import AuditEmitter, PrincipalResolver, admin_router
 from candleviewer.api._generated import openapi_models as api
+from candleviewer.api.csrf import source_ip
 from candleviewer.api.idle_lock import idle_locked_problem, problem
 from candleviewer.api.step_up import (
     StepUpAuth,
@@ -95,7 +98,9 @@ class OwnViewAs(Protocol):
 
     async def evaluate(self, record: SessionRecord, *, now: datetime) -> ViewAsBinding | None: ...
 
-    async def leave(self, record: SessionRecord, *, now: datetime) -> SessionRecord | None: ...
+    async def leave(
+        self, record: SessionRecord, *, now: datetime, ip: str | None = None
+    ) -> SessionRecord | None: ...
 
 
 class TargetNames(Protocol):
@@ -207,7 +212,7 @@ def make_view_as_router(
         if service is None:
             return _unwired()
         try:
-            left = await service.leave(record, now=clock())
+            left = await service.leave(record, now=clock(), ip=source_ip(request.scope))
         except Exception as exc:  # a store failure: the leave did not apply
             return _unavailable("view_as", exc, _NOT_LEFT)
         if left is None:  # nothing applied: a revoked row's successor still carries the context
@@ -243,7 +248,13 @@ class ViewAsStarter(Protocol):
     """`ViewAsService.start` (`admin/view_as.py`)."""
 
     async def start(
-        self, record: SessionRecord, target_user_id: UUID, *, reason: str, now: datetime
+        self,
+        record: SessionRecord,
+        target_user_id: UUID,
+        *,
+        reason: str,
+        now: datetime,
+        ip: str | None = None,
     ) -> ViewAsStartResult: ...
 
 
@@ -397,7 +408,7 @@ def make_view_as_start_router(
         if service is None:  # the fake backend: no context can start
             return _unwired()
         try:
-            result = await service.start(record, target, reason=body.reason, now=clock())
+            result = await service.start(record, target, reason=body.reason, now=clock(), ip=who.ip)
         except ViewAsStartUnavailable as exc:  # no id and no reason in the line
             cause = type(exc.__cause__).__name__ if exc.__cause__ is not None else None
             _log().error("admin.view_as.start_unavailable", code=exc.code, error=cause)

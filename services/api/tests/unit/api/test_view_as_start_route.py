@@ -230,6 +230,14 @@ async def test_a_start_writes_one_started_record() -> None:
     assert [c["action"] for c in w.ports.calls] == ["admin.view_as_started"]
 
 
+async def test_a_start_records_the_address_it_came_from() -> None:
+    """The started record's `actor_ip` is the admin principal's address, as a refusal record's is
+    (the #4245 re-check's n-7)."""
+    w = await _after_a_start()
+    (call,) = w.ports.calls
+    assert call.get("actor_ip") == "100.64.0.9"
+
+
 async def test_a_start_notifies_the_target_once() -> None:
     w = await _after_a_start()
     assert len(w.repo.notices) == 1
