@@ -305,8 +305,8 @@ def make_recording_writes_router(
             rule = {"field": "symbol", "rule": "listed_instrument", "message": "Not listed."}
             raise common.Problem(422, BAD, "The symbol is not a listed instrument.", errors=[rule])
         spec, status = _spec(body), await call.control.status()
-        rows = (e for e in status.entries if e.symbol == body.symbol and e.id)  # a row: an id
-        held = next(rows, None)
+        entries = (e for e in status.entries if e.symbol == body.symbol and e.id)  # rows: an id
+        held = next(entries, None)
         held_id = None if held is None else held.id
         if held is not None and view(call, held) is None:  # held only by a cause outside the view
             if not held.streams:  # no stored streams to keep: the policy would name its default
@@ -321,7 +321,8 @@ def make_recording_writes_router(
             )
         except rc.RelaxRefused as refused:
             await relax_refused(call, refused, body.symbol, held_id)
-        except RecorderSymbolNotRecordedError:  # a racing stop took the row after the add
+        except RecorderSymbolNotRecordedError:  # a racing stop took the row after the add; the
+            # record's `object_id` is null when this add created the row (no id was read before)
             await _audit(call, "recorder.start", body.symbol, held_id, "not_recorded")
             raise _missing() from None
         except (LimitError, RecorderInvalidUpdateError) as exc:  # before its record
