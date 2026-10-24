@@ -6,9 +6,10 @@ against `ReplaySessionRepository` and these plain frozen dataclasses;
 
 Owner scoping (C-12.4): every method takes the caller's `user_id` and the implementation re-checks
 it in SQL. A missing row, a malformed id and another user's row are indistinguishable (`get` ->
-None, writes -> `ReplaySessionNotFoundError`), so ids cannot be probed across users. The one
-unscoped read is `list_idle_since`, the system-only reclaim sweep: it returns a projection without
-`bookmarks`, which 21 §12 classifies P1 ("read only by `user_id` in the WHERE clause").
+None, writes -> `ReplaySessionNotFoundError`), so ids cannot be probed across users. The two
+unscoped reads are `list_idle_since` and `list_non_terminal_since`, system-only sweeps: they return
+a projection without `bookmarks`, which 21 §12 classifies P1 ("read only by `user_id` in the WHERE
+clause").
 
 Trust boundary: `user_id` is always the authenticated principal, never client-supplied;
 `paper_account_id` MUST be restricted by the service (slice 3 / E26-T05) to `exchange_accounts`
@@ -55,8 +56,8 @@ class SourceTier(StrEnum):
     PARQUET = "parquet"
 
 
-#: Sessions that hold buffers: the `ix_rps_live` predicate, what the quota counts and the
-#: reclaim sweep scans.
+#: Sessions that hold buffers: the `ix_rps_live` predicate, what `count_active` counts and the
+#: restart revival scans.
 LIVE_STATES = frozenset(
     {ReplayState.BUFFERING, ReplayState.PLAYING, ReplayState.PAUSED, ReplayState.STEPPING}
 )
@@ -318,14 +319,25 @@ class ReplaySessionRepository(Protocol):
         ...
 
     async def count_active(self, user_id: str) -> int:
-        """Sessions in `LIVE_STATES`; what the per-user concurrent-session quota compares."""
+        """Sessions in `LIVE_STATES`: what entering a buffer-holding state is checked against."""
+        ...
+
+    async def count_non_terminal(self, user_id: str) -> int:
+        """Sessions not in `TERMINAL_STATES`: what the per-user open-session quota compares."""
         ...
 
     async def list_idle_since(self, before: datetime, limit: int) -> list[IdleReplaySession]:
         """SYSTEM ONLY, not user-scoped: live sessions untouched since before `before`.
 
-        Oldest first, at most `limit` (clamped), for the reclaim sweep.
+        Oldest first, at most `limit` (clamped), for the restart revival.
         """
+        ...
+
+    async def list_non_terminal_since(
+        self, before: datetime, limit: int
+    ) -> list[IdleReplaySession]:
+        """SYSTEM ONLY, not user-scoped: every non-terminal session untouched since before
+        `before`, whatever it holds. Oldest first, at most `limit` (clamped), for the reclaim."""
         ...
 
     async def delete(self, user_id: str, session_id: str) -> bool:

@@ -21,6 +21,7 @@ from unittest.mock import patch
 import pytest
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
+from structlog.testing import capture_logs
 
 import candleviewer.replay.sessions_service as sessions_service
 import candleviewer.statechart.bindings.b12_replay as b12
@@ -127,9 +128,14 @@ class Env:
 
 
 def make_env(
-    *, cap: int = 2, batch: int = 50, repo: FakeReplaySessionRepository | None = None, **kw: Any
+    *,
+    cap: int = 2,
+    batch: int = 50,
+    repo: FakeReplaySessionRepository | None = None,
+    clock: FakeClock | None = None,
+    **kw: Any,
 ) -> Env:
-    clock = FakeClock(datetime(2026, 10, 1, tzinfo=UTC))
+    clock = clock or FakeClock(datetime(2026, 10, 1, tzinfo=UTC))
     env = Env(clock=clock, repo=repo or FakeReplaySessionRepository(clock))
     limits = ReplayLimits(
         idle_ttl=timedelta(hours=2), max_sessions_per_user=cap, max_window=timedelta(hours=24),
@@ -547,10 +553,11 @@ async def test_a_send_held_after_a_racing_completion_is_a_counted_refusal(
 
 
 class _DeniesEverything(Gateway):
-    """Answers every send with a guard-denied receipt (B12 itself has no deniable arm)."""
+    """Answers every send with a guard-denied receipt (B12 itself has no deniable arm). On a
+    chart with `onUnhandled: "defer"` a denied send is also held, so both flags are set."""
 
     async def send(self, key: str, event: Any, *, wait: bool = False) -> Any:
-        return SimpleNamespace(changed=False, error=None, deferred=False, denied=True)
+        return SimpleNamespace(changed=False, error=None, deferred=True, denied=True)
 
 
 async def test_a_guard_denied_send_is_a_counted_refusal() -> None:
@@ -722,6 +729,22 @@ async def test_on_ended_hears_every_destroy_with_its_reason() -> None:
     assert ended == [(sid, USER_A, "client"), (other, USER_A, "idle_reclaim")]
 
 
+async def test_a_failing_on_ended_listener_is_logged_by_exception_type_only() -> None:
+    async def on_ended(session_id: str, user_id: str, reason: str) -> None:
+        raise RuntimeError("listener detail that must stay out of the log")
+
+    env = make_env(on_ended=on_ended)
+    sid = (await env.s.create(USER_A, request())).id
+    with capture_logs() as logs:
+        assert await env.s.destroy(USER_A, sid) is True
+    failed = [e for e in logs if e["event"] == "replay_session_ended_failed"]
+    assert failed == [
+        {"event": "replay_session_ended_failed", "session_id": sid, "error": "RuntimeError",
+         "log_level": "error"},
+    ]  # fmt: skip
+    assert "listener detail" not in repr(logs)
+
+
 async def test_a_hanging_on_ended_listener_does_not_hold_up_destroy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -877,6 +900,65 @@ async def test_restart_without_a_snapshot_rebuilds_the_row_in_created() -> None:
     assert await state_in_db(again, USER_A, sid) is ReplayState.CREATED
     row = await again.s.transition(USER_A, sid, "PREPARE")
     assert (row.state, row.cursor_ts) == (ReplayState.PAUSED, cursor)
+    await again.s.stop()
+
+
+_QUIET = (ReplayState.CREATED, ReplayState.FINISHED, ReplayState.ERROR)
+
+
+async def _quiet_rows_across_a_restart() -> tuple[Env, dict[ReplayState, str]]:
+    """One session each in created / finished / error, then a restart: a fresh service over the
+    same repository and clock holds none of them, and none is in `ix_rps_live` (#2795)."""
+    env = make_env(cap=3)
+    created = (await env.s.create(USER_A, request())).id
+    finished = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.transition(USER_A, finished, "PLAY")
+    await env.s.transition(USER_A, finished, "RANGE_END")
+    failed = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.transition(USER_A, failed, "PLAY")
+    await env.s.transition(USER_A, failed, "SOURCE_ERROR", {"error": "Boom"})
+    await env.s.stop()
+    again = make_env(cap=3, repo=env.repo, clock=env.clock)
+    await again.s.start()
+    sids = dict(zip(_QUIET, (created, finished, failed), strict=True))
+    for state, sid in sids.items():
+        assert await state_in_db(again, USER_A, sid) is state and again.s.state_of(sid) is None
+    return again, sids
+
+
+async def test_the_quota_counts_a_held_session_once() -> None:
+    env = make_env(cap=2)
+    await env.s.create(USER_A, request())  # held in memory and stored: still one session
+    await env.s.create(USER_A, request())
+    with pytest.raises(ReplayQuotaExceededError):
+        await env.s.create(USER_A, request())
+
+
+async def test_after_a_restart_the_quota_counts_every_open_row() -> None:
+    again, _sids = await _quiet_rows_across_a_restart()
+    with pytest.raises(ReplayQuotaExceededError):
+        await again.s.create(USER_A, request())
+    assert again.handles.acquired == []
+    await again.s.stop()
+
+
+async def test_after_a_restart_reclaim_destroys_every_open_row_once_after_the_ttl() -> None:
+    again, sids = await _quiet_rows_across_a_restart()
+    again.clock.advance(hours=2, seconds=-1)
+    assert await again.s.reclaim_idle(again.clock()) == 0  # not before the TTL
+    again.clock.advance(seconds=2)
+    assert await again.s.reclaim_idle(again.clock()) == 3
+    for sid in sids.values():
+        assert await state_in_db(again, USER_A, sid) is ReplayState.DESTROYED
+    assert await again.s.reclaim_idle(again.clock()) == 0  # INV-B12-e: a second pass is a no-op
+    destroyed = [
+        (kw["reason"], kw["actor_label"])
+        for a, kw in again.audit.rows
+        if a == "replay.session.destroyed"
+    ]
+    assert destroyed == [("idle_reclaim", "system:replay-reclaimer")] * 3
+    assert again.handles.released == Counter(dict.fromkeys(sids.values(), 1))
+    await again.s.create(USER_A, request())  # the quota is free again
     await again.s.stop()
 
 

@@ -242,7 +242,6 @@ class _Live:
     state: ReplayState
     cursor: int
     speed: Decimal
-    touched: datetime
     releases: tuple[Release, ...] = ()
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     unsubscribe: Callable[[], None] | None = None
@@ -308,8 +307,9 @@ class ReplaySessionService:
         """Revive every live (`ix_rps_live`) row, then start the mirror and the reclaimer.
 
         US-RPL-009: a sealed snapshot is restored through `statechart.persistence`; without one
-        the chart is rebuilt from the row in `created`. Other rows hold no buffers and are
-        revived on their owner's next call."""
+        the chart is rebuilt from the row in `created`. Other rows hold no buffers: they still
+        count against the quota, are revived on their owner's next call and are reclaimed by
+        the idle sweep like any other session (#2795)."""
         horizon = self._clock() + timedelta(days=1)
         try:  # a database outage must not fail the boot: the sessions revive on next use
             live_rows = await self._io(
@@ -522,22 +522,22 @@ class ReplaySessionService:
         return True
 
     async def reclaim_idle(self, now: datetime) -> int:
-        """Destroy (`idle_reclaim`) every session with no control call for `idle_ttl`: live rows
-        from `list_idle_since` (`ix_rps_live`) plus sessions this process holds in
-        created/finished/error, which that index leaves out. One bounded batch per call; a
-        session already destroyed is skipped, so a second pass is a no-op. Returns the count."""
+        """Destroy (`idle_reclaim`) every non-terminal session with no control call for
+        `idle_ttl`, read from the repository (`list_non_terminal_since`), so a row this process
+        does not hold (one left in created/finished/error by a restart) is revived and destroyed
+        through `destroy` like any other. The row's `updated_at` is the one activity mark (every
+        control call and state change writes it). One bounded batch per call; a destroyed row
+        is no longer listed, so a second pass is a no-op (INV-B12-e). Returns the count."""
         cutoff = now - self._limits.idle_ttl
         batch = self._limits.reclaim_batch
-        idle = await self._io("repository", self._repo.list_idle_since(cutoff, batch))
-        due = {r.id: r.user_id for r in idle}
-        due.update({s.id: s.user_id for s in self._live.values() if s.touched < cutoff})
+        idle = await self._io("repository", self._repo.list_non_terminal_since(cutoff, batch))
         reclaimed = 0
-        for sid, uid in list(due.items())[:batch]:
+        for row in idle:
             try:
-                reclaimed += await self.destroy(uid, sid, reason="idle_reclaim")
+                reclaimed += await self.destroy(row.user_id, row.id, reason="idle_reclaim")
             except Exception as exc:  # e.g. a step still running: the next sweep retries
                 logger().warning(
-                    "replay_session_reclaim_skipped", session_id=sid, error=type(exc).__name__
+                    "replay_session_reclaim_skipped", session_id=row.id, error=type(exc).__name__
                 )
         return reclaimed
 
@@ -626,8 +626,7 @@ class ReplaySessionService:
             raise
         live = _Live(
             id=row.id, user_id=row.user_id, symbol=row.symbol, interp=interp, state=row.state,
-            cursor=to_us(row.cursor_ts or row.range_start), speed=row.speed,
-            touched=row.updated_at, releases=releases,
+            cursor=to_us(row.cursor_ts or row.range_start), speed=row.speed, releases=releases,
         )  # fmt: skip
 
         async def hook(name: str, facts: Mapping[str, object]) -> None:
@@ -676,7 +675,8 @@ class ReplaySessionService:
         if receipt_is_conclusive(receipt) and receipt.error is not None:
             raise ReplayChartError(f"B12 {event}: {type(receipt.error).__name__}")
         if receipt.deferred or receipt.denied:  # `changed=False` alone is fine: internal arms
-            self.refusals.record_send_refused("deferred" if receipt.deferred else "denied")
+            # A guard-denied send on a defer chart sets both flags: `denied` is the cause.
+            self.refusals.record_send_refused("denied" if receipt.denied else "deferred")
             state = ReplayState(leaf_of(live.interp))
             logger().warning(
                 "replay_session_event_parked", session_id=live.id, control=event, state=state
@@ -706,10 +706,9 @@ class ReplaySessionService:
                 live.cursor = cursor
             if (speed := Decimal(str(facts["speed"]))) != live.speed:
                 await self._io("repository", repo.update_speed(uid, sid, speed=speed))
-                live.speed, live.touched = speed, now
+                live.speed = speed
             if control:  # a control call is activity even when the state comes back the same
                 await self._io("repository", repo.touch(uid, sid, now))
-                live.touched = now
         if state is not live.state:
             error = str(facts["error"] or "source_error") if state is ReplayState.ERROR else None
             await self._io(
@@ -719,7 +718,7 @@ class ReplaySessionService:
                 "replay_session_transition", session_id=sid, user_id=uid, symbol=live.symbol,
                 from_state=live.state.value, to_state=state.value,
             )  # fmt: skip
-            live.state, live.touched = state, now
+            live.state = state
         row = await self._io("repository", repo.get(uid, sid))
         if row is None:
             raise ReplaySessionNotFoundError(sid)
@@ -741,13 +740,12 @@ class ReplaySessionService:
     # --- checks, hook, audit -----------------------------------------------------------------
 
     async def _check_quota(self, uid: str, *, opening: bool) -> None:
-        """`count_active` counts the buffer-holding rows (`ix_rps_live`); opening a session also
-        counts the user's held charts outside them (created/finished/error)."""
-        used = await self._io("repository", self._repo.count_active(uid))
-        if opening:
-            used += sum(
-                s.user_id == uid and s.state not in LIVE_STATES for s in self._live.values()
-            )
+        """Opening a session counts every non-terminal row of the user (`count_non_terminal`), so
+        a row this process does not hold (after a restart) counts, and a held one counts once,
+        as its row. Entering a buffer-holding state counts the rows already holding buffers
+        (`count_active`, `ix_rps_live`; the session itself is outside them)."""
+        count = self._repo.count_non_terminal if opening else self._repo.count_active
+        used = await self._io("repository", count(uid))
         if used >= self._limits.max_sessions_per_user:
             raise ReplayQuotaExceededError(
                 f"at most {self._limits.max_sessions_per_user} open replay sessions per user"
