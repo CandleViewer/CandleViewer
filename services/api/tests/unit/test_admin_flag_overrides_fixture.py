@@ -112,7 +112,8 @@ async def test_the_check_names_a_safety_flag_stored_true(
 
 @pytest.mark.parametrize("key", _SAFETY)
 async def test_the_check_names_a_safety_flag_stored_as_no_boolean(seeded: FakeDb, key: str) -> None:
-    seeded.row("feature_flags", key=key)["default_value"] = "off"  # resolves closed, all the same
+    # unreadable, so each fails closed: trading.live_enabled to False, maintenance.mode to True
+    seeded.row("feature_flags", key=key)["default_value"] = "off"
     await _refuses(seeded, f"{key}: is stored 'off', not False")
 
 
