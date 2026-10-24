@@ -404,3 +404,31 @@ async def test_a_null_retention_is_the_default_not_forever(
         assert env.rows.store.rows[entry.id]["retention_days"] is None
     else:
         assert (await change).retention_days == 60
+
+
+async def _pinned_with_a_number(env: Any) -> rc.RecordedEntry:
+    """A pinned row still holding a number: what a failed second statement or a direct policy
+    call leaves (#2188 S3c nulls the days on a pin)."""
+    entry, _ = await env.c.add("BTCUSDT", rc.EntrySpec(), OWNER, restricted=False)
+    await env.c.pin(entry.id, True, OWNER, restricted=False)
+    env.rows.store.rows[entry.id]["retention_days"] = 60
+    env.rows.store.trace.clear()
+    env.audit.records.clear()
+    return entry
+
+
+async def test_a_patch_of_retention_on_a_pinned_row_writes_and_records_nothing(env: Any) -> None:
+    entry = await _pinned_with_a_number(env)
+    seen = await env.c.update(entry.id, rc.EntrySpec(retention_days=7), OWNER, restricted=False)
+    assert seen is not None and (seen.pinned, seen.retention_days) == (True, None)
+    assert "set_retention" not in env.rows.store.trace and env.audit.records == []
+
+
+async def test_settle_never_sets_retention_while_the_row_stays_pinned(env: Any) -> None:
+    """The guard itself, on the row as stored (not as viewed): a pinned row keeps forever, so no
+    retention write is made for it, whatever number it still holds."""
+    entry = await _pinned_with_a_number(env)
+    raw = rc.RecordedEntry(entry.id, "BTCUSDT", ("manual",), "idle", pinned=True,
+                           retention_days=60)  # fmt: skip
+    await env.c._settle(raw, rc.EntrySpec(retention_days=7), OWNER, False)
+    assert "set_retention" not in env.rows.store.trace and env.audit.records == []
