@@ -16,7 +16,7 @@ import inspect
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 from starlette.requests import Request
@@ -210,9 +210,9 @@ async def test_a_cleared_context_is_the_sessions_own_scope_and_needs_no_stamp() 
 
 async def test_a_context_stamped_for_the_viewer_is_the_viewers_principal() -> None:
     """A write the guard passes as the viewer, a registered protective one, carries a stamp whose
-    subject is the viewer: the principal is the session's own, as with no context."""
-    resolver = _resolver(_Sessions(view_as=_live()))
-    principal = await resolver.resolve(_request(stamp=_stamp()))
+    subject is the viewer: the principal is the session's own, as with no context (the target's
+    roles, read too for the route's second check, are `target`'s: below)."""
+    principal = await _viewing().resolve(_request(stamp=_stamp()))
     assert principal is not None and (principal.session_id, principal.snapshot.user_id) == (
         SESSION, USER
     )  # fmt: skip
@@ -295,7 +295,10 @@ class _UserGrants:
         return [(TARGET_TRADE, True, True, False), (TARGET_VIEW, True, False, False)]
 
 
-def _as(phase: ViewAsPhase = ViewAsPhase.LIVE, subject: uuid.UUID = USER) -> ViewAsRequestContext:
+def _as(
+    phase: Literal[ViewAsPhase.LIVE, ViewAsPhase.HELD] = ViewAsPhase.LIVE,
+    subject: uuid.UUID = USER,
+) -> ViewAsRequestContext:
     """The guard's stamp: `subject` is the viewer for a write it passed, the target for a read."""
     return ViewAsRequestContext(
         viewer_user_id=USER, viewer_session_id=SESSION, viewer_label="owner-anna",
