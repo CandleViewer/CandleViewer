@@ -224,7 +224,7 @@ def make_recording_writes_router(
             raise _missing()
         return entry
 
-    async def _record(call: _Call, action: str, symbol: str, entry_id: str | None,
+    async def _audit(call: _Call, action: str, symbol: str, entry_id: str | None,
                       refused: str | None = None, **fields: Any) -> None:  # fmt: skip
         """A record the route writes (C-2.9); `refused`: a refused write's cause. Unwritten: 503."""
         p, out = call.p, {"outcome": AuditOutcome.DENIED, "reason": refused}
@@ -251,11 +251,11 @@ def make_recording_writes_router(
             if not held.streams:  # no stored streams to keep: the policy would name its default
                 raise common.unavailable()
             if body.model_fields_set & _RETAINS:  # a join honours neither: the request's record
-                await _record(call, "retention.change", body.symbol, held.id, "joined")
+                await _audit(call, "retention.change", body.symbol, held.id, "joined")
             spec = rc.EntrySpec(held.streams, held.depth)  # a join adds a cause, changes no setting
         # Recorded even when it names the row's own value: it records the request, as PUT, PATCH.
         elif intent := "retention_days" in body.model_fields_set and not spec.pinned:
-            await _record(call, "retention.change", body.symbol, held_id,
+            await _audit(call, "retention.change", body.symbol, held_id,
                           before_state={"retention_days": held.retention_days if held else None},
                           after_state={"retention_days": spec.retention_days})  # fmt: skip
         try:  # the policy writes `recorder.start` ahead of the row (add_manual)
@@ -264,10 +264,10 @@ def make_recording_writes_router(
             capped, (setting, field) = isinstance(exc, LimitError), rc.setting_rule(spec.depth)
             cause = ErrorCode.RECORDER_SYMBOL_LIMIT.value if capped else setting
             if intent:  # the route's retention record gets its denied twin
-                await _record(call, "retention.change", body.symbol, held_id, cause)
+                await _audit(call, "retention.change", body.symbol, held_id, cause)
             if not capped:
                 raise _invalid(setting, field) from None
-            await _record(call, "recorder.start", body.symbol, None, cause)
+            await _audit(call, "recorder.start", body.symbol, None, cause)
             raise common.Problem(422, ErrorCode.RECORDER_SYMBOL_LIMIT,
                                  "The recorder's symbol cap is reached.") from None  # fmt: skip
         seen = shown(call, entry)
@@ -286,13 +286,13 @@ def make_recording_writes_router(
             return call.replayed
         entry = await visible(call, entry_id)
         if body.retention_days is not None and not body.pinned:  # no policy member records it
-            await _record(call, "retention.change", entry.symbol, entry.id,
+            await _audit(call, "retention.change", entry.symbol, entry.id,
                           before_state={"retention_days": entry.retention_days},
                           after_state={"retention_days": body.retention_days})  # fmt: skip
         pinned = await _stored(call.control.pin(entry.id, body.pinned, call.actor,
                                                 retention_days=body.retention_days))  # fmt: skip
         if pinned is None:  # the row went after the lookup: no active row to pin
-            await _record(call, "retention.change", entry.symbol, entry.id, "not_recorded")
+            await _audit(call, "retention.change", entry.symbol, entry.id, "not_recorded")
             raise _missing()
         return done(call, JSONResponse(_dump(shown(call, pinned))))
 
