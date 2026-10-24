@@ -695,3 +695,33 @@ def test_the_security_look_fold_gates_a_price_move_and_closes_the_lows() -> None
     )
     arm = _words(_COMPONENTS["parameters"]["ArmToken"]["description"])
     assert "once, a price move on an order that is not reduce-only with them" in arm
+
+
+def test_the_delta_check_fold_points_info_to_the_one_class_and_orders_cancel_all() -> None:
+    """S4-A's Opus delta check at `0d29a2bd`: DC-S4A-01 (`info`'s order of the checks names
+    24 Sec.8.10's class, a price move included, and no longer its own narrower list), -02
+    (cancel-all reads its body before its scope in 24 as in 22, D8) and the cancel's one way to
+    `unknown` with nothing sent, as the amend's."""
+    assert (
+        "only an amend that increases exposure (the one class 24-internal-schemas.md section 8.10 "
+        "defines, a `price` or `trigger_price` change on an order that is not reduce-only "
+        "included) meets the arm token and the `trading_disabled` checks" in _INFO
+    )
+    assert "or moves a conditional entry's trigger) meets the arm token" not in _INFO
+    assert (
+        "`cancelAllOrders`, whose scope needs the ids its body lists, reads that body first, "
+        "strictly (step 5's `400 validation_failed`, whatever ids a malformed body names), then "
+        "refuses the whole request with `403 account_scope_denied`" in _EXITS
+    )
+    assert "Scope is settled before anything is sent (SR-E29-13), once the body is read" in (
+        _CANCEL_ALL
+    )
+    assert (
+        "never `unknown`, which only a venue call already started can leave, or a refusal whose "
+        "own audit record cannot be written (C-2.9), the one way a cancel that sent nothing "
+        "reaches `unknown`" in _CANCEL
+    )
+    threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
+    assert "bound to the caller and scope; the exit routes' `404`" in threat.read_text(
+        encoding="utf-8"
+    )

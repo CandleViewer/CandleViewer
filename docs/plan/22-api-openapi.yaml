@@ -402,10 +402,11 @@ info:
     the order-entry gate, then validation (where a `profile_id` that is not one of the account's
     own profiles is `404 not_found`), sizing, risk, the write-ahead persist and the send
     (24-internal-schemas.md section 8.4). `amendOrder` takes the same order (its scope is the
-    order id's `404`), and only an amend that increases exposure (one that raises the quantity
-    of an order that is not reduce-only, or moves a conditional entry's trigger) meets the arm
-    token and the `trading_disabled` checks: the carve-out under `Forbidden` exempts every other
-    amend from them, as it does every cancel (#913 slice 4 ruling Q10). The lookup comes after
+    order id's `404`), and only an amend that increases exposure (the one class
+    24-internal-schemas.md section 8.10 defines, a `price` or `trigger_price` change on an order
+    that is not reduce-only included) meets the arm token and the `trading_disabled` checks: the
+    carve-out under `Forbidden` exempts every other amend from them, as it does every cancel
+    (#913 slice 4 ruling Q10). The lookup comes after
     authorisation, so a caller who has lost access cannot read an outcome back, and before the
     `trading_disabled` checks, so the exact repeat of an accepted request (same key, same
     fingerprint) is answered with its stored outcome, never refused, while the same key with
@@ -5942,7 +5943,9 @@ paths:
         2026-10-24). A read the cancel needs before anything is sent (the stored row or the account)
         that fails answers `503 store_unavailable` with `Retry-After: 1`: nothing was sent, so
         the order stays live and cancellable, never `unknown`, which only a venue call already
-        started can leave (the S4-B1 ruling of 10:29Z). An account the OMS cannot send for (no
+        started can leave, or a refusal whose own audit record cannot be written (C-2.9), the
+        one way a cancel that sent nothing reaches `unknown` (the S4-B1 ruling of 10:29Z;
+        24-internal-schemas.md section 8.4). An account the OMS cannot send for (no
         usable key, or out of the OMS's reach) answers `409 account_unavailable`, with no
         `Retry-After`: nothing was sent, the order stays live, and the operator is paged (the
         ruling of 11:34Z).

@@ -3929,7 +3929,9 @@ export interface paths {
      *     2026-10-24). A read the cancel needs before anything is sent (the stored row or the account)
      *     that fails answers `503 store_unavailable` with `Retry-After: 1`: nothing was sent, so
      *     the order stays live and cancellable, never `unknown`, which only a venue call already
-     *     started can leave (the S4-B1 ruling of 10:29Z). An account the OMS cannot send for (no
+     *     started can leave, or a refusal whose own audit record cannot be written (C-2.9), the
+     *     one way a cancel that sent nothing reaches `unknown` (the S4-B1 ruling of 10:29Z;
+     *     24-internal-schemas.md section 8.4). An account the OMS cannot send for (no
      *     usable key, or out of the OMS's reach) answers `409 account_unavailable`, with no
      *     `Retry-After`: nothing was sent, the order stays live, and the operator is paged (the
      *     ruling of 11:34Z).
