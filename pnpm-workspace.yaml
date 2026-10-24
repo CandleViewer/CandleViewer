@@ -48,3 +48,8 @@ overrides:
   tar: ">=7.5.21"
   http-cache-semantics: ">=4.3.0 <5"
   source-map-js: ">=1.2.2 <2"
+  # #4356: the patched undici releases, one per major so each tooling path keeps its own:
+  # apps/desktop > electron > @electron/get on 7, and electron-builder > @electron/rebuild >
+  # node-gyp on 6 (build-time only). Remove once electron and electron-builder require them.
+  "undici@6": "6.29.1"
+  "undici@7": "7.30.1"

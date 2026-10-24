@@ -304,6 +304,16 @@ def test_pr_yml_py_filter_covers_the_xstate_nightly_workflow() -> None:
     assert XSTATE_NIGHTLY in _filters()["py"]
 
 
+def test_pr_yml_py_filter_covers_python_under_docs() -> None:
+    # #4348: #4325 added a design-audit tool under docs/design/_tools/ in a docs-only PR, which
+    # never started the Semgrep lane, and every later code PR's scan then blocked on it.
+    tools = sorted(p.relative_to(ROOT).as_posix() for p in ROOT.glob("docs/**/*.py"))
+    assert tools, "no Python under docs/"
+    py = _filters()["py"]
+    for tool in tools:
+        assert any(_matches(tool, rule) for rule in py), tool
+
+
 def test_pr_yml_py_filter_covers_every_statechart_tool_a_py_gate_runs() -> None:
     # What the `gates` steps the py filter starts run from tools/statechart/, scripts followed.
     steps = [s for s in _jobs()["gates"]["steps"] if "outputs.py ==" in str(s.get("if", ""))]

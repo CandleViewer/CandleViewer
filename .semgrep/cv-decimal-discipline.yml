@@ -20,6 +20,9 @@ rules:
           metavariable: $VAR
           regex: "(?i)^(price|qty|quantity|notional|order_size|position_size|tick_size|lot_size)$"
     paths:
+      include:
+        - "services/api/candleviewer/**"
+        - "**/cv-decimal-discipline*"
       exclude:
         - "**/test_*.py"
         - "**/*_test.py"
