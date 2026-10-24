@@ -27,11 +27,10 @@ Slice 3's complete read (S3-H): `put_in_force` locks the key's live rows in id o
 then replaces before it sets, so `ux_rs_in_force` never holds two; `resolve` locks as `settle` does
 and compares-and-sets in its UPDATE (each row's key and `answered_at` as read);
 `waiting_keys_statement` shares `_waits` with the key's read. An order step that settles its
-entry's rows (`orders_sqlalchemy.settle_entry_stops_statement`) locks them in its UPDATE's scan
-order, not in id order: a step and a read meeting on an entry's two rows can deadlock, which
-Postgres breaks by failing one of the two transactions, nothing written by it (the step's write
-or the read's, which the next request reads again). Ordering that lock, with a race test on
-Postgres, is left to H3: it is `orders_sqlalchemy.py`'s.
+entry's rows (`orders_sqlalchemy.settle_entry_stops_statement`) locks them first in id order, as
+these writes do (`orders_sqlalchemy.lock_entry_stops_statement`, H3), after its order row, which
+none of these writes locks: a step and a read meeting on an entry's rows never deadlock (40P01),
+as a race test on Postgres pins.
 
 `release_and_bind` locks its pair `FOR UPDATE` in id order first, as `settle` and `put_in_force`
 lock theirs, so none of them deadlock; it then releases and binds in one unit of work and awaits
