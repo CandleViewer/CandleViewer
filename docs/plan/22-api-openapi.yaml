@@ -357,7 +357,8 @@ info:
     keep no anchor (threat model OM-T11): their 24 h record holds only a `2xx`, and a repeat
     while the first is still running is `409 idempotency_in_flight` with `Retry-After: 1`, from
     a bounded in-process guard per caller, operation and key (#913 slice 4 ruling Q11), at most
-    1,024 keys, a request arriving while it is full being `429 rate_limited` with `Retry-After: 1`.
+    1,024 keys and 64 per caller, a request arriving while either is full being
+    `429 rate_limited` with `Retry-After: 1`.
     Exception (ADR-0039): `rotateAuditSigningKey` stores only its `200` under the key; every
     refusal and every `503` is evaluated afresh on a retry. That `200` is durable, as
     `placeOrder`'s anchor is: the row of the key the rotation made keeps the request's key and
@@ -5836,17 +5837,20 @@ paths:
 
         Amending only one side of a TP/SL pair breaks Bybit's OCO pairing (digest 06 §19); the
         server therefore re-sends both sides whenever either changes, the unchanged one at its
-        current value, records the paired amend in `order_events`, and records the stop it
-        requests as the entry's own before the send (ruling Q2).
+        current value (a stop re-sent unchanged is ratcheted as a changed one is,
+        24-internal-schemas.md section 8.8 rule 6), records the paired amend in `order_events`, and
+        records the stop it requests as the entry's own before the send (ruling Q2).
 
-        An amend that raises the quantity of an order that is not reduce-only, or moves a
-        conditional entry's trigger, increases exposure (24-internal-schemas.md section 8.10
-        defines it): it meets every check `placeOrder` meets, the `trading.oms_enabled` flag,
-        live trading enabled, the B18 kill switch, the order-entry gate, on a live account the
-        arm token, and the risk check of the amended, sized and rounded order
-        (`403 risk_limit_breached`, SR-E29-04). Its class is read from the order as the route read
-        it: the terms it compares change only through an amend, and B1 takes one at a time. Every
-        other amend meets none of them (the C-2.6 carve-out under `Forbidden`; ruling Q10).
+        An amend that raises the quantity of an order that is not reduce-only, moves a conditional
+        entry's trigger, or changes the `price` or `trigger_price` of an order that is not
+        reduce-only (a resting entry repriced to a marketable price fills at once), increases
+        exposure (24-internal-schemas.md section 8.10 defines it): it meets every check `placeOrder`
+        meets, the `trading.oms_enabled` flag, live trading enabled, the B18 kill switch, the
+        order-entry gate, on a live account the arm token, and the risk check of the amended, sized
+        and rounded order evaluated at the amended price (`403 risk_limit_breached`, SR-E29-04). Its
+        class is read from the order as the route read it: the terms it compares change only through
+        an amend, and B1 takes one at a time. Every other amend meets none of them (the C-2.6
+        carve-out under `Forbidden`; ruling Q10).
 
         `If-Match` takes the order's `ETag` from an answer about it (`placeOrder`'s `202` or this
         route's). The `ETag` is opaque and changes with every step the order takes, each
@@ -5995,7 +5999,8 @@ paths:
         reports exchange outcomes only: one account's exchange error does not undo another
         account's cancels, so the status is `200` with per-account results. At most five accounts
         are worked at once, one order at a time on each, within a 20 s deadline. An account is
-        `ok` when every order selected on it ended; else `error` gives its first failure, the
+        `ok` when every order selected on it ended, an order a `110001` parks in `unknown`
+        counting as ended; else `error` gives its first failure, the
         account's other selected orders still each sent theirs:
         `exchange_error` with `exchange_ret_code`, `exchange_rate_limited`, `exchange_unavailable`
         when an outcome is not known (that order `unknown`, never re-sent), `store_unavailable`
@@ -14386,7 +14391,8 @@ components:
         `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
         increases exposure requires it, as the order-entry gate classifies them
         (24-internal-schemas.md section 8.10, which defines "quantity up" and "trigger re-armed"
-        once): a submit (`placeOrder` and `createTradeGroup`, reduce-only ones included) and an
+        once, a price move on an order that is not reduce-only with them):
+        a submit (`placeOrder` and `createTradeGroup`, reduce-only ones included) and an
         amend with any risk-increasing component (quantity up, trigger re-armed) on `amendOrder`,
         `amendTradeGroup` or `setPositionTpSl`, and the
         owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a

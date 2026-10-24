@@ -196,8 +196,8 @@ def test_only_an_amend_that_increases_exposure_meets_the_flag_the_switches_and_t
     """Q10, amended: the flag too; every other amend and every cancel meet none (C-2.6)."""
     assert not _missing(
         _AMEND,
-        "or moves a conditional entry's trigger, increases exposure (24-internal-schemas.md "
-        "section 8.10 defines it): it meets every check",
+        "reduce-only (a resting entry repriced to a marketable price fills at once), increases "
+        "exposure (24-internal-schemas.md section 8.10 defines it): it meets every check",
         "the `trading.oms_enabled` flag, live trading enabled, the B18 kill switch, the",
         "Every other amend meets none of them",
     )
@@ -469,8 +469,9 @@ def test_a_read_that_fails_before_the_send_is_a_503_and_leaves_the_order_live() 
         "audited `kill_cancel_refused` with the code `STORE_UNAVAILABLE`, or "
         "`ACCOUNT_UNAVAILABLE` for an account it cannot send for, and the KILL stays final",
         "as it cannot tell a recorded stop from a plain order (fail closed)",
-        "Each KILL logs one `oms_kill_result` with its cancels counted by outcome, and any cancel "
-        "not done pages, naming the count by code",
+        "Each KILL logs one `oms_kill_result` with its cancels counted by outcome, those still in "
+        "flight included (a re-sent KILL reports its own), and any cancel not done pages, naming "
+        "the count by code",
         "so the operator never reads a clean KILL; `kill()`'s signature and answer are unchanged",
     )
     assert not _missing(
@@ -564,8 +565,8 @@ def test_the_contract_lens_fold_defines_once_and_closes_the_gaps() -> None:
     assert 'which defines "quantity up" and "trigger re-armed" once' in arm
     assert not _missing(
         _AMEND,
-        "and the risk check of the amended, sized and rounded order (`403 risk_limit_breached`, "
-        "SR-E29-04)",
+        "and the risk check of the amended, sized and rounded order evaluated at the amended "
+        "price (`403 risk_limit_breached`, SR-E29-04)",
         "the terms it compares change only through an amend, and B1 takes one at a time",
         "an amend with no `If-Match` carries no version",
         "the stop-request gate, 21-database-schema.md section 3.3.11",
@@ -576,14 +577,16 @@ def test_the_contract_lens_fold_defines_once_and_closes_the_gaps() -> None:
     assert "after a fill `amendOrder` refuses a stop change first, `tpsl_after_fill`" in _AMEND
     assert not _missing(
         _EXITS,
-        "the risk check of the amended, sized and rounded order, the pipeline's own rule 3",
+        "the risk check of the amended, sized and rounded order evaluated at the amended price, "
+        "the pipeline's own rule 3",
         "with `If-Match`, carrying the tag's version",
         "without it, carrying none (last write wins)",
         "holding at most 1,024 keys",
-        "a request arriving while the set is full is `429 rate_limited` with `Retry-After: 1`",
+        "a request arriving while the set, or its principal's share of it, is full is "
+        "`429 rate_limited` with `Retry-After: 1`",
         "the one way an exit that sent nothing reaches `unknown`",
     )
-    assert "at most 1,024 keys, a request arriving while it is full being `429 rate_limited`" in (
+    assert "at most 1,024 keys and 64 per caller, a request arriving while either is full" in (
         _INFO
     )
     assert "`CV_COMMAND_TIMEOUT`, 10 s (28-statechart-catalogue.md section B1.4)" in _CANCEL
@@ -647,3 +650,48 @@ def test_the_1230z_rulings_word_the_deadline_the_retryable_flags_and_an_unbound_
         "the request itself going only to the internal seam E29-T06's job consumes, never "
         "ticketed on its own; for a KILL's bound `110001` the request alone, as a ticket" in errors
     )
+
+
+def test_the_security_look_fold_gates_a_price_move_and_closes_the_lows() -> None:
+    """S4-A's Fable security look at `a579bb24`: SEC-S4A-01 (a `price` or `trigger_price`
+    change on an order that is not reduce-only is risk-increasing), SEC-S4A-02 (one answer for a
+    port refusal whose record cannot be written), -03 (the guard's per-principal share), -04 (the
+    `404` timing residual) and -05 (a parked order counts as ended; a re-sent stop ratcheted)."""
+    [definition] = [
+        line
+        for line in _INTERNAL_DOC.splitlines()
+        if line.startswith("**Risk-increasing amends: the one definition")
+    ]
+    assert (
+        "a change of the `price` or `trigger_price` of an order that is not reduce-only is "
+        "risk-increasing too" in definition
+    )
+    assert "a reduce-only order's price" in definition
+    assert "so its risk check is evaluated at the amended price" in definition
+    assert (
+        "moves a conditional entry's trigger, or changes the `price` or `trigger_price` of an "
+        "order that is not reduce-only" in _AMEND
+    )
+    assert (
+        "or changes the price or trigger price of an order that is not reduce-only; every "
+        "other amend" in _EXITS
+    )
+    assert not _missing(
+        _EXITS,
+        "a refusal inside the command port whose own record cannot be written is the port's "
+        "raise, answered `202` with the order `unknown` (step 11)",
+        "holding at most 1,024 keys and 64 per principal",
+        "so a full share refuses only the principal that filled it",
+        "is an accepted residual (threat model SR-E29-13)",
+    )
+    threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
+    assert "so their timing may differ: an accepted residual, bounded by authentication" in (
+        _words(threat.read_text(encoding="utf-8"))
+    )
+    assert "an order a `110001` parks in `unknown` counting as ended" in _CANCEL_ALL
+    assert "a stop re-sent unchanged is ratcheted as a changed one is" in _AMEND
+    assert "has compared each stop it sends, changed or re-sent, with the order's current" in (
+        _RULE_6
+    )
+    arm = _words(_COMPONENTS["parameters"]["ArmToken"]["description"])
+    assert "once, a price move on an order that is not reduce-only with them" in arm
