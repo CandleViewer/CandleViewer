@@ -1345,6 +1345,7 @@ interface AlgoProgressCardProps {
 - **Storybook**: Default, TypedStop, ProfileStop, FallbackStop, RoundedAwayCaption, WrongSideStop, PartialTpLadder, TpPriceMode, ReduceOnlyCollapsed, ReadOnlyT2, Comfortable, HighContrast.
 - **Tests**: unit (unit conversions, away-from-entry rounding), visual, axe, keyboard, the native-SL assertion (no render path yields `nativeSlConfirmed` true without a resolved stop; no toggle in the DOM), the T2 test.
 - **Design (DS spec):** [E30-D04.md](../design/E30/E30-D04.md) §10 (E30-D04; owner approval pending).
+- **Design (hi-fi):** [E32-D03.md](../design/E32/E32-D03.md) §5 · [E32-D03-handoff.md](../design/E32/E32-D03-handoff.md) (E32-D03; owner approval pending; the four consumers, the T2 / validity split, the mode matrix, the per-step TP ladder rows and the risk restatement block, as deltas on E30-D04 §10).
 
 ### CMP-120 TrailingStopEditor
 
