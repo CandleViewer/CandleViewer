@@ -225,29 +225,19 @@ _OWNER_SHAPES = pytest.mark.parametrize(
 
 
 @_OWNER_SHAPES
-def test_export_owner_gets_501_with_not_implemented_type(principal: Any) -> None:
-    client = TestClient(_app(_FakeAuditService(), _FakeResolver(principal())))
-    response = client.post("/admin/audit/export", json=_EXPORT_BODY)
-    assert response.status_code == 501
-    assert response.json()["type"].endswith("/errors/not_implemented")
-
-
-@_OWNER_SHAPES
-def test_export_owner_501_body_has_no_job_id(principal: Any) -> None:
-    client = TestClient(_app(_FakeAuditService(), _FakeResolver(principal())))
-    response = client.post("/admin/audit/export", json=_EXPORT_BODY)
-    assert response.status_code == 501
-    assert "job_id" not in response.text
-
-
-@_OWNER_SHAPES
-def test_export_owner_501_writes_no_audit_record(principal: Any) -> None:
+def test_export_with_nothing_wired_is_unavailable_and_recorded_with_no_job(principal: Any) -> None:
+    """#889 S10 replaced the `501`: with no export wired the Owner's request is `503
+    signing_unavailable` (export alone is unavailable), with no job id, recorded as a refusal
+    under the budget naming why. The served route is `test_audit_export_route.py`'s."""
     service = _FakeAuditService()
-    response = TestClient(_app(service, _FakeResolver(principal()))).post(
-        "/admin/audit/export", json=_EXPORT_BODY
-    )
-    assert response.status_code == 501
-    assert service.writer_service.emitted == []
+    client = TestClient(_app(service, _FakeResolver(principal())))
+    response = client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert (response.status_code, response.json()["code"]) == (503, "signing_unavailable")
+    assert "job_id" not in response.text and "Retry-After" not in response.headers
+    [(action, fields)] = service.writer_service.emitted
+    assert (action, fields["reason"], fields["object_kind"]) == (
+        "admin.audit_denied", "signing_unavailable", "audit_export"
+    )  # fmt: skip
 
 
 @pytest.mark.parametrize(
@@ -1691,14 +1681,14 @@ def test_every_export_response_is_no_store() -> None:
         return TestClient(_app(svc, resolver)).post("/admin/audit/export", json=_EXPORT_BODY)
 
     responses = [
-        export(_FakeAuditService(), _FakeResolver(_real_owner())),  # the stub
+        export(_FakeAuditService(), _FakeResolver(_real_owner())),  # nothing wired: 503
         export(_FakeAuditService(), _FakeResolver(_non_owner_with_export())),  # not the Owner
         export(_FakeAuditService(), _FakeResolver(None)),  # no verified session
         export(unwritable, _FakeResolver(_non_owner_with_export())),  # a refusal not recorded
         export(None, _FakeResolver(_real_owner())),  # no audit backend
         export(_FakeAuditService(), None),  # no resolver wired
     ]
-    _assert_no_store(responses, [501, 403, 401, 503, 503, 501])
+    _assert_no_store(responses, [503, 403, 401, 503, 503, 501])
 
 
 # ---- verify break: the critical system event, best effort (#2392) --------------------------

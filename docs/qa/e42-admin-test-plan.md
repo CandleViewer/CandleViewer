@@ -557,8 +557,8 @@ AC-ADM-17)
 **AD-S04-05 Export is signed and audited [R]** (`e2e`, `contract`; E42-S04 "Export is signed and
 audited"; D11; 22 `exportAuditLog`; 24 "Verification"; AC-ADM-20)
 
-- **Blocked:** export is a deliberate `501 not_implemented` stub on this `main` until #889 S10 serves it
-  (22 `exportAuditLog`, ADR-0039), so no job is created. Until then AD-S04-N07 is the case that runs.
+- Served since #889 S10 (22 `exportAuditLog`, ADR-0039), in place of the `501 not_implemented` stub; a
+  refused request creates no job (AD-S04-N01 to N03, N05 and N07).
 - Pre: OWNER, with the `audit` class's step-up.
 - Steps: export the filtered set; follow the job; download the file; verify it offline by the five
   steps of 24 "Verification" (the file's SHA-256 against the manifest; the header's key and
@@ -575,11 +575,11 @@ audited"; D11; 22 `exportAuditLog`; 24 "Verification"; AC-ADM-20)
 
 **AD-S04-06 A failed export offers no partial file** (`e2e`; E42-S04 "Export job fails")
 
-- **Blocked** with AD-S04-05.
 - Pre: an export job that ends `failed`.
 - Expected: the failure shows its reason and a retry action, and no partial file is offered.
-- Audit: the request's `admin.audit_export`; none with reason `downloaded`, since no file is offered; a
-  failure at signing also writes `security.audit_export_sign_failed`.
+- Audit: the request's `admin.audit_export`, and its completion with reason `failed` naming the job's `error`;
+  none with reason `downloaded`, since no file is offered; a failure at signing also writes
+  `security.audit_export_sign_failed`.
 
 **AD-S04-07 A secret-bearing entry shows fingerprints only [R]** (`e2e`, `security`; E42-S04 "Secret-bearing
 entry"; C-12.6)
@@ -595,11 +595,10 @@ entry"; C-12.6)
 **Negative and boundary cases**
 
 Each of N01 to N04, N08 and N09 needs the OWNER's live `audit` grace in its Pre: the step-up guard runs
-first, so without it each answers `403 step_up_required` instead (22 `exportAuditLog`). They are
-**blocked** with AD-S04-05. Audit, for each refusal below: no `admin.audit_export` record; the refusal
-itself falls under `queryAuditLog`'s audit budget, as an `admin.audit_denied` record or, for a `429`, a
-count carried by the next record (`suppressed`). N05's step-up guard writes `auth.step_up_required`
-first, and N07's `501` writes none.
+first, so without it each answers `403 step_up_required` instead (22 `exportAuditLog`). Audit, for each
+refusal below: no `admin.audit_export` record; the refusal itself falls under `queryAuditLog`'s audit
+budget, as an `admin.audit_denied` record or, for a `429` or a `409`, a count carried by the next record
+(`suppressed`). N05's step-up guard writes `auth.step_up_required` first.
 
 - **AD-S04-N01 An export over the range limit** (`contract`; 22 `exportAuditLog`): a window longer than
   `audit_export_max_range_days` (31 by default) answers `422 validation_failed`, with `errors[].rule`
@@ -607,7 +606,7 @@ first, and N07's `501` writes none.
 - **AD-S04-N02 The export rate limit** (`contract`): the sixth export in an hour answers `429 rate_limited`
   with `Retry-After`. Audit: none written for the `429`; it is counted (`suppressed`).
 - **AD-S04-N03 One export at a time** (`contract`): a second export while one is queued or running answers
-  `409 conflict`. Audit: `admin.audit_denied` for the refusal.
+  `409 conflict`. Audit: none written for the `409`; it is counted (`suppressed`).
 - **AD-S04-N04 An expired download** (`contract`): a download after `expires_at` answers `410 gone`; the
   download's `audit` grace is checked after the requester check (22 `downloadAuditExport`).
 - **AD-S04-N05 Export without the step-up** (`contract`): `403 step_up_required` with `action_class`
@@ -616,9 +615,11 @@ first, and N07's `501` writes none.
   opens from the entry already on the page, since no single-record route exists, so no fetch is timed:
   one record in ≤300 ms, and the raw payload is built only when expanded. Audit: `admin.audit_read` for
   the page read that carried the entry; opening the drawer writes none of its own.
-- **AD-S04-N07 Export is not implemented yet** (`contract`; 22 `exportAuditLog`): an Owner with the
-  `audit` step-up gets `501 not_implemented`, no job and no record; a Manager gets `403 forbidden`;
-  without the step-up, `403 step_up_required` comes first. D02 draws the "Not available yet" state.
+- **AD-S04-N07 Export while it is unavailable** (`contract`; 22 `exportAuditLog`): while no signing key
+  can be opened, or the export directory takes no hard links, an Owner with the `audit` step-up gets
+  `503 signing_unavailable` and no job, recorded as `admin.audit_denied` (reason `signing_unavailable` or
+  `export_volume_unavailable`); a Manager gets `403 forbidden`; without the step-up,
+  `403 step_up_required` comes first. D02's "Not available yet" state is stale until its next revision (#889's closing comment, F7).
 - **AD-S04-N08 Another user's download** (`contract`, `security`; 22 `downloadAuditExport`; AC-ADM-21):
   the download fetched by anyone but the requester, another Owner included, answers `404 not_found`,
   and no byte is streamed.

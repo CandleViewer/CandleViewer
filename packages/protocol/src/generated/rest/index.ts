@@ -120,14 +120,9 @@ export interface paths {
      *     covers the window `[from, to)`, for offline retention. Poll `GET /admin/jobs/{jobId}`; once
      *     the job succeeds its `result` is an `AuditExportResult`.
      *
-     *     **Not implemented yet.** Until #889 S10b serves the signed export (ADR-0039), every request
-     *     that passes authentication, the `audit` step-up and RBAC is answered `501 not_implemented`:
-     *     no job is created, nothing is exported, and a `501` writes no audit record. That `501` is
-     *     deprecated: S10b removes it with the route that replaces it.
-     *
-     *     **Order of the checks** (as served from #889 S10b). For an authenticated session the
-     *     step-up guard runs first, before the operation and before RBAC: until the session holds an
-     *     `audit` step-up the call is refused with
+     *     **Order of the checks** (#889 S10b, which replaced the `501` this operation answered until
+     *     then). For an authenticated session the step-up guard runs first, before the operation
+     *     and before RBAC: until the session holds an `audit` step-up the call is refused with
      *     `403 step_up_required` (`action_class: audit`), whatever the caller's role. The operation
      *     then answers `401` when the request is not authenticated and `403` (`code: forbidden`) for
      *     anyone but the Owner; as on every audit operation, `503 store_unavailable` comes first
@@ -11548,23 +11543,6 @@ export interface operations {
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
-      /** @description Deprecated: replaced by #889 S10b, which serves the signed export and removes this answer with the route (ADR-0039; see the operation description). */
-      501: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          /**
-           * @example {
-           *       "type": "https://candleviewer.local/errors/not_implemented",
-           *       "title": "Not implemented",
-           *       "status": 501,
-           *       "code": "not_implemented"
-           *     }
-           */
-          "application/problem+json": components["schemas"]["Problem"];
-        };
-      };
       503: components["responses"]["ServiceUnavailable"];
     };
   };
