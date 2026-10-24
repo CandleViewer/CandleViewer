@@ -2717,6 +2717,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E29",
     ),
     _s(
+        "oms_lane_notices_failed_total",
+        "counter",
+        "notices",
+        ("reason",),
+        "Notices from the order lane to the serving loop that never took effect (E29-T04, 20 "
+        "Sec.6.2): lost, the serving loop had closed, or failed, the call raised there; each is "
+        "logged by its call's name (oms_lane_notice_lost, oms_lane_notice_failed).",
+        "> 0 (rule: E29-T08)",
+        _P,
+        "E29",
+        max_series=2,
+    ),
+    _s(
         "bybit_clock_drift_ms",
         "gauge",
         "milliseconds",
