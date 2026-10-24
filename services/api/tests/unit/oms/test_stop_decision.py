@@ -16,8 +16,10 @@ from candleviewer.exchange.base.models import Order, Position
 from candleviewer.oms.ports import PositionKey
 from candleviewer.oms.stop_resolution import (
     ENTRY_HELD,
+    FILL_PAGE,
     SPAN_HELD,
     TRAIL_HELD,
+    UNSEEN_PAGE,
     EntryState,
     Reading,
     RequestDecision,
@@ -307,13 +309,37 @@ def test_a_fill_case_void_past_the_span_is_held_unless_the_position_shows_no_sto
     assert moves(whole) == {sl.id: "in_force", tp.id: "in_force"}  # nothing voided: no hold
 
 
-def test_an_entry_unseen_past_the_span_is_held_unless_the_position_shows_no_stop() -> None:
-    """A lookup that misses the entry where a miss proves nothing (`unseen`) decides nothing."""
-    decision = one(entry_rows(), flat(), "unseen")
-    assert decision.outcome == "held_for_reconciliation" and decision.held == SPAN_HELD
-    assert one(entry_rows(), position(), "unseen").outcome == "in_flight_resolved"
+def test_an_entry_unseen_is_held_only_where_a_history_miss_is() -> None:
+    """Fold 2, Opus Major: `unseen` holds nothing by itself (`_missed` alone holds), so `gone` and
+    `unseen` decide alike: flat past the span is held; open on the row's side with a foreign
+    stop past the live span decides, as does a demo key 2 d old inside its retention."""
+    past = T0_US
+    assert one(entry_rows(), flat(), "unseen", history_from_us=past).held == SPAN_HELD
+    foreign = position(stop_loss=Decimal("59000"))
+    demo = {"history_from_us": past, "retention_from_us": past - 4 * 86_400 * SECOND_US}
+    for over in ({"history_from_us": past}, demo):
+        gone, unseen = (one(entry_rows(), foreign, entry, **over) for entry in ("gone", "unseen"))
+        assert gone.outcome == unseen.outcome == "in_flight_resolved"
+        assert gone.held is unseen.held is None and gone.pages == unseen.pages == ()
     shown = one(entry_rows(), position(stop_loss=STOP), "unseen")
     assert shown.outcome == "in_force" and shown.held is None
+
+
+def test_an_unseen_entry_voided_on_a_position_with_no_stop_at_all_pages() -> None:
+    """The 06:38Z ruling: the `in_flight_resolved` void proceeds and the decision pages (its
+    stop-loss row, `UNSEEN_PAGE`), as the fill case pages (`FILL_PAGE`); `gone` never pages."""
+    sl, tp = entry_rows()
+    decision = one((sl, tp), position(), "unseen")
+    assert decision.outcome == "in_flight_resolved" and decision.pages == (sl.id,)
+    assert decision.page == UNSEEN_PAGE and "entry_unseen" in UNSEEN_PAGE
+    assert "no stop" in UNSEEN_PAGE
+    other_side = one((sl, tp), position(side="sell"), "unseen")
+    assert other_side.pages == (sl.id,) and other_side.page == UNSEEN_PAGE
+    gone = one((sl, tp), position(), "gone")
+    assert gone.pages == () and gone.page is None
+    fill = one((sl, tp), position(take_profit=TP), "filled")
+    assert fill.pages == (sl.id,) and fill.page == FILL_PAGE
+    assert FILL_PAGE.split(":")[0] == "entry_filled_stop_absent"
 
 
 def test_answered_rows_a_read_leaves_listed_carry_the_entry_hold() -> None:
