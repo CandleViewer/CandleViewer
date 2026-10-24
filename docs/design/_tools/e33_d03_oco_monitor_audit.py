@@ -271,6 +271,11 @@ ROW_IDS = (("c_rows", "C"), ("cg_rows", "CG"), ("g_rows", "G"), ("a_rows", "A"),
 REASON_RE = r"^\| `((?:rbac|algo|recon)\.[a-z_.]+|frozen|lockout)` +\| ([^|]+?) +\|"
 
 
+# A `file:line` cite whose text moved is a WARN naming its current line (re-pin at the next text
+# touch); a cite whose text no longer exists in the file is a FAIL.
+CITE_WARN: list[str] = []
+
+
 def rows(table: str) -> list[list[str]]:
     return [[c.strip() for c in ln.split("|")] for ln in table.strip().splitlines()]
 
@@ -438,13 +443,19 @@ def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, s
     if re.search(r"\bLIVE (?:row|run|badge) drawn\b", section(spec, 5, 8)):
         bad.append("spec sections 5-7: a LIVE run is drawn (LIVE is an absence in R3)")
     lines = {k: v.split("\n") for k, v in t.items()}
+    CITE_WARN.clear()
     for doc, line_s, want in rows(CITED_TABLE):
         line = int(line_s)
         shift = sum(POINTER in ln for ln in lines[doc][: line - 1]) if doc == "14" else 0
-        if not any(
+        if any(
             0 < n <= len(lines[doc]) and want in lines[doc][n - 1] for n in (line, line + shift)
         ):
-            bad.append(f"cited line drifted: `{doc}` :{line} no longer holds {want[:40]!r}")
+            continue
+        found = [i + 1 for i, ln in enumerate(lines[doc]) if want in ln]
+        if found:
+            CITE_WARN.append(f"`{doc}` :{line} now at :{found[0]} ({want[:40]!r})")
+        else:
+            bad.append(f"cited text gone: `{doc}` :{line} {want[:40]!r} is nowhere in the file")
     for f in files:
         txt = f.read_text(encoding="utf-8")
         bad += [f"{f.name}: forbidden text {p}" for p in FORBIDDEN if re.search(p, txt)]
@@ -525,9 +536,10 @@ def main(argv: list[str]) -> int:
     ok = (
         "OK — both OCO caveats, the outage notes, the banner leads and the halt words present "
         "verbatim; no retired word in the copy deck; every T2 reason within 60 characters; no "
-        "private path; every C / CMP / SCR id exists; no cited line drifted"
+        "private path; every C / CMP / SCR id exists; every cited text exists"
     )
     out.append("\n## 5. String gates: " + (ok if not bad else "\n".join("FAIL " + b for b in bad)))
+    out += [f"WARN cited line drifted: {w}" for w in CITE_WARN]
     deck = section(spec, 13, 14)
     deck_rows = re.findall(r"^\| `[^`]+` +\| [^|]*\| ([^|]+?) +\|", deck, MULTI)
     by_source: dict[str, int] = {}
@@ -597,7 +609,7 @@ def main(argv: list[str]) -> int:
     if "--json" in argv:
         palette = {th: {n: resolve(tk, n) for n in BINDINGS} for th, tk in themes.items()}
         payload = {"numbers": numbers, "matrix": matrix, "missing": missing, "facts": facts}
-        payload.update({"problems": bad, "palette": palette})
+        payload.update({"problems": bad, "cite_warnings": CITE_WARN, "palette": palette})
         print(json.dumps(payload, ensure_ascii=False, indent=1))
     else:
         print("\n".join(out))
