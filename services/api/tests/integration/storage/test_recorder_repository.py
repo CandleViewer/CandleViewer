@@ -186,6 +186,8 @@ async def test_e16_t04_session_gap_coverage_round_trip(
     fresh = SessionManager(repo, now_us=lambda: clock[0], audit=audit)
     assert await fresh.recover_on_startup(restart) == 1
     assert audit.actions() == ["recorder.stop"]  # C-2.9: the close is audited, never skipped
+    stop = audit.records[0][1]  # and it names the symbol and the session it closes
+    assert (stop["object_id"], stop["after_state"]["recording_session_id"]) == ("BTCUSDT", sid)
     assert await repo.list_live_sessions() == []
     svc = CoverageService(repo, now_us=lambda: clock[0])
     (cov,) = await svc.coverage("BTCUSDT", ["trades"], t0, restart)

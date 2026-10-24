@@ -18,7 +18,7 @@ async def test_crash_recovery_then_warmup_gate_opens_and_only_then_stops(
 ) -> None:
     """Gherkin "Crash leaves no open session" + policy gate (C-13.6 #12)."""
     store = MemRecorderStore()
-    dead = SessionManager(store, now_us=UsClock(T0), audit=audit)
+    dead = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit())
     sid = await store.open_session_at(recorded_symbol_id="r", symbol="ETHUSDT",
                                       streams=["trades"], orderbook_depth=1, ws_endpoint="x",
                                       started_at=to_dt(T0))  # fmt: skip
@@ -40,7 +40,7 @@ async def test_crash_recovery_then_warmup_gate_opens_and_only_then_stops(
             await p.tick()
             order.append(f"positions:{p.leaf('ETHUSDT')}")  # still gated while reloading
 
-        mgr = SessionManager(store, now_us=UsClock(start), audit=audit)
+        mgr = SessionManager(store, now_us=UsClock(start), audit=FakeAudit())
         await startup_reconcile(mgr, p, process_start_us=start,
                                 reload_positions=reload_positions)  # fmt: skip
         s = store.sessions[sid]
@@ -59,7 +59,7 @@ async def test_policy_forwards_b11_state_entries_to_the_session_mirror(
     clock: FakeClock, bus: FakeBus, audit: FakeAudit
 ) -> None:
     store = MemRecorderStore()
-    mgr = SessionManager(store, now_us=UsClock(T0), audit=audit)
+    mgr = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit())
     p = RecordingPolicy(
         disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock, recorded=Mem()
     )

@@ -8,10 +8,11 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 
+from candleviewer.audit.writer import AuditWriter
 from candleviewer.exchange.bybit.public_ws import stream_for_topic
 from candleviewer.recorder.models import RecorderSetChanged
 from candleviewer.recorder.sessions import (
@@ -290,7 +291,7 @@ class _Audit:
     async def emit(self, action: str, **kw: Any) -> None:
         if self.fail:
             raise OSError("audit down")
-        self.log.append("audit")
+        self.log.append(f"audit:{kw['object_id']}")
         self.records.append((action, kw))
 
 
@@ -300,24 +301,28 @@ class _LoggingStore(MemRecorderStore):
         self.log = log
 
     async def record_gap(self, **kw: Any) -> int:
-        self.log.append("gap")
+        self.log.append(f"gap:{kw['symbol']}")
         return await super().record_gap(**kw)
 
 
 async def test_crash_recovery_is_audited_write_ahead_as_system_recorder() -> None:
     """Security MEDIUM: one `recorder.stop reason=process_restart` per closed session, actor
-    `system:recorder`, written BEFORE the gap rows."""
+    `system:recorder`, each written BEFORE its own session's gap rows."""
     log: list[str] = []
-    store = _LoggingStore(log)
-    await SessionManager(store, now_us=UsClock(T0), audit=FakeAudit()).on_set_changed(_added())
+    store, symbols = _LoggingStore(log), ("BTCUSDT", "ETHUSDT")
+    dead = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit())
+    for symbol in symbols:
+        await dead.on_set_changed(_added(symbol))
     audit = _Audit(log)
     fresh = SessionManager(store, now_us=UsClock(T0 + 9), audit=audit)
-    assert await fresh.recover_on_startup(T0 + 9) == 1
-    assert log[0] == "audit" and log.count("audit") == 1 and "gap" in log[1:]
-    ((action, kw),) = audit.records
-    assert action == "recorder.stop" and kw["reason"] == "process_restart"
-    assert kw["actor_label"] == "system:recorder" and kw["actor_user_id"] is None
-    assert kw["object_id"] == "BTCUSDT" and kw["after_state"]["reason"] == "process_restart"
+    assert await fresh.recover_on_startup(T0 + 9) == 2
+    gaps = len(DEFAULT_STREAMS)
+    assert log == [f"{kind}:{s}" for s in symbols for kind in ["audit"] + ["gap"] * gaps]
+    for symbol, (action, kw) in zip(symbols, audit.records, strict=True):
+        assert action == "recorder.stop" and kw["reason"] == "process_restart"
+        assert kw["actor_label"] == "system:recorder" and kw["actor_user_id"] is None
+        assert kw["object_id"] == symbol and kw["after_state"]["reason"] == "process_restart"
+        assert kw["after_state"]["recording_session_id"] == dead.live_session(symbol)
 
 
 async def test_crash_recovery_audit_failure_leaves_session_open() -> None:
@@ -386,7 +391,7 @@ def test_session_manager_built_without_audit_raises_type_error() -> None:
 
 def test_session_manager_built_with_audit_none_raises_value_error_naming_the_reason() -> None:
     store, clock = MemRecorderStore(), UsClock(T0)
-    with pytest.raises(ValueError, match=r"crash-recovery.*stop audit.*C-2\.9"):
+    with pytest.raises(ValueError, match=r"crash-recovery `recorder\.stop` audit.*C-2\.9"):
         SessionManager(store, now_us=clock, audit=None)  # type: ignore[arg-type]  # a runtime None
 
 
@@ -400,7 +405,7 @@ async def test_crash_recovery_writes_the_stop_audit_record_for_the_session_it_cl
     fresh = SessionManager(store, now_us=UsClock(start), audit=audit)
     assert await fresh.recover_on_startup(start) == 1
     after_state = {
-        "symbol": "BTCUSDT", "session_id": sid, "reason": "process_restart",
+        "symbol": "BTCUSDT", "recording_session_id": sid, "reason": "process_restart",
         "gap_start_us": str(T0), "gap_end_us": str(start),
     }  # fmt: skip
     assert audit.records == [
@@ -410,3 +415,24 @@ async def test_crash_recovery_writes_the_stop_audit_record_for_the_session_it_cl
             "reason": "process_restart", "after_state": after_state, "env": "live",
         })
     ]  # fmt: skip
+
+
+async def test_the_stop_record_carries_the_managers_env() -> None:
+    store, audit = MemRecorderStore(), FakeAudit()
+    await SessionManager(store, now_us=UsClock(T0), audit=FakeAudit()).on_set_changed(_added())
+    cfg = SessionConfig(env="demo")
+    fresh = SessionManager(store, now_us=UsClock(T0 + 9), config=cfg, audit=audit)
+    await fresh.recover_on_startup(T0 + 9)
+    assert audit.envs() == [("recorder.stop", "demo")]
+
+
+async def test_the_stop_record_keeps_its_after_state_through_the_audit_writers_build(
+    tmp_path: Path,
+) -> None:
+    """M19's redactor blanks a `session_id` key as a credential name; this record must survive."""
+    store, audit = MemRecorderStore(), FakeAudit()
+    await SessionManager(store, now_us=UsClock(T0), audit=FakeAudit()).on_set_changed(_added())
+    await SessionManager(store, now_us=UsClock(T0 + 9), audit=audit).recover_on_startup(T0 + 9)
+    ((action, kw),) = audit.records
+    built = AuditWriter(cast(Any, object()), str(tmp_path / "audit.wal")).build(action, **kw)
+    assert built.after_state == kw["after_state"]
