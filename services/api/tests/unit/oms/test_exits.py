@@ -608,7 +608,7 @@ async def test_a_cancel_whose_intent_cannot_be_recorded_is_503_and_sends_nothing
 @pytest.mark.parametrize(
     ("error", "status", "code"),
     [
-        (VersionConflict(), 412, "version_conflict"),
+        (VersionConflict(), 409, "conflict"),
         (OrderStepRefused("CANCEL", "StorageTierUnavailable"), 503, "store_unavailable"),
         (IllegalTransition("held", "CANCEL"), 409, "conflict"),
         (OrderNotLoaded("no machine in this process holds the order"), 409, "conflict"),
@@ -619,9 +619,10 @@ async def test_a_cancel_whose_intent_cannot_be_recorded_is_503_and_sends_nothing
 async def test_a_command_the_facade_did_not_take_is_refused_and_its_watch_forgotten(
     error: BaseException, status: int, code: str
 ) -> None:
-    """`_taken_not`: a stale version (412), a step the store refused (503, the shared retry), a
-    state the order no longer takes it in, an order not loaded or a latched machine (409, CV-C63):
-    nothing sent, the watch forgotten (it answers None), the refusal recorded beside the intent."""
+    """`_taken_not`: a stale version, which no client's `If-Match` named (409 `conflict`, never
+    412: SEC-S4C2B-01), a step the store refused (503, the shared retry), a state the order no
+    longer takes it in, an order not loaded or a latched machine (409, CV-C63): nothing sent, the
+    watch forgotten (it answers None), the refusal recorded beside the intent."""
     exits, machines, row, port = await scripted("submitted")
     machines.refuse = error
     got = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
