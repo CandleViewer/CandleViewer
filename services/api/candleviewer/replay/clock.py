@@ -19,11 +19,14 @@ gives the achieved rate (`stats()`). An event due within `min_wait_s` goes out w
 
 **Loop budget** (#2668 G1, C-2.17). Every `yield_slice_s` the clock breathes on its session's
 `BudgetLane`, shared with the session's sources: a yield, or a hold while replay is over its
-share of the loop. It charges the lane before every other await and restarts it only after a
-deadline wait, so a delivery's or a read's own work stays charged (a suspension in them too: the
-safe direction). A hold in playback slides the schedule (`Pacer.delay`) and is booked as lost
-time: the achieved ratio falls; never backpressure (`CONSUMER_SLOW`), never a catch-up burst.
-The clock never changes the requested rate: the sessions service, owner of B12's `rate`, does.
+share of the loop. It charges the lane before every other await and restarts it after a pure
+wait (a deadline, a source close), returned or cancelled, so a delivery's or a read's own work
+stays charged and idle time never is. The slice runs from the last breathe, not from the last
+natural wait, so a paced clock with short waits still breathes. A hold ends only on a pause or a
+destroy, never on a speed change. A hold in playback slides the schedule (`Pacer.delay`) and is
+booked as lost time: the achieved ratio falls; never backpressure (`CONSUMER_SLOW`), never a
+catch-up burst. The clock never changes the requested rate: the sessions service, owner of B12's
+`rate`, does.
 
 **Steps** (`24-internal-schemas.md` Sec.13.7) deliver at once while not playing: `step_events(n)`
 the next n market events, `step_ms(n)` everything in the next n ms of replay time, and
@@ -148,6 +151,9 @@ class ReplayClock:
         self._pacer: Pacer | None = None
         self._window = RateWindow(self._cfg.rate_window_s)
         self._wake = asyncio.Event()
+        self._halt = (
+            asyncio.Event()
+        )  # a pause or a destroy: ends a budget hold (a speed change not)
         self._lane = FREE_LANE if budget_lane is None else budget_lane
         self._task: asyncio.Task[StopReason] | None = None
         self._stack: AsyncExitStack | None = None
@@ -182,6 +188,7 @@ class ReplayClock:
         reposition is still closing. Every caller awaits the same shielded close, so a caller
         cancelled again meanwhile cannot leave a source open."""
         self._closed = True
+        self._halt.set()  # a step held by the budget stops waiting
         if self._closing is None:
             self._closing = spawn(self._shutdown(), name="replay-clock-close")
         await asyncio.shield(self._closing)
@@ -216,6 +223,7 @@ class ReplayClock:
         if self._speed == STEP:
             raise ReplayClockStateError("speed 0 is step mode: step instead of playing")
         self._stop, self._starting = False, True
+        self._halt.clear()
         self._task = _child(group, self._play())
         return self._task
 
@@ -226,6 +234,7 @@ class ReplayClock:
         if task is not None and not task.done():
             self._stop = True
             self._wake.set()
+            self._halt.set()
             await asyncio.wait({task})
 
     def set_speed(self, speed: float) -> None:
@@ -350,8 +359,10 @@ class ReplayClock:
             self._closers.add(closing)
             closing.add_done_callback(self._closers.discard)
             self._lane.charge()
-            await asyncio.shield(closing)
-            self._lane.start()
+            try:
+                await asyncio.shield(closing)
+            finally:  # a pure wait, returned or cancelled: never charged
+                self._lane.start()
 
     def now_us(self) -> int:
         """Replay "now" for downstream clocks: one clock for every pane (US-RPL-005)."""
@@ -428,8 +439,10 @@ class ReplayClock:
                 lag = now - pacer.due(self._end_us if item is None else item.ts_us)
                 if lag < -min_wait:
                     lane.charge()
-                    await time.wait_until(now - lag, self._wake)
-                    lane.start()
+                    try:
+                        await time.wait_until(now - lag, self._wake)
+                    finally:  # a pure wait, returned or cancelled: never charged
+                        lane.start()
                     continue
             if item is None:
                 self._cursor = self._end_us
@@ -461,7 +474,7 @@ class ReplayClock:
             ):
                 self._window_closed()
             if now - sliced >= slice_s:  # let the loop run, or hold while replay is over budget
-                held = await lane.breathe(self._wake)
+                held = await lane.breathe(self._halt)
                 if held > 0.0 and self._pacer is not None:
                     self._pacer.delay(held)  # the schedule waits too: no catch-up burst
                     self._lost_s += held  # the achieved ratio shows it; never backpressure
@@ -478,6 +491,7 @@ class ReplayClock:
         if self.playing or self._stepping:
             raise ReplayClockStateError("pause playback before stepping")
         self._stepping, self._sliced = True, self._time.now()
+        self._halt.clear()
         self._lane.start()
         try:
             yield
@@ -489,7 +503,7 @@ class ReplayClock:
     async def _breathe(self) -> None:
         """A step never waits, so it breathes on the lane after `yield_slice_s` of work (C-2.17)."""
         if self._time.now() - self._sliced >= self._cfg.yield_slice_s:
-            await self._lane.breathe()
+            await self._lane.breathe(self._halt)
             self._sliced = self._time.now()
 
     async def _step_item(

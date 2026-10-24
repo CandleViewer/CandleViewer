@@ -153,7 +153,8 @@ class PlaybackStats:
 
     `achieved_ratio` is the achieved speed over the requested one in the last full rate window
     (`None` before the first window, while not paced, or in step mode). `achieved_speed` is the
-    replay seconds per wall second in that window."""
+    replay seconds per wall second in that window. `backpressure_s` is the paced wall time lost
+    to slow consumers and to loop-budget holds (#2668); `backpressured` is the consumers' only."""
 
     cursor_us: int
     speed: float
