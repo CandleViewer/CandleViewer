@@ -1,0 +1,137 @@
+# E32-D05 — Per-component handoff checklist (`16` §11.4; the contracts SCR-064 introduces or changes)
+
+Two blocks — **CMP-120 TrailingStopEditor** (the kind selector, the value and unit, the activation-R control, the translated readout, the only-tighten line, the class word) and the **SCR-064 composite** (the loosen flow: the slot + CMP-044 confirmation + SCR-006 step-up + the pending and refused outcomes; the pending-versus-confirmed language; the breakeven row with its fee-offset option) — every line of the `16` §11.4 block kept, then Tables 1–5, the Density table and the Essential-exceptions table once each with a leading `Component` column, then §A the `16` §12 design-QA checklist and §B the `05` §10 template for SCR-064. Addressed to **E32-D06**, the epic's design-system ticket, which embeds it: the `15` A-row D05-A1 in `docs/design/E32/E32-D05.md` §12 carries the copy-ready text. Every number is `docs/design/_tools/e32_d05_sltp_editor_audit.py`'s; the Penpot page is `E32-D05 Position SL TP editor`, BLOCKED-PENPOT until the boards are drawn. CMP-119 (the existing-position variant is E30-D04 §10's; the deltas are routed to E32-D03), CMP-158 (contract unchanged; the SCR-064 sentence is E32-D02's `sl.note`), CMP-100 / CMP-003 / CMP-009 (unchanged) and CMP-079 / CMP-019 (unchanged) get this line and no block.
+
+## Handoff checklist — CMP-120 TrailingStopEditor (E32-D05, #925)
+
+Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done (docs/plan/16-design-system-brief.md §11.4, §13.3).
+
+- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E32-D05 Position SL TP editor` (page id pinned after the first build), frames `CMP-120 / anatomy` … `/ validity` on board 08; PNG planned at `docs/design/E32/img/E32-D05-08-cmp-120-anatomy-and-kinds.png`
+- [ ] **Variants × States matrix** — PENDING (a Penpot variant exists once the boards are drawn): 4 kinds (fixed · percent · ATR · structure; MA named only) × the 9 states of spec §4.2 × 2 densities; Table 1
+- [x] **Keyboard table** — the kind selector one roving stop (`←` / `→`, `Enter` / `Space`); the value `↑` / `↓` one tick / 0.1 % / 0.1 × (`Shift` ×10); the activation R `↑` / `↓` by 0.1 R; `Enter` in a field = Apply (pending); a wider distance or a later activation reverts on commit with its line; `Esc` closes the dialog and never cancels a sent request (spec §9); Table 2
+- [x] **Accessible name / role table** — the row a `group` "Trailing stop"; the kind selector `radiogroup` / `radio`; the value's `aria-describedby` = the translated readout line (input → distance → first trigger, the holder word, the only-tighten line); the `(estimated)` badge a native `<button>` named "Estimated, trailing-stop translation"; T2 controls keep their role and full label with `aria-disabled` and `aria-describedby` → the panel notice (spec §4); Table 3
+- [x] **Live data** — the readout re-translates from the mark, polite, ≤ 1 / 2 s, latest value only; the server's echo replaces the preview once, polite; `Position.trailing_stop` from WS `positions`; nothing per tick; Table 5
+- [x] **Motion pair** — none animated: the kind switch, the revert and the echo are instant token swaps; the `(estimated)` badge leaving is a cut (`16` §7); the full spec is E32-D06's; Table 4
+- [x] **Density notes** — compact 24 px wells and segments, comfortable 32 px; smallest target the 24 × 24 nudge buttons (CMP-100); Density table
+- [x] **Essential-exceptions log** — none (every target reaches 24 px by padding)
+- [x] **Tokens used** — `color.text.primary` / `.secondary` / `.tertiary`, `color.surface.overlay` / `.raised` / `.app` / `.selected`, `color.border.default`, `color.status.danger.default` (the 2 px boundary) / `.strong` (the glyph) / `.subtle` (the revert line), `color.status.info.subtle` / `.default` / `.strong` (CMP-227 inline, the readout's estimated pair), `color.status.warning.subtle` / `.strong` (the "contract pending" stamp), `color.focus.ring`, `opacity.disabled` (the validity look only), `type.ui.label`, `type.ui.caption`, `type.num.base`, `size.control.height`, `space.inset.sm` / `.md`, `radius.card`; Penpot token sets = `packages/ui/tokens` at the branch base
+- [ ] **Data contract confirmed** — NO for the Emulated kinds: the row binds `PUT /positions/{positionId}/tpsl` `SetTpSlRequest.trailing_stop: Offset` (`unit ∈ ticks · percent · atr · price`) + `activation_price`, the echo `TpSlResult.trailing_stop_distance` / `.trailing_stop_requested` / `.activation_price`, the read `Position.trailing_stop` (a distance) — producible today for fixed and percent; `structure` and `ma` have no `OffsetUnit`, the Emulated trails have no write (D05-G3), and the read carries no activation price or arming state (D05-G4); `15`'s "order-amend endpoint / client-side" sentence is replaced by D05-A1
+- [ ] **Contrast and CVD** — PENDING (CVD planned on the exports of boards 04 and 08): spec §14 — the readout on the overlay, the T2 label on raised, the revert words on `danger.subtle`, the estimated word on `info.subtle` and its outline, the stamp words on `warning.subtle`, all PASS in dark / light / hc; the kind, the holder and the verdict are words and glyphs, never colour
+- [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — sections A and B below
+- [ ] **Sign-off** — owner approval pending (owner `approved` comment or merged spec PR)
+
+## Handoff checklist — SCR-064 composite: the loosen flow, the pending language, the breakeven row (E32-D05, #925)
+
+Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done (docs/plan/16-design-system-brief.md §11.4, §13.3).
+
+- [ ] **Final Penpot link** — BLOCKED-PENPOT: page `E32-D05 Position SL TP editor`, `SCR-064 / editing` (board 02), the outcomes (board 04), the loosen flow and the breakeven row (board 07); PNGs planned at `docs/design/E32/img/E32-D05-02-scr064-anatomy.png`, `-04-scr064-outcomes.png`, `-07-scr064-breakeven-and-loosen.png`
+- [ ] **Variants × States matrix** — PENDING: the 31 SCR-064 states of spec §3 (29 drawn, 2 by reference) × 2 densities; the loosen flow's 4 frames + 2 insets; Table 1
+- [x] **Keyboard table** — E32-D02 §4.4's focus order with the kind selector, the activation R and the fee-offset option inserted; initial focus on the stop field; the loosen confirmation opens on "Keep 63,900.0" with E30-D03 D3's ≥ 400 ms acceptance delay on the primary; the step-up is SCR-006's (focus on the password field); `Esc` keeps / cancels / closes and never cancels a sent request; a T2 control re-shows its reason (spec §9); Table 2
+- [x] **Accessible name / role table** — the dialog `dialog` named by the header; the stop field's description carries value + holder + risk read-out; the pending line `status` with `aria-busy` on Apply; the applied line `status`; the rejected line `alert`; the loosen confirmation `alertdialog` with the restatement; the T2 slot keeps its name with `aria-disabled` + `aria-describedby` → the reason (spec §6, §7); Table 3
+- [x] **Live data** — the read-out and the pending line polite, ≤ 1 / 2 s; a refusal, a rejection, `naked`, the position closing and an arm change assertive, once; the loosen's outcome polite, once; nothing moves focus; Table 5
+- [x] **Motion pair** — pending → applied is a cut (the hourglass goes, the check comes), instant under reduced motion; the hourglass is static; the confirmation opens with `16` §7's `normal` scale + fade, instant under reduce; the pending hatch never animates; the full spec is E32-D06's; Table 4
+- [x] **Density notes** — rows 24 / 32 px; the dialog 640 px in both; the confirmation 560 px; at 200 % zoom the dialog fills 1280 × 800 with header and footer pinned and the body scrolling (spec §10); Density table
+- [x] **Essential-exceptions log** — none
+- [x] **Tokens used** — the CMP-120 set plus `color.status.success.subtle` / `.strong` (applied), `color.status.info.subtle` / `.strong` (the pending line and its hatch), `color.status.danger.subtle` / `.strong` / `.default` (rejected, the boundary), `color.data-confidence.stale.text` / `.surface` (the disconnected inset), `color.env.live` / `color.env.demo` (the pill rings), `color.text.on-action` on `color.action.primary.default` (Apply, "Loosen to 63,800.0…"), `color.surface.canvas`, `space.inset.sm` / `.md`
+- [ ] **Data contract confirmed** — NO: the loosen is contract, not code (`22` :6690–6703, :11748–11754, :14242; `24` :2101–2113, :4834 — D05-G5, E29-T07 #915); the breakeven and its fee offset have no field on an open position (D05-G2); shipped today: `setPositionTpSl` with both sides, the `positions` read, `POST /auth/step-up` with the `challenge_id`
+- [ ] **Contrast and CVD** — PENDING: spec §14 — the pending words on `info.subtle`, the applied words on `success.subtle`, the rejected words on `danger.subtle`, the env badge word ≥ 7:1, the T2 label on raised, all PASS in dark / light / hc; the three outcomes differ by glyph, word, fill, hatch and role at once
+- [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** attached — sections A and B below
+- [ ] **Sign-off** — owner approval pending
+
+### Table 1 — Variants × States
+
+| Component         | Variant                           | State (every one is a Penpot variant and a story)                                                                                                                           | Penpot variant (planned)    | Story (planned)              |
+| ----------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- | ---------------------------- |
+| CMP-120           | fixed · percent · ATR · structure | anatomy · fixed · percent · percent tighter · ATR · structure · only-tighten revert · read-only T2 · validity (spec §4.2)                                                   | `CMP-120 / <state>`         | `TrailingStopEditor/<State>` |
+| SCR-064 composite | owner · manager · viewer          | the 31 states of spec §3 (`editing` with the `· comfortable`, `· manager`, `· arm locked` insets; `viewer-read-only` with `· view-as`; `reconciling` with `· disconnected`) | `SCR-064 / <state>`         | `SltpEditor/<State>`         |
+| SCR-064 composite | the loosen flow                   | confirm · step-up · pending · refused (`· arm locked`, `· DEMO`) (spec §6)                                                                                                  | `SCR-064 / loosen · <step>` | `SltpEditor/Loosen/<Step>`   |
+
+### Table 2 — Keyboard
+
+| Component               | Key                                                | Action                                                                                                                                                            | Focus after                  | Global conflict? (`05` §3.2 / §3.3)              |
+| ----------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------ |
+| SCR-064                 | `Tab` / `Shift+Tab`                                | stop field → unit switch → trigger → "Loosen stop…" → the rungs → the trail (check, kind, value, arms at) → the breakeven (check, R, fee option) → Cancel → Apply | the next stop                | none                                             |
+| SCR-064                 | `↑` / `↓` in the stop field                        | one tick (`Shift` ×10, `PageUp` / `PageDown` ×100); the loosening key stops at the current stop                                                                   | the field                    | none (a field, not the DOM ladder's `Shift+←/→`) |
+| SCR-064                 | `Enter` in a field                                 | Apply (pending)                                                                                                                                                   | stays on Apply               | none                                             |
+| SCR-064                 | `Esc`                                              | closes; never cancels a sent request; focus returns to the invoker                                                                                                | the invoker                  | the universal cancel                             |
+| CMP-120                 | `←` / `→` on the kind selector · `Enter` / `Space` | moves and selects the kind; the readout re-translates                                                                                                             | the segment                  | none (roving)                                    |
+| CMP-120                 | `↑` / `↓` on the value · on "arms at"              | one tick / 0.1 % / 0.1 × · 0.1 R; a wider or later value reverts on commit                                                                                        | the field                    | none                                             |
+| the loosen confirmation | `Enter` / `Space` on "Loosen to 63,800.0…"         | accepted only ≥ 400 ms after open (E30-D03 D3) → SCR-006                                                                                                          | the password field (SCR-006) | none                                             |
+| the loosen confirmation | `Esc` / "Keep 63,900.0"                            | keeps the stop; nothing sent                                                                                                                                      | "Loosen stop…"               | the universal cancel                             |
+| T2 controls             | `Enter` / `Space` / a value key                    | nothing changes; the reason re-shown inline, announced once politely (E09-D09 §9.3)                                                                               | unchanged                    | none                                             |
+
+### Table 3 — Accessible name / role
+
+| Component               | Element                              | Role                             | Accessible name (source)                                                               | States / properties                                                                                                   |
+| ----------------------- | ------------------------------------ | -------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| SCR-064                 | the dialog                           | `dialog`                         | "Manage BTCUSDT long 0.250 · Main · LIVE" (`e32.title.*`)                              | `aria-modal`; focus trapped; returns to the invoker                                                                   |
+| SCR-064                 | the stop field                       | `spinbutton` (CMP-100)           | "Stop-loss · held by Bybit (exchange)"                                                 | description = value + holder + `sltp.readout`; `readonly` while pending                                               |
+| SCR-064                 | the unit switch                      | `radiogroup` / `radio` (CMP-003) | "price" / "ticks" / "%"                                                                | one roving stop                                                                                                       |
+| SCR-064                 | "Loosen stop…"                       | `button`                         | "Loosen stop…" + description "owner only · opens a confirmation"                       | T2 for a manager: `aria-disabled="true"` + `aria-describedby` → "Only the owner can loosen a stop."; never `disabled` |
+| SCR-064                 | the pending line                     | `status`                         | `sl.tighten.pending` + `sltp.pending.held`                                             | `aria-busy` on Apply; polite, once                                                                                    |
+| SCR-064                 | the applied line · the rejected line | `status` · `alert`               | `sl.tighten.done` · `sltp.rejected`                                                    | once                                                                                                                  |
+| SCR-064                 | CMP-158                              | `note`                           | `sl.note`'s sentence                                                                   | not in the Tab order                                                                                                  |
+| SCR-064                 | the panel notice (viewer, view-as)   | text                             | the E09-D09 §3.1 / §10 sentence                                                        | the `aria-describedby` of every gated control                                                                         |
+| the loosen confirmation | the dialog                           | `alertdialog` (CMP-044)          | `sltp.loosen.confirm.title` + the body as its description                              | focus on "Keep 63,900.0"; `aria-modal`                                                                                |
+| the step-up             | SCR-006                              | `alertdialog`                    | "Confirm: loosen the stop on BTCUSDT long 0.250, Main, to 63,800.0"                    | SCR-006's own (E09-D02 §9)                                                                                            |
+| CMP-120                 | the row                              | `group`                          | "Trailing stop"                                                                        | —                                                                                                                     |
+| CMP-120                 | the kind selector                    | `radiogroup` / `radio` (CMP-003) | "Fixed" / "Percent" / "ATR" / "Structure"                                              | `aria-checked`; ATR and Structure carry the "contract pending" stamp in their description                             |
+| CMP-120                 | the value · "arms at"                | `spinbutton` (CMP-100)           | "Trail distance" / "Trail percent" / "ATR multiple" / "Swing lookback" · "Arms at (R)" | description = the readout line + the only-tighten line                                                                |
+| CMP-120                 | the `(estimated)` badge              | `button` (CMP-227)               | "Estimated, trailing-stop translation"                                                 | present until the echo; never colour alone                                                                            |
+| CMP-120                 | the holder word                      | text                             | "held by Bybit (exchange)" · "Emulated — run by CandleViewer, not Bybit"               | —                                                                                                                     |
+
+### Table 4 — Motion pair
+
+| Component               | Property                              | motion-safe                                         | motion-reduce | Duration / easing tokens                                              |
+| ----------------------- | ------------------------------------- | --------------------------------------------------- | ------------- | --------------------------------------------------------------------- |
+| SCR-064                 | pending → applied / rejected          | a cut: the hourglass goes, the check or cross comes | the same      | — (E32-D06 confirms)                                                  |
+| SCR-064                 | the pending hatch                     | static                                              | static        | —                                                                     |
+| the loosen confirmation | dialog open                           | `normal` scale + fade                               | instant       | `motion.duration.normal`, `motion.easing.standard` (E32-D06 confirms) |
+| CMP-120                 | the kind switch, the revert, the echo | instant token swap                                  | the same      | —                                                                     |
+
+### Table 5 — Live data
+
+| Component | Field                                                                | Politeness                   | Cadence   | Coalescing                 |
+| --------- | -------------------------------------------------------------------- | ---------------------------- | --------- | -------------------------- |
+| SCR-064   | the read-out (mark, last, liq, R) and `sltp.readout`                 | polite                       | ≤ 1 / 2 s | latest value               |
+| SCR-064   | the pending line                                                     | polite, once per transition  | discrete  | —                          |
+| SCR-064   | a refusal, a rejection, `naked`, the position closing, an arm change | assertive, once              | discrete  | one announcement per event |
+| CMP-120   | the translated readout                                               | polite                       | ≤ 1 / 2 s | latest value               |
+| CMP-120   | the server's echo                                                    | polite, once                 | discrete  | —                          |
+| CMP-120   | `Position.trailing_stop` (WS `positions`)                            | polite (through the readout) | ≤ 1 / 2 s | latest value               |
+
+### Density
+
+| Component               | Mode                  | Row / control height          | Padding tokens           | Smallest target                     |
+| ----------------------- | --------------------- | ----------------------------- | ------------------------ | ----------------------------------- |
+| SCR-064, CMP-120        | compact (default)     | 24 px (`size.control.height`) | `space.inset.sm`         | the 24 × 24 nudge buttons (CMP-100) |
+| SCR-064, CMP-120        | comfortable           | 32 px                         | `space.inset.md`         | 32 × 32                             |
+| the loosen confirmation | compact / comfortable | buttons 28 / 32 px            | `space.inset.sm` / `.md` | 28 × 80                             |
+
+### Essential exceptions
+
+| Component | Exception | Compensating control | Reviewer | Date |
+| --------- | --------- | -------------------- | -------- | ---- |
+| —         | none      | —                    | —        | —    |
+
+## A. Design QA checklist (`16` §12) — SCR-064 and CMP-120
+
+- [x] Dark-first; light is a token swap through `themes.json` (board 10); both densities (spec §10, the Density table)
+- [x] Every state in `14`'s entry has a named frame (spec §3, §4.2; §15 reconciles the checklist)
+- [x] Semantic tokens only; `pattern.hatch` stays a DS request (E30-D04 §3.2); no hard-coded colour
+- [x] Colour never the sole encoding: glyph + word + fill + hatch on pending / applied / rejected; the T2 lock; the env pill's word
+- [x] Contrast ≥4.5:1 text / ≥3:1 non-text in every theme (spec §14, 0 FAIL); the env badge ≥7:1
+- [x] Focus visible and never obscured; dialogs trap and return focus; a push never moves focus
+- [x] Motion-safe / motion-reduce pairs (Table 4); nothing animates past 5 s
+- [x] Every control's accessible name carries its target and effect; T2 controls keep role, label and focusability
+- [ ] Storybook stories for CMP-120 — E32-D06 / E32-S07
+- [ ] Owner approval — pending
+
+## B. Accessibility acceptance criteria (`05` §10) — SCR-064
+
+- Keyboard: every control reachable by `Tab`; the stop moves by `↑` / `↓` with `Shift` and `PageUp` / `PageDown` multipliers; `Enter` applies; `Esc` closes without cancelling a sent request; no single unmodified key is bound (spec §9).
+- Screen reader: the stop field's description carries value, holder and risk; a T2 control reads its name, "unavailable", then the reason; the pending line is a `status`, the rejected line an `alert`, CMP-158 a `note`, the loosen confirmation an `alertdialog`.
+- Live regions: polite ≤ 1 / 2 s with the latest value; assertive once for a refusal, a rejection, `naked`, the close and an arm change; no update moves focus.
+- Contrast and CVD: spec §14; the greyscale strip on board 10; `forced-colors` keeps the words, the glyphs and the hatch (spec §10).
+- Zoom: 200 % fills 1280 × 800 with the header and footer pinned and the body scrolling; nothing is clipped.
+- Timing: the only timed gate is E30-D03 D3's ≥ 400 ms acceptance delay on the loosen confirmation; the step-up's TTL is SCR-006's; no copy promises a time.
