@@ -27,6 +27,7 @@ from structlog.testing import capture_logs
 
 from candleviewer import oms_wiring
 from candleviewer.api.health import make_health_router
+from candleviewer.domain.order_link import ext_key
 from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.fakes import FakeTradingPort
 from candleviewer.exchange.base.models import AccountRef, RateLane
@@ -706,6 +707,39 @@ async def test_the_sweep_voids_hydrates_abandons_the_unsent_resumes_the_sent_the
         assert sent > 0 and set(methods[:sent]) <= {"open_orders", "order_history"}
         [create] = [call.request for call in port.calls if call.method == "place_order"]
         assert getattr(create, "order_link_id", None) == SENDING.order_link_id
+
+
+@pytest.mark.parametrize(
+    ("intent", "trigger"), [("stop_loss", cr.STOP), ("take_profit", cr.new_order().take_profit)]
+)
+async def test_native_sl_the_runtimes_kill_cancels_at_the_venue_and_spares_a_recorded_stop(
+    intent: str, trigger: Decimal | None
+) -> None:
+    """E29-T04 S4-B1 wires B1's cancel into the composed runtime: a KILL cancels the sent order at
+    the venue once, in the `critical` lane, under its own id (INV-B1-h, C-2.10), accepted, so it
+    is audited nothing more; and a recorded stop's row, its stop-loss or its take-profit, is
+    spared, its KILL audited and no venue cancel sent for it (C-2.6, INV-B1-p)."""
+    world = World()
+    await crashed(world)
+    stop = cr.new_order(
+        seq=7, order_link_id=ext_key("x-sl-0007"), side="Sell", intent=intent,
+        order_type="Market", price=None, trigger_price=trigger, stop_loss=None, take_profit=None,
+        reduce_only=True, close_on_trigger=True, tpsl_mode="Partial", exchange_order_id="x-sl-0007",
+    )  # fmt: skip
+    async with started(world.runtime()) as runtime:
+        for flag in world.flags:
+            flag.read()
+        await runtime.wait_ready()
+        await until(lambda: world.store._orders[SENDING.id].lifecycle_state == "submitted")
+        machines = runtime._composed().machines
+        assert await machines.materialise(stop, environment="demo") == "submitted"
+        assert await machines.kill("kill switch") == ()
+    [port] = world.venue.ports
+    cancels = [call for call in port.calls if call.method == "cancel_order"]
+    sent = [(call.lane, getattr(call.request, "order_link_id", None)) for call in cancels]
+    assert sent == [("critical", SENDING.order_link_id)]
+    assert ("orders.cancel", "kill_spared_recorded_stop") in world.writer.actions
+    assert [r for _, r in world.writer.actions if str(r).startswith("kill_cancel")] == []
 
 
 async def test_a_failing_store_leaves_it_not_ready_and_the_sweep_retries_with_backoff(
