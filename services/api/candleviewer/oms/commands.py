@@ -148,7 +148,8 @@ from candleviewer.exchange.base.models import (
 from candleviewer.observability import spawn
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_KILL_CANCEL_TIMEOUT
-from candleviewer.storage.repositories.orders import NewOrder, OrderRow
+from candleviewer.storage.errors import StorageError
+from candleviewer.storage.repositories.orders import NewOrder, OrderRow, OrderStoreError
 from candleviewer.storage.repositories.recorded_stops import (
     NewRecordedStop,
     RecordedStopRow,
@@ -165,6 +166,7 @@ from .errors import (
     ResendRefused,
     StopRequestInFlight,
     StopRequestPending,
+    StoreUnavailable,
     problem_for,
 )
 from .order_link_resolution import (
@@ -198,6 +200,7 @@ from .stop_ratchet import TPSL_SIDES, ratchet_refusal, tpsl_scope_refusal
 
 __all__ = [
     "ALREADY_SET",
+    "AMEND_AUDIT_GRACE_S",
     "AMEND_REASON",
     "AMEND_REFUSED",
     "AMEND_TIMEOUT_S",
@@ -247,7 +250,14 @@ KILL_CANCEL_TIMEOUT_S: Final = CV_KILL_CANCEL_TIMEOUT - 1.0
 #: The bound on an amend as a whole (B1's `amend_pending`), in seconds, as `CANCEL_TIMEOUT_S` is a
 #: cancel's: its reads, the gate, the record, the call and the settle all end by it, inside B1's
 #: `CV_COMMAND_TIMEOUT`. Tighten it, never raise it.
-AMEND_TIMEOUT_S: Final = CV_COMMAND_TIMEOUT - 1.0
+AMEND_TIMEOUT_S: Final = CV_COMMAND_TIMEOUT - 2.0
+#: How long past `AMEND_TIMEOUT_S` a `STORE_UNAVAILABLE` refusal's audit may take, still inside
+#: B1's bound: a read the deadline ended is answered, recorded, never raised (the 10:18Z ruling).
+AMEND_AUDIT_GRACE_S: Final = 1.0
+#: A read that failed before the amend's send (the 10:18Z ruling), its code, reason and retry.
+STORE_UNAVAILABLE: Final = "STORE_UNAVAILABLE"
+STORE_UNAVAILABLE_REASON: Final = "store_unavailable"
+STORE_RETRY_AFTER_S: Final = 5
 #: How old a create a restart resumes may be and still be re-sent where history never expires
 #: (`order_retention_days` None: live), in seconds ([LANE-26], binding). Tighten it, never raise
 #: it: a resumed send survives a restart or a dropped connection measured in seconds, and after
@@ -286,6 +296,8 @@ ORDER_NOT_AMENDABLE: Final = "ORDER_NOT_AMENDABLE"
 _MODIFIED: Final[Mapping[StopKind, str]] = {"stop_loss": SL_MODIFIED, "take_profit": TP_MODIFIED}
 #: The terms B1's `stage_amend` may stage (`qty` and `b01.TERMS`).
 _AMENDABLE: Final = ("qty", *b01.TERMS)
+#: What a read before the amend's send raises when the store or the gate cannot answer.
+_UNREAD: Final = (TimeoutError, StorageError, OrderStoreError, StoreUnavailable)
 #: [LANE-26]: a resumed create that ends unsent, its record's action and reason, and its alert.
 RESEND_REFUSED: Final = "oms.resend_refused"
 EXPIRED_UNSENT_REASON: Final = "expired_unsent"
@@ -1177,7 +1189,11 @@ class OmsCommandPort:
         by = self._deadline(self._amend_timeout_s)  # all of the amend, inside B1's own bound
         account_id = _uuid(command.order.get("account_id"))
         order_id = _uuid(command.order.get("order_id"))
-        row = await self._bounded(self._orders.get(account_id, order_id), by=by)
+        link = b01.text_id(command.order.get("order_link_id"))
+        try:
+            row = await self._bounded(self._orders.get(account_id, order_id), by=by)
+        except _UNREAD as exc:
+            return await self._unread(order_id, account_id, {"order_link_id": link}, exc, by=by)
         if row is None:
             raise ValueError("no stored order of the account has the command's id")
         _check_names(command, row)
@@ -1201,7 +1217,10 @@ class OmsCommandPort:
         if sides and stop is None:  # an entry carries its native stop (C-2.6): never sent bare
             rule = "native_stop_required"
             return await self._amend_refused(row, b01.NATIVE_STOP_REQUIRED, rule, detail, by=by)
-        account = await self._account(row, by=by)
+        try:
+            account = await self._account(row, by=by)
+        except _UNREAD as exc:
+            return await self._unread(row.id, row.exchange_account_id, detail, exc, by=by)
         request = AmendOrderRequest(
             account=account,
             symbol=row.symbol,
@@ -1218,28 +1237,23 @@ class OmsCommandPort:
         recorded: tuple[RecordedStopRow, ...] = ()
         if stop is not None:
             key = PositionKey(account.account_id, row.symbol, row.position_idx)
-            try:
+            try:  # Q4 on every stop recorded or sent, read after the gate, before the record (m2)
                 await self._bounded(self._gate.clear(key), by=by)
-                # Q4 on every stop recorded or sent, a re-paired one too, read after the gate
-                # cleared the key and just before the record (fold m2)
-                live = self._stops.live_for_key(
-                    row.exchange_account_id, row.symbol, row.position_idx
-                )
+                live = self._stops.live_for_key(key.account_id, row.symbol, row.position_idx)
                 in_force = await self._bounded(live, by=by)
-                loose = ratchet_refusal(
-                    side=row.side, requested=stop, current=row.stop_loss, in_force=in_force
-                )
-                if loose is not None:
-                    return await self._amend_refused(
-                        row, STOP_LOOSENING_REFUSED, loose, detail, by=by
-                    )
+            except StopRequestPending as held:
+                return _held(row.order_link_id, held.retry_after_s)
+            except _UNREAD as exc:
+                return await self._unread(row.id, row.exchange_account_id, detail, exc, by=by)
+            loose = ratchet_refusal(
+                side=row.side, requested=stop, current=row.stop_loss, in_force=in_force
+            )
+            if loose is not None:
+                return await self._amend_refused(row, STOP_LOOSENING_REFUSED, loose, detail, by=by)
+            try:
                 recorded = await self._record_amend(row, stop, take_profit, detail, sides, by=by)
-            except (StopRequestPending, StopRequestInFlight) as held:
-                _log().warning("oms_amend_stop_key_held", order_link_id=row.order_link_id)
-                wait = STOP_REQUEST_RETRY_AFTER_S
-                if isinstance(held, StopRequestPending):
-                    wait = held.retry_after_s
-                return {"ok": False, "error_code": STOP_REQUEST_IN_FLIGHT, "retry_after_s": wait}
+            except StopRequestInFlight:
+                return _held(row.order_link_id, STOP_REQUEST_RETRY_AFTER_S)
         port = self._router.port_for(account.environment)
         try:
             ack = await self._venue_gated(account, port.amend_order(request), by=by)
@@ -1262,6 +1276,27 @@ class OmsCommandPort:
             return {"ok": True, **bound, **_record(ack)}
         refused = {"ok": False, "error_code": ack.error_code}
         return {**refused, "exchange_ret_code": ack.exchange_ret_code, **_record(ack)}
+
+    async def _unread(
+        self,
+        order_id: UUID,
+        account_id: UUID,
+        detail: Mapping[str, str | None],
+        exc: BaseException,
+        *,
+        by: float,
+    ) -> dict[str, Any]:
+        """The 10:18Z ruling: a read failing before the send is `STORE_UNAVAILABLE`, nothing sent
+        and the order live, audited ahead within `AMEND_AUDIT_GRACE_S` past the amend's bound (an
+        audit that fails raises, C-2.9)."""
+        failure = type(exc).__name__
+        await self._audit_order(
+            order_id, account_id, ORDERS_AMEND, "denied", "warning", STORE_UNAVAILABLE_REASON,
+            {**detail, "failure": failure}, by=by + AMEND_AUDIT_GRACE_S,
+        )  # fmt: skip
+        _log().warning("oms_amend_store_unavailable", order_link_id=detail.get("order_link_id"))
+        retry = STORE_RETRY_AFTER_S
+        return {"ok": False, "error_code": STORE_UNAVAILABLE, "retry_after_s": retry}
 
     async def _amend_refused(
         self, row: OrderRow, code: str, reason: str, detail: Mapping[str, str | None], *, by: float
@@ -1422,6 +1457,12 @@ class OmsCommandPort:
             action, order_id, account_id, outcome, severity, reason, detail, request_id
         )
         await self._bounded(self._audit.write(record), by=by)
+
+
+def _held(link: str, wait: int) -> dict[str, Any]:
+    """A key a stop request still holds: 409 `stop_request_in_flight`, never a raise."""
+    _log().warning("oms_amend_stop_key_held", order_link_id=link)
+    return {"ok": False, "error_code": STOP_REQUEST_IN_FLIGHT, "retry_after_s": wait}
 
 
 def _check_names(command: b01.Command, order: StoredOrder) -> None:
