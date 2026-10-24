@@ -490,13 +490,15 @@ LABELLED: dict[str, tuple[tuple[str, str, str, bool, dict[str, str]], ...]] = {
 # alert -> [(values, eval_time, fires)]: more cases on the same series (`_xN`: N missed scrapes).
 # #2668 G1: rate(...[1m]) needs samples under a minute apart, so these cases sample every 30 s.
 # The configured share is 0.25, so the threshold is 0.3 loop seconds per second: 10 per 30 s fires
-# (0.333), 8.5 per 30 s (0.283) and a missing share gauge (replay not wired) stay quiet.
+# (0.333), 8.5 per 30 s (0.283), a missing share gauge (replay not wired) and the same 10 per 30 s
+# against a configured 0.5 (threshold 0.6) stay quiet.
 _LOOP, _SHARE = 'replay_loop_seconds_total{env="live"}', 'replay_loop_share_ratio{env="live"}'
 FINE: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
     "ReplayLoopShareHigh": (
         ("10m", True, {_LOOP: "0+10x40", _SHARE: "0.25x40"}),
         ("10m", False, {_LOOP: "0+8.5x40", _SHARE: "0.25x40"}),
         ("10m", False, {_LOOP: "0+10x40"}),
+        ("10m", False, {_LOOP: "0+10x40", _SHARE: "0.5x40"}),
     ),
 }
 EXTRA: dict[str, list[tuple[str, str, bool]]] = {

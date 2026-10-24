@@ -313,3 +313,42 @@ async def test_clock_a_speed_change_does_not_end_a_hold() -> None:
         assert len(sink.events) == held_at  # still held
         await clock.pause()
         assert task.result() == "paused"
+
+
+async def test_clock_speed_zero_ends_a_hold() -> None:
+    """Speed 0 (STEP) pauses playback, so like a pause it ends a hold at once."""
+    time, work = FakeTime(auto=False), Work()
+    budget = ReplayLoopBudget(SHARE, BURST, time, measure=work.now)
+    _indebt(budget, work)
+    async with _clock(_events(1_000, 100), WorkSink(time, work), budget.lane("s"), speed=1.0) as c:
+        task = c.play()
+        await _settle()
+        c.set_speed(STEP)
+        await _settle()
+        assert task.done() and task.result() == "paused"
+
+
+async def test_clock_destroy_during_a_parked_source_read_charges_no_idle_time() -> None:
+    """Review (Fable m2): the clock waits on a source whose producer is parked in a slow read; a
+    destroy 5 s later charges nothing for the wait."""
+    time = FakeTime(auto=False)
+    budget = ReplayLoopBudget(SHARE, BURST, time, measure=time.now)
+
+    class ParkedTier(BoundedTier):
+        async def read(self, *args: object, **kwargs: object) -> list[RecordedEvent]:
+            await asyncio.Event().wait()  # storage never answers
+            raise AssertionError("unreachable")
+
+    harness = Harness(req=request(end_us=60 * SECOND))
+    harness.replace_ports(hot=ParkedTier(many(10)))
+    lane = budget.lane("s")
+    source = ReplaySource(harness.req, harness.tiers, config=SMALL, lane=lane)
+    clock = _clock([], RecordingSink(time), lane, speed=1.0)
+    clock._source = source  # the clock reads the parked source
+    async with clock:
+        clock.play()
+        await _settle()
+        time.advance(5.0)
+        before = _charged()
+        await clock.aclose()
+    assert _charged() - before < 0.01

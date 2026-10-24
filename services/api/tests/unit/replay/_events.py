@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from candleviewer.replay import ReplayError, ReplayItem, ReplayRequest, ReplayTiers, SourceTier
+from candleviewer.replay.budget import FREE_LANE
 from candleviewer.replay.merge import DEFAULT_MAX_WINDOW_US, RecordedMerge
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
@@ -212,6 +213,7 @@ class Harness:
             window_us=window_us,
             max_window_us=max_window_us,
             io_timeout_s=timeout_s,
+            lane=FREE_LANE,
         )
 
     async def read_all(
