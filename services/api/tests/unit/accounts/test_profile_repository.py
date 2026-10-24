@@ -7,7 +7,7 @@ import dataclasses
 import inspect
 import json
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -22,9 +22,15 @@ from candleviewer.accounts.errors import (
     AccountScopeDeniedError,
     AccountsError,
     AccountVersionConflictError,
+    ProfileUnavailableError,
 )
-from candleviewer.accounts.profile_repository import DefaultBinding, ProfilesRepository
-from candleviewer.accounts.profiles import AccountProfile, profile_values
+from candleviewer.accounts.profile_repository import (
+    DefaultBinding,
+    ProfilesRepository,
+    StoredProfile,
+)
+from candleviewer.accounts.profiles import AccountProfile, profile_from_row, profile_values
+from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
 from candleviewer.storage.repositories.account_profiles import (
     DEFAULT_MOVES_ALONE,
     AccountProfileRevision,
@@ -118,10 +124,84 @@ async def test_reads_map_rows_to_the_domain_model() -> None:
     assert store.calls == [("list_profiles", (_OWNER, _P.account_id), {})]
 
 
+_READS: dict[str, Any] = {
+    "read_profiles": lambda r: r.read_profiles(_OWNER, _P.account_id),
+    "read_profile": lambda r: r.read_profile(_OWNER, _P.account_id, _P.profile_id),
+    "list_profiles": lambda r: r.list_profiles(_OWNER, _P.account_id),
+    "get_profile": lambda r: r.get_profile(_OWNER, _P.account_id, _P.profile_id),
+}
+
+
+async def test_a_read_answers_each_profile_with_its_rows_created_at() -> None:
+    """#906 D1b: the row's `created_at`, which the model does not hold, in exact microseconds;
+    `list_profiles` and `get_profile` still answer the model alone."""
+    first = dataclasses.replace(_row(), created_at=datetime(2026, 10, 1, 8, 30, 15, 123456, UTC))
+    rows = (first, _row(_profile(profile_id=str(uuid4()), name="B")))
+    repo, store, _, _ = _repo(rows)
+    read = await repo.read_profiles(_OWNER, _P.account_id)
+    assert [s.created_at for s in read] == [1_790_843_415_123_456, 1_792_486_800_000_000]
+    assert [s.profile for s in read] == [profile_from_row(row) for row in rows]
+    assert await repo.list_profiles(_OWNER, _P.account_id) == tuple(s.profile for s in read)
+    assert store.calls[0] == ("list_profiles", (_OWNER, _P.account_id), {})
+    one, one_store, _, _ = _repo(first)
+    assert await one.read_profile(_OWNER, _P.account_id, _P.profile_id) == read[0]
+    assert await one.get_profile(_OWNER, _P.account_id, _P.profile_id) == read[0].profile
+    # the caller's scope and both ids, as given, once per read
+    assert one_store.calls == [("get_profile", (_OWNER, _P.account_id, _P.profile_id), {})] * 2
+    assert isinstance(read[0], StoredProfile)
+
+
+@pytest.mark.parametrize("read", list(_READS))
+@pytest.mark.parametrize(
+    ("answer", "error"),
+    [
+        (TypeError("Decimal('NaN') in sl_offset_value"), "TypeError"),  # the store's decode
+        (KeyError("pct"), "KeyError"),  # a stored ladder rung with no `pct`
+        (InvalidOperation(), "InvalidOperation"),  # a non-numeric rung: an ArithmeticError
+        (_row(allowed_symbols=("btcusdt",)), "ValidationError"),  # the model's, not a CHECK's
+    ],
+    ids=["store", "ladder-key", "ladder-number", "model"],
+)
+async def test_an_unreadable_stored_row_fails_closed_and_logs_no_value(
+    read: str, answer: object, error: str
+) -> None:
+    """SR-E28-24: `ProfileUnavailableError`, unchained, as the order path's cache answers it; the
+    log line names the error's class and never a value (C-12.6)."""
+    listed = read in ("read_profiles", "list_profiles") and not isinstance(answer, BaseException)
+    repo, _, _, _ = _repo((answer,) if listed else answer)
+    with structlog.testing.capture_logs() as logs, pytest.raises(ProfileUnavailableError) as ei:
+        await _READS[read](repo)
+    assert str(ei.value) == "stored profile unreadable"
+    assert ei.value.__cause__ is None and ei.value.__suppress_context__
+    assert logs == [
+        {
+            "event": "profile.read_failed_closed",
+            "reason": "invalid_row",
+            "account_id": str(_P.account_id),
+            "error": error,
+            "log_level": "warning",
+        }
+    ]
+
+
+@pytest.mark.parametrize("read", list(_READS))
+@pytest.mark.parametrize(
+    "raised", [StorageTierUnavailable("pg"), StorageQueryFailed("57014")], ids=["tier", "query"]
+)
+async def test_a_storage_error_reaches_the_caller_unchanged(read: str, raised: Exception) -> None:
+    """An outage is not an unreadable row (#906 D1b, code lens R1C-03): D1c's 503 logs the class
+    and sqlstate it receives, so the reads pass a `StorageError` through as raised."""
+    repo, _, _, _ = _repo(raised)
+    with pytest.raises(type(raised)) as ei:
+        await _READS[read](repo)
+    assert ei.value is raised
+
+
 @pytest.mark.parametrize(
     "call",
     [
         lambda r: r.get_profile(_OWNER, _P.account_id, _P.profile_id),
+        _READS["read_profile"],
         lambda r: r.update_profile(_OWNER, _P.account_id, _P.profile_id, _P, expected_version=3),
         lambda r: r.delete_profile(_OWNER, _P.account_id, _P.profile_id, expected_version=3),
         lambda r: r.set_default_profile(
@@ -130,7 +210,7 @@ async def test_reads_map_rows_to_the_domain_model() -> None:
         lambda r: r.get_revision(_OWNER, _P.account_id, _P.profile_id, 2),
         lambda r: r.create_profile(_OWNER, _P.account_id, _P),
     ],
-    ids=["get", "update", "delete", "set_default", "revision", "create"],
+    ids=["get", "read", "update", "delete", "set_default", "revision", "create"],
 )
 async def test_every_miss_is_the_same_not_found(call: Any) -> None:
     repo, _, _, _ = _repo(None)
@@ -150,12 +230,13 @@ async def test_every_miss_is_the_same_not_found(call: Any) -> None:
         (AccountProfileStoreError("x"), AccountsError, None),
     ],
 )
+@pytest.mark.parametrize("call", ["update", *_READS])
 async def test_store_errors_map_to_domain_errors_unchained(
-    raised: AccountProfileStoreError, mapped: type[AccountsError], detail: str | None
+    raised: AccountProfileStoreError, mapped: type[AccountsError], detail: str | None, call: str
 ) -> None:
     repo, _, _, _ = _repo(raised)
     with pytest.raises(mapped) as ei:
-        await repo.update_profile(_OWNER, _P.account_id, _P.profile_id, _P, expected_version=3)
+        await (_READS[call](repo) if call in _READS else _write(repo, call))
     assert type(ei.value) is mapped and ei.value.__cause__ is None
     assert ei.value.__suppress_context__
     if detail is not None:
