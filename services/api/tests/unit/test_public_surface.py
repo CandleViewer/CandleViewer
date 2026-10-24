@@ -217,6 +217,8 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "mint_signing_key_rotator",  # #889 S7: its mint, pinned to admin/wiring.py likewise
         "RotationRunning",  # #889 S10: whether a rotation runs, the export route's 409
         "mint_rotation_running",  # #889 S10: its mint, pinned to admin/wiring.py likewise
+        "LoopSigning",  # #913 L3b: signing bound to the order lane's loop, minted in wiring
+        "mint_loop_signing",  # #913 L3b: its mint, pinned to admin/wiring.py likewise
     },
     # E26-T02: the replay read path's request, in-stream gap marker, storage ports, typed
     # errors and bounded read-ahead source (docs/plan/24-internal-schemas.md Sec.13.7).
