@@ -41,7 +41,7 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.recorder import control as rc
-from candleviewer.recorder.errors import RecorderInvalidUpdateError
+from candleviewer.recorder.errors import RecorderInvalidUpdateError, RecorderSymbolNotRecordedError
 from candleviewer.recorder.errors import RecorderSymbolLimitError as LimitError
 from candleviewer.recorder.models import Actor
 from candleviewer.ws._generated.error_codes import ErrorCode
@@ -320,6 +320,9 @@ def make_recording_writes_router(
             )
         except rc.RelaxRefused as refused:
             await relax_refused(call, refused, body.symbol, held_id)
+        except RecorderSymbolNotRecordedError:  # a racing stop took the row after the add
+            await _audit(call, "recorder.start", body.symbol, held_id, "not_recorded")
+            raise _missing() from None
         except (LimitError, RecorderInvalidUpdateError) as exc:  # before its record
             capped, (setting, field) = isinstance(exc, LimitError), rc.setting_rule(spec.depth)
             cause = ErrorCode.RECORDER_SYMBOL_LIMIT.value if capped else setting
