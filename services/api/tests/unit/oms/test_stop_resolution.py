@@ -21,8 +21,10 @@ from candleviewer.exchange.base.errors import ServiceUnavailableError
 from candleviewer.exchange.base.fakes import FakeTradingPort
 from candleviewer.exchange.base.models import AccountRef, Order, Position
 from candleviewer.oms import commands, stop_resolution
-from candleviewer.oms.fakes import InMemoryOrderStore
+from candleviewer.oms.fakes import InMemoryOrderStore, InMemoryRecordedStopStore
+from candleviewer.oms.repository import RecordedStopRepository
 from candleviewer.oms.stop_resolution import (
+    ENTRY_HELD,
     SPAN_HELD,
     TRAIL_HELD,
     CompleteRead,
@@ -33,9 +35,12 @@ from candleviewer.oms.stop_resolution import (
 )
 from candleviewer.storage.repositories.orders import ORDER_STATE_OF, NewOrderEvent, OrderRow
 from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
+from tests.unit.oms import submission_contract as sc
 from tests.unit.oms.command_rig import (
+    ACCOUNT,
     LIVE_ACCOUNT,
     STOP,
+    SYMBOL,
     T0,
     T0_US,
     exchange_order,
@@ -55,6 +60,8 @@ from tests.unit.oms.test_stop_decision import (
 )
 
 NOW = T0 + timedelta(seconds=30)
+NOW_US = T0_US + 30 * SECOND_US
+DAY_US = 86_400 * SECOND_US
 UID = "100001"
 
 
@@ -89,7 +96,7 @@ class Store:
         write_ahead: VoidWriteAhead | None = None, position_state: PositionState | None = None,
     ) -> tuple[RecordedStopRow, ...]:  # fmt: skip
         if write_ahead is not None:
-            await write_ahead(tuple(rows))
+            await write_ahead(tuple(rows), position_state)
         self.calls.append(("resolve", tuple(r.id for r in rows), outcome, position_state))
         return tuple(rows)
 
@@ -99,11 +106,15 @@ class Store:
 
 @dataclass
 class Audit:
-    hooks: list[tuple[VoidReason, PositionState, tuple[UUID, ...]]] = field(default_factory=list)
+    """A recording `VoidAudit`: each hook records the state the store gives it (H1)."""
 
-    def hook(self, reason: VoidReason, position_state: PositionState) -> VoidWriteAhead:
-        async def write(rows: tuple[RecordedStopRow, ...]) -> None:
-            self.hooks.append((reason, position_state, tuple(r.id for r in rows)))
+    hooks: list[tuple[VoidReason, PositionState | None, tuple[UUID, ...]]] = field(
+        default_factory=list
+    )
+
+    def hook(self, reason: VoidReason) -> VoidWriteAhead:
+        async def write(rows: tuple[RecordedStopRow, ...], state: PositionState | None) -> None:
+            self.hooks.append((reason, state, tuple(r.id for r in rows)))
 
         return write
 
@@ -129,12 +140,34 @@ class Rig:
         return [call.method for call in self.port.calls]
 
 
-def build(*, port: FakeTradingPort | None = None, timeout_s: float = 5.0) -> Rig:
+def build(
+    *, port: FakeTradingPort | None = None, timeout_s: float = 5.0, now: datetime = NOW
+) -> Rig:
     orders = InMemoryOrderStore(clock=lambda: T0)
     store, audit = Store(), Audit()
     read = CompleteRead(orders, read_timeout_s=timeout_s, whole_timeout_s=3 * timeout_s)
     port = port or FakeTradingPort(now_us=lambda: T0_US)
-    return Rig(port, orders, store, audit, StopResolver(store, read, audit, now=lambda: NOW))
+    resolver = StopResolver(store, read, audit, now=lambda: now, store_timeout_s=timeout_s)
+    return Rig(port, orders, store, audit, resolver)
+
+
+class Capped(FakeTradingPort):
+    """A port whose history read lists what the adapter's would (24 Sec.14.1): the 7 days from
+    `start`, or to `end`, or to its clock with neither; every 7-day window between both."""
+
+    async def order_history(
+        self, account: AccountRef, *, order_link_id: Any = None,
+        exchange_order_id: str | None = None, start: int | None = None, end: int | None = None,
+    ) -> list[Order]:  # fmt: skip
+        if start is None:
+            end = self._now_us() if end is None else end
+            start = end - 7 * DAY_US
+        elif end is None:
+            end = start + 7 * DAY_US
+        return list(
+            await super().order_history(account, order_link_id=order_link_id,
+                                        exchange_order_id=exchange_order_id, start=start, end=end)
+        )  # fmt: skip
 
 
 async def seed_entry(
@@ -202,7 +235,7 @@ async def test_a_partial_side_reads_its_orders_from_5_s_before_the_request_in_th
     (decision,) = await rig.resolve()
     assert decision.outcome == "answered"
     asked = [(c.method, c.request) for c in rig.port.calls]
-    assert ("order_history", (None, None, T0_US - 5 * SECOND_US, None)) in asked
+    assert ("order_history", (None, None, T0_US - 5 * SECOND_US, NOW_US)) in asked
     assert {call.lane for call in rig.port.calls} == {"poll"}
 
 
@@ -291,7 +324,7 @@ async def test_a_squatter_under_the_entrys_id_credits_no_fill() -> None:
     rig.port.seed_position(position(qty="0.020"))
     (decision,) = await rig.resolve()
     assert decision.outcome == "in_flight_resolved" and decision.pages == ()
-    assert rig.audit.hooks == [("in_flight_resolved", "open", (sl.id, tp.id))]
+    assert rig.audit.hooks == [("in_flight_resolved", None, (sl.id, tp.id))]  # the void's own
 
 
 async def test_an_entry_bound_to_another_order_id_credits_no_fill() -> None:
@@ -340,9 +373,9 @@ async def test_a_row_already_in_force_later_replaces_the_older_side_without_a_vo
     rig.port.seed_position(position(stop_loss=Decimal("59000"), take_profit=TP))
     (decision,) = await rig.resolve()
     assert decision.pages == () and rig.audit.hooks == []
-    assert rig.store.calls == [
-        ("resolve", (sl.id,), "replaced", None),
+    assert rig.store.calls == [  # in force first: a lost put replaces nothing (Fable Minor)
         ("put_in_force", (tp.id,), "in_force", None),
+        ("resolve", (sl.id,), "replaced", None),
     ]
 
 
@@ -356,9 +389,165 @@ async def test_a_later_request_in_the_same_read_replaces_the_older_one_before_it
     assert rig.store.calls == [
         ("resolve", (old_tp.id,), "answered", None),
         ("resolve", (new_tp.id,), "answered", None),
-        ("resolve", (old_sl.id,), "replaced", None),
+        ("put_in_force", (new_sl.id,), "in_force", None),
+        ("resolve", (old_sl.id,), "replaced", None),  # unanswered: the put never replaces it
+    ]
+
+
+async def test_an_answered_row_the_put_replaces_gets_no_replace_of_its_own() -> None:
+    """Fable Minor: the put's transaction replaces an older answered row of its kind, so the
+    read's own `replaced` is for an unanswered row or a successor already stored in force."""
+    rig = build()
+    row = await rig.entry()
+    old_sl, old_tp = request_rows(source="entry_attach", order_id=row.id, answered_at=T0)
+    new_sl, new_tp = request_rows(trigger_price=Decimal("59000"), created_at=NOW)
+    rig.store.rows = [old_sl, old_tp, new_sl, new_tp]
+    rig.port.seed_position(position(stop_loss=Decimal("59000")))
+    old, _ = await rig.resolve()
+    assert rig.store.calls == [
+        ("resolve", (new_tp.id,), "answered", None),
         ("put_in_force", (new_sl.id,), "in_force", None),
     ]
+    assert old.held == ENTRY_HELD  # its answered take-profit stays listed
+    rig = build()
+    rig.store.rows = [old_sl, old_tp]
+    rig.store.in_force = [replace(new_sl, status="in_force")]
+    rig.port.seed_position(position(stop_loss=Decimal("59000")))
+    await rig.resolve()
+    assert rig.store.calls == [("resolve", (old_sl.id,), "replaced", None)]
+
+
+# --- the H lens folds: the history window, the entry lookup, the entry hold, the store bound ----
+
+
+async def test_the_history_read_ends_now_so_a_newer_request_past_a_week_of_the_oldest_is_read(
+) -> None:  # fmt: skip
+    """Opus Major (H2b): with no end the adapter reads the 7 days from `start` only, so a newer
+    request's fired stop went unread and its rows were voided `in_flight_resolved`."""
+    port = Capped(now_us=lambda: NOW_US + 8 * DAY_US)
+    rig = build(port=port, now=NOW + timedelta(days=8))
+    old = request_rows()
+    late = NOW + timedelta(days=8, seconds=-60)
+    new = request_rows(trigger_price=Decimal("59000"), created_at=late)
+    rig.store.rows = [*old, *new]
+    rig.port.seed_position(flat())
+    fired_at = NOW_US + 8 * DAY_US - 30 * SECOND_US
+    rig.port.seed_order(fired("stop_loss", Decimal("59000"), created_at=fired_at), uid=UID)
+    held, answered = await rig.resolve()
+    assert held.held == SPAN_HELD and answered.outcome == "answered"
+    asked = [c.request for c in rig.port.calls if c.method == "order_history"]
+    assert asked == [(None, None, T0_US - 5 * SECOND_US, NOW_US + 8 * DAY_US)]
+
+
+async def test_an_entry_is_looked_up_by_its_bound_id_from_5_s_before_it_was_stored() -> None:
+    """Opus Major (H2b): the default window missed a filled entry older than a week, and the read
+    voided its rows `in_flight_resolved`, unpaged; the bound id from `created_ts` finds it."""
+    port = Capped(now_us=lambda: NOW_US + 8 * DAY_US)
+    rig = build(port=port, now=NOW + timedelta(days=8))
+    venue = exchange_order(new_order(), state="filled", filled_qty=Decimal("0.010"))
+    row = await rig.entry(exchange_order_id=venue.exchange_order_id)
+    rig.port.seed_order(venue, uid=UID)
+    sl, tp = rig.store.rows = list(request_rows(source="entry_attach", order_id=row.id))
+    rig.port.seed_position(position(stop_loss=STOP))
+    (decision,) = await rig.resolve()
+    assert decision.outcome == "entry_filled_stop_absent"
+    assert rig.store.moves() == {sl.id: "in_force", tp.id: "entry_filled_stop_absent"}
+    asked = [c.request for c in rig.port.calls if c.method == "order_history"]
+    assert (None, venue.exchange_order_id, T0_US - 5 * SECOND_US, None) in asked
+
+
+@pytest.mark.parametrize(("pos", "outcome"), [(flat(), "held"), (position(), "voided")])
+async def test_an_entry_not_found_past_the_span_is_unseen(pos: Position, outcome: str) -> None:
+    """Its miss proves nothing: held unless the position shows no stop at all; inside the span
+    the same miss is `gone` (`test_an_entry_not_stored_or_not_found_is_gone`)."""
+    rig = build(now=NOW + timedelta(days=2))
+    row = await rig.entry()
+    rig.store.rows = list(request_rows(source="entry_attach", order_id=row.id))
+    rig.port.seed_position(pos)
+    (decision,) = await rig.resolve()
+    if outcome == "held":
+        assert decision.held == SPAN_HELD and rig.store.calls == []
+    else:
+        assert decision.outcome == "in_flight_resolved"
+
+
+async def test_an_entry_partly_filled_and_still_resting_is_the_fill_case() -> None:
+    """The orchestrator's ruling (21 Sec.3.3.11): decided as a fill for its filled part."""
+    rig = build()
+    sl, _ = await seed_entry(rig, state="partially_filled", filled="0.005", answered=False)
+    rig.port.seed_position(position(qty="0.005"))
+    (decision,) = await rig.resolve()
+    assert decision.outcome == "entry_filled_stop_absent" and decision.pages == (sl.id,)
+
+
+async def test_rows_answered_by_this_read_carry_the_hold_while_the_stored_entry_waits() -> None:
+    """Fable Major (b): the stored order `WAITING_ENTRY` holds (ended, nothing filled) keeps a
+    row the read answers listed: `ENTRY_HELD`, its outcome kept."""
+    rig = build()
+    row = await rig.entry(state=ORDER_STATE_OF["cancelled"], lifecycle_state="cancelled")
+    venue = exchange_order(new_order(), state="cancelled")
+    rig.port.seed_order(venue, uid=UID)
+    rig.store.rows = list(request_rows(source="entry_attach", order_id=row.id))
+    rig.port.seed_position(position(stop_loss=STOP))
+    (decision,) = await rig.resolve()
+    assert decision.outcome == "in_force" and decision.held == ENTRY_HELD
+
+
+async def test_an_open_partial_stop_order_counts_as_a_stop_once_the_orders_were_read() -> None:
+    """The orchestrator's ruling: Partial-mode protection is an open `partial_stop_loss` order;
+    the demo miss past retention on that position is held, not voided."""
+    rig = build(port=FakeTradingPort(environment="demo", now_us=lambda: T0_US))
+    partial = {"tpsl_mode": "Partial", "size": Decimal("0.010")}
+    rig.store.rows = list(request_rows(created_at=NOW - timedelta(days=7), **partial))
+    rig.port.seed_position(position())
+    rig.port.seed_order(tpsl_order("partial_stop_loss", Decimal("57000")), uid=UID)
+    (decision,) = await rig.resolve(ref(environment="demo"))
+    assert decision.held == SPAN_HELD and rig.store.calls == []
+
+
+class Stalled(Store):
+    async def waiting_for_key(self, *args: Any, **kwargs: Any) -> list[RecordedStopRow]:
+        await asyncio.Event().wait()
+        return []
+
+
+async def test_a_store_call_that_does_not_answer_in_its_bound_raises() -> None:
+    """21 Sec.3.3.5: every store call is bounded, as each venue read is."""
+    rig = build(timeout_s=0.01)
+    rig.resolver = StopResolver(Stalled(), CompleteRead(rig.orders), rig.audit, now=lambda: NOW,
+                                store_timeout_s=0.01)  # fmt: skip
+    with pytest.raises(TimeoutError):
+        await rig.resolve()
+
+
+async def test_the_resolver_runs_over_the_recorded_stops_facade_and_its_in_memory_store() -> None:
+    """H1's real store through `RecordedStopRepository`: the put replaces the row in force, a
+    void's hook is given its state by the store, and nothing is left listed."""
+    db = InMemoryOrderStore(clock=lambda: T0)
+    stops = RecordedStopRepository(InMemoryRecordedStopStore(db))
+    audit = Audit()
+    resolver = StopResolver(stops, CompleteRead(db), audit, now=lambda: NOW)
+    port = FakeTradingPort(now_us=lambda: NOW_US)
+
+    def pair(**over: Any) -> list[Any]:
+        return [sc.trading_stop(ACCOUNT, trigger_price=STOP, **over),
+                sc.trading_stop(ACCOUNT, kind="take_profit", trigger_price=TP, **over)]  # fmt: skip
+
+    first = await stops.record(pair(), write_ahead=sc.audited)
+    await stops.put_in_force(ACCOUNT, first, at=T0)
+    second = await stops.record(pair(position_marker="m2"), write_ahead=sc.audited)
+    port.seed_position(position(stop_loss=STOP, take_profit=TP))
+    (decision,) = await resolver.resolve_key(port, ref(), KEY, bound_s=10.0)
+    assert decision.outcome == "in_force"
+    held = await stops.in_force_for_key(ACCOUNT, SYMBOL, 0)
+    assert {r.id for r in held} == {r.id for r in second}
+    assert await stops.waiting_for_key(ACCOUNT, SYMBOL, 0, now=NOW, bound_s=10.0) == ()
+    third = await stops.record(pair(position_marker="m3"), write_ahead=sc.audited)
+    port.seed_position(position())
+    (decision,) = await resolver.resolve_key(port, ref(), KEY, bound_s=10.0)
+    assert decision.outcome == "in_flight_resolved"
+    assert audit.hooks == [("in_flight_resolved", None, tuple(r.id for r in third))]
+    assert await stops.waiting_for_key(ACCOUNT, SYMBOL, 0, now=NOW, bound_s=10.0) == ()
 
 
 # --- failures ----------------------------------------------------------------------------------
