@@ -43,7 +43,9 @@ import functools
 import json
 import posixpath
 import re
+import subprocess
 import sys
+from collections.abc import Iterable
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
@@ -304,14 +306,110 @@ def test_pr_yml_py_filter_covers_the_xstate_nightly_workflow() -> None:
     assert XSTATE_NIGHTLY in _filters()["py"]
 
 
-def test_pr_yml_py_filter_covers_python_under_docs() -> None:
+def test_pr_yml_security_filters_cover_python_under_docs() -> None:
     # #4348: #4325 added a design-audit tool under docs/design/_tools/ in a docs-only PR, which
     # never started the Semgrep lane, and every later code PR's scan then blocked on it.
     tools = sorted(p.relative_to(ROOT).as_posix() for p in ROOT.glob("docs/**/*.py"))
     assert tools, "no Python under docs/"
-    py = _filters()["py"]
-    for tool in tools:
-        assert any(_matches(tool, rule) for rule in py), tool
+    filters = _filters()
+    rules = [rule for name in sorted(LANE_FILTERS["security"]) for rule in filters[name]]
+    uncovered = _uncovered(tools, rules)
+    assert not uncovered, uncovered
+
+
+#: Semgrep also reads an executable file as Python by a `python` shebang, whatever its name; the
+#: test reads every kept file's first line, executable or not, so its set is a superset.
+_PY_SHEBANG = re.compile(rb"#!.*python")
+
+
+def _git_ls_files(*options: str) -> set[str]:
+    result = subprocess.run(
+        ["git", "-c", "core.ignorecase=false", "ls-files", "-z", "--cached", *options],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
+    return set(result.stdout.decode("utf-8").split("\0")) - {""}
+
+
+def _reads_as_python(path: str) -> bool:
+    if path.endswith((".py", ".pyi")):
+        return True
+    if not (ROOT / path).is_file():
+        return False
+    with (ROOT / path).open("rb") as handle:
+        return _PY_SHEBANG.match(handle.readline(256)) is not None
+
+
+def _semgrep_python_targets() -> list[str]:
+    """The Python files CI's Semgrep scans: tracked by git, less what `.semgrepignore` matches.
+
+    Semgrep limits its scan to git-tracked files and drops what `.semgrepignore` matches with
+    gitignore semantics; `git ls-files -i --exclude-from` applies that file with git's own matcher.
+    On 2026-10-24 both gave the same 3,149 Python files and the same 5,839 ignored files (semgrep
+    1.181.0). After a Semgrep upgrade or an unusual `.semgrepignore` edit, re-verify against
+    `paths.scanned` from `semgrep scan --metrics=off --disable-version-check --lang python
+    -e 'probe()' --json --verbose --max-target-bytes 5000000 .` run at the repo root, as CI scans.
+    The two matchers agree on plain patterns, so the file holds no `!` or `:` line and no other
+    `.semgrepignore` is tracked.
+    """
+    ignore = (ROOT / ".semgrepignore").read_text(encoding="utf-8").splitlines()
+    unusual = [line for line in ignore if line.startswith(("!", ":"))]
+    assert not unusual, f"re-verify the derivation against Semgrep's own targets: {unusual}"
+    assert _git_ls_files("--", "*.semgrepignore") == {".semgrepignore"}
+    ignored = _git_ls_files("--ignored", "--exclude-from=.semgrepignore")
+    return sorted(path for path in _git_ls_files() - ignored if _reads_as_python(path))
+
+
+def _uncovered(paths: Iterable[str], rules: Iterable[str]) -> list[str]:
+    """The paths that none of `rules` selects."""
+    pool = list(rules)
+    return [path for path in paths if not any(_matches(path, rule) for rule in pool)]
+
+
+def test_pr_yml_security_filters_cover_every_semgrep_scanned_python_file() -> None:
+    # #4355: a PR whose only change is a scanned Python file must start the security lane, or a
+    # finding lands on main unscanned and blocks every later code PR (#4325, #4348).
+    targets = _semgrep_python_targets()
+    assert len(targets) > 1000, f"{len(targets)} Semgrep Python targets: the derivation broke"
+    filters = _filters()
+    rules = [rule for name in sorted(LANE_FILTERS["security"]) for rule in filters[name]]
+    uncovered = _uncovered(targets, rules)
+    assert not uncovered, uncovered
+
+
+def test_uncovered_names_exactly_the_paths_no_rule_selects() -> None:
+    # The coverage test's negative control: it can fail, and it names what it misses.
+    paths = ["tools/rbac/generate.py", "tools/triage/run.py", ".claude/hooks/pre_edit_guard.py"]
+    assert _uncovered(paths, ["tools/rbac/**", ".claude/hooks/**"]) == ["tools/triage/run.py"]
+    assert _uncovered(paths, []) == paths
+
+
+@pytest.mark.parametrize(
+    ("path", "home"),
+    [
+        (".claude/hooks/pre_edit_guard.py", "semgrep"),
+        ("security/zap/baseline_gate.py", "semgrep"),
+        ("spikes/storage/bench.py", "semgrep"),
+        ("tools/contracts/wire_contract.py", "semgrep"),
+        ("tools/errorcodes/generate.py", "semgrep"),
+        ("tools/ga_defects/run.py", "semgrep"),
+        ("tools/triage/run.py", "semgrep"),
+        ("docs/design/_tools/contrast_check.py", "semgrep"),
+        ("tools/fixtures/redact.py", "py"),
+        ("tools/gen/export_instrument_policy_rules.py", "py"),
+        ("tools/rbac/generate.py", "py"),
+    ],
+)
+def test_pr_yml_scanned_tool_starts_its_cheapest_home_filter(path: str, home: str) -> None:
+    # #4355: `semgrep` starts only the security lane; `py` is for the tools services/api/tests
+    # exercises, the only Python tests the py lane runs.
+    assert (ROOT / path).is_file(), path
+    selected = path_filters.select([path], _filters())
+    assert selected[home], (path, home)
+    if home == "semgrep":
+        assert not selected["py"], f"{path} starts the py lane, which runs none of its tests"
 
 
 def test_pr_yml_py_filter_covers_every_statechart_tool_a_py_gate_runs() -> None:
