@@ -1210,7 +1210,7 @@ class OmsCommandPort:
         order's amend registration (`expect_exit`) gets the answer, None when the call raises."""
         watch = self._exits.pop((_uuid(command.order.get("order_id")), "amend"), None)
         try:
-            answer = await self._amend(command)
+            answer = await self._amend(command, None if watch is None else watch.actor)
         except BaseException:
             if watch is not None:
                 watch.resolve(None)
@@ -1219,7 +1219,9 @@ class OmsCommandPort:
             watch.resolve(answer)
         return answer
 
-    async def _amend(self, command: b01.Command) -> dict[str, Any]:
+    async def _amend(
+        self, command: b01.Command, actor: SubmitActor | None = None
+    ) -> dict[str, Any]:
         by = self._deadline(self._amend_timeout_s)  # all of the amend, inside B1's own bound
         account_id = _uuid(command.order.get("account_id"))
         order_id = _uuid(command.order.get("order_id"))
@@ -1286,7 +1288,9 @@ class OmsCommandPort:
                 return await self._amend_refused(row, STOP_LOOSENING_REFUSED, loose, detail, by=by)
             try:  # any other failure raises: a timed-out insert may have committed rows that only
                 # the complete read resolves, so it is never answered as unsent (fold 2 minor 2)
-                recorded = await self._record_amend(row, stop, take_profit, detail, sides, by=by)
+                recorded = await self._record_amend(
+                    row, stop, take_profit, detail, sides, by=by, actor=actor
+                )
             except StopRequestInFlight:
                 return _held(row.order_link_id, STOP_REQUEST_RETRY_AFTER_S)
         port = self._router.port_for(account.environment)
@@ -1362,9 +1366,11 @@ class OmsCommandPort:
         changed: Mapping[str, object],
         *,
         by: float,
+        actor: SubmitActor | None = None,
     ) -> tuple[RecordedStopRow, ...]:
         """Q2: one `entry_attach` insert naming the order, each row audited in its transaction;
-        a re-paired side the amend does not change is audited `changed: "false"`."""
+        a re-paired side the amend does not change is audited `changed: "false"`. Rows and records
+        name the requesting principal the amend's exit watch holds (`actor`, C-2.9)."""
         sides: dict[StopKind, Decimal | None] = {"stop_loss": stop, "take_profit": tp}
         news = [
             NewRecordedStop(
@@ -1372,7 +1378,7 @@ class OmsCommandPort:
                 position_idx=_POSITION_IDX[row.position_idx], position_side=row.side, kind=kind,
                 source="entry_attach", order_id=row.id, tpsl_mode="Full", trigger_price=price,
                 size=None, audit_record_id=self._submit_audit.record_id(_MODIFIED[kind], str(i)),
-                actor_user_id=None,
+                actor_user_id=None if actor is None else actor.user_id,
             )
             for kind, price in sides.items()
             if price is not None
@@ -1380,7 +1386,7 @@ class OmsCommandPort:
         marked = {kind: {**detail, "changed": str(kind in changed).lower()} for kind in sides}
         records = [
             _stop_record(
-                _MODIFIED[new.kind], new, "success", "info", AMEND_REASON, marked[new.kind]
+                _MODIFIED[new.kind], new, "success", "info", AMEND_REASON, marked[new.kind], actor
             )
             for new in news
         ]
@@ -1537,8 +1543,11 @@ def _stop_record(
     severity: AuditSeverity,
     reason: str,
     detail: Mapping[str, str | None],
+    actor: SubmitActor | None = None,
 ) -> KeyedRecord:
-    """A stop request's record, the row its object and the row's id its name (21 Sec.3.3.11)."""
+    """A stop request's record, the row its object and the row's id its name (21 Sec.3.3.11); it
+    names the row's own principal (`actor_user_id`), with the role when the request's `actor` is
+    given (C-2.9)."""
     return KeyedRecord(
         action=action,
         name=str(row.id),
@@ -1548,6 +1557,7 @@ def _stop_record(
         outcome=outcome,
         severity=severity,
         reason=reason,
-        actor_user_id=None,
+        actor_user_id=row.actor_user_id,
+        actor=actor,
         detail={**detail, "kind": row.kind, "source": row.source},
     )

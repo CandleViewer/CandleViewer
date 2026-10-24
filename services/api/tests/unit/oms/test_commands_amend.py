@@ -22,7 +22,7 @@ from candleviewer.exchange.base.models import AmendOrderRequest, OrderAck
 from candleviewer.oms import commands as oc
 from candleviewer.oms.errors import StoreUnavailable
 from candleviewer.oms.order_machine import OrderAuditRecord
-from candleviewer.oms.ports import KeyedRecord
+from candleviewer.oms.ports import KeyedRecord, SubmitActor
 from candleviewer.oms_wiring import STOP_REQUEST_BOUND_S
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT
@@ -113,6 +113,25 @@ async def test_the_re_pairing_rule(
     await rig.port.amend(_amend(order, **terms))
     (request,) = _sent(rig)
     assert (request.take_profit, request.stop_loss) == sent and len(_rows(rig)) == kinds
+
+
+async def test_an_amends_rows_and_records_name_the_watch_actor(rig: Rig) -> None:
+    """C-2.9: the `entry_attach` rows and their audit records carry the requesting principal the
+    amend's exit watch holds, never the system's None."""
+    order = await _live(rig)
+    actor = SubmitActor(user_id=uuid4(), role="owner")
+    rig.port.expect_exit(order.id, "amend", actor=actor)
+    answer = await rig.port.amend(_amend(order, stop_loss="58500", take_profit="65000"))
+    assert answer["ok"] is True
+    assert [row.actor_user_id for row in _rows(rig)] == [actor.user_id] * 2
+    records = [record for record, _ in rig.audits.written]
+    assert [r.actor_user_id for r in records if isinstance(r, KeyedRecord)] == [actor.user_id] * 2
+
+
+async def test_an_amend_with_no_watch_actor_records_the_system(rig: Rig) -> None:
+    order = await _live(rig)
+    await rig.port.amend(_amend(order, stop_loss="58500"))
+    assert [row.actor_user_id for row in _rows(rig)] == [None] * len(_rows(rig)) != []
 
 
 async def test_the_rows_exist_when_the_venue_call_lands(
