@@ -109,6 +109,8 @@ and the closing record. Poll `GET /admin/jobs/{job_id}`.
 
 ## Recording stays refused on a single `/data` mount
 
-The default `CV_BARS_STATE_ROOT` is a sibling of `CV_PARQUET_ROOT`, so one `/data` mount puts both on
-the same filesystem and recording stays refused (`recording_volume_shared`, disk pressure level 3)
-until `CV_PARQUET_ROOT` is its own filesystem (`24-internal-schemas.md` §13.4.1).
+The default `CV_BARS_STATE_ROOT` is `<parent of CV_PARQUET_ROOT>/bars/state`, so one `/data` mount
+puts it on the same filesystem as the Parquet root and recording stays refused
+(`recording_volume_shared`, disk pressure level 3) until `CV_PARQUET_ROOT` is its own filesystem
+(`24-internal-schemas.md` §13.4.1). The audit WAL directory must also sit on another filesystem.
+`CV_ALLOW_SHARED_VOLUME` lifts the refusal on testnet only.
