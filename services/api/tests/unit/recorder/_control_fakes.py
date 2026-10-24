@@ -210,14 +210,14 @@ class FakeRecorder:
         """The port's check ahead of any write (unrecorded: the route records it)."""
         pinned, days = self._target(e, spec)
         unpin = e.pinned and not pinned
-        lower = not pinned and (days or DEFAULT_DAYS) < (e.retention_days or DEFAULT_DAYS)
+        lower = not pinned and _lowers(e.pinned, e.retention_days, days, DEFAULT_DAYS)
         if (unpin or lower) and not self.relax_allowed(e.symbol, restricted=restricted):
             raise rc.RelaxRefused(e.symbol, recorded=False)
 
     async def list(self, query: rc.EntryQuery) -> rc.EntryPage:
         q = query
         hits = [
-            e for _, e in sorted(self.entries.items())
+            rc.viewed(e) for _, e in sorted(self.entries.items())
             if q.state in (None, e.state) and q.reason in (None, e.reason)
             and q.pinned in (None, e.pinned) and (q.after is None or (e.symbol, e.id) > q.after)
             and not (q.hidden and set(e.reasons) <= q.hidden)
@@ -225,7 +225,7 @@ class FakeRecorder:
         return rc.EntryPage(tuple(hits[: q.limit]), len(hits) > q.limit)
 
     async def get(self, entry_id: str) -> rc.RecordedEntry | None:
-        return next((e for e in self.entries.values() if e.id == entry_id), None)
+        return next((rc.viewed(e) for e in self.entries.values() if e.id == entry_id), None)
 
     # The `RecordingControl` writes, by entry id, over the policy members above (as S9 maps them).
     def _symbol(self, entry_id: str) -> str | None:
@@ -237,7 +237,7 @@ class FakeRecorder:
         streams, depth = (old.streams, old.depth) if old else (STREAMS, 200)
         join = restricted and old is not None and rc.restricted_view(old) is None
         if old is not None and not join:  # as S9's control: before any write
-            self._relax(old, spec, restricted)
+            self._relax(rc.viewed(old), spec, restricted)
         await self.add_manual(symbol, actor, spec.streams or streams, spec.depth or depth,
                               held_hidden=join)  # fmt: skip
         return await self._settle(symbol, spec, actor, restricted) or self.entries[symbol], old
@@ -248,7 +248,7 @@ class FakeRecorder:
         if (symbol := self._symbol(entry_id)) is None:
             return None
         spec = rc.EntrySpec(pinned=pinned, retention_days=retention_days)
-        self._relax(self.entries[symbol], spec, restricted)
+        self._relax(rc.viewed(self.entries[symbol]), spec, restricted)
         return await self._settle(symbol, spec, actor, restricted)
 
     async def update(
@@ -258,7 +258,7 @@ class FakeRecorder:
         manual reason -> `ChangeRefused("not_manual")`; an invalid change -> its field's rule."""
         if (symbol := self._symbol(entry_id)) is None:
             return None
-        self._relax(self.entries[symbol], spec, restricted)
+        self._relax(rc.viewed(self.entries[symbol]), spec, restricted)
         if spec.streams is not None or spec.depth is not None:
             try:
                 await self.update_manual(symbol, actor, streams=spec.streams, depth=spec.depth)
@@ -283,7 +283,7 @@ class FakeRecorder:
     async def _settle(self, symbol: str, spec: rc.EntrySpec, actor: Actor,
                       restricted: bool) -> rc.RecordedEntry | None:  # fmt: skip
         """The pin, else the retention, through the policy members, as S9's control does."""
-        e = self.entries[symbol]
+        e = rc.viewed(self.entries[symbol])
         pinned, days = self._target(e, spec)
         try:
             if pinned != e.pinned:
@@ -295,10 +295,11 @@ class FakeRecorder:
             return None
         except RecorderRelaxRefusedError:
             raise rc.RelaxRefused(symbol, recorded=True) from None
-        return self.entries.get(symbol) or replace(e, pinned=pinned, retention_days=days)
+        kept = self.entries.get(symbol) or replace(e, pinned=pinned, retention_days=days)
+        return rc.viewed(kept)
 
     async def status(self) -> rc.ControlStatus:
-        entries = tuple(e for _, e in sorted(self.entries.items()))
+        entries = tuple(rc.viewed(e) for _, e in sorted(self.entries.items()))
         return rc.ControlStatus(entries, **self.status_fields)
 
 

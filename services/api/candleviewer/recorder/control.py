@@ -199,14 +199,21 @@ def restricted_view(entry: RecordedEntry) -> RecordedEntry | None:
     return replace(entry, reasons=reasons, refusals=refusals) if reasons else None
 
 
+def viewed(entry: RecordedEntry) -> RecordedEntry:
+    """`entry` as every answer shows it: a pinned entry keeps forever, so its stored
+    `retention_days` (inert while pinned, #2188 S3c) is shown as none."""
+    return replace(entry, retention_days=None) if entry.pinned else entry
+
+
 def entry_from_row(row: Mapping[str, Any]) -> RecordedEntry:
-    """A recorded row: its latest session's state (`idle` with none) and, once started, start."""
+    """A recorded row: its latest session's state (`idle` with none) and, once started, start;
+    `viewed`, so a pinned row shows no retention."""
     state: RecordingState = row["session_state"] or "idle"
     started = row["session_started_at"] if state in _STARTED else None
-    return RecordedEntry(
+    return viewed(RecordedEntry(
         row["id"], row["symbol"], (row["reason"],), state, row["pinned"], tuple(row["streams"]),
         row["depth"], started, row["retention_days"], row["added_by"],
-    )  # fmt: skip
+    ))  # fmt: skip
 
 
 class StoredRecordingControl:
