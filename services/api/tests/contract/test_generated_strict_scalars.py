@@ -52,6 +52,7 @@ def test_the_request_scalars_the_proof_checks_hold_a_boolean_an_integer_and_a_nu
         ("CreateApiKeyRequest", "read_only"),
         ("ProfileRiskCaps", "max_open_positions"),
         ("ReplayControlRequest", "speed"),
+        ("RetentionPolicyInput", "retain_days"),  # only from inside an inline body (R1C-02)
     } <= members
 
 
@@ -112,6 +113,7 @@ def test_the_kek_rewrap_body_takes_a_version_with_no_fraction_as_its_contract_do
         return api.KekRewrapRequest.model_validate_json(raw, strict=True)
 
     assert (parse(2.0).to_version, parse(3).to_version) == (2, 3)
+    assert type(parse(2.0).to_version) is int  # the KEK handle selector, never a float (R1S-01)
     for refused in ("2", 2.5, True):
         with pytest.raises(ValidationError):
             parse(refused)
