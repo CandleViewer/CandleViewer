@@ -72,6 +72,7 @@ def test_only_public_m2_surface_imported(path: Path) -> None:
         "from candleviewer.secrets import mint_signing_keys",
         "from candleviewer.secrets import mint_signing_key_rotator",  # #889 S7
         "from candleviewer.secrets import mint_rotation_running",  # #889 S10
+        "from candleviewer.secrets import mint_loop_signing",  # #913 L3b
     ],
 )
 def test_import_rule_rejects_private_m2_imports(src: str) -> None:

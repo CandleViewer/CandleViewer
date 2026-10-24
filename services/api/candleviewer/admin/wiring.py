@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 from candleviewer.admin.audited import audit_exempt, audited
 from candleviewer.audit.actions import validate_action
@@ -51,6 +51,7 @@ from candleviewer.secrets import (
     ExportKeyStore,
     ExportSigner,
     KcvStore,
+    LoopSigning,
     RotationRunning,
     SecretsError,
     SecretsLifecycle,
@@ -64,6 +65,7 @@ from candleviewer.secrets import (
     mint_borrower,
     mint_candidate_keys,
     mint_export_signer,
+    mint_loop_signing,
     mint_rotation_running,
     mint_signing_key_rotator,
     mint_signing_keys,
@@ -75,6 +77,15 @@ from candleviewer.settings import Settings
 #: `SecretsBundle.candidate_keys`, minted here too, so it imports no M2 module.
 SecretsHandle = SecretsLifecycle
 SecretsMeta = SecretsMetadata
+#: The order lane's loop signing (#913 L3b), so the lane's wiring names no `secrets` type.
+LoopSigningHandle = LoopSigning
+
+
+class LoopSigningBinder(Protocol):
+    """`SecretsBundle.loop_signing` (#913 L3b): called on the order lane's loop with that loop's
+    own credential store and audit service, never the serving loop's, it binds signing there."""
+
+    def __call__(self, *, store: CredentialStore, audit: AuditService) -> LoopSigning: ...
 
 
 @dataclass(frozen=True)
@@ -82,7 +93,9 @@ class SecretsBundle:
     """The narrow capabilities of one `SecretsService` (built once, in wiring); the export signer
     and its key directory are `audit`'s ports, for the export job (#889, ADR-0039), the directory
     also for `listAuditSigningKeys` and the export's own `503`, the rotator is `admin`'s, for
-    `rotateAuditSigningKey`, and the running rotation the export route's, for its own `409`."""
+    `rotateAuditSigningKey`, and the running rotation the export route's, for its own `409`.
+    `loop_signing(store=, audit=)`, called on the order lane's loop with the lane's own store and
+    audit service, binds signing to it (#913)."""
 
     lifecycle: SecretsLifecycle
     metadata: SecretsMetadata
@@ -92,12 +105,15 @@ class SecretsBundle:
     signing_keys: SigningKeyDirectory
     signing_key_rotator: SigningKeyRotator
     rotation_running: RotationRunning
+    loop_signing: LoopSigningBinder
 
 
 __all__ = [
     "AuditHandle",
     "AuditVerifyRunner",
     "LaneNotWired",
+    "LoopSigningBinder",
+    "LoopSigningHandle",
     "MachineEventSinkHandle",
     "MachineEventSinkMetrics",
     "MachineEventSinkUnavailable",
@@ -233,12 +249,22 @@ def build_secrets_service(
             store=store, kcv_store=kcv_store, audit=sink, auth_keys=auth_keys,
             export_keys=export_keys,
         )  # fmt: skip
-    return secrets_bundle(svc)
+    return secrets_bundle(svc, serving=(store, audit))
 
 
-def secrets_bundle(svc: SecretsService) -> SecretsBundle:
+def secrets_bundle(
+    svc: SecretsService, *, serving: tuple[object, object] = (None, None)
+) -> SecretsBundle:
     """Every capability of `svc`, each minted here: `build_secrets_service`'s, and a test's that
-    builds a service of its own."""
+    builds a service of its own. `serving` is the serving loop's credential store and audit
+    service: bound to that loop, `loop_signing` refuses them to a lane (#913 L3b)."""
+    bind = mint_loop_signing(svc, "exchange_adapter")
+
+    def loop_signing(*, store: CredentialStore, audit: AuditService) -> LoopSigning:
+        if store is serving[0] or audit is serving[1]:
+            raise ValueError("the lane's store and audit are its own, never the serving loop's")
+        return bind(store, secrets_audit_sink(audit))  # M2's sink: built here (C-2.9)
+
     return SecretsBundle(
         SecretsLifecycleFacade(svc),
         SecretsMetadataFacade(svc),
@@ -248,6 +274,7 @@ def secrets_bundle(svc: SecretsService) -> SecretsBundle:
         _SigningKeyDirectory(mint_signing_keys(svc)),
         mint_signing_key_rotator(svc),
         mint_rotation_running(svc),
+        loop_signing,
     )
 
 

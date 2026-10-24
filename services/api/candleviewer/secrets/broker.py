@@ -6,12 +6,19 @@ traceback: a failed MAC leaves as a typed `signing_failed` with nothing chained,
 call's frames are cleared, as a failed seal's are. Every action is audited *before* it acts (C-2.9),
 with an actor bound at wiring time; every await has a timeout; failures are typed, fail closed and
 carry no key material (C-12.6).
+
+#913 L3b: the order lane's loop signs too, through its own store, sink and writes (`_LoopIo`); the
+KEKs, DEK cache, fence and touch window are shared under `_guard`, a `threading.Lock` never held
+across an await or re-entered. The guard-free KEK users and `drop_kek` run on the serving loop.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import threading
 import time
+import weakref
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Literal, final
 from uuid import UUID, uuid4
@@ -35,6 +42,7 @@ from candleviewer.secrets.errors import (
     KekLoadError,
     KekUnavailable,
     SecretsError,
+    SigningLoopMismatch,
     SnapshotInvalid,
     WithdrawPermissionRejected,
 )
@@ -125,6 +133,48 @@ class _DekCache:
         return len(self._items)
 
 
+@final
+class _LoopIo:
+    """One more loop's signing I/O (#913 L3b): its store, sink and writes, used on that loop only,
+    and `closed`; the loop is held weakly, so a leaked handle keeps no dead loop."""
+
+    __slots__ = ("__weakref__", "audit", "closed", "loop", "store", "touches")
+
+    def __init__(
+        self, store: CredentialStore, audit: AuditSink, loop: asyncio.AbstractEventLoop
+    ) -> None:
+        self.store, self.audit, self.loop = store, audit, weakref.ref(loop)
+        self.touches: dict[UUID, asyncio.Task[None]] = {}
+        self.closed = False
+
+    def owns_running_loop(self) -> bool:
+        return self.loop() is asyncio.get_running_loop()
+
+    def cancel_touches(self, key_id: UUID | None = None) -> None:
+        for k, write in list(self.touches.items()):
+            if key_id is None or k == key_id:
+                write.cancel()
+
+    def cancel_soon(self, key_id: UUID | None = None) -> None:
+        """From any thread: `cancel_touches` on its own loop, unless it is gone."""
+        loop = self.loop()
+        if loop is not None:
+            with contextlib.suppress(RuntimeError):  # closed meanwhile
+                loop.call_soon_threadsafe(self.cancel_touches, key_id)
+
+    async def aclose(self, timeout_s: float) -> None:
+        """On its own loop: closed, then its writes cancelled and awaited, each wait bounded by
+        the broker's `io_timeout_s` (`timeout_s`), as `aclose`'s."""
+        if not self.owns_running_loop():
+            raise SigningLoopMismatch("signing_loop_mismatch")
+        self.closed = True
+        pending = set(self.touches.values())
+        while pending:
+            for write in pending:
+                write.cancel()
+            _, pending = await asyncio.wait(pending, timeout=timeout_s)
+
+
 class CredentialBroker:
     def __init_subclass__(cls, **kw: Any) -> None:
         _m2_only(cls)
@@ -141,6 +191,7 @@ class CredentialBroker:
         io_timeout_s: float = _IO_TIMEOUT_S,
         clock: Clock = time.monotonic,
         env_name: str = "demo",
+        loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         if any(k is not None and k.env_name != env_name for k in (kek, prev_kek)):
             # #2338: a KEK opens only its own environment's wraps; never re-bind one here.
@@ -159,6 +210,10 @@ class CredentialBroker:
         self._touch_closed = False
         self._destroyed: set[UUID] = set()
         self._env = env_name
+        #: #913 L3b: the shared state's lock, the own I/O's loop (None: any), other loops' I/O.
+        self._guard = threading.Lock()
+        self._loop = None if loop is None else weakref.ref(loop)
+        self._loops: set[weakref.ref[_LoopIo]] = set()
 
     async def _io[T](self, aw: Awaitable[T], code: str) -> T:
         """Bounded and typed: a timeout or any non-M2 error leaves M2 as
@@ -178,9 +233,12 @@ class CredentialBroker:
                 )
             raise CredentialUnavailable(code) from None
 
-    async def _audit(self, action: str, fields: dict[str, str]) -> None:
+    async def _audit(
+        self, action: str, fields: dict[str, str], *, io: _LoopIo | None = None
+    ) -> None:
+        sink = self._audit_sink if io is None else io.audit
         try:
-            await self._io(self._audit_sink(action, fields), "audit_timeout")
+            await self._io(sink(action, fields), "audit_timeout")
         except KekLoadError:  # the service sink's own refusal: a typed borrow-side error
             raise CredentialUnavailable("audit_unavailable") from None
 
@@ -195,15 +253,48 @@ class CredentialBroker:
 
     def drop_kek(self) -> None:
         """Zero everything, fail closed from now on (stop / runtime loss)."""
+        with self._guard:  # every loop at once; production calls it on the serving loop only
+            self._zero_keks()
+
+    def _zero_keks(self) -> None:
+        """`drop_kek`'s work. The caller holds `_guard`, or is a boot that the collector ends
+        before it returns (`SecretsService.start`), so before anything can sign (20 §6.2): no
+        wrap or unwrap can overlap it, since the broker is reachable only through that await."""
         self._cache.flush()
         for k in (self._kek, self._prev):
             if k is not None:
                 k.close()
         self._kek = self._prev = None
 
-    def borrow_handle(self, caller_module: str) -> BorrowHandle:
+    def borrow_handle(self, caller_module: str, *, io: _LoopIo | None = None) -> BorrowHandle:
         """Wiring-time binding of a caller identity (C-3.2, C-2.9)."""
-        return BorrowHandle(self, caller_module)
+        return BorrowHandle(self, caller_module, io=io)
+
+    def _bound(self, io: _LoopIo | None, caller_module: str) -> None:
+        """#913 L3b: an I/O (None: the broker's own) serves its own loop only, and none closed. A
+        wrong loop is a wiring fault, logged as an error; a call after the close, as a warning."""
+        if io is None:
+            own = self._loop is None or self._loop() is asyncio.get_running_loop()
+        else:
+            own = io.owns_running_loop()
+        if own and (io is None or not io.closed):
+            return
+        log = structlog.get_logger(__name__)
+        if own:
+            log.warning("secrets.signing_loop_mismatch", caller_module=caller_module)
+        else:
+            log.error("secrets.signing_loop_mismatch", caller_module=caller_module)
+        raise SigningLoopMismatch("signing_loop_mismatch")
+
+    def _leave(self, io: _LoopIo) -> None:
+        with self._guard:
+            self._loops.discard(weakref.ref(io))
+
+    def _live_loops(self) -> list[_LoopIo]:
+        """Caller holds `_guard`."""
+        live = [io for ref in self._loops if (io := ref()) is not None]
+        self._loops = {weakref.ref(io) for io in live}
+        return live
 
     async def store(
         self,
@@ -242,6 +333,7 @@ class CredentialBroker:
         if len(api_key.reveal()) < 4 or not last4.isascii() or not last4.isalnum():
             raise CredentialUnavailable("credential_shape_invalid")
         dek = env.new_dek()
+        self._guard.acquire()  # no `drop_kek` zeroes the KEK mid-wrap (#913 L3b)
         try:
             dek_ref = kek.wrap_dek(dek, credential_id=key_id)
             aad_k = env.cred_aad(env_name, account_id, key_id, "key_id")
@@ -252,7 +344,8 @@ class CredentialBroker:
             scrub_frames(exc)  # the frames below hold the KEK, the DEK and the pasted pair (C-12.6)
             raise
         finally:
-            env.zero(dek)
+            self._guard.release()
+            env.zero(dek)  # this call's own DEK, never shared
         row = CredentialRow(
             id=key_id,
             exchange_account_id=account_id,
@@ -277,8 +370,9 @@ class CredentialBroker:
             raise
         return StoredCredential(key_id, account_id, label, last4, kek.version)
 
-    async def _load(self, key_id: UUID) -> CredentialRow | None:
-        rec = await self._io(self._store.get(key_id, self._env), "store_unavailable")
+    async def _load(self, key_id: UUID, *, io: _LoopIo | None = None) -> CredentialRow | None:
+        store = self._store if io is None else io.store
+        rec = await self._io(store.get(key_id, self._env), "store_unavailable")
         if rec is None:
             return None
         # A fund flag the store did not return is `None`, never false: refused (SR-E27-14).
@@ -303,6 +397,7 @@ class CredentialBroker:
         return out
 
     def _dek_for(self, row: CredentialRow, kek: LoadedKek) -> bytearray:
+        """The row's DEK, cached or unwrapped (and then cached). Caller holds `_guard`."""
         cached = self._cache.get(row.id)
         if cached is not None:
             m.dek_cache_hits_total.inc()
@@ -320,13 +415,15 @@ class CredentialBroker:
         self._cache.put(row.id, dek)
         return dek
 
-    def _touch(self, key_id: UUID) -> None:
+    def _touch(self, key_id: UUID, *, io: _LoopIo | None = None) -> None:
         """Best-effort `last_used_at` (21 §3.2.2) that never delays a signing (#2776): the write
         runs in a task this broker owns and is never awaited here. At most one attempt per key per
         `_TOUCH_INTERVAL_S`: the window is stamped *before* the write, so a failed or stalled
         attempt is debounced exactly like a successful one. At most one write per key is in
         flight; a signing that finds one starts none. After `aclose` no write starts."""
-        if self._touch_closed or key_id in self._touches:
+        # #913 L3b, under `_guard`: one window; the write runs on the signing loop through its `io`.
+        store, touches = (self._store, self._touches) if io is None else (io.store, io.touches)
+        if self._touch_closed or (io is not None and io.closed) or key_id in touches:
             return
         now = self._clock()
         prev = self._last_touch.get(key_id)
@@ -335,9 +432,8 @@ class CredentialBroker:
         self._last_touch[key_id] = now
         # The write is handed over as a bound method: this debouncer stays the only code that
         # names it (#2580), and no store coroutine exists unless the task really starts.
-        write = self._write_touch(self._store.touch_last_used, key_id, self._timeout)
+        write = self._write_touch(store.touch_last_used, key_id, self._timeout)
         task = spawn(write, name="secrets-credential-touch")
-        touches = self._touches
         touches[key_id] = task
 
         def forget(done: asyncio.Task[None]) -> None:
@@ -366,8 +462,14 @@ class CredentialBroker:
         cancelled and awaited, so none is left pending. Each wait is bounded by `io_timeout_s`;
         a write still running then (its cleanup stalled again, e.g. a rollback and then a close
         on a wedged connection) is cancelled again, until every write has ended.
-        Idempotent; signing is not affected."""
-        self._touch_closed = True
+        Idempotent; the serving broker's own signing is not affected (another loop's refuses)."""
+        with self._guard:  # #913 L3b: other loops' I/O closes, its writes cancelled there unawaited
+            self._touch_closed = True
+            others = self._live_loops()
+            for io in others:
+                io.closed = True
+        for io in others:
+            io.cancel_soon()
         pending = set(self._touches.values())
         while pending:
             for write in pending:
@@ -377,7 +479,8 @@ class CredentialBroker:
     def _check_row(
         self, row: CredentialRow | None, key_id: UUID, purpose: str, *, fence: bool = False
     ) -> CredentialRow:
-        """`fence`: the post-audit check of the row already checked, so C-2.8 runs once."""
+        """`fence`: the post-audit check of the row already checked, so C-2.8 runs once. Caller
+        holds `_guard` (it reads the fence and may flush the cache)."""
         if row is None or row.revoked or key_id in self._destroyed or row.env != self._env:
             self._cache.flush(key_id)
             raise CredentialUnavailable("credential_unavailable")
@@ -415,6 +518,7 @@ class CredentialBroker:
         purpose: str,
         *,
         digest: str | None = None,
+        io: _LoopIo | None = None,
     ) -> T:
         """The single audited decrypt path. Its only production caller is `_sign`, which
         uses the secret for the request MAC inside M2 and returns no plaintext secret (C-2.7,
@@ -429,9 +533,11 @@ class CredentialBroker:
         (`test_capability_boundary.py`) is the enforcing control; process isolation of
         signing is the real fix (#835 residual, follow-up issue). The write-ahead record
         carries `digest` as `message_sha256`; any failure after it (fence, decrypt, MAC,
-        cancellation) appends `security.credential_sign_failed` with a bounded `reason`."""
+        cancellation) appends `security.credential_sign_failed` with a bounded `reason`. #913 L3b:
+        `io` is another loop's I/O; the fence to the DEK's last use is one guarded section."""
         if caller_module not in ALLOWED_CALLERS or purpose not in _PURPOSES:
             raise CredentialUnavailable("caller_not_permitted")
+        self._bound(io, caller_module)
         actor = ("system", caller_module, None)
         extra = {"caller_module": caller_module, "purpose": purpose}
         if digest is not None:
@@ -439,13 +545,13 @@ class CredentialBroker:
         result = "error"
         audited: dict[str, str] | None = None
         try:
-            kek = self._require_kek()
-            row = self._check_row(await self._load(key_id), key_id, purpose)
+            self._require_kek()  # fail fast; read again under the guard after the audit
+            loaded = await self._load(key_id, io=io)
+            with self._guard:
+                row = self._check_row(loaded, key_id, purpose)
             fields = self._fields(row, actor=actor, **extra)
-            await self._audit("security.credential_borrowed", fields)
+            await self._audit("security.credential_borrowed", fields, io=io)
             audited = fields
-            row = self._check_row(row, key_id, purpose, fence=True)  # destroyed during the audit?
-            self._touch(key_id)  # started, never awaited: metadata never delays a signing
             attrs = {k: fields[k] for k in ("key_id", "env", "kek_version")}
             started = time.perf_counter()
             key = secret = dek = None
@@ -453,10 +559,15 @@ class CredentialBroker:
             s_s: Secret[str] | None = None
             try:
                 with span("secrets.credential_borrow", {**attrs, "purpose": purpose}):
+                    self._guard.acquire()  # one section, no await: the fence to the DEK let go
                     try:
+                        row = self._check_row(row, key_id, purpose, fence=True)  # destroyed?
+                        if io is not None and not io.closed:  # a closed I/O never joins again
+                            self._loops.add(weakref.ref(io))  # `destroy` and `aclose` reach it
+                        self._touch(key_id, io=io)  # started, never awaited: never delays a signing
                         if row.secret_enc[: env.NONCE_LEN] != row.enc_nonce:
                             raise ValueError("enc_nonce mismatch")
-                        dek = self._dek_for(row, kek)
+                        dek = self._dek_for(row, self._require_kek())  # dropped meanwhile?
                         acct, rid = row.exchange_account_id, row.id
                         # C-2.11: AAD from the process environment (never a DB-read field).
                         bound = self._env
@@ -467,6 +578,12 @@ class CredentialBroker:
                     except (InvalidTag, ValueError):
                         self._cache.flush(row.id)
                         raise CredentialUnavailable("credential_unavailable") from None
+                    finally:  # the guard let go, then a DEK the cache does not keep zeroed
+                        mine = None if dek is None or self._cache.holds(row.id, dek) else dek
+                        self._guard.release()
+                        if mine is not None:
+                            env.zero(mine)
+                        dek = mine = None
                     m.credential_borrow_seconds.observe(time.perf_counter() - started)
                     k_s, s_s = Secret(key.decode()), Secret(secret.decode())
                     out = await fn(k_s, s_s)
@@ -474,8 +591,6 @@ class CredentialBroker:
                 for buf in (key, secret):
                     if buf is not None:
                         env.zero(buf)
-                if dek is not None and not self._cache.holds(row.id, dek):
-                    env.zero(dek)
                 for sec in (k_s, s_s):
                     if sec is not None:
                         sec.invalidate()
@@ -487,13 +602,19 @@ class CredentialBroker:
             return out
         except BaseException as exc:
             if audited is not None:  # close the write-ahead record (C-2.9)
-                await self._sign_failed(audited, exc)
+                await self._sign_failed(audited, exc, io=io)
             raise
         finally:
             m.credential_borrow_total.labels(stage=caller_module, result=result).inc()
 
     async def _sign(
-        self, key_id: UUID, message: SigningMessage, caller_module: str, purpose: str
+        self,
+        key_id: UUID,
+        message: SigningMessage,
+        caller_module: str,
+        purpose: str,
+        *,
+        io: _LoopIo | None = None,
     ) -> RequestSignature:
         """M2-side request signing (C-2.7, #2339): the secret is used for the MAC here and
         never leaves M2. The result holds the hex MAC and the key id the caller's request
@@ -505,7 +626,8 @@ class CredentialBroker:
         async def mac(k: Secret[str], s: Secret[str]) -> RequestSignature:
             return request_signature(k, s, parts)  # `k`/`s`: wrappers `_borrow` invalidates
 
-        return await self._borrow(key_id, mac, caller_module, purpose, digest=message_sha256(parts))
+        digest = message_sha256(parts)
+        return await self._borrow(key_id, mac, caller_module, purpose, digest=digest, io=io)
 
     async def destroy(self, key_id: UUID, *, actor: tuple[str, str, str | None] = _SYSTEM) -> None:
         """Fence first (in-flight borrows refuse at their post-audit re-check, and the key's
@@ -514,21 +636,27 @@ class CredentialBroker:
         `security.credential_destroy_failed`; the original error is always re-raised."""
         row = await self._load(key_id)
         if row is None:
-            self._cache.flush(key_id)
+            self.flush_cache(key_id)
             raise CredentialUnavailable("credential_unavailable")
-        self._destroyed.add(key_id)
-        self._cache.flush(key_id)
+        with self._guard:  # #913 L3b: for every loop; other loops' writes are cancelled there
+            self._destroyed.add(key_id)
+            self._cache.flush(key_id)
+            others = self._live_loops()
         write = self._touches.get(key_id)
         if write is not None:  # #2776: drop its pending write (one already committed stays)
             write.cancel()
+        for io in others:
+            io.cancel_soon(key_id)
         try:
             await self._audit("security.credential_destroyed", self._fields(row, actor=actor))
             await self._io(self._store.mark_revoked(key_id), "store_unavailable")
+        except GeneratorExit:  # the collector's, maybe on a thread holding `_guard`: no lock
+            raise
         except BaseException:
             await self._outcome("security.credential_destroy_failed", row, actor)
+            self.flush_cache(key_id)  # never in a `finally`: the collector may end either await
             raise
-        finally:
-            self._cache.flush(key_id)
+        self.flush_cache(key_id)
 
     async def _outcome(
         self, action: str, row: CredentialRow, actor: tuple[str, str, str | None], **extra: str
@@ -539,17 +667,20 @@ class CredentialBroker:
         except Exception:
             m.credential_outcome_audit_failures_total.inc()
 
-    async def _sign_failed(self, borrowed: dict[str, str], exc: BaseException) -> None:
+    async def _sign_failed(
+        self, borrowed: dict[str, str], exc: BaseException, *, io: _LoopIo | None = None
+    ) -> None:
         """Close a write-ahead `security.credential_borrowed` record with the bounded `reason`
         of `exc`, best effort like `_outcome`. Every signing path closes its record here."""
         try:
-            await self._audit(_SIGN_FAILED, {**borrowed, "reason": _failure_reason(exc)})
+            await self._audit(_SIGN_FAILED, {**borrowed, "reason": _failure_reason(exc)}, io=io)
         except Exception:
             m.credential_outcome_audit_failures_total.inc()
 
     def flush_cache(self, key_id: UUID | None = None) -> None:
         """Flush on revoke/rotate (E27-S03/S04) and on KEK rotation."""
-        self._cache.flush(key_id)
+        with self._guard:
+            self._cache.flush(key_id)
 
 
 @final
@@ -561,15 +692,17 @@ class BorrowHandle:
         _m2_only(cls)
         super().__init_subclass__(**kw)
 
-    __slots__ = ("_broker", "_caller")
+    __slots__ = ("_broker", "_caller", "_io")
 
-    def __init__(self, broker: CredentialBroker, caller_module: str) -> None:
+    def __init__(
+        self, broker: CredentialBroker, caller_module: str, *, io: _LoopIo | None = None
+    ) -> None:
         if caller_module not in ALLOWED_CALLERS:
             raise ValueError("caller not permitted to borrow credentials")
-        self._broker, self._caller = broker, caller_module
+        self._broker, self._caller, self._io = broker, caller_module, io
 
     async def sign(
         self, key_id: UUID, message: SigningMessage, *, purpose: Purpose
     ) -> RequestSignature:
         """M2 signs `message` with the credential's API secret (see `CredentialBroker._sign`)."""
-        return await self._broker._sign(key_id, message, self._caller, purpose)
+        return await self._broker._sign(key_id, message, self._caller, purpose, io=self._io)

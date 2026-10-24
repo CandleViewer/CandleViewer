@@ -2005,11 +2005,14 @@ _TOKEN_HASH = 'return hashlib.sha256(token.encode("utf-8")).hexdigest()'
 _KEY_TAG = (
     'tag = hmac.new(mac_key, body.api_key.get_secret_value().encode(), "sha256").hexdigest()'
 )
+_VECTOR_MAC = "return hmac.new(secret.encode(), data, hashlib.sha256).hexdigest()"  # #913 L3b
 # `rule:path` of every line-keyed codeql entry -> the code its line must still hold.
 _CODEQL_LINE_PINS = {
     "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py": _TOKEN_HASH,
     "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/mfa_service.py": _TOKEN_HASH,
     "py/weak-sensitive-data-hashing:services/api/candleviewer/api/exchange_keys.py": _KEY_TAG,
+    "py/weak-sensitive-data-hashing:"
+    "services/api/tests/unit/credentials_m2/test_broker_two_loops.py": _VECTOR_MAC,
     "py/clear-text-logging-sensitive-data:"
     "services/api/candleviewer/migrations/versions/0002_rbac_seed.py": (
         "print(message, file=sys.stdout)"
