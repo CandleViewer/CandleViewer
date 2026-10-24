@@ -478,6 +478,25 @@ async def test_runtime_stop_cut_short_may_notify_again() -> None:
     await asyncio.wait({runtime._sweeper})
 
 
+async def test_runtime_starts_and_stops_the_recording_status() -> None:
+    """E16-T08: `WsRuntime` drives the 1 Hz recording status; each `stop` ends it, notice first."""
+    calls: list[str] = []
+
+    class Status:
+        def start(self) -> None:
+            calls.append("start")
+
+        async def stop(self) -> None:
+            calls.append("stop")
+
+    runtime = WsRuntime(GatewayHub(), UpstreamRefs(), _settings())
+    runtime.recorder_status = Status()
+    runtime.start()
+    await runtime.stop()
+    await runtime.stop()
+    assert calls == ["start", "stop", "stop"] and runtime._sweeper is None
+
+
 async def test_runtime_stop_cancels_the_machine_registry_timers() -> None:
     """E17-T08: once the notice ends, no `machines` window or retention timer is left armed."""
     machines = MachineStateRegistry(call_later=loop_call_later, coalesce_s=3600.0)

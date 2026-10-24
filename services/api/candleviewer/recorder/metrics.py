@@ -86,6 +86,12 @@ recorder_disk_budget_last_sample_timestamp_seconds = Gauge(
     "Unix time of the last completed DiskBudget pass (a stale value = a stuck ladder).",
 )
 
+# --- Recording status (E16-T08) -----------------------------------------------------------
+recorder_status_cache_age_seconds = Gauge(
+    "recorder_status_cache_age_seconds",
+    "Seconds since the 1 Hz recording status was last computed (+Inf before the first).",
+)
+
 #: Names served by `export_recorder_metrics`.
 EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
     {
@@ -101,6 +107,7 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "recorder_projected_full_timestamp",
         "recorder_disk_budget_last_sample_timestamp_seconds",
         "recorder_disk_budget_breakdown_age_seconds",
+        "recorder_status_cache_age_seconds",
         # The nightly roll-off (`recorder/rolloff.py`, E16-T05): unscraped until #3794.
         "recorder_rolloff_bytes_total",
         "recorder_rolloff_duration_seconds",
