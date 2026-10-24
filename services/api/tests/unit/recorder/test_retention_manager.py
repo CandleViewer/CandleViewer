@@ -133,7 +133,9 @@ async def test_lease_taken_after_plan_is_honoured_at_delete_time() -> None:
 
 
 def _wired_lease(sessions: Any, clock: FakeClock) -> rw.PgRetentionFacts:
-    guard = rw.ReplayRetentionGuard(sessions, max_lifetime=timedelta(days=1), clock=clock)
+    guard = rw.ReplayRetentionGuard(
+        sessions, max_lifetime=timedelta(days=1), reclaim_interval=timedelta(minutes=1), clock=clock
+    )
     return rw.PgRetentionFacts(cast(Any, None), guard)
 
 

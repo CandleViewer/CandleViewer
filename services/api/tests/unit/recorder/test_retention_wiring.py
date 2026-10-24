@@ -133,6 +133,7 @@ async def test_pg_facts_drop_unknown_stream_and_never_shorten_below_hot() -> Non
 _US = timedelta(microseconds=1)
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 LIFE = timedelta(days=1)
+RECLAIM = timedelta(seconds=60)  # `CV_REPLAY_RECLAIM_INTERVAL_S`
 W0 = datetime(2026, 10, 17, tzinfo=UTC)  # an open session's window: [W0, W1)
 W1 = W0 + timedelta(hours=2)
 
@@ -147,7 +148,9 @@ def _clock() -> FakeClock:
 
 def _guard(sessions: Any = None, clock: Any = None, **kw: Any) -> rw.ReplayRetentionGuard:
     sessions = FakeReplaySessionRepository() if sessions is None else sessions
-    return rw.ReplayRetentionGuard(sessions, max_lifetime=LIFE, clock=clock or _clock(), **kw)
+    return rw.ReplayRetentionGuard(
+        sessions, max_lifetime=LIFE, reclaim_interval=RECLAIM, clock=clock or _clock(), **kw
+    )
 
 
 def _facts(guard: rw.ReplayRetentionGuard) -> rw.PgRetentionFacts:
@@ -204,22 +207,51 @@ async def test_guard_keeps_a_range_only_when_it_overlaps_a_session_window(
 ) -> None:
     clock = _clock()
     repo = FakeReplaySessionRepository(clock)
-    row = await open_session(repo, ReplayState.PAUSED, W0, W1)
+    row = await open_session(repo, ReplayState.PAUSED, W0, W1, streams=("trades",))
     facts = _facts(_guard(repo, clock))
     assert await facts.lease("BTCUSDT", _us(lo), _us(hi)) == (row.id if kept else None)
     got = await facts.replay_session_for(_part("BTCUSDT", StreamKind.TRADES, lo, hi))
     assert got == (row.id if kept else None)
 
 
-async def test_guard_ignores_a_session_older_than_the_maximum_lifetime() -> None:
+async def test_guard_keeps_a_session_until_the_sweep_can_destroy_it() -> None:
+    """M2: the sweep destroys a session past its lifetime on its next pass, so the guard keeps it
+    for one reclaim interval and a margin beyond the lifetime."""
     clock = _clock()
     repo = FakeReplaySessionRepository(clock)
     row = await open_session(repo, ReplayState.PLAYING, W0, W1)
     facts = _facts(_guard(repo, clock))
-    clock.now = row.created_at + LIFE - _US
-    assert await facts.lease("BTCUSDT", _us(W0), _us(W1)) == row.id
-    clock.now = row.created_at + LIFE  # the sweep destroys it as `max_lifetime` (G6)
-    assert await facts.lease("BTCUSDT", _us(W0), _us(W1)) is None
+    swept = row.created_at + LIFE + RECLAIM + rw.SWEEP_LAG_MARGIN
+    for now, want in ((row.created_at + LIFE, row.id), (swept - _US, row.id), (swept, None)):
+        clock.now = now
+        assert await facts.lease("BTCUSDT", _us(W0), _us(W1)) == want
+
+
+async def test_guard_keeps_the_snapshot_a_seek_anchor_reads_before_the_session() -> None:
+    """M1: a seek anchors on the latest book snapshot up to an hour before its target
+    (`replay/merge.py`), so a session starting in the first hour of a day keeps the day before."""
+    clock = _clock()
+    repo = FakeReplaySessionRepository(clock)
+    start = W0 + timedelta(minutes=30)
+    row = await open_session(repo, ReplayState.PLAYING, start, W1)
+    facts = _facts(_guard(repo, clock))
+    snap, day_before = StreamKind.ORDERBOOK_SNAPSHOT, W0 - timedelta(days=1)
+    edge = start - timedelta(microseconds=rw.ANCHOR_LOOKBACK_US)
+    assert await facts.replay_session_for(_part("BTCUSDT", snap, day_before, W0)) == row.id
+    assert await facts.replay_session_for(_part("BTCUSDT", snap, day_before, edge + _US)) == row.id
+    assert await facts.replay_session_for(_part("BTCUSDT", snap, day_before, edge)) is None
+    assert (
+        await facts.replay_session_for(_part("BTCUSDT", StreamKind.TRADES, day_before, W0)) is None
+    )
+    assert await facts.lease("BTCUSDT", _us(day_before), _us(W0)) == row.id  # via the snapshot
+    guard = _guard(repo, clock).partition_guard(Path("/c"), site="compaction")
+    assert await guard(Path("/c/orderbook_snapshots/symbol=BTCUSDT/dt=2026-10-16")) == row.id
+
+
+def test_the_anchor_lookback_is_the_merges() -> None:
+    from candleviewer.replay import merge
+
+    assert rw.ANCHOR_LOOKBACK_US == merge.ANCHOR_LOOKBACK_US == 3_600_000_000
 
 
 async def test_guard_fails_closed_counts_and_logs_ids_only_on_a_read_error() -> None:
@@ -289,7 +321,7 @@ async def test_cold_guard_reads_the_partitions_symbol_stream_and_range(
     clock = _clock()
     guard = _guard(_Spy(), clock).partition_guard(tmp_path, site="compaction")
     assert await guard(tmp_path / rel) == "s-1"
-    assert calls == [("BTCUSDT", stream, lo, hi, clock.now - LIFE)]
+    assert calls == [("BTCUSDT", stream, lo, hi, clock.now - LIFE - RECLAIM - rw.SWEEP_LAG_MARGIN)]
 
 
 async def test_cold_guard_reads_nothing_for_a_stream_no_session_replays(tmp_path: Path) -> None:
@@ -314,7 +346,11 @@ async def test_cold_guard_keeps_a_partition_whose_path_it_cannot_read(
 
 
 def _real_settings(tmp_path: Path) -> Settings:
-    return Settings(parquet_root=str(tmp_path / "parquet"), replay_max_lifetime_s=7200.0)
+    return Settings(
+        parquet_root=str(tmp_path / "parquet"),
+        replay_max_lifetime_s=7200.0,
+        replay_reclaim_interval_s=120.0,
+    )
 
 
 def test_build_passes_the_replay_lease_bounded_by_the_session_lifetime(tmp_path: Path) -> None:
@@ -323,6 +359,7 @@ def test_build_passes_the_replay_lease_bounded_by_the_session_lifetime(tmp_path:
     assert isinstance(facts, rw.PgRetentionFacts)
     assert built._lease == facts.lease
     assert facts._guard._lifetime == timedelta(hours=2)
+    assert facts._guard._reclaim == timedelta(minutes=2)
 
 
 def test_compaction_is_built_with_the_replay_guard_when_postgres_is_wired(tmp_path: Path) -> None:

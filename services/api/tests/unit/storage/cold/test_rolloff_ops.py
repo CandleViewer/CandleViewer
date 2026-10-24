@@ -708,7 +708,9 @@ async def test_downsampler_defers_a_book_hour_an_open_replay_session_reads(tmp_p
     await open_replay_session(
         repo, ReplayState.PLAYING, hour0 + timedelta(hours=1), hour0 + timedelta(hours=2)
     )
-    guard = rw.ReplayRetentionGuard(repo, max_lifetime=timedelta(days=4), clock=clock)
+    guard = rw.ReplayRetentionGuard(
+        repo, max_lifetime=timedelta(days=4), reclaim_interval=timedelta(minutes=1), clock=clock
+    )
     sampler = ColdDownsampler(reg, idle_guard=guard.partition_guard(reg.root, site="downsample"))
     before = DAY_START_US + 2 * 86_400_000_000
     assert await sampler.downsample_before("BTCUSDT", StreamKind.ORDERBOOK_DELTA, before) == 0

@@ -159,7 +159,9 @@ async def test_the_wired_replay_guard_keeps_a_partition_an_open_session_reads(
     other = await open_session(
         repo, ReplayState.PLAYING, _W0, _W0 + timedelta(hours=1), streams=("klines",)
     )
-    guard = rw.ReplayRetentionGuard(repo, max_lifetime=timedelta(days=1), clock=clock)
+    guard = rw.ReplayRetentionGuard(
+        repo, max_lifetime=timedelta(days=1), reclaim_interval=timedelta(minutes=1), clock=clock
+    )
     result = await _compact(tmp_path, idle_guard=guard.partition_guard(tmp_path, site="compaction"))
     assert result.skipped and row.id in result.reason and other.id not in result.reason
     assert len(list((tmp_path / PART).iterdir())) == 2
@@ -174,7 +176,10 @@ async def test_an_unreadable_replay_guard_defers_the_partition_never_merges_it(
     _seed(tmp_path, [[(1, 1.0)], [(2, 1.0)]])
     clock = FakeClock(_W0)
     broken = rw.ReplayRetentionGuard(
-        FailingCoveringRead(OSError()), max_lifetime=timedelta(days=1), clock=clock
+        FailingCoveringRead(OSError()),
+        max_lifetime=timedelta(days=1),
+        reclaim_interval=timedelta(minutes=1),
+        clock=clock,
     )
     result = await _compact(
         tmp_path, idle_guard=broken.partition_guard(tmp_path, site="compaction")

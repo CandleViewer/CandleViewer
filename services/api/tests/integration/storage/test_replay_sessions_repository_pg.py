@@ -154,7 +154,9 @@ async def test_the_retention_guard_keeps_a_live_sessions_data_never_a_destroyed_
     idle guard keep what an open session replays; a destroyed session holds nothing."""
     live = await h.in_state(S.PLAYING)  # BTCUSDT, every stream, [T0, T2H)
     await h.in_state(S.DESTROYED, symbol="ETHUSDT")
-    guard = rw.ReplayRetentionGuard(h.repo, max_lifetime=timedelta(days=1), clock=h.clock)
+    guard = rw.ReplayRetentionGuard(
+        h.repo, max_lifetime=timedelta(days=1), reclaim_interval=timedelta(minutes=1), clock=h.clock
+    )
     facts = rw.PgRetentionFacts(cast(Any, None), guard)  # no policy read: the guard alone
     lo, hi = (int(t.timestamp()) * 1_000_000 for t in (T0, T2H))
     cold = guard.partition_guard(tmp_path, site="compaction")
