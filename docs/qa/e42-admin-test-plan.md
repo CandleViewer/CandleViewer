@@ -100,7 +100,7 @@ replaced by one that raises `AuditUnavailable` for that record only, as
 | AUDIT-KEY-ENTRY                       | An entry whose before and after states referenced key material, by fingerprint                                                             |
 | AUDIT-SECRET-MARKER                   | A synthetic secret-shaped marker written through the real audit writer; test database only                                                 |
 | AUDIT-CONCURRENT                      | Two connections inserting 1,000 audit rows, one outside the app's insert path (AC-ADM-16)                                                  |
-| OOB-WRITES                            | As `cv_app`, outside the API: an Owner role row, MGR-M's grant widened, `trading.live_enabled` set and a backup digest changed (AC-ADM-31) |
+| OOB-WRITES                            | As `cv_app`, outside the API: an Owner role row, MGR-M's grant widened, `trading.live_enabled` set and a backup digest written (AC-ADM-31) |
 | FLAG-UI                               | A catalogued UI flag, `rules.graph_editor`, on (see Q-9)                                                                                   |
 | FLAG-LIVE-BLOCKED                     | `trading.live_enabled` off, with the pen-test sign-off outstanding                                                                         |
 | RULES-ON-FLAG                         | Two armed rules that depend on a flag being disabled; not buildable until Q-29 is answered                                                 |

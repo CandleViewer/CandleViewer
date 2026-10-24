@@ -5,12 +5,14 @@ API changes only with a record written ahead (C-2.9). The seed makes four such w
 audit record, for the change capture of SR-E42-06 (#3196) to catch: an Owner role row for MGR-M, a
 second grant for MGR-M (SUB-T beside SUB-S), `trading.live_enabled` set, and a backup's digest set.
 The digest is set, not rewritten: `0032_backups_write_once` refuses a change to one already set, for
-every role, so OOB-BACKUP, the seed's own row, has none. It shares no database with `seed_backups`.
+every role, so OOB-BACKUP, the seed's own row, has none. It shares no database with `seed_backups`,
+nor with FLAG-OVERRIDE-ROWS or FLAG-LIVE-BLOCKED, whose checks expect the live gate off.
 
 Each write runs after `SET ROLE cv_app`, reset after the last. They leave a standing privilege and a
 set live gate, so the seed refuses, before it reads a row, a database not named for tests and a
 session not logged in as the test container's own user. It builds on slice A's world, which
-`check_admin_world` no longer passes afterwards: it names the widened grant and the extra role.
+`check_admin_world` no longer passes afterwards: it names the widened grant, the extra role and the
+set gate. `seed_admin_world` puts the gate back, and only the gate.
 """
 
 from __future__ import annotations
@@ -79,11 +81,11 @@ async def seed_oob_writes(conn: AsyncConnection, *, now: datetime) -> None:
         )
         .on_conflict_do_nothing(index_elements=["id"])
     )
-    manager, flags = user("MGR-M"), m.feature_flags
-    await conn.execute(sa.text("SET ROLE cv_app"))
+    manager, flags, owner = user("MGR-M"), m.feature_flags, role_ids["owner"]
+    await conn.execute(sa.text("SET ROLE cv_app"))  # only the four writes until the reset
     await conn.execute(
         pg_insert(m.user_roles)
-        .values(user_id=manager.id, role_id=role_ids["owner"])
+        .values(user_id=manager.id, role_id=owner)
         .on_conflict_do_nothing(index_elements=["user_id", "role_id"])
     )
     await conn.execute(

@@ -19,6 +19,8 @@ and this file, through the log redactor to keep it so.
 | `audit_10m.py`       | AUDIT-10M: `load_audit_10m`, E42-K01's 10 M-row generator run into a test database              |
 | `flag_overrides.py`  | FLAG-OVERRIDE-ROWS: override rows on both safety flags and an unreadable row, and their check   |
 | `world.py`           | `require_world`: the rows of slice A's world a later seed needs, each named if missing          |
+| `oob_writes.py`      | OOB-WRITES: four writes as `cv_app` outside the API, with no audit record, and their check      |
+| `forged_seal.py`     | SC-FORGED-SEAL: a snapshot changed after it was sealed, `forged_row` and its checks             |
 | `payloads/`          | The health reports and the overview, as JSON bodies of the contract's models                    |
 | `README.md`          | This file                                                                                       |
 
@@ -250,8 +252,11 @@ async with engine.begin() as conn:  # a transaction: a failed write rolls the ro
   digest, and the write sets one. `0032_backups_write_once` refuses a change to a digest already
   set, for every role, so a digest can only be set. The row shares no database with `seed_backups`,
   whose check refuses a backup that is not its own two: the seed refuses a database holding one.
-- **The world's check fails after it,** by design: `check_admin_world` names MGR-M's second grant and
-  extra role. Seed the world and check it first, in a database of its own.
+- **A database of its own:** `check_admin_world` fails after it, by design: it names MGR-M's second
+  grant, the extra role and the set live gate. So does `check_flag_overrides`, which expects the gate
+  off: OOB-WRITES shares no database with FLAG-OVERRIDE-ROWS or FLAG-LIVE-BLOCKED. Seed the world and
+  check it first. The Postgres test runs it in `oob_test`, migrated after its stand-in `cv_app` got
+  the bootstrap's default privileges, so the migrations' revokes apply to the stand-in too.
 - **The world first:** MGR-M, SUB-S, SUB-T and the live gate's row; a missing one is a
   `FixtureCheckError` naming it. The role `cv_app` must exist too: the shipped bootstrap creates it,
   and the Postgres test makes a stand-in.
@@ -261,7 +266,7 @@ async with engine.begin() as conn:  # a transaction: a failed write rolls the ro
 - **Test databases only, and the test container's login:** it refuses, with `FixtureRefused` and
   before a row is read, a database not named `test` or `*_test`, and a session not logged in as
   `test`, the user of the test container. The writes leave a standing privilege and a set live
-  gate, which nothing removes.
+  gate; `seed_admin_world` puts the gate back, and nothing removes the role row or the grant.
 
 ## The forged seal (SC-FORGED-SEAL)
 
@@ -280,14 +285,17 @@ await check_forged_seal(relational, keys, now=now)
   earlier row. Like that row it carries no drain seal, so a `Restorer` refuses it.
 - **The key is the caller's:** the row is sealed with the `HmacKeys` passed in, and the fixture
   holds no key.
-- **Idempotent and self-checking:** a second run writes the same row. `check_forged_seal` raises
+- **In process:** `forged_row` builds the same row without a database, and `check_left_out` checks
+  any rows read back. The plan runs AD-T07-N01 in process only, over an injected store.
+- **Idempotent and self-checking:** a second run rewrites the same row (an upsert), and the check
+  passes again. `check_forged_seal` raises
   `FixtureCheckError` unless the row is there once, its seal fails on the HMAC (not on an unknown
   key or a hash) and the inspector, reading it back with the same keys, lists nothing and says
   `error`. The critical `system_events` row AD-T07-N01 expects is not written by the inspector yet.
 - **Test databases only:** a database not named for tests is refused with `FixtureRefused` before
   any read.
-- `tests/integration/admin/test_admin_fixture_b4a_pg.py` runs the three seeds on Postgres 16, the
-  second as `cv_app` through a stand-in role.
+- `tests/integration/admin/test_admin_fixture_b4a_pg.py` runs the three seeds on Postgres 16,
+  OOB-WRITES in its own database as `cv_app` through a stand-in role.
 
 ## The degraded snapshot (SC-CHAIN-TRIPS)
 
