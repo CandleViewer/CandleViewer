@@ -900,6 +900,8 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_REPLAY_RECLAIM_INTERVAL_S`   | float  | `60`                      | process | idle-reclaim sweep cadence (one bounded batch per sweep)                                                            |
 | `CV_REPLAY_MAX_SESSIONS_PER_USER` | int   | `2`                       | process | open replay sessions per user; create / `PREPARE` past it refused                                                   |
 | `CV_REPLAY_MAX_WINDOW_HOURS`     | int    | `24`                      | process | replay window cap; a longer window is a 422 before any I/O                                                          |
+| `CV_REPLAY_LOOP_SHARE`           | float  | `0.25`                    | process | replay's share of the event loop, all sessions (#2668 G1, C-2.17); above 0, at most 0.5, no off value (C-4.14)      |
+| `CV_REPLAY_LOOP_BURST_MS`        | int    | `50`                      | process | loop time a quiet loop banks for replay (#2668 G1); 5-250                                                           |
 | `CV_ORDER_RATE_PER_UID`          | int    | `8`                       | runtime | below Bybit's 10/s for headroom                                                                                     |
 | `CV_NATIVE_SL_DEADLINE_MS`       | int    | `3000`                    | runtime | NakedPositionAlert threshold                                                                                        |
 | `CV_KILLSWITCH_ON_DISCONNECT_S`  | int    | `30`                      | runtime | watchdog flatten policy (opt-in per account)                                                                        |
@@ -1536,6 +1538,9 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | Replay | `replay_events_emitted_total` | counter | recorded events replay clocks delivered (E26-T03); throughput, no alert |
 | Replay | `replay_backpressure_seconds_total` | counter | wall time replay clocks gave up to slow consumers (E26-T03); the cause behind a low `replay_achieved_speed_ratio` |
 | Replay | `replay_achieved_speed_ratio` | gauge | lowest achieved/requested speed of the paced replay clocks (E26-T03); info when < 0.9 for 5 min, the SCR-097 honesty state |
+| Replay | `replay_loop_seconds_total` | counter | event-loop wall time charged to replay lanes by the loop budget (#2668 G1, C-2.17); warning when its 1 min rate exceeds 1.2 × `CV_REPLAY_LOOP_SHARE` for 5 min |
+| Replay | `replay_budget_held_seconds_total` | counter | wall time replay lanes were held by the loop budget (#2668 G1); a held lane plays below its requested speed, no alert |
+| Replay | `replay_budget_waiters` | gauge | replay lanes waiting for the loop budget now (#2668 G1); each waits about one turn per lane ahead, no alert |
 | Feature flags | `cv_feature_flag_evaluations_total{flag}`, `cv_feature_flag_unreadable_overrides_total{flag}` | counter | unreadable overrides > 0 (E42-T03) |
 | Feature flags | `cv_feature_flag_changes_total{flag,result}` | counter | conflict or refusal spikes show in `result` (E42-T03) |
 | Feature flags | `cv_flag_push_latency_seconds` | histogram | committed flag write -> last session frame queued; budget 2 s (E42-T03) |
