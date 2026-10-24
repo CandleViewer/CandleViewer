@@ -68,6 +68,11 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     # E42-T09 (#2649): the contract says listing needs no step-up; revoking one is gated (`users`).
     ("GET", "/users/{userId}/sessions"): "listUserSessions: a read (04 row 40a); revoke is gated",
     ("PUT", "/admin/capacity/subaccount-tier"): "setSubaccountTier: the contract says No step-up",
+    # 04 §7.2.2 rows 10 and 11: placing an order takes no step-up of its own; a live one needs the
+    # session's arm token (SR-043), whose issue takes the live step-up.
+    ("POST", "/orders"): (
+        "placeOrder: no step-up (04 rows 10, 11); live needs the arm token (SR-043)"
+    ),
     # #3085 (D1): ending one's own view-as only lowers capability, so it never needs a step-up.
     ("DELETE", "/auth/session/view-as"): "endViewAs: the contract says no step-up",
     # `rules:write` is seeded `dangerous`, so the sweep flags each rule write. 04 §7.2.2 rows 22,

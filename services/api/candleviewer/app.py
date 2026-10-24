@@ -146,6 +146,8 @@ from candleviewer.api.notifications import make_notifications_router
 from candleviewer.api.onboarding import make_onboarding_router
 from candleviewer.api.onboarding_checklist import StepResult, bybit_key_restriction
 from candleviewer.api.openapi_publish import install_contract_openapi
+from candleviewer.api.order_principal import SessionTradingPrincipalResolver
+from candleviewer.api.orders import OrderPrincipals, make_orders_router
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
 from candleviewer.api.recorder_purge import make_recorder_purge_router
 from candleviewer.api.recording_reports import make_recording_reports_router
@@ -296,7 +298,7 @@ from candleviewer.observability.support_bundle import filter_config
 from candleviewer.observability.support_bundle_wiring import build_support_bundle_service
 from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySink
 from candleviewer.oms.service import OmsService
-from candleviewer.oms_wiring import OmsRuntime, build_oms_runtime
+from candleviewer.oms_wiring import OmsAudit, OmsRuntime, build_oms_runtime
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.indicators.catalogue import default_catalogue
 from candleviewer.orderflow.indicators.engine import IndicatorEngine, StoredHistory
@@ -2228,6 +2230,30 @@ def create_app(
         profiles=None if profiles is None else profiles.effective,
         persistence=persistence,
         feed=machine_feed,
+    )
+    # #913 slice 3F (24 Sec.8.4): `placeOrder` over that runtime, mounted whatever
+    # `trading.oms_enabled` says (it gates admission). The principal is the session's with its
+    # trade grants; a test-injected `principal_resolver` wins. The fake backend composes neither
+    # an identity nor a runtime, so it answers 501.
+    order_principals: OrderPrincipals | None = principal_resolver
+    if order_principals is None and identity is not None:
+        trade_grants = SqlAlchemyScopeSource(
+            SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "order-principal")
+        )
+        order_principals = SessionTradingPrincipalResolver(
+            lambda: ctx.auth.sessions, identity, trade_grants
+        )
+    order_records = OmsAudit(_LazyAuditEmitter(ctx.audit), environment=resolved.environment.value)
+    app.include_router(
+        make_orders_router(
+            order_principals,
+            lambda: app.state.oms_runtime,
+            audit=_LazyAuditEmitter(ctx.audit),
+            records=order_records,
+            oms_enabled=feature_flags.oms_enabled,
+            metrics=metrics_facade,
+            auth=ctx.auth,
+        )
     )
     # #2111: the start-up and nightly audit chain verify job (lifespan-started). #2966: the real
     # backend runs it with the real runner (an injected one, a test's, wins); the fake backend has
