@@ -14,16 +14,24 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 from typing import Any
+from unittest.mock import AsyncMock
+from uuid import UUID
 
+import httpx
 import pytest
+from fastapi import FastAPI
 from jsonschema import ValidationError as SchemaError
 from pydantic import ValidationError
 
 from candleviewer.accounts import selfcheck
+from candleviewer.accounts.key_age import KeyRotationPolicy
 from candleviewer.accounts.verification import Rule
 from candleviewer.api._generated import openapi_models as api
+from candleviewer.api.error_redaction import install_error_redaction
+from candleviewer.api.exchange_keys import make_exchange_keys_router
 from candleviewer.ws._generated.error_codes import ErrorCode
 from tests.contract._admin_support import ROOT, SPEC, example_cases, text, validate_example
+from tests.unit.credentials_m2._vectors import API_KEY, API_SECRET
 
 _KEYS = "/exchange-accounts/{accountId}/keys"
 _TEST = f"{_KEYS}/{{keyId}}/test"
@@ -824,6 +832,42 @@ def test_a_verification_may_show_a_wildcard_and_a_range_the_whitelist_check_refu
     whitelist = ["*", "203.0.113.0/24", "2001:db8::/32", _EGRESS]
     shown = {"passed": False, "withdraw_enabled": False, "ip_whitelist": whitelist}
     validate_example(_VERIFICATION, shown)
+
+
+# --- `read_only` is a JSON boolean (#906 slice G2a) --------------------------------------------
+
+
+async def _import_with(read_only: object) -> httpx.Response:
+    """`createApiKey` as mounted, its body `CreateApiKeyRequest`. No principal resolver is wired,
+    so a body that validates would reach the handler and answer 501; none of these does."""
+    app = FastAPI()
+    install_error_redaction(app)
+    router = make_exchange_keys_router(
+        None, AsyncMock(), None, egress_ip=None, rotation=KeyRotationPolicy()
+    )
+    app.include_router(router)
+    body = {"api_key": API_KEY, "api_secret": API_SECRET, "read_only": read_only}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        return await c.post(f"/exchange-accounts/{UUID(int=1)}/keys", json=body)
+
+
+@pytest.mark.parametrize(
+    "sent", ["true", 1, "yes", "x" * 10_000], ids=["true-string", "one", "yes", "long"]
+)
+async def test_create_api_key_takes_read_only_as_a_json_boolean_only(sent: object) -> None:
+    """A lax parser read `1`, `"yes"` and `"true"` as `true`; the contract says `type: boolean`.
+    The 422 names the member, echoes nothing of the input and holds no key material."""
+    response = await _import_with(sent)
+    assert response.status_code == 422
+    assert response.json()["errors"] == [
+        {
+            "field": "body.read_only",
+            "rule": "bool_type",
+            "message": "Input should be a valid boolean",
+        }
+    ]
+    assert len(response.content) < 1024
+    assert API_KEY not in response.text and API_SECRET not in response.text
 
 
 # --- Every new sentence is quoted -------------------------------------------------------------

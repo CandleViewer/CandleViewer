@@ -140,6 +140,74 @@ def test_a_decimal_block_without_a_pattern_stops_the_generator() -> None:
         _generator()._patch_decimal_money_type(bare)
 
 
+# What `--strict-types int` leaves: `StrictInt` in the import tuple, in a root model and in a union.
+_INTEGER_BLOCK = """\
+from typing import Annotated
+
+from pydantic import (
+    BaseModel,
+    Field,
+    RootModel,
+    StrictInt,
+)
+
+
+class Count(RootModel[StrictInt]):
+    root: Annotated[StrictInt, Field(ge=0, le=9)]
+
+
+class Box(BaseModel):
+    size: Annotated[StrictInt | None, Field(ge=1, le=9)] = None
+"""
+
+
+def test_the_integer_type_is_a_json_integer() -> None:
+    """`StrictInt` refuses `5.0`, which the contract's `type: integer` takes (JSON Schema)."""
+    patched = _generator()._patch_json_integer(_INTEGER_BLOCK)
+    assert "StrictInt" not in patched
+    namespace: dict[str, Any] = {}
+    code = compile(patched, "<patched>", "exec", dont_inherit=True)  # annotations evaluated here
+    exec(code, namespace)  # noqa: S102 - the generator's own output for a fixed fixture
+    adapter: TypeAdapter[Any] = TypeAdapter(namespace["JsonInt"])
+    assert [adapter.validate_python(taken) for taken in (5, 5.0)] == [5, 5]
+    for refused in ("5", " 5", "5.0", True, False, 5.5, float("inf"), float("nan")):
+        with pytest.raises(ValidationError):
+            adapter.validate_python(refused)
+    assert namespace["Count"].model_validate(9.0).root == 9
+    assert namespace["Box"].model_validate({"size": 2.0}).size == 2
+    with pytest.raises(ValidationError):  # a bound still applies to a whole float
+        namespace["Count"].model_validate(10.0)
+    with pytest.raises(ValidationError):
+        namespace["Box"].model_validate({"size": 10.0})
+
+
+def test_a_strict_integer_import_the_patch_cannot_find_stops_the_generator() -> None:
+    shared = (
+        "from pydantic import BaseModel, StrictInt\n\n\nclass A(BaseModel):\n    n: StrictInt\n"
+    )
+    with pytest.raises(RuntimeError, match="update _patch_json_integer"):
+        _generator()._patch_json_integer(shared)
+
+
+def test_only_the_rest_run_passes_the_strict_types(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The WS models hold no scalar member, so `--check` cannot see a WS run that took the flags."""
+    gen, runs = _generator(), []
+
+    def fake(
+        *, input_file_type: str, output_path: Path, extra: tuple[str, ...] = (), **_: Any
+    ) -> None:
+        runs.append((input_file_type, extra))
+        output_path.write_text("from __future__ import annotations\n", encoding="utf-8")
+
+    monkeypatch.setattr(gen, "_run_datamodel_codegen", fake)
+    for name in ("REST_OUT", "WS_OUT", "CONTRACT_OUT"):
+        monkeypatch.setattr(gen, name, tmp_path / name)
+    gen.generate()
+    assert runs == [("openapi", gen._STRICT_SCALARS), ("jsonschema", ())]
+
+
 def test_ws_models_module_imports_cleanly(generated_ws_module) -> None:  # type: ignore[no-untyped-def]
     assert generated_ws_module.__name__ == "candleviewer.ws._generated.ws_models"
 

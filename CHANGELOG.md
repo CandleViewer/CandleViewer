@@ -5112,6 +5112,7 @@ tracker).
 
 ### Security
 
+- **backend-platform**: a request body's boolean, integer and number members now take only the JSON types the contract names, where `1`, `"yes"` or `"true"` was read as a boolean and `"5"` as an integer: the key import refuses such a `read_only` with a 422, and the KEK rewrap takes a `to_version` written as `2.0` (#906)
 - **infra-devops**: `pnpm install` now runs no lifecycle script, keeps the lockfile frozen and records exact versions, because the install policy moved to `pnpm-workspace.yaml`, where pnpm 12 reads it; the reviewed postinstall runner is the only build step, and the git hooks need `pnpm run prepare` once per clone (#3277) (#4282)
 - **electron-shell**: the desktop shell moves from Electron 41.10.7 to 45.0.0 (Chromium 156), a supported major that carries the fix for the Medium finding in 41; the shell's hardening settings are unchanged (#1819) (#4168)
 - **rule-engine**: no rule may loosen a stop, for any role: saving, validating, compiling or importing a rule with a `widen_stop` action, or a stop action whose `only_tighten` is not `true`, is now refused with the `stop_loosening` issue, and a stored version holding one cannot be armed; the `rules.loosen_stop` permission, which no role held, is removed (#2698) (#4246)
