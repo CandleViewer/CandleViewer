@@ -17,6 +17,10 @@ from uuid import UUID
 
 import pytest
 
+from candleviewer.domain.order_link import account_tag
+from candleviewer.domain.primitives import AccountId, Symbol
+from candleviewer.exchange.base.fakes import FakeTradingPort
+from candleviewer.exchange.base.models import AccountRef, CancelOrderRequest, Order, OrderAck
 from candleviewer.oms.cancel_all import (
     ACCOUNTS_AT_ONCE,
     DEADLINE_S,
@@ -28,6 +32,8 @@ from candleviewer.oms.cancel_all import (
     ScopedAccounts,
     selected,
 )
+from candleviewer.oms.cancel_all_coalescer import CancelAllCoalescer
+from candleviewer.oms.cancel_all_fold import CancelAllSpacer
 from candleviewer.oms.errors import AccountScopeDenied, StoreUnavailable
 from candleviewer.oms.exits import ExitOutcome
 from candleviewer.oms.ports import SubmitActor
@@ -490,3 +496,194 @@ def test_each_bound_is_finite_and_above_zero(name: str, bound: float) -> None:
     over: dict[str, Any] = {name: bound}
     with pytest.raises(ValueError, match=name):
         CancelAll(_Reads([]), _Exits(), **over)
+
+
+# --- S4-F: the venue cancel-all fold (24 Sec.8.7; the 21:11Z ruling) --------------------------
+
+_FOLD_ACCOUNT = AccountId(_A)
+_FOLD_REF = AccountRef(
+    account_id=_FOLD_ACCOUNT, uid="100001", environment="demo",
+    key_ref=str(UUID(int=1)),
+)  # fmt: skip
+
+
+def _link(n: int) -> str:
+    """A link id the OMS's generator could have made (24 Sec.8.3)."""
+    return f"cvd-0{n:021d}-{account_tag(_FOLD_ACCOUNT)}-00en"
+
+
+def _venue_order(n: int, symbol: str = "BTCUSDT", kind: Any = "order") -> Order:
+    return Order(
+        order_link_id=_link(n), exchange_order_id=f"x-{n}", account_id=_FOLD_ACCOUNT,
+        symbol=symbol, side="buy", order_type="limit", qty=Decimal("0.010"),
+        price=Decimal("60000"), state="new", filled_qty=Decimal("0"),
+        leaves_qty=Decimal("0.010"), avg_fill_price=None, created_at=1_790_000_000_000_000,
+        terminal_at=None, order_kind=kind,
+    )  # fmt: skip
+
+
+class _Log(list[tuple[str, str]]):
+    """Every write-ahead and venue call, in the order they happened."""
+
+
+class _Venue(FakeTradingPort):
+    def __init__(self, log: _Log) -> None:
+        super().__init__()
+        self.log = log
+
+    async def cancel_all(self, account: AccountRef, symbol: Any) -> Sequence[OrderAck]:
+        self.log.append(("venue", "cancel_all"))
+        return await super().cancel_all(account, symbol)
+
+    async def cancel_order(self, req: CancelOrderRequest) -> OrderAck:
+        self.log.append(("venue", f"cancel_order {req.order_link_id}"))
+        return await super().cancel_order(req)
+
+
+class _PortExits:
+    """The exit service as B1's command port reaches the venue: each order's write-ahead, then its
+    `cancel_order` through the fold port, its ack read as the outcome. `refuse` names orders
+    refused before their send (no write-ahead, no venue call)."""
+
+    def __init__(self, port: CancelAllCoalescer, log: _Log, refuse: Collection[UUID] = ()):
+        self.port, self.log, self.refuse = port, log, set(refuse)
+
+    async def accounts_in_scope(
+        self, scope: object, requested: Collection[UUID]
+    ) -> tuple[UUID, ...]:
+        return tuple(requested) or (_A,)
+
+    async def cancel_admitted(
+        self, row: OrderRow, *, actor: SubmitActor, reason: str, request_id: UUID | None
+    ) -> ExitOutcome:
+        if row.id in self.refuse:
+            return _refused("conflict")
+        self.log.append(("ahead", row.order_link_id))
+        request = CancelOrderRequest(
+            account=_FOLD_REF, symbol=Symbol(row.symbol), order_link_id=row.order_link_id
+        )
+        ack = await self.port.cancel_order(request)
+        return _CANCELLED if ack.ok else _refused("exchange_error", status=502)
+
+
+class _Accounts:
+    def __init__(self, fail: bool = False) -> None:
+        self.fail, self.asked = fail, 0
+
+    async def trading_account(self, account_id: AccountId) -> AccountRef:
+        self.asked += 1
+        if self.fail:
+            raise StorageTierUnavailable("postgres unreachable (OSError)")
+        return _FOLD_REF
+
+
+class _Fold:
+    """A venue holding `resting`, the fold port over it, and the service over both."""
+
+    def __init__(
+        self, rows: Sequence[OrderRow], resting: Sequence[Order], *, refuse: Collection[UUID] = (),
+        accounts: _Accounts | None = None,
+    ) -> None:  # fmt: skip
+        self.log, self.accounts = _Log(), accounts or _Accounts()
+        self.venue = _Venue(self.log)
+        for order in resting:
+            self.venue.seed_order(order, uid=_FOLD_REF.uid)
+        clock = _Clock()
+        self.port = CancelAllCoalescer(
+            self.venue, spacer=CancelAllSpacer(monotonic=clock, sleep=_never), monotonic=clock,
+            sleep=_never,
+        )  # fmt: skip
+        self.exits = _PortExits(self.port, self.log, refuse)
+        self.service = CancelAll(_Reads(rows), self.exits, folds=(self.port, self.accounts))
+
+    async def run(self, **request: Any) -> Any:
+        ask = _request(exclude_reduce_only=False) if not request else _request(**request)
+        async with asyncio.timeout(5):
+            accounts = await self.service.scope(_SCOPE, ask)
+            return await self.service.run(accounts, ask, actor=_ACTOR, request_id=_REQUEST)
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 100.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+async def _never(seconds: float) -> None:
+    """The gather's bound and the spacer's wait never end on their own here."""
+    await asyncio.Event().wait()
+
+
+def _fold_row(n: int, **over: Any) -> OrderRow:
+    return _row(n, order_link_id=_link(n), **over)
+
+
+async def test_an_unrestricted_request_folds_a_covered_symbol_into_one_venue_call() -> None:
+    """The ruled pin: every member's write-ahead lands before the one venue call (C-2.9)."""
+    fold = _Fold([_fold_row(1), _fold_row(2)], [_venue_order(1), _venue_order(2)])
+    got = await fold.run()
+    assert got.accounts == (AccountCancels(_A, affected=2, error=None),)
+    venue_at = fold.log.index(("venue", "cancel_all"))
+    ahead = [i for i, entry in enumerate(fold.log) if entry[0] == "ahead"]
+    assert len(ahead) == 2 and max(ahead) < venue_at
+    assert [entry for entry in fold.log if entry[0] == "venue"] == [("venue", "cancel_all")]
+
+
+@pytest.mark.parametrize(
+    "request_over",
+    [
+        {"exclude_reduce_only": True},
+        {"exclude_reduce_only": False, "intents": frozenset({"entry"})},
+    ],
+    ids=["reduce_only_left_out", "intents_named"],
+)
+async def test_a_restricted_request_never_folds(request_over: dict[str, Any]) -> None:
+    fold = _Fold([_fold_row(1), _fold_row(2)], [_venue_order(1), _venue_order(2)])
+    await fold.run(**request_over)
+    assert ("venue", "cancel_all") not in fold.log and fold.accounts.asked == 0
+    assert [c.method for c in fold.venue.calls] == ["cancel_order", "cancel_order"]
+
+
+async def test_a_symbol_with_another_plain_order_resting_stays_on_per_order_cancels() -> None:
+    """Coverage fails: the venue's call would take an order the request did not select."""
+    fold = _Fold([_fold_row(1)], [_venue_order(1), _venue_order(9)])
+    got = await fold.run()
+    assert got.accounts == (AccountCancels(_A, affected=1, error=None),)
+    assert [c.method for c in fold.venue.calls] == ["open_orders", "cancel_order"]
+    assert [o.order_link_id for o in await fold.venue.open_orders(_FOLD_REF)] == [_link(9)]
+
+
+async def test_a_member_refused_before_its_send_leaves_the_others_their_own_cancels() -> None:
+    """The fail-safe: no venue call goes out for a fold one member never reaches."""
+    rows = [_fold_row(1), _fold_row(2), _fold_row(3)]
+    fold = _Fold(rows, [_venue_order(n) for n in (1, 2, 3)], refuse={UUID(int=2)})
+    got = await fold.run()
+    assert ("venue", "cancel_all") not in fold.log
+    assert sorted(e[1] for e in fold.log if e[0] == "venue") == [
+        f"cancel_order {_link(1)}", f"cancel_order {_link(3)}",
+    ]  # fmt: skip
+    assert got.accounts[0].affected == 2 and got.accounts[0].error is not None
+
+
+async def test_an_account_the_fold_cannot_read_stays_on_per_order_cancels() -> None:
+    fold = _Fold(
+        [_fold_row(1), _fold_row(2)], [_venue_order(1), _venue_order(2)],
+        accounts=_Accounts(fail=True),
+    )  # fmt: skip
+    got = await fold.run()
+    assert got.accounts == (AccountCancels(_A, affected=2, error=None),)
+    assert [c.method for c in fold.venue.calls] == ["cancel_order", "cancel_order"]
+
+
+async def test_each_symbol_folds_or_not_on_its_own_coverage() -> None:
+    rows = [_fold_row(1), _fold_row(2, symbol="ETHUSDT"), _fold_row(3)]
+    resting = [
+        _venue_order(1), _venue_order(3), _venue_order(2, "ETHUSDT"), _venue_order(7, "ETHUSDT"),
+    ]  # fmt: skip
+    fold = _Fold(rows, resting)
+    got = await fold.run()
+    assert got.accounts == (AccountCancels(_A, affected=3, error=None),)
+    venue = [entry[1] for entry in fold.log if entry[0] == "venue"]
+    assert venue == ["cancel_all", f"cancel_order {_link(2)}"]  # BTC folded, ETH per-order

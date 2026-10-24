@@ -54,6 +54,8 @@ from candleviewer.oms.cancel_all import (
     CancelAllRequest,
     ScopedAccounts,
 )
+from candleviewer.oms.cancel_all_coalescer import CancelAllCoalescer
+from candleviewer.oms.cancel_all_fold import CancelAllSpacer
 from candleviewer.oms.clock_halt import ClockHalt
 from candleviewer.oms.commands import NEVER_SENT_ALERT, OmsCommandPort
 from candleviewer.oms.errors import (
@@ -1900,7 +1902,13 @@ class OmsRuntime:
         closers: list[_Closer] = [("trading_port", lambda: serving.call(port.aclose()))]
         try:
             served: RoutedPort = ServedPort(port, serving)  # the port's members, on its loop
-            router = TradingRouter({env: served}, lane_waits=self._venue.lane_waits())
+            # S4-F (24 Sec.8.7): the OMS's way to the venue meets cancel-all's folds; every other
+            # call passes through it as it is. The folds sit on the lane, before the serving hop.
+            spacer = CancelAllSpacer(monotonic=self._monotonic, sleep=self._sleep)
+            folds = CancelAllCoalescer(
+                served, spacer=spacer, monotonic=self._monotonic, sleep=self._sleep
+            )
+            router = TradingRouter({env: folds}, lane_waits=self._venue.lane_waits())
             self._phase = "stores"
             stores = self._stores()
             closers.append(("pool", lambda: lane.call(stores.release())))
@@ -2019,7 +2027,7 @@ class OmsRuntime:
             raise
         return _Parts(
             submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route, gate,
-            exits, lane, CancelAll(orders, exits),
+            exits, lane, CancelAll(orders, exits, folds=(folds, accounts)),
         )  # fmt: skip
 
     def _now_us(self) -> int:
