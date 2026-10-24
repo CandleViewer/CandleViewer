@@ -26,12 +26,13 @@ class-line banner; and E30-D04 (#4271, `ca7d61fa1`), the design-system contract 
 M1, M6, M7 and M9 motions, §2.3 `unprotected` banner and §3.3 icon table meet CMP-038, 044, 046, 028 and 027. Where this
 slice meets them, §5.2 records each clash.
 **Key.** `05`, `14`, `15`, `16`, `17` are the `docs/plan/` documents by number; D09 is `docs/design/E09/E09-D09.md`, D08
-`docs/design/E09/E09-D08.md`. This branch's base is `origin/main` `b8212be90`, where the merged specs are read unless a
+`docs/design/E09/E09-D08.md`. This branch's base is `origin/main` `27bd8e885`, where the merged specs are read unless a
 line says otherwise. `path:line` references are at `origin/main` `5a382efec`, except the specs that merged or changed
 after it: E30-D03 and its handoff (as its boards PR left them), E30-D04 and its handoff, E10-D03, E13-D04 and its
-handoff, E14-D03 and its handoff, E14-D07, E29-D02 and E29-D03 are cited at the previous base `2b25eff38`, and E11-D07,
-E11-D09 and its handoff, E13-D05, E14-D04 and its handoff, E14-D05 and its handoff, E22-D03, E25-D02, E27-D02 and
-E36-D04 at this base; E14-D02, changed only by its boards PR, stays at `5a382efec`; slices 2 and 3 are cited by section.
+handoff, E14-D03 and its handoff, E14-D07, E29-D02 and E29-D03 are cited at `2b25eff38`, E11-D07, E11-D09 and its
+handoff, E13-D05, E14-D04 and its handoff, E14-D05 and its handoff, E22-D03, E25-D02, E27-D02 and E36-D04 at the
+previous base `b8212be90`, and E33-D02, E33-D03, E35-D02 and E35-D03 (the last three with their handoffs) at this base;
+E14-D02 and E32-D02, changed only by their boards PRs, stay at `5a382efec`; slices 2 and 3 are cited by section.
 
 ## 1. What this slice specifies
 
@@ -213,7 +214,7 @@ ticket lists them as cross-band v0 additions. The brief's "slice 2 E-row on CMP-
     docked inspector keeps its width and wraps, then takes its host's narrow mode and overlay fallback (E13-D02 §11.7
     and D20, `E13-D02.md:447`, `:215`); a popover or menu caps its height to the room above or below its anchor and
     scrolls; a tooltip wraps inside its maximum width and flips side; a toast keeps its width or the viewport width less
-    `space.inset.lg` each side. Eight specs merged after the pin keep the footer to one row (nine earlier ones do too),
+    `space.inset.lg` each side. Twelve specs merged after the pin keep the footer to one row (nine earlier ones do too),
     three cap a dialog at 90 vw × 90 vh after E13-D02 §11.7, E14-D04 turns its popover into a bottom sheet and E22-D03
     its popover and menu into sheets, and E10-D03 narrows the toast to 320 px (§6 H33).
 
@@ -261,7 +262,7 @@ slices 1–3 keep their resolution.
   every floating surface of this slice, the scrim, and the toast stack, whose position is CMP-212's.
 - **Penpot variant-set chrome:** as slice 1 B7.
 - **Cross-spec clashes, recorded for their owners**, each aligned here, kept with its owner following, or put to you. A
-  mechanical sweep at this base took the 99 specs under `docs/design` that name one of these 17 ids or an overlay word
+  mechanical sweep at this base took the 106 specs under `docs/design` that name one of these 17 ids or an overlay word
   (dialog, alertdialog, popover, toast, scrim, initial focus, `Esc`, motion) — slices 1–4, research notes, tools and
   data files aside — and read every line naming an id, every overlay word within three lines or the block of one, and
   every line that pairs a surface (a dialog, popover, toast, drawer, tooltip, menu, banner, callout, scrim or confirm)
@@ -269,7 +270,7 @@ slices 1–3 keep their resolution.
   reflow, a footer, `inert`), for a scrim, a focus rule, a motion, a timing, a 200 % form, a footer or a role; the seven
   specs that name none of them (E01-D01, E06-D01, E09-D03, E10's research findings, E12-D01, E47-S07 and the README)
   were read whole: E09-D03's countdown is recorded below, E10's research findings and E47-S07 agree, and the other four
-  have nothing on these points. A spec merged after `b8212be90` is not covered. Its result, each spec once, closes this
+  have nothing on these points. A spec merged after `27bd8e885` is not covered. Its result, each spec once, closes this
   list; a listed spec's points of agreement are not repeated. Anatomy was not swept, but the anatomy clashes it met (the
   confirm's look, §6 H24; a toast's surface, §6 H6; E11-D09's and E22-D03's banners, kept) and the one missing item
   state (CMP-041's busy item) are listed too:
@@ -283,17 +284,22 @@ slices 1–3 keep their resolution.
     (`E30-D02.md:280`). E30-D03's CR-7 reads CMP-044's bare `color.status.danger` as `.subtle` / `.strong`
     (`E30-D03.md:596`; `E30-D04.md:256`), this slice as CMP-001 `danger`'s `.default` fill: §6 H24. The card's fade and
     rise (E30-D04 M6) is §6 H21. E29-D02 §8.4 needs a typed word and a hold together in Live (`E29-D02.md:351`; item 13,
-    `:622`): `typedConfirmValue` now gates a `hold` Confirm too.
-  - **CMP-027 and E30-D02 D16, E30-D03 D5, E30-D04 §3.3 (aligned; the glyph and the edge kept).** SCR-077's class line
-    is a CMP-027 banner (`type.ui.body-strong` on `status.danger.subtle`, the glyph `.strong`, `role="alert"` once;
-    `E30-D03.md:200`; `E30-D02.md:478`), and D16's summary a CMP-027 box with a heading and links that takes focus
-    (`E30-D02.md:141`, `:308`): CMP-027 gains `form="banner"` and `title?`, `headingLevel?` and `items?`, and its
-    message is CandleViewer's own text, never `ret_msg` (`E30-D03.md:112`; `E30-D04.md:1034`). D04 §3.3's PROPOSED
-    `icon/x-circle` for CMP-027 (`E30-D04.md:272`, routed to E05-T06 at `:1096`) is not a base glyph (slice 1
-    conventions 7): CMP-019 `danger` stands until E05-T06 registers it. The banner keeps CMP-028's 2 px `border.thick`
-    start edge, which SCR-077's class line and its board draw without (`E30-D03.md:200`; board
+    `:622`): `typedConfirmValue` now gates a `hold` Confirm too. E33-D02's D02-A5 asks E30-D03 to pause the 20 s
+    countdown while the restatement has focus or is scrolled (`E33-D02.md:467`, `:101`), where D3 (6) restarts it on any
+    key or pointer event: CMP-044 follows E30-D03's answer.
+  - **CMP-027 and E30-D02 D16, E30-D03 D5, E30-D04 §3.3 (aligned; the glyph and the edge kept; E33-D02 and E35-D02
+    following).** SCR-077's class line is a CMP-027 banner (`type.ui.body-strong` on `status.danger.subtle`, the glyph
+    `.strong`, `role="alert"` once; `E30-D03.md:200`; `E30-D02.md:478`), and D16's summary a CMP-027 box with a heading
+    and links that takes focus (`E30-D02.md:141`, `:308`): CMP-027 gains `form="banner"` and `title?`, `headingLevel?`
+    and `items?`, and its message is CandleViewer's own text, never `ret_msg` (`E30-D03.md:112`; `E30-D04.md:1034`). D04
+    §3.3's PROPOSED `icon/x-circle` for CMP-027 (`E30-D04.md:272`, routed to E05-T06 at `:1096`) is not a base glyph
+    (slice 1 conventions 7): CMP-019 `danger` stands until E05-T06 registers it. The banner keeps CMP-028's 2 px
+    `border.thick` start edge, which SCR-077's class line and its board draw without (`E30-D03.md:200`; board
     `E30-D03-04-scr-077-anatomy.png`, one uniform fill), so that one banner box serves both: E30-D03 follows at its next
-    revision.
+    revision. E33-D02 draws its validation summary, after D16's pattern, as a CMP-028 `danger` that takes focus on a
+    failed Start (`E33-D02.md:139`, `:319`), and E35-D02 reads the summary that a press of a validity-look Arm shows
+    politely (`E35-D02.md:286`), where the summary is CMP-027's, `role="alert"` with its host's focus move (D16): both
+    follow at their next revisions.
   - **CMP-028 and E30-D04 §2.3 and §9 (aligned; E30-D02 following on §9).** The `unprotected` banner is a CMP-028
     `danger` with a 4 px hatched edge, the shield-off glyph, a sustained `role="alert"` and two actions, not dismissible
     while the stop is missing (`E30-D04.md:184`–`:185`; CR-5, `:254`; `E30-D02.md:300`; `15` CMP-107 States): CMP-028
@@ -325,20 +331,22 @@ slices 1–3 keep their resolution.
     `busy` item, conventions 37's busy — reached by the arrows, `aria-busy`, never activated, no lock and no reason,
     CMP-014 leading its label — in `15`'s Props, States and A11y (§6 (e)). Item 5's other CMP-041 request, a
     disabled-with-reason item, is H16's.
-  - **CMP-046 and E30-D03 A13, E30-D04 M9, E13-D04 A-8 and M3, E13-D05 A-12, E29-D03 D-2, E36-D03 §14 (put to you: §6
-    H21, H31; the docked width aligned).** The slide's easing: `decelerate` (E40-D02 §8, E08-D06 A-3) or `standard`
-    (`E30-D04.md:550`; `E13-D04.md:583`, `:604`); E13-D04 M3 docks SCR-036 in one frame and fades its content in over
-    `fast` (`E13-D04.md:134`, `:328`); E13-D04's `standard` (its CR-11) and M3 were RULED with its BQ-16
-    (`E13-D04.md:724`, record 6364739361), and H21 asks you to revisit that ruling. The non-modal drawer's layer:
-    `elevation.popover` (E40-D02 §4.6) or `elevation.dialog` (`E30-D03.md:675`, `:200`); its role: `dialog` (E40-D02
-    §4.6, E30-D03 A13, E25-D02 D18) or a named landmark (`E13-D05.md:796`, F-05 for E13-D02's drawer; `E29-D03.md:70`,
-    after CMP-209's `complementary`; SCR-088's inspector, `E36-D03.md:317`, which E36-D04 N-23 passes,
-    `E36-D04.md:303`). SCR-077's 420 / 480 px join §5.1. Kept, E08-D06 following: a modal drawer stops above the
-    StatusBar (conventions 31; E29-D03 D-2, `E29-D03.md:70`), where E08-D06 D-14 draws it at full height below the
-    TopBar (`E08-D06.md:51`). Aligned: a docked drawer at 200 % keeps its 320 / 360 px and wraps, then takes D20's 240
-    px narrow mode and overlay fallback (E13-D02 §11.7, `E13-D02.md:447`, `:215`; E13-D05, `E13-D05.md:157`, `:491`;
-    E14-D02, `E14-D02.md:494`; E14-D07, `E14-D07.md:205`), where conventions 39 gave every drawer the full width at 720
-    CSS px or less: conventions 39 and `15` CMP-046 now keep the full width for a drawer over the page.
+  - **CMP-046 and E30-D03 A13, E30-D04 M9, E13-D04 A-8 and M3, E13-D05 A-12, E29-D03 D-2, E36-D03 §14, E35-D02 §2 and §9
+    (put to you: §6 H21, H31; the docked width aligned).** The slide's easing: `decelerate` (E40-D02 §8, E08-D06 A-3) or
+    `standard` (`E30-D04.md:550`; `E13-D04.md:583`, `:604`); E13-D04 M3 docks SCR-036 in one frame and fades its content
+    in over `fast` (`E13-D04.md:134`, `:328`), and E35-D02 slides its docked SCR-084 in over `normal`
+    (`E35-D02.md:412`); E13-D04's `standard` (its CR-11) and M3 were RULED with its BQ-16 (`E13-D04.md:724`, record
+    6364739361), and H21 asks you to revisit that ruling. The non-modal drawer's layer: `elevation.popover` (E40-D02
+    §4.6), `elevation.dialog` (`E30-D03.md:675`, `:200`) or `elevation.chrome` on `color.surface.raised` (SCR-084,
+    `E35-D02.md:142`); its role: `dialog` (E40-D02 §4.6, E30-D03 A13, E25-D02 D18) or a named landmark
+    (`E13-D05.md:796`, F-05 for E13-D02's drawer; `E29-D03.md:70`, after CMP-209's `complementary`; SCR-088's inspector,
+    `E36-D03.md:317`, which E36-D04 N-23 passes, `E36-D04.md:303`; SCR-084, a named `region`, `E35-D02.md:142`).
+    SCR-077's 420 / 480 px join §5.1. Kept, E08-D06 following: a modal drawer stops above the StatusBar (conventions 31;
+    E29-D03 D-2, `E29-D03.md:70`), where E08-D06 D-14 draws it at full height below the TopBar (`E08-D06.md:51`).
+    Aligned: a docked drawer at 200 % keeps its 320 / 360 px and wraps, then takes D20's 240 px narrow mode and overlay
+    fallback (E13-D02 §11.7, `E13-D02.md:447`, `:215`; E13-D05, `E13-D05.md:157`, `:491`; E14-D02, `E14-D02.md:494`;
+    E14-D07, `E14-D07.md:205`), where conventions 39 gave every drawer the full width at 720 CSS px or less: conventions
+    39 and `15` CMP-046 now keep the full width for a drawer over the page.
   - **CMP-043, CMP-044 and where a dialog opens (put to you: §6 H32; the ladder props, H24).** Conventions 32 now opens
     an `alertdialog` with no Cancel, a CMP-043, on the least-destructive choice its host names through
     `initialFocusRef`. That aligns E13-D02's D17 and D24 `alertdialog`s, CMP-043s (`E13-D02.md:606`, `:613`), opening on
@@ -362,7 +370,7 @@ slices 1–3 keep their resolution.
     two or three other verbs (`E15-D02.md:391`, `:401`, `:417`), to CMP-044 and finds it two-button (`:737`; `14:654`):
     a CMP-044 has one Confirm, so SCR-029 is a CMP-043 `role="alertdialog"` whose footer carries its verbs, Cancel first
     and focused (conventions 32). E15-D02 and `14` SCR-029 follow at their next revisions.
-  - **The motion of popovers, menus and dialogs (put to you: §6 H21; nine kept).** Merged after the pin, E14-D04's
+  - **The motion of popovers, menus and dialogs (put to you: §6 H21; twelve kept).** Merged after the pin, E14-D04's
     property popover opens and closes with brief §7's dialog recipe, scale + fade (`E14-D04.md:308`, `:683`;
     `E14-D04-handoff.md:15`, `:103`), and E11-D09 row 39 fades the legend's "+N more" popover and the SCR-043 menus in
     over `fast` / `standard` (`E11-D09.md:490`; `E11-D09-handoff.md:101`; from E11-D03 §12.4, `E11-D03.md:492`), as
@@ -372,7 +380,9 @@ slices 1–3 keep their resolution.
     `:326`–`:327`; RULED with its BQ-16, `:724`, record 6364739361, which H21 asks you to revisit; E13-D05 MR-01 passes
     it, `E13-D05.md:499`), as E11-D09 row 40 opens SCR-044 (`E11-D09.md:491`; `E11-D09-handoff.md:102`; E11-D03 §12.4,
     `E11-D03.md:493`) and E10-D03 §6.1 its command palette, a CMP-043 (`E10-D03.md:262`) whose input takes focus
-    (`:358`), with "opacity + scale" (`:832`). Kept, their owners following: E11-D03's tooltip easing, `standard`
+    (`:358`), with "opacity + scale" (`:832`); merged after `b8212be90`, E33-D02's builders, E33-D03's bulk dialogs,
+    E35-D02's SCR-085 and E35-D03's SCR-086 open the same way, focus inside (`E33-D02.md:397`; `E33-D03-handoff.md:111`;
+    `E35-D02.md:411`; `E35-D03.md:437`). Kept, their owners following: E11-D03's tooltip easing, `standard`
     (`E11-D03.md:495`), and E42-D04 M19's (`E42-D04.md:570`), where CMP-016 takes `decelerate` / `accelerate`; E14-D07's
     toast, instant in both modes (`E14-D07.md:208`), where E13-D02 §11.6, which it cites, cuts it only under reduce
     (`E13-D02.md:443`) and CMP-045 slides in (E40-D02 §8); E14-D03's rail tooltip, shown with no transition
@@ -382,18 +392,23 @@ slices 1–3 keep their resolution.
     (`E04-D01.md:204`–`:210`; SCR-152's global banner is a CMP-028, `:147`–`:149`), where CMP-028's content changes at 0
     ms in both modes (E08-D11 D1; E42-D05 §5.2 already supersedes the cross-fade for SCR-143 and SCR-144,
     `E42-D05.md:297`); E16-D02's disk bar, eased on `decelerate` (`E16-D02.md:536`), where CMP-023 moves on `standard`;
-    and E39-D02's CMP-138 meter fill, moved over `fast` (`E39-D02.md:193`), where CMP-023, whose contract `15` CMP-138
-    extends, moves over `normal` / `standard`.
-  - **CMP-017, CMP-043, CMP-044 and CMP-045 at 200 % (put to you: §6 H33).** Eight specs merged after the pin keep a
+    E39-D02's CMP-138 meter fill, moved over `fast` (`E39-D02.md:193`), where CMP-023, whose contract `15` CMP-138
+    extends, moves over `normal` / `standard`; and E33-D02's CMP-118 bar, swapped at once at 2 Hz (`E33-D02.md:397`),
+    and the `fast` width change of E33-D03's and E35-D02's bars (`E33-D03-handoff.md:110`; `E35-D02.md:413`;
+    `E35-D02-handoff.md:89`), where CMP-023's fill moves by `transform` over `normal` / `standard`, sampled at most once
+    a second.
+  - **CMP-017, CMP-043, CMP-044 and CMP-045 at 200 % (put to you: §6 H33).** Twelve specs merged after the pin keep a
     dialog's footer to one row at 200 %, where conventions 39 lets it wrap so a full-intent label is never cut (E30-D03
     §13): E10-D03 (`E10-D03.md:467`), E11-D09 §8.8 for SCR-031, a CMP-043 `lg` (`E11-D09.md:816`; R-57, `:162`), E13-D04
     (`E13-D04.md:502`), E14-D04 (`E14-D04.md:305`), E14-D07 (`E14-D07.md:272`), E25-D02 S59-17 (`E25-D02.md:247`,
-    `:288`), E27-D02 §9.4 (`E27-D02.md:1088`–`:1089`) and E36-D04, for E36-D03's SCR-089 (`E36-D04.md:440`;
-    `E36-D03.md:136`). E13-D02 §11.7 caps its dialogs at 90 vw × 90 vh (`E13-D02.md:447`), as E13-D04, E13-D05
-    (`E13-D05.md:491`) and E14-D07 do after it, where a dialog fills the viewport. E14-D04 turns its property popover
-    into a bottom-anchored sheet as wide as the pane (`E14-D04.md:305`), and E22-D03, after E22-D02, its filter popover
-    and column menu into full-height sheets (`E22-D03.md:115`; `E22-D02.md:95`), where a popover caps its height by its
-    anchor. E10-D03 narrows the toast to 320 px (`E10-D03.md:467`; 360 px at `:270`), where it keeps its width.
+    `:288`), E27-D02 §9.4 (`E27-D02.md:1088`–`:1089`), E36-D04, for E36-D03's SCR-089 (`E36-D04.md:440`;
+    `E36-D03.md:136`), E33-D02's and E33-D03's builders (`E33-D02.md:144`; `E33-D03.md:145`), E35-D02's SCR-085
+    (`E35-D02.md:277`) and E35-D03's SCR-086 (`E35-D03.md:354`). E13-D02 §11.7 caps its dialogs at 90 vw × 90 vh
+    (`E13-D02.md:447`), as E13-D04, E13-D05 (`E13-D05.md:491`) and E14-D07 do after it, where a dialog fills the
+    viewport. E14-D04 turns its property popover into a bottom-anchored sheet as wide as the pane (`E14-D04.md:305`),
+    and E22-D03, after E22-D02, its filter popover and column menu into full-height sheets (`E22-D03.md:115`;
+    `E22-D02.md:95`), where a popover caps its height by its anchor. E10-D03 narrows the toast to 320 px
+    (`E10-D03.md:467`; 360 px at `:270`), where it keeps its width.
   - **CMP-016 in E36-D04 (put to you: §6 H10) and E14-D05 (agreeing).** E36-D04 §4.1 row 2 passes E36-D02 §4's
     round-trip chip, whose `Enter` opens "a CMP-016 persistent tooltip" (`E36-D02.md:118`) that `Esc` closes
     (`E36-D04.md:177`), where CMP-016 shows on hover and keyboard focus, hides on leave, blur and `Esc`, and holds text
@@ -478,10 +493,13 @@ slices 1–3 keep their resolution.
     (the CMP-041 and CMP-044 bullets, aligned; H32), E29-D03† (the CMP-028 bullet, aligned; H31), E30-D02 (aligned in
     the CMP-027, CMP-028 and CMP-038 bullets, its accepted banner's role following E30-D04 §9; H2, H26), E30-D03† (the
     CMP-044, CMP-027 and CMP-046 bullets; H24, H31) and its handoff† (H21), E30-D04† (the CMP-044, CMP-028, CMP-038 and
-    CMP-046 bullets; H5, H21, H24), E32-D02 (`Enter`, aligned), E36-D02 (H10, H32), E36-D03 (H21, H31, H33) and its
+    CMP-046 bullets; H5, H21, H24), E32-D02† (`Enter`, aligned), E33-D02† (the CMP-027 and CMP-044 bullets; H4, H21,
+    H33; its bar's motion, kept), E33-D03† (H4, H5, H33) and its handoff† (H3, H4, H21; its bar's motion, kept),
+    E35-D02† (the CMP-027 and CMP-046 bullets; H4, H21, H31, H33; its bar's motion, kept) and its handoff† (H4, H21; its
+    bar's motion, kept), E35-D03† (H21, H33) and its handoff† (H21), E36-D02 (H10, H32), E36-D03 (H21, H31, H33) and its
     handoff (H21), E36-D04† (H10, H31–H33; `Enter`, aligned), E39-D02 (its meter fill, kept) and its handoff (H33),
     E39-D03 and its handoff (H21, H23), E40-D02 (H6, H26), E42-D02 (H1, H24, H32), E42-D03 (H22, H24, H33), E42-D04
-    (H21, H22, H24, H33; its tooltip easing, kept) and E42-D05 (H33): 63 specs.
+    (H21, H22, H24, H33; its tooltip easing, kept) and E42-D05 (H33): 70 specs.
   - **The sweep's consistent specs** (†, as above): E02-D01, E05-D01, E06-D02, E06-D03, E08-D01 to E08-D04,
     E08-D11, E09-D03's QA checklist, E09-D04, E09-D09, E10's research findings, E11-D05 and its handoff, E11-D07†,
     E14-D05† and its handoff† (agreeing, in the CMP-016 bullet), E14-D06† and its handoff†, E14-D07's handoff†, E17-D01,
@@ -529,14 +547,18 @@ modes), C13 (strict matrix), C15 (stories) and D15 (the slow path, its order-sub
   blocks take `color.surface.selected` and sweep to `color.surface.hover`. Options: (a) accept the mapping and the
   recipe, no token; (b) add `color.surface.skeleton` and a shimmer recipe in #162. **Recommended:** (a); the sweep's
   luminance step is 0.011–0.090, under the 0.10 flash bar (audit §4). Brief §7's "slow looping shimmer" gains the 5 s
-  stop (a hand-off, §6 (f)). **Affects:** CMP-015, CMP-029.
+  stop (a hand-off, §6 (f)). E33-D03's handoff, merged after `b8212be90`, binds SCR-070's shimmer to `motion.shimmer`
+  (`E33-D03-handoff.md:112`), a token (a) does not add; E33-D03 follows. **Affects:** CMP-015, CMP-029.
 - **H4 — The progress track and the tone fills.** `color.track` does not exist (CMP-138 uses `color.surface.sunken`,
-  which is black in dark). The track binds `color.surface.hover`; the fills measure against it 3.09 / 3.80 / 5.66:1
-  (`color.action.primary.default`), 5.99 / 4.30 / 5.99 (`color.status.success.default`), 9.36 / 3.78 / 9.36
-  (`color.status.warning.strong`: `.default` is 2.76:1 in light) and 2.92 / 8.24 / 3.45 (`color.status.danger.default`,
-  thin in dark). Options: (a) these four and the value text that always carries the figure; (b) a `color.track` token
-  tuned for every fill. **Recommended:** (a) now, and (b) in the E05 token follow-up so the dark danger fill reaches
-  3:1. **Affects:** CMP-023 (CMP-138, CMP-177 inherit it).
+  which is black in dark; merged after `b8212be90`, E33-D02 and E33-D03 draw CMP-023's track on it and E35-D02 on
+  `color.surface.raised`, each asking this entry's owner for the alias: `E33-D02.md:142`, `:440`, `:464`;
+  `E33-D03.md:425`; `E35-D02.md:150`, `:422`). The track binds `color.surface.hover`; the fills measure against it 3.09
+  / 3.80 / 5.66:1 (`color.action.primary.default`), 5.99 / 4.30 / 5.99 (`color.status.success.default`), 9.36 / 3.78 /
+  9.36 (`color.status.warning.strong`: `.default` is 2.76:1 in light) and 2.92 / 8.24 / 3.45
+  (`color.status.danger.default`, thin in dark). Options: (a) these four and the value text that always carries the
+  figure; (b) a `color.track` token tuned for every fill. **Recommended:** (a) now, and (b) in the E05 token follow-up
+  so the dark danger fill reaches 3:1; (a) answers the three requests, and E33-D02, E33-D03 and E35-D02 follow.
+  **Affects:** CMP-023 (CMP-138, CMP-177 inherit it).
 - **H5 — The callout tokens and the connection tones.** `color.callout.*` does not exist. A callout binds
   `color.status.{tone}.subtle` with a 2 px `border.thick` start edge and its glyph in `.strong`, words in
   `color.text.primary` and `.secondary` (E08-D03 §2, `E08-D03.md:49`; it drew a 4 px edge without a token); E30-D04 §2.3
@@ -547,8 +569,11 @@ modes), C13 (strict matrix), C15 (stories) and D15 (the slow path, its order-sub
   that fill (E17-D02 C21, `E17-D02.md:443`). Options: (a) the status subtle and strong pair, the connection tones on
   danger; (b) the catalogue's accents on the fill. **Recommended:** accept, with `edge="hatched"` for the `unprotected`
   banner alone, drawn by CR-5's geometry until E05-T01 ships `pattern.hatch.unprotected`, and the tone glyph until
-  E05-T06 registers §3.3's; the data-confidence indicators stay on `color.surface.*` (CMP-239's). **Affects:** CMP-028
-  (CMP-077, CMP-092, CMP-107's banners).
+  E05-T06 registers §3.3's; the data-confidence indicators stay on `color.surface.*` (CMP-239's). E33-D03's case-2
+  banner, a CMP-028 `connection-reconnecting` merged after `b8212be90`, draws `reconnecting.indicator` as its accent bar
+  on `color.surface.canvas` (`E33-D03.md:230`, `:425`, `:455`), where (a) gives the connection tones
+  `color.status.danger.subtle` and `.strong`; E33-D03 follows. **Affects:** CMP-028 (CMP-077, CMP-092, CMP-107's
+  banners).
 - **H6 — The toast's tone: an edge on the overlay, or a tone fill.** E40-D02 §4.2 (`E40-D02.md:626`) draws a toast on
   `color.surface.overlay` with a 2 px tone edge and binds the edge `.strong` in light only until its DS-CR-2, a
   per-theme binding a token swap cannot express (`16` §4), because light `color.status.warning.default` measures 2.76:1
@@ -680,30 +705,32 @@ modes), C13 (strict matrix), C15 (stories) and D15 (the slow path, its order-sub
   SCR-076 (`E30-D03-handoff.md:106`). Merged after the pin, brief §7's recipe is also E13-D04 M1–M2's for SCR-034,
   SCR-035 and an `alertdialog` stacked over them (`E13-D04.md:133`, `:326`–`:327`), E11-D09 row 40's for SCR-044
   (`E11-D09.md:491`; E11-D03 §12.4, `E11-D03.md:493`), E10-D03's for its command palette, a CMP-043 (`E10-D03.md:262`)
-  whose input takes focus (`:358`), "opacity + scale" (`:832`), and E14-D04's for its property popover
-  (`E14-D04.md:308`; `E14-D04-handoff.md:103`), and E11-D09 row 39 fades the "+N more" popover and the SCR-043 menus in
-  (`E11-D09.md:490`; `E11-D03.md:492`), as E13-D04's handoff fades that popover and E13-D05 MR-09 passes it
-  (`E13-D04-handoff.md:116`; `E13-D05.md:507`), where conventions 35 opens a popover and a menu at once; E13-D05 MR-01
-  passes E13-D04's dialog recipe (`E13-D05.md:499`). Earlier, E11-D06's register fades popovers, chip tooltips and
-  SCR-043's menus (row 39) and scales and fades SCR-044 (row 40; `E11-D06.md:341`, `:342`), E11-D02 (`E11-D02.md:672`),
-  E12-D03's and E13-D03's handoffs (`E12-D03-handoff.md:197`; `E13-D03-handoff.md:145`) and E42-D04 M19
-  (`E42-D04.md:570`) fade their popovers or menus, E08-D05 fades SCR-102 in and out with focus in its input
+  whose input takes focus (`:358`), "opacity + scale" (`:832`), E33-D02's, E33-D03's, E35-D02's and E35-D03's for their
+  dialogs (`E33-D02.md:397`; `E33-D03-handoff.md:111`; `E35-D02.md:411`; `E35-D03.md:437`), and E14-D04's for its
+  property popover (`E14-D04.md:308`; `E14-D04-handoff.md:103`), and E11-D09 row 39 fades the "+N more" popover and the
+  SCR-043 menus in (`E11-D09.md:490`; `E11-D03.md:492`), as E13-D04's handoff fades that popover and E13-D05 MR-09
+  passes it (`E13-D04-handoff.md:116`; `E13-D05.md:507`), where conventions 35 opens a popover and a menu at once;
+  E13-D05 MR-01 passes E13-D04's dialog recipe (`E13-D05.md:499`). Earlier, E11-D06's register fades popovers, chip
+  tooltips and SCR-043's menus (row 39) and scales and fades SCR-044 (row 40; `E11-D06.md:341`, `:342`), E11-D02
+  (`E11-D02.md:672`), E12-D03's and E13-D03's handoffs (`E12-D03-handoff.md:197`; `E13-D03-handoff.md:145`) and E42-D04
+  M19 (`E42-D04.md:570`) fade their popovers or menus, E08-D05 fades SCR-102 in and out with focus in its input
   (`E08-D05.md:344`; its handoff, `:196`), E36-D03 scales and fades its dialogs (`E36-D03.md:181`; its handoff, `:78`),
   and E39-D03 fades SCR-072's scrim over `fast` (`E39-D03.md:236`; its handoff, `:82`). Drawers slide over `decelerate`
   in E40-D02 §8 and E08-D06 A-3, and over `standard` in E30-D04 M9 (`E30-D04.md:550`) and E13-D04 A-8
-  (`E13-D04.md:583`); E13-D04 M3 docks SCR-036 in one frame and fades its content in (`E13-D04.md:134`). E13-D04's
-  M1–M3, and its CR-11, which gives `15` CMP-046 `motion.easing.standard` (`E13-D04.md:604`), were RULED with its BQ-16
-  (`:724`, record 6364739361), so (a), the one-frame dock and `decelerate` ask you to revisit that ruling. Options: (a)
-  D08 D2 for every CMP-043 and CMP-044 dialog; (b) brief §7 as written; (c) E30-D04 M6; for drawers, (d) `standard`, as
-  E30-D04 M9 and E13-D04 A-8, and (e) a docked drawer's content fade, as E13-D04 M3; for popovers and menus, (f) a fade
-  or brief §7's scale in, as E11-D09 and E14-D04. **Recommended:** (a): the scrim 0 → 0.6 over `motion.duration.normal`
-  / `standard`, the card at frame 0, the exit over `fast` / `accelerate`; drawers slide `translateX` over `normal` /
-  `decelerate` (E40-D02 §8, E08-D06 A-3), opaque from frame 0, and a docked drawer arrives in one frame with the reflow,
-  its content included, since its first item takes focus (E13-D05 FM-07, `E13-D05.md:442`); popovers and menus appear at
-  once and leave with a `fast` fade (conventions 35); reduce: instant. The brief §7 line, E30-D04 M6 and M9 with their
-  recipe lines, E30-D03's motion row, E13-D04 M1–M3 and CR-11, E11-D09 rows 39–40 with E11-D03 §12.4, E14-D04's popover
-  row, E10-D03's palette pair, E13-D05's MR-01 and MR-09 and the earlier specs' rows are hand-offs (§6 (f)).
-  **Affects:** CMP-017, 041, 043, 044, 046.
+  (`E13-D04.md:583`); E13-D04 M3 docks SCR-036 in one frame and fades its content in (`E13-D04.md:134`), and E35-D02
+  slides its docked SCR-084 in over `normal` (`E35-D02.md:412`). E13-D04's M1–M3, and its CR-11, which gives `15`
+  CMP-046 `motion.easing.standard` (`E13-D04.md:604`), were RULED with its BQ-16 (`:724`, record 6364739361), so (a),
+  the one-frame dock and `decelerate` ask you to revisit that ruling. Options: (a) D08 D2 for every CMP-043 and CMP-044
+  dialog; (b) brief §7 as written; (c) E30-D04 M6; for drawers, (d) `standard`, as E30-D04 M9 and E13-D04 A-8, and (e) a
+  docked drawer's content fade, as E13-D04 M3; for popovers and menus, (f) a fade or brief §7's scale in, as E11-D09 and
+  E14-D04. **Recommended:** (a): the scrim 0 → 0.6 over `motion.duration.normal` / `standard`, the card at frame 0, the
+  exit over `fast` / `accelerate`; drawers slide `translateX` over `normal` / `decelerate` (E40-D02 §8, E08-D06 A-3),
+  opaque from frame 0, and a docked drawer arrives in one frame with the reflow, its content included, since its first
+  item takes focus (E13-D05 FM-07, `E13-D05.md:442`); popovers and menus appear at once and leave with a `fast` fade
+  (conventions 35); reduce: instant. The brief §7 line, E30-D04 M6 and M9 with their recipe lines, E30-D03's motion row,
+  E13-D04 M1–M3 and CR-11, E11-D09 rows 39–40 with E11-D03 §12.4, E14-D04's popover row, E10-D03's palette pair,
+  E13-D05's MR-01 and MR-09, the motion rows of E33-D02, E33-D03, E35-D02 and E35-D03 and the earlier specs' rows are
+  hand-offs (§6 (f)). **Affects:** CMP-017, 041, 043, 044, 046.
 - **H22 — `Esc`, the NoEscClose story and the scrim.** `15:450` lets a destructive confirm disable `Esc`; `05` §3.4 item
   4 keeps `Esc` = Cancel even on irreversible confirms ("cancel is always safe") and makes every modal dialog
   "dismissible via `Esc`" (`05:97`). E10-D03 §9.1's blocking version dialog, merged after the pin, has one dismiss,
@@ -809,13 +836,15 @@ modes), C13 (strict matrix), C15 (stories) and D15 (the slow path, its order-sub
   `role="dialog"` without `aria-modal`, named by its title (E40-D02 §4.6, `E40-D02.md:724`; E30-D03 A13,
   `E30-D03.md:675`; E25-D02 D18); (b) a named landmark (`complementary`) where the drawer docks (E29-D03 D-2,
   `E29-D03.md:70`, after CMP-209's A11y; E13-D05 A-12, `E13-D05.md:796`, its F-05 for E13-D02's drawer; E36-D03 §14's
-  SCR-088 inspector, `E36-D03.md:317`, which E36-D04 N-23 passes, `E36-D04.md:303`). Layer: (c) `elevation.popover`
-  (E40-D02 §4.6); (d) `elevation.dialog` on `color.surface.overlay` (E30-D03 §4 and A13, `E30-D03.md:200`, `:675`).
-  **Recommended:** (a) and (c): a drawer takes focus on open and closes on `Esc`, a dialog's contract rather than a
-  landmark's, and where it docks in CMP-209's stack, CMP-209's `complementary` region contains it, so the region cycle
-  still reaches it; the elevation scale keeps floating and modal layers apart (conventions 30). E29-D03 D-2, E13-D05
-  A-12, E36-D03 §14 and E30-D03's `elevation.dialog` follow at their next revisions. **Affects:** CMP-046 (CMP-209;
-  SCR-077, SCR-088, E40-D02's, E13-D02's and E29-D03's drawers).
+  SCR-088 inspector, `E36-D03.md:317`, which E36-D04 N-23 passes, `E36-D04.md:303`; E35-D02's docked SCR-084, merged
+  after `b8212be90`, a `region` on `color.surface.raised` at `elevation.chrome`, a layer neither (c) nor (d),
+  `E35-D02.md:142`). Layer: (c) `elevation.popover` (E40-D02 §4.6); (d) `elevation.dialog` on `color.surface.overlay`
+  (E30-D03 §4 and A13, `E30-D03.md:200`, `:675`). **Recommended:** (a) and (c): a drawer takes focus on open and closes
+  on `Esc`, a dialog's contract rather than a landmark's, and where it docks in CMP-209's stack, CMP-209's
+  `complementary` region contains it, so the region cycle still reaches it; the elevation scale keeps floating and modal
+  layers apart (conventions 30). E29-D03 D-2, E13-D05 A-12, E36-D03 §14, E35-D02's SCR-084 and E30-D03's
+  `elevation.dialog` follow at their next revisions. **Affects:** CMP-046 (CMP-209; SCR-077, SCR-084, SCR-088,
+  E40-D02's, E13-D02's and E29-D03's drawers).
 - **H32 — Where a confirm opens, and its Tab order.** Conventions 32 opens a confirm on Cancel (E30-D03 D3 (1), E42-D02
   D18) and runs its trap in DOM order from there, Confirm next (`E30-D03.md:156`). Merged after the pin, E29-D02 §11.1
   opens a typed Live confirm on its field and the Live close dialog with its Confirm as the default action, `Enter`
@@ -834,8 +863,9 @@ modes), C13 (strict matrix), C15 (stories) and D15 (the slow path, its order-sub
 - **H33 — The 200 % reflow of dialogs, popovers and toasts.** Conventions 39 fills the viewport with a dialog at 200 %,
   its sticky footer wrapping to a second line rather than cut a full-intent label (E30-D03 §13, `E30-D03.md:589`), caps
   a popover by its anchor and keeps a toast's width. Merged after the pin, E10-D03, E11-D09, E13-D04, E14-D04, E14-D07,
-  E25-D02, E27-D02 and E36-D04 keep the footer to one row (`E10-D03.md:467`; `E11-D09.md:816`, SCR-031;
-  `E13-D04.md:502`; `E14-D04.md:305`; `E14-D07.md:272`; `E25-D02.md:247`; `E27-D02.md:1088`–`:1089`; `E36-D04.md:440`,
+  E25-D02, E27-D02, E33-D02, E33-D03, E35-D02, E35-D03 and E36-D04 keep the footer to one row (`E10-D03.md:467`;
+  `E11-D09.md:816`, SCR-031; `E13-D04.md:502`; `E14-D04.md:305`; `E14-D07.md:272`; `E25-D02.md:247`;
+  `E27-D02.md:1088`–`:1089`; `E33-D02.md:144`; `E33-D03.md:145`; `E35-D02.md:277`; `E35-D03.md:354`; `E36-D04.md:440`,
   for E36-D03's SCR-089, `E36-D03.md:136`); E13-D04, E13-D05 and E14-D07, after E13-D02 §11.7, cap a dialog at 90 vw ×
   90 vh (`E13-D02.md:447`); E14-D04 turns its property popover into a bottom-anchored sheet as wide as the pane, its
   header and actions sticky (`E14-D04.md:305`), and E22-D03, after E22-D02, its filter popover and column menu into
@@ -940,21 +970,24 @@ clauses (H20).
   §6.2's, E13-D04's (its M5 row and §10.1 deck), E13-D05's, E14-D02's, E14-D04's and E14-D07's fixed 10 s Undo windows
   (H27), E42-D02 D3's confirm look with E42-D03's and E42-D04's, E14-D07's Delete 7, E30-D03's CR-7, E42-D03's
   `aria-disabled` Confirm and E42-D02 P-2 with E42-D03's `rung?` (H24), E14-D03's danger glyph (H16), E13-D03's toast
-  surface (H6), E16-D02's budget bar (H12), E30-D02's 600 ms hold (H2, `E30-D02.md:359`), E30-D04 M6 and M9 with its
-  `16` §7 recipe lines (`E30-D04.md:262`), E30-D03's motion row (`E30-D03-handoff.md:106`), E13-D04 M1–M3 and CR-11,
-  with its BQ-16 ruling, E11-D09 rows 39–40 with E11-D03 §12.4, E14-D04's popover recipe, E10-D03's palette pair,
-  E13-D05's MR-01 and MR-09 and the fades of E08-D05, E11-D02, E11-D06, E12-D03, E13-D03, E13-D04's handoff, E36-D03,
-  E39-D03 and E42-D04 (H21), the scrim presses and in-flight `Esc` of E42-D03 and E42-D04 (H22), E39-D03's full-viewport
-  scrim (H23), E30-D03's non-modal `elevation.dialog` and the landmark of E29-D03 D-2, E13-D05 A-12 and E36-D03 §14
-  (H31), E36-D02 §4's toggletip on its round-trip chip, with E36-D04 §4.1 (H10), E14-D02 Table 2's and E14-D04's popover
-  Tab (H11), E29-D02 §11.1's focus, E42-D02's, E27-D02's and E16-D02's Tab order and E36-D02 §4's and E36-D04's CMP-044
-  for SCR-081 (H32), the one-row footers of the eight specs and the nine earlier ones, the 90 vw × 90 vh caps, E14-D04's
-  and E22-D03's sheets and E10-D03's 320 px toast (H33), E14-D04's Templates dialog trapping its removal toast (H34),
-  E10-D03 §9.1's blocking dialog as an `alertdialog` opening on Continue read-only (H35), E25-D02's unsaved-change
-  prompt (H36), the warnings and load failures of E25-D02, E08-D05 and E08-D06 (H37), E08-D06 D-14's full-height modal
-  drawer, §5.2's kept items for E30-D03, E11-D03 (its tooltip easing and `Space`, with E11-D09's K-120 and E12-D03's
-  D3-3), E11-D04 and E11-D09 (SCR-048's card; E11-D04's fades), E14-D04, E14-D07, E22-D03 (S18's strip), E27-D02,
-  E09-D08, E12-D02, E14-D03, E16-D02, E39-D02 (its meter fill), E04-D01 (its banner cross-fade), E15-D02 (its
+  surface (H6), E16-D02's budget bar (H12), the `motion.shimmer` of E33-D03's handoff (H3), the tracks of E33-D02,
+  E33-D03 and E35-D02 (H4), E33-D03's connection accent (H5), E30-D02's 600 ms hold (H2, `E30-D02.md:359`), E30-D04 M6
+  and M9 with its `16` §7 recipe lines (`E30-D04.md:262`), E30-D03's motion row (`E30-D03-handoff.md:106`), E13-D04
+  M1–M3 and CR-11, with its BQ-16 ruling, E11-D09 rows 39–40 with E11-D03 §12.4, E14-D04's popover recipe, E10-D03's
+  palette pair, E13-D05's MR-01 and MR-09, the dialog recipe of E33-D02, E33-D03, E35-D02 and E35-D03 and E35-D02's
+  docked slide, and the fades of E08-D05, E11-D02, E11-D06, E12-D03, E13-D03, E13-D04's handoff, E36-D03, E39-D03 and
+  E42-D04 (H21), the scrim presses and in-flight `Esc` of E42-D03 and E42-D04 (H22), E39-D03's full-viewport scrim
+  (H23), E30-D03's non-modal `elevation.dialog` and the landmarks of E29-D03 D-2, E13-D05 A-12, E36-D03 §14 and
+  E35-D02's SCR-084 (H31), E36-D02 §4's toggletip on its round-trip chip, with E36-D04 §4.1 (H10), E14-D02 Table 2's and
+  E14-D04's popover Tab (H11), E29-D02 §11.1's focus, E42-D02's, E27-D02's and E16-D02's Tab order and E36-D02 §4's and
+  E36-D04's CMP-044 for SCR-081 (H32), the one-row footers of the twelve specs and the nine earlier ones, the 90 vw × 90
+  vh caps, E14-D04's and E22-D03's sheets and E10-D03's 320 px toast (H33), E14-D04's Templates dialog trapping its
+  removal toast (H34), E10-D03 §9.1's blocking dialog as an `alertdialog` opening on Continue read-only (H35), E25-D02's
+  unsaved-change prompt (H36), the warnings and load failures of E25-D02, E08-D05 and E08-D06 (H37), E08-D06 D-14's
+  full-height modal drawer, §5.2's kept items for E30-D03, E11-D03 (its tooltip easing and `Space`, with E11-D09's K-120
+  and E12-D03's D3-3), E11-D04 and E11-D09 (SCR-048's card; E11-D04's fades), E14-D04, E14-D07, E22-D03 (S18's strip),
+  E27-D02, E09-D08, E12-D02, E14-D03, E16-D02, E39-D02 (its meter fill), E33-D02, E33-D03 and E35-D02 (their bars'
+  motion; E33-D02's summary on CMP-028 and E35-D02's polite one), E04-D01 (its banner cross-fade), E15-D02 (its
   Cancel-last footers, and its SCR-029 on CMP-044 with `14` SCR-029's Type and Components lines), E09-D03 and its audit
   (SCR-001's polite countdown) and E42-D04, and E10-D03's, E13-D05's and E14-D07's items of §5.2 (H1, H6, H20, H22, H26,
   H28; E10-D03's §7 cells `:275`–`:276` against its Q13); E40-D02 §4.2's light edge (H6) to its DS-CR-2.
