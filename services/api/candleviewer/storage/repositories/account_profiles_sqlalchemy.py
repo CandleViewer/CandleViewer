@@ -26,7 +26,9 @@ demoted default first and then the new one. `bounded_write_ahead` bounds each ca
 `audit_timeout_s`; `WriteAheadTimeout` and anything the hook raises roll the write back and leave
 unchanged, except that a raw `OSError` or driver error from the hook is mapped below as the
 database's (so the hook raises its own typed refusal). A commit that fails after the hook leaves a
-record of a change that never landed: write-ahead over-reports, it never under-reports.
+record of a change that never landed: write-ahead over-reports, it never under-reports. Each
+`RelaxedNotice` the hooks answer is then one `system_events` row (`notice_statement`), after the
+last hook and before the commit, so the Owner's notice commits with its change (SR-E28-01).
 
 A default move first locks the account row `FOR NO KEY UPDATE` and compares the binding's version
 (`exchange_accounts.default_binding_version`, which `trg_ap_default_binding` raises once per move),
@@ -80,6 +82,7 @@ from candleviewer.storage.repositories.account_profiles import (
     DefaultMove,
     LadderRung,
     ProfileWriteAhead,
+    RelaxedNotice,
 )
 from candleviewer.storage.repositories.accounts import AccountScope, GrantScope, OwnerScope
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -132,6 +135,19 @@ _GRANT_PRED: Final = (
 _NAMED_VIOLATIONS: Final = frozenset({"23505", "23514", "23503"})
 #: A server that does not serve: shut down (57P01, 57P02), starting (57P03), full (53300).
 _NOT_SERVING: Final = frozenset({"57P01", "57P02", "57P03", "53300"})
+#: SR-E28-01's notice: one fixed sentence; the ids and columns go to `details`, never a value.
+RELAXED_MESSAGE: Final = (
+    "A profile change loosened an exchange account's risk caps or symbols (SR-E28-01); the audit "
+    "log holds the change."
+)
+#: The notice's row (21 Sec.3.10.2). Every value binds as text: a NULL renders `$n::VARCHAR` too.
+_NOTICE_SQL: Final = sa.text(
+    "INSERT INTO system_events (component, kind, severity, exchange_account_id, message, details, "
+    "correlation_id) VALUES ('api', 'profile_relaxed', CAST('warning' AS severity), "
+    "CAST(:account AS uuid), :message, CAST(:details AS jsonb), CAST(:corr AS uuid))"
+).bindparams(
+    *(sa.bindparam(name, type_=sa.String) for name in ("account", "message", "details", "corr"))
+)
 
 
 def _uuid(value: object) -> UUID:
@@ -501,6 +517,24 @@ def effective_statement(account_id: UUID, profile_id: UUID | None) -> sa.Select[
     )
 
 
+def notice_statement(account_id: UUID, notice: RelaxedNotice) -> sa.TextClause:
+    """The notice as one row of the account: `details` holds the ids, the column names and the
+    flag alone, keys sorted (closed, 21 Sec.12), beside `RELAXED_MESSAGE`."""
+    previous, corr = notice.previous_profile_id, notice.correlation_id
+    details = {
+        "profile_id": str(notice.profile_id),
+        "previous_profile_id": None if previous is None else str(previous),
+        "looser_caps": list(notice.looser_caps),
+        "widened_symbols": notice.widened_symbols,
+    }
+    return _NOTICE_SQL.bindparams(
+        account=str(account_id),
+        message=RELAXED_MESSAGE,
+        details=json.dumps(details, sort_keys=True),
+        corr=None if corr is None else str(corr),
+    )
+
+
 class SqlAlchemyAccountProfileStore:
     """`AccountProfileStore` and `EffectiveProfileReads` over one relational repository."""
 
@@ -518,10 +552,22 @@ class SqlAlchemyAccountProfileStore:
         write_ahead: ProfileWriteAhead | None,
         before: AccountProfileRow | None,
         after: AccountProfileRow,
+    ) -> RelaxedNotice | None:
+        """The write-ahead audit hook, in the write's transaction and before its commit: its
+        answer, a notice when the write is relaxing."""
+        if write_ahead is None:
+            return None
+        return await bounded_write_ahead(write_ahead(before, after), self._audit_timeout_s)
+
+    @staticmethod
+    async def _notify(
+        uow: SqlAlchemyUnitOfWork, account_id: UUID, *notices: RelaxedNotice | None
     ) -> None:
-        """The write-ahead audit hook, in the write's transaction and before its commit."""
-        if write_ahead is not None:
-            await bounded_write_ahead(write_ahead(before, after), self._audit_timeout_s)
+        """SR-E28-01: one row per notice the hooks answered, in the write's own transaction, after
+        its last hook and before its commit."""
+        for notice in notices:
+            if notice is not None:
+                await uow.session.execute(notice_statement(account_id, notice))
 
     @staticmethod
     async def _locked(
@@ -595,7 +641,7 @@ class SqlAlchemyAccountProfileStore:
                 return None
             stmt = insert_statement(owner, account_id, profile_id, values)
             created = _row((await uow.session.execute(stmt)).mappings().one())
-            await self._ahead(write_ahead, None, created)
+            await self._notify(uow, account_id, await self._ahead(write_ahead, None, created))
             await uow.commit()
         return created
 
@@ -625,7 +671,7 @@ class SqlAlchemyAccountProfileStore:
                         raise AccountProfileStoreRuleError(DEFAULT_MOVES_ALONE)
                 raise AccountProfileStoreStaleError
             updated = _row(m)
-            await self._ahead(write_ahead, before, updated)
+            await self._notify(uow, account_id, await self._ahead(write_ahead, before, updated))
             await uow.commit()
         return updated
 
@@ -664,9 +710,9 @@ class SqlAlchemyAccountProfileStore:
             previous = None if m_prev is None else _row(m_prev)
             moved = set_default_statement(owner, account_id, profile_id)
             profile = _row((await uow.session.execute(moved)).mappings().one())
-            if previous is not None:
-                await self._ahead(write_ahead, old, previous)
-            await self._ahead(write_ahead, target, profile)
+            first = None if previous is None else await self._ahead(write_ahead, old, previous)
+            last = await self._ahead(write_ahead, target, profile)
+            await self._notify(uow, account_id, first, last)
             await uow.commit()
         # `trg_ap_default_binding` bumped it once, under this transaction's row lock
         return DefaultMove(profile=profile, previous=previous, written=True, version=version + 1)
@@ -696,7 +742,7 @@ class SqlAlchemyAccountProfileStore:
                         raise AccountProfileStoreConflictError("default_profile")
                 raise AccountProfileStoreStaleError
             deleted = _row(m)
-            await self._ahead(write_ahead, before, deleted)
+            await self._notify(uow, account_id, await self._ahead(write_ahead, before, deleted))
             await uow.commit()
         return deleted
 

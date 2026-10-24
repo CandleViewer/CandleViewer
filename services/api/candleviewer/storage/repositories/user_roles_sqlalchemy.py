@@ -66,13 +66,13 @@ _STATUS = sa.text(
 )
 
 
-async def bounded_write_ahead(hook: Awaitable[None], timeout_s: float) -> None:
-    """Await a write-ahead audit `hook` in the caller's unit of work (row locks held);
-    past `timeout_s` raise `WriteAheadTimeout`, so the unit of work rolls back. Only that
-    type means "rolled back": a driver or commit `TimeoutError` is not converted."""
+async def bounded_write_ahead[T](hook: Awaitable[T], timeout_s: float) -> T:
+    """Await a write-ahead audit `hook` in the caller's unit of work (row locks held) and answer
+    what it answers; past `timeout_s` raise `WriteAheadTimeout`, so the unit of work rolls back.
+    Only that type means "rolled back": a driver or commit `TimeoutError` is not converted."""
     try:
         async with asyncio.timeout(timeout_s):
-            await hook
+            return await hook
     except TimeoutError as exc:
         raise WriteAheadTimeout(f"write-ahead audit exceeded {timeout_s} s") from exc
 

@@ -21,7 +21,7 @@ system read of a profile (24-internal-schemas.md Sec.9.3), which no route reache
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime
 from decimal import Decimal
 from typing import Final, Protocol
@@ -130,14 +130,46 @@ class DefaultBindingRow:
     version: int
 
 
+#: The column names a `RelaxedNotice` may carry: `AccountProfileValues`' own.
+_NOTICE_COLUMNS: Final = frozenset(f.name for f in fields(AccountProfileValues))
+
+
+@dataclass(frozen=True, slots=True)
+class RelaxedNotice:
+    """SR-E28-01: a hook's answer that the store adds as one `system_events` row in the write's own
+    transaction, after the hooks and before the commit: it commits with the change, never without.
+    It holds ids, column names and one flag, never a value (21 Sec.12), so anything else is
+    refused."""
+
+    profile_id: UUID
+    previous_profile_id: UUID | None  # the default a move replaced; None on a replace
+    looser_caps: tuple[str, ...]  # `AccountProfileValues` column names
+    widened_symbols: bool  # always false on a move
+    correlation_id: UUID | None  # the request's id
+
+    def __post_init__(self) -> None:
+        ids = (self.previous_profile_id, self.correlation_id)
+        if not (
+            isinstance(self.profile_id, UUID)
+            and all(i is None or isinstance(i, UUID) for i in ids)
+            and type(self.widened_symbols) is bool
+            and isinstance(self.looser_caps, tuple)
+            and all(isinstance(c, str) and c in _NOTICE_COLUMNS for c in self.looser_caps)
+        ):
+            raise ValueError("a relaxed notice holds ids, profile column names and one flag only")
+
+
 #: Awaited inside a write's transaction, before it commits, once per profile row the write
 #: changed (never for a write that changes none): the row as it stood before (`None` for a create)
 #: and after, in stored units (`profile_from_row` reads them). A hook that raises, or outlasts the
 #: store's audit timeout, rolls the write back (C-2.9 write-ahead; E28-T02 wires the
 #: `profile.created|updated|deleted` record). A hook raises its own typed refusal, as
 #: `api/users.py`'s `_AuditRefused` does: a raw `OSError` or driver error from it is mapped as the
-#: database's own, `StorageTierUnavailable` or `StorageQueryFailed`.
-ProfileWriteAhead = Callable[[AccountProfileRow | None, AccountProfileRow], Awaitable[None]]
+#: database's own, `StorageTierUnavailable` or `StorageQueryFailed`. It answers a `RelaxedNotice`
+#: when the write is relaxing, otherwise `None`.
+ProfileWriteAhead = Callable[
+    [AccountProfileRow | None, AccountProfileRow], Awaitable[RelaxedNotice | None]
+]
 
 #: The refusals a write can meet, by the name the database gives them: every CHECK of
 #: `account_profiles` and the ladder trigger (which names itself as the error's constraint, `USING

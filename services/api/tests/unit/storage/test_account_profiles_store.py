@@ -25,6 +25,7 @@ from sqlalchemy.engine import Dialect, make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
 from candleviewer.db import models
+from candleviewer.observability.redaction import redact_text
 from candleviewer.storage.errors import (
     StorageQueryFailed,
     StorageTierUnavailable,
@@ -46,8 +47,11 @@ from candleviewer.storage.repositories.account_profiles import (
     DefaultBindingRow,
     DefaultMove,
     LadderRung,
+    ProfileWriteAhead,
+    RelaxedNotice,
 )
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
+from candleviewer.storage.repositories.user_roles_sqlalchemy import bounded_write_ahead
 
 _ASYNCPG: Dialect = make_url("postgresql+asyncpg://").get_dialect()()
 _T = datetime(2026, 10, 20, 9, tzinfo=UTC)
@@ -128,24 +132,30 @@ class _Result:
 
 
 class _Rel:
-    """A unit of work that answers each `execute` with the next scripted result."""
+    """A unit of work that answers each `execute` with the next scripted result. `log` holds each
+    statement (`notice` for the `system_events` insert), hook and commit, in order."""
 
     def __init__(self, *results: _Result, raises: BaseException | None = None) -> None:
         self.results = list(results)
         self.calls: list[Any] = []
-        self.commits = 0
+        self.log: list[str] = []
+        self.commits = self.units = 0
         self.raises = raises
 
     @asynccontextmanager
     async def unit_of_work(self) -> AsyncIterator[Any]:
+        self.units += 1
+
         async def execute(stmt: Any, params: dict[str, Any] | None = None) -> _Result:
             self.calls.append(stmt)
+            self.log.append("notice" if "system_events" in _sql(stmt) else "sql")
             if self.raises is not None and len(self.calls) > 1:
                 raise self.raises
             return self.results.pop(0)
 
         async def commit() -> None:
             self.commits += 1
+            self.log.append("commit")
 
         yield SimpleNamespace(session=SimpleNamespace(execute=execute), commit=commit)
 
@@ -739,8 +749,10 @@ async def test_a_default_move_without_a_previous_default_hands_the_hook_the_new_
 
 
 async def _refusable(
-    write: str, store: mod.SqlAlchemyAccountProfileStore, ahead: _Ahead
+    write: str, store: mod.SqlAlchemyAccountProfileStore, ahead: ProfileWriteAhead
 ) -> AccountProfileRow | DefaultMove | None:
+    if write == "create":
+        return await store.create_profile(_OWNER, _ACCOUNT, _PROFILE, _VALUES, write_ahead=ahead)
     if write == "update":
         return await store.update_profile(
             _OWNER, _ACCOUNT, _PROFILE, _VALUES, expected_version=3, write_ahead=ahead
@@ -929,3 +941,116 @@ def test_a_dbapi_error_never_leaves_with_its_parameters() -> None:
         raise err
     assert "secret-name" not in repr(ei.value) and ei.value.__context__ is err
     assert ei.value.__suppress_context__
+
+
+# -- the Owner's notice (SR-E28-01, #906 D2) -------------------------------------------------------
+
+
+def test_a_notice_is_one_system_events_row_of_ids_and_column_names() -> None:
+    """One `api`/`profile_relaxed`/`warning` row of the account: `details` holds the ids, the
+    columns and the flag alone, keys sorted, beside a fixed message (21 Sec.3.10.2)."""
+    previous, corr = uuid4(), uuid4()
+    caps = ("max_daily_loss_usd", "max_leverage_cap")
+    for notice, prior, cid in (
+        (RelaxedNotice(_PROFILE, previous, caps, False, corr), str(previous), str(corr)),
+        (RelaxedNotice(_PROFILE, None, (), True, None), None, None),
+    ):
+        stmt = mod.notice_statement(_ACCOUNT, notice)
+        assert _sql(stmt) == (
+            "INSERT INTO system_events (component, kind, severity, exchange_account_id, message, "
+            "details, correlation_id) VALUES ('api', 'profile_relaxed', CAST('warning' AS severity)"
+            ", CAST($1::VARCHAR AS uuid), $2::VARCHAR, CAST($3::VARCHAR AS jsonb), "
+            "CAST($4::VARCHAR AS uuid))"
+        )
+        params = _params(stmt)
+        ids = {"previous_profile_id": prior, "profile_id": str(_PROFILE)}
+        flags = {"looser_caps": list(notice.looser_caps), "widened_symbols": notice.widened_symbols}
+        assert params.pop("details") == json.dumps(ids | flags, sort_keys=True)
+        assert params == {"account": str(_ACCOUNT), "message": mod.RELAXED_MESSAGE, "corr": cid}
+    assert mod.RELAXED_MESSAGE == (
+        "A profile change loosened an exchange account's risk caps or symbols (SR-E28-01); the "
+        "audit log holds the change."
+    )
+    assert redact_text(mod.RELAXED_MESSAGE) == mod.RELAXED_MESSAGE  # listNotifications' title
+
+
+def _answering(rel: _Rel, *answers: RelaxedNotice | None) -> ProfileWriteAhead:
+    """A hook answering `answers` in turn, logging each call."""
+    queue = list(answers)
+
+    async def hook(
+        before: AccountProfileRow | None, after: AccountProfileRow
+    ) -> RelaxedNotice | None:
+        rel.log.append("hook")
+        return queue.pop(0)
+
+    return hook
+
+
+#: Each write's script after the owner gate, with its hook calls (a move's two).
+_WRITES = {
+    "create": ([_Result([{"id": _ACCOUNT}]), _Result([_mapping(version=1)])], 1),
+    "update": ([_Result([_mapping(version=3)]), _V4], 1),
+    "delete": ([_Result([_mapping(version=3)]), _Result([_mapping(version=4, deleted_at=_T)])], 1),
+    "default": ([_BIND3, _Result([_mapping(version=3)]), _DEFAULT, _V4,
+                 _Result([_mapping(version=4, is_default=True)])], 2),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("write", sorted(_WRITES))
+async def test_a_hooks_notice_is_added_after_the_hooks_and_before_the_commit(write: str) -> None:
+    """One insert per notice in the write's own unit of work, after every hook (a move's two) and
+    before the commit: a notice commits with its change, never without it."""
+    script, hooks = _WRITES[write]
+    notices = [RelaxedNotice(uuid4(), None, (), False, None) for _ in range(hooks)]
+    rel = _Rel(_GATE_OK, *script, *(_Result() for _ in notices))
+    await _refusable(write, _store(rel), _answering(rel, *notices))
+    assert rel.log[-2 * hooks - 1 :] == ["hook"] * hooks + ["notice"] * hooks + ["commit"]
+    assert rel.units == 1 and rel.commits == 1
+    inserted = [(_sql(c), _params(c)) for c in rel.calls if "system_events" in _sql(c)]
+    wanted = [mod.notice_statement(_ACCOUNT, n) for n in notices]
+    assert inserted == [(_sql(s), _params(s)) for s in wanted]
+
+
+@pytest.mark.parametrize("write", sorted(_WRITES))
+async def test_a_hook_that_answers_no_notice_adds_no_row(write: str) -> None:
+    script, hooks = _WRITES[write]
+    rel = _Rel(_GATE_OK, *script)
+    await _refusable(write, _store(rel), _answering(rel, *[None] * hooks))
+    assert "notice" not in rel.log and rel.log[-hooks - 1 :] == ["hook"] * hooks + ["commit"]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"looser_caps": ("max_leverage_cap", "10x")},
+        {"looser_caps": "max_leverage_cap"},
+        {"looser_caps": ["max_leverage_cap"]},
+        {"widened_symbols": "BTCUSDT"},
+        {"profile_id": str(_PROFILE)},
+        {"previous_profile_id": "Default"},
+        {"correlation_id": 7},
+    ],
+)
+def test_a_notice_naming_a_column_no_profile_holds_is_refused(bad: dict[str, Any]) -> None:
+    """`details` is closed (21 Sec.12): ids, `AccountProfileValues` column names and one flag, so
+    anything else is refused, and the refusal names no value."""
+    good: dict[str, Any] = {"profile_id": _PROFILE, "previous_profile_id": None,
+                            "looser_caps": ("max_leverage_cap",), "widened_symbols": False,
+                            "correlation_id": None}  # fmt: skip
+    assert RelaxedNotice(**good).looser_caps == ("max_leverage_cap",)
+    with pytest.raises(ValueError) as refused:
+        RelaxedNotice(**(good | bad))
+    assert not {"10x", "BTCUSDT", "Default"} & set(str(refused.value).split())
+
+
+async def test_bounded_write_ahead_answers_what_its_hook_answers() -> None:
+    """Generic over the answer (#906 D2): the notice passes through, and the bound stands."""
+    notice = RelaxedNotice(_PROFILE, None, (), True, None)
+
+    async def answers() -> RelaxedNotice:
+        return notice
+
+    assert await bounded_write_ahead(answers(), 5.0) is notice
+    with pytest.raises(WriteAheadTimeout):
+        await bounded_write_ahead(asyncio.Event().wait(), 0)
