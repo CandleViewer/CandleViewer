@@ -325,7 +325,7 @@ from candleviewer.replay.sessions_service import (
     ReplaySessionService,
     WindowCoverage,
 )
-from candleviewer.retention_wiring import build_retention_manager
+from candleviewer.retention_wiring import build_compactor, build_retention_manager
 from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
 from candleviewer.rules.manager import Actor
@@ -351,7 +351,6 @@ from candleviewer.statechart.plugins import MachineStatePort
 from candleviewer.statechart_wiring import StatechartPersistence, build_statechart_persistence
 from candleviewer.storage.cold.archive_import import FileImportLedger
 from candleviewer.storage.cold.compaction_run import compact_all
-from candleviewer.storage.cold.compactor import Compactor
 from candleviewer.storage.cold.kline_reader import ParquetKlineReader
 from candleviewer.storage.cold.layout import DatasetRegistry
 from candleviewer.storage.cold.observability import LoggingSystemEventSink
@@ -2408,7 +2407,7 @@ def create_app(
     ) -> dict[str, object]:
         summary = await compact_all(
             _cold_registry,
-            Compactor(events=LoggingSystemEventSink()),
+            build_compactor(resolved, _kb_pg, _cold_registry),  # G7: behind the replay guard
             symbols=symbols,
             older_than_days=older_than_days,
             on_progress=progress,

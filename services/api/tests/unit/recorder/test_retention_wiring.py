@@ -159,7 +159,7 @@ def _part(symbol: str, stream: StreamKind, lo: datetime = W0, hi: datetime = W1)
 
 
 def _errors(site: str) -> float:
-    return REGISTRY.get_sample_value("replay_retention_guard_errors_total", {"site": site}) or 0.0
+    return REGISTRY.get_sample_value("replay_retention_guard_errors_total", {"where": site}) or 0.0
 
 
 @pytest.mark.parametrize("state", sorted(ReplayState))
@@ -231,7 +231,7 @@ async def test_guard_fails_closed_counts_and_logs_ids_only_on_a_read_error() -> 
         got = await facts.replay_session_for(_part("BTCUSDT", StreamKind.TRADES))
     assert got == rw.GUARD_UNVERIFIED and broken.calls == 2  # never another stream after it
     assert (_errors("lease"), _errors("reaper")) == (before[0] + 1, before[1] + 1)
-    assert [(e["event"], e["site"], e["symbol"], e["error"]) for e in logs] == [
+    assert [(e["event"], e["where"], e["symbol"], e["error"]) for e in logs] == [
         ("replay_retention_guard_failed_closed", "lease", "BTCUSDT", "OSError"),
         ("replay_retention_guard_failed_closed", "reaper", "BTCUSDT", "OSError"),
     ]

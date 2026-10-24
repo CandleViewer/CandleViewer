@@ -18,7 +18,7 @@ from candleviewer.retention_wiring import PgRetentionFacts
 from candleviewer.storage.models import StreamKind
 from candleviewer.storage.retention.policy import RowReading, read_policy_row
 from tests.unit.recorder._retention_fakes import NOW_US, FakeFacts, T, World, day, manager
-from tests.unit.recorder.test_retention_wiring import _Rel
+from tests.unit.recorder.test_retention_wiring import _guard, _Rel
 from tests.unit.recorder.test_rolloff import FakeArchiver, FakeHot, FakeMarks, _job
 from tests.unit.storage.test_recorder_repository_unit import _ARCHIVE, _DROP, _repo
 
@@ -34,7 +34,7 @@ class _Facts(FakeFacts):
         super().__init__(w)
         label = db_stream or stream.value  # the DB's spelling, when a test gives one
         row = dict(scope="symbol", symbol=SYM, stream=label, retain_days=days, action=action)
-        self._pg = PgRetentionFacts(_Rel([row]))  # type: ignore[arg-type]  # fake relational repo
+        self._pg = PgRetentionFacts(_Rel([row]), _guard())  # type: ignore[arg-type]  # fake relational repo
 
     async def policies(self) -> Mapping[tuple[str | None, str], PolicyRow]:
         return await self._pg.policies()

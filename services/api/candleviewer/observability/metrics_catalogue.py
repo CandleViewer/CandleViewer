@@ -2953,6 +2953,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E26",
         exported=True,
     ),
+    # --- Replay retention guard (#2674 G7); served by replay.metrics.export_replay_metrics -----
+    _s(
+        "replay_retention_guard_errors_total",
+        "counter",
+        "reads",
+        ("where",),
+        "Replay retention guard reads that failed; the partition was kept this pass.",
+        "none (fails closed, data is kept; sustained = replay_sessions unreadable, see its log)",
+        _L,
+        "E26",
+        max_series=4,
+        exported=True,
+    ),
     # --- DiskBudget (E16-T07); served by recorder.metrics.export_recorder_metrics
     _s(
         "disk_used_ratio",
