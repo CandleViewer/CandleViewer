@@ -118,10 +118,10 @@ async def _serve(
 async def _sent(
     port: int, requests: list[bytes], resets: bool = False
 ) -> AsyncIterator[asyncio.Future[list[Any]]]:
-    """A socket per request, the request sent as it connects (the server has read it long before
-    the deadline, so its close is a FIN) and the socket left open: what each one reads until the
-    server closes it. With `resets`, a socket's result is the exception that ended its read, a
-    reset included, in place of what it read."""
+    """A socket per request, the request sent as it connects (the server normally reads it long
+    before the deadline, so its close is a FIN; see `resets`) and the socket left open: what each
+    one reads until the server closes it. With `resets`, a socket's result is the exception that
+    ended its read, a reset included, in place of what it read."""
     conns = []
     for request in requests:
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
@@ -179,16 +179,20 @@ async def test_300_incomplete_requests_are_closed_at_the_deadline_and_rest_answe
     part of a request, or nothing at all (the deadline then runs from the connection's opening).
     The deadline closes each, unanswered, and a REST call then succeeds. The test waits for every
     close before it calls REST, so a slow runner's late closes never meet REST (#4429); with no
-    deadline nothing closes them, and the bound fails the test."""
+    deadline nothing closes them, and the bound fails the test. A socket whose bytes the server
+    has not read yet when its deadline closes it is reset, not ended: that is still a close, and an
+    answer the client reads still fails the test. Sending nothing leaves nothing unread, so there
+    only a FIN will do."""
     assert SOCKETS > SERVER_LIMIT_CONCURRENCY
+    reset = ConnectionResetError if request_bytes else ()  # unread bytes are a reset's only cause
     async with (
         asyncio.timeout(_BOUND_S),
         _serve() as (port, _),
-        _sent(port, [request_bytes] * SOCKETS) as reads,
+        _sent(port, [request_bytes] * SOCKETS, resets=True) as reads,
     ):
         closed = await reads  # each close ran the server's `connection_lost`: no slot is held
         assert await _rest(port) == OK
-        assert closed == [b""] * SOCKETS
+        assert [c for c in closed if c != b"" and not isinstance(c, reset)] == []
 
 
 async def test_300_upgrades_past_the_websocket_request_limits_are_refused_at_once(
