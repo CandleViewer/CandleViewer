@@ -456,6 +456,8 @@ def test_property_a_request_is_voided_whole_unless_filled_and_pages_only_an_open
         assert "in_flight_resolved" not in made or made == {"in_flight_resolved"}
     for row, move in decision.moves:
         paged = row.id in decision.pages
+        unseen = entry == "unseen" and side is not None and shown is None  # 06:38Z: no stop at all
         assert paged == (
-            move == "entry_filled_stop_absent" and row.kind == "stop_loss" and side == "buy"
+            (move == "entry_filled_stop_absent" and row.kind == "stop_loss" and side == "buy")
+            or (unseen and move == "in_flight_resolved" and row.kind == "stop_loss")
         )
