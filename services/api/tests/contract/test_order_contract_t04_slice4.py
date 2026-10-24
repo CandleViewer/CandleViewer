@@ -13,6 +13,7 @@ import pytest
 
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
 from candleviewer.audit.actions import AUDIT_ACTIONS
+from candleviewer.oms.recovery import FINALS
 from candleviewer.oms_wiring import ORDER_ALERTS
 from candleviewer.statechart.bindings.b01_order import NATIVE_STOP_REQUIRED
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_KILL_CANCEL_TIMEOUT
@@ -655,13 +656,16 @@ def test_the_1230z_rulings_word_the_deadline_the_retryable_flags_and_an_unbound_
 def test_the_1742z_ruling_passes_another_per_order_refusal_through_cancel_all() -> None:
     """The orchestrator's 17:42Z ruling (S4-E): a refusal of the per-order cancel that the list does
     not name keeps its code and is not retryable; an order that ended otherwise first is, like a
-    fill, neither affected nor an error."""
+    fill, neither affected nor an error; and S4-C's counting: a cancel whose step had not settled
+    within its own wait is `timeout`, retryable, as the deadline is."""
     assert not _missing(
         _CANCEL_ALL,
         "or another refusal of the per-order cancel, with its code as `cancelOrder` answers it",
         "nor is one that ended otherwise first (`rejected`, `expired` or `killed`)",
-        "and false for another refusal of the per-order cancel",
+        "and false for another refusal of the per-order cancel (the 17:42Z ruling)",
+        "when the deadline cut it short or an order's cancel had not settled within its own wait",
     )
+    assert FINALS - {"filled", "cancelled"} == {"rejected", "expired", "killed"}
 
 
 def test_the_security_look_fold_gates_a_price_move_and_closes_the_lows() -> None:
