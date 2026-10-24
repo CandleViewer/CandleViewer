@@ -380,7 +380,14 @@ def _stamped(at: datetime) -> sa.ColumnElement[Any]:
 def void_orphans_statement(scope: UUID | SweepScope, at: datetime) -> sa.Update:
     """Pending entry-attach rows whose order, of their account, was never placed (module
     docstring): the `scope` account's, or for `EVERY_ACCOUNT` every account's, the sweep at
-    startup. Any other scope, a forgotten account (`None`) among them, is a `TypeError`."""
+    startup. Any other scope, a forgotten account (`None`) among them, is a `TypeError`.
+
+    It locks its rows in scan order, not by id as a resolution does, which is safe beside the
+    eager pass a retried sweep has started for the account (SEC-S3H3B-01): the first run voided
+    every row it targets, no unplaced entry is recorded before `ready`, and a resumed create
+    refused at startup voids its own rows, so a re-run and the pass write disjoint rows; were they
+    ever to deadlock, Postgres aborts one, the sweep retries and the resolution counts
+    `read_failed`, nothing written either way."""
     o, rs, e = orders.c, recorded_stops.c, order_events.c
     unsent = sa.and_(*(_holds(o[name], value) for name, value in UNSENT_ENTRY.items()))
     refusal = sa.select(sa.literal(1)).where(
