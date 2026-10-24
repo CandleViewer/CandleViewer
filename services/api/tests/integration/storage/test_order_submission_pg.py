@@ -416,8 +416,13 @@ async def test_a_stop_request_is_settled_once_and_only_in_its_account(
 async def test_two_successors_race_for_one_binding_and_the_loser_writes_nothing(
     pg_dsn: str,
 ) -> None:
-    """24 Sec.8.3 rule 7: A's pair holds the predecessor's row lock over its audit, B's release
-    waits on it, then finds the id released and is refused, its own rows untouched."""
+    """24 Sec.8.3 rule 7: A's pair holds the predecessor's row lock over its audit, B's pair waits
+    for it at its lock-first statement, then its release finds the id already released and is
+    refused, its own rows untouched."""
+    # `at_a != at_b` is what lets this test see the release's compare-and-set. A release without
+    # it would stamp the released row again: with a second timestamp `trg_rs_guard` refuses that
+    # (`OrderConstraintError`, not the typed refusal); with the same one it changes nothing, the
+    # trigger stays silent and never-two refuses B instead, so the test would still pass.
     account, xid, at_a, at_b = _account(pg_dsn)[0], "x-race", _T0, _T0 + timedelta(minutes=1)
     entered, release = asyncio.Event(), asyncio.Event()
 

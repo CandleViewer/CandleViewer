@@ -1007,6 +1007,10 @@ class InMemoryRecordedStopStore:
             r.id for r in stops.values() if (r.exchange_account_id, r.exchange_order_id) == holds
         }
         live = LIVE_STOP_STATUSES
+        # `held == {old.id}` is two predicates: the predecessor holds the id, and no other row of
+        # the account does (never two, in any status). The first makes the chain's `== account_id`
+        # redundant: `old` is the account's already (`held` reads only its rows), and `new` is
+        # `old`'s account. The check stays, as the SQL's release and bind each filter by account.
         if not (
             old and new and old.exchange_account_id == new.exchange_account_id == account_id
             and old.status in live and old.released_at is None and held == {old.id}  # one holder
