@@ -2,12 +2,13 @@
 
 One job ran every governance check plus the whole unit-test suite, and the tests alone took
 55-69 s of its 90 s budget (E01-Q02), so the budget step failed on 8 of the last 23 PR attempts
-before the fix with every test green. `governance.yml` now runs three jobs in parallel:
-`governance-checks` (the GOV checks, the canary and the reports), the `governance-tests` shards
-that write raw coverage data, and `governance`, which combines that data, applies the 85% gate
-on `scripts/**` and fails unless every other job passed. `tools/ci/governance_shards.py` splits
-the test files by measured duration; #4365 raised the count to four after two files the table
-did not know (49 s and 33 s of the 174 s sequential total) pushed shards past the budget.
+before the fix with every test green. `governance.yml` now runs its three job definitions in
+parallel: `governance-checks` (the GOV checks, the canary and the reports), the
+`governance-tests` shards that write raw coverage data, and `governance`, which combines that
+data, applies the 85% gate on `scripts/**` and fails unless every other job passed.
+`tools/ci/governance_shards.py` splits the test files by measured duration; #4365 raised the
+count to four after two files the table did not know (49 s and 33 s of the 174 s sequential
+total) pushed shards past the budget.
 
 These tests pin the split and the shape; nothing the old job checked is dropped: the shards list
 exactly the files `pytest scripts/tests scripts/gh/tests` collects. Two rules to keep in mind:

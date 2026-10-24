@@ -317,7 +317,10 @@ jobs:
           # The combine reads only the downloaded shard files, and all four must be there.
           shopt -s nullglob
           files=("$COV_DIR"/coverage-shard-*)
-          [ "${#files[@]}" -eq 4 ]
+          [ "${#files[@]}" -eq 4 ] || {
+            echo "::error::expected 4 shard coverage files in $COV_DIR, found ${#files[@]}"
+            exit 1
+          }
           python -m coverage combine "${files[@]}"
           python -m coverage report -m --fail-under=85
 
