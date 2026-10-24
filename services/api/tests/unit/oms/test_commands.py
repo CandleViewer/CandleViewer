@@ -30,7 +30,7 @@ from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
 from structlog.testing import capture_logs
