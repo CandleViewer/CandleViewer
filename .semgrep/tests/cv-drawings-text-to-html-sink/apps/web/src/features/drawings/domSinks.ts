@@ -61,7 +61,7 @@ export function sinks(): void {
   frame.contentWindow!.document.write(label); // ruleid: cv-drawings-text-to-html-sink
   frame.contentWindow?.document.write(label); // ruleid: cv-drawings-text-to-html-sink
   Object.assign(el.style, { cssText: css }); // ruleid: cv-drawings-text-to-html-sink
-  Object.assign(el.style, { "cssText": "color: " + css }); // ruleid: cv-drawings-text-to-html-sink
+  Object.assign(el.style, { cssText: "color: " + css }); // ruleid: cv-drawings-text-to-html-sink
 }
 
 // The text-node forms the message points to, and what a naive rule on the same words would flag:

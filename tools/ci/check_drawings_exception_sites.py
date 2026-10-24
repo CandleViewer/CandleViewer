@@ -6,13 +6,13 @@ predicate. The few that are unscoped by design carry a reviewed `nosemgrep`, so 
 shows none. This scans `services/api/candleviewer` with the five persistence rules and
 `--disable-nosem`, names each finding by its rule, its file and the statement it starts at (the
 assigned constant's name, else `line N`), and compares them with
-`tools/ci/drawings-exception-sites.json`. A fifth unscoped statement fails, and so does an
-annotation moved to another statement of the same file: a count of (file, rule) pairs would pass
-both. A scan that read no file, or left a target unread for any reason but configuration (the
-skips `security_gate.py` allows), fails too: an exception there could not be seen. It needs the
-`semgrep` binary: the `semgrep-bandit` job's venv has it, CI's governance shards
-do not (`scripts/tests/test_e14_security_gates.py` checks the annotations against the list there,
-without Semgrep).
+`tools/ci/drawings-exception-sites.json`. A fifth unscoped statement fails here; an annotation moved
+to another statement of the same file fails the job, here or in the whole-tree scan beside it. A
+count of (file, rule) pairs would pass both. A scan that read no file, or left a target unread for
+any reason but configuration (the skips `security_gate.py` allows), fails too: an exception there
+could not be seen. It needs the `semgrep` binary: the `semgrep-bandit` job's venv has it, CI's
+governance shards do not (`scripts/tests/test_e14_security_gates.py` checks the annotations against
+the list there, without Semgrep).
 
 Usage: check_drawings_exception_sites.py [--root DIR] [--sites FILE]
 Exit: 0 the same, 1 a difference, 2 the scan or the list could not be read. Stdlib only.
@@ -115,9 +115,12 @@ def scan(root: Path) -> list[dict[str, Any]]:
     paths = data.get("paths") or {}  # --verbose writes both lists
     if not paths.get("scanned"):
         raise RuntimeError(f"semgrep read no file under {TARGET}: is --root the repository?")
+    skipped = paths.get("skipped")
+    if not isinstance(skipped, list):  # without --verbose: no word on what was left unread
+        raise RuntimeError("semgrep listed no skipped targets: was --verbose dropped?")
     lost = [
         f"{entry.get('path')} ({entry.get('reason')})"
-        for entry in paths.get("skipped", [])
+        for entry in skipped
         if entry.get("reason") not in CONFIGURED_SKIPS
     ]
     if lost:

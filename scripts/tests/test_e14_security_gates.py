@@ -1,8 +1,9 @@
 """E14-X03 (#549): the drawings persistence rules. Each names its DR and SR ids, is scoped to the
 drawings files and has a section in docs/plan/security/ci-gates-e14.md. On the production tree they
 are quiet, and without `nosemgrep` fire on exactly the four reviewed exceptions of
-tools/ci/drawings-exception-sites.json, each by its path and statement: a fifth unscoped statement,
-or an annotation moved to another statement of its file, must be listed there. The scan needs the
+tools/ci/drawings-exception-sites.json, each by its path and statement: a fifth unscoped statement
+must be listed there (an annotation moved to another statement of its file fails the job, in the
+pin or the whole-tree scan). The scan needs the
 `semgrep` binary: CI's governance shards have none, so that test skips there (as
 test_e12_security_gates.py), the annotations are checked against the list without it, and the
 `semgrep-bandit` job runs the script. The fixtures are proven by
@@ -183,6 +184,7 @@ def _scanned(errors: list[object] | None = None, **paths: object) -> object:
         "a result past the file",
         "nothing scanned",
         "a target left unread",
+        "no skipped list",
         "semgrep reported errors",
     ],
 )
@@ -206,6 +208,8 @@ def test_main_exits_2_when_the_scan_or_the_list_cannot_be_read(
     if failure == "semgrep reported errors":  # a rule or a target Semgrep could not run
         error = {"type": "Rule parse error", "message": "bad pattern"}
         monkeypatch.setattr(pin.subprocess, "run", _scanned([error], scanned=["a.py"], skipped=[]))
+    if failure == "no skipped list":  # no --verbose: a skipped target would go unseen
+        monkeypatch.setattr(pin.subprocess, "run", _scanned(scanned=["a.py"]))
     if failure == "a target left unread":  # a file over the size cap, unread, sites unseen
         big = {"path": "services/api/candleviewer/big.py", "reason": "exceeded_size_limit"}
         monkeypatch.setattr(pin.subprocess, "run", _scanned(scanned=["a.py"], skipped=[big]))

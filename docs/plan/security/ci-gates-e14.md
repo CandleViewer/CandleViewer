@@ -38,12 +38,12 @@ in the same job: no new required-check name (C-9.1; the one step added is below)
 them with `tools/ci/drawings-exception-sites.json`. The `semgrep-bandit` job runs it, so a fifth
 unscoped statement, or an annotation moved to another statement of the same file, fails the job (the
 pin, with the whole-tree scan's zero-finding gate beside it) until an entry in the list lands,
-reviewed under C-10.1: the list is not a C-10.2 path, so it forces no CODEOWNER review (a count of
-(file, rule) pairs passed both). A scan that read no file, or left a target unread for a reason
-other than configuration, fails too. `scripts/tests/test_e14_security_gates.py`
-runs the same scan where `semgrep` is installed (CI's governance shards have none, so that test skips
-there), checks the annotations in the source against the list without it, and pins each rule's
-metadata, scope and doc section.
+reviewed under C-10.1: the list is not a C-10.2 path, so it needs no security-team approval (a count
+of (file, rule) pairs passed both). A scan that read no file, or left a target unread for a reason
+other than configuration, fails too. `scripts/tests/test_e14_security_gates.py` runs the same scan
+where `semgrep` is installed (CI's governance shards have none, so that test skips there), checks
+the annotations in the source against the list without it, and pins each rule's metadata, scope and
+doc section.
 
 Every rule but the first is scoped by glob (`api/drawings*.py`; the batch rule also
 `storage/repositories/drawings*.py`): a router moved into a package `api/drawings/`, or a
@@ -171,14 +171,14 @@ E15-T01's spec decision on #402, SR-E14-09).
   `aria-labelledby`); with the scope removed it finds 5 such `aria-label`s in the frontend, none at
   a raw-HTML sink. Not seen: a conditional of templates, `.join`, `DOMParser`, a raw `href` from data,
   deliberate reflection (`Reflect.set(el, "innerHTML", s)`, a property descriptor's `set.call`), a
-  `document` reached through an alias or a cast, an `Object.assign` bag's URL, name or `style` key, a
-  computed key, a bag held in a variable or a spread argument, an attribute name held in a variable,
-  a string-keyed `setAttribute` of a URL or name, a module-scope constant key read inside a function
-  declaration or a class method (inside an arrow or a function expression it is seen; a constant
-  imported from another module never is), and `.mts` or `.cts` files, which Semgrep does not read
-  (the lint ban covers only its `no-unsanitized` forms there: no `createElement` props, string keys
-  or URL, name and CSS arms, and the engine layer has no raw-HTML lint). Fixture-proven until
-  E14-S08.
+  `document` reached through an alias or in parentheses, an `Object.assign` bag's URL, name or
+  `style` key, a computed key that is no literal, a bag held in a variable or a spread argument, an
+  attribute name held in a variable, a string-keyed `setAttribute` of a URL or name, a module-scope
+  constant key read inside a function declaration or a class method (inside an arrow or a function
+  expression it is seen; a constant imported from another module never is), and `.mts` or `.cts`
+  files, which Semgrep does not read (the lint ban covers only its `no-unsanitized` forms there: no
+  `createElement` props, string keys or URL, name and CSS arms, and the engine layer has no raw-HTML
+  lint). Fixture-proven until E14-S08.
 - **Deliberate-regression fixture:** `.semgrep/tests/cv-drawings-text-to-html-sink/` (a `ruleid` per
   sink, form and root; the shell rule alone misses 62 of its 68, every string-key,
   `setHTMLUnsafe`, `style` and attribute-name form among them).
