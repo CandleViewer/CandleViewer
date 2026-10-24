@@ -1356,6 +1356,7 @@ interface AlgoProgressCardProps {
 - **Data contract**: trailing logic runs client-side (or via backend-scheduled job for closed-app resilience per owner decision) against the mark-price WS stream, re-submitting stop-order amendments via the order-amend REST endpoint as the trail advances.
 - **Storybook**: Fixed, Percentage, ATR, Structure, MovingAverage.
 - **Tests**: unit, visual, axe.
+- **Design (DS spec):** [E32-D05-handoff.md](../design/E32/E32-D05-handoff.md) (E32-D05; owner approval pending).
 
 ### CMP-121 RiskCalculatorPanel
 

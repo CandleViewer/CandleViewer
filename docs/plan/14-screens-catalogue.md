@@ -1503,6 +1503,7 @@ Drag preview                Drop zones
 - **Stories:** US-ALGO-008, US-POS-004, US-ORD-008.
 - **Design sign-off acceptance checklist:** [ ] price / ticks / % / R-multiple entry modes with the others recomputed live [ ] resulting risk in account currency and R shown before confirm [ ] 'SL cannot be removed, only moved' rule stated and enforced in the UI [ ] invalid-side and beyond-liquidation validation messages drawn [ ] partial-quantity TP ladder variant drawn [ ] keyboard path equivalent to chart drag-to-modify
 - **UX research (E32-D01):** [e32-brackets-ladders.md](../design/research/e32-brackets-ladders.md) §4 R3–R5, §5 (E32-D01; heuristic research, recommendations PROPOSED pending the owner's sessions: the non-removable stop as hard-lock with the explanation at the point of refusal and its copy deck, currency-first risk with R on exits, the three-class exchange-held / app-managed wording with the fixed / % trail exchange-held, the `sl.naked` frame; DCR-9–DCR-11 against E32-D02).
+- **Design (hi-fi):** [E32-D05.md](../design/E32/E32-D05.md) §2–§10 · [E32-D05-handoff.md](../design/E32/E32-D05-handoff.md) (E32-D05; owner approval pending; the wireframe level is E32-D02 §4; the owner's loosen flow as confirmation → `sl_loosen` step-up → pending, the pending-versus-confirmed language with the stop in force named on every pending frame, CMP-120's translated readout from the mark to a distance to the first trigger, and the keyboard map of every chart drag-to-modify gesture)
 
 ### SCR-065 — Scaled / ladder order builder
 
