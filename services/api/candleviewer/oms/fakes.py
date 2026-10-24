@@ -6,7 +6,7 @@ import asyncio
 import json
 import math
 import re
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from decimal import Context, Decimal
@@ -25,6 +25,7 @@ from candleviewer.storage.errors import (
 )
 from candleviewer.storage.repositories import exchange_payload as xp
 from candleviewer.storage.repositories import orders as port
+from candleviewer.storage.repositories.accounts import AccountScope, OwnerScope
 from candleviewer.storage.repositories.executions import ExecutionRow, NewExecution, OrderFill
 from candleviewer.storage.repositories.idempotency_anchors import (
     UX_IA_PRINCIPAL_REF,
@@ -346,7 +347,8 @@ class InMemoryOrderStore:
     settles the entry's recorded stops with the step, as the store does in SQL. A write whose
     write-ahead hook is awaited holds its rows, uncommitted, until it commits or rolls back: every
     other write waits for it, as one that meets a row it holds waits on Postgres (here any write
-    waits), and a read never sees them."""
+    waits), and a read never sees them. The exit routes' scoped reads (slice 4) take the grants
+    and owners `seed_access` and `seed_owner` seed, and a seeded account's environment."""
 
     def __init__(self, clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
         self._clock = clock
@@ -359,6 +361,10 @@ class InMemoryOrderStore:
         self._refusals: dict[UUID, SubmissionRefusal] = {}
         #: Each seeded account's `exchange_accounts.env` (`InMemorySubmissionStore.seed_account`).
         self._environments: dict[UUID, Environment] = {}
+        #: The exit reads' scope (E29-T04 slice 4): viewing grants by (user, account), their
+        #: `(can_trade, frozen)`, and the users holding a live owner role.
+        self._access: dict[tuple[UUID, UUID], tuple[bool, bool]] = {}
+        self._owners: set[UUID] = set()
         self._held: asyncio.Event | None = None
         self._ids = count(1)
         self._fault: tuple[BaseException, bool] | None = None
@@ -432,6 +438,61 @@ class InMemoryOrderStore:
     async def link_id_taken(self, order_link_id: str) -> bool:
         await asyncio.sleep(0)
         return self._link_taken(order_link_id)
+
+    def seed_access(
+        self, user_id: UUID, account_id: UUID, *, trade: bool, frozen: bool = False
+    ) -> None:
+        """A viewing grant of `user_id` on `account_id`, for the exit reads' scope."""
+        self._access[(user_id, account_id)] = (trade, frozen)
+
+    def seed_owner(self, user_id: UUID) -> None:
+        """A live owner role, for the exit reads' scope."""
+        self._owners.add(user_id)
+
+    async def get_in_scope(
+        self, scope: AccountScope, order_id: UUID, *, environment: Environment
+    ) -> port.ScopedOrder | port.OutOfScope:
+        await asyncio.sleep(0)
+        row = self._orders.get(order_id)
+        if row is None or not self._reaches(scope, environment, row.exchange_account_id):
+            return port.OutOfScope(None if row is None else row.exchange_account_id)
+        trade = self._reaches(scope, environment, row.exchange_account_id, trade=True)
+        legs = (leg for record in self._groups.values() for leg in record.legs)
+        leg = next((leg for leg in legs if leg.id == row.trade_group_leg_id), None)
+        if leg is not None:
+            group = self._groups[leg.trade_group_id].group
+            return port.ScopedOrder(row, group.id, leg.account_profile_id, group.created_by, trade)
+        anchors = (a.anchor for a in self._anchors.values() if a.anchor.order_id == row.id)
+        creator = next((anchor.created_by for anchor in anchors), None)
+        return port.ScopedOrder(row, None, None, creator, trade)
+
+    async def accounts_in_scope(
+        self, scope: AccountScope, environment: Environment, requested: Collection[UUID]
+    ) -> tuple[UUID, ...]:
+        await asyncio.sleep(0)
+        reach = (
+            account
+            for account in sorted(self._environments)
+            if self._reaches(scope, environment, account, trade=True)
+            and (not requested or account in requested)
+        )
+        return port.settle_accounts(reach, requested)
+
+    def _reaches(
+        self, scope: AccountScope, environment: Environment, account: UUID, *, trade: bool = False
+    ) -> bool:
+        """`orders_sqlalchemy.scope_clause` over the seeded rows: an account of `environment` not
+        deleted (`refuse`'s `account_not_live`); an Owner's while a live owner role is seeded; a
+        grant's among the scope's ids while its seeded grant is unfrozen, trading for `trade`."""
+        deleted = self._refusals.get(account) == ACCOUNT_NOT_LIVE
+        if deleted or self._environments.get(account) != environment:
+            return False
+        if isinstance(scope, OwnerScope):
+            return scope.user_id in self._owners
+        held = self._access.get((scope.user_id, account))
+        if account not in scope.account_ids or held is None or held[1]:
+            return False
+        return held[0] or not trade
 
     async def append(self, account_id: UUID, order_id: UUID, event: NewEvent) -> EventRow:
         await self._turn()

@@ -11,7 +11,9 @@ takes the exchange account and the implementation re-checks it in SQL, so anothe
 reads as missing. Two calls are unscoped: `link_id_taken`, a yes/no over the global
 `ux_orders_link`, which the 24 Sec.8.3 rule 5 collision check needs (#846 ruling Q1); and
 `list_unfinished`, which only the OMS runtime's startup hydration reads (E29-T04), behind a callers
-fence (`tests/unit/architecture/test_oms_system_reads_callers.py`).
+fence (`tests/unit/architecture/test_oms_system_reads_callers.py`). The exit routes' two reads
+(E29-T04 slice 4, `get_in_scope` and `accounts_in_scope`) take the principal's `AccountScope`
+instead, held in SQL by one predicate, the scope written once (C-12.4).
 
 Money (AGENTS.md Sec.5.2: `Decimal`, never `float`): every numeric(38,18) value is a finite
 `Decimal` that the column holds exactly. `require_money` refuses a float, an int, NaN (which numeric
@@ -37,7 +39,7 @@ connection or waiting for the pool, so the OMS bounds every call with `asyncio.t
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from decimal import Decimal
@@ -46,6 +48,7 @@ from typing import Final, Literal, Protocol, get_args, get_type_hints
 from uuid import UUID
 
 from candleviewer.domain.primitives import Environment
+from candleviewer.storage.repositories.accounts import AccountScope
 from candleviewer.storage.repositories.exchange_payload import MAX_CODE_CHARS, redact_exchange_text
 
 OrderState = Literal[
@@ -476,6 +479,46 @@ class FillRefused(OrderStoreError):
         self.order_id, self.reason = order_id, reason
 
 
+@dataclass(frozen=True, slots=True)
+class ScopedOrder:
+    """`get_in_scope`'s order (24 Sec.8.4 "The exit routes", step 4) with what the exit routes
+    judge it by: its trade group and the profile its leg was sized from, its creator (ruling Q6:
+    its group's `created_by`, else its anchor's; None for an order no person created) and whether
+    the scope may trade its account (ruling Q7: False for a view-only grant)."""
+
+    order: OrderRow
+    trade_group_id: UUID | None
+    profile_id: UUID | None
+    created_by: UUID | None
+    can_trade: bool
+
+
+@dataclass(frozen=True, slots=True)
+class OutOfScope:
+    """`get_in_scope`'s answer for an id outside the scope: the account of the order holding the
+    id, None when none does, for the refusal's audit alone (ruling Q12), never for the answer,
+    which is the same 404 either way (SR-E29-13)."""
+
+    account_id: UUID | None
+
+
+class AccountsOutOfScope(OrderStoreError):
+    """`accounts_in_scope`: a requested account outside the scope, whichever (SR-E29-13)."""
+
+
+def settle_accounts(reach: Iterable[UUID], requested: Collection[UUID]) -> tuple[UUID, ...]:
+    """`accounts_in_scope`'s answer from the accounts the scope reaches (among `requested`, when
+    it names any): all of them for none requested; else `requested` once each, in its order, all
+    or nothing."""
+    reached = tuple(reach)
+    if not requested:
+        return reached
+    wanted = tuple(dict.fromkeys(requested))
+    if not set(wanted) <= set(reached):
+        raise AccountsOutOfScope("an account the request names is outside its scope")
+    return wanted
+
+
 class OrderStore(Protocol):
     """Insert, the write-ahead step and account-scoped reads of `orders` (module docs)."""
 
@@ -513,6 +556,24 @@ class OrderStore(Protocol):
 
     async def link_id_taken(self, order_link_id: str) -> bool:
         """Whether any row, of any account, in any state, holds the id (24 Sec.8.3 rule 5)."""
+        ...
+
+    async def get_in_scope(
+        self, scope: AccountScope, order_id: UUID, *, environment: Environment
+    ) -> ScopedOrder | OutOfScope:
+        """The exit routes' order (E29-T04 slice 4) while `scope` reaches its account, in one
+        statement holding the scope: an account of `environment`, not deleted; an Owner's while
+        its user holds a live owner role, else one the user's live grant lets it view, unfrozen,
+        among the scope's ids (C-12.4, SR-051). Else `OutOfScope`."""
+        ...
+
+    async def accounts_in_scope(
+        self, scope: AccountScope, environment: Environment, requested: Collection[UUID]
+    ) -> tuple[UUID, ...]:
+        """Cancel-all's accounts (E29-T04 slice 4): those of `environment` `scope` may trade, by
+        `get_in_scope`'s predicate (a grant's trading, neither view-only nor frozen; an Owner's
+        every live one): all of them, by id, when `requested` is empty, else `settle_accounts`'s
+        answer, `AccountsOutOfScope` when one is outside, all or nothing (SR-E29-13)."""
         ...
 
 

@@ -6,7 +6,9 @@ and `EVENT_COLUMNS`, never `*`. Every statement filters on `orders.exchange_acco
 or for the entry-stop settle on `recorded_stops.exchange_account_id`, except those in `UNSCOPED`:
 the insert, which writes the account it is given, the 24 Sec.8.3 rule 5 yes/no over the global
 `ux_orders_link`, and E29-T04's startup hydration read (21 Sec.13.1 row 49), whose two statements
-read one environment's accounts, then their unfinished orders. A unit test pins that set.
+read one environment's accounts, then their unfinished orders. A unit test pins that set. The exit
+routes' two reads (E29-T04 slice 4) hold the principal's scope instead, `scope_clause`, the one
+predicate both take.
 
 `create` writes the order and its first event (`seq` 0) in one statement, a data-modifying CTE:
 one round trip in one transaction (#845 performance notes). `append` first locks the order row
@@ -47,7 +49,7 @@ So a caller meets `OrderStoreError` or `StorageError`, never a driver or pool ex
 from __future__ import annotations
 
 import math
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
+from collections.abc import AsyncIterator, Collection, Iterable, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict, fields
 from datetime import datetime
@@ -58,13 +60,26 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import DBAPIError
 
-from candleviewer.db.models import exchange_accounts, order_events, orders, recorded_stops
+from candleviewer.db.models import (
+    exchange_accounts,
+    idempotency_anchors,
+    order_events,
+    orders,
+    recorded_stops,
+    roles,
+    trade_group_legs,
+    trade_groups,
+    user_account_access,
+    user_roles,
+    users,
+)
 from candleviewer.domain.primitives import Environment
 from candleviewer.storage.errors import (
     StorageQueryFailed,
     StorageTierUnavailable,
     WriteAheadTimeout,
 )
+from candleviewer.storage.repositories.accounts import AccountScope, OwnerScope
 from candleviewer.storage.repositories.exchange_payload import (
     MAX_CODE_CHARS,
     redact_exchange_payload,
@@ -85,11 +100,14 @@ from candleviewer.storage.repositories.orders import (
     OrderNotFoundError,
     OrderRow,
     OrderTransition,
+    OutOfScope,
+    ScopedOrder,
     StaleOrderState,
     require_exchange_order_id,
     require_exchange_record,
     require_limit,
     require_no_fill,
+    settle_accounts,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -201,6 +219,76 @@ def list_unfinished_statement(account_ids: Iterable[UUID], limit: int) -> sa.Sel
         _O.exchange_account_id == sa.any_(sa.cast(ids, ARRAY(sa.Uuid))), _O.state.in_(states)
     )
     return stmt.order_by(_O.created_ts, _O.id).limit(limit)
+
+
+def scope_clause(
+    scope: AccountScope, environment: Environment, *, trade: bool
+) -> sa.ColumnElement[bool]:
+    """C-12.4, written once for the exit routes (E29-T04 slice 4): the `exchange_accounts` rows
+    `scope` reaches in `environment`, not deleted. An Owner's while its user holds a live owner
+    role; a grant's among the scope's ids while the user's `user_account_access` row lets it view,
+    unfrozen, and trade too when `trade`: SR-051's predicates (`accounts_sqlalchemy`), so a stale
+    snapshot only narrows. A grant scope with no id reaches nothing."""
+    ea = exchange_accounts.c
+    live = (ea.deleted_at.is_(None), ea.env == environment)
+    if isinstance(scope, OwnerScope):
+        ur, role, user = user_roles.c, roles.c, users.c
+        held = user_roles.join(roles, role.id == ur.role_id).join(users, user.id == ur.user_id)
+        owner = sa.select(ur.user_id).select_from(held).where(
+            ur.user_id == scope.user_id, role.name == "owner", user.deleted_at.is_(None),
+            user.status == "active", sa.or_(ur.expires_at.is_(None), ur.expires_at > sa.func.now()),
+        )  # fmt: skip
+        return sa.and_(*live, owner.exists())
+    if not scope.account_ids:
+        return sa.false()
+    access = user_account_access.c
+    grant = [access.user_id == scope.user_id, access.exchange_account_id == ea.id, access.can_view]
+    grant += [sa.not_(access.frozen), *([access.can_trade] if trade else [])]
+    granted = ea.id.in_(sorted(scope.account_ids))
+    return sa.and_(*live, granted, sa.select(access.user_id).where(*grant).exists())
+
+
+def in_scope_statement(
+    scope: AccountScope, order_id: UUID, environment: Environment
+) -> sa.Select[Any]:
+    """`get_in_scope`'s one statement: the order with its leg's group and profile, its creator
+    (its group's, else its anchor's, which `COALESCE` reads for an order with no group only) and
+    whether the scope may trade its account, only where `scope_clause` holds; beside it, the
+    account of the order holding the id, whatever the scope, for the refusal's audit (ruling Q12).
+    So one row answers, and no column of an order outside the scope leaves the database."""
+    legs, groups, anchors = trade_group_legs.c, trade_groups.c, idempotency_anchors.c
+    anchored = sa.select(anchors.created_by).where(anchors.order_id == _O.id).limit(1)
+    tree = (
+        orders.join(exchange_accounts, exchange_accounts.c.id == _O.exchange_account_id)
+        .outerjoin(trade_group_legs, legs.id == _O.trade_group_leg_id)
+        .outerjoin(trade_groups, groups.id == legs.trade_group_id)
+    )
+    scoped = (
+        sa.select(
+            *ORDER_COLUMNS, legs.trade_group_id, legs.account_profile_id.label("profile_id"),
+            sa.func.coalesce(groups.created_by, anchored.scalar_subquery()).label("created_by"),
+            scope_clause(scope, environment, trade=True).label("can_trade"),
+        )
+        .select_from(tree)
+        .where(_O.id == order_id, scope_clause(scope, environment, trade=False))
+        .subquery("scoped")
+    )  # fmt: skip
+    held = orders.alias("held")
+    holder = sa.select(held.c.exchange_account_id).where(held.c.id == order_id).scalar_subquery()
+    probe = sa.select(holder.label("holder")).subquery("probe")
+    return sa.select(probe.c.holder, *scoped.c).select_from(probe.outerjoin(scoped, sa.true()))
+
+
+def accounts_in_scope_statement(
+    scope: AccountScope, environment: Environment, requested: Collection[UUID]
+) -> sa.Select[Any]:
+    """`accounts_in_scope`'s one statement: the accounts of `environment` the scope may trade
+    (`scope_clause`), among `requested` when it names any, by id."""
+    ea = exchange_accounts.c
+    stmt = sa.select(ea.id).where(scope_clause(scope, environment, trade=True))
+    if requested:
+        stmt = stmt.where(ea.id.in_(sorted(set(requested))))
+    return stmt.order_by(ea.id)
 
 
 def link_taken_statement(order_link_id: str) -> sa.Select[Any]:
@@ -454,6 +542,26 @@ class SqlAlchemyOrderStore(CappedStore):
             result = await uow.session.execute(link_taken_statement(order_link_id))
             return bool(result.scalar_one())
 
+    async def get_in_scope(
+        self, scope: AccountScope, order_id: UUID, *, environment: Environment
+    ) -> ScopedOrder | OutOfScope:
+        stmt = in_scope_statement(scope, order_id, environment)
+        async with self._unit_of_work() as uow:
+            row = (await uow.session.execute(stmt)).mappings().one()
+        if row["id"] is None:
+            return OutOfScope(row["holder"])
+        found = (row["trade_group_id"], row["profile_id"], row["created_by"], row["can_trade"])
+        return ScopedOrder(order_row(row), found[0], found[1], found[2], bool(found[3]))
+
+    async def accounts_in_scope(
+        self, scope: AccountScope, environment: Environment, requested: Collection[UUID]
+    ) -> tuple[UUID, ...]:
+        stmt = accounts_in_scope_statement(scope, environment, requested)
+        async with self._unit_of_work() as uow:
+            found = await uow.session.execute(stmt)
+            reach = [UUID(str(row["id"])) for row in found.mappings()]
+        return settle_accounts(reach, requested)
+
     async def append(self, account_id: UUID, order_id: UUID, event: NewOrderEvent) -> OrderEventRow:
         require_no_fill(event)
         async with self._unit_of_work() as uow:
@@ -484,10 +592,10 @@ class SqlAlchemyOrderStore(CappedStore):
 
 __all__ = [
     "EVENT_COLUMNS", "OMS_STATEMENT_TIMEOUT_MS", "ORDER_COLUMNS", "UNSCOPED", "CappedStore",
-    "SqlAlchemyOrderStore", "append_statement", "commit_step", "create_statement",
-    "environment_accounts_statement", "fill_statement", "get_by_exchange_statement",
-    "get_by_link_statement", "get_statement",
+    "SqlAlchemyOrderStore", "accounts_in_scope_statement", "append_statement", "commit_step",
+    "create_statement", "environment_accounts_statement", "fill_statement",
+    "get_by_exchange_statement", "get_by_link_statement", "get_statement", "in_scope_statement",
     "link_taken_statement", "list_events_statement", "list_open_statement",
     "list_unfinished_statement", "lock_order", "lock_statement", "order_row",
-    "require_audit_bound", "settle_entry_stops_statement", "transition_statement",
+    "require_audit_bound", "scope_clause", "settle_entry_stops_statement", "transition_statement",
 ]  # fmt: skip
