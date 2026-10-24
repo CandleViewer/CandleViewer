@@ -10,6 +10,8 @@
 
 Components modelled (data model: `docs/plan/21-database-schema.md` section 3.6, migration `0007_recorder`, E16-T01; policy: ADR-0015):
 
+<!-- prettier-ignore-start -->
+
 | Id | Component | Ticket | Role |
 | --- | --- | --- | --- |
 | C1 | `RecordingPolicy` | E16-T02 | Computes the effective recorded set (explicit list + open chart + open position), 60 s grace, auto-record triggers |
@@ -175,7 +177,11 @@ Threats with a control but no detection: R-I1, R-I2, R-I4, R-E5 (test-only or no
 | Coverage/gap metadata, sessions, retention policy | internal, integrity-critical | append-only for app role; reconcilable |
 | Audit entries | internal, tamper-evident | hash-chained, on the OS volume, never cascaded |
 
+<!-- prettier-ignore-end -->
+
 Residual risks: all rows Low after controls and findings land. Until the findings ship, R-D2, R-D3, R-E3 stay High. Accepting owner: Owner (repository owner). Performance-costly controls (WAL bound, sampling cadence, lease TTL) must not be removed without security review.
+
+Relax guard (R-I2, E16-T08): an unpin or a lower `retention_days` from a restricted caller on a row that a cause outside the caller's view holds is refused with one constant 403 body whatever the cause, and one denied `retention.change` record names the refusal; that this answer shows a cause outside the caller's view holds the row is an accepted residual of R-I2.
 
 ## 9. Sign-off
 
