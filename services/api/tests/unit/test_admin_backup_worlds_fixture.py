@@ -60,23 +60,31 @@ _BOTH = pytest.mark.parametrize("world", ["tampered", "revoked"])
 FAILED = AuditOutcome.FAILURE.value
 
 
-def _slice_a() -> FakeDb:
-    """The rows of slice A that BACKUP-THEN-REVOKED builds on."""
+def _slice_a(deletes: tuple[str, ...] = ()) -> FakeDb:
+    """The rows of slice A that BACKUP-THEN-REVOKED builds on; `deletes` as `FakeDb` takes it."""
     users = [{"id": i} for i in (OWNER.id, _OWNER_2, _MGR_M)]
-    return FakeDb(deletes=("user_roles",), users=users, exchange_accounts=[{"id": _SUB_S}])
+    return FakeDb(deletes=deletes, users=users, exchange_accounts=[{"id": _SUB_S}])
+
+
+#: The one delete BACKUP-THEN-REVOKED sends, OWNER-2's `owner` role; the tampered world sends none.
+_REVOKED_DELETES = ("user_roles",)
 
 
 async def _seeded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, world: str) -> FakeDb:
     """`world`'s seed run on the fake. It applies no UPDATE or DELETE, so the rows BACKUP-THEN-
     REVOKED's revocations leave are made by hand."""
-    db = _slice_a()
+    db = _slice_a(_REVOKED_DELETES if world == "revoked" else ())
     patch_audit_session(monkeypatch, db)
     await _SEEDS[world](tmp_path)
     if world == "revoked":
-        viewer = db.row("roles", name="viewer")["id"]
+        viewer, owner = (db.row("roles", name=n)["id"] for n in ("viewer", "owner"))
         both = {"exchange_account_id": _SUB_S, "can_view": False, "can_trade": False}
+        both |= {"frozen": False, "frozen_at": None}
         db.tables["user_account_access"] = [{"user_id": _MGR_M} | both]
-        db.tables["user_roles"] = [{"user_id": _OWNER_2, "role_id": viewer}]
+        db.tables["user_roles"] = [
+            {"user_id": _OWNER_2, "role_id": viewer},
+            {"user_id": OWNER.id, "role_id": owner},
+        ]
     return db
 
 
@@ -263,7 +271,7 @@ async def test_the_revoked_seed_soft_revokes_the_grant_and_swaps_the_role(
 ) -> None:
     """The statements; that they share one transaction the fake cannot see, and the Postgres
     case reads the rows they leave."""
-    db = _slice_a()
+    db = _slice_a(_REVOKED_DELETES)
     patch_audit_session(monkeypatch, db)
     await _SEEDS["revoked"](tmp_path)
     soft = _sent(db, sa.Update, "user_account_access").compile().params
@@ -441,6 +449,16 @@ _SPOILS: list[tuple[str, str, Callable[[FakeDb], None], str]] = [
      "OWNER-2's roles are not viewer alone"),
     ("revoked", "no role left", lambda d: d.tables["user_roles"].clear(),
      "OWNER-2's roles are not viewer alone"),
+    ("revoked", "a frozen grant",
+     lambda d: d.tables["user_account_access"][0].update(frozen=True, frozen_at=_NOW),
+     "carries the risk freeze"),
+    ("revoked", "a freeze time alone",
+     lambda d: d.tables["user_account_access"][0].update(frozen_at=_NOW),
+     "carries the risk freeze"),
+    ("revoked", "OWNER demoted too",
+     lambda d: d.tables["user_roles"].remove(
+         {"user_id": OWNER.id, "role_id": d.row("roles", name="owner")["id"]}),
+     "OWNER no longer holds the owner role"),
 ]  # fmt: skip
 
 

@@ -219,16 +219,18 @@ async def check_backup_tampered(dsn: str) -> None:
 
 async def check_backup_then_revoked(dsn: str) -> None:
     """`FixtureCheckError` naming each way the world is not BACKUP-THEN-REVOKED's: the row, its two
-    records, the revocations in the rows, and their records after `covers_to`."""
+    records, the revocations in the rows (the grant soft-revoked and never frozen, OWNER-2's role
+    replaced while OWNER keeps hers), and their records after `covers_to`."""
     b, manager, demoted = BACKUP_THEN_REVOKED, user("MGR-M").id, user("OWNER-2").id
     grants, roles = m.user_account_access, m.user_roles
     revoked = grants.c.user_id == manager, grants.c.exchange_account_id == account("SUB-S").id
-    rows, records, held, kept, named = await read_audit_db(
+    held_columns = (grants.c.can_view, grants.c.can_trade, grants.c.frozen, grants.c.frozen_at)
+    rows, records, held, roled, named = await read_audit_db(
         dsn,
         _row_read(b),
         _record_read(str(b.id), str(manager), str(demoted)),
-        sa.select(grants.c.can_view, grants.c.can_trade).where(*revoked),
-        sa.select(roles.c.role_id).where(roles.c.user_id == demoted),
+        sa.select(*held_columns).where(*revoked),
+        sa.select(roles.c.user_id, roles.c.role_id).where(roles.c.user_id.in_((demoted, OWNER.id))),
         sa.select(m.roles.c.id, m.roles.c.name),
     )
     failed = backup_differences(b, rows[0] if rows else None)
@@ -247,6 +249,8 @@ async def check_backup_then_revoked(dsn: str) -> None:
         return len(times) == 1 and covers_to is not None and times[0] > covers_to
 
     names = {r["id"]: r["name"] for r in named}
+    kept = {names[r["role_id"]] for r in roled if r["user_id"] == demoted}
+    owners = {names[r["role_id"]] for r in roled if r["user_id"] == OWNER.id}
     facts = {
         "covers_to is not when its run ended": covers_to is not None and covers_to == finished_at,
         "its backup.run record does not bind its digest and covers_to": [
@@ -260,7 +264,11 @@ async def check_backup_then_revoked(dsn: str) -> None:
         "roles.revoke is not one record after covers_to": follows("roles.revoke", demoted),
         "MGR-M's grant on SUB-S is not soft-revoked": bool(held)
         and not any(g["can_view"] or g["can_trade"] for g in held),
-        "OWNER-2's roles are not viewer alone": {names[r["role_id"]] for r in kept} == {"viewer"},
+        "MGR-M's grant on SUB-S carries the risk freeze, which a revocation never writes": not any(
+            g["frozen"] or g["frozen_at"] is not None for g in held
+        ),
+        "OWNER-2's roles are not viewer alone": kept == {"viewer"},
+        "OWNER no longer holds the owner role": "owner" in owners,
     }
     failed += [f"{b.handle}: {text}" for text, ok in facts.items() if not ok]
     if failed:
