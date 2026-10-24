@@ -1254,7 +1254,8 @@ class OmsCommandPort:
             )
             if loose is not None:
                 return await self._amend_refused(row, STOP_LOOSENING_REFUSED, loose, detail, by=by)
-            try:
+            try:  # any other failure raises: a timed-out insert may have committed rows that only
+                # the complete read resolves, so it is never answered as unsent (fold 2 minor 2)
                 recorded = await self._record_amend(row, stop, take_profit, detail, sides, by=by)
             except StopRequestInFlight:
                 return _held(row.order_link_id, STOP_REQUEST_RETRY_AFTER_S)
@@ -1293,7 +1294,8 @@ class OmsCommandPort:
     ) -> dict[str, Any]:
         """The 10:18Z ruling: a read failing before the send is `STORE_UNAVAILABLE`, nothing sent
         and the order live, audited ahead within `AMEND_AUDIT_GRACE_S` past the amend's bound (an
-        audit that fails raises, C-2.9)."""
+        audit that fails raises, C-2.9). A stored row read that fails is audited under the
+        command's own ids, before `_check_names`: B1's context is the server's, so trusted."""
         failure = type(exc).__name__
         await self._audit_order(
             order_id, account_id, ORDERS_AMEND, "denied", "warning", STORE_UNAVAILABLE_REASON,
