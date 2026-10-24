@@ -15,8 +15,9 @@ rule "no path arms LIVE without the `22` step-up" over the spec's section 4 clas
 section 5 frame table and section 8 copy deck (`live_step_up`); (6) the counts. `--check` re-derives
 every `<!-- audit:NAME=VALUE -->` marker in the spec. `--selftest` runs `live_step_up` on the spec
 and on mutated copies of it held in memory (an armed frame moved ahead of the hand-off, SCR-006
-dropped from the hand-off, the override drawn for DEMO only, a LIVE arm without the hand-off): the
-spec must pass and every mutation must fail. Exit 1 on a gated FAIL or a mutation that passes.
+dropped from the hand-off, the override drawn for DEMO only, a LIVE arm without the hand-off, the
+LIVE override inset alone relabelled DEMO): the spec must pass and every mutation must fail.
+Exit 1 on a gated FAIL or a mutation that passes.
 
 Usage: python3 -I docs/design/_tools/e35_d02_sim_arming_audit.py [--json] [--check] [--selftest]
        [--extra F ...]
@@ -298,6 +299,11 @@ def spec_sections(spec: str) -> dict[str, str]:
 HAND_OFF = "SCR-006 / no-grace-live-enable"
 LIVE_ARM = re.compile(r"Arm (?:again )?on LIVE…")
 DEMO_ARM = re.compile(r'"(Arm (?:again )?on DEMO[^"]*)"')
+DEMO_LABEL = re.compile(r"Arm (?:again )?on DEMO")
+LIVE_IR = re.compile(r"IR lists live")
+# the blocked row's live clause: the override label nearest before "when it lists live"
+LIVE_CLAUSE = re.compile(r'"(Arm [^"]*— override)"[^"]*?when it lists live')
+LIVE_OVERRIDE = "Arm on LIVE… — override"
 # classes whose rows cannot arm: a gate, an absence, a status, a refusal or an outcome
 NO_PRESS = ("T2", "**T2", "absence", "**absence", "status", "**status", "T4", "**T4", "outcome")
 
@@ -321,7 +327,10 @@ def live_step_up(spec: str) -> list[str]:
     `pending` and `armed`; (2) every section 4 classification row and section 5 row that names a
     LIVE arm control and can be pressed routes through `step-up-hand-off` or SCR-006; (3) every
     DEMO arm label in the copy deck has its LIVE twin there, named by a pressable section 5 row that
-    routes through the hand-off — so no override or re-arm is drawn for DEMO only.
+    routes through the hand-off — so no override or re-arm is drawn for DEMO only; (4) the board
+    script's rule 5 (record 6379900801): no section 5 row whose "Who sees it" names a live IR
+    carries an `Arm (again )?on DEMO` label, and the `blocked` row's live clause ("when it lists
+    live") names the override "Arm on LIVE… — override", never a DEMO label.
     """
     bad: list[str] = []
     rows = frame_rows(spec)
@@ -365,6 +374,13 @@ def live_step_up(spec: str) -> list[str]:
         ]
         if twin not in strings or not named:
             bad.append(f"step-up rule: {demo!r} has no LIVE twin {twin!r} routed to the hand-off")
+    for row in rows:
+        if len(row) > 2 and LIVE_IR.search(row[2]) and DEMO_LABEL.search(" ".join(row)):
+            bad.append(f"step-up rule: {row[0][:48]} names a live IR but carries a DEMO arm label")
+    blocked = next((r for r in rows if r[0] == "`SCR-085/blocked`"), [])
+    clause = LIVE_CLAUSE.search(" ".join(blocked))
+    if not clause or clause.group(1) != LIVE_OVERRIDE:
+        bad.append(f"step-up rule: the blocked row's live clause does not name {LIVE_OVERRIDE!r}")
     return bad
 
 
@@ -374,6 +390,11 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     "SCR-006 dropped from the hand-off": ("`SCR-085/step-up-hand-off`", HAND_OFF, "the dialog"),
     "the override drawn for DEMO only": ("", "Arm on LIVE… — override", "Arm on DEMO — override"),
     "a LIVE arm without the hand-off": ("`SCR-085/review-live`", "`step-up-hand-off`", "`armed`"),
+    "the LIVE override inset relabelled DEMO alone": (
+        "treatment blocked-override-live",
+        "Arm on LIVE… — override",
+        "Arm on DEMO — override",
+    ),
 }
 
 
