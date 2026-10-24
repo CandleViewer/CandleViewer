@@ -5,9 +5,10 @@
 stored ones, `profile_values(profile)`: a percent is the percent a user sees, and so is an offset
 whose unit is `percent`, with no arithmetic here. Every member is answered at every depth, its
 default included, and `null` only where the contract makes a member nullable: `stop_loss` and
-`risk_caps` are always objects. A decimal is every stored digit, with no exponent and no trailing
-fractional zero; a time is RFC 3339 in UTC to the microsecond (`22-api-openapi.yaml` conventions
-C6 and C7). A read renders a row as stored: it is a projection, not a validator.
+`risk_caps` are always objects. A decimal is every stored digit with no exponent
+(`22-api-openapi.yaml` convention C6 and its `Decimal` pattern) and no trailing fractional zero
+(this projection's own rule); a time is RFC 3339 in UTC to the microsecond (its C7). A read
+renders a row as stored: it is a projection, not a validator.
 
 `created_at` (the row's) and `environment` (the account's, C-2.11) are arguments, since the model
 holds neither; `warnings` are a read's, `profile_warnings` with no instrument listing. Nothing here

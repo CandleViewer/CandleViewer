@@ -8,6 +8,7 @@ import-linted; the module under test reads none of them.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from collections.abc import Iterator
@@ -43,7 +44,7 @@ from tests.contract._admin_support import SPEC, validate_example
 _FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "profiles"
 _SCHEMAS: dict[str, Any] = SPEC["components"]["schemas"]
 _CREATED = 1_792_486_800_000_000  # 2026-10-20T09:00:00Z, the row's `created_at`
-#: C6 as a read writes it: no exponent and no trailing fractional zero.
+#: A read's decimal: no exponent (C6, `Decimal`'s pattern), no trailing fractional zero (D1b).
 _PLAIN = re.compile(r"-?[0-9]+(\.[0-9]*[1-9])?")
 
 
@@ -108,6 +109,14 @@ def test_the_risk_based_fixture_reads_as_its_document(
     doc = profile_document(p, created_at=_CREATED, environment=environment)
     assert doc == {**_RISK_BASED, "environment": answered}
     assert profile_etag(p) == 'W/"0b5f6d0e-28a1-4c1e-9e01-000000000001:3"'
+
+
+def test_the_environment_is_always_the_callers_to_give() -> None:
+    """C-2.11 and 22's C9, never inferred (#906 D1b, re-check R2-03): `environment` has no
+    default, so no caller can render an account's profile as `live` by leaving it out."""
+    parameter = inspect.signature(profile_document).parameters["environment"]
+    assert parameter.default is inspect.Parameter.empty
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
 
 
 def test_a_time_is_every_microsecond_in_utc() -> None:

@@ -7,7 +7,7 @@ import dataclasses
 import inspect
 import json
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -156,9 +156,11 @@ async def test_a_read_answers_each_profile_with_its_rows_created_at() -> None:
     ("answer", "error"),
     [
         (TypeError("Decimal('NaN') in sl_offset_value"), "TypeError"),  # the store's decode
+        (KeyError("pct"), "KeyError"),  # a stored ladder rung with no `pct`
+        (InvalidOperation(), "InvalidOperation"),  # a non-numeric rung: an ArithmeticError
         (_row(allowed_symbols=("btcusdt",)), "ValidationError"),  # the model's, not a CHECK's
     ],
-    ids=["store", "model"],
+    ids=["store", "ladder-key", "ladder-number", "model"],
 )
 async def test_an_unreadable_stored_row_fails_closed_and_logs_no_value(
     read: str, answer: object, error: str
