@@ -166,9 +166,9 @@ def test_settings_oms_runtime_defaults_are_the_20_7_2_rows() -> None:
 _OMS_ACCEPTED = [
     ({"CV_OMS_SUBMIT_TIMEOUT_MS": "1000"}, "oms_submit_timeout_ms", 1000),
     (
-        {"CV_OMS_SUBMIT_TIMEOUT_MS": "8000", "CV_OMS_INFLIGHT_STUCK_S": "20.5"},
+        {"CV_OMS_SUBMIT_TIMEOUT_MS": "6000", "CV_OMS_INFLIGHT_STUCK_S": "19"},
         "oms_submit_timeout_ms",
-        8000,
+        6000,
     ),
     ({"CV_OMS_INFLIGHT_STUCK_S": "17.5"}, "oms_inflight_stuck_s", 17.5),  # 5 s + 12 s, and above
     ({"CV_OMS_INFLIGHT_STUCK_S": "120"}, "oms_inflight_stuck_s", 120.0),
@@ -193,10 +193,10 @@ def test_settings_oms_runtime_bounds_take_each_value_in_range(
     ("env", "field"),
     [
         ({"CV_OMS_SUBMIT_TIMEOUT_MS": "999"}, "oms_submit_timeout_ms"),
-        ({"CV_OMS_SUBMIT_TIMEOUT_MS": "8001"}, "oms_submit_timeout_ms"),  # past the stop's bound
+        ({"CV_OMS_SUBMIT_TIMEOUT_MS": "6001"}, "oms_submit_timeout_ms"),  # inside the 1 s margin
         ({"CV_OMS_INFLIGHT_STUCK_S": "17"}, "oms_inflight_stuck_s"),  # = 5 s + 12 s, not above
         (
-            {"CV_OMS_SUBMIT_TIMEOUT_MS": "8000", "CV_OMS_INFLIGHT_STUCK_S": "20"},
+            {"CV_OMS_SUBMIT_TIMEOUT_MS": "6000", "CV_OMS_INFLIGHT_STUCK_S": "18"},
             "oms_inflight_stuck_s",
         ),
         ({"CV_OMS_INFLIGHT_STUCK_S": "120.5"}, "oms_inflight_stuck_s"),  # SEC-S3D-02's ceiling

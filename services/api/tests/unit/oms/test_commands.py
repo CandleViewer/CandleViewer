@@ -489,7 +489,7 @@ async def test_one_deadline_ends_all_of_a_registered_place(
     hung: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """CR-2B1-04: `SUBMIT_TIMEOUT_S` bounds all of `place`, its answer's calls too, so an entry's
-    stop request is answered within the persist, this and the persist ([LANE-25]). A call the
+    stop request is answered within this and its three persists ([LANE-25], Q4). A call the
     deadline ends is raised when the answer needs it (the account; the adoption's record, C-2.9:
     B1's `unknown`) and logged when it is best-effort, its answer standing (a hand-over: an empty
     lookup, S2-Q3; a credential report: the refusal), as on its own, longer, timeout."""
@@ -1701,14 +1701,14 @@ async def test_cancel_and_amend_go_to_their_services_or_raise_unwired() -> None:
 
 
 def test_the_stop_request_bound_exceeds_an_entrys_answer_path() -> None:
-    """[LANE-25]: an entry's stop request is answered within its `submitting` step's write, all
-    of `place` (one deadline for its reads, calls and answer, CR-2B1-04, which
-    `test_one_deadline_ends_all_of_a_registered_place` pins), and the result step's write, each
-    read from the constant that bounds it, so a change to any of them that the bound no longer
-    covers fails here."""
+    """[LANE-25], Q4: an entry's stop request is answered within its first persist (which stamps
+    the row's `created_at`), its `submitting` step's write, all of `place` (one deadline for its
+    reads, calls and answer, CR-2B1-04, which `test_one_deadline_ends_all_of_a_registered_place`
+    pins), and the result step's write, each read from the constant that bounds it, so a change
+    to any of them that the bound no longer covers fails here."""
     defaults = inspect.signature(OmsCommandPort).parameters
     assert defaults["submit_timeout_s"].default == SUBMIT_TIMEOUT_S
-    persist, place, result = CV_PERSIST_TIMEOUT, SUBMIT_TIMEOUT_S, CV_PERSIST_TIMEOUT
-    assert STOP_REQUEST_BOUND_S > persist + place + result
+    first, send, result = CV_PERSIST_TIMEOUT, CV_PERSIST_TIMEOUT, CV_PERSIST_TIMEOUT
+    assert STOP_REQUEST_BOUND_S > first + send + SUBMIT_TIMEOUT_S + result
     bound = inspect.signature(RefuseWhileWaiting).parameters["bound_s"]
     assert bound.default is inspect.Parameter.empty  # given: `OmsBounds.stop_request_s`
