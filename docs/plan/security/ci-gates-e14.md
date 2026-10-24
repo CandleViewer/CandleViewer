@@ -136,9 +136,10 @@ E15-T01's spec decision on #402, SR-E14-09).
   `setHTMLUnsafe`, `parseHTMLUnsafe`), `document.write(ln)`, `createContextualFragment`, `srcdoc`,
   CSS strings (`cssText`, `insertRule`, `setAttribute("style", ...)` with a non-literal), each also
   named by a string key (`el["innerHTML"] = s`, a local constant key included, which `no-unsanitized`
-  does not read), and `href`, `src`, `style`, `aria-label`, `aria-description` or `title` built by `+`
-  or a template with a substitution (JSX, `setAttribute` with the name in any case, a DOM property,
-  `createElement` props). Scope: the paths of
+  does not read; `setAttribute("srcdoc" | "style", ...)` too) and by an `Object.assign` property bag
+  (`Object.assign(el, { innerHTML: s })`), and `href`, `src`, `style`, `aria-label`,
+  `aria-description` or `title` built by `+` or a template with a substitution (JSX, `setAttribute`
+  with the name in any case or a backtick string, a DOM property, `createElement` props). Scope: the paths of
   `tools/ci/no-inline-suppression-paths.json`. The message points to a React text child,
   `textContent` or `setAttribute(name, raw)`, never to stripping characters (it breaks RTL text and
   emoji).
@@ -152,8 +153,12 @@ E15-T01's spec decision on #402, SR-E14-09).
   `aria-labelledby`); with the scope removed it finds 5 such `aria-label`s in the frontend, none at
   a raw-HTML sink. Not seen: a conditional of templates, `.join`, `DOMParser`, a raw `href` from data,
   deliberate reflection (`Reflect.set(el, "innerHTML", s)`, a property descriptor's `set.call`), a
-  `document` reached through an alias or a cast, an attribute name held in a variable, and `.mts` or
-  `.cts` files, which Semgrep does not read (the lint ban covers them). Fixture-proven until E14-S08.
+  `document` reached through an alias or a cast, an attribute name held in a variable, a string-keyed
+  `setAttribute` of a URL or name, a module-scope constant key read inside a function declaration or
+  a class method (inside an arrow or a function expression it is seen; an imported or exported
+  constant never is), and `.mts` or `.cts` files, which Semgrep does not read (the lint ban covers
+  only its `no-unsanitized` forms there: no `createElement` props, string keys or URL, name and CSS
+  arms, and the engine layer has no raw-HTML lint). Fixture-proven until E14-S08.
 - **Deliberate-regression fixture:** `.semgrep/tests/cv-drawings-text-to-html-sink/` (a `ruleid` per
   sink, form and root; the shell rule alone misses 43 of its 49, every string-key,
   `setHTMLUnsafe`, `style` and attribute-name form among them).
@@ -190,10 +195,13 @@ E15-T01's spec decision on #402, SR-E14-09).
   `lint` job.
 - **Matches:** in source files under the paths of `tools/ci/no-inline-suppression-paths.json`, a
   comment holding `eslint-disable[-next-line|-line]`, an ESLint config comment such as
-  `/* eslint no-console: off */`, `@ts-ignore`, `@ts-expect-error`, `nosemgrep` or `nosem` that is no
-  reviewed annotation: `reason=<token> owner=@<handle> review=YYYY-MM-DD` in the same comment (the
-  grammar and 180-day cap of `tools/ci/suppressions.py`, CI-SEC-006). A marker that opens a line inside a block comment counts:
-  ESLint reads `/*`, a newline and `eslint-disable` as a directive.
+  `/* eslint no-console: off */`, `@ts-ignore`, `@ts-expect-error` (as tsc reads them, with no word
+  boundary after) or `nosemgrep` or any `nosem...` word that is no reviewed annotation:
+  `reason=<token> owner=@CandleViewer/security review=YYYY-MM-DD` in the same comment (the grammar and
+  180-day cap of `tools/ci/suppressions.py`, CI-SEC-006, which takes any `@handle`: on these paths
+  only the security team may own one, the ticket's Security-engineer review). A marker that opens a
+  line inside a block comment counts (ESLint reads `/*`, a newline and `eslint-disable` as a
+  directive; tsc reads any run of `/` and `*` before `@ts-...`), and so does each marker of a line.
 - **Does not match:** a word in a string, a Markdown file, a directory symlink or `@ts-nocheck`
   (typescript-eslint bans it). An annotated `eslint-disable` in a listed path still fails the lint:
   it is inert, so it warns.

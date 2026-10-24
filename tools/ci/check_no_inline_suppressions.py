@@ -4,10 +4,12 @@
 Under the globs of `tools/ci/no-inline-suppression-paths.json` (relative to the repo root; a ticket
 that adds drawing or object-tree code extends the list), a comment holding `eslint-disable`, an
 ESLint config comment (`/* eslint <rule>: off */`), `@ts-ignore`, `@ts-expect-error`, `nosemgrep`
-or `nosem` fails unless it is a reviewed annotation in the repo's form (`tools/ci/suppressions.py`,
-CI-SEC-006): `reason=<token> owner=@<handle> review=YYYY-MM-DD` in the same comment, the review at
-most 180 days away. A marker that opens a line inside a block comment counts too: ESLint reads
-`/*` + newline + `eslint-disable` as a directive.
+or any `nosem...` spelling fails unless it is a reviewed annotation in the repo's form
+(`tools/ci/suppressions.py`, CI-SEC-006) in the same comment: `reason=<token>`, `owner=` and
+`review=YYYY-MM-DD`, at most 180 days away. The shared grammar takes any `@handle`; on these paths
+only `@CandleViewer/security` may own one (the ticket's Security-engineer review). A marker that
+opens a line inside a block comment counts too (ESLint reads `/*` + newline + `eslint-disable` as a
+directive), and every marker on a line is judged, not only the first.
 
 Usage: python tools/ci/check_no_inline_suppressions.py [--root DIR] [--config FILE] [--today DATE]
 Exit: 0 clean, 1 an unreviewed suppression, 2 a bad config. Stdlib only.
@@ -27,18 +29,24 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
-from tools.ci.suppressions import field_problems  # noqa: E402 - sys.path first (#549)
+from tools.ci.suppressions import field, field_problems  # noqa: E402 - sys.path first (#549)
 
 CONFIG = "tools/ci/no-inline-suppression-paths.json"
+#: The one owner a drawing-path suppression may name: the shared grammar takes any `@handle`, which
+#: would make the escape self-service (#4377's L5).
+OWNER = "@CandleViewer/security"
 SOURCE_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"})
 SKIP_DIRS = frozenset({"node_modules", "dist", "coverage", ".turbo"})
+# No `\b` after a TypeScript marker, and any `nosem...` word: tsc honours `@ts-expect-errorx` and
+# Semgrep `nosemantic` (CI-SEC-006 still blocks the Semgrep ones, a lane later).
 _MARKERS = (
-    r"\beslint-disable(?:-next-line|-line)?\b|@ts-ignore\b|@ts-expect-error\b|(?i:\bnosem(?:grep)?\b)"
+    r"\beslint-disable(?:-next-line|-line)?\b|@ts-ignore|@ts-expect-error|(?i:\bnosem\w*)"
     r"|\beslint(?=\s+[@\w/-]+\s*:)"  # a config comment: `/* eslint no-console: off */`
 )
-# The marker anywhere in a comment, or opening a line inside a block comment: a word in a string is
-# not one, a prose mention is (rephrase it).
-MARKER_RE = re.compile(rf"(?:(?://|/\*)[^\n]*?|^\s*\*?\s*)(?P<marker>{_MARKERS})(?P<rest>[^\n]*)")
+# The marker anywhere in a comment, or opening a line inside a block comment after any run of `/`
+# and `*`, as TypeScript reads a directive. A marker in a string after code is not one; a string
+# line that opens with one counts (it fails closed), and so does a prose mention (rephrase it).
+MARKER_RE = re.compile(rf"(?:(?://|/\*)[^\n]*?|^\s*[/*]*\s*)(?P<marker>{_MARKERS})")
 _GLOB_TOKENS = ((r"**/", "(?:.*/)?"), (r"**", ".*"), (r"*", "[^/]*"), (r"?", "[^/]"))
 
 
@@ -95,8 +103,11 @@ def findings_in(path: Path, rel: str, today: date) -> list[str]:
     found: list[str] = []
     for n, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
         for m in MARKER_RE.finditer(line):
-            comment = (m.group("marker") + m.group("rest")).split("*/", 1)[0]
+            comment = line[m.start("marker") :].split("*/", 1)[0]
             problems = field_problems(comment, today)
+            owner = field(comment, "owner")
+            if owner and owner != OWNER:
+                problems.append(f"suppression owner {owner!r} must be {OWNER} on a drawing path")
             if problems:
                 found.append(f"{rel}:{n}: {m.group('marker')}: {'; '.join(problems)}")
     return found
@@ -122,7 +133,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     for message in findings:
         print(f"no-inline-suppressions: {message}", file=sys.stderr)
     if findings:
-        hint = "remove it, or annotate it: `reason=<token> owner=@<handle> review=YYYY-MM-DD`"
+        hint = f"remove it, or annotate it: `reason=<token> owner={OWNER} review=YYYY-MM-DD`"
         print(f"no-inline-suppressions: DR6, SR-E14-01: {hint}", file=sys.stderr)
         return 1
     print(f"no-inline-suppressions: OK: {len(files)} file(s) under {len(paths)} path(s)")

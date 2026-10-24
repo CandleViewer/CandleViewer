@@ -94,7 +94,9 @@ jobs:
       - name: Turbo lint --filter=...[origin/main]
         run: pnpm turbo run lint --filter='...[origin/main]' --summarize
       # E14-X03 (#549; DR6, SR-E14-01): the lint ban on the drawing render paths cannot be switched
-      # off inline (apps/web's `noInlineConfig`), and no other suppression comment goes unreviewed.
+      # off inline (`noInlineConfig` in apps/web and in the engine's drawing layer), and no other
+      # suppression comment (an eslint-disable or config comment, @ts-ignore, @ts-expect-error,
+      # nosemgrep) goes without an annotation owned by @CandleViewer/security.
       - name: No unreviewed inline suppression in the drawing render paths (E14-X03)
         run: python tools/ci/check_no_inline_suppressions.py
       - name: Record lane duration in job summary
