@@ -275,25 +275,40 @@ E15-T01's spec decision on #402, SR-E14-09).
   harness refuses any target but loopback (`mint_sessions.py`): a run against it is the owner's call.
 - **Plan:** `.zap/e14-drawings.yaml` imports `22-api-openapi.yaml` cut to `/drawings`,
   `/drawings/batch` and `/drawings/{drawingId}` by `security/zap/nightly_plans.py`, then runs an
-  active scan for SQL injection, reflected and persistent XSS (a label is stored text), command
-  injection, path traversal and template injection, at most 8 minutes. The ticket's
+  active scan for SQL injection, reflected XSS, command injection, path traversal and template
+  injection, at most 8 minutes. Its `defaultThreshold` is `Off`, so only those rules run (the market
+  and rules plans keep ZAP's defaults at Medium). Persistent XSS (40014) is listed, as in the admin
+  plan, but attacks only the stored sinks that its companions 40016 and 40017 find, and they do not
+  run: it tests nothing here. A label's stored-XSS sink is the SPA (DR6), whose gates are
+  `cv-drawings-text-to-html-sink` and `test_drawings_nosniff.py`. The ticket's
   `security/zap/e14-drawings.conf` is a baseline-rule file, which cannot hold contexts, users or
   active policies; an automation plan is the form E12, E35 and E42 use.
 - **Principals:** a Viewer cannot write drawings (DR38), so the scan role is a synthetic **Manager**,
   with a real TOTP method and no MFA exception. A synthetic Owner (TOTP too) signs in to seed one
   drawing with a fixed client id (`.zap/e14-drawings-seed.json`, a batch `create`) and again after the
-  scan. ZAP's `{drawingId}` example names that id and its PUT body is valid for it, so a cross-owner
-  PUT or DELETE reaches the owner check. `security/zap/drawings_isolation.py verify` then requires the
-  Owner's row exactly as seeded (no cross-owner write, DR12, DR21) and none of the Owner's rows in the
-  Manager's list (no cross-owner read, DR20), whatever ZAP raised: the AF `accessControl` job is used
-  nowhere in this repo and is unverified in the pinned image, so ZAP's alerts do not judge it.
-- **The documented 404 and the batch 409** (DR20, DR21) raise 90022 on their problem+json text: an
-  `alertFilter` marks that alert "False Positive" on `/drawings*` when the evidence is one of our
-  codes. Injection and disclosure rules are never filtered.
+  scan. ZAP's `{drawingId}` example names that id and its PUT body is valid for it, so the scan's
+  PUT and DELETE can reach the owner check. Whether ZAP 2.17 sends the examples is not shown
+  offline, and a batch `update` or `delete` needs the row's live `updated_at`, which no plan knows.
+- **The check:** `security/zap/drawings_isolation.py verify` therefore writes to the Owner's row
+  itself, as the Manager, before it judges the row. A batch `update` and `delete` carrying the token
+  the seed returned must answer the batch 409 (`target_unavailable`, DR21); a PUT of the row's own
+  input, its label changed, and a DELETE must answer the foreign 404 (`not_found`, DR20). A 2xx is a
+  cross-owner write that succeeded (DR12); any other answer means the probe never reached the owner
+  check, and it fails too. The check then requires the Owner's row exactly as seeded (no cross-owner
+  write, DR12, DR21) and none of the Owner's rows in the Manager's list, read to its last page (at
+  most 20 pages of 500; no cross-owner read, DR20), whatever ZAP raised: the AF `accessControl` job
+  is used nowhere in this repo and is unverified in the pinned image, so ZAP's alerts do not judge
+  it. The seeded rows stay under `$RUNNER_TEMP/cv`, out of the scan's writable mount, until the
+  check has read them; then they join the artefact.
+- **The documented refusals** (22-api) raise 90022 on their problem text: the foreign 404
+  `not_found` (DR20), the batch 409 `conflict` with `target_unavailable`, `version_conflict` or
+  `id_unavailable` (DR21), and `invalid_cursor`, `payload_too_large` and `validation_failed`. An
+  `alertFilter` marks that alert "False Positive" on `/drawings*` only when its evidence is one of
+  those codes, never the problem media type alone. Injection and disclosure rules are never
+  filtered. Whether 90022's evidence lands on a code is shown by the first run: the log names a
+  waived alert, not a baseline entry.
 - **Not here:** a body over 64 KiB is no plan literal (`test_drawings_abuse_exhaustion.py` covers the
-  cap). The batch route is driven by ZAP's generated bodies: an update or delete needs the row's live
-  `updated_at`, which the plan cannot know, so its cross-owner behaviour is the contract tests' (DR21)
-  and this nightly only judges the row after the whole scan.
+  cap).
 - **Baseline:** `.zap/e14-drawings-baseline.json` (empty at merge). `security/zap/baseline_gate.py`
   fails the job on any High or Medium alert whose `pluginId METHOD path` is not in it (entries need
   `reason`, `owner` and a `review` date). Triage is the SR-134 clock, as for E12: 48 hours, 7 days

@@ -1615,9 +1615,10 @@ before any change and pixel geometry, with reviewed `nosemgrep` annotations on t
 are unscoped by design) are explained in [`security/ci-gates-e14.md`](security/ci-gates-e14.md),
 with the render-path guards: two more rules, the scoped ESLint ban, the inline-suppression check,
 the production-bundle guard and the `/drawings` nosniff test. The nightly ZAP profile
-(`dast-drawings-nightly.yml`: a synthetic Manager scans while a synthetic Owner's drawing must stay
-unchanged and unlisted for the Manager, DR20, DR21) closes the ticket; its CodeQL decision (the
-custom taint source waits for E14-T02) and SCA note (no sanitiser dependency) are in the same page.
+(`dast-drawings-nightly.yml`: a synthetic Manager scans, then sends its own cross-owner writes,
+and a synthetic Owner's drawing must refuse them and stay unchanged and unlisted for the Manager,
+DR12, DR20, DR21) closes the ticket; its CodeQL decision (the custom taint source waits for
+E14-T02) and SCA note (no sanitiser dependency) are in the same page.
 
 ### 12.3 Required status checks on `main`
 
