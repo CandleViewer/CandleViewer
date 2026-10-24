@@ -14,6 +14,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.exchange.base.errors import OmsErrorCode, RateBudgetExceededError, TransportError
 from candleviewer.exchange.base.fakes import FakeReject
@@ -27,7 +28,6 @@ from candleviewer.statechart.config import CV_COMMAND_TIMEOUT
 from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.command_rig import T0, T0_US, Rig
-from tests.unit.oms.test_commands import _earlier_request
 
 _TP, _SL2 = Decimal("64000"), Decimal("58500")
 _NO: dict[str, Any] = {"ok": False}
@@ -187,7 +187,7 @@ async def test_a_held_key_answers_in_flight_and_keeps_the_prior_order(
 ) -> None:
     """409 `stop_request_in_flight` at the route: nothing recorded or sent, never a raise."""
     order = await _live(rig)
-    await _earlier_request(rig)
+    await cr.earlier_request(rig)
     rig.now.us = T0_US + (round(STOP_REQUEST_BOUND_S * 1_000_000) if past_bound else 1_000_000)
     answer = await rig.port.amend(_amend(order, stop_loss="58500"))
     assert answer == _NO | {"error_code": oc.STOP_REQUEST_IN_FLIGHT, "retry_after_s": 5}
@@ -219,10 +219,19 @@ async def test_an_amend_resumed_with_nothing_recorded_records_and_sends(rig: Rig
     assert len(_rows(rig)) == 2 and len(_sent(rig)) == 1
 
 
-async def test_a_looser_stop_is_refused_in_the_writer_before_any_record_or_send(rig: Rig) -> None:
-    """Q4: audited `orders.amend` denied, never `sl.loosen_refused`; nothing recorded or sent."""
-    order = await _live(rig)
-    answer = await rig.port.amend(_amend(order, stop_loss="57999"))
+_SHORT = {"side": "Sell", "stop_loss": Decimal("62000"), "take_profit": Decimal("57000")}
+
+
+@pytest.mark.parametrize(
+    ("over", "stop"), [({}, "57999"), (_SHORT, "62001")], ids=["long", "short"]
+)
+async def test_a_looser_stop_is_refused_in_the_writer_before_any_record_or_send(
+    rig: Rig, over: dict[str, Any], stop: str
+) -> None:
+    """Q4, a long's and a short's (fold n4): audited `orders.amend` denied, never
+    `sl.loosen_refused`; nothing recorded or sent."""
+    order = await _live(rig, **over)
+    answer = await rig.port.amend(_amend(order, stop_loss=stop))
     assert answer == _NO | {"error_code": oc.STOP_LOOSENING_REFUSED}
     assert rig.demo.calls == [] and _rows(rig) == []
     ((record, _),) = rig.audits.written
@@ -232,7 +241,7 @@ async def test_a_looser_stop_is_refused_in_the_writer_before_any_record_or_send(
 
 async def _in_force(rig: Rig, price: str) -> None:
     """A Full-mode stop-loss record in force for the key at `price`."""
-    await _earlier_request(rig)
+    await cr.earlier_request(rig)
     (row,) = _rows(rig)
     in_force: dict[str, Any] = {"status": "in_force", "answered_at": T0, "in_force_at": T0}
     rig.store._stops[row.id] = replace(row, trigger_price=Decimal(price), **in_force)
@@ -343,3 +352,13 @@ def test_the_amend_bound_is_inside_b1s_and_only_ever_tightened() -> None:
     assert oc.AMEND_TIMEOUT_S < CV_COMMAND_TIMEOUT
     with pytest.raises(ValueError, match="tightened"):
         cr.build_rig(amend_timeout_s=oc.AMEND_TIMEOUT_S + 1)
+
+
+@pytest.mark.parametrize("side", ["stop_loss", "take_profit"])
+def test_the_send_belt_refuses_a_side_at_or_below_zero_critically(side: str) -> None:
+    """Fold n1: `_check_amend_stops`, unreachable behind Q3, still refuses and logs CRITICAL."""
+    values: dict[str, Any] = {"order_link_id": "x", side: Decimal(0)}
+    request = AmendOrderRequest.model_construct(**values)
+    with capture_logs() as logs, pytest.raises(ValueError, match="not a price above zero"):
+        oc._check_amend_stops(request)
+    assert [log["log_level"] for log in logs] == ["critical"]
