@@ -4,6 +4,7 @@ SR-096 shared-volume refusal, and `CV_DISK_*` settings (E16-FR-11). I/O only und
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -215,10 +216,50 @@ async def test_a_demo_budget_composes_sources_that_read_only_demo_rows(tmp_path:
     assert budget is not None
     us = int(_Repo.at.timestamp()) * 1_000_000
     gaps, pinned = budget._gaps, budget._pinned
+    assert gaps is not None and pinned is not None
     assert await gaps(0, 2 * us) == [(us, us + 1_000_000)]
     assert await pinned() == {"BTCUSDT"}
     assert set(repo.envs) == {"demo"}  # dropping the env argument reads the live rows
     await budget.stop()
+
+
+def test_parquet_usage_refuses_a_root_it_cannot_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_scandir = os.scandir
+
+    def denied(path: Any) -> Any:
+        if str(path) == str(tmp_path):
+            raise PermissionError(13, "denied", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", denied)
+    with pytest.raises(PermissionError):  # never a fresh (0, {})
+        parquet_usage(tmp_path)
+
+
+def test_parquet_usage_tolerates_a_subdirectory_removed_mid_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _tree(tmp_path, {"trades/symbol=BTCUSDT/a.parquet": 7, "gone/b.parquet": 1})
+    real_scandir = os.scandir
+
+    def vanishing(path: Any) -> Any:
+        if str(path).endswith("gone"):
+            raise FileNotFoundError(2, "removed by retention", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", vanishing)
+    assert parquet_usage(tmp_path) == (7, {"BTCUSDT": 7})
+
+
+async def test_the_volume_of_a_vanished_root_fails_the_pass_not_the_parent_filesystem(
+    tmp_path: Path,
+) -> None:
+    meter = VolumeMeter(tmp_path / "unmounted", None)
+    with pytest.raises(FileNotFoundError, match="recording root missing"):
+        await meter.volume()
+    await meter.close()
 
 
 def test_parquet_usage_refuses_a_root_that_is_not_a_directory(tmp_path: Path) -> None:
