@@ -314,11 +314,13 @@ exempt_modules = ["candleviewer.observability"]
 # the regrouping adapter, the injector) are listed one by one: the replay
 # session service beside them drives B12 and imports the runtime. The private
 # stream's per-frame parser (G-8b) is one too; its runtime beside it drives B13.
+# The private stream's row mapping and pairing (E29-T05) are too: the facade they feed drives B1.
 rule = "C-2.20"
 source_modules = [
     "candleviewer.book",
     "candleviewer.bars",
     "candleviewer.exchange.bybit.private_parse",
+    "candleviewer.oms.push_mapping",
     "candleviewer.orderflow",
     "candleviewer.orderbook_wiring",
     "candleviewer.replay.clock",
