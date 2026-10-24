@@ -3,14 +3,16 @@
 `checked_pool` opens a pool on the DSN it is given and reads the database's name first: a database
 not named for tests is `FixtureRefused` before any statement but that read, so no row is read or
 written there. `audit_session` builds the real `AuditWriter` over that pool, as `corrupt_chain`
-does, so an entry can land only in the database that was checked. `read_audit_db` is the same
-refusal for a check's reads.
+does, so an entry can land only in the database that was checked. `emit_at` appends a record stamped
+at a given instant, by the writer's own `build()` (the redactor) and `ingest()`. `read_audit_db` is
+the same refusal for a check's reads.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +50,11 @@ async def audit_session(
             await writer.flush(60)
         finally:
             await writer.stop(5)
+
+
+async def emit_at(writer: AuditWriter, action: str, at: datetime, **fields: Any) -> None:
+    """One record as `emit` writes it, but stamped `at`: `build()` redacts, `ingest()` appends."""
+    await writer.ingest_counted(writer.build(action, **fields).model_copy(update={"event_ts": at}))
 
 
 async def read_audit_db(dsn: str, *reads: sa.Select[Any]) -> list[list[RowMapping]]:
