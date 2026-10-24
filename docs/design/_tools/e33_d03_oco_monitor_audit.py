@@ -231,6 +231,11 @@ CITED_TABLE = """
 11 | 3434 | reconciliation runs at least every 30 s
 20 | 912 | no WS or REST success this long = `down`
 """
+# Table-row needles carry pipes, so they sit outside the pipe-split table (same cite rule).
+CITED_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("28", "3382", "| `repricing` | _always_ | `two_consecutive_post_only_rejects` |"),
+    ("28", "3384", "| `cooling_down` | `COOLDOWN_DUE` | — | `submitting_slice` |"),
+)
 POINTER = "E33-D03.md](../design/E33/E33-D03.md)"
 DOC_NAMES = (
     "11-user-stories.md",
@@ -260,7 +265,8 @@ FIXTURE["ticks_down"] = round((FIXTURE["mark"] - FIXTURE["exit_stop"]) / FIXTURE
 FIXTURE["ticks_entry_a"] = round((FIXTURE["entry_a"] - FIXTURE["mark"]) / FIXTURE["tick"])
 FIXTURE["ticks_entry_b"] = round((FIXTURE["mark"] - FIXTURE["entry_b"]) / FIXTURE["tick"])
 # The 40-run bulk fixture: the kinds, what Pause all skips per kind (every skip a section 1.3
-# class) and the per-item result; the pausable counts are derived below, never typed.
+# class), the cooling-down icebergs it defers (B5 defers USER_PAUSE; never skipped) and the per-item
+# result; the paused, deferred and skipped counts are derived below, never typed.
 BULK: dict[str, float] = json.loads(
     '{"twap": 12, "chase": 9, "iceberg": 14, "oco": 5, "orders": 31, "btc": 2.14, '
     '"cancelled": 38, "failed": 2, "twap_price_blocked": 3, "chase_parked": 2, '
@@ -469,7 +475,7 @@ def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, s
             bad.append(f"spec sections 2-10: {m.group(0)} without a negation (LIVE is an absence)")
     lines = {k: v.split("\n") for k, v in t.items()}
     CITE_WARN.clear()
-    for doc, line_s, want in rows(CITED_TABLE):
+    for doc, line_s, want in [*rows(CITED_TABLE), *CITED_ROWS]:
         line = int(line_s)
         shift = sum(POINTER in ln for ln in lines[doc][: line - 1]) if doc == "14" else 0
         found = [i + 1 for i, ln in enumerate(lines[doc]) if want in ln]
@@ -612,12 +618,13 @@ def main(argv: list[str]) -> int:
         "pausable_iceberg": BULK["iceberg"] - BULK["iceberg_cooling"] - BULK["finishing_iceberg"],
         "finishing": BULK["finishing_twap"] + BULK["finishing_iceberg"],
     }
-    skipped = ("oco", "twap_price_blocked", "chase_parked", "iceberg_cooling")
+    skipped = ("oco", "twap_price_blocked", "chase_parked")
     pausable["skipped"] = sum(BULK[k] for k in skipped) + pausable["finishing"]
+    pausable["deferred"] = BULK["iceberg_cooling"]
     total = BULK["twap"] + BULK["chase"] + BULK["iceberg"] + BULK["oco"]
-    pausable["pausable"] = total - pausable["skipped"]
-    if pausable["pausable"] != sum(pausable[f"pausable_{k}"] for k in ("twap", "chase", "iceberg")):
-        bad.append("bulk fixture: the pausable counts do not add up to total - skipped")
+    pausable["pausable"] = sum(pausable[f"pausable_{k}"] for k in ("twap", "chase", "iceberg"))
+    if pausable["pausable"] + pausable["deferred"] + pausable["skipped"] != total:
+        bad.append("bulk fixture: paused + deferred + skipped does not reconcile to the total")
     if BULK["cancelled"] + BULK["failed"] != total or pausable["finishing"] + 1 != BULK["failed"]:
         bad.append("bulk fixture: the per-item result does not add up (finishing + 1 unanswered)")
     at_bybit = dict(AT_BYBIT)
