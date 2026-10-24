@@ -193,9 +193,9 @@ def _all_streams(topic: str) -> tuple[str | None, tuple[str, ...]]:
 class SessionManager:
     """Opens/closes `recording_sessions` rows and writes gap rows (module docstring).
 
-    The audit writer is required (C-2.9, #2188): crash recovery closes every session a dead
-    process left open and writes the `recorder.stop` audit record first, so a manager without
-    an audit writer cannot exist - there is no unaudited path to skip."""
+    The audit writer is required (C-2.9, #2188): the crash-recovery `recorder.stop` audit comes
+    before each session recovery closes, so a manager without an audit writer cannot exist -
+    there is no unaudited path to skip."""
 
     def __init__(
         self,
@@ -209,8 +209,8 @@ class SessionManager:
     ) -> None:
         if audit is None:  # the typed signature refuses it; this catches an untyped caller
             raise ValueError(
-                "SessionManager needs an audit writer: the crash-recovery and stop audit "
-                "(`recorder.stop`, C-2.9) must never be skipped"
+                "SessionManager needs an audit writer: the crash-recovery `recorder.stop` "
+                "audit (C-2.9) must never be skipped"
             )
         self._audit = audit
         self._store = store
@@ -405,7 +405,7 @@ class SessionManager:
                 reason="process_restart",
                 after_state={
                     "symbol": symbol,
-                    "session_id": sid,
+                    "recording_session_id": sid,  # not `session_id`: M19 redacts that name
                     "reason": "process_restart",
                     "gap_start_us": str(lo),
                     "gap_end_us": str(hi),

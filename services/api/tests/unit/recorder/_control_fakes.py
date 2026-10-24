@@ -42,7 +42,13 @@ class FakeRecorder:
         return self.entries[symbol]
 
     async def add_manual(
-        self, symbol: str, actor: Actor, streams: tuple[str, ...] = (), depth: int | None = None
+        self,
+        symbol: str,
+        actor: Actor,
+        streams: tuple[str, ...] = (),
+        depth: int | None = None,
+        *,
+        held_hidden: bool = False,
     ) -> None:
         _user(actor)
         old = self.entries.get(symbol)
