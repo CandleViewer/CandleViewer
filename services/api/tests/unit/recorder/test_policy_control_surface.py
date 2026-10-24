@@ -5,6 +5,7 @@ validation it shares with `add_manual`."""
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -19,7 +20,12 @@ from candleviewer.recorder.errors import (
     RecorderSymbolNotManualError,
 )
 from candleviewer.recorder.models import ORDERBOOK_DEPTHS, STREAM_KINDS, SYSTEM_ACTOR, Actor
-from candleviewer.recorder.policy import PolicyControlSurface, RecordingPolicy, user_actor
+from candleviewer.recorder.policy import (
+    PolicyControlSurface,
+    RecordingPolicy,
+    RefusalCause,
+    user_actor,
+)
 from candleviewer.recorder.sessions import DEFAULT_STREAMS
 from tests.unit.recorder._fakes import FakeAudit, Mem, surface_mismatches
 
@@ -50,8 +56,14 @@ def test_the_comparison_catches_a_rename_a_changed_default_and_a_sync_async_swap
         async def position_open(self, symbol: str) -> bool:  # async where it is sync
             return True
 
+        async def linger_until(self, symbol: str) -> datetime | None: ...  # likewise
+        def start_refusal(self, symbol: str) -> RefusalCause | None: ...  # as the surface has it
+        def chart_open(self, sym: str) -> bool:  # a renamed parameter
+            return False
+
     assert surface_mismatches(Drifted, PolicyControlSurface) == [
-        "add_manual", "remove_manual", "update_manual", "position_open",
+        "add_manual", "remove_manual", "update_manual", "position_open", "linger_until",
+        "chart_open",
     ]  # fmt: skip
 
 
@@ -62,7 +74,8 @@ def test_the_comparison_reports_a_missing_member_and_an_annotation_it_cannot_res
         remove_manual.__annotations__["actor"] = "NoSuchType"  # no name resolves it
 
     assert surface_mismatches(Partial, PolicyControlSurface) == [
-        "add_manual", "remove_manual", "set_pin", "update_manual", "position_open",
+        "add_manual", "remove_manual", "set_pin", "update_manual", "position_open", "linger_until",
+        "start_refusal", "chart_open",
     ]  # fmt: skip
 
 

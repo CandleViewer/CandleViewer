@@ -39,6 +39,7 @@ import asyncio
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Final, Literal, Protocol, runtime_checkable
 
 import structlog
@@ -180,8 +181,9 @@ class RecordedStore(Protocol):
 class PolicyControlSurface(Protocol):
     """What the recording REST binding (#492) calls on `RecordingPolicy`. Its fake is held to
     these signatures by `test_policy_control_surface.py`, so a rename on either side fails a
-    test. The read-only accessors join in #2188 S3. A write is audited before it is made (C-2.9):
-    an audit or store error propagates as it is (nothing here maps one), with memory unchanged."""
+    test. A write is audited before it is made (C-2.9): an audit or store error propagates as it
+    is (nothing here maps one), with memory unchanged. The accessors are sync and O(1), change
+    nothing and raise nothing."""
 
     async def add_manual(
         self, symbol: str, actor: Actor, streams: tuple[str, ...] = (), depth: int | None = None
@@ -216,6 +218,15 @@ class PolicyControlSurface(Protocol):
     def position_open(self, symbol: str) -> bool:
         """The `StreamWriter` gate's predicate: True while the warm-up gate is closed, then
         whether the symbol holds a position. Raises nothing."""
+
+    def linger_until(self, symbol: str) -> datetime | None:
+        """The end of the stop grace as an aware UTC instant, or None when not lingering."""
+
+    def start_refusal(self, symbol: str) -> RefusalCause | None:
+        """Why the latest start was refused, or None: not refused, started or no longer wanted."""
+
+    def chart_open(self, symbol: str) -> bool:
+        """Whether any chart holds the symbol: the twin of `position_open`, with no warm-up gate."""
 
 
 #: (symbol, B11 hook name, chart context) -> None; see `RecordingPolicy.observe_states`.
@@ -264,8 +275,9 @@ class _Sym:
     pinned: bool = False
     linger_deadline: float | None = None
     started_reasons: set[Reason] = field(default_factory=set)  # reasons sent to B11
-    #: Reasons refused by the cap (warned once each; retried every tick until started).
-    refused: set[Reason] = field(default_factory=set)
+    #: Reasons refused (warned once each; retried every tick until started) -> their latest
+    #: cause, in the order they were first refused.
+    refused: dict[Reason, RefusalCause] = field(default_factory=dict)
     #: Set when this symbol is evicted for a position; the stop audit carries it.
     stop_cause: str | None = None
     error_attempts: int = 0
@@ -570,6 +582,20 @@ class RecordingPolicy:
         s = self._syms.get(symbol)
         return not self._positions_ready or (s is not None and bool(s.positions))
 
+    def linger_until(self, symbol: str) -> datetime | None:
+        s = self._syms.get(symbol)
+        if s is None or s.linger_deadline is None or self.leaf(symbol) != "lingering":
+            return None  # a pinned symbol keeps its old deadline once it has stopped
+        return datetime.fromtimestamp(s.linger_deadline, UTC)  # `_now` reads wall-clock seconds
+
+    def start_refusal(self, symbol: str) -> RefusalCause | None:
+        s = self._syms.get(symbol)
+        return None if s is None else next(reversed(s.refused.values()), None)
+
+    def chart_open(self, symbol: str) -> bool:
+        s = self._syms.get(symbol)
+        return s is not None and bool(s.charts)
+
     def positions_reloaded(self) -> None:
         """Open the warm-up gate: the position cache now reflects the exchange."""
         self._positions_ready = True
@@ -603,6 +629,7 @@ class RecordingPolicy:
             want = self._desired(s)
             if self._cfg.autorecord_enabled and s.charts and self.leaf(symbol) == "lingering":
                 want.add("chart_open")  # continuing an existing session is not a new start
+            s.refused = {r: c for r, c in s.refused.items() if r in want}  # a lapsed trigger
             for reason in sorted(want - s.started_reasons, key=PRECEDENCE.index):
                 await self._add(symbol, s, reason)
             for reason in sorted(s.started_reasons - want, key=PRECEDENCE.index):
@@ -697,7 +724,7 @@ class RecordingPolicy:
             symbol, "REASON_ADDED", reason=reason, symbol=symbol, streams=streams
         ):
             s.started_reasons.add(reason)
-            s.refused.discard(reason)
+            s.refused.pop(reason, None)
             s.linger_deadline = None
 
     async def _refuse(
@@ -705,9 +732,10 @@ class RecordingPolicy:
     ) -> None:
         """Cap or disk refusal: warning event + metric + audit, once per (symbol, reason) until
         it starts; `_due` keeps it queued so every tick retries it."""
-        if reason in s.refused:
+        again = reason in s.refused
+        s.refused[reason] = cause  # the latest cause, announced or not
+        if again:
             return
-        s.refused.add(reason)
         recorder_cap_refused_total.labels(reason=reason).inc()
         logger().warning(
             "recorder_cap_refused", symbol=symbol, reason=reason, cause=cause, env=self._env
