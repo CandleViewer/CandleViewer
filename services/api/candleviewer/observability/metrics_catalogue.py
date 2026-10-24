@@ -2632,6 +2632,21 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E29",
     ),
     _s(
+        "oms_stop_resolutions_total",
+        "counter",
+        "resolutions",
+        ("outcome",),
+        "The complete read's resolutions of waiting stop requests (E29-T04 S3-H, 21 Sec.3.3.11), "
+        "one per request it decided, by outcome, a closed set: in_force, replaced, answered, "
+        "entry_resting, in_flight_resolved, entry_filled_stop_absent, held_for_reconciliation, "
+        "and read_failed for a read that decided nothing (its key then waits 5 s).",
+        "the gate pages each stop-loss voided entry_filled_stop_absent while its position is open "
+        "(C-2.6); held_for_reconciliation is logged once per key",
+        _P,
+        "E29",
+        max_series=8,
+    ),
+    _s(
         "naked_position_alerts_total",
         "counter",
         "alerts",

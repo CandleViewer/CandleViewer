@@ -1224,7 +1224,9 @@ async def test_a_stop_gate_that_does_not_answer_is_bounded_and_nothing_is_record
     `sl_missing`), with nothing recorded or sent."""
 
     class _Stuck:
-        async def clear(self, key: PositionKey) -> None:
+        async def clear(
+            self, key: PositionKey, *, wait_s: float = 0.0, protective: bool = False
+        ) -> None:
             await asyncio.Event().wait()
 
     rig = build_rig(gate=_Stuck(), port_timeout_s=0.05)

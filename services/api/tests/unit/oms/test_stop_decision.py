@@ -424,6 +424,47 @@ def test_an_answered_request_the_read_only_matched_is_held_for_reconciliation() 
     assert decision.outcome == "held_for_reconciliation"
 
 
+def test_a_request_held_through_its_entry_is_exposed_only_open_with_no_stop_at_all() -> None:
+    """The lead's rulings on H3's item 6: a position open with no stop-loss and no trail
+    (`shows_no_stop`; a take-profit, or a take-profit order, protects nothing) is a C-2.6
+    exposure, paged once per hold, unless a Partial stop-loss order of the key is open."""
+    trailing = position().model_copy(update={"trailing_stop_distance": Decimal("150")})
+    cases = [
+        (position(), (), True),
+        (position(take_profit=TP), (), True),
+        (position(), (tpsl_order("partial_take_profit", TP),), True),
+        (position(stop_loss=Decimal("55000")), (), False),
+        (trailing, (), False),
+        (position(), (tpsl_order("partial_stop_loss", Decimal("55000")),), False),
+        (flat(), (), False),
+    ]
+    history = (fired("partial_stop_loss", STOP),)
+    for pos, open_orders, exposed in cases:
+        decision = one(partial_rows(answered_at=T0), pos, history=history, open_orders=open_orders,
+                       orders_read=True)  # fmt: skip
+        assert (decision.held, decision.exposed) == (ENTRY_HELD, exposed)
+
+
+def test_every_hold_through_its_entry_is_exposed_open_with_no_stop_at_all() -> None:
+    """CR-S3H3A-02: wherever `ENTRY_HELD` is attached, the read's own answer on rows whose stored
+    order waits and a filled entry whose answered stop matched one that fired among them, the
+    open position with no stop at all is exposed; a stop on it or a Partial stop-loss open is
+    not."""
+    guard = (tpsl_order("partial_stop_loss", Decimal("55000")),)
+    read: dict[str, Any] = {"history": (fired("partial_stop_loss", STOP),), "orders_read": True}
+    unanswered = partial_rows(source="entry_attach", order_id=ENTRY)
+    answered = partial_rows(source="entry_attach", order_id=ENTRY, answered_at=T0)
+    for pos, open_orders, exposed in (
+        (position(), (), True),
+        (position(stop_loss=Decimal("55000")), (), False),
+        (position(), guard, False),
+    ):
+        waits = one(unanswered, pos, "gone", open_orders=open_orders,
+                    waiting_entries=frozenset({ENTRY}), **read)  # fmt: skip
+        filled = one(answered, pos, "filled", open_orders=open_orders, **read)
+        assert (waits.held, waits.exposed) == (filled.held, filled.exposed) == (ENTRY_HELD, exposed)
+
+
 # --- invariants --------------------------------------------------------------------------------
 
 TRIGGERS = st.sampled_from([STOP, Decimal("59000"), TP])

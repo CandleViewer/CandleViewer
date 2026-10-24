@@ -46,6 +46,9 @@ cap, its cooldown, its metric and its pages) is slice H3's.
    by its entry's order (`WAITING_ENTRY`); any other entry's request that leaves a row answered
    or kept, on a row answered already or whose stored order `WAITING_ENTRY` holds
    (`Reading.waiting_entries`), carries `ENTRY_HELD` with its outcome, as that row stays listed.
+   A request held through its entry's order, however the hold came, is `exposed` when its
+   position, open on its side, shows no stop at all and no Partial stop-loss order of the key is
+   open (a take-profit never counts): a C-2.6 exposure H3's gate pages once per hold.
 4. **The read** (`CompleteRead`), every read a `poll` lane read, each bounded at
    `READ_TIMEOUT_S` and the whole at `WHOLE_READ_TIMEOUT_S`: the position always
    (`routing.read_position`); an entry's order by its id among the open orders, then in the
@@ -66,9 +69,10 @@ cap, its cooldown, its metric and its pages) is slice H3's.
    each request's rows in force (whose transaction also replaces the older answered rows of
    their kind), then the read's own `replaced` rows (an unanswered row, or one whose successor
    was already in force), then the voids, each audited write-ahead (C-2.9), the store giving the
-   hook its `position_state` (a fill void's, and a paged unseen entry's, the 06:38Z ruling). A
-   write that fails or loses its compare-and-set raises; the key is read again on the next
-   request.
+   hook its `position_state` (a fill void's, and a paged unseen entry's, the 06:38Z ruling); the
+   caller is told of each decision whose voids committed as they commit (`committed`), so its page
+   outlives a later write's failure. A write that fails or loses its compare-and-set raises; the
+   key is read again on the next request.
 
 Nothing here ends a row, materialises one, binds or releases an `exchange_order_id` or tells B1 a
 stop was seen or lost (INV-B1-f).
@@ -248,6 +252,10 @@ class RequestDecision:
     page: str | None = None
     #: The same, typed, for code to branch on: None when nothing pages.
     page_reason: PageReason | None = None
+    #: A request held through its entry's order (`ENTRY_HELD`) whose position, open on its side,
+    #: shows no stop at all (`shows_no_stop`, the open orders once read): a C-2.6 exposure H3's
+    #: gate pages once per hold.
+    exposed: bool = False
 
 
 # --- grouping and the pure matchers ----------------------------------------------------------
@@ -391,15 +399,20 @@ def decide(requests: Sequence[StopRequest], reading: Reading) -> tuple[RequestDe
 
 def _decide(request: StopRequest, reading: Reading, later: frozenset[StopKind]) -> RequestDecision:
     decision = _moves(request, reading, later)
-    if decision.held is not None or request.source != "entry_attach":
-        return decision
     waits = request.order_id in reading.waiting_entries
-    if any(
-        move in ("answered", "kept") and (row.answered_at is not None or waits)
-        for row, move in decision.moves
+    if (
+        decision.held is None
+        and request.source == "entry_attach"
+        and any(
+            move in ("answered", "kept") and (row.answered_at is not None or waits)
+            for row, move in decision.moves
+        )
     ):  # the row stays listed through its entry's order (Fable Major, H lens)
-        return replace(decision, held=ENTRY_HELD)
-    return decision
+        decision = replace(decision, held=ENTRY_HELD)
+    if decision.held != ENTRY_HELD:
+        return decision
+    # however the hold came (CR-S3H3A-02): open on its side with no stop at all
+    return replace(decision, exposed=decision.position_state == "open" and _no_stop(reading))
 
 
 def _moves(request: StopRequest, reading: Reading, later: frozenset[StopKind]) -> RequestDecision:
@@ -765,16 +778,27 @@ class StopResolver:
         self._store_timeout_s = store_timeout_s
 
     async def resolve_key(
-        self, port: TradingPort, account: AccountRef, key: PositionKey, *, bound_s: float | None
+        self,
+        port: TradingPort,
+        account: AccountRef,
+        key: PositionKey,
+        *,
+        bound_s: float | None,
+        now: datetime | None = None,
+        committed: Callable[[RequestDecision], None] | None = None,
     ) -> tuple[RequestDecision, ...] | None:
         """The key's decisions, written; None when the read decided nothing (`read_failed`).
         A store read or write that fails raises, with what was written before it kept: a void
         audit past its bound as `AuditNotDurable` (through `RecordedStopRepository`, the store H3
         wires; a bare store raises `WriteAheadTimeout`), a store call past `STORE_TIMEOUT_S` as
-        `TimeoutError`, a lost compare-and-set as `StaleRecordedStop`."""
+        `TimeoutError`, a lost compare-and-set as `StaleRecordedStop`. `now`, the listing's, is the
+        one the caller's `bound_s` was worked out against (H3's startup floor); by default the
+        clock's. `committed` is told each decision whose voids committed, as they do, so a later
+        write's failure loses no page (H3's gate). The gate logs a hold once per key
+        (`oms_stop_request_held`)."""
         if account.account_id != key.account_id:
             raise ValueError("the account resolved is the key's (C-12.4)")
-        now = self._now()
+        now = self._now() if now is None else now
         listed = await self._bounded(
             self._store.waiting_for_key(
                 key.account_id, key.symbol, key.position_idx, now=now, bound_s=bound_s
@@ -794,7 +818,7 @@ class StopResolver:
             )
             reading = replace(read, in_force=tuple(stored))
         decisions = decide(requests, reading)
-        await self._write(key, decisions)
+        await self._write(key, decisions, committed)
         for d in decisions:
             _log().info(
                 "oms_stop_request_resolved",
@@ -802,15 +826,19 @@ class StopResolver:
                 outcome=d.outcome,
                 rows=[str(row.id) for row, _ in d.moves],
                 pages=[str(i) for i in d.pages],
+                held=d.held,
             )
-            if d.held is not None:  # H3 counts it and keeps one line per key
-                _log().warning("oms_stop_request_held", symbol=key.symbol, reason=d.held)
         return decisions
 
-    async def _write(self, key: PositionKey, decisions: Sequence[RequestDecision]) -> None:
+    async def _write(
+        self,
+        key: PositionKey,
+        decisions: Sequence[RequestDecision],
+        committed: Callable[[RequestDecision], None] | None = None,
+    ) -> None:
         """Answers, rows in force (replacing the older answered rows of their kind), the read's
-        own `replaced` rows, then voids, each audited write-ahead. Never an end, a bind or a
-        release."""
+        own `replaced` rows, then voids, each audited write-ahead, `committed` told of each
+        decision whose voids committed. Never an end, a bind or a release."""
         at, account_id = self._now(), key.account_id
         put = {r.kind: r.created_at for d in decisions for r, m in d.moves if m == "in_force"}
         for d in decisions:
@@ -841,6 +869,8 @@ class StopResolver:
                             position_state=state,
                         )
                     )
+            if committed is not None and any(m in _VOIDS for _, m in d.moves):
+                committed(d)  # its page outlives a later write's failure
 
     async def _bounded[T](self, call: Awaitable[T]) -> T:
         async with asyncio.timeout(self._store_timeout_s):

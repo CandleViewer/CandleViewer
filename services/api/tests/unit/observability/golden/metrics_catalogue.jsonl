@@ -256,6 +256,7 @@
 ["oms_rate_reject_total", "counter", [], "live", "E04"]
 ["oms_reconcile_anomaly_total", "counter", [], "planned", "E29"]
 ["oms_state_transitions_total", "counter", ["from", "to", "source"], "planned", "E29"]
+["oms_stop_resolutions_total", "counter", ["outcome"], "planned", "E29"]
 ["oms_submit_rejected_total", "counter", ["code"], "planned", "E29"]
 ["oms_unknown_orders", "gauge", [], "planned", "E29"]
 ["order_submit_seconds", "histogram", ["transport"], "planned", "E29"]
