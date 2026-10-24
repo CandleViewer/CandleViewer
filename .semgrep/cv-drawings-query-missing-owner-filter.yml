@@ -32,15 +32,15 @@ rules:
           (?= (?: [rbuf]{0,2} (?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*') (?:\s|\#[^\n]*)* )*?
               [rbuf]{0,2} (?: "(?:[^"\\]|\\.)*? | '(?:[^'\\]|\\.)*? )
               \b(?:from|update|join|using)
-              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])+ (?:\w+\.)?[\\"]*drawings\b )
+              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?[rbuf]{0,2}["'])+ (?:\w+\.)?[\\"]*drawings\b )
           (?! (?: [rbuf]{0,2} (?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*') (?:\s|\#[^\n]*)* )*?
               [rbuf]{0,2} (?: "(?:[^"\\]|\\.)*? | '(?:[^'\\]|\\.)*? )
-              \b(?:where|and|on) (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])+ \(*
-              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])* (?:\w+\.)?owner_user_id
-              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])* =
-              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])*
-              (?:cast (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])* \(
-                 (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])* )? :owner\w* )
+              \b(?:where|and|on) (?:\s|["']\s*(?:\#[^\n]*\n\s*)?[rbuf]{0,2}["'])+ \(*
+              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?[rbuf]{0,2}["'])* (?:\w+\.)?owner_user_id
+              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?[rbuf]{0,2}["'])* =
+              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?[rbuf]{0,2}["'])*
+              (?:cast (?:\s|["']\s*(?:\#[^\n]*\n\s*)?[rbuf]{0,2}["'])* \(
+                 (?:\s|["']\s*(?:\#[^\n]*\n\s*)?[rbuf]{0,2}["'])* )? :owner\w* )
           (?: [rbuf]{0,2} (?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*') (?:\s|\#[^\n]*)* )+
       - patterns:
           - pattern-either:
@@ -51,7 +51,9 @@ rules:
               - pattern: $M.delete(<... drawings ...>)
               - pattern: delete(<... drawings ...>)
           - pattern-not-inside: $Q.where(..., <... $X.owner_user_id == $O ...>, ...)
+          - pattern-not-inside: $Q.where(..., <... $O == $X.owner_user_id ...>, ...)
           - pattern-not-inside: $Q.filter(..., <... $X.owner_user_id == $O ...>, ...)
+          - pattern-not-inside: $Q.filter(..., <... $O == $X.owner_user_id ...>, ...)
           - pattern-not-inside: $Q.filter_by(..., owner_user_id=$O, ...)
     paths:
       include:

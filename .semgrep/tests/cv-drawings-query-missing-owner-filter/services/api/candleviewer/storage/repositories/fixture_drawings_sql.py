@@ -2,6 +2,8 @@
 # line a finding starts on: the call (`text(`, `execute(`) or assignment that opens the statement.
 import sqlalchemy as sa
 
+did = "1"
+
 # --- fires: a statement on `drawings` with no `owner_user_id = :owner` predicate ----------------
 _SELECT = sa.text(  # ruleid: cv-drawings-query-missing-owner-filter
     "SELECT id::text AS id FROM drawings WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL"
@@ -26,6 +28,10 @@ _TRANSFER = sa.text("UPDATE drawings SET owner_user_id = CAST(:owner AS uuid), l
 _COPY = sa.text("INSERT INTO drawings (id, owner_user_id) SELECT :new, CAST(:owner AS uuid) FROM drawings WHERE id = :id")  # ruleid: cv-drawings-query-missing-owner-filter
 _RAW = sa.text(r"SELECT id FROM drawings WHERE id = :id")  # ruleid: cv-drawings-query-missing-owner-filter
 _PREFIXED = sa.text(u"SELECT id FROM drawings WHERE id = :id")  # ruleid: cv-drawings-query-missing-owner-filter
+_F = sa.text(f"SELECT id FROM drawings WHERE id = {did}")  # ruleid: cv-drawings-query-missing-owner-filter
+_RF = sa.text(rf"SELECT id FROM drawings WHERE id = {did}")  # ruleid: cv-drawings-query-missing-owner-filter
+_MIXED = sa.text("SELECT id FROM " r"drawings WHERE id = :id")  # ruleid: cv-drawings-query-missing-owner-filter
+_MIXED_SET = sa.text("UPDATE " r"drawings SET owner_user_id = CAST(:owner AS uuid) WHERE id = :id")  # ruleid: cv-drawings-query-missing-owner-filter
 
 
 async def raw(conn):
@@ -49,6 +55,9 @@ _PREDICATE_SPLIT = sa.text(  # ok: cv-drawings-query-missing-owner-filter
     "CAST(:owner AS uuid)"
 )
 _RAW_SCOPED = sa.text(r"SELECT id FROM drawings WHERE id = :id AND owner_user_id = CAST(:owner AS uuid)")  # ok: cv-drawings-query-missing-owner-filter
+_MIXED_SCOPED = sa.text(  # ok: cv-drawings-query-missing-owner-filter
+    "SELECT id FROM drawings WHERE id = :id AND " r"(" r"owner_user_id" r"=" r"CAST" r"(" r":owner AS uuid))"
+)
 _INSERT_MANY = sa.text(  # ok: cv-drawings-query-missing-owner-filter
     "INSERT INTO drawings (id, owner_user_id) SELECT n_id, CAST(:owner AS uuid) "
     "FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS r(n_id uuid)"
