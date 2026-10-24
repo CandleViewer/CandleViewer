@@ -254,10 +254,13 @@ class _Rel:
     def __init__(self, *script: list[dict[str, Any]] | BaseException) -> None:
         self.script = list(script)
         self.statements: list[Any] = []
+        self.units = 0  # every unit of work entered, the statement cap's included
         self.commits = 0
 
     @asynccontextmanager
     async def unit_of_work(self) -> AsyncIterator[Any]:
+        self.units += 1
+
         async def execute(stmt: Any, params: Any = None) -> Any:
             if isinstance(stmt, TextClause):
                 return None
@@ -372,11 +375,14 @@ async def test_for_exchange_order_maps_the_rows_read_and_commits_nothing() -> No
     assert (row.id, row.exchange_order_id, rel.commits) == (_SL, "x-1", 0)
 
 
-async def test_a_read_with_an_id_the_table_cannot_hold_runs_no_statement() -> None:
+@pytest.mark.parametrize("text", [None, "", "x" * 65], ids=["none", "empty", "overlong"])
+async def test_for_exchange_order_with_an_id_no_order_can_hold_runs_no_statement(
+    text: Any,
+) -> None:
     rel = _Rel()
     with pytest.raises(ValueError, match="1 to 64 characters"):
-        await _store(rel).for_exchange_order(_ACCOUNT, "")
-    assert rel.statements == []
+        await _store(rel).for_exchange_order(_ACCOUNT, text)
+    assert rel.units == 0
 
 
 # -- R10: the startup sweep ----------------------------------------------------------------------

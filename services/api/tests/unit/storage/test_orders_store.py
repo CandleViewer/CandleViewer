@@ -136,8 +136,9 @@ def test_the_longest_exchange_order_id_is_the_adapters(length: int) -> None:
 
 @pytest.mark.parametrize("value", [None, 7, b"x"])
 def test_an_exchange_order_id_that_is_not_text_is_refused_naming_no_value(value: Any) -> None:
-    with pytest.raises(ValueError, match="text of 1 to 64 characters"):
+    with pytest.raises(ValueError) as refused:
         port.require_exchange_order_id(value)
+    assert str(refused.value) == "an order id is text of 1 to 64 characters"
 
 
 def test_rows_and_inserts_follow_the_table_columns() -> None:

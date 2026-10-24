@@ -360,8 +360,9 @@ class RecordedStopStore(Protocol):
         Sec.13.1 row 46, `ix_rs_exch_id`): an ended row keeps its id, so a stop that closed its
         position still pairs; a released row holds none. 24 Sec.8.3 rule 7 admits one holder at a
         time, but `ix_rs_exch_id` is not unique, so the store reports whatever it holds. The exact
-        text, as `get_by_exchange_order_id`, which also refuses an id that is not 1 to
-        `MAX_EXCHANGE_ORDER_ID_CHARS` characters of text; empty outside the account."""
+        text only; `ValueError` before any statement unless the id is text of 1 to
+        `MAX_EXCHANGE_ORDER_ID_CHARS` characters (`require_exchange_order_id`); empty outside the
+        account."""
         ...
 
     async def waiting_for_key(

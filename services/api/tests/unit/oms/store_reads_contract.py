@@ -164,6 +164,14 @@ class StoreReadsContract:
             h.move_stop(stop.id, end)
         assert await h.stops.live_for_key(account, "BTCUSDT", 0) == ()
 
+    async def test_live_for_key_lists_a_row_once_it_is_bound(self, h: Harness) -> None:
+        """A bound row stays live: S6 reads it as a successor's predecessor (24 Sec.8.3 rule 7)."""
+        account, _ = h.new_account()
+        stop = await live_stop(h, account)
+        h.bind_stop(stop.id, XID)
+        [row] = await h.stops.live_for_key(account, "BTCUSDT", 0)
+        assert (row.id, row.exchange_order_id) == (stop.id, XID)
+
     async def test_live_for_key_other_account_symbol_or_position_index_reads_empty(
         self, h: Harness
     ) -> None:
@@ -204,6 +212,16 @@ class StoreReadsContract:
             await advance(h, account, stop, status)
         [row] = await h.stops.for_exchange_order(account, XID)
         assert (row.id, row.status, row.exchange_order_id) == (stop.id, status, XID)
+
+    async def test_for_exchange_order_lists_every_holder_oldest_first(self, h: Harness) -> None:
+        """`ix_rs_exch_id` is not unique, so the read keeps its order, whatever it holds."""
+        account, _ = h.new_account()
+        held = [await live_stop(h, account, "answered") for _ in range(3)]
+        for stop in held:
+            h.bind_stop(stop.id, XID)
+        rows = await h.stops.for_exchange_order(account, XID)
+        ages = [(row.created_at, row.id) for row in rows]
+        assert {row.id for row in rows} == {stop.id for stop in held} and ages == sorted(ages)
 
     async def test_for_exchange_order_other_account_id_prefix_or_case_reads_empty(
         self, h: Harness
