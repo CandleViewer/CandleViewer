@@ -43,6 +43,7 @@ from candleviewer.oms.errors import (
 )
 from candleviewer.oms.fakes import InMemorySubmissionStore
 from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.orders import ORDER_STATE_OF, NewOrder, OrderRow
 from tests.unit.api.test_order_acceptance import schema
 from tests.unit.oms import command_rig as cr
@@ -175,11 +176,14 @@ def world_of(service: ex.OrderExits, audits: cr.Audits) -> World:
 
 async def scripted_world(
     held: str | None = "submitted", *settles: str | BaseException,
-    answer: dict[str, Any] | None = _OK, stored: Any = "submitted",
+    answer: dict[str, Any] | None = _OK, stored: Any = "submitted", **over: Any,
 ) -> tuple[World, tx.Scripted, OrderRow, cr.Rig]:  # fmt: skip
-    """The route over the exit service on S4-C's scripted facade: its order on `cr.ACCOUNT`, of
-    the demo environment, in the Owners' scope alone (no person created it, ruling Q6)."""
-    exits, machines, row, port = await tx.scripted(held, *settles, answer=answer, stored=stored)
+    """The route over the exit service on S4-C's scripted facade (`over` replacing any of its
+    dependencies): its order on `cr.ACCOUNT`, of the demo environment, in the Owners' scope alone
+    (no person created it, ruling Q6)."""
+    exits, machines, row, port = await tx.scripted(
+        held, *settles, answer=answer, stored=stored, **over
+    )
     InMemorySubmissionStore(port.store).seed_account(cr.ref())
     port.store.seed_owner(OWNER)
     port.store.seed_owner(SECOND)
@@ -194,6 +198,30 @@ async def delete(
         headers["idempotency-key"] = str(key)
     async with AsyncClient(transport=ASGITransport(app=world.app()), base_url="http://t") as c:
         return await c.delete(f"/orders/{order}", headers=headers)
+
+
+def admitted(world: World, monkeypatch: pytest.MonkeyPatch) -> list[UUID]:
+    """The orders the route hands `cancel_admitted`, which checks no scope itself: only one
+    `scope` returned may reach it (SEC-S4C2A-02)."""
+    seen: list[UUID] = []
+    real = world.oms.service.cancel_admitted
+
+    async def spy(row: OrderRow, **kw: Any) -> ex.ExitOutcome:
+        seen.append(row.id)
+        return await real(row, **kw)
+
+    monkeypatch.setattr(world.oms.service, "cancel_admitted", spy)
+    return seen
+
+
+class _Unread:
+    """An order store whose every read fails as an outage."""
+
+    def __getattr__(self, _name: str) -> Any:
+        async def unread(*_args: Any, **_kwargs: Any) -> Any:
+            raise StorageTierUnavailable("postgres unreachable (OSError)")
+
+        return unread
 
 
 def _claimed(*keys: UUID) -> Callable[[World], None]:
@@ -318,6 +346,16 @@ async def test_each_answer_is_22s_from_the_exit_services_outcome(case: Any) -> N
     assert body.get("exchange") == ({"ret_code": 110003} if status == 502 else None)
 
 
+async def test_a_scope_that_cannot_be_read_is_503_unrecorded_and_counted() -> None:
+    """SEC-S4C2A-03: an outage, not an actor's act: `503 store_unavailable` with `Retry-After: 1`
+    (the shared retry), no record, and counted (Q14); nothing sent."""
+    world, machines, row, _ = await scripted_world(orders=_Unread())
+    answer = await delete(world, row.id)
+    assert (answer.status_code, answer.json()["code"]) == (503, "store_unavailable")
+    assert answer.headers["retry-after"] == "1"
+    assert (world.actions(), machines.sent, world.refused("store_unavailable")) == ([], [], 1)
+
+
 @pytest.mark.parametrize("lands", [True, False], ids=["recorded", "unrecorded"])
 async def test_a_viewer_is_403_its_record_naming_the_order_and_still_403_unrecorded(
     lands: bool,
@@ -357,6 +395,18 @@ async def test_a_202_is_kept_24h_and_a_key_is_the_principals_for_this_order_only
     fresh = await delete(world, row.id, "second")
     assert fresh.status_code == 202 and "idempotency-replayed" not in fresh.headers
     assert fresh.json()["lifecycle_state"] == "cancelled" and machines.sent == ["CANCEL"]
+
+
+async def test_a_refusal_is_not_kept_and_its_key_is_free_once_its_cancel_ended() -> None:
+    """The 24 h record holds a `2xx` only: a cancel the venue refused may be asked again under
+    its key, which the guard frees once that cancel's task ended (24 Sec.8.4 steps 8 and 9)."""
+    refusal = _no(_VENUE, exchange_ret_code=110003)
+    world, machines, row, _ = await scripted_world(
+        "submitted", "submitted", "submitted", answer=refusal
+    )
+    first, again = await delete(world, row.id), await delete(world, row.id)
+    assert (first.status_code, again.status_code) == (502, 502)
+    assert "idempotency-replayed" not in again.headers and machines.sent == ["CANCEL", "CANCEL"]
 
 
 async def test_a_client_that_leaves_does_not_stop_the_cancel_nor_free_its_key_early() -> None:
@@ -424,16 +474,20 @@ def granted(rig: SubmitRig, who: str) -> World:
     ],
 )
 async def test_the_scope_is_the_exit_services_as_rulings_q6_q7_and_q12_say(
-    rig: SubmitRig, who: str, status: int, code: str | None, denied: str | None
-) -> None:
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch, who: str, status: int, code: str | None,
+    denied: str | None,
+) -> None:  # fmt: skip
     """A Manager cancels only the orders it created (04 Sec.7.2.2 rows 12, 13); a view-only grant
     is 403 (Q7); an ungranted or frozen account's order is 404 (SR-E29-13), each refusal recorded
-    `rbac.denied` once, by the service, and nothing sent."""
+    `rbac.denied` once, by the service; a refused order never reaches `cancel_admitted`, and
+    nothing is sent."""
     row = await tx.placed(rig)
     world = granted(rig, who)
+    seen = admitted(world, monkeypatch)
     answer = await delete(world, row.id, who)
     sent = rig.calls().count("cancel_order")
     assert answer.status_code == status
+    assert seen == ([row.id] if code is None else [])
     if code is None:
         _ORDER.validate(answer.json())
         assert (answer.json()["lifecycle_state"], sent) == ("cancelled", 1)
@@ -444,17 +498,20 @@ async def test_the_scope_is_the_exit_services_as_rulings_q6_q7_and_q12_say(
 
 
 async def test_a_foreign_order_is_answered_as_a_missing_id_only_the_real_one_recorded(
-    rig: SubmitRig,
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """SR-E29-13 and Q12: a frozen or ungranted account's order and an id no order holds get one
-    `404`, body and headers alike; only the real orders' are recorded `rbac.denied`."""
+    `404`, body and headers alike; only the real orders' are recorded `rbac.denied`, and none
+    reaches `cancel_admitted` (SEC-S4C2A-02)."""
     row = await tx.placed(rig)
     world = granted(rig, "frozen")
+    seen = admitted(world, monkeypatch)
     asked = [(uuid4(), "frozen"), (row.id, "frozen"), (row.id, "ungranted")]
     answers = [await delete(world, order, who) for order, who in asked]
     shapes = [(a.status_code, a.json(), dict(a.headers)) for a in answers]
     assert shapes[0][0] == 404 and shapes[0] == shapes[1] == shapes[2]
     assert world.actions() == [("rbac.denied", ex.NOT_GRANTED)] * 2
+    assert (seen, rig.calls().count("cancel_order")) == ([], 0)
 
 
 @pytest.mark.parametrize(
@@ -480,6 +537,8 @@ async def test_native_sl_a_recorded_stops_cancel_is_refused_while_its_position_i
         provenance="recorded_stop", state="accepted", lifecycle_state="submitted",
     )  # fmt: skip
     await rig.machines.materialise(stop, environment="demo")
+    held = cr.exchange_order(stop, exchange_order_id=tx.STOP_ID)
+    rig.port.demo.seed_order(held, uid=cr.UIDS["demo"])  # the venue holds the stop
     if position:
         rig.port.demo.seed_position(cr.position())
     answer = await delete(granted(rig, who), stop.id, who)
@@ -506,6 +565,9 @@ async def test_a_cancel_meets_no_switch_and_no_flag(rig: SubmitRig) -> None:
 # --- the app -------------------------------------------------------------------------------------
 
 
+_CANCEL_ALL = "candleviewer.api.order_cancel_all"
+
+
 def _order_routers(routes: Any, found: list[str]) -> list[str]:
     """The modules serving `/orders` routes, in the order `create_app()` mounted them."""
     for route in routes:
@@ -519,8 +581,11 @@ def _order_routers(routes: Any, found: list[str]) -> list[str]:
 
 
 def test_the_order_routers_mount_in_their_ruled_order() -> None:
-    """The orchestrator's ruling of 2026-10-24 19:43Z: cancel-all's own router mounts ahead of
-    the exit routes' `/orders/{orderId}`. S4-E inserts `candleviewer.api.order_cancel_all`
-    between the two below, in `app.py` and here."""
+    """The orchestrator's ruling of 2026-10-24 19:43Z: `create_app()` mounts the exit routes'
+    `DELETE /orders/{orderId}` after `placeOrder`'s router and after cancel-all's own router
+    (S4-E's `api/order_cancel_all.py`, included between the two) wherever that is mounted."""
     mounted = _order_routers(create_app().routes, [])
-    assert mounted == ["candleviewer.api.orders", "candleviewer.api.order_exits"]
+    exits = mounted.index("candleviewer.api.order_exits")
+    ahead = [m for m in mounted if m in ("candleviewer.api.orders", _CANCEL_ALL)]
+    assert "candleviewer.api.orders" in ahead
+    assert all(mounted.index(module) < exits for module in ahead)
