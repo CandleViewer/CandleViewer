@@ -142,6 +142,34 @@ async def run(dsns: tuple[str, str], conn: Conn) -> AsyncIterator[_Run]:
     await relational.dispose()
 
 
+async def test_no_row_stops_before_the_gate_opens_and_the_expired_one_stops_after_it(
+    dsns: tuple[str, str], conn: Conn
+) -> None:
+    _seed(conn, "ETHUSDT", refs=[CHART])  # a chart of the dead process
+    relational = SqlAlchemyRelationalRepository(dsns[1])
+    repo, clock, audit = SqlAlchemyRecorderRepository(relational), FakeClock(), FakeAudit()
+    policy = RecordingPolicy(
+        bus=FakeBus(), audit=audit, env="demo", now=clock, disk_refuses=bool, recorded=repo,
+        config=PolicyConfig(),
+    )  # fmt: skip
+    removed = "SELECT removed_at FROM recorded_symbols WHERE symbol = 'ETHUSDT' AND env = 'demo'"
+    try:
+        await policy.adopt_recorded(await policy.load_recorded())
+        await policy.reconcile_all()
+        clock.advance(1_800 + 60)  # its grace is over, but the warm-up gate is still closed
+        for _ in range(3):
+            await policy.tick()
+        assert conn.execute(removed).fetchone() == (None,)  # the row stays, nothing stops
+        assert "recorder.stop" not in audit.actions()
+        policy.positions_reloaded()
+        await policy.tick()
+        assert audit.actions().count("recorder.stop") == 1
+        assert conn.execute(removed).fetchone()[0] is not None  # stopped, the row goes too
+    finally:
+        await policy.stop()
+        await relational.dispose()
+
+
 async def test_only_this_envs_active_rows_are_read_and_the_others_are_left_alone(
     run: _Run,
 ) -> None:

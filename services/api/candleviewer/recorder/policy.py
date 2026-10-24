@@ -1058,6 +1058,7 @@ class RecordingPolicy:
         idle/stopped) is opened for a symbol that was recording or lingering."""
         symbol = key.entity_id
         if symbol in self._charts:
+            logger().info("recorder_restore_skipped", symbol=symbol, env=self._env)
             return  # a retried startup: this chart is already restored (and registered)
         res = await restore_chart(restorer, key, sealed)
         self._register(symbol, res.interpreter)
