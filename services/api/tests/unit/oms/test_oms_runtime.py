@@ -171,9 +171,10 @@ class Writer:
 
 class InlineLane:
     """The order lane on the test's own loop, so these tests step one loop (`test_order_lane`
-    runs the runtime on `OrderLane`'s thread): `call` tracks each task as the lane does."""
+    runs the runtime on `OrderLane`'s thread): `call` tracks each task as the lane does, and its
+    stop is recorded (CR-S3L1B-03)."""
 
-    dead = False
+    dead = stopped = False
 
     def __init__(self) -> None:
         self.tasks: set[asyncio.Task[Any]] = set()
@@ -194,7 +195,7 @@ class InlineLane:
             await asyncio.wait(pending)
 
     async def stop(self) -> None:
-        return None
+        self.stopped = True
 
 
 class Refusing(InlineLane):
@@ -376,7 +377,7 @@ async def test_the_sink_is_the_bundles_else_a_standalone_one_never_on_live_with_
                 assert failed_closed(logs) == ["NoMachineEventSink"] and not b01.ports_wired()
                 assert world.pager.calls == ["oms_runtime_failed_closed: sink"]  # CR-S3E1-02
                 assert failed_phases(logs) == ["sink"]
-                assert world.venue.ports == [] and world.log == []
+                assert world.venue.ports == [] and world.log == [] and world.lanes[0].stopped
                 with pytest.raises(OmsNotReady):
                     _ = runtime.submission
             else:
@@ -395,7 +396,7 @@ async def test_a_composition_that_fails_late_closes_what_it_built_and_fails_clos
             assert world.log == ["sink.start", "pool.release"] and world.venue.ports[0].closed
             assert world.pager.calls == ["oms_runtime_failed_closed: sink_start"]
             assert failed_phases(logs) == ["sink_start"]
-            assert world.pager.severities == ["page"]
+            assert world.pager.severities == ["page"] and world.lanes[0].stopped
             with pytest.raises(OmsNotReady):
                 _ = runtime.anchors
             with pytest.raises(OmsNotReady):
@@ -464,7 +465,7 @@ async def test_a_failure_once_the_trading_port_exists_closes_it(
         async with started(world.runtime(**over)):
             [port] = world.venue.ports
             assert (failed_closed(logs), failed_phases(logs)) == (["ValueError"], [step])
-            assert port.closed and world.log == []
+            assert port.closed and world.log == [] and world.lanes[0].stopped
 
 
 async def test_a_testnet_process_fails_closed_over_the_real_adapter_that_has_no_testnet_port() -> (
@@ -479,6 +480,7 @@ async def test_a_testnet_process_fails_closed_over_the_real_adapter_that_has_no_
         async with started(world.runtime("testnet", venue=real)) as runtime:
             assert (failed_closed(logs), failed_phases(logs)) == (["ValueError"], ["port"])
             assert world.log == [] and not b01.ports_wired() and runtime.state == "degraded"
+            assert world.lanes[0].stopped
             with pytest.raises(OmsNotReady):
                 _ = runtime.submission
 
@@ -708,6 +710,25 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
     assert steps == [("commands", "RuntimeError"), ("sink", "TimeoutError")]
     assert world.venue.ports[0].closed and world.log == ["sink.start", "pool.release"]
     assert not b01.ports_wired()  # the facade, first in line, closed too
+
+
+async def test_a_cancelled_stop_still_stops_the_lane(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-S3L1B-03: the stop is cancelled while the sink's drain hangs; the lane still stops."""
+    world, began = World(), asyncio.Event()
+
+    async def hangs(self: Sink) -> None:
+        began.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(Sink, "stop", hangs)
+    runtime = world.runtime()
+    await runtime.start()
+    stop = asyncio.ensure_future(runtime.stop())
+    await began.wait()
+    stop.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stop
+    assert world.lanes[0].stopped
 
 
 async def test_drained_returns_at_once_when_its_tasks_end_inside_the_bound() -> None:

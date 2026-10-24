@@ -70,7 +70,7 @@ async def test_a_stalled_serving_loop_leaves_the_gate_not_ready_and_the_sink_unr
     runs once this loop turns again."""
     calls, done, serving = Calls(), threading.Event(), _serving()
     spy: Any = Spy(calls)
-    gate, sink = ServedGate(spy, serving), ServedSink(spy, serving)
+    gate, sink = ServedGate(spy, serving, ServedStandings(spy, serving)), ServedSink(spy, serving)
 
     async def hops() -> list[str]:
         failed = []
@@ -100,7 +100,8 @@ async def test_a_rejected_credentials_notice_lands_before_a_later_gate_read_from
     lane makes after it."""
     calls, serving = Calls(), _serving()
     spy: Any = Spy(calls)
-    standings, gate = ServedStandings(spy, serving), ServedGate(spy, serving)
+    standings = ServedStandings(spy, serving)
+    gate = ServedGate(spy, serving, standings)
 
     async def rejected() -> OrderEntryRefusal | None:
         standings.credential_rejected(cr.ACCOUNT, Refusal.UNKNOWN_KEY)
@@ -110,6 +111,33 @@ async def test_a_rejected_credentials_notice_lands_before_a_later_gate_read_from
         assert await lane.call(rejected()) is None
     here = threading.current_thread()
     assert calls == [("credential_rejected", here), ("refusal", here)]
+
+
+async def test_a_rejected_credential_is_refused_on_the_lane_before_its_notice_lands() -> None:
+    """CR-S3L1B-04 (C-2.21): while this loop stalls, the lane's gate refuses at once an account it
+    told of a rejected credential, without this loop; once the notice lands, the lane's own refusal
+    ends and the key standing's answers."""
+    calls, done, serving = Calls(), threading.Event(), _serving()
+    spy: Any = Spy(calls)
+    standings = ServedStandings(spy, serving)
+    gate = ServedGate(spy, serving, standings)
+
+    async def rejected() -> OrderEntryRefusal | None:
+        try:
+            standings.credential_rejected(cr.ACCOUNT, Refusal.UNKNOWN_KEY)
+            return gate.refusal(cr.ACCOUNT)
+        finally:
+            done.set()
+
+    async with running() as lane:
+        answered = lane.call(rejected())
+        assert done.wait(BOUND_S)  # the stall: the notice cannot land meanwhile
+        refused = await answered
+        assert refused is not None and refused.reason == "no_active_key"
+        await lane.call(asyncio.sleep(0))  # this loop has turned: the notice has landed
+    assert not standings.refused(cr.ACCOUNT) and [name for name, _ in calls] == [
+        "credential_rejected"
+    ]
 
 
 async def test_the_port_awaits_each_venue_call_on_the_serving_loop_and_refuses_a_private_stream(

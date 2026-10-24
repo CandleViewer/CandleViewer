@@ -23,7 +23,9 @@ from candleviewer import oms_lane, oms_wiring
 from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.domain.events import Instrument
 from candleviewer.observability.metrics import Metrics
+from candleviewer.oms.commands import OmsCommandPort
 from candleviewer.oms.exits import AmendTerms, ExitCaller
+from candleviewer.oms.order_machine import OrderMachines
 from candleviewer.oms.ports import SubmitActor
 from candleviewer.oms_lane import LANE_JOIN_S, LaneStopped, OrderLane, Serving
 from candleviewer.settings import OMS_STOP_RESERVE_S, TEARDOWN_BUDGET_S, Settings
@@ -33,7 +35,7 @@ from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import ScopedOrder
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms import submit_rig as sr
-from tests.unit.oms.test_oms_runtime import SENDING, Port, World, crashed, started
+from tests.unit.oms.test_oms_runtime import SENDING, Port, Sink, World, crashed, started
 
 #: A bound on each test's waits for the lane's thread, never a time the test expects.
 BOUND_S = 10.0
@@ -380,16 +382,26 @@ def _noting(real: Any, threads: list[threading.Thread]) -> Any:
     return noted
 
 
+def _logged(real: Any, entry: str, log: list[str]) -> Any:
+    async def logged(self: Any) -> Any:
+        log.append(entry)
+        return await real(self)
+
+    return logged
+
+
 async def test_the_oms_runs_on_the_lane_and_its_stop_drains_cancels_closes_and_joins_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """20 Sec.6.2 on `OrderLane`: the sweep resumes a create left at the venue's door, whose venue
     call runs on the serving loop (ruling Q11's interim); the facade's machine refuses a send from
     this loop; the route's reads answer from the lane. The stop drains (its bound spent at once
-    here), cancels a submit still on the lane and waits for it there, closes each part, then stops
+    here), cancels a submit still on the lane and waits there for its unwinding, which ends only
+    once that wait has begun, before the machines and the commands close (CR-S3L1B-06), then stops
     the lane: its closers' deadline leaves `LANE_JOIN_S` of the reserve for the join."""
     drains, reserves, threads = list[float](), list[float](), list[threading.Thread]()
-    drained, closed = oms_wiring._drained, oms_wiring._closed
+    drained, closed, idle = oms_wiring._drained, oms_wiring._closed, OrderLane._idle
+    idling = asyncio.Event()  # the stop's wait on the lane has begun
 
     async def spent(tasks: set[asyncio.Task[Any]], timeout_s: float) -> set[asyncio.Task[Any]]:
         drains.append(timeout_s)
@@ -399,11 +411,27 @@ async def test_the_oms_runs_on_the_lane_and_its_stop_drains_cancels_closes_and_j
         reserves.append(deadline - asyncio.get_running_loop().time())
         await closed(closers, deadline)
 
+    async def waits(self: OrderLane) -> None:
+        idling.set()
+        await idle(self)
+
+    async def unwinds(began: threading.Event) -> None:
+        began.set()
+        try:
+            await asyncio.Event().wait()
+        finally:  # a slow unwind: it ends once the stop waits on the lane
+            await idling.wait()
+            world.log.append("unwound")
+
     monkeypatch.setattr(oms_wiring, "_drained", spent)
     monkeypatch.setattr(oms_wiring, "_closed", timed)
+    monkeypatch.setattr(OrderLane, "_idle", waits)
     monkeypatch.setattr(Port, "place_order", _noting(Port.place_order, threads))
     world = World()
     await crashed(world)
+    spied = {(OrderMachines, "stop"): "machines", (OmsCommandPort, "aclose"): "commands"}
+    for (owner, name), entry in spied.items():  # after the crash: its own facade stops unlogged
+        monkeypatch.setattr(owner, name, _logged(getattr(owner, name), entry, world.log))
     for flag in world.flags:
         flag.read()
     async with asyncio.timeout(BOUND_S), started(world.runtime(lane=OrderLane)) as runtime:
@@ -418,17 +446,18 @@ async def test_the_oms_runs_on_the_lane_and_its_stop_drains_cancels_closes_and_j
         with pytest.raises(LoopAffinityError):
             await parts.machines._gateway.send(str(SENDING.id), "KILL")
         assert await runtime.route.accounts.environment_of(cr.ACCOUNT) == "demo"
-        began, outcome = threading.Event(), list[str]()
+        began = threading.Event()
         answered = runtime.run(_awaited(parts.lane.call(asyncio.sleep(0, result="202"))))
-        hung = runtime.run(_awaited(parts.lane.call(_held(began, outcome, asyncio.Event()))))
+        hung = runtime.run(_awaited(parts.lane.call(unwinds(began))))
         assert await answered == "202"
         await _began(began)
-    assert drains == [Settings().oms_drain_s] and hung.cancelled() and outcome == ["cancelled"]
+    assert drains == [Settings().oms_drain_s] and hung.cancelled()
     reserve = OMS_STOP_RESERVE_S - LANE_JOIN_S
     assert reserve - 1 < reserves[-1] <= reserve  # the join's share is the reserve's last
     assert Settings().oms_drain_s + OMS_STOP_RESERVE_S <= TEARDOWN_BUDGET_S  # the 15 s grace
     assert not thread.is_alive() and loop.is_closed() and not b01.ports_wired()
-    assert world.log == ["sink.start", "sink.stop", "pool.release"] and world.venue.ports[0].closed
+    unwound = ["sink.start", "unwound", "machines", "commands", "sink.stop", "pool.release"]
+    assert world.log == unwound and world.venue.ports[0].closed
 
 
 async def test_an_amend_runs_on_the_lane_while_this_loop_is_blocked_and_reads_its_profile_here(
@@ -481,3 +510,29 @@ async def test_an_amend_runs_on_the_lane_while_this_loop_is_blocked_and_reads_it
     here = threading.current_thread()
     assert (got.kind, got.status, got.lifecycle_state) == ("accepted", 202, "submitted")
     assert reads == [("instrument", on_lane), ("profile", here)] and sent == [here]
+
+
+async def test_a_cancelled_start_lets_the_compose_close_on_the_lane_before_the_lane_stops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-S3L1B-03: the start is cancelled while the sink starts on the lane; the compose closes the
+    port and the pool and unwires B1's ports there, and only then is the lane stopped."""
+    world, began, stop = World(), threading.Event(), OrderLane.stop
+
+    async def hangs(self: Sink) -> None:
+        began.set()
+        await asyncio.Event().wait()
+
+    async def stops(self: OrderLane) -> None:
+        world.log.append("lane.stop")
+        await stop(self)
+
+    monkeypatch.setattr(Sink, "start", hangs)
+    monkeypatch.setattr(OrderLane, "stop", stops)
+    start = asyncio.ensure_future(world.runtime(lane=OrderLane).start())
+    await _began(began)
+    start.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await start
+    assert world.log == ["pool.release", "lane.stop"] and world.venue.ports[0].closed
+    assert not b01.ports_wired()
