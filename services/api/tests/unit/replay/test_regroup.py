@@ -249,6 +249,7 @@ async def test_regroup_one_clock_step_delivers_one_whole_update() -> None:
         start_us=T0,
         end_us=T0 + SECOND,
         speed=0,
+        budget_lane=None,
     )
     async with clock:
         assert await clock.step_event() == "step"

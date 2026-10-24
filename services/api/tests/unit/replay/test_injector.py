@@ -361,6 +361,7 @@ async def test_an_off_grid_price_stops_the_clock_with_error_after_the_events_bef
         start_us=T0,
         end_us=T0 + SECOND,
         speed=UNBOUNDED,
+        budget_lane=None,
     )
     async with clock:
         assert await clock.play() == "error"

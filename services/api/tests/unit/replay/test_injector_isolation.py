@@ -118,6 +118,7 @@ async def replay(bus: Bus, session: uuid.UUID = SESSION) -> ReplayInjector:
         start_us=T0,
         end_us=T0 + 60 * SECOND,
         speed=UNBOUNDED,
+        budget_lane=None,
     )
     async with clock:
         assert await clock.play() == "range_end"

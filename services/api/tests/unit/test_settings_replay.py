@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from candleviewer.replay.budget import MAX_BURST_S, MAX_SHARE, MIN_BURST_S, SHARE_ABOVE
+from candleviewer.replay.budget import MAX_BURST_S, MAX_SHARE, MIN_BURST_S, MIN_SHARE
 from candleviewer.settings import Settings
 
 
@@ -28,7 +28,8 @@ def test_replay_settings_default_to_the_ticket_values() -> None:
         ("replay_reclaim_interval_s", 0.5), ("replay_reclaim_interval_s", 3_601),
         ("replay_max_sessions_per_user", 0), ("replay_max_sessions_per_user", 17),
         ("replay_max_window_hours", 0), ("replay_max_window_hours", 24 * 31 + 1),
-        ("replay_loop_share", 0.0), ("replay_loop_share", 0.5000001),
+        ("replay_loop_share", 0.0), ("replay_loop_share", 0.0099),
+        ("replay_loop_share", 0.5000001),
         ("replay_loop_burst_ms", 4), ("replay_loop_burst_ms", 251),
         ("replay_max_lifetime_s", 3_599), ("replay_max_lifetime_s", 604_801),
     ],
@@ -42,10 +43,10 @@ def test_the_replay_loop_budget_settings_take_their_bounds_from_the_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """C-4.14: the budget has no off value; its bounds themselves are accepted."""
-    monkeypatch.setenv("CV_REPLAY_LOOP_SHARE", "1e-9")
+    monkeypatch.setenv("CV_REPLAY_LOOP_SHARE", "0.01")
     monkeypatch.setenv("CV_REPLAY_LOOP_BURST_MS", "250")
     s = _settings()
-    assert (s.replay_loop_share, s.replay_loop_burst_ms) == (1e-9, 250)
+    assert (s.replay_loop_share, s.replay_loop_burst_ms) == (0.01, 250)
     assert _settings(replay_loop_share=0.5, replay_loop_burst_ms=5).replay_loop_share == 0.5
 
 
@@ -56,9 +57,8 @@ def _bound(name: str, kind: str) -> float:
 
 
 def test_the_replay_loop_settings_bounds_are_the_budgets_own() -> None:
-    """M1 may not import `replay`, so settings repeats the budget's bounds: they never drift. The
-    share's lower bound is exclusive (`gt`) on both sides."""
-    share = ("replay_loop_share", "gt"), ("replay_loop_share", "le")
-    assert tuple(_bound(n, k) for n, k in share) == (SHARE_ABOVE, MAX_SHARE)
+    """M1 may not import `replay`, so settings repeats the budget's bounds: they never drift."""
+    share = ("replay_loop_share", "ge"), ("replay_loop_share", "le")
+    assert tuple(_bound(n, k) for n, k in share) == (MIN_SHARE, MAX_SHARE)
     burst = ("replay_loop_burst_ms", "ge"), ("replay_loop_burst_ms", "le")
     assert tuple(_bound(n, k) / 1000 for n, k in burst) == (MIN_BURST_S, MAX_BURST_S)
