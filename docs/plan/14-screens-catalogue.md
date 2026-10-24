@@ -1545,6 +1545,7 @@ Drag preview                Drop zones
 - **Performance:** Slice scheduling is backend-side so the algo survives a UI reload; the panel renders progress from `orders` at <=2 Hz.
 - **Analytics/audit:** **Audited:** `algo.twap_created` `{symbol, side, totalQty, duration, sliceCount, randomisation, accountIds}`, `algo.twap_paused`, `algo.twap_resumed`, `algo.twap_cancelled`, `algo.twap_completed`, `algo.twap_slice_failed`. Analytics: `algo.twap_previewed`.
 - **Design sign-off acceptance checklist:** [ ] total qty, duration, slice count/interval, randomisation, limit-vs-market slices and price-band guard drawn [ ] schedule preview table [ ] running / paused / degraded / completed / failed states [ ] 'algo pauses if the backend disconnects; native stops still protect' message drawn [ ] cancel and cancel-and-flatten paths with confirmation
+- **Design (wireframe → hi-fi):** [E33-D02.md](../design/E33/E33-D02.md) §2–§3 (E33-D02; owner approval pending; the shared builder shell with the emulation paragraph and the native-stop line in every state, the TWAP fields mapped to `AlgoSpec` / `24` §10.4 with the gaps recorded, the schedule preview as ranges, every catalogue state as a named frame, the disconnect copy per E33-D01; Penpot page by name + id in the spec).
 
 ### SCR-067 — Iceberg (emulated) builder
 
@@ -1556,6 +1557,7 @@ Drag preview                Drop zones
 - **Performance:** Refresh logic runs backend-side; each visible-slice replacement counts against the per-account rate budget and the builder shows the projected requests/min before submit.
 - **Analytics/audit:** **Audited:** `algo.iceberg_created` `{symbol, side, totalQty, visibleQty, refreshPolicy, accountIds}`, `algo.iceberg_paused|resumed|cancelled|completed|failed`, `algo.iceberg_slice_replaced` (rate-relevant, sampled). Analytics: `algo.iceberg_previewed`.
 - **Design sign-off acceptance checklist:** [ ] 'emulated client-side - Bybit has no native iceberg' stated prominently [ ] total/visible/refresh/peg controls drawn [ ] projected request rate shown [ ] running state with slices done/remaining [ ] residual-risk note if the backend stops mid-algo [ ] validation messages drawn
+- **Design (wireframe → hi-fi):** [E33-D02.md](../design/E33/E33-D02.md) §2, §4 (E33-D02; owner approval pending; the visible-size floor and the 450-order cap, the projected request rate, the rejected-slice choices, every state as a frame; the validation message verbatim).
 
 ### SCR-068 — Chase-limit builder
 
@@ -1568,6 +1570,7 @@ Drag preview                Drop zones
 - **Performance:** Re-pegging is backend-side against the book stream; the builder shows an estimated requests/min figure and refuses configurations projected to exceed the account's budget with an explicit message.
 - **Analytics/audit:** **Audited:** `algo.chase_created` `{symbol, side, qty, peg, offsetTicks, maxDistance, maxRepricings, fallback, accountIds}`, `algo.chase_repriced` (sampled/aggregated), `algo.chase_limit_reached`, `algo.chase_fell_back_to_market`, `algo.chase_cancelled|completed|failed`.
 - **Design sign-off acceptance checklist:** [ ] peg source, offset, re-peg threshold, max distance, max repricings, fall-back-to-market and timeout drawn [ ] rate-limit estimate [ ] running / limit-reached / fell-back / cancelled states [ ] fall-back-to-market is opt-in and its slippage risk stated [ ] validation messages drawn
+- **Design (wireframe → hi-fi):** [E33-D02.md](../design/E33/E33-D02.md) §2, §5 (E33-D02; owner approval pending; the peg radio on `24`'s three modes, max distance required with its price, never market at the cap, the rate line and the budget refusal with the nearest acceptable configuration, every state as a frame).
 
 ### SCR-069 — Emulated OCO / bracket builder
 
