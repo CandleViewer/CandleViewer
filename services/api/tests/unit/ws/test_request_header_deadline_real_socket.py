@@ -44,8 +44,8 @@ SOCKETS = 300
 #: An answer far larger than the kernel's buffers hold for a peer that reads none of it.
 LARGE = 16 * 1024 * 1024
 _BOUND_S = 30.0
-#: How long a test lets the server close the sockets it opened before it calls REST: well past
-#: the deadline. With no deadline, nothing closes them and REST answers 503.
+#: How long a test waits for a close it expects soon. The upgrades test's window is its claim
+#: (refused at once), so it must stay below `SERVER_READ_HEADER_TIMEOUT_S`.
 _CLOSE_WAIT_S = 5.0
 OK = b"HTTP/1.1 200 OK"
 UNAUTHORIZED = b"HTTP/1.1 401 Unauthorized"
@@ -177,16 +177,18 @@ async def test_300_incomplete_requests_are_closed_at_the_deadline_and_rest_answe
 ) -> None:
     """More sockets than `limit_concurrency` admits, none of them done with its headers: they send
     part of a request, or nothing at all (the deadline then runs from the connection's opening).
-    The deadline closes each, unanswered, and a REST call then succeeds (503 without it)."""
+    The deadline closes each, unanswered, and a REST call then succeeds. The test waits for every
+    close before it calls REST, so a slow runner's late closes never meet REST (#4429); with no
+    deadline nothing closes them, and the bound fails the test."""
     assert SOCKETS > SERVER_LIMIT_CONCURRENCY
     async with (
         asyncio.timeout(_BOUND_S),
         _serve() as (port, _),
         _sent(port, [request_bytes] * SOCKETS) as reads,
     ):
-        await asyncio.wait({reads}, timeout=_CLOSE_WAIT_S)
+        closed = await reads  # each close ran the server's `connection_lost`: no slot is held
         assert await _rest(port) == OK
-        assert reads.result() == [b""] * SOCKETS
+        assert closed == [b""] * SOCKETS
 
 
 async def test_300_upgrades_past_the_websocket_request_limits_are_refused_at_once(
