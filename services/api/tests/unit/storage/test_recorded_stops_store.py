@@ -33,6 +33,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     SWEEP_REASON,
     UNSENT_ENTRY,
     WAITING_ENTRY,
+    FillPosition,
     NewRecordedStop,
     RecordedStopRow,
     StaleRecordedStop,
@@ -691,6 +692,9 @@ def test_the_complete_reads_statements_lock_in_id_order_and_keep_answered_at_onc
     gone = mod.resolve_statement(_ACCOUNT, rows, "replaced", _T)
     assert _sets(gone) == f"status=$1::VARCHAR, {_STAMP}, closed_at=$3::TIMESTAMP WITH TIME ZONE"
     assert _sql(void).count("recorded_stops.answered_at IS NOT DISTINCT FROM ") == 2
+    # a row is compared as read on its key too, as the fake compares it
+    assert _sql(void).count("recorded_stops.symbol = $") == 2
+    assert _sql(void).count("recorded_stops.position_idx = $") == 2
     keys = _sql(mod.waiting_keys_statement(_ACCOUNT, now=_T, bound_s=5.0))
     assert "recorded_stops.answered_at IS NULL AND recorded_stops.created_at <= $" in keys
     assert keys.endswith("ORDER BY min(recorded_stops.created_at), recorded_stops.symbol, "
@@ -755,24 +759,26 @@ async def test_a_put_in_force_that_loses_its_race_or_its_audit_writes_nothing(sc
 async def test_a_resolve_locks_then_sets_every_row_or_none_audited_before_its_commit() -> None:
     voided = {"status": "void", "closed_at": _T}
     rel = _Rel([], [_row(_TP, kind="take_profit", **voided), _row(_SL, **voided)])
-    seen: list[tuple[list[uuid.UUID], int]] = []
+    seen: list[tuple[list[uuid.UUID], FillPosition | None, int]] = []
 
-    async def audit(rows: tuple[RecordedStopRow, ...]) -> None:
-        seen.append(([row.id for row in rows], rel.commits))
+    async def audit(rows: tuple[RecordedStopRow, ...], state: FillPosition | None) -> None:
+        seen.append(([row.id for row in rows], state, rel.commits))
 
     rows = _rows(_row(_SL), _row(_TP, kind="take_profit"))
     done = await _store(rel).resolve(_ACCOUNT, rows, "entry_filled_stop_absent", at=_T,
                                      position_state="open", write_ahead=audit)  # fmt: skip
-    assert [r.id for r in done] == [_SL, _TP] and seen == [([_SL, _TP], 0)]
+    assert [r.id for r in done] == [_SL, _TP] and seen == [([_SL, _TP], "open", 0)]
     assert rel.commits == 1
     assert "FOR UPDATE" in _sql(rel.statements[0])
     stale = _Rel([], [_row(_SL)])
     with pytest.raises(StaleRecordedStop):
         await _store(stale).resolve(_ACCOUNT, rows, "answered", at=_T)
-    for ids, at, state, reason in (([_SL, _SL], _T, None, "names each row"),
-                                   ([], _T, None, "names each row"),
-                                   ([_SL], _T.replace(tzinfo=None), None, "timezone-aware"),
-                                   ([_SL], _T, "flat", "position_state")):  # fmt: skip
+    refused: tuple[tuple[list[uuid.UUID], datetime, FillPosition | None, str], ...] = (
+        ([_SL, _SL], _T, None, "names each row"), ([], _T, None, "names each row"),
+        ([_SL], _T.replace(tzinfo=None), None, "timezone-aware"),
+        ([_SL], _T, "flat", "position_state"),
+    )  # fmt: skip
+    for ids, at, state, reason in refused:
         with pytest.raises(ValueError, match=reason):
             await _store(stale).resolve(_ACCOUNT, _rows(*map(_row, ids)), "answered", at=at,
                                         position_state=state)  # fmt: skip

@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import timedelta
-from typing import Any, Final
+from typing import Any, Final, Literal
 from uuid import UUID, uuid4
 
 import pytest
@@ -15,7 +16,12 @@ import pytest
 from candleviewer.oms.errors import AuditNotDurable
 from candleviewer.oms.repository import RecordedStopRepository
 from candleviewer.storage.errors import StorageTierUnavailable
-from candleviewer.storage.repositories.recorded_stops import RecordedStopRow, StaleRecordedStop
+from candleviewer.storage.repositories.recorded_stops import (
+    FillPosition,
+    RecordedStopRow,
+    ResolveWriteAhead,
+    StaleRecordedStop,
+)
 from tests.unit.oms import submission_contract as sc
 from tests.unit.oms.submission_contract import T0, Harness
 
@@ -26,8 +32,24 @@ FAILING: Final[dict[str, tuple[Callable[[object], Awaitable[None]], type[Excepti
     "unreachable": (sc.unreachable, StorageTierUnavailable),
 }
 ABSENT: Final = "entry_filled_stop_absent"
+_Rows = tuple[RecordedStopRow, ...]
+#: What a resolve's hook saw: the rows it was given, the rows as stored then, its position_state.
+_Seen = tuple[_Rows, _Rows, FillPosition | None]
+Outcome = Literal["answered", "replaced", "in_flight_resolved", "entry_filled_stop_absent"]
 ANSWERED: Final = (sc.SEND, sc.ACK)
 HELD: Final = (*ANSWERED, sc.to("submitted", "held"))  # the complete read resolves its rows
+
+
+def resolving(hook: Callable[[object], Awaitable[None]]) -> ResolveWriteAhead:
+    """`hook` as a resolve's write-ahead, which is also given the void's `position_state`."""
+
+    async def write(rows: tuple[RecordedStopRow, ...], state: FillPosition | None) -> None:
+        await hook(rows)
+
+    return write
+
+
+AUDITED: Final = resolving(sc.audited)
 
 
 def repo(h: Harness, seconds: float | None = None) -> RecordedStopRepository:
@@ -102,7 +124,7 @@ class RecordedStopContract:
         for writer in (account, uuid4()):
             with pytest.raises(StaleRecordedStop):
                 await repo(h).resolve(writer, rows, "in_flight_resolved", at=LATER,
-                                      write_ahead=sc.audited)  # fmt: skip
+                                      write_ahead=AUDITED)  # fmt: skip
         assert await now_of(h, rows) == before
         await repo(h).put_in_force(account, before[1:], at=LATER)
         with pytest.raises(StaleRecordedStop):
@@ -122,25 +144,27 @@ class RecordedStopContract:
             await repo(h, 0.05).put_in_force(account, rows, at=LATER, write_ahead=audit)
         with pytest.raises(raised):
             await repo(h, 0.05).resolve(account, rows, "in_flight_resolved", at=LATER,
-                                        write_ahead=audit)  # fmt: skip
+                                        write_ahead=resolving(audit))  # fmt: skip
         assert await now_of(h, (*prior, *rows)) == before
 
     @pytest.mark.parametrize("outcome", ["answered", "replaced", "in_flight_resolved", ABSENT])
     @pytest.mark.parametrize("answered", [False, True])
     async def test_a_resolve_answers_replaces_or_voids_whatever_answered_at(
-        self, h: Harness, outcome: Any, answered: bool
+        self, h: Harness, outcome: Outcome, answered: bool
     ) -> None:
         """Audited before the commit, when hooked (inside the hook every reader still sees the rows
         as they were; a void needs it); `position_state` is the `entry_filled_stop_absent` void's
-        alone (CR-S3H0-08); an answer, and a replace, stamp only a NULL `answered_at`."""
+        alone (CR-S3H0-08), and its hook is given it; an answer, and a replace, stamp only a NULL
+        `answered_at`."""
         account, profile = h.new_account()
         rows = await request(h, account, profile, answered=answered)
-        seen: list[tuple[tuple[RecordedStopRow, ...], tuple[RecordedStopRow, ...]]] = []
+        seen: list[_Seen] = []
 
-        async def audit(done: tuple[RecordedStopRow, ...]) -> None:
-            seen.append((done, await now_of(h, rows)))
+        async def audit(done: tuple[RecordedStopRow, ...], given: FillPosition | None) -> None:
+            seen.append((done, await now_of(h, rows), given))
 
-        state, wrong = ("flat", None) if outcome == ABSENT else (None, "open")
+        state: FillPosition | None = "flat" if outcome == ABSENT else None
+        wrong: FillPosition | None = None if outcome == ABSENT else "open"
         for writer in (repo(h), h.stops):  # refused before anything, by the facade and the store
             with pytest.raises(ValueError, match="position_state"):
                 await writer.resolve(account, rows, outcome, at=AT, position_state=wrong,
@@ -150,10 +174,27 @@ class RecordedStopContract:
                     await writer.resolve(account, rows, outcome, at=AT, position_state=state)
         done = await repo(h).resolve(account, rows, outcome, at=AT, position_state=state,
                                      write_ahead=audit)  # fmt: skip
-        assert seen == [(done, rows)] and await now_of(h, rows) == done
+        assert seen == [(done, rows, state)] and await now_of(h, rows) == done
         stamp = T0 if answered else (None if outcome in ("in_flight_resolved", ABSENT) else AT)
         status = {"answered": "pending", "replaced": "replaced"}.get(outcome, "void")
         assert shape(done) == [(status, stamp, None, None if status == "pending" else AT)] * 2
+
+    async def test_a_row_read_on_another_key_is_stale_and_writes_nothing(self, h: Harness) -> None:
+        """The compare-and-set holds each row on its key as read too (symbol and index), so a
+        caller's row of another key never moves a stored one, nor picks the key to replace."""
+        account, profile = h.new_account()
+        rows = await request(h, account, profile)
+        before = await now_of(h, rows)
+        for moved in ({"symbol": "ETHUSDT"}, {"position_idx": 1}):
+            other = tuple(replace(r, **moved) for r in rows)
+            with pytest.raises(StaleRecordedStop):
+                await repo(h).put_in_force(account, other[:1], at=AT)
+            with pytest.raises(StaleRecordedStop):
+                await repo(h).resolve(account, other, "in_flight_resolved", at=AT,
+                                      write_ahead=AUDITED)  # fmt: skip
+            with pytest.raises(StaleRecordedStop):
+                await repo(h).resolve(account, other, "answered", at=AT)
+        assert await now_of(h, rows) == before
 
     async def test_the_waiting_keys_are_the_keys_waiting_for_key_lists(self, h: Harness) -> None:
         """Oldest row's key first; never a row inside its bound, an answered one, or another
@@ -189,8 +230,8 @@ class RecordedStopContract:
             if end == "in_force":
                 await repo(h).put_in_force(account, [side], at=AT)
             elif end == ABSENT:
-                await repo(h).resolve(account, [side], end, at=AT, position_state="open",
-                                      write_ahead=sc.audited)  # fmt: skip
+                await repo(h).resolve(account, [side], ABSENT, at=AT, position_state="open",
+                                      write_ahead=AUDITED)  # fmt: skip
         statuses = [{ABSENT: "void"}.get(end, end) for end in ends]
         assert [r.status for r in await now_of(h, held)] == statuses
         assert await repo(h).waiting_keys(account, now=sc.LATE, bound_s=5.0) == ()
