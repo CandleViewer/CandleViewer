@@ -105,6 +105,11 @@ def test_pair_named_row_held_final_or_bound_is_passed_over() -> None:
         assert pg.pair(_fill(orderLinkId=link()), pg.Reads(None, named)) == pg.NeedOrder(XID)
 
 
+def test_pair_named_row_bound_to_the_push_since_step_1_takes_it() -> None:
+    """Derived: its bind landed between the two reads, so it is the push's row (rule 7)."""
+    assert pg.pair(_fill(orderLinkId=link()), pg.Reads(None, _row())) == pg.ToRow(_row())
+
+
 def test_pair_failed_or_cut_short_read_decides_nothing() -> None:
     """Derived: the bound's timeout reads as a failure, at whichever step it cut in."""
     for reads in (pg.Reads(bound=F), pg.Reads(None, F), _none(order=F), _none(order=READ, stops=F)):

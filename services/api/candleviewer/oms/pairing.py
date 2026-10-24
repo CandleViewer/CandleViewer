@@ -141,8 +141,12 @@ def pair(push: Order | Execution, reads: Reads) -> Pairing:
         return ToRow(_own(push, reads.bound, step=1))
     if isinstance(reads.named, NoAnswer):
         return _ask(reads.named, NeedNamed(push.order_link_id))
-    if reads.named is not None and takes_waiting(_own(push, reads.named, step=2)):
-        return WaitOnRow(reads.named)
+    if reads.named is not None:
+        named = _own(push, reads.named, step=2)
+        if named.exchange_order_id == xid:  # bound to this very order since step 1 read none
+            return ToRow(named)
+        if takes_waiting(named):
+            return WaitOnRow(named)
     if isinstance(push, Order):
         order = push
     elif isinstance(reads.order, NoAnswer):
