@@ -1,15 +1,20 @@
-"""#3789: the governance unit tests run in two shards; the `governance` job judges them together.
+"""#3789: the governance unit tests run in shards; the `governance` job judges them together.
 
 One job ran every governance check plus the whole unit-test suite, and the tests alone took
 55-69 s of its 90 s budget (E01-Q02), so the budget step failed on 8 of the last 23 PR attempts
 before the fix with every test green. `governance.yml` now runs three jobs in parallel:
-`governance-checks` (the GOV checks, the canary and the reports), two `governance-tests` shards
+`governance-checks` (the GOV checks, the canary and the reports), the `governance-tests` shards
 that write raw coverage data, and `governance`, which combines that data, applies the 85% gate
 on `scripts/**` and fails unless every other job passed. `tools/ci/governance_shards.py` splits
 the test files by measured duration; #4365 raised the count to four after two files the table
-did not know (49 s and 33 s of the 174 s sequential total) pushed shards past the budget. These tests pin the split and the shape; nothing the old job
-checked is dropped: the shards list exactly the files `pytest scripts/tests scripts/gh/tests`
-collects.
+did not know (49 s and 33 s of the 174 s sequential total) pushed shards past the budget.
+
+These tests pin the split and the shape; nothing the old job checked is dropped: the shards list
+exactly the files `pytest scripts/tests scripts/gh/tests` collects. Two rules to keep in mind:
+(a) a file that is not in the weight table falls to the lightest shard and is never dropped;
+`test_the_shards_partition_every_test_file` asserts every governance test file maps to exactly
+one shard. (b) The pytest wall time each shard prints in its job summary is the signal to
+re-measure the weight table.
 """
 
 from __future__ import annotations
@@ -97,8 +102,8 @@ def test_the_shards_list_exactly_the_files_pytest_collects(tmp_path: Path) -> No
         "scripts/" + line.split("::")[0] for line in run.stdout.splitlines() if "::" in line
     }
     assert collected == set(gs.suite_files(tmp_path)) == set(wanted)
-    parts = gs.shards(gs.suite_files(tmp_path), 2)
-    assert sorted(parts[0] + parts[1]) == sorted(wanted)
+    parts = gs.shards(gs.suite_files(tmp_path), _matrix()["total"][0])
+    assert sorted(name for part in parts for name in part) == sorted(wanted)
 
 
 def test_the_split_is_balanced_by_the_measured_weights() -> None:
@@ -159,7 +164,7 @@ def test_governance_runs_the_checks_four_test_shards_and_an_aggregate() -> None:
     assert aggregate["needs"] == ["governance-checks", "governance-tests"]
     assert aggregate["if"] == "${{ !cancelled() }}"
     combined = _runs(aggregate)
-    assert "python -m coverage combine coverage-shard-*" in combined
+    assert "python -m coverage combine" in combined
     assert "python -m coverage report -m --fail-under=85" in combined
     assert '[ "$CHECKS" = success ] && [ "$TESTS" = success ]' in combined
 
@@ -196,3 +201,18 @@ def test_the_shard_job_summary_names_the_shard_and_the_pytest_wall_time() -> Non
     assert last["env"]["PYTEST_MS"] == "${{ steps.pytest.outputs.pytest_ms }}"
     assert "| pytest wall time (ms) |" in last["run"] and "shard ${SHARD}/${TOTAL}" in last["run"]
     assert 'if [ "$duration_ms" -gt "$BUDGET_MS" ]' in last["run"]  # the assertion is unchanged
+
+
+def test_the_aggregate_combines_exactly_one_coverage_file_per_shard() -> None:
+    combine = next(
+        step
+        for step in _workflow()["jobs"]["governance"]["steps"]
+        if step.get("name", "").startswith("Combined coverage")
+    )
+    total = _matrix()["total"][0]
+    assert len(_matrix()["shard"]) == total
+    assert f'[ "${{#files[@]}}" -eq {total} ]' in combine["run"]
+    assert 'files=("$COV_DIR"/coverage-shard-*)' in combine["run"]
+    assert 'coverage combine "${files[@]}"' in combine["run"]
+    assert "coverage report -m --fail-under=85" in combine["run"]
+    assert combine["env"]["COV_DIR"] == "${{ runner.temp }}/gov-coverage"
