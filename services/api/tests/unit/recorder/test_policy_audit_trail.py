@@ -108,6 +108,11 @@ async def test_a_join_writes_the_same_row_checks_and_memory_as_an_add_without_th
     entries = policy.effective_set()
     assert entries["ETHUSDT"].model_copy(update={"symbol": "BTCUSDT"}) == entries["BTCUSDT"]
     audit.records.clear()
+    for symbol in ("BTCUSDT", "ETHUSDT"):  # the adder in memory, which the set does not show
+        await policy.remove_manual(symbol, MANAGER)
+    stops = [(kw["object_id"], kw["after_state"]["trigger_ref"]) for _, kw in audit.records]
+    assert stops == [("BTCUSDT", "manual:mgr-2"), ("ETHUSDT", "manual:mgr-2")]
+    audit.records.clear()
     with pytest.raises(RecorderInvalidUpdateError):  # the settings are checked all the same
         await policy.add_manual("SOLUSDT", MANAGER, depth=7, held_hidden=True)
     assert audit.records == [] and store.active("SOLUSDT") is None

@@ -470,6 +470,18 @@ async def test_a_stop_clears_the_grace_deadline_so_a_pinned_entry_is_not_due_aga
     assert not policy._due("BTCUSDT", policy._syms["BTCUSDT"])  # a spent deadline stayed due
 
 
+async def test_a_stop_whose_row_removal_fails_stays_due_so_a_later_tick_retries_it(
+    policy: RecordingPolicy, store: Mem, clock: FakeClock
+) -> None:
+    await _lingering(policy)
+    store.fail.add("soft_remove")
+    await _expire(policy, clock)  # the stop's row removal fails
+    assert policy._due("BTCUSDT", policy._syms["BTCUSDT"])  # the deadline is cleared only after
+    store.fail.discard("soft_remove")
+    await policy.tick()
+    assert store.active("BTCUSDT") is None  # the retry removed the row
+
+
 async def _stop_races(
     policy: RecordingPolicy, store: Mem, clock: FakeClock, racer: Coroutine[object, object, None]
 ) -> object:

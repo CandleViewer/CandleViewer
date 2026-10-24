@@ -748,7 +748,7 @@ class RecordingPolicy:
     def linger_until(self, symbol: str) -> datetime | None:
         s = self._syms.get(symbol)
         if s is None or s.linger_deadline is None or self.leaf(symbol) != "lingering":
-            return None  # defensive: `_prune` clears the deadline at the stop
+            return None  # a failed stop leaves the leaf `error` with its deadline still set
         return datetime.fromtimestamp(s.linger_deadline, UTC)  # `_now` reads wall-clock seconds
 
     def start_refusal(self, symbol: str) -> RefusalCause | None:

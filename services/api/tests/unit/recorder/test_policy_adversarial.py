@@ -274,6 +274,7 @@ async def test_retry_after_failed_stop_completes_stop(
     clock.advance(1_800)
     await policy.tick()
     assert policy.leaf("XRPUSDT") == "error"
+    assert policy.linger_until("XRPUSDT") is None  # its deadline is still set: the leaf answers
     clock.advance(1)
     await policy.tick()
     assert policy.leaf("XRPUSDT") is None and policy.effective_set() == {}
