@@ -28,6 +28,7 @@ test_no_orphaned_test_dirs.py pins that a workflow runs the rest.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -161,6 +162,37 @@ def test_the_split_is_balanced_by_the_measured_weights() -> None:
     assert max(loads) - min(loads) <= max(gs.WEIGHTS.values())
     # And no shard carries more than 20% over an even split (the one heavy file sits alone).
     assert max(loads) <= sum(loads) / count * 1.2
+
+
+TOOL_GATED = re.compile(r"""which\(\s*["'](?:semgrep|gitleaks)["']\s*\)""")
+# Measured with both tools off PATH (CI's governance-tests job installs neither): the slowest
+# tool-gated file, test_pr_gate.py, takes ~5 s there; with the tools on PATH it took 33 s and
+# test_e12_security_gates.py 49 s. 10 s sits between the two readings, so a table measured on
+# a host that has semgrep or gitleaks fails here instead of skewing the shards.
+TOOL_GATED_MAX_WEIGHT = 10.0
+
+
+def test_the_table_is_measured_the_way_ci_runs_it_without_semgrep_or_gitleaks() -> None:
+    # Files that skip tests when semgrep / gitleaks are missing run only a few seconds in CI.
+    gated = [
+        name
+        for name in gs.suite_files()
+        if TOOL_GATED.search((REPO_ROOT / name).read_text(encoding="utf-8"))
+    ]
+    assert "scripts/tests/test_e12_security_gates.py" in gated
+    assert "scripts/tests/test_pr_gate.py" in gated
+    for name in gated:
+        weight = gs.WEIGHTS.get(name, gs.DEFAULT_WEIGHT)
+        assert weight < TOOL_GATED_MAX_WEIGHT, (
+            f"{name} weighs {weight} s: re-measure with semgrep and gitleaks off PATH"
+        )
+    doc = " ".join((gs.__doc__ or "").split())
+    assert "semgrep and gitleaks off PATH" in doc
+    # The premise itself: the job installs neither tool, so the table stays true on CI.
+    job = _workflow()["jobs"]["governance-tests"]
+    requirements = (REPO_ROOT / "scripts/requirements-ci.txt").read_text(encoding="utf-8")
+    for tool in ("semgrep", "gitleaks"):
+        assert tool not in _runs(job) and tool not in requirements.lower()
 
 
 def test_every_weighted_file_exists() -> None:
