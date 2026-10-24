@@ -2,7 +2,8 @@
 fault at the commit, a write that waits while another holds its rows over its hook, the sweep
 over every account, the hooks' default bounds, which the adapters share, and every CHECK the
 schema declares on the four tables, met by name or left to the row's own refusals. The pairing
-reads' contract (`store_reads_contract.py`, E29-T05) runs here too."""
+reads' contract (`store_reads_contract.py`) and the stop end's (`stop_end_contract.py`), both
+E29-T05, run here too."""
 
 from __future__ import annotations
 
@@ -43,6 +44,7 @@ from candleviewer.storage.repositories.submissions import (
 )
 from candleviewer.storage.repositories.submissions_sqlalchemy import SqlAlchemySubmissionStore
 from tests.unit.oms.recorded_stop_contract import RecordedStopContract, StopGateContract
+from tests.unit.oms.stop_end_contract import StopEndContract
 from tests.unit.oms.store_reads_contract import StoreReadsContract
 from tests.unit.oms.submission_contract import (
     EVENT,
@@ -109,7 +111,7 @@ def tick(fake: Fake) -> None:
     fake._clock = lambda: now
 
 
-class TestInMemorySubmissionStores(SubmissionContract, StoreReadsContract):
+class TestInMemorySubmissionStores(SubmissionContract, StoreReadsContract, StopEndContract):
     @pytest.fixture
     def fake(self) -> Fake:
         return Fake(clock=lambda: T0)

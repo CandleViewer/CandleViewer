@@ -6,8 +6,9 @@ and on the in-memory stores in `test_submission_fake.py`, so the fakes the OMS's
 take only what Postgres takes, by the names Postgres gives (C-13.3). The races, the rollbacks and
 the share-locked re-check are real here; `test_order_submission_pg.py` keeps the cases only a
 database can stage (lock waits, the sweep over every account). The pairing reads' contract
-(`store_reads_contract.py`, E29-T05) runs here too, beside it, with the exit routes' scoped reads
-(E29-T04 slice 4) over real grants, owner roles and accounts of two environments.
+(`store_reads_contract.py`) and the stop end's (`stop_end_contract.py`), both E29-T05, run here too,
+beside it, with the exit routes' scoped reads (E29-T04 slice 4) over real grants, owner roles and
+accounts of two environments.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 )
 from candleviewer.storage.repositories.submissions import FirstPersist, SubmissionRefusal
 from candleviewer.storage.repositories.submissions_sqlalchemy import SqlAlchemySubmissionStore
+from tests.unit.oms.stop_end_contract import StopEndContract
 from tests.unit.oms.store_reads_contract import StoreReadsContract
 from tests.unit.oms.submission_contract import Bounded, Harness, SubmissionContract
 
@@ -213,5 +215,6 @@ async def h(pg_dsn: str) -> AsyncIterator[Harness]:
         await rel.dispose()
 
 
-class TestSubmissionContractOnPostgres(SubmissionContract, StoreReadsContract):
-    """E29-T04's submission contract on real row locks and real rollbacks, and E29-T05's reads."""
+class TestSubmissionContractOnPostgres(SubmissionContract, StoreReadsContract, StopEndContract):
+    """E29-T04's submission contract on real row locks and real rollbacks, and E29-T05's reads
+    and stop ends."""

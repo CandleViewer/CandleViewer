@@ -7,8 +7,8 @@ proves: an entry's group, leg, order, recorded stops and anchor in one transacti
 (a refused order, a refusing hook, a profile past the leg's version); the anchor's lookup under its
 principal, its fingerprint compared in SQL and its outcome written once; the recorded stops'
 settle; and the races, gated on `pg_stat_activity` lock waits and never on a fixed sleep: two first
-persists of one key (an entry's and a reduce-only order's) and two stop requests on one position.
-The DDL itself is test_order_submission_migration.py's.
+persists of one key (an entry's and a reduce-only order's), two stop requests on one position and
+an end racing a put in force. The DDL itself is test_order_submission_migration.py's.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import shutil
 import subprocess
 import sys
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Awaitable, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -46,6 +46,7 @@ from candleviewer.storage.repositories.orders import (
 from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
 from candleviewer.storage.repositories.recorded_stops import (
     EVERY_ACCOUNT,
+    EndWriteAhead,
     NewRecordedStop,
     RecordedStopNotBindable,
     RecordedStopRow,
@@ -54,6 +55,7 @@ from candleviewer.storage.repositories.recorded_stops import (
 )
 from candleviewer.storage.repositories.recorded_stops_sqlalchemy import (
     SqlAlchemyRecordedStopStore,
+    end_statement,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -469,6 +471,89 @@ async def test_two_successors_race_for_one_binding_and_the_loser_writes_nothing(
         one: (xid, None),
         two: (None, None),
     }
+
+
+@pytest.mark.parametrize("row_is", ["unanswered", "ended"])
+async def test_an_end_past_its_pre_check_meets_trg_rs_guard_and_writes_nothing(
+    rel: SqlAlchemyRelationalRepository, pg_dsn: str, row_is: str
+) -> None:
+    """21 Sec.3.3.11 "Guard": the table refuses what `check_end` keeps out, whatever a defect runs.
+    A pending row never answered keeps its `status`; an ended row keeps its `closed_at`, so a
+    second end's new time is refused."""
+    account = _account(pg_dsn)[0]
+    stops = SqlAlchemyRecordedStopStore(rel)
+    [row] = await stops.insert([trading_stop(account)])
+    if row_is == "ended":
+        [row] = await stops.settle(account, [row.id], "answered", at=_T0)
+        [row] = await stops.end(account, [row], at=_T0)
+    with pytest.raises(OrderConstraintError) as err:
+        async with stops._unit_of_work() as uow:  # the statement alone, as a defect would run it
+            await uow.session.execute(end_statement(account, [row], _T0 + timedelta(seconds=1)))
+    assert err.value.constraint == "trg_rs_guard"
+    stored = _sql(pg_dsn, "SELECT status, closed_at FROM recorded_stops WHERE id = %s", row.id)
+    assert stored == [(row.status, row.closed_at)]
+
+
+@pytest.mark.parametrize("first", ["put_in_force", "end"])
+async def test_an_end_and_a_put_in_force_racing_on_one_key_one_commits_and_the_other_is_stale(
+    pg_dsn: str, first: str
+) -> None:
+    """21 Sec.3.3.11: one key holds a row in force and a younger answered row. The first writer
+    holds its rows over its audit; the second waits for them, then finds its rows moved
+    (`StaleRecordedStop`) and writes nothing: `at_a != at_b` shows its time written nowhere. A put
+    in force that wins replaces the row in force, so the end finds it moved; an end that wins
+    closes both, so the put finds no live row to lock."""
+    account, at_a, at_b = _account(pg_dsn)[0], _T0 + timedelta(hours=1), _T0 + timedelta(hours=2)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def hold(rows: tuple[RecordedStopRow, ...]) -> None:
+        entered.set()
+        await release.wait()
+
+    async with (
+        asyncio.timeout(20),
+        _racing(pg_dsn, "end-race-a") as rel_a,
+        _racing(pg_dsn, "end-race-b") as rel_b,
+    ):
+        a = SqlAlchemyRecordedStopStore(rel_a, statement_timeout_ms=15_000, audit_timeout_s=15)
+        b = SqlAlchemyRecordedStopStore(rel_b, statement_timeout_ms=15_000)
+        [old] = await a.insert([trading_stop(account)])
+        [old] = await a.settle(account, [old.id], "answered", at=_T0)
+        [old] = (await a.put_in_force(account, [old], at=_T0)).in_force
+        [new] = await a.insert([trading_stop(account)])
+        [new] = await a.settle(account, [new.id], "answered", at=_T0)
+
+        def write(
+            store: SqlAlchemyRecordedStopStore, op: str, at: datetime, hook: EndWriteAhead | None
+        ) -> Awaitable[object]:
+            if op == "end":
+                return store.end(account, [old, new], at=at, write_ahead=hook)
+            return store.put_in_force(account, [new], at=at, write_ahead=hook)
+
+        task_a = asyncio.ensure_future(write(a, first, at_a, hold))
+        try:
+            await entered.wait()
+            second = "end" if first == "put_in_force" else "put_in_force"
+            task_b = asyncio.ensure_future(write(b, second, at_b, None))
+            await _wait_until_blocked(pg_dsn, "end-race-b")
+            release.set()
+            await task_a
+            with pytest.raises(StaleRecordedStop):
+                await task_b
+        finally:
+            release.set()
+    rows = _sql(
+        pg_dsn,
+        "SELECT id, status, in_force_at, closed_at FROM recorded_stops WHERE id = ANY(%s)",
+        [old.id, new.id],
+    )
+    expected: dict[uuid.UUID, tuple[Any, ...]] = {
+        old.id: ("ended", _T0, at_a),
+        new.id: ("ended", None, at_a),
+    }
+    if first == "put_in_force":
+        expected = {old.id: ("replaced", _T0, at_a), new.id: ("in_force", at_a, None)}
+    assert {row[0]: row[1:] for row in rows} == expected
 
 
 # -- E29-T04 commit 4: the order step's settle and the startup sweep -------------------------------

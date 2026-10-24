@@ -37,6 +37,11 @@ lock theirs, so none of them deadlock; it then releases and binds in one unit of
 the writer's write-ahead audit, bounded, before the one commit (C-2.9): a miss on either update,
 or an audit that fails or is late, writes nothing.
 
+`end` (E29-T05 S2d) locks its named rows in id order, as `resolve` does, then compares and sets
+each on its key, `status` and `answered_at` as read, and writes `status` and `closed_at` only: an
+ended row keeps its times, its marker and its binding (R-5). Its optional hook is awaited,
+bounded, before the commit; 21 names no record for an end.
+
 `void_orphans_statement` is R10's startup sweep (`RecordedStopStore.void_orphans`): one UPDATE that
 voids the pending entry-attach rows of an order of their account that was never placed (never sent,
 `UNSENT_ENTRY`; or refused by its create's own answer, `REFUSED_ENTRY` with the `REFUSED_BY` event),
@@ -81,6 +86,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     STOP_AUDIT_TIMEOUT_S,
     UNSENT_ENTRY,
     WAITING_ENTRY,
+    EndWriteAhead,
     FillPosition,
     InForce,
     InForceWriteAhead,
@@ -97,6 +103,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     SweepScope,
     SweepWriteAhead,
     SweptStop,
+    check_end,
     check_in_force,
     check_request,
     check_resolve,
@@ -109,7 +116,8 @@ from candleviewer.storage.repositories.user_roles_sqlalchemy import bounded_writ
 
 __all__ = [
     "STOP_COLUMNS", "STOP_FIELDS", "SYSTEM_STATEMENTS", "UNSCOPED", "SqlAlchemyRecordedStopStore",
-    "bind_statement", "clock_statement", "for_exchange_order_statement", "for_order_statement",
+    "bind_statement", "clock_statement", "end_statement", "for_exchange_order_statement",
+    "for_order_statement",
     "in_force_for_key_statement", "in_force_statement", "in_given_order", "insert_stops_statement",
     "live_for_key_statement", "lock_key_statement", "lock_stops_statement", "release_statement",
     "replace_statement", "resolve_statement", "settle_statement", "stop_row", "to_replace",
@@ -355,6 +363,14 @@ def resolve_statement(
     elif outcome != "answered":
         values = {"status": "void", "closed_at": at}
     return stmt.values(values).returning(*STOP_COLUMNS)
+
+
+def end_statement(account_id: UUID, rows: Sequence[RecordedStopRow], at: datetime) -> sa.Update:
+    """21 Sec.3.3.11 "Ends with its position": each of `rows`, as read (its key, `status` and
+    `answered_at`), becomes `ended` at `at`; nothing else is written (R-5, the set-once times)."""
+    as_read = sa.or_(*(sa.and_(_as_read((r,)), _S.status == r.status) for r in rows))
+    stmt = sa.update(recorded_stops).where(_S.exchange_account_id == account_id, as_read)
+    return stmt.values(status="ended", closed_at=at).returning(*STOP_COLUMNS)
 
 
 def _as_read(rows: Sequence[RecordedStopRow]) -> sa.ColumnElement[bool]:
@@ -651,3 +667,24 @@ class SqlAlchemyRecordedStopStore(CappedStore):
                 await bounded_write_ahead(hook, self._audit_timeout_s)
             await uow.commit()
         return resolved
+
+    async def end(
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        *,
+        at: datetime,
+        write_ahead: EndWriteAhead | None = None,
+    ) -> tuple[RecordedStopRow, ...]:
+        check_end(account_id, rows, at)
+        ids = [row.id for row in rows]
+        async with self._unit_of_work() as uow:
+            await uow.session.execute(lock_stops_statement(account_id, ids))
+            done = await uow.session.execute(end_statement(account_id, rows, at))
+            ended = in_given_order(list(done.mappings()), ids)
+            if len(ended) != len(ids):
+                raise StaleRecordedStop
+            if write_ahead is not None:
+                await bounded_write_ahead(write_ahead(ended), self._audit_timeout_s)
+            await uow.commit()
+        return ended

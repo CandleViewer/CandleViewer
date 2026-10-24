@@ -70,6 +70,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     NewRecordedStop,
     RecordedStopNotBindable,
     RecordedStopRow,
+    StaleRecordedStop,
     SweptStop,
 )
 from candleviewer.storage.repositories.submissions import (
@@ -343,6 +344,11 @@ SUCCESSOR = uuid.UUID(int=7)
 #: released, then its successor; they differ in id, so a log line says which row it carries.
 RELEASED_ROW = replace(STOP_ROW, released_at=T0)
 BOUND_ROW = replace(STOP_ROW, id=SUCCESSOR)
+#: An end's rows (21 Sec.3.3.11): one in force, which ends `in_force`; one answered and never
+#: shown, which ends `answered_unread`, its `in_force_at` left NULL (`RecordedStopRow.end`).
+IN_FORCE_ROW = replace(STOP_ROW, status="in_force", answered_at=T0, in_force_at=T0)
+ENDED_ROW = replace(IN_FORCE_ROW, status="ended", closed_at=T0)
+UNREAD_ROW = replace(STOP_ROW, id=SUCCESSOR, status="ended", answered_at=T0, closed_at=T0)
 PERSISTED = FirstPersisted(order=_row(), anchor_id=ANCHOR, group=None, recorded_stops=())
 #: Each write by its table (the label it is timed on), and the call where a table has two.
 _WRITES: dict[str, tuple[Callable[[Any, WriteTimer], Awaitable[object]], object]] = {
@@ -364,6 +370,8 @@ _WRITES: dict[str, tuple[Callable[[Any, WriteTimer], Awaitable[object]], object]
                               [STOP.id], "answered", at=T0), (STOP_ROW,)),
     "recorded_stops release_and_bind": (lambda s, t: RecordedStopRepository(s, t).release_and_bind(
         ACCOUNT, STOP.id, SUCCESSOR, "x-1", at=T0, write_ahead=_released), (STOP_ROW, STOP_ROW)),
+    "recorded_stops end": (lambda s, t: RecordedStopRepository(s, t).end(ACCOUNT, [IN_FORCE_ROW],
+                           at=T0), (ENDED_ROW,)),
 }  # fmt: skip
 
 
@@ -781,3 +789,43 @@ async def test_the_rows_that_hold_a_key_are_read_in_its_account_at_the_requests_
         ((ACCOUNT, "BTCUSDT", 0), {"now": T0, "bound_s": 5.0}),
         ((ACCOUNT, "BTCUSDT", 0), {"now": T0, "bound_s": None}),
     ]
+
+
+async def test_an_end_passes_its_rows_clock_and_hook_through_and_logs_each_rows_end() -> None:
+    """21 Sec.3.3.11 "Ends with its position": the caller's rows, clock and hook reach the store as
+    given; one line per ended row says which end it was, by ids and statuses only (a price is P1,
+    21 Sec.12)."""
+    store = _AnyStore((ENDED_ROW, UNREAD_ROW))
+    with capture_logs() as logs:
+        done = await RecordedStopRepository(cast(Any, store)).end(
+            ACCOUNT, [IN_FORCE_ROW], at=T0, write_ahead=_attached
+        )
+    assert done == (ENDED_ROW, UNREAD_ROW)
+    assert store.calls == [("end", (ACCOUNT, [IN_FORCE_ROW]))]
+    [keywords] = store.keywords
+    assert keywords["at"] is T0 and keywords["write_ahead"] is _attached
+    lines = [(line["event"], line["record_id"], line["end"]) for line in logs]
+    assert lines == [
+        ("oms_stops_ended", str(STOP.id), "in_force"),
+        ("oms_stops_ended", str(SUCCESSOR), "answered_unread"),
+    ]
+    assert "62000" not in repr(logs)
+
+
+@pytest.mark.parametrize(
+    ("error", "typed"),
+    [(WriteAheadTimeout("write-ahead audit exceeded 5.0 s"), AuditNotDurable),
+     (StaleRecordedStop(), StaleRecordedStop)],
+    ids=["a_late_audit", "a_stale_row"],
+)  # fmt: skip
+async def test_an_end_its_store_refuses_logs_nothing_and_maps_only_a_late_audit(
+    error: Exception, typed: type[Exception]
+) -> None:
+    """C-2.9: a hook past its bound is `AuditNotDurable`, unchained and no `TimeoutError`; a row
+    moved since it was read (`StaleRecordedStop`) passes through as the store raised it."""
+    with capture_logs() as logs, pytest.raises(typed) as err:
+        await RecordedStopRepository(cast(Any, _AnyStore(error=error))).end(
+            ACCOUNT, [IN_FORCE_ROW], at=T0
+        )
+    assert logs == [] and err.value.__cause__ is None and not isinstance(err.value, TimeoutError)
+    assert (err.value is error) == (typed is StaleRecordedStop)

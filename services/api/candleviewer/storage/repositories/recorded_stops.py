@@ -16,7 +16,9 @@ Sec.3.3.11). A row in flight inside its bound is not listed: a second request me
 insert (`ux_rs_in_flight`) and retries (the orchestrator's Q2 ruling). A row never leaves the table,
 and its request's values never change (`trg_rs_guard`). Every read and update takes the exchange
 account and filters on it (C-12.4), so another account's row reads as missing; the one write that
-does not is the insert, which writes the account each row names.
+does not is the insert, which writes the account each row names. A read that shows the position
+closed ends its rows (`end`): those in force, and the answered ones its caller names; an end keeps
+the binding, so the stop's fills still pair.
 
 Every value a writer gives is refused, before any statement, by the rule the table would refuse it
 with (`rs_px`, `rs_size`, `rs_trail`, `rs_entry`, `rs_restore`, `rs_marker`, the money columns'
@@ -50,12 +52,13 @@ __all__ = [
     "EVERY_ACCOUNT", "LIVE_STOP_STATUSES", "MAX_MARKER_CHARS", "REFUSED_BY", "REFUSED_ENTRY",
     "STOP_AUDIT_TIMEOUT_S", "SWEEP_REASON", "UNSENT_ENTRY", "UX_RS_IN_FLIGHT", "UX_RS_IN_FORCE",
     "WAITING_ENTRY",
+    "EndWriteAhead",
     "FillPosition", "InForce", "InForceWriteAhead", "InsertWriteAhead", "NewRecordedStop",
     "RecordedStopNotBindable", "RecordedStopRow",
     "RecordedStopStore", "ReleaseWriteAhead", "ResolveOutcome", "ResolveWriteAhead",
     "SettleWriteAhead",
     "StaleRecordedStop", "StopEnd", "StopKind", "StopOutcome", "StopSource", "StopStatus",
-    "SweepScope", "SweepWriteAhead", "SweptStop", "check_in_force", "check_request",
+    "SweepScope", "SweepWriteAhead", "SweptStop", "check_end", "check_in_force", "check_request",
     "check_resolve", "request_cutoff",
 ]  # fmt: skip
 
@@ -326,6 +329,10 @@ InForceWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
 #: `entry_filled_stop_absent`, CR-S3H0-08; optionally for `in_flight_resolved`; never otherwise), so
 #: a void's record names the state the void was given.
 ResolveWriteAhead = Callable[[tuple[RecordedStopRow, ...], FillPosition | None], Awaitable[None]]
+#: An `end` hook, awaited before the commit with the rows as ended. 21 Sec.3.3.11 names no `sl.*`
+#: record for an end (`closed_at` is one of the three later times, what the exchange did), so a
+#: caller passes one only if a ruling asks; one that fails or is late leaves every row as it was.
+EndWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,6 +375,23 @@ def check_resolve(
     voids = outcome not in ("answered", "replaced")
     if voids and write_ahead is None:  # 21 Sec.3.3.11: no void unaudited
         raise ValueError("a void is audited write-ahead (C-2.9): no hook was given")
+
+
+def check_end(account_id: UUID, rows: Sequence[RecordedStopRow], at: datetime) -> None:
+    """`ValueError` before any statement unless `rows` are the account's, of one key, each named
+    once, and each in force or pending and answered as read: `trg_rs_guard`'s two moves into
+    `ended` (21 Sec.3.3.11). An unanswered row never ends; a closed one ended already."""
+    if not rows or len({row.id for row in rows}) != len(rows):
+        raise ValueError("a row ended is named once, and at least one is")
+    key = (account_id, rows[0].symbol, rows[0].position_idx)
+    if any((r.exchange_account_id, r.symbol, r.position_idx) != key for r in rows):
+        raise ValueError("the rows ended are the account's, of one key")
+    if any(
+        r.status not in LIVE_STOP_STATUSES or (r.status == "pending" and r.answered_at is None)
+        for r in rows
+    ):
+        raise ValueError("an end takes rows in force, or pending and answered (trg_rs_guard)")
+    require_aware("at", at)
 
 
 class StaleRecordedStop(OrderStoreError):
@@ -545,4 +569,22 @@ class RecordedStopStore(Protocol):
         nothing written). `check_resolve` first; the hook is awaited bounded before the commit,
         given the rows and `position_state`. `replaced` trusts the caller: the store does not
         check that a later row of the key and kind is in force (the complete read decided it)."""
+        ...
+
+    async def end(
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        *,
+        at: datetime,
+        write_ahead: EndWriteAhead | None = None,
+    ) -> tuple[RecordedStopRow, ...]:
+        """A read showed the position closed (21 Sec.3.3.11 "Ends with its position"): `rows`, as
+        the caller read them, become `ended` at `at`, all or none, in the order given. A row in
+        force ends `in_force`; an answered pending row ends `answered_unread`, its `in_force_at`
+        left NULL. Which rows, and when their executions are paired or listed, is the caller's.
+        `check_end` first; one transaction locks them in id order and compares-and-sets each on its
+        key, `status` and `answered_at` (`StaleRecordedStop`, nothing written). Only `status` and
+        `closed_at` change, never another time, the marker, the binding or its release (R-5). The
+        hook, when given, is awaited bounded before the commit."""
         ...

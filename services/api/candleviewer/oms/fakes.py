@@ -45,6 +45,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     UNSENT_ENTRY,
     UX_RS_IN_FLIGHT,
     WAITING_ENTRY,
+    EndWriteAhead,
     FillPosition,
     InForce,
     InForceWriteAhead,
@@ -61,6 +62,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     SweepScope,
     SweepWriteAhead,
     SweptStop,
+    check_end,
     check_in_force,
     check_request,
     check_resolve,
@@ -974,7 +976,8 @@ class InMemoryRecordedStopStore:
     compare-and-set, a void (`refused`, `not_shown`) refused before anything with no write-ahead
     hook (C-2.9), as the SQL store refuses it; every read and update inside the account but the
     startup sweep over every account. A write's write-ahead hook is awaited, bounded, before its
-    commit. `put_in_force` and `resolve` compare-and-set on `(status, answered_at)` as read."""
+    commit. `put_in_force`, `resolve` and `end` compare-and-set on `(status, answered_at)` as
+    read."""
 
     def __init__(
         self, db: InMemoryOrderStore, *, audit_timeout_s: float = STOP_AUDIT_TIMEOUT_S
@@ -1205,6 +1208,29 @@ class InMemoryRecordedStopStore:
         hook = None if write_ahead is None else write_ahead(done, position_state)
         await self._db._audited_commit(hook, self._audit_timeout_s, *done)
         return done
+
+    async def end(
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        *,
+        at: datetime,
+        write_ahead: EndWriteAhead | None = None,
+    ) -> tuple[RecordedStopRow, ...]:
+        check_end(account_id, rows, at)
+        await self._db._turn()
+        held = [self._db._stops.get(row.id) for row in rows]
+        if any(  # the SQL's compare-and-set: the account, the key, `status` and `answered_at`
+            h is None
+            or (h.exchange_account_id, h.symbol, h.position_idx, h.status, h.answered_at)
+            != (account_id, r.symbol, r.position_idx, r.status, r.answered_at)
+            for h, r in zip(held, rows, strict=True)
+        ):
+            raise StaleRecordedStop
+        ended = tuple(replace(h, status="ended", closed_at=at) for h in held if h is not None)
+        hook = None if write_ahead is None else write_ahead(ended)
+        await self._db._audited_commit(hook, self._audit_timeout_s, *ended)
+        return ended
 
     def _as_read(self, account_id: UUID, rows: Sequence[RecordedStopRow]) -> list[RecordedStopRow]:
         """The stored rows if each is as read (account, key, kind, `pending`, `answered_at`)."""
