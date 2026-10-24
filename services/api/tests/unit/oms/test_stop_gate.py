@@ -595,3 +595,30 @@ async def test_a_gate_tasks_unexpected_error_is_logged_by_its_type(
         (e["log_level"], e["failure"]) for e in logs if e["event"] == "oms_stop_gate_task_failed"
     ]
     assert failed == [("error", "RuntimeError")]
+
+
+async def test_the_floors_start_is_read_once_from_the_databases_clock() -> None:
+    """Q7: once, so a sweep retried after this runtime wrote a row never moves it past that row."""
+    rig = build(started_at=None)
+    rig.clock.at = cr.T0 + timedelta(seconds=1)
+    assert await rig.gate.start_floor() == cr.T0 + timedelta(seconds=1)
+    rig.clock.at = cr.T0
+    assert await rig.gate.start_floor() == cr.T0 + timedelta(seconds=1)
+
+
+@pytest.mark.parametrize("refused_account", [False, True])
+async def test_the_startup_pass_resolves_each_waiting_key_never_a_refused_accounts(
+    refused_account: bool,
+) -> None:
+    """20 Sec.6.2 step 2: each waiting key of the account read once; an account the binding
+    refuses (paged there) leaves its keys refused, never read."""
+    rig = build(accounts=() if refused_account else (cr.ref(),))
+    rows = [await request(rig, symbol=symbol) for symbol in ("BTCUSDT", "ETHUSDT")]
+    with capture_logs() as logs:
+        rig.gate.start_pass(cr.ACCOUNT)
+        await until(lambda: not rig.gate._passes)
+        await rig.idle()
+    assert rig.venue.reads() == (0 if refused_account else 2)
+    assert [status(rig, row) for row in rows] == ["pending" if refused_account else "void"] * 2
+    skipped = [entry["failure"] for entry in logs if entry["event"] == "oms_stop_pass_skipped"]
+    assert skipped == (["AccountScopeDenied"] if refused_account else [])

@@ -32,12 +32,15 @@ from candleviewer.oms.ports import (
     ClockHealth,
     KeyedRecord,
     OrderHandovers,
-    RefuseWhileWaiting,
     RequestRecord,
     StopRequestGate,
+    SubmitAudit,
+    TradingAccounts,
 )
 from candleviewer.oms.repository import OrderRepository, RecordedStopRepository
 from candleviewer.oms.routing import TradingRouter
+from candleviewer.oms.stop_gate import ResolvingStopGate, StopVoidAudit
+from candleviewer.oms.stop_resolution import CompleteRead, StopResolver
 from candleviewer.oms_wiring import STOP_REQUEST_BOUND_S
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.storage.repositories.orders import (
@@ -311,6 +314,7 @@ class Rig:
     monotonic: Monotonic
     notices: Notices
     metrics: Metrics
+    gate: StopRequestGate
 
     def calls(self, port: FakeTradingPort | None = None) -> list[str]:
         return [call.method for call in (port or self.demo).calls]
@@ -348,12 +352,15 @@ def build_rig(
     metrics = Metrics("demo")
     halt = ClockHalt(health if clock is None else clock, monotonic=monotonic, metrics=metrics)
     notices = Notices()
+    router = TradingRouter({"demo": demo, "live": live}, lane_waits=LANE_WAITS)
+
+    def at() -> datetime:  # the port's clock
+        return EPOCH + timedelta(microseconds=now.us)
+
     if gate is None:
-        gate = RefuseWhileWaiting(
-            stops, now=lambda: EPOCH + timedelta(microseconds=now.us), bound_s=STOP_REQUEST_BOUND_S
-        )
+        gate = stop_gate(stops, orders, audits, accounts, router, at, monotonic, metrics)
     port = OmsCommandPort(
-        router=TradingRouter({"demo": demo, "live": live}, lane_waits=LANE_WAITS),
+        router=router,
         accounts=accounts,
         orders=orders,
         stops=stops,
@@ -370,12 +377,32 @@ def build_rig(
     )
     return Rig(
         port, demo, live, store, orders, stops, accounts, audits, chosen, credentials, switches,
-        health, halt, now, monotonic, notices, metrics,
+        health, halt, now, monotonic, notices, metrics, gate,
     )  # fmt: skip
 
 
-async def earlier_request(rig: Rig) -> None:
-    """A trading-stop request of the key, in flight since `T0` (the store's clock)."""
+def stop_gate(
+    stops: RecordedStopRepository,
+    orders: OrderRepository,
+    audit: SubmitAudit,
+    accounts: TradingAccounts,
+    router: TradingRouter,
+    now: Callable[[], datetime],
+    monotonic: Callable[[], float],
+    metrics: Metrics,
+) -> ResolvingStopGate:
+    """The runtime's stop-request gate (S3-H) over a rig's stores and router, its startup floor
+    long past, so each row waits only past its request's bound."""
+    resolver = StopResolver(stops, CompleteRead(orders), StopVoidAudit(audit), now=now)
+    return ResolvingStopGate(
+        stops, resolver, accounts=accounts, port_for=router.port_for,
+        bound_s=STOP_REQUEST_BOUND_S, now=now, monotonic=monotonic, metrics=metrics,
+        started_at=EPOCH,
+    )  # fmt: skip
+
+
+async def earlier_request(rig: Rig, source: Any = "trading_stop") -> None:
+    """A trading-stop request of the key (or a restore), in flight since `T0`, the store's clock."""
     earlier = NewRecordedStop(
         id=uuid5(NAMESPACE_URL, "earlier"),
         exchange_account_id=ACCOUNT,
@@ -383,7 +410,7 @@ async def earlier_request(rig: Rig) -> None:
         position_idx=0,
         position_side="Buy",
         kind="stop_loss",
-        source="trading_stop",
+        source=source,
         order_id=None,
         tpsl_mode="Full",
         trigger_price=Decimal("57000"),
