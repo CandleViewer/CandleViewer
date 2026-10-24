@@ -896,3 +896,13 @@ async def test_a_non_owner_retention_change_on_a_null_row_reads_null_as_the_defa
     answer = await env.http.patch(_one(entry.id), json={"retention_days": days})
     assert answer.status_code == status
     assert fake.entries["BTCUSDT"].retention_days == (None if status == 403 else days)
+
+
+async def test_a_patch_of_retention_on_a_pinned_row_is_ignored_and_records_nothing() -> None:
+    """A pinned row keeps forever: no retention write, no record, `retention_days: null`."""
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT", pinned=True, retention_days=60)  # a number left on a pinned row
+    env = _Env(fake, *W, elevated=True)
+    kept = await env.http.patch(_one(entry.id), json={"retention_days": 7})
+    assert (kept.status_code, kept.json()["retention_days"]) == (200, None)
+    assert fake.entries["BTCUSDT"].retention_days == 60 and env.actions() == []
