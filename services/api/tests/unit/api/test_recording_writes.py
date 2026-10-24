@@ -851,3 +851,23 @@ async def test_retention_days_on_a_pinned_row_without_an_unpin_is_ignored(method
     assert (kept.status_code, kept.json()["pinned"], kept.json()["retention_days"]) == (
         200, True, None)  # fmt: skip
     assert fake.entries["BTCUSDT"] == entry and env.actions() == []
+
+
+class _StartRefused(FakeRecorder):
+    """The status also lists a symbol whose start was refused and that has no row (no id)."""
+
+    async def status(self) -> rc.ControlStatus:
+        listed = await super().status()
+        idle = rc.RecordedEntry("", "SOLUSDT", ("position_open",), "idle",
+                                refusals=("symbol_cap",))  # fmt: skip
+        return dataclasses.replace(listed, entries=(*listed.entries, idle))
+
+
+async def test_an_add_of_a_start_refused_symbol_with_no_row_is_a_fresh_add() -> None:
+    """A status-only entry is no row: no join (a non-Owner would get 503 for its missing
+    streams), a plain add that creates the row."""
+    fake = _StartRefused()
+    env = _Env(fake, *W, owner=False)
+    added = await env.add(symbol="SOLUSDT")
+    assert (added.status_code, added.json()["reason"]) == (201, "manual")
+    assert fake.entries["SOLUSDT"].streams == STREAMS
