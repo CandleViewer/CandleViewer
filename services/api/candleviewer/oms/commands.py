@@ -198,6 +198,7 @@ __all__ = [
     "AMEND_AUDIT_GRACE_S",
     "AMEND_REASON",
     "AMEND_REFUSED",
+    "AMEND_SETTLE_RESERVE_S",
     "AMEND_TIMEOUT_S",
     "CANCEL_TIMEOUT_S",
     "EXPIRED_UNSENT_REASON",
@@ -254,6 +255,9 @@ AMEND_TIMEOUT_S: Final = CV_COMMAND_TIMEOUT - 2.0
 #: How long past `AMEND_TIMEOUT_S` a `STORE_UNAVAILABLE` refusal's audit may take, still inside
 #: B1's bound: a read the deadline ended is answered, recorded, never raised (the 10:18Z ruling).
 AMEND_AUDIT_GRACE_S: Final = 1.0
+#: How long before the amend's deadline its venue call must end, in seconds, so an answer that
+#: lands just inside it still leaves `_settle_stop` time to settle the rows (review fold 2).
+AMEND_SETTLE_RESERVE_S: Final = 0.5
 #: A read that failed before the amend's send (the 10:18Z ruling), its code, reason and retry.
 STORE_UNAVAILABLE: Final = "STORE_UNAVAILABLE"
 STORE_UNAVAILABLE_REASON: Final = "store_unavailable"
@@ -1263,7 +1267,8 @@ class OmsCommandPort:
                 return _held(row.order_link_id, STOP_REQUEST_RETRY_AFTER_S)
         port = self._router.port_for(account.environment)
         try:
-            ack = await self._venue_gated(account, port.amend_order(request), by=by)
+            venue_by = by - AMEND_SETTLE_RESERVE_S  # the settle keeps its time
+            ack = await self._venue_gated(account, port.amend_order(request), by=venue_by)
         except RateBudgetExceededError as exc:  # nothing left: the rows are void, unsent
             code = OmsErrorCode.RATE_BUDGET_EXCEEDED.value
             if recorded:
