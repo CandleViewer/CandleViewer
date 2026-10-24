@@ -116,7 +116,7 @@ class RotatingBroker(CredentialBroker):
         # record, and the run is then closed as aborted (#2266 D1 review).
         kcvs = {"from_kcv": prev.kcv().hex(), "to_kcv": kek.kcv().hex()}
         run_id = uuid4()
-        self._cache.flush()
+        self.flush_cache()
         total = await self._io(self._store.count_at_kek_version(prev.version, self._env), "store")
         moved = self._store.count_rewrapped_since_enrolment(kek.version, self._env)
         before = await self._io(moved, "store")
@@ -211,7 +211,9 @@ class RotatingBroker(CredentialBroker):
         """The round-5 fence (#2266): a row revoked by either signal, destroyed in this process
         or no longer at `version` is never re-wrapped. Every other status is (0017 `key_status`),
         or the rotation could never complete."""
-        if row.revoked or row.status == "revoked" or key_id in self._destroyed:
+        with self._guard:  # one fence for every loop (#913 L3b)
+            destroyed = key_id in self._destroyed
+        if row.revoked or row.status == "revoked" or destroyed:
             return True
         return row.kek_version != version
 
