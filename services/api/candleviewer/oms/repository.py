@@ -464,6 +464,13 @@ class RecordedStopRepository:
         bound and released rows are listed too."""
         return await self._store.live_for_key(account_id, symbol, position_idx)
 
+    async def for_exchange_order(
+        self, account_id: UUID, exchange_order_id: str
+    ) -> tuple[RecordedStopRow, ...]:
+        """The account's rows bound to the exchange order id, in any status, oldest first
+        (`RecordedStopStore.for_exchange_order`); a released row holds none."""
+        return await self._store.for_exchange_order(account_id, exchange_order_id)
+
     async def waiting_for_key(
         self,
         account_id: UUID,

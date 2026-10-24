@@ -86,6 +86,7 @@ from candleviewer.storage.repositories.orders import (
     OrderRow,
     OrderTransition,
     StaleOrderState,
+    require_exchange_order_id,
     require_exchange_record,
     require_limit,
     require_no_fill,
@@ -418,6 +419,7 @@ class SqlAlchemyOrderStore(CappedStore):
     async def get_by_exchange_order_id(
         self, account_id: UUID, exchange_order_id: str
     ) -> OrderRow | None:
+        require_exchange_order_id(exchange_order_id)
         return await self._one(get_by_exchange_statement(account_id, exchange_order_id))
 
     async def list_open(

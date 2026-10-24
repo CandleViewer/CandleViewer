@@ -82,6 +82,11 @@ def move_stop(fake: Fake, record_id: UUID, status: str) -> None:
     fake._stops[record_id] = replace(row, status=cast(StopStatus, status), **stamps)
 
 
+def bind_stop(fake: Fake, record_id: UUID, exchange_order_id: str) -> None:
+    """An exchange order id no store binds yet, as `trg_rs_guard` admits the one bind."""
+    fake._stops[record_id] = replace(fake._stops[record_id], exchange_order_id=exchange_order_id)
+
+
 class TestInMemorySubmissionStores(SubmissionContract, StoreReadsContract):
     @pytest.fixture
     def fake(self) -> Fake:
@@ -101,6 +106,7 @@ class TestInMemorySubmissionStores(SubmissionContract, StoreReadsContract):
             refuse=fake.submissions.refuse, bounded=bounded,
             held=lambda first, order: held(fake, first, order),
             move_stop=lambda record_id, status: move_stop(fake, record_id, status),
+            bind_stop=lambda record_id, xid: bind_stop(fake, record_id, xid),
         )  # fmt: skip
 
     async def test_a_leg_on_an_account_never_seeded_passes_the_environment_trigger(

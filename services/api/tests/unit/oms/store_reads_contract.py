@@ -1,19 +1,21 @@
 """Contract of the stores' pairing reads (E29-T05 #848, 24 Sec.8.12): the order bound to an exchange
-order id (`OrderStore.get_by_exchange_order_id`, 21 Sec.13.1 row 12) and a position key's live
-recorded stops (`RecordedStopStore.live_for_key`, row 45). A mixin beside `SubmissionContract`, on
-its `h`, run on the in-memory stores (`test_submission_fake.py`) and on Postgres
+order id (`OrderStore.get_by_exchange_order_id`, 21 Sec.13.1 row 12), a position key's live
+recorded stops (`RecordedStopStore.live_for_key`, row 45) and the recorded stops bound to an
+exchange order (`for_exchange_order`, row 46). A mixin beside `SubmissionContract`, on its `h`, run
+on the in-memory stores (`test_submission_fake.py`) and on Postgres
 (`test_order_submission_contract_pg.py`), so the fake reads what Postgres reads (C-13.3). Every
 case works in accounts of its own, so a shared database never mixes them."""
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Any, Final
 from uuid import UUID, uuid4
 
 import pytest
 
 from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories.orders import NewOrder
+from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 from tests.unit.oms.submission_contract import (
     EVENT,
     SEND,
@@ -45,6 +47,26 @@ async def placed(h: Harness, account: UUID, xid: str | None = XID, *then: Move) 
     return order
 
 
+async def advance(h: Harness, account: UUID, stop: RecordedStopRow, status: str) -> None:
+    """Take `stop`, in flight, to `answered`, `in_force`, `replaced`, `ended` or `void`."""
+    if status == "void":
+        await h.stops.settle(account, [stop.id], "refused", at=T0, write_ahead=audited)
+        return
+    await h.stops.settle(account, [stop.id], "answered", at=T0)
+    if status != "answered":
+        h.move_stop(stop.id, "in_force")
+        if status != "in_force":
+            h.move_stop(stop.id, status)
+
+
+async def live_stop(h: Harness, account: UUID, status: str = "pending") -> RecordedStopRow:
+    """A system writer's stop-loss request for BTCUSDT 0, in flight (`pending`) or advanced."""
+    [stop] = await h.stops.insert([trading_stop(account)])
+    if status != "pending":
+        await advance(h, account, stop, status)
+    return stop
+
+
 class StoreReadsContract:
     @pytest.mark.parametrize(
         ("moves", "state"),
@@ -65,16 +87,29 @@ class StoreReadsContract:
 
     @pytest.mark.parametrize(
         "text",
-        ["", XID.upper(), XID[:-1], XID + "0", "x-" + XID, f" {XID} "],
-        ids=["empty", "upper_case", "a_prefix", "longer", "embedded", "padded"],
+        [XID.upper(), XID[:-1], XID + "0", "x-" + XID, f" {XID} "],
+        ids=["upper_case", "a_prefix", "longer", "embedded", "padded"],
     )
     async def test_get_by_exchange_order_id_other_text_than_the_bound_one_reads_none(
         self, h: Harness, text: str
     ) -> None:
-        """The exact text: no case folding, no prefix, no trimming; the empty text names no row."""
+        """The exact text: no case folding, no prefix, no trimming (an empty text is refused)."""
         account, _ = h.new_account()
         await placed(h, account)
         assert await h.orders.get_by_exchange_order_id(account, text) is None
+
+    @pytest.mark.parametrize("text", [None, "", "x" * 65], ids=["none", "empty", "overlong"])
+    async def test_a_read_by_an_exchange_order_id_no_order_can_hold_is_refused(
+        self, h: Harness, text: Any
+    ) -> None:
+        """`None` would read `IS NULL`, an arbitrary unbound row: both reads refuse an id the
+        adapter cannot issue (1 to 64 characters of text), before any statement."""
+        account, _ = h.new_account()
+        await placed(h, account, None)
+        await live_stop(h, account)
+        for read in (h.orders.get_by_exchange_order_id, h.stops.for_exchange_order):
+            with pytest.raises(ValueError, match="1 to 64 characters"):
+                await read(account, text)
 
     async def test_get_by_exchange_order_id_unbound_order_is_never_found(self, h: Harness) -> None:
         """The store's half of "a fill before its bind": a sent row holds no exchange id yet."""
@@ -129,6 +164,14 @@ class StoreReadsContract:
             h.move_stop(stop.id, end)
         assert await h.stops.live_for_key(account, "BTCUSDT", 0) == ()
 
+    async def test_live_for_key_lists_a_row_once_it_is_bound(self, h: Harness) -> None:
+        """A bound row stays live: S6 reads it as a successor's predecessor (24 Sec.8.3 rule 7)."""
+        account, _ = h.new_account()
+        stop = await live_stop(h, account)
+        h.bind_stop(stop.id, XID)
+        [row] = await h.stops.live_for_key(account, "BTCUSDT", 0)
+        assert (row.id, row.exchange_order_id) == (stop.id, XID)
+
     async def test_live_for_key_other_account_symbol_or_position_index_reads_empty(
         self, h: Harness
     ) -> None:
@@ -147,3 +190,43 @@ class StoreReadsContract:
         account, _ = h.new_account()
         with pytest.raises(StorageQueryFailed):
             await h.stops.live_for_key(account, "BTC\x00USDT", 0)
+
+    # -- the rows bound to an exchange order (21 Sec.13.1 row 46) --
+
+    async def test_for_exchange_order_text_holding_nul_is_refused_as_postgres_refuses_it(
+        self, h: Harness
+    ) -> None:
+        account, _ = h.new_account()
+        with pytest.raises(StorageQueryFailed):
+            await h.stops.for_exchange_order(account, "a\x00b")
+
+    @pytest.mark.parametrize("status", ["pending", "in_force", "replaced", "ended"])
+    async def test_for_exchange_order_lists_the_row_bound_to_the_id_in_any_status(
+        self, h: Harness, status: str
+    ) -> None:
+        """An end keeps the id, so the fills of a stop that closed its position still pair."""
+        account, _ = h.new_account()
+        stop = await live_stop(h, account)
+        h.bind_stop(stop.id, XID)
+        if status != "pending":
+            await advance(h, account, stop, status)
+        [row] = await h.stops.for_exchange_order(account, XID)
+        assert (row.id, row.status, row.exchange_order_id) == (stop.id, status, XID)
+
+    async def test_for_exchange_order_lists_every_holder_oldest_first(self, h: Harness) -> None:
+        """`ix_rs_exch_id` is not unique, so the read keeps its order, whatever it holds."""
+        account, _ = h.new_account()
+        held = [await live_stop(h, account, "answered") for _ in range(3)]
+        for stop in held:
+            h.bind_stop(stop.id, XID)
+        rows = await h.stops.for_exchange_order(account, XID)
+        ages = [(row.created_at, row.id) for row in rows]
+        assert {row.id for row in rows} == {stop.id for stop in held} and ages == sorted(ages)
+
+    async def test_for_exchange_order_other_account_id_prefix_or_case_reads_empty(
+        self, h: Harness
+    ) -> None:
+        (mine, _), (theirs, _) = h.new_account(), h.new_account()
+        h.bind_stop((await live_stop(h, mine, "answered")).id, XID)
+        for key in ((theirs, XID), (mine, XID.upper()), (mine, XID[:-1]), (mine, XID + "0")):
+            assert await h.stops.for_exchange_order(*key) == ()
