@@ -119,6 +119,20 @@ async def test_a_row_reason_no_trigger_of_the_policy_holds_is_skipped_with_a_war
     ]
 
 
+async def test_a_store_failure_on_one_symbol_starts_the_rest_and_a_later_tick_retries_it(
+    cold: RecordingPolicy, store: Mem
+) -> None:
+    """Derived: the seeded position's start writes its row, and that write fails once."""
+    await store.upsert_manual("BTCUSDT", "u-1", ("trades",), 50, "demo")
+    store.fail.add("upsert_auto")
+    await _startup(cold, [("SOLUSDT", "p1")])  # `reconcile_all` isolates the failing symbol
+    assert (cold.leaf("BTCUSDT"), cold.leaf("SOLUSDT")) == ("recording", None)
+    assert cold.position_open("SOLUSDT") and not cold.position_open("XRPUSDT")  # the gate opened
+    store.fail.discard("upsert_auto")
+    await cold.tick()
+    assert cold.leaf("SOLUSDT") == "recording"
+
+
 async def test_a_seeded_position_resumes_recording_for_position_open_with_or_without_a_row(
     cold: RecordingPolicy, store: Mem, audit: FakeAudit
 ) -> None:
