@@ -1,11 +1,13 @@
 """#3991: the low-privilege ZAP nightlies (`dast-rules-nightly.yml`, `dast-market-nightly.yml`, both
-through `_dast-low-priv.yml`): `security/zap/nightly_plans.py`, the two templates, the session
+through `_dast-low-priv.yml`) and the drawings profile (E14-X03, #549; its workflow and isolation
+check are in test_zap_drawings.py): `security/zap/nightly_plans.py`, the templates, the session
 script's surfaces and the workflows. No network and no ZAP: the script runs on the repo's own
 contract and templates, and on files in `tmp_path`."""
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -16,6 +18,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import jsonschema
 import pytest
 import yaml
 
@@ -24,6 +27,7 @@ CALLED = ROOT / ".github/workflows/_dast-low-priv.yml"
 CALLERS = {
     "rules": ROOT / ".github/workflows/dast-rules-nightly.yml",
     "market": ROOT / ".github/workflows/dast-market-nightly.yml",
+    "drawings": ROOT / ".github/workflows/dast-drawings-nightly.yml",
 }
 SESSION_SCRIPT = ROOT / "security/zap/role_session.js"
 
@@ -199,6 +203,48 @@ def test_main_refuses_an_out_outside_the_checkout_and_writes_nothing(
     assert list(tmp_path.iterdir()) == []
 
 
+# --- the drawings profile's fixture: the examples aim at the Owner's row ------------------------
+
+SEED = json.loads(plans.SEEDS["drawings"].read_text(encoding="utf-8"))
+ROW = SEED["operations"][0]
+
+
+def _drawings_cut() -> dict[str, Any]:
+    api, _ = plans.cut_contract(CONTRACT, plans.PROFILES["drawings"][1])
+    plans.pin_seed(api, SEED)
+    return api
+
+
+def test_the_drawings_cut_names_the_owners_row_in_its_examples() -> None:
+    api = _drawings_cut()
+    assert set(api["paths"]) == {"/drawings", "/drawings/batch", "/drawings/{drawingId}"}
+    parameters, schemas = api["components"]["parameters"], api["components"]["schemas"]
+    assert parameters["DrawingId"]["example"] == ROW["id"]
+    assert parameters["SymbolQuery"]["example"] == ROW["drawing"]["symbol"]
+    put = schemas["DrawingInput"]["example"]  # valid, so a cross-owner PUT reaches the owner check
+    assert put == {**ROW["drawing"], "label": "zap probe"}
+    assert "example" not in CONTRACT["components"]["parameters"]["DrawingId"]  # a copy
+
+
+def test_the_seed_is_a_valid_create_batch_and_the_put_example_a_valid_drawing() -> None:
+    schemas = {"components": CONTRACT["components"]}
+    jsonschema.validate(SEED, {"$ref": "#/components/schemas/DrawingBatchRequest", **schemas})
+    assert [op["op"] for op in SEED["operations"]] == ["create"]
+    put = _drawings_cut()["components"]["schemas"]["DrawingInput"]["example"]
+    jsonschema.validate(put, {"$ref": "#/components/schemas/DrawingInput", **schemas})
+
+
+def test_main_writes_the_drawings_cut_with_its_example_and_no_other_profile_gets_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert plans.main(["--profile", "drawings", "--out", "w"]) == plans.main(
+        ["--profile", "market", "--out", "w"]
+    )
+    assert ROW["id"] in (tmp_path / "w/drawings-openapi.yaml").read_text(encoding="utf-8")
+    assert ROW["id"] not in (tmp_path / "w/market-openapi.yaml").read_text(encoding="utf-8")
+
+
 # --- the templates ------------------------------------------------------------------------------
 
 
@@ -248,6 +294,7 @@ def test_each_scan_fits_in_one_12_minute_bearer(profile: str) -> None:
     [
         ("rules", ["${ZAP_TARGET}/rules([/?].*)?", "${ZAP_TARGET}/schemas/rule-ir\\.json"]),
         ("market", ["${ZAP_TARGET}/market/klines([/?].*)?", "${ZAP_TARGET}/market/bars([/?].*)?"]),
+        ("drawings", ["${ZAP_TARGET}/drawings([/?].*)?"]),
     ],
 )
 def test_each_context_is_its_surface(profile: str, include: list[str]) -> None:
@@ -262,6 +309,25 @@ def test_the_market_filters_apply_before_the_first_request_and_name_no_absent_ru
     assert kinds.index("alertFilter") < kinds.index("requestor")
     (filters,) = [job["alertFilters"] for job in jobs if job["type"] == "alertFilter"]
     assert [entry["ruleId"] for entry in filters] == [90022]  # 10049 is not in ZAP 2.17.0
+
+
+def test_no_template_holds_a_literal_over_the_single_body_cap() -> None:
+    """A body over 64 KiB is no plan literal: test_drawings_abuse_exhaustion.py covers the cap."""
+    assert all(len(yaml.safe_dump(plan)) < 64 * 1024 for plan in TEMPLATES.values())
+
+
+def test_the_drawings_filter_waives_only_the_documented_refusals_on_its_own_paths() -> None:
+    """The documented 404 and batch 409 (DR20, DR21) raise 90022 on their problem+json text:
+    only that alert, on `/drawings*`, and only with a registered code as its evidence."""
+    jobs = TEMPLATES["drawings"]["jobs"]
+    kinds = [job["type"] for job in jobs]
+    assert kinds.index("alertFilter") < kinds.index("requestor")
+    (entry,) = next(job["alertFilters"] for job in jobs if job["type"] == "alertFilter")
+    assert (entry["ruleId"], entry["url"]) == (90022, ".*/drawings([/?].*)?")
+    assert entry["newRisk"] == "False Positive"
+    assert entry["urlRegex"] is True and entry["evidenceRegex"] is True
+    assert all(re.search(entry["evidence"], c) for c in ("not_found", "target_unavailable"))
+    assert not re.search(entry["evidence"], "Traceback (most recent call last)")
 
 
 def test_the_rules_filter_ends_one_false_positive_and_no_other_traversal() -> None:
@@ -323,6 +389,13 @@ def _session_rule(name: str) -> re.Pattern[str]:
         ("MARKET", "/market/klinesx", False),  # whole segments: the `$` after the name
         ("RULES", "/me/sessions/0f4c", False),  # `/me` alone, never the session's own DELETE
         ("MARKET", "/me/sessions/0f4c", False),
+        ("DRAWINGS", "/drawings?symbol=BTCUSDT&limit=500", True),
+        ("DRAWINGS", "/drawings/batch", True),
+        ("DRAWINGS", "/drawings/0193f2bb-0000-7000-8000-00000000d001", True),
+        ("DRAWINGS", "/me", True),
+        ("DRAWINGS", "/drawingsx", False),  # whole segments
+        ("DRAWINGS", "/drawing-templates", False),
+        ("DRAWINGS", "/admin/overview", False),
     ],
 )
 def test_the_session_goes_only_to_the_profiles_surface_and_the_liveness_check(
@@ -334,13 +407,13 @@ def test_the_session_goes_only_to_the_profiles_surface_and_the_liveness_check(
 def test_the_profile_picks_the_surface_and_any_other_name_gets_none() -> None:
     script = SESSION_SCRIPT.read_text(encoding="utf-8")
     assert 'var PROFILE = System.getenv("ZAP_PROFILE") || "admin";' in script
-    choice = re.search(r"var SURFACE =\s+(.+);", script)
-    assert choice is not None
-    assert choice.group(1) == (
-        'PROFILE === "admin" ? ADMIN : PROFILE === "rules" ? RULES : '
-        'PROFILE === "market" ? MARKET : null'
+    assert (
+        "var SURFACES = { admin: ADMIN, rules: RULES, market: MARKET, drawings: DRAWINGS };"
+        in script
     )
-    assert set(plans.PROFILES) == {"rules", "market"}  # each has its surface above
+    own_keys = "hasOwnProperty.call(SURFACES, PROFILE) ? SURFACES[PROFILE] : null;"
+    assert own_keys in script  # `constructor` and `__proto__` name no surface
+    assert set(plans.PROFILES) == {"rules", "market", "drawings"}  # each has its surface above
 
 
 # --- the workflows ------------------------------------------------------------------------------
@@ -358,6 +431,15 @@ _NIGHTLY: dict[str, dict[str, str]] = {
         "report": "market-viewer",
         "baseline": ".zap/market-data-baseline.json",
         "artifact": "zap-market-data",
+    },
+    # A Viewer cannot write drawings (DR38): the scan role is a Manager, with the Owner's rows.
+    "drawings": {
+        "cron": "57 3 * * *",
+        "report": "drawings-manager",
+        "baseline": ".zap/e14-drawings-baseline.json",
+        "artifact": "zap-drawings",
+        "role": "manager",
+        "fixture": ".zap/e14-drawings-seed.json",
     },
 }
 
@@ -403,7 +485,11 @@ def _steps() -> dict[str, dict[str, Any]]:
     return {step.get("name", step.get("uses", "")): step for step in job["steps"]}
 
 
-_SCAN = "The passive and active scan, as the Viewer"
+_SCAN = "The passive and active scan, as the scan role"
+_USERS = "Migrate, then seed the Owner the owner floor needs and the scan role's user (testnet)"
+_SEED = "Seed the Owner's rows (a profile with a fixture)"
+_PLAN = "Write the plan (nightly_plans.py, importing the contract cut to the surface)"
+_VERIFY = "The Owner's rows are unchanged and the scan role cannot list them (a fixture)"
 _CHECKS = "The scan stayed signed in, and no new medium+ alert"
 
 
@@ -433,9 +519,13 @@ def test_every_uv_run_is_frozen() -> None:
     assert re.findall(r"uv run(?! --frozen)", CALLED.read_text(encoding="utf-8")) == []
 
 
-def test_the_scan_signs_in_as_the_viewer() -> None:
+def test_the_scan_signs_in_as_its_role_the_viewer_unless_the_profile_names_another() -> None:
     scan = _steps()[_SCAN]["run"]
-    assert "security/zap/mint_sessions.py" in scan and '--username "$ZAP_VIEWER_USER"' in scan
+    assert "security/zap/mint_sessions.py" in scan and '--username "${!user}"' in scan
+    assert 'user="ZAP_${ZAP_ROLE^^}_USER"' in scan
+    assert '--password-env "ZAP_${ZAP_ROLE^^}_PASSWORD"' in scan
+    inputs = yaml.safe_load(CALLED.read_text(encoding="utf-8"))[True]["workflow_call"]["inputs"]
+    assert inputs["role"]["default"] == "viewer"
 
 
 def test_zap_gets_the_session_file_the_target_and_the_profile_and_nothing_else() -> None:
@@ -490,17 +580,20 @@ from pathlib import Path
 name = Path(sys.argv[0]).stem
 with open(os.environ["CALLS"], "a", encoding="utf-8") as calls:
     calls.write(name + "\\n")
+if "--username" in sys.argv:  # which user a mint signed in
+    with open(os.environ["CALLS"] + ".users", "a", encoding="utf-8") as users:
+        users.write(sys.argv[sys.argv.index("--username") + 1] + "\\n")
 if "--out" in sys.argv:
     Path(sys.argv[sys.argv.index("--out") + 1]).write_text("ZAP_AUTH_TOKEN=t\\n", encoding="utf-8")
 sys.exit(int(os.environ.get(name.upper() + "_RC", "0")))
 """
 
 
-def _run_step(tmp_path: Path, step: str, **exit_codes: int) -> tuple[int, list[str]]:
+def _run_step(tmp_path: Path, step: str, **exit_codes: int | str) -> tuple[int, list[str]]:
     """Run one step's script as the runner does (`bash -e`) in `tmp_path`, with stand-ins for
     `docker` and the scripts under `security/zap`, and no network: its exit code and the calls
     the stand-ins logged, in order. `exit_codes` sets a stand-in's (`docker_run_rc=3`,
-    `check_liveness_rc=1`, ...)."""
+    `check_liveness_rc=1`, ...), or an environment variable (`zap_role="manager"`)."""
     if not shutil.which("bash"):  # CI must run these proofs
         (pytest.fail if os.environ.get("CI") else pytest.skip)("bash runs the step")
     bin_dir, zap = tmp_path / "bin", tmp_path / "security/zap"
@@ -510,7 +603,7 @@ def _run_step(tmp_path: Path, step: str, **exit_codes: int) -> tuple[int, list[s
     (bin_dir / "python3").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
     for tool in ("docker", "python3"):
         (bin_dir / tool).chmod(0o755)
-    for script in ("mint_sessions", "check_liveness", "baseline_gate"):
+    for script in ("mint_sessions", "check_liveness", "baseline_gate", "drawings_isolation"):
         (zap / f"{script}.py").write_text(_FAKE_SCRIPT, encoding="utf-8")
     calls = tmp_path / "calls"
     calls.touch()
@@ -522,7 +615,11 @@ def _run_step(tmp_path: Path, step: str, **exit_codes: int) -> tuple[int, list[s
         "ZAP_TARGET": "http://127.0.0.1:8000",
         "ZAP_IMAGE": "zap",
         "ZAP_PROFILE": "rules",
+        "ZAP_ROLE": "viewer",
+        "ZAP_FIXTURE": ".zap/e14-drawings-seed.json",
         "ZAP_VIEWER_USER": "viewer-user",
+        "ZAP_MANAGER_USER": "manager-user",
+        "ZAP_OWNER_USER": "owner-user",
         "ZAP_REPORT": "zap-reports/rules-viewer.json",
         "ZAP_BASELINE": ".zap/rules-low-priv-baseline.json",
         "CALLS": str(calls),
@@ -559,6 +656,48 @@ def test_the_scan_fails_with_zap_or_its_session_and_never_scans_without_one(
     """ZAP's own exit fails the step through the pipe into `tee`, and a failed mint or pull
     stops it before ZAP runs."""
     assert _run_step(tmp_path, _SCAN, **exit_codes) == (code, calls)
+
+
+@pytest.mark.parametrize(("role", "user"), [("viewer", "viewer-user"), ("manager", "manager-user")])
+def test_the_scan_mints_the_session_of_its_role(tmp_path: Path, role: str, user: str) -> None:
+    assert _run_step(tmp_path, _SCAN, zap_role=role)[0] == 0
+    assert (tmp_path / "calls.users").read_text(encoding="utf-8").split() == [user]
+
+
+def test_a_fixture_is_seeded_before_the_plan_and_checked_after_the_scan_and_only_with_one() -> None:
+    steps = _steps()
+    order = [list(steps).index(name) for name in (_SEED, _PLAN, _SCAN, _CHECKS, _VERIFY)]
+    assert order == sorted(order)
+    assert (steps[_SEED]["id"], steps[_SEED]["if"]) == ("seed", "${{ inputs.fixture != '' }}")
+    assert steps[_VERIFY]["if"] == "${{ !cancelled() && steps.seed.outcome == 'success' }}"
+
+
+def test_a_fixture_enrols_the_owners_totp_and_the_role_is_checked_and_seeded_by_name() -> None:
+    users = _steps()[_USERS]["run"]
+    assert 'owner_totp=(--totp-secret-out "$RUNNER_TEMP/cv/owner.totp")' in users
+    assert 'uv run --frozen python scripts/seed_fixture_user.py "${owner_totp[@]}"' in users
+    assert '--role "$ZAP_ROLE"' in users and '"$RUNNER_TEMP/cv/$ZAP_ROLE.totp"' in users
+    made = _steps()["Make this run's synthetic credentials (masked, never echoed)"]["run"]
+    assert 'case "$ZAP_ROLE" in viewer | manager) ;;' in made and "exit 1" in made
+
+
+def test_the_seed_signs_the_owner_in_before_it_seeds_and_a_failed_mint_seeds_nothing(
+    tmp_path: Path,
+) -> None:
+    assert _run_step(tmp_path, _SEED) == (0, ["mint_sessions", "drawings_isolation"])
+    assert (tmp_path / "calls.users").read_text(encoding="utf-8").split() == ["owner-user"]
+    assert _run_step(tmp_path / "b", _SEED, mint_sessions_rc=1) == (1, ["mint_sessions"])
+
+
+@pytest.mark.parametrize(("isolation", "code"), [(0, 0), (1, 1)])
+def test_the_check_signs_the_owner_and_the_scan_role_in_afresh_and_fails_with_it(
+    tmp_path: Path, isolation: int, code: int
+) -> None:
+    """Their bearers from before the scan have expired (12 minutes): a session each, one verdict."""
+    ran = _run_step(tmp_path, _VERIFY, zap_role="manager", drawings_isolation_rc=isolation)
+    assert ran == (code, ["mint_sessions", "mint_sessions", "drawings_isolation"])
+    users = (tmp_path / "calls.users").read_text(encoding="utf-8").split()
+    assert users == ["owner-user", "manager-user"]
 
 
 @pytest.mark.parametrize(("liveness", "gate", "code"), [(0, 0, 0), (1, 0, 1), (0, 1, 1), (2, 2, 1)])
