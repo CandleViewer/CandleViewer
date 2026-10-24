@@ -6,9 +6,9 @@ addresses, `fixture` labels, and ids and numeric exchange uids (the `ea_uid_fmt`
 only) derived from each handle's name with `uuid5`: the handles' rows are the same on every run. Two
 things are random by design: the default profile each account gets from the `trg_ea_default_profile`
 trigger, and the invite's token. Nothing here is a credential, an exchange key, a token or anyone's
-personal data, and `tests/unit/test_admin_fixture_handles.py`, `test_admin_fixture_seed.py` and
-`test_admin_corrupt_chain_fixture.py` pass every value, and this file, through the log redactor to
-keep it so.
+personal data, and `tests/unit/test_admin_fixture_handles.py`, `test_admin_fixture_seed.py`,
+`test_admin_corrupt_chain_fixture.py` and `test_admin_flag_overrides_fixture.py` pass every value,
+and this file, through the log redactor to keep it so.
 
 | File                 | What it holds                                                                                   |
 | -------------------- | ----------------------------------------------------------------------------------------------- |
@@ -17,6 +17,8 @@ keep it so.
 | `corrupt_chain.py`   | AUDIT-CORRUPT: `seed_corrupted_chain`, a chain with one of its own entries altered behind it    |
 | `latched_machine.py` | SC-CHAIN-TRIPS: a sealed, degraded order snapshot, its seed and its check                       |
 | `audit_10m.py`       | AUDIT-10M: `load_audit_10m`, E42-K01's 10 M-row generator run into a test database              |
+| `flag_overrides.py`  | FLAG-OVERRIDE-ROWS: override rows on both safety flags and an unreadable row, and their check   |
+| `world.py`           | `require_world`: the rows of slice A's world a later seed needs, each named if missing          |
 | `payloads/`          | The health reports and the overview, as JSON bodies of the contract's models                    |
 | `README.md`          | This file                                                                                       |
 
@@ -204,7 +206,7 @@ async with engine.begin() as conn:
 ```
 
 - **What it writes**, into `feature_flags` and `feature_flag_overrides`, as a database writer would,
-  for AC-ADM-09 (AD-S05-N03):
+  for AC-ADM-09 (AD-S05-N03; AD-S05-03 reads the unreadable row):
   - a role override (`owner`) and a user override (MGR-M), both `true`, on each safety flag,
     `trading.live_enabled` and the kill switch `maintenance.mode`: neither takes an override, so each
     resolves to its stored `false` for both;
@@ -222,6 +224,11 @@ async with engine.begin() as conn:
   with the app's own `resolve` that each caller gets the closed value: each safety flag its stored
   `false`, `algo.twap` its fail-closed `false`. It names a changed value, a lost override, or an
   unreadable row made readable.
+- **Slice A's check still passes after it:** the seed writes no row of slice A's, and its Postgres
+  case runs `check_admin_world` after it.
+- **Seed it again right before AD-S05-N03:** the plan runs AD-S05-05 first, and a successful `PUT` on
+  a safety flag keeps no user override (`admin/flags/writes.py`), so it deletes MGR-M's row on
+  `maintenance.mode`. A second seed puts that row back and leaves a stored value as it is.
 - **Test databases only:** both refuse a database not named `test` or `*_test`, with
   `FixtureRefused` and before a row is read.
 

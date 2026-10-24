@@ -26,7 +26,9 @@ async def require_world(
     flags: Sequence[str] = (),
 ) -> None:
     """Raise `FixtureCheckError` naming each user, account (by handle) and flag (by key) of the
-    world that has no row."""
+    world that has no row. It reads `users`, `exchange_accounts` and `feature_flags` and refuses
+    nothing itself: a caller refuses a database not named for tests first
+    (`refuse_unless_test_database`)."""
     wanted: list[tuple[sa.Table, str, dict[Any, str]]] = [
         (m.users, "id", {user(h).id: h for h in users}),
         (m.exchange_accounts, "id", {account(h).id: h for h in accounts}),
