@@ -216,12 +216,30 @@ def test_nothing_shown_voids_the_whole_request() -> None:
 
 def test_a_history_miss_past_the_span_is_held_only_where_it_can_hide_a_match() -> None:
     past = T0_US
-    for pos in (flat(), position(side="sell")):
+    for pos in (flat(), position(side="sell", stop_loss=Decimal("62000"))):
         decision = one(request_rows(), pos, history_from_us=past)
         assert decision.outcome == "held_for_reconciliation" and decision.held == SPAN_HELD
-    assert one(request_rows(), position(), history_from_us=past).outcome == "in_flight_resolved"
-    demo = one(request_rows(), position(), retention_from_us=past)  # demo, past its 7 d
+    open_ = position(stop_loss=Decimal("59000"))
+    assert one(request_rows(), open_, history_from_us=past).outcome == "in_flight_resolved"
+    demo = one(request_rows(), open_, retention_from_us=past)  # demo, past its 7 d less a day
     assert demo.outcome == "held_for_reconciliation" and demo.held == SPAN_HELD
+
+
+def test_a_history_miss_on_a_position_open_with_no_stop_at_all_is_never_held() -> None:
+    """21 Sec.3.3.11: "a key whose position, open on either side, shows no stop at all is never
+    held on this rule"; a flat key stays held. A take-profit alone is no stop (C-2.6)."""
+    past = T0_US
+    for side in ("buy", "sell"):
+        for pos in (position(side=side), position(side=side, take_profit=Decimal("66000"))):
+            for decision in (
+                one(request_rows(), pos, history_from_us=past),
+                one(request_rows(), pos, retention_from_us=past),
+            ):
+                assert decision.outcome == "in_flight_resolved" and decision.held is None
+    trail = position(side="sell").model_copy(update={"trailing_stop_distance": Decimal("150")})
+    assert one(request_rows(), trail, history_from_us=past).held == SPAN_HELD
+    assert one(request_rows(), flat(), history_from_us=past).held == SPAN_HELD
+    assert one(request_rows(), flat(), retention_from_us=past).held == SPAN_HELD
 
 
 def test_an_entry_still_resting_keeps_its_rows() -> None:
