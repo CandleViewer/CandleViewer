@@ -48,18 +48,23 @@ cap, its cooldown, its metric and its pages) is slice H3's.
    (`Reading.waiting_entries`), carries `ENTRY_HELD` with its outcome, as that row stays listed.
 4. **The read** (`CompleteRead`), every read a `poll` lane read, each bounded at
    `READ_TIMEOUT_S` and the whole at `WHOLE_READ_TIMEOUT_S`: the position always
-   (`routing.read_position`); an entry's order through `find_by_link_id`, credited only when
-   `b01.full_match(found_view(order))` passes (SR-E29-03), so a squatter's fill is never the
-   entry's; and, for a Partial side or a Full side whose position is flat (Q3), the open orders of
-   the symbol and the order history from 5 s before the oldest request, kept to the key and the
+   (`routing.read_position`); an entry's order by its id among the open orders, then in the
+   history from 5 s before its stored `created_ts` (by its bound `exchange_order_id` once it has
+   one), credited only when `b01.full_match(found_view(order))` passes (SR-E29-03), so a
+   squatter's fill is never the entry's, and `unseen` when not found where a miss proves nothing;
+   whether its stored order `WAITING_ENTRY` holds; and, for a Partial side or a Full side whose
+   position is flat (Q3), the open orders of the symbol and the order history from 5 s before the
+   oldest request to now (the adapter reads every 7-day window between), kept to the key and the
    TP/SL kinds. One that fails or does not answer decides nothing (None). The venue's retention
    comes from its port's `ExchangeCapabilities.order_retention_days` (demo 7 d, less rule 6's
    day; none on live), never an environment check (24 Sec.14.2 rule 3). The read keeps no state
    between calls: the cooldown and the attach's reserved slot are H3's gate's.
-5. **The writes** (`StopResolver`): answers, then the `replaced` rows, then each request's rows in
-   force (whose transaction also replaces the older answered rows of their kind), then the voids,
-   each audited write-ahead (C-2.9). A write that fails or loses its compare-and-set raises; the
-   key is read again on the next request.
+5. **The writes** (`StopResolver`), each store call bounded at `READ_TIMEOUT_S`: answers, then
+   each request's rows in force (whose transaction also replaces the older answered rows of
+   their kind), then the read's own `replaced` rows (an unanswered row, or one whose successor
+   was already in force), then the voids, each audited write-ahead (C-2.9), the store giving the
+   hook its `position_state`. A write that fails or loses its compare-and-set raises; the key is
+   read again on the next request.
 
 Nothing here ends a row, materialises one, binds or releases an `exchange_order_id` or tells B1 a
 stop was seen or lost (INV-B1-f).
@@ -81,10 +86,14 @@ from candleviewer.exchange.base.models import AccountRef, Order, Position
 from candleviewer.exchange.base.ports import TradingPort
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.storage.repositories.orders import OrderRow
-from candleviewer.storage.repositories.recorded_stops import RecordedStopRow, StopKind
+from candleviewer.storage.repositories.recorded_stops import (
+    WAITING_ENTRY,
+    RecordedStopRow,
+    ResolveWriteAhead,
+    StopKind,
+)
 
-from .commands import LIVE_HISTORY_SPAN_S, found_view, place_request
-from .order_link_resolution import find_by_link_id
+from .commands import LIVE_HISTORY_SPAN_S, found_view
 from .ports import PositionKey
 from .routing import read_position
 
@@ -130,8 +139,9 @@ type EntryState = Literal["resting", "filled", "gone", "unseen"]
 #: Why a decision pages (`RequestDecision.page_reason`): the fill void of an open stop-loss, or the
 #: void of an unseen entry on a position open with no stop at all (the 06:38Z ruling).
 type PageReason = Literal["entry_filled_stop_absent", "entry_unseen"]
-#: A void's write-ahead hook (`ResolveWriteAhead`, H1): awaited before the commit, with the rows.
-type VoidWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
+#: A void's write-ahead hook (`ResolveWriteAhead`, H1): awaited before the commit, with the rows
+#: and the `position_state` the store was given (None but for `entry_filled_stop_absent`).
+VoidWriteAhead = ResolveWriteAhead
 
 #: Why a request is held for reconciliation (`RequestDecision.held`, the log line's text).
 TRAIL_HELD: Final = (
@@ -536,7 +546,7 @@ class VoidAudit(Protocol):
     """The write-ahead hook of a void (C-2.9): one `sl.modified` / `tp.modified` record per row,
     with `reason`, actor `system:oms`, ids only (21 Sec.3.3.11 "Audit")."""
 
-    def hook(self, reason: VoidReason, position_state: PositionState) -> VoidWriteAhead: ...
+    def hook(self, reason: VoidReason) -> VoidWriteAhead: ...
 
 
 def entry_view(row: OrderRow) -> dict[str, Any]:
@@ -600,20 +610,18 @@ class CompleteRead:
         """The key's reading at `now`, or None when a read fails or outlasts its bound."""
         if account.account_id != key.account_id:
             raise ValueError("the account read is the key's (C-12.4)")
-        try:
-            async with asyncio.timeout(self._whole_timeout_s):
-                reading = await self._read(port, account, key, requests)
-        except Exception as exc:  # CancelledError is no Exception: a cancel goes through
-            _log().warning("oms_stop_read_failed", symbol=key.symbol, failure=type(exc).__name__)
-            return None
         now_us = _us(now)
         days = port.capabilities.order_retention_days  # a demo venue's retention; None on live
         kept = 0 if days is None else now_us - (days - 1) * _DAY_US  # rule 6's margin of a day
-        return replace(
-            reading,
-            history_from_us=now_us - round(HISTORY_SPAN_S * 1_000_000),
-            retention_from_us=kept,
-        )
+        span = now_us - round(HISTORY_SPAN_S * 1_000_000)
+        try:
+            async with asyncio.timeout(self._whole_timeout_s):
+                reading = await self._read(port, account, key, requests, now_us, max(span, kept))
+        except Exception as exc:  # CancelledError is no Exception: a cancel goes through
+            _log().warning("oms_stop_read_failed", symbol=key.symbol, failure=type(exc).__name__)
+            return None
+        read_from = reading.history_from_us if reading.orders_read else 0
+        return replace(reading, history_from_us=max(span, read_from), retention_from_us=kept)
 
     async def _read(
         self,
@@ -621,18 +629,24 @@ class CompleteRead:
         account: AccountRef,
         key: PositionKey,
         requests: Sequence[StopRequest],
+        now_us: int,
+        proves_from_us: int,
     ) -> Reading:
         position = await self._one(read_position(port, account, key.symbol, key.position_idx))
         entries: dict[UUID, EntryState] = {}
+        waiting: set[UUID] = set()
         for request in requests:
             if request.source == "entry_attach" and request.order_id is not None:
-                entries[request.order_id] = await self._entry(port, account, request.order_id)
+                row = await self._one(self._orders.get(account.account_id, request.order_id))
+                if row is not None and _waits(row):
+                    waiting.add(row.id)
+                entries[request.order_id] = await self._entry(port, account, row, proves_from_us)
         rows = [row for request in requests for row in request.rows]
         if not any(r.tpsl_mode == "Partial" or position_state(r, position) == "flat" for r in rows):
-            return Reading(position, entries)
+            return Reading(position, entries, waiting_entries=frozenset(waiting))
         start = _us(min(r.created_at for r in rows)) - _LEAD_US
         open_now = await self._one(port.open_orders(account, key.symbol))
-        history = await self._one(port.order_history(account, start=start))
+        history = await self._one(port.order_history(account, start=start, end=now_us))
         place = (key.account_id, key.symbol, key.position_idx)
 
         def kept(orders: Sequence[Order]) -> tuple[Order, ...]:
@@ -642,17 +656,23 @@ class CompleteRead:
                 if (o.account_id, o.symbol, o.position_idx) == place and o.order_kind in _STOP_KINDS
             )
 
-        return Reading(position, entries, kept(open_now), kept(history))
+        return Reading(
+            position, entries, kept(open_now), kept(history), history_from_us=start,
+            orders_read=True, waiting_entries=frozenset(waiting),
+        )  # fmt: skip
 
-    async def _entry(self, port: TradingPort, account: AccountRef, order_id: UUID) -> EntryState:
-        """The entry's order, by its bound id when it has one: `gone` when it is not stored for
-        the account, not found, or found and not the row's (a squatter's fill is never ours)."""
-        row = await self._one(self._orders.get(account.account_id, order_id))
+    async def _entry(
+        self, port: TradingPort, account: AccountRef, row: OrderRow | None, proves_from_us: int
+    ) -> EntryState:
+        """The entry's order: `gone` when it is not stored for the account, not found, or found
+        and not the row's (a squatter's fill is never ours); `unseen` when not found where a miss
+        proves nothing (stored before `proves_from_us`); `filled` on any fill, resting or not."""
         if row is None:
             return "gone"
-        found = await self._one(find_by_link_id(port, place_request(row, account)))
+        start = _us(row.created_ts) - _LEAD_US
+        found = await self._find(port, account, row, start)
         if found is None:
-            return "gone"
+            return "unseen" if start < proves_from_us else "gone"
         order, source = found
         bound = row.exchange_order_id
         try:
@@ -662,13 +682,40 @@ class CompleteRead:
         if not ours or (bound is not None and order.exchange_order_id != bound):
             _log().warning("oms_stop_read_entry_unmatched", order_link_id=row.order_link_id)
             return "gone"
-        if order.filled_qty > 0:
+        if order.filled_qty > 0:  # a partly filled entry still resting is a fill (the ruling)
             return "filled"
         return "resting" if source == "realtime" else "gone"
+
+    async def _find(
+        self, port: TradingPort, account: AccountRef, row: OrderRow, start: int
+    ) -> tuple[Order, Literal["realtime", "history"]] | None:
+        """The entry's id among the open orders, then in the history from `start` (its bound
+        `exchange_order_id` once it has one): the venue's 7 days from it hold its creation."""
+        link, bound = row.order_link_id, row.exchange_order_id
+        listed = await self._one(port.open_orders(account, row.symbol, order_link_id=link))
+        opened = [o for o in listed if o.order_link_id == link]  # the port's filter, again
+        if opened:
+            return opened[0], "realtime"
+        if bound is not None:
+            history = port.order_history(account, exchange_order_id=bound, start=start)
+        else:
+            history = port.order_history(account, order_link_id=link, start=start)
+        found = await self._one(history)
+        ended = [o for o in found if o.order_link_id == link or o.exchange_order_id == bound]
+        return (ended[0], "history") if ended else None
 
     async def _one[T](self, call: Awaitable[T]) -> T:
         async with asyncio.timeout(self._read_timeout_s):
             return await call
+
+
+def _waits(row: OrderRow) -> bool:
+    """`WAITING_ENTRY` on the stored order: each column holds its value, or one of a set."""
+    for name, value in WAITING_ENTRY.items():
+        held = getattr(row, name)
+        if not (held in value if isinstance(value, frozenset) else held == value):
+            return False
+    return True
 
 
 # --- the resolution --------------------------------------------------------------------------
@@ -685,22 +732,27 @@ class StopResolver:
         audit: VoidAudit,
         *,
         now: Callable[[], datetime],
+        store_timeout_s: float = READ_TIMEOUT_S,
     ) -> None:
         self._store = store
         self._read = read
         self._audit = audit
         self._now = now
+        self._store_timeout_s = store_timeout_s
 
     async def resolve_key(
         self, port: TradingPort, account: AccountRef, key: PositionKey, *, bound_s: float | None
     ) -> tuple[RequestDecision, ...] | None:
         """The key's decisions, written; None when the read decided nothing (`read_failed`).
-        A store read or write that fails raises, with what was written before it kept."""
+        A store read or write that fails, or outlasts its bound (`TimeoutError`), raises, with
+        what was written before it kept."""
         if account.account_id != key.account_id:
             raise ValueError("the account resolved is the key's (C-12.4)")
         now = self._now()
-        listed = await self._store.waiting_for_key(
-            key.account_id, key.symbol, key.position_idx, now=now, bound_s=bound_s
+        listed = await self._bounded(
+            self._store.waiting_for_key(
+                key.account_id, key.symbol, key.position_idx, now=now, bound_s=bound_s
+            )
         )
         requests = group_requests(key, listed)
         if not requests:
@@ -711,8 +763,8 @@ class StopResolver:
             read = await self._read.read(port, account, key, live, now=now)
             if read is None:
                 return None
-            stored = await self._store.in_force_for_key(
-                key.account_id, key.symbol, key.position_idx
+            stored = await self._bounded(
+                self._store.in_force_for_key(key.account_id, key.symbol, key.position_idx)
             )
             reading = replace(read, in_force=tuple(stored))
         decisions = decide(requests, reading)
@@ -730,29 +782,46 @@ class StopResolver:
         return decisions
 
     async def _write(self, key: PositionKey, decisions: Sequence[RequestDecision]) -> None:
-        """Answers, replaced rows, rows in force (replacing the older answered rows of their
-        kind), then voids, each audited write-ahead. Never an end, a bind or a release."""
+        """Answers, rows in force (replacing the older answered rows of their kind), the read's
+        own `replaced` rows, then voids, each audited write-ahead. Never an end, a bind or a
+        release."""
         at, account_id = self._now(), key.account_id
-        for outcome in ("answered", "replaced"):
-            for d in decisions:
-                rows = [r for r, m in d.moves if m == outcome]
-                rows = [r for r in rows if outcome == "replaced" or r.answered_at is None]
-                if rows:
-                    await self._store.resolve(account_id, rows, outcome, at=at)
+        put = {r.kind: r.created_at for d in decisions for r, m in d.moves if m == "in_force"}
+        for d in decisions:
+            rows = [r for r, m in d.moves if m == "answered" and r.answered_at is None]
+            if rows:
+                await self._bounded(self._store.resolve(account_id, rows, "answered", at=at))
         for d in decisions:
             shown = [r for r, m in d.moves if m == "in_force"]
             if shown:
-                await self._store.put_in_force(account_id, shown, at=at)
+                await self._bounded(self._store.put_in_force(account_id, shown, at=at))
+        for d in decisions:  # the put's transaction replaced an older answered row of its kind
+            rows = [r for r, m in d.moves if m == "replaced" and not _put_replaced(r, put)]
+            if rows:
+                await self._bounded(self._store.resolve(account_id, rows, "replaced", at=at))
         for d in decisions:
             for reason in _VOIDS:
                 voided = [r for r, m in d.moves if m == reason]
                 if voided:
                     state = d.position_state if reason == "entry_filled_stop_absent" else None
-                    await self._store.resolve(
-                        account_id,
-                        voided,
-                        reason,
-                        at=at,
-                        write_ahead=self._audit.hook(reason, d.position_state),
-                        position_state=state,
+                    await self._bounded(
+                        self._store.resolve(
+                            account_id,
+                            voided,
+                            reason,
+                            at=at,
+                            write_ahead=self._audit.hook(reason),
+                            position_state=state,
+                        )
                     )
+
+    async def _bounded[T](self, call: Awaitable[T]) -> T:
+        async with asyncio.timeout(self._store_timeout_s):
+            return await call
+
+
+def _put_replaced(row: RecordedStopRow, put: Mapping[StopKind, datetime]) -> bool:
+    """An answered row older than a row of its kind this read puts in force: that put replaced
+    it in its own transaction (`put_in_force`)."""
+    born = put.get(row.kind)
+    return row.answered_at is not None and born is not None and row.created_at < born
