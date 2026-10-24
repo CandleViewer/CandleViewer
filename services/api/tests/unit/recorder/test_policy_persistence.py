@@ -492,6 +492,15 @@ async def test_a_stop_in_flight_cannot_erase_a_pin(
     assert not any(r["pinned"] and r["removed"] for r in store.rows.values())
 
 
+async def test_a_stop_in_flight_cannot_take_a_retention_change(
+    policy: RecordingPolicy, store: Mem, clock: FakeClock
+) -> None:
+    change = policy.set_retention("BTCUSDT", 10, OWNER, restricted=False)
+    raised = await _stop_races(policy, store, clock, change)
+    assert isinstance(raised, RecorderSymbolNotRecordedError)  # the row went first, unwritten
+    assert not any(r["retention_days"] is not None for r in store.rows.values())
+
+
 def _live_rows(store: Mem) -> list[dict[str, Any]]:
     return [copy.deepcopy(r) for r in store.rows.values() if r["env"] == "live"]
 

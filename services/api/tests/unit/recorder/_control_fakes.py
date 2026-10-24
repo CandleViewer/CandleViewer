@@ -130,7 +130,7 @@ class FakeRecorder:
             return
         if not pinned:
             await self._refuse_relax(symbol, actor, restricted)
-        days = e.retention_days if pinned else retention_days  # a pin leaves the days alone
+        days = None if pinned else retention_days  # a pin nulls the days (22)
         await self._record("retention.change", symbol, actor, "pin" if pinned else "unpin",
                            {"pinned": e.pinned, "retention_days": _str(e.retention_days)},
                            pinned=pinned, retention_days=_str(days))  # fmt: skip

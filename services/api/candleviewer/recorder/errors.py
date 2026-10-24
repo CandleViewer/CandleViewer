@@ -26,7 +26,8 @@ class RecorderSymbolNotManualError(RecorderError):
 
 
 class RecorderSymbolNotRecordedError(RecorderError):
-    """`set_pin` named a symbol with no active `recorded_symbols` row: a pin needs a row."""
+    """`set_pin` or `set_retention` named a symbol with no active `recorded_symbols` row, or one
+    that went before the write: both need an active row."""
 
 
 class RecorderInvalidUpdateError(RecorderError):

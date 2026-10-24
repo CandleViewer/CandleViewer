@@ -21,7 +21,7 @@ from candleviewer.recorder.errors import (
     RecorderRelaxRefusedError,
     RecorderSymbolNotRecordedError,
 )
-from candleviewer.recorder.models import SYSTEM_ACTOR
+from candleviewer.recorder.models import SYSTEM_ACTOR, Actor
 from candleviewer.recorder.policy import PolicyControlSurface, RecordingPolicy, user_actor
 from candleviewer.settings import Settings
 from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, Mem
@@ -201,17 +201,70 @@ async def test_both_writes_record_retention_change_ahead_of_the_store_with_the_r
         await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
         await policy.set_pin("BTCUSDT", False, OWNER, restricted=False, retention_days=90)
     read, record = "get_by_symbol", "audit:retention.change"
-    assert trace == [read, record, "set_retention", read, record, "set_pinned",
+    assert trace == [read, record, "set_retention",  # the days
+                     read, record, "set_pinned", "set_retention",  # the pin, then its days nulled
                      read, record, "set_retention", "set_pinned"]  # fmt: skip  # days, then unpin
     assert [kw["reason"] for _, kw in audit.records] == ["retention", "pin", "unpin"]
     assert {kw["request_id"] for _, kw in audit.records} == {rid}
     states = [(kw["before_state"], kw["after_state"]) for _, kw in audit.records]
     assert [(b, a["retention_days"]) for b, a in states] == [
         ({"retention_days": None}, "30"),
-        ({"pinned": False, "retention_days": "30"}, "30"),
-        ({"pinned": True, "retention_days": "30"}, "90"),
+        ({"pinned": False, "retention_days": "30"}, None),  # a pin nulls the days (22)
+        ({"pinned": True, "retention_days": None}, "90"),
     ]
     assert all(redact(dict(b or {})) == b for b, _ in states)  # the real writer stores them so
+
+
+async def test_a_pin_writes_the_pin_then_nulls_the_stored_days(
+    policy: RecordingPolicy, store: Mem, trace: list[str]
+) -> None:
+    await _held(policy, hidden=False, days=30)
+    trace.clear()
+    await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
+    assert trace == ["get_by_symbol", "audit:retention.change", "set_pinned", "set_retention"]
+    assert _kept(store) == (True, None)  # 22: `pinned: true` nulls `retention_days`
+
+
+async def test_a_pin_of_a_row_already_holding_null_writes_no_second_statement(
+    policy: RecordingPolicy, trace: list[str]
+) -> None:
+    await _held(policy, hidden=False)
+    trace.clear()
+    await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
+    assert trace == ["get_by_symbol", "audit:retention.change", "set_pinned"]
+
+
+async def test_a_failure_after_the_pin_leaves_a_pinned_row_whose_number_is_inert(
+    policy: RecordingPolicy, store: Mem
+) -> None:
+    await _held(policy, hidden=False, days=30)
+    store.fail.add("set_retention")
+    with pytest.raises(OSError, match="pg down"):
+        await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
+    assert _kept(store) == (True, 30)  # the pin went first: no unpinned row ever lost its days
+
+
+async def test_a_restricted_retention_reset_of_a_pinned_hidden_held_row_is_no_refusal(
+    policy: RecordingPolicy, store: Mem, audit: FakeAudit, trace: list[str]
+) -> None:
+    await _held(policy, days=30, pinned=True)  # the pin nulls the 30: the reset changes nothing
+    audit.records.clear()
+    trace.clear()
+    await policy.set_retention("BTCUSDT", None, MANAGER, restricted=True)
+    assert (audit.records, trace, _kept(store)) == ([], ["get_by_symbol"], (True, None))
+
+
+@pytest.mark.parametrize("days", [None, 7])
+@pytest.mark.parametrize(("restricted", "hidden"), [(False, False), (True, True)])
+async def test_an_unpin_of_an_unpinned_row_writes_and_records_nothing(
+    policy: RecordingPolicy, store: Mem, audit: FakeAudit, trace: list[str],
+    restricted: bool, hidden: bool, days: int | None,
+) -> None:  # fmt: skip
+    await _held(policy, hidden=hidden, days=30)
+    audit.records.clear()
+    trace.clear()
+    await policy.set_pin("BTCUSDT", False, MANAGER, restricted=restricted, retention_days=days)
+    assert (audit.records, trace, _kept(store)) == ([], [], (False, 30))  # not even refused
 
 
 @pytest.mark.parametrize("op", ["pin", "unpin", "retention", "refusal"])
@@ -252,22 +305,37 @@ async def test_a_retention_the_table_refuses_raises_before_any_audit_or_write(
     assert (audit.records, trace) == ([], [])
 
 
-async def test_set_retention_needs_a_user_a_valid_symbol_and_an_active_row(
+@pytest.mark.parametrize(
+    ("symbol", "actor", "recorded", "refusal"),
+    [
+        ("BTCUSDT", SYSTEM_ACTOR, True, InvalidRecorderActorError),
+        ("btc", OWNER, True, InvalidRecordedSymbolError),
+        ("BTCUSDT", OWNER, False, RecorderSymbolNotRecordedError),
+    ],
+    ids=["a non-user actor", "a malformed symbol", "no active row"],
+)
+async def test_set_retention_refuses_before_any_audit_or_write(
+    policy: RecordingPolicy, audit: FakeAudit, trace: list[str],
+    symbol: str, actor: Actor, recorded: bool, refusal: type[Exception],
+) -> None:  # fmt: skip
+    if recorded:
+        await _held(policy, hidden=False)
+    audit.records.clear()
+    trace.clear()
+    with pytest.raises(refusal):
+        await policy.set_retention(symbol, 30, actor, restricted=False)
+    assert audit.records == [] and "set_retention" not in trace  # a read is all it may make
+
+
+async def test_set_retention_of_a_row_gone_between_read_and_write_raises_after_its_record(
     policy: RecordingPolicy, store: Mem, audit: FakeAudit, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with pytest.raises(InvalidRecorderActorError):
-        await policy.set_retention("BTCUSDT", 30, SYSTEM_ACTOR, restricted=False)
-    with pytest.raises(InvalidRecordedSymbolError):
-        await policy.set_retention("btc", 30, OWNER, restricted=False)
-    with pytest.raises(RecorderSymbolNotRecordedError):
-        await policy.set_retention("BTCUSDT", 30, OWNER, restricted=False)
-
     async def row_gone(recorded_id: str, days: int | None) -> bool:
         return False
 
     await _held(policy, hidden=False)
     monkeypatch.setattr(store, "set_retention", row_gone)
-    with pytest.raises(RecorderSymbolNotRecordedError):  # the row went between read and write
+    with pytest.raises(RecorderSymbolNotRecordedError):
         await policy.set_retention("BTCUSDT", 30, OWNER, restricted=False)
     assert _kept(store) == (False, None)
     assert audit.actions().count("retention.change") == 1  # the record stands: write-ahead

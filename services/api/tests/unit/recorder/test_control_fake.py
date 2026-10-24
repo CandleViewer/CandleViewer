@@ -140,3 +140,10 @@ async def test_a_restricted_relax_of_a_hidden_held_entry_is_refused_as_the_polic
     await fake.set_retention("BTCUSDT", 7, USER, restricted=False)
     await fake.set_pin("BTCUSDT", False, USER, restricted=False, retention_days=9)
     assert fake.entries["BTCUSDT"].retention_days == 9 and not fake.entries["BTCUSDT"].pinned
+
+
+async def test_a_pin_nulls_the_entrys_days_as_the_policy_does() -> None:
+    fake = fakes.FakeRecorder()
+    fake.put("BTCUSDT", "manual", retention_days=30)
+    await fake.set_pin("BTCUSDT", True, USER, restricted=False)
+    assert fake.entries["BTCUSDT"].retention_days is None

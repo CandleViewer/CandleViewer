@@ -161,6 +161,18 @@ async def test_set_pinned_reports_whether_an_active_row_matched() -> None:
     assert await repo2.set_pinned("missing", False) is False
 
 
+async def test_set_retention_binds_the_days_and_reports_whether_an_active_row_matched() -> None:
+    repo, rel = _repo([{"?column?": 1}])
+    assert await repo.set_retention("r1", 7) is True
+    assert await repo.set_retention("r1", None) is True
+    assert rel.calls[0][1] == {"id": "r1", "days": 7}
+    assert rel.calls[1][1] == {"id": "r1", "days": None}  # None binds NULL: the default
+    sql = rel.calls[0][0]
+    assert "updated_at = now()" in sql and "removed_at IS NULL" in sql
+    repo2, _ = _repo([])
+    assert await repo2.set_retention("missing", 7) is False
+
+
 class _Driver(Exception):
     def __init__(self, sqlstate: str, constraint_name: str | None = None) -> None:
         super().__init__("Failing row contains (secret)")

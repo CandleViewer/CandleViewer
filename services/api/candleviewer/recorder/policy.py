@@ -250,12 +250,13 @@ class PolicyControlSurface(Protocol):
         restricted: bool,
         retention_days: int | None = None,
     ) -> None:
-        """Pin or unpin the symbol's active row. A pin keeps forever; an unpin takes
-        `retention_days` (None: the default), and an unpin of a row not pinned changes nothing.
-        Unpinning is a relaxation, refused to a `restricted` caller when `relax_allowed` is False.
-        Raises `InvalidRecorderActorError` (not a user), `RecorderSymbolNotRecordedError` (no
-        active row), `InvalidRecordedSymbolError`, `RecorderInvalidUpdateError` (a retention the
-        table refuses), `RecorderRelaxRefusedError` and `RecorderSymbolLimitError`."""
+        """Pin or unpin the symbol's active row. A pin keeps forever and nulls the stored
+        `retention_days` (22); an unpin takes `retention_days` (None: the default), and an unpin
+        of a row not pinned changes nothing. Unpinning is a relaxation, refused to a `restricted`
+        caller when `relax_allowed` is False. Raises `InvalidRecorderActorError` (not a user),
+        `RecorderSymbolNotRecordedError` (no active row), `InvalidRecordedSymbolError`,
+        `RecorderInvalidUpdateError` (a retention the table refuses), `RecorderRelaxRefusedError`
+        and `RecorderSymbolLimitError`."""
 
     async def set_retention(
         self, symbol: str, retention_days: int | None, actor: Actor, *, restricted: bool
@@ -300,7 +301,9 @@ class PolicyControlSurface(Protocol):
     def relax_allowed(self, symbol: str, *, restricted: bool) -> bool:
         """Whether the caller's view covers every cause holding the symbol: True when not
         `restricted` or when no `HIDDEN_CAUSES` cause holds it (a closed warm-up gate counts as
-        a position). False: a restricted unpin or lower retention is refused."""
+        a position). False: a restricted unpin or lower retention is refused. The check is made
+        at decision time: a position opening during the change's own audit write is an accepted
+        residual."""
 
 
 #: (symbol, B11 hook name, chart context) -> None; see `RecordingPolicy.observe_states`.
@@ -591,8 +594,9 @@ class RecordingPolicy:
         written, then applied. A pin needs an active row (`RecorderSymbolNotRecordedError`);
         unpinning an idle symbol also soft-removes the row that only the pin kept, judged from the
         row (manual, or holding refs) and from memory (a manual entry, a trigger, a session).
-        An unpin stores `retention_days` (None: NULL, the default) ahead of the unpin, so a failure
-        in between leaves the row pinned. A `restricted` unpin of a row `relax_allowed` refuses is
+        A pin writes the pin, then nulls the stored `retention_days` if it holds one (22); an unpin
+        stores `retention_days` (None: NULL, the default) ahead of the unpin. A failure in between
+        leaves the row pinned either way. A `restricted` unpin of a row `relax_allowed` refuses is
         refused before it is audited or written; an unpin of a row not pinned changes nothing."""
         if actor.kind != "user":
             raise InvalidRecorderActorError("a pin requires a user actor")
@@ -620,7 +624,7 @@ class RecordingPolicy:
         if not pinned:  # an unpin relaxes the row's protection
             await self._refuse_relax(symbol, actor, restricted=restricted)
         held = row["retention_days"]
-        after = held if pinned else new  # a pin keeps forever: the stored days are inert
+        after = None if pinned else new  # a pin keeps forever and nulls the days (22)
         await self._audit_emit(
             "retention.change",
             symbol,
@@ -629,9 +633,11 @@ class RecordingPolicy:
             before={"pinned": row["pinned"], "retention_days": _str(held)},
             extra={"pinned": pinned, "retention_days": _str(after)},
         )
+        if pinned and not await self._recorded.set_pinned(row["id"], True):  # the pin first
+            raise RecorderSymbolNotRecordedError("the recorded row was removed")
         if after != held and not await self._recorded.set_retention(row["id"], after):
             raise RecorderSymbolNotRecordedError("the recorded row was removed")
-        if not await self._recorded.set_pinned(row["id"], pinned):
+        if not pinned and not await self._recorded.set_pinned(row["id"], False):  # the unpin last
             raise RecorderSymbolNotRecordedError("the recorded row was removed")
         kept = row["reason"] == "manual" or bool(row["reason_refs"])  # the row's own reasons
         if not (pinned or kept or s.manual or s.charts or s.positions or symbol in self._charts):
