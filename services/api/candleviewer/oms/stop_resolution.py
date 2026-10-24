@@ -105,7 +105,7 @@ __all__ = [
     "ENTRY_HELD", "FILL_PAGE", "HISTORY_LEAD_S", "HISTORY_SPAN_S", "MAX_HISTORY_WINDOWS",
     "READ_TIMEOUT_S", "RESTORE_HELD", "SPAN_HELD", "STORE_MARGIN_S", "STORE_TIMEOUT_S",
     "TRAIL_HELD", "UNSEEN_PAGE", "WHOLE_READ_TIMEOUT_S", "CompleteRead", "EntryOrders",
-    "EntryState", "Move", "Outcome", "PositionState", "Reading", "RequestDecision",
+    "EntryState", "Move", "Outcome", "PageReason", "PositionState", "Reading", "RequestDecision",
     "ResolutionStore", "StopRequest", "StopResolver", "VoidAudit", "VoidReason", "VoidWriteAhead",
     "decide", "entry_view", "full_shows", "group_requests", "order_matches", "position_state",
     "shows_no_stop", "trail_unreadable",
@@ -115,10 +115,13 @@ __all__ = [
 READ_TIMEOUT_S: Final = 5.0
 WHOLE_READ_TIMEOUT_S: Final = 15.0
 #: Each store call's bound (21 Sec.3.3.5): the stop audit's write-ahead bound
-#: (`recorded_stops.STOP_AUDIT_TIMEOUT_S`, every recorded-stop store's default) plus a margin for
-#: the statements around it, so a late audit reaches the caller as the store's `AuditNotDurable`,
-#: and only a store call stuck elsewhere (a lock wait, the pool) as this bound's `TimeoutError`.
-STORE_MARGIN_S: Final = 2.0
+#: (`recorded_stops.STOP_AUDIT_TIMEOUT_S`, every recorded-stop store's default) plus a 5 s margin
+#: for the statements before the hook (the lock and the update, each capped at the store's 2 s
+#: `OMS_STATEMENT_TIMEOUT_MS`) and some slack, so a late audit surfaces as the audit's own error,
+#: and only a store call stuck elsewhere (the pool, a connection) as this bound's `TimeoutError`.
+#: The store raises `WriteAheadTimeout`; only the facade, `RecordedStopRepository`, maps it to
+#: `AuditNotDurable`, so H3 wires the resolver over the facade, never over a bare store.
+STORE_MARGIN_S: Final = 5.0
 STORE_TIMEOUT_S: Final = STOP_AUDIT_TIMEOUT_S + STORE_MARGIN_S
 #: How many of the venue's 7-day history windows one read may walk (Fable, fold 2): 4 weeks, so
 #: the adapter's walk stays far inside its cap (106) and the read's bound.
@@ -764,7 +767,8 @@ class StopResolver:
     ) -> tuple[RequestDecision, ...] | None:
         """The key's decisions, written; None when the read decided nothing (`read_failed`).
         A store read or write that fails raises, with what was written before it kept: a void
-        audit past its bound as `AuditNotDurable`, a store call past `STORE_TIMEOUT_S` as
+        audit past its bound as `AuditNotDurable` (through `RecordedStopRepository`, the store H3
+        wires; a bare store raises `WriteAheadTimeout`), a store call past `STORE_TIMEOUT_S` as
         `TimeoutError`, a lost compare-and-set as `StaleRecordedStop`."""
         if account.account_id != key.account_id:
             raise ValueError("the account resolved is the key's (C-12.4)")
@@ -823,7 +827,7 @@ class StopResolver:
             for reason in _VOIDS:
                 voided = [r for r, m in d.moves if m == reason]
                 if voided:
-                    stated = reason == "entry_filled_stop_absent" or d.page == UNSEEN_PAGE
+                    stated = reason == "entry_filled_stop_absent" or d.page_reason == "entry_unseen"
                     state = d.position_state if stated else None
                     await self._bounded(
                         self._store.resolve(
