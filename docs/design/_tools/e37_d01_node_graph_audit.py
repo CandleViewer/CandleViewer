@@ -244,6 +244,7 @@ CITES: dict[tuple[str, int], str] = {
         "E30-D02",
         128,
     ): "disabled = `opacity.disabled` on the control with the reason as full-opacity text",
+    ("E36-D02", 109): "| **02-5 armed** (ARMED-DEMO)",
     ("E36-D02", 114): 'Read-only while viewing as {user}."** ({user} is the view-as target',
     ("E36-D02", 122): '"This rule is fully editable in both the form and the graph editor."',
     ("E36-D02", 123): 'Open in the graph editor to change this." — the lead-in',
@@ -286,6 +287,7 @@ CITES: dict[tuple[str, int], str] = {
     ("graph.py", 12): "Well-formedness (cycles, multiple sinks, orphans, dangling ports)",
     ("graph.py", 14): "form-subset detector flags as graph-only",
     ("catalogue.py", 63): "RETIRED_ACTIONS = frozenset",
+    ("catalogue.py", 66): "only_tighten=false is refused",
     ("catalogue.py", 97): "TRIGGERS: dict[str, tuple[str, tuple[str, ...]]] = {",
     ("model.ts", 3): "export type GraphNodeType",
     ("model.ts", 14): "export interface GraphEdge",
@@ -302,7 +304,16 @@ CITES: dict[tuple[str, int], str] = {
     ("keymap.json", 599): '"id": "rules.graph_mode"',
     ("keymap.json", 663): '"id": "rules.group"',
     ("keymap.json", 672): '"id": "rules.auto_layout"',
+    ("keymap.json", 696): '"defaultBinding": "Tab"',
     ("keymap.json", 721): '"id": "rules.rename"',
+}
+
+# The state-2 chip candidates of memo R3: the tool owns their character counts (markers
+# ``r3.len_<id>``) and --check fails when a candidate string is missing from the memo.
+STATE2_CANDIDATES: dict[str, str] = {
+    "2a": "Graph-only — read-only in the form",
+    "2b": "Graph-only construct — the form shows it read-only",
+    "2d": "Graph-only construct — read-only in the form",
 }
 
 # ------------------------------------------------------------------ the corpus (memo section 3) --
@@ -828,6 +839,7 @@ def derived(memo: str, protocol: str) -> dict[str, Any]:
             "g": len(st["g"]),
             "q": len(st["q"]),
             "a": len(st["a"]),
+            **{f"r3.len_{k}": len(v) for k, v in STATE2_CANDIDATES.items()},
         },
     }
 
@@ -860,7 +872,8 @@ def cites_in(text: str) -> list[tuple[str, int, int]]:
     return out
 
 
-def check_cites(text: str) -> tuple[list[str], list[str], int, int]:
+def check_cites(text: str, label: str = "memo") -> tuple[list[str], list[str], int, int]:
+    """Check every registered cite in ``text``; ``label`` names the file in each message."""
     fails: list[str] = []
     warns: list[str] = []
     checked = unregistered = 0
@@ -874,11 +887,13 @@ def check_cites(text: str) -> tuple[list[str], list[str], int, int]:
         if hits == [n]:
             continue
         if len(hits) == 1:
-            warns.append(f"WARN cited line drifted: `{key}`:{n} (memo line {at}) now at :{hits[0]}")
+            warns.append(
+                f"WARN cited line drifted: `{key}`:{n} ({label} line {at}) now at :{hits[0]}"
+            )
         elif not hits:
-            fails.append(f"FAIL needle not found: `{key}`:{n} (memo line {at}) {needle!r}")
+            fails.append(f"FAIL needle not found: `{key}`:{n} ({label} line {at}) {needle!r}")
         else:
-            fails.append(f"FAIL ambiguous needle: `{key}`:{n} (memo line {at}) found at {hits}")
+            fails.append(f"FAIL ambiguous needle: `{key}`:{n} ({label} line {at}) found at {hits}")
     return fails, warns, checked, unregistered
 
 
@@ -910,7 +925,15 @@ def check(memo_path: Path, protocol_path: Path) -> int:
     memo, protocol = read(memo_path), read(protocol_path)
     d = derived(memo, protocol)
     problems = check_markers(memo, d["markers"]) + check_rules(memo + protocol)
-    fails, warns, checked, unregistered = check_cites(memo + "\n" + protocol)
+    problems += [
+        f"FAIL state-2 candidate ({k}) {v!r} missing from the memo"
+        for k, v in STATE2_CANDIDATES.items()
+        if v not in memo
+    ]
+    fails, warns, checked, unregistered = check_cites(memo)
+    p_fails, p_warns, p_checked, p_unreg = check_cites(protocol, "protocol")
+    fails, warns = fails + p_fails, warns + p_warns
+    checked, unregistered = checked + p_checked, unregistered + p_unreg
     problems += fails
     for w in warns:
         print(w)
@@ -977,8 +1000,19 @@ def report(d: dict[str, Any]) -> str:
     return "\n".join(out)
 
 
+USAGE = (
+    "usage: e37_d01_node_graph_audit.py [--json] | --check MEMO [--protocol FILE]\n"
+    "  --check needs the memo path (and takes the protocol path after --protocol)"
+)
+
+
 def main(argv: list[str]) -> int:
     if "--check" in argv:
+        if argv.index("--check") + 1 >= len(argv) or (
+            "--protocol" in argv and argv.index("--protocol") + 1 >= len(argv)
+        ):
+            print(USAGE, file=sys.stderr)
+            return 2
         memo_path = Path(argv[argv.index("--check") + 1])
         protocol_path = (
             Path(argv[argv.index("--protocol") + 1]) if "--protocol" in argv else PROTOCOL
