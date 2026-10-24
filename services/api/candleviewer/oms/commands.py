@@ -74,7 +74,8 @@ does not; a hand-over that fails raises, as an empty answer would send the order
 **attach_stop** (24 Sec.8.8 rules 2 and 6). The position is read first. One that shows the
 requested stop is answered with that reading and audited (`sl.attached`, `already_set`), and
 nothing is recorded or sent (the orchestrator's Q-E ruling). Otherwise the gate clears the
-position's key (21 Sec.3.3.11, bounded as every other call), the request is recorded ahead
+position's key (21 Sec.3.3.11, bounded as every other call), waiting up to `ATTACH_GATE_WAIT_S`
+for a complete read it starts or joins (protective, 24 Sec.8.4), the request is recorded ahead
 (`trading_stop`, audited `sl.attached` in the insert's transaction), and one `trading-stop` call
 sends the stop with the take-profit the position shows (24 Sec.8.9: both sides), that side left
 out when the reading shows no finite price above zero, so nothing is removed by implication. Its
@@ -159,6 +160,7 @@ from .routing import RoutedPort, TradingRouter, read_position, retry_after
 
 __all__ = [
     "ALREADY_SET",
+    "ATTACH_GATE_WAIT_S",
     "EXPIRED_UNSENT_REASON",
     "LIVE_HISTORY_SPAN_S",
     "LIVE_RESEND_MAX_AGE_S",
@@ -187,6 +189,10 @@ SUBMIT_TIMEOUT_S: Final = 5.0
 #: The bound on each other call (a read, the store, an audit, a notice, a hand-over, the stop
 #: gate), in seconds; inside `place` its deadline may end one sooner.
 PORT_TIMEOUT_S: Final = 5.0
+#: How long an attach waits for its key's complete read (24 Sec.8.4, the Q2 ruling), in seconds:
+#: with the gate's read before and after it (`STOP_GATE_READ_TIMEOUT_S` each) inside
+#: `PORT_TIMEOUT_S`, and with the `trading-stop` call's `SUBMIT_TIMEOUT_S` inside B1's attempt.
+ATTACH_GATE_WAIT_S: Final = 2.0
 #: How old a create a restart resumes may be and still be re-sent where history never expires
 #: (`order_retention_days` None: live), in seconds ([LANE-26], binding). Tighten it, never raise
 #: it: a resumed send survives a restart or a dropped connection measured in seconds, and after
@@ -815,7 +821,8 @@ class OmsCommandPort:
             )
             return {"ok": True, "position": _reading(before)}
         key = PositionKey(account.account_id, row.symbol, row.position_idx)
-        await self._bounded(self._gate.clear(key))  # whatever the gate bounds itself (C-2.18)
+        cleared = self._gate.clear(key, wait_s=ATTACH_GATE_WAIT_S, protective=True)
+        await self._bounded(cleared)  # whatever the gate bounds itself (C-2.18)
         recorded = await self._record_stop(row, stop, detail)
         request = TradingStopRequest(
             account=account,

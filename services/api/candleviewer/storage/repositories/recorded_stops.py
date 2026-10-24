@@ -512,6 +512,10 @@ class RecordedStopStore(Protocol):
         """The key's rows in force (`ux_rs_in_force`: one per kind), by kind; empty elsewhere."""
         ...
 
+    async def database_now(self) -> datetime:
+        """The database's clock, aware: the startup floor's start (S3-H's Q7). Reads no row."""
+        ...
+
     async def put_in_force(
         self,
         account_id: UUID,
