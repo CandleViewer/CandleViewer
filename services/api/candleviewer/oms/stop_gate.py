@@ -10,11 +10,12 @@ is late is `StoreUnavailable`); with none, the key is clear. Otherwise it joins 
 (`StopResolver.resolve_key`, a task the gate owns) or starts one: one per key, at most
 `MAX_RESOLUTIONS` in the process, the last kept for an attach (C-2.18; a reserve, as C-12.7 keeps
 one). An entry that finds the others taken, or its key cooling, is refused without asking the
-venue; an attach (`protective`) may take the kept slot and is never held by the cooldown. It waits
-up to `wait_s` (an entry not at all: 409 at once, `Retry-After: 5`, the read running on for its
-retry) and returns once the resolution has ended and a fresh read lists nothing; else
-`StopRequestPending(5)`. A resolution that wrote nothing (no move but `kept` or an answer its row
-had), failed or not, cools its key for `STOP_REQUEST_RETRY_AFTER_S` on the injected monotonic clock.
+venue; an attach (`protective`) may take the kept slot, waits for one when all are taken, and is
+never held by the cooldown. It waits up to `wait_s` in all (an entry not at all: 409 at once,
+`Retry-After: 5`, the read running on for its retry) and returns once the resolution has ended and
+a fresh read lists nothing; else `StopRequestPending(5)`. A resolution that wrote nothing (no move
+but `kept` or an answer its row had), failed or not, cools its key for `STOP_REQUEST_RETRY_AFTER_S`
+on the injected monotonic clock.
 
 Each decision counts `oms_stop_resolutions_total{outcome}`, a read that decided nothing
 `read_failed`; each stop-loss voided `entry_filled_stop_absent` on its open position pages (C-2.6),
@@ -28,7 +29,8 @@ ids only; a gate task's unexpected error is logged by its type.
 The startup floor (Q7): every unanswered row created before the runtime started (`started_at`, from
 the database's clock) waits whatever its age: each listing passes its own `now`, never before the
 start, and `bound_s = min(bound, now - start)`, so the cutoff is `max(now - bound, start)`, the app
-clock behind the database's or not. Until the start is known, `clear` is `StoreUnavailable`.
+clock behind the database's or not. Until the start is known, `clear` is `StoreUnavailable` and a
+resolution decides nothing (`read_failed`): a read with no bound would void blind.
 `aclose()` cancels and awaits every resolution the gate runs.
 """
 
@@ -161,6 +163,7 @@ class ResolvingStopGate:
         self._running: dict[PositionKey, asyncio.Task[None]] = {}
         self._cooling: OrderedDict[PositionKey, float] = OrderedDict()
         self._holds: OrderedDict[PositionKey, set[str]] = OrderedDict()
+        self._freed = asyncio.Event()
         self._closed = False
 
     async def clear(
@@ -170,11 +173,23 @@ class ResolvingStopGate:
         `StoreUnavailable` when its rows cannot be read (module docstring)."""
         if not await self._waiting(key):
             return
-        task = self._running.get(key)
-        if task is None or task.done():
-            task = self._start(key, protective)
-        if task is not None and wait_s > 0:
-            done, _ = await asyncio.wait([task], timeout=wait_s)  # shared: a wait never cancels it
+        loop = asyncio.get_running_loop()
+        until = loop.time() + wait_s
+        task = self._joined(key, protective)
+        while task is None and protective and not self._closed:  # every slot taken (SEC-S3H3A-02)
+            left = until - loop.time()
+            if left <= 0:
+                break
+            self._freed.clear()
+            try:
+                async with asyncio.timeout(left):
+                    await self._freed.wait()
+            except TimeoutError:
+                break
+            task = self._joined(key, protective)
+        left = until - loop.time()
+        if task is not None and left > 0:
+            done, _ = await asyncio.wait([task], timeout=left)  # shared: a wait never cancels it
             if done and not await self._waiting(key):
                 return
         _log().info("oms_stop_request_waiting", symbol=key.symbol, reading=task is not None)
@@ -216,6 +231,13 @@ class ResolvingStopGate:
             self._holds.pop(key, None)
         return bool(rows)
 
+    def _joined(self, key: PositionKey, protective: bool) -> asyncio.Task[None] | None:
+        """The key's running resolution, or a new one (`_start`)."""
+        task = self._running.get(key)
+        if task is None or task.done():
+            task = self._start(key, protective)
+        return task
+
     def _start(self, key: PositionKey, protective: bool) -> asyncio.Task[None] | None:
         """The key's resolution, or None: closed, no slot (an entry leaves the kept one), or an
         entry's key cooling."""
@@ -235,6 +257,7 @@ class ResolvingStopGate:
         if self._running.get(key) is task:
             del self._running[key]
         _failed(task)
+        self._freed.set()
 
     async def _resolve(self, key: PositionKey) -> None:
         counted: list[RequestDecision] = []
@@ -248,7 +271,10 @@ class ResolvingStopGate:
             async with asyncio.timeout(self._resolution_timeout_s):
                 account = await self._accounts.trading_account(key.account_id)
                 port = self._port_for(account.environment)
-                now, bound = self._listing() or (self._now(), None)
+                listing = self._listing()
+                if listing is None:  # never decided with no bound: it would void blind
+                    raise StoreUnavailable  # (SEC-S3H3A-01)
+                now, bound = listing
                 decisions = await self._resolver.resolve_key(
                     port, account, key, bound_s=bound, now=now, committed=voided
                 )
