@@ -262,6 +262,11 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
             [port] = world.venue.ports
             assert port.environment == "demo" and b01.ports_wired()
             assert runtime.submission._anchors is runtime.anchors  # SEC-S3D-02: the one service
+            exits = runtime.exits._d  # slice 4: the exits drive the pipeline's facade and port
+            assert (exits.machines, exits.commands) == (
+                runtime.submission._machines, runtime.submission._commands,
+            )  # fmt: skip
+            assert exits.environment == runtime.route.environment == "demo"
             assert world.log == ["sink.start"]
     warned = [e["port"] for e in logs if e["event"] == "oms_interim_port"]
     assert warned == [*INTERIMS, "machine_event_sink"]  # one WARNING each
@@ -317,6 +322,8 @@ async def test_a_composition_that_fails_late_closes_what_it_built_and_fails_clos
             assert world.pager.severities == ["page"]
             with pytest.raises(OmsNotReady):
                 _ = runtime.anchors
+            with pytest.raises(OmsNotReady):
+                _ = runtime.exits
 
 
 async def test_one_facade_per_process_stop_unwires_it_and_a_second_start_works() -> None:
