@@ -196,8 +196,12 @@ class ReplayLimits:
 
 class DestroyOutcome(StrEnum):
     """What `destroy` did. `DESTROYING`: a step was still running after `_STEP_WAIT_S`; the
-    session takes no more control calls and is destroyed when the step ends (a `DELETE` route
-    answers 202 for it, 204 for `DESTROYED`)."""
+    session takes no more control calls and is destroyed when the step ends. PROPOSED, not in
+    `22-api-openapi.yaml` yet (C-6.1): a `DELETE` route answers 202 for it, 204 for `DESTROYED`.
+    Residual (G6): the DESTROYING intent is held in memory; a process restart drops it (`stop`
+    logs `replay_session_destroy_pending`); the sweep recovers the session within `idle_ttl`,
+    recorded as `idle_reclaim`. The durable mark (a column or an accepted-destroy audit action)
+    is E26-T05's, before the `DELETE` route answers 202."""
 
     DESTROYED = "destroyed"
     DESTROYING = "destroying"
@@ -360,6 +364,10 @@ class ReplaySessionService:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         for live in list(self._live.values()):
+            if live.destroying and not live.done:  # the intent is memory-only (G6 residual)
+                logger().warning(
+                    "replay_session_destroy_pending", session_id=live.id, user_id=live.user_id
+                )
             await self._retire(live, persist=True)
 
     @property
@@ -516,7 +524,13 @@ class ReplaySessionService:
         more control calls, and the mirror task destroys it (same audit and release path) once
         the step ends. The handles are released exactly once and the interpreter is always
         retired, even when mirroring the row fails: the row then stays live and a retry revives
-        and destroys it. `on_ended` is told in every case. `GONE` when already destroyed."""
+        and destroys it. `on_ended` is told in every case. `GONE` when already destroyed.
+
+        The bounded wait holds `live.lock`, so the mirror task and the serial sweep can be held up
+        by up to `_STEP_WAIT_S` per stepping session (no deadlock: nothing else is awaited under
+        it). The DESTROYING intent is held in memory; a process restart drops it; the sweep
+        recovers the session within `idle_ttl`, recorded as `idle_reclaim` (durable mark: E26-T05,
+        see `DestroyOutcome`). Routes never pass `reason`: it is for the reclaimer only."""
         if reason not in _REASONS:
             raise ReplaySessionValidationError(f"reason must be one of {sorted(_REASONS)}")
         live = await self._owned(user_id, session_id)
@@ -565,20 +579,33 @@ class ReplaySessionService:
         read (`list_reclaimable`). A row this process does not hold (one left in
         created/finished/error by a restart) is revived and destroyed through `destroy` like any
         other. `updated_at` is the last client call (`_sync`). A destroyed row is no longer
-        listed, so a second pass is a no-op (INV-B12-e). Returns the count destroyed."""
+        listed, so a second pass is a no-op (INV-B12-e). Held sessions with a pending destroy
+        whose step has ended (its completion failed) are retried first, with their own reason,
+        so a failed completion waits at most one sweep interval. Returns the count destroyed."""
         born = now - self._limits.max_lifetime
+        pending = [
+            (live.user_id, live.id, live.destroying)
+            for live in list(self._live.values())  # bounded by the per-user quota
+            if live.destroying and not live.done and leaf_of(live.interp) != "stepping"
+        ]
         due = self._repo.list_reclaimable(
             now - self._limits.idle_ttl, born, self._limits.reclaim_batch
         )
-        reclaimed = 0
-        for row in await self._io("repository", due):
-            reason = "max_lifetime" if row.created_at < born else "idle_reclaim"
+        listed = [
+            (r.user_id, r.id, "max_lifetime" if r.created_at < born else "idle_reclaim")
+            for r in await self._io("repository", due)
+        ]
+        reclaimed, seen = 0, set[str]()
+        for uid, sid, reason in pending + listed:
+            if sid in seen:  # once per pass; `destroy` itself is exactly-once (INV-B12-e)
+                continue
+            seen.add(sid)
             try:
-                outcome = await self.destroy(row.user_id, row.id, reason=reason)
+                outcome = await self.destroy(uid, sid, reason=reason)
                 reclaimed += outcome is DestroyOutcome.DESTROYED
             except Exception as exc:  # e.g. a lost row write: the next sweep retries
                 logger().warning(
-                    "replay_session_reclaim_skipped", session_id=row.id, error=type(exc).__name__
+                    "replay_session_reclaim_skipped", session_id=sid, error=type(exc).__name__
                 )
         return reclaimed
 
