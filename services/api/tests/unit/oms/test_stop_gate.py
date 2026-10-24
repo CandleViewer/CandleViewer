@@ -20,6 +20,7 @@ from candleviewer.exchange.base.errors import ServiceUnavailableError
 from candleviewer.exchange.base.fakes import FakeTradingPort
 from candleviewer.exchange.base.models import AccountRef, Order, Position
 from candleviewer.observability.metrics import Metrics
+from candleviewer.oms import stop_gate
 from candleviewer.oms.errors import StopRequestPending, StoreUnavailable
 from candleviewer.oms.fakes import (
     InMemoryOrderStore,
@@ -40,11 +41,19 @@ from candleviewer.storage.repositories.orders import (
 from candleviewer.storage.repositories.recorded_stops import NewRecordedStop, RecordedStopRow
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.order_rig import Pager
-from tests.unit.oms.test_stop_decision import fired, tpsl_order
+from tests.unit.oms.test_stop_decision import fired, stop_row, tpsl_order
 
 KEY = PositionKey(cr.ACCOUNT, cr.SYMBOL, 0)
 WHERE = f"account {cr.ACCOUNT} {cr.SYMBOL} position_idx 0"
 EVENT = NewOrderEvent(kind="submit_attempt", source="local", event_ts=cr.T0)
+EXPOSED = (
+    f"oms_stop_request_held: C-2.6 exposure, held_for_reconciliation, {WHERE} open with no stop at"
+    " all, until E29-T06's pass"
+)
+FILL_VOID = (
+    f"oms_stop_entry_filled_stop_absent: C-2.6 exposure, {WHERE}, {{}}: a stop-loss voided while"
+    " its position is open on its side (C-2.6)"
+)
 
 
 class Venue(FakeTradingPort):
@@ -141,9 +150,9 @@ async def request(rig: Rig, *, symbol: str = cr.SYMBOL, **over: Any) -> Recorded
     return row
 
 
-async def refused(rig: Rig, key: PositionKey = KEY, **wait: float) -> None:
+async def refused(rig: Rig, key: PositionKey = KEY, **asked: Any) -> None:
     with pytest.raises(StopRequestPending) as pending:
-        await rig.gate.clear(key, **wait)
+        await rig.gate.clear(key, **asked)
     assert pending.value.retry_after_s == 5
 
 
@@ -183,7 +192,7 @@ async def test_an_attach_waits_for_the_read_then_clears() -> None:
     rig = build()
     await request(rig)
     rig.venue.open.clear()
-    attach = asyncio.create_task(rig.gate.clear(KEY, wait_s=5.0))
+    attach = asyncio.create_task(rig.gate.clear(KEY, wait_s=5.0, protective=True))
     await until(lambda: rig.venue.reads() == 1)
     assert not attach.done()
     rig.venue.open.set()
@@ -194,7 +203,7 @@ async def test_an_attach_past_its_wait_is_refused_and_the_read_runs_on() -> None
     rig = build()
     await request(rig)
     rig.venue.open.clear()
-    await refused(rig, wait_s=0.01)  # the read held past the wait
+    await refused(rig, wait_s=0.01, protective=True)  # the read held past the wait
     [task] = rig.gate._running.values()
     assert not task.done()
     rig.venue.open.set()
@@ -215,9 +224,10 @@ async def test_at_most_eight_reads_run_and_the_last_slot_is_kept_for_an_attach()
     await until(lambda: rig.venue.reads() == MAX_RESOLUTIONS - 1)
     await refused(rig, keys[-2])  # an entry: the last slot is an attach's
     assert len(rig.gate._running) == MAX_RESOLUTIONS - 1
-    await refused(rig, keys[-2], wait_s=0.01)  # an attach takes it
-    await refused(rig, keys[-1], wait_s=0.01)  # none left
-    assert rig.venue.reads() == MAX_RESOLUTIONS and keys[-1] not in rig.gate._running
+    await refused(rig, keys[-2], wait_s=0.01, protective=True)  # an attach takes it
+    await refused(rig, keys[-1], wait_s=0.01, protective=True)  # none left
+    await until(lambda: rig.venue.reads() == MAX_RESOLUTIONS)
+    assert keys[-1] not in rig.gate._running
     rig.venue.open.set()
     await rig.idle()
 
@@ -235,7 +245,7 @@ async def test_a_failed_read_keeps_the_key_refused_and_cools_it_for_entries_neve
     assert rig.count("read_failed") == 1 and status(rig, row) == "pending"
     await refused(rig)
     assert rig.venue.reads() == 1 and not rig.gate._running  # cooling: the venue not asked
-    await rig.gate.clear(KEY, wait_s=5.0)
+    await rig.gate.clear(KEY, wait_s=5.0, protective=True)
     assert rig.venue.reads() == 2 and status(rig, row) == "void"
 
 
@@ -256,17 +266,28 @@ async def test_a_restore_row_is_held_unread_paged_and_logged_once_per_hold() -> 
     assert held == [[RESTORE_HELD]]
 
 
-async def held_entry(rig: Rig) -> RecordedStopRow:
-    """An entry killed after its send, its Partial stop-loss answered, so held through
-    `WAITING_ENTRY`; the read matches a stop that fired since (in history)."""
+async def held_entry(rig: Rig, way: str = "matched") -> RecordedStopRow:
+    """An entry killed after its send, so its Partial stop-loss is held through `WAITING_ENTRY`,
+    which a stop that fired since (in history) matches: answered already (`matched`), answered by
+    the read itself (`unanswered`), or answered with the venue showing the entry filled (`filled`,
+    CR-S3H3A-02)."""
     entry = await stored(rig, "killed")
     row = await request(rig, source="entry_attach", order_id=entry.id, tpsl_mode="Partial",
                         size=Decimal("0.010"))  # fmt: skip
-    await rig.stops.settle(cr.ACCOUNT, [row.id], "answered", at=cr.T0)
+    if way != "unanswered":
+        await rig.stops.settle(cr.ACCOUNT, [row.id], "answered", at=cr.T0)
+    if way == "filled":
+        filled = cr.exchange_order(cr.new_order(), state="filled", filled_qty=Decimal("0.010"))
+        rig.venue.seed_order(filled, uid=cr.UIDS["demo"])
     rig.venue.seed_order(fired("partial_stop_loss", cr.STOP), uid=cr.UIDS["demo"])
     return row
 
 
+@pytest.mark.parametrize(
+    ("way", "held"),
+    [("matched", 2), ("unanswered", 2), ("filled", 1)],
+    ids=["answered_matched", "answered_by_the_read", "entry_filled"],
+)
 @pytest.mark.parametrize(
     ("position", "order", "paged"),
     [
@@ -285,13 +306,15 @@ async def held_entry(rig: Rig) -> RecordedStopRow:
     ],
 )
 async def test_a_hold_through_its_entry_pages_once_per_hold_when_open_with_no_stop_at_all(
-    position: Position, order: Order | None, paged: bool
+    way: str, held: int, position: Position, order: Order | None, paged: bool
 ) -> None:
     """The lead's rulings on item 6: a C-2.6 exposure only E29-T06's pass clears (no stop-loss
-    and no trail on the open position, `shows_no_stop`, and no Partial stop-loss order open); the
-    key stays refused across both resolutions of the hold."""
+    and no trail on the open position, `shows_no_stop`, and no Partial stop-loss order open),
+    wherever the hold through its entry comes from (CR-S3H3A-02); the key stays refused across
+    both resolutions of the hold, counted `held_for_reconciliation` once a resolution, or once a
+    hold where no decision is (a filled entry's answered stop, CR-S3H3A-03)."""
     rig = build()
-    row = await held_entry(rig)
+    row = await held_entry(rig, way)
     rig.venue.seed_position(position)
     if order is not None:
         rig.venue.seed_order(order, uid=cr.UIDS["demo"])
@@ -299,40 +322,93 @@ async def test_a_hold_through_its_entry_pages_once_per_hold_when_open_with_no_st
         await refused(rig)
         await rig.idle()
         rig.clock.s += 5.0
-    assert rig.count("held_for_reconciliation") == 2 and status(rig, row) == "pending"
-    page = (
-        f"oms_stop_request_held: C-2.6 exposure, held_for_reconciliation, {WHERE} open with no"
-        " stop at all, until E29-T06's pass"
-    )
-    assert rig.pager.calls == ([page] if paged else [])
+    assert rig.count("held_for_reconciliation") == held and status(rig, row) == "pending"
+    assert rig.pager.calls == ([EXPOSED] if paged else [])
 
 
-async def test_a_stop_loss_voided_on_its_open_position_pages_with_its_ids() -> None:
+async def test_a_held_key_asked_again_inside_its_cooldown_is_refused_unread() -> None:
+    """CR-S3H3A-03: a resolution that wrote nothing (a filled entry's answered stop-loss, held)
+    cools its key, so an entry asked again inside 5 s is refused without reading the venue."""
+    rig = build()
+    await held_entry(rig, "filled")
+    rig.venue.seed_position(cr.position())
+    for reads in (1, 1):
+        await refused(rig)
+        await rig.idle()
+        assert rig.venue.reads() == reads
+    rig.clock.s += 5.0
+    await refused(rig)
+    await rig.idle()
+    assert rig.venue.reads() == 2 and rig.count("answered") == 2
+
+
+@pytest.mark.parametrize("pager_down", [False, True], ids=["paged", "pager_down"])
+async def test_a_stop_loss_voided_on_its_open_position_pages_with_its_ids(pager_down: bool) -> None:
     """A filled entry whose stop is absent: void `entry_filled_stop_absent` with `position_state`,
-    audited ahead, paged (C-2.6); the key is clear for the protective re-attach."""
+    audited ahead, paged (C-2.6); the key is clear for the protective re-attach. A page the pager
+    refuses is lost, logged critical by its failure, never the void (CR-S3H3A-06)."""
     rig = build()
     entry = await stored(rig, "submitting")
     venue = cr.exchange_order(cr.new_order(), state="filled", filled_qty=Decimal("0.010"))
     rig.venue.seed_order(venue, uid=cr.UIDS["demo"])
     row = await request(rig, source="entry_attach", order_id=entry.id)
     rig.venue.seed_position(cr.position())
-    await refused(rig)
-    await rig.idle()
+    rig.pager.refuse = pager_down
+    with capture_logs() as logs:
+        await refused(rig)
+        await rig.idle()
     await rig.gate.clear(KEY)
     [(record, _)] = rig.audits.written
     assert (record.reason, record.detail["position_state"]) == ("entry_filled_stop_absent", "open")
-    assert rig.pager.calls == [
-        f"oms_stop_entry_filled_stop_absent: C-2.6 exposure, {WHERE}, {row.id}: a stop-loss voided"
-        " while its position is open on its side (C-2.6)"
-    ]
+    assert rig.pager.calls == ([] if pager_down else [FILL_VOID.format(row.id)])
     assert rig.count("entry_filled_stop_absent") == 1
+    lost = [(e["log_level"], e["failure"]) for e in logs if e["event"] == "oms_pager_failed"]
+    assert lost == ([("critical", "RuntimeError")] if pager_down else [])
 
 
-@pytest.mark.parametrize("seconds", [2.0, 0.5], ids=["app_clock_after", "app_clock_behind"])
-async def test_a_row_from_before_the_start_waits_whatever_its_age(seconds: float) -> None:
+async def test_a_void_that_committed_pages_once_though_a_later_write_of_its_read_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-S3H3A-04: a killed entry the venue shows filled, its answered stop-loss absent from the
+    open position, is voided and paged as the void commits, counted once, though the read's next
+    void (a trading-stop request nothing shows) fails: that one stays, and the read is
+    `read_failed`."""
+    rig = build()
+    entry = await stored(rig, "killed")
+    filled = cr.exchange_order(cr.new_order(), state="filled", filled_qty=Decimal("0.010"))
+    rig.venue.seed_order(filled, uid=cr.UIDS["demo"])
+    voided = await request(rig, source="entry_attach", order_id=entry.id)
+    await rig.stops.settle(cr.ACCOUNT, [voided.id], "answered", at=cr.T0)
+    kept = await request(rig)
+    rig.venue.seed_position(cr.position())
+    resolve = rig.stops.resolve
+
+    async def fails(account_id: Any, rows: Any, outcome: Any, **over: Any) -> Any:
+        if outcome == "in_flight_resolved":
+            raise StorageTierUnavailable("down")
+        return await resolve(account_id, rows, outcome, **over)
+
+    monkeypatch.setattr(rig.stops, "resolve", fails)
+    await refused(rig)
+    await rig.idle()
+    assert (status(rig, voided), status(rig, kept)) == ("void", "pending")
+    assert rig.pager.calls == [FILL_VOID.format(voided.id)]
+    assert (rig.count("entry_filled_stop_absent"), rig.count("read_failed")) == (1, 1)
+
+
+@pytest.mark.parametrize(
+    ("seconds", "stamped"),
+    [(2.0, 0.0), (0.5, 0.0), (0.5, 0.75)],
+    ids=["app_clock_after", "app_clock_behind", "stamped_after_the_app_clock"],
+)
+async def test_a_row_from_before_the_start_waits_whatever_its_age(
+    seconds: float, stamped: float
+) -> None:
     """Q7: a row stamped before the start waits, one stamped after it only past its bound, the app
-    clock behind the database's or not."""
+    clock behind the database's or not; behind it, a row stamped between the app clock's `now` and
+    the start waits too: the listing's `now` is never before the start (CR-S3H3A-05)."""
     rig = build(started_at=cr.T0 + timedelta(seconds=1))
+    rig.clock.at = cr.T0 + timedelta(seconds=stamped)
     before = await request(rig)
     rig.clock.at, rig.clock.now = cr.T0 + timedelta(seconds=1.5), cr.T0 + timedelta(seconds=seconds)
     await request(rig, symbol="ETHUSDT")
@@ -374,5 +450,84 @@ async def test_aclose_cancels_the_running_reads_and_none_starts_after() -> None:
     [task] = rig.gate._running.values()
     await rig.gate.aclose()
     assert task.cancelled() and rig.count("read_failed") == 0
-    await refused(rig, wait_s=5.0)  # closed: refused at once, no read started
+    await refused(rig, wait_s=5.0, protective=True)  # closed: refused at once, no read started
     assert rig.venue.reads() == 1
+
+
+async def test_a_resolution_past_its_bound_decided_nothing_and_cools_its_key() -> None:
+    """CR-S3H3A-06: the whole resolution's bound (30 s; a hundredth here) ends a read that never
+    answers: `read_failed`, logged by its type, and an entry asked again meets the cooldown."""
+    rig = build(resolution_timeout_s=0.01)
+    row = await request(rig)
+    rig.venue.open.clear()
+    with capture_logs() as logs:
+        await refused(rig)
+        await rig.idle()
+    assert rig.count("read_failed") == 1 and status(rig, row) == "pending"
+    failed = [e["failure"] for e in logs if e["event"] == "oms_stop_resolution_failed"]
+    assert failed == ["TimeoutError"]
+    await refused(rig)
+    assert rig.venue.reads() == 1 and not rig.gate._running
+
+
+async def test_the_holds_and_cooldowns_kept_are_bounded_and_ended_cooldowns_pruned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-S3H3A-06 (C-2.18): past `MAX_HOLDS` keys the oldest hold and cooldown are forgotten, so
+    that key is read again inside its 5 s and its hold announced again; a cooldown that ended is
+    pruned as the next begins."""
+    monkeypatch.setattr(stop_gate, "MAX_HOLDS", 2)
+    rig = build()
+    keys = [PositionKey(cr.ACCOUNT, f"COIN{n}USDT", 0) for n in range(3)]
+    for key in keys:
+        await request(rig, symbol=key.symbol, source="restore")
+    with capture_logs() as logs:
+        for key in (*keys, keys[0]):
+            await refused(rig, key)
+            await rig.idle()
+    held = [e["symbol"] for e in logs if e["event"] == "oms_stop_request_held"]
+    assert held == ["COIN0USDT", "COIN1USDT", "COIN2USDT", "COIN0USDT"]
+    assert rig.count("held_for_reconciliation") == 4
+    rig.clock.s += 5.0
+    await refused(rig, keys[1])
+    await rig.idle()
+    assert list(rig.gate._cooling) == [keys[1]]
+
+
+async def test_a_take_profit_void_is_audited_as_tp_modified() -> None:
+    """CR-S3H3A-06: a take-profit side's void record is `tp.modified`, named by reason and row."""
+    audits, row = cr.Audits(), stop_row(kind="take_profit", trigger_price=Decimal(64000))
+    await StopVoidAudit(audits).hook("in_flight_resolved")((row,), None)
+    [(record, _)] = audits.written
+    assert isinstance(record, KeyedRecord)
+    assert (record.action, record.name) == ("tp.modified", f"in_flight_resolved:{row.id}")
+
+
+async def test_an_attach_whose_read_ends_with_its_key_still_listed_is_refused() -> None:
+    """CR-S3H3A-06: an attach waits for the read of its key, which a `restore` row keeps held:
+    listed still once the read ended, the attach is refused (B1's `sl_missing`), nothing read."""
+    rig = build()
+    await request(rig, source="restore")
+    await refused(rig, wait_s=5.0, protective=True)
+    assert rig.venue.calls == [] and rig.count("held_for_reconciliation") == 1
+
+
+async def test_a_gate_tasks_unexpected_error_is_logged_by_its_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-S3H3A-08: an error out of a resolution's own end, not left for asyncio's "never
+    retrieved"."""
+    rig = build()
+    await request(rig, source="restore")
+
+    def fails(_key: PositionKey) -> None:
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(rig.gate, "_cool", fails)
+    with capture_logs() as logs:
+        await refused(rig)
+        await rig.idle()
+    failed = [
+        (e["log_level"], e["failure"]) for e in logs if e["event"] == "oms_stop_gate_task_failed"
+    ]
+    assert failed == [("error", "RuntimeError")]
