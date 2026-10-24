@@ -3906,8 +3906,9 @@ export interface paths {
      *     order is idempotent and returns `202` with the current state rather than an error, as does
      *     an order whose cancel is in flight (`cancel_pending`). An order not acknowledged yet or with
      *     an amend in flight (`validated`, `submitting`, `amend_pending`) is cancelled once that step
-     *     settles, waited for at most `CV_COMMAND_TIMEOUT` (24-internal-schemas.md section 8.2), and
-     *     one still unsettled then is `409 conflict`. An order in `unknown`, `quarantined`, `held` or
+     *     settles, waited for at most `CV_COMMAND_TIMEOUT`, 10 s (28-statechart-catalogue.md
+     *     section B1.4), and one still unsettled then is `409 conflict`; with the cancel's own wait
+     *     after it, such a cancel answers within about 21 s. An order in `unknown`, `quarantined`, `held` or
      *     `untracked` is refused with `409 conflict` and nothing is sent: reconciliation decides it,
      *     and until E29-T06 an `unknown` order is cancelled only by a KILL (#913 slice 4 ruling Q8). A
      *     recorded stop's row (24-internal-schemas.md section 8.8 rule 6) is refused by the command
@@ -3926,9 +3927,12 @@ export interface paths {
      *     `202` with the order `unknown`, never re-sent, until reconciliation ends it with the
      *     exchange's state (24-internal-schemas.md section 8.6; the orchestrator's S4-B1 ruling of
      *     2026-10-24). A read the cancel needs before anything is sent (the stored row or the account)
-     *     that fails answers `503 store_unavailable` with `Retry-After`: nothing was sent, so the
-     *     order stays live and cancellable, never `unknown`, which only a venue call already started
-     *     can leave (the S4-B1 ruling of 10:29Z).
+     *     that fails answers `503 store_unavailable` with `Retry-After: 1`: nothing was sent, so
+     *     the order stays live and cancellable, never `unknown`, which only a venue call already
+     *     started can leave (the S4-B1 ruling of 10:29Z). An account the OMS cannot send for (no
+     *     usable key, or out of the OMS's reach) answers `409 account_unavailable`, with no
+     *     `Retry-After`: nothing was sent, the order stays live, and the operator is paged (the
+     *     ruling of 11:34Z).
      */
     delete: operations["cancelOrder"];
     options?: never;
@@ -3951,12 +3955,17 @@ export interface paths {
      *     the amended price, else the order's, else its trigger price. A `qty` not above the filled
      *     quantity is `validation_failed` / `qty_not_above_filled`, and the amended terms meet the
      *     instrument's limits as on `placeOrder` (`tick_size_violation`, `lot_size_violation`);
-     *     `errors[]` lists every rule that fails.
+     *     `errors[]` lists every rule that fails, each with the `field` it names (`take_profit`,
+     *     `stop_loss`, `qty`), and when rules of both kinds fail the code is `validation_failed`. An
+     *     empty body is `validation_failed` / `nothing_to_amend`. A stop or take-profit that the
+     *     amended price leaves on the wrong side of the entry is refused with `placeOrder`'s rules,
+     *     `native_stop_required` for the stop and `take_profit_side` for the take-profit.
      *
      *     A `stop_loss` moved to loosen it on an entry is refused with `403 risk_limit_breached`,
      *     whatever the caller's role, before any send: compared with the stop it replaces, a long
      *     entry's stop may only rise and a short entry's only fall, before the fill and after it
-     *     (the ratchet `amendTradeGroup` applies). The one check, at the recorded-stop writer,
+     *     (the ratchet `amendTradeGroup` applies; after a fill `amendOrder` refuses a stop change
+     *     first, `tpsl_after_fill`, and the position's stop is `setPositionTpSl`'s). The one check, at the recorded-stop writer,
      *     compares the request with the order's current stop and with its position's recorded stop
      *     in force (Full mode, same side) (24-internal-schemas.md section 8.8 rule 6; ruling Q4).
      *     The one way to loosen a stop is the owner's override on `setPositionTpSl`
@@ -3969,10 +3978,13 @@ export interface paths {
      *     requests as the entry's own before the send (ruling Q2).
      *
      *     An amend that raises the quantity of an order that is not reduce-only, or moves a
-     *     conditional entry's trigger, increases exposure: it meets every check `placeOrder` meets,
-     *     the `trading.oms_enabled` flag, live trading enabled, the B18 kill switch, the order-entry
-     *     gate and, on a live account, the arm token. Every other amend meets none of them (the
-     *     C-2.6 carve-out under `Forbidden`; ruling Q10).
+     *     conditional entry's trigger, increases exposure (24-internal-schemas.md section 8.10
+     *     defines it): it meets every check `placeOrder` meets, the `trading.oms_enabled` flag,
+     *     live trading enabled, the B18 kill switch, the order-entry gate, on a live account the
+     *     arm token, and the risk check of the amended, sized and rounded order
+     *     (`403 risk_limit_breached`, SR-E29-04). Its class is read from the order as the route read
+     *     it: the terms it compares change only through an amend, and B1 takes one at a time. Every
+     *     other amend meets none of them (the C-2.6 carve-out under `Forbidden`; ruling Q10).
      *
      *     `If-Match` takes the order's `ETag` from an answer about it (`placeOrder`'s `202` or this
      *     route's). The `ETag` is opaque and changes with every step the order takes, each
@@ -3980,18 +3992,25 @@ export interface paths {
      *     (a `protection` step leaves it): when the order has changed since, the amend is refused with
      *     `412 version_conflict` and nothing is sent; without `If-Match` it applies to the order as it
      *     stands (last write wins). `*`, a list of tags, a weak or unparseable tag and another order's
-     *     tag are `412` too. The checks come in this order: the order's scope (`404`, or `403` as
-     *     `OrderId` says), whether it takes an amend (`422`), then `If-Match` (`412`), compared under
-     *     the order's lock right before the send (ruling Q5).
+     *     tag are `412` too. The checks come in the order 24-internal-schemas.md section 8.4 gives
+     *     the exit routes: the order's scope (`404`, or `403` as `OrderId` says) first, whether it
+     *     takes an amend (`422`) after the body's shape, the gates and the 24 h record, and
+     *     `If-Match` (`412`) last, the tag's version compared under the order's lock right before
+     *     the send; an amend with no `If-Match` carries no version (ruling Q5).
      *
      *     The answer (ruling Q11): `202` with the order and its new `ETag` once the exchange took the
      *     amend; `502 exchange_error` with `exchange.ret_code` when it refused it, the order kept live
      *     on its prior terms; `429 exchange_rate_limited` with `Retry-After` when no rate token was
      *     free, nothing sent; and `202` with the order `unknown` when the outcome is not known, never
      *     re-sent. A read the amend needs before anything is sent (the stored order, the account or
-     *     the gate) that fails answers `503 store_unavailable` with `Retry-After`: nothing was sent,
-     *     so the order stays live and cancellable, never `unknown`, which only a venue call already
-     *     started can leave (the orchestrator's S4-B1 ruling of 2026-10-24 10:18Z).
+     *     the stop-request gate, 21-database-schema.md section 3.3.11) that fails answers
+     *     `503 store_unavailable` with `Retry-After: 1`: nothing was sent, so the order stays live
+     *     and cancellable, never `unknown`, which only a venue call already started can leave, or a
+     *     refusal whose own audit record cannot be written (C-2.9), the one way an amend that sent
+     *     nothing reaches `unknown` (the orchestrator's S4-B1 ruling of 2026-10-24 10:18Z). An
+     *     account the OMS cannot send for (no usable key, or out of the OMS's reach) answers
+     *     `409 account_unavailable`, with no `Retry-After` as a retry does not help: nothing was
+     *     sent, the order stays live, and the operator is paged (the ruling of 11:34Z).
      */
     patch: operations["amendOrder"];
     trace?: never;
@@ -4034,28 +4053,55 @@ export interface paths {
      *     command, written ahead and audited (24-internal-schemas.md section 8.4; #913 slice 4
      *     ruling Q1). Only an unrestricted request (`intents` empty, `exclude_reduce_only: false`)
      *     is folded into `POST /v5/order/cancel-all`, per account and symbol, and only where an
-     *     open-orders read shows each plain order resting there selected; any other is cancelled
-     *     order by order. The exchange allows one cancel-all per second per account for `linear`,
-     *     and the server keeps to it (24-internal-schemas.md section 8.7). Selected: the orders the
+     *     open-orders read shows each plain order resting there selected (a plain order is one the
+     *     venue's cancel-all with `orderFilter=Order` cancels: no TP/SL and no conditional order);
+     *     any other is cancelled order by order. The exchange allows one cancel-all per second per
+     *     account, its UID, shared by its keys, for `linear`, and the server keeps to it
+     *     (24-internal-schemas.md section 8.7). Selected: the orders the
      *     OMS placed (`provenance` `placed`; never a recorded stop's row) in `submitted`,
      *     `triggered` or `partially_filled`, on `symbol` when set, with an `intent` in `intents`
      *     when it is not empty, a reduce-only order only with `exclude_reduce_only: false`. Like
      *     every cancel it never meets the arm token or the `trading_disabled` checks (C-2.6).
      *
-     *     Scope is settled before anything is sent (SR-E29-13): an empty `exchange_account_ids`
-     *     means the caller's granted accounts, and one listed id outside them, or one that does
-     *     not exist, refuses the whole request alike with `403 account_scope_denied`: nothing is
-     *     cancelled, no exchange call is made, and the refusal is audited. A Manager's grants here
+     *     Scope is settled before anything is sent (SR-E29-13), once the body is read (the scope
+     *     needs its ids): an empty `exchange_account_ids` means the caller's granted accounts, an
+     *     empty list from a caller with no trade grant answers `200` with no results, and one
+     *     listed id outside them, or one that does not exist, refuses the whole request alike with
+     *     `403 account_scope_denied`: nothing is cancelled, no exchange call is made, and the
+     *     refusal is audited, one `rbac.denied` record for the request. A Manager's grants here
      *     are the ones that allow trading, with every OMS order on them, another user's included
      *     (04-security-program.md section 7.2.2 row 14). Once the scope check passes, `results`
      *     reports exchange outcomes only: one account's exchange error does not undo another
      *     account's cancels, so the status is `200` with per-account results. At most five accounts
      *     are worked at once, one order at a time on each, within a 20 s deadline. An account is
-     *     `ok` when every order selected on it ended; else `error` gives its first failure:
+     *     `ok` when every order selected on it ended; else `error` gives its first failure, the
+     *     account's other selected orders still each sent theirs:
      *     `exchange_error` with `exchange_ret_code`, `exchange_rate_limited`, `exchange_unavailable`
-     *     when an outcome is not known (that order `unknown`, never re-sent), or `timeout`,
-     *     `retryable: true`, when the deadline cut it short. `affected` counts the orders
-     *     cancelled.
+     *     when an outcome is not known (that order `unknown`, never re-sent), `store_unavailable`
+     *     (`retryable: true`) when a read before the send failed, the account's open orders
+     *     included, `account_unavailable` (no retry) when the account cannot be sent for,
+     *     `conflict` when an order's state changed under the request into one a cancel refuses, or
+     *     `timeout`, `retryable: true`, when the deadline cut it short. `affected` counts the orders
+     *     cancelled; an order that filled before its cancel landed is neither affected nor an error,
+     *     and neither is one a `110001` parks in `unknown` (the venue no longer holds it resting;
+     *     24-internal-schemas.md section 8.6), `exchange_unavailable` being for an outcome the
+     *     command port raised on.
+     *     At the deadline an account not finished reports `timeout`: a cancel already sent stays
+     *     with its order and is never sent again, and `affected` counts only the orders that ended
+     *     cancelled by then. An order outside the selection, one whose cancel is already in flight
+     *     (`cancel_pending`), one not acknowledged yet or with an amend in flight (`validated`,
+     *     `submitting`, `amend_pending`), or one in `unknown`, `quarantined`, `held` or `untracked`
+     *     (until E29-T06 an `unknown` order is cancelled only by a KILL), is not sent anything and
+     *     counts in neither `affected` nor `error`. `requested` counts the accounts the request
+     *     covers once its scope check passed, and `succeeded` those `ok`. A retry of the request
+     *     takes a new `Idempotency-Key`: the same key replays the stored `200` for 24 h.
+     *
+     *     The request as a whole: `400 validation_failed` for a body `CancelAllRequest` refuses
+     *     (an unknown field, a malformed id, an unknown intent); `409 idempotency_key_reuse`, or
+     *     `idempotency_in_flight` with `Retry-After: 1`, as an order's conflicts are reported in
+     *     `results`, never as a `409`; `501 not_implemented` until the route is wired; and
+     *     `503 store_unavailable` when the scope itself cannot be read, nothing sent (#913 slice 4,
+     *     the rulings of 2026-10-24 11:31Z to 11:45Z).
      */
     post: operations["cancelAllOrders"];
     delete?: never;
@@ -11132,7 +11178,7 @@ export interface components {
         "application/problem+json": components["schemas"]["OrderExchangeProblem"];
       };
     };
-    /** @description A conflict on `amendOrder`, `cancelOrder` or `cancelAllOrders`, nothing sent: `idempotency_key_reuse`; `idempotency_in_flight` with `Retry-After: 1` (see Idempotency); `stop_request_in_flight` with `Retry-After`, an amend's stop write meeting a stop request still in flight on the position; or `conflict`, for an order whose machine is latched degraded until the operator acknowledges it (CV-C63) and the cancel states `cancelOrder` names (#913 slice 4 rulings Q8, Q11). */
+    /** @description A conflict on `amendOrder`, `cancelOrder` or `cancelAllOrders`, nothing sent: `idempotency_key_reuse`; `idempotency_in_flight` with `Retry-After: 1` (see Idempotency); `stop_request_in_flight` with `Retry-After`, an amend's stop write meeting a stop request still in flight on the position; `account_unavailable`, without `Retry-After`, for an order whose account the OMS cannot send for; or `conflict`, for an order whose machine is latched degraded until the operator acknowledges it (CV-C63) and the cancel states `cancelOrder` names (#913 slice 4 rulings Q8, Q11; the ruling of 2026-10-24 11:34Z). On `cancelAllOrders` only the two idempotency codes apply: an order's conflicts there are reported in its account's result, never as a 409. */
     OrderExitConflict: {
       headers: {
         "Retry-After": components["headers"]["RetryAfter"];
@@ -11291,9 +11337,10 @@ export interface components {
      * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
      *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
      *     increases exposure requires it, as the order-entry gate classifies them
-     *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-     *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-     *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+     *     (24-internal-schemas.md section 8.10, which defines "quantity up" and "trigger re-armed"
+     *     once): a submit (`placeOrder` and `createTradeGroup`, reduce-only ones included) and an
+     *     amend with any risk-increasing component (quantity up, trigger re-armed) on `amendOrder`,
+     *     `amendTradeGroup` or `setPositionTpSl`, and the
      *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
      *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
      *     requires it for `reversePosition` and for a
@@ -11499,7 +11546,7 @@ export interface components {
     ETag: string;
     /** @description True when the response was replayed from the idempotency store. */
     IdempotencyReplayed: boolean;
-    /** @description `"<orderId>:<seq>"`, a strong tag of the order answered: its id and the `seq` of its latest `order_events` row (`21-database-schema.md` section 3.3.5), the last committed one, which is the order facade's `version()`, so it changes with each lifecycle step the order takes and with nothing else: a step of the order's `protection` region and B1's internal arms write no such row and leave it as it was. A final order's answer carries none, and neither does an answer given during a resync window, when the facade reports no version (as its `state()` reports none). A client sends it back whole as `If-Match` on `amendOrder`, which compares it under the order's lock (#913 slice 4 ruling Q5; the S4-B1 rulings of 2026-10-24). */
+    /** @description `"<orderId>:<seq>"`, a strong tag of the order answered: its id and the `seq` of its latest `order_events` row (`21-database-schema.md` section 3.3.5), the last committed one, which is the order facade's `version()`, so it changes with each lifecycle step the order takes and with nothing else: a step of the order's `protection` region and B1's internal arms write no such row and leave it as it was. A final order's answer carries none, and neither does an answer given during a resync window, when the facade reports no version (as its `state()` reports none). A client sends it back whole as `If-Match` on `amendOrder`, which compares it under the order's lock (#913 slice 4 ruling Q5; the S4-B1 rulings of 2026-10-24). A client treats it as opaque; its form is published for tests and logs only. */
     OrderETag: string;
     /** @description `W/"<id>:<version>"` of the profile answered. Send it as `If-Match` on `updateAccountProfile` and `deleteAccountProfile`: the server compares the id and the version it names, so the weak tag matches. */
     ProfileETag: string;
@@ -17239,9 +17286,10 @@ export interface operations {
          * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
          *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
          *     increases exposure requires it, as the order-entry gate classifies them
-         *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-         *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-         *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+         *     (24-internal-schemas.md section 8.10, which defines "quantity up" and "trigger re-armed"
+         *     once): a submit (`placeOrder` and `createTradeGroup`, reduce-only ones included) and an
+         *     amend with any risk-increasing component (quantity up, trigger re-armed) on `amendOrder`,
+         *     `amendTradeGroup` or `setPositionTpSl`, and the
          *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
          *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
          *     requires it for `reversePosition` and for a
@@ -17282,7 +17330,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Accepted into the OMS, never a fill: every order the request created, with its state (`OrderAcceptance`), and its `ETag` (`OrderETag`) for `If-Match` on `amendOrder`, on the first answer and on both replays, the 24 h record's stored tag and the anchor's current one; an order already final carries none (#913 slice 4 ruling Q5). */
+      /** @description Accepted into the OMS, never a fill: every order the request created, with its state (`OrderAcceptance`), and its `ETag` (`OrderETag`) for `If-Match` on `amendOrder`, on the first answer and on both replays, the 24 h record's stored tag and the anchor's current one; an order already final carries none (#913 slice 4 ruling Q5). It is sent once `amendOrder` is served (E29-T04 slice 4, S4-D2); until then the `202` carries none. */
       202: {
         headers: {
           ETag: components["headers"]["OrderETag"];
@@ -17418,9 +17466,10 @@ export interface operations {
          * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
          *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
          *     increases exposure requires it, as the order-entry gate classifies them
-         *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-         *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-         *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+         *     (24-internal-schemas.md section 8.10, which defines "quantity up" and "trigger re-armed"
+         *     once): a submit (`placeOrder` and `createTradeGroup`, reduce-only ones included) and an
+         *     amend with any risk-increasing component (quantity up, trigger re-armed) on `amendOrder`,
+         *     `amendTradeGroup` or `setPositionTpSl`, and the
          *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
          *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
          *     requires it for `reversePosition` and for a
@@ -17691,9 +17740,10 @@ export interface operations {
          * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
          *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
          *     increases exposure requires it, as the order-entry gate classifies them
-         *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-         *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-         *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+         *     (24-internal-schemas.md section 8.10, which defines "quantity up" and "trigger re-armed"
+         *     once): a submit (`placeOrder` and `createTradeGroup`, reduce-only ones included) and an
+         *     amend with any risk-increasing component (quantity up, trigger re-armed) on `amendOrder`,
+         *     `amendTradeGroup` or `setPositionTpSl`, and the
          *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
          *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
          *     requires it for `reversePosition` and for a
@@ -17765,9 +17815,10 @@ export interface operations {
          * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
          *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
          *     increases exposure requires it, as the order-entry gate classifies them
-         *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-         *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-         *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+         *     (24-internal-schemas.md section 8.10, which defines "quantity up" and "trigger re-armed"
+         *     once): a submit (`placeOrder` and `createTradeGroup`, reduce-only ones included) and an
+         *     amend with any risk-increasing component (quantity up, trigger re-armed) on `amendOrder`,
+         *     `amendTradeGroup` or `setPositionTpSl`, and the
          *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
          *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
          *     requires it for `reversePosition` and for a
@@ -17836,9 +17887,10 @@ export interface operations {
          * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
          *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
          *     increases exposure requires it, as the order-entry gate classifies them
-         *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-         *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-         *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+         *     (24-internal-schemas.md section 8.10, which defines "quantity up" and "trigger re-armed"
+         *     once): a submit (`placeOrder` and `createTradeGroup`, reduce-only ones included) and an
+         *     amend with any risk-increasing component (quantity up, trigger re-armed) on `amendOrder`,
+         *     `amendTradeGroup` or `setPositionTpSl`, and the
          *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
          *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
          *     requires it for `reversePosition` and for a
@@ -19931,9 +19983,10 @@ export interface operations {
          * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
          *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
          *     increases exposure requires it, as the order-entry gate classifies them
-         *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-         *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-         *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+         *     (24-internal-schemas.md section 8.10, which defines "quantity up" and "trigger re-armed"
+         *     once): a submit (`placeOrder` and `createTradeGroup`, reduce-only ones included) and an
+         *     amend with any risk-increasing component (quantity up, trigger re-armed) on `amendOrder`,
+         *     `amendTradeGroup` or `setPositionTpSl`, and the
          *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
          *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
          *     requires it for `reversePosition` and for a
@@ -20029,9 +20082,10 @@ export interface operations {
          * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
          *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
          *     increases exposure requires it, as the order-entry gate classifies them
-         *     (24-internal-schemas.md section 8.10): a submit (`placeOrder` and `createTradeGroup`,
-         *     reduce-only ones included) and an amend with any risk-increasing component (quantity
-         *     up, trigger re-armed) on `amendOrder`, `amendTradeGroup` or `setPositionTpSl`, and the
+         *     (24-internal-schemas.md section 8.10, which defines "quantity up" and "trigger re-armed"
+         *     once): a submit (`placeOrder` and `createTradeGroup`, reduce-only ones included) and an
+         *     amend with any risk-increasing component (quantity up, trigger re-armed) on `amendOrder`,
+         *     `amendTradeGroup` or `setPositionTpSl`, and the
          *     owner's loosened stop on `setPositionTpSl` (`amendOrder` and `amendTradeGroup` refuse a
          *     looser stop outright, 24-internal-schemas.md section 8.8 rule 5). This contract also
          *     requires it for `reversePosition` and for a

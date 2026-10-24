@@ -146,7 +146,9 @@ def test_the_etag_is_sent_on_both_202s_and_checked_after_the_404_and_the_422() -
         _AMEND,
         "without `If-Match` it applies to the order as it stands (last write wins)",
         "`*`, a list of tags, a weak or unparseable tag and another order's tag are `412` too",
-        "(`404`, or `403` as `OrderId` says), whether it takes an amend (`422`), then `If-Match`",
+        "the order's scope (`404`, or `403` as `OrderId` says) first, whether it takes an "
+        "amend (`422`) after the body's shape, the gates and the 24 h record, and `If-Match` "
+        "(`412`) last",
         "compared under the order's lock right before the send",
     )
     assert "an amend's with its stored `ETag`" in _EXITS
@@ -194,7 +196,8 @@ def test_only_an_amend_that_increases_exposure_meets_the_flag_the_switches_and_t
     """Q10, amended: the flag too; every other amend and every cancel meet none (C-2.6)."""
     assert not _missing(
         _AMEND,
-        "or moves a conditional entry's trigger, increases exposure: it meets every check",
+        "or moves a conditional entry's trigger, increases exposure (24-internal-schemas.md "
+        "section 8.10 defines it): it meets every check",
         "the `trading.oms_enabled` flag, live trading enabled, the B18 kill switch, the",
         "Every other amend meets none of them",
     )
@@ -225,7 +228,10 @@ def test_the_exit_routes_check_answer_and_audit_as_ruled() -> None:
     assert conflict["headers"]["Retry-After"] == {"$ref": "#/components/headers/RetryAfter"}
     codes = set(re.findall(r"`([a-z_]+)`", conflict["description"]))
     assert {code: _STATUS[code] for code in codes} == dict.fromkeys(
-        ("idempotency_key_reuse", "idempotency_in_flight", "stop_request_in_flight", "conflict"),
+        (
+            *("idempotency_key_reuse", "idempotency_in_flight", "stop_request_in_flight"),
+            *("account_unavailable", "conflict"),
+        ),
         409,
     )
     shared = {"400": "BadRequest", "409": "OrderExitConflict", "501": "NotImplemented"}
@@ -273,7 +279,7 @@ def test_cancel_all_cancels_order_by_order_and_folds_only_what_a_read_proves() -
         "(04-security-program.md section 7.2.2 row 14)",
         "At most five accounts are worked at once, one order at a time on each, within a 20 s",
     )
-    failures = _CANCEL_ALL.split("else `error` gives its first failure:", 1)[1]
+    failures = _CANCEL_ALL.split("else `error` gives its first failure", 1)[1]
     for code in ("exchange_error", "exchange_rate_limited", "exchange_unavailable", "timeout"):
         assert f"`{code}`" in failures and code in _STATUS, code
     assert "exchange_ret_code" in _COMPONENTS["schemas"]["LegError"]["properties"]
@@ -342,9 +348,11 @@ def test_the_s4b1_ruling_bounds_a_cancel_and_ends_its_110001_in_reconciliation()
     assert "On cancel: treat as already-terminal, reconcile" in errors  # the 110001 row
     assert not _missing(
         errors,
-        "On a cancel `110001` is no refusal",
-        "The command port raises a typed `already_terminal` answer that carries the venue's",
-        "B1 lands the order in `unknown` (S1: never re-sent), whose entry arms the reconciliation",
+        "On a cancel, B1's own or a KILL's",
+        "`110001` is no refusal",
+        "The command port raises the adapter's `NotFoundError` (code `ORDER_NOT_FOUND`, an",
+        "`ExchangeError`, never a `LookupError` or `ValueError`) carrying the venue's `retCode`",
+        "B1 lands the order in `unknown` with the reason `already_terminal` (S1: never re-sent)",
         "(`RECON_FOUND_CANCELLED` or `RECON_FOUND_FILLED`)",
         "`record_transport_fault` names the fault `already_terminal`",  # the 09:37Z ruling
         'reads "already terminal — reconciling", not a transport fault',
@@ -353,8 +361,9 @@ def test_the_s4b1_ruling_bounds_a_cancel_and_ends_its_110001_in_reconciliation()
     )
     assert not _missing(
         _RECORDS,
-        "`kill_cancel_refused` for a venue refusal, with its `retCode`",
-        "`rate_budget_exceeded` when no rate token was free",
+        "each a registered `B1_AUDITS` row (SR-E29-17;",
+        "`kill_cancel_refused` (error) for a venue refusal, with its `retCode`",
+        "`kill_cancel_rate_budget_exceeded` (error) when no rate token was free",
         "`kill_cancel_already_terminal` for a `110001`",
     )
     assert not _missing(
@@ -373,7 +382,8 @@ def test_the_later_s4b1_rulings_park_a_110001_and_name_what_a_kill_audits() -> N
     [inv_h] = [line for line in _CATALOGUE.splitlines() if line.startswith("| **INV-B1-h** |")]
     assert (
         "the venue's refusal (`kill_cancel_refused`, with the venue's `retCode`) or a refused "
-        "rate token (`rate_budget_exceeded`), is audited and never rolls the kill back" in inv_h
+        "rate token (`kill_cancel_rate_budget_exceeded`), is audited and never rolls the kill "
+        "back" in inv_h
     )
     assert _CATALOGUE.index("| **INV-B1-h** |") < _CATALOGUE.index("<!-- BEGIN GENERATED:")
     errors = _between(_INTERNAL_DOC, "### 8.6 Error mapping", "### 8.7 ")
@@ -393,12 +403,12 @@ def test_the_later_s4b1_rulings_park_a_110001_and_name_what_a_kill_audits() -> N
         "times out unsent, audited `kill_cancel_timeout`",
         "as B18's cancel-all and E34-T02's reserve land before live",
     )
-    assert not _missing(
-        _METRIC,
-        "or a fill racing a cancel, parks its order in `unknown` (never re-sent)",
-        'its `order_already_terminal` ticket ("already terminal — reconciling", §12.5) is the',
-        "is the operator's cue until E29-T06 wires the reconciler",
+    assert (
+        "an order a cancel's `110001`, or a fill racing a cancel, parks in `unknown` (never "
+        "re-sent; 24 §8.6) waits for E29-T06's reconciler, its ticket (§12.5) the operator's cue"
+        in _METRIC
     )
+    assert "already terminal — reconciling" not in _METRIC  # 24 §8.6 owns the payload
     assert not _missing(
         _words(_COMPONENTS["headers"]["OrderETag"]["description"]),
         "the last committed one, which is the order facade's `version()`",
@@ -443,25 +453,166 @@ def test_a_read_that_fails_before_the_send_is_a_503_and_leaves_the_order_live() 
     for text in (_AMEND, _CANCEL):
         assert not _missing(
             text,
-            "that fails answers `503 store_unavailable` with `Retry-After`",
+            "that fails answers `503 store_unavailable` with `Retry-After: 1`",
             "nothing was sent, so the order stays live and cancellable, never `unknown`",
         )
     assert _answers("amendOrder")["503"] == _answers("cancelOrder")["503"] == "ServiceUnavailable"
     assert _STATUS["store_unavailable"] == 503
     assert not _missing(
         _EXITS,
-        "that fails answers `503 store_unavailable` with `Retry-After`: nothing was sent",
+        "with `Retry-After: 1`, one shared value for the cancel and the amend: nothing was sent",
         "An amend's command port audits it `orders.amend` denied, reason `store_unavailable`, "
         "and raises when that record cannot be written (C-2.9)",
         "a user's cancel is audited `orders.cancel` denied, reason `store_unavailable`, by the "
         "exit service, the port writing none",
         "Raising, which puts the order in `unknown`, stays only once the venue call has started",
-        "audited `kill_cancel_refused` with the code `store_unavailable`, and the KILL stays final",
+        "audited `kill_cancel_refused` with the code `STORE_UNAVAILABLE`, or "
+        "`ACCOUNT_UNAVAILABLE` for an account it cannot send for, and the KILL stays final",
         "as it cannot tell a recorded stop from a plain order (fail closed)",
-        '("n cancels not sent — store unavailable") rather than reporting a clean KILL',
+        "Each KILL logs one `oms_kill_result` with its cancels counted by outcome, and any cancel "
+        "not done pages, naming the count by code",
+        "so the operator never reads a clean KILL; `kill()`'s signature and answer are unchanged",
     )
     assert not _missing(
         _RECORDS,
         "is `orders.amend` or `orders.cancel` denied with reason `store_unavailable`",
-        "the KILL's `halted_by_kill` record counts the cancels it did not send, by code",
+        "the KILL's one `oms_kill_result` log counts its cancels by outcome, any not done paged by",
     )
+
+
+def test_an_account_it_cannot_send_for_and_cancel_alls_counting_are_as_ruled() -> None:
+    """The orchestrator's rulings of 2026-10-24 11:31Z to 11:45Z, with S4-B1's final names: an
+    account the command port cannot send for is `409 account_unavailable` with no retry, one 1 s
+    retry for `store_unavailable`, a `110001`'s reconciliation request a ticket, the recorded
+    stop's read cap, cancel-all's counting, and SR-E29-06 (ii) in E29-T06's hands."""
+    [entry] = [e for e in _SPEC["x-error-codes"] if e["code"] == "account_unavailable"]
+    assert (entry["status"], entry["retryable"]) == (409, False)
+    for text in (_AMEND, _CANCEL):
+        assert not _missing(
+            text,
+            "answers `409 account_unavailable`, with no `Retry-After`",
+            "nothing was sent, the order stays live, and the operator is paged",
+        )
+    conflict = _words(_COMPONENTS["responses"]["OrderExitConflict"]["description"])
+    assert (
+        "`account_unavailable`, without `Retry-After`, for an order whose account the OMS cannot "
+        "send for" in conflict
+    )
+    assert not _missing(
+        _EXITS,
+        "the port answers `ACCOUNT_UNAVAILABLE` with no `retry_after_s`, B1 keeps the order live, "
+        "the route answers `409 account_unavailable` with no `Retry-After`",
+        "and the wiring's CRITICAL page stays",
+    )
+    assert "one whose account cannot be sent for with reason `account_unavailable`" in _RECORDS
+    rate = _between(_INTERNAL_DOC, "### 8.7 Rate budgeting", "### 8.8 ")
+    assert (
+        "is capped at `RECORDED_STOP_READ_S`, 3 s, so the `critical` lane keeps its 5 s token "
+        "wait inside the 9 s" in rate
+    )
+    errors = _between(_INTERNAL_DOC, "### 8.6 Error mapping", "### 8.7 ")
+    assert (
+        "is routed as a ticket too, so one case raises one notice (a `quarantined` order's "
+        "request keeps paging;" in errors
+    )
+    assert not _missing(
+        _between(_ARCH, "OMS order alerts (E29-T03, E29-T04;", "\n"),
+        "is routed as a ticket for the reason `already_terminal`, so one case raises one notice",
+        "Until E29-T06 / T08 the `oms_unknown_orders` page also counts an order parked by",
+    )
+    assert (
+        "until E29-T06 / T08 the unknown-orders alert (`oms_unknown_orders`, §12.5) also counts "
+        "orders parked by `110001`, and the ticket names the reason" in _METRIC
+    )
+    failures = _CANCEL_ALL.split("else `error` gives its first failure", 1)[1]
+    for code in ("store_unavailable", "account_unavailable", "conflict"):
+        assert f"`{code}`" in failures and code in _STATUS, code
+    assert not _missing(
+        _CANCEL_ALL,
+        "an order that filled before its cancel landed is neither affected nor an error",
+        "a cancel already sent stays with its order and is never sent again",
+        "counts in neither `affected` nor `error`",
+        "`requested` counts the accounts the request covers once its scope check passed, and "
+        "`succeeded` those `ok`",
+        "as an order's conflicts are reported in `results`, never as a `409`",
+        "`503 store_unavailable` when the scope itself cannot be read, nothing sent",
+    )
+    threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
+    assert (
+        "the foreign-stop cancel, which E29-T06 builds (the `untracked` rows it acts on exist "
+        "only there; #913 slice 4 ruling Q8)" in _words(threat.read_text(encoding="utf-8"))
+    )
+
+
+def test_the_contract_lens_fold_defines_once_and_closes_the_gaps() -> None:
+    """S4-A's contract-lens fold (2026-10-24): one definition of a risk-increasing amend in
+    24 section 8.10, the amend's risk check, `If-Match` alone carrying a version, the guard's
+    bound, the one pre-send path to `unknown`, cancel-all's open points, and the nits."""
+    [definition] = [
+        line
+        for line in _INTERNAL_DOC.splitlines()
+        if line.startswith("**Risk-increasing amends: the one definition")
+    ]
+    assert not _missing(
+        _words(definition),
+        '"Quantity up" is the quantity raised on an order that is not reduce-only, and "trigger '
+        "re-armed\" a conditional entry's trigger moved",
+        "`22-api-openapi.yaml` (`amendOrder`, `ArmToken`) and §8.4's exit routes point here",
+    )
+    assert "(24-internal-schemas.md section 8.10 defines it)" in _AMEND
+    arm = _words(_COMPONENTS["parameters"]["ArmToken"]["description"])
+    assert 'which defines "quantity up" and "trigger re-armed" once' in arm
+    assert not _missing(
+        _AMEND,
+        "and the risk check of the amended, sized and rounded order (`403 risk_limit_breached`, "
+        "SR-E29-04)",
+        "the terms it compares change only through an amend, and B1 takes one at a time",
+        "an amend with no `If-Match` carries no version",
+        "the stop-request gate, 21-database-schema.md section 3.3.11",
+        "the one way an amend that sent nothing reaches `unknown`",
+        "An empty body is `validation_failed` / `nothing_to_amend`",
+        "`native_stop_required` for the stop and `take_profit_side` for the take-profit",
+    )
+    assert "after a fill `amendOrder` refuses a stop change first, `tpsl_after_fill`" in _AMEND
+    assert not _missing(
+        _EXITS,
+        "the risk check of the amended, sized and rounded order, the pipeline's own rule 3",
+        "with `If-Match`, carrying the tag's version",
+        "without it, carrying none (last write wins)",
+        "holding at most 1,024 keys",
+        "a request arriving while the set is full is `429 rate_limited` with `Retry-After: 1`",
+        "the one way an exit that sent nothing reaches `unknown`",
+    )
+    assert "at most 1,024 keys, a request arriving while it is full being `429 rate_limited`" in (
+        _INFO
+    )
+    assert "`CV_COMMAND_TIMEOUT`, 10 s (28-statechart-catalogue.md section B1.4)" in _CANCEL
+    assert "such a cancel answers within about 21 s" in _CANCEL
+    assert not _missing(
+        _CANCEL_ALL,
+        "a plain order is one the venue's cancel-all with `orderFilter=Order` cancels",
+        "the account's other selected orders still each sent theirs",
+        "and neither is one a `110001` parks in `unknown`",
+        "takes a new `Idempotency-Key`: the same key replays the stored `200` for 24 h",
+        "once the body is read (the scope needs its ids)",
+        "an empty list from a caller with no trade grant answers `200` with no results",
+        "and the refusal is audited, one `rbac.denied` record for the request",
+    )
+    ids = _COMPONENTS["schemas"]["CancelAllRequest"]["properties"]["exchange_account_ids"]
+    assert (ids["maxItems"], ids["uniqueItems"]) == (100, True)
+    errors = _between(_INTERNAL_DOC, "### 8.6 Error mapping", "### 8.7 ")
+    assert "On a cancel, B1's own or a KILL's (an algo's `cancel_children`, §9.5" in errors
+    assert "the parked order also counts in `oms_unknown_orders`, whose rule pages" in errors
+    assert "An amend's own `entry_attach` rows (24 §8.8 rule 6, audit reason `amend`) are " in (
+        _words(_SCHEMA_DOC)
+    )
+    assert "`order.adopted_untracked`, `orders.amend`, `orders.cancel`," in _RECORDS
+    assert "until then the `202` carries none" in _words(
+        _OPS["placeOrder"]["responses"]["202"]["description"]
+    )
+    assert "A client treats it as opaque" in _words(
+        _COMPONENTS["headers"]["OrderETag"]["description"]
+    )
+    assert "a narrowing of a request no route served yet" in _INTERNAL_DOC
+    conflict = _words(_COMPONENTS["responses"]["OrderExitConflict"]["description"])
+    assert "On `cancelAllOrders` only the two idempotency codes apply" in conflict

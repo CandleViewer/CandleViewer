@@ -49,6 +49,7 @@ class ErrorCode(StrEnum):
     KEK_ROTATION_NOT_STAGED = "kek_rotation_not_staged"
     KEK_ROTATION_IN_PROGRESS = "kek_rotation_in_progress"
     STOP_REQUEST_IN_FLIGHT = "stop_request_in_flight"
+    ACCOUNT_UNAVAILABLE = "account_unavailable"
     JOB_RUNNING = "job_running"
     VERSION_CONFLICT = "version_conflict"
     PRECONDITION_REQUIRED = "precondition_required"
@@ -155,6 +156,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.KEK_ROTATION_NOT_STAGED: ErrorMeta(("rest",), None, False, None, None, "No KEK rotation is staged as the request states (previous KEK not loaded, or another environment or version)"),
     ErrorCode.KEK_ROTATION_IN_PROGRESS: ErrorMeta(("rest",), None, True, None, None, "A KEK re-wrap run is already in progress for this environment"),
     ErrorCode.STOP_REQUEST_IN_FLIGHT: ErrorMeta(("rest",), None, True, None, None, "A stop request for this position is still in flight"),
+    ErrorCode.ACCOUNT_UNAVAILABLE: ErrorMeta(("rest",), None, False, None, None, "The order's account cannot be sent for (no usable key, or out of the OMS's reach); nothing was sent"),
     ErrorCode.JOB_RUNNING: ErrorMeta(("rest",), None, True, None, None, "A job of this kind is already queued or running; one runs at a time"),
     ErrorCode.VERSION_CONFLICT: ErrorMeta(("rest",), None, False, None, None, "If-Match / ETag precondition failed"),
     ErrorCode.PRECONDITION_REQUIRED: ErrorMeta(("rest",), None, False, None, None, "The request must carry If-Match with the current ETag"),
