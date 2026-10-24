@@ -33,5 +33,5 @@ def test_20_names_a_failure_before_the_send_as_the_command_port_records_it() -> 
         "A failure before the attach's send (the account, the position read, the stop-request "
         "gate or the record) is answered with nothing sent, audited `sl.attached` denied with its "
         f"reason and logged `{STOP_NOT_SENT}`, so the operator can tell a stop never sent, the "
-        "venue holding only what the create attached, from one sent and not confirmed" in _ROW
+        "venue holding nothing this attach added, from one sent and not confirmed" in _ROW
     )
