@@ -268,14 +268,14 @@ def make_recording_writes_router(
             **fields, severity=Severity.INFO if refused is None else Severity.WARNING,
         ))  # fmt: skip
 
-    async def refuse(
+    async def audit_refusal(
         call: _Call, entry: rc.RecordedEntry, causes: tuple[rc.Refusal, ...]
     ) -> NoReturn:
         """`409` for a refused stop. The audit names the real cause; the body names it to the
         Owner, and to anyone else only a cause their view shows (restricted refusal parity)."""
         held = replace(entry, refusals=causes)
         cause = rc.stop_refusal(held) or "conflict"
-        await _record(call, "recorder.stop", entry.symbol, entry.id, cause)
+        await _audit(call, "recorder.stop", entry.symbol, entry.id, cause)
         named = rc.stop_refusal(held, restricted=not call.p.is_owner)
         extra = {} if named is None else {"refusal": named}
         raise common.Problem(409, ErrorCode.CONFLICT, "An auto-record trigger holds the symbol.",
@@ -358,17 +358,17 @@ def make_recording_writes_router(
             return call.replayed
         entry, spec = await visible(call, entry_id), _spec(body)
         if intent := "retention_days" in body.model_fields_set and not spec.pinned:
-            await _record(call, "retention.change", entry.symbol, entry.id,
+            await _audit(call, "retention.change", entry.symbol, entry.id,
                           before_state={"retention_days": entry.retention_days},
                           after_state={"retention_days": spec.retention_days})  # fmt: skip
         try:
             updated = await _stored(call.control.update(entry.id, spec, call.actor))
         except rc.ChangeRefused as refused:
             if intent:  # the route's retention record gets its denied twin
-                await _record(call, "retention.change", entry.symbol, entry.id, refused.rule)
+                await _audit(call, "retention.change", entry.symbol, entry.id, refused.rule)
             if refused.rule != "not_manual":  # the policy's own check of the change
                 raise _invalid(refused.rule, refused.field) from None
-            await _record(call, "recorder.update", entry.symbol, entry.id, refused.rule)
+            await _audit(call, "recorder.update", entry.symbol, entry.id, refused.rule)
             msg = "Streams and depth change only on a manually recorded symbol."
             raise common.Problem(409, ErrorCode.CONFLICT, msg) from None
         return done(call, JSONResponse(_dump(shown(call, updated))))
@@ -385,11 +385,11 @@ def make_recording_writes_router(
             return call.replayed
         entry = await visible(call, entry_id)
         if not force and rc.stop_refusal(entry) is not None:  # refused before remove_manual
-            await refuse(call, entry, entry.refusals)
+            await audit_refusal(call, entry, entry.refusals)
         try:  # the policy writes `recorder.stop` ahead of the row (remove_manual)
             await _stored(call.control.remove(entry.id, call.actor, force=force))
         except rc.StopRefused as refused:  # a trigger came after the lookup
-            await refuse(call, entry, refused.causes)
+            await audit_refusal(call, entry, refused.causes)
         return done(call, Response(status_code=204))
 
     return router
