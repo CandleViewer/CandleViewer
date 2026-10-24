@@ -13,7 +13,8 @@ section 6 mapping quote, parsed from file text — every shipped `skipped_reason
 section 6 row; (5) the copy gates — the memo's CA rows byte-for-byte by status, CA-27 and CA-29
 verbatim, the #4118 string, no banned UI word, no private path or host (generic patterns), dangling
 `C-x.y` / `CMP-nnn` / `SCR-nnn` ids, every section 6 sentence at most 80 characters and free of
-exception text, the stop pair tighten-only, the resolver never arming, and the cite check — a cited
+exception text, the stop pair tighten-only (the drawn F18 row applies the tighter of the two moves,
+SC-10's clause), the resolver never arming, and the cite check — a cited
 `file:line` whose quoted fragment moved WARNs with the current line and FAILs only when the
 fragment is gone; (6) the counts. `--check` re-derives every `<!-- audit:NAME=VALUE -->` marker in
 the spec. `--selftest` holds mutated copies of the spec in memory (a section 6 row dropped, a CA
@@ -113,6 +114,8 @@ the strip's check glyph | color.status.success.strong | color.status.info.subtle
 the pre text (SCR-088) | color.text.primary | color.surface.sunken | text
 the masked account token | color.text.secondary | color.surface.sunken | text
 the Order / Audit / Replay links | color.text.link | color.surface.canvas | text
+the links on a failed row | color.text.link | color.status.danger.subtle | text
+the LIVE glyph on a failed row | color.env.live | color.status.danger.subtle | non-text
 focus ring on the canvas | color.focus.ring | color.surface.canvas | non-text
 focus ring on raised | color.focus.ring | color.surface.raised | non-text
 tertiary on a selected row (never) | color.text.tertiary | color.surface.selected | rejected-text
@@ -158,6 +161,11 @@ FRAME_SECTIONS = (
 MUTATIONS: dict[str, tuple[str, str, str]] = {
     "a section 6 row dropped": ("| `stale_data`", "| `stale_datum`", "FAIL"),
     "a CA quote altered": ("controls always go first.", "controls usually go first.", "FAIL"),
+    "the looser stop applied": (
+        "stop 61,400.0 → 62,300.0 · ✓",
+        "stop 61,400.0 → 62,000.2 · ✓",
+        "FAIL",
+    ),
     "a cite's line moved": ("CITE-LINE", "", "WARN"),
     "a cite's fragment gone": ("CITE-FRAG", "", "FAIL"),
 }
@@ -415,6 +423,16 @@ def gates(
         bad.append("the stop-pair frame does not state the tighten-only rule (BQ-8, C-2.6)")
     if re.search(r"Apply (?:arms|also arms)", spec):
         bad.append("the resolver must never arm (BQ-17)")
+    # SC-10's clause (BQ-7): the F18 row applies the tighter of the two stop moves (a long: higher)
+    f18 = facts["f18"]
+    if f18:
+        wants = (f18["be_wants"], f18["atr_wants"])
+        tighter = max(wants, key=lambda s: float(s.replace(",", "")))
+        looser = wants[0] if tighter == wants[1] else wants[1]
+        s4 = sec.get("4", "").splitlines()
+        row1 = next((ln for ln in s4 if "row 1" in ln and "→" in ln), "")
+        if f"→ {tighter}" not in row1 or f"→ {looser}" in row1:
+            bad.append(f"the readable row must apply the tighter stop move {tighter} (SC-10)")
     warns, fails = cite_check(spec)
     return bad + fails, warns
 
