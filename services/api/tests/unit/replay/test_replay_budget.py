@@ -50,12 +50,20 @@ def _work(time: FakeTime, lane: BudgetLane, seconds: float) -> None:
 
 @pytest.mark.parametrize(
     ("share", "burst_s"),
-    [(0.049, 0.05), (0.751, 0.05), (0.25, 0.0049), (0.25, 0.251), (float("nan"), 0.05)],
-)
+    [
+        (0.0, 0.05), (-0.25, 0.05), (0.5000001, 0.05), (float("inf"), 0.05),
+        (float("nan"), 0.05), (0.25, 0.0049), (0.25, 0.251),
+    ],
+)  # fmt: skip
 def test_budget_outside_its_bounds_is_refused(share: float, burst_s: float) -> None:
     """C-4.14: no configuration turns the budget off or past its bounds."""
     with pytest.raises(ReplayConfigInvalid):
         ReplayLoopBudget(share, burst_s, FakeTime())
+
+
+@pytest.mark.parametrize("share", [1e-9, 0.5])
+def test_budget_takes_any_share_above_zero_up_to_one_half(share: float) -> None:
+    assert ReplayLoopBudget(share, BURST, FakeTime()).share == share
 
 
 async def test_budget_work_within_the_burst_is_not_held() -> None:
