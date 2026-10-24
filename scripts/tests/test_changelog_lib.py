@@ -195,7 +195,7 @@ def test_security_footer_with_exploit_detail_is_refused_at_the_pr_and_ignored_at
     result = check_changelog_fragment("fix(auth-rbac): x", footer)
     assert not result.ok and result.error_code == "CI-REL-001"
     update = _update(f"fix(auth-rbac): x (#7)\n\n{footer}")
-    assert update.entries == {Category.FIXES: ["- **auth-rbac**: x (#7)"]}
+    assert update.entries == {Category.FIXES: ["- **auth-rbac**: x (#7) (abc1234)"]}
 
 
 def test_a_clean_security_footer_passes_the_fragment_check_for_a_free_form_title() -> None:
