@@ -242,7 +242,7 @@ def scan(spec: str, misses: list[str]) -> dict[str, int]:
             n["key_ids"] += 1
             if m.group(1) or len(m.group(2)) != 4:
                 misses.append(f"key id not truncated to ... plus 4: {m.group(0)!r}")
-    for m in re.finditer(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])", spec):
+    for m in re.finditer(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?!\.?\d)", spec):
         n["ips"] += 1
         if not m.group(1).startswith(DOC_NETS):
             misses.append(f"IPv4 outside the documentation ranges: {m.group(1)}")
