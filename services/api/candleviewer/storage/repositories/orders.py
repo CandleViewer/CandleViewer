@@ -502,8 +502,10 @@ class OutOfScope:
     account_id: UUID | None
 
 
-class AccountsOutOfScope(OrderStoreError):
-    """`accounts_in_scope`: a requested account outside the scope, whichever (SR-E29-13)."""
+class AccountsOutOfScope(Exception):
+    """`accounts_in_scope`: a requested account outside the scope, whichever (SR-E29-13). The
+    caller's scope, never an outage, so no `OrderStoreError`, which the OMS reads as a store that
+    did not serve (24 Sec.8.2 S7); `OrderRepository` answers it `AccountScopeDenied`."""
 
 
 def settle_accounts(reach: Iterable[UUID], requested: Collection[UUID]) -> tuple[UUID, ...]:
