@@ -12,7 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-import tools.ci.check_prod_bundle_handles as guard  # noqa: E402 - sys.path first
+import tools.ci.check_prod_bundle_handles as guard  # noqa: E402 - sys.path first (#549)
 
 CLEAN = {"index.html": "<html></html>\n", "assets/index-ab12.js": 'console.log("hi");\n'}
 SOURCE_MAP = json.dumps({"sources": ["engine.ts"], "sourcesContent": ["window.__cvEngine = {}"]})
@@ -103,7 +103,7 @@ def test_the_script_runs_as_a_command(tmp_path):
     (tmp_path / "dist").mkdir()
     (tmp_path / "dist" / "a.js").write_text("window.__cvEngine = 1", encoding="utf-8")
     script = str(ROOT / "tools/ci/check_prod_bundle_handles.py")
-    run = subprocess.run(  # noqa: S603 - the interpreter and the script under test
+    run = subprocess.run(  # noqa: S603 - the interpreter and the script under test (#549)
         [sys.executable, script, "--dist", str(tmp_path / "dist")],
         capture_output=True,
         text=True,
