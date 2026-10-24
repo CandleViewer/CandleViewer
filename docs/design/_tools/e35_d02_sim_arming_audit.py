@@ -476,6 +476,11 @@ def main(argv: list[str]) -> int:
         "opacity_disabled": alpha, "gate_fires": cfg["fires"], "gate_hours": cfg["hours"],
         "example": facts["simulate_example"], "composite": comp,
         "blank_checklist_lines": len(re.findall(r"^- \[[ x~]\] \*\*[^*]+\*\*\s*$", hand, MULTI)),
+        "token_files": {
+            "primitives": counts[PRIM], "dark": counts[DARK],
+            "light": counts[LIGHT], "hc": counts[HC],
+        },
+        "pairs_registry": len(registered),
     }  # fmt: skip
     out.append("\n## 6. Counts: " + json.dumps(numbers, ensure_ascii=False))
     flat = flatten(
