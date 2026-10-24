@@ -2659,6 +2659,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Tokens**: `radius.md`, `color.surface.sunken`.
 - **Storybook**: Footprint, Heatmap, ThemeDark, ThemeLight.
 - **Tests**: unit, visual, axe.
+- **Design (usage spec):** [E32-D04.md](../design/E32/E32-D04.md) §8 (E32-D04; owner approval pending; the ladder builder's five glance tiles — total qty, average entry, total notional, projected risk vs cap, projected requests vs minute budget — as `role="img"` with one name, never the only disclosure: the pinned totals row repeats every figure; the `ladder` kind, `value` and `caption` props are a PROPOSED amendment routed to this catalogue's owner).
 
 ### CMP-229 ArmToggle
 
