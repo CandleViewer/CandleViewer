@@ -164,8 +164,7 @@ _RECORD_GAP = sa.text(
 # E16-T03 StreamWriter: both target the symbol's live session in `:env` (ix_recs_live), newest
 # first. A session's env is its recorded row's (`recording_sessions` has no `env`, 21 Sec.3.6.2),
 # so a statement that finds sessions by symbol or state, `_LIVE_SESSIONS` too, joins that row and
-# binds the env, cast: without it, it reaches another env's sessions (C-2.11, #2726's class). The
-# gap insert keeps its derived table: Postgres types `:symbol` from the first place it meets it.
+# binds the env, cast: without it, it reaches another env's sessions (C-2.11, #2726's class).
 _ADD_COUNTERS = sa.text(
     "UPDATE recording_sessions SET messages_received = messages_received + :rx, "
     "messages_dropped = messages_dropped + :dropped, bytes_written = bytes_written + :bytes, "
@@ -175,6 +174,11 @@ _ADD_COUNTERS = sa.text(
     "WHERE s.symbol = :symbol AND s.state IN ('starting','recording','degraded') "
     "ORDER BY s.started_at DESC LIMIT 1) RETURNING 1"
 )
+# The gap insert keeps its derived table, which looks removable and is not. Postgres analyses a
+# select list before the WHERE of the same query, so a flat form meets `:symbol` untyped in the
+# select list and then typed `symbol_code` in the WHERE, and refuses the statement: SQLSTATE
+# 42P08, "inconsistent types deduced for parameter $1". A derived table is analysed first, so its
+# WHERE types `:symbol` once and the select list agrees. The Postgres test of the env scope runs it.
 _RECORD_LIVE_GAP = sa.text(
     "INSERT INTO recording_gaps (recording_session_id, symbol, stream, gap_start, gap_end, "
     "cause) SELECT s.id, :symbol, CAST(:stream AS stream_kind), :gs, :ge, :cause FROM "

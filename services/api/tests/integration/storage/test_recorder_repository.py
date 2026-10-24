@@ -545,17 +545,24 @@ async def test_set_retention_refuses_what_rs_retention_refuses(
 
 async def test_a_startup_leaves_another_envs_open_session_alone(repo: Repo, conn: Conn) -> None:
     """SEC-1 (S3a lens): a demo process's startup closed a live session as `process_restart`,
-    logged a gap that never happened and wrote its `recorder.stop` with `env=demo`."""
+    logged a gap that never happened and wrote its `recorder.stop` with `env=demo`. BTCUSDT is
+    recorded in both envs, each with a session left open, so only the row link tells them apart
+    (a join on the symbol and the env would close both)."""
     t0 = to_us(datetime(2026, 9, 1, tzinfo=UTC))
-    killed = SessionManager(repo, now_us=lambda: t0, audit=FakeAudit(), config=LIVE)
-    await killed.on_set_changed(_added())  # a live session, its process killed
+    for config in (LIVE, DEMO):  # one killed process per env
+        killed = SessionManager(repo, now_us=lambda: t0, audit=FakeAudit(), config=config)
+        await killed.on_set_changed(_added())
     audit, start = FakeAudit(), t0 + 60_000_000
     demo = SessionManager(repo, now_us=lambda: start, audit=audit, config=DEMO)
-    assert await demo.recover_on_startup(start) == 0
-    assert audit.records == []
-    assert conn.execute("SELECT count(*) FROM recording_gaps").fetchone() == (0,)
-    state = "SELECT state::text, end_reason FROM recording_sessions"
-    assert conn.execute(state).fetchall() == [("starting", None)]
+    assert await demo.recover_on_startup(start) == 1  # its own session, not live's too
+    assert audit.envs() == [("recorder.stop", "demo")]
+    by_env = (
+        "SELECT rs.env::text, s.state::text, (SELECT count(*) FROM recording_gaps g "
+        "WHERE g.recording_session_id = s.id) FROM recording_sessions s "
+        "JOIN recorded_symbols rs ON rs.id = s.recorded_symbol_id"
+    )
+    states = {env: (state, gaps > 0) for env, state, gaps in conn.execute(by_env)}
+    assert states == {"live": ("starting", False), "demo": ("stopped", True)}  # live: no gap
 
 
 async def test_the_gap_insert_and_the_counters_reach_only_their_own_envs_session(

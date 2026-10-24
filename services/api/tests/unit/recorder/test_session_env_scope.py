@@ -10,8 +10,10 @@ from types import ModuleType
 
 import pytest
 
-from candleviewer.recorder import policy, sessions
+from candleviewer.recorder import policy, sessions, writer
 from candleviewer.recorder.sessions import SessionConfig, SessionManager
+from candleviewer.recorder.writer import writer_config_from_settings
+from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories import recorder_sqlalchemy
 from tests.unit.recorder._fakes import FakeAudit
 from tests.unit.recorder._session_fakes import DEMO, LIVE, MemRecorderStore, UsClock
@@ -41,16 +43,25 @@ def test_the_scan_finds_a_default_env_to_begin_with() -> None:
     assert _defaulted_envs(ast.parse("def f(env, a=1): ...\nclass C:\n env: int")) == []
 
 
-@pytest.mark.parametrize("module", [sessions, policy, recorder_sqlalchemy])
+@pytest.mark.parametrize("module", [sessions, policy, recorder_sqlalchemy, writer])
 def test_no_env_in_the_session_path_has_a_default(module: ModuleType) -> None:
     assert _defaulted_envs(ast.parse(Path(inspect.getfile(module)).read_text())) == []
 
 
-def test_a_session_config_and_a_manager_cannot_be_built_without_an_env() -> None:
+def test_a_session_config_cannot_be_built_without_an_env() -> None:
     with pytest.raises(TypeError, match="env"):
         SessionConfig()  # type: ignore[call-arg]  # the default is gone
+
+
+def test_a_manager_cannot_be_built_without_a_config() -> None:
     with pytest.raises(TypeError, match="config"):
         SessionManager(MemRecorderStore(), now_us=UsClock(T0), audit=FakeAudit())  # type: ignore[call-arg]  # likewise
+
+
+def test_a_manager_built_with_a_config_of_none_is_refused_naming_the_reason() -> None:
+    """Like `audit=None`: refused when built, not later at the first `self._cfg.env`."""
+    with pytest.raises(ValueError, match=r"needs a config.*C-2\.11"):
+        SessionManager(MemRecorderStore(), now_us=UsClock(T0), audit=FakeAudit(), config=None)  # type: ignore[arg-type]  # a runtime None
 
 
 @pytest.mark.parametrize(("mine", "other"), [(LIVE, DEMO), (DEMO, LIVE)])
@@ -71,6 +82,12 @@ async def test_a_startup_closes_its_own_envs_open_sessions_and_leaves_the_others
     assert audit.envs() == [("recorder.stop", mine.env)]
     own = next(sid for sid, s in store.sessions.items() if s["env"] == mine.env)
     assert {g["session_id"] for g in store.gaps} == {own}
+
+
+@pytest.mark.parametrize("environment", list(Environment))
+def test_the_production_writer_config_takes_the_settings_env(environment: Environment) -> None:
+    settings = Settings().model_copy(update={"environment": environment})  # only the env is read
+    assert writer_config_from_settings(settings).env == environment.value
 
 
 async def test_the_writer_names_its_env_on_its_gap_and_counter_writes(tmp_path: Path) -> None:

@@ -212,6 +212,11 @@ class SessionManager:
                 "SessionManager needs an audit writer: the crash-recovery `recorder.stop` "
                 "audit (C-2.9) must never be skipped"
             )
+        if config is None:  # likewise: no config means no env, and an env is never assumed
+            raise ValueError(
+                "SessionManager needs a config: its env scopes every session it reads or writes "
+                "(C-2.11)"
+            )
         self._audit = audit
         self._store = store
         self._topics = topics or _all_streams
