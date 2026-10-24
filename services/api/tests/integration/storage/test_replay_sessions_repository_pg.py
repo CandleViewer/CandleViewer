@@ -271,7 +271,8 @@ async def test_a_real_check_violation_leaves_no_row_values_in_the_chain(
     notes, user = ({"note": _NOTE},), h.new_user()
     insert = sa.insert(models.replay_sessions).values(
         id=uuid.uuid4(), user_id=uuid.UUID(user), symbol="BTCUSDT", range_start=T0, range_end=T0,
-        bookmarks=list(notes), created_at=T0, updated_at=T0,
+        bookmarks=list(notes), created_at=T0, updated_at=T0, symbols=["BTCUSDT"],
+        streams=["trades"],
     )  # fmt: skip
     rel = SqlAlchemyRelationalRepository(pg_dsn, "replay-sessions-leak")
     try:

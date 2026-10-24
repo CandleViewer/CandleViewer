@@ -54,6 +54,7 @@ from candleviewer.statechart.persistence import (
 )
 from candleviewer.statechart.plugins import FeedBinding, MachineStatePort, feed_plugins
 from candleviewer.storage.repositories.replay_sessions import (
+    ALL_REPLAY_STREAMS,
     LIVE_STATES,
     MAX_PAGE_LIMIT,
     ReplaySessionCreate,
@@ -243,6 +244,20 @@ def _canon(value: str) -> str | None:
         return str(uuid.UUID(str(value)))
     except ValueError:
         return None
+
+
+def _list_problems(req: ReplaySessionCreate) -> list[str]:
+    """CHECKs `rps_symbols` and `rps_streams`, worded for a person: the lists the row stores (an
+    empty one stores `(symbol,)` or every replayable stream) are what retention protects (G7)."""
+    problems: list[str] = []
+    symbols, streams = req.stored_symbols, req.stored_streams
+    if len(symbols) > 8 or len(set(symbols)) != len(symbols) or symbols[0] != req.symbol:
+        problems.append("symbols must be 1 to 8 distinct codes, starting with symbol")
+    if not all(_SYMBOL.fullmatch(code) for code in symbols[1:]):
+        problems.append("symbols must be upper-case instrument codes such as BTCUSDT")
+    if len(set(streams)) != len(streams) or not set(streams) <= set(ALL_REPLAY_STREAMS):
+        problems.append("streams must be distinct recorded streams")
+    return problems
 
 
 class _Refusals:
@@ -827,6 +842,7 @@ class ReplaySessionService:
         problems: list[str] = []
         if not _SYMBOL.fullmatch(req.symbol):
             problems.append("symbol must be an upper-case instrument code such as BTCUSDT")
+        problems += _list_problems(req)
         if req.range_end <= req.range_start:
             problems.append("range_end must be after range_start")
         elif req.range_end - req.range_start > self._limits.max_window:

@@ -6,10 +6,10 @@ against `ReplaySessionRepository` and these plain frozen dataclasses;
 
 Owner scoping (C-12.4): every method takes the caller's `user_id` and the implementation re-checks
 it in SQL. A missing row, a malformed id and another user's row are indistinguishable (`get` ->
-None, writes -> `ReplaySessionNotFoundError`), so ids cannot be probed across users. The two
-unscoped reads are `list_idle_since` and `list_reclaimable`, system-only sweeps: they return a
+None, writes -> `ReplaySessionNotFoundError`), so ids cannot be probed across users. The three
+unscoped reads are system-only: the sweeps `list_idle_since` and `list_reclaimable` return a
 projection without `bookmarks`, which 21 §12 classifies P1 ("read only by `user_id` in the WHERE
-clause").
+clause"), and the retention guard `live_covering` returns a session id alone.
 
 Trust boundary: `user_id` is always the authenticated principal, never client-supplied;
 `paper_account_id` MUST be restricted by the service (slice 3 / E26-T05) to `exchange_accounts`
@@ -32,7 +32,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
+
+from candleviewer.storage.repositories.recorded import REPLAYABLE_STREAMS
 
 
 class ReplayState(StrEnum):
@@ -61,6 +63,12 @@ class SourceTier(StrEnum):
 LIVE_STATES = frozenset(
     {ReplayState.BUFFERING, ReplayState.PLAYING, ReplayState.PAUSED, ReplayState.STEPPING}
 )
+#: What the retention guard (`live_covering`, G7) protects: the live states and `created`, which
+#: holds no buffer yet but will read its window. `finished` and `error` are not covered.
+COVERING_STATES = LIVE_STATES | {ReplayState.CREATED}
+#: Every replayable stream by its `StreamKind` name (CHECK `rps_streams`): what a session made
+#: without a stream list stores, as 0051's backfill did.
+ALL_REPLAY_STREAMS: Final[tuple[str, ...]] = tuple(s.value for s in REPLAYABLE_STREAMS)
 #: B12's only final state; terminal rows refuse every update (the owner may still delete them).
 TERMINAL_STATES = frozenset({ReplayState.DESTROYED})
 #: Entering one of these stamps `finished_at`.
@@ -128,6 +136,10 @@ class ReplaySessionCreate:
     never client-supplied. `paper_account_id` MUST be restricted by the service (slice 3 /
     E26-T05) to `exchange_accounts` rows with `env = 'demo'` that the user is granted (C-2.11,
     C-12.5): the repository only enforces the foreign key.
+
+    `symbols` and `streams` are every symbol and stream the session replays (CHECKs `rps_symbols`,
+    `rps_streams`): `symbols` starts with `symbol`, and an empty tuple stores `(symbol,)`; an empty
+    `streams` stores `ALL_REPLAY_STREAMS`, so a row never protects less than it may replay.
     """
 
     id: str
@@ -143,11 +155,23 @@ class ReplaySessionCreate:
     paper_account_id: str | None = None
     bookmarks: tuple[dict[str, Any], ...] = ()
     loop_enabled: bool = False
+    symbols: tuple[str, ...] = ()
+    streams: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name in ("range_start", "range_end", "cursor_ts"):
             if (value := getattr(self, name)) is not None:
                 require_aware(value, name)
+
+    @property
+    def stored_symbols(self) -> tuple[str, ...]:
+        """What `replay_sessions.symbols` stores for this request."""
+        return self.symbols or (self.symbol,)
+
+    @property
+    def stored_streams(self) -> tuple[str, ...]:
+        """What `replay_sessions.streams` stores for this request."""
+        return self.streams or ALL_REPLAY_STREAMS
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +198,8 @@ class ReplaySessionRow:
     created_at: datetime
     updated_at: datetime
     finished_at: datetime | None
+    symbols: tuple[str, ...]
+    streams: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,14 +370,25 @@ class ReplaySessionRepository(Protocol):
         Least recently touched first, at most `limit` (clamped), for the reclaim sweep."""
         ...
 
+    async def live_covering(
+        self, symbol: str, stream: str, lo: datetime, hi: datetime, *, created_after: datetime
+    ) -> str | None:
+        """SYSTEM ONLY, not user-scoped: the id of a session in `COVERING_STATES` that replays
+        `stream` of `symbol` over a window overlapping `[lo, hi)` (`range_start < hi AND
+        range_end > lo`) and was created after `created_after` (the caller passes now minus the
+        maximum lifetime), or None. The oldest by `(created_at, id)` when several do: the
+        retention guard only needs to know whether one does, and which to name in its log."""
+        ...
+
     async def delete(self, user_id: str, session_id: str) -> bool:
         """Hard delete by the owner (any state); False when there was nothing to delete."""
         ...
 
 
 __all__ = [
-    "FINISHED_STATES", "LIVE_STATES", "MAX_PAGE_LIMIT", "TERMINAL_STATES", "IdleReplaySession",
-    "ReplaySessionConstraintError", "ReplaySessionCreate", "ReplaySessionCursorError",
+    "ALL_REPLAY_STREAMS", "COVERING_STATES", "FINISHED_STATES", "LIVE_STATES", "MAX_PAGE_LIMIT",
+    "TERMINAL_STATES", "IdleReplaySession", "ReplaySessionConstraintError", "ReplaySessionCreate",
+    "ReplaySessionCursorError",
     "ReplaySessionIllegalUpdateError", "ReplaySessionNotFoundError", "ReplaySessionPage",
     "ReplaySessionRepository", "ReplaySessionRow", "ReplayState", "SourceTier", "clamp_limit",
     "decode_cursor", "encode_cursor", "require_aware", "require_counters", "state_columns",
