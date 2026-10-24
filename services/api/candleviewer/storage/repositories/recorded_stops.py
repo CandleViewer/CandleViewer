@@ -71,9 +71,8 @@ StopEnd = Literal["in_force", "answered_unread"]
 #: bound showed neither its stop nor an order or entry that carries it (`not_shown`, 21
 #: Sec.3.3.11). Both of the last two make the row `void`.
 StopOutcome = Literal["answered", "refused", "not_shown"]
-#: How `resolve` settles the pending rows a complete read decided, answered or not: `answered`
-#: stamps a NULL `answered_at` and keeps them `pending`; the others void them, each the reason of
-#: their write-ahead audit (`in_flight_resolved`; `entry_filled_stop_absent`, the Q1 ruling).
+#: How `resolve` settles pending rows: `answered` stamps a NULL `answered_at`, keeping them pending;
+#: the others void them, each its audit's reason (`entry_filled_stop_absent`: the Q1 ruling).
 ResolveOutcome = Literal["answered", "in_flight_resolved", "entry_filled_stop_absent"]
 #: Whether the position was open or flat when its filled entry's side was voided (CR-S3H0-08).
 FillPosition = Literal["open", "flat"]
@@ -305,9 +304,8 @@ SettleWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
 InsertWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
 
 
-#: A `put_in_force` hook: awaited before the commit with every row it changed (the replaced rows
-#: first), one `sl.modified` / `tp.modified` record per row; one that raises or outlasts the audit
-#: bound (`WriteAheadTimeout`) leaves every row as it was.
+#: A `put_in_force` hook, awaited before the commit with every row it changed (replaced first), a
+#: `sl.modified` / `tp.modified` record per row; one that fails or is late leaves every row as is.
 InForceWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
 
 
@@ -334,8 +332,7 @@ class InForce:
 
 
 def check_in_force(account_id: UUID, rows: Sequence[RecordedStopRow]) -> None:
-    """`ValueError` before any statement unless `rows` are the account's, of one key, each named
-    once and each of its own kind (`ux_rs_in_force`). Names no value."""
+    """`ValueError` before any statement unless `rows` are the account's, of one key, each once."""
     if not rows or len({row.id for row in rows}) != len(rows):
         raise ValueError("a row put in force is named once, and at least one is")
     if len({row.kind for row in rows}) != len(rows):
@@ -479,12 +476,10 @@ class RecordedStopStore(Protocol):
         at: datetime,
         write_ahead: InForceWriteAhead | None = None,
     ) -> InForce:
-        """A read showed the stops of `rows`, pending as read (21 Sec.3.3.11). One transaction locks
-        the key's live rows `FOR UPDATE` in id order and compares each of `rows` on `(status,
-        answered_at)` (`StaleRecordedStop`, nothing written, on a lost race); marks `replaced`
-        first the row in force of each kind and the older answered pending rows of that kind, then
-        puts `rows` `in_force` at `at`; a moved row keeps `answered_at`, or is stamped `at`.
-        `check_in_force` first; the hook, when given, is awaited bounded before the commit."""
+        """A read showed `rows`' stops (21 Sec.3.3.11): one transaction locks the key's live rows in
+        id order, compare-and-sets `rows` (`StaleRecordedStop`), marks `replaced` first the row in
+        force and older answered rows of each kind, then puts `rows` in force, `answered_at` kept
+        or stamped `at`. `check_in_force` first; the hook is awaited bounded before the commit."""
         ...
 
     async def resolve(
