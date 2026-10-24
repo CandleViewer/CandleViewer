@@ -387,6 +387,12 @@ async def test_seek_out_of_finished_or_error_rechecks_the_quota_rp_d03(
         {"cursor_ts": T1 + timedelta(seconds=1)},  # rps_cursor
         {"paper_trading": True},  # rps_paper
         {"symbol": "btc/usdt"},
+        {"symbols": ("ETHUSDT", "BTCUSDT")},  # rps_symbols: `symbol` is the first
+        {"symbols": ("BTCUSDT", "BTCUSDT")},
+        {"symbols": ("BTCUSDT", "eth/usdt")},
+        {"symbols": ("BTCUSDT", *(f"SYM{i}USDT" for i in range(8)))},  # nine
+        {"streams": ("trades", "trades")},
+        {"streams": ("trades", "bars")},  # rps_streams: derived streams are never replayed
     ],
 )
 async def test_create_invalid_request_is_a_readable_validation_error(
@@ -396,6 +402,19 @@ async def test_create_invalid_request_is_a_readable_validation_error(
     with pytest.raises(ReplaySessionValidationError, match=r"\w+"):
         await env.s.create(USER_A, request(**changes))
     assert env.coverage.calls == [] and env.handles.acquired == [] and env.audit.rows == []
+
+
+async def test_create_persists_every_symbol_and_stream_the_request_names() -> None:
+    """The retention guard (G7) reads these lists, so a session protects all it replays."""
+    env = make_env()
+    row = await env.s.create(
+        USER_A, request(symbols=("BTCUSDT", "ETHUSDT"), streams=("trades", "klines"))
+    )
+    assert (row.symbol, row.symbols, row.streams) == (
+        "BTCUSDT", ("BTCUSDT", "ETHUSDT"), ("trades", "klines"),
+    )  # fmt: skip
+    stored = await env.repo.get(USER_A, row.id)
+    assert stored is not None and (stored.symbols, stored.streams) == (row.symbols, row.streams)
 
 
 async def test_create_paper_account_only_through_the_grant_gate() -> None:

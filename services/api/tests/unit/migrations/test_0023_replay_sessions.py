@@ -152,6 +152,11 @@ _COLUMNS = [
 ]
 
 
+#: Added by later revisions, pinned by their own tests (`test_0051_replay_symbols_streams.py`).
+_LATER_COLUMNS = frozenset({"symbols", "streams"})
+_LATER_CHECKS = frozenset({"ck_replay_sessions_rps_symbols", "ck_replay_sessions_rps_streams"})
+
+
 def _default(column: Column[Any]) -> str | None:
     default = column.server_default
     if default is None:
@@ -163,7 +168,8 @@ def _default(column: Column[Any]) -> str | None:
 def test_models_mirror_the_replay_sessions_columns() -> None:
     """The `migrations` job autogenerate-diffs the DB against `db.models.metadata`."""
     t = models.replay_sessions
-    assert [(c.name, c.nullable, _default(c)) for c in t.columns] == _COLUMNS
+    mine = [c for c in t.columns if c.name not in _LATER_COLUMNS]
+    assert [(c.name, c.nullable, _default(c)) for c in mine] == _COLUMNS
     speed = t.c.speed.type
     assert isinstance(speed, Numeric) and (speed.precision, speed.scale) == (6, 2)
     assert tuple(models.replay_state.enums) == _STATES
@@ -187,7 +193,7 @@ def test_models_mirror_the_check_and_index_names() -> None:
     t = models.replay_sessions
     checks = {str(c.name) for c in t.constraints if isinstance(c, CheckConstraint)}
     # CHECK names get the metadata naming-convention prefix (`ck_<table>_`).
-    assert checks == {
+    assert checks - _LATER_CHECKS == {
         f"ck_replay_sessions_{n}"
         for n in ("rps_range", "rps_speed", "rps_tier", "rps_cursor", "rps_paper")
     }
