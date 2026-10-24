@@ -11,16 +11,18 @@ default included, and `null` only where the contract makes a member nullable: `s
 renders a row as stored: it is a projection, not a validator.
 
 `created_at` (the row's) and `environment` (the account's, C-2.11) are arguments, since the model
-holds neither; `warnings` are a read's, `profile_warnings` with no instrument listing. Nothing here
-sets a header: the single-profile read sends `profile_etag` as its `ETag`.
+holds neither; `warnings` are a write's, its second pass's against the listing (#906 D2-3), or else
+a read's, `profile_warnings` with no instrument listing. Nothing here sets a header: the
+single-profile read sends `profile_etag` as its `ETag`.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
 
 from candleviewer.accounts.models import ExchangeEnv
-from candleviewer.accounts.profile_validator import profile_warnings
+from candleviewer.accounts.profile_validator import ProfileWarning, profile_warnings
 from candleviewer.accounts.profiles import AccountProfile, profile_values
 from candleviewer.accounts.trade_groups import from_us
 from candleviewer.domain.primitives import TsUs
@@ -101,10 +103,15 @@ def profile_body(profile: AccountProfile) -> dict[str, object]:
 
 
 def profile_document(
-    profile: AccountProfile, *, created_at: TsUs, environment: ExchangeEnv
+    profile: AccountProfile,
+    *,
+    created_at: TsUs,
+    environment: ExchangeEnv,
+    warnings: Sequence[ProfileWarning] | None = None,
 ) -> dict[str, object]:
     """The contract's `AccountProfile` of `profile`, created at `created_at` (its row's, us) on an
-    account of `environment`."""
+    account of `environment`, with a write's `warnings`, or a read's when they are `None`."""
+    judged = profile_warnings(profile) if warnings is None else warnings
     return {
         "id": str(profile.profile_id),
         "exchange_account_id": str(profile.account_id),
@@ -112,6 +119,6 @@ def profile_document(
         "version": profile.version,
         "created_at": rfc3339(created_at),
         "updated_at": rfc3339(profile.updated_at),
-        "warnings": [w.to_dict() for w in profile_warnings(profile)],
+        "warnings": [w.to_dict() for w in judged],
         "profile": profile_body(profile),
     }

@@ -24,10 +24,10 @@ store's rows in stored units (`profile_from_row` reads them): E28-T02 (#906) wir
 `ap_native_sl` rule (unreachable through `AccountProfile`, whose `require_native_sl` is
 `Literal[True]`) to `native_stop_mandatory` with its audit row (SR-E28-08).
 
-The REST reads, `read_profiles` and `read_profile` (#906 D1b), answer each profile with its row's
-`created_at` (`StoredProfile`); a stored row the store or the model cannot read is
-`ProfileUnavailableError`, logged by its error class alone, as the order path's cache fails
-closed (SR-E28-24).
+The REST reads, `read_profiles` and `read_profile` (#906 D1b), and the writes `create_profile` and
+`update_profile` (D2-3) answer a profile with its row's `created_at` (`StoredProfile`); a stored
+row the store or the model cannot read is `ProfileUnavailableError`, logged by its error class
+alone, as the order path's cache fails closed (SR-E28-24), from every write too, once committed.
 """
 
 from __future__ import annotations
@@ -94,14 +94,28 @@ def _stored(row: AccountProfileRow) -> StoredProfile:
     return StoredProfile(profile_from_row(row), to_us(row.created_at))
 
 
-def _unreadable(account_id: UUID, exc: Exception) -> ProfileUnavailableError:
+def _unreadable(
+    account_id: UUID, exc: Exception, reason: str = "invalid_row"
+) -> ProfileUnavailableError:
     _log().warning(
         "profile.read_failed_closed",
-        reason="invalid_row",
+        reason=reason,
         account_id=str(account_id),
         error=type(exc).__name__,  # never a value
     )
     return ProfileUnavailableError("stored profile unreadable")
+
+
+def _read_back(account_id: UUID, row: AccountProfileRow | None) -> StoredProfile:
+    """A write's row as a read answers it: `None` is the one not-found, and a row the model
+    cannot read `ProfileUnavailableError`, though the write committed (a 503, never a 500), logged
+    as `committed_row_unreadable` so an operator knows it committed."""
+    if row is None:
+        raise AccountNotFoundError("profile")
+    try:
+        return _stored(row)
+    except _UNREADABLE as exc:
+        raise _unreadable(account_id, exc, "committed_row_unreadable") from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,12 +167,6 @@ class ProfilesRepository:
         if isinstance(exc, AccountProfileStoreStaleError):
             return AccountVersionConflictError()
         return AccountsError("store error")
-
-    @staticmethod
-    def _found(row: AccountProfileRow | None) -> AccountProfile:
-        if row is None:
-            raise AccountNotFoundError("profile")
-        return profile_from_row(row)
 
     def _written(self, bumped: int) -> None:
         """`bumped` profile rows got a new version (and a revision)."""
@@ -227,7 +235,7 @@ class ProfilesRepository:
         profile: AccountProfile,
         *,
         write_ahead: ProfileWriteAhead | None = None,
-    ) -> AccountProfile:
+    ) -> StoredProfile:
         """Store `profile` under its own id on account `account_id`, the path's; its `version` and
         `updated_at` are the database's. `AccountNotFoundError("profile")` when the account is not
         a live one, or when `profile` names another account: a path mismatch reads as missing."""
@@ -245,7 +253,7 @@ class ProfilesRepository:
             raise self._map(exc) from None
         finally:
             self._invalidate(account_id)
-        return self._found(row)
+        return _read_back(account_id, row)
 
     async def update_profile(
         self,
@@ -256,7 +264,7 @@ class ProfilesRepository:
         *,
         expected_version: int | None,
         write_ahead: ProfileWriteAhead | None = None,
-    ) -> AccountProfile:
+    ) -> StoredProfile:
         """Every field of profile `profile_id` of account `account_id` (the path's ids) but
         `is_default`, which must be unchanged (`set_default_profile` moves it): a different one is
         `AccountRuleError("default_moves_alone")`. A `profile` naming another account or profile
@@ -276,9 +284,9 @@ class ProfilesRepository:
             raise self._map(exc) from None
         finally:
             self._invalidate(account_id)
-        updated = self._found(row)
-        self._written(1)
-        return updated
+        if row is not None:  # committed: counted whether or not the row reads back
+            self._written(1)
+        return _read_back(account_id, row)
 
     async def set_default_profile(
         self,
@@ -305,12 +313,15 @@ class ProfilesRepository:
             self._invalidate(account_id)
         if move is None:
             raise AccountNotFoundError("profile")
-        previous = None if move.previous is None else profile_from_row(move.previous)
-        if move.written:
-            self._written(1 + (previous is not None))
-        return DefaultProfileMove(
-            profile=profile_from_row(move.profile), previous=previous, version=move.version
-        )
+        if move.written:  # committed: counted whether or not its rows read back
+            self._written(1 + (move.previous is not None))
+        try:
+            previous = None if move.previous is None else profile_from_row(move.previous)
+            profile = profile_from_row(move.profile)
+        except _UNREADABLE as exc:
+            reason = "committed_row_unreadable" if move.written else "invalid_row"
+            raise _unreadable(account_id, exc, reason) from None
+        return DefaultProfileMove(profile=profile, previous=previous, version=move.version)
 
     async def delete_profile(
         self,
@@ -334,9 +345,9 @@ class ProfilesRepository:
             raise self._map(exc) from None
         finally:
             self._invalidate(account_id)
-        deleted = self._found(row)
-        self._written(1)
-        return deleted
+        if row is not None:  # committed: counted whether or not the row reads back
+            self._written(1)
+        return _read_back(account_id, row).profile
 
     async def get_revision(
         self, scope: AccountScope, account_id: UUID, profile_id: UUID, version: int
