@@ -289,6 +289,8 @@ def test_cancel_all_cancels_order_by_order_and_folds_only_what_a_read_proves() -
         "a reduce-only order only with `exclude_reduce_only: false`",
         "(04-security-program.md section 7.2.2 row 14)",
         "At most five accounts are worked at once, one order at a time on each, within a 20 s",
+        "a covered account-and-symbol group is commanded together, with one venue cancel-all once"
+        " every member's cancel is written ahead (the orchestrator's ruling of 2026-10-24 21:11Z)",
     )
     failures = _CANCEL_ALL.split("else `error` gives its first failure", 1)[1]
     for code in ("exchange_error", "exchange_rate_limited", "exchange_unavailable", "timeout"):

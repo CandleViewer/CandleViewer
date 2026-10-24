@@ -6159,9 +6159,11 @@ paths:
         (04-security-program.md section 7.2.2 row 14). Once the scope check passes, `results`
         reports exchange outcomes only: one account's exchange error does not undo another
         account's cancels, so the status is `200` with per-account results. At most five accounts
-        are worked at once, one order at a time on each, within a 20 s deadline. An account is
-        `ok` when every order selected on it ended, an order a `110001` parks in `unknown`
-        counting as ended; else `error` gives its first failure, the
+        are worked at once, one order at a time on each, within a 20 s deadline; a covered
+        account-and-symbol group is commanded together, with one venue cancel-all once every
+        member's cancel is written ahead (the orchestrator's ruling of 2026-10-24 21:11Z). An
+        account is `ok` when every order selected on it ended, an order a `110001` parks in
+        `unknown` counting as ended; else `error` gives its first failure, the
         account's other selected orders still each sent theirs:
         `exchange_error` with `exchange_ret_code`, `exchange_rate_limited`, `exchange_unavailable`
         when an outcome is not known (that order `unknown`, never re-sent), `store_unavailable`
