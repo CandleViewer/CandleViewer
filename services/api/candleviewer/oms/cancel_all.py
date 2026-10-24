@@ -43,8 +43,8 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Collection, Iterable, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Collection, Iterable
+from dataclasses import dataclass
 from typing import Final, Protocol, cast
 from uuid import UUID
 
@@ -65,7 +65,7 @@ from candleviewer.storage.repositories.orders import (
 __all__ = [
     "ACCOUNTS_AT_ONCE", "DEADLINE_S", "EXCHANGE_UNAVAILABLE", "READ_TIMEOUT_S", "REASON",
     "SELECTABLE", "STORE_UNAVAILABLE", "TIMEOUT", "AccountCancels", "AccountError", "CancelAll",
-    "CancelAllOutcome", "CancelAllRequest", "Exits", "OrderReads", "selected",
+    "CancelAllOutcome", "CancelAllRequest", "Exits", "OrderReads", "ScopedAccounts", "selected",
 ]  # fmt: skip
 
 #: Each touched order's `orders.cancel` reason (Q12).
@@ -216,7 +216,15 @@ class _Tally:
         return AccountCancels(account, self.affected, self.error)
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
+class ScopedAccounts:
+    """The accounts `CancelAll.scope` settled, each once, in its order: `run` takes nothing else,
+    so no account reaches a cancel without the scope's all-or-nothing check (SR-E29-13)."""
+
+    ids: tuple[UUID, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _Run:
     """One request's settled inputs, shared by its account workers."""
 
@@ -224,7 +232,7 @@ class _Run:
     actor: SubmitActor
     request_id: UUID | None
     gate: asyncio.Semaphore
-    tallies: dict[UUID, _Tally] = field(default_factory=dict)
+    tallies: dict[UUID, _Tally]
 
 
 def _bound(name: str, value: float) -> float:
@@ -252,25 +260,27 @@ class CancelAll:
         self._deadline_s = _bound("deadline_s", deadline_s)
         self._read_timeout_s = _bound("read_timeout_s", read_timeout_s)
 
-    async def scope(self, scope: AccountScope, request: CancelAllRequest) -> tuple[UUID, ...]:
-        """Step 1: the accounts the request covers, in the scope helper's order. Its refusal
-        (`AccountScopeDenied`) and its `StoreUnavailable` propagate unchanged."""
-        return await self._exits.accounts_in_scope(scope, request.exchange_account_ids)
+    async def scope(self, scope: AccountScope, request: CancelAllRequest) -> ScopedAccounts:
+        """Step 1: the accounts the request covers, each once, in the scope helper's order. Its
+        refusal (`AccountScopeDenied`) and its `StoreUnavailable` propagate unchanged."""
+        found = await self._exits.accounts_in_scope(scope, request.exchange_account_ids)
+        return ScopedAccounts(tuple(dict.fromkeys(found)))
 
     async def run(
         self,
-        accounts: Sequence[UUID],
+        accounts: ScopedAccounts,
         request: CancelAllRequest,
         *,
         actor: SubmitActor,
         request_id: UUID | None,
     ) -> CancelAllOutcome:
         """Steps 2 to 4 over the accounts `scope` answered: each account's entry, in their order."""
-        run = _Run(request, actor, request_id, asyncio.Semaphore(self._accounts_at_once))
-        run.tallies = {account: _Tally() for account in accounts}
+        tallies = {account: _Tally() for account in accounts.ids}
+        gate = asyncio.Semaphore(self._accounts_at_once)
+        run = _Run(request, actor, request_id, gate, tallies)
         try:
             async with asyncio.timeout(self._deadline_s), asyncio.TaskGroup() as group:
-                for account in run.tallies:  # once each, however often `accounts` names one
+                for account in run.tallies:
                     group.create_task(self._work(run, account))
         except TimeoutError:
             cut = sum(not tally.finished for tally in run.tallies.values())

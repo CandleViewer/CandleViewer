@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator, Collection, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, fields
 from decimal import Decimal
-from typing import Any
+from typing import Any, Final
 from uuid import UUID
 
 import httpx
@@ -30,11 +30,17 @@ from candleviewer.api.idempotency import IdempotencyCache, StoredResponse
 from candleviewer.api.order_cancel_all import CANCEL_ALL_PATH, make_cancel_all_router
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.app import create_app
+from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.observability.correlation import CorrelationMiddleware
 from candleviewer.observability.metrics import Metrics
-from candleviewer.oms.cancel_all import CancelAll, CancelAllOutcome, CancelAllRequest
+from candleviewer.oms.cancel_all import (
+    CancelAll,
+    CancelAllOutcome,
+    CancelAllRequest,
+    ScopedAccounts,
+)
 from candleviewer.oms.errors import AccountScopeDenied, OmsNotReady, StoreUnavailable
 from candleviewer.oms.exits import ExitOutcome, InFlightGuard
 from candleviewer.oms.ports import RequestRecord, SubmitActor
@@ -51,6 +57,7 @@ from tests.unit.api.test_orders_route import (
     KEY,
     MANAGER,
     SESSION,
+    TRACE,
     Audit,
     Pager,
     Principals,
@@ -156,9 +163,12 @@ class Runtime:
     tasks: list[asyncio.Task[Response]] = field(default_factory=list)
     stopped: bool = False
     broken: bool = False
+    gone: bool = False
 
     @property
     def cancel_all(self) -> Any:
+        if self.gone:  # its stop began after step 3 read `ok`
+            raise OmsNotReady
         if self.broken:
             return _Broken(CancelAll(self.store, self.exits))
         return CancelAll(self.store, self.exits)
@@ -177,11 +187,11 @@ class _Broken:
 
     real: CancelAll
 
-    async def scope(self, scope: AccountScope, request: CancelAllRequest) -> tuple[UUID, ...]:
+    async def scope(self, scope: AccountScope, request: CancelAllRequest) -> ScopedAccounts:
         return await self.real.scope(scope, request)
 
     async def run(self, *args: Any, **kwargs: Any) -> CancelAllOutcome:
-        raise RuntimeError("a worker broke")
+        raise ExceptionGroup("a worker broke", [ValueError("a defect")])  # as a TaskGroup fails
 
 
 def _principals() -> Principals:
@@ -233,8 +243,10 @@ async def client(world: World) -> AsyncIterator[AsyncClient]:
         yield c
 
 
-def _args(who: str, body: object, key: object) -> dict[str, Any]:
-    headers = {"authorization": f"Bearer {who}"}
+def _args(
+    who: str, body: object, key: object, extra: dict[str, str] | None = None
+) -> dict[str, Any]:
+    headers = {"authorization": f"Bearer {who}"} | (extra or {})
     if key is not None:
         headers["idempotency-key"] = str(key)
     raw = body if isinstance(body, bytes) else json.dumps(body).encode()
@@ -242,10 +254,15 @@ def _args(who: str, body: object, key: object) -> dict[str, Any]:
 
 
 async def post(
-    world: World, who: str = "owner", body: object = None, key: object = KEY
-) -> httpx.Response:
+    world: World, who: str = "owner", body: object = None, key: object = KEY,
+    extra: dict[str, str] | None = None,
+) -> httpx.Response:  # fmt: skip
     async with client(world) as c:
-        return await c.post(CANCEL_ALL_PATH, **_args(who, {} if body is None else body, key))
+        args = _args(who, {} if body is None else body, key, extra)
+        return await c.post(CANCEL_ALL_PATH, **args)
+
+
+_TRACED: Final = {"x-correlation-id": str(TRACE)}
 
 
 def _listed(*ids: UUID) -> dict[str, Any]:
@@ -397,6 +414,7 @@ async def test_each_refusal_after_the_scope_is_recorded_per_account_before_it_is
     answer = await post(world, "owner", {}, key)
     assert (answer.status_code, answer.json()["code"]) == (status, code)
     assert answer.headers.get("retry-after") == retry
+    assert answer.json().get("retry_after_seconds") == (None if retry is None else int(retry))
     records = world.records()
     assert [(r.account_id, r.object_kind, r.object_id) for r in records] == [
         (ACCOUNT, "exchange_account", ACCOUNT), (FOREIGN, "exchange_account", FOREIGN),
@@ -605,3 +623,154 @@ def test_the_app_serves_cancel_all() -> None:
     """`create_app()` mounts the route; that it mounts ahead of the exit routes' router (the 19:43Z
     ruling) is `test_order_exits_route.py::test_the_order_routers_mount_in_their_ruled_order`."""
     assert ("POST", CANCEL_ALL_PATH) in served_operations(create_app())
+
+
+# --- the code look's findings (M1, M2, m1, m4, m5): the records' correlation, the real -----------
+# --- fingerprint, 22's limits, the audit writer's own failures and the answer's rendering --------
+
+
+async def test_each_refusal_record_names_its_request_and_its_actor() -> None:
+    """C-2.9: the actor, role, address, session and correlation id of every record (M1)."""
+    world = World()
+    await post(world, "owner", {}, None, _TRACED)
+    for record in world.records():
+        assert record.request_id == TRACE
+        assert (record.actor.user_id, record.actor.role) == (USER, "owner")
+        assert (record.actor.ip, record.actor.session_id) == ("127.0.0.1", SESSION)
+
+
+async def test_the_scope_refusal_record_names_its_request_and_its_actor() -> None:
+    world = World()
+    await post(world, "manager", _listed(FOREIGN), KEY, _TRACED)
+    [denied] = world.audit.emitted
+    assert (denied["request_id"], denied["actor_ip"]) == (TRACE, "127.0.0.1")
+    assert (denied["outcome"], denied["severity"]) == ("denied", "warning")
+
+
+async def test_the_permission_refusal_record_names_its_request() -> None:
+    world = World()
+    await post(world, "viewer", {}, KEY, _TRACED)
+    [denied] = world.audit.emitted
+    assert (denied["request_id"], denied["actor_ip"]) == (TRACE, "127.0.0.1")
+
+
+async def test_each_cancel_carries_its_request_and_its_actor() -> None:
+    world = World()
+    await post(world, "owner", {}, KEY, _TRACED)
+    assert [request_id for *_, request_id in world.oms.exits.cancelled] == [TRACE, TRACE]
+    assert {(actor.role, actor.ip) for _, actor, _, _ in world.oms.exits.cancelled} == {
+        ("owner", "127.0.0.1"),
+    }  # fmt: skip
+
+
+async def test_a_key_reused_for_another_body_is_409_and_sends_nothing_again() -> None:
+    """24 Sec.8.4 step 8 on the real fingerprint: the stored `200` never answers another body
+    (M2)."""
+    world = World()
+    first = await post(world, "owner", {}, KEY)
+    again = await post(world, "owner", _listed(ACCOUNT), KEY)
+    assert first.status_code == 200
+    assert (again.status_code, again.json()["code"]) == (409, "idempotency_key_reuse")
+    assert len(world.oms.exits.cancelled) == 2  # the first request's two, nothing more
+    assert [r.detail["step"] for r in world.records()] == ["replay"]
+
+
+@pytest.mark.parametrize(
+    ("body", "rule"),
+    [
+        (_listed(ACCOUNT, ACCOUNT), "non_unique_items"),  # 22's `uniqueItems`
+        ({"exchange_account_ids": [str(UUID(int=n)) for n in range(101)]}, "too_long"),
+    ],
+    ids=["repeated", "over_100"],
+)
+async def test_a_list_the_contract_refuses_is_400_before_the_scope(
+    body: dict[str, Any], rule: str
+) -> None:
+    world = World()
+    answer = await post(world, "owner", body)
+    assert (answer.status_code, answer.json()["code"]) == (400, "validation_failed")
+    assert [e["rule"] for e in answer.json()["errors"]] == [rule]
+    assert world.oms.exits.scoped == [] and world.audit.actions() == []
+
+
+class _BrokenAudit(Audit):
+    """The audit writer refusing as the real one does (`AuditError`) while `refusing` is set;
+    `after` lets that many writes land first."""
+
+    def __init__(self, after: int = 0) -> None:
+        super().__init__()
+        self.after, self.refusing = after, True
+
+    async def emit(self, action: str, **fields: Any) -> None:
+        if self.refusing:
+            raise AuditError("the audit writer refused")
+        await super().emit(action, **fields)
+
+    async def write(self, record: Any) -> None:
+        if self.refusing and len(self.written) >= self.after:
+            raise AuditError("the audit writer refused")
+        await super().write(record)
+
+
+@pytest.mark.parametrize(
+    ("who", "body", "status", "code"),
+    [
+        ("viewer", {}, 403, "forbidden"),  # step 2's record
+        ("manager", _listed(FOREIGN), 403, "account_scope_denied"),  # step 4's
+    ],
+    ids=["step_2", "step_4"],
+)
+async def test_a_403_stands_when_the_audit_writer_refuses_its_record(
+    who: str, body: dict[str, Any], status: int, code: str
+) -> None:
+    world = World(audit=_BrokenAudit())
+    answer = await post(world, who, body)
+    assert (answer.status_code, answer.json()["code"]) == (status, code)
+
+
+async def test_a_refusal_whose_later_record_does_not_land_is_503_and_sends_nothing() -> None:
+    """The first account's record landed, the second's did not: the refusal is not answered as
+    such, and nothing is sent (C-2.9)."""
+    world = World(audit=_BrokenAudit(after=1))
+    answer = await post(world, "owner", {}, None)
+    assert (answer.status_code, answer.json()["code"]) == (503, "audit_unavailable")
+    assert [r.account_id for r in world.records()] == [ACCOUNT]
+    assert (world.oms.exits.cancelled, world.oms.tasks) == ([], [])
+
+
+async def test_a_stop_begun_before_the_service_is_read_is_not_ready() -> None:
+    world = World()
+    world.oms.gone = True
+    answer = await post(world, "owner", {})
+    assert (answer.status_code, answer.json()["code"]) == (503, "oms_not_ready")
+    assert world.refused("oms_not_ready") == 1
+
+
+async def test_a_scope_that_cannot_be_read_answers_the_shared_retry() -> None:
+    """The exits' one `Retry-After` for a store outage (the 11:34Z ruling), nothing recorded."""
+    world = World()
+    world.oms.exits.scope_down = True
+    answer = await post(world, "owner", {})
+    assert (answer.status_code, answer.headers.get("retry-after")) == (503, "1")
+    assert answer.json()["retry_after_seconds"] == 1 and world.audit.actions() == []
+
+
+async def test_a_retryable_account_error_says_so() -> None:
+    world = World()
+    world.oms.exits.outcomes[UUID(int=2)] = _refused("store_unavailable", 503)
+    body = (await post(world, "owner", {})).json()
+    assert body["results"][1]["error"]["retryable"] is True
+
+
+async def test_a_code_the_registry_lacks_gets_the_oms_fixed_text() -> None:
+    """Never the exchange's text, whatever code an account reports (SR-E29-09)."""
+    world = World()
+    world.oms.exits.outcomes[UUID(int=2)] = _refused("not_a_registered_code")
+    body = (await post(world, "owner", {})).json()
+    _RESULT.validate(body)
+    error = body["results"][1]["error"]
+    assert error == {
+        "code": "not_a_registered_code",
+        "message": "The account's selected orders were not all cancelled.",
+        "exchange_ret_code": None, "retryable": False,
+    }  # fmt: skip

@@ -25,6 +25,7 @@ from candleviewer.oms.cancel_all import (
     AccountError,
     CancelAll,
     CancelAllRequest,
+    ScopedAccounts,
     selected,
 )
 from candleviewer.oms.errors import AccountScopeDenied, StoreUnavailable
@@ -32,7 +33,7 @@ from candleviewer.oms.exits import ExitOutcome
 from candleviewer.oms.ports import SubmitActor
 from candleviewer.oms.recovery import FINALS
 from candleviewer.storage.errors import StorageTierUnavailable
-from candleviewer.storage.repositories.orders import OrderRow
+from candleviewer.storage.repositories.orders import OrderRow, OrderStoreError
 
 _A, _B = UUID(int=0xA), UUID(int=0xB)
 _ACTOR, _REQUEST = SubmitActor(user_id=UUID(int=0x100), role="manager"), UUID(int=0x200)
@@ -85,9 +86,11 @@ class _Reads:
         rows: Sequence[OrderRow],
         *,
         down: Sequence[UUID] = (),
+        refuse: Sequence[UUID] = (),
         stall: Sequence[UUID] = (),
     ):
         self.rows, self.down, self.stall = list(rows), set(down), set(stall)
+        self.refuse = set(refuse)
         self.listed: list[tuple[UUID, str | None]] = []
 
     async def list_open(
@@ -98,6 +101,8 @@ class _Reads:
             await asyncio.Event().wait()
         if account_id in self.down:
             raise StorageTierUnavailable("postgres unreachable (OSError)")
+        if account_id in self.refuse:
+            raise OrderStoreError("the order store refused the read")
         return tuple(
             r for r in self.rows
             if r.exchange_account_id == account_id and (symbol is None or r.symbol == symbol)
@@ -417,13 +422,34 @@ async def test_an_account_still_waiting_its_turn_at_the_deadline_is_timeout() ->
     assert [a.error for a in got.accounts] == [AccountError("timeout", True)] * 2
 
 
-async def test_an_account_named_twice_is_worked_and_answered_once() -> None:
-    """`run` takes its accounts from the route: a repeat sends no order a second cancel."""
+async def test_an_account_named_twice_is_scoped_worked_and_answered_once() -> None:
+    """`scope` settles each account once, and `run` takes only what it settled: a repeat sends no
+    order a second cancel."""
     reads, exits = _Reads([_row(1)]), _Exits()
     service = CancelAll(reads, exits)
-    got = await service.run((_A, _A), _request(), actor=_ACTOR, request_id=_REQUEST)
+    accounts = await service.scope(_SCOPE, _request(exchange_account_ids=(_A, _A)))
+    assert accounts == ScopedAccounts((_A,))
+    got = await service.run(accounts, _request(), actor=_ACTOR, request_id=_REQUEST)
     assert [a.exchange_account_id for a in got.accounts] == [_A]
     assert ([c[0] for c in exits.calls], reads.listed) == ([UUID(int=1)], [(_A, None)])
+
+
+async def test_at_the_deadline_timeout_replaces_an_earlier_failure() -> None:
+    """22: the retryable signal wins, so a caller retries the account (the code look's S06)."""
+    reads = _Reads([_row(1), _row(2)])
+    exits = _Exits(stall=[UUID(int=2)], outcomes={UUID(int=1): _refused("conflict")})
+    got = await _run(reads, exits, _request(exchange_account_ids=(_A,)), deadline_s=0.05)
+    assert got.accounts == (AccountCancels(_A, affected=0, error=AccountError("timeout", True)),)
+
+
+async def test_an_order_store_refusal_is_the_accounts_store_unavailable() -> None:
+    """`OrderStoreError` as `StorageError` is: nothing of that account is sent (S16)."""
+    reads, exits = _Reads([_row(1)], refuse=[_A]), _Exits()
+    got = await _run(reads, exits, _request(exchange_account_ids=(_A,)))
+    assert got.accounts == (
+        AccountCancels(_A, affected=0, error=AccountError("store_unavailable", True)),
+    )
+    assert exits.calls == []
 
 
 async def test_the_answer_keeps_the_scope_helpers_account_order() -> None:

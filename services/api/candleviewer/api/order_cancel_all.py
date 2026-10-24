@@ -43,7 +43,7 @@ import asyncio
 import functools
 import json
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import Any, Final, Literal, Protocol
 
 import structlog
@@ -82,7 +82,8 @@ from candleviewer.auth.generated_permissions import Scope
 from candleviewer.auth.metrics import authz_denied_total, normalise_permission
 from candleviewer.auth.scopes import Deny, DenyReason, ForbiddenError, decide, enforce
 from candleviewer.observability.metrics import Metrics
-from candleviewer.oms.cancel_all import CancelAllOutcome, CancelAllRequest
+from candleviewer.oms.cancel_all import CancelAllOutcome, CancelAllRequest, ScopedAccounts
+from candleviewer.oms.commands import STORE_UNAVAILABLE_RETRY_AFTER_S
 from candleviewer.oms.errors import (
     AccountScopeDenied,
     AuditNotDurable,
@@ -95,6 +96,7 @@ from candleviewer.oms.errors import (
 )
 from candleviewer.oms.exits import NOT_GRANTED, ExitCaller, ExitOutcome
 from candleviewer.oms.ports import RequestRecord, SubmitActor, SubmitAudit
+from candleviewer.oms.routing import retry_after
 from candleviewer.oms.submit import STORE_TIMEOUT_S
 from candleviewer.statechart.plugins import LogPager, Pager
 from candleviewer.storage.repositories.accounts import AccountScope
@@ -112,6 +114,12 @@ _ACTION: Final = "orders.cancel"
 #: A message for a code `ERROR_META` does not hold: never one the exchange wrote (SR-E29-09).
 _UNNAMED: Final = "The account's selected orders were not all cancelled."
 
+#: The scope read's outage, with the shared `Retry-After` of the exits' 503 (the 11:34Z ruling).
+_STORE_DOWN: Final = ExitOutcome(
+    kind="refused", status=503, code="store_unavailable", detail=StoreUnavailable.default_detail,
+    retry_after_s=retry_after(STORE_UNAVAILABLE_RETRY_AFTER_S),
+)  # fmt: skip
+
 type _Step = Literal["key", "replay", "guard"]
 
 
@@ -123,13 +131,11 @@ def _log() -> Any:
 class CancelAllService(Protocol):
     """`oms.cancel_all.CancelAll`: the scope (step 4), then the cancels (step 11)."""
 
-    async def scope(
-        self, scope: AccountScope, request: CancelAllRequest
-    ) -> tuple[uuid.UUID, ...]: ...
+    async def scope(self, scope: AccountScope, request: CancelAllRequest) -> ScopedAccounts: ...
 
     async def run(
         self,
-        accounts: Sequence[uuid.UUID],
+        accounts: ScopedAccounts,
         request: CancelAllRequest,
         *,
         actor: SubmitActor,
@@ -159,8 +165,14 @@ def _request(raw: bytes) -> CancelAllRequest:
         read = api.CancelAllRequest.model_validate_json(json.dumps(body), strict=True)
     except ValidationError as exc:
         raise OrderInvalid(errors=tuple(field_errors(exc))) from None
+    listed = read.exchange_account_ids or []
+    if len(set(listed)) != len(listed):  # 22's `uniqueItems`, which the model does not hold
+        message = "List each exchange account once."
+        raise OrderInvalid(
+            errors=(FieldError("exchange_account_ids", "non_unique_items", message),)
+        )
     return CancelAllRequest(
-        exchange_account_ids=tuple(read.exchange_account_ids or ()),
+        exchange_account_ids=tuple(listed),
         symbol=None if read.symbol is None else read.symbol.root,
         intents=frozenset(read.intents or ()),
         exclude_reduce_only=read.exclude_reduce_only,
@@ -236,8 +248,8 @@ def make_cancel_all_router(
         count("forbidden" if missing else "account_scope_denied")
         return rbac_refusal(decision)
 
-    def page(summary: str) -> None:
-        _log().critical(summary)
+    def page(summary: str, **fields: str) -> None:
+        _log().critical(summary, **fields)
         try:
             paging.raise_alert("page", summary, machine_kind="order")
         except Exception as exc:  # the page is lost, never the answer
@@ -260,25 +272,23 @@ def make_cancel_all_router(
         return refused(AccountScopeDenied())
 
     async def recorded(
-        accounts: Sequence[uuid.UUID],
+        accounts: ScopedAccounts,
         caller: ExitCaller,
         step: _Step,
         code: str,
-        status: int,
         answer: Callable[[], JSONResponse],
     ) -> Response:
-        """A refusal of steps 7 to 9: one `orders.cancel` denied per account in scope, each
-        within the store's bound, before it is answered (C-2.9); 503 when one does not land."""
-        severity: Literal["warning", "error"] = "error" if status >= 500 else "warning"
+        """A refusal of steps 7 to 9 (each a 4xx, so a `warning`): one `orders.cancel` denied per
+        account in scope, all within the store's one bound, before it is answered (C-2.9); 503
+        when one does not land, nothing sent."""
         detail = {"operation": _EXIT, "code": code, "step": step}
         try:
-            for account in accounts:
-                record = RequestRecord(
-                    _ACTION, account, "exchange_account", account, "denied", severity, code,
-                    caller.actor, detail, caller.request_id,
-                )  # fmt: skip
-                async with asyncio.timeout(STORE_TIMEOUT_S):
-                    await records.write(record)
+            async with asyncio.timeout(STORE_TIMEOUT_S):
+                for account in accounts.ids:
+                    await records.write(RequestRecord(
+                        _ACTION, account, "exchange_account", account, "denied", "warning", code,
+                        caller.actor, detail, caller.request_id,
+                    ))  # fmt: skip
         except Exception as exc:  # no refusal is answered unrecorded: nothing was sent
             failure = type(exc).__name__
             _log().error("orders_cancel_all_unrecorded", code=code, step=step, error=failure)
@@ -287,10 +297,10 @@ def make_cancel_all_router(
         return answer()
 
     async def refusal(
-        accounts: Sequence[uuid.UUID], caller: ExitCaller, step: _Step, error: OmsError
+        accounts: ScopedAccounts, caller: ExitCaller, step: _Step, error: OmsError
     ) -> Response:
-        row, answer = problem_for(error), functools.partial(order_problem, error, pager=paging)
-        return await recorded(accounts, caller, step, row.code, row.status, answer)
+        answer = functools.partial(order_problem, error, pager=paging)
+        return await recorded(accounts, caller, step, problem_for(error).code, answer)
 
     @router.post(CANCEL_ALL_PATH, status_code=200)
     async def cancel_all_orders(request: Request) -> Response:
@@ -333,7 +343,10 @@ def make_cancel_all_router(
             accounts = await service.scope(caller.scope, asked)
         except AccountScopeDenied:
             return await scope_denied(caller, asked)
-        except OmsError as exc:  # the scope's 503, or the runtime's stop begun meanwhile
+        except StoreUnavailable:  # nothing read: no account to record it on, counted
+            count("store_unavailable")
+            return exit_problem(_STORE_DOWN)
+        except OmsError as exc:  # the runtime's stop begun meanwhile
             return refused(exc)
         step: _Step = "key"
         try:
@@ -349,8 +362,7 @@ def make_cancel_all_router(
 
         async def guard_refused(outcome: ExitOutcome) -> Response:
             answer = functools.partial(exit_problem, outcome)
-            code = outcome.code or "rate_limited"
-            return await recorded(accounts, caller, "guard", code, outcome.status, answer)
+            return await recorded(accounts, caller, "guard", outcome.code or "rate_limited", answer)
 
         async def cancels() -> Response:
             """Step 11's task: the cancels' `200`, kept for 24 h by the task itself."""
@@ -358,11 +370,11 @@ def make_cancel_all_router(
                 outcome = await service.run(
                     accounts, asked, actor=caller.actor, request_id=caller.request_id
                 )
+                body = _result(outcome)
             except Exception as exc:  # a defect: each cancel already sent stays with B1
-                page("orders_cancel_all_failed")
-                _log().error("orders_cancel_all_failed", error=type(exc).__name__)
+                page("orders_cancel_all_failed", error=type(exc).__name__)
                 return refused(OmsError("cancel-all's run failed"))
-            out = JSONResponse(_result(outcome), 200)
+            out = JSONResponse(body, 200)
             kept.put(*held, StoredResponse(digest, 200, bytes(out.body), None))
             return out
 
