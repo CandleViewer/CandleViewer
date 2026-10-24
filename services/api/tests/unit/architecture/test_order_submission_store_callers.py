@@ -32,6 +32,10 @@ SR-E27-21), and no route reaches it but that one, after scope, the arm token and
 `oms_wiring.py` (slice 3E, C-12.4) builds the Postgres adapters and the M14 facades over them
 for the OMS runtime alone, and mounts no route; its startup sweep calls `void_orphans` once per
 account of the process's own environment, before anything hydrates (20 Sec.6.2).
+`oms/stop_resolution.py`, S3-H's complete read, answers, puts in force, replaces and voids the
+waiting rows of one key through `RecordedStopRepository`, with the account the key names (C-12.4):
+its callers are the stop-request gate and the startup pass (H3), after the submit pipeline's or
+B1's own admission, and no route reaches it.
 """
 
 from __future__ import annotations
@@ -58,6 +62,7 @@ ALLOWED = frozenset(
         "oms/idempotency.py",
         "oms/order_steps.py",
         "oms/repository.py",
+        "oms/stop_resolution.py",
         "oms/submit.py",
         "oms_wiring.py",
         "storage/repositories/idempotency_anchors.py",

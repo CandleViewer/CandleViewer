@@ -299,7 +299,8 @@ def test_the_complete_read_ends_each_case_on_the_row_as_ruled() -> None:
         "clears; E29-T06's pass must resolve those rows (24 §8.5)",
         "when a read shows one side, that side goes in force and the other is answered, the "
         "next read answering it should a crash come between the two writes. A filled entry's "
-        "sides are each decided as above.",
+        "sides are each decided as above. An entry partly filled and still resting is decided "
+        "as a fill for its filled part, the open part being what C-2.6 protects.",
         "Putting a row in force, or replacing one, stamps `answered_at` if it is still NULL",
         "The read runs once per key at a time and at most 8 at once in the process (C-2.18), "
         "one of the 8 kept for an attach's read, as C-12.7 keeps a reserve for the protective "
@@ -326,7 +327,11 @@ def test_the_complete_read_ends_each_case_on_the_row_as_ruled() -> None:
         "and the complete read's (`in_flight_resolved`, and `entry_filled_stop_absent`, whose "
         "record carries `position_state`, `open` (a position on the row's side) or `flat` "
         "(none on its side, the other side's included), so a naked window that a close or a "
-        "liquidation ended stays on the record unpaged), is audited write-ahead too",
+        "liquidation ended stays on the record unpaged; and, for a stop-loss side, the "
+        "`in_flight_resolved` void of an entry the read did not find where a miss proves "
+        "nothing, while the position is open with no stop at all, whose record carries "
+        "`position_state` too and which pages `entry_unseen`, no stop), is audited write-ahead "
+        "too",
     )
     rules = _words(_INTERNAL_DOC.split("**The pipeline's own rules", 1)[1].split("**8.4.1 ", 1)[0])
     assert not _missing(
