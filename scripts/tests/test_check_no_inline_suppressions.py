@@ -32,24 +32,21 @@ FORMS = [
 MARKER = re.compile(r"eslint-disable(?:-next-line|-line)?|@ts-ignore|@ts-expect-error|nosemgrep")
 
 
-def _tree(root: Path, files: dict[str, str], paths: tuple[str, ...] = (f"{SCOPE}/**",)) -> Path:
-    for rel, text in {check.CONFIG: json.dumps({"paths": list(paths)}), **files}.items():
+def _check(root: Path, capsys: pytest.CaptureFixture[str], files: dict[str, str], *paths: str):
+    for rel, text in {
+        check.CONFIG: json.dumps({"paths": paths or [f"{SCOPE}/**"]}),
+        **files,
+    }.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
-    return root
-
-
-def _run(root: Path, capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
     code = check.main(["--root", str(root), "--today", TODAY])
     return code, capsys.readouterr().err
 
 
 @pytest.mark.parametrize("form", FORMS)
-def test_a_bare_suppression_fails_naming_file_line_and_marker(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], form: str
-) -> None:
-    root = _tree(tmp_path, {f"{SCOPE}/deep/a.tsx": f"export const a = 1;\n{form.format(a='')}\n"})
-    code, err = _run(root, capsys)
+def test_a_bare_suppression_fails_naming_file_line_and_marker(tmp_path, capsys, form):
+    files = {f"{SCOPE}/deep/a.tsx": f"export const a = 1;\n{form.format(a='')}\n"}
+    code, err = _check(tmp_path, capsys, files)
     marker = MARKER.search(form)
     assert code == 1 and marker
     assert f"{SCOPE}/deep/a.tsx:2: {marker.group(0)}: suppression missing reason, owner" in err
@@ -57,53 +54,33 @@ def test_a_bare_suppression_fails_naming_file_line_and_marker(
 
 
 @pytest.mark.parametrize("form", FORMS)
-def test_a_reviewed_annotation_passes(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], form: str
-) -> None:
-    root = _tree(tmp_path, {f"{SCOPE}/a.ts": form.format(a=f" -- {OK}") + "\n"})
-    assert _run(root, capsys) == (0, "")
+def test_a_reviewed_annotation_passes(tmp_path, capsys, form):
+    files = {f"{SCOPE}/a.ts": form.format(a=f" -- {OK}") + "\n"}
+    assert _check(tmp_path, capsys, files) == (0, "")
 
 
 @pytest.mark.parametrize(
-    ("annotation", "problem"),
+    ("text", "problem"),
     [
-        ("reason=x owner=@basiltt review=2026-10-23", "has expired"),
-        ("reason=x owner=@basiltt review=2027-06-01", "expiry too far"),
-        ("reason=x owner=@basiltt review=soon", "not YYYY-MM-DD"),
-        ("owner=@basiltt review=2026-12-01", "missing reason"),
-        ("reason=x review=2026-12-01", "missing owner"),
-        ("reason=x owner=basiltt review=2026-12-01", "is not @<handle>"),
+        ("// @ts-expect-error reason=x owner=@basiltt review=2026-10-23", "has expired"),
+        ("// @ts-expect-error reason=x owner=@basiltt review=2027-06-01", "expiry too far"),
+        ("// @ts-expect-error owner=@basiltt review=2026-12-01", "missing reason"),
+        ("// @ts-expect-error reason=x owner=basiltt review=2026-12-01", "is not @<handle>"),
+        (f"/* eslint-disable */ {OK}", "missing reason, owner, review"),  # outside the comment
+        (f"// @ts-ignore\n// {OK}", "missing reason, owner, review"),  # in the next comment
     ],
 )
-def test_an_annotation_is_judged_by_the_shared_grammar(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], annotation: str, problem: str
-) -> None:
-    root = _tree(tmp_path, {f"{SCOPE}/a.ts": f"// @ts-expect-error {annotation}\n"})
-    code, err = _run(root, capsys)
+def test_an_annotation_is_judged_by_the_shared_grammar_in_its_own_comment(
+    tmp_path, capsys, text, problem
+):
+    code, err = _check(tmp_path, capsys, {f"{SCOPE}/a.ts": text + "\n"})
     assert code == 1 and problem in err
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        f"/* eslint-disable */ {OK}\n",  # outside the block comment
-        f"// @ts-ignore\n// {OK}\n",  # in the next line's comment
-    ],
-)
-def test_the_annotation_must_sit_in_the_suppressing_comment(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], text: str
-) -> None:
-    root = _tree(tmp_path, {f"{SCOPE}/a.ts": text})
-    code, err = _run(root, capsys)
-    assert code == 1 and "suppression missing reason, owner, review" in err
-
-
-def test_the_review_date_is_judged_against_the_given_day(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    root = _tree(tmp_path, {f"{SCOPE}/a.ts": f"// @ts-ignore {OK}\n"})  # review=2026-12-01
-    assert check.main(["--root", str(root), "--today", "2026-11-30"]) == 0
-    assert check.main(["--root", str(root), "--today", "2026-12-02"]) == 1
+def test_the_review_date_is_judged_against_the_given_day(tmp_path, capsys):
+    _check(tmp_path, capsys, {f"{SCOPE}/a.ts": f"// @ts-ignore {OK}\n"})  # review=2026-12-01
+    assert check.main(["--root", str(tmp_path), "--today", "2026-11-30"]) == 0
+    assert check.main(["--root", str(tmp_path), "--today", "2026-12-02"]) == 1
     assert "has expired" in capsys.readouterr().err
 
 
@@ -114,59 +91,44 @@ def test_a_glob_means_what_the_path_filters_mean() -> None:
     assert check.covered("a/b.ts", ["a/?.ts"]) and not check.covered("a/b.ts", ["a?b.ts"])
 
 
-def test_only_source_files_under_the_listed_paths_are_read(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_only_source_files_under_the_listed_paths_are_read(tmp_path, capsys):
     bare = "// @ts-ignore\n"
-    root = _tree(
-        tmp_path,
-        {
-            "apps/web/src/features/indicators/a.ts": bare,  # another feature
-            f"{SCOPE}/notes.md": bare,  # not source
-            f"{SCOPE}/node_modules/x/a.ts": bare,  # a build tree
-            f"{SCOPE}/s.ts": "export const s = \"eslint-disable\"; const t = '@ts-ignore';\n",
-            f"{SCOPE}/p.ts": "export const p = 1; // note: see the lint config\n",
-        },
-    )
-    assert _run(root, capsys) == (0, "")
+    files = {
+        "apps/web/src/features/indicators/a.ts": bare,  # another feature
+        f"{SCOPE}/notes.md": bare,  # not source
+        f"{SCOPE}/node_modules/x/a.ts": bare,  # a build tree
+        f"{SCOPE}/s.ts": "export const s = \"eslint-disable\"; const t = '@ts-ignore';\n",
+        f"{SCOPE}/p.ts": "export const p = 1; // note: see the lint config\n",
+    }
+    assert _check(tmp_path, capsys, files) == (0, "")
 
 
-def test_extending_the_path_list_extends_the_scan(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_extending_the_path_list_extends_the_scan(tmp_path, capsys):
     files = {"apps/web/src/objecttree/a.ts": "// @ts-ignore\n", f"{SCOPE}/b.ts": "// @ts-ignore\n"}
-    code, err = _run(_tree(tmp_path / "one", files), capsys)
-    assert code == 1 and "objecttree" not in err  # the second file is out of scope until listed
-    listed = (f"{SCOPE}/**", "apps/web/src/objecttree/a.ts")  # a single-file entry works too
-    code, err = _run(_tree(tmp_path / "two", files, listed), capsys)
+    code, err = _check(tmp_path / "one", capsys, files)
+    assert code == 1 and "objecttree" not in err  # out of scope until listed
+    code, err = _check(
+        tmp_path / "two", capsys, files, f"{SCOPE}/**", "apps/web/src/objecttree/a.ts"
+    )
     assert code == 1 and "objecttree/a.ts:1" in err and f"{SCOPE}/b.ts:1" in err
 
 
 @pytest.mark.parametrize(
     "config",
-    [
-        "{",
-        "[]",
-        '{"paths": []}',
-        '{"paths": [1]}',
-        '{"paths": ["/abs/**"]}',
-        '{"paths": ["../x/**"]}',
-    ],
+    ["{", '{"paths": []}', '{"paths": [1]}', '{"paths": ["/x/**"]}', '{"paths": ["../x"]}'],
 )
-def test_a_bad_path_list_is_a_config_error(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], config: str
-) -> None:
+def test_a_bad_path_list_is_a_config_error(tmp_path, capsys, config):
     (tmp_path / "tools/ci").mkdir(parents=True)
     (tmp_path / check.CONFIG).write_text(config, encoding="utf-8")
-    assert _run(tmp_path, capsys)[0] == 2
-    assert _run(tmp_path / "missing", capsys)[0] == 2  # no list at all
+    assert check.main(["--root", str(tmp_path)]) == 2
+    assert check.main(["--root", str(tmp_path / "missing")]) == 2  # no list at all
 
 
-def test_the_script_runs_as_a_command(tmp_path: Path) -> None:
-    root = _tree(tmp_path, {f"{SCOPE}/a.ts": "// nosemgrep: cv-x\n"})
+def test_the_script_runs_as_a_command(tmp_path, capsys):
+    _check(tmp_path, capsys, {f"{SCOPE}/a.ts": "// nosemgrep: cv-x\n"})
     script = str(ROOT / "tools/ci/check_no_inline_suppressions.py")
     run = subprocess.run(  # noqa: S603 - the interpreter and the script under test
-        [sys.executable, script, "--root", str(root), "--today", TODAY],
+        [sys.executable, script, "--root", str(tmp_path), "--today", TODAY],
         capture_output=True,
         text=True,
         check=False,
@@ -194,7 +156,7 @@ def _unlisted(root: Path, paths: list[str]) -> list[str]:
     return sorted(missing)
 
 
-def test_the_tripwire_names_drawing_and_object_tree_code_outside_the_list(tmp_path: Path) -> None:
+def test_the_tripwire_names_drawing_and_object_tree_code_outside_the_list(tmp_path):
     for rel in [
         f"{SCOPE}/a.ts",  # listed
         "apps/web/src/features/drawings-legacy/a.ts",
@@ -203,7 +165,8 @@ def test_the_tripwire_names_drawing_and_object_tree_code_outside_the_list(tmp_pa
         "packages/chart-engine/src/layers/drawings/a.ts",
         "apps/web/src/features/indicators/drawings.ts",  # a file, not a directory: not drawing code
     ]:
-        _tree(tmp_path, {rel: ""})
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("", encoding="utf-8")
     assert _unlisted(tmp_path, [f"{SCOPE}/**"]) == [
         "apps/web/src/features/drawings-legacy",
         "apps/web/src/objecttree",

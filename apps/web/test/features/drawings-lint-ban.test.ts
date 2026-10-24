@@ -6,10 +6,9 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 /**
  * E14-X03 (#549; DR6, SR-E14-01): the lint ban on the drawing render paths, proved through the ESLint
- * API with the app's own config. A virtual file has to be named in `allowDefaultProject`: the project
- * service refuses a path that is not on disk even under the tsconfig's `include`, and the rules under
- * test read no type information. The paths are those of tools/ci/no-inline-suppression-paths.json,
- * which the Semgrep rule and the suppression check read too.
+ * API with the app's config and the paths of tools/ci/no-inline-suppression-paths.json. A virtual
+ * file must be named in `allowDefaultProject`: the project service refuses a path that is not on
+ * disk even under the tsconfig's `include`, and the rules under test read no type information.
  */
 const WEB = resolve(import.meta.dirname, "../..");
 const LISTED = JSON.parse(
@@ -29,16 +28,13 @@ const NO_EFFECT = /has no effect because you have 'noInlineConfig'/;
 const lineOff = (rule: string, code: string) => `// eslint-disable-next-line ${rule}\n${code}`;
 const blockOff = (rule: string, code: string) => `/* eslint-disable ${rule} */\n${code}`;
 
-type Message = { rule: string | null; severity: number; text: string };
 let eslint: ESLint;
-const lint = async (file: string, code: string): Promise<Message[]> => {
-  const [result] = await eslint.lintText(code, { filePath: resolve(WEB, file) });
-  if (!result) throw new Error(`no result for ${file}`);
-  return result.messages.map((m) => ({ rule: m.ruleId, severity: m.severity, text: m.message }));
-};
-const errors = (found: Message[]) => found.filter((m) => m.severity === 2).map((m) => m.rule);
+const lint = async (file: string, code: string) =>
+  (await eslint.lintText(code, { filePath: resolve(WEB, file) }))[0]?.messages ?? [];
+type Found = Awaited<ReturnType<typeof lint>>;
+const errors = (found: Found) => found.filter((m) => m.severity === 2).map((m) => m.ruleId);
 /** Warnings that say the comment is inert: `--max-warnings=0` turns each into a failed lint. */
-const inert = (found: Message[]) => found.filter((m) => NO_EFFECT.test(m.text) && m.severity === 1);
+const inert = (found: Found) => found.filter((m) => m.severity === 1 && NO_EFFECT.test(m.message));
 
 beforeAll(() => {
   eslint = new ESLint({

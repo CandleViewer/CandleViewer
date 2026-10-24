@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """E14-X03 (#549; DR6, SR-E14-01): no silent suppression in the drawing render paths.
 
-A drawing's stored text (label, note, template name) must reach the DOM as text only. The ESLint
-ban and the Semgrep rules enforce that, and a comment that switches a check off there would hide
-the next real finding. In the files under the paths of `tools/ci/no-inline-suppression-paths.json`
-(globs relative to the repository root; a ticket that adds drawing or object-tree code extends the
-list), a comment that holds `eslint-disable`, `@ts-ignore`, `@ts-expect-error` or `nosemgrep`
-fails unless it is a reviewed annotation in the repo's form (`tools/ci/suppressions.py`,
-CI-SEC-006): `reason=<token> owner=@<handle> review=YYYY-MM-DD` in the same comment line, the
-review at most 180 days away.
+Under the globs of `tools/ci/no-inline-suppression-paths.json` (relative to the repo root; a ticket
+that adds drawing or object-tree code extends the list), a comment holding `eslint-disable`,
+`@ts-ignore`, `@ts-expect-error` or `nosemgrep` fails unless it is a reviewed annotation in the
+repo's form (`tools/ci/suppressions.py`, CI-SEC-006): `reason=<token> owner=@<handle>
+review=YYYY-MM-DD` in the same comment, the review at most 180 days away.
 
 Usage: python tools/ci/check_no_inline_suppressions.py [--root DIR] [--config FILE] [--today DATE]
-Exit: 0 clean, 1 a suppression without a reviewed annotation, 2 a bad config. Stdlib only.
+Exit: 0 clean, 1 an unreviewed suppression, 2 a bad config. Stdlib only.
 """
 
 from __future__ import annotations
@@ -41,10 +38,6 @@ MARKER_RE = re.compile(
 _GLOB_TOKENS = ((r"**/", "(?:.*/)?"), (r"**", ".*"), (r"*", "[^/]*"), (r"?", "[^/]"))
 
 
-class ConfigError(ValueError):
-    pass
-
-
 def glob_regex(pattern: str) -> re.Pattern[str]:
     """`**/` any directories, `**` anything, `*` and `?` within one path segment."""
     out, i = [], 0
@@ -60,16 +53,15 @@ def covered(relpath: str, paths: Sequence[str]) -> bool:
 
 
 def load_paths(config: Path) -> list[str]:
-    try:
-        data = json.loads(config.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise ConfigError(f"{config}: {exc}") from exc
+    data = json.loads(
+        config.read_text(encoding="utf-8")
+    )  # an OSError or ValueError is the caller's
     paths = data.get("paths") if isinstance(data, dict) else None
     if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p for p in paths):
-        raise ConfigError(f"{config}: 'paths' must be a non-empty list of globs")
+        raise ValueError("'paths' must be a non-empty list of globs")
     for p in paths:
         if p.startswith("/") or "\\" in p or ".." in p.split("/"):
-            raise ConfigError(f"{config}: {p!r} must be a relative glob inside the repository")
+            raise ValueError(f"{p!r} must be a relative glob inside the repository")
     return list(paths)
 
 
@@ -113,10 +105,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--config", type=Path)
     ap.add_argument("--today", type=date.fromisoformat)
     args = ap.parse_args(argv)
+    config = args.config or args.root / CONFIG
     try:
-        paths = load_paths(args.config or args.root / CONFIG)
-    except ConfigError as exc:
-        print(f"no-inline-suppressions: {exc}", file=sys.stderr)
+        paths = load_paths(config)
+    except (OSError, ValueError) as exc:
+        print(f"no-inline-suppressions: {config}: {exc}", file=sys.stderr)
         return 2
     today = args.today or datetime.now(UTC).date()
     files = files_in_scope(args.root, paths)
@@ -126,11 +119,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     for message in findings:
         print(f"no-inline-suppressions: {message}", file=sys.stderr)
     if findings:
-        print(
-            "no-inline-suppressions: DR6, SR-E14-01: remove it, or annotate it in the repo's form "
-            "`reason=<token> owner=@<handle> review=YYYY-MM-DD` (docs/plan/security/ci-gates-e14.md)",  # noqa: E501 - one URL-like path
-            file=sys.stderr,
-        )
+        hint = "remove it, or annotate it: `reason=<token> owner=@<handle> review=YYYY-MM-DD`"
+        print(f"no-inline-suppressions: DR6, SR-E14-01: {hint}", file=sys.stderr)
         return 1
     print(f"no-inline-suppressions: OK: {len(files)} file(s) under {len(paths)} path(s)")
     return 0

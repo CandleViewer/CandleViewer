@@ -1,9 +1,8 @@
-# E14-X03 (#549), DR6/DR7/DR9, SR-E14-01/-02/-04. A drawing's stored text (label, note, template name,
-# style value) is user content: the object tree, tooltips, popovers and accessible names all show it.
-# Syntactic, not taint: a text-sink call or attribute that builds a string is flagged whatever it is
-# built from. It adds, beyond `cv-shell-dangerously-set-inner-html` (the shell's raw-HTML bans, whose
-# scope has none of the literal paths nor the engine layer), `document.write`, `createContextualFragment`,
-# `srcdoc`, string-built URL/name/CSS values and CSS strings. A raw variable is not "built".
+# E14-X03 (#549), DR6/DR7/DR9, SR-E14-01/-02/-04: a drawing's stored text (label, note, template name) is
+# user content. Syntactic, not taint: a text sink that builds a string is flagged whatever it is built
+# from; a raw variable is not "built". Beyond `cv-shell-dangerously-set-inner-html` (whose scope has no
+# literal drawing path nor the engine layer) it adds `document.write`, `createContextualFragment`,
+# `srcdoc`, string-built URL, name and style attributes, and CSS strings.
 rules:
   - id: cv-drawings-text-to-html-sink
     languages: [typescript, javascript]
@@ -24,7 +23,6 @@ rules:
         - docs/security/threat-models/E14-drawings.md DR6, DR7, DR9 (section 5), SR-E14-01, SR-E14-02, SR-E14-04 (section 6.2)
         - .semgrep/cv-shell-dangerously-set-inner-html.yml
     pattern-either:
-      # Raw HTML: what the shell rule bans, and the sinks it does not name.
       - pattern: "<$EL ... dangerouslySetInnerHTML={...} ... />"
       - pattern: "{..., dangerouslySetInnerHTML: ..., ...}"
       - pattern: $X.innerHTML = $V

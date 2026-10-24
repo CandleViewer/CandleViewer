@@ -1,7 +1,7 @@
 # E14-X03 (#549), DR10, SR-040: the TypeScript arm of the pixel-geometry guard (the Python arm is
 # `cv-drawings-pixel-geometry`). The contract (`DrawingPoint`: `additionalProperties: false`) stores a
 # point as a UTC time `t` and a price `p`; a pixel depends on the viewport. Scoped to the store, which
-# holds and persists chart space only. The chart engine works in pixels by design and is never in scope.
+# persists chart space only; the chart engine works in pixels by design and is never in scope.
 rules:
   - id: cv-drawings-pixel-geometry-ts
     languages: [typescript, javascript]
