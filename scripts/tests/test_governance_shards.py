@@ -188,6 +188,11 @@ def test_the_table_is_measured_the_way_ci_runs_it_without_semgrep_or_gitleaks() 
         )
     doc = " ".join((gs.__doc__ or "").split())
     assert "semgrep and gitleaks off PATH" in doc
+    # The premise itself: the job installs neither tool, so the table stays true on CI.
+    job = _workflow()["jobs"]["governance-tests"]
+    requirements = (REPO_ROOT / "scripts/requirements-ci.txt").read_text(encoding="utf-8")
+    for tool in ("semgrep", "gitleaks"):
+        assert tool not in _runs(job) and tool not in requirements.lower()
 
 
 def test_every_weighted_file_exists() -> None:
