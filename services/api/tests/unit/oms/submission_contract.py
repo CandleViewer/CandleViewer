@@ -113,7 +113,8 @@ class Bounded:
 class Harness:
     """`new_account` makes a demo account with its live profile at version 1; `refuse` makes the
     share-locked re-check refuse it from now on (SR-E28-15); `held` counts a persist's anchor,
-    group, leg, order and recorded-stop rows as stored."""
+    group, leg, order and recorded-stop rows as stored; `move_stop` makes a lifecycle move no store
+    writes yet (`in_force`, `replaced` or `ended`), as `trg_rs_guard` and `rs_times` admit it."""
 
     submissions: SubmissionStore
     anchors: IdempotencyAnchorStore
@@ -125,6 +126,7 @@ class Harness:
     refuse: Callable[[UUID, SubmissionRefusal], None]
     bounded: Callable[[float], Bounded]
     held: Callable[[FirstPersist, NewOrder], tuple[int, ...]]
+    move_stop: Callable[[UUID, str], None]
 
 
 def link() -> str:

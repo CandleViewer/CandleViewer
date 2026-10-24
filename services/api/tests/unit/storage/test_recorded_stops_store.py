@@ -6,6 +6,7 @@ and the 0043 migration suite (CI only)."""
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -26,6 +27,7 @@ from candleviewer.storage.errors import StorageTierUnavailable, WriteAheadTimeou
 from candleviewer.storage.repositories import recorded_stops_sqlalchemy as mod
 from candleviewer.storage.repositories.recorded_stops import (
     EVERY_ACCOUNT,
+    LIVE_STOP_STATUSES,
     REFUSED_BY,
     REFUSED_ENTRY,
     SWEEP_REASON,
@@ -123,6 +125,7 @@ def _built() -> dict[str, Any]:
         "lock_stops_statement": mod.lock_stops_statement(_ACCOUNT, [_SL, _TP]),
         "settle_statement": mod.settle_statement(_ACCOUNT, [_SL, _TP], "answered", _T),
         "for_order_statement": mod.for_order_statement(_ACCOUNT, _ORDER),
+        "live_for_key_statement": mod.live_for_key_statement(_ACCOUNT, "BTCUSDT", 0),
         "void_orphans_statement": mod.void_orphans_statement(EVERY_ACCOUNT, _T),
         "waiting_for_key_statement": mod.waiting_for_key_statement(
             _ACCOUNT, "BTCUSDT", 0, now=_T, bound_s=5.0
@@ -142,6 +145,24 @@ def test_every_statement_but_the_insert_and_the_system_sweep_filters_the_account
     assert not mod.UNSCOPED & mod.SYSTEM_STATEMENTS
     assert mod.UNSCOPED == frozenset({"insert_stops_statement"})
     assert mod.SYSTEM_STATEMENTS == frozenset({"void_orphans_statement"})
+
+
+def test_live_stop_statuses_are_the_ix_rs_live_predicate() -> None:
+    index = next(i for i in models.recorded_stops.indexes if i.name == "ix_rs_live")
+    predicate = str(index.dialect_options["postgresql"]["where"])
+    assert set(LIVE_STOP_STATUSES) == set(re.findall(r"'(\w+)'", predicate))
+
+
+def test_live_for_key_statement_reads_one_keys_live_statuses_as_literals_oldest_first() -> None:
+    """21 Sec.13.1 row 45: the key's rows in the account whose status is `ix_rs_live`'s predicate,
+    written as literals so the planner matches it; no filter on the binding or the release."""
+    sql = _sql(_built()["live_for_key_statement"])
+    where = sql.split(" WHERE ", 1)[1]
+    for column in ("exchange_account_id", "symbol", "position_idx"):
+        assert f"recorded_stops.{column} = $" in where
+    assert "recorded_stops.status IN ('in_force', 'pending')" in where
+    assert "exchange_order_id" not in where and "released_at" not in where
+    assert sql.endswith("ORDER BY recorded_stops.created_at, recorded_stops.id")
 
 
 _OTHER = uuid.UUID(int=0x4002)
@@ -323,6 +344,13 @@ async def test_for_order_reads_the_entry_rows_oldest_first() -> None:
     rows = await _store(rel).for_order(_ACCOUNT, _ORDER)
     assert [row.kind for row in rows] == ["stop_loss", "take_profit"] and rel.commits == 0
     assert _sql(rel.statements[0]).endswith("ORDER BY recorded_stops.created_at, recorded_stops.id")
+
+
+async def test_live_for_key_maps_rows_in_the_order_read_and_commits_nothing() -> None:
+    rel = _Rel([_row(_TP, kind="take_profit"), _row(_SL, status="in_force")])
+    rows = await _store(rel).live_for_key(_ACCOUNT, "BTCUSDT", 0)
+    assert [(row.id, row.status) for row in rows] == [(_TP, "pending"), (_SL, "in_force")]
+    assert isinstance(rows[0].exchange_account_id, uuid.UUID) and rel.commits == 0
 
 
 # -- R10: the startup sweep ----------------------------------------------------------------------

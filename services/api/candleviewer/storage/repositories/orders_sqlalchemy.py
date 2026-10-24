@@ -163,6 +163,13 @@ def get_by_link_statement(account_id: UUID, order_link_id: str) -> sa.Select[Any
     )
 
 
+def get_by_exchange_statement(account_id: UUID, exchange_order_id: str) -> sa.Select[Any]:
+    """21 Sec.13.1 row 12: `ux_orders_exch_id` serves it."""
+    return sa.select(*ORDER_COLUMNS).where(
+        _O.exchange_account_id == account_id, _O.exchange_order_id == exchange_order_id
+    )
+
+
 def list_open_statement(account_id: UUID, symbol: str | None) -> sa.Select[Any]:
     """Rendered with the states as literals, so the planner can match `ix_orders_open`."""
     states: sa.BindParameter[Any] = sa.bindparam(
@@ -408,6 +415,11 @@ class SqlAlchemyOrderStore(CappedStore):
     async def get_by_link_id(self, account_id: UUID, order_link_id: str) -> OrderRow | None:
         return await self._one(get_by_link_statement(account_id, order_link_id))
 
+    async def get_by_exchange_order_id(
+        self, account_id: UUID, exchange_order_id: str
+    ) -> OrderRow | None:
+        return await self._one(get_by_exchange_statement(account_id, exchange_order_id))
+
     async def list_open(
         self, account_id: UUID, *, symbol: str | None = None
     ) -> tuple[OrderRow, ...]:
@@ -465,7 +477,8 @@ class SqlAlchemyOrderStore(CappedStore):
 __all__ = [
     "EVENT_COLUMNS", "OMS_STATEMENT_TIMEOUT_MS", "ORDER_COLUMNS", "UNSCOPED", "CappedStore",
     "SqlAlchemyOrderStore", "append_statement", "commit_step", "create_statement",
-    "environment_accounts_statement", "fill_statement", "get_by_link_statement", "get_statement",
+    "environment_accounts_statement", "fill_statement", "get_by_exchange_statement",
+    "get_by_link_statement", "get_statement",
     "link_taken_statement", "list_events_statement", "list_open_statement",
     "list_unfinished_statement", "lock_order", "lock_statement", "order_row",
     "require_audit_bound", "settle_entry_stops_statement", "transition_statement",

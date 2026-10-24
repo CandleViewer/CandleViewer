@@ -184,6 +184,11 @@ class OrderRepository:
     async def get_by_link_id(self, account_id: UUID, order_link_id: str) -> OrderRow | None:
         return await self._store.get_by_link_id(account_id, order_link_id)
 
+    async def get_by_exchange_order_id(
+        self, account_id: UUID, exchange_order_id: str
+    ) -> OrderRow | None:
+        return await self._store.get_by_exchange_order_id(account_id, exchange_order_id)
+
     async def list_open(
         self, account_id: UUID, *, symbol: str | None = None
     ) -> tuple[OrderRow, ...]:
@@ -451,6 +456,13 @@ class RecordedStopRepository:
 
     async def for_order(self, account_id: UUID, order_id: UUID) -> tuple[RecordedStopRow, ...]:
         return await self._store.for_order(account_id, order_id)
+
+    async def live_for_key(
+        self, account_id: UUID, symbol: str, position_idx: int
+    ) -> tuple[RecordedStopRow, ...]:
+        """The key's `pending` and `in_force` rows, oldest first (`RecordedStopStore.live_for_key`);
+        bound and released rows are listed too."""
+        return await self._store.live_for_key(account_id, symbol, position_idx)
 
     async def waiting_for_key(
         self,

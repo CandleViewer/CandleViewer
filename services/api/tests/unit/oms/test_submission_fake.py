@@ -1,12 +1,14 @@
 """The submission contract on the in-memory stores (E29-T04 #913), and the fakes' own calls: a
 fault at the commit, a write that waits while another holds its rows over its hook, the sweep
 over every account, the hooks' default bounds, which the adapters share, and every CHECK the
-schema declares on the four tables, met by name or left to the row's own refusals."""
+schema declares on the four tables, met by name or left to the row's own refusals. The pairing
+reads' contract (`store_reads_contract.py`, E29-T05) runs here too."""
 
 from __future__ import annotations
 
 import asyncio
 import inspect
+from dataclasses import replace
 from typing import Any, Final, cast
 from uuid import UUID, uuid4
 
@@ -21,7 +23,7 @@ from candleviewer.oms.fakes import InMemoryOrderStore as Fake
 from candleviewer.oms.fakes import InMemoryRecordedStopStore, InMemorySubmissionStore
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.orders import NewOrder
-from candleviewer.storage.repositories.recorded_stops import EVERY_ACCOUNT, SweptStop
+from candleviewer.storage.repositories.recorded_stops import EVERY_ACCOUNT, StopStatus, SweptStop
 from candleviewer.storage.repositories.recorded_stops_sqlalchemy import (
     SqlAlchemyRecordedStopStore,
 )
@@ -31,6 +33,7 @@ from candleviewer.storage.repositories.submissions import (
     FirstPersisted,
 )
 from candleviewer.storage.repositories.submissions_sqlalchemy import SqlAlchemySubmissionStore
+from tests.unit.oms.store_reads_contract import StoreReadsContract
 from tests.unit.oms.submission_contract import (
     EVENT,
     NOTHING,
@@ -71,7 +74,15 @@ def demo_account(fake: Fake) -> tuple[UUID, UUID]:
     return account, profile
 
 
-class TestInMemorySubmissionStores(SubmissionContract):
+def move_stop(fake: Fake, record_id: UUID, status: str) -> None:
+    """A lifecycle move no store writes yet, as `trg_rs_guard` and `rs_times` admit it."""
+    row = fake._stops[record_id]
+    stamps: dict[str, Any] = ({"in_force_at": T0, "answered_at": row.answered_at or T0}
+                              if status == "in_force" else {"closed_at": T0})  # fmt: skip
+    fake._stops[record_id] = replace(row, status=cast(StopStatus, status), **stamps)
+
+
+class TestInMemorySubmissionStores(SubmissionContract, StoreReadsContract):
     @pytest.fixture
     def fake(self) -> Fake:
         return Fake(clock=lambda: T0)
@@ -89,6 +100,7 @@ class TestInMemorySubmissionStores(SubmissionContract):
             executions=fake.executions, new_user=uuid4, new_account=lambda: demo_account(fake),
             refuse=fake.submissions.refuse, bounded=bounded,
             held=lambda first, order: held(fake, first, order),
+            move_stop=lambda record_id, status: move_stop(fake, record_id, status),
         )  # fmt: skip
 
     async def test_a_leg_on_an_account_never_seeded_passes_the_environment_trigger(
