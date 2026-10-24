@@ -135,6 +135,7 @@ def _built() -> dict[str, Any]:
         "lock_key_statement": mod.lock_key_statement(_ACCOUNT, "BTCUSDT", 0),
         "replace_statement": mod.replace_statement(_ACCOUNT, [_SL], _T),
         "in_force_statement": mod.in_force_statement(_ACCOUNT, _rows(_row(_SL)), _T),
+        "in_force_for_key_statement": mod.in_force_for_key_statement(_ACCOUNT, "BTCUSDT", 0),
         "resolve_statement": mod.resolve_statement(_ACCOUNT, _rows(_row(_SL)), "answered", _T),
     }
 
@@ -774,6 +775,15 @@ async def test_a_resolve_locks_then_sets_every_row_or_none_audited_before_its_co
             await _store(stale).resolve(_ACCOUNT, _rows(*map(_row, ids)), "answered", at=at,
                                         position_state=state)  # fmt: skip
     assert stale.commits == 0 and len(stale.statements) == 2
+
+
+async def test_the_store_reads_a_keys_rows_in_force_by_kind() -> None:
+    rel = _Rel([_row(_SL, status="in_force"), _row(_TP, kind="take_profit", status="in_force")])
+    rows = await _store(rel).in_force_for_key(_ACCOUNT, "BTCUSDT", 0)
+    assert [row.kind for row in rows] == ["stop_loss", "take_profit"] and rel.commits == 0
+    sql = _sql(rel.statements[0])
+    assert "recorded_stops.status = $" in sql and "recorded_stops.position_idx = $" in sql
+    assert sql.endswith("ORDER BY recorded_stops.kind")
 
 
 async def test_the_store_reads_the_waiting_keys_and_a_naive_now_runs_nothing() -> None:
