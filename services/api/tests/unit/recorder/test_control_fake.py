@@ -1,19 +1,19 @@
 """#492 S1: the fake behind the recording tests.
 
 `FakeRecorder` mirrors #2188's `PolicyControlSurface` member for member (`surface_mismatches`:
-names, signatures, sync versus async); the read-only accessors S3 adds are held to the
-signatures agreed on 2026-10-23 (`_Agreed`). It keeps the policy's rules: the cap, a re-add of a
+names, signatures, sync versus async) as S3c leaves it (`control_runtime.RuntimePolicy` until S3c
+is on main): the S3b accessors, `set_pin` and `set_retention` with the view, `relax_allowed`. It
+keeps the policy's rules: the cap, a re-add of a
 manual entry that changes and records nothing, the depth and stream check before any record, pin
 and unpin, a stop that lingers and keeps its pin, an update only of a manual entry (none when it
 changes nothing), a user actor on every manual change, and the policy's records."""
 
 from __future__ import annotations
 
-import inspect
-from datetime import datetime
-from typing import Any, Protocol
+from typing import Any
 
 import pytest
+from candleviewer.recorder.control_runtime import RuntimePolicy
 
 from candleviewer.recorder.errors import (
     InvalidRecorderActorError,
@@ -23,28 +23,14 @@ from candleviewer.recorder.errors import (
 from candleviewer.recorder.errors import RecorderInvalidUpdateError as InvalidUpdate
 from candleviewer.recorder.errors import RecorderSymbolNotManualError as NotManual
 from candleviewer.recorder.models import SYSTEM_ACTOR, Actor
-from candleviewer.recorder.policy import PolicyControlSurface, RefusalCause
 from tests.unit.recorder import _control_fakes as fakes
 from tests.unit.recorder._fakes import surface_mismatches
 
 USER = Actor(kind="user", id="u-1")
 
 
-class _Agreed(Protocol):  # #2188 S3's read-only accessors on `PolicyControlSurface`
-    def linger_until(self, symbol: str) -> datetime | None: ...
-    def start_refusal(self, symbol: str) -> RefusalCause | None: ...
-    def chart_open(self, symbol: str) -> bool: ...
-
-
 def test_the_fake_mirrors_the_policy_control_surface() -> None:
-    assert surface_mismatches(fakes.FakeRecorder, PolicyControlSurface) == []
-
-
-@pytest.mark.parametrize("name", [n for n in vars(_Agreed) if not n.startswith("_")])
-def test_the_fake_mirrors_each_agreed_s3_accessor(name: str) -> None:
-    ours, theirs = getattr(fakes.FakeRecorder, name), getattr(_Agreed, name)
-    assert inspect.iscoroutinefunction(ours) == inspect.iscoroutinefunction(theirs)
-    assert inspect.signature(ours, eval_str=True) == inspect.signature(theirs, eval_str=True)
+    assert surface_mismatches(fakes.FakeRecorder, RuntimePolicy) == []
 
 
 class _Sink(list[tuple[str, dict[str, Any]]]):
@@ -140,3 +126,19 @@ async def test_a_restricted_relax_of_a_hidden_held_entry_is_refused_as_the_polic
     await fake.set_retention("BTCUSDT", 7, USER, restricted=False)
     await fake.set_pin("BTCUSDT", False, USER, restricted=False, retention_days=9)
     assert fake.entries["BTCUSDT"].retention_days == 9 and not fake.entries["BTCUSDT"].pinned
+
+
+async def test_a_relax_a_hidden_cause_holds_is_refused_with_the_policys_denied_record() -> None:
+    fake, sink = fakes.FakeRecorder(), _Sink()
+    fake.audit = sink
+    fake.put("ETHUSDT", "manual", "position_open", pinned=True)
+    fake.put("BTCUSDT", "manual", "position_open", retention_days=60)
+    for change in (fake.set_pin("ETHUSDT", False, USER, restricted=True),
+                   fake.set_retention("BTCUSDT", 7, USER, restricted=True)):  # fmt: skip
+        with pytest.raises(RecorderRelaxRefusedError):
+            await change
+    assert [(a, r["outcome"]) for a, r in sink] == [("retention.change", "denied")] * 2
+    await fake.set_retention("BTCUSDT", 90, USER, restricted=True)  # raising is no relax
+    await fake.set_pin("ETHUSDT", False, USER, restricted=False, retention_days=7)  # the Owner
+    assert (fake.entries["BTCUSDT"].retention_days, fake.entries["ETHUSDT"].retention_days) == (
+        90, 7)  # fmt: skip
