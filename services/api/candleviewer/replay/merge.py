@@ -71,7 +71,7 @@ from typing import Any, Final, Literal
 import structlog
 
 from candleviewer.observability.metrics import Counter, Histogram
-from candleviewer.replay.budget import FREE_LANE, LoopLane
+from candleviewer.replay.budget import LoopLane
 from candleviewer.replay.errors import (
     ReplayConfigInvalid,
     ReplayError,
@@ -287,11 +287,12 @@ class RecordedMerge:
         window_us: int = DEFAULT_WINDOW_US,
         max_window_us: int = DEFAULT_MAX_WINDOW_US,
         io_timeout_s: float = DEFAULT_IO_TIMEOUT_S,
-        lane: LoopLane = FREE_LANE,
+        lane: LoopLane,
     ) -> None:
         """`lane`: the session's loop-budget lane (#2668 G1), charged before every storage await
-        and restarted after it (a pure wait: both readers decode off the loop, so the wait is not
-        loop time) and breathed on at every yield of a gap-marker build."""
+        and restarted after it, so the wait is not loop time (the QuestDB reader's PGWire row
+        decode, on the loop inside the await, goes uncharged with it; the cold reader decodes off
+        the loop), and breathed on at every yield of a gap-marker build."""
         if window_us < 1 or max_window_us < window_us:
             raise ReplayConfigInvalid("read windows need 1 µs <= window_us <= max_window_us")
         if not (math.isfinite(io_timeout_s) and io_timeout_s > 0):
