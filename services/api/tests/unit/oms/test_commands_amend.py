@@ -294,3 +294,19 @@ async def test_terms_b1_would_not_stage_are_refused_locally(
     answer = await rig.port.amend(_amend(order, **terms))
     assert answer == _NO | {"error_code": OmsErrorCode.INSTRUMENT_FILTER.value}
     assert rig.demo.calls == []
+
+
+async def test_the_record_in_force_is_read_after_the_gate_clears() -> None:
+    """Fold m2: a record put in force while the gate cleared the key is still ratcheted."""
+    holder: list[Rig] = []
+
+    class Gate:
+        async def clear(self, _key: Any) -> None:
+            await _in_force(holder[0], "58800")
+
+    rig = cr.build_rig(gate=Gate())
+    holder.append(rig)
+    order = await _live(rig)
+    answer = await rig.port.amend(_amend(order, stop_loss="58500"))
+    assert answer == _NO | {"error_code": oc.STOP_LOOSENING_REFUSED}
+    assert rig.demo.calls == [] and len(_rows(rig)) == 1
