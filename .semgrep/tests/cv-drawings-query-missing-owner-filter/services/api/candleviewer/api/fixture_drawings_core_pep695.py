@@ -1,7 +1,10 @@
 # Fixture for cv-drawings-query-missing-owner-filter (E14-X03): the Core arm and the text arm in a
 # file with PEP 695 generics (Semgrep parses it another way, #3549). A marker sits on the call's line.
 import sqlalchemy as sa
+from sqlalchemy import select
 
+from candleviewer.db import models
+from candleviewer.db import models as m
 from candleviewer.db.models import drawings, layouts
 
 
@@ -16,7 +19,21 @@ def core(did, owner, label):
     sa.select(drawings).where(drawings.c.owner_user_id != owner)  # ruleid: cv-drawings-query-missing-owner-filter
     sa.select(drawings).where(drawings.c.owner_user_id == owner, drawings.c.id == did)  # ok: cv-drawings-query-missing-owner-filter
     sa.delete(drawings).where(sa.and_(drawings.c.id == did, drawings.c.owner_user_id == owner))  # ok: cv-drawings-query-missing-owner-filter
+    sa.select(drawings).where(owner == drawings.c.owner_user_id)  # ok: cv-drawings-query-missing-owner-filter
+    sa.select(drawings).filter(owner == drawings.c.owner_user_id)  # ok: cv-drawings-query-missing-owner-filter
+    sa.select(m.drawings).where(m.drawings.c.id == did)  # ruleid: cv-drawings-query-missing-owner-filter
+    sa.update(models.drawings).values(label=label)  # ruleid: cv-drawings-query-missing-owner-filter
+    sa.delete(m.drawings).where(m.drawings.c.id == did)  # ruleid: cv-drawings-query-missing-owner-filter
+    sa.select(m.drawings.c.id, m.drawings.c.label)  # ruleid: cv-drawings-query-missing-owner-filter
+    select(m.drawings)  # ruleid: cv-drawings-query-missing-owner-filter
+    sa.select(m.drawings).where(m.drawings.c.owner_user_id == owner)  # ok: cv-drawings-query-missing-owner-filter
     sa.select(layouts).where(layouts.c.id == did)  # ok: cv-drawings-query-missing-owner-filter
+
+
+def bare(select, update, delete):  # names no import resolves: only the bare arms see them
+    select(m.drawings)  # ruleid: cv-drawings-query-missing-owner-filter
+    update(m.drawings)  # ruleid: cv-drawings-query-missing-owner-filter
+    delete(m.drawings)  # ruleid: cv-drawings-query-missing-owner-filter
 
 
 _COUNT = sa.text("SELECT count(*) FROM drawings WHERE symbol = :symbol")  # ruleid: cv-drawings-query-missing-owner-filter

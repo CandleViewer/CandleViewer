@@ -30,7 +30,7 @@ SARIF = {"contents": "read", "security-events": "write"}
 # Job -> (permissions, timeout-minutes).
 LANE = {
     "codeql": (SARIF, 25),
-    "semgrep-bandit": (SARIF, 30),
+    "semgrep-bandit": (SARIF, 36),
     "gitleaks": (READ, 10),
     "read-only-scans": (READ, 47),
     "trivy": (SARIF, 15),
@@ -49,6 +49,13 @@ SCANS = {
 OLD_BUDGETS = {"semgrep": 15, "bandit": 10, "security-auth": 10, "pip-audit": 10}
 OLD_BUDGETS |= {"npm-audit": 10, "license-scan": 10}
 OLD_BUDGETS |= {"register-pins": 2}  # #3587: a new step, with no old job, on its own budget
+# #549: a gate with no id, no old job and no `continue-on-error` (it fails the job), on its own
+# budget.
+GATES = {
+    "semgrep-bandit": {
+        "Drawings rules (the reviewed-exception sites are exactly the listed ones)": 6,
+    },
+}
 # #3587: the register's pins, in the lane `ci-required` judges; a rename out of the -k prefix or a
 # narrower selection would drop a pin from it silently.
 REGISTER_PINS = (
@@ -134,7 +141,13 @@ def test_scan_steps_keep_their_old_budgets_and_the_job_adds_five_minutes(job: st
             old = SCANS[job][step["id"]]
             spent[old] = spent.get(old, 0) + step["timeout-minutes"]
     assert spent == {old: OLD_BUDGETS[old] for old in SCANS[job].values()}
-    assert JOBS[job]["timeout-minutes"] == sum(spent.values()) + 5
+    gates = {
+        s["name"]: s["timeout-minutes"]
+        for s in _steps(job)
+        if "id" not in s and "timeout-minutes" in s
+    }
+    assert gates == GATES.get(job, {})
+    assert JOBS[job]["timeout-minutes"] == sum(spent.values()) + sum(gates.values()) + 5
 
 
 def test_register_pins_run_every_test_repo_register_pin_in_read_only_scans() -> None:

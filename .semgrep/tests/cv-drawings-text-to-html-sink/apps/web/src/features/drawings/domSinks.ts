@@ -43,6 +43,25 @@ export function sinks(): void {
   el.setAttribute("src", `/img/${label}`); // ruleid: cv-drawings-text-to-html-sink
   el.ariaDescription = "Drawing " + label; // ruleid: cv-drawings-text-to-html-sink
   el.style = "color: " + css; // ruleid: cv-drawings-text-to-html-sink
+  frame.setAttribute(`srcdoc`, label); // ruleid: cv-drawings-text-to-html-sink
+  link.setAttribute(`href`, "/d/" + label); // ruleid: cv-drawings-text-to-html-sink
+  document["write"](label); // ruleid: cv-drawings-text-to-html-sink
+  document["writeln"](label); // ruleid: cv-drawings-text-to-html-sink
+  range["createContextualFragment"](label); // ruleid: cv-drawings-text-to-html-sink
+  sheet["insertRule"](css); // ruleid: cv-drawings-text-to-html-sink
+  frame["setAttribute"]("srcdoc", label); // ruleid: cv-drawings-text-to-html-sink
+  el["setAttribute"]("style", css); // ruleid: cv-drawings-text-to-html-sink
+  Object.assign(el, { innerHTML: label }); // ruleid: cv-drawings-text-to-html-sink
+  Object.assign(el, { title: "x" }, { outerHTML: label }); // ruleid: cv-drawings-text-to-html-sink
+  Object.assign(el, { srcdoc: label }); // ruleid: cv-drawings-text-to-html-sink
+  frame.contentDocument!.write(label); // ruleid: cv-drawings-text-to-html-sink
+  frame.contentDocument!["write"](label); // ruleid: cv-drawings-text-to-html-sink
+  frame.contentDocument?.write(label); // ruleid: cv-drawings-text-to-html-sink
+  frame.contentDocument?.writeln(label); // ruleid: cv-drawings-text-to-html-sink
+  frame.contentWindow!.document.write(label); // ruleid: cv-drawings-text-to-html-sink
+  frame.contentWindow?.document.write(label); // ruleid: cv-drawings-text-to-html-sink
+  Object.assign(el.style, { cssText: css }); // ruleid: cv-drawings-text-to-html-sink
+  Object.assign(el.style, { cssText: "color: " + css }); // ruleid: cv-drawings-text-to-html-sink
 }
 
 // The text-node forms the message points to, and what a naive rule on the same words would flag:
@@ -64,4 +83,8 @@ export function safe(): void {
   el["textContent"] = label; // ok: cv-drawings-text-to-html-sink
   el.textContent = "Drawing " + label; // ok: cv-drawings-text-to-html-sink
   el.className = "row " + label; // ok: cv-drawings-text-to-html-sink
+  sheet["insertRule"]("li { color: red }"); // ok: cv-drawings-text-to-html-sink
+  el["setAttribute"]("style", "display: none"); // ok: cv-drawings-text-to-html-sink
+  Object.assign(el, { textContent: label }); // ok: cv-drawings-text-to-html-sink
+  Object.assign(el.style, { cssText: "display: none" }); // ok: cv-drawings-text-to-html-sink
 }

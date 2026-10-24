@@ -3,9 +3,10 @@
 # at an assignment, wants a first literal that opens with SELECT, UPDATE, DELETE, WITH or INSERT,
 # a `FROM|UPDATE|JOIN|USING drawings` in the run of literals (the words may straddle two literals)
 # and no `WHERE|AND|ON owner_user_id = [CAST(]:owner` in it: a `SET owner_user_id = ...` is a
-# transfer, not a scope. Core arm: a select, update or delete of the `drawings` table with no
-# `.where(... owner_user_id == ...)` in its chain. A statement that is unscoped by design carries a
-# reviewed `nosemgrep: <id> reason= owner= review=` on the line above.
+# transfer, not a scope. Core arm: a select, update or delete of the `drawings` table (bare or
+# module-qualified, `m.drawings`) with no `.where(... owner_user_id == ...)` in its chain. A
+# statement that is unscoped by design carries a reviewed
+# `nosemgrep: <id> reason= owner= review=` on the line above.
 rules:
   - id: cv-drawings-query-missing-owner-filter
     languages: [python]
@@ -32,15 +33,15 @@ rules:
           (?= (?: [rbuf]{0,2} (?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*') (?:\s|\#[^\n]*)* )*?
               [rbuf]{0,2} (?: "(?:[^"\\]|\\.)*? | '(?:[^'\\]|\\.)*? )
               \b(?:from|update|join|using)
-              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])+ (?:\w+\.)?[\\"]*drawings\b )
+              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?[rbuf]{0,2}["'])+ (?:\w+\.)?[\\"]*drawings\b )
           (?! (?: [rbuf]{0,2} (?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*') (?:\s|\#[^\n]*)* )*?
               [rbuf]{0,2} (?: "(?:[^"\\]|\\.)*? | '(?:[^'\\]|\\.)*? )
-              \b(?:where|and|on) (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])+ \(*
-              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])* (?:\w+\.)?owner_user_id
-              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])* =
-              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])*
-              (?:cast (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])* \(
-                 (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])* )? :owner\w* )
+              \b(?:where|and|on) (?:\s|["']\s*(?:\#[^\n]*\n\s*)?[rbuf]{0,2}["'])+ \(*
+              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?[rbuf]{0,2}["'])* (?:\w+\.)?owner_user_id
+              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?[rbuf]{0,2}["'])* =
+              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?[rbuf]{0,2}["'])*
+              (?:cast (?:\s|["']\s*(?:\#[^\n]*\n\s*)?[rbuf]{0,2}["'])* \(
+                 (?:\s|["']\s*(?:\#[^\n]*\n\s*)?[rbuf]{0,2}["'])* )? :owner\w* )
           (?: [rbuf]{0,2} (?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*') (?:\s|\#[^\n]*)* )+
       - patterns:
           - pattern-either:
@@ -50,8 +51,17 @@ rules:
               - pattern: update(<... drawings ...>)
               - pattern: $M.delete(<... drawings ...>)
               - pattern: delete(<... drawings ...>)
+              # The module-qualified table (`m.drawings`, `models.drawings`: the house idiom).
+              - pattern: $M.select(..., <... $MOD.drawings ...>, ...)
+              - pattern: select(..., <... $MOD.drawings ...>, ...)
+              - pattern: $M.update(<... $MOD.drawings ...>)
+              - pattern: update(<... $MOD.drawings ...>)
+              - pattern: $M.delete(<... $MOD.drawings ...>)
+              - pattern: delete(<... $MOD.drawings ...>)
           - pattern-not-inside: $Q.where(..., <... $X.owner_user_id == $O ...>, ...)
+          - pattern-not-inside: $Q.where(..., <... $O == $X.owner_user_id ...>, ...)
           - pattern-not-inside: $Q.filter(..., <... $X.owner_user_id == $O ...>, ...)
+          - pattern-not-inside: $Q.filter(..., <... $O == $X.owner_user_id ...>, ...)
           - pattern-not-inside: $Q.filter_by(..., owner_user_id=$O, ...)
     paths:
       include:

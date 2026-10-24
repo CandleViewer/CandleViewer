@@ -19,13 +19,13 @@ const BANNED = LISTED.paths
   .filter((path) => path.startsWith("apps/web/src/"))
   .map((path) => path.replace(/^apps\/web\//, "").replace(/\/\*\*$/, "/__probe.tsx"));
 const FREE = "src/features/indicators/__probe.tsx";
-/** The same roots as ECMAScript modules of either kind: TypeScript's `.mts` and `.cts`. */
-const MODULES = (BANNED[0] === undefined ? [] : ["mts", "cts"]).map((ext) =>
-  (BANNED[0] ?? "").replace(/\.tsx$/, `.${ext}`),
+/** Every root as ECMAScript modules of either kind: TypeScript's `.mts` and `.cts`. */
+const MODULES = BANNED.flatMap((file) =>
+  ["mts", "cts"].map((ext) => file.replace(/\.tsx$/, `.${ext}`)),
 );
-/** The engine's drawing layer, linted with the engine's own config. */
+/** The engine's drawing layer, linted with the engine's own config: its top and a nested folder. */
 const ENGINE = resolve(WEB, "../../packages/chart-engine");
-const LAYER = "src/layers/drawings/__probe.ts";
+const LAYERS = ["src/layers/drawings/__probe.ts", "src/layers/drawings/deep/er/__probe.ts"];
 
 const DANGER =
   "export const A = ({ t }: { t: string }) => <div dangerouslySetInnerHTML={{ __html: t }} />;\n";
@@ -42,8 +42,8 @@ let eslint: ESLint;
 let engine: ESLint;
 const lint = async (file: string, code: string) =>
   (await eslint.lintText(code, { filePath: resolve(WEB, file) }))[0]?.messages ?? [];
-const lintEngine = async (code: string) =>
-  (await engine.lintText(code, { filePath: resolve(ENGINE, LAYER) }))[0]?.messages ?? [];
+const lintEngine = async (code: string, file: string) =>
+  (await engine.lintText(code, { filePath: resolve(ENGINE, file) }))[0]?.messages ?? [];
 type Found = Awaited<ReturnType<typeof lint>>;
 const errors = (found: Found) => found.filter((m) => m.severity === 2).map((m) => m.ruleId);
 /** Warnings that say the comment is inert: `--max-warnings=0` turns each into a failed lint. */
@@ -72,7 +72,7 @@ beforeAll(async () => {
       files: ["**/*.ts"],
       languageOptions: {
         parserOptions: {
-          projectService: { allowDefaultProject: [LAYER], defaultProject: "tsconfig.json" },
+          projectService: { allowDefaultProject: LAYERS, defaultProject: "tsconfig.json" },
           tsconfigRootDir: ENGINE,
         },
       },
@@ -80,7 +80,7 @@ beforeAll(async () => {
   });
   // The first lint of each instance builds its project (tens of seconds on a busy host): pay it here.
   await lint(FREE, "export {};\n");
-  await lintEngine("export {};\n");
+  await lintEngine("export {};\n", LAYERS[0] ?? "");
 }, 120_000);
 
 describe("the drawing render paths ban raw HTML and an inline switch-off", () => {
@@ -124,12 +124,16 @@ describe("the drawing render paths ban raw HTML and an inline switch-off", () =>
     expect(inert(found)).toHaveLength(1);
   });
 
-  it("the engine's drawing layer: a config comment lifts no rule", async () => {
-    expect(errors(await lintEngine(WINDOW))).toEqual(["no-restricted-globals"]);
-    const found = await lintEngine(`/* eslint no-restricted-globals: off */\n${WINDOW}`);
-    expect(errors(found)).toEqual(["no-restricted-globals"]);
-    expect(inert(found)).toHaveLength(1);
-  }, 60_000);
+  it.each(LAYERS)(
+    "the engine's drawing layer, %s: a config comment lifts no rule",
+    async (file) => {
+      expect(errors(await lintEngine(WINDOW, file))).toEqual(["no-restricted-globals"]);
+      const found = await lintEngine(`/* eslint no-restricted-globals: off */\n${WINDOW}`, file);
+      expect(errors(found)).toEqual(["no-restricted-globals"]);
+      expect(inert(found)).toHaveLength(1);
+    },
+    60_000,
+  );
 
   it("is per path: elsewhere a disable comment still works and the ban is off", async () => {
     expect(await lint(FREE, lineOff("@typescript-eslint/no-explicit-any", ANY))).toEqual([]);

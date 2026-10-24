@@ -10,6 +10,9 @@
 ## Running locally
 
 - Validate: `semgrep --metrics=off --validate --config .semgrep`.
+- Prove the exception sites, in a git checkout (Semgrep reads no file of a path-scoped rule's
+  subdirectory target outside one, and the pin then fails as having scanned nothing):
+  `python tools/ci/check_drawings_exception_sites.py`.
 - Prove the fixtures: `python tools/ci/check_semgrep_rule_tests.py`. Every rule needs at least one
   `# ruleid: <id>` line and, since E14-X03, one `# ok: <id>` line: a line a naive rule would flag.
   The checker cannot tell an `ok` line a rule scans from one outside its `paths.include`: place
@@ -26,16 +29,21 @@
 ## How these gates run
 
 `_job-security.yml` passes every `.semgrep/cv-*.yml` to `semgrep scan` and runs the fixture checker
-in the same job: no workflow change, no new required-check name (C-9.1); `ERROR` blocks
+in the same job: no new required-check name (C-9.1; the one step added is below); `ERROR` blocks
 (`security_gate.py`), so the whole-tree scan keeps `services/api` at zero unsuppressed findings.
 
-**PR-3 owns the pin of the four exceptions below, and its CI step.** The pin will be
-`scripts/tests/test_e14_security_gates.py` (it also pins each rule's metadata, scope and doc
-section). It needs the `semgrep` binary, which CI's governance shards do not have, so it would skip
-there; the CI step is a `semgrep scan --disable-nosem` of the five rules over
-`services/api/candleviewer` in `semgrep-bandit`, compared with a committed site list. Until then a
-fifth annotation rests on review (CI-SEC-006 checks its grammar only) and on the annotated modules'
-unit tests, which pin their statements.
+**The four exceptions below are pinned by statement, not by count.**
+`tools/ci/check_drawings_exception_sites.py` scans `services/api/candleviewer` with the five rules and
+`--disable-nosem`, names each finding by its file and the statement it opens (`_PURGE`), and compares
+them with `tools/ci/drawings-exception-sites.json`. The `semgrep-bandit` job runs it, so a fifth
+unscoped statement, or an annotation moved to another statement of the same file, fails the job (the
+pin, with the whole-tree scan's zero-finding gate beside it) until an entry in the list lands,
+reviewed under C-10.1: the list is not a C-10.2 path, so it needs no security-team approval (a count
+of (file, rule) pairs passed both). A scan that read no file, or left a target unread for a reason
+other than configuration, fails too. `scripts/tests/test_e14_security_gates.py` runs the same scan
+where `semgrep` is installed (CI's governance shards have none, so that test skips there), checks
+the annotations in the source against the list without it, and pins each rule's metadata, scope and
+doc section.
 
 Every rule but the first is scoped by glob (`api/drawings*.py`; the batch rule also
 `storage/repositories/drawings*.py`): a router moved into a package `api/drawings/`, or a
@@ -59,15 +67,22 @@ E15-T01's spec decision on #402, SR-E14-09).
 - **Matches:** a `SELECT`, `UPDATE`, `DELETE` or `INSERT ... SELECT` on `drawings` with no
   `WHERE|AND|ON owner_user_id = :owner` predicate (a `SET owner_user_id = ...` is a transfer, not a
   scope), as text SQL (`text(`, `execute(`, `fetch(` ... or an assignment whose first literal opens
-  with the verb; any `r`/`u`/`f`/`b` prefix) or as a Core `select`/`update`/`delete` with no
+  with the verb; any `r`/`u`/`f`/`b` prefix) or as a Core `select`/`update`/`delete` of the table,
+  bare or module-qualified (`drawings`, `m.drawings`, `models.drawings`), with no
   `.where(... owner_user_id == ...)`. Scope: `services/api/candleviewer/**`, not migrations. Fix:
   add `AND owner_user_id = CAST(:owner AS uuid)`, or annotate with a reason.
 - **Does not match:** `INSERT ... VALUES` (an upsert too), `drawing_templates`, text built before
   the call (`cv-no-raw-sql-interpolation` owns construction). The predicate is looked for, not
-  parsed: one under `OR`/`or_()` or in a subselect passes (the repository's unit test covers its
+  parsed: one under `OR`/`or_()`, `not_()` or `~`, in a subselect, in a SQL comment, or compared with
+  any right-hand side (`== body.owner_user_id`) passes (the repository's unit test covers its
   constants). Not seen: comma joins, a literal that is returned or held in a dict, `MERGE`, anything
-  after the first `+` of a `+`-joined statement; in Core, `select_from(drawings)` and table methods
-  such as `drawings.update()` (Core is unused for drawings today).
+  after the first `+` of a `+`-joined statement, a name split after its schema qualifier
+  (`"FROM public." "drawings"`, prefixed or not) or quoted (`"public"."drawings"`), a predicate on a
+  joined table's `owner_user_id` (`JOIN layouts l ... WHERE l.owner_user_id = :owner` passes), any
+  bind named `:owner...` (`:owner_from_body` passes); in Core, `select_from(drawings)`, table
+  methods such as `drawings.update()`, a table held in a variable or an attribute (the class-based
+  repository's idiom, `self.table = m.drawings`), `sa.table("drawings")` and
+  `getattr(m, "drawings")` (Core is unused for drawings today).
 - **Deliberate-regression fixture:** the `ruleid` lines of
   `.semgrep/tests/cv-drawings-query-missing-owner-filter/`, with the annotated multi-line statement
   that proves the marker placement the four exceptions use.
@@ -84,8 +99,8 @@ E15-T01's spec decision on #402, SR-E14-09).
 - **Does not match:** `request` alone (`caller(request, ...)` stays clean), request data at a
   non-owner argument, response models (`..Out`, `..Response`, `..Row`). Search mode, not taint mode:
   one rule cannot hold the structural schema arm. Not seen: a handler parameter named `owner`,
-  `getattr`, a non-owner-named intermediate, camelCase fields, a hoisted `repo = store()` receiver;
-  DR1's 422 test and the repository tests own the rest. **Fixture:**
+  `getattr`, a non-owner-named intermediate, camelCase fields, a hoisted `repo = store()` receiver,
+  a `user_id=` keyword or dict key; DR1's 422 test and the repository tests own the rest. **Fixture:**
   `.semgrep/tests/cv-drawings-owner-from-body/`.
 
 ## cv-drawings-unbounded-geometry
@@ -98,8 +113,8 @@ E15-T01's spec decision on #402, SR-E14-09).
   `_parse(DrawingIn, text)`, then `_fields(body)`.
 - **Does not match:** `_ListQuery` (`extra="ignore"`: unknown query parameters are ignored, as
   FastAPI does), `model_copy()` without `update`. A tripwire on the roads round the validator, not a
-  proof. Not seen: `__new__`, `Extra.allow`, a v1 `class Config`, a dict held in a variable, a
-  free-form `dict`/`Any` field on a request model. **Fixture:**
+  proof. Not seen: `__new__`, `Extra.allow`, a v1 `class Config`, a dict held in a variable or built
+  by `dict(geometry=...)`, a free-form `dict`/`Any` field on a request model. **Fixture:**
   `.semgrep/tests/cv-drawings-unbounded-geometry/`.
 
 ## cv-drawings-batch-unvalidated-ids
@@ -113,7 +128,8 @@ E15-T01's spec decision on #402, SR-E14-09).
   `store().apply_batch(owner, ops)`.
 - **Does not match:** `_INSERT_MANY` (a create touches no existing row; a key collision is refused
   atomically). A structural heuristic: not seen are a snapshot taken in a helper, `enumerate(ops)`,
-  a generator inside `gather` and an aliased constant. **Fixture:**
+  `list(ops)`, a loop over `ids` or another name than `ops`/`operations`, a generator inside
+  `gather` and an aliased constant. **Fixture:**
   `.semgrep/tests/cv-drawings-batch-unvalidated-ids/`.
 
 ## cv-drawings-pixel-geometry
@@ -136,9 +152,12 @@ E15-T01's spec decision on #402, SR-E14-09).
   `setHTMLUnsafe`, `parseHTMLUnsafe`), `document.write(ln)`, `createContextualFragment`, `srcdoc`,
   CSS strings (`cssText`, `insertRule`, `setAttribute("style", ...)` with a non-literal), each also
   named by a string key (`el["innerHTML"] = s`, a local constant key included, which `no-unsanitized`
-  does not read), and `href`, `src`, `style`, `aria-label`, `aria-description` or `title` built by `+`
-  or a template with a substitution (JSX, `setAttribute` with the name in any case, a DOM property,
-  `createElement` props). Scope: the paths of
+  does not read; `setAttribute("srcdoc" | "style", ...)` too), the raw-HTML keys and a non-literal
+  `cssText` also by an `Object.assign` property bag (`Object.assign(el, { innerHTML: s })`), and
+  `document.write(ln)` reached through strict TypeScript's `!` or `?.`
+  (`frame.contentDocument!.write(s)`), and `href`, `src`, `style`, `aria-label`,
+  `aria-description` or `title` built by `+` or a template with a substitution (JSX, `setAttribute`
+  with the name in any case or a backtick string, a DOM property, `createElement` props). Scope: the paths of
   `tools/ci/no-inline-suppression-paths.json`. The message points to a React text child,
   `textContent` or `setAttribute(name, raw)`, never to stripping characters (it breaks RTL text and
   emoji).
@@ -152,10 +171,16 @@ E15-T01's spec decision on #402, SR-E14-09).
   `aria-labelledby`); with the scope removed it finds 5 such `aria-label`s in the frontend, none at
   a raw-HTML sink. Not seen: a conditional of templates, `.join`, `DOMParser`, a raw `href` from data,
   deliberate reflection (`Reflect.set(el, "innerHTML", s)`, a property descriptor's `set.call`), a
-  `document` reached through an alias or a cast, an attribute name held in a variable, and `.mts` or
-  `.cts` files, which Semgrep does not read (the lint ban covers them). Fixture-proven until E14-S08.
+  `document` reached through an alias or in parentheses, an `Object.assign` bag's URL, name or
+  `style` key, a computed key that is no literal, a bag held in a variable or a spread argument, an
+  attribute name held in a variable, a string-keyed `setAttribute` of a URL or name, a module-scope
+  constant key read inside a function declaration or a class method (inside an arrow or a function
+  expression it is seen; a constant imported from another module never is), and `.mts` or `.cts`
+  files, which Semgrep does not read (the lint ban covers only its `no-unsanitized` forms there: no
+  `createElement` props, string keys or URL, name and CSS arms, and the engine layer has no raw-HTML
+  lint). Fixture-proven until E14-S08.
 - **Deliberate-regression fixture:** `.semgrep/tests/cv-drawings-text-to-html-sink/` (a `ruleid` per
-  sink, form and root; the shell rule alone misses 43 of its 49, every string-key,
+  sink, form and root; the shell rule alone misses 62 of its 68, every string-key,
   `setHTMLUnsafe`, `style` and attribute-name form among them).
 
 ## cv-drawings-pixel-geometry-ts
@@ -190,10 +215,13 @@ E15-T01's spec decision on #402, SR-E14-09).
   `lint` job.
 - **Matches:** in source files under the paths of `tools/ci/no-inline-suppression-paths.json`, a
   comment holding `eslint-disable[-next-line|-line]`, an ESLint config comment such as
-  `/* eslint no-console: off */`, `@ts-ignore`, `@ts-expect-error`, `nosemgrep` or `nosem` that is no
-  reviewed annotation: `reason=<token> owner=@<handle> review=YYYY-MM-DD` in the same comment (the
-  grammar and 180-day cap of `tools/ci/suppressions.py`, CI-SEC-006). A marker that opens a line inside a block comment counts:
-  ESLint reads `/*`, a newline and `eslint-disable` as a directive.
+  `/* eslint no-console: off */`, `@ts-ignore`, `@ts-expect-error` (as tsc reads them, with no word
+  boundary after) or `nosemgrep` or any `nosem...` word that is no reviewed annotation:
+  `reason=<token> owner=@CandleViewer/security review=YYYY-MM-DD` in the same comment (the grammar and
+  180-day cap of `tools/ci/suppressions.py`, CI-SEC-006, which takes any `@handle`: on these paths
+  only the security team may own one, the ticket's Security-engineer review). A marker that opens a
+  line inside a block comment counts (ESLint reads `/*`, a newline and `eslint-disable` as a
+  directive; tsc reads any run of `/` and `*` before `@ts-...`), and so does each marker of a line.
 - **Does not match:** a word in a string, a Markdown file, a directory symlink or `@ts-nocheck`
   (typescript-eslint bans it). An annotated `eslint-disable` in a listed path still fails the lint:
   it is inert, so it warns.
@@ -254,10 +282,21 @@ under `nice -n 10`:
 - **PR-2's two rules** take 2.8 s and 4.4 s in the checker at load 5.6, and read no file in the product
   scan (their directories do not exist yet). With PR-1's five that is about 25 s on a quiet host, under
   the bound, and over it on a busy one.
+- **The exception-site pin** (`check_drawings_exception_sites.py`) is one more `semgrep scan` of the
+  five rules over `services/api/candleviewer` with `--disable-nosem`: 26 s of CPU and 51 s wall at
+  load 17 on the shared VPS, of which the matching is about a second (the rest is Semgrep's start-up
+  and the tree walk). It is a step of its own in `semgrep-bandit`, within that job's budget, and the
+  part of this gate that goes over the ticket's 30 s when added to the rules above on a busy host.
+  Not measured on a CI runner.
 
 ## Requesting an exception
 
 Fix the code if you can. Otherwise add
 `# nosemgrep: <rule-id> reason=<token> owner=@<handle> review=YYYY-MM-DD` (at most 180 days) on the
-line above the finding's first line, with the rationale above it, and tag `security-review`; a High
-finding or an exception that outlives a release also follows `04-security-program.md` section 16.2.
+line above the finding's first line, with the rationale above it, and tag `security-review`; an
+exception of `cv-drawings-query-missing-owner-filter` is also listed in
+`tools/ci/drawings-exception-sites.json` (its one `rule` names that rule, the only one with exceptions
+today; another rule's exception needs the list to name rules per site), by the constant its statement
+assigns, else as `line N`, which moves with any edit above it,
+and a High finding or an exception that outlives a release also follows `04-security-program.md`
+section 16.2.

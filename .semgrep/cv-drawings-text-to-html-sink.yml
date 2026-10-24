@@ -2,8 +2,9 @@
 # user content. Syntactic, not taint: a text sink that builds a string is flagged whatever it is built
 # from; a raw variable is not "built". Beyond `cv-shell-dangerously-set-inner-html` (whose scope has no
 # literal drawing path nor the engine layer) it adds `document.write`, `createContextualFragment`,
-# `srcdoc`, `setHTMLUnsafe`, each sink named by a string key, string-built URL, name and style
-# attributes, and CSS strings.
+# `srcdoc`, `setHTMLUnsafe`, each sink named by a string key (the raw-HTML ones and a non-literal
+# `cssText` also by an `Object.assign` property bag), string-built URL, name and style attributes,
+# and CSS strings.
 rules:
   - id: cv-drawings-text-to-html-sink
     languages: [typescript, javascript]
@@ -37,33 +38,61 @@ rules:
       - pattern: $X["setHTMLUnsafe"](...)
       - pattern: $D.parseHTMLUnsafe(...)
       - pattern: $R.createContextualFragment(...)
+      - pattern: $R["createContextualFragment"](...)
+      # `!` and `?.` are strict TypeScript's spellings of a nullable `contentDocument` (#4411's L3).
       - patterns:
           - pattern-either:
               - pattern: $D.write(...)
               - pattern: $D.writeln(...)
+              - pattern: $D?.write(...)
+              - pattern: $D?.writeln(...)
+              - pattern: $D["write"](...)
+              - pattern: $D["writeln"](...)
           - metavariable-regex:
               metavariable: $D
-              regex: '^(?:[\w$.]*\.)?(?:document|contentDocument)$'
+              regex: '^(?:[\w$.!?]*\.)?(?:document|contentDocument)!?$'
       - pattern: <$EL ... srcDoc={...} ... />
       - pattern: "{..., srcDoc: ..., ...}"
+      - patterns:
+          - pattern: "Object.assign($X, ..., {..., $K: $V, ...}, ...)"
+          - metavariable-regex:
+              metavariable: $K
+              regex: '^["'']?(?:innerHTML|outerHTML|srcdoc)["'']?$'
+      # A CSS string in a bag, unless it is a literal (#4411's L4), as the `cssText` arms above.
+      - patterns:
+          - pattern: "Object.assign($X, ..., {..., $K: $V, ...}, ...)"
+          - metavariable-regex:
+              metavariable: $K
+              regex: '^["'']?cssText["'']?$'
+          - metavariable-pattern:
+              metavariable: $V
+              patterns:
+                - pattern-not: '"..."'
       - pattern: $X.srcdoc = $V
       - pattern: $X["srcdoc"] = $V
+      # Semgrep binds a template-literal name without its closing backtick (`` `srcdoc ``): `?` below.
       - patterns:
-          - pattern: $X.setAttribute($N, ...)
+          - pattern-either:
+              - pattern: $X.setAttribute($N, ...)
+              - pattern: $X["setAttribute"]($N, ...)
           - metavariable-regex:
               metavariable: $N
-              regex: '(?i)^["'']srcdoc["'']$'
+              regex: '(?i)^["''`]srcdoc["''`]?$'
       # CSS strings: the CSSOM (`style.color = ...`, `setProperty`) takes a value, not a string of rules.
       - patterns:
           - pattern-either:
               - pattern: $X.cssText = $V
               - pattern: $X["cssText"] = $V
               - pattern: $S.insertRule($V, ...)
+              - pattern: $S["insertRule"]($V, ...)
               - pattern: $X.setAttribute("style", $V)
+              - pattern: $X["setAttribute"]("style", $V)
           - pattern-not: $X.cssText = "..."
           - pattern-not: $X["cssText"] = "..."
           - pattern-not: $S.insertRule("...", ...)
+          - pattern-not: $S["insertRule"]("...", ...)
           - pattern-not: $X.setAttribute("style", "...")
+          - pattern-not: $X["setAttribute"]("style", "...")
       # URL, accessible-name and style attributes built by concatenation or templating. A literal, a call,
       # a raw variable and a template without a substitution are not built; a `style` object is the CSSOM path.
       - patterns:
@@ -86,7 +115,7 @@ rules:
               - pattern: "$E.setAttribute($N, `...${$X}...`)"
           - metavariable-regex:
               metavariable: $N
-              regex: '(?i)^["''](?:href|src|style|aria-label|aria-description|title)["'']$'
+              regex: '(?i)^["''`](?:href|src|style|aria-label|aria-description|title)["''`]?$'
       - patterns:
           - pattern-either:
               - pattern: $E.$P = $X + $Y
