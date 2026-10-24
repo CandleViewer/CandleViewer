@@ -26,12 +26,15 @@ through `WAITING_ENTRY` whose read shows the position open with no stop at all (
 only E29-T06's pass clears); a hold ends once its key is found clear or held no more. Pages name
 ids only; a gate task's unexpected error is logged by its type.
 
-The startup floor (Q7): every unanswered row created before the runtime started (`started_at`, from
-the database's clock) waits whatever its age: each listing passes its own `now`, never before the
-start, and `bound_s = min(bound, now - start)`, so the cutoff is `max(now - bound, start)`, the app
-clock behind the database's or not. Until the start is known, `clear` is `StoreUnavailable` and a
-resolution decides nothing (`read_failed`): a read with no bound would void blind.
-`aclose()` cancels and awaits every resolution the gate runs.
+The startup floor (Q7): every unanswered row created before the runtime started waits whatever its
+age. `start_floor()` reads the start once from the database's clock before the runtime writes any
+stop row (the startup sweep's first step, retried with it); each listing passes its own `now`,
+never before the start, and `bound_s = min(bound, now - start)`, so the cutoff is `max(now - bound,
+start)`, the app clock behind the database's or not. Until the start is known, `clear` is
+`StoreUnavailable` and a resolution decides nothing (`read_failed`): a read with no bound would void
+blind. `start_pass(account)` is 20 Sec.6.2 step 2's eager pass over one account's waiting keys,
+never awaited, one per account at a time: an account the binding refuses is paged there, its keys
+never read. `aclose()` cancels and awaits every task the gate owns.
 """
 
 from __future__ import annotations
@@ -44,10 +47,11 @@ from datetime import datetime
 from functools import partial
 from types import MappingProxyType
 from typing import Any, Final
+from uuid import UUID
 
 import structlog
 
-from candleviewer.domain.primitives import Environment
+from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.ports import TradingPort
 from candleviewer.observability import spawn
 from candleviewer.observability.metrics import Metrics
@@ -161,10 +165,22 @@ class ResolvingStopGate:
         counter = metrics.counter(spec.name, spec.help, spec.labels, max_series=spec.max_series)
         self._outcomes = counter
         self._running: dict[PositionKey, asyncio.Task[None]] = {}
+        self._passes: dict[UUID, asyncio.Task[None]] = {}
         self._cooling: OrderedDict[PositionKey, float] = OrderedDict()
         self._holds: OrderedDict[PositionKey, set[str]] = OrderedDict()
         self._freed = asyncio.Event()
         self._closed = False
+
+    async def start_floor(self) -> datetime:
+        """The startup floor's start, read once from the database's clock; a read that fails
+        raises, and the next call reads again."""
+        at = self._started_at
+        if at is None:
+            at = await self._rows.database_now()
+            if at.tzinfo is None:
+                raise ValueError("the database's clock reads an aware time")
+            self._started_at = at
+        return at
 
     async def clear(
         self, key: PositionKey, *, wait_s: float = 0.0, protective: bool = False
@@ -195,10 +211,20 @@ class ResolvingStopGate:
         _log().info("oms_stop_request_waiting", symbol=key.symbol, reading=task is not None)
         raise StopRequestPending(retry_after_s=STOP_REQUEST_RETRY_AFTER_S)
 
+    def start_pass(self, account_id: UUID) -> None:
+        """20 Sec.6.2 step 2's eager pass over the account's waiting keys, owned, never awaited;
+        one per account at a time, so the sweep's retries add none while it runs (C-2.18)."""
+        running = self._passes.get(account_id)
+        if self._closed or (running is not None and not running.done()):
+            return
+        task = spawn(self._pass(account_id), name="oms-stop-pass")
+        self._passes[account_id] = task
+        task.add_done_callback(partial(self._passed, account_id))
+
     async def aclose(self) -> None:
-        """Cancel and await every resolution (20 Sec.6.2 `stop()`); none starts after."""
+        """Cancel and await every resolution and pass (20 Sec.6.2 `stop()`); none starts after."""
         self._closed = True
-        tasks = list(self._running.values())
+        tasks = [*self._passes.values(), *self._running.values()]
         for task in tasks:
             task.cancel()
         if tasks:
@@ -258,6 +284,11 @@ class ResolvingStopGate:
             del self._running[key]
         _failed(task)
         self._freed.set()
+
+    def _passed(self, account_id: UUID, task: asyncio.Task[None]) -> None:
+        if self._passes.get(account_id) is task:
+            del self._passes[account_id]
+        _failed(task)
 
     async def _resolve(self, key: PositionKey) -> None:
         counted: list[RequestDecision] = []
@@ -347,6 +378,32 @@ class ResolvingStopGate:
             self._pager.raise_alert("page", summary, machine_kind="order")
         except Exception as exc:  # the page is lost, never what it pages on
             _log().critical("oms_pager_failed", summary=summary, failure=type(exc).__name__)
+
+    async def _pass(self, account_id: UUID) -> None:
+        """One account's eager pass: each waiting key started as an entry would start it, waiting
+        for a slot rather than refused. An account refused (paged by the binding), or a read that
+        fails, leaves its keys to the gate, never read here."""
+        listing = self._listing()
+        try:
+            if listing is None:
+                raise StoreUnavailable
+            now, bound = listing
+            async with asyncio.timeout(self._resolution_timeout_s):
+                keys = await self._rows.waiting_keys(account_id, now=now, bound_s=bound)
+                if keys:
+                    await self._accounts.trading_account(AccountId(account_id))
+        except Exception as exc:  # the gate still resolves each key before its next request
+            failure = type(exc).__name__
+            _log().warning("oms_stop_pass_skipped", account_id=str(account_id), failure=failure)
+            return
+        for symbol, position_idx in keys:
+            key = PositionKey(AccountId(account_id), symbol, position_idx)
+            while self._busy() >= self._max - 1:  # an entry's slots: the kept one stays an attach's
+                self._freed.clear()
+                await self._freed.wait()
+            running = self._running.get(key)
+            if running is None or running.done():
+                self._start(key, False)
 
 
 def _where(key: PositionKey) -> str:
