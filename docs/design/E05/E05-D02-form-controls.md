@@ -24,7 +24,7 @@ cited). They apply here unchanged and are cited as "slice 1 §n", "slice 1 A3" a
 this slice meets them, §5.2 records each clash and how it is resolved.
 **Key.** `05`, `14`, `15`, `16` are the `docs/plan/` documents by number; D09 is `docs/design/E09/E09-D09.md`.
 `path:line` references are at `origin/main` `5a382efec`, except E30-D04's, E29-D02's and E14-D04's, which merged after
-it and are cited at this PR's base, `f128ba6c6`.
+it and are cited at `f128ba6c6` (this PR's base is now `2b25eff38`).
 
 ## 1. What this slice specifies
 
@@ -152,13 +152,13 @@ inside its well (E30-D04 §2.5 (2); §6 G23), and the reason line is CMP-040's, 
     string. It emits no audit and no analytics.
 25. **What is not T2** (the standing rulings; D09 §9.1). _Validity_ (conventions 23): an invalid value is a message, not
     a lock, and an option that the form's own rules make unavailable, with a stated reason, takes E30-D04 §2.5's
-    validity look (ruled as LANE-55, `E30-D04.md:203`; conventions 26). _Busy:_ a control whose own request is in flight
-    — a form submitting (its fields stay focusable and `readOnly`, `14:144` SCR-001 "fields locked"), a sort reading
-    pages, a search — is focusable, `aria-busy` where the role allows it, with no lock and no reason (E42-D03 §7's sort
-    header). _Availability:_ nothing refuses the action but what it needs is not there yet — no rows, no results, days
-    outside the recorded range, a stepper at its bound — shown as an empty, loading or bound state with its own words.
-    _Read-only by nature:_ a value nobody may edit here is `readOnly` (conventions 22) or plain text. _Plain disabled:_
-    unavailable to everyone in this state.
+    validity look (E30-D02 D3, as E30-D04 §2.5 writes it, `E30-D04.md:203`; conventions 26). _Busy:_ a control whose own
+    request is in flight — a form submitting (its fields stay focusable and `readOnly`, `14:144` SCR-001 "fields
+    locked"), a sort reading pages, a search — is focusable, `aria-busy` where the role allows it, with no lock and no
+    reason (E42-D03 §7's sort header). _Availability:_ nothing refuses the action but what it needs is not there yet —
+    no rows, no results, days outside the recorded range, a stepper at its bound — shown as an empty, loading or bound
+    state with its own words. _Read-only by nature:_ a value nobody may edit here is `readOnly` (conventions 22) or
+    plain text. _Plain disabled:_ unavailable to everyone in this state.
 26. **Popups** (CMP-009's listbox, CMP-048's results, CMP-047's calendar). The surface is `color.surface.overlay`,
     `elevation.popover`, `radius.card`, with a 1 px `color.border.default` edge (decorative: the shadow and the position
     carry it) and padding-block `space.inset.xs`; it is anchored `space.inset.xs` under the field, above it when the
