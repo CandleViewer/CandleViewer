@@ -453,6 +453,35 @@ async def test_a_partial_stop_on_a_flat_book_adds_no_order() -> None:
     assert await port.open_orders(_ref()) == []
 
 
+async def test_each_change_to_an_order_stamps_updated_at_as_the_venue_does() -> None:
+    """24 §14.4: `updated_at` is the time of an order's last change. A create, a partial stop's
+    order, an amend and a cancel each stamp it, beside `created_at` and `terminal_at`, so B1's
+    `updated_time` never falls back to the push's creation time for an order the fake made."""
+    now = [T0]
+    port = FakeTradingPort(environment="demo", now_us=lambda: now[0])
+    port.seed_position(_position())
+    await port.place_order(_place())
+    stop = TradingStopRequest(
+        account=_ref(), symbol="BTCUSDT", tpsl_mode="partial", stop_loss=Decimal("58000"),
+        sl_size=Decimal("0.4"),
+    )  # fmt: skip
+    await port.set_trading_stop(stop)
+    created = await port.open_orders(_ref())  # the plain order, then the partial stop's
+    assert [(o.created_at, o.updated_at) for o in created] == [(T0, T0), (T0, T0)]
+    now[0] = T0 + 5
+    amend = AmendOrderRequest(
+        account=_ref(), symbol="BTCUSDT", order_link_id=_link(), price=Decimal("59000")
+    )
+    await port.amend_order(amend)
+    [plain] = await port.open_orders(_ref(), order_link_id=_link())
+    assert (plain.created_at, plain.updated_at) == (T0, T0 + 5)
+    now[0] = T0 + 9
+    cancel = CancelOrderRequest(account=_ref(), symbol="BTCUSDT", order_link_id=_link())
+    await port.cancel_order(cancel)
+    [gone] = await port.order_history(_ref(), order_link_id=_link())
+    assert (gone.terminal_at, gone.updated_at) == (T0 + 9, T0 + 9)
+
+
 async def test_reads_answer_the_seeded_state_by_account_and_window() -> None:
     port = _port()
     fill = Execution(

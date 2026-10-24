@@ -306,7 +306,8 @@ class FakeTradingPort:
     subscriber, and an account has one subscriber at a time, as the exchange's private stream
     has one stream per account (a second is refused until the first is closed or ends). It does
     not model a refusal the venue gives on its own (a stop on a flat position, a margin
-    shortfall): script it."""
+    shortfall): script it. An order it holds states `updated_at`, the time of its last change (a
+    create, an amend, a cancel), as the venue's rows do (24 §14.4)."""
 
     def __init__(
         self,
@@ -462,7 +463,9 @@ class FakeTradingPort:
             for name in ("qty", "price", "trigger_price", "take_profit", "stop_loss")
             if (value := getattr(req, name)) is not None
         }
-        self._open[key] = self._open[key].model_copy(update=changes)
+        self._open[key] = self._open[key].model_copy(
+            update=changes | {"updated_at": self._now_us()}
+        )
         return _ack(self._open[key].order_link_id, self._open[key].exchange_order_id)
 
     async def cancel_order(self, req: CancelOrderRequest) -> OrderAck:
@@ -545,6 +548,7 @@ class FakeTradingPort:
                 continue
             self._next_id += 1
             exchange_order_id = f"fake-{self._next_id:012d}"
+            now = self._now_us()
             self._open[exchange_order_id] = Order(
                 order_link_id=ext_key(exchange_order_id),
                 exchange_order_id=exchange_order_id,
@@ -558,8 +562,9 @@ class FakeTradingPort:
                 filled_qty=Decimal(0),
                 leaves_qty=size,
                 avg_fill_price=None,
-                created_at=self._now_us(),
+                created_at=now,
                 terminal_at=None,
+                updated_at=now,
                 reduce_only=True,
                 trigger_price=trigger,
                 tpsl_mode="partial",
@@ -725,6 +730,7 @@ class FakeTradingPort:
         self._seen.add((req.account.uid, req.order_link_id))
         self._next_id += 1
         exchange_order_id = f"fake-{self._next_id:012d}"
+        now = self._now_us()
         order = Order(
             order_link_id=req.order_link_id,
             exchange_order_id=exchange_order_id,
@@ -738,8 +744,9 @@ class FakeTradingPort:
             filled_qty=Decimal(0),
             leaves_qty=req.qty,
             avg_fill_price=None,
-            created_at=self._now_us(),
+            created_at=now,
             terminal_at=None,
+            updated_at=now,
             reduce_only=req.reduce_only,
             trigger_price=req.trigger_price,
             stop_loss=req.stop_loss,
@@ -768,8 +775,9 @@ class FakeTradingPort:
         return None
 
     def _close(self, key: str, state: Literal["cancelled"]) -> Order:
+        now = self._now_us()
         order = self._open.pop(key).model_copy(
-            update={"state": state, "terminal_at": self._now_us()}
+            update={"state": state, "terminal_at": now, "updated_at": now}
         )
         self._history[key] = order
         return order
