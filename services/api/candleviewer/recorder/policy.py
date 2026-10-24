@@ -292,7 +292,10 @@ class PolicyControlSurface(Protocol):
         """The end of the stop grace as an aware UTC instant, or None when not lingering."""
 
     def start_refusal(self, symbol: str) -> RefusalCause | None:
-        """Why the latest start was refused, or None: not refused, started or no longer wanted."""
+        """Why the latest start was refused, or None: not refused, started or no longer wanted.
+        When several reasons are refused, the one whose refusal began last answers (a reason
+        refused again keeps its place): the lowest in precedence of those refused together (a
+        chart's `disk_pressure` reads over a position's `symbol_cap`)."""
 
     def start_refused(self) -> tuple[StartRefused, ...]:
         """Every symbol with a start refusal now, in symbol order, each as `start_refusal(symbol)`
@@ -746,7 +749,7 @@ class RecordingPolicy:
     def linger_until(self, symbol: str) -> datetime | None:
         s = self._syms.get(symbol)
         if s is None or s.linger_deadline is None or self.leaf(symbol) != "lingering":
-            return None  # a pinned symbol keeps its old deadline once it has stopped
+            return None  # a failed stop leaves the leaf `error` with its deadline still set
         return datetime.fromtimestamp(s.linger_deadline, UTC)  # `_now` reads wall-clock seconds
 
     def start_refusal(self, symbol: str) -> RefusalCause | None:
@@ -907,8 +910,10 @@ class RecordingPolicy:
             await self._recorded.soft_remove(row["id"])  # B11 stopped: the auto row goes too
         interp = self._charts.pop(symbol, None)
         self._gateway.unregister(symbol)
+        if (s := self._syms.get(symbol)) is not None:
+            s.linger_deadline = None  # a pinned entry stays: its spent deadline must not stay due
         if interp is not None:
-            await interp.stop()
+            await interp.stop()  # after the clear: a stop that raises leaves no deadline due
 
     async def _retry_error(self, symbol: str, s: _Sym) -> None:
         """B11 `error --RETRY--> starting` with bounded backoff (audit outage, C-2.9)."""
@@ -978,8 +983,10 @@ class RecordingPolicy:
     async def _refuse(
         self, symbol: str, s: _Sym, reason: Reason, cause: RefusalCause = "symbol_cap"
     ) -> None:
-        """Cap or disk refusal: warning event + metric + audit, once per (symbol, reason) until
-        it starts; `_due` keeps it queued so every tick retries it."""
+        """Cap or disk refusal: warning event + metric + audit, once per (symbol, reason) until it
+        starts or its trigger lapses (`_reconcile` forgets a refusal whose reason is no longer
+        wanted, so one that returns is announced again); `_due` keeps it queued, so every tick
+        retries it."""
         again = reason in s.refused
         s.refused[reason] = cause  # the latest cause, announced or not
         if again:

@@ -106,6 +106,18 @@ async def test_start_refusal_follows_the_latest_cause_and_lapses_with_the_trigge
     assert capped.start_refusal("SOLUSDT") is None
 
 
+async def test_start_refusal_with_two_reasons_refused_answers_the_last_one(
+    capped: RecordingPolicy, clock: FakeClock, disk: list[bool]
+) -> None:
+    await capped.add_manual("BTCUSDT", OWNER)  # takes the slot
+    await capped.on_position_opened("SOLUSDT", "p1")  # refused for the cap
+    await capped.on_chart_opened("SOLUSDT", "c1")
+    clock.advance(60)
+    disk[0] = True
+    await capped.tick()  # the chart's start is refused too, for the disk
+    assert capped.start_refusal("SOLUSDT") == "disk_pressure"  # the lowest reason, refused last
+
+
 @pytest.mark.parametrize("name", ["linger_until", "start_refusal", "chart_open"])
 async def test_an_accessor_is_sync_and_changes_nothing(
     capped: RecordingPolicy, clock: FakeClock, name: str
