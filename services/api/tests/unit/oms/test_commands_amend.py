@@ -421,3 +421,55 @@ async def test_a_cancellation_before_the_send_propagates(
     with pytest.raises(asyncio.CancelledError):
         await rig.port.amend(_amend(order, stop_loss="58500"))
     assert rig.demo.calls == [] and rig.audits.written == []
+
+
+def _fixed_deadline(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> float:
+    """Every deadline the port takes, pinned far ahead, so the bounds it passes on are exact."""
+    fixed = asyncio.get_running_loop().time() + 1000.0
+    monkeypatch.setattr(rig.port, "_deadline", lambda _s: fixed)
+    return fixed
+
+
+async def test_the_venue_call_ends_before_the_settle_has_to(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fold 2 minor 1: the venue call's deadline is `AMEND_SETTLE_RESERVE_S` before the amend's,
+    so an answer just inside it still leaves the settle its time, and the rows are answered."""
+    order = await _live(rig)
+    fixed = _fixed_deadline(rig, monkeypatch)
+    venue_by: list[float] = []
+    settle_by: list[float | None] = []
+    real_venue, real_settle = rig.port._venue_gated, rig.port._settle_stop
+
+    async def venue(account: Any, call: Any, *, by: float) -> Any:
+        venue_by.append(by)
+        return await real_venue(account, call, by=by)
+
+    async def settle(*args: Any, **kwargs: Any) -> None:
+        settle_by.append(kwargs.get("by"))
+        await real_settle(*args, **kwargs)
+
+    monkeypatch.setattr(rig.port, "_venue_gated", venue)
+    monkeypatch.setattr(rig.port, "_settle_stop", settle)
+    assert (await rig.port.amend(_amend(order, stop_loss="58500")))["ok"] is True
+    assert venue_by == [fixed - oc.AMEND_SETTLE_RESERVE_S] and settle_by == [fixed]
+    assert {r.answered_at is not None for r in _rows(rig)} == {True}
+
+
+async def test_a_refusal_audit_has_the_grace_past_the_amends_deadline(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fold 2 nit 1: a refusal audited near the deadline is never cut off into `unknown`."""
+    order = await _live(rig)
+    fixed = _fixed_deadline(rig, monkeypatch)
+    audit_by: list[float | None] = []
+    real = rig.port._audit_order
+
+    async def audit(*args: Any, **kwargs: Any) -> None:
+        audit_by.append(kwargs.get("by"))
+        await real(*args, **kwargs)
+
+    monkeypatch.setattr(rig.port, "_audit_order", audit)
+    answer = await rig.port.amend(_amend(order, stop_loss="57999"))
+    assert answer["error_code"] == oc.STOP_LOOSENING_REFUSED
+    assert audit_by == [fixed + oc.AMEND_AUDIT_GRACE_S]
