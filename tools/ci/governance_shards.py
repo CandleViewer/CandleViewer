@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
-"""#3789: split the governance unit-test suite (`scripts/tests`, `scripts/gh/tests`) into shards.
+"""#3789: split the governance unit-test suites (`SUITES`) into shards.
 
 `governance.yml` runs one shard per matrix job, and its final `governance` job combines their
-coverage data, so the 85% gate on `scripts/**` still judges the whole suite. The files are the
-ones `pytest scripts/tests scripts/gh/tests` collects: recursive, pytest's default `python_files`
-(scripts/pytest.ini sets no other), no `__pycache__` or dot directories, as
-`tools/ci/py_test_lanes.py` lists services/api's. Files go greedily, heaviest first, to the
-lightest shard. `WEIGHTS` holds the measured cost, in seconds, of every file that took 0.5 s or
-more (one sequential run of `pytest -n 0 --durations=0` with coverage on, setup and teardown
-included; 2026-10-24: 5,959 tests, 174 s), and any other file costs `DEFAULT_WEIGHT`, about the
-median of the rest. So a new, renamed or moved file always lands in a shard, and the split is
-deterministic for a given set of files; stale weights cost balance, never coverage.
+coverage data, so the 85% gate on `scripts/**` still judges the whole suite. #4361: besides
+`scripts/tests` and `scripts/gh/tests`, the suites hold the infra script, alert-rule and dashboard
+tests (`infra/scripts/tests`, `infra/alertmanager/tests`, `infra/grafana/tests`), which no workflow
+ran. They need only PyYAML and pytest, and `--cov=scripts` measures `scripts/` alone, so they change
+no coverage figure. `EXCLUDED` holds what a suite collects but another lane runs (a test that fails
+by design under CI=true without a Grafana runs in the merge queue's integration lane);
+scripts/tests/test_no_orphaned_test_dirs.py fails on a test file that no workflow runs, and on an
+exclusion that no gating workflow runs. The files are the ones `pytest <suites>` collects, less
+`EXCLUDED`: recursive, pytest's default `python_files` (no pytest.ini sets another), no
+`__pycache__` or dot directories, as `tools/ci/py_test_lanes.py` lists services/api's. A shard that
+mixes `scripts/` and `infra/` files reads the root pytest.ini, whose addopts match
+scripts/pytest.ini's. Files go greedily, heaviest first, to the lightest shard. `WEIGHTS` holds the
+measured cost, in seconds, of every file that took 0.5 s or more (one sequential run of
+`pytest -n 0 --durations=0` with coverage on, setup and teardown included; 2026-10-24: 5,959 tests,
+174 s; #4361's two entries ran beside six of the table's files, scaled to them), and any other
+file costs `DEFAULT_WEIGHT`, about the median of the rest. So a new, renamed or moved file always
+lands in a shard, and the split is deterministic for a given set of files; stale weights cost
+balance, never coverage.
 
 Two rules for whoever edits the table. (a) A file that is not in the table falls to the
 lightest shard and is never dropped; `test_the_shards_partition_every_test_file` (in
@@ -30,8 +39,21 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SUITES = ("scripts/tests", "scripts/gh/tests")
-PYTHON_FILES = ("test_*.py", "*_test.py")  # pytest's default; scripts/pytest.ini sets no other
+SUITES = (
+    "scripts/tests",
+    "scripts/gh/tests",
+    "infra/scripts/tests",
+    "infra/alertmanager/tests",
+    "infra/grafana/tests",
+)
+#: Collected by a suite, run by another lane: {path: why, and which lane}.
+EXCLUDED: dict[str, str] = {
+    "infra/grafana/tests/test_live_render.py": (
+        "needs a running Grafana and fails by design under CI=true without GRAFANA_URL: the "
+        "integration lane (_job-integration.yml) starts one and runs it in the merge queue"
+    ),
+}
+PYTHON_FILES = ("test_*.py", "*_test.py")  # pytest's default; no pytest.ini sets another
 DEFAULT_WEIGHT = 0.1
 WEIGHTS: dict[str, float] = {
     "scripts/tests/test_e12_security_gates.py": 48.98,
@@ -55,6 +77,7 @@ WEIGHTS: dict[str, float] = {
     "scripts/tests/test_check_accepted_risk_expiry.py": 1.94,
     "scripts/tests/test_security_lane.py": 1.88,
     "scripts/tests/test_pr_metadata_yml.py": 1.57,
+    "infra/alertmanager/tests/test_alerting_config.py": 1.33,
     "scripts/tests/test_pnpm_effective_policy.py": 1.25,
     "scripts/tests/test_codeowners_backend_paths.py": 1.25,
     "scripts/tests/test_security_gate.py": 1.15,
@@ -67,20 +90,22 @@ WEIGHTS: dict[str, float] = {
     "scripts/tests/test_prepull_images.py": 0.68,
     "scripts/tests/test_nightly_issue.py": 0.62,
     "scripts/tests/test_web_tests_build_deps.py": 0.53,
+    "scripts/tests/test_no_orphaned_test_dirs.py": 0.53,
     "scripts/tests/test_check_backlog_twin_eol.py": 0.52,
 }
 
 
 def suite_files(root: Path = REPO_ROOT) -> list[str]:
-    """Every test module pytest collects from `SUITES`, as POSIX paths relative to `root`."""
+    """Every test module pytest collects from `SUITES` less `EXCLUDED`, as POSIX paths of `root`."""
     found: list[str] = []
     for suite in SUITES:
         for path in (root / suite).rglob("*.py"):
             parts = path.relative_to(root / suite).parts
             if any(part == "__pycache__" or part.startswith(".") for part in parts):
                 continue
-            if any(fnmatch.fnmatch(path.name, pattern) for pattern in PYTHON_FILES):
-                found.append(path.relative_to(root).as_posix())
+            name = path.relative_to(root).as_posix()
+            if name not in EXCLUDED and any(fnmatch.fnmatch(path.name, p) for p in PYTHON_FILES):
+                found.append(name)
     return sorted(found)
 
 
