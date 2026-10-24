@@ -12,6 +12,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.domain.order_link import account_tag
 from candleviewer.domain.primitives import AccountId, Symbol
@@ -253,3 +254,17 @@ async def test_an_order_meets_one_open_fold_only() -> None:
                 pass
         with port.fold(_REF, _BTC, _ids("c")):  # a disjoint fold opens beside it
             pass
+
+
+async def test_an_order_placed_after_the_coverage_read_is_taken_and_logged() -> None:
+    """The ruled residual: the venue's call takes every plain order resting on the symbol, one
+    placed after the coverage read too; the coalescer names each such order in a WARNING."""
+    venue = _venue("a", "b")
+    port, _, _ = _port(venue)
+    assert await port.coverage(_REF, _BTC, _ids("a", "b"))
+    venue.seed_order(_resting("other"), uid=_REF.uid)  # placed in the window
+    with capture_logs() as logs, port.fold(_REF, _BTC, _ids("a", "b")):
+        first = asyncio.create_task(port.cancel_order(_cancel("a")))
+        assert (await port.cancel_order(_cancel("b"))).ok and (await first).ok
+    [taken] = [e for e in logs if e["event"] == "oms_cancel_all_took_non_member"]
+    assert (taken["count"], taken["order_link_ids"]) == (1, _ids("other"))

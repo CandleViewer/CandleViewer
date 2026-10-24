@@ -18,8 +18,9 @@ through as it is but a fold member's `cancel_order`, which meets its fold's `Can
 - **The residual** (named for the security look, as ruled): an order placed on the symbol between
   the coverage read and the venue call is cancelled by the venue's call too, with no B1 `CANCEL`
   of its own; B1 learns of it from the private stream and reconciliation, as of any cancel it did
-  not send (24 Sec.8.6). The window is the gather's bound plus the spacer's wait, at most
-  `GATHER_S + SPACER_WAIT_S`.
+  not send (24 Sec.8.6), and the coalescer logs each order the call took that was no member
+  (`oms_cancel_all_took_non_member`). The window is the gather's bound plus the spacer's wait, at
+  most `GATHER_S + SPACER_WAIT_S`.
 
 One event loop's, as the order lanes are. Nothing here imports the exchange adapter (C-2.2).
 """
@@ -113,7 +114,17 @@ class CancelAllCoalescer:
             if not await self._spacer.turn(account.uid, deadline=deadline):
                 _log().warning("oms_cancel_all_slot_refused", symbol=symbol)
                 return None
-            return await self._inner.cancel_all(account, symbol)
+            acks = await self._inner.cancel_all(account, symbol)
+            taken = sorted(
+                ack.order_link_id for ack in acks
+                if ack.ok and ack.order_link_id and ack.order_link_id not in members
+            )  # fmt: skip
+            if taken:  # the residual (module docstring): seen here, settled by B1's own reads
+                _log().warning(
+                    "oms_cancel_all_took_non_member", symbol=symbol, count=len(taken),
+                    order_link_ids=taken,
+                )  # fmt: skip
+            return acks
 
         join = CancelAllJoin(
             members, send, monotonic=self._monotonic, sleep=self._sleep, gather_s=self._gather_s
