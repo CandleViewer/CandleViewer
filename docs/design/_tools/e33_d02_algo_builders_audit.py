@@ -8,8 +8,10 @@ high-contrast (`themes.json` layering) against the role's bar; `rejected-*`, `de
 `aaa-target` rows are reported, never gated; (2) every token the spec binds, resolved or MISSING;
 (3) the pure arithmetic the boards quote (the TWAP schedule, the iceberg floor, the chase bound and
 the rate projections); (4) the plan facts the frames quote, parsed from text (`22` bounds vs `24`
-defaults, the two catalogue validation strings, the three memo caveats); (5) the copy gates on the
-spec; (6) the counts the boards and the draft quote. Exit 1 on a gated FAIL or a failed gate.
+defaults, the `24` defaults the frames override, the two catalogue validation strings, the three
+memo caveats); (5) the copy gates on the spec, the reduce-only CMP-158 sentence, and every
+`file:line` the spec cites by number (the row text must still sit there); (6) the counts the
+boards and the draft quote. Exit 1 on a gated FAIL or a failed gate.
 
 Usage: python3 -I docs/design/_tools/e33_d02_algo_builders_audit.py [--json] [--check]
        [--extra FILE ...]
@@ -49,6 +51,7 @@ MULTI = re.MULTILINE
 class Facts(TypedDict):
     bounds_22: dict[str, dict[str, str]]
     defaults_24: dict[str, dict[str, str]]
+    overrides_24: dict[str, dict[str, str]]
     catalogue_strings: list[str]
     caveats: dict[str, str]
     help_text: str
@@ -57,6 +60,48 @@ class Facts(TypedDict):
 
 
 BOUND = r"(minimum|maximum|default): ([^,}\s]+)"
+# `24` defaults the frames override (D02-C7): field -> the drawn default; `24`'s own is parsed.
+DRAWN_24 = {"catch_up": "proportional", "final_market_sweep": "leave as limit (no sweep)"}
+# Plan lines the spec cites by number at the branch base (`file:line` -> a substring of that line).
+# `14` lines after SCR-066 :1545 shift by the pointer lines this PR inserts above them, so a `14`
+# citation also passes at the cited line plus the number of E33-D02 pointer lines before it.
+CITED: tuple[tuple[str, int, str], ...] = (
+    ("14", 1540, "Slices of 0.0004 BTC are below the minimum"),
+    ("14", 1546, "algo.twap_previewed"),
+    ("14", 1552, "Visible size must be at least the minimum lot"),
+    ("14", 1555, "at most once every 5 s"),
+    ("14", 1557, "algo.iceberg_previewed"),
+    ("14", 1563, "max chase distance > offset"),
+    ("14", 1564, "stops and notifies"),
+    ("14", 1567, "repriced 7 times"),
+    ("14", 1568, "refuses configurations projected to exceed"),
+    ("22", 281, "**Read-only.**"),
+    ("22", 291, "**Protective writes (C-2.6).**"),
+    ("22", 6258, "twapExit:"),
+    ("23", 898, "`algo:{algo_id}`"),
+    ("24", 2820, "catch_up"),
+    ("24", 2826, "`final_market_sweep` (default `true`)"),
+    ("28", 3371, "| `working` | `CHILD_CANCELLED` |"),
+    ("28", 3373, "| `working` | `WS_DISCONNECT` |"),
+    ("28", 3384, "| `cooling_down` | `COOLDOWN_DUE` |"),
+    ("28", 3725, "| `armed` | `WS_DISCONNECT` |"),
+    ("28", 3730, "| `price_blocked` | `PRICE_OK` |"),
+    ("28", 3735, "| `paused` | `RESUME` |"),
+    ("28", 4088, "| `working` | `RATE_BUDGET_EXHAUSTED` |"),
+    ("28", 4090, "| `working` | `WS_DISCONNECT` |"),
+    ("28", 4093, "`on_timeout_is_market`"),
+    ("28", 4095, "| `bound_exceeded` | _always_ | — | `parked` |"),
+    ("28", 4099, "| `parked` | `CHILD_FILLED` |"),
+    ("28", 4100, "| `parked` | `USER_CANCEL` |"),
+)
+PLAN = {
+    "14": CAT14,
+    "22": API22,
+    "23": ROOT / "docs" / "plan" / "23-ws-protocol.md",
+    "24": DOC24,
+    "28": ROOT / "docs" / "plan" / "28-statechart-catalogue.md",
+}
+POINTER = "E33-D02.md](../design/E33/E33-D02.md)"
 # Private paths and hosts that never belong in a public file: generic patterns only, no personal
 # word and no hostname, whole or split; the path literal is split so this file never holds it.
 FORBIDDEN = (
@@ -223,15 +268,22 @@ def arithmetic() -> dict[str, dict[str, object]]:
     total, minutes, slices, cap, floor_slices = dec("2.000"), 30, 10, 450, 2000
     nominal, seconds = (total / slices).quantize(step, ROUND_FLOOR), minutes * 60
     dense = min(cap, seconds)
+    # The dense schedule and the catalogue's 0.0004 example are reachable configurations of their
+    # own: the dense total divides evenly over 450 slices (no remainder row), and 0.180 BTC over
+    # 450 slices reproduces the catalogue string inside slices 2-450 and the 1 s floor.
+    dense_total, min_lot_total = dec("1.800"), dec("0.180")
+    dense_qty = (dense_total / dense).quantize(step, ROUND_FLOOR)
     twap: dict[str, object] = {
         "total": float(total), "minutes": minutes, "slices": slices, "nominal": float(nominal),
         "lo": float(nominal * dec("0.80")), "hi": float(nominal * dec("1.20")),
         "interval_s": seconds // slices, "jitter_s": seconds // slices // 4,
         "derived_60s": seconds // 60, "cap": cap, "dense_slices": dense,
-        "dense_qty": float((total / dense).quantize(step, ROUND_FLOOR)),
+        "dense_total": float(dense_total), "dense_qty": float(dense_qty),
+        "dense_remainder": float(dense_total - dense_qty * dense),
         "dense_interval_s": seconds // dense, "dense_jitter_s": seconds // dense // 4,
         "dense_middle": dense - 2,
-        "min_lot_slices": 5000, "min_lot_qty": float((total / 5000).normalize()),
+        "min_lot_total": float(min_lot_total), "min_lot_slices": cap,
+        "min_lot_qty": float((min_lot_total / cap).normalize()),
         "floor_slices": floor_slices, "floor_interval_s": float(dec(seconds) / floor_slices),
         "floor_max": min(cap, seconds), "window_end_left": 0.40, "worst_limit": 64250.0,
         "min_interval_ms": 1000,
@@ -289,6 +341,17 @@ def plan_facts() -> Facts:
         }
     cat = CAT14.read_text(encoding="utf-8")
     memo = MEMO.read_text(encoding="utf-8")
+    sweep = re.search(r"`final_market_sweep` \(default `(\w+)`\)", doc)
+    overrides = {
+        "catch_up": {
+            "24": defaults["TwapParams"].get("catch_up", "MISSING"),
+            "drawn": DRAWN_24["catch_up"],
+        },
+        "final_market_sweep": {
+            "24": f"{sweep.group(1)} (prose, not in TwapParams)" if sweep else "MISSING",
+            "drawn": DRAWN_24["final_market_sweep"],
+        },
+    }
     caveats: dict[str, str] = {}
     for k in ("TWAP", "Iceberg", "Chase"):
         m = re.search(rf"- \*\*{k}:\*\* \"(.+?)\"\n", memo, re.DOTALL)
@@ -298,12 +361,27 @@ def plan_facts() -> Facts:
     return Facts(
         bounds_22=bounds,
         defaults_24=defaults,
+        overrides_24=overrides,
         catalogue_strings=re.findall(r'"(Slices of [^"]+|Visible size must [^"]+)"', cat),
         caveats=caveats,
         help_text=" ".join(help_m.group(1).split()) if help_m else "MISSING",
         link_down_in_memo=LINK_DOWN in memo,
         algo_kind=kind.group(1) if kind else "MISSING",
     )
+
+
+def cited_lines() -> list[str]:
+    """Every `file:line` the spec cites by number holds its row text (a `14` line may sit lower by
+    the pointer lines this PR inserts above it)."""
+    out: list[str] = []
+    texts = {k: PLAN[k].read_text(encoding="utf-8").split("\n") for k in PLAN}
+    for doc, line, want in CITED:
+        lines = texts[doc]
+        shift = sum(POINTER in ln for ln in lines[: line - 1]) if doc == "14" else 0
+        hits = [n for n in (line, line + shift) if 0 < n <= len(lines) and want in lines[n - 1]]
+        if not hits:
+            out.append(f"cited line drifted: `{doc}` :{line} no longer holds {want[:40]!r}")
+    return out
 
 
 def section(spec: str, a: int, b: int) -> str:
@@ -328,6 +406,12 @@ def gates(files: list[Path], facts: Facts, spec: str) -> list[str]:
         for f, rest in frames
         if "CMP-158" not in rest
     ]
+    bad += [
+        "spec: the reduce-only frame must name stop.algo_builder.reduce_only (C-2.6 path)"
+        for f, rest in frames
+        if f == "SCR-066/reduce-only" and "stop.algo_builder.reduce_only" not in rest
+    ]
+    bad += cited_lines()
     for f in files:
         t = f.read_text(encoding="utf-8")
         bad += [f"{f.name}: forbidden text {p}" for p in FORBIDDEN if re.search(p, t)]
