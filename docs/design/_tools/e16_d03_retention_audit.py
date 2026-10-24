@@ -9,14 +9,18 @@ kinds, the four actions, the five job states, the 1..3650 bounds, the seed numbe
 sentence, the storage example the fixture derives from); (4) the copy gates (the `14` validation
 sentence byte-for-byte, every T2 reason within 60 characters naming no data, no jargon in user copy,
 no private path or host, every cited id and line still valid); (5) the per-frame gates (every
-destructive frame carries its consequence sentence and its typed instruction, every T2 frame its lock,
+reduction frame carries its consequence sentence, every destructive frame its typed instruction, a timing
+clause and the undo line, every reduction kind its title / body / typed value, every T2 frame its lock,
 every validity-look frame its reason and no lock, the view-as row first, the absences named); (6) the
-counts the spec, the boards and the PR body quote. `--json` feeds the check-nums script; `--check`
-re-derives the spec's `audit:` markers; `--mutate-consequence` removes the consequence sentence from
-one reduction frame in memory and passes only when exactly one FAIL results (the gate's mutation test).
-Exit 1 on a gated FAIL or a failed gate.
+counts the spec, the boards and the PR body quote. The fixture is derived from the `22` storage example
+by the contract's own semantics: a reduction is a shorter TOTAL horizon (`21` `read_policy_row`), the
+fallback size is per symbol across its streams and its range is clamped to the recorded history.
+`--json` feeds the check-nums script; `--check` re-derives the spec's `audit:` markers;
+`--mutate-consequence` removes the consequence sentence from one reduction frame in memory and
+`--mutate-kinds` removes the undo line from one reduction-kind row; each passes only when exactly one
+FAIL results (the gates' mutation tests). Exit 1 on a gated FAIL or a failed gate.
 
-Usage: python3 -I docs/design/_tools/e16_d03_retention_audit.py [--json] [--check] [--mutate-consequence] [--extra F]
+Usage: python3 -I docs/design/_tools/e16_d03_retention_audit.py [--json] [--check] [--mutate-consequence] [--mutate-kinds] [--extra F]
 """
 
 from __future__ import annotations
@@ -49,13 +53,33 @@ FORBIDDEN = (
     r"file-i[d]=",
 )
 # Jargon the copy deck (section 14) never shows a user; checked on the deck's String column only.
-BANNED_COPY = (r"client-side", r"server-side", r"\bbackend\b", r"\bendpoint\b", r"\b422\b", r"\b409\b")
+BANNED_COPY = (
+    r"client-side",
+    r"server-side",
+    r"\bbackend\b",
+    r"\bendpoint\b",
+    r"\b422\b",
+    r"\b409\b",
+)
 # `14` :2753, byte-for-byte (the derived-stream rule in product terms).
 SENTENCE_14 = "Bars can't be deleted before the ticks they came from are kept — adjust the tiers."
 # `24` :3764, the daily job; `22` :5083, the exemption; both quoted in the spec.
 SENTENCE_24 = "Daily retention job (03:00 UTC)"
 SENTENCE_22_EXEMPT = "pinned symbols are exempt"
 VIEW_AS = "Read-only while viewing as {user}."
+# The undo line every destructive confirm ends with (spec section 5; E16-D02 :506).
+UNDO = "It cannot be undone. Replay, footprint history and the journal lose the deleted days."
+# The two timing clauses (BQ-8 / BQ-10 RULED): one of them in every destructive frame.
+TIMING = ("at the next retention run (daily, 03:00 UTC)", "a retention sweep starts now")
+# The worked example's typed constants beside the contract-derived ones (spec header): the lowered drop
+# window of kind K2, the per-symbol override days of F3 / K3 / K4, the running job's progress.
+EXAMPLE = {
+    "reduce_to": 7,
+    "lengthen_to": 90,
+    "drop_lower_to": 3,
+    "override_days": 14,
+    "progress_pct": 42,
+}
 # The absences (deferred capabilities drawn as absent, never as a lock): `22` :5086–5087.
 ABSENCES = ("downsample", "pin", "applies_to_pinned")
 ABSENT_FIELDS = ("downsample_to", "max_disk_gb", "archive_path", "enabled")
@@ -167,6 +191,7 @@ CITED_TABLE = """
 22 | 5091 | `409 conflict` while the retention scheduler is off (`CV_RETENTION_ENABLED`). A refused
 22 | 5093 | Audited as `retention.change` (the set before and after), written before the new set is
 22 | 5100 | - name: apply_now
+22 | 282 | answers `403 view_as_read_only` and changes nothing.
 22 | 11379 | (ADR-0004), so a restart loses every
 22 | 13934 | operationId: purgeRecordedData
 22 | 16052 | StreamKind:
@@ -235,6 +260,7 @@ E16D02 | 750 | **D-3 (audit vocabulary):**
 E16D02 | 760 | **D-8 (owner decision):**
 E16D02 | 769 | **D-12 (shell):**
 E16D02 | 771 | **D-13 (SCR-141/142):**
+E16D02 | 777 | **D-15 (2b in the grid):**
 E16D02 | 778 | **D-16 (the view-as notice):**
 E16D01 | 222 | "Older data was removed by the retention policy (<N> days)."
 """
@@ -380,8 +406,14 @@ def contract_facts(t: dict[str, str]) -> dict[str, object]:
     rp_in = api[api.index("    RetentionPolicyInput:") : api.index("    RetentionPolicy:")]
     put = api[api.index("operationId: setRetentionPolicies") : api.index("  /recording/sessions:")]
     put = " ".join(put.split())  # the description wraps; sentences are checked on one line
-    lst = api[api.index("operationId: listRetentionPolicies") : api.index("operationId: setRetentionPolicies")]
-    usage = api[api.index("operationId: getStorageUsage") : api.index("  /recording/retention-policies:")]
+    lst = api[
+        api.index("operationId: listRetentionPolicies") : api.index(
+            "operationId: setRetentionPolicies"
+        )
+    ]
+    usage = api[
+        api.index("operationId: getStorageUsage") : api.index("  /recording/retention-policies:")
+    ]
     job = api[api.index("    Job:\n") :]
     job = job[: job.index("        progress_pct:")]
     matrix = db[db.index("## 7. Retention policy matrix") :]
@@ -406,23 +438,28 @@ def contract_facts(t: dict[str, str]) -> dict[str, object]:
         "retain_min": int(first(r"minimum: (\d+)", rp_in)),
         "retain_max": int(first(r"maximum: (\d+)", rp_in)),
         "symbol_null_is_global": "Null = global default." in rp_in,
-        "applies_to_pinned_default": first(r"applies_to_pinned: \{ type: boolean, default: (\w+) \}", rp_in),
+        "applies_to_pinned_default": first(
+            r"applies_to_pinned: \{ type: boolean, default: (\w+) \}", rp_in
+        ),
         "input_fields": re.findall(r"^        (\w+):", rp_in, MULTI),
         "put_sentences": {
             "whole_set": "Replaces the whole set in one transaction." in put,
             "most_specific_first": "most-specific-first" in put,
             "exempt": SENTENCE_22_EXEMPT in put,
             "retain_days_by_action": "for `drop` the total horizon" in put,
-            "deferred_422": "`downsample`, `pin` and `applies_to_pinned: true` are `422 retention_invalid_policy`" in put,
+            "deferred_422": "`downsample`, `pin` and `applies_to_pinned: true` are `422 retention_invalid_policy`"
+            in put,
             "derived_422": "a stream derived from `trades` outlives it" in put,
             "unknown_field_422": "an unknown field is `422 validation_failed`" in put,
             "step_up": "Always needs the `recorder` step-up (`403 step_up_required`)" in put,
             "nightly": "Changes apply at the next nightly sweep" in put,
             "apply_now": "`apply_now=true` also" in put and "name: apply_now" in put,
             "job_running": "`409 job_running` while one is queued or running" in put,
-            "scheduler_off": "`409 conflict` while the retention scheduler is off (`CV_RETENTION_ENABLED`)" in put,
+            "scheduler_off": "`409 conflict` while the retention scheduler is off (`CV_RETENTION_ENABLED`)"
+            in put,
             "refused_stores_nothing": "A refused request stores nothing." in put,
-            "audit": "Audited as `retention.change` (the set before and after), written before the new set is" in put,
+            "audit": "Audited as `retention.change` (the set before and after), written before the new set is"
+            in put,
             "audit_unavailable": "`503 audit_unavailable` and nothing changes" in put,
             "rbac": "x-rbac: { permissions: [recording:write], scope: none }" in put,
         },
@@ -432,26 +469,48 @@ def contract_facts(t: dict[str, str]) -> dict[str, object]:
             "cap_bytes": int(first(r"cap_bytes: (\d+)", usage)),
             "daily_growth_bytes": int(first(r"^\s+daily_growth_bytes: (\d+)$", usage, MULTI)),
             "tiers": {tier: int(b) for tier, b, _ in tiers},
-            "symbols": {s: {"used_bytes": int(u), "daily_growth_bytes": int(g), "pinned": p == "true"} for s, u, g, p in sym_rows},
+            "symbols": {
+                s: {"used_bytes": int(u), "daily_growth_bytes": int(g), "pinned": p == "true"}
+                for s, u, g, p in sym_rows
+            },
         },
         "seed": seed,
         "total_horizon": total,
-        "resolution_order": "pinned symbol → infinite retention; else symbol-scoped policy; else default policy; else the §7 per-stream default" in db,
+        "resolution_order": "pinned symbol → infinite retention; else symbol-scoped policy; else default policy; else the §7 per-stream default"
+        in db,
         "read_policy_row": "`read_policy_row`" in db,
         "mainnet_comment": "market data is mainnet even for demo trading" in db,
-        "purge_audit_21": "a `retention_purge` audit entry records symbol, stream, range and row count" in db,
+        "purge_audit_21": "a `retention_purge` audit entry records symbol, stream, range and row count"
+        in db,
         "pinned_overrides_all": "Overrides everything above" in matrix,
         "daily_job_24": SENTENCE_24 in d24,
-        "never_delete_referenced": "never delete a period referenced by an unexported journal trade, a saved replay session or an open investigation" in d24,
-        "deletion_audit_24": "Every deletion writes an audit entry with symbol, stream, range and freed bytes" in d24,
-        "manager_recording_write_22": bool(re.search(r"  manager:\n(?:    - [\w:*]+\n)*?    - recording:write\n", api)),
-        "manager_recording_write_04": "✔(step-up for purge/retention)           |        ✖" in t["04"],
+        "never_delete_referenced": "never delete a period referenced by an unexported journal trade, a saved replay session or an open investigation"
+        in d24,
+        "deletion_audit_24": "Every deletion writes an audit entry with symbol, stream, range and freed bytes"
+        in d24,
+        "manager_recording_write_22": bool(
+            re.search(r"  manager:\n(?:    - [\w:*]+\n)*?    - recording:write\n", api)
+        ),
+        "manager_recording_write_04": "✔(step-up for purge/retention)           |        ✖"
+        in t["04"],
         "s19_owner_only": "Retention-policy mutation is Owner-only" in t["04"],
-        "sr_099": "Retention jobs MUST honour pins, run dry-run-first with a report, and audit every deletion (symbol, range, byte count)." in t["04"],
+        "sr_099": "Retention jobs MUST honour pins, run dry-run-first with a report, and audit every deletion (symbol, range, byte count)."
+        in t["04"],
         "sentence_14_present": SENTENCE_14 in t["14"],
-        "checklist_boxes_14": len(re.findall(r"\[ \]", first(r"^(- \*\*Design sign-off acceptance checklist:\*\*[^\n]*)$", t["14"][t["14"].index("### SCR-141") : t["14"].index("### SCR-142")], MULTI))),
-        "us_rec_003_dry_run": "reports exactly what would be deleted, by symbol, range and size, before anything is removed" in t["11"],
-        "us_admin_006_typed": "a preview of the impact is shown and typed confirmation is required" in t["11"],
+        "checklist_boxes_14": len(
+            re.findall(
+                r"\[ \]",
+                first(
+                    r"^(- \*\*Design sign-off acceptance checklist:\*\*[^\n]*)$",
+                    t["14"][t["14"].index("### SCR-141") : t["14"].index("### SCR-142")],
+                    MULTI,
+                ),
+            )
+        ),
+        "us_rec_003_dry_run": "reports exactly what would be deleted, by symbol, range and size, before anything is removed"
+        in t["11"],
+        "us_admin_006_typed": "a preview of the impact is shown and typed confirmation is required"
+        in t["11"],
         "zero_counts": {
             "22:retention-policies/preview": api.count("retention-policies/preview"),
             "22:dry_run": api.count("dry_run"),
@@ -466,31 +525,49 @@ def contract_facts(t: dict[str, str]) -> dict[str, object]:
 
 
 def fixture(facts: dict[str, object]) -> dict[str, object]:
-    """The spec's one worked example, derived from the `22` storage example: trades 30 → 7 days."""
-    ex = facts["storage_example"]  # type: ignore[assignment]
-    seed = facts["seed"]  # type: ignore[assignment]
+    """The spec's worked examples, derived from the `22` storage example and the `21` section 7 seed.
+
+    The reduction is the ticket's trades 30 -> 7 days WITH the action set to `drop`: under `22` :5083-5085
+    a lowered `retain_days` on an `archive_parquet` row only moves days to Parquet sooner (a tiering
+    change), so the total horizon falls only through `drop`. The fallback size is `used_bytes` per symbol
+    across all its streams; its range is clamped to the recorded history (start = generated_at -
+    used_bytes / daily_growth_bytes), and when nothing predates the cut-off the sentence says so.
+    """
+    ex = facts["storage_example"]
+    seed = facts["seed"]
+    total = facts["total_horizon"]
     syms = ex["symbols"]  # type: ignore[index]
-    gen = dt.date.fromisoformat(str(ex["generated_at"])[:10])  # type: ignore[index]
-    reduce_from, reduce_to, lengthen_to = int(seed["trades"]), 7, 90  # type: ignore[index]
+    gen_dt = dt.datetime.fromisoformat(str(ex["generated_at"]).replace("Z", "+00:00"))  # type: ignore[index]
+    gen = gen_dt.date()
+    reduce_from, reduce_to = int(seed["trades"]), EXAMPLE["reduce_to"]  # type: ignore[index]
     days_removed = reduce_from - reduce_to
     nonpinned = {s: v for s, v in syms.items() if not v["pinned"]}
     pinned = {s: v for s, v in syms.items() if v["pinned"]}
-    eligible = sum(v["used_bytes"] * days_removed / reduce_from for v in nonpinned.values())
+    cutoff = gen_dt - dt.timedelta(days=reduce_to)
+    held = {s: v["used_bytes"] / v["daily_growth_bytes"] for s, v in nonpinned.items()}
+    since = {s: gen_dt - dt.timedelta(days=d) for s, d in held.items()}
+    eligible_now = sum(
+        max(0.0, (cutoff - since[s]).total_seconds() / 86400) * v["daily_growth_bytes"]
+        for s, v in nonpinned.items()
+    )
     growth_np = sum(v["daily_growth_bytes"] for v in nonpinned.values())
     longest = max(int(d) for d in seed.values())  # type: ignore[union-attr]
     steady = growth_np * longest
     cap = int(ex["cap_bytes"])  # type: ignore[index]
     tiers = ex["tiers"]  # type: ignore[index]
     used = int(tiers["questdb"]) + int(tiers["parquet"])
-    return {
+    out: dict[str, object] = {
         "generated_at": gen.isoformat(),
         "reduce_from": reduce_from,
         "reduce_to": reduce_to,
-        "lengthen_to": lengthen_to,
+        "reduce_action": "archive_parquet -> drop",
         "days_removed": days_removed,
-        "range_from": (gen - dt.timedelta(days=reduce_from)).isoformat(),
-        "cutoff": (gen - dt.timedelta(days=reduce_to)).isoformat(),
-        "eligible_gb": gb(eligible),
+        "cutoff": cutoff.date().isoformat(),
+        "recorded_since": min(since.values()).date().isoformat(),
+        "days_held": round(max(held.values()), 1),
+        "predates_cutoff": any(since[s] <= cutoff for s in nonpinned),
+        "eligible_now_gb": gb(eligible_now),
+        "total_months": int(first(r"^(\d+) mo$", str(total["trades"]))),  # type: ignore[index]
         "affected_symbols": len(nonpinned),
         "affected_symbol": ",".join(sorted(nonpinned)),
         "pinned_symbol": ",".join(sorted(pinned)),
@@ -504,22 +581,48 @@ def fixture(facts: dict[str, object]) -> dict[str, object]:
         "cap_gb": round(cap / 1e9),
         "used_gb": round(used / 1e9),
         "used_pct": round(used / cap * 100),
-        "override": [r for r in facts["example_rows"] if r[3] != "null"][0],  # type: ignore[index]
+        "override": next(r for r in facts["example_rows"] if r[3] != "null"),  # type: ignore[attr-defined]
         "example_rows": len(facts["example_rows"]),  # type: ignore[arg-type]
     }
+    out.update({k: v for k, v in EXAMPLE.items() if k != "reduce_to"})
+    return out
 
 
 def sentences(fx: dict[str, object]) -> dict[str, str]:
     """The consequence sentences every reduction frame carries (BQ-10 RULED), from the fixture."""
-    head = (
-        f"About {fx['eligible_gb']} GB of trades for {fx['affected_symbol']}, recorded from "
-        f"{fx['range_from']} to {fx['cutoff']},"
-    )
+    n, sym, m = fx["reduce_to"], fx["affected_symbol"], fx["total_months"]
+    size_gb = f"{float(str(fx['eligible_now_gb'])):g}"
+    if fx["predates_cutoff"]:
+        size = f"About {size_gb} GB across {sym}'s recorded streams, recorded from {fx['recorded_since']} to {fx['cutoff']}, goes at the first run."
+        size_now = size.replace("goes at the first run", "goes in this sweep")
+        row = f"{sym} · Trades · {fx['recorded_since']} · {fx['cutoff']} · about {size_gb} GB"
+        total = f"About {size_gb} GB across {fx['affected_symbols']} symbol"
+    else:
+        size = f"Nothing recorded before {fx['cutoff']} exists yet (about {size_gb} GB now; recording started about {fx['recorded_since']}), so the first run deletes nothing."
+        size_now = size.replace("the first run deletes nothing", "this sweep deletes nothing")
+        row = f"{sym} · Trades · — · — · about {size_gb} GB now (recorded since about {fx['recorded_since']})"
+        total = f"About {size_gb} GB now across {fx['affected_symbols']} symbol"
+    lead = f"Trades for {sym} older than {n} days"
     return {
-        "consequence": head + " becomes eligible for deletion at the next retention run (daily, 03:00 UTC).",
-        "consequence_now": head + " is deleted when you apply: a retention sweep starts now.",
+        "consequence": f"{lead} become eligible for deletion {TIMING[0]} and at every run after it, Parquet included. {size}",
+        "consequence_now": f"{lead} are deleted when you apply: {TIMING[1]}, and every daily run repeats it, Parquet included. {size_now}",
+        "undo": UNDO,
         "typed": "Type trades to confirm",
         "pinned_note": f"{fx['pinned_symbol']} is pinned and is not affected.",
+        "tiering": f"Moves trades older than {n} days to Parquet sooner; it is still kept for {m} months. Nothing is deleted.",
+        "help_archive": f"Days in the fast store before the nightly move to Parquet. Parquet keeps it for {m} months in total.",
+        "title": f"Delete trades after {n} days?",
+        "preview_row": row,
+        "preview_total": total,
+        "kind_titles": " · ".join(
+            [
+                f"Delete trades after {n} days?",
+                f"Delete trades after {fx['drop_lower_to']} days?",
+                f"Delete {sym} trades after {fx['override_days']} days?",
+                f"Remove the {sym} trades rule?",
+                "Shorten retention for 2 streams?",
+            ]
+        ),
     }
 
 
@@ -531,17 +634,43 @@ def frame_rows(spec: str, a: int, b: int) -> list[tuple[str, list[str]]]:
     return out
 
 
-def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, str], sent: dict[str, str], mutate: bool) -> list[str]:
+def gates(
+    files: list[Path],
+    spec: str,
+    facts: dict[str, object],
+    t: dict[str, str],
+    sent: dict[str, str],
+    mutate: bool,
+    mutate_kinds: bool = False,
+) -> list[str]:
     bad: list[str] = []
     constitution = (ROOT / "CONSTITUTION.md").read_text(encoding="utf-8")
     deck = section(spec, 14, 15)
     if SENTENCE_14 not in deck:
-        bad.append("spec section 14: the `14` :2753 validation sentence is not in the copy deck byte-for-byte")
+        bad.append(
+            "spec section 14: the `14` :2753 validation sentence is not in the copy deck byte-for-byte"
+        )
     if not facts["sentence_14_present"]:
         bad.append("`14`: the validation sentence is gone from the catalogue")
-    for k in ("consequence", "consequence_now", "typed", "pinned_note"):
+    for k in (
+        "consequence",
+        "consequence_now",
+        "undo",
+        "typed",
+        "pinned_note",
+        "tiering",
+        "help_archive",
+        "title",
+        "preview_row",
+        "preview_total",
+    ):
         if sent[k] not in deck:
-            bad.append(f"spec section 14: the {k} sentence is not in the copy deck: {sent[k][:48]!r}")
+            bad.append(
+                f"spec section 14: the {k} sentence is not in the copy deck: {sent[k][:48]!r}"
+            )
+    for title in sent["kind_titles"].split(" · "):
+        if title not in deck:
+            bad.append(f"spec section 14: the kind title is not in the copy deck: {title!r}")
     strings = re.findall(r"^\| `[^`]+` +\| ([^|]+?) +\|", deck, MULTI)
     for p in BANNED_COPY:
         for s in strings:
@@ -551,7 +680,9 @@ def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, s
     for key, cell in re.findall(REASON_RE, deck, MULTI):
         for s in re.findall(r'"([^"]+)"', cell):
             if len(s) > LAYOUT["reason_max"] or not s.endswith(".") or re.search(r"\d", s):
-                bad.append(f"T2 reason {key}: {len(s)} chars; stop {s.endswith('.')}; digit {bool(re.search(r'[0-9]', s))}")
+                bad.append(
+                    f"T2 reason {key}: {len(s)} chars; stop {s.endswith('.')}; digit {bool(re.search(r'[0-9]', s))}"
+                )
     # (5) the per-frame gates over every state table (sections 4-9, 11)
     tables = [(a, b) for _, a, b, p in COUNTS if p.startswith(r"^\| `SCR-141/")]
     seen: dict[str, int] = {}
@@ -564,38 +695,96 @@ def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, s
                 bad.append(f"spec section {a}: {name} has fewer than five columns")
                 continue
             shows, cls = c[2], c[3]
-            if "destructive" in cls or "reduction" in cls:  # a reduction frame: the consequence sentence always
+            if (
+                "destructive" in cls or "reduction" in cls
+            ):  # a reduction frame: the consequence sentence always
                 reductions += 1
                 row_text = shows
                 if mutate and not mutated:
                     mutated = True
-                    row_text = row_text.replace(sent["consequence"], "").replace(sent["consequence_now"], "")
-                if sent["consequence"] not in row_text and sent["consequence_now"] not in row_text:
-                    bad.append(f"spec section {a}: reduction frame {name} lacks its consequence sentence")
-                if "destructive" in cls and (sent["typed"] not in row_text or "typed" not in cls):
-                    bad.append(f"spec section {a}: destructive frame {name} lacks the typed instruction")
+                    row_text = row_text.replace(sent["consequence"], "").replace(
+                        sent["consequence_now"], ""
+                    )
+                titles = sent["kind_titles"].split(" · ")
+                if (
+                    "kinds" in cls
+                ):  # the kinds frame: every reduction kind's title stands for its sentence
+                    if any(tt not in row_text for tt in titles):
+                        bad.append(
+                            f"spec section {a}: reduction frame {name} lacks its consequence sentence (a kind title is missing)"
+                        )
+                elif (
+                    sent["consequence"] not in row_text and sent["consequence_now"] not in row_text
+                ):
+                    bad.append(
+                        f"spec section {a}: reduction frame {name} lacks its consequence sentence"
+                    )
+                if "destructive" in cls:
+                    if sent["typed"] not in row_text or "typed" not in cls:
+                        bad.append(
+                            f"spec section {a}: destructive frame {name} lacks the typed instruction"
+                        )
+                    if UNDO not in row_text:
+                        bad.append(
+                            f"spec section {a}: destructive frame {name} lacks the undo line"
+                        )
+                    if not any(tc in row_text for tc in TIMING):
+                        bad.append(
+                            f"spec section {a}: destructive frame {name} lacks a timing clause"
+                        )
             if "T2" in cls:
                 t2 += 1
                 if "lock" not in shows:
                     bad.append(f"spec section {a}: T2 frame {name} draws no lock")
                 if "rbac.view_as" not in c[4]:
-                    bad.append(f"spec section {a}: T2 frame {name} is not the view-as leg (the only T2 on SCR-141)")
+                    bad.append(
+                        f"spec section {a}: T2 frame {name} is not the view-as leg (the only T2 on SCR-141)"
+                    )
             if "validity" in cls:
                 validity += 1
                 if "validity-reason" not in shows or "lock" in shows:
-                    bad.append(f"spec section {a}: validity frame {name} must carry validity-reason and no lock")
+                    bad.append(
+                        f"spec section {a}: validity frame {name} must carry validity-reason and no lock"
+                    )
     for name, n in seen.items():
         if n > 1:
             bad.append(f"spec: frame {name} appears in {n} state rows (one row per frame)")
     if mutate and reductions and not mutated:
         bad.append("mutation: no reduction frame to mutate")
+    # the reduction-kinds table (section 5): every kind has a title ending "?", a body with the undo line
+    # (or the `retention.confirm.body` reference, whose deck row carries it) and a typed value in code style
+    kinds = re.findall(r"^\| (K\d) +\|(.*)$", section(spec, 5, 6), MULTI)
+    mutated_k = False
+    for kid, rest in kinds:
+        c = cells("|" + rest)
+        if len(c) < 5:
+            bad.append(f"spec section 5: kind {kid} has fewer than five columns")
+            continue
+        body = c[3]
+        if mutate_kinds and not mutated_k:
+            mutated_k = True
+            body = body.replace("It cannot be undone.", "").replace("`retention.confirm.body`", "")
+        if not re.search(r'"[^"]+\?"', c[2]):
+            bad.append(
+                f"spec section 5: kind {kid} has no quoted title ending with a question mark"
+            )
+        if "It cannot be undone." not in body and "`retention.confirm.body`" not in body:
+            bad.append(f"spec section 5: kind {kid} lacks the undo line")
+        if not re.search(r"`[^`]+`", c[4]):
+            bad.append(f"spec section 5: kind {kid} has no typed value in code style")
+    if mutate_kinds and kinds and not mutated_k:
+        bad.append("mutation: no reduction kind to mutate")
     # the classification table: the view-as row first among the gated rows; the absences row present
     s1 = section(spec, 1, 2)
-    gated = re.findall(r"^\| ([^|]+?) +\| \*\*(T2|validity look|busy|T4|absence|outcome|exempt)\*\*", s1, MULTI)
+    gated = re.findall(
+        r"^\| ([^|]+?) +\| \*\*(T2|validity look|busy|T4|absence|outcome|exempt)\*\*", s1, MULTI
+    )
     if not gated or "viewing as" not in gated[0][0] or gated[0][1] != "T2":
         bad.append("spec section 1: the view-as T2 row is not the first classified row")
     if sum(cls == "T2" for _, cls in gated) != 1:
-        bad.append("spec section 1: SCR-141 has exactly one T2 row (view-as); over-conversion is a defect")
+        bad.append(
+            "spec section 1: SCR-141 has exactly one T2 row (view-as); over-conversion is a defect"
+        )
     for a in ABSENCES:
         if f"`{a}`" not in s1:
             bad.append(f"spec section 1: absence `{a}` is not named")
@@ -609,7 +798,9 @@ def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, s
         if total == 0:
             bad.append(f"cited text gone: `{doc}` :{line} {want[:40]!r} (nowhere in the file)")
         elif total > 1:
-            bad.append(f"cited text ambiguous: `{doc}` :{line} {want[:40]!r} ({total} matches: use a longer needle)")
+            bad.append(
+                f"cited text ambiguous: `{doc}` :{line} {want[:40]!r} ({total} matches: use a longer needle)"
+            )
         elif found[0] not in (line, line + shift):
             CITE_WARN.append(f"`{doc}` :{line} now at :{found[0]} ({want[:40]!r})")
     for f in files:
@@ -621,7 +812,17 @@ def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, s
         for c in sorted(set(re.findall(r"\b(?:CMP|SCR)-\d{3}\b", txt))):
             if f"### {c} " not in t["15" if c.startswith("CMP") else "14"]:
                 bad.append(f"{f.name}: no catalogue heading for {c}")
-        for word in ("close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved"):
+        for word in (
+            "close",
+            "closes",
+            "closed",
+            "fix",
+            "fixes",
+            "fixed",
+            "resolve",
+            "resolves",
+            "resolved",
+        ):
             if re.search(rf"\b{word}\b\s+#\d+", txt, re.IGNORECASE):
                 bad.append(f"{f.name}: closing keyword before an issue number (text-first PR)")
     expect = {"stream_kinds": 8, "retention_actions": 4, "job_status": 5}
@@ -633,7 +834,17 @@ def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, s
     for k, ok in facts["put_sentences"].items():  # type: ignore[union-attr]
         if not ok:
             bad.append(f"`22` setRetentionPolicies: the {k} sentence is gone")
-    for k in ("resolution_order", "read_policy_row", "mainnet_comment", "daily_job_24", "never_delete_referenced", "sr_099", "s19_owner_only", "us_rec_003_dry_run", "us_admin_006_typed"):
+    for k in (
+        "resolution_order",
+        "read_policy_row",
+        "mainnet_comment",
+        "daily_job_24",
+        "never_delete_referenced",
+        "sr_099",
+        "s19_owner_only",
+        "us_rec_003_dry_run",
+        "us_admin_006_typed",
+    ):
         if not facts[k]:
             bad.append(f"contract fact gone: {k}")
     return bad
@@ -652,6 +863,7 @@ def flatten(d: object, prefix: str = "") -> dict[str, object]:
 def main(argv: list[str]) -> int:
     extra = [Path(a) for a in argv[argv.index("--extra") + 1 :]] if "--extra" in argv else []
     mutate = "--mutate-consequence" in argv
+    mutate_kinds = "--mutate-kinds" in argv
     themes = {k: load_theme(k) for k in THEMES}
     t = {k: p.read_text(encoding="utf-8") for k, p in DOCS.items()}
     pairs_text = (ROOT / "tools" / "contrast" / "pairs.mjs").read_text(encoding="utf-8")
@@ -671,19 +883,27 @@ def main(argv: list[str]) -> int:
             proposed += (fg, bg) not in registered
         reg = "registered" if (fg, bg) in registered else "PROPOSED"
         row: dict[str, object] = {"element": element, "fg": fg, "bg": bg, "role": role}
-        row.update({"verdict": verdict, "pairs": reg, **{k: round(v, 4) for k, v in ratios.items()}})
+        row.update(
+            {"verdict": verdict, "pairs": reg, **{k: round(v, 4) for k, v in ratios.items()}}
+        )
         matrix.append(row)
-        out.append(f"{fg} on {bg} | {role} | {' / '.join(show(r) for r in ratios.values())} | {verdict} | {reg} | {element}")
+        out.append(
+            f"{fg} on {bg} | {role} | {' / '.join(show(r) for r in ratios.values())} | {verdict} | {reg} | {element}"
+        )
     composite: dict[str, float] = {}
     for th, tk in themes.items():
         over = resolve(tk, "color.surface.overlay")
         label = blend(resolve(tk, "color.text.on-action"), over, 0.45)
         fill = blend(resolve(tk, "color.action.primary.default"), over, 0.45)
         composite[th] = round(contrast(label, fill), 2)
-    out.append(f"validity composite (Apply at opacity.disabled over the dialog; not gated): {composite}")
+    out.append(
+        f"validity composite (Apply at opacity.disabled over the dialog; not gated): {composite}"
+    )
     out.append("\n## 2. Token bindings (token | dark / light / hc)")
     missing = [tok for tok in BINDINGS if resolve(themes["dark"], tok) == "MISSING"]
-    out += [f"{tok} | {' / '.join(resolve(tk, tok)[:40] for tk in themes.values())}" for tok in BINDINGS]
+    out += [
+        f"{tok} | {' / '.join(resolve(tk, tok)[:40] for tk in themes.values())}" for tok in BINDINGS
+    ]
     out.append(f"MISSING tokens: {missing}")
     facts = contract_facts(t)
     fx = fixture(facts)
@@ -691,13 +911,17 @@ def main(argv: list[str]) -> int:
     out.append("\n## 3. Contract facts parsed from text (and the derived fixture):")
     out.append(json.dumps({"facts": facts, "fixture": fx, "sentences": sent}, ensure_ascii=False))
     spec = SPEC.read_text(encoding="utf-8")
-    bad = gates([SPEC, *extra], spec, facts, t, sent, mutate)
+    bad = gates([SPEC, *extra], spec, facts, t, sent, mutate, mutate_kinds)
     ok = (
-        "OK — the `14` sentence verbatim; the consequence sentences in the deck and on every reduction frame "
-        "with the typed instruction; one T2 (view-as) with its lock, first; validity frames with their reason and no lock; "
+        "OK — the `14` sentence verbatim; the consequence sentences in the deck and on every reduction frame, "
+        "the destructive ones with the typed instruction, a timing clause and the undo line; every reduction kind with its title, "
+        "body and typed value; one T2 (view-as) with its lock, first; validity frames with their reason and no lock; "
         "the absences named; no jargon; no private path; every C / CMP / SCR id exists; every cited text exists; no closing keyword"
     )
-    out.append("\n## 4-5. String and frame gates: " + (ok if not bad else "\n".join("FAIL " + b for b in bad)))
+    out.append(
+        "\n## 4-5. String and frame gates: "
+        + (ok if not bad else "\n".join("FAIL " + b for b in bad))
+    )
     out += [f"WARN cited line drifted: {w}" for w in CITE_WARN]
     deck = section(spec, 14, 15)
     deck_rows = re.findall(r"^\| `[^`]+` +\| [^|]*\| ([^|]+?) +\|", deck, MULTI)
@@ -711,14 +935,26 @@ def main(argv: list[str]) -> int:
     tables = sorted({(a, b) for _, a, b, p in COUNTS if p.startswith(r"^\| `SCR-141/")})
     all_rows = [c for a, b in tables for _, c in frame_rows(spec, a, b)]
     numbers["frames_total"] = len(all_rows)
-    numbers["reduction_frames"] = sum(("destructive" in c[3] or "reduction" in c[3]) for c in all_rows if len(c) > 3)
+    numbers["reduction_frames"] = sum(
+        ("destructive" in c[3] or "reduction" in c[3]) for c in all_rows if len(c) > 3
+    )
     numbers["t2_frames"] = sum("T2" in c[3] for c in all_rows if len(c) > 3)
     numbers["validity_frames"] = sum("validity" in c[3] for c in all_rows if len(c) > 3)
     numbers["bq_rows"] = count(r"^\| BQ-\d+ ", spec)
+    numbers["kinds"] = count(r"^\| K\d +\|", section(spec, 5, 6))
     numbers["checklist_items"] = count(r"^\| 14:2759 ", spec)
     numbers["checklist_boxes_14"] = facts["checklist_boxes_14"]
-    numbers.update({"pairs_rows": gated, "pairs_registered": gated - proposed, "pairs_proposed": proposed, "pairs_fail": fails})
-    numbers.update({"composite": composite, "deck_rows": len(deck_rows), "deck_by_source": by_source})
+    numbers.update(
+        {
+            "pairs_rows": gated,
+            "pairs_registered": gated - proposed,
+            "pairs_proposed": proposed,
+            "pairs_fail": fails,
+        }
+    )
+    numbers.update(
+        {"composite": composite, "deck_rows": len(deck_rows), "deck_by_source": by_source}
+    )
     numbers["opacity_disabled"] = float(resolve(themes["dark"], "opacity.disabled"))
     numbers.update({"deck_new": by_source.get("new", 0), "reason_keys": len(reasons)})
     numbers["reason_keys_proposed"] = sum(r.startswith("recorder.") for r in reasons)
@@ -727,7 +963,9 @@ def main(argv: list[str]) -> int:
     numbers["job_keys"] = count(r"^\| `retention\.job\.", deck)
     numbers.update({"missing_tokens": len(missing), "banned_copy_words": len(BANNED_COPY)})
     numbers.update({"streams": len(facts["stream_kinds"]), "actions": len(facts["retention_actions"])})  # type: ignore[arg-type]
-    numbers.update({"actions_offered": 2, "absences": len(ABSENCES), "absent_fields": len(ABSENT_FIELDS)})
+    numbers.update(
+        {"actions_offered": 2, "absences": len(ABSENCES), "absent_fields": len(ABSENT_FIELDS)}
+    )
     numbers.update({"job_states": len(facts["job_status"]), "retain_min": facts["retain_min"], "retain_max": facts["retain_max"]})  # type: ignore[arg-type]
     numbers.update({"seed": facts["seed"], "fixture": fx, "layout": LAYOUT})
     numbers["example_rows_22"] = fx["example_rows"]
@@ -745,15 +983,30 @@ def main(argv: list[str]) -> int:
         clean = not any(b.startswith("marker") for b in bad)
         out.append("markers: " + ("clean" if clean else "MISMATCH"))
     out.append("\n## 6. Counts: " + json.dumps(numbers, ensure_ascii=False))
-    if mutate:
-        hits = [b for b in bad if "lacks its consequence sentence" in b]
-        verdict = len(hits) == 1
-        out.append(f"\n## mutation (consequence sentence removed from one reduction frame): {len(hits)} FAIL — " + ("as expected" if verdict else "UNEXPECTED"))
+    if mutate or mutate_kinds:
+        needle = "lacks its consequence sentence" if mutate else "lacks the undo line"
+        what = (
+            "consequence sentence removed from one reduction frame"
+            if mutate
+            else "undo line removed from one reduction kind"
+        )
+        hits = [b for b in bad if needle in b]
+        verdict = len(hits) == 1 and len(bad) == 1
+        out.append(
+            f"\n## mutation ({what}): {len(hits)} FAIL — "
+            + ("as expected" if verdict else "UNEXPECTED")
+        )
         print("\n".join(out))
         return 0 if verdict else 1
     if "--json" in argv:
         palette = {th: {n: resolve(tk, n) for n in BINDINGS} for th, tk in themes.items()}
-        payload = {"numbers": numbers, "matrix": matrix, "missing": missing, "facts": facts, "sentences": sent}
+        payload = {
+            "numbers": numbers,
+            "matrix": matrix,
+            "missing": missing,
+            "facts": facts,
+            "sentences": sent,
+        }
         payload.update({"problems": bad, "cite_warnings": CITE_WARN, "palette": palette})
         print(json.dumps(payload, ensure_ascii=False, indent=1))
     else:
