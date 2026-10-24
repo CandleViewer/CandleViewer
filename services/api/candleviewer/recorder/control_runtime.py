@@ -31,13 +31,18 @@ from typing import Final, Protocol
 
 from candleviewer.recorder import control as rc
 from candleviewer.recorder.errors import (
-    RecorderError,
     RecorderInvalidUpdateError,
+    RecorderRelaxRefusedError,
     RecorderSymbolNotManualError,
     RecorderSymbolNotRecordedError,
 )
 from candleviewer.recorder.models import Actor
-from candleviewer.recorder.policy import MAX_PROTECTED, PolicyConfig, RefusalCause
+from candleviewer.recorder.policy import (
+    MAX_PROTECTED,
+    PolicyConfig,
+    PolicyControlSurface,
+    _lowers,
+)
 from candleviewer.recorder.status import Budget
 
 #: Reasons, top first (`RecordReason`); a live position outranks a chart (`RecordRefusal`).
@@ -52,71 +57,11 @@ _MINUTE_S: Final = 60
 _HOUR_MINUTES: Final = 60
 
 
-class RecorderRelaxRefusedError(RecorderError):
-    """Stand-in for #2188 S3c's error of this name in `recorder.errors` (swapped at the rebase):
-    the policy refused an unpin or a lower retention, wrote its denied record, changed nothing."""
-
-
-@dataclass(frozen=True, slots=True)
-class StartRefused:
-    """Stand-in for #2188 S3c's value of this name (swapped at the rebase): a symbol whose start
-    the policy refuses now, its latest cause and the reasons refused, top first."""
-
-    symbol: str
-    cause: RefusalCause
-    reasons: tuple[rc.RecordReason, ...]
-
-
-class RuntimePolicy(Protocol):
-    """#2188 S3c's `PolicyControlSurface` as the orchestrator approved it (12:42Z), until it is on
-    main: the S2b/S3b members, `set_pin` with the view and the unpin's retention, `set_retention`
-    and `relax_allowed`. `restricted` is keyword-only and required: the server-side principal's
-    view (C-12.4). Each write records `retention.change` ahead of its store; a refused relax
-    raises `RecorderRelaxRefusedError` before any write, after its denied record."""
-
-    async def add_manual(
-        self,
-        symbol: str,
-        actor: Actor,
-        streams: tuple[str, ...] = (),
-        depth: int | None = None,
-        *,
-        held_hidden: bool = False,
-    ) -> None: ...
-    async def remove_manual(self, symbol: str, actor: Actor) -> None: ...
-    async def set_pin(
-        self,
-        symbol: str,
-        pinned: bool,
-        actor: Actor,
-        *,
-        restricted: bool,
-        retention_days: int | None = None,
-    ) -> None: ...
-    async def set_retention(
-        self, symbol: str, retention_days: int | None, actor: Actor, *, restricted: bool
-    ) -> None: ...
-    async def update_manual(
-        self,
-        symbol: str,
-        actor: Actor,
-        *,
-        streams: tuple[str, ...] | None = None,
-        depth: int | None = None,
-    ) -> None: ...
-    def position_open(self, symbol: str) -> bool: ...
-    def linger_until(self, symbol: str) -> datetime | None: ...
-    def start_refusal(self, symbol: str) -> RefusalCause | None: ...
-    def chart_open(self, symbol: str) -> bool: ...
-    def relax_allowed(self, symbol: str, *, restricted: bool) -> bool: ...
-    def start_refused(self) -> tuple[StartRefused, ...]: ...
-
-
 class RecorderWiring(Protocol):
     """#2188 S4b's one frozen value: the composed policy, the rows, the budget and the env."""
 
     @property
-    def policy(self) -> RuntimePolicy: ...
+    def policy(self) -> PolicyControlSurface: ...
     @property
     def rows(self) -> rc.RecordedRows: ...
     @property
@@ -170,10 +115,6 @@ class HourWindows:
         return sum(m[1] for m in held), sum(m[2] for m in held), counts.last_event_at
 
 
-def _retention(pinned: bool, days: int | None, default_days: int) -> float:
-    return math.inf if pinned else float(days or default_days)
-
-
 class RuntimeRecordingControl:
     """The bound `RecordingControl` (see the module docstring)."""
 
@@ -182,12 +123,12 @@ class RuntimeRecordingControl:
         wiring: RecorderWiring,
         *,
         config: PolicyConfig,
-        default_retention_days: int,
         now: Callable[[], datetime],
     ) -> None:
-        """`config` is the policy's own (the status reports it); `now` is the wall clock."""
+        """`config` is the policy's own (the status reports it, and its `default_retention_days`
+        is what a NULL keeps); `now` is the wall clock."""
         self._policy, self._rows, self._env = wiring.policy, wiring.rows, wiring.env
-        self._config, self._default_days = config, default_retention_days
+        self._config = config
         #: Pages read for one full listing: the policy's chart bound plus its protected one
         #: (C-2.18), so a listing never stops short of the rows the policy can hold.
         self._max_pages = math.ceil((config.max_chart_symbols + MAX_PROTECTED) / _PAGE) + 1
@@ -204,7 +145,7 @@ class RuntimeRecordingControl:
         p, symbol = self._policy, entry.symbol
         live = {"chart_open": p.chart_open(symbol), "position_open": p.position_open(symbol)}
         held = set(entry.reasons) | {r for r, on in live.items() if on}
-        start = p.start_refusal(symbol)
+        start = p.start_refusal(symbol) or (entry.refusals[0] if not entry.id else None)
         stops = tuple(c for c in _STOPS if live[c])
         until = p.linger_until(symbol)
         rows, resyncs, last = self.windows.totals(symbol)
@@ -270,7 +211,7 @@ class RuntimeRecordingControl:
         held = stored + self._lingering({e.symbol for e in stored})
         listed = {e.symbol for e in held}
         held += [
-            rc.RecordedEntry("", r.symbol, r.reasons, "idle")
+            rc.RecordedEntry("", r.symbol, r.reasons, "idle", refusals=(r.cause,))
             for r in self._policy.start_refused()
             if r.symbol not in listed and r.reasons
         ]
@@ -298,8 +239,8 @@ class RuntimeRecordingControl:
         """Ahead of any write of a change that also relaxes: `RelaxRefused` (unrecorded) when the
         view does not cover the row, so no other part of the change lands."""
         pinned, days = self._target(entry, spec)
-        held = _retention(entry.pinned, entry.retention_days, self._default_days)
-        relaxes = _retention(pinned, days, self._default_days) < held
+        default = self._config.default_retention_days  # what a NULL keeps (21 §3.6.1)
+        relaxes = not pinned and _lowers(entry.pinned, entry.retention_days, days, default)
         if relaxes and not self._policy.relax_allowed(entry.symbol, restricted=restricted):
             raise rc.RelaxRefused(entry.symbol, recorded=False)
 

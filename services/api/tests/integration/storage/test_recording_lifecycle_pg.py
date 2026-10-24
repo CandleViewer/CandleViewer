@@ -1,7 +1,7 @@
 """Integration (#492 S9): the recording lifecycle against the composed runtime on real Postgres 16.
 
 The pieces S9 can compose before #2188 S4b lands its wiring: the real `RecordingPolicy` (with
-#2188 S3c's members standing in, `tests/unit/recorder/_s3c_policy.py`), the real `SessionManager`
+#2188 S3c's relax guard and retention writes), the real `SessionManager`
 mirroring B11 and the policy's bus, `SqlAlchemyRecorderRepository` as the policy's store, and
 `SqlAlchemyRecordingReads` as the rows; `RuntimeRecordingControl` over them, and the 1 Hz
 `RecordingStatusCache` whose snapshots the `recorder` WS topic carries. A fake feed reports rows.
@@ -40,7 +40,6 @@ from candleviewer.storage.repositories.recording_reads_sqlalchemy import SqlAlch
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
-from tests.unit.recorder._s3c_policy import S3cPolicy
 
 pytestmark = pytest.mark.integration
 T0 = datetime(2026, 10, 24, 12, 0, tzinfo=UTC)
@@ -88,7 +87,7 @@ class _Bus:
 
 @dataclass(frozen=True)
 class _Wiring:  # #2188 S4b's `RecorderWiring`, field for field
-    policy: S3cPolicy
+    policy: RecordingPolicy
     rows: SqlAlchemyRecordingReads
     budget: None
     env: str
@@ -117,15 +116,9 @@ async def runtime(dsns: tuple[str, str]) -> AsyncIterator[SimpleNamespace]:
                              disk_refuses=lambda: False, config=CONFIG)  # fmt: skip
     policy.observe_states(sessions.on_b11_state)
     policy.positions_reloaded()
-
-    async def days(row_id: str, value: int | None) -> bool:  # S3c's `set_retention` store write
-        done = conn.execute("UPDATE recorded_symbols SET retention_days = %s WHERE id = %s "
-                            "AND removed_at IS NULL RETURNING id", (value, row_id))  # fmt: skip
-        return done.fetchone() is not None
-
-    wired = S3cPolicy(policy, days, default_days=30)
+    wired = policy
     control = RuntimeRecordingControl(
-        _Wiring(wired, reads, None, "demo"), config=CONFIG, default_retention_days=30,
+        _Wiring(wired, reads, None, "demo"), config=CONFIG,
         now=lambda: datetime.fromtimestamp(clock.t, UTC),
     )  # fmt: skip
     cache = RecordingStatusCache(lambda: control, None,

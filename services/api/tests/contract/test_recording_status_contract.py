@@ -16,8 +16,8 @@ from typing import Any
 import pytest
 
 from candleviewer.api.contract_conformance import load_openapi_spec
-from candleviewer.recorder.control_runtime import RuntimeRecordingControl, StartRefused
-from candleviewer.recorder.policy import PolicyConfig
+from candleviewer.recorder.control_runtime import RuntimeRecordingControl
+from candleviewer.recorder.policy import PolicyConfig, RefusalCause, StartRefused
 from tests.contract._admin_support import validate_example
 from tests.contract.rbac.rbac_harness import World, bearer, build_world
 from tests.unit.recorder._control_fakes import EmptyRows, FakeRecorder
@@ -101,7 +101,7 @@ class _RefusingPolicy:
         return (StartRefused("LINKUSDT", "symbol_cap", ("position_open",)),
                 StartRefused("SOLUSDT", "symbol_cap", ("chart_open",)))  # fmt: skip
 
-    def start_refusal(self, symbol: str) -> str | None:
+    def start_refusal(self, symbol: str) -> RefusalCause | None:
         return "symbol_cap" if symbol in ("LINKUSDT", "SOLUSDT") else None
 
     def linger_until(self, symbol: str) -> None:
@@ -128,7 +128,7 @@ def test_start_refused_symbols_with_no_row_through_the_bound_runtime(world: Worl
     fake = world.app.state.recording_runtime
     world.app.state.recording_runtime = RuntimeRecordingControl(
         _Wiring(_RefusingPolicy(), EmptyRows(), None, "demo"), config=PolicyConfig(),
-        default_retention_days=30, now=lambda: datetime(2026, 10, 24, tzinfo=UTC),
+        now=lambda: datetime(2026, 10, 24, tzinfo=UTC),
     )  # fmt: skip
     _refresh(world)
     try:
