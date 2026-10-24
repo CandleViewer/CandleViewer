@@ -13,8 +13,10 @@ E29-T04 (#913, slice 2b): `oms/submit.py`, the order submission pipeline, moves 
 the group its own first persist wrote, by compare-and-set from the status it wrote (S2-Q4:
 `update_leg` and `update_group` with `expected_status`), after the request's admission and the
 OMS's own checks; it reads nothing back and reaches no other group. `oms_wiring.py` (slice 3E,
-C-12.4) builds the Postgres adapter and the facade over it for that pipeline alone, in the OMS
-runtime, and mounts no route.
+C-12.4) builds the Postgres adapter and the facade over it for that pipeline, in the OMS runtime,
+and mounts no route itself. Its `OrderRoute` (slice 3F) hands `POST /orders` a replay's two reads,
+after the route's RBAC check: the order by its account, and the group through the principal-scoped
+`TradeGroupReader` over the same adapter, never the facade or the system port.
 """
 
 from __future__ import annotations

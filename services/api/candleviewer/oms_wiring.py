@@ -28,7 +28,7 @@ from uuid import UUID
 
 import structlog
 
-from candleviewer.accounts.trade_group_repository import TradeGroupRepository
+from candleviewer.accounts.trade_group_repository import TradeGroupReader, TradeGroupRepository
 from candleviewer.accounts.verification import Refusal
 from candleviewer.admin.wiring import (
     MachineEventSinkMetrics,
@@ -66,6 +66,7 @@ from candleviewer.oms.order_machine import (
 )
 from candleviewer.oms.order_steps import OrderStepWriter
 from candleviewer.oms.ports import (
+    ArmRecords,
     ClockHealth,
     Interim,
     KeyedRecord,
@@ -131,7 +132,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 from candleviewer.storage.repositories.statechart_sqlalchemy import SqlAlchemyEventStore
 from candleviewer.storage.repositories.submissions import SubmissionStore
 from candleviewer.storage.repositories.submissions_sqlalchemy import SqlAlchemySubmissionStore
-from candleviewer.storage.repositories.trade_groups import TradeGroupStore
+from candleviewer.storage.repositories.trade_groups import TradeGroupReads, TradeGroupStore
 from candleviewer.storage.repositories.trade_groups_sqlalchemy import SqlAlchemyTradeGroupStore
 from candleviewer.storage.repositories.trading_accounts import (
     TradingAccountReads,
@@ -900,18 +901,27 @@ class OrderStores(OrderStore, OrderEventStore, Protocol):
     """The order rows and their events, in one adapter (`SqlAlchemyOrderStore`)."""
 
 
+class GroupStores(TradeGroupStore, TradeGroupReads, Protocol):
+    """The trade groups: the pipeline's system port and the principal-scoped read a replay goes
+    through (`TradeGroupReader`), in one adapter (`SqlAlchemyTradeGroupStore`), so a store that
+    lacks the scoped read fails at the type check, not at a replay (SEC-S3F1-01)."""
+
+
 @dataclass(frozen=True, slots=True)
 class OmsStores:
     """The runtime's stores, on one pool of its own that `release` disposes of, and the builder of
-    the standalone sink over it. They take no principal: no route reaches them (C-12.4). `sweep`
-    is the startup sweep's reads, under their own statement cap (`SWEEP_STATEMENT_TIMEOUT_MS`)."""
+    the standalone sink over it. They take no principal, so a route reaches them only through the
+    OMS's own surfaces, after its RBAC check (C-12.4): the pipeline, its anchors and `OrderRoute`'s
+    reads, the existence read and a replay's two, the order by its account and the group through
+    the principal-scoped `TradeGroupReader`. `sweep` is the startup sweep's reads, under their own
+    statement cap (`SWEEP_STATEMENT_TIMEOUT_MS`)."""
 
     orders: OrderStores
     executions: ExecutionStore
     submissions: SubmissionStore
     anchors: IdempotencyAnchorStore
     stops: RecordedStopStore
-    groups: TradeGroupStore
+    groups: GroupStores
     accounts: TradingAccountReads
     sweep: UnfinishedOrders
     sink: Callable[[], OwnedSink]
@@ -963,6 +973,34 @@ class NoProfileCache(RuntimeError):
 type _Closer = tuple[str, Callable[[], Awaitable[object]]]
 
 
+class AccountExistence(Protocol):
+    """`OrderRoute.accounts`: step 4's one read, never `trading_account`'s key ref (C-12.4)."""
+
+    async def environment_of(self, account_id: AccountId) -> Environment: ...
+
+
+class OrderRead(Protocol):
+    """`OrderRoute.orders`: a replay's one read of its order, by its account, never a write."""
+
+    async def get(self, account_id: UUID, order_id: UUID) -> OrderRow | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class OrderRoute:
+    """What `POST /orders` reads of the composed OMS beside the pipeline and its anchors (24
+    Sec.8.4), each the instance the pipeline was built with: the existence read (step 4), the arm
+    records (step 5), the switches B1's `SEND` asks too (step 10), and a replay's rows (steps 8 and
+    12): the order by its account, and the group through the principal-scoped reader (SR-E28-21),
+    never the system facade (C-12.4). The account and order reads are typed as the one read each
+    step uses."""
+
+    accounts: AccountExistence
+    arm_records: ArmRecords
+    switches: TradingSwitchesBinding
+    orders: OrderRead
+    groups: TradeGroupReader
+
+
 @dataclass(frozen=True, slots=True)
 class _Parts:
     """What `start()` composed; `stop()` runs the `closers` after its drain, in their order."""
@@ -974,6 +1012,7 @@ class _Parts:
     stops: RecordedStopRepository
     audit: OmsAudit
     sweep: UnfinishedOrders
+    route: OrderRoute
 
 
 async def _drained(tasks: set[asyncio.Task[Any]], timeout_s: float) -> set[asyncio.Task[Any]]:
@@ -1134,6 +1173,11 @@ class OmsRuntime:
         """The anchor service the pipeline was built with, which the route's lookup reads
         (SEC-S3D-02); `OmsNotReady` before it is composed."""
         return self._composed().anchors
+
+    @property
+    def route(self) -> OrderRoute:
+        """The route's reads of the composed OMS (`OrderRoute`); `OmsNotReady` before."""
+        return self._composed().route
 
     def _composed(self) -> _Parts:
         if self._parts is None:
@@ -1440,6 +1484,9 @@ class OmsRuntime:
                 store_timeout_s=bounds.store_timeout_s, place_wait_s=bounds.place_wait_s,
                 result_wait_s=bounds.result_wait_s,
             )  # fmt: skip
+            # `pg_stores`' one group adapter serves the system port and the scoped read alike.
+            reader = TradeGroupReader(stores.groups)
+            route = OrderRoute(accounts, ports.arm_records, switches, orders, reader)
             if owned is not None:
                 self._phase = "sink_start"
                 await owned.start()
@@ -1447,7 +1494,9 @@ class OmsRuntime:
         except BaseException:
             await _closed(closers, asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S)
             raise
-        return _Parts(submission, anchors, machines, tuple(closers), stops, audit, stores.sweep)
+        return _Parts(
+            submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route
+        )
 
     def _now_us(self) -> int:
         return (self._now() - _EPOCH) // _US

@@ -42,6 +42,7 @@ from candleviewer.oms_wiring import (
     SWEEP_MAX_FAILURES,
     SWEEP_STATEMENT_TIMEOUT_MS,
     CommandAccounts,
+    GroupStores,
     OmsRuntime,
     OmsStores,
     TradingAccountsBinding,
@@ -57,7 +58,6 @@ from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories.orders import NewOrder
 from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
 from candleviewer.storage.repositories.recorded_stops import NewRecordedStop, RecordedStopRow
-from candleviewer.storage.repositories.trade_groups import TradeGroupStore
 from candleviewer.storage.repositories.trading_accounts import (
     InMemoryTradingAccountReads,
     TradingAccountRow,
@@ -190,7 +190,7 @@ class World:
 
         return OmsStores(
             orders=store, executions=store.executions, submissions=store.submissions,
-            anchors=store.anchors, stops=store.stops, groups=cast(TradeGroupStore, None),
+            anchors=store.anchors, stops=store.stops, groups=cast(GroupStores, None),
             accounts=InMemoryTradingAccountReads(*self.accounts), sweep=store,
             sink=lambda: Sink(self.log, self.sink_fails), release=release,
         )  # fmt: skip
