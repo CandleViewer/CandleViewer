@@ -305,6 +305,14 @@ async def test_a_row_under_one_of_this_accounts_ids_is_kept_as_its_own() -> None
     assert (order.order_link_id, order.account_id) == (link(), account().account_id)
 
 
+async def test_an_order_read_through_the_port_carries_the_rows_own_update_time() -> None:
+    """24 Sec.8.12: the REST read keeps the row's own `updatedTime`, as the stream does."""
+    page = _last(_rows(REALTIME, orderLinkId=link()))
+    [order] = await make_port(Venue().on("/v5/order/realtime", page)).open_orders(account())
+    row = page["result"]["list"][0]
+    assert order.updated_at == int(row["updatedTime"]) * 1000 != order.created_at
+
+
 async def test_executions_of_another_account_are_dropped_too() -> None:
     page = _last(_rows(EXECUTIONS, orderLinkId=link(ACCOUNT_B)))
     fills = await make_port(Venue().on("/v5/execution/list", page)).executions(

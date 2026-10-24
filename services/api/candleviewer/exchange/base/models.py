@@ -597,9 +597,10 @@ class Order(BaseModel):
     only for an order the exchange itself placed on the account, which skips
     SR-E27-19's freeze and nothing else (24 §8.10): only the change that maps
     the venue's order-creation type sets it, after E29-K01, so until then every
-    order is false and freezes like any other. `updated_at` is the venue's own time of
-    the order's last change, which B1's `updated_time` carries (24 §8.12), so a read received
-    after an older push never wins on its receipt time; it is None only where a source has none."""
+    order is false and freezes like any other. `updated_at` is the venue's
+    own time of the order's last change, which B1's `updated_time` carries in
+    milliseconds (24 §8.12), so a read received after an older push never
+    wins on its receipt time; it is None only where a source has none."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
