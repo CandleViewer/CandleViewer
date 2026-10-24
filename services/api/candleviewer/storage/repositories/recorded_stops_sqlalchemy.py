@@ -99,11 +99,11 @@ from candleviewer.storage.repositories.user_roles_sqlalchemy import (
 
 __all__ = [
     "STOP_COLUMNS", "STOP_FIELDS", "SYSTEM_STATEMENTS", "UNSCOPED", "SqlAlchemyRecordedStopStore",
-    "for_exchange_order_statement", "for_order_statement", "in_force_statement", "in_given_order",
-    "insert_stops_statement", "live_for_key_statement", "lock_key_statement",
-    "lock_stops_statement", "replace_statement", "resolve_statement", "settle_statement",
-    "stop_row", "to_replace", "void_orphans_statement", "waiting_for_key_statement",
-    "waiting_keys_statement",
+    "for_exchange_order_statement", "for_order_statement", "in_force_for_key_statement",
+    "in_force_statement", "in_given_order", "insert_stops_statement", "live_for_key_statement",
+    "lock_key_statement", "lock_stops_statement", "replace_statement", "resolve_statement",
+    "settle_statement", "stop_row", "to_replace", "void_orphans_statement",
+    "waiting_for_key_statement", "waiting_keys_statement",
 ]  # fmt: skip
 
 _S = recorded_stops.c
@@ -234,6 +234,16 @@ def lock_key_statement(account_id: UUID, symbol: str, position_idx: int) -> sa.S
         _S.status.in_(("pending", "in_force")),
     )
     return stmt.order_by(_S.id).with_for_update()
+
+
+def in_force_for_key_statement(account_id: UUID, symbol: str, position_idx: int) -> sa.Select[Any]:
+    stmt = sa.select(*STOP_COLUMNS).where(
+        _S.exchange_account_id == account_id,
+        sa.type_coerce(_S.symbol, sa.Text) == symbol,
+        _S.position_idx == position_idx,
+        _S.status == "in_force",
+    )
+    return stmt.order_by(_S.kind)
 
 
 def to_replace(
@@ -468,6 +478,15 @@ class SqlAlchemyRecordedStopStore(CappedStore):
         async with self._unit_of_work() as uow:
             result = await uow.session.execute(stmt)
             return tuple((m["symbol"], m["position_idx"]) for m in result.mappings())
+
+    async def in_force_for_key(
+        self, account_id: UUID, symbol: str, position_idx: int
+    ) -> tuple[RecordedStopRow, ...]:
+        async with self._unit_of_work() as uow:
+            result = await uow.session.execute(
+                in_force_for_key_statement(account_id, symbol, position_idx)
+            )
+            return tuple(stop_row(m) for m in result.mappings())
 
     async def put_in_force(
         self,

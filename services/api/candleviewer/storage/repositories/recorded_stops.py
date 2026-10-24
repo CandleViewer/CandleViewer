@@ -468,6 +468,12 @@ class RecordedStopStore(Protocol):
         list, the oldest row's first: the startup pass's input. `ValueError` for a naive `now`."""
         ...
 
+    async def in_force_for_key(
+        self, account_id: UUID, symbol: str, position_idx: int
+    ) -> tuple[RecordedStopRow, ...]:
+        """The key's rows in force (`ux_rs_in_force`: one per kind), by kind; empty elsewhere."""
+        ...
+
     async def put_in_force(
         self,
         account_id: UUID,

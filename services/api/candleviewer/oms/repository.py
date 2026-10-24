@@ -543,6 +543,12 @@ class RecordedStopRepository:
         """`RecordedStopStore.waiting_keys`: the startup pass's input, per account (C-2.11)."""
         return await self._store.waiting_keys(account_id, now=now, bound_s=bound_s)
 
+    async def in_force_for_key(
+        self, account_id: UUID, symbol: str, position_idx: int
+    ) -> tuple[RecordedStopRow, ...]:
+        """The key's rows in force, by kind (`RecordedStopStore.in_force_for_key`)."""
+        return await self._store.in_force_for_key(account_id, symbol, position_idx)
+
     async def put_in_force(
         self,
         account_id: UUID,
