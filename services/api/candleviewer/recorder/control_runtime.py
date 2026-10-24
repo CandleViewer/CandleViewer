@@ -246,13 +246,14 @@ class RuntimeRecordingControl:
 
     async def _settle(self, entry: rc.RecordedEntry, spec: rc.EntrySpec, actor: Actor,
                       restricted: bool) -> rc.RecordedEntry | None:  # fmt: skip
-        """The pin, else the retention, through the policy, which records it ahead of its store."""
+        """The pin, else the retention, through the policy, which records it ahead of its store. A
+        row that stays pinned keeps forever: no retention write for it, whatever number it holds."""
         pinned, days = self._target(entry, spec)
         try:
             if pinned != entry.pinned:
                 await self._policy.set_pin(entry.symbol, pinned, actor, restricted=restricted,
                                            retention_days=days)  # fmt: skip
-            elif days != entry.retention_days:
+            elif not pinned and days != entry.retention_days:
                 await self._policy.set_retention(entry.symbol, days, actor, restricted=restricted)
         except RecorderSymbolNotRecordedError:
             return None

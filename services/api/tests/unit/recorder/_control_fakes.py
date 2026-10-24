@@ -289,7 +289,7 @@ class FakeRecorder:
             if pinned != e.pinned:
                 await self.set_pin(symbol, pinned, actor, restricted=restricted,
                                    retention_days=days)  # fmt: skip
-            elif days != e.retention_days:
+            elif not pinned and days != e.retention_days:
                 await self.set_retention(symbol, days, actor, restricted=restricted)
         except NotRecorded:
             return None
