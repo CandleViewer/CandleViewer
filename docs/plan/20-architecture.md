@@ -477,7 +477,7 @@ The matcher exposes the **same** interface the exchange adapter does (§9), so t
 
 Determinism: given the same stored data and the same `BarSpec`/engine config, replay produces identical derived series — asserted by a golden-file test in CI.
 
-Loop budget (#2668 G1, C-2.17): each session's clock and sources charge one lane of the process's `ReplayLoopBudget` (`CV_REPLAY_LOOP_SHARE`, `CV_REPLAY_LOOP_BURST_MS`, §7.2) before every await and breathe on it every 2 ms of work; a hold slows playback (the achieved ratio falls) and never changes the requested rate, which the session layer owns (B12 `rate`). A seek (scrub, E26-T04) works in chunks that charge the session's lane before every await, as the clock's turns do.
+Loop budget (#2668 G1, C-2.17): each session's clock and sources charge one lane of the process's `ReplayLoopBudget` (`CV_REPLAY_LOOP_SHARE`, `CV_REPLAY_LOOP_BURST_MS`, §7.2) before every await and breathe on it every 2 ms of work; a hold slows playback (the achieved ratio falls) and never changes the requested rate, which the session layer owns (B12 `rate`). A seek (scrub, E26-T04) works in chunks that start the session's lane on entry, charge it before every await and restart it after a pure wait, as the clock's turns do.
 
 ### 3.10 Auth / RBAC / Audit
 
