@@ -1,13 +1,14 @@
 """The exit service (E29-T04 slice 4): `OrderExits`, which the exit routes and cancel-all drive
 once RBAC passed, steps 4 and 11 of 24 Sec.8.4 "The exit routes", whose rulings it implements
-(Q6 to Q9, Q11, Q12; the S4-A decisions D2, D4, D6, D9; the 11:34Z and 12:30Z rulings).
+(Q3 to Q12; the S4-A decisions D1 to D4, D6, D9; the 11:34Z and 12:30Z rulings).
 
 `scope` reads the order in the caller's `AccountScope` (`OrderRepository.get_in_scope`, C-12.4):
 `404` outside it (SR-E29-13; `rbac.denied` for a real order only, Q12), `403
 account_scope_denied` on a view-only grant (Q7), `403 forbidden` for a Manager on an order it did
 not create (Q6), each record best effort. `cancel_admitted` is the route's and cancel-all's one
 per-order cancel (04 Sec.7.2.2 row 14: no creator check), with Q8's state rules and D9's bounded
-waits.
+waits. `amend` checks the state (`422`), the body (`400`), the one ratchet (`403`), a
+risk-increasing amend's gates (Q10, D1, SEC-S4A-01) and `If-Match` (`412`), in that order (D3).
 
 Every refusal is an `ExitOutcome`, recorded ahead (`deny`, C-2.9), else `503 audit_unavailable`.
 An exit is written ahead (`orders.amend`, `orders.cancel`, with the request's reason), so a caller
@@ -30,8 +31,11 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.accounts.errors import AccountNotFoundError, ProfileUnavailableError
+from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.accounts.selfcheck import DISABLED_BY_POLICY
-from candleviewer.domain.primitives import Environment
+from candleviewer.domain.events import Instrument
+from candleviewer.domain.primitives import AccountId, Environment, Side
 from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.observability import spawn
 from candleviewer.statechart.bindings import b01_order as b01
@@ -47,6 +51,7 @@ from candleviewer.storage.repositories.orders import (
     ScopedOrder,
 )
 
+from .classify import stop_errors, take_profit_errors
 from .commands import (
     ACCOUNT_UNAVAILABLE,
     ORDER_NOT_AMENDABLE,
@@ -63,6 +68,7 @@ from .errors import (
     FieldError,
     IdempotencyInFlight,
     IllegalTransition,
+    OmsError,
     OmsNotReady,
     OrderEntryRefused,
     OrderInvalid,
@@ -76,19 +82,36 @@ from .errors import (
     RiskRefused,
     StopRequestPending,
     StoreUnavailable,
+    TradingDisabled,
     VersionConflict,
     problem_for,
 )
 from .order_machine import Actor, CommandEvent
-from .ports import RequestRecord, SubmitActor, SubmitAudit
+from .ports import (
+    Instruments,
+    OrderEffect,
+    Profiles,
+    RequestRecord,
+    RiskGate,
+    SizedOrder,
+    StopOffset,
+    StopResolver,
+    SubmitActor,
+    SubmitAudit,
+    TradingSwitches,
+)
+from .repository import RecordedStopRepository
 from .routing import retry_after
+from .stop_ratchet import ratchet_refusal, tpsl_scope_refusal
+from .validator import Validator
 
 __all__ = [
     "IN_FLIGHT_RETRY_AFTER_S", "MAX_IN_FLIGHT", "MAX_IN_FLIGHT_PER_PRINCIPAL", "NOT_GRANTED",
     "NOT_ORDER_CREATOR",
-    "SETTLE_TIMEOUT_S", "TRANSITION_TIMEOUT_S", "VIEW_ONLY", "CancelReason",
+    "SETTLE_TIMEOUT_S", "TRANSITION_TIMEOUT_S", "VIEW_ONLY", "AmendTerms", "CancelReason",
     "ExitCaller", "ExitCommands", "ExitDeps", "ExitMachines", "ExitOperation", "ExitOrders",
     "ExitOutcome", "InFlightGuard", "OrderExits", "OutcomeKind", "UnknownReason",
+    "risk_increasing",
 ]  # fmt: skip
 
 #: What an exit's answer is (the 12:30Z ruling): taken, its outcome not known, or refused.
@@ -125,6 +148,8 @@ _FINAL: Final = frozenset({"filled", "cancelled", "rejected", "expired", "killed
 _AMENDABLE: Final = frozenset({"submitted", "partially_filled"})
 _CANCELLABLE: Final = frozenset({"submitted", "triggered", "partially_filled"})
 _SETTLING: Final = frozenset({"validated", "submitting", "amend_pending", "cancel_pending"})
+_SIDES: Final[Mapping[str, Side]] = {"Buy": "buy", "Sell": "sell"}
+_TYPES: Final[Mapping[str, Literal["market", "limit"]]] = {"Market": "market", "Limit": "limit"}
 #: The retry codes of cancel-all's `retryable` (the 12:30Z ruling): nothing sent, may pass later.
 _RETRYABLE: Final = frozenset({"store_unavailable", "exchange_rate_limited"})
 #: Q3's rules the command port answers in capitals, which this service checks first.
@@ -132,6 +157,8 @@ _TPSL_RULES: Final = frozenset({
     "reduce_only_tpsl", "native_stop_required", "tpsl_clear_unsupported", "tpsl_partial_mode",
     "tpsl_after_fill",
 })  # fmt: skip
+#: A TP/SL side named by an `Offset`, for Q3's check before it is resolved: not a clear.
+_NAMED: Final = Decimal(1)
 _UNREAD: Final = (TimeoutError, StorageError, OrderStoreError)
 _NOT_TAKEN: Final = (IllegalTransition, DegradedLatchError, OrderNotLoaded, OrderStepRefused)
 
@@ -276,6 +303,31 @@ class ExitCaller:
     request_id: UUID | None = None
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AmendTerms:
+    """22 `AmendOrderRequest`, read strictly by the route: each term named, else None; `sides` the
+    TP/SL sides named, None for one asked cleared (`null`)."""
+
+    qty: Decimal | None = None
+    price: Decimal | None = None
+    trigger_price: Decimal | None = None
+    sides: Mapping[str, StopOffset | None] | None = None
+
+
+def risk_increasing(row: OrderRow, terms: AmendTerms) -> bool:
+    """24 Sec.8.10, ruling Q10 (D5) and the S4-A security look's default (SEC-S4A-01): an amend of
+    an order that is not reduce-only raises exposure when it raises the quantity or moves the
+    price or the trigger (a deep limit entry repriced through the market fills at once), each
+    compared with the scoped read's terms. A reduce-only order's terms, any quantity cut, a stop
+    or a take-profit change and every cancel are never gated (C-2.6); a figure that is no number
+    is not compared, the body refuses it."""
+    if row.reduce_only:
+        return False
+    raised = terms.qty is not None and terms.qty.is_finite() and terms.qty > row.qty
+    moves = ((terms.price, row.price), (terms.trigger_price, row.trigger_price))
+    return raised or any(new is not None and new != old for new, old in moves)
+
+
 class ExitMachines(Protocol):
     """`order_machine.OrderMachines` as the exits drive it."""
 
@@ -332,12 +384,21 @@ class ExitOrders(Protocol):
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ExitDeps:
     """What the composition root (`oms_wiring`) builds the exits over: the facade and the command
-    port the pipeline drives, the order store's reads and the audit."""
+    port the pipeline drives, the order store's reads, the stops in force, the audit, and the
+    pipeline's own checks (D1)."""
 
     machines: ExitMachines
     commands: ExitCommands
     orders: ExitOrders
+    stops: RecordedStopRepository
     audit: SubmitAudit
+    instruments: Instruments
+    profiles: Profiles
+    stop_resolver: StopResolver
+    risk_gate: RiskGate
+    validator: Validator
+    switches: TradingSwitches
+    oms_enabled: Callable[[], bool]
     environment: Environment
 
 
@@ -653,6 +714,176 @@ class OrderExits:
         detail = {"operation": kind, "code": outcome.code, "state": outcome.lifecycle_state}
         await self._record(row, _ACTIONS[kind], result, reason, detail, actor, request_id)
         return outcome
+
+    # --- amend -----------------------------------------------------------------------------------
+
+    async def amend(
+        self,
+        scoped: ScopedOrder,
+        terms: AmendTerms,
+        *,
+        caller: ExitCaller,
+        expected_seq: int | None,
+    ) -> ExitOutcome:
+        """`amendOrder`'s admission and send (module docstring) for an order `scope` returned;
+        `expected_seq` is `If-Match`'s version (`api.order_etag.expected_seq`), None without one."""
+        row, actor, rid = scoped.order, caller.actor, caller.request_id
+        held = self._d.machines.state(row.id)
+        if row.provenance != "placed" or held is None or held[0] not in _AMENDABLE:
+            return await self.deny(
+                row, "amend", _refused(OrderNotAmendable()), actor=actor, request_id=rid
+            )
+        checked = await self._checked(row, terms)
+        if isinstance(checked, ExitOutcome):
+            return await self.deny(row, "amend", checked, actor=actor, request_id=rid)
+        sized, instrument, sides = checked
+        refusal = await self._ratchet(row, sized.stop_loss if sides else None)
+        if refusal is None and risk_increasing(row, terms):
+            refusal = await self._gated(scoped, sized, instrument)
+        if refusal is None and expected_seq is not None:
+            if self._d.machines.version(row.id) != expected_seq:  # again under the lock (Q5)
+                refusal = _refused(VersionConflict())
+        if refusal is not None:
+            return await self.deny(row, "amend", refusal, actor=actor, request_id=rid)
+        named = {"qty": terms.qty, "price": terms.price, "trigger_price": terms.trigger_price}
+        if sides:  # Q2: both sides re-paired, the unchanged one at its current value
+            named |= {"stop_loss": sized.stop_loss, "take_profit": sized.take_profit}
+        taken = {key: value for key, value in named.items() if value is not None}
+        payload = {key: _text(value) for key, value in taken.items()}
+        changed = ",".join(sorted(taken))
+        detail = {"operation": "amend", "terms": changed, "order_link_id": row.order_link_id}
+        if not await self._record(row, "orders.amend", "success", "user", detail, actor, rid):
+            return _problem(503, "audit_unavailable", "The amend could not be recorded.")
+        send = self._send(
+            row, "amend", "AMEND", payload, actor=actor, request_id=rid,
+            expected_seq=expected_seq, terms=taken,
+        )  # fmt: skip
+        return await self._shielded(send, "amend")
+
+    async def _checked(
+        self, row: OrderRow, terms: AmendTerms
+    ) -> tuple[SizedOrder, Instrument, bool] | ExitOutcome:
+        """The body (400), every rule that fails listed: the amended order, sized as it would be
+        sent, its instrument, and whether it names a TP/SL side."""
+        figures = {"qty": terms.qty, "price": terms.price, "trigger_price": terms.trigger_price}
+        sides = dict(terms.sides or {})
+        if not sides and all(value is None for value in figures.values()):
+            return _invalid("body", "required", "Name at least one term to amend.")
+        odd = [key for key, value in figures.items() if value is not None and not value.is_finite()]
+        if odd:  # as `Validator.check_order` names it: never compared
+            return _invalid(odd[0], "finite", "Each term amended is a finite number.")
+        named = {side: None if offset is None else _NAMED for side, offset in sides.items()}
+        rule = tpsl_scope_refusal(
+            named, reduce_only=row.reduce_only, tpsl_mode=row.tpsl_mode, filled_qty=row.cum_exec_qty
+        )
+        if rule is not None:
+            return _tpsl_refused(rule, sides)
+        errors: list[FieldError] = []
+        qty = row.qty if terms.qty is None else terms.qty
+        if not qty > row.cum_exec_qty:
+            errors.append(
+                FieldError(
+                    "qty",
+                    "qty_not_above_filled",
+                    "The quantity must stay above the filled quantity.",
+                )
+            )
+        try:
+            instrument = await self._bounded(self._d.instruments.instrument(row.symbol))
+        except OmsError as exc:  # the catalogue not composed yet: `oms_not_ready`
+            return _refused(exc) if isinstance(exc, OrderRefused) else _store()
+        except _UNREAD:
+            return _store()
+        if instrument is None or instrument.symbol != row.symbol:
+            return _invalid("symbol", "listed", "No instrument is listed under this symbol.")
+        price = row.price if terms.price is None else terms.price
+        trigger = row.trigger_price if terms.trigger_price is None else terms.trigger_price
+        reference = price if price is not None else trigger
+        if reference is None:
+            return _invalid("price", "required", "The order has no price to measure from.")
+        side, stop, take_profit = _SIDES[row.side], row.stop_loss, row.take_profit
+        effect = OrderEffect.REDUCE if row.reduce_only else OrderEffect.ENTRY
+        resolver = self._d.stop_resolver
+        try:
+            if (offset := sides.get("stop_loss")) is not None:
+                stop = resolver.resolve(
+                    offset, side=side, reference_price=reference, effect=effect,
+                    instrument=instrument, profile=None,
+                )  # fmt: skip
+            if (offset := sides.get("take_profit")) is not None:
+                take_profit = resolver.resolve_take_profit(
+                    offset, side=side, reference_price=reference, instrument=instrument,
+                    profile=None,
+                )  # fmt: skip
+        except OrderInvalid as exc:  # a unit the resolver cannot resolve
+            errors.extend(exc.errors)
+        errors += stop_errors(effect=effect, side=side, reference_price=reference, stop=stop)
+        errors += take_profit_errors(side=side, reference_price=reference, take_profit=take_profit)
+        if errors:
+            return _refused(OrderInvalid(errors=errors))
+        try:
+            sized = SizedOrder(
+                account_id=AccountId(row.exchange_account_id), environment=self._env,
+                symbol=row.symbol, side=side, order_type=_TYPES[row.order_type], qty=qty,
+                price=price, trigger_price=trigger, reference_price=reference,
+                reduce_only=row.reduce_only, intent=row.intent, effect=effect, stop_loss=stop,
+                take_profit=take_profit,
+            )  # fmt: skip
+            self._d.validator.check_terms(sized, instrument=instrument)
+        except OrderRefused as exc:
+            return _refused(exc)
+        except ValueError:  # a figure `SizedOrder` itself refuses (a reference not above zero)
+            return _invalid("price", "min_price", "The amended terms are no order to send.")
+        return sized, instrument, bool(sides)
+
+    async def _ratchet(self, row: OrderRow, stop: Decimal | None) -> ExitOutcome | None:
+        """Q4's one ratchet on the stop the amend would send, before any record or send: against
+        the order's stop and the key's records in force (Full mode, same side)."""
+        if stop is None:
+            return None
+        live = self._d.stops.live_for_key(row.exchange_account_id, row.symbol, row.position_idx)
+        try:
+            in_force = await self._bounded(live)
+        except _UNREAD:
+            return _store()
+        loose = ratchet_refusal(
+            side=row.side, requested=stop, current=row.stop_loss, in_force=in_force
+        )
+        if loose is None:
+            return None
+        return _refused(
+            RiskRefused(
+                "A stop-loss may only be tightened: the owner loosens it on setPositionTpSl."
+            )
+        )
+
+    async def _gated(
+        self, scoped: ScopedOrder, sized: SizedOrder, instrument: Instrument
+    ) -> ExitOutcome | None:
+        """Ruling Q10 and D1, a risk-increasing amend: what `placeOrder` meets, in its order."""
+        row = scoped.order
+        if not self._d.oms_enabled():
+            return _refused(TradingDisabled())
+        switched = self._d.switches.refusal(AccountId(row.exchange_account_id), self._env)
+        if switched is not None:
+            return _refused(switched)
+        profile: AccountProfile | None = None
+        try:
+            read = self._d.profiles.get_effective_profile(
+                row.exchange_account_id, scoped.profile_id
+            )
+            profile = await self._bounded(read)
+        except AccountNotFoundError:  # no profile allows it: the check refuses it (D11)
+            profile = None
+        except (ProfileUnavailableError, *_UNREAD):
+            return _store()
+        try:
+            self._d.validator.check_order(sized, instrument=instrument, profile=profile)
+        except OrderRefused as exc:
+            return _refused(exc)
+        if not self._d.risk_gate.check(sized, profile=profile).allowed:
+            return _refused(RiskRefused())
+        return None
 
     # --- the rest --------------------------------------------------------------------------------
 

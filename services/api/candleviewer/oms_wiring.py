@@ -1512,7 +1512,10 @@ class OmsRuntime:
             reader = TradeGroupReader(stores.groups)
             route = OrderRoute(accounts, ports.arm_records, switches, orders, reader, env)
             exits = OrderExits(ExitDeps(
-                machines=machines, commands=commands, orders=orders, audit=audit, environment=env,
+                machines=machines, commands=commands, orders=orders, stops=stops, audit=audit,
+                instruments=instruments, profiles=self.profiles,
+                stop_resolver=ports.stop_resolver, risk_gate=ports.risk_gate, validator=validator,
+                switches=switches, oms_enabled=self._oms_enabled, environment=env,
             ))  # fmt: skip
             if owned is not None:
                 self._phase = "sink_start"

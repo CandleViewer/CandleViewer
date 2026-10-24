@@ -161,26 +161,7 @@ class Validator:
         if instrument.symbol != order.symbol:
             raise ValueError("the instrument is not the order's symbol")
         self.assert_order_placement_allowed()
-        non_finite = _non_finite_errors(order)
-        if non_finite:
-            raise OrderInvalid(errors=non_finite)
-        out_of_bounds = _bound_errors(order, instrument)
-        if out_of_bounds:
-            _refuse(out_of_bounds)
-        priced = order.price if order.price is not None else order.reference_price
-        try:  # every step on a figure, under one handler (the module docstring's step 2)
-            violations = InstrumentPolicy(instrument).validate(priced, order.qty)
-            status = [v for v in violations if v.code is FilterViolationCode.SYMBOL_NOT_TRADING]
-            if status:
-                raise OrderInvalid(errors=map(_policy_error, status))
-            malformed = _price_errors(order)
-            if malformed:
-                raise OrderInvalid(errors=malformed)
-            if order.order_type == "market":
-                violations = [v for v in violations if v.code not in _NOT_FOR_MARKET]
-            errors = [*map(_policy_error, violations), *_order_path_errors(order, instrument)]
-        except InvalidOperation as error:  # a figure no step can judge: DivisionImpossible
-            raise OrderInvalid() from error
+        errors = _terms_errors(order, instrument)
         if order.effect is not OrderEffect.REDUCE:
             if profile is None:
                 raise RiskRefused("No profile allows this order.")
@@ -191,6 +172,14 @@ class Validator:
             errors += _leverage_errors(profile, instrument)
         _refuse(errors)
 
+    def check_terms(self, order: SizedOrder, *, instrument: Instrument) -> None:
+        """An amend's terms (E29-T04 slice 4, 22 `amendOrder`): steps 2 and 4 alone, as
+        `check_order` refuses them. The read-only gate and the profile are a risk-increasing
+        amend's, which `check_order` takes too: an exit is never gated (C-2.6)."""
+        if instrument.symbol != order.symbol:
+            raise ValueError("the instrument is not the order's symbol")
+        _refuse(_terms_errors(order, instrument))
+
     @staticmethod
     def check_route(order_environment: Environment, route_environment: Environment) -> None:
         """C-2.11: refuse an order whose route is another environment's."""
@@ -198,6 +187,31 @@ class Validator:
             raise EnvironmentMismatch(
                 order_environment=order_environment, route_environment=route_environment
             )
+
+
+def _terms_errors(order: SizedOrder, instrument: Instrument) -> list[FieldError]:
+    """Steps 2 and 4 of the module docstring: a figure step 2 refuses raises; step 4's
+    violations are listed for the caller, which may add the leverage's."""
+    non_finite = _non_finite_errors(order)
+    if non_finite:
+        raise OrderInvalid(errors=non_finite)
+    out_of_bounds = _bound_errors(order, instrument)
+    if out_of_bounds:
+        _refuse(out_of_bounds)
+    priced = order.price if order.price is not None else order.reference_price
+    try:  # every step on a figure, under one handler (the module docstring's step 2)
+        violations = InstrumentPolicy(instrument).validate(priced, order.qty)
+        status = [v for v in violations if v.code is FilterViolationCode.SYMBOL_NOT_TRADING]
+        if status:
+            raise OrderInvalid(errors=map(_policy_error, status))
+        malformed = _price_errors(order)
+        if malformed:
+            raise OrderInvalid(errors=malformed)
+        if order.order_type == "market":
+            violations = [v for v in violations if v.code not in _NOT_FOR_MARKET]
+        return [*map(_policy_error, violations), *_order_path_errors(order, instrument)]
+    except InvalidOperation as error:  # a figure no step can judge: DivisionImpossible
+        raise OrderInvalid() from error
 
 
 def symbol_allowed(profile: AccountProfile, instrument: Instrument) -> bool:
