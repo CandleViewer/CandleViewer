@@ -91,7 +91,7 @@ class ReplayLoopBudget:
         self._share, self._burst = float(share), float(burst_s)
         self._time, self._measure = time, measure
         self._tokens = self._burst
-        self._stamp = time.now()
+        self._stamp: float | None = None  # taken on the first refill: no running loop needed here
         self._waiters: deque[object] = deque()
         self._never = asyncio.Event()  # a hold's wake when the caller passes none
 
@@ -109,7 +109,7 @@ class ReplayLoopBudget:
 
     def _refill(self) -> None:
         now = self._time.now()
-        elapsed = now - self._stamp
+        elapsed = 0.0 if self._stamp is None else now - self._stamp
         if elapsed > 0.0:
             self._tokens = min(self._burst, self._tokens + elapsed * self._share)
         self._stamp = now
