@@ -163,6 +163,37 @@ async def test_budget_admits_waiters_first_in_first_out() -> None:
     assert _sample("replay_budget_waiters") == 0
 
 
+async def test_budget_a_later_lane_queues_behind_a_waiter_even_with_the_debt_paid() -> None:
+    time = FakeTime(auto=False)
+    budget = _budget(time)
+    _indebt(time, budget)
+    order: list[str] = []
+
+    async def first() -> None:
+        lane = budget.lane("first")
+        await lane.breathe()
+        time.advance(BURST + 0.050)  # its turn puts the budget back into debt
+        lane.charge()
+        order.append("first")
+
+    async def advance_later() -> None:
+        await _settle()
+        time.advance(1.0)
+
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(first())
+        await _settle()
+        time.advance(1.0)  # the debt is paid, but "first" has not run yet
+        tg.create_task(advance_later())
+        late = budget.lane("late")
+        late.start()
+        held = await late.breathe()
+        order.append("late")
+
+    assert order == ["first", "late"]
+    assert held > 0.0  # it waited for the debt "first" ran up, instead of overtaking
+
+
 async def test_budget_a_cancelled_waiter_leaves_and_the_next_is_admitted() -> None:
     time = FakeTime(auto=False)
     budget = _budget(time)

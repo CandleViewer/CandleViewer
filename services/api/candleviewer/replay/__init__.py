@@ -19,10 +19,14 @@ session's replay-scoped book, built from the `LiveEventModels` the composition r
 `ReplayRun` is one session's playback: it opens the session's sources (a `SourceFactory`), owns
 the clock and its driver in one structured scope, wraps the loop and reports to the session
 layer through a `ReplayRunPort`.
+
+#2668 (G1) adds `ReplayLoopBudget`, the process-wide cap on replay's share of the event loop, and
+its per-session `BudgetLane`.
 """
 
 from __future__ import annotations
 
+from candleviewer.replay.budget import BudgetLane, ReplayLoopBudget
 from candleviewer.replay.clock import ReplayClock
 from candleviewer.replay.errors import (
     ReplayClockStateError,
@@ -69,6 +73,7 @@ __all__ = [
     "STEP",
     "UNBOUNDED",
     "BarProbe",
+    "BudgetLane",
     "ClockConfig",
     "GapPolicy",
     "LiveEventModels",
@@ -88,6 +93,7 @@ __all__ = [
     "ReplayInjector",
     "ReplayInternalError",
     "ReplayItem",
+    "ReplayLoopBudget",
     "ReplayLoopStartUnknown",
     "ReplayMemoryCeilingExceeded",
     "ReplayPriceOffGrid",

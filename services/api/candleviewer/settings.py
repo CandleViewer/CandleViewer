@@ -708,6 +708,11 @@ class Settings(BaseSettings):
     replay_readahead_events: int = Field(default=131_072, ge=1_024, le=4_194_304)
     replay_readahead_bytes: int = Field(default=64 << 20, ge=1 << 20, le=1 << 30)
     replay_memory_ceiling_bytes: int = Field(default=256 << 20, ge=2 << 20, le=4 << 30)
+    # #2668 (G1, C-2.17): replay's share of the event loop, all sessions together
+    # (`replay.budget.ReplayLoopBudget`): loop seconds per wall second, and the burst a quiet
+    # loop banks. No off value (C-4.14); the bounds repeat the budget's own.
+    replay_loop_share: float = Field(default=0.25, ge=0.05, le=0.75)
+    replay_loop_burst_ms: int = Field(default=50, ge=5, le=250)
     order_rate_per_uid: int = 8
     native_sl_deadline_ms: int = 3000
     killswitch_on_disconnect_s: int = 30

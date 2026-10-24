@@ -65,6 +65,7 @@ _SUFFIX_EXCEPTIONS = frozenset(
         "cv_ws_connection_class",
         "cv_ws_coalesced_updates",
         "cv_ws_queue_frames",
+        "replay_budget_waiters",  # a gauge of waiting lanes, named by the #2668 plan
     }
 )
 
