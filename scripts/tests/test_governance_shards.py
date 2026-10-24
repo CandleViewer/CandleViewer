@@ -6,7 +6,8 @@ before the fix with every test green. `governance.yml` now runs three jobs in pa
 `governance-checks` (the GOV checks, the canary and the reports), two `governance-tests` shards
 that write raw coverage data, and `governance`, which combines that data, applies the 85% gate
 on `scripts/**` and fails unless every other job passed. `tools/ci/governance_shards.py` splits
-the test files by measured weight. These tests pin the split and the shape; nothing the old job
+the test files by measured duration; #4365 raised the count to four after two files the table
+did not know (49 s and 33 s of the 174 s sequential total) pushed shards past the budget. These tests pin the split and the shape; nothing the old job
 checked is dropped: the shards list exactly the files `pytest scripts/tests scripts/gh/tests`
 collects.
 """
@@ -45,12 +46,20 @@ def _runs(job: dict[str, Any]) -> str:
     return "\n".join(str(step.get("run", "")) for step in job["steps"])
 
 
-def test_the_two_shards_partition_every_test_file() -> None:
+def _matrix() -> dict[str, Any]:
+    matrix: dict[str, Any] = _workflow()["jobs"]["governance-tests"]["strategy"]["matrix"]
+    return matrix
+
+
+def test_the_shards_partition_every_test_file() -> None:
     files = gs.suite_files()
-    first, second = gs.shards(files, 2)
-    assert first and second and not set(first) & set(second)
-    assert sorted(first + second) == files
-    assert gs.shards(files, 2) == [first, second]  # deterministic
+    count = _matrix()["total"][0]
+    parts = gs.shards(files, count)
+    assert len(parts) == count and all(parts)
+    flat = [name for part in parts for name in part]
+    assert len(flat) == len(set(flat))  # disjoint
+    assert sorted(flat) == files  # exhaustive
+    assert gs.shards(files, count) == parts  # deterministic
 
 
 def test_the_shards_list_exactly_the_files_pytest_collects(tmp_path: Path) -> None:
@@ -88,19 +97,30 @@ def test_the_shards_list_exactly_the_files_pytest_collects(tmp_path: Path) -> No
         "scripts/" + line.split("::")[0] for line in run.stdout.splitlines() if "::" in line
     }
     assert collected == set(gs.suite_files(tmp_path)) == set(wanted)
-    first, second = gs.shards(gs.suite_files(tmp_path), 2)
-    assert sorted(first + second) == sorted(wanted)
+    parts = gs.shards(gs.suite_files(tmp_path), 2)
+    assert sorted(parts[0] + parts[1]) == sorted(wanted)
 
 
 def test_the_split_is_balanced_by_the_measured_weights() -> None:
-    first, second = gs.shards(gs.suite_files(), 2)
+    count = _matrix()["total"][0]
+    loads = [_weight(part) for part in gs.shards(gs.suite_files(), count)]
     # Greedy, heaviest first: the shards differ by at most the heaviest single file.
-    assert abs(_weight(first) - _weight(second)) <= max(gs.WEIGHTS.values())
+    assert max(loads) - min(loads) <= max(gs.WEIGHTS.values())
+    # And no shard carries more than 20% over an even split (the one heavy file sits alone).
+    assert max(loads) <= sum(loads) / count * 1.2
 
 
 def test_every_weighted_file_exists() -> None:
     # A renamed or deleted heavy file would silently fall back to the default weight.
     assert set(gs.WEIGHTS) <= set(gs.suite_files())
+
+
+def test_the_weight_table_is_measured_seconds_with_a_small_default() -> None:
+    # #4365: a table that misses the heaviest files balances nothing; the unknown-file default
+    # stays near the median file (~0.1 s) so a new file lands in a shard without skewing it.
+    assert 0 < gs.DEFAULT_WEIGHT <= 0.5
+    assert all(weight >= 0.5 for weight in gs.WEIGHTS.values())
+    assert len(gs.WEIGHTS) >= 30
 
 
 def test_the_cli_prints_one_shard_and_refuses_a_bad_index(
@@ -120,19 +140,26 @@ def test_an_empty_shard_fails_the_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     assert gs.main(["2", "2"]) == 1
 
 
-def test_governance_runs_the_checks_two_test_shards_and_an_aggregate() -> None:
+def test_governance_runs_the_checks_four_test_shards_and_an_aggregate() -> None:
     doc = _workflow()
     jobs = doc["jobs"]
     assert list(jobs) == ["governance-checks", "governance-tests", "governance"]
-    assert jobs["governance-tests"]["strategy"] == {"fail-fast": False, "matrix": {"shard": [1, 2]}}
+    assert jobs["governance-tests"]["strategy"] == {
+        "fail-fast": False,
+        "matrix": {"shard": [1, 2, 3, 4], "total": [4]},
+    }
+    assert (
+        jobs["governance-tests"]["name"]
+        == "governance-tests (${{ matrix.shard }}/${{ matrix.total }})"
+    )
     tests = _runs(jobs["governance-tests"])
-    assert 'governance_shards.py "$SHARD" 2' in tests
+    assert 'governance_shards.py "$SHARD" "$TOTAL"' in tests
     assert "--cov=scripts --cov-report= --cov-fail-under=0" in tests
     aggregate = jobs["governance"]
     assert aggregate["needs"] == ["governance-checks", "governance-tests"]
     assert aggregate["if"] == "${{ !cancelled() }}"
     combined = _runs(aggregate)
-    assert "python -m coverage combine coverage-shard-1 coverage-shard-2" in combined
+    assert "python -m coverage combine coverage-shard-*" in combined
     assert "python -m coverage report -m --fail-under=85" in combined
     assert '[ "$CHECKS" = success ] && [ "$TESTS" = success ]' in combined
 
@@ -159,3 +186,13 @@ def test_every_job_is_read_only_bounded_and_ends_with_its_duration_budget() -> N
         assert [c["with"]["persist-credentials"] for c in checkouts] == [False], name
         last = job["steps"][-1]
         assert (last["name"], last["if"], last["env"]["BUDGET_MS"]) == (BUDGET, "always()", "90000")
+
+
+def test_the_shard_job_summary_names_the_shard_and_the_pytest_wall_time() -> None:
+    job = _workflow()["jobs"]["governance-tests"]
+    pytest_step = next(s for s in job["steps"] if s.get("id") == "pytest")
+    assert "pytest_ms" in pytest_step["run"] and "GITHUB_OUTPUT" in pytest_step["run"]
+    last = job["steps"][-1]
+    assert last["env"]["PYTEST_MS"] == "${{ steps.pytest.outputs.pytest_ms }}"
+    assert "| pytest wall time (ms) |" in last["run"] and "shard ${SHARD}/${TOTAL}" in last["run"]
+    assert 'if [ "$duration_ms" -gt "$BUDGET_MS" ]' in last["run"]  # the assertion is unchanged
