@@ -54,6 +54,7 @@ from candleviewer.oms.errors import (
     StoreUnavailable,
     TradingDisabled,
 )
+from candleviewer.oms.exits import ExitDeps, OrderExits
 from candleviewer.oms.idempotency import AnchorService
 from candleviewer.oms.order_link_allocator import OrderLinkIdAllocator
 from candleviewer.oms.order_machine import (
@@ -1004,13 +1005,15 @@ class OrderRoute:
     records (step 5), the switches B1's `SEND` asks too (step 10), and a replay's rows (steps 8 and
     12): the order by its account, and the group through the principal-scoped reader (SR-E28-21),
     never the system facade (C-12.4). The account and order reads are typed as the one read each
-    step uses."""
+    step uses. The exit routes (E29-T04 slice 4) read the arm records too, and the process's
+    `environment`, which every order `OrderExits.scope` answers is of."""
 
     accounts: AccountExistence
     arm_records: ArmRecords
     switches: TradingSwitchesBinding
     orders: OrderRead
     groups: TradeGroupReader
+    environment: Environment
 
 
 @dataclass(frozen=True, slots=True)
@@ -1025,6 +1028,7 @@ class _Parts:
     audit: OmsAudit
     sweep: UnfinishedOrders
     route: OrderRoute
+    exits: OrderExits
 
 
 async def _drained(tasks: set[asyncio.Task[Any]], timeout_s: float) -> set[asyncio.Task[Any]]:
@@ -1190,6 +1194,12 @@ class OmsRuntime:
     def route(self) -> OrderRoute:
         """The route's reads of the composed OMS (`OrderRoute`); `OmsNotReady` before."""
         return self._composed().route
+
+    @property
+    def exits(self) -> OrderExits:
+        """The exit service the exit routes and cancel-all drive (E29-T04 slice 4), over the
+        pipeline's facade, command port and checks; `OmsNotReady` before it is composed."""
+        return self._composed().exits
 
     def _composed(self) -> _Parts:
         if self._parts is None:
@@ -1477,9 +1487,11 @@ class OmsRuntime:
             )
             if demand is not None:
                 closers.insert(2, ("ticker_demand", demand.close))
+            instruments = InstrumentsBinding(ingestion.instruments)
+            validator = Validator(read_only_gate=self._read_only)
             deps = SubmissionDeps(
                 accounts=accounts,
-                instruments=InstrumentsBinding(ingestion.instruments),
+                instruments=instruments,
                 prices=ReferencePricesBinding(tickers, demand=demand),
                 profiles=self.profiles,
                 switches=switches,
@@ -1490,7 +1502,7 @@ class OmsRuntime:
             submission = OrderSubmission(
                 ports, deps, machines=machines, commands=commands,
                 allocator=OrderLinkIdAllocator(orders),
-                validator=Validator(read_only_gate=self._read_only), router=router,
+                validator=validator, router=router,
                 anchors=anchors, clock_halt=halt, metrics=metrics, now=self._now,
                 monotonic=self._monotonic, pager=self._pager,
                 store_timeout_s=bounds.store_timeout_s, place_wait_s=bounds.place_wait_s,
@@ -1498,16 +1510,20 @@ class OmsRuntime:
             )  # fmt: skip
             # `pg_stores`' one group adapter serves the system port and the scoped read alike.
             reader = TradeGroupReader(stores.groups)
-            route = OrderRoute(accounts, ports.arm_records, switches, orders, reader)
+            route = OrderRoute(accounts, ports.arm_records, switches, orders, reader, env)
+            exits = OrderExits(ExitDeps(
+                machines=machines, commands=commands, orders=orders, audit=audit, environment=env,
+            ))  # fmt: skip
             if owned is not None:
                 self._phase = "sink_start"
                 await owned.start()
                 closers.insert(2, ("sink", owned.stop))
+            closers.insert(0, ("exits", exits.aclose))  # its exits end before the facade stops
         except BaseException:
             await _closed(closers, asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S)
             raise
         return _Parts(
-            submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route
+            submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route, exits
         )
 
     def _now_us(self) -> int:
