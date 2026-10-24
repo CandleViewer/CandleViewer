@@ -88,6 +88,7 @@ tracker).
 
 ### Features
 
+- **oms-execution**: `POST /orders` places an order on one account through the OMS and answers `202`, an acceptance and never a fill: an entry with no native stop-loss is refused, a send whose outcome is unknown leaves the order `unknown` and is never sent again, and nothing is sent while the order cannot be recorded (`503`). The same `Idempotency-Key` and body get the original answer with `Idempotency-Replayed: true`, after a restart too (#913) (#4367)
 - **infra-devops**: E03-T11 add release workflow, changelog and semver tagging (#1565) (15bbbd8)
 - **infra-devops**: wire coverage/bundle-size/flaky quality gates to §9 (#1543) (605cb2f)
 - **infra-devops**: E03-T08 build, scan, SBOM and cosign-sign images on merge to main (#1540) (4dc6bb7)
