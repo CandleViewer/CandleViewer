@@ -62,9 +62,11 @@ class Facts(TypedDict):
 BOUND = r"(minimum|maximum|default): ([^,}\s]+)"
 # `24` defaults the frames override (D02-C7): field -> the drawn default; `24`'s own is parsed.
 DRAWN_24 = {"catch_up": "proportional", "final_market_sweep": "leave as limit (no sweep)"}
-# Plan lines the spec cites by number at the branch base (`file:line` -> a substring of that line).
+# Plan lines the spec cites by number at its pinned `origin/main` (`file:line` -> a substring of
+# that line; re-pinned by content at the round-1 approval fold: `24` +3 from #4358 / #4319).
 # `14` lines after SCR-066 :1545 shift by the pointer lines this PR inserts above them, so a `14`
 # citation also passes at the cited line plus the number of E33-D02 pointer lines before it.
+# Every other citation must hold its text at exactly its number (NEAR = 0: no drift window).
 CITED: tuple[tuple[str, int, str], ...] = (
     ("14", 1540, "Slices of 0.0004 BTC are below the minimum"),
     ("14", 1546, "algo.twap_previewed"),
@@ -79,8 +81,10 @@ CITED: tuple[tuple[str, int, str], ...] = (
     ("22", 291, "**Protective writes (C-2.6).**"),
     ("22", 6258, "twapExit:"),
     ("23", 898, "`algo:{algo_id}`"),
-    ("24", 2820, "catch_up"),
-    ("24", 2826, "`final_market_sweep` (default `true`)"),
+    ("24", 2090, "### 8.8 Safety invariant"),
+    ("24", 2729, "class AlgoState(BaseModel):"),
+    ("24", 2825, "catch_up"),
+    ("24", 2831, "`final_market_sweep` (default `true`)"),
     ("28", 3371, "| `working` | `CHILD_CANCELLED` |"),
     ("28", 3373, "| `working` | `WS_DISCONNECT` |"),
     ("28", 3384, "| `cooling_down` | `COOLDOWN_DUE` |"),
@@ -94,6 +98,7 @@ CITED: tuple[tuple[str, int, str], ...] = (
     ("28", 4099, "| `parked` | `CHILD_FILLED` |"),
     ("28", 4100, "| `parked` | `USER_CANCEL` |"),
 )
+NEAR = 0
 PLAN = {
     "14": CAT14,
     "22": API22,
@@ -378,7 +383,8 @@ def cited_lines() -> list[str]:
     for doc, line, want in CITED:
         lines = texts[doc]
         shift = sum(POINTER in ln for ln in lines[: line - 1]) if doc == "14" else 0
-        hits = [n for n in (line, line + shift) if 0 < n <= len(lines) and want in lines[n - 1]]
+        near = {n + d for n in (line, line + shift) for d in range(-NEAR, NEAR + 1)}
+        hits = [n for n in near if 0 < n <= len(lines) and want in lines[n - 1]]
         if not hits:
             out.append(f"cited line drifted: `{doc}` :{line} no longer holds {want[:40]!r}")
     return out

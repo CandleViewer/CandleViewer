@@ -1545,7 +1545,7 @@ Drag preview                Drop zones
 - **Performance:** Slice scheduling is backend-side so the algo survives a UI reload; the panel renders progress from `orders` at <=2 Hz.
 - **Analytics/audit:** **Audited:** `algo.twap_created` `{symbol, side, totalQty, duration, sliceCount, randomisation, accountIds}`, `algo.twap_paused`, `algo.twap_resumed`, `algo.twap_cancelled`, `algo.twap_completed`, `algo.twap_slice_failed`. Analytics: `algo.twap_previewed`.
 - **Design sign-off acceptance checklist:** [ ] total qty, duration, slice count/interval, randomisation, limit-vs-market slices and price-band guard drawn [ ] schedule preview table [ ] running / paused / degraded / completed / failed states [ ] 'algo pauses if the backend disconnects; native stops still protect' message drawn [ ] cancel and cancel-and-flatten paths with confirmation
-- **Design (wireframe → hi-fi):** [E33-D02.md](../design/E33/E33-D02.md) §2–§3 (E33-D02; owner approval pending; the shared builder shell with the emulation paragraph and the native-stop line in every state, the TWAP fields mapped to `AlgoSpec` / `24` §10.4 with the gaps recorded, the schedule preview as ranges, every catalogue state as a named frame, the disconnect copy per E33-D01; Penpot page by name + id in the spec).
+- **Design (wireframe → hi-fi):** [E33-D02.md](../design/E33/E33-D02.md) §2–§3 (E33-D02; owner approval pending; the shared builder shell with the emulation paragraph and the native-stop line in every state, the TWAP fields mapped to `AlgoSpec` / `24` §10.4 with the gaps recorded, the schedule preview as ranges, every catalogue state as a named frame, the disconnect copy per E33-D01; Penpot page by name in the spec).
 
 ### SCR-067 — Iceberg (emulated) builder
 
