@@ -900,6 +900,8 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_REPLAY_RECLAIM_INTERVAL_S`   | float  | `60`                      | process | idle-reclaim sweep cadence (one bounded batch per sweep)                                                            |
 | `CV_REPLAY_MAX_SESSIONS_PER_USER` | int   | `2`                       | process | open replay sessions per user; create / `PREPARE` past it refused                                                   |
 | `CV_REPLAY_MAX_WINDOW_HOURS`     | int    | `24`                      | process | replay window cap; a longer window is a 422 before any I/O                                                          |
+| `CV_REPLAY_LOOP_SHARE`           | float  | `0.25`                    | process | replay's share of the event loop, all sessions (#2668 G1, C-2.17); 0.05-0.75, no off value (C-4.14)                 |
+| `CV_REPLAY_LOOP_BURST_MS`        | int    | `50`                      | process | loop time a quiet loop banks for replay (#2668 G1); 5-250                                                           |
 | `CV_ORDER_RATE_PER_UID`          | int    | `8`                       | runtime | below Bybit's 10/s for headroom                                                                                     |
 | `CV_NATIVE_SL_DEADLINE_MS`       | int    | `3000`                    | runtime | NakedPositionAlert threshold                                                                                        |
 | `CV_KILLSWITCH_ON_DISCONNECT_S`  | int    | `30`                      | runtime | watchdog flatten policy (opt-in per account)                                                                        |

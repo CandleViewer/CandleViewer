@@ -18,15 +18,22 @@ used to yield. `breathe` charges, then yields once if the bucket is not in debt 
 waits, else holds the lane in the queue until it is admitted, and returns the seconds held. A
 hold waits through the injected `MonotonicTime` (`LoopTime` in production); setting `wake` ends it
 early (a pause), and a cancelled hold leaves the queue on the way out, so the next waiter is
-admitted on time. One lane may serve several tasks of a session: since only one task runs at a
-time, charging since the last `start()` or `charge()` of any of them never double counts.
+admitted on time. Each wake-up of the head also wakes every waiter behind it once to look again,
+so one admission costs O(N) wake-ups for N waiters (N is the number of sessions, a handful).
+
+**Charge before every await.** One lane may serve several tasks of a session, as one mark: a
+task's `start()` on resume overwrites the mark another task left. Every await on a replay path
+must therefore be preceded by `charge()` (or be a `breathe()`): an uncharged await overcharges the
+suspended task's lane by the time other tasks ran, or undercharges it when another task of the
+same lane restarts the mark meanwhile.
 
 **Wall time, not thread time.** Work is measured with `measure` (`time.perf_counter`), not
 `time.thread_time`: garbage collection, page faults and syscalls inside a turn hold the loop
 just as much as Python code does, and thread time would not see them. A turn that suspends
-inside a sink without charging first is charged the suspension too. That overcharge only makes
-replay yield more, which is the safe direction for the loop's other work; one charge adds at most
-`MAX_CHARGE_S` of debt, so one long suspension cannot hold every session for long.
+inside a sink without charging first is charged the suspension too (on a lane no other task
+shares). That overcharge only makes replay yield more, which is the safe direction for the
+loop's other work; one charge adds at most `MAX_CHARGE_S` of debt, so one long suspension cannot
+hold every session for long.
 
 **Metrics** (served by `replay.metrics`): `replay_loop_seconds_total` is the loop time charged to
 replay, `replay_budget_held_seconds_total` the wall time lanes were held, and
@@ -140,7 +147,8 @@ class ReplayLoopBudget:
                     await time.wait_until(time.now() + debt / self._share, signal)
                 elif self._waiters[0] is ticket:
                     break
-                else:  # paid, and the waiter ahead is about to run: let it
+                else:  # paid, and the waiter ahead is about to run: let it. Bounded by timer skew:
+                    # the head's deadline is at or before the clear time, so it leaves within a turn
                     waited = True
                     await asyncio.sleep(0)
         finally:
