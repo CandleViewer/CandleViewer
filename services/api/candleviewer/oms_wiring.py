@@ -14,20 +14,25 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Callable
+import re
+from collections import OrderedDict
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields
-from typing import Any, ClassVar, Final, Protocol
+from types import MappingProxyType
+from typing import Any, ClassVar, Final, Literal, Protocol
 from uuid import UUID
 
 import structlog
 
 from candleviewer.accounts.verification import Refusal
+from candleviewer.admin.wiring import keyed_record_id
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.order_entry import OrderEntryCheck, OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId, Environment, Px, Symbol
 from candleviewer.exchange.base.errors import AuthError, ExchangeError, OmsErrorCode
 from candleviewer.exchange.base.models import AccountRef, TickerEvent
 from candleviewer.observability.metrics import Metrics
+from candleviewer.oms.commands import NEVER_SENT_ALERT
 from candleviewer.oms.errors import (
     AccountScopeDenied,
     OmsNotReady,
@@ -35,11 +40,25 @@ from candleviewer.oms.errors import (
     StoreUnavailable,
     TradingDisabled,
 )
-from candleviewer.oms.ports import ClockHealth, Interim, RuntimePortName, announce_interim_port
+from candleviewer.oms.order_machine import MAX_MACHINES, OrderAuditRecord, OrderNotice
+from candleviewer.oms.ports import (
+    ClockHealth,
+    Interim,
+    KeyedRecord,
+    RequestRecord,
+    RuntimePortName,
+    SubmitActor,
+    announce_interim_port,
+)
 from candleviewer.oms.submit import RESULT_WAIT_S, STORE_TIMEOUT_S
 from candleviewer.settings import OMS_INFLIGHT_STUCK_MAX_S, Settings
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
 from candleviewer.statechart.plugins import LogPager, Pager
+from candleviewer.statechart.plugins.state_feed import (
+    FeedBinding,
+    MachineStateHandle,
+    MachineStatePort,
+)
 from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.orders import OrderStoreError
 from candleviewer.storage.repositories.trading_accounts import (
@@ -374,8 +393,200 @@ class TradingAccountsBinding:
             async with asyncio.timeout(self._timeout_s):
                 row = await self._reads.read_account(account_id)
         except (TimeoutError, StorageError, OrderStoreError) as exc:
-            structlog.get_logger(__name__).warning("oms_account_unread", error=type(exc).__name__)
+            _log().warning("oms_account_unread", error=type(exc).__name__)
             raise StoreUnavailable from None
         if row is None or row.deleted or row.environment != self._environment:
             raise AccountScopeDenied
         return row
+
+
+#: The actor of a record no principal asks for (24 Sec.15.5).
+SYSTEM_ACTOR: Final = "system:oms"
+
+
+class AuditWriterPort(Protocol):
+    """`AuditWriter`'s durable appends (C-2.9) with the columns this module writes: the root may
+    not import `audit` (C-3.3), so `outcome`, `severity` and `env` go as their plain values."""
+
+    async def emit(
+        self,
+        action: str,
+        *,
+        actor_label: str,
+        actor_user_id: UUID | None = None,
+        actor_ip: str | None = None,
+        session_id: UUID | None = None,
+        object_kind: str | None = None,
+        object_id: str | None = None,
+        outcome: Any = ...,
+        severity: Any = ...,
+        reason: str | None = None,
+        after_state: dict[str, Any] | None = None,
+        request_id: UUID | None = None,
+        env: Any = None,
+    ) -> None: ...
+
+    async def emit_keyed(self, action: str, name: str, **fields: Any) -> None: ...
+
+
+def _actor(actor: SubmitActor | None, user_id: UUID | None) -> dict[str, Any]:
+    """The columns that say who acted: the user and role of `actor`, else the OMS itself. A record
+    that names a user but no actor has no role to record (C-2.9), so it is refused, never
+    labelled without one: a site that drops the actor fails its write."""
+    if actor is not None:
+        return {
+            "actor_label": f"user:{actor.role}",
+            "actor_user_id": actor.user_id,
+            "actor_ip": actor.ip,
+            "session_id": actor.session_id,
+        }
+    if user_id is not None:
+        raise ValueError("a record that names a user has no role to record without its actor")
+    return {"actor_label": SYSTEM_ACTOR, "actor_user_id": None}
+
+
+class OmsAudit:
+    """The OMS's `SubmitAudit` and `OrderAudit` over the audit writer: a `KeyedRecord` through
+    `emit_keyed`, under the id `record_id` names ahead (`keyed_record_id`), a `RequestRecord` and
+    an `OrderAuditRecord` through `emit`. A record names its actor and role (`user:<role>`, with
+    its session and address), or `system:oms` where none is given, its object, its account and
+    detail as `after_state` (ids, state names and codes, C-12.6), its correlation id and the
+    process's environment. `write` returns once the record is durable, else raises (C-2.9)."""
+
+    def __init__(self, writer: AuditWriterPort, *, environment: Environment) -> None:
+        self._writer, self._environment = writer, environment
+
+    def record_id(self, action: str, name: str) -> UUID:
+        return keyed_record_id(action, name)
+
+    async def write(self, record: KeyedRecord | RequestRecord | OrderAuditRecord) -> None:
+        fields: dict[str, Any] = {
+            "outcome": record.outcome,
+            "severity": record.severity,
+            "reason": record.reason,
+            "after_state": {**record.detail, "account_id": str(record.account_id)},
+            "request_id": record.request_id,
+            "env": self._environment,
+        }
+        if isinstance(record, OrderAuditRecord):
+            fields |= _actor(None, None) | {"object_kind": "order"}
+            await self._writer.emit(record.action, object_id=str(record.order_id), **fields)
+            return
+        fields |= {"object_kind": record.object_kind, "object_id": str(record.object_id)}
+        if isinstance(record, KeyedRecord):
+            fields |= _actor(record.actor, record.actor_user_id)
+            await self._writer.emit_keyed(record.action, record.name, **fields)
+        else:
+            fields |= _actor(record.actor, record.actor.user_id)
+            await self._writer.emit(record.action, **fields)
+
+
+#: The notices whose owners have not landed: an ERROR and a page each until they do.
+UNOWNED_NOTICES: Final = MappingProxyType(
+    {"request_reconciliation": "E29-T06", "request_fallback_sl": "E32"}
+)
+#: The alert the pager takes as a ticket, not a page: an order a restart found never sent.
+_TICKETS: Final = frozenset({NEVER_SENT_ALERT})
+#: The alerts an order raises, a closed set: the order machine's (`raise_unknown_alert`,
+#: `raise_critical_alert` on `quarantined` and `held`, `raise_naked_position_alert`) and the one a
+#: resumed create past its history raises (`oms.commands`). Only these are logged and paged by
+#: name, so a value of any other source, a key among them, is never a name (SEC-S3C2-01, C-12.6).
+ORDER_ALERTS: Final = frozenset(
+    {"order_unknown", "order_quarantined", "order_held", "SL_ATTACH_FAILED", NEVER_SENT_ALERT}
+)
+#: The codes of a refused amend, a closed set too: the adapters' taxonomy (24 Sec.8.6).
+_ERROR_CODES: Final = frozenset(code.value for code in OmsErrorCode)
+_NAME: Final = re.compile(r"[A-Za-z0-9_]{1,64}")
+
+
+def _name(value: object) -> str:
+    """A code or a name as logged: itself when it is a plain name, else `unnamed`."""
+    return value if isinstance(value, str) and _NAME.fullmatch(value) else "unnamed"
+
+
+def _named(value: object, known: frozenset[str]) -> str:
+    """`value` when it is one of the `known` names, else `unnamed`: the shape of `_name` says a
+    name is plain, not that it is no secret, so a source with a closed set is held to it."""
+    return value if isinstance(value, str) and value in known else "unnamed"
+
+
+class OrderNoticesRouter:
+    """`order_machine.OrderNotices`: an `alert` goes to the pager (a page, but a never-sent
+    order's, which is a ticket); `request_reconciliation` and `request_fallback_sl` are an ERROR
+    and a page until E29-T06 and E32 own them; `amend_rejected` is a log line. It logs the order's
+    ids and the notice's names only, never a price, a size or a key (C-12.6): an alert is named
+    only from `ORDER_ALERTS` and an amend's code from `OmsErrorCode`, else `unnamed`. It never
+    raises: a notice it cannot route is a CRITICAL log and a page, whatever it was, and a failing
+    pager is logged at CRITICAL."""
+
+    def __init__(self, pager: Pager) -> None:
+        self._pager = pager
+
+    async def notify(self, notice: OrderNotice) -> None:
+        try:
+            self._route(notice)
+        except Exception as exc:  # not routed, maybe page-worthy: logged and paged, never raised
+            kind, error = _name(getattr(notice, "kind", None)), type(exc).__name__
+            _log().critical("oms_notice_unrouted", kind=kind, error=error)
+            self._raise("page", f"order notice {kind} not routed: {error}")
+
+    def _route(self, notice: OrderNotice) -> None:
+        log = _log()
+        ids = {
+            "order_id": str(notice.order_id),
+            "account_id": str(notice.account_id),
+            "order_link_id": notice.order_link_id,
+        }
+        kind = notice.kind
+        if kind == "alert":
+            alert = _named(notice.detail.get("alert"), ORDER_ALERTS)
+            log.error("oms_order_alert", alert=alert, **ids)
+            self._raise("alert" if alert in _TICKETS else "page", f"order alert {alert}")
+        elif kind in UNOWNED_NOTICES:
+            owner = UNOWNED_NOTICES[kind]
+            log.error("oms_order_notice_unowned", kind=kind, owner=owner, **ids)
+            self._raise("page", f"order notice {kind} has no owner until {owner}")
+        elif kind == "amend_rejected":
+            code = _named(notice.detail.get("error_code"), _ERROR_CODES)
+            log.warning("oms_amend_rejected", error_code=code, **ids)
+        else:
+            log.error("oms_order_notice_unknown", kind=_name(kind), **ids)
+            self._raise("page", "order notice of an unknown kind")
+
+    def _raise(self, severity: Literal["page", "alert"], summary: str) -> None:
+        try:
+            self._pager.raise_alert(severity, summary, machine_kind="order")
+        except Exception as exc:  # the alert is lost, never the notice's caller
+            _log().critical("oms_pager_failed", summary=summary, failure=type(exc).__name__)
+
+
+class OrderStateFeed:
+    """The machine-state member of the order facade's publisher (`order_machine.CompositePublisher`,
+    23 Sec.6.4 `machines.order:{id}.state`; the WS `orders` topics are E29-T10's): each order's slot
+    bound through `RegistryFeed` once, scoped to its account (OM-I02), and dropped on its last
+    step. A machine stopped before its last step keeps its slot, so at most `max_orders` (one or
+    more) are held, the least recently published dropped first (C-2.18): a later step binds it
+    again.
+
+    It publishes into the WS registry directly, which is single-threaded and bound to the serving
+    loop, so it must run on that loop: the runtime builds the order facade there (slice 3E), and a
+    machine on another loop would have to hop with `call_soon_threadsafe` first
+    (`machine_state_wiring`)."""
+
+    def __init__(self, feed: MachineStatePort, *, max_orders: int = MAX_MACHINES) -> None:
+        if max_orders < 1:  # 0 would bind again at every step and hold no slot
+            raise ValueError("max_orders must be at least 1")
+        self._feed, self._max = feed, max_orders
+        self._handles: OrderedDict[UUID, MachineStateHandle] = OrderedDict()
+
+    def publish(
+        self, order_id: UUID, account_id: UUID, payload: Mapping[str, Any], *, last: bool
+    ) -> None:
+        handle = self._handles.pop(order_id, None)
+        if handle is None:
+            handle = self._feed.bind(FeedBinding("order", str(order_id), frozenset({account_id})))
+        if not last:
+            self._handles[order_id] = handle
+            if len(self._handles) > self._max:
+                self._handles.popitem(last=False)
+        handle.publish(payload, last=last)

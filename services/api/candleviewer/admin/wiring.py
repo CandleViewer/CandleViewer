@@ -40,6 +40,7 @@ from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.service import AuditService, LaneKeyLoader, LaneNotWired
 from candleviewer.audit.verify_job import AuditVerifyJob
 from candleviewer.audit.verify_runner import VerifyRunner
+from candleviewer.audit.writer import keyed_record_id  # the OMS's keyed audit ids (#913, C-3.3)
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.observability.metrics import Metrics
 from candleviewer.secrets import (
@@ -111,6 +112,7 @@ __all__ = [
     "build_secrets_service",
     "export_audit_lane_metrics",
     "export_secrets_metrics",
+    "keyed_record_id",
     "secrets_audit_row",
     "secrets_audit_sink",
     "secrets_bundle",

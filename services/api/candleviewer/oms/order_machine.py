@@ -1730,3 +1730,25 @@ class OrderMachines:
             self._pager.raise_alert(severity, summary, machine_kind=MACHINE)
         except Exception as exc:  # the alert is lost, never the record or the answer
             logger().critical("oms_pager_failed", summary=summary, error=type(exc).__name__)
+
+
+class CompositePublisher:
+    """A `MachinePublisher` over several (E29-T04 #913 slice 3, commitment b): the machine-state
+    feed now, the WS `orders` topics with E29-T10. Each member gets each payload in turn, the
+    same mapping, and is synchronous and non-blocking, as a plugin hook calls it. One that raises
+    is logged and stops neither the others nor the step."""
+
+    def __init__(self, *members: MachinePublisher) -> None:
+        self._members = members
+
+    def publish(
+        self, order_id: UUID, account_id: UUID, payload: Mapping[str, Any], *, last: bool
+    ) -> None:
+        for member in self._members:
+            try:
+                member.publish(order_id, account_id, payload, last=last)
+            except Exception as exc:  # the member's failure is its own: the rest still publish
+                error = type(exc).__name__
+                logger().error(
+                    "oms_publish_member_failed", member=type(member).__name__, error=error
+                )
