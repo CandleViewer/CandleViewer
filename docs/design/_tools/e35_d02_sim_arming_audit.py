@@ -16,7 +16,8 @@ section 5 frame table and section 8 copy deck (`live_step_up`); (6) the counts. 
 every `<!-- audit:NAME=VALUE -->` marker in the spec. `--selftest` runs `live_step_up` on the spec
 and on mutated copies of it held in memory (an armed frame moved ahead of the hand-off, SCR-006
 dropped from the hand-off, the override drawn for DEMO only, a LIVE arm without the hand-off, the
-LIVE override inset alone relabelled DEMO): the spec must pass and every mutation must fail. Exit 1 on a gated FAIL or a mutation that passes.
+LIVE override inset alone relabelled DEMO): the spec must pass and every mutation must fail.
+Exit 1 on a gated FAIL or a mutation that passes.
 
 Usage: python3 -I docs/design/_tools/e35_d02_sim_arming_audit.py [--json] [--check] [--selftest]
        [--extra F ...]

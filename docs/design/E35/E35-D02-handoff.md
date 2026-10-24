@@ -123,7 +123,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [~] Verified in all three themes at both densities — the matrix is computed for the three themes (spec §10); `forced-colors: active` is stated per surface (spec §7); the visual parity check runs on the drawn boards — dark 01 / 03 / 04 beside their light twins 07 / 08 / 09 (spec §0).
 - [x] Passes the contrast matrix for every pair introduced or touched (34 gated rows, 0 FAIL; 14 PROPOSED `pairs.mjs` rows named; the rejected rows reported and never drawn).
 - [~] CVD simulation reviewed — `docs/design/_tools/cvd_sim.py` ran on the nine drawn exports (spec §0; greyscale + deuteranopia, outputs not committed); the greyscale argument is in spec §10 and board 09.
-- [~] Every documented State has a Penpot variant and a story — the states are named (Table 1); the variants exist once drawn; the stories are E35-S08's.
+- [~] Every documented State has a Penpot variant and a story — the states are named (Table 1) and drawn as named frames (`SCR-084/<state>`, `SCR-085/<state>`) on boards 02, 04 and 05 (spec §0); the Penpot variants and the stories are E35-S08's.
 - [x] Disabled states use the disabled-with-reason pattern (E09-D09 T2) for every RBAC- or state-gated action — the one rule in spec §1: "Arm on LIVE…" on a version whose IR lists live and, after D02-G5, the LIVE option (a Manager, an Owner without live), the untradeable account row, every write while viewing as (one notice per frame); form validity (the flatten-all box, the empty override reason) is `aria-disabled` with its visible reason, outside the grammar (E09-D09 §9.1), drawn E30-D02 D3's way (0.45, the reason full-opacity under it, layer `validity-reason`); a deferred LIVE (flag off), a deferred Disarm and the arm while `simulation_required` / `safety_warning_open` would refuse (Cancel alone) are absences — no bare disabled control, no over-conversion.
 - [x] Loading / empty / error states designed: running, no-history (both forms), failed, pending, refused, returned-from-step-up.
 - [x] Keyboard-interaction table completed (spec §7; Table 2) — a design table, to be matched by E35-S08's tested path.
@@ -137,7 +137,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] Demo / Live context unambiguous: the chrome's band above the dialog, the environment line's words with glyph + border (● DEMO / ◆ LIVE — two filled shapes; hollow stays estimated or absent, spec D02-C14), "Runs on LIVE." in the restatement, "Arm on LIVE…" naming the environment; a LIVE frame never without the red band.
 - [x] Reuses existing `CMP-*` (CMP-043 / 006 / 036 / 023 / 026 / 027 / 028 / 040 / 046 / 047 / 049 / 079 / 093 / 105 / 154 / 156 / 158 / 159 / 227 / 044 / 019 / 016 / 074); no new id requested.
 - [~] Storybook stories match the Variants × States matrix — planned (Table 1); none exists yet.
-- [~] Composes only published-library components — on the boards, once drawn.
+- [~] Composes only published-library components — the boards draw the reused `CMP-*` above (spec §0); not yet checked against the published library.
 
 ## B. Accessibility acceptance criteria (`05` §10) — SCR-084 and SCR-085
 
@@ -171,7 +171,7 @@ Feature: E35-D02 rule simulation panel and arming dialog — accessibility accep
     When the state is rendered
     Then the state is also conveyed via shape/icon and text, not colour alone (DEMO / LIVE by word +
       glyph + border; Armed / Not armed / Arming… by word + glyph; the T2 look by lock + label + reason)
-    And the feature passes deuteranopia/protanopia/tritanopia simulation review (planned on the exports)
+    And the feature passes deuteranopia/protanopia/tritanopia simulation review (greyscale and deuteranopia run on the nine exports, section A; protanopia and tritanopia not yet run)
 
   Scenario: Contrast
     Given the feature is rendered in the default dark theme and the
