@@ -195,6 +195,7 @@ __all__ = [
     "ALREADY_SET",
     "AMEND_REASON",
     "AMEND_REFUSED",
+    "AMEND_TIMEOUT_S",
     "CANCEL_TIMEOUT_S",
     "EXPIRED_UNSENT_REASON",
     "KILL_CANCEL_TIMEOUT_S",
@@ -243,6 +244,10 @@ STORE_UNAVAILABLE: Final = "STORE_UNAVAILABLE"
 #: B1's `killed` entry, under the order's lock. Tighten each bound, never raise it: the
 #: constructor refuses a larger figure.
 KILL_CANCEL_TIMEOUT_S: Final = CV_KILL_CANCEL_TIMEOUT - 1.0
+#: The bound on an amend as a whole (B1's `amend_pending`), in seconds, as `CANCEL_TIMEOUT_S` is a
+#: cancel's: its reads, the gate, the record, the call and the settle all end by it, inside B1's
+#: `CV_COMMAND_TIMEOUT`. Tighten it, never raise it.
+AMEND_TIMEOUT_S: Final = CV_COMMAND_TIMEOUT - 1.0
 #: How old a create a restart resumes may be and still be re-sent where history never expires
 #: (`order_retention_days` None: live), in seconds ([LANE-26], binding). Tighten it, never raise
 #: it: a resumed send survives a restart or a dropped connection measured in seconds, and after
@@ -611,6 +616,7 @@ class OmsCommandPort:
         submit_timeout_s: float = SUBMIT_TIMEOUT_S,
         cancel_timeout_s: float = CANCEL_TIMEOUT_S,
         kill_cancel_timeout_s: float = KILL_CANCEL_TIMEOUT_S,
+        amend_timeout_s: float = AMEND_TIMEOUT_S,
         port_timeout_s: float = PORT_TIMEOUT_S,
         live_resend_max_age_s: float = LIVE_RESEND_MAX_AGE_S,
         max_watches: int = MAX_WATCHES,
@@ -622,6 +628,7 @@ class OmsCommandPort:
         bounds = (
             (cancel_timeout_s, CANCEL_TIMEOUT_S),
             (kill_cancel_timeout_s, KILL_CANCEL_TIMEOUT_S),
+            (amend_timeout_s, AMEND_TIMEOUT_S),
         )
         if not all(0 < bound <= most for bound, most in bounds):  # NaN fails it too
             raise ValueError("a cancel bound is only ever tightened, inside B1's own")
@@ -641,6 +648,7 @@ class OmsCommandPort:
         self._submit_timeout_s = submit_timeout_s
         self._cancel_timeout_s = cancel_timeout_s
         self._kill_cancel_timeout_s = kill_cancel_timeout_s
+        self._amend_timeout_s = amend_timeout_s
         self._port_timeout_s = port_timeout_s
         self._live_resend_max_age_us = round(live_resend_max_age_s * 1_000_000)
         self._max_watches = max_watches
@@ -1018,6 +1026,7 @@ class OmsCommandPort:
         detail: Mapping[str, str | None],
         *,
         reason: str = STOP_REFUSED,
+        by: float | None = None,
     ) -> None:
         """The request's answer on its rows: `answered`, or `refused`, each void audited ahead
         (`sl.modified`, or `tp.modified` for a take-profit side) with `reason`. A settle that fails
@@ -1027,7 +1036,7 @@ class OmsCommandPort:
         account_id, at = recorded[0].exchange_account_id, _at(self._now_us())
         try:
             if ok:
-                await self._bounded(self._stops.settle(account_id, ids, "answered", at=at))
+                await self._bounded(self._stops.settle(account_id, ids, "answered", at=at), by=by)
                 return
             voided = {**detail, "error_code": error_code}
             records = [
@@ -1040,7 +1049,7 @@ class OmsCommandPort:
                     await self._submit_audit.write(record)
 
             await self._bounded(
-                self._stops.settle(account_id, ids, "refused", at=at, write_ahead=void)
+                self._stops.settle(account_id, ids, "refused", at=at, write_ahead=void), by=by
             )
         except Exception as exc:  # the rows stay in flight, which only the complete read ends
             _log().error("oms_stop_settle_failed", answered=ok, failure=type(exc).__name__)
@@ -1172,9 +1181,10 @@ class OmsCommandPort:
         return answer
 
     async def _amend(self, command: b01.Command) -> dict[str, Any]:
+        by = self._deadline(self._amend_timeout_s)  # all of the amend, inside B1's own bound
         account_id = _uuid(command.order.get("account_id"))
         order_id = _uuid(command.order.get("order_id"))
-        row = await self._bounded(self._orders.get(account_id, order_id))
+        row = await self._bounded(self._orders.get(account_id, order_id), by=by)
         if row is None:
             raise ValueError("no stored order of the account has the command's id")
         _check_names(command, row)
@@ -1183,20 +1193,22 @@ class OmsCommandPort:
         requested = _amend_terms(command.terms)
         if requested is None:  # as B1 refuses terms it could not stage: nothing is sent
             code = OmsErrorCode.INSTRUMENT_FILTER.value
-            return await self._amend_refused(row, code, "terms_not_staged", detail)
+            return await self._amend_refused(row, code, "terms_not_staged", detail, by=by)
         if row.provenance != "placed":  # a recorded stop's TP/SL order is not the user's to amend
-            return await self._amend_refused(row, ORDER_NOT_AMENDABLE, "not_amendable", detail)
+            return await self._amend_refused(
+                row, ORDER_NOT_AMENDABLE, "not_amendable", detail, by=by
+            )
         sides = {side: value for side, value in requested.items() if side in TPSL_SIDES}
         rule = tpsl_scope_refusal(
             sides, reduce_only=row.reduce_only, tpsl_mode=row.tpsl_mode, filled_qty=row.cum_exec_qty
         )
         if rule is not None:
-            return await self._amend_refused(row, rule.upper(), rule, detail)
+            return await self._amend_refused(row, rule.upper(), rule, detail, by=by)
         stop, take_profit = _paired(row, sides)
         if sides and stop is None:  # an entry carries its native stop (C-2.6): never sent bare
             rule = "native_stop_required"
-            return await self._amend_refused(row, b01.NATIVE_STOP_REQUIRED, rule, detail)
-        account = await self._account(row)
+            return await self._amend_refused(row, b01.NATIVE_STOP_REQUIRED, rule, detail, by=by)
+        account = await self._account(row, by=by)
         request = AmendOrderRequest(
             account=account,
             symbol=row.symbol,
@@ -1214,18 +1226,21 @@ class OmsCommandPort:
         if stop is not None:
             key = PositionKey(account.account_id, row.symbol, row.position_idx)
             try:
-                await self._bounded(self._gate.clear(key))
+                await self._bounded(self._gate.clear(key), by=by)
                 # Q4 on every stop recorded or sent, a re-paired one too, read after the gate
                 # cleared the key and just before the record (fold m2)
-                in_force = await self._bounded(
-                    self._stops.live_for_key(row.exchange_account_id, row.symbol, row.position_idx)
+                live = self._stops.live_for_key(
+                    row.exchange_account_id, row.symbol, row.position_idx
                 )
+                in_force = await self._bounded(live, by=by)
                 loose = ratchet_refusal(
                     side=row.side, requested=stop, current=row.stop_loss, in_force=in_force
                 )
                 if loose is not None:
-                    return await self._amend_refused(row, STOP_LOOSENING_REFUSED, loose, detail)
-                recorded = await self._record_amend(row, stop, take_profit, detail, sides)
+                    return await self._amend_refused(
+                        row, STOP_LOOSENING_REFUSED, loose, detail, by=by
+                    )
+                recorded = await self._record_amend(row, stop, take_profit, detail, sides, by=by)
             except (StopRequestPending, StopRequestInFlight) as held:
                 _log().warning("oms_amend_stop_key_held", order_link_id=row.order_link_id)
                 wait = STOP_REQUEST_RETRY_AFTER_S
@@ -1233,20 +1248,21 @@ class OmsCommandPort:
                     wait = held.retry_after_s
                 return {"ok": False, "error_code": STOP_REQUEST_IN_FLIGHT, "retry_after_s": wait}
         port = self._router.port_for(account.environment)
-        by = self._deadline(self._submit_timeout_s)  # a raise leaves the rows in flight
         try:
             ack = await self._venue_gated(account, port.amend_order(request), by=by)
         except RateBudgetExceededError as exc:  # nothing left: the rows are void, unsent
             code = OmsErrorCode.RATE_BUDGET_EXCEEDED.value
             if recorded:
-                await self._settle_stop(recorded, False, code, detail, reason=AMEND_REFUSED)
+                await self._settle_stop(recorded, False, code, detail, reason=AMEND_REFUSED, by=by)
             _log().warning("oms_amend_rate_refused", order_link_id=row.order_link_id)
             retry = retry_after(exc.retry_after_s)
             return {"ok": False, "error_code": code, "retry_after_s": retry}
         if not ack.ok:
-            await self._venue(account, ack.error_code, ack.exchange_ret_code)
+            await self._venue(account, ack.error_code, ack.exchange_ret_code, by=by)
         if recorded:
-            await self._settle_stop(recorded, ack.ok, ack.error_code, detail, reason=AMEND_REFUSED)
+            await self._settle_stop(
+                recorded, ack.ok, ack.error_code, detail, reason=AMEND_REFUSED, by=by
+            )
         if ack.ok:
             kept = order_id_kept(ack.exchange_order_id)
             bound = {} if kept is None else {"exchange_order_id": kept}
@@ -1255,11 +1271,18 @@ class OmsCommandPort:
         return {**refused, "exchange_ret_code": ack.exchange_ret_code, **_record(ack)}
 
     async def _amend_refused(
-        self, row: OrderRow, code: str, reason: str, detail: Mapping[str, str | None]
+        self, row: OrderRow, code: str, reason: str, detail: Mapping[str, str | None], *, by: float
     ) -> dict[str, Any]:
         """A refusal, nothing recorded or sent, audited ahead (`orders.amend` denied, C-2.9)."""
         await self._audit_order(
-            row.id, row.exchange_account_id, ORDERS_AMEND, "denied", "warning", reason, detail
+            row.id,
+            row.exchange_account_id,
+            ORDERS_AMEND,
+            "denied",
+            "warning",
+            reason,
+            detail,
+            by=by,
         )
         _log().warning("oms_amend_refused", order_link_id=row.order_link_id, code=code)
         return {"ok": False, "error_code": code}
@@ -1271,6 +1294,8 @@ class OmsCommandPort:
         tp: Decimal | None,
         detail: Mapping[str, str | None],
         changed: Mapping[str, object],
+        *,
+        by: float,
     ) -> tuple[RecordedStopRow, ...]:
         """Q2: one `entry_attach` insert naming the order, each row audited in its transaction;
         a re-paired side the amend does not change is audited `changed: "false"`."""
@@ -1298,7 +1323,7 @@ class OmsCommandPort:
             for record in records:
                 await self._submit_audit.write(record)
 
-        return await self._bounded(self._stops.record(news, write_ahead=requested))
+        return await self._bounded(self._stops.record(news, write_ahead=requested), by=by)
 
     # --- the rest ----------------------------------------------------------------------------
 
