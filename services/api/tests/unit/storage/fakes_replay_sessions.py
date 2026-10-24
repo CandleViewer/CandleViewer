@@ -205,6 +205,7 @@ class FakeReplaySessionRepository:
         expected_state: ReplayState | None = None,
         finished: bool = False,
         error_message: str | None = None,
+        activity: bool = True,
     ) -> ReplaySessionRow:
         target = ReplayState(state)
         expected = None if expected_state is None else ReplayState(expected_state)
@@ -214,8 +215,8 @@ class FakeReplaySessionRepository:
         )
         row = self._writable(user_id, session_id, expected)
         return self._store(
-            row, state=target, updated_at=max(row.updated_at, now), finished_at=finished_at,
-            error_message=message,
+            row, state=target, updated_at=max(row.updated_at, now) if activity else row.updated_at,
+            finished_at=finished_at, error_message=message,
         )  # fmt: skip
 
     async def update_cursor(
@@ -241,7 +242,7 @@ class FakeReplaySessionRepository:
         )  # fmt: skip
 
     async def update_speed(
-        self, user_id: str, session_id: str, *, speed: Decimal
+        self, user_id: str, session_id: str, *, speed: Decimal, activity: bool = True
     ) -> ReplaySessionRow:
         now = self._clock()
         # Ids first, like the adapter: a malformed or unknown id is "not found" whatever the speed.
@@ -253,7 +254,8 @@ class FakeReplaySessionRepository:
             start=row.range_start, end=row.range_end, cursor=row.cursor_ts, speed=stored,
             paper=row.paper_trading, account=row.paper_account_id, tier=row.source_tier,
         )  # fmt: skip
-        return self._store(row, speed=stored, updated_at=max(row.updated_at, now))
+        moved = max(row.updated_at, now) if activity else row.updated_at
+        return self._store(row, speed=stored, updated_at=moved)
 
     async def touch(self, user_id: str, session_id: str, at: datetime) -> None:
         require_aware(at, "at")
@@ -272,23 +274,28 @@ class FakeReplaySessionRepository:
         )
 
     async def list_idle_since(self, before: datetime, limit: int) -> list[IdleReplaySession]:
-        return self._idle(before, limit, LIVE_STATES)
-
-    async def list_non_terminal_since(
-        self, before: datetime, limit: int
-    ) -> list[IdleReplaySession]:
-        return self._idle(before, limit, frozenset(ReplayState) - TERMINAL_STATES)
-
-    def _idle(
-        self, before: datetime, limit: int, states: frozenset[ReplayState]
-    ) -> list[IdleReplaySession]:
         require_aware(before, "before")
-        idle = sorted(
-            (r for r in self._rows.values() if r.state in states and r.updated_at < before),
-            key=lambda r: (r.updated_at, r.id),
+        return self._idle(lambda r: r.state in LIVE_STATES and r.updated_at < before, limit)
+
+    async def list_reclaimable(
+        self, idle_before: datetime, created_before: datetime, limit: int
+    ) -> list[IdleReplaySession]:
+        require_aware(idle_before, "idle_before")
+        require_aware(created_before, "created_before")
+        return self._idle(
+            lambda r: (
+                r.state not in TERMINAL_STATES
+                and (r.updated_at < idle_before or r.created_at < created_before)
+            ),
+            limit,
         )
+
+    def _idle(self, due: Callable[[ReplaySessionRow], bool], limit: int) -> list[IdleReplaySession]:
+        idle = sorted(filter(due, self._rows.values()), key=lambda r: (r.updated_at, r.id))
         return [
-            IdleReplaySession(r.id, r.user_id, r.symbol, r.state, r.paper_account_id, r.updated_at)
+            IdleReplaySession(
+                r.id, r.user_id, r.symbol, r.state, r.paper_account_id, r.updated_at, r.created_at
+            )
             for r in idle[: clamp_limit(limit)]
         ]
 

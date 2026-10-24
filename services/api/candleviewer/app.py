@@ -638,6 +638,7 @@ def _build_replay_sessions(
         max_sessions_per_user=settings.replay_max_sessions_per_user,
         max_window=timedelta(hours=settings.replay_max_window_hours),
         reclaim_interval_s=settings.replay_reclaim_interval_s,
+        max_lifetime=timedelta(seconds=settings.replay_max_lifetime_s),
     )
     return ReplaySessionService(
         SqlAlchemyReplaySessionRepository(pg),
