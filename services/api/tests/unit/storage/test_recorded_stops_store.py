@@ -757,8 +757,8 @@ async def test_a_put_in_force_that_loses_its_race_or_its_audit_writes_nothing(sc
 
 
 async def test_a_resolve_locks_then_sets_every_row_or_none_audited_before_its_commit() -> None:
-    voided = {"status": "void", "closed_at": _T}
-    rel = _Rel([], [_row(_TP, kind="take_profit", **voided), _row(_SL, **voided)])
+    voided_cols = {"status": "void", "closed_at": _T}
+    rel = _Rel([], [_row(_TP, kind="take_profit", **voided_cols), _row(_SL, **voided_cols)])
     seen: list[tuple[list[uuid.UUID], FillPosition | None, int]] = []
 
     async def audit(rows: tuple[RecordedStopRow, ...], state: FillPosition | None) -> None:
@@ -782,6 +782,15 @@ async def test_a_resolve_locks_then_sets_every_row_or_none_audited_before_its_co
         with pytest.raises(ValueError, match=reason):
             await _store(stale).resolve(_ACCOUNT, _rows(*map(_row, ids)), "answered", at=at,
                                         position_state=state)  # fmt: skip
+    with pytest.raises(ValueError, match="position_state"):  # refused for a replace
+        await _store(stale).resolve(_ACCOUNT, rows, "replaced", at=_T, position_state="open")
+    with pytest.raises(ValueError, match="position_state"):  # required for the fill void
+        await _store(stale).resolve(_ACCOUNT, rows, "entry_filled_stop_absent", at=_T,
+                                    write_ahead=audit)  # fmt: skip
+    voided = _Rel([], [_row(_SL, **voided_cols)])
+    await _store(voided).resolve(_ACCOUNT, rows[:1], "in_flight_resolved", at=_T,
+                                 position_state="open", write_ahead=audit)  # fmt: skip
+    assert seen[-1][:2] == ([_SL], "open") and voided.commits == 1  # optional: given to the hook
     assert stale.commits == 0 and len(stale.statements) == 2
 
 
