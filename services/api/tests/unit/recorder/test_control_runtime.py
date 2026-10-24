@@ -372,3 +372,35 @@ async def test_a_restricted_status_drops_hidden_reasons_of_start_refused_symbols
     restricted = [row["symbol"] for row in env.cache.body(True)["symbols"]]
     assert "LINKUSDT" not in restricted and "AVAXUSDT" in restricted
     assert "position_open" not in str(env.cache.body(True))
+
+
+async def test_a_pinned_entry_shows_no_retention_while_its_stored_days_stay_inert(env: Any) -> None:
+    """A pin keeps the stored `retention_days` (inert while pinned, #2188 S3c); the view shows
+    none. An unpin naming no days stores NULL, the default."""
+    entry, _ = await env.c.add("BTCUSDT", rc.EntrySpec(), OWNER, restricted=False)
+    await env.c.update(entry.id, rc.EntrySpec(retention_days=60), OWNER, restricted=False)
+    pinned = await env.c.pin(entry.id, True, OWNER, restricted=False)
+    assert pinned is not None and (pinned.pinned, pinned.retention_days) == (True, None)
+    assert env.rows.store.rows[entry.id]["retention_days"] == 60  # kept, inert
+    for seen in (await env.c.get(entry.id), await _one(env.c, "BTCUSDT")):
+        assert seen is not None and seen.retention_days is None
+    unpinned = await env.c.pin(entry.id, False, OWNER, restricted=False)
+    assert unpinned is not None and (unpinned.pinned, unpinned.retention_days) == (False, None)
+
+
+@pytest.mark.parametrize(("days", "refused"), [(7, True), (60, False)])
+async def test_a_null_retention_is_the_default_not_forever(
+    env: Any, days: int, refused: bool
+) -> None:
+    """21 §3.6.1: an unpinned NULL keeps `default_retention_days` (30); only a pin is forever.
+    So NULL -> 7 lowers (refused for a restricted caller a hidden cause shuts out), NULL -> 60
+    does not."""
+    entry, _ = await env.c.add("ETHUSDT", rc.EntrySpec(), OWNER, restricted=False)
+    await env.p.on_position_opened("ETHUSDT", "p1")
+    change = env.c.update(entry.id, rc.EntrySpec(retention_days=days), USER, restricted=True)
+    if refused:
+        with pytest.raises(rc.RelaxRefused):
+            await change
+        assert env.rows.store.rows[entry.id]["retention_days"] is None
+    else:
+        assert (await change).retention_days == 60
