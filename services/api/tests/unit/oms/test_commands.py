@@ -109,7 +109,6 @@ from candleviewer.statechart.config import (
 )
 from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories.orders import NewOrder, OrderRow
-from candleviewer.storage.repositories.recorded_stops import NewRecordedStop
 from tests.unit.oms.command_rig import (
     ACCOUNT,
     DAY_US,
@@ -129,6 +128,9 @@ from tests.unit.oms.command_rig import (
     outage,
     position,
     ref,
+)
+from tests.unit.oms.command_rig import (
+    earlier_request as _earlier_request,
 )
 
 _DUP = OmsErrorCode.DUPLICATE_CLIENT_ID.value
@@ -1280,30 +1282,6 @@ async def test_an_attach_sends_while_the_switches_refuse_and_the_clock_halt_stan
     assert rig.switches.asked == [] and [row.status for row in _rows(rig)] == ["pending"]
 
 
-async def _earlier_request(rig: Any) -> None:
-    """A trading-stop request of the key, in flight since `T0` (the store's clock)."""
-    earlier = NewRecordedStop(
-        id=uuid5(NAMESPACE_URL, "earlier"),
-        exchange_account_id=ACCOUNT,
-        symbol=SYMBOL,
-        position_idx=0,
-        position_side="Buy",
-        kind="stop_loss",
-        source="trading_stop",
-        order_id=None,
-        tpsl_mode="Full",
-        trigger_price=Decimal("57000"),
-        size=None,
-        audit_record_id=uuid5(NAMESPACE_URL, "earlier-record"),
-        actor_user_id=None,
-    )
-
-    async def audited(_rows: Any) -> None:
-        return None
-
-    await rig.stops.record([earlier], write_ahead=audited)
-
-
 async def test_a_row_waiting_for_the_complete_read_refuses_the_attach_at_once() -> None:
     """Q-A and Q-D: 409 `stop_request_in_flight`, `Retry-After: 5`, nothing recorded or sent."""
     rig = build_rig()
@@ -1708,15 +1686,10 @@ def test_the_port_holds_at_least_one_registration() -> None:
         build_rig(max_watches=0)
 
 
-async def test_amend_raises_unwired_with_nothing_sent_until_its_slice() -> None:
-    """S4-B2 implements the amend; until then B1's `amend_pending` lands the order in `unknown`
-    (S1) with nothing sent. Both injected services are gone: the port's own cancel follows."""
-    rig = build_rig()
-    row = await _live(rig)
-    with pytest.raises(b01.PortMissingError):
-        await rig.port.amend(command("amend", row))
+def test_no_cancel_or_amend_service_is_injected() -> None:
+    """The port's own cancel and amend (S4-B2: `test_commands_amend.py`) replace both services."""
     params = inspect.signature(OmsCommandPort).parameters
-    assert rig.calls() == [] and {"cancels", "amends"}.isdisjoint(params)
+    assert {"cancels", "amends"}.isdisjoint(params)
 
 
 # --- cancel and a KILL's cancel (24 Sec.8.8 rule 6; INV-B1-h, INV-B1-j; S4 rulings Q8, Q9, Q11) --
