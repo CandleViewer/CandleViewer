@@ -7,7 +7,7 @@
 > **low-confidence** because it rests on heuristics alone. The instruments in this directory let the owner run the
 > study later; results are added here as a dated addendum, and each label then becomes `(session: Pn)`.
 
-- **Ticket:** E15-D01 (#205) · **Status:** draft; text pass and boards r2 done · **Owner approval pending** (Agent-delivery
+- **Ticket:** E15-D01 (#205) · **Status:** draft; text pass and boards r3 done · **Owner approval pending** (Agent-delivery
   adaptations, owner decision 2026-09-25) · **Method:** heuristic and documentation review; no session was run.
 - **Scope:** SCR-011, SCR-020..029, SCR-049, SCR-150, SCR-153; CMP-073, CMP-080..083, CMP-196, CMP-214..218;
   US-LAY-001..008. Feeds E15-D02 (#248), then D04 (#320), D05 (#321), D06 (#360), D08 (#362), D15 (#369), the K01 spike
@@ -61,25 +61,27 @@ pending the owner run; **open** = needs sessions or an owner decision; **deviati
 | DoD: walkthrough with CDO, Architect and FE lead, attendance recorded                                                                 | §17, ready to post on #205; the owner's walk through it is the attendance record                                                                                                                                                                                                                                                   | open (not yet posted)                  |
 | DoD: CDO sign-off recorded on the ticket                                                                                              | the owner's `approved` comment on #205 (§17 item 7)                                                                                                                                                                                                                                                                                | open                                   |
 | Test plan 5: every US-LAY story named, or recorded as not covered                                                                     | US-LAY-001 §2, §6; US-LAY-002 §5, §8; US-LAY-003 §3; US-LAY-004 only §3.1 (Y-scale is its per-pane link, not a group axis; the link UI is E15-D06's and S05's); US-LAY-005 §4; US-LAY-006 §2, §6; US-LAY-007 (SCR-026) **not covered** (no research question: E15-D09, S07); US-LAY-008 only §7's 1280×800 findings (E15-D12, S08) | done                                   |
-| Penpot boards and PNGs (`docs/design/README.md` approval rule)                                                                        | Research boards, below; six boards drawn 2026-10-22                                                                                                                                                                                                                                                                                | done (boards r2)                       |
+| Penpot boards and PNGs (`docs/design/README.md` approval rule)                                                                        | Research boards, below; six boards drawn 2026-10-22, redrawn from r3 2026-10-24                                                                                                                                                                                                                                                    | done (boards r3)                       |
 
 ## Research boards (Penpot)
 
 Page **`E15-D01 Layout UX research`** · page id `f624df56-f905-8048-8008-d3a73fdb2b4b` (page name and id only). Six
 greyscale research boards, not visual design, drawn 2026-10-22 from board script `r2` (posted on PR #4079 with sha256;
-not in this diff): one board per call, relaid out, in one row, exported as PNG at scale 1 by the plugin's `shape.export`
-(the bridge's export timed out) to `docs/design/E15/img/`. Boards 03 and 04 are the sync stimulus, with a facilitator
-card (no answer key): each configuration frame (`/ 03 / C1` to `/ 04 / C6`) exports alone, letters only, text 16 px or
-more, its `/ reveal` frame (shared axes) hidden but for step (2); board 05 holds `E15-D01 / 05 / focus`.
+not in this diff) and redrawn 2026-10-24 from `r3` (sha256 `83a1815bcc2a41af…`, carry m1 of #248's boards PR: every id
+joined with U+2011, the AM-1 box citing the ruling): one board per call, relaid out, in one row, exported as PNG at
+scale 1 by the plugin's `shape.export` (the bridge's export timed out) to `docs/design/E15/img/`. Boards 03 and 04 are
+the sync stimulus, with a facilitator card (no answer key): each configuration frame (`/ 03 / C1` to `/ 04 / C6`)
+exports alone, letters only, text 16 px or more, its `/ reveal` frame (shared axes) hidden but for step (2); board 05
+holds `E15-D01 / 05 / focus`.
 
 | #   | Board · board id · PNG                                                                                                              | Illustrates                                                                           |
 | --- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| 01  | `E15-D01 / 01 journey` · `f624df56-f905-8048-8008-d3cc9fa8b0e9` · [PNG](../../E15/img/E15-D01-01-journey.png)                       | §2–§5: six stages, set up to save, by does, risk, decision and keyboard; participants |
-| 02  | `E15-D01 / 02 presets` · `f624df56-f905-8048-8008-d3cced8bdebb` · [PNG](../../E15/img/E15-D01-02-presets.png)                       | §2.2: the ten presets and two grids ranked, storable today, first-run defaults        |
-| 03  | `E15-D01 / 03 sync-c1-c3` · `f624df56-f905-8048-8008-d3cc2125e200` · [PNG](../../E15/img/E15-D01-03-sync-c1-c3.png)                 | §3.2: configurations C1–C3 (stimulus)                                                 |
-| 04  | `E15-D01 / 04 sync-c4-c6` · `f624df56-f905-8048-8008-d3cc60cc477b` · [PNG](../../E15/img/E15-D01-04-sync-c4-c6.png)                 | §3.2: configurations C4–C6 (stimulus)                                                 |
-| 05  | `E15-D01 / 05 dock-and-keys` · `f624df56-f905-8048-8008-d3d010aac4f3` · [PNG](../../E15/img/E15-D01-05-dock-and-keys.png)           | §4, §6: the reduce proposal, move mode step by step, the key map                      |
-| 06  | `E15-D01 / 06 findings-decisions` · `f624df56-f905-8048-8008-d3cdac73f8b8` · [PNG](../../E15/img/E15-D01-06-findings-decisions.png) | §9, §13, §14: findings, decisions, amendments                                         |
+| 01  | `E15-D01 / 01 journey` · `504cb790-0152-809d-8008-d6c8852b3fe0` · [PNG](../../E15/img/E15-D01-01-journey.png)                       | §2–§5: six stages, set up to save, by does, risk, decision and keyboard; participants |
+| 02  | `E15-D01 / 02 presets` · `504cb790-0152-809d-8008-d6c8dede526e` · [PNG](../../E15/img/E15-D01-02-presets.png)                       | §2.2: the ten presets and two grids ranked, storable today, first-run defaults        |
+| 03  | `E15-D01 / 03 sync-c1-c3` · `504cb790-0152-809d-8008-d6c9317f50cf` · [PNG](../../E15/img/E15-D01-03-sync-c1-c3.png)                 | §3.2: configurations C1–C3 (stimulus)                                                 |
+| 04  | `E15-D01 / 04 sync-c4-c6` · `504cb790-0152-809d-8008-d6c97434782e` · [PNG](../../E15/img/E15-D01-04-sync-c4-c6.png)                 | §3.2: configurations C4–C6 (stimulus)                                                 |
+| 05  | `E15-D01 / 05 dock-and-keys` · `504cb790-0152-809d-8008-d6c9bf743115` · [PNG](../../E15/img/E15-D01-05-dock-and-keys.png)           | §4, §6: the reduce proposal, move mode step by step, the key map                      |
+| 06  | `E15-D01 / 06 findings-decisions` · `504cb790-0152-809d-8008-d6ca2a64a6a9` · [PNG](../../E15/img/E15-D01-06-findings-decisions.png) | §9, §13, §14: findings, decisions, amendments                                         |
 
 Contrast (`docs/design/_tools/contrast_check.py`, dark; canvas / raised / sunken): text primary 15.20 / 14.35 / 17.42,
 secondary 9.33 / 8.81 / 10.69 (also the cue outlines), tertiary 5.96 / 5.62 / 6.83 (footnotes); borders are decorative.
