@@ -67,3 +67,7 @@ def test_the_scan_still_finds_the_actions_it_guards() -> None:
         "alert.created",
         "alert.disabled",
     } <= found
+    # #906 D2-2: the `profile.*` actions the profile writes emit, each as a literal (the move's
+    # `.unbound` and `.bound` join them with its hook, #906 D2-6)
+    verbs = ("created", "updated", "deleted", "save_refused")
+    assert _emitted("api/profile_audit.py") >= {f"profile.{verb}" for verb in verbs}

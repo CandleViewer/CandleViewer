@@ -435,9 +435,7 @@ def test_a_move_is_audited_unbound_then_bound_and_a_looser_cap_is_relaxing() -> 
     )
     assert [words for words in (*said, *_ZERO_RULE) if words not in put] == []
     assert {"profile.bound", "profile.unbound"} <= AUDIT_ACTIONS
-    doc = (ROOT / "docs/plan/24-internal-schemas.md").read_text(encoding="utf-8").splitlines()
-    lead = "The `profile.*` records (E28-T02, #906)"
-    (records,) = [line for line in doc if line.startswith(lead)]
+    records = _records()
     kept = (
         "`setAccountDefaultProfile`",
         "`relaxing`",
@@ -517,6 +515,15 @@ def test_only_create_and_replace_can_want_the_instrument_cache() -> None:
     assert f"`audit_unavailable` when {recorded} refusal, could not be written (C-2.9)" in said
 
 
+def _records() -> str:
+    """24 Sec.15.5's paragraph on the `profile.*` records, one line."""
+    doc = (ROOT / "docs/plan/24-internal-schemas.md").read_text(encoding="utf-8").splitlines()
+    (records,) = [
+        line for line in doc if line.startswith("The `profile.*` records (E28-T02, #906)")
+    ]
+    return records
+
+
 def test_a_replace_is_judged_as_a_move_and_also_by_its_symbols() -> None:
     """The 17:25Z ruling 1: a replace relaxes when it loosens a cap under the move's zero rule, or
     widens what a profile that can trade allows (SR-E28-01, ruling B10)."""
@@ -533,6 +540,34 @@ def test_a_replace_is_judged_as_a_move_and_also_by_its_symbols() -> None:
     assert [words for words in said if words not in put] == []
     # R1S-04: what widens a write is one list, so (e)'s trigger list says "or changed" as (b) does
     assert widens in _text(_REJECTED["description"].split("\n\n")[2])
+    # D2-c R1S-03, R1C-05 (#906 D2-2): 24 Sec.15.5 restates (b) with its list, as test 5 holds the
+    # move's judgement to both texts
+    restated = (
+        "An `.updated` is judged as a move is, and is also relaxing when it widens what a profile"
+        f" that can trade allows {widens}: its `after` carries `relaxing`, `looser_caps` and"
+        " `widened_symbols`."
+    )
+    assert restated in _records() and "raises or removes a cap" not in _records()
+
+
+def test_the_records_hold_the_profile_whole_and_a_refused_save_once_per_rule() -> None:
+    """#906 D2-2 (the D2 spec Sec.6.1): 24 Sec.15.5 says what `api/profile_audit.py` writes: the
+    profile, the Owner's notice of a relaxing write, and a refused save's records."""
+    said = (
+        "(none before a create, none after a delete): its account, its `version` and every column"
+        " of 21 §3.2.4 that a write sets, in stored units, each decimal with no exponent and no"
+        " trailing fractional zero.",
+        "A relaxing replace or move notifies the Owner through one `system_events` row (`api`,"
+        " `profile_relaxed`, `warning`, the account's id; `details` the profile's id, the replaced"
+        " default's id on a move, `looser_caps` and `widened_symbols`, never a value) written in"
+        " the write's own transaction, and served by `listNotifications` (kind `system`; 21"
+        " §3.10.2).",
+        "outcome `denied`, one record per audited rule the refusal names, its `after` the"
+        " account's id, the rule's entry count and its first 20 entries;",
+        "; a refused create names the account (`object_kind` `exchange_account`);",
+        "; a record that cannot be written is `503 audit_unavailable`; its `reason` is one of",
+    )
+    assert [words for words in said if words not in _records()] == []
 
 
 def test_the_body_states_its_bounds_and_the_name_holds_no_control_character() -> None:
