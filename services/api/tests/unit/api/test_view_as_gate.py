@@ -479,3 +479,46 @@ async def test_the_read_only_check_skips_exempt_paths_and_safe_methods() -> None
     gate.rig.clock.now = _at(31)
     assert _code(await gate.call("GET", "/me", record)) == (403, "view_as_expired")
     assert gate.auth.step_up.asked == 0
+
+
+#: The cancels, protective in whole (C-2.6; 22's View-as section: the carve-out's writes pass
+#: neither the read-only rule nor the hold; the orchestrator's ruling of 2026-10-24 22:50Z).
+_CANCELS = {
+    "cancelOrder": ("DELETE", "/orders/x"),
+    "cancelAllOrders": ("POST", "/orders/cancel-all"),
+}
+
+
+@pytest.mark.parametrize("operation_id", sorted(_CANCELS))
+async def test_a_viewing_owners_cancel_passes_as_the_viewer_once_its_handler_registers(
+    operation_id: str,
+) -> None:
+    """A cancel is a protective write: once its handler registers, it passes to it as the viewer,
+    with the target named for the handler's own RBAC check, live and held."""
+    gate = _Gate()
+    record = await gate.rig.viewing()
+    method, path = _CANCELS[operation_id]
+    gate.protective.register(operation_id)
+    assert (await gate.call(method, path, record)).status_code == 200
+    gate.rig.clock.now = _at(31)
+    assert (await gate.call(method, path, record)).status_code == 200
+    assert [(s.subject_user_id, s.target_user_id, s.phase) for _, _, s, _ in gate.seen] == [
+        (_VIEWER, _TARGET, ViewAsPhase.LIVE),
+        (_VIEWER, _TARGET, ViewAsPhase.HELD),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [("POST", "/orders"), ("POST", "/trade-groups"), ("POST", "/rules")],
+    ids=["placeOrder", "createTradeGroup", "createRule"],
+)
+async def test_every_other_write_is_still_refused_with_the_cancels_registered(
+    method: str, path: str
+) -> None:
+    gate = _Gate()
+    record = await gate.rig.viewing()
+    for operation_id in _CANCELS:
+        gate.protective.register(operation_id)
+    response = await gate.call(method, path, record)
+    assert _code(response) == (403, "view_as_read_only") and gate.seen == []
