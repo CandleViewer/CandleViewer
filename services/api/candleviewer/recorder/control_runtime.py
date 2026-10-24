@@ -12,8 +12,10 @@ Writes go through the policy, which records each ahead of its store (C-2.9), a p
 a retention change included (#2188 S3c). The caller's view (`restricted`) comes from the
 server-side principal only: an add onto a row it hides is a join (`held_hidden=True`, the row's
 own streams and depth, no other setting changed), and an unpin or a lower retention it does not
-cover raises `RelaxRefused` before any write: checked here first, so no other part of a change
-lands (the route records it), and by the policy again, which records its own refusal. This module
+cover raises `RelaxRefused`: checked here before any write, so no other part of a change lands
+(the route records it), and by the policy again, which records its own refusal. One narrow race
+remains: on an add, the manual reason can land (recorded by the policy) and the retention named
+with it then be refused, when a hidden cause takes the row between the two checks. This module
 never calls the policy's `tick`: the lifespan drives it, so no record carries a request's id."""
 
 from __future__ import annotations
@@ -308,6 +310,7 @@ class RuntimeRecordingControl:
         entry = await self._find(symbol)
         if entry is None:  # the policy wrote it ahead of this read; a racing stop took it
             raise RecorderSymbolNotRecordedError("the recorded row was removed")
+        self._relax(entry, spec, restricted)  # again on the row as it is now (a fresh row too)
         return await self._settle(entry, spec, actor, restricted) or entry, old
 
     async def update(self, entry_id: str, spec: rc.EntrySpec, actor: Actor, *,

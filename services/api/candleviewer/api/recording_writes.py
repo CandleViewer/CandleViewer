@@ -5,8 +5,10 @@ changes retention (403), a replay (409 on another body), the entry in the settin
 caller's view (404), then the write, which the policy records ahead of the store (503 when it
 cannot); a pin, an unpin and a retention change included (#2188 S3c), so the routes record only
 what they refuse. The caller's view goes to the port from the principal only (C-12.4): an unpin or
-a lower retention that a cause outside it holds is 403, recorded once. No control writes until the
-recorder runtime is bound (#2188 S4b): until then every write is 503."""
+a lower retention that a cause outside it holds is 403, recorded once; on an add the manual
+reason may already have landed (recorded by the policy) when a hidden cause took the row
+between the port's checks. No control writes until the recorder runtime is bound (#2188 S4b):
+until then every write is 503."""
 
 from __future__ import annotations
 
