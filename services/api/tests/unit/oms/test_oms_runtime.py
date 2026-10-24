@@ -34,9 +34,15 @@ from candleviewer.exchange.base.models import AccountRef, Position, RateLane
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.commands import OmsCommandPort
-from candleviewer.oms.errors import AccountScopeDenied, OmsNotReady, OrderEntryRefused
+from candleviewer.oms.errors import (
+    AccountScopeDenied,
+    OmsNotReady,
+    OrderEntryRefused,
+    StoreUnavailable,
+)
 from candleviewer.oms.fakes import FakeClockHealth, InMemoryOrderStore, InMemorySubmissionStore
 from candleviewer.oms.order_machine import OrderMachines
+from candleviewer.oms.ports import PositionKey
 from candleviewer.oms.repository import RecordedStopRepository
 from candleviewer.oms_wiring import (
     HYDRATE_CONCURRENCY,
@@ -531,7 +537,8 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
     """CR-S3E2-04: each close step is isolated and has its share of `OMS_STOP_RESERVE_S`. The
     command port fails to close and the sink's drain never ends; the trading port, which needs a
     turn of the loop, and the pool still close, and the whole stop is bounded."""
-    monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 1.5)  # the hung sink costs a third of it
+    # the hung sink, 4th of the 6 closers (the stop gate's first, CR-S3H3B-01), costs a third of it
+    monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 1.5)
 
     async def fails(self: OmsCommandPort) -> None:
         raise RuntimeError("the resync would not end")
@@ -1156,6 +1163,8 @@ async def test_the_startup_pass_never_holds_ready_and_stop_cancels_its_read() ->
         assert isinstance(port, Stalled)
         await until(lambda: port.asked and runtime.state != "starting")
         assert runtime.state == "ok"
+        closers = [name for name, _ in runtime._composed().closers]
+        assert closers[:2] == ["stop_gate", "machines"]  # its reads end first (CR-S3H3B-01)
     assert port.cancelled
     assert [row.status for row in world.store._stops.values()] == ["pending"]
 
@@ -1170,3 +1179,35 @@ async def test_a_refused_accounts_waiting_keys_are_paged_and_never_read() -> Non
         assert runtime.state == "ok" and world.venue.ports[0].calls == []
     assert world.pager.calls == [f"oms_order_account_refused: account {cr.ACCOUNT}"]
     assert [row.status for row in world.store._stops.values()] == ["pending"]
+
+
+async def test_a_floor_read_that_fails_is_retried_and_the_gate_refuses_until_it_is_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-S3H3B-02 (20 Sec.6.2, Q7): the database's clock failing once fails the sweep, which
+    retries after its backoff; meanwhile the gate judges nothing (`StoreUnavailable`), and once
+    the start is read the runtime gets ready and the gate answers."""
+    world, release, backoffs = World(), asyncio.Event(), list[float]()
+    database_now, failures = world.store.stops.database_now, [StorageQueryFailed("down")]
+
+    async def flaky() -> datetime:
+        if failures:
+            raise failures.pop()
+        return await database_now()
+
+    async def backoff(seconds: float) -> None:
+        backoffs.append(seconds)
+        await release.wait()
+
+    monkeypatch.setattr(world.store.stops, "database_now", flaky)
+    for flag in world.flags:
+        flag.read()
+    key = PositionKey(cr.ACCOUNT, cr.SYMBOL, 0)
+    async with started(world.runtime(sleep=backoff)) as runtime:
+        await until(lambda: bool(backoffs))
+        with pytest.raises(StoreUnavailable):
+            await runtime._composed().gate.clear(key)
+        release.set()
+        await until(lambda: runtime.state == "ok")
+        await runtime._composed().gate.clear(key)  # read: nothing waits for the key
+    assert backoffs == [1.0]
