@@ -460,6 +460,16 @@ async def test_a_stop_keeps_a_pinned_row(
     assert (policy.leaf("BTCUSDT"), _row(store)["pinned"]) == (None, True)
 
 
+async def test_a_stop_clears_the_grace_deadline_so_a_pinned_entry_is_not_due_again(
+    policy: RecordingPolicy, clock: FakeClock
+) -> None:
+    await policy.on_position_opened("BTCUSDT", "p1")
+    await policy.set_pin("BTCUSDT", True, OWNER)
+    await policy.on_position_closed("BTCUSDT", "p1")
+    await _expire(policy, clock)  # it stops; the pin keeps its entry
+    assert not policy._due("BTCUSDT", policy._syms["BTCUSDT"])  # a spent deadline stayed due
+
+
 async def _stop_races(
     policy: RecordingPolicy, store: Mem, clock: FakeClock, racer: Coroutine[object, object, None]
 ) -> object:
