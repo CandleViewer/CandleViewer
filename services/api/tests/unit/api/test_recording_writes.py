@@ -286,6 +286,18 @@ async def test_a_non_owner_reads_its_write_through_the_restricted_view() -> None
     assert not fake.entries["XRPUSDT"].pinned
 
 
+class _Spied(FakeRecorder):
+    """Keeps every spec the route hands the port's `add`, as the real port will forward it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.specs: list[rc.EntrySpec] = []
+
+    async def add(self, symbol: str, spec: rc.EntrySpec, actor: Any) -> Any:
+        self.specs.append(spec)
+        return await super().add(symbol, spec, actor)
+
+
 _JOINS: list[dict[str, Any]] = [
     {},
     {"pinned": False},
@@ -305,7 +317,7 @@ async def test_a_non_owner_re_add_of_a_row_its_view_hides_joins_it_and_keeps_its
     """Ruling (iii): the caller's manual cause joins the row through the normal add, `200` with
     the row as the caller's view shows it. A join changes none of the row's settings (no lower
     retention, no unpin), and the route records no retention change the join does not make."""
-    fake = FakeRecorder()
+    fake = _Spied()
     held = fake.put("SOLUSDT", cause, depth=50, streams=("trades", "tickers"), started_at=NOW,
                     refusals=(cause,), **kept)  # fmt: skip
     env = _Env(fake, *W, owner=False, elevated=True)
@@ -320,6 +332,7 @@ async def test_a_non_owner_re_add_of_a_row_its_view_hides_joins_it_and_keeps_its
     assert (env.actions(), record["outcome"], record["reason"]) == (
         ["recorder.start"], "success", "manual")  # fmt: skip
     assert record["after_state"]["trigger_ref"] == f"manual:{env.caller.user_id}"
+    assert fake.specs == [rc.EntrySpec(("trades", "tickers"), 50, None, None)]  # the row's own
 
 
 @pytest.mark.parametrize("cause", sorted(rc.HIDDEN_CAUSES))
@@ -333,6 +346,41 @@ async def test_a_join_at_the_cap_is_200_and_the_owner_sees_the_joined_cause(caus
     seen = (await _Env(fake, *W).http.get(f"/recording/symbols/{held.id}")).json()
     assert (seen["reason"], seen["added_by"], seen["refusal"]) == (
         "manual", str(env.caller.user_id), cause)  # fmt: skip
+
+
+@pytest.mark.parametrize("cause", sorted(rc.HIDDEN_CAUSES))
+async def test_a_join_whose_record_cannot_be_written_is_503_and_changes_nothing(cause: Any) -> None:
+    fake = FakeRecorder()
+    held = fake.put("SOLUSDT", cause, streams=STREAMS, refusals=(cause,))
+    env = _Env(fake, *W, owner=False)
+    env.fail_audit = True
+    refused = await env.add(symbol="SOLUSDT")
+    assert (refused.status_code, refused.json()["code"]) == (503, "audit_unavailable")
+    assert fake.entries["SOLUSDT"] == held
+
+
+@pytest.mark.parametrize("cause", sorted(rc.HIDDEN_CAUSES))
+async def test_a_join_of_a_row_with_no_stored_streams_is_503_and_joins_nothing(cause: Any) -> None:
+    """The status carries the stored row's streams; none means no stored row to keep them from,
+    so the route refuses rather than let the policy name its default streams on the row."""
+    fake = FakeRecorder()
+    held = fake.put("SOLUSDT", cause)  # the seed's default: no streams
+    env = _Env(fake, *W, owner=False)
+    refused = await env.add(symbol="SOLUSDT")
+    assert (refused.status_code, refused.json()["code"]) == (503, "store_unavailable")
+    assert fake.entries["SOLUSDT"] == held and env.actions() == []
+
+
+@pytest.mark.parametrize("cause", sorted(rc.HIDDEN_CAUSES))
+async def test_a_join_naming_pinned_without_the_step_up_is_403_and_records_nothing(
+    cause: Any,
+) -> None:
+    fake = FakeRecorder()
+    held = fake.put("SOLUSDT", cause, streams=STREAMS, refusals=(cause,))
+    env = _Env(fake, *W, owner=False)
+    refused = await env.add(symbol="SOLUSDT", pinned=True)
+    assert (refused.status_code, refused.json()["code"]) == (403, "step_up_required")
+    assert fake.entries["SOLUSDT"] == held and env.actions() == []
 
 
 async def test_the_fake_promotes_a_held_row_as_the_policy_does() -> None:
