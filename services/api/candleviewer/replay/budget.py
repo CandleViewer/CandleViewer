@@ -23,17 +23,22 @@ so one admission costs O(N) wake-ups for N waiters (N is the number of sessions,
 
 **Charge before every await.** One lane may serve several tasks of a session, as one mark: a
 task's `start()` on resume overwrites the mark another task left. Every await on a replay path
-must therefore be preceded by `charge()` (or be a `breathe()`): an uncharged await overcharges the
-suspended task's lane by the time other tasks ran, or undercharges it when another task of the
-same lane restarts the mark meanwhile.
+must therefore be preceded by `charge()` (or be a `breathe()`), and a pure wait (a deadline, a
+queue, a storage read decoded off the loop) followed by `start()`, in a `finally` so a cancelled
+wait is not charged either; an await that does the task's own work (a delivery) is not restarted
+after, so that work stays charged. Left: a `start()` still wipes another task's work since its
+last charge (at most one event's; a mark per task would remove it), and any wait inside such an
+await is charged.
+
+**Fairness is per waiting task, not per session**: each `breathe` queues once, so a session whose
+clock and producer both wait holds two places in line.
 
 **Wall time, not thread time.** Work is measured with `measure` (`time.perf_counter`), not
 `time.thread_time`: garbage collection, page faults and syscalls inside a turn hold the loop
-just as much as Python code does, and thread time would not see them. A turn that suspends
-inside a sink without charging first is charged the suspension too (on a lane no other task
-shares). That overcharge only makes replay yield more, which is the safe direction for the
-loop's other work; one charge adds at most `MAX_CHARGE_S` of debt, so one long suspension cannot
-hold every session for long.
+just as much as Python code does, and thread time would not see them. A suspension inside a
+delivery is charged too: replay yields more, the safe direction. One charge adds at most
+`MAX_CHARGE_S` of debt; the worst hold is the tail of the line, which waits for every charging
+task's debt: N x MAX_CHARGE_S / share (N x 25 s at the 0.01 floor).
 
 **Metrics** (served by `replay.metrics`): `replay_loop_seconds_total` is the loop time charged to
 replay, `replay_budget_held_seconds_total` the wall time lanes were held,
@@ -105,7 +110,7 @@ class ReplayLoopBudget:
                 f"the replay loop burst must be {MIN_BURST_S}..{MAX_BURST_S} s"
             )
         self._share, self._burst = float(share), float(burst_s)
-        replay_loop_share_ratio.set(self._share)
+        replay_loop_share_ratio.set(self._share)  # here, so the wiring that builds it sets it
         self._time, self._measure = time, measure
         self._tokens = self._burst
         self._stamp: float | None = None  # taken on the first refill: no running loop needed here
@@ -121,7 +126,8 @@ class ReplayLoopBudget:
         return self._burst
 
     def lane(self, key: str) -> BudgetLane:
-        """A new lane named `key` (one per replay session)."""
+        """A new lane named `key`: a mark on this one bucket, shared by one session's tasks (the
+        bucket, not the lane, is the account; the lane only says since when a task worked)."""
         return BudgetLane(self, key)
 
     def _refill(self) -> None:

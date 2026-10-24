@@ -264,6 +264,7 @@ class ReplaySource:
         (before the first read, mid-replay, after close). It raises `ReplayRequestInvalid` for a
         symbol or instant outside the replay and `ReplaySourceUnavailable` when storage fails or
         answers outside the bound; neither is ever turned into "no anchor"."""
+        self._lane.start()  # a seek's task: its loop time counts from here, never the pause before
         return await self._merge.anchor_at(symbol, at_us)
 
     def _start(self) -> asyncio.Task[None]:
@@ -335,8 +336,10 @@ class ReplaySource:
                     if self._done:  # closed while a read was in flight: queue nothing for it
                         return
                     lane.charge()
-                    await self._queue.put(batch)  # blocks while full: storage reads stop
-                    lane.start()
+                    try:
+                        await self._queue.put(batch)  # blocks while full: storage reads stop
+                    finally:  # a pure wait, returned or cancelled: never charged
+                        lane.start()
                     self._queued += len(batch)
                     replay_readahead_depth.inc(len(batch))
                     await lane.breathe()  # C-2.17: a batch is 1-3 ms of merge work, not a fill
