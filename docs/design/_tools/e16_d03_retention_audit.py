@@ -22,10 +22,13 @@ re-derives the spec's `audit:` markers. The mutation modes change the spec in me
 when exactly the FAIL they target results: `--mutate-consequence` removes the consequence sentence
 from one reduction frame, `--mutate-kinds` the undo line from one reduction-kind row,
 `--mutate-typed` the quoted typed-field label from the first destructive confirm, `--mutate-plain`
-turns the `drop` -> `archive_parquet` kind into a plain confirm. Exit 1 on a gated FAIL.
+turns the `drop` -> `archive_parquet` kind into a plain confirm, `--mutate-title` gives K7 K6's title,
+`--mutate-nothing` adds "Nothing is deleted." to K6's body, `--mutate-producer` writes the plain mark
+into the kinds frame's Producer cell. Exit 1 on a gated FAIL.
 
 Usage: python3 -I docs/design/_tools/e16_d03_retention_audit.py [--json] [--check]
-  [--mutate-consequence | --mutate-kinds | --mutate-typed | --mutate-plain] [--extra F]
+  [--mutate-consequence | --mutate-kinds | --mutate-typed | --mutate-plain | --mutate-title
+   | --mutate-nothing | --mutate-producer] [--extra F]
 """
 
 from __future__ import annotations
@@ -83,7 +86,8 @@ TYPED_LABEL = '"Type trades to confirm"'
 # A confirm that names the plain variant is never a reduction's confirm.
 PLAIN_MARKS = ("CMP-044 standard", "plain confirm")
 # The worked example's typed constants beside the contract-derived ones (spec header): the lowered drop
-# window of kind K2, the per-symbol override days of F3 / K3 / K4, the running job's progress.
+# window of kind K2, the per-symbol override days of F3 / K3 / K4, the running job's progress, the
+# long-window days of K6 / K7 and the hot window above the section 7 total that `{total}` must print.
 EXAMPLE = {
     "reduce_to": 7,
     "lengthen_to": 90,
@@ -91,6 +95,7 @@ EXAMPLE = {
     "override_days": 14,
     "progress_pct": 42,
     "long_days": 1000,
+    "long_hot_days": 800,
 }
 # The absences (deferred capabilities drawn as absent, never as a lock): `22` :5086–5087.
 ABSENCES = ("downsample", "pin", "applies_to_pinned")
@@ -346,6 +351,16 @@ MUTATIONS = {
     "kinds": "lacks the undo line",
     "typed": "lacks the typed field",
     "plain": "takes no typed confirm",
+    "title": "share a title",
+    "nothing": "says Nothing is deleted",
+    "producer": "names the plain confirm",
+}
+# frame | the derived strings its Shows cell must carry (the drawn sizes, gated where they are drawn)
+FRAME_SENTENCES = {
+    "SCR-141/preview": ("preview_row", "preview_total"),
+    "SCR-141/estimate": ("estimate",),
+    "SCR-141/confirm-lengthen": ("lengthen_body",),
+    "SCR-141/pinned-list": ("pinned_row",),
 }
 # section | pattern — the counted frame rows per spec section (start, end, regex).
 COUNTS = (
@@ -578,12 +593,13 @@ def fixture(facts: dict[str, Any]) -> dict[str, Any]:
     """The spec's worked examples, derived from the `22` storage example and the `21` section 7 seed.
 
     The reduction is the ticket's trades 30 -> 7 days WITH the action set to `drop`: under `22`
-    :5083-5085 a lowered `retain_days` on an `archive_parquet` row whose total stays the section 7
-    total only moves days to Parquet sooner (a tiering change). The fallback size is `used_bytes` per
+    :5083-5085 a lowered `retain_days` on an `archive_parquet` row only moves days to Parquet sooner
+    (a tiering change) while its hot window stays at or under the section 7 total. The fallback size is `used_bytes` per
     symbol across all its streams; its range is clamped to the recorded history (start =
     generated_at - used_bytes / daily_growth_bytes), and when nothing predates the cut-off the
     sentence says so. The long-window example (EXAMPLE long_days) is the total that falls to the
-    section 7 total when its row becomes Move to Parquet after the seed days.
+    section 7 total when its row becomes Move to Parquet after the seed days; with a hot window above
+    the section 7 total (EXAMPLE long_hot_days) the total is that hot window.
     """
     ex = facts["storage_example"]
     seed = facts["seed"]
@@ -683,6 +699,11 @@ def sentences(fx: dict[str, Any]) -> dict[str, str]:
     lead = f"Trades for {sym} older than {n} days"
     every = "and at every run after it, Parquet included."
     title_total = f"Shorten trades retention to {m} months?"
+    move = "Move trades to Parquet and shorten retention to"
+    hot = int(fx["long_hot_days"])
+    # `{total}` = max(the hot window, the section 7 total): days when the hot window is the larger
+    long_words = f"{hot} days" if hot > m * 365 / 12 else f"{m} months"
+    cap = f"{int(fx['cap_gb']):,}"
     return {
         "consequence": f"{lead} become eligible for deletion {TIMING[0]} {every} {size}",
         "consequence_now": (
@@ -706,6 +727,17 @@ def sentences(fx: dict[str, Any]) -> dict[str, str]:
         ),
         "title": f"Delete trades after {n} days?",
         "title_total": title_total,
+        "title_total_move": f"{move} {m} months?",
+        "title_total_long": f"{move} {long_words}?",
+        "estimate": (
+            f"Under this policy the fast store settles at most about {fx['steady_gb']} GB "
+            f"({fx['steady_pct']} % of {cap} GB), plus pinned data."
+        ),
+        "lengthen_body": (
+            f"Nothing is deleted. The fast store settles at most about {fx['steady_gb']} GB, "
+            "plus pinned data."
+        ),
+        "pinned_row": f"⚲ {fx['pinned_symbol']} · {fx['pinned_gb']} GB · Exempt (pinned)",
         "preview_row": row,
         "preview_total": total,
         "kind_titles": " · ".join(
@@ -715,7 +747,7 @@ def sentences(fx: dict[str, Any]) -> dict[str, str]:
                 f"Delete {sym} trades after {fx['override_days']} days?",
                 f"Remove the {sym} trades rule?",
                 "Shorten retention for 2 streams?",
-                title_total,
+                f"{move} {m} months?",
                 title_total,
             ]
         ),
@@ -807,6 +839,10 @@ def gates(
         "help_archive",
         "title",
         "title_total",
+        "title_total_move",
+        "title_total_long",
+        "estimate",
+        "lengthen_body",
         "preview_row",
         "preview_total",
     ):
@@ -834,7 +870,11 @@ def gates(
     tables = [(a, b) for _, a, b, p in COUNTS if p.startswith(r"^\| `SCR-141/")]
     seen: dict[str, int] = {}
     reductions = t2 = validity = 0
-    mutated = {"consequence": False, "typed": False}
+    mutated = {"consequence": False, "typed": False, "producer": False}
+    kinds = re.findall(r"^\| (K\d) +\|(.*)$", section(spec, 5, 6), MULTI)
+    # the typed instruction each kind's inset draws, in the kinds table's order (its typed value)
+    want_typed = [first(r"`([^`]+)`", cells("|" + rest)[-1]) for _, rest in kinds]
+    kinds_shows = ""
     for a, b in sorted(set(tables)):
         for name, c in frame_rows(spec, a, b):
             seen[name] = seen.get(name, 0) + 1
@@ -842,6 +882,9 @@ def gates(
                 bad.append(f"spec section {a}: {name} has fewer than five columns")
                 continue
             shows, cls = c[2], c[3]
+            for k in FRAME_SENTENCES.get(name, ()):
+                if sent[k] not in shows:
+                    bad.append(f"spec section {a}: frame {name} lacks the derived {k}: {sent[k]!r}")
             d = diff.get(name, {"stage": "", "kinds": False, "reduction": False})
             said = "destructive" in cls or "reduction" in cls
             if said != d["reduction"]:
@@ -860,6 +903,15 @@ def gates(
                 if mode == "typed" and confirm and not d["kinds"] and not mutated["typed"]:
                     mutated["typed"] = True
                     row_text = row_text.replace(TYPED_LABEL, "")
+                producer = c[1]
+                if mode == "producer" and d["kinds"] and not mutated["producer"]:
+                    mutated["producer"] = True
+                    producer = PLAIN_MARKS[0] + ": " + producer
+                # the plain marks, read from the Producer, Shows and Class cells alike
+                if any(pm in cell for pm in PLAIN_MARKS for cell in (producer, row_text, cls)):
+                    bad.append(f"spec section {a}: reduction frame {name} names the plain confirm")
+                if d["kinds"]:
+                    kinds_shows = row_text
                 titles = sent["kind_titles"].split(" · ")
                 if d[
                     "kinds"
@@ -883,9 +935,9 @@ def gates(
                             f"spec section {a}: destructive frame {name} lacks the typed field "
                             f"(its quoted label {TYPED_LABEL})"
                         )
-                    if any(pm in row_text for pm in PLAIN_MARKS):
+                    if "typed" not in cls:
                         bad.append(
-                            f"spec section {a}: destructive frame {name} is drawn as a plain confirm"
+                            f"spec section {a}: destructive frame {name}'s Class cell lacks typed"
                         )
                     if UNDO not in row_text:
                         bad.append(
@@ -917,13 +969,22 @@ def gates(
     for name in diff:
         if name.startswith("SCR-141/") and name not in seen:
             bad.append(f"DIFF_TABLE: frame {name} is not in the spec's state tables")
-    for k in ("consequence", "typed"):
+    for name in FRAME_SENTENCES:
+        if name not in seen:
+            bad.append(f"spec: frame {name} is not in the spec's state tables")
+    for k in ("consequence", "typed", "producer"):
         if mode == k and not mutated[k]:
             bad.append(f"mutation: no frame to mutate for {k}")
+    got_typed = re.findall(r'"Type ([^"]+) to confirm"', kinds_shows)
+    if kinds_shows and got_typed != want_typed:
+        bad.append(
+            f"spec section 5: the kinds frame's typed instructions {got_typed} differ from the "
+            f"kinds table's typed values {want_typed}"
+        )
     # the reduction-kinds table (section 5): every kind is a reduction by its horizons and takes the
-    # typed confirm: a title ending "?", a body with the undo line (or the `retention.confirm.body`
-    # reference, whose deck row carries it) and a typed value in code style, never the plain confirm
-    kinds = re.findall(r"^\| (K\d) +\|(.*)$", section(spec, 5, 6), MULTI)
+    # typed confirm: a title ending "?" no other kind shares, a body with the undo line (or the
+    # `retention.confirm.body` reference, whose deck row carries it) and never "Nothing is deleted.",
+    # and a typed value in code style, never the plain confirm
     plain_target = next(
         (
             k
@@ -934,13 +995,28 @@ def gates(
         ),
         "",
     )
-    mutated_k = mutated_p = False
+    mutated_k = mutated_p = mutated_t = mutated_n = False
+    title_of: dict[str, str] = {}
+    k6_title = next((cells("|" + r)[2] for k, r in kinds if k == plain_target), "")
     for kid, rest in kinds:
         c = cells("|" + rest)
         if len(c) < 5:
             bad.append(f"spec section 5: kind {kid} has fewer than five columns")
             continue
         body, typed = c[3], c[4]
+        if mode == "title" and kid == "K7" and k6_title:
+            mutated_t = True
+            c[2] = k6_title
+        if mode == "nothing" and kid == plain_target:
+            mutated_n = True
+            body += " Nothing is deleted."
+        fixture_title = (re.findall(r'"([^"]+\?)"', c[2]) or [""])[-1]
+        twin = next((k for k, tt in title_of.items() if tt == fixture_title), "")
+        if twin:
+            bad.append(f"spec section 5: kinds {twin} and {kid} share a title {fixture_title!r}")
+        title_of[kid] = fixture_title
+        if any("Nothing is deleted." in cell for cell in (*c[:3], body)):
+            bad.append(f"spec section 5: kind {kid} says Nothing is deleted.")
         if mode == "kinds" and not mutated_k:
             mutated_k = True
             body = body.replace("It cannot be undone.", "").replace("`retention.confirm.body`", "")
@@ -974,6 +1050,10 @@ def gates(
     if mode == "kinds" and kinds and not mutated_k:
         bad.append("mutation: no reduction kind to mutate")
     if mode == "plain" and not mutated_p:
+        bad.append("mutation: no drop -> archive_parquet kind to mutate")
+    if mode == "title" and not mutated_t:
+        bad.append("mutation: no K7 / K6 pair to mutate")
+    if mode == "nothing" and not mutated_n:
         bad.append("mutation: no drop -> archive_parquet kind to mutate")
     # the classification table: the view-as row first among the gated rows; the absences row present
     s1 = section(spec, 1, 2)
