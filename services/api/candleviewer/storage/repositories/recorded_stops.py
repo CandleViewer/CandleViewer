@@ -48,11 +48,11 @@ from candleviewer.storage.repositories.orders import (
 
 __all__ = [
     "EVERY_ACCOUNT", "LIVE_STOP_STATUSES", "MAX_MARKER_CHARS", "REFUSED_BY", "REFUSED_ENTRY",
-    "SWEEP_REASON",
-    "UNSENT_ENTRY", "UX_RS_IN_FLIGHT", "UX_RS_IN_FORCE", "WAITING_ENTRY", "InsertWriteAhead",
-    "NewRecordedStop", "RecordedStopRow", "RecordedStopStore", "SettleWriteAhead",
-    "StaleRecordedStop", "StopEnd", "StopKind", "StopOutcome", "StopSource", "StopStatus",
-    "SweepScope", "SweepWriteAhead", "SweptStop", "check_request", "request_cutoff",
+    "SWEEP_REASON", "UNSENT_ENTRY", "UX_RS_IN_FLIGHT", "UX_RS_IN_FORCE", "WAITING_ENTRY", "InForce",
+    "InsertWriteAhead", "NewRecordedStop", "RecordedStopRow", "RecordedStopStore", "ResolveOutcome",
+    "ResolveWriteAhead", "SettleWriteAhead", "StaleRecordedStop", "StopEnd", "StopKind",
+    "StopOutcome", "StopSource", "StopStatus", "SweepScope", "SweepWriteAhead", "SweptStop",
+    "check_in_force", "check_request", "request_cutoff",
 ]  # fmt: skip
 
 StopKind = Literal["stop_loss", "take_profit"]
@@ -70,6 +70,10 @@ StopEnd = Literal["in_force", "answered_unread"]
 #: bound showed neither its stop nor an order or entry that carries it (`not_shown`, 21
 #: Sec.3.3.11). Both of the last two make the row `void`.
 StopOutcome = Literal["answered", "refused", "not_shown"]
+#: How `resolve` settles the pending rows a complete read decided, answered or not: `answered`
+#: stamps a NULL `answered_at` and keeps them `pending`; the others void them, each the reason of
+#: their write-ahead audit (`in_flight_resolved`; `entry_filled_stop_absent`, the Q1 ruling).
+ResolveOutcome = Literal["answered", "in_flight_resolved", "entry_filled_stop_absent"]
 #: One request in flight per position (21 Sec.3.3.11): a second writer's insert is refused.
 UX_RS_IN_FLIGHT: Final = "ux_rs_in_flight"
 #: One row in force per position and kind.
@@ -298,6 +302,32 @@ SettleWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
 InsertWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
 
 
+#: A `put_in_force` or `resolve` hook: awaited before the commit with every row it changed (the
+#: replaced rows first), one `sl.modified` / `tp.modified` record per row; one that raises or
+#: outlasts the audit bound (`WriteAheadTimeout`) leaves every row as it was.
+ResolveWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
+
+
+@dataclass(frozen=True, slots=True)
+class InForce:
+    """What `put_in_force` wrote: the rows it marked `replaced`, then the rows it put in force."""
+
+    replaced: tuple[RecordedStopRow, ...]
+    in_force: tuple[RecordedStopRow, ...]
+
+
+def check_in_force(account_id: UUID, rows: Sequence[RecordedStopRow]) -> None:
+    """`ValueError` before any statement unless `rows` are the account's, of one key, each named
+    once and each of its own kind (`ux_rs_in_force`). Names no value."""
+    if not rows or len({row.id for row in rows}) != len(rows):
+        raise ValueError("a row put in force is named once, and at least one is")
+    if len({row.kind for row in rows}) != len(rows):
+        raise ValueError("one row in force per key and kind")
+    key = (account_id, rows[0].symbol, rows[0].position_idx)
+    if any((r.exchange_account_id, r.symbol, r.position_idx) != key for r in rows):
+        raise ValueError("the rows put in force are the account's, of one key")
+
+
 class StaleRecordedStop(OrderStoreError):
     """A settle met a row that is not in flight any more (another writer answered it first) or not
     in the account: nothing was written. Names no value."""
@@ -396,4 +426,41 @@ class RecordedStopStore(Protocol):
         read, never voided blind. Only at startup, before the order machines hydrate and before
         order entry opens (slice 3's wiring): a `pending_submit` order is an orphan only while no
         request can still send it, and a sweep after that could void an entry about to be sent."""
+        ...
+
+    async def waiting_keys(
+        self, account_id: UUID, *, now: datetime, bound_s: float | None
+    ) -> tuple[tuple[str, int], ...]:
+        """The account's distinct `(symbol, position_idx)` keys with a row `waiting_for_key` would
+        list, the oldest row's first: the startup pass's input. `ValueError` for a naive `now`."""
+        ...
+
+    async def put_in_force(
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        *,
+        at: datetime,
+        write_ahead: ResolveWriteAhead | None = None,
+    ) -> InForce:
+        """A read showed the stops of `rows`, pending as read (21 Sec.3.3.11). One transaction locks
+        the key's live rows `FOR UPDATE` in id order and compares each of `rows` on `(status,
+        answered_at)` (`StaleRecordedStop`, nothing written, on a lost race); marks `replaced`
+        first the row in force of each kind and the older answered pending rows of that kind, then
+        puts `rows` `in_force` at `at`; a moved row keeps `answered_at`, or is stamped `at`.
+        `check_in_force` first; the hook, when given, is awaited bounded before the commit."""
+        ...
+
+    async def resolve(
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        outcome: ResolveOutcome,
+        *,
+        at: datetime,
+        write_ahead: ResolveWriteAhead | None = None,
+    ) -> tuple[RecordedStopRow, ...]:
+        """Answer or void one request's pending rows, answered or not, by compare-and-set on
+        `(status, answered_at)` as read (`StaleRecordedStop`, nothing written). A void needs its
+        hook (`ValueError` before any statement, C-2.9), awaited bounded before the commit."""
         ...
