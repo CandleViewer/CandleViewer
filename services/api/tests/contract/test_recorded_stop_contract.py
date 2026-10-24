@@ -397,22 +397,49 @@ def test_the_rules_it_cites_keep_their_numbers() -> None:
     assert not _missing(_SECTION, "24 §8.8 rule 6", "24 §8.3 rule 7")
 
 
-def test_rule_7_releases_the_record_only_when_its_order_no_longer_matches() -> None:
-    """The release 21's "Binding" cites (#848, the orchestrator's ruling of 2026-10-23 in LANE-41):
-    only a later push or section 8.5 read that section 8.8 rule 6's match no longer accepts
-    releases the record's binding, and an end keeps the id, so a stop that closed its position
-    still pairs. The materialised `orders` row is never released: its terms follow its order."""
-    pairing = _words(_INTERNAL_DOC.split("### 8.3 ", 1)[1].split("### 8.4 ", 1)[0])
+def test_rule_7_releases_a_record_only_by_its_successors_bind() -> None:
+    """Rule 7's release, which 21's "Binding" cites (#848, the orchestrator's ruling of
+    2026-10-23 in LANE-43): a record's binding is released only when its successor, the OMS's own
+    later record, binds the same `orderId`, the release first in one transaction. A foreign or
+    venue change in place keeps the binding, so section 8.5 step 5 still compares the order's row
+    with the record and puts the recorded stop back over a looser one (C-2.6); an end keeps the
+    id, so a stop that closed its position still pairs; and the materialised `orders` row is never
+    released."""
+    head = "\n7. **Pairing through the bound id (SR-E29-03).**"
+    rule = _words(_INTERNAL_DOC.split(head, 1)[1].split("\n", 1)[0])
     binding = _words(_SECTION.split("**Binding.**", 1)[1].split("\n\n", 1)[0])
     assert not _missing(
-        pairing,
+        rule,
+        "each recorded side's `recorded_stops` row binds that `orderId` once, as its "
+        "`exchange_order_id`, in the transaction that materialises the order's row (on the "
+        "order push that follows its request, §8.9; in §8.5 step 3c or 3d; or on §8.12 step 3's "
+        "read of a fill's order) or by its bind as a successor (below)",
         "That binding is released (`exchange_order_id` cleared and `released_at` stamped, "
-        "`rs_release`; never bound again) only when a later push of that order, or a §8.5 read "
-        "of it, shows that §8.8 rule 6's match no longer accepts the order for the record's side",
+        "`rs_release`; never bound again) only by its successor's bind: the OMS's own later "
+        "record of the side binding the same `orderId` once its own match accepts the order "
+        "(§8.8 rule 6), the release first and the bind after it, in one transaction, so both "
+        "happen or neither does.",
         "E29-T05 releases on the push and E29-T06 on the read.",
-        "An end never releases it",
-        "keeps the id, so the fills of a stop that closed its position still pair.",
-        "The materialised `orders` row is never released: its terms follow every in-place "
-        "change of its order (`TERMS_CHANGED`",
+        "A foreign or venue in-place change keeps the binding (`[O-4]`): `TERMS_CHANGED` "
+        "updates the materialised row as the sixth point below bounds it, and §8.5 step 5 "
+        "compares that row with the record and restores the recorded stop over a looser one "
+        "(SR-E29-06, C-2.6).",
+        "An end never releases it: a record that ends with its position, or whose order is "
+        "cancelled, rejected, expired or deactivated, keeps the id, so the fills of a stop that "
+        "closed its position still pair; a record that has ended keeps it whatever a later push "
+        "or read of its order shows.",
+        "The materialised `orders` row is never released.",
     )
-    assert "the one of 24 §8.3 rule 7 (a later read of that order that no longer matches" in binding
+    assert not _missing(
+        binding,
+        "It is released only by its successor's bind: the OMS's own later record binding the "
+        "same `orderId`, release first in that transaction; a foreign or venue in-place change "
+        "keeps the binding (`[O-4]`), `TERMS_CHANGED` updates the materialised row, and 24 §8.5 "
+        "step 5 compares it with the record and restores.",
+        "The end of the row keeps it, so the fills of a stop that closed its position still pair.",
+    )
+    log = (
+        "\n### 19.30 2026-10-23 — §8.3 rule 7, §8.5, §8.12, and 21 §3.3.11: a recorded stop's "
+        "binding is released only by its successor's bind (E29-T05, #848)\n"
+    )
+    assert log in _INTERNAL_DOC
