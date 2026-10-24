@@ -107,6 +107,7 @@ class ReplaySessionRepositoryContract:
         assert await h.repo.get(stranger, mine.id) is None
         assert (await h.repo.list_page(stranger)).rows == ()
         assert await h.repo.count_active(stranger) == 0
+        assert await h.repo.count_non_terminal(stranger) == 0
         assert await h.repo.delete(stranger, mine.id) is False
         for call in _writes(h, stranger, mine.id).values():
             with pytest.raises(ReplaySessionNotFoundError):
@@ -235,6 +236,34 @@ class ReplaySessionRepositoryContract:
         assert [i.id for i in await h.repo.list_idle_since(before, 10)] == [a.id, b.id]
         assert [i.id for i in await h.repo.list_idle_since(before, 1)] == [a.id]
         assert await h.repo.list_idle_since(T0 - timedelta(days=1), 10) == []
+
+    async def test_count_non_terminal_counts_every_state_but_destroyed(self, h: Harness) -> None:
+        user = h.new_user()
+        for state in ReplayState:
+            await h.in_state(state, user)
+        await h.in_state(S.CREATED)  # someone else's open session
+        assert await h.repo.count_non_terminal(user) == len(ReplayState) - 1 == 7
+        assert await h.repo.count_non_terminal("not-a-uuid") == 0
+
+    async def test_list_non_terminal_since_returns_every_idle_open_session_oldest_first(
+        self, h: Harness
+    ) -> None:
+        old: list[ReplaySessionRow] = []
+        for state in ReplayState:  # one a minute, so the order is the creation order
+            row = await h.in_state(state)
+            h.clock.advance(minutes=1)
+            if state is not S.DESTROYED:
+                old.append(row)
+        before = h.clock.now
+        await h.in_state(S.CREATED)  # exactly at the boundary: not strictly older
+        h.clock.advance(hours=2)
+        await h.in_state(S.FINISHED)  # recent
+        got = await h.repo.list_non_terminal_since(before, 10)
+        assert [i.id for i in got] == [r.id for r in old]
+        assert {i.state for i in got} == set(ReplayState) - {S.DESTROYED}
+        two = await h.repo.list_non_terminal_since(before, 2)
+        assert [i.id for i in two] == [r.id for r in old[:2]]
+        assert await h.repo.list_non_terminal_since(T0 - timedelta(days=1), 10) == []
 
     async def test_idle_projection_carries_what_the_sweep_needs_and_no_bookmarks(
         self, h: Harness
