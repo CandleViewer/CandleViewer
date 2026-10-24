@@ -63,7 +63,7 @@ from typing import Any, Final, Literal, Protocol
 
 import structlog
 
-from candleviewer.exchange.base.errors import OmsErrorCode
+from candleviewer.exchange.base.errors import NotFoundError, OmsErrorCode
 from candleviewer.statechart.bindings import register_binding_module
 from candleviewer.statechart.config import (
     CV_COMMAND_TIMEOUT,
@@ -236,6 +236,16 @@ UNRESOLVED_AFTER_RECONCILE: Final = "UNRESOLVED_AFTER_RECONCILE"
 #: `submitting`'s last arm ends the order `rejected`, and `map_reject_code` keeps it as the row's
 #: reason. Past that history the port answers an empty lookup instead (`unknown`, SEC-2B1-02).
 EXPIRED_UNSENT: Final = "EXPIRED_UNSENT"
+#: Why an order waits in `unknown` with no transport fault: the venue answered a cancel's 110001
+#: (`NotFoundError`). It does not hold the order, which says nothing of how it ended (24 Sec.8.6).
+ALREADY_TERMINAL: Final = "already_terminal"
+#: Why a KILL's cancel the venue does not hold is NOT done: it named the `order_link_id` alone (no
+#: bound exchange order id), and an order whose create may still be on the wire can land after it.
+NOT_HELD_UNBOUND: Final = "not_held_unbound"
+#: The fact `issue_kill_cancel` leaves in context for the KILL's own result (`OrderMachines.kill`):
+#: `sent`, the code of an answer that cancelled nothing, `already_terminal`, `not_held_unbound`,
+#: `timeout` or `failed`.
+KILL_CANCEL: Final = "kill_cancel"
 #: Bounds on what a payload may put into context (C-2.18): fills per order, id text, and money as
 #: 22's `Decimal` text (C6: no exponent, space or `_`) with numeric(38,18)'s 20 + 18 digits.
 MAX_FILLS: Final = 10_000
@@ -264,9 +274,16 @@ FOLLOWED: Final = ("qty", "trigger_price")
 UNCHANGED: Final = "the push names the terms the row holds"
 _REJECT_CODES: Final = frozenset(code.value for code in OmsErrorCode) | {EXPIRED_UNSENT}
 _DUPLICATE: Final = OmsErrorCode.DUPLICATE_CLIENT_ID.value
+#: A KILL's cancel answered without a cancel, by code: the record each is audited under (C-2.9).
+_KILL_REFUSALS: Final = {
+    OmsErrorCode.ORDER_NOT_FOUND.value: "kill_cancel_already_terminal",
+    OmsErrorCode.RATE_BUDGET_EXCEEDED.value: "kill_cancel_rate_budget_exceeded",
+}
 #: Codes 24 Sec.8.6 routes to retry, poll or reconcile: the command port raises them (S1), so one
 #: recorded as a reject is logged at ERROR.
 _AMBIGUOUS: Final = frozenset({"TRANSPORT_ERROR", "SERVICE_UNAVAILABLE", "UNKNOWN_STATE"})
+#: The `onError` event of `cancel_pending`'s invoke (`error.platform.<invoke id>`, `order_steps`).
+_CANCEL_ERROR: Final = "error.platform.cancel"
 #: The invoking `lifecycle` states and the command each one's service sends.
 _INVOKES: Final = {"submitting": "place", "cancel_pending": "cancel", "amend_pending": "amend"}
 #: The steps that create the order's row, each a state and the event that enters it from `draft`:
@@ -1023,8 +1040,16 @@ async def map_reject_code(_i: Any, context: dict[str, Any], event: Any, _a: Any)
 
 
 async def record_transport_fault(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
-    """S1: the outcome is ambiguous, so the order waits in `unknown` for reconciliation."""
+    """S1: the outcome is ambiguous, so the order waits in `unknown` for reconciliation. The venue's
+    110001 on the cancel's own `onError` is no fault: marked `ALREADY_TERMINAL`, with its code, and
+    reconciled at once. Out of any other invoke (a lookup in `place`, an amend) it is a fault."""
     fault = getattr(event, "error", None)
+    if isinstance(fault, NotFoundError) and _name(event) == _CANCEL_ERROR:
+        context[ALREADY_TERMINAL] = code = fault.exchange_ret_code
+        link = context.get("order_link_id")
+        logger().warning("b01_already_terminal", order_link_id=link, exchange_ret_code=code)
+        _post(context, "request_reconciliation", reason=ALREADY_TERMINAL)
+        return
     what = type(fault).__name__ if isinstance(fault, BaseException) else _name(event)
     logger().error("b01_transport_fault", order_link_id=context.get("order_link_id"), fault=what)
 
@@ -1241,7 +1266,14 @@ async def emit_terminal(i: Any, context: dict[str, Any], _e: Any, _a: Any) -> No
 
 
 async def raise_unknown_alert(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
-    """S1: an order in `unknown` is an incident; it pages once `recon_deadline_us` passes."""
+    """S1: an order in `unknown` is an incident; it pages once `recon_deadline_us` passes. One the
+    venue does not hold (`ALREADY_TERMINAL`) is a ticket, reconciling; the mark ends here."""
+    if ALREADY_TERMINAL in context:
+        detail = {"exchange_ret_code": context.pop(ALREADY_TERMINAL)}
+        link = context.get("order_link_id")
+        logger().error("b01_order_unknown", order_link_id=link, reason=ALREADY_TERMINAL, **detail)
+        _post(context, "alert", alert="order_already_terminal", **detail)
+        return
     logger().error("b01_order_unknown", order_link_id=context.get("order_link_id"))
     _post(context, "alert", alert="order_unknown")
 
@@ -1288,7 +1320,10 @@ async def issue_kill_cancel(_i: Any, context: dict[str, Any], _e: Any, _a: Any) 
     """At most one exchange cancel per KILL, and only if the order was sent (INV-B1-h): through
     the OMS's audited cancel service (SR-E29-06; the same client order id, C-2.10), bounded by
     `CV_KILL_CANCEL_TIMEOUT`. Failure or timeout is audited, never raised: rolling back would
-    un-kill the order. Reconciliation re-syncs the exchange (C-2.5)."""
+    un-kill the order; so is any other answer but `ok`, after the bound, with its code: the venue's
+    110001 at warning, and reconciled (24 Sec.8.6), but done only if the cancel named the bound id
+    (`NOT_HELD_UNBOUND`). The answer is read inside the bound: no mapping is a failure.
+    Reconciliation re-syncs the exchange (C-2.5)."""
     if context.get("kill_skip_cancel"):
         unverified = context.get("needs_lookup") is True
         why = "unverified_duplicate" if unverified else "unsubmitted"
@@ -1296,17 +1331,40 @@ async def issue_kill_cancel(_i: Any, context: dict[str, Any], _e: Any, _a: Any) 
         return
     link = context.get("order_link_id")
     command = Command(kind="kill_cancel", key=f"{link}:kill_cancel", order=_view(context), terms={})
+    answer: Mapping[str, Any] = {}
     try:
         if _ports.commands is None:
             raise PortMissingError("no command port is wired for the kill cancel")
         async with asyncio.timeout(CV_KILL_CANCEL_TIMEOUT):
-            await _ports.commands.cancel(command)
+            answer = dict(await _ports.commands.cancel(command))
+    except NotFoundError as exc:  # the venue's 110001: audited below, no failure
+        answer = {"ok": False, "error_code": exc.code, "exchange_ret_code": exc.exchange_ret_code}
     except TimeoutError:
+        context[KILL_CANCEL] = "timeout"
         logger().error("b01_kill_cancel_timeout", order_link_id=link)
         await _hook("kill_cancel_timeout", context)
     except Exception as exc:  # audited; reconciliation re-syncs
+        context[KILL_CANCEL] = "failed"
         logger().error("b01_kill_cancel_failed", order_link_id=link, failure=type(exc).__name__)
         await _hook("kill_cancel_failed", context)
+    if answer.get("ok") is True:
+        context[KILL_CANCEL] = "sent"
+    if answer.get("ok") is not False:  # accepted, or nothing answered: nothing more to record
+        return
+    code, ret = _code(answer), answer.get("exchange_ret_code")
+    name = _KILL_REFUSALS.get(str(code), "kill_cancel_refused")
+    refusal = str(ret) if type(ret) is int else code  # the venue's own code, else the OMS's
+    outcome = code or "refused"
+    if name == "kill_cancel_already_terminal":  # it does not hold it: reconcile
+        if context.get("exchange_order_id") is None:  # unbound: its create may still land
+            name, outcome = "kill_cancel_refused", NOT_HELD_UNBOUND  # a refusal, never "ended"
+        else:
+            outcome = ALREADY_TERMINAL
+        _post(context, "request_reconciliation", reason=outcome)
+    context[KILL_CANCEL] = outcome
+    log = logger().warning if outcome == ALREADY_TERMINAL else logger().error
+    log(f"b01_{name}", order_link_id=link, refusal=refusal)
+    await _hook(name, {**context, "denied": {"reason": refusal}})  # a copy: no stale `denied`
 
 
 async def audit_kill_cancel_in_flight(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
