@@ -213,10 +213,34 @@ async def test_cancel_admitted_sends_one_cancel_and_answers_once_b1_settled_it(
 
 
 async def test_a_final_order_is_answered_as_it_stands_and_nothing_is_sent(rig: SubmitRig) -> None:
+    """C-2.9 (the orchestrator's ruling of 2026-10-24 21:47Z (2)): the user's cancel is the action
+    even when nothing is sent, so it is recorded ahead of its `202`, `orders.cancel` with the
+    reason `already_final` (the `audit_outcome` enum has no `noop`: its outcome is `success`)."""
     row, exits = await placed(rig), exits_of(rig)
     await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
-    again = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    again = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=REQUEST)
     assert (again.kind, again.lifecycle_state) == ("accepted", "cancelled")
+    assert [c.method for c in rig.port.demo.calls].count("cancel_order") == 1
+    assert requests(rig, "orders.cancel") == [
+        ("success", "user"), ("success", "cancelled"), ("success", "already_final"),
+    ]  # fmt: skip
+    noop = [r for r in rig.records("orders.cancel") if isinstance(r, RequestRecord)][-1]
+    assert noop.request_id == REQUEST
+    assert {k: noop.detail[k] for k in ("operation", "state")} == {
+        "operation": "cancel", "state": "cancelled",
+    }  # fmt: skip
+
+
+async def test_a_final_orders_cancel_that_cannot_be_recorded_is_503_audit_unavailable(
+    rig: SubmitRig,
+) -> None:
+    """C-2.9: no order action is answered unrecorded, a cancel that finds nothing to send included;
+    nothing is sent either way."""
+    row, exits = await placed(rig), exits_of(rig)
+    await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    rig.port.audits.refuse = RuntimeError("the audit WAL refused the record")
+    got = await exits.cancel_admitted(row, actor=actor(), reason="cancel_all", request_id=None)
+    assert (got.kind, got.status, got.code) == ("refused", 503, "audit_unavailable")
     assert [c.method for c in rig.port.demo.calls].count("cancel_order") == 1
 
 
