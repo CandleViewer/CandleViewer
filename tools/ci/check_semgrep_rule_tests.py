@@ -11,6 +11,10 @@ fixture contract using `semgrep scan --json`, which reports accurate,
 directly-checkable line numbers, and is what CI/`make security` should call
 instead of `semgrep --test`.
 
+Every rule needs at least one `# ruleid: <id>` line (where it must fire) and at least one
+`# ok: <id>` line (where a naive rule would misfire and this one must stay quiet; E14-X03, #549):
+a rule that is only ever shown firing is untested against its false positives.
+
 A rule's fixture is one file, or a tree (E42-X03, AC-ADM-14): `.semgrep/tests/<id>/` holds files
 at the repo paths they stand for, such as `<id>/services/api/candleviewer/auth/x.py`. A tree is
 staged at those paths and scanned once, so a path-scoped rule meets its fixtures where its
@@ -175,14 +179,20 @@ def tree_lines(rule_yaml: Path, files: Sequence[tuple[Path, PurePosixPath]]) -> 
 
 
 def check_tree(rule_yaml: Path, rule_id: str, tree: Path) -> list[str]:
-    """`rule_id`'s failures on its fixture tree: no `ruleid` line anywhere, a file with neither
-    marker (it tests nothing), a line missed, a false positive, or a finding outside the tree."""
+    """`rule_id`'s failures on its fixture tree: no `ruleid` line anywhere, no `ok` line anywhere,
+    a file with neither marker (it tests nothing), a line missed, a false positive, or a finding
+    outside the tree."""
     files = tree_files(tree)
     expected = {str(rel): expected_lines(source, rule_id) for source, rel in files}
     if not any(fire for fire, _ in expected.values()):
         return [
             f"{rule_id}: fixture tree has no '# ruleid: {rule_id}' lines -- "
             "a rule that never fires on its own fixture is untested"
+        ]
+    if not any(clean for _, clean in expected.values()):
+        return [
+            f"{rule_id}: fixture tree has no '# ok: {rule_id}' lines -- "
+            "a rule that is never shown staying quiet is untested against false positives"
         ]
     failures = [
         f"{rule_id}: {path} has no '# ruleid:' or '# ok:' line, so it tests nothing"
@@ -229,6 +239,12 @@ def main() -> int:
             failures.append(
                 f"{rule_id}: fixture has no '# ruleid: {rule_id}' lines -- "
                 "a rule that never fires on its own fixture is untested"
+            )
+            continue
+        if not must_not_fire:
+            failures.append(
+                f"{rule_id}: fixture has no '# ok: {rule_id}' lines -- "
+                "a rule that is never shown staying quiet is untested against false positives"
             )
             continue
         actual = actual_lines(rule_yaml, fixture)

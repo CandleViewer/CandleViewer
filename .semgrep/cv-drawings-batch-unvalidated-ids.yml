@@ -1,0 +1,52 @@
+# E14-X03 (#549), DR12/DR21/DR23, SR-051. Invariant: the owner-scoped snapshot precedes every
+# UPDATE or DELETE of existing rows. `apply_batch` runs `_SNAPSHOT` (owner-scoped, FOR UPDATE),
+# `_first_failure`, then `_UPDATE_MANY` and `_SOFT_DELETE_MANY`; `_INSERT_MANY` is not listed (a
+# create touches no existing row). One function is read: a snapshot taken in a helper is not seen.
+# In the API the batch goes to the store whole. `def` and `for` patterns only: a bare `async def`
+# pattern matches nothing in a file with PEP 695 generics, as api/drawings.py has (X03-F4).
+rules:
+  - id: cv-drawings-batch-unvalidated-ids
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A batch changes existing drawings without resolving its ids against the caller's rows first
+      (DR12, DR21, DR23; SR-051). `_UPDATE_MANY` and `_SOFT_DELETE_MANY` run only after the same
+      function's owner-scoped `_SNAPSHOT`; in the API, hand the whole batch to
+      `store().apply_batch(owner, ops)` instead of calling the store once per op in a loop.
+      Rule doc: docs/plan/security/ci-gates-e14.md#cv-drawings-batch-unvalidated-ids.
+    metadata:
+      rule-id: cv-drawings-batch-unvalidated-ids
+      dr: [DR12, DR21, DR23]
+      sr: SR-051
+      references:
+        - docs/security/threat-models/E14-drawings.md DR21, DR23 (section 5), section 6.1
+        - services/api/candleviewer/storage/repositories/drawings_sqlalchemy.py
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: $S.execute(_UPDATE_MANY, ...)
+              - pattern: $S.execute(_SOFT_DELETE_MANY, ...)
+          - pattern-not-inside: |
+              $L = await $S2.execute(_SNAPSHOT, ...)
+              ...
+          - pattern-not-inside: |
+              await $S2.execute(_SNAPSHOT, ...)
+              ...
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  for $OP in $OPS:
+                    ...
+              - pattern-inside: |
+                  [... for $OP in $OPS]
+          - pattern-either:
+              - pattern: store().update(...)
+              - pattern: store().soft_delete(...)
+              - pattern: store().create(...)
+          - metavariable-regex:
+              metavariable: $OPS
+              regex: '^(?:\w+\.)*(?:ops|operations)$'
+    paths:
+      include:
+        - "services/api/candleviewer/storage/repositories/drawings*.py"
+        - "services/api/candleviewer/api/drawings*.py"

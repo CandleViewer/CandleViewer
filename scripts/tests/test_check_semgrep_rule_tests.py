@@ -290,3 +290,37 @@ def test_every_fixture_tree_belongs_to_a_rule_that_has_no_other_fixture() -> Non
         assert (RULES_DIR / f"{tree.name}.yml").is_file(), f"{tree.name}: no rule of that id"
         assert not find_fixture(tree.name).exists(), f"{tree.name}: a tree and a single fixture"
         assert tree_files(tree), f"{tree.name}: an empty fixture tree tests nothing"
+
+
+# E14-X03 (#549): a rule needs an `ok` line as well as a `ruleid` line.
+_NO_OK = "has no '# ok: cv-example' lines -- a rule that is never shown staying quiet is untested"
+
+
+def test_check_tree_needs_an_ok_line_somewhere(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fires_only = {_AUTH: "a()  # ruleid: cv-example\n", _FLAGS: "b()  # ruleid: cv-example\n"}
+    (failure,) = _check(tmp_path, monkeypatch, fires_only, {_AUTH: {1}, _FLAGS: {1}})
+    assert _NO_OK in failure
+    assert (
+        _check(tmp_path / "ok", monkeypatch, _FILES, {_AUTH: {1}}) == []
+    )  # one `ok` line is enough
+
+
+@pytest.mark.parametrize(
+    ("text", "code"),
+    [("a()  # ruleid: cv-example\n", 1), ("a()  # ruleid: cv-example\nb()  # ok: cv-example\n", 0)],
+)
+def test_main_needs_an_ok_line_in_a_single_file_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str, code: int
+) -> None:
+    rules, tests = tmp_path / "rules", tmp_path / "tests"
+    rules.mkdir()
+    tests.mkdir()
+    (rules / "cv-example.yml").write_text("rules: []\n", encoding="utf-8")
+    (tests / "cv-example.py").write_text(text, encoding="utf-8")
+    monkeypatch.setattr(checker, "RULES_DIR", rules)
+    monkeypatch.setattr(checker, "TESTS_DIR", tests)
+    monkeypatch.setattr(checker, "FIXTURE_LOCATIONS", ((tests, ".py"),))
+    monkeypatch.setattr(checker, "actual_lines", lambda rule_yaml, fixture: {1})
+    assert checker.main() == code

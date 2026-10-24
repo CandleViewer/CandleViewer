@@ -1,0 +1,47 @@
+# E14-X03 (#549), DR10, SR-040: a correctness guard that rides along. The contract (`DrawingPoint`,
+# `DrawingGeometry`: `additionalProperties: false`) gives a point only a time `t` and a price `p`;
+# a pixel position depends on the viewport. Python arm: a field, a key or a keyword named `x`, `y`
+# or `px` in the drawings API. A comprehension or lambda variable `x` is not a field. The
+# TypeScript arm is the next slice; the chart engine legitimately works in pixels.
+rules:
+  - id: cv-drawings-pixel-geometry
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A pixel coordinate (`x`, `y` or `px`) is declared or built in the drawings API. Geometry is
+      chart-space only: each point is a UTC time `t` and a price string `p` (DR10; SR-040; the
+      contract's `DrawingPoint` is closed). Pixels depend on the viewport, so a stored drawing
+      would not reproduce. Convert to chart coordinates in the client before sending.
+      Rule doc: docs/plan/security/ci-gates-e14.md#cv-drawings-pixel-geometry.
+    metadata:
+      rule-id: cv-drawings-pixel-geometry
+      dr: [DR10]
+      sr: SR-040
+      references:
+        - docs/plan/22-api-openapi.yaml DrawingPoint, DrawingGeometry
+        - docs/security/threat-models/E14-drawings.md DR10 (section 5)
+    pattern-either:
+      - patterns:
+          - pattern-inside: |
+              class $C(...):
+                ...
+          - pattern-either:
+              - pattern: "$F: $T"
+              - pattern: "$F: $T = $V"
+          - metavariable-regex:
+              metavariable: $F
+              regex: "^(?:x|y|px)$"
+      # A dict key, a subscript assignment or a keyword argument named like a pixel coordinate.
+      - patterns:
+          - pattern-either:
+              - pattern: '{..., "$K": $V, ...}'
+              - pattern: '$D["$K"] = $V'
+          - metavariable-regex:
+              metavariable: $K
+              regex: "^(?:x|y|px)$"
+      - pattern: $F(..., x=$V, ...)
+      - pattern: $F(..., y=$V, ...)
+      - pattern: $F(..., px=$V, ...)
+    paths:
+      include:
+        - "services/api/candleviewer/api/drawings*.py"

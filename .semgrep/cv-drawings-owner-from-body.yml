@@ -1,0 +1,69 @@
+# E14-X03 (#549), DR1, SR-051/SR-040. Search mode: the schema arm (an owner field on a request model)
+# is structural and one rule has one mode. The flow arms read "request data" from an expression's
+# text (REQ: `request.query_params|path_params|headers|json()|...`, an attribute of `body`, `op`,
+# `payload`..., a `model_validate`/`_parse(...)` result); `request` alone is none, so
+# `caller(request, ...)` stays clean. Followed: an owner-named variable; not any other name.
+rules:
+  - id: cv-drawings-owner-from-body
+    languages: [python]
+    severity: ERROR
+    message: >-
+      The owner of a drawing is taken from request data, or a request model has an owner field. The
+      owner is the session principal (`str(principal.user_id)` from `caller()`), never a body,
+      query, path or header value: a client that can name the owner can read or change another
+      user's drawings (DR1; SR-051, SR-040, C-12.4). Request models are closed and have no `owner`,
+      `owner_id`, `owner_user_id` or `user_id` field, so an owner key is a 422.
+      Rule doc: docs/plan/security/ci-gates-e14.md#cv-drawings-owner-from-body.
+    metadata:
+      rule-id: cv-drawings-owner-from-body
+      dr: [DR1, DR12, DR20]
+      sr: SR-051
+      references:
+        - docs/security/threat-models/E14-drawings.md DR1 (section 5), section 3 (TB1 to TB2)
+        - services/api/candleviewer/api/drawings.py
+    pattern-either:
+      # Schema arm: an owner-like field on a request model.
+      - patterns:
+          - pattern-inside: |
+              class $C(...):
+                ...
+          - pattern-either:
+              - pattern: "$F: $T"
+              - pattern: "$F: $T = $V"
+          - metavariable-regex:
+              metavariable: $F
+              regex: "^(?:owner|owner_id|owner_user_id|user_id|actor_user_id|created_by)$"
+          - metavariable-regex:
+              metavariable: $C
+              regex: "^(?!.*(?:Out|Response|Row)$)"
+      # The owner argument of a store call is request data.
+      - patterns:
+          - pattern: store().$M($O, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: "^(?:create|get|update|soft_delete|list_page|apply_batch|exists_for_other_owner)$"
+          - metavariable-regex:
+              metavariable: $O
+              regex: '(?s)^.*?(?:\b(?:request|req)\s*\.\s*(?:query_params|path_params|headers|cookies|json|body|form|stream)\b|\b(?:body|op|payload|data|params|query|q)\s*\.\s*\w+|\bmodel_validate(?:_json)?\b|\b_parse\s*\()'
+      # An owner keyword or an owner key of a dict, given request data.
+      - patterns:
+          - pattern-either:
+              - pattern: $F(..., owner_user_id=$O, ...)
+              - pattern: $F(..., owner=$O, ...)
+              - pattern: '{..., "owner_user_id": $O, ...}'
+              - pattern: '{..., "owner": $O, ...}'
+          - metavariable-regex:
+              metavariable: $O
+              regex: '(?s)^.*?(?:\b(?:request|req)\s*\.\s*(?:query_params|path_params|headers|cookies|json|body|form|stream)\b|\b(?:body|op|payload|data|params|query|q)\s*\.\s*\w+|\bmodel_validate(?:_json)?\b|\b_parse\s*\()'
+      # An owner-named variable or attribute assigned from request data.
+      - patterns:
+          - pattern: $OWN = $RHS
+          - metavariable-regex:
+              metavariable: $OWN
+              regex: '^(?:\w+\.)*(?:owner|owner_id|owner_user_id|user_id|uid)$'
+          - metavariable-regex:
+              metavariable: $RHS
+              regex: '(?s)^.*?(?:\b(?:request|req)\s*\.\s*(?:query_params|path_params|headers|cookies|json|body|form|stream)\b|\b(?:body|op|payload|data|params|query|q)\s*\.\s*\w+|\bmodel_validate(?:_json)?\b|\b_parse\s*\()'
+    paths:
+      include:
+        - "services/api/candleviewer/api/drawings*.py"

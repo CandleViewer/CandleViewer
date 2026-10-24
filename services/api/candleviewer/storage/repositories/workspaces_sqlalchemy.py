@@ -245,6 +245,10 @@ _CHART_SYMBOLS = sa.text(
 # live hangs below it, so a broken soft-delete cascade leaves a visible stuck row instead of an
 # FK cascade silently deleting live data; workspaces wait for their layouts, so every layout row
 # is removed (and counted) by `_PURGE_LAYOUTS` itself.
+# The correlated `SELECT ... FROM drawings` below looks for live drawings under a layout of ANY
+# owner (D21; SR-E14-09): the purge is a system job with no caller, and a layout is removed only
+# once nothing live hangs below it, whoever owns it.
+# nosemgrep: cv-drawings-query-missing-owner-filter reason=purge owner=@basiltt review=2027-03-25
 _PURGE_LAYOUTS = sa.text(
     "DELETE FROM layouts WHERE id IN (SELECT id FROM layouts WHERE deleted_at IS NOT NULL "
     "AND deleted_at < now() - make_interval(days => CAST(:days AS integer)) "
