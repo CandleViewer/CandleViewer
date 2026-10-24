@@ -246,6 +246,11 @@
       "path": "services/api/candleviewer/migrations/versions/0050_ea_identity_write_once.py",
       "sha256": "29106e6ccc7ae81bfc5ad39cb69b432ffe7ae87615c7f0083f98efb9752712cf",
       "down_revision": "0049_ea_env_parent_always"
+    },
+    "0051_replay_symbols_streams": {
+      "path": "services/api/candleviewer/migrations/versions/0051_replay_symbols_streams.py",
+      "sha256": "de85fe4a683d7775b07df62affb07b3b53b5c7fd3c4ed83c55a3288179715c97",
+      "down_revision": "0050_ea_identity_write_once"
     }
   }
 }

@@ -193,9 +193,10 @@ def _seed(dsn: str) -> list[str]:
     with _sync(dsn) as c:
         for user in users:
             c.execute(
-                "INSERT INTO replay_sessions (id, user_id, symbol, range_start, range_end, state, "
-                "created_at, updated_at) SELECT gen_random_uuid(), %s::uuid, 'BTCUSDT', "
-                "'2026-01-01', '2026-01-02', (CASE WHEN g %% 50 = 0 THEN 'playing' "
+                "INSERT INTO replay_sessions (id, user_id, symbol, symbols, streams, range_start, "
+                "range_end, state, created_at, updated_at) SELECT gen_random_uuid(), %s::uuid, "
+                "'BTCUSDT', '{BTCUSDT}', '{trades}', '2026-01-01', '2026-01-02', "
+                "(CASE WHEN g %% 50 = 0 THEN 'playing' "
                 "WHEN g %% 50 = 1 THEN 'paused' WHEN g %% 7 = 0 THEN 'finished' "
                 "ELSE 'destroyed' END)::replay_state, now() - (g || ' minutes')::interval, "
                 "now() - (g || ' minutes')::interval FROM generate_series(1, %s) g",
@@ -270,7 +271,8 @@ async def test_a_real_check_violation_leaves_no_row_values_in_the_chain(
     notes, user = ({"note": _NOTE},), h.new_user()
     insert = sa.insert(models.replay_sessions).values(
         id=uuid.uuid4(), user_id=uuid.UUID(user), symbol="BTCUSDT", range_start=T0, range_end=T0,
-        bookmarks=list(notes), created_at=T0, updated_at=T0,
+        bookmarks=list(notes), created_at=T0, updated_at=T0, symbols=["BTCUSDT"],
+        streams=["trades"],
     )  # fmt: skip
     rel = SqlAlchemyRelationalRepository(pg_dsn, "replay-sessions-leak")
     try:

@@ -981,6 +981,10 @@ replay_sessions = Table(
     Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("finished_at", TIMESTAMP(timezone=True)),
+    # 0051_replay_symbols_streams (E26 G7): every symbol (`symbol` is the first) and every
+    # stream the session replays, `StreamKind` names; what the retention guard reads.
+    Column("symbols", ARRAY(symbol_code), nullable=False),
+    Column("streams", ARRAY(Text), nullable=False),
     CheckConstraint("range_end > range_start", name="rps_range"),
     CheckConstraint("speed BETWEEN 0.1 AND 100", name="rps_speed"),
     CheckConstraint("source_tier IN ('auto','questdb','parquet')", name="rps_tier"),
@@ -989,6 +993,14 @@ replay_sessions = Table(
         name="rps_cursor",
     ),
     CheckConstraint("paper_trading = false OR paper_account_id IS NOT NULL", name="rps_paper"),
+    CheckConstraint(
+        "cardinality(symbols) BETWEEN 1 AND 8 AND symbols[1] = symbol", name="rps_symbols"
+    ),
+    CheckConstraint(
+        "cardinality(streams) >= 1 AND streams <@ '{trades,orderbook_delta,orderbook_snapshot,"
+        "tickers,klines,liquidations,open_interest,funding_rates}'",
+        name="rps_streams",
+    ),
     Index("ix_rps_user_time", "user_id", text("created_at DESC")),
     Index(
         "ix_rps_live",

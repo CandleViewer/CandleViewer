@@ -18,6 +18,8 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from candleviewer.storage.repositories.replay_sessions import (
+    ALL_REPLAY_STREAMS,
+    COVERING_STATES,
     LIVE_STATES,
     TERMINAL_STATES,
     IdleReplaySession,
@@ -115,9 +117,13 @@ class FakeReplaySessionRepository:
     @staticmethod
     def _check(
         *, start: datetime, end: datetime, cursor: datetime | None, speed: Decimal,
-        paper: bool, account: str | None, tier: str,
+        paper: bool, account: str | None, tier: str, row: ReplaySessionRow | None = None,
+        symbol: str = "", symbols: tuple[str, ...] = (), streams: tuple[str, ...] = (),
     ) -> None:  # fmt: skip
-        """Postgres evaluates CHECKs in name order: rps_cursor, rps_paper, rps_range, ..."""
+        """Postgres evaluates CHECKs in name order: rps_cursor, rps_paper, rps_range, ...
+        An update re-checks `row`'s stored lists; a create passes its own."""
+        if row is not None:
+            symbol, symbols, streams = row.symbol, row.symbols, row.streams
         if cursor is not None and not start <= cursor <= end:
             raise ReplaySessionConstraintError("rps_cursor")
         if paper and account is None:
@@ -128,6 +134,10 @@ class FakeReplaySessionRepository:
             speed.is_nan() or not _SPEED_MIN <= speed <= _SPEED_MAX
         ):  # NaN: an ordinary CHECK failure
             raise ReplaySessionConstraintError("rps_speed")
+        if not streams or not set(streams) <= set(ALL_REPLAY_STREAMS):
+            raise ReplaySessionConstraintError("rps_streams")
+        if not 1 <= len(symbols) <= 8 or symbols[0] != symbol:
+            raise ReplaySessionConstraintError("rps_symbols")
         if tier not in {t.value for t in SourceTier}:
             raise ReplaySessionConstraintError("rps_tier")
 
@@ -142,14 +152,15 @@ class FakeReplaySessionRepository:
             _stored_uuid(row.recording_session_id),
             _stored_uuid(row.paper_account_id),
         )
-        if not _SYMBOL_CODE.fullmatch(
-            row.symbol
-        ):  # a domain check, coerced before the table CHECKs
+        symbols, streams = tuple(row.stored_symbols), tuple(row.stored_streams)
+        # A domain check, coerced before the table CHECKs, on `symbol` and on every element.
+        if not all(_SYMBOL_CODE.fullmatch(code) for code in (row.symbol, *symbols)):
             raise ReplaySessionConstraintError("symbol_code_check")
         speed = _numeric_6_2(row.speed)
         self._check(
             start=row.range_start, end=row.range_end, cursor=row.cursor_ts, speed=speed,
-            paper=row.paper_trading, account=account, tier=row.source_tier,
+            paper=row.paper_trading, account=account, tier=row.source_tier, symbol=row.symbol,
+            symbols=symbols, streams=streams,
         )  # fmt: skip
         if sid in self._rows:
             raise ReplaySessionConstraintError("replay_sessions_pkey")
@@ -161,7 +172,7 @@ class FakeReplaySessionRepository:
             paper_trading=row.paper_trading, paper_account_id=account,
             bookmarks=copy.deepcopy(tuple(row.bookmarks)), loop_enabled=row.loop_enabled,
             events_emitted=0, gap_warnings=0, error_message=None, created_at=now, updated_at=now,
-            finished_at=None,
+            finished_at=None, symbols=symbols, streams=streams,
         )  # fmt: skip
         self._rows[sid] = made
         return made
@@ -233,7 +244,7 @@ class FakeReplaySessionRepository:
         row = self._writable(user_id, session_id)
         self._check(
             start=row.range_start, end=row.range_end, cursor=cursor_ts, speed=row.speed,
-            paper=row.paper_trading, account=row.paper_account_id, tier=row.source_tier,
+            paper=row.paper_trading, account=row.paper_account_id, tier=row.source_tier, row=row,
         )  # fmt: skip
         self._store(
             row, cursor_ts=cursor_ts,
@@ -252,7 +263,7 @@ class FakeReplaySessionRepository:
         stored = _numeric_6_2(speed)
         self._check(
             start=row.range_start, end=row.range_end, cursor=row.cursor_ts, speed=stored,
-            paper=row.paper_trading, account=row.paper_account_id, tier=row.source_tier,
+            paper=row.paper_trading, account=row.paper_account_id, tier=row.source_tier, row=row,
         )  # fmt: skip
         moved = max(row.updated_at, now) if activity else row.updated_at
         return self._store(row, speed=stored, updated_at=moved)
@@ -289,6 +300,22 @@ class FakeReplaySessionRepository:
             ),
             limit,
         )
+
+    async def live_covering(
+        self, symbol: str, stream: str, lo: datetime, hi: datetime, *, created_after: datetime
+    ) -> str | None:
+        require_aware(lo, "lo")
+        require_aware(hi, "hi")
+        require_aware(created_after, "created_after")
+        covering = sorted(
+            (
+                r for r in self._rows.values()
+                if r.state in COVERING_STATES and symbol in r.symbols and stream in r.streams
+                and r.range_start < hi and r.range_end > lo and r.created_at > created_after
+            ),
+            key=lambda r: (r.created_at, r.id),
+        )  # fmt: skip
+        return covering[0].id if covering else None
 
     def _idle(self, due: Callable[[ReplaySessionRow], bool], limit: int) -> list[IdleReplaySession]:
         idle = sorted(filter(due, self._rows.values()), key=lambda r: (r.updated_at, r.id))

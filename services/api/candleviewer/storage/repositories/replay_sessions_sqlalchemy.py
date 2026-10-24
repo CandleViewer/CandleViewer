@@ -6,12 +6,13 @@ can match against the partial index `ix_rps_live`), and nothing is built from st
 adapters in this package use static `sa.text`; this table's statements vary by optional filters,
 and Core keeps them checked against the model that `alembic check` pins to the migration.
 
-Every statement but the two system sweeps (`UNSCOPED`) is filtered by `user_id` (C-12.4 data-layer
-re-check). A write
+Every statement but the two system sweeps and the retention guard (`UNSCOPED`) is filtered by
+`user_id` (C-12.4 data-layer re-check). A write
 that matches no row is disambiguated in the same unit of work: no row for this owner is
 `ReplaySessionNotFoundError`; a terminal row, or a lost compare-and-set, is
 `ReplaySessionIllegalUpdateError`. Reads select explicit column allow-lists (`ROW_COLUMNS`,
-`IDLE_COLUMNS`), never `*`, and the system-only sweeps never select `bookmarks` (P1, 21 §12).
+`IDLE_COLUMNS`), never `*`; the system-only sweeps never select `bookmarks` (P1, 21 §12), and the
+retention guard selects the id alone.
 A database error never leaves a write with its statement, bound parameters or the server's
 `DETAIL: Failing row contains (...)`, any of which can carry a `bookmarks` note (C-12.6): it is
 re-raised `from None`, as a named `ReplaySessionConstraintError` or `StorageQueryFailed(sqlstate)`.
@@ -38,6 +39,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyUnitOfWork,
 )
 from candleviewer.storage.repositories.replay_sessions import (
+    COVERING_STATES,
     LIVE_STATES,
     TERMINAL_STATES,
     IdleReplaySession,
@@ -64,16 +66,19 @@ ROW_COLUMNS = (
     _C.id, _C.user_id, _C.recording_session_id, _C.symbol, _C.range_start, _C.range_end,
     _C.cursor_ts, _C.speed, _C.state, _C.source_tier, _C.paper_trading, _C.paper_account_id,
     _C.bookmarks, _C.loop_enabled, _C.events_emitted, _C.gap_warnings, _C.error_message,
-    _C.created_at, _C.updated_at, _C.finished_at,
+    _C.created_at, _C.updated_at, _C.finished_at, _C.symbols, _C.streams,
 )  # fmt: skip
 IDLE_COLUMNS = (
     _C.id, _C.user_id, _C.symbol, _C.state, _C.paper_account_id, _C.updated_at, _C.created_at,
 )  # fmt: skip
 
-#: Statements allowed to omit the `user_id` filter (see module docstring); tested.
-UNSCOPED = frozenset({"idle_statement", "reclaim_statement"})
+#: Statements allowed to omit the `user_id` filter (see module docstring); tested. The sweeps are
+#: the reclaim service's; `covering_statement` is the retention guard's (G7), which must see every
+#: user's sessions to keep their data, and returns an id alone.
+UNSCOPED = frozenset({"idle_statement", "reclaim_statement", "covering_statement"})
 
 _LIVE_VALUES = sorted(s.value for s in LIVE_STATES)
+_COVERING_VALUES = sorted(s.value for s in COVERING_STATES)
 _TERMINAL_VALUES = sorted(s.value for s in TERMINAL_STATES)
 #: SQLSTATEs that carry a constraint name: check_violation, foreign_key_violation, unique_violation.
 _NAMED_VIOLATIONS = frozenset({"23514", "23503", "23505"})
@@ -96,6 +101,10 @@ def _uuid(value: str) -> uuid.UUID | None:
 
 def _live() -> sa.BindParameter[Any]:
     return sa.bindparam("live", _LIVE_VALUES, expanding=True, literal_execute=True)
+
+
+def _covering() -> sa.BindParameter[Any]:
+    return sa.bindparam("covering", _COVERING_VALUES, expanding=True, literal_execute=True)
 
 
 def _bump(at: datetime) -> sa.ColumnElement[Any]:
@@ -162,6 +171,28 @@ def reclaim_statement(
     )
 
 
+def covering_statement(
+    symbol: str, stream: str, lo: datetime, hi: datetime, created_after: datetime
+) -> sa.Select[Any]:
+    """System-only retention guard (G7): one session in `COVERING_STATES` that names `symbol` and
+    `stream` among its lists, whose window overlaps `[lo, hi)`, created after the lifetime bound.
+    No index: `ix_rps_live` leaves `created` out and the table is small, so Postgres scans it
+    (21 §13.1); every caller value is a bound parameter."""
+    return (
+        sa.select(_C.id)
+        .where(
+            _C.state.in_(_covering()),
+            sa.literal(symbol, sa.Text) == sa.any_(_C.symbols),
+            sa.literal(stream, sa.Text) == sa.any_(_C.streams),
+            _C.range_start < hi,
+            _C.range_end > lo,
+            _C.created_at > created_after,
+        )
+        .order_by(_C.created_at, _C.id)
+        .limit(1)
+    )
+
+
 def update_statement(
     uid: uuid.UUID, sid: uuid.UUID, values: Mapping[str, Any], expected: ReplayState | None
 ) -> sa.Update:
@@ -180,6 +211,7 @@ def _to_row(m: Mapping[Any, Any]) -> ReplaySessionRow:  # RowMapping keys are no
         d[key] = None if d[key] is None else str(d[key])
     marks = json.loads(d["bookmarks"]) if isinstance(d["bookmarks"], str) else d["bookmarks"]
     d["bookmarks"] = tuple(marks)
+    d["symbols"], d["streams"] = tuple(d["symbols"]), tuple(d["streams"])
     d["state"], d["source_tier"] = ReplayState(d["state"]), SourceTier(d["source_tier"])
     return ReplaySessionRow(**d)
 
@@ -267,6 +299,8 @@ class SqlAlchemyReplaySessionRepository:
             "paper_account_id": _opt_uuid(row.paper_account_id),
             "bookmarks": list(row.bookmarks),
             "loop_enabled": row.loop_enabled,
+            "symbols": list(row.stored_symbols),
+            "streams": list(row.stored_streams),
             "created_at": now,
             "updated_at": now,
         }
@@ -394,6 +428,17 @@ class SqlAlchemyReplaySessionRepository:
             result = await uow.session.execute(stmt)
             return [_to_idle(m) for m in result.mappings()]
 
+    async def live_covering(
+        self, symbol: str, stream: str, lo: datetime, hi: datetime, *, created_after: datetime
+    ) -> str | None:
+        require_aware(lo, "lo")
+        require_aware(hi, "hi")
+        require_aware(created_after, "created_after")
+        stmt = covering_statement(symbol, stream, lo, hi, created_after)
+        async with self._relational.unit_of_work() as uow:
+            got = (await uow.session.execute(stmt)).scalar_one_or_none()
+        return None if got is None else str(got)
+
     async def delete(self, user_id: str, session_id: str) -> bool:
         uid, sid = _uuid(user_id), _uuid(session_id)
         if uid is None or sid is None:
@@ -443,6 +488,6 @@ async def _refuse(
 
 __all__ = [
     "IDLE_COLUMNS", "ROW_COLUMNS", "UNSCOPED", "SqlAlchemyReplaySessionRepository",
-    "count_statement", "get_statement", "idle_statement", "list_statement", "open_count_statement",
-    "reclaim_statement", "update_statement",
+    "count_statement", "covering_statement", "get_statement", "idle_statement", "list_statement",
+    "open_count_statement", "reclaim_statement", "update_statement",
 ]  # fmt: skip

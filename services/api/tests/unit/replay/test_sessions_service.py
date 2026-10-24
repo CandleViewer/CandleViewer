@@ -42,6 +42,7 @@ from candleviewer.statechart import build as build_chart
 from candleviewer.statechart.gateway import Gateway, GatewayError
 from candleviewer.statechart.registry import Registry
 from candleviewer.storage.repositories.replay_sessions import (
+    ALL_REPLAY_STREAMS,
     ReplaySessionCreate,
     ReplaySessionIllegalUpdateError,
     ReplaySessionNotFoundError,
@@ -228,6 +229,17 @@ async def test_create_writes_the_created_audit_record() -> None:
     assert env.audit.actions() == ["replay.session.created"]
 
 
+async def test_create_audits_the_stored_symbols_and_streams_by_name() -> None:
+    env = make_env()
+    await env.s.create(USER_A, request(symbols=("BTCUSDT", "ETHUSDT"), streams=("klines",)))
+    await env.s.create(USER_A, request())  # no lists: the stored ones are audited
+    (_, first), (_, second) = env.audit.rows
+    after = first["after_state"]
+    assert (after["symbols"], after["streams"]) == (["BTCUSDT", "ETHUSDT"], ["klines"])
+    assert second["after_state"]["symbols"] == ["BTCUSDT"]
+    assert second["after_state"]["streams"] == list(ALL_REPLAY_STREAMS)
+
+
 async def test_create_seeds_the_recorder_gap_into_the_chart() -> None:
     env = make_env()
     facts = env.s.facts_of((await env.s.create(USER_A, request())).id)
@@ -387,6 +399,12 @@ async def test_seek_out_of_finished_or_error_rechecks_the_quota_rp_d03(
         {"cursor_ts": T1 + timedelta(seconds=1)},  # rps_cursor
         {"paper_trading": True},  # rps_paper
         {"symbol": "btc/usdt"},
+        {"symbols": ("ETHUSDT", "BTCUSDT")},  # rps_symbols: `symbol` is the first
+        {"symbols": ("BTCUSDT", "BTCUSDT")},
+        {"symbols": ("BTCUSDT", "eth/usdt")},
+        {"symbols": ("BTCUSDT", *(f"SYM{i}USDT" for i in range(8)))},  # nine
+        {"streams": ("trades", "trades")},
+        {"streams": ("trades", "bars")},  # rps_streams: derived streams are never replayed
     ],
 )
 async def test_create_invalid_request_is_a_readable_validation_error(
@@ -396,6 +414,19 @@ async def test_create_invalid_request_is_a_readable_validation_error(
     with pytest.raises(ReplaySessionValidationError, match=r"\w+"):
         await env.s.create(USER_A, request(**changes))
     assert env.coverage.calls == [] and env.handles.acquired == [] and env.audit.rows == []
+
+
+async def test_create_persists_every_symbol_and_stream_the_request_names() -> None:
+    """The retention guard (G7) reads these lists, so a session protects all it replays."""
+    env = make_env()
+    row = await env.s.create(
+        USER_A, request(symbols=("BTCUSDT", "ETHUSDT"), streams=("trades", "klines"))
+    )
+    assert (row.symbol, row.symbols, row.streams) == (
+        "BTCUSDT", ("BTCUSDT", "ETHUSDT"), ("trades", "klines"),
+    )  # fmt: skip
+    stored = await env.repo.get(USER_A, row.id)
+    assert stored is not None and (stored.symbols, stored.streams) == (row.symbols, row.streams)
 
 
 async def test_create_paper_account_only_through_the_grant_gate() -> None:
@@ -1365,7 +1396,10 @@ async def test_audit_rows_are_attributable_session_records() -> None:
         assert (kw["actor_user_id"], kw["object_kind"], kw["object_id"]) == (
             USER_A, "replay_session", sid,
         )  # fmt: skip
-        allowed = {"symbol", "state", "range_start", "range_end", "reason", "paper_account_id"}
+        allowed = {
+            "symbol", "symbols", "streams", "state", "range_start", "range_end", "reason",
+            "paper_account_id",
+        }  # fmt: skip
         assert set(kw["after_state"]) <= allowed
 
 

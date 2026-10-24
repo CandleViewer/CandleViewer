@@ -30,7 +30,9 @@ from sqlalchemy.exc import DataError, DBAPIError, IntegrityError, OperationalErr
 from candleviewer.db import models
 from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories import replay_sessions_sqlalchemy as mod
+from candleviewer.storage.repositories.recorded import REPLAYABLE_STREAMS
 from candleviewer.storage.repositories.replay_sessions import (
+    COVERING_STATES,
     FINISHED_STATES,
     LIVE_STATES,
     MAX_PAGE_LIMIT,
@@ -273,6 +275,9 @@ _STATEMENTS = {
     "open_count_statement": mod.open_count_statement(_UID),
     "reclaim_statement": mod.reclaim_statement(T0, T0 - timedelta(days=1), 10),
     "update_statement": mod.update_statement(_UID, _SID, {"cursor_ts": T0}, S.PAUSED),
+    "covering_statement": mod.covering_statement(
+        "ETHUSDT", "klines", T0, T0 + timedelta(hours=1), T0 - timedelta(days=1)
+    ),
 }
 
 
@@ -286,8 +291,36 @@ def test_every_statement_is_owner_scoped_except_the_unscoped_sweep(name: str) ->
     assert ("replay_sessions.user_id = " in _sql(_STATEMENTS[name])) is (name not in mod.UNSCOPED)
 
 
-def test_only_the_idle_sweeps_are_unscoped() -> None:
-    assert mod.UNSCOPED == {"idle_statement", "reclaim_statement"}
+def test_only_the_idle_sweeps_and_the_retention_guard_are_unscoped() -> None:
+    assert mod.UNSCOPED == {"idle_statement", "reclaim_statement", "covering_statement"}
+
+
+def test_covering_states_are_every_state_but_the_terminal_one() -> None:
+    """Fail toward retaining: `created` will read its window, and B12 SEEKs back out of
+    `finished` and `error`, which the quota counts and the sweep reclaims like any open row."""
+    assert COVERING_STATES == frozenset(ReplayState) - TERMINAL_STATES
+    assert {S.CREATED, S.FINISHED, S.ERROR} <= COVERING_STATES
+    assert not COVERING_STATES & TERMINAL_STATES
+
+
+def test_the_retention_guard_reads_one_bound_id_by_both_lists_window_and_lifetime() -> None:
+    stmt = _STATEMENTS["covering_statement"]
+    sql = _sql(stmt)
+    assert sql.startswith("SELECT replay_sessions.id \nFROM replay_sessions \nWHERE ")
+    assert (
+        "replay_sessions.state IN "
+        "('buffering', 'created', 'error', 'finished', 'paused', 'playing', 'stepping')"
+    ) in sql
+    assert "= ANY (replay_sessions.symbols)" in sql and "= ANY (replay_sessions.streams)" in sql
+    assert "replay_sessions.range_start < " in sql and "replay_sessions.range_end > " in sql
+    assert "replay_sessions.created_at > " in sql
+    assert "ORDER BY replay_sessions.created_at, replay_sessions.id" in sql and "LIMIT" in sql
+    assert "bookmarks" not in sql
+    # Every caller value is a bound parameter, never SQL text.
+    assert "ETHUSDT" not in sql and "klines" not in sql
+    bound = list(stmt.compile().params.values())
+    for value in ("ETHUSDT", "klines", T0, T0 + timedelta(hours=1), T0 - timedelta(days=1)):
+        assert value in bound
 
 
 def test_the_open_statements_exclude_exactly_the_terminal_state() -> None:
@@ -340,7 +373,7 @@ def _db_row(**over: Any) -> dict[str, Any]:
         "cursor_ts": None, "speed": Decimal("1.00"), "state": "paused", "source_tier": "auto",
         "paper_trading": False, "paper_account_id": None, "bookmarks": [], "loop_enabled": False,
         "events_emitted": 0, "gap_warnings": 0, "error_message": None, "created_at": T0,
-        "updated_at": T0, "finished_at": None,
+        "updated_at": T0, "finished_at": None, "symbols": ["BTCUSDT"], "streams": ["trades"],
     } | over  # fmt: skip
 
 
@@ -351,6 +384,7 @@ def test_to_row_stringifies_ids_maps_enums_and_decodes_text_bookmarks() -> None:
     assert (row.paper_account_id, row.recording_session_id) == (str(account), None)
     assert row.bookmarks == ({"label": "x"},)
     assert mod._to_row(_db_row(bookmarks=[{"label": "y"}])).bookmarks == ({"label": "y"},)
+    assert (row.symbols, row.streams) == (("BTCUSDT",), ("trades",))  # arrays come back as lists
 
 
 class _Driver(Exception):
@@ -496,7 +530,18 @@ async def test_create_binds_every_value_and_commits_once() -> None:
     assert (p["speed"], p["bookmarks"], p["created_at"], p["updated_at"]) == (
         Decimal("2.5"), [{"label": "x"}], T0, T0,
     )  # fmt: skip
+    assert (p["symbol"], p["symbols"]) == ("BTCUSDT", ["BTCUSDT"])
+    assert p["streams"] == [s.value for s in REPLAYABLE_STREAMS]  # no list: every stream
     assert (rel.commits, row.state) == (1, S.PAUSED)
+
+
+async def test_create_binds_the_requests_symbols_and_streams() -> None:
+    rel = _Rel(_Result([_db_row()]))
+    await _repo(rel).create(_create(symbols=("BTCUSDT", "ETHUSDT"), streams=("klines",)))
+    assert (rel.params()["symbols"], rel.params()["streams"]) == (
+        ["BTCUSDT", "ETHUSDT"],
+        ["klines"],
+    )
 
 
 @pytest.mark.parametrize(
@@ -713,6 +758,18 @@ async def test_list_reclaimable_clamps_the_limit_and_maps_the_projection() -> No
     assert rel.params()["param_1"] == MAX_PAGE_LIMIT
     with pytest.raises(ValueError, match="timezone-aware"):
         await _repo(rel).list_reclaimable(datetime(2026, 10, 1), born, 1)
+
+
+async def test_live_covering_returns_the_id_or_none_and_refuses_naive_bounds() -> None:
+    rel = _Rel(_Result(scalar=_SID), _Result(scalar=None))
+    repo = _repo(rel)
+    later = T0 + timedelta(hours=1)
+    assert await repo.live_covering("BTCUSDT", "trades", T0, later, created_after=T0) == str(_SID)
+    assert await repo.live_covering("BTCUSDT", "trades", T0, later, created_after=T0) is None
+    assert rel.commits == 0 and "LIMIT" in _sql(rel.statements[0])
+    with pytest.raises(ValueError, match="timezone-aware"):
+        await repo.live_covering("BTCUSDT", "trades", T0, later, created_after=datetime(2026, 1, 1))
+    assert len(rel.statements) == 2
 
 
 async def test_count_non_terminal_reports_the_count_and_never_queries_a_malformed_user() -> None:

@@ -1,8 +1,9 @@
-"""Integration: `0023_replay_sessions` against real Postgres 16 (E26-T01 #624).
+"""Integration: `0023_replay_sessions` and `0051_replay_symbols_streams` on real Postgres 16.
 
-AC1 (round trip, no residue, catalog == 21-database-schema.md Sec.3.6.4) and AC2 (each
-invalid row rejected by its NAMED constraint). Uses `testcontainers` like the other
-migration suites; exercised by the integration CI job.
+AC1 (round trip, no residue, catalog == 21-database-schema.md Sec.3.6.4, both blocks) and AC2
+(each invalid row rejected by its NAMED constraint), E26-T01 #624; 0051's backfill of existing
+rows and its refused downgrade (E26 G7, #2674). Uses `testcontainers` like the other migration
+suites; exercised by the integration CI job.
 """
 
 from __future__ import annotations
@@ -28,6 +29,12 @@ pytestmark = pytest.mark.integration
 _ROOT = Path(__file__).resolve().parents[3]
 _DOC = _ROOT.parents[1] / "docs" / "plan" / "21-database-schema.md"
 _PREV = "0022_workspaces"
+_PREV_0051 = "0050_ea_identity_write_once"
+#: Every replayable stream (`REPLAYABLE_STREAMS`): 0051's backfill and the `rps_streams` set.
+_ALL_STREAMS = [
+    "trades", "orderbook_delta", "orderbook_snapshot", "tickers", "klines", "liquidations",
+    "open_interest", "funding_rates",
+]  # fmt: skip
 _T0 = datetime(2026, 9, 10, 13, 0, tzinfo=UTC)
 _T1 = _T0 + timedelta(hours=2)
 
@@ -101,6 +108,8 @@ def _session(c: Conn, user: str, **cols: object) -> str:
         "symbol": "BTCUSDT",
         "range_start": _T0,
         "range_end": _T1,
+        "symbols": [cols.get("symbol", "BTCUSDT")],
+        "streams": ["trades"],
         **cols,
     }
     stmt = sql.SQL("INSERT INTO replay_sessions ({}) VALUES ({})").format(
@@ -140,9 +149,11 @@ _STATES = [
 
 
 def _doc_ddl() -> str:
-    """The Sec.3.6.4 `CREATE TABLE` + indexes, verbatim from the plan doc."""
+    """Every Sec.3.6.4 ```sql block in order (0023's table and indexes, then 0051's columns),
+    verbatim from the plan doc."""
     text = _DOC.read_text(encoding="utf-8")
-    return text.split("#### 3.6.4 `replay_sessions`", 1)[1].split("```sql", 1)[1].split("```")[0]
+    section = text.split("#### 3.6.4 `replay_sessions`", 1)[1].split("### 3.7 ", 1)[0]
+    return "\n".join(block.split("```", 1)[0] for block in section.split("```sql")[1:])
 
 
 def _catalog(c: Conn, schema: str) -> tuple[list[Any], list[Any], list[Any]]:
@@ -190,7 +201,7 @@ def test_round_trip_leaves_no_residue_and_restores_the_exact_schema(pg_dsn: str)
 
 def test_downgrade_refuses_while_sessions_exist(pg_dsn: str) -> None:
     with _conn(pg_dsn) as c:
-        _session(c, _user(c))
+        _session(c, _user(c), streams=_ALL_STREAMS)  # 0051 lets it pass; 0023 refuses
         refused = _alembic(pg_dsn, "downgrade", _PREV)
         assert refused.returncode != 0
         assert "0023_replay_sessions downgrade refused" in refused.stderr
@@ -332,3 +343,103 @@ def test_account_delete_is_refused_while_a_paper_session_uses_it(pg_dsn: str) ->
         with pytest.raises(pgerr.CheckViolation) as exc:
             c.execute("DELETE FROM exchange_accounts WHERE id = %s", (acct,))
         assert exc.value.diag.constraint_name == "rps_paper"
+
+
+# --- 0051_replay_symbols_streams (E26 G7, #2674) -------------------------------------------
+
+
+def _lists(c: Conn, sid: str) -> tuple[Any, ...] | None:
+    return c.execute(
+        "SELECT symbols::text[], streams FROM replay_sessions WHERE id = %s", (sid,)
+    ).fetchone()
+
+
+def test_0051_backfills_existing_rows_with_their_symbol_and_every_stream(pg_dsn: str) -> None:
+    """The 21:03Z ruling: a row made before 0051 names its one symbol and every replayable
+    stream, so the retention guard protects all it could replay."""
+    with _conn(pg_dsn) as c:
+        c.execute("DELETE FROM replay_sessions")
+        assert _alembic(pg_dsn, "downgrade", _PREV_0051).returncode == 0
+        user = _user(c)
+        old = {}
+        for symbol, state in (("BTCUSDT", "playing"), ("ETHUSDT", "created")):
+            sid = str(uuid.uuid4())
+            c.execute(
+                "INSERT INTO replay_sessions (id, user_id, symbol, range_start, range_end, state) "
+                "VALUES (%s, %s, %s, %s, %s, %s::replay_state)",
+                (sid, user, symbol, _T0, _T1, state),
+            )
+            old[sid] = symbol
+        assert _alembic(pg_dsn, "upgrade", "head").returncode == 0
+        for sid, symbol in old.items():
+            assert _lists(c, sid) == ([symbol], _ALL_STREAMS)
+        _assert_matches_plan_doc(c)
+        c.execute("DELETE FROM replay_sessions")
+
+
+@pytest.mark.parametrize(
+    "cols",
+    [
+        pytest.param({"symbols": ["BTCUSDT", "ETHUSDT"]}, id="a-second-symbol"),
+        pytest.param({"streams": ["trades"]}, id="fewer-streams-than-all"),
+    ],
+)
+def test_0051_downgrade_refuses_while_a_row_holds_what_the_backfill_cannot_rebuild(
+    pg_dsn: str, cols: dict[str, object]
+) -> None:
+    with _conn(pg_dsn) as c:
+        c.execute("DELETE FROM replay_sessions")
+        sid = _session(c, _user(c), **({"streams": _ALL_STREAMS} | cols))
+        refused = _alembic(pg_dsn, "downgrade", _PREV_0051)
+        assert refused.returncode != 0
+        assert "0051_replay_symbols_streams downgrade refused" in refused.stderr
+        assert _lists(c, sid) is not None  # nothing was dropped
+        c.execute("DELETE FROM replay_sessions")
+
+
+def test_0051_downgrade_keeps_a_row_the_backfill_rebuilds_then_round_trips(pg_dsn: str) -> None:
+    with _conn(pg_dsn) as c:
+        c.execute("DELETE FROM replay_sessions")
+        sid = _session(c, _user(c), symbol="SOLUSDT", streams=_ALL_STREAMS)
+        assert _alembic(pg_dsn, "downgrade", _PREV_0051).returncode == 0
+        gone = c.execute(
+            "SELECT count(*) FROM information_schema.columns WHERE table_name = 'replay_sessions' "
+            "AND column_name IN ('symbols', 'streams')"
+        ).fetchone()
+        assert gone == (0,)
+        assert _alembic(pg_dsn, "upgrade", "head").returncode == 0
+        assert _lists(c, sid) == (["SOLUSDT"], _ALL_STREAMS)
+        _assert_matches_plan_doc(c)
+        c.execute("DELETE FROM replay_sessions")
+
+
+@pytest.mark.parametrize(
+    ("cols", "constraint"),
+    [
+        pytest.param({"symbols": ["ETHUSDT"]}, "rps_symbols", id="first-is-not-symbol"),
+        pytest.param({"symbols": []}, "rps_symbols", id="no-symbols"),
+        pytest.param(
+            {"symbols": ["BTCUSDT", *(f"SYM{i}USDT" for i in range(8))]}, "rps_symbols", id="nine"
+        ),
+        pytest.param({"symbols": ["BTCUSDT", "eth"]}, "symbol_code_check", id="bad-symbol"),
+        pytest.param({"streams": []}, "rps_streams", id="no-streams"),
+        pytest.param({"streams": ["trades", "bars"]}, "rps_streams", id="derived-stream"),
+        pytest.param({"streams": ["funding"]}, "rps_streams", id="db-kind-not-stream-name"),
+    ],
+)
+def test_0051_invalid_lists_are_rejected_by_their_named_constraint(
+    pg_dsn: str, cols: dict[str, object], constraint: str
+) -> None:
+    with _conn(pg_dsn) as c:
+        user = _user(c)
+        with pytest.raises(pgerr.CheckViolation) as exc:
+            _session(c, user, **cols)
+        assert exc.value.diag.constraint_name == constraint
+
+
+@pytest.mark.parametrize("column", ["symbols", "streams"])
+def test_0051_lists_are_not_null(pg_dsn: str, column: str) -> None:
+    with _conn(pg_dsn) as c:
+        user = _user(c)
+        with pytest.raises(pgerr.NotNullViolation):
+            _session(c, user, **{column: None})

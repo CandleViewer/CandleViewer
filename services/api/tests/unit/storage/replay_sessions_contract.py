@@ -20,7 +20,9 @@ from typing import Any, cast
 
 import pytest
 
+from candleviewer.storage.repositories.recorded import REPLAYABLE_STREAMS
 from candleviewer.storage.repositories.replay_sessions import (
+    COVERING_STATES,
     LIVE_STATES,
     IdleReplaySession,
     ReplaySessionConstraintError,
@@ -38,6 +40,8 @@ from tests.unit.storage.fakes_replay_sessions import FakeClock
 S = ReplayState
 T0 = FakeClock().now
 T2H = T0 + timedelta(hours=2)
+_US = timedelta(microseconds=1)
+_ALL_STREAMS = tuple(s.value for s in REPLAYABLE_STREAMS)
 _SOME_UUID = "00000000-0000-4000-8000-000000000001"  # literal: parametrize ids must be stable
 
 
@@ -93,7 +97,15 @@ class ReplaySessionRepositoryContract:
         assert (made.state, made.created_at, made.updated_at) == (S.CREATED, T0, T0)
         assert (made.events_emitted, made.gap_warnings, made.finished_at) == (0, 0, None)
         assert (made.speed, made.bookmarks, made.paper_account_id) == (Decimal("2.5"), mark, acct)
+        assert (made.symbols, made.streams) == (("BTCUSDT",), _ALL_STREAMS)
         assert await h.repo.get(user, made.id) == made
+
+    async def test_create_persists_every_symbol_and_stream_of_the_request(self, h: Harness) -> None:
+        made = await h.make(symbols=("BTCUSDT", "ETHUSDT"), streams=("klines", "trades"))
+        assert (made.symbol, made.symbols, made.streams) == (
+            "BTCUSDT", ("BTCUSDT", "ETHUSDT"), ("klines", "trades"),
+        )  # fmt: skip
+        assert await h.repo.get(made.user_id, made.id) == made
 
     async def test_stored_bookmarks_do_not_alias_the_callers_objects(self, h: Harness) -> None:
         mark = {"ts": "2026-10-01T00:30:00+00:00", "label": "gap", "note": None}
@@ -290,6 +302,96 @@ class ReplaySessionRepositoryContract:
         assert idle == want
         assert not hasattr(idle, "bookmarks")
 
+    # -- live_covering (retention guard, G7) -----------------------------------------------------
+
+    async def _covering(
+        self, h: Harness, symbol: str = "BTCUSDT", stream: str = "trades", lo: Any = T0,
+        hi: Any = T2H, created_after: Any = None,
+    ) -> str | None:  # fmt: skip
+        born = T0 - timedelta(days=1) if created_after is None else created_after
+        return await h.repo.live_covering(symbol, stream, lo, hi, created_after=born)
+
+    @pytest.mark.parametrize("state", sorted(COVERING_STATES))
+    async def test_live_covering_names_a_session_in_every_live_state_created_included(
+        self, h: Harness, state: ReplayState
+    ) -> None:
+        row = await h.in_state(state)
+        assert await self._covering(h) == row.id
+
+    @pytest.mark.parametrize("state", sorted(set(ReplayState) - COVERING_STATES))
+    async def test_live_covering_ignores_a_session_in_the_terminal_state(
+        self, h: Harness, state: ReplayState
+    ) -> None:
+        await h.in_state(state)
+        assert await self._covering(h) is None
+
+    @pytest.mark.parametrize("state", [S.FINISHED, S.ERROR])
+    async def test_live_covering_names_a_finished_or_failed_session_it_may_seek_back_into(
+        self, h: Harness, state: ReplayState
+    ) -> None:
+        row = await h.in_state(state)
+        assert await self._covering(h) == row.id
+        assert await self._covering(h, lo=T2H, hi=T2H + timedelta(hours=1)) is None
+
+    async def test_live_covering_sees_every_symbol_and_stream_of_a_session(
+        self, h: Harness
+    ) -> None:
+        row = await h.in_state(
+            S.PLAYING, symbols=("BTCUSDT", "ETHUSDT"), streams=("trades", "klines")
+        )
+        assert await self._covering(h, "ETHUSDT", "klines") == row.id
+        assert await self._covering(h, "ETHUSDT", "trades") == row.id
+        assert await self._covering(h, "ETHUSDT", "tickers") is None
+        assert await self._covering(h, "SOLUSDT", "trades") is None
+
+    async def test_live_covering_takes_every_stream_of_a_session_made_without_a_list(
+        self, h: Harness
+    ) -> None:
+        row = await h.in_state(S.PAUSED)
+        for stream in _ALL_STREAMS:
+            assert await self._covering(h, stream=stream) == row.id
+
+    @pytest.mark.parametrize(
+        ("lo", "hi", "covered"),
+        [
+            pytest.param(T0, T2H, True, id="same-window"),
+            pytest.param(T0 - timedelta(hours=1), T0 + _US, True, id="overlaps-the-start"),
+            pytest.param(T2H - _US, T2H + timedelta(hours=1), True, id="overlaps-the-end"),
+            pytest.param(T0 + _US, T2H - _US, True, id="inside"),
+            pytest.param(T0 - timedelta(days=1), T2H + timedelta(days=1), True, id="around"),
+            pytest.param(T0 - timedelta(hours=1), T0, False, id="ends-at-the-start"),
+            pytest.param(T2H, T2H + timedelta(hours=1), False, id="starts-at-the-end"),
+            pytest.param(T2H + timedelta(days=1), T2H + timedelta(days=2), False, id="after"),
+        ],
+    )
+    async def test_live_covering_takes_a_session_whose_window_overlaps_the_range(
+        self, h: Harness, lo: Any, hi: Any, covered: bool
+    ) -> None:
+        row = await h.in_state(S.PLAYING)
+        assert await self._covering(h, lo=lo, hi=hi) == (row.id if covered else None)
+
+    async def test_live_covering_ignores_a_session_created_at_or_before_the_lifetime_bound(
+        self, h: Harness
+    ) -> None:
+        row = await h.in_state(S.PLAYING)
+        assert await self._covering(h, created_after=row.created_at - _US) == row.id
+        assert await self._covering(h, created_after=row.created_at) is None
+        assert await self._covering(h, created_after=row.created_at + _US) is None
+
+    async def test_live_covering_names_the_oldest_of_several_and_any_users_session(
+        self, h: Harness
+    ) -> None:
+        older = await h.in_state(S.PAUSED)
+        h.clock.advance(minutes=1)
+        await h.in_state(S.PLAYING)  # another user's, younger
+        assert await self._covering(h) == older.id
+
+    async def test_live_covering_refuses_naive_datetimes(self, h: Harness) -> None:
+        naive = T0.replace(tzinfo=None)
+        for kw in ({"lo": naive}, {"hi": naive}, {"created_after": naive}):
+            with pytest.raises(ValueError, match="timezone-aware"):
+                await self._covering(h, **kw)
+
     # -- update_state ----------------------------------------------------------------------------
 
     async def test_update_state_compare_and_set_refuses_a_stale_expected_state(
@@ -415,6 +517,11 @@ class ReplaySessionRepositoryContract:
             ("rps_cursor", {"cursor_ts": T2H + timedelta(seconds=1)}),
             ("rps_paper", {"paper_trading": True}),
             ("symbol_code_check", {"symbol": "btc-usdt"}),
+            ("symbol_code_check", {"symbols": ("BTCUSDT", "eth-usdt")}),
+            ("rps_symbols", {"symbols": ("ETHUSDT", "BTCUSDT")}),  # `symbol` is the first
+            ("rps_symbols", {"symbols": ("BTCUSDT", *(f"SYM{i}USDT" for i in range(8)))}),
+            ("rps_streams", {"streams": ("trades", "bars")}),  # derived: rebuilt, not replayed
+            ("rps_streams", {"streams": ("funding",)}),  # the DB kind, not the stream name
         ],
     )
     async def test_create_surfaces_each_check_by_its_constraint_name(
