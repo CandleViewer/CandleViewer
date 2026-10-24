@@ -314,8 +314,11 @@ E15-T01's spec decision on #402, SR-E14-09).
   `reason`, `owner` and a `review` date). Triage is the SR-134 clock, as for E12: 48 hours, 7 days
   for a Medium.
 - **First run:** a workflow must be on the default branch to be dispatched, so the first real run, one
-  `workflow_dispatch`, and its baseline triage (a comment on #549) come after merge. Until then the
-  plan is proven offline: `python security/zap/nightly_plans.py --profile drawings --out DIR` and
+  `workflow_dispatch`, and its baseline triage (a comment on #549) come after merge. Then the
+  ticket's regression proof: one dispatch on a scratch branch whose drawings repository drops the
+  owner filter must go red on the check (the Manager's probes answer 2xx), and a comment on #549
+  links that run before the branch is deleted. Until then the plan is proven offline:
+  `python security/zap/nightly_plans.py --profile drawings --out DIR` and
   `scripts/tests/test_zap_nightly.py`.
 
 ## CodeQL
