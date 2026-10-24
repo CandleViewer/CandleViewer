@@ -30,8 +30,23 @@ quote. `--json` feeds the check-nums script; `--check` re-derives the spec's `au
 `--self-test` mutates copies in memory (a moved, a deleted and a duplicated cite → WARN / FAIL /
 FAIL; a removed stop marker → FAIL; a present-tense marker on a pre-send row → FAIL; on the
 `placing` row a present-tense marker on the placing… clause → FAIL and that clause's marker
-removed → FAIL) and prints `self-test: clean` only if every mutation is caught. Exit 1 on a gated
-FAIL or a failed gate.
+removed → FAIL; one changed derived cell in a scaled row, in the DCA table and in a spec table →
+FAIL; the placing… clause deleted (rows 1…N no longer covered once) → FAIL; `ladder.placing`'s k
+off by one → FAIL; on a pre-send row a custodian string not followed by " once placed" — the
+"(exchange) once placed" variant and "held at Bybit now" — → FAIL) and prints `self-test: clean`
+only if every mutation is caught. Exit 1 on a gated FAIL or a failed gate.
+
+The tool's own arithmetic (D04-C4; BQ-14): the duplicate-price merge re-sums the merged tool's
+rows, the DCA table's per-row columns are summed over `dca_ladder()`'s levels, and the
+drop-and-redistribute floors are re-derived for the remainder note. Each uses the merged tool's
+convention — notional and cumulative notional through `:,.2f` in the default Decimal context
+(half-even), risk through the merged tool's own `money()` — and `derived_gate()` asserts the
+recomputed rows equal the merged tool's rows on every unmerged fixture and its totals on every
+fixture. The spec's own tables (sections 2, 4.2, 4.3, 5.2, 5.5) re-derive cell by cell. The C-2.6
+gate also requires, on every post-confirm row, per-child clause ranges that cover rows 1…N exactly
+once and a resting count equal to the row's count sentence (`ladder.placing`'s k); on every
+pre-send row any "held by Bybit" / "held at Bybit" not immediately followed by " once placed" is a
+FAIL — the registered `sl.holder` string is never modified (orchestrator, text round 1 M-2).
 
 Usage: python3 -I docs/design/_tools/e32_d04_ladder_builder_audit.py [--json] [--check]
        [--self-test] [--extra F ...]
@@ -39,6 +54,7 @@ Usage: python3 -I docs/design/_tools/e32_d04_ladder_builder_audit.py [--json] [-
 
 from __future__ import annotations
 
+import copy
 import importlib
 import json
 import re
@@ -71,8 +87,8 @@ FORBIDDEN = (
     r"file-i[d]=",
     r"(?<![A-Za-z0-9])wt-[a-z]+/",
 )
-# Words retired from user-facing copy (E33-D01 SC-6; E32-D02 D10's word is replaced by the lane's
-# class word, A-row); checked on the copy deck only.
+# Words retired from user-facing copy (E33-D01 SC-6; E32-D02 D10's word is replaced by E33-D03's
+# registered `tag.emulated` name, BQ-17, A-row D04-A7); checked on the copy deck only.
 BANNED_COPY = (
     r"app-managed",
     r"client-side",
@@ -80,7 +96,7 @@ BANNED_COPY = (
     r"\(estimated\) tag",
     r"\bfallback\b",
 )
-CLASS_WORD = "Emulated · run by CandleViewer, not Bybit"
+CLASS_WORD = "Emulated — run by CandleViewer, not Bybit"  # E33-D03 `tag.emulated` (BQ-17)
 NOTE_DRAFT = (
     "Every position keeps a native stop — you can move it, not delete it.",
     "It is placed with the order, not after it.",
@@ -90,17 +106,26 @@ PRE_SEND = "held by Bybit once placed"
 CUSTODIAN = "held by Bybit (exchange)"
 # A present-tense custodian directly beside a price on a pre-send row is the tense FAIL (BQ-16).
 PRESENT_MARKER = r"stop [\d,]+\.\d(?: ·)? held by Bybit \(exchange\)"
+# On a pre-send row every custodian mention is the state-true marker: "held by|at Bybit" not
+# immediately followed by " once placed" FAILs, the "(exchange) once placed" variant included
+# (the registered `sl.holder` string is never modified; orchestrator, text round 1 M-2).
+PRE_SEND_HELD = r"held (?:by|at) Bybit(?! once placed)"
 # The state-table rows that open no position (no stop marker required): the empty modal, the
 # refused generator, the read-only panel and the reduce-only scale-out (`sl.reduce_only`).
 NON_OPENING = ("empty", "no viable ladder", "viewer-read-only", "preview · reduce-only")
 # Rows whose depicted children are already at Bybit (`native_sl_confirmed` per child): the
-# custodian string is right there; every other opening row is pre-send.
-POST_CONFIRM = (
-    "placing",
-    "placing · queued levels",
-    "partial placement failure with retry",
-    "cancelled",
-)
+# custodian string is right there; every other opening row is pre-send. Each names the fixture it
+# draws, whose level count N the per-child clauses must cover exactly once.
+POST_CONFIRM = {
+    "placing": "anatomy",
+    "placing · queued levels": "rows_50",
+    "partial placement failure with retry": "anatomy",
+    "cancelled": "anatomy",
+}
+# The count sentences a post-confirm row may carry; the per-child clauses must agree with them.
+PLACING_K = r"Placing (\d+) orders — (\d+) of (\d+) resting"  # `ladder.placing`
+CUSTODY_K = r"(\d+) resting · (\d+) queued"  # `ladder.custody.result`
+PARTIAL_K = r"(\d+) of (\d+) placed — (\d+) failed"  # `ladder.partial`
 STOP_EMPTY = "preview · stop empty"
 # Rows drawn on the DCA fixture: the server cannot preview a DCA ladder (E32-D02 G-21 lists SCR-065
 # rows 7 and 14), so each carries the G-21 marker.
@@ -448,8 +473,13 @@ def level_rows(raw: Any) -> list[dict[str, str]]:
     return [{str(k): str(v) for k, v in vars(r).items()} for r in list(raw)]
 
 
-def merge_duplicates(rows_in: list[dict[str, str]], stop: Decimal) -> list[dict[str, str]]:
-    """`24` §10.6: duplicate prices after rounding are merged, their quantities summed."""
+def merge_duplicates(
+    lm: ModuleType, rows_in: list[dict[str, str]], stop: Decimal
+) -> list[dict[str, str]]:
+    """`24` §10.6: duplicate prices after rounding are merged, their quantities summed.
+
+    This tool's own arithmetic (D04-C4): the derived columns are re-summed in the merged tool's
+    convention — `:,.2f` in the default (half-even) Decimal context, risk via its `money()`."""
     out: list[dict[str, str]] = []
     for r in rows_in:
         if out and out[-1]["price"] == r["price"]:
@@ -463,7 +493,7 @@ def merge_duplicates(rows_in: list[dict[str, str]], stop: Decimal) -> list[dict[
         cum_q, cum_n, cum_r = cum_q + q, cum_n + p * q, cum_r + q * abs(p - stop)
         r["notional"] = f"{p * q:,.2f}"
         r["cum_qty"], r["cum_notional"] = f"{cum_q:.3f}", f"{cum_n:,.2f}"
-        r["avg_entry"], r["risk_cum"] = f"{cum_n / cum_q:,.1f}", money(cum_r)
+        r["avg_entry"], r["risk_cum"] = f"{cum_n / cum_q:,.1f}", f"{lm.money(cum_r):,.2f}"
     return out
 
 
@@ -486,7 +516,7 @@ def ladder(lm: ModuleType, key: str) -> dict[str, object]:
             for i in range(n)
         ]
     remainder = total - sum(floors, D(0))
-    merged = merge_duplicates(table, stop)
+    merged = merge_duplicates(lm, table, stop)
     merged_note = [r["merged_from"] for r in merged if "merged_from" in r]
     above_mark = [r["level"] for r in table if D(r["price"].replace(",", "")) > MARK]
     cap = PROFILE["queue_cap_50"] if n == 50 else PROFILE["max_concurrent_orders"]
@@ -515,6 +545,8 @@ def ladder(lm: ModuleType, key: str) -> dict[str, object]:
 
 
 def dca(lm: ModuleType) -> dict[str, object]:
+    """The DCA table. Its per-row columns are this tool's own arithmetic (D04-C4) in the merged
+    tool's convention; `derived_gate()` holds them to `dca_ladder()`'s totals."""
     raw = dict(lm.dca_ladder())
     levels = [{str(k): str(v) for k, v in dict(x).items()} for x in list(raw["levels"])]
     stop = D(str(raw["shared_stop"]).replace(",", ""))
@@ -522,9 +554,9 @@ def dca(lm: ModuleType) -> dict[str, object]:
     for lv in levels:
         p, q = D(lv["price"].replace(",", "")), D(lv["qty"])
         cum_q, cum_n, cum_r = cum_q + q, cum_n + p * q, cum_r + q * (p - stop)
-        lv.update({"notional": money(p * q), "cum_qty": f"{cum_q:.3f}"})
-        lv.update({"cum_notional": money(cum_n), "avg_entry": f"{cum_n / cum_q:,.1f}"})
-        lv["risk_cum"] = money(cum_r)
+        lv.update({"notional": f"{p * q:,.2f}", "cum_qty": f"{cum_q:.3f}"})
+        lv.update({"cum_notional": f"{cum_n:,.2f}", "avg_entry": f"{cum_n / cum_q:,.1f}"})
+        lv["risk_cum"] = f"{lm.money(cum_r):,.2f}"
     headroom = DAILY["cap"] - DAILY["used"]
     full = D(str(raw["risk_full"]).replace(",", ""))
     return {
@@ -639,6 +671,108 @@ def upstream_tables(upstream: str, fx: dict[str, dict[str, object]]) -> list[str
     return bad
 
 
+# ---- the tool's own arithmetic against the merged tool (M-1; BQ-14) --------------------------
+def derived_gate(
+    lm: ModuleType, fx: dict[str, dict[str, object]], dca_fx: dict[str, object]
+) -> list[str]:
+    """Recomputed rows equal the merged tool's rows (unmerged fixtures) and totals (every one)."""
+    bad: list[str] = []
+    for key, (total, p_start, p_end, n, dist, skew) in LADDERS.items():
+        mine = cast(list[dict[str, str]], fx[key]["rows"])
+        if not mine:
+            continue
+        stop = lm.shared_stop(p_end, p_start)
+        raw_rows, raw_totals = lm.scaled_ladder(total, p_start, p_end, n, dist, skew, stop=stop)
+        theirs, totals = level_rows(raw_rows), dict(raw_totals)
+        if not fx[key]["merged"]:
+            for a, b in zip(mine, theirs, strict=True):
+                diff = [k for k in FULL_KEYS if a[k] != b[k]]
+                if diff:
+                    bad.append(
+                        f"derived {key} level {b['level']}: {diff} differ from the merged tool"
+                    )
+        last = mine[-1]
+        for k, t in (
+            ("cum_qty", "total_qty"),
+            ("cum_notional", "total_notional"),
+            ("avg_entry", "avg_entry"),
+            ("risk_cum", "worst_case_usdt"),
+        ):
+            if last[k] != totals[t]:
+                bad.append(f"derived {key}: last row {k} {last[k]} vs the merged tool's {t}")
+    raw = dict(lm.dca_ladder())
+    levels = cast(list[dict[str, str]], dca_fx["levels"])
+    want = [{str(k): str(v) for k, v in dict(x).items()} for x in list(raw["levels"])]
+    for i, (a, b) in enumerate(zip(levels, want, strict=True), start=1):
+        if (a["price"], a["qty"]) != (b["price"], b["qty"]):
+            bad.append(f"derived dca level {i}: price / qty differ from dca_ladder()")
+    for k, have in (
+        ("total_qty", levels[-1]["cum_qty"]),
+        ("avg_entry", levels[-1]["avg_entry"]),
+        ("risk_full", levels[-1]["risk_cum"]),
+        ("risk_first_leg", levels[0]["risk_cum"]),
+    ):
+        if have != str(raw[k]):
+            bad.append(f"derived dca: {have} vs dca_ladder()'s {k} {raw[k]}")
+    return bad
+
+
+def spec_tables(
+    spec: str, fx: dict[str, dict[str, object]], dca_fx: dict[str, object]
+) -> list[str]:
+    """The spec's own tables (sections 2, 4.2, 4.3, 5.2, 5.5) against the tool, cell by cell."""
+    bad: list[str] = []
+
+    def sub(a: str, b: str) -> str:
+        start = spec.index(a)
+        return spec[start : spec.index(b, start)]
+
+    def want(key: str, lvl: int, keys: tuple[str, ...], where: bool = True) -> list[str]:
+        r = next(x for x in cast(list[dict[str, str]], fx[key]["rows"]) if x["level"] == str(lvl))
+        resting = int(cast(dict[str, str], fx[key]["split"])["resting"])
+        return [r[k] for k in keys] + ([where_word(lvl, resting)] if where else [])
+
+    s42 = sub("\n### 4.2", "\n### 4.3")
+    blocks = (
+        ("2", sub("\n## 2.", "\n## 3."), "anatomy", FULL_KEYS),
+        ("4.2", s42[s42.index("3 rows —") : s42.index("10 rows —")], "rows_3", FULL_KEYS),
+        ("4.2", s42[s42.index("10 rows —") :], "rows_10", FULL_KEYS),
+        ("4.3", sub("\n### 4.3", "\n### 4.4"), "rows_50", SHORT_KEYS),
+    )
+    for sec, block, key, keys in blocks:
+        drawn = table_rows(block)
+        if not drawn:
+            bad.append(f"spec section {sec} {key}: no table rows found")
+        for cells in drawn:
+            exp = want(key, int(cells[0]), keys)
+            if cells[: len(exp)] != exp:
+                bad.append(f"spec section {sec} {key} level {cells[0]}: {cells[: len(exp)]}")
+    s52 = table_rows(sub("\n### 5.2", "\n### 5.3"))
+    if not s52:
+        bad.append("spec section 5.2: no table rows found")
+    for cells in s52:
+        for off, key in ((0, "skew_1"), (9, "anatomy")):
+            got = cells[off : off + 8]
+            if got != want(key, int(got[0]), FULL_KEYS, where=False):
+                bad.append(f"spec section 5.2 {key} level {got[0]}: {got}")
+    s55 = sub("\n### 5.5", "\n## 6.")
+    levels = cast(list[dict[str, str]], dca_fx["levels"])
+    resting = int(cast(dict[str, str], dca_fx["split"])["resting"])
+    drawn = table_rows(s55)
+    if len(drawn) != len(levels):
+        bad.append(f"spec section 5.5: {len(drawn)} DCA rows vs the tool's {len(levels)}")
+    dca_keys = FULL_KEYS[1:]
+    for cells, (i, lv) in zip(drawn, enumerate(levels, start=1), strict=False):
+        exp = [str(i)] + [lv[k] for k in dca_keys] + [where_word(i, resting)]
+        if cells[: len(exp)] != exp:
+            bad.append(f"spec section 5.5 dca level {i}: {cells[: len(exp)]} vs {exp}")
+    sigma = next((ln for ln in s55.splitlines() if ln.startswith("| Σ")), "")
+    for k in ("total_qty", "total_notional", "avg_entry", "risk_full", "risk_first_leg"):
+        if str(dca_fx[k]) not in sigma:
+            bad.append(f"spec section 5.5: the Σ line lacks the tool's {k} {dca_fx[k]}")
+    return bad
+
+
 # ---- the copy deck (spec section 12): key | string | where | source ---------------------------
 DECK_ROW = r"^\| `([^`]+)`[^|]*\| ([^\n]*?) \| ([^|]*?) \| ([^|]*?) \|$"
 
@@ -698,12 +832,49 @@ FRAME_ROW = r"^\| \d+ +\| `([^`]+)` +\| \d\d +\| (?:full|inset)[^\n]*"
 STOP_VALUE = r"stop [\d,]+\.\d"
 
 
-def child_clauses(row: str) -> list[str]:
+def clause_counts(row: str, n: int, clauses: list[re.Match[str]]) -> list[str]:
+    """Rows 1…N covered once; the resting (queued, failed) counts equal the row's count sentence."""
+    bad: list[str] = []
+    covered: list[int] = []
+    size: dict[str, int] = {"resting": 0, "queued": 0, "failed": 0}
+    for m in clauses:
+        a, b = int(m.group(1)), int(m.group(2))
+        covered += range(a, b + 1)
+        for word in size:
+            size[word] += (b - a + 1) if word in m.group(3) else 0
+    if sorted(covered) != list(range(1, n + 1)):
+        gaps = sorted(set(range(1, n + 1)) - set(covered))
+        extra = sorted({c for c in covered if covered.count(c) > 1 or not 1 <= c <= n})
+        bad.append(f"the per-child clauses cover rows 1…{n} not exactly once ({gaps=}, {extra=})")
+    # (resting k, the level total, the other per-child count it names) per count sentence
+    sentences: list[tuple[re.Match[str], int, int, tuple[str, int] | None]] = []
+    if (m1 := re.search(PLACING_K, row)) is not None:
+        g = [int(x) for x in m1.groups()]
+        sentences.append((m1, g[1], g[0] if g[0] == g[2] else -1, None))
+    if (m2 := re.search(CUSTODY_K, row)) is not None:
+        g = [int(x) for x in m2.groups()]
+        sentences.append((m2, g[0], g[0] + g[1], ("queued", g[1])))
+    if (m3 := re.search(PARTIAL_K, row)) is not None:
+        g = [int(x) for x in m3.groups()]
+        sentences.append((m3, g[0], g[1], ("failed", g[2])))
+    for found, k, total, other in sentences:
+        said = found.group(0)
+        if k != size["resting"]:
+            bad.append(f"{said!r}: k {k} vs {size['resting']} resting per-child rows")
+        if total != n:
+            bad.append(f"{said!r}: the count is not the ladder's {n} levels")
+        if other and size[other[0]] != other[1]:
+            bad.append(f"{said!r}: {other[1]} {other[0]} vs {size[other[0]]} per-child rows")
+    return bad
+
+
+def child_clauses(row: str, n: int) -> list[str]:
     """The per-child tense on a mixed row: each `rows a-b "<where>" …` clause by its where word."""
     bad: list[str] = []
     clauses = list(re.finditer(CHILD_CLAUSE, row))
     if not clauses:
         return ['a post-confirm row without a per-level clause (rows a-b "<where>" …)']
+    bad += clause_counts(row, n, clauses)
     for m in clauses:
         where, rest = m.group(3), m.group(4)
         span = f'rows {m.group(1)}{EN_DASH}{m.group(2)} "{where}"'
@@ -745,12 +916,21 @@ def frame_gates(spec: str) -> list[str]:
             if name in POST_CONFIRM:
                 if CUSTODIAN not in row:
                     bad.append(f"{tag}: post-confirm row without {CUSTODIAN!r}")
-                bad += [f"{tag}: {b}" for b in child_clauses(row)]
+                if name == "placing" and not re.search(PLACING_K, row):
+                    bad.append(f"{tag}: the `ladder.placing` count sentence is missing")
+                n = LADDERS[POST_CONFIRM[name]][3]
+                bad += [f"{tag}: {b}" for b in child_clauses(row, n)]
             else:
                 if PRE_SEND not in row:
                     bad.append(f"{tag}: pre-send row without {PRE_SEND!r} (state-true tense)")
                 if re.search(PRESENT_MARKER, row):
                     bad.append(f"{tag}: present-tense stop marker on a pre-send row")
+        if name not in POST_CONFIRM:
+            for h in re.finditer(PRE_SEND_HELD, row):
+                bad.append(
+                    f"{tag}: a custodian string on a pre-send row not followed by ' once placed'"
+                    f" ({row[h.start() : h.end() + 14]!r})"
+                )
         live = name != "preview · LIVE arm" and re.search(r"\bLIVE\b", row)
         if live and not re.search(r"\b(?:no|never|not|only|absence|absent)\b", row, re.IGNORECASE):
             bad.append(f"{tag}: LIVE without the arm frame or a negation")
@@ -827,9 +1007,44 @@ def read_texts() -> dict[str, str]:
     return t
 
 
-def self_test(spec: str, texts: dict[str, str]) -> list[str]:
-    """Plant one fault per gate in a copy and expect it caught; a silent gate is a FAIL here."""
+def bump(value: str) -> str:
+    """One changed derived cell: the last digit moved by one."""
+    return value[:-1] + str((int(value[-1]) + 1) % 10)
+
+
+def self_test_derived(
+    spec: str, lm: ModuleType, fx: dict[str, dict[str, object]], dca_fx: dict[str, object]
+) -> list[str]:
+    """M-1: one changed derived cell in a scaled row, the DCA table and a spec table → FAIL."""
     failures: list[str] = []
+    fx2 = copy.deepcopy(fx)
+    row = cast(list[dict[str, str]], fx2["anatomy"]["rows"])[1]
+    row["notional"] = bump(row["notional"])
+    if not any("derived anatomy level 2" in b for b in derived_gate(lm, fx2, dca_fx)):
+        failures.append("a changed derived cell in a scaled row was not a FAIL")
+    dca2 = copy.deepcopy(dca_fx)
+    last = cast(list[dict[str, str]], dca2["levels"])[-1]
+    last["risk_cum"] = bump(last["risk_cum"])
+    if not any(b.startswith("derived dca") for b in derived_gate(lm, fx, dca2)):
+        failures.append("a changed derived cell in the DCA table was not a FAIL")
+    lv = cast(list[dict[str, str]], dca_fx["levels"])[1]
+    start = spec.index("\n### 5.5")
+    line = next(ln for ln in spec[start:].splitlines() if re.match(r"^\| 2 \|", ln))
+    planted = spec.replace(line, line.replace(lv["notional"], bump(lv["notional"])), 1)
+    if not any("5.5 dca level 2" in b for b in spec_tables(planted, fx, dca_fx)):
+        failures.append("a changed cell in the spec's DCA table was not a FAIL")
+    return failures
+
+
+def self_test(
+    spec: str,
+    texts: dict[str, str],
+    lm: ModuleType,
+    fx: dict[str, dict[str, object]],
+    dca_fx: dict[str, object],
+) -> list[str]:
+    """Plant one fault per gate in a copy and expect it caught; a silent gate is a FAIL here."""
+    failures: list[str] = self_test_derived(spec, lm, fx, dca_fx)
     doc, line_s, want = cites()[0]
     lines = texts[doc].split("\n")
     idx = int(line_s) - 1
@@ -861,6 +1076,14 @@ def self_test(spec: str, texts: dict[str, str]) -> list[str]:
     tense = spec.replace(row, row.replace(f"{PRE_SEND}", CUSTODIAN))
     if not any("present-tense stop marker" in b for b in frame_gates(tense)):
         failures.append("a present-tense marker on a pre-send row was not a FAIL")
+    held = "not followed by ' once placed'"
+    for planted, what in (
+        ("held by Bybit (exchange) once placed", "the (exchange) once placed variant"),
+        (f"{PRE_SEND}; the stop is held at Bybit now", "held at Bybit now"),
+    ):
+        mutated = spec.replace(row, row.replace(PRE_SEND, planted, 1))
+        if not any(held in b for b in frame_gates(mutated)):
+            failures.append(f"{what} on a pre-send row was not a FAIL")
     placing = next(
         (m.group(0) for m in re.finditer(FRAME_ROW, s3, MULTI) if m.group(1) == "placing"), ""
     )
@@ -878,6 +1101,18 @@ def self_test(spec: str, texts: dict[str, str]) -> list[str]:
     gone_marker = spec.replace(placing, placing.replace(clause.group(0), bare))
     if not any("not-yet-confirmed child without" in b for b in frame_gates(gone_marker)):
         failures.append("a removed marker on the placing… clause was not a FAIL")
+    deleted = spec.replace(placing, placing.replace(clause.group(0), ""))
+    if not any("not exactly once" in b for b in frame_gates(deleted)):
+        failures.append("the placing… clause deleted was not a FAIL")
+    k = re.search(PLACING_K, placing)
+    if k is None:
+        failures.append("the `placing` row lacks the `ladder.placing` count the self-test mutates")
+        return failures
+    off = f"Placing {k.group(1)} orders — {int(k.group(2)) - 1} of {k.group(3)} resting"
+    if not any(
+        ": k " in b for b in frame_gates(spec.replace(placing, placing.replace(k.group(0), off)))
+    ):
+        failures.append("`ladder.placing`'s k off by one was not a FAIL")
     return failures
 
 
@@ -970,15 +1205,19 @@ def main(argv: list[str]) -> int:
     spec = SPEC.read_text(encoding="utf-8") if SPEC.exists() else ""
     bad: list[str] = [] if spec else ["spec missing: docs/design/E32/E32-D04.md"]
     bad += upstream_tables(texts["E32-D02"], fixtures)
+    bad += derived_gate(lm, fixtures, dca_fx)
     cite_bad, cite_warn = cite_gate(texts)
     bad += cite_bad
     CITE_WARN[:] = cite_warn
     if spec:
         bad += deck_gates(spec, texts)
         bad += frame_gates(spec)
+        bad += spec_tables(spec, fixtures, dca_fx)
         bad += file_gates([SPEC, *extra], texts)
     ok = (
-        "OK — E32-D02's four tables re-derive byte-equal; every listed E32-D02 key byte-equal; the"
+        "OK — E32-D02's four tables re-derive byte-equal; the tool's own derived columns equal the"
+        " merged tool's rows and totals; the spec's own tables re-derive cell by cell; every listed"
+        " E32-D02 key byte-equal; the"
         " class word, the CMP-158 sentence and 14's sub-minimum line verbatim; no retired word in"
         " UI"
         " copy; every T2 reason within 60 characters, no digit; every position-opening row carries"
@@ -1046,12 +1285,14 @@ def main(argv: list[str]) -> int:
         clean = not any(b.startswith("marker") for b in bad)
         out.append("markers: " + ("clean" if clean else "MISMATCH"))
     if "--self-test" in argv and spec:
-        failed = self_test(spec, texts)
+        failed = self_test(spec, texts, lm, fixtures, dca_fx)
         bad += [f"self-test: {f}" for f in failed]
         out.append(
             "self-test: clean (moved → WARN, gone → FAIL, ambiguous → FAIL, stop marker removed →"
             " FAIL, present tense pre-send → FAIL, placing clause present tense → FAIL, placing"
-            " clause marker removed → FAIL)"
+            " clause marker removed → FAIL, derived scaled cell → FAIL, derived DCA cell → FAIL,"
+            " spec DCA cell → FAIL, (exchange) once placed pre-send → FAIL, held at Bybit now"
+            " pre-send → FAIL, placing clause deleted → FAIL, ladder.placing k off by one → FAIL)"
             if not failed
             else "self-test: FAILED " + "; ".join(failed)
         )
