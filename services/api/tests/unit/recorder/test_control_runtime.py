@@ -7,15 +7,21 @@ is refused before any record or write."""
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
+from fastapi import FastAPI
 
+from candleviewer.api.recording_writes import make_recording_writes_router
 from candleviewer.app import bind_recording_runtime
+from candleviewer.audit.access import AuditPrincipal
+from candleviewer.observability.context import bind_context
 from candleviewer.recorder import control as rc
 from candleviewer.recorder.control_runtime import HourWindows, RuntimeRecordingControl
 from candleviewer.recorder.policy import PolicyConfig, RecordingPolicy, user_actor
@@ -267,3 +273,54 @@ async def test_a_fresh_add_whose_row_a_hidden_cause_holds_by_then_refuses_before
     assert not refused.value.recorded and env.rows.writes == []
     actions = env.audit.actions()  # the add landed (the narrow race), recorded; no retention
     assert "recorder.start" in actions and "retention.change" not in actions
+
+
+async def test_a_row_of_another_env_is_none_to_every_lookup_and_write(env: Any) -> None:
+    """C-2.11: the control reads and writes only its wiring's env; another env's id is unknown."""
+    row = env.rows.store._new("ETHUSDT", "live", "manual")
+    for call in (env.c.get(row["id"]),
+                 env.c.pin(row["id"], True, OWNER, restricted=False),
+                 env.c.update(row["id"], rc.EntrySpec(retention_days=90), OWNER, restricted=False),
+                 env.c.remove(row["id"], OWNER, force=True)):  # fmt: skip
+        assert await call is None
+    assert (env.rows.writes, env.audit.records) == ([], [])
+    assert (row["pinned"], row.get("retention_days"), row["removed"]) == (False, None, False)
+
+
+class _Caller:
+    """The route's resolver and audit for one Owner session with a request id."""
+
+    def __init__(self) -> None:
+        user = uuid.UUID(OWNER.id)
+        perms = frozenset({"recording:read", "recording:write"})
+        self.p = AuditPrincipal(user, "owner", perms, is_owner=True, request_id=uuid.uuid4())
+        self.records: list[tuple[str, dict[str, Any]]] = []
+
+    async def resolve(self, request: Any) -> AuditPrincipal:
+        return self.p
+
+    async def emit(self, action: str, **record: Any) -> None:
+        self.records.append((action, record))
+
+
+async def test_the_policys_records_through_the_route_carry_the_request_and_the_actor(
+    env: Any,
+) -> None:
+    """POST through the bound runtime: the policy's `recorder.start` and `retention.change` name
+    the request the middleware bound and the session's user."""
+    caller, app = _Caller(), FastAPI()
+
+    async def elevated(_session: Any) -> None:
+        return None
+
+    app.include_router(make_recording_writes_router(lambda: env.c, caller, caller, elevated,
+                                                    lambda _symbol: True))  # fmt: skip
+    http = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+    with bind_context(request_id=caller.p.request_id):
+        added = await http.post("/recording/symbols", json={"symbol": "BTCUSDT",
+                                                             "retention_days": 90})  # fmt: skip
+    assert added.status_code == 201
+    mine = [(a, r) for a, r in env.audit.records if r["actor_user_id"] is not None]
+    assert [a for a, _ in mine] == ["recorder.start", "retention.change"]
+    assert {(r["request_id"], r["actor_user_id"]) for _, r in mine} == {
+        (caller.p.request_id, OWNER.id)}  # fmt: skip
