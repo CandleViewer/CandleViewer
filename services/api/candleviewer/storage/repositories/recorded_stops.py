@@ -48,7 +48,8 @@ from candleviewer.storage.repositories.orders import (
 
 __all__ = [
     "EVERY_ACCOUNT", "LIVE_STOP_STATUSES", "MAX_MARKER_CHARS", "REFUSED_BY", "REFUSED_ENTRY",
-    "SWEEP_REASON", "UNSENT_ENTRY", "UX_RS_IN_FLIGHT", "UX_RS_IN_FORCE", "WAITING_ENTRY",
+    "STOP_AUDIT_TIMEOUT_S", "SWEEP_REASON", "UNSENT_ENTRY", "UX_RS_IN_FLIGHT", "UX_RS_IN_FORCE",
+    "WAITING_ENTRY",
     "FillPosition", "InForce", "InForceWriteAhead", "InsertWriteAhead", "NewRecordedStop",
     "RecordedStopRow",
     "RecordedStopStore", "ResolveOutcome", "ResolveWriteAhead", "SettleWriteAhead",
@@ -79,6 +80,10 @@ ResolveOutcome = Literal["answered", "replaced", "in_flight_resolved", "entry_fi
 #: Whether the position was open or flat when its filled entry's side was voided (CR-S3H0-08), or
 #: when an unseen entry's rows were voided on a position with no stop (the 06:38Z ruling).
 FillPosition = Literal["open", "flat"]
+#: The recorded stops' write-ahead audit bound (s), every store's default (the SQL store's and the
+#: fakes'), driver-free so the OMS may read it (`stop_resolution.STORE_TIMEOUT_S` outlasts it); a
+#: unit test pins it to the drivers' `WRITE_AHEAD_TIMEOUT_S`.
+STOP_AUDIT_TIMEOUT_S: Final = 5.0
 #: One request in flight per position (21 Sec.3.3.11): a second writer's insert is refused.
 UX_RS_IN_FLIGHT: Final = "ux_rs_in_flight"
 #: One row in force per position and kind.
