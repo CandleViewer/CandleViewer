@@ -16,6 +16,13 @@ exactly the files `pytest scripts/tests scripts/gh/tests` collects. Two rules to
 `test_the_shards_partition_every_test_file` asserts every governance test file maps to exactly
 one shard. (b) The pytest wall time each shard prints in its job summary is the signal to
 re-measure the weight table.
+
+#4361: the suites also hold `infra/scripts/tests`, `infra/alertmanager/tests` and
+`infra/grafana/tests`, which no workflow ran. `EXCLUDED` keeps out of the shards the one file that
+needs a running Grafana (the merge queue's integration lane runs it); a shard that mixes `scripts/`
+and `infra/` files reads the root pytest.ini, one that holds only `scripts/` files
+scripts/pytest.ini, and both must collect what the shards list, and be configured alike.
+test_no_orphaned_test_dirs.py pins that a workflow runs the rest.
 """
 
 from __future__ import annotations
@@ -26,6 +33,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import iniconfig
 import pytest
 import yaml
 
@@ -68,30 +76,46 @@ def test_the_shards_partition_every_test_file() -> None:
     assert gs.shards(files, count) == parts  # deterministic
 
 
-def test_the_shards_list_exactly_the_files_pytest_collects(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("ini", "prefix", "suites"),
+    [
+        # Every suite: the shard mixes scripts/ and infra/ files, so pytest reads the root file.
+        ("pytest.ini", "", gs.SUITES),
+        # A shard of scripts/ files only reads scripts/pytest.ini, whose rootdir is scripts/.
+        ("scripts/pytest.ini", "scripts/", [s for s in gs.SUITES if s.startswith("scripts/")]),
+    ],
+    ids=["root-ini", "scripts-ini"],
+)
+def test_the_shards_list_exactly_the_files_pytest_collects(
+    tmp_path: Path, ini: str, prefix: str, suites: list[str]
+) -> None:
     # The old step ran `pytest scripts/tests scripts/gh/tests`: recursive, `test_*.py` and
     # `*_test.py`, no dot or __pycache__ directory. A file the shards missed would never run,
-    # and the 85% gate would not notice. Real pytest, the real scripts/pytest.ini, a tiny tree.
+    # and the 85% gate would not notice. Real pytest, the real ini file, a tiny tree. An excluded
+    # file is collected by pytest and left out of the shards on purpose.
     wanted = [
         "scripts/tests/test_top.py",
         "scripts/tests/suffix_test.py",
         "scripts/tests/sub/test_nested.py",
         "scripts/gh/tests/deep/er/deep_test.py",
+        "infra/scripts/tests/test_probe.py",
+        "infra/alertmanager/tests/test_rules.py",
+        "infra/grafana/tests/test_dashboards.py",
     ]
+    excluded = list(gs.EXCLUDED)
     ignored = [
         "scripts/tests/.hidden/test_dot.py",
         "scripts/tests/__pycache__/test_cache.py",
         "scripts/tests/helper.py",
     ]
-    for name in wanted + ignored:
+    for name in [*wanted, *excluded, *ignored]:
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("def test_ok():\n    pass\n", encoding="utf-8")
-    ini = (REPO_ROOT / "scripts" / "pytest.ini").read_text(encoding="utf-8")
-    (tmp_path / "scripts" / "pytest.ini").write_text(ini, encoding="utf-8")
+    (tmp_path / ini).write_text((REPO_ROOT / ini).read_text(encoding="utf-8"), encoding="utf-8")
     command = [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"]
     run = subprocess.run(
-        [*command, *gs.SUITES],
+        [*command, *suites],
         cwd=tmp_path,
         env={**os.environ, "PYTEST_ADDOPTS": ""},
         capture_output=True,
@@ -99,12 +123,35 @@ def test_the_shards_list_exactly_the_files_pytest_collects(tmp_path: Path) -> No
         check=True,
         timeout=120,
     )
-    collected = {
-        "scripts/" + line.split("::")[0] for line in run.stdout.splitlines() if "::" in line
-    }
-    assert collected == set(gs.suite_files(tmp_path)) == set(wanted)
+    collected = {prefix + line.split("::")[0] for line in run.stdout.splitlines() if "::" in line}
+    in_scope = {name for name in wanted if name.startswith(prefix)}
+    assert {f for f in gs.suite_files(tmp_path) if f.startswith(prefix)} == in_scope
+    assert collected == in_scope | {name for name in gs.EXCLUDED if name.startswith(prefix)}
     parts = gs.shards(gs.suite_files(tmp_path), _matrix()["total"][0])
     assert sorted(name for part in parts for name in part) == sorted(wanted)
+
+
+def test_the_suites_have_no_two_test_modules_of_one_name() -> None:
+    # Outside a package pytest imports a test module by its file name (the default `prepend`
+    # import mode), and a shard mixes the suites: two `test_x.py` would fail the collection.
+    names = [
+        Path(name).name
+        for name in gs.suite_files()
+        if not (REPO_ROOT / name).with_name("__init__.py").is_file()
+    ]
+    assert sorted(n for n in set(names) if names.count(n) > 1) == []
+
+
+def test_the_two_ini_files_a_shard_can_read_configure_pytest_alike() -> None:
+    # Which shard mixes scripts/ and infra/ files, and so reads the root pytest.ini and not
+    # scripts/pytest.ini, is an accident of the split: only `testpaths` may differ.
+    def section(path: str) -> dict[str, str]:
+        return iniconfig.IniConfig(str(REPO_ROOT / path)).sections["pytest"]
+
+    root, scripts = section("pytest.ini"), section("scripts/pytest.ini")
+    assert {"addopts", "markers"} <= root.keys()  # the ones that matter are read, not defaulted
+    for key in sorted((root.keys() | scripts.keys()) - {"testpaths"}):
+        assert root.get(key) == scripts.get(key), key
 
 
 def test_the_split_is_balanced_by_the_measured_weights() -> None:
