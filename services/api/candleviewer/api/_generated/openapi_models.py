@@ -2639,7 +2639,8 @@ class CancelAllRequest(BaseModel):
     exchange_account_ids: Annotated[
         list[UUID] | None,
         Field(
-            description="Empty means the caller's granted accounts; one id outside them, or one that does not exist, refuses the whole request (SR-E29-13)."
+            description="Empty means the caller's granted accounts that allow trading (an Owner's: every account of the environment); one id outside them, or one that does not exist, refuses the whole request (SR-E29-13).",
+            max_length=100,
         ),
     ] = None
     symbol: Symbol | None = None
@@ -2659,7 +2660,10 @@ class CancelAllRequest(BaseModel):
         | None
     ) = None
     exclude_reduce_only: Annotated[
-        StrictBool, Field(description="Protects TP/SL exits from a blanket cancel.")
+        StrictBool,
+        Field(
+            description="Leaves reduce-only exits out of a blanket cancel; a recorded stop's row is never cancelled here, whatever this says (24-internal-schemas.md section 8.8 rule 6)."
+        ),
     ] = True
 
 

@@ -128,13 +128,14 @@ def test_the_oms_flag_refuses_only_new_admissions_with_a_reasonless_403() -> Non
     forbidden = _words(_RESPONSES["Forbidden"]["description"])
     assert "flag, while off, also refuses with `trading_disabled` and no `reason`" in forbidden
     general = _words(_SPEC["info"]["description"])
-    assert "(on `placeOrder` the `trading.oms_enabled` flag, then live trading not" in general
+    exposure = "`placeOrder` and an amend that increases exposure"  # slice 4 ruling Q10
+    assert f"(on {exposure} the `trading.oms_enabled` flag, then live trading not" in general
     order = general.split("**Order of the checks on an order submit or amend (E29-T04).**")[1]
     item = _between(_INTERNAL_DOC, "\n1. After authentication, CSRF", "\n2. ")
     for text in (order, item):  # 22's order and 24's step 1 agree
         at = [text.index(s) for s in ("lookup", "`trading.oms_enabled` flag", "live trading")]
         assert at == sorted(at)
-        assert "the `trading.oms_enabled` flag (`placeOrder` only)" in text
+        assert f"the `trading.oms_enabled` flag ({exposure})" in text
     section = _SCHEMA_DOC.split("### 10.7 Feature flags", 1)[1].split("### 10.8 ", 1)[0]
     [row] = [line for line in section.splitlines() if line.startswith("| `trading.oms_enabled`")]
     cells = "|".join(cell.strip() for cell in row.strip("|").split("|")[1:])
@@ -341,11 +342,9 @@ def test_a_refused_credential_fails_closed_for_the_process_until_a_recorded_pass
     assert "whose durable reaction is #4243" in gate
 
 
-def test_the_etag_waits_for_slice_4_an_algo_for_its_epics_and_held_rows_are_scanned() -> None:
-    """Q11, Q12 and Q16: no index for `held` now, and 21 says the read scans for it."""
-    assert "required" not in _SPEC["components"]["headers"]["ETag"]  # an optional header
-    text = _words(_PLACE["responses"]["202"]["description"])
-    assert "is sent once `amendOrder` defines and checks it (#913 slice 4, ruling Q11)" in text
+def test_an_algo_waits_for_its_epics_and_held_rows_are_scanned() -> None:
+    """Q12 and Q16: no index for `held` now, and 21 says the read scans for it. Q11's `ETag` is
+    sent since slice 4 (`test_order_contract_t04_slice4.py`)."""
     assert "is refused with `validation_failed` / `algo_unsupported`" in _PLACE_TEXT
     table = _SCHEMA_DOC.split("### 13.1 Postgres", 1)[1].split("### 13.2 ", 1)[0]
     [row] = [line for line in table.splitlines() if line.startswith("| 49  |")]
