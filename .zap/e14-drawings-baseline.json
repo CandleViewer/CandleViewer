@@ -1,0 +1,4 @@
+{
+  "$comment": "E14-X03: accepted ZAP alerts for the drawings surface scanned as the synthetic Manager (.zap/e14-drawings.yaml). The nightly fails on any High or Medium alert NOT listed here (key = pluginId + method + path without the query; security/zap/baseline_gate.py). Every entry needs reason, owner and review, an ISO date not in the past (baseline_gate.py: an expired entry no longer protects). Empty at merge: the first dispatched run is triaged (a comment on #549), and an addition is a reviewed PR, never a workflow edit.",
+  "accepted": []
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """#3991: the low-privilege ZAP nightlies' plans, each importing the contract cut to its surface.
 
-For a profile (`rules`, `market`) this writes, from the profile's template:
+For a profile (`rules`, `market`, `drawings`) this writes, from the profile's template:
 
 - `<profile>-openapi.yaml`: the contract cut to the profile's paths and every component they
   reach through `$ref`. ZAP's import resolves each schema in full, so a `$ref` that closes a
@@ -9,11 +9,15 @@ For a profile (`rules`, `market`) this writes, from the profile's template:
   there instead of passing its nesting limit, as the whole contract did (#1026);
 - `<profile>-scan.yaml`: the template, importing that file as ZAP sees the checkout.
 
+The `drawings` profile also has a fixture, `.zap/e14-drawings-seed.json`: a synthetic Owner's
+drawing with a fixed id. The cut's examples name it (`pin_seed`), so the scan's PUT and DELETE as
+the Manager aim at a row the Manager does not own.
+
 The template's `script` job loads `security/zap/role_session.js`, which reads the synthetic
 Viewer's bearer and SR-041 CSRF pair from the environment and adds them to each request to the
 surface `ZAP_PROFILE` names: no token is written here. Stdlib and PyYAML only.
 
-Usage: nightly_plans.py --profile {market,rules} --out DIR
+Usage: nightly_plans.py --profile {market,rules,drawings} --out DIR
 
 `--out` is a relative directory without `..`: ZAP mounts the checkout at /zap/wrk, so the plan
 must sit inside it to be read there (an absolute or climbing path is refused).
@@ -23,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import json
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -37,7 +42,10 @@ CONTRACT = REPO_ROOT / "docs/plan/22-api-openapi.yaml"
 PROFILES: dict[str, tuple[Path, tuple[str, ...]]] = {
     "market": (REPO_ROOT / ".zap/market-data.yaml", ("/market/klines", "/market/bars")),
     "rules": (REPO_ROOT / ".zap/rules-low-priv.yaml", ("/rules", "/schemas/rule-ir.json")),
+    "drawings": (REPO_ROOT / ".zap/e14-drawings.yaml", ("/drawings",)),
 }
+#: A profile's fixture: the rows its examples aim at (E14-X03).
+SEEDS: dict[str, Path] = {"drawings": REPO_ROOT / ".zap/e14-drawings-seed.json"}
 #: What a `$ref` that closes a cycle becomes.
 OPEN: dict[str, str] = {"type": "object", "description": "a recursive reference, cut for ZAP"}
 
@@ -117,6 +125,17 @@ def cut_contract(
     return {**kept, "paths": copy.deepcopy(paths), "components": components}, edges
 
 
+def pin_seed(api: dict[str, Any], seed: dict[str, Any]) -> None:
+    """Point the cut's examples at the Owner's row: `{drawingId}`, the list's `symbol` and a PUT
+    body valid for it (its symbol and tool, which are immutable). A cross-owner write that
+    succeeded would change the row, which the isolation check after the scan finds."""
+    first = seed["operations"][0]
+    parameters, schemas = api["components"]["parameters"], api["components"]["schemas"]
+    parameters["DrawingId"]["example"] = first["id"]
+    parameters["SymbolQuery"]["example"] = first["drawing"]["symbol"]
+    schemas["DrawingInput"]["example"] = {**first["drawing"], "label": "zap probe"}
+
+
 def scan_plan(template: dict[str, Any], api_file: str) -> dict[str, Any]:
     """The template, importing `api_file` (the cut contract, as ZAP sees the checkout)."""
     plan = copy.deepcopy(template)
@@ -146,6 +165,8 @@ def main(argv: list[str] | None = None) -> int:
     template_path, surface = PROFILES[args.profile]
     contract = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
     api, edges = cut_contract(contract, surface)
+    if args.profile in SEEDS and api["paths"]:
+        pin_seed(api, json.loads(SEEDS[args.profile].read_text(encoding="utf-8")))
     if not api["paths"]:
         print(
             f"nightly_plans: the contract has no path on the {args.profile} surface",
