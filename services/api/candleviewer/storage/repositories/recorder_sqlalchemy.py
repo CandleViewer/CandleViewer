@@ -8,7 +8,7 @@ recorder module (M11) consumes it through injection. Static, parameterised
 SQL only. `reason_refs` edits and the policy resolution are single statements
 so the auto-record path (E16-T02) cannot lose an update to a read-modify-write
 race; so are the manual-row writes (`upsert_manual`, `clear_manual`, `set_pinned`,
-E16-F01). Nothing here hard-deletes a row: `soft_remove` sets `removed_at`, and the
+`set_retention`, E16-F01). Nothing here hard-deletes a row: `soft_remove` sets `removed_at`, and the
 gap/session tables are append/update-only (ADR-0015 Sec.7). `clear_manual` never soft-removes
 a pinned row, so its retention protection holds (ADR-0015 decisions 4 and 6).
 """
@@ -135,6 +135,10 @@ _CLEAR_MANUAL = sa.text(
 )
 _SET_PINNED = sa.text(
     "UPDATE recorded_symbols SET pinned = CAST(:pinned AS boolean), updated_at = now() "
+    "WHERE id = CAST(:id AS uuid) AND removed_at IS NULL RETURNING 1"
+)
+_SET_RETENTION = sa.text(
+    "UPDATE recorded_symbols SET retention_days = CAST(:days AS integer), updated_at = now() "
     "WHERE id = CAST(:id AS uuid) AND removed_at IS NULL RETURNING 1"
 )
 _OPEN_SESSION = sa.text(
@@ -330,6 +334,13 @@ class SqlAlchemyRecorderRepository:
         """Set `pinned` on the active row `recorded_id` (E16-F01). False: no active row has that
         id (it never existed, or is soft-removed); True also when it already held that value."""
         return bool(await self._write(_SET_PINNED, {"id": recorded_id, "pinned": pinned}))
+
+    async def set_retention(self, recorded_id: str, retention_days: int | None) -> bool:
+        """Set `retention_days` on the active row `recorded_id` (E16-F01); `None` is NULL, the
+        default. False: no active row has that id; True also when it already held that value. A
+        value `rs_retention` refuses (not 1 to 3650) leaves as `StorageConstraintViolated`."""
+        params = {"id": recorded_id, "days": retention_days}
+        return bool(await self._write(_SET_RETENTION, params))
 
     async def open_session(
         self,

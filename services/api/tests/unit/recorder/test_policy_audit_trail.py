@@ -27,7 +27,7 @@ async def test_a_users_records_carry_the_request_they_are_written_in(
     with bind_context(request_id=rid):
         await policy.add_manual("BTCUSDT", OWNER)
         await policy.update_manual("BTCUSDT", OWNER, depth=50)
-        await policy.set_pin("BTCUSDT", True, OWNER)
+        await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
         await policy.remove_manual("BTCUSDT", OWNER)
     await policy.add_manual("ETHUSDT", OWNER)  # outside a request: a job, a test
     assert _by(audit, "user") == [

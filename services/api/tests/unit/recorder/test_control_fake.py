@@ -15,7 +15,11 @@ from typing import Any, Protocol
 
 import pytest
 
-from candleviewer.recorder.errors import InvalidRecorderActorError, RecorderSymbolLimitError
+from candleviewer.recorder.errors import (
+    InvalidRecorderActorError,
+    RecorderRelaxRefusedError,
+    RecorderSymbolLimitError,
+)
 from candleviewer.recorder.errors import RecorderInvalidUpdateError as InvalidUpdate
 from candleviewer.recorder.errors import RecorderSymbolNotManualError as NotManual
 from candleviewer.recorder.models import SYSTEM_ACTOR, Actor
@@ -68,7 +72,7 @@ async def test_pin_unpin_and_a_stop_that_lingers_keeping_its_pin() -> None:
     fake = fakes.FakeRecorder()
     for symbol in ("BTCUSDT", "ETHUSDT"):
         await fake.add_manual(symbol, USER)
-    await fake.set_pin("BTCUSDT", True, USER)
+    await fake.set_pin("BTCUSDT", True, USER, restricted=False)
     for symbol in ("BTCUSDT", "ETHUSDT"):
         await fake.remove_manual(symbol, USER)
     stopped = fake.entries["BTCUSDT"]
@@ -77,7 +81,7 @@ async def test_pin_unpin_and_a_stop_that_lingers_keeping_its_pin() -> None:
     for symbol in ("BTCUSDT", "ETHUSDT"):
         fake.lapse(symbol)  # a pinned row is demoted and kept; an unpinned one is soft-removed
     assert (list(fake.entries), fake.entries["BTCUSDT"].state) == (["BTCUSDT"], "stopped")
-    await fake.set_pin("BTCUSDT", False, USER)  # unpinning the idle row soft-removes it
+    await fake.set_pin("BTCUSDT", False, USER, restricted=False)  # an idle row unpinned goes
     assert fake.entries == {} and fake.linger_until("BTCUSDT") is None
 
 
@@ -101,7 +105,7 @@ async def test_no_op_changes_record_nothing_and_every_manual_change_needs_a_user
     await fake.add_manual("BTCUSDT", USER, ("tickers",), 500)  # already manual
     await fake.update_manual("BTCUSDT", USER, streams=("trades",), depth=50)  # nothing changes
     for change in (fake.remove_manual("BTCUSDT", SYSTEM_ACTOR),
-                   fake.set_pin("BTCUSDT", True, SYSTEM_ACTOR),
+                   fake.set_pin("BTCUSDT", True, SYSTEM_ACTOR, restricted=False),
                    fake.update_manual("BTCUSDT", SYSTEM_ACTOR, depth=1)):  # fmt: skip
         with pytest.raises(InvalidRecorderActorError):
             await change
@@ -118,3 +122,28 @@ async def test_the_update_and_stop_records_are_the_policys() -> None:
     assert (update["before_state"], update["after_state"]["depth"]) == (
         {"streams": "trades", "depth": "200"}, "50")  # fmt: skip
     assert (stop["after_state"]["trigger_ref"], stop["actor_user_id"]) == ("manual:u-1", "u-2")
+
+
+async def test_a_restricted_relax_of_a_hidden_held_entry_is_refused_as_the_policy_does() -> None:
+    fake, sink = fakes.FakeRecorder(), _Sink()
+    fake.audit = sink
+    held = fake.put("BTCUSDT", "manual", "position_open", pinned=True)
+    assert fake.relax_allowed("BTCUSDT", restricted=False)
+    assert not fake.relax_allowed("BTCUSDT", restricted=True)
+    for relax in (fake.set_pin("BTCUSDT", False, USER, restricted=True),
+                  fake.set_retention("BTCUSDT", 7, USER, restricted=True)):  # fmt: skip
+        with pytest.raises(RecorderRelaxRefusedError):
+            await relax
+    assert fake.entries == {"BTCUSDT": held}  # the denied twins are all it wrote
+    assert [(a, r["outcome"], r["reason"]) for a, r in sink] == [
+        ("retention.change", "denied", "relax_refused")] * 2  # fmt: skip
+    await fake.set_retention("BTCUSDT", 7, USER, restricted=False)
+    await fake.set_pin("BTCUSDT", False, USER, restricted=False, retention_days=9)
+    assert fake.entries["BTCUSDT"].retention_days == 9 and not fake.entries["BTCUSDT"].pinned
+
+
+async def test_a_pin_nulls_the_entrys_days_as_the_policy_does() -> None:
+    fake = fakes.FakeRecorder()
+    fake.put("BTCUSDT", "manual", retention_days=30)
+    await fake.set_pin("BTCUSDT", True, USER, restricted=False)
+    assert fake.entries["BTCUSDT"].retention_days is None

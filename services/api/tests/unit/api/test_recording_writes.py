@@ -240,9 +240,9 @@ async def test_an_unpin_is_audited_before_the_store_and_a_refused_record_changes
 class _Gone(FakeRecorder):
     """The row goes between the lookup and the pin: the policy finds no active row."""
 
-    async def set_pin(self, symbol: str, pinned: bool, actor: Any) -> None:
+    async def set_pin(self, symbol: str, pinned: bool, actor: Any, **rest: Any) -> None:
         self.entries.clear()
-        await super().set_pin(symbol, pinned, actor)  # raises: no active row
+        await super().set_pin(symbol, pinned, actor, **rest)  # raises: no active row
 
 
 async def test_a_pin_of_a_row_gone_since_the_lookup_is_404_audited_as_denied() -> None:

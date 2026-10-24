@@ -163,7 +163,7 @@ async def test_pinned_symbol_is_never_preempted(
         await p.on_chart_opened("ETHUSDT", "c1")
         clock.advance(60)
         await p.tick()
-        await p.set_pin("ETHUSDT", True, OWNER)
+        await p.set_pin("ETHUSDT", True, OWNER, restricted=False)
         await p.on_position_opened("XRPUSDT", "p1")
         assert set(p.effective_set()) == {"ETHUSDT"}
         warned = [e.symbol for _t, e in bus.events if isinstance(e, RecorderCapRefused)]

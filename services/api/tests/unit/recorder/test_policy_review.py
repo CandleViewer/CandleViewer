@@ -105,8 +105,8 @@ async def test_set_pin_is_audited_with_actor(
     policy: RecordingPolicy, audit: FakeAudit, store: Mem
 ) -> None:
     await store.upsert_manual("BTCUSDT", None, (), None, "demo")  # a pin needs a recorded row
-    await policy.set_pin("BTCUSDT", True, OWNER)
-    await policy.set_pin("BTCUSDT", True, OWNER)  # no-op: no second record
+    await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
+    await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)  # no-op: no second record
     assert [(a, kw["actor_label"]) for a, kw in audit.records] == [
         ("retention.change", "user:owner-1")
     ]

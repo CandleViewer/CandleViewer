@@ -26,7 +26,8 @@ class RecorderSymbolNotManualError(RecorderError):
 
 
 class RecorderSymbolNotRecordedError(RecorderError):
-    """`set_pin` named a symbol with no active `recorded_symbols` row: a pin needs a row."""
+    """`set_pin` or `set_retention` named a symbol with no active `recorded_symbols` row, or one
+    that went before the write: both need an active row."""
 
 
 class RecorderGateOpenError(RecorderError):
@@ -38,3 +39,12 @@ class RecorderInvalidUpdateError(RecorderError):
     """`add_manual` or `update_manual` named a depth or a stream that `recorded_symbols` refuses
     (`rs_depth`, `stream_kind`); raised before any audit or write (the REST binding maps it to 422).
     """
+
+
+class RecorderRelaxRefusedError(RecorderError):
+    """A `restricted` caller asked to unpin a row a hidden cause holds, or to lower its
+    `retention_days` (ruling 2026-10-24, C-12.4). Raised after the refusal's own record and before
+    the change is audited or written; the REST binding maps it to 403."""
+
+    def __init__(self) -> None:
+        super().__init__("Only the owner can unpin this row or lower its retention")

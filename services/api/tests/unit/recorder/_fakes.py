@@ -85,7 +85,7 @@ class MemRecordedStore:
         rid = str(uuid.uuid4())
         self.rows[rid] = dict(id=rid, symbol=symbol, env=env, reason=reason, reason_refs=[],
                               pinned=False, added_by=None, streams=[], orderbook_depth=None,
-                              removed=False)  # fmt: skip
+                              removed=False, retention_days=None)  # fmt: skip
         return self.rows[rid]
 
     async def _live(self, op: str, recorded_id: str) -> dict[str, Any] | None:
@@ -130,6 +130,12 @@ class MemRecordedStore:
         row = await self._live("set_pinned", recorded_id)
         if row is not None:
             row["pinned"] = pinned
+        return row is not None
+
+    async def set_retention(self, recorded_id: str, retention_days: int | None) -> bool:
+        row = await self._live("set_retention", recorded_id)
+        if row is not None:
+            row["retention_days"] = retention_days
         return row is not None
 
     async def upsert_manual(
