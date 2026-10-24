@@ -83,6 +83,17 @@ STOP_LINE = (
     "Stop-losses at Bybit are held by Bybit and work whether or not CandleViewer is running."
 )
 TAG_NAME = "Emulated — run by CandleViewer, not Bybit"
+# C-2.6 on an exit pair: the frame names the position's own stop; an OCO leg is never that stop.
+EXTRA_EXIT = (
+    "Your position's native stop stays at Bybit; this stop-market leg is an extra exit "
+    "CandleViewer manages."
+)
+# C-2.6 on an entry pair: each leg's read-out names its own stop at Bybit (the derived fixture).
+ENTRY_LEGS = (("Entry A", "stop_a"), ("Entry B", "stop_b"))
+# A LIVE run, row or badge is an absence in R3: every `LIVE` / `live` env token in sections 2-10
+# sits next to a negation.
+LIVE_WORD = r"\bLIVE\b|`live`"
+NEGATION = r"\b(?:no|never|not|nor|absence|absent|without)\b"
 HALT = "Halted by risk control"
 MEMO_STRINGS = (
     CAVEAT_ENTRY,
@@ -186,15 +197,15 @@ GLYPHS = ("lock", "alert-triangle", "refresh", "check", "x", "pause", "play")
 GLYPH_PRECEDENTS = ("E29/E29-D02.md", "E29/E29-D03.md", "E36/E36-D04.md", "E17/E17-D02.md")
 # doc | line at the base | text the line must hold; a `14` line may sit lower by the pointers.
 CITED_TABLE = """
-14 | 1574 | explicitly labelled "emulated
-14 | 1578 | `role="note"`
-14 | 1579 | <=300 ms
-14 | 1581 | entry+bracket and standalone-OCO
-14 | 1598 | WS `orders`
-14 | 1599 | degraded (backend reconnecting
-14 | 1601 | 'Cancel TWAP a_12 on BTCUSDT, Main'
-14 | 1602 | coalesced to 2 Hz
-14 | 1605 | 'pause all' and 'cancel all'
+14 | 1577 | explicitly labelled "emulated
+14 | 1581 | `role="note"`
+14 | 1582 | <=300 ms
+14 | 1584 | entry+bracket and standalone-OCO
+14 | 1601 | WS `orders`
+14 | 1602 | degraded (backend reconnecting
+14 | 1604 | 'Cancel TWAP a_12 on BTCUSDT, Main'
+14 | 1605 | coalesced to 2 Hz
+14 | 1608 | 'pause all' and 'cancel all'
 22 | 281 | Read-only.
 22 | 17932 | AlgoSpec:
 22 | 18054 | CancelAllRequest:
@@ -203,11 +214,11 @@ CITED_TABLE = """
 23 | 824 | 0 ms (never throttled)
 23 | 898 | `algo:{algo_id}`
 23 | 965 | `orders:read` on its account (E33-T02)
-24 | 2711 | class AlgoSpec
-24 | 2727 | class AlgoState
-24 | 2770 | class OcoParams
-24 | 2785 | Preferred alternative
-24 | 4821 | `algo.started`
+24 | 2714 | class AlgoSpec
+24 | 2730 | class AlgoState
+24 | 2773 | class OcoParams
+24 | 2788 | Preferred alternative
+24 | 4824 | `algo.started`
 28 | 2986 | B4.2 States
 28 | 3002 | B4.3 Events
 28 | 4458 | B8.2 States
@@ -440,8 +451,11 @@ def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, s
     )
     if re.search(flat_uncond, s3, MULTI):
         bad.append("spec section 3: an entry-pair frame binds the unconditional stop sentence")
-    if re.search(r"\bLIVE (?:row|run|badge) drawn\b", section(spec, 5, 8)):
-        bad.append("spec sections 5-7: a LIVE run is drawn (LIVE is an absence in R3)")
+    bad += stop_gates(spec)
+    body = section(spec, 2, 11)
+    for m in re.finditer(LIVE_WORD, body):
+        if not re.search(NEGATION, body[max(0, m.start() - 60) : m.end() + 40], re.IGNORECASE):
+            bad.append(f"spec sections 2-10: {m.group(0)} without a negation (LIVE is an absence)")
     lines = {k: v.split("\n") for k, v in t.items()}
     CITE_WARN.clear()
     for doc, line_s, want in rows(CITED_TABLE):
@@ -453,7 +467,8 @@ def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, s
             continue
         found = [i + 1 for i, ln in enumerate(lines[doc]) if want in ln]
         if found:
-            CITE_WARN.append(f"`{doc}` :{line} now at :{found[0]} ({want[:40]!r})")
+            near = min(found, key=lambda n: abs(n - line))
+            CITE_WARN.append(f"`{doc}` :{line} now at :{near} ({want[:40]!r})")
         else:
             bad.append(f"cited text gone: `{doc}` :{line} {want[:40]!r} is nowhere in the file")
     for f in files:
@@ -465,6 +480,31 @@ def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, s
         for c in sorted(set(re.findall(r"\b(?:CMP|SCR)-\d{3}\b", txt))):
             if f"### {c} " not in t["15" if c.startswith("CMP") else "14"]:
                 bad.append(f"{f.name}: no catalogue heading for {c}")
+    return bad
+
+
+def stop_gates(spec: str) -> list[str]:
+    """C-2.6 per leg: every entry leg names its own stop, every exit pair names the position's."""
+    bad: list[str] = []
+    s2, s3 = section(spec, 2, 3), section(spec, 3, 4)
+    for leg, key in ENTRY_LEGS:
+        want = f"stop {FIXTURE[key]:,.1f} at Bybit"
+        readouts = re.findall(rf'"{leg} ·[^"]*"', s2)
+        if not readouts or any(want not in r for r in readouts):
+            bad.append(f"spec section 2: the {leg} read-out lacks its own stop ({want})")
+    frames = re.findall(r"^\| `SCR-0(?:69|76)/[a-z0-9-]+` +\|[^\n]*", s3, MULTI)
+    for row in frames:
+        name = row.split("`")[1]
+        if re.search(r"Entry [AB]|both legs with", row) and not re.search(
+            r"(?:its|their) (?:own )?stops?\b|stop [\d,]+\.\d at Bybit", row
+        ):
+            bad.append(f"spec section 3: {name} shows the entry legs without their stops")
+        if "`caveat.oco_exit`" in row and not re.search(r"`oco\.extra_exit`|`sl\.label`", row):
+            bad.append(f"spec section 3: {name} is an exit pair that names no position stop")
+        if "`oco.extra_exit`" in row and EXTRA_EXIT not in row:
+            bad.append(f"spec section 3: {name} binds oco.extra_exit without its sentence")
+    if EXTRA_EXIT not in section(spec, 13, 14):
+        bad.append("spec section 13: the oco.extra_exit sentence is missing")
     return bad
 
 
@@ -577,7 +617,7 @@ def main(argv: list[str]) -> int:
     numbers["opacity_disabled"] = float(resolve(themes["dark"], "opacity.disabled"))
     numbers.update({"deck_new": by_source.get("new", 0), "reason_keys": len(reasons)})
     numbers["reason_keys_proposed"] = sum(r.startswith("algo.") for r in reasons)
-    numbers["checklist_items"] = count(r"^\| 14:(?:1581|1605|1475) ", spec)
+    numbers["checklist_items"] = count(r"^\| 14:(?:1584|1608|1475) ", spec)
     numbers["handoff_blocks"] = count(r"^## Handoff checklist", handoff)
     numbers.update({"missing_tokens": len(missing), "glyphs_new": len(glyphs_new)})
     numbers["banned_copy_words"] = len(BANNED_COPY)
