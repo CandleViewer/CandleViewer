@@ -327,9 +327,10 @@ def test_the_drawings_filter_waives_only_the_documented_refusals_on_its_own_path
     assert (entry["ruleId"], entry["url"]) == (90022, ".*/drawings([/?].*)?")
     assert entry["newRisk"] == "False Positive"
     assert entry["urlRegex"] is True and entry["evidenceRegex"] is True
-    assert all(re.search(entry["evidence"], c) for c in ("not_found", "target_unavailable"))
-    assert not re.search(entry["evidence"], "Traceback (most recent call last)")
-    assert not re.search(entry["evidence"], "application/problem+json")
+    evidence = re.compile(entry["evidence"])  # ZAP's filter matches the whole evidence
+    assert all(evidence.fullmatch(f'"code": "{c}"') for c in ("not_found", "target_unavailable"))
+    assert not evidence.fullmatch("Traceback (most recent call last)")
+    assert not evidence.fullmatch("application/problem+json")
 
 
 def test_the_rules_filter_ends_one_false_positive_and_no_other_traversal() -> None:
@@ -539,6 +540,7 @@ def test_the_scan_signs_in_as_its_role_the_viewer_unless_the_profile_names_anoth
     assert '--password-env "ZAP_${ZAP_ROLE^^}_PASSWORD"' in scan
     inputs = yaml.safe_load(CALLED.read_text(encoding="utf-8"))[True]["workflow_call"]["inputs"]
     assert inputs["role"]["default"] == "viewer"
+    assert inputs["fixture"]["default"] == ""  # no Owner and no rows unless the caller names them
 
 
 def test_zap_gets_the_session_file_the_target_and_the_profile_and_nothing_else() -> None:
@@ -596,6 +598,10 @@ with open(os.environ["CALLS"], "a", encoding="utf-8") as calls:
 if "--username" in sys.argv:  # which user a mint signed in
     with open(os.environ["CALLS"] + ".users", "a", encoding="utf-8") as users:
         users.write(sys.argv[sys.argv.index("--username") + 1] + "\\n")
+for flag in ("--totp-secret-file", "--fixture", "--out", "--seeded"):  # the files it was given
+    if flag in sys.argv:
+        with open(os.environ["CALLS"] + ".files", "a", encoding="utf-8") as files:
+            files.write(f"{name} {flag} {sys.argv[sys.argv.index(flag) + 1]}\\n")
 if "--out" in sys.argv:
     Path(sys.argv[sys.argv.index("--out") + 1]).write_text("ZAP_AUTH_TOKEN=t\\n", encoding="utf-8")
 sys.exit(int(os.environ.get(name.upper() + "_RC", "0")))
@@ -675,6 +681,15 @@ def test_the_scan_fails_with_zap_or_its_session_and_never_scans_without_one(
 def test_the_scan_mints_the_session_of_its_role(tmp_path: Path, role: str, user: str) -> None:
     assert _run_step(tmp_path, _SCAN, zap_role=role)[0] == 0
     assert (tmp_path / "calls.users").read_text(encoding="utf-8").split() == [user]
+    assert _files(tmp_path) == [
+        f"mint_sessions --totp-secret-file {tmp_path}/cv/{role}.totp",
+        f"mint_sessions --out {tmp_path}/cv/{role}-scan.env",
+    ]
+
+
+def _files(tmp_path: Path) -> list[str]:
+    """The file arguments each stand-in was called with, in order."""
+    return (tmp_path / "calls.files").read_text(encoding="utf-8").splitlines()
 
 
 def test_a_fixture_is_seeded_before_the_plan_and_checked_after_the_scan_and_only_with_one() -> None:
@@ -687,7 +702,11 @@ def test_a_fixture_is_seeded_before_the_plan_and_checked_after_the_scan_and_only
 
 def test_a_fixture_enrols_the_owners_totp_and_the_role_is_checked_and_seeded_by_name() -> None:
     users = _steps()[_USERS]["run"]
-    assert 'owner_totp=(--totp-secret-out "$RUNNER_TEMP/cv/owner.totp")' in users
+    guard = (
+        'if [ -n "$ZAP_FIXTURE" ]; then '
+        'owner_totp=(--totp-secret-out "$RUNNER_TEMP/cv/owner.totp"); fi'
+    )
+    assert "owner_totp=()" in users and guard in users  # an Owner TOTP only with a fixture
     assert 'uv run --frozen python scripts/seed_fixture_user.py "${owner_totp[@]}"' in users
     assert '--role "$ZAP_ROLE"' in users and '"$RUNNER_TEMP/cv/$ZAP_ROLE.totp"' in users
     made = _steps()["Make this run's synthetic credentials (masked, never echoed)"]["run"]
@@ -699,6 +718,12 @@ def test_the_seed_signs_the_owner_in_before_it_seeds_and_a_failed_mint_seeds_not
 ) -> None:
     assert _run_step(tmp_path, _SEED) == (0, ["mint_sessions", "drawings_isolation"])
     assert (tmp_path / "calls.users").read_text(encoding="utf-8").split() == ["owner-user"]
+    assert _files(tmp_path) == [
+        f"mint_sessions --totp-secret-file {tmp_path}/cv/owner.totp",
+        f"mint_sessions --out {tmp_path}/cv/owner-seed.env",
+        "drawings_isolation --fixture .zap/e14-drawings-seed.json",
+        f"drawings_isolation --out {tmp_path}/cv/owner-rows.json",
+    ]
     assert _run_step(tmp_path / "b", _SEED, mint_sessions_rc=1) == (1, ["mint_sessions"])
 
 
@@ -723,6 +748,9 @@ def test_the_check_signs_the_owner_and_the_scan_role_in_afresh_and_fails_with_it
     assert ran == (code, ["mint_sessions", "mint_sessions", "drawings_isolation"])
     users = (tmp_path / "calls.users").read_text(encoding="utf-8").split()
     assert users == ["owner-user", "manager-user"]
+    assert _files(tmp_path)[-1] == f"drawings_isolation --seeded {tmp_path}/cv/owner-rows.json"
+    totps = [line.split()[-1] for line in _files(tmp_path) if "--totp-secret-file" in line]
+    assert totps == [f"{tmp_path}/cv/owner.totp", f"{tmp_path}/cv/manager.totp"]
 
 
 @pytest.mark.parametrize(("liveness", "gate", "code"), [(0, 0, 0), (1, 0, 1), (0, 1, 1), (2, 2, 1)])

@@ -9,7 +9,7 @@ name: _dast-low-priv
 # before the scan and checked after it (security/zap/drawings_isolation.py).
 # A synthetic user signs in only with CV_STORAGE_BACKEND=real (app.build_auth_service).
 # Every credential is made here, per run, masked and never echoed: no repository secret is read,
-# and the target is loopback, never an input (mint_sessions.py refuses any other). The Viewer's
+# and the target is loopback, never an input (mint_sessions.py refuses any other). The scan role's
 # bearer and CSRF pair reach ZAP through the environment and security/zap/role_session.js
 # (ZAP_PROFILE), never through a plan. "The scan stayed signed in" (check_liveness.py: both /me
 # requestors answered 200) fails a scan that lost its session, and "no new medium+ alert"
@@ -41,7 +41,7 @@ on:
         type: string
         default: viewer
       fixture:
-        description: The Owner's rows to seed before the scan and check after it, or empty for none
+        description: The Owner's drawings drawings_isolation.py seeds and checks, or empty for none
         type: string
         default: ""
 

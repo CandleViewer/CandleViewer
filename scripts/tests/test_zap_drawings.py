@@ -286,6 +286,7 @@ def test_the_seed_posts_the_fixture_whole_and_a_batch_that_made_other_rows_fails
     assert sent == [("POST", "/drawings/batch", fixture)]
     for answer in [
         (409, {}),
+        (201, {"created": [{"id": ID}]}),  # only the batch's 200 is its success
         (200, {"created": []}),
         (200, {"created": [{"id": "x"}]}),
         (200, None),
@@ -302,6 +303,7 @@ def test_the_seed_posts_the_fixture_whole_and_a_batch_that_made_other_rows_fails
         "http://127.0.0.1.evil.example",
         "http://127.0.0.1:8000/x",
         "http://u@127.0.0.1:8000",
+        "http://127.0.0.1:8000?x=1",
         "http://127.0.0.1:8000#x",
     ],
 )
@@ -328,10 +330,11 @@ def test_a_session_file_becomes_the_headers_a_browser_sends_and_one_without_is_r
         "X-CSRF-Token": "csrf",
         "Cookie": "__Host-cv_csrf=csrf",
     }
-    session.write_text("ZAP_AUTH_TOKEN=bear\n", encoding="ascii")
-    with pytest.raises(iso.Refused, match=r"s\.env holds no session") as refused:
-        iso.session_headers(session)
-    assert "bear" not in str(refused.value)
+    for half in ("ZAP_AUTH_TOKEN=bear\n", "ZAP_CSRF_TOKEN=csrf\n"):  # a bearer or a pair alone
+        session.write_text(half, encoding="ascii")
+        with pytest.raises(iso.Refused, match=r"s\.env holds no session") as refused:
+            iso.session_headers(session)
+        assert "bear" not in str(refused.value) and "csrf" not in str(refused.value)
 
 
 class _Connection:
@@ -357,6 +360,8 @@ def test_exchange_sends_the_session_and_the_body_and_reads_only_a_json_answer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(iso.http.client, "HTTPConnection", _Connection)
+    monkeypatch.setattr(_Connection, "sent", [])  # its own record, however often the test runs
+    monkeypatch.setattr(_Connection, "answer", (200, b'{"ok": true}'))
     session = {"Authorization": "Bearer b", "X-CSRF-Token": "c", "Cookie": "__Host-cv_csrf=c"}
     assert iso.exchange("POST", URL, "/drawings/batch", {"a": 1}, session) == (200, {"ok": True})
     host, request = _Connection.sent
@@ -373,7 +378,10 @@ def test_main_seeds_to_a_file_and_verifies_from_it_and_prints_no_token(
     for name in ("owner", "manager"):
         (tmp_path / f"{name}.env").write_text(f"ZAP_AUTH_TOKEN={name}-t\nZAP_CSRF_TOKEN=c\n")
     out, row, owner = tmp_path / "rows.json", SEEDED["created"], str(tmp_path / "owner.env")
-    seeding: iso.Send = lambda *a: (200, {"created": row})  # noqa: E731 - a stand-in
+
+    def seeding(*_: Any) -> tuple[int, Any]:
+        return 200, {"created": row}
+
     seed = ["seed", "--target", URL, "--session", owner, "--fixture", str(FIXTURE)]
     assert iso.main([*seed, "--out", str(out)], seeding) == 0
     assert json.loads(out.read_text(encoding="utf-8")) == {"created": row}
@@ -384,7 +392,10 @@ def test_main_seeds_to_a_file_and_verifies_from_it_and_prints_no_token(
     seen = capsys.readouterr().out
     assert "owner-t" not in seen and "manager-t" not in seen
     assert "is gone" in seen and "the Manager lists" in seen
-    remote: iso.Send = lambda *a: pytest.fail("a call to a remote target")  # noqa: E731
+
+    def remote(*_: Any) -> tuple[int, Any]:
+        pytest.fail("a call to a remote target")
+
     away = ["seed", "--target", "https://staging.example", "--session", owner]
     assert iso.main([*away, "--fixture", str(FIXTURE), "--out", str(out)], remote) == 1
 

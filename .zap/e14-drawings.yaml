@@ -35,12 +35,13 @@ jobs:
   # on these paths and only with one of these codes as its evidence; injection rules never are.
   - type: alertFilter
     alertFilters:
-      # reason: "Application Error Disclosure" matches the RFC 7807 text of a documented refusal
+      # reason: "Application Error Disclosure" matches the RFC 7807 text of a documented refusal;
+      # ZAP matches the whole evidence (String.matches), hence the .* on either side
       - ruleId: 90022
         newRisk: "False Positive"
         url: ".*/drawings([/?].*)?"
         urlRegex: true
-        evidence: "not_found|conflict|target_unavailable|version_conflict|id_unavailable|validation_failed|payload_too_large|invalid_cursor"
+        evidence: ".*(?:not_found|conflict|target_unavailable|version_conflict|id_unavailable|validation_failed|payload_too_large|invalid_cursor).*"
         evidenceRegex: true
   - type: requestor
     name: session-live-before-scan

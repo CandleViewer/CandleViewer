@@ -13,9 +13,10 @@ The `drawings` profile also has a fixture, `.zap/e14-drawings-seed.json`: a synt
 drawing with a fixed id. The cut's examples name it (`pin_seed`), so the scan's PUT and DELETE as
 the Manager aim at a row the Manager does not own.
 
-The template's `script` job loads `security/zap/role_session.js`, which reads the synthetic
-Viewer's bearer and SR-041 CSRF pair from the environment and adds them to each request to the
-surface `ZAP_PROFILE` names: no token is written here. Stdlib and PyYAML only.
+The template's `script` job loads `security/zap/role_session.js`, which reads the scan role's
+bearer (the synthetic Viewer's, or the Manager's for `drawings`) and SR-041 CSRF pair from the
+environment and adds them to each request to the surface `ZAP_PROFILE` names: no token is written
+here. Stdlib and PyYAML only.
 
 Usage: nightly_plans.py --profile {market,rules,drawings} --out DIR
 
