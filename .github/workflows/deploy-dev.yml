@@ -14,7 +14,7 @@ name: deploy-dev
 # migrating.
 #
 # Error codes: CI-DEP-001 signature verification failed, CI-DEP-002 smoke
-# failed, CI-DEP-003 sha mismatch after deploy, CI-DEP-004 migration lock
+# failed, CI-DEP-003 image mismatch after deploy, CI-DEP-004 migration lock
 # timeout (surfaced inside the boot sequence itself; a stuck migration
 # shows up here as a CI-DEP-002 smoke timeout).
 
@@ -36,7 +36,7 @@ concurrency:
 env:
   PYTHONIOENCODING: utf-8
   REGISTRY: ghcr.io
-  IMAGE_NAME: candleviewer/candleviewer-api  # GHCR requires a lowercase path; the org login is CandleViewer
+  IMAGE_NAME: candleviewer/candleviewer-api # GHCR requires a lowercase path; the org login is CandleViewer
 
 jobs:
   deploy-dev:
@@ -66,7 +66,7 @@ jobs:
         # otherwise let `imagetools inspect :dev` race ahead to a *newer*
         # digest than the one that actually completed and triggered this
         # run (previously caught only after the fact, by CI-DEP-003's
-        # post-deploy sha check).
+        # post-deploy image-id check).
         run: |
           set -euo pipefail
           SHORT_SHA="$(git rev-parse --short=12 ${{ github.event.workflow_run.head_sha }})"
