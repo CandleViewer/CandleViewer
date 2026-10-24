@@ -107,9 +107,10 @@ def _new(w: Writes) -> list[port.AccountProfileRow]:
 
 
 def _names(record: dict[str, Any], resp: Any, actor: str = "owner") -> None:
-    """A refusal's record names its actor, the account, the session (#4174) and the request."""
-    ids = (rbac.user_id_of(actor), rbac.session_id_of(actor), str(GRANTED))
-    assert (record["actor_user_id"], record["session_id"], record["object_id"]) == ids
+    """A refusal's record names its actor and address, the account, the session (#4174) and the
+    request (D2-4 R1C-03)."""
+    ids = [rbac.user_id_of(actor), rbac.session_id_of(actor), str(GRANTED), "127.0.0.1"]
+    assert [record[k] for k in ("actor_user_id", "session_id", "object_id", "actor_ip")] == ids
     assert record["object_kind"] == "exchange_account"
     assert str(record["request_id"]) == resp.headers["x-correlation-id"]  # D2-2 R1C-02
 
@@ -139,8 +140,9 @@ def test_ac1_a_risk_based_create_is_201_version_1_with_its_etag_and_record(w: Wr
     assert (resp.status_code, got, resp.headers["etag"]) == (201, doc, f'W/"{row.id}:1"')
     assert (got["version"], got["profile"]["name"]) == (1, _RISK["name"])
     (record,) = w.world.audit.records
-    assert [record[k] for k in ("action", "object_id", "outcome", "after_state")] == [
-        "profile.created", str(row.id), "success", profile_state(row),
+    keys = ("action", "object_id", "outcome", "after_state", "session_id", "actor_ip")
+    assert [record[k] for k in keys] == [
+        "profile.created", str(row.id), "success", profile_state(row), None, "127.0.0.1",
     ]  # fmt: skip
     assert str(record["request_id"]) == resp.headers["x-correlation-id"]
     assert (w.invalidated, len(w.rows.hooks)) == ([GRANTED], 1)
@@ -214,9 +216,7 @@ def test_ac4_leverage_above_an_allowed_symbols_maximum_names_it_and_is_audited(w
     _refused_save(w, resp, "max_leverage", example["errors"])
 
 
-def test_a_stale_catalogue_is_503_retry_after_2_and_its_retry_is_a_first_submission(
-    w: Writes,
-) -> None:
+def test_a_stale_catalogue_is_503_retry_after_2(w: Writes) -> None:
     """PF-D04: never audited or stored. Its retry, a first submission, is D2-5's."""
     w.limits.fails = InstrumentLimitsUnavailable("no listing in time")
     resp = create(w, _RISK, key=str(uuid.uuid4()))
@@ -288,7 +288,7 @@ def test_a_body_over_its_cap_is_413_before_it_is_parsed(w: Writes, write: Write)
 
 
 @_EACH
-def test_profile_write_without_step_up_is_403_and_audited(w: Writes, write: Write) -> None:
+def test_profile_write_without_step_up_is_403_and_changes_nothing(w: Writes, write: Write) -> None:
     """SR-E28-02, the route's half: never the handler. The guard's (B16's `auth.step_up_required`
     record) is `test_profile_step_up_gate.py`'s; the pack's step-up stand-in records nothing."""
     w.world.step_up.elevated = False
