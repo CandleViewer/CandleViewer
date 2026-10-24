@@ -263,6 +263,10 @@ jobs:
           pnpm --filter @candleviewer/web --filter @candleviewer/desktop build
           xvfb-run -a node apps/desktop/scripts/collect-hardening-facts.mjs hardening-facts.json
           python tools/ci/electron_hardening_gate.py --desktop-dist apps/desktop/dist             --web-dist apps/web/dist --builder-config apps/desktop/electron-builder.yml             --facts hardening-facts.json --require-runtime
+      # E14-X03 (#549; DR5, SR-E14-10): the build above is the production bundle, so no test-only
+      # engine handle may be in it. Reads apps/web/dist (no second build); never the source maps.
+      - name: Production-bundle guard (E14-X03, DR5, SR-E14-10) - no test-only engine handle in the build
+        run: python tools/ci/check_prod_bundle_handles.py --dist apps/web/dist
       - name: Contrast-matrix gate (E05-T05, A11Y-C001/002/003 over packages/ui/tokens/**)
         run: pnpm --filter @candleviewer/ui contrast:gate
       - name: Upload contrast-matrix report

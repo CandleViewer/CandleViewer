@@ -200,6 +200,23 @@ E15-T01's spec decision on #402, SR-E14-09).
   appears under `apps/*/src` or
   `packages/*/src` outside it. Fixture: `scripts/tests/test_check_no_inline_suppressions.py`.
 
+## tools/ci/check_prod_bundle_handles.py
+
+- **Protects:** DR5 (spoofing: a test-only handle in a production bundle), SR-E14-10.
+  `__cvEngine.projectForTest` (E14-Q03) projects chart coordinates to pixels for a test; on a
+  production page a script could use it to spoof where a drawing sits.
+- **Matches:** a `.js` or `.html` file of `apps/web/dist` that holds an identifier of
+  `tools/ci/prod-bundle-forbidden-handles.json`, as a substring (`__cvEngineDebug` counts as
+  `__cvEngine`). It runs in `_job-js.yml`'s `build` job right after the web build and reads that dist
+  (no second build); a failure names the file, line, column, identifier, DR5 and SR-E14-10. A dist with
+  no `.js` or `.html` file fails, so a missing build never passes. E14-Q03 adds its names to the
+  manifest and a positive control (an E2E build that exposes the handle).
+- **Does not match:** source maps (`sourcesContent` holds the source of a correctly gated handle),
+  other file types, a name built at run time. The release build packages `main`'s web build, which
+  passed this step; `release.yml` has no web build of its own.
+- **Deliberate-regression fixture:** `scripts/tests/test_check_prod_bundle_handles.py` builds
+  synthetic dists: a handle in a `.js` fails, one only in a `.map` passes, a clean dist passes.
+
 ## Budget
 
 The ticket asks for under 30 s added to CI. Measured with Semgrep 1.181.0 on the shared 8-vCPU VPS,
