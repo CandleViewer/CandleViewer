@@ -6,6 +6,8 @@ not applied); the database's name and the session's user answer their reads; an 
 switch are kept and not applied; every statement sent is kept, and `shapes` names each. Any other
 statement, a delete or an unknown text, fails the test. It is also the relational repository whose
 engine connects to it. Conflicts and updates are Postgres's: the integration tests.
+`patch_audit_session` points the writer-based seeds at it, their real `AuditWriter` over its
+`audit_log`.
 """
 
 from __future__ import annotations
@@ -13,14 +15,19 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any, Final, cast
 
+import pytest
 import sqlalchemy as sa
 from sqlalchemy.engine import IteratorResult
 from sqlalchemy.engine.result import SimpleResultMetaData
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from candleviewer.audit.repository import AuditRepository
+from candleviewer.audit.writer import AuditWriter
 from candleviewer.db import models as m
+from tests.fixtures.admin import audit_session
 
 #: The texts a seed sends that the fake answers with nothing: the role switch around OOB-WRITES.
 _SILENT: Final = frozenset({"SET ROLE cv_app", "RESET ROLE"})
@@ -56,6 +63,9 @@ class FakeDb:
     async def connect(self) -> AsyncIterator[AsyncConnection]:
         yield self.conn
 
+    async def dispose(self) -> None:
+        return None
+
     def unit_of_work(self) -> Any:
         raise AssertionError("the fixture opened a unit of work")
 
@@ -87,3 +97,29 @@ class FakeDb:
         elif not isinstance(stmt, sa.Update) and text not in _SILENT:
             raise AssertionError(f"the fake does not model {self.shapes[-1]!r}")
         return IteratorResult(SimpleResultMetaData(keys), iter(rows))
+
+
+class FakeAuditRows:
+    """The `audit_log` of a `FakeDb` as an `AuditRepository`: all the writer calls is `insert`."""
+
+    def __init__(self, db: FakeDb) -> None:
+        self._rows = db.tables.setdefault("audit_log", [])
+
+    async def insert(self, record: dict[str, Any]) -> None:
+        stored = record | {"event_ts": datetime.fromisoformat(record["event_ts"])}
+        self._rows.append({"id": len(self._rows) + 1} | stored)
+
+
+def patch_audit_session(monkeypatch: pytest.MonkeyPatch, db: FakeDb) -> list[str]:
+    """The writer-based seeds' pool is `db`, and their writer the real `AuditWriter` over its
+    `audit_log`; the WAL path of each writer built is returned."""
+    built: list[str] = []
+
+    def writer(repository: FakeAuditRows, wal_path: str) -> AuditWriter:
+        built.append(wal_path)
+        return AuditWriter(cast("AuditRepository", repository), wal_path)
+
+    monkeypatch.setattr(audit_session, "SqlAlchemyRelationalRepository", lambda _dsn: db)
+    monkeypatch.setattr(audit_session, "SqlAlchemyAuditRepository", FakeAuditRows)
+    monkeypatch.setattr(audit_session, "AuditWriter", writer)
+    return built

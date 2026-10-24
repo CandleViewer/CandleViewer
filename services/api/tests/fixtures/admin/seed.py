@@ -66,7 +66,7 @@ def is_test_database(name: str) -> bool:
     return name == "test" or name.endswith("_test")
 
 
-def _require_aware(now: datetime) -> None:
+def require_aware(now: datetime) -> None:
     if now.utcoffset() is None:
         raise ValueError("`now` must be timezone-aware: the clock the app under test reads, in UTC")
 
@@ -96,7 +96,7 @@ async def seed_admin_world(
     conn: AsyncConnection, *, now: datetime, password_hash: str = PLACEHOLDER_HASH
 ) -> None:
     """Every handle's rows, as of `now`; a second run keeps the rows the first wrote."""
-    _require_aware(now)
+    require_aware(now)
     await refuse_unless_test_database(conn)
     named = await conn.execute(sa.select(m.roles.c.name, m.roles.c.id))
     roles = {name: role_id for name, role_id in named.all()}
@@ -184,7 +184,7 @@ async def _read(
 
 async def check_admin_world(conn: AsyncConnection, *, now: datetime) -> None:
     """Raise `FixtureCheckError` naming every post-condition the seeded rows break."""
-    _require_aware(now)
+    require_aware(now)
     await refuse_unless_test_database(conn)
     failed: list[str] = []
     ids = [u.id for u in USERS]
@@ -267,7 +267,7 @@ def _stamp(value: datetime | None) -> str:
 
 async def seed_backups(conn: AsyncConnection, *, now: datetime) -> None:
     """BACKUP-VERIFY-FAILED as of `now`; a second run keeps the rows the first wrote."""
-    _require_aware(now)
+    require_aware(now)
     await refuse_unless_test_database(conn)
     for b in BACKUPS:
         started = now - b.age
