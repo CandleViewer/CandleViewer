@@ -194,7 +194,9 @@ def test_pair_read_answering_another_accounts_or_orders_row_is_refused() -> None
         pg.Reads(bound=_row(**other)),
         pg.Reads(bound=_row(exchange_order_id="other")),
         pg.Reads(None, _row(**other, order_link_id=FILL.order_link_id, exchange_order_id=None)),
+        pg.Reads(None, _row(**other, order_link_id=FILL.order_link_id)),  # bound to XID: the race
         pg.Reads(None, _row(order_link_id=link(seq=9), exchange_order_id=None)),
+        pg.Reads(None, _row(order_link_id=link(seq=9))),  # bound to XID under another link
         _none(order=_order(orderId="other")),
         _none(order=_order(orderId=XID).model_copy(update={"account_id": ACCOUNT_B})),
         *(_none(order=READ, stops=(_record(**key),)) for key in keys),
