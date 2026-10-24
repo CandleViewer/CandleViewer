@@ -4,16 +4,16 @@ fixtures (E42-Q01, #962).
 An insert leaves its row in `tables`; a select answers with the rows of its table (its `where` is
 not applied); the database's name and the session's user answer their reads; an update and the role
 switch are kept and not applied; every statement sent is kept, and `shapes` names each. Any other
-statement, a delete or an unknown text, fails the test. It is also the relational repository whose
-engine connects to it. Conflicts and updates are Postgres's: the integration tests.
-`patch_audit_session` points the writer-based seeds at it, their real `AuditWriter` over its
-`audit_log`.
+statement, a delete or an unknown text, fails the test, unless the test names the table whose delete
+it expects (`deletes`). It is also the relational repository whose engine connects to it. Conflicts
+and updates are Postgres's: the integration tests. `patch_audit_session` points the writer-based
+seeds at it, their real `AuditWriter` over its `audit_log`.
 """
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Collection
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Final, cast
@@ -41,9 +41,15 @@ def _table(stmt: Any) -> str:
 
 class FakeDb:
     def __init__(
-        self, database: str = "test", login: str = "test", **tables: list[dict[str, Any]]
+        self,
+        database: str = "test",
+        login: str = "test",
+        *,
+        deletes: Collection[str] = (),
+        **tables: list[dict[str, Any]],
     ) -> None:
         self.database, self.login = database, login
+        self._deletes = frozenset(deletes)  # the tables whose delete this test expects
         self.statements: list[Any] = []
         roles: list[dict[str, Any]] = [
             {"id": uuid.uuid5(uuid.NAMESPACE_DNS, n), "name": n} for n in m.role_name.enums
@@ -61,6 +67,10 @@ class FakeDb:
 
     @asynccontextmanager
     async def connect(self) -> AsyncIterator[AsyncConnection]:
+        yield self.conn
+
+    @asynccontextmanager
+    async def begin(self) -> AsyncIterator[AsyncConnection]:
         yield self.conn
 
     async def dispose(self) -> None:
@@ -94,6 +104,8 @@ class FakeDb:
             keys, rows = ["name"], [(self.database,)]
         elif text == "SELECT session_user":
             keys, rows = ["name"], [(self.login,)]
+        elif isinstance(stmt, sa.Delete) and _table(stmt) in self._deletes:
+            pass  # a delete the test expects: kept and not applied, as an update is
         elif not isinstance(stmt, sa.Update) and text not in _SILENT:
             raise AssertionError(f"the fake does not model {self.shapes[-1]!r}")
         return IteratorResult(SimpleResultMetaData(keys), iter(rows))

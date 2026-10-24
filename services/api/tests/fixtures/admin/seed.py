@@ -14,7 +14,7 @@ import hashlib
 import re
 import secrets
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Any, Final
 
@@ -265,57 +265,73 @@ def _stamp(value: datetime | None) -> str:
     return "NULL" if value is None else "set"
 
 
+def backup_row(b: FixtureBackup, now: datetime) -> dict[str, Any]:
+    """Every value `insert_backup` writes of `b`'s row as of `now`."""
+    started = now - b.age
+    return {
+        **_backup_columns(b),
+        "id": b.id,
+        "started_at": started,
+        "finished_at": started + _BACKUP_RUN,
+        "verified_at": started + 2 * _BACKUP_RUN if b.status == "verified" else None,
+    }
+
+
+async def insert_backup(
+    conn: AsyncConnection, b: FixtureBackup, *, now: datetime, **more: Any
+) -> None:
+    """`b`'s row as of `now`, `DO NOTHING` on its id; `more` sets columns besides the seed's. It
+    refuses nothing itself: its caller refuses a database not named for tests first, as
+    `seed_backups` and the backup worlds do."""
+    row = pg_insert(m.backups).values(**backup_row(b, now), **more)
+    await conn.execute(row.on_conflict_do_nothing(index_elements=["id"]))
+
+
 async def seed_backups(conn: AsyncConnection, *, now: datetime) -> None:
     """BACKUP-VERIFY-FAILED as of `now`; a second run keeps the rows the first wrote."""
     require_aware(now)
     await refuse_unless_test_database(conn)
     for b in BACKUPS:
-        started = now - b.age
-        verified = b.status == "verified"
-        await conn.execute(
-            pg_insert(m.backups)
-            .values(
-                **_backup_columns(b),
-                id=b.id,
-                started_at=started,
-                finished_at=started + _BACKUP_RUN,
-                verified_at=started + 2 * _BACKUP_RUN if verified else None,
-            )
-            .on_conflict_do_nothing(index_elements=["id"])
-        )
+        await insert_backup(conn, b, now=now)
+
+
+def backup_differences(b: FixtureBackup, row: Mapping[Any, Any] | None) -> list[str]:
+    """Each way `row`, read with `BACKUP_COLUMNS`, is not `b`'s row as `insert_backup` writes it."""
+    if row is None:
+        return [f"{b.handle}: no row"]
+    ran = "NULL" if row["finished_at"] is None else str(row["finished_at"] - row["started_at"])
+    got = {
+        **row,
+        "verified_at": _stamp(row["verified_at"]),
+        "deleted_at": _stamp(row["deleted_at"]),
+        "finished_at after started_at": ran,
+    }
+    want = _backup_columns(b) | {
+        "verified_at": "set" if b.status == "verified" else "NULL",
+        "deleted_at": "NULL",  # a deleted artefact no longer counts as the last verified one
+        "finished_at after started_at": str(_BACKUP_RUN),
+    }
+    return [f"{b.handle}: {c} is {got[c]!r}, not {v!r}" for c, v in want.items() if got[c] != v]
+
+
+#: What a check reads of a fixture backup's row: its id, its times and the columns the seed writes.
+BACKUP_COLUMNS: Final = (
+    *("id", "started_at", "finished_at", "verified_at", "deleted_at"),
+    *_backup_columns(BACKUP_VERIFY_FAILED),
+)
 
 
 async def check_backups(conn: AsyncConnection) -> None:
     """Raise `FixtureCheckError` naming each way the catalogue is not the fixture's two backups."""
     await refuse_unless_test_database(conn)
-    times = ("started_at", "finished_at", "verified_at", "deleted_at")
-    names = ("id", *times, *_backup_columns(BACKUP_VERIFY_FAILED))
-    read = sa.select(*(m.backups.c[n] for n in names))  # a test catalogue: a handful of rows
+    read = sa.select(*(m.backups.c[n] for n in BACKUP_COLUMNS))  # a handful of rows, as a test's
     rows = (await conn.execute(read)).mappings().all()
     held = {r["id"]: r for r in rows}
     failed: list[str] = []
     if held.keys() - {b.id for b in BACKUPS}:
         failed.append("the backups table holds a row that is not the fixture's")
     for b in BACKUPS:
-        row = held.get(b.id)
-        if row is None:
-            failed.append(f"{b.handle}: no row")
-            continue
-        ran = "NULL" if row["finished_at"] is None else str(row["finished_at"] - row["started_at"])
-        got = {
-            **row,
-            "verified_at": _stamp(row["verified_at"]),
-            "deleted_at": _stamp(row["deleted_at"]),
-            "finished_at after started_at": ran,
-        }
-        want = _backup_columns(b) | {
-            "verified_at": "set" if b.status == "verified" else "NULL",
-            "deleted_at": "NULL",  # a deleted artefact no longer counts as the last verified one
-            "finished_at after started_at": str(_BACKUP_RUN),
-        }
-        failed += [
-            f"{b.handle}: {c} is {got[c]!r}, not {v!r}" for c, v in want.items() if got[c] != v
-        ]
+        failed += backup_differences(b, held.get(b.id))
     latest = max(rows, key=lambda r: (r["started_at"], r["id"]), default=None)
     if BACKUP_VERIFY_FAILED.id in held and latest is not held[BACKUP_VERIFY_FAILED.id]:
         failed.append(f"{BACKUP_VERIFY_FAILED.handle}: is not the latest backup")
