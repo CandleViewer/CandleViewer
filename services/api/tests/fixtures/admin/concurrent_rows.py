@@ -1,11 +1,13 @@
 """AUDIT-CONCURRENT (E42-Q01, #962): AC-ADM-16's 1,000 audit rows, from two connections.
 
-The seed runs 500 rounds, and in each round two inserts race for the chain lock: one through the
+The seed runs 500 rounds, and in each round two inserts are in flight together: one through the
 app's insert path (`SqlAlchemyAuditRepository.insert`, the writer's flusher's own), the other a raw
-`INSERT` on a psycopg connection, which meets the lock only in the trigger. Either may win a round,
-but a round ends before the next begins, so the rows alternate in pairs. The trigger chains both
-(ids are drawn under the lock since 0045), so a verify over the rows must find no break:
-`check_concurrent_rows` runs the app's own verify over them.
+`INSERT` on a psycopg connection, which meets the chain lock only in the trigger. Either may take
+the lock first, but a round ends before the next begins, so the rows alternate in pairs. The
+trigger chains both (ids are drawn under the lock since 0045), so a verify over the rows must find
+no break: `check_concurrent_rows` runs the app's own verify over them. The seed does not make the
+two meet at the lock (the app's path takes it after its `SET LOCAL`s), so it is no proof of
+contention; `test_audit_repository.py`'s `test_two_connection_inserts_link_in_id_order` is.
 
 It writes 1,000 rows that can never be removed (C-5.7), so a database not named for tests is
 `FixtureRefused` before anything is read or written, on the pool and on the psycopg connection. A

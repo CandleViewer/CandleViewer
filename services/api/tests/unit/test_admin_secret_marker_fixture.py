@@ -1,7 +1,8 @@
 """E42-Q01 (#962): AUDIT-SECRET-MARKER: the marker's parameters, the real audit writer keeping it
-out of the stored entry and the WAL, the refusal of a database not named for tests, and the check
-over spoiled worlds. The writer is the real `AuditWriter`, over an in-memory `audit_log` (no
-Docker); the Postgres half is `tests/integration/admin/test_admin_fixture_b4b_pg.py`.
+out of the stored entry and the WAL, a second seed after a run cut before its flush, the refusal of
+a database not named for tests, and the check over spoiled worlds. The writer is the real
+`AuditWriter`, over an in-memory `audit_log` (no Docker); the Postgres half is
+`tests/integration/admin/test_admin_fixture_b4b_pg.py`.
 """
 
 from __future__ import annotations
@@ -9,18 +10,22 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.audit.redact import REDACTION_MARKER, redact
+from candleviewer.audit.repository import AuditRepository
+from candleviewer.audit.wal import AuditWal
+from candleviewer.audit.writer import AuditWriter
 from candleviewer.observability.redaction import redact_text
 from tests.fixtures.admin.secret_marker import (
     ACTION,
     ACTOR,
     MARKER,
     OBJECT_ID,
+    WAL_NAME,
     check_secret_marker,
     seed_secret_marker,
 )
@@ -58,15 +63,25 @@ def test_the_entrys_action_is_registered() -> None:
 async def test_the_seed_writes_one_entry_and_the_marker_stays_out_of_it_and_the_wal(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Each record the WAL is handed is caught as it is appended: the flush compacts the file, so a
+    scan of it afterwards would find nothing whatever it had held."""
     db = FakeDb()
     patch_audit_session(monkeypatch, db)
+    appended: list[dict[str, Any]] = []
+    append = AuditWal.append
+
+    def caught(wal: AuditWal, record: dict[str, Any]) -> int:
+        appended.append(record)
+        return append(wal, record)
+
+    monkeypatch.setattr(AuditWal, "append", caught)
     await seed_secret_marker(_DSN, tmp_path)
     [row] = _stored(db)
     assert (row["actor_label"], row["action"], row["object_id"]) == (ACTOR, ACTION, OBJECT_ID)
     assert row["before_state"] == {"api_key": REDACTION_MARKER}
     assert row["after_state"] == {"api_secret": REDACTION_MARKER}
     assert MARKER not in json.dumps(row, default=str)
-    assert [f for f in _files(tmp_path) if MARKER.encode() in f.read_bytes()] == []
+    assert (len(appended), MARKER in json.dumps(appended, default=str)) == (1, False)
     await check_secret_marker(_DSN)
 
 
@@ -76,6 +91,36 @@ async def test_a_second_seed_writes_nothing(
     db = FakeDb()
     patch_audit_session(monkeypatch, db)
     await seed_secret_marker(_DSN, tmp_path)
+    await seed_secret_marker(_DSN, tmp_path)
+    assert len(_stored(db)) == 1
+
+
+class _Down:
+    """An `audit_log` that is unreachable: the entry stays in the WAL."""
+
+    async def insert(self, record: dict[str, Any]) -> None:
+        raise OSError("the database is down")
+
+
+async def test_a_seed_after_a_run_cut_before_its_flush_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A run that ended between the emit and the flush leaves the entry in the WAL. The next run's
+    writer replays it inside its flusher, after `start()` returns: a seed that read before the
+    flush would find no entry and emit a second one, and audit rows can never be removed."""
+    cut = AuditWriter(cast("AuditRepository", _Down()), str(tmp_path / WAL_NAME))
+    await cut.start()
+    await cut.emit(
+        ACTION,
+        actor_label=ACTOR,
+        object_kind="api_key",
+        object_id=OBJECT_ID,
+        before_state={"api_key": MARKER},
+        after_state={"api_secret": MARKER},
+    )
+    await cut.stop(0.05)
+    db = FakeDb()
+    patch_audit_session(monkeypatch, db)
     await seed_secret_marker(_DSN, tmp_path)
     assert len(_stored(db)) == 1
 

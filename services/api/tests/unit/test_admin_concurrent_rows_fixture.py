@@ -116,21 +116,44 @@ async def test_each_round_races_the_apps_insert_against_the_raw_one(
     assert len(db.tables["audit_log"]) == 2 * ROUNDS
 
 
-async def test_the_seed_writes_500_rows_from_each_connection_and_answers_their_range(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+@pytest.fixture
+async def seeded(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """One seed over the fakes: its database, its raw connection, the ranges verify is asked and
+    the seed's answer."""
     db = FakeDb()
     raw = _Raw("test", db)
     asked = _world(monkeypatch, db, raw)
-    assert await seed_concurrent_rows(_DSN, now=_NOW) == (1, 2 * ROUNDS)
-    actors = [row["actor_label"] for row in db.tables["audit_log"]]
+    answer = await seed_concurrent_rows(_DSN, now=_NOW)
+    return SimpleNamespace(db=db, raw=raw, asked=asked, answer=answer)
+
+
+def _actors(db: FakeDb) -> list[str]:
+    return [row["actor_label"] for row in db.tables["audit_log"]]
+
+
+async def test_the_seed_answers_the_range_of_its_rows(seeded: SimpleNamespace) -> None:
+    assert seeded.answer == (1, 2 * ROUNDS)
+
+
+async def test_the_seed_writes_500_rows_from_each_connection(seeded: SimpleNamespace) -> None:
+    actors = _actors(seeded.db)
     assert (actors.count(APP_ACTOR), actors.count(RAW_ACTOR)) == (ROUNDS, ROUNDS)
+
+
+async def test_the_two_connections_rows_alternate_in_pairs(seeded: SimpleNamespace) -> None:
+    actors = _actors(seeded.db)
     assert [set(actors[i : i + 2]) for i in range(0, 2 * ROUNDS, 2)] == [
         {APP_ACTOR, RAW_ACTOR}
     ] * ROUNDS
-    assert raw.closed
+
+
+async def test_the_seed_closes_its_raw_connection(seeded: SimpleNamespace) -> None:
+    assert seeded.raw.closed
+
+
+async def test_the_check_passes_and_verifies_the_seeds_range(seeded: SimpleNamespace) -> None:
     await check_concurrent_rows(_DSN)
-    assert asked == [(1, 2 * ROUNDS)]
+    assert seeded.asked == [(1, 2 * ROUNDS)]
 
 
 async def test_a_second_seed_writes_nothing_and_answers_the_same_range(

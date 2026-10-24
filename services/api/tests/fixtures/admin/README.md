@@ -6,10 +6,10 @@ addresses, `fixture` labels, and ids and numeric exchange uids (the `ea_uid_fmt`
 only) derived from each handle's name with `uuid5`: the handles' rows are the same on every run. Two
 things are random by design: the default profile each account gets from the `trg_ea_default_profile`
 trigger, and the invite's token. Nothing here is a credential, an exchange key, a token or anyone's
-personal data, and `tests/unit/test_admin_fixture_handles.py`, `test_admin_fixture_seed.py`,
-`test_admin_corrupt_chain_fixture.py` and `test_admin_flag_overrides_fixture.py` pass every value,
-and this file, through the log redactor to keep it so. One value is left out of that scan, by name:
-AUDIT-SECRET-MARKER's marker, which is secret-shaped on purpose (see its section).
+personal data, and the admin-fixture unit tests (`tests/unit/test_admin_*.py`) pass every value
+through the log redactor to keep it so; `test_admin_fixture_handles.py` passes this file too. One
+value is left out of that scan, by name: AUDIT-SECRET-MARKER's marker, which is secret-shaped on
+purpose (see its section).
 
 | File                 | What it holds                                                                                   |
 | -------------------- | ----------------------------------------------------------------------------------------------- |
@@ -292,10 +292,10 @@ await check_forged_seal(relational, keys, now=now)
 - **In process:** `forged_row` builds the same row without a database, and `check_left_out` checks
   any rows read back. The plan runs AD-T07-N01 in process only, over an injected store.
 - **Idempotent and self-checking:** a second run rewrites the same row (an upsert), and the check
-  passes again. `check_forged_seal` raises
-  `FixtureCheckError` unless the row is there once, its seal fails on the HMAC (not on an unknown
-  key or a hash) and the inspector, reading it back with the same keys, lists nothing and says
-  `error`. The critical `system_events` row AD-T07-N01 expects is not written by the inspector yet.
+  passes again. `check_forged_seal` raises `FixtureCheckError` unless the row is there once, its
+  seal fails on the HMAC (not on an unknown key or a hash) and the inspector, reading it back with
+  the same keys, lists nothing and says `error`. The critical `system_events` row AD-T07-N01
+  expects is not written by the inspector yet.
 - **Test databases only:** a database not named for tests is refused with `FixtureRefused` before
   any read.
 - `tests/integration/admin/test_admin_fixture_b4a_pg.py` runs the three seeds on Postgres 16,
@@ -314,15 +314,17 @@ await check_secret_marker(pg_dsn)
 
 - **What it writes:** one `api_key.import` entry through the real audit writer, which it builds on
   `pg_dsn` (it cannot point at another database). Its `before_state` holds the marker under `api_key` and
-  its `after_state` under `api_secret`, as a caller's mistake would. The audit redactor replaces a value by
-  the name of its field, so the entry is stored with `<redacted:secret>` in both, and no read of it shows
-  the marker: AD-S04-07's scan of the drawer's DOM and of the exported file finds none. The entry's
+  its `after_state` under `api_secret`, as a caller's mistake would. The audit redactor decides by the
+  field's name, not by the value's shape, and writes `<redacted:secret>` in the value's place, so the
+  entry is stored with that in both, and no read of it shows the marker: AD-S04-07's scan of the drawer's DOM and of the exported file finds none. The entry's
   `actor_label`, `fixture-secret-marker`, is how a case finds it.
 - **The marker:** `FIXTURE-SECRET-` and 24 letters and digits (`MARKER` in `secret_marker.py`). It is no
   credential, and it is shaped like an exchange key so that the log redactor replaces it too. That is why
   the fixtures' secret scan leaves this one value out, by name, and no other, and why it is in no file of
   this directory but that module.
-- **Idempotent and self-checking:** a second run finds the entry and writes nothing. `check_secret_marker`
+- **Idempotent and self-checking:** a second run finds the entry and writes nothing, even after a run
+  that ended between its emit and its flush (the seed waits for the writer's replay before it reads).
+  `check_secret_marker`
   raises `FixtureCheckError` unless the one entry is stored with the redacted states and the marker is in
   none of its columns; it never prints a stored value.
 - **Test databases only, because it is permanent:** an entry can never be removed (C-5.7), so a database
@@ -346,7 +348,7 @@ await check_concurrent_rows(pg_dsn)  # then verify from_id=first, to_id=last
 - **What it writes:** AC-ADM-16's 1,000 audit rows from two connections, in 500 rounds. In each round
   one insert goes through the app's insert path (the audit repository's `insert`, which the writer's
   flusher calls) and one is a raw `INSERT` on a psycopg connection, which meets the chain lock only in
-  the trigger; the two race for it. Either may win a round, but a round ends before the next begins, so
+  the trigger; the two are in flight together. Either may take the lock first, but a round ends before the next begins, so
   the rows alternate in pairs. The trigger chains both, ids being drawn under the lock (0045), so a
   verify over `first` to `last` must find no break. The rows are `auth.login` entries by
   `fixture-concurrent-app` and `fixture-concurrent-raw`.
@@ -362,7 +364,9 @@ await check_concurrent_rows(pg_dsn)  # then verify from_id=first, to_id=last
   It needs no row of slice A's world.
 - `tests/unit/test_admin_concurrent_rows_fixture.py` shows with a barrier that the two inserts of a round
   are in flight together; `tests/integration/admin/test_admin_fixture_b4b_pg.py` runs the seed on
-  Postgres 16.
+  Postgres 16. The seed does not make the two meet at the chain lock (the app's path takes it after
+  its `SET LOCAL`s), so it is no proof of contention: `tests/integration/audit/test_audit_repository.py`'s
+  `test_two_connection_inserts_link_in_id_order` is.
 
 ## The degraded snapshot (SC-CHAIN-TRIPS)
 

@@ -3,9 +3,10 @@ the drawer and the export (AD-S04-07, C-12.6).
 
 The seed emits one `api_key.import` entry through the real audit writer, whose states carry `MARKER`
 as a caller's mistake would: under `api_key` before and under `api_secret` after. The audit redactor
-replaces a value by the name of its field, so the entry is stored with `<redacted:secret>` in both
-states, and nothing that reads it (the drawer's diff, the export) can show the marker. A scan of
-either for `MARKER` finds nothing; the check shows the same of the stored row.
+decides by the field's name, not by the value's shape, and writes `<redacted:secret>` in the value's
+place, so the entry is stored with that in both states, and nothing that reads it (the drawer's
+diff, the export) can show the marker. A scan of either for `MARKER` finds nothing; the check shows
+the same of the stored row.
 
 `MARKER` is `FIXTURE-SECRET-` and 24 letters and digits: plainly the fixture's, and no credential.
 Its body is the shape of an exchange key, so the log redactor replaces it too; for that reason the
@@ -43,8 +44,11 @@ def _mine(*columns: Any) -> sa.Select[Any]:
 
 async def seed_secret_marker(dsn: str, wal_dir: Path) -> None:
     """The entry through a writer built on `dsn`, its WAL in `wal_dir`. A second run finds it and
-    writes nothing. `dsn` is the SQLAlchemy asyncpg URL of a migrated test database."""
+    writes nothing, even after a run that ended between the emit and the flush: the writer's
+    `start()` replays that run's WAL inside its flusher, so the seed waits for the flush before it
+    reads. `dsn` is the SQLAlchemy asyncpg URL of a migrated test database."""
     async with audit_session(dsn, wal_dir / WAL_NAME) as (relational, writer):
+        await writer.flush(60)
         async with relational.engine.connect() as conn:
             held = (await conn.execute(_mine(m.audit_log.c.id))).all()
         if not held:

@@ -1,12 +1,13 @@
 """Integration (E42-Q01, #962): the audit-writer seeds of slice B4b on a migrated Postgres 16:
 AUDIT-SECRET-MARKER and AUDIT-CONCURRENT.
 
-Each seed passes its own check, a second seed writes no row, and a database not named for tests is
-refused, before a table is touched: the refused database here is empty, so a seed that went on
-would fail on a missing table, not with `FixtureRefused`. Audit rows can never be removed (C-5.7),
-so each test runs in a database cloned from the migrated `test` one and named for tests. The marker
-entry is read back as the Owner's raw read and the export's batch read it, and neither holds the
-marker. Needs Docker (testcontainers); CI `integration` runs it.
+Each seed passes its own check, both pass in one database beside another actor's row, a second seed
+writes no row, and a database not named for tests is refused, before a table is touched: the refused
+database here is empty, so a seed that went on would fail on a missing table, not with
+`FixtureRefused`. Audit rows can never be removed (C-5.7), so each test runs in a database cloned
+from the migrated `test` one and named for tests. The marker entry is read back as the Owner's raw
+read and the export's batch read it, and neither holds the marker. Needs Docker (testcontainers); CI
+`integration` runs it.
 """
 
 from __future__ import annotations
@@ -82,6 +83,15 @@ def other_dsn(pg_dsn: str) -> str:
 
 
 _LOG = "SELECT count(*) FROM audit_log"
+_OTHER_ROW = (
+    "INSERT INTO audit_log (record_id, actor_label, action, object_id, event_ts)"
+    " VALUES (%s, 'fixture-other-actor', 'auth.login', 'fixture-other', %s)"
+)
+
+
+def _other_actors_row(dsn: str) -> None:
+    with psycopg.connect(_sync(dsn)) as conn:
+        conn.execute(_OTHER_ROW, (uuid.uuid4(), _NOW))
 
 
 async def test_the_secret_marker_is_stored_redacted_and_a_second_seed_writes_no_row(
@@ -126,6 +136,21 @@ async def test_concurrent_rows_pass_their_check_and_a_second_seed_writes_none(
     await check_concurrent_rows(fresh)
     assert await seed_concurrent_rows(fresh, now=_NOW) == (first, last)
     assert await asyncio.to_thread(_rows, fresh, _LOG) == [(2 * ROUNDS,)]
+
+
+async def test_both_seeds_beside_another_actors_row_pass_and_a_second_seed_writes_none(
+    fresh: str, tmp_path: Path
+) -> None:
+    """Each seed reads only its own actors' rows: another actor's entry ahead of both, and each
+    other's rows, change neither seed's answer nor its check."""
+    await asyncio.to_thread(_other_actors_row, fresh)
+    await seed_secret_marker(fresh, tmp_path)
+    first, last = await seed_concurrent_rows(fresh, now=_NOW)
+    await check_secret_marker(fresh)
+    await check_concurrent_rows(fresh)
+    await seed_secret_marker(fresh, tmp_path)
+    assert await seed_concurrent_rows(fresh, now=_NOW) == (first, last)
+    assert await asyncio.to_thread(_rows, fresh, _LOG) == [(2 * ROUNDS + 2,)]
 
 
 _REFUSED: dict[str, Callable[[str, Path], Awaitable[object]]] = {
