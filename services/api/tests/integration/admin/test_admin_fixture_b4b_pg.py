@@ -245,6 +245,21 @@ async def test_the_revoked_backups_records_bind_its_digest_and_covers_to_and_rev
         await _in_world(fresh, lambda conn: check_admin_world(conn, now=_NOW))  # by design
 
 
+@pytest.mark.parametrize("world", ["tampered", "revoked"])
+async def test_a_backup_seed_beside_another_actors_row_writes_its_records_and_passes(
+    fresh: str, tmp_path: Path, world: str
+) -> None:
+    """A seed reads only its own records: another actor's entry first hides none of them."""
+    await asyncio.to_thread(_other_actors_row, fresh)
+    if world == "tampered":
+        await seed_backup_tampered(fresh, tmp_path, now=_NOW)
+        await check_backup_tampered(fresh)
+    else:
+        await _in_world(fresh, lambda conn: seed_admin_world(conn, now=_NOW))
+        await seed_backup_then_revoked(fresh, tmp_path, now=_NOW)
+        await check_backup_then_revoked(fresh)
+
+
 async def test_a_backup_world_refuses_a_catalogue_that_holds_seed_backups_rows_and_writes_nothing(
     fresh: str, tmp_path: Path
 ) -> None:

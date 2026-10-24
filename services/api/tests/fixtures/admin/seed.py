@@ -280,7 +280,9 @@ def backup_row(b: FixtureBackup, now: datetime) -> dict[str, Any]:
 async def insert_backup(
     conn: AsyncConnection, b: FixtureBackup, *, now: datetime, **more: Any
 ) -> None:
-    """`b`'s row as of `now`, `DO NOTHING` on its id; `more` sets columns besides the seed's."""
+    """`b`'s row as of `now`, `DO NOTHING` on its id; `more` sets columns besides the seed's. It
+    refuses nothing itself: its caller refuses a database not named for tests first, as
+    `seed_backups` and the backup worlds do."""
     row = pg_insert(m.backups).values(**backup_row(b, now), **more)
     await conn.execute(row.on_conflict_do_nothing(index_elements=["id"]))
 
