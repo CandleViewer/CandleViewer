@@ -27,11 +27,16 @@ import candleviewer.app as appmod
 from candleviewer.admin.account_access import AccountAccessService
 from candleviewer.admin.user_disable import UserDisableService
 from candleviewer.api.onboarding_checklist import STEP_ORDER
+from candleviewer.profiles_wiring import ProfilesWiring
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.account_access import AccessGrant
 from candleviewer.storage.repositories.account_access_sqlalchemy import (
     SqlAlchemyAccountAccessStore,
 )
+from candleviewer.storage.repositories.account_profiles_sqlalchemy import (
+    SqlAlchemyAccountProfileStore,
+)
+from candleviewer.storage.repositories.accounts_sqlalchemy import SqlAlchemyAccountsStore
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.onboarding_sqlalchemy import SqlAlchemyOnboardingStore
 from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
@@ -39,6 +44,7 @@ from candleviewer.storage.repositories.user_lifecycle_sqlalchemy import SqlAlche
 from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserAdminStore
 from tests.contract.rbac import rbac_harness as rbac
+from tests.contract.test_account_profile_reads_provider import Store
 from tests.csrf_helpers import csrf_headers
 
 _ROWS = yaml.safe_load(rbac.MATRIX_PATH.read_text(encoding="utf-8"))["operations"]
@@ -169,6 +175,10 @@ def deployed() -> Iterator[SimpleNamespace]:
             mp.setattr(SqlAlchemyOnboardingStore, name, _delegate(onboarding, name))
         trade, grants = _TradeGrants(), "load_trade_grants"
         mp.setattr(SqlAlchemyScopeSource, grants, _delegate(trade, grants))
+        profiles = Store()  # #906 D1c: the account and profile reads, scoped as Postgres does
+        mp.setattr(SqlAlchemyAccountsStore, "get_account", _delegate(profiles, "get_account"))
+        for name in ("list_profiles", "get_profile"):
+            mp.setattr(SqlAlchemyAccountProfileStore, name, _delegate(profiles, name))
         mp.setattr(appmod, "real_socket_enumerator", lambda: _loopback_only)
         app = appmod.create_app(real)  # nothing injected: the deployed composition
         ctx = app.state.app_context
@@ -185,6 +195,7 @@ def deployed() -> Iterator[SimpleNamespace]:
             onboarding=onboarding,
             admin=admin,
             trade=trade,
+            profiles=profiles,
         )
 
 
@@ -556,3 +567,26 @@ def test_deployed_app_places_an_order_as_the_sessions_principal_with_its_trade_g
         deployed.trade.rows.clear()
     assert (resp.status_code, resp.json()["code"]) == (status, code), resp.text
     assert deployed.trade.calls[start:] == [manager]
+
+
+@pytest.mark.parametrize(
+    ("actor", "status"),
+    [
+        ("owner", 200),
+        ("manager_with_grant", 200),
+        ("manager_without_grant", 404),
+        ("viewer", 404),
+        ("unauthenticated", 401),
+    ],
+)
+def test_deployed_app_reads_profiles_through_the_callers_grants(
+    deployed: SimpleNamespace, actor: str, status: int
+) -> None:
+    """#906 D1c: nothing injected, so `SessionSnapshotResolver(grants=True)` loads the caller's
+    grants and the stores scope both reads by them; the real backend wires the profile store the
+    reads go through (`app.state.profiles`, D1a's R1C-01)."""
+    assert isinstance(deployed.client.app.state.profiles, ProfilesWiring)
+    path = f"/exchange-accounts/{rbac.GRANTED}/profiles"
+    for sent in (path, f"{path}/{deployed.profiles.rows[rbac.GRANTED][0].id}"):
+        resp = deployed.client.get(sent, headers=_headers(deployed.client, actor))
+        assert resp.status_code == status, (sent, resp.text)
