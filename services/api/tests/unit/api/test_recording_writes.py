@@ -291,8 +291,10 @@ async def test_a_non_owner_reads_its_write_through_the_restricted_view() -> None
     assert env.actions() == []  # an authorized re-add of a manual entry: no record
     hidden = fake.put("XRPUSDT", "position_open")
     env.elevated = True
-    assert (await env.http.put(_PIN.format(hidden.id), json={"pinned": True})).status_code == 404
-    assert not fake.entries["XRPUSDT"].pinned
+    for method, suffix, body in _WRITES_BY_ID:  # every write by id: the hidden row is no row
+        answer = await env.http.request(method, f"{_one(hidden.id)}{suffix}", json=body)
+        assert (answer.status_code, answer.json()["code"]) == (404, "not_found")
+    assert fake.entries["XRPUSDT"] == hidden and env.actions() == []
 
 
 class _Spied(FakeRecorder):
