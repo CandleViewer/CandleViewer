@@ -1,4 +1,4 @@
-"""E26-T01 replay settings (`CV_REPLAY_*`): the ticket's defaults and the validated bounds."""
+"""Replay settings (`CV_REPLAY_*`; E26-T01, #2668 G1): the defaults and the validated bounds."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ def test_replay_settings_default_to_the_ticket_values() -> None:
     s = _settings()
     assert (s.replay_idle_ttl_s, s.replay_reclaim_interval_s) == (7200.0, 60.0)
     assert (s.replay_max_sessions_per_user, s.replay_max_window_hours) == (2, 24)
+    assert (s.replay_loop_share, s.replay_loop_burst_ms) == (0.25, 50)
 
 
 @pytest.mark.parametrize(
@@ -25,8 +26,21 @@ def test_replay_settings_default_to_the_ticket_values() -> None:
         ("replay_reclaim_interval_s", 0.5), ("replay_reclaim_interval_s", 3_601),
         ("replay_max_sessions_per_user", 0), ("replay_max_sessions_per_user", 17),
         ("replay_max_window_hours", 0), ("replay_max_window_hours", 24 * 31 + 1),
+        ("replay_loop_share", 0.049), ("replay_loop_share", 0.751),
+        ("replay_loop_burst_ms", 4), ("replay_loop_burst_ms", 251),
     ],
 )  # fmt: skip
 def test_replay_settings_outside_their_bounds_are_refused(name: str, value: float) -> None:
     with pytest.raises(ValidationError):
         _settings(**{name: value})
+
+
+def test_the_replay_loop_budget_settings_take_their_bounds_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C-4.14: the budget has no off value; its bounds themselves are accepted."""
+    monkeypatch.setenv("CV_REPLAY_LOOP_SHARE", "0.05")
+    monkeypatch.setenv("CV_REPLAY_LOOP_BURST_MS", "250")
+    s = _settings()
+    assert (s.replay_loop_share, s.replay_loop_burst_ms) == (0.05, 250)
+    assert _settings(replay_loop_share=0.75, replay_loop_burst_ms=5).replay_loop_share == 0.75
