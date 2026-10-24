@@ -580,6 +580,10 @@ class RecordedStopRepository:
         as `waiting_keys`."""
         return await self._store.in_force_for_key(account_id, symbol, position_idx)
 
+    async def database_now(self) -> datetime:
+        """The database's clock (`RecordedStopStore.database_now`): the startup floor's start."""
+        return await self._store.database_now()
+
     async def put_in_force(
         self,
         account_id: UUID,

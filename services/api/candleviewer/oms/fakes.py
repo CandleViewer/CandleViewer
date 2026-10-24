@@ -1082,6 +1082,10 @@ class InMemoryRecordedStopStore:
         )
         return tuple(sorted(shown, key=lambda r: r.kind))
 
+    async def database_now(self) -> datetime:
+        await asyncio.sleep(0)
+        return self._db._clock()
+
     async def put_in_force(
         self,
         account_id: UUID,

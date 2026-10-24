@@ -42,8 +42,8 @@ the trading port's `AccountRef`, whose `key_ref` only that account's active key 
 The command port (`commands.OmsCommandPort`) consumes five more, which slice 3 binds:
 `SubmitAudit` (the keyed audit records a stop request's row names), `OrderHandovers` (with
 `NoHandoverStore`, its one production binding until E29-T06), `CredentialRejections` (24 Sec.8.6
-`AUTH_ERROR`), `TradingSwitches` (C-2.21's switches before a re-send) and `StopRequestGate`, with
-its fail-closed interim `RefuseWhileWaiting` (21 Sec.3.3.11). `ForeignOrderLockout` (SR-E27-19) is
+`AUTH_ERROR`), `TradingSwitches` (C-2.21's switches before a re-send) and `StopRequestGate`, which
+S3-H's `stop_gate.ResolvingStopGate` serves (21 Sec.3.3.11). `ForeignOrderLockout` (SR-E27-19) is
 declared here for E29-T05 and E29-T06, its callers.
 
 The private-stream consumer (E29-T05, #848; 24 Sec.8.12) consumes five more, which its last
@@ -73,8 +73,7 @@ Verdicts are B1's gate values (`statechart/bindings/b01_order.py`).
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
@@ -94,9 +93,6 @@ from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.observability.secret_type import ComparableSecret, Secret
 from candleviewer.risk.models import RiskDecision, RiskRefusal
 from candleviewer.settings import Environment as ProcessEnvironment
-from candleviewer.storage.errors import StorageError
-from candleviewer.storage.repositories.orders import OrderStoreError
-from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 
 from .errors import (
     RULE_SIZING_MODE_UNSUPPORTED,
@@ -105,9 +101,7 @@ from .errors import (
     OrderInvalid,
     ProtectionReadingsUnavailable,
     ReconciliationUnavailable,
-    StopRequestPending,
     StopUnitUnsupported,
-    StoreUnavailable,
     TradingDisabled,
 )
 from .order_link import OrderPurpose
@@ -545,69 +539,12 @@ class StopRequestGate(Protocol):
     ) -> None: ...
 
 
-class WaitingRows(Protocol):
-    """The recorded stops' `waiting_for_key` (`oms.repository`): the one read the interim gate
-    makes, scoped by the account it is given (C-12.4)."""
-
-    async def waiting_for_key(
-        self,
-        account_id: UUID,
-        symbol: str,
-        position_idx: int,
-        *,
-        now: datetime,
-        bound_s: float | None,
-    ) -> Sequence[RecordedStopRow]: ...
-
-
 #: The `Retry-After` of a request refused because a row of its key waits for the complete read, in
 #: seconds: only that read clears it (the orchestrator's Q-D ruling); a key whose read cleared
 #: nothing waits as long before an entry asks the venue again.
 STOP_REQUEST_RETRY_AFTER_S: Final = 5
 #: The gate's bound on each of its reads of the key's waiting rows, in seconds.
 STOP_GATE_READ_TIMEOUT_S: Final = 1.0
-
-
-class RefuseWhileWaiting:
-    """The interim `StopRequestGate` until slice 3's complete read (the orchestrator's Q-A ruling):
-    it resolves no waiting row, it refuses while the key has one (fail closed). A read that fails,
-    or does not answer within `timeout_s`, refuses too (`StoreUnavailable`): no stop request leaves
-    unchecked. `bound_s` is how long an unanswered request holds its key before it waits for the
-    complete read, the stop request's bound (`oms_wiring.OmsBounds.stop_request_s`). It starts no
-    read, so it never waits: `wait_s` and `protective` are the resolving gate's, which replaces it
-    once wired."""
-
-    def __init__(
-        self,
-        rows: WaitingRows,
-        *,
-        now: Callable[[], datetime],
-        bound_s: float,
-        timeout_s: float = STOP_GATE_READ_TIMEOUT_S,
-    ) -> None:
-        self._rows = rows
-        self._now = now
-        self._bound_s = bound_s
-        self._timeout_s = timeout_s
-
-    async def clear(
-        self, key: PositionKey, *, wait_s: float = 0.0, protective: bool = False
-    ) -> None:
-        try:
-            async with asyncio.timeout(self._timeout_s):
-                waiting = await self._rows.waiting_for_key(
-                    key.account_id,
-                    key.symbol,
-                    key.position_idx,
-                    now=self._now(),
-                    bound_s=self._bound_s,
-                )
-        except (TimeoutError, StorageError, OrderStoreError) as exc:
-            _log().warning("oms_stop_gate_unavailable", failure=type(exc).__name__)
-            raise StoreUnavailable from None
-        if waiting:
-            _log().warning("oms_stop_request_waiting", symbol=key.symbol, rows=len(waiting))
-            raise StopRequestPending(retry_after_s=STOP_REQUEST_RETRY_AFTER_S)
 
 
 #: What a lockout opens on: an order, or a trade execution, with no OMS intent (24 Sec.8.10); and,
