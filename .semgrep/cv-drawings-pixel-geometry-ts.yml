@@ -1,0 +1,39 @@
+# E14-X03 (#549), DR10, SR-040: the TypeScript arm of the pixel-geometry guard (the Python arm is
+# `cv-drawings-pixel-geometry`). The contract (`DrawingPoint`: `additionalProperties: false`) stores a
+# point as a UTC time `t` and a price `p`; a pixel depends on the viewport. Scoped to the store, which
+# persists chart space only; the chart engine works in pixels by design and is never in scope.
+rules:
+  - id: cv-drawings-pixel-geometry-ts
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      A pixel coordinate (`x`, `y` or `px`) is built in the drawings store. A persisted drawing is chart
+      space only: each point is a UTC time `t` and a price string `p` (DR10; SR-040; the contract's
+      `DrawingPoint` is closed). A pixel depends on the viewport, so a stored drawing would not
+      reproduce. Convert pixels to chart coordinates in the engine before they reach the store.
+      Rule doc: docs/plan/security/ci-gates-e14.md#cv-drawings-pixel-geometry-ts.
+    metadata:
+      rule-id: cv-drawings-pixel-geometry-ts
+      dr: [DR10]
+      sr: SR-040
+      references:
+        - docs/plan/22-api-openapi.yaml DrawingPoint, DrawingGeometry
+        - docs/security/threat-models/E14-drawings.md DR10 (section 5)
+    pattern-either:
+      # An object with a pixel key (shorthand and destructuring included): the store has no pixel to read.
+      - patterns:
+          - pattern: "{..., $K: $V, ...}"
+          - metavariable-regex:
+              metavariable: $K
+              regex: '^["'']?(?:x|y|px)["'']?$'
+      # A pixel key written onto an object.
+      - patterns:
+          - pattern-either:
+              - pattern: $O.$K = $V
+              - pattern: $O["$K"] = $V
+          - metavariable-regex:
+              metavariable: $K
+              regex: "^(?:x|y|px)$"
+    paths:
+      include:
+        - "apps/web/src/features/drawings/store/**"

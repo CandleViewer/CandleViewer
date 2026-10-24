@@ -104,6 +104,7 @@ READ_INPUTS = (
     ("security", "scripts/check_secrets_hygiene.py", ".gitignore"),  # the SR-144 dev-env check
     ("security", "scripts/check_secrets_hygiene.py", ".env.example"),
     ("js", "tools/ci/run-allowed-postinstall.mjs", "tools/ci/allowed-postinstall.json"),
+    ("js", "tools/ci/check_no_inline_suppressions.py", "tools/ci/no-inline-suppression-paths.json"),
     ("engine-bench", "tools/ci/run-allowed-postinstall.mjs", "tools/ci/allowed-postinstall.json"),
     ("e2e", "tools/ci/run-allowed-postinstall.mjs", "tools/ci/allowed-postinstall.json"),  # #1819
     ("migrations", "tools/ci/migration_lint.py", "tools/ci/security-sensitive-tables.txt"),

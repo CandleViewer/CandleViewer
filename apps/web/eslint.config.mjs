@@ -48,6 +48,31 @@ export default tseslint.config(
       "no-unsanitized/property": "error",
     },
   },
+  // E14-X03 (#549; DR6, SR-E14-01): the drawing render paths show stored user text (labels, notes,
+  // template names). No raw-HTML sink is allowed there, and no inline comment can lift the ban:
+  // with noInlineConfig an `eslint-disable` is inert and ESLint warns about it, which
+  // --max-warnings=0 fails. Keep these globs equal to tools/ci/no-inline-suppression-paths.json.
+  {
+    files: [
+      "src/features/drawings/**/*.{ts,tsx,mts,cts}",
+      "src/drawings/**/*.{ts,tsx,mts,cts}",
+      "src/objecttree/**/*.{ts,tsx,mts,cts}",
+    ],
+    plugins: { "no-unsanitized": noUnsanitized },
+    linterOptions: { noInlineConfig: true },
+    rules: {
+      "no-unsanitized/method": "error",
+      "no-unsanitized/property": "error",
+    },
+  },
+  {
+    files: [
+      "src/features/drawings/**/*.{ts,tsx}",
+      "src/drawings/**/*.{ts,tsx}",
+      "src/objecttree/**/*.{ts,tsx}",
+    ],
+    rules: { "react/no-danger": "error" },
+  },
   // E17-T04 S5e-2 (ADR-0005; 50-security): the shared worker's code has no page, so it names none of a page's globals.
   {
     files: ["src/lib/ws/worker/**/*.ts"],

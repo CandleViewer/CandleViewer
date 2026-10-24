@@ -93,6 +93,10 @@ jobs:
       - run: node tools/ci/run-allowed-postinstall.mjs
       - name: Turbo lint --filter=...[origin/main]
         run: pnpm turbo run lint --filter='...[origin/main]' --summarize
+      # E14-X03 (#549; DR6, SR-E14-01): the lint ban on the drawing render paths cannot be switched
+      # off inline (apps/web's `noInlineConfig`), and no other suppression comment goes unreviewed.
+      - name: No unreviewed inline suppression in the drawing render paths (E14-X03)
+        run: python tools/ci/check_no_inline_suppressions.py
       - name: Record lane duration in job summary
         if: always()
         run: node tools/ci/write-turbo-summary.mjs lint >> "$GITHUB_STEP_SUMMARY"

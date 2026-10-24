@@ -1,0 +1,102 @@
+# E14-X03 (#549), DR6/DR7/DR9, SR-E14-01/-02/-04: a drawing's stored text (label, note, template name) is
+# user content. Syntactic, not taint: a text sink that builds a string is flagged whatever it is built
+# from; a raw variable is not "built". Beyond `cv-shell-dangerously-set-inner-html` (whose scope has no
+# literal drawing path nor the engine layer) it adds `document.write`, `createContextualFragment`,
+# `srcdoc`, `setHTMLUnsafe`, each sink named by a string key, string-built URL, name and style
+# attributes, and CSS strings.
+rules:
+  - id: cv-drawings-text-to-html-sink
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      Stored drawing text reaches an HTML, URL, accessible-name or CSS sink. Show it as text: a React
+      child (`{label}`), `el.textContent = raw`, or one attribute set from the raw string
+      (`aria-label={raw}`, `el.setAttribute("aria-label", raw)`). Build no markup, URL or CSS string
+      from it (a style goes through the CSSOM: `el.style.setProperty(name, tokenOrHex)`), and do not strip
+      or escape characters to make it "safe": that breaks right-to-left text and emoji, and the server
+      already removes control and bidi characters (DR6, DR7, DR9; SR-E14-01, SR-E14-02, SR-E14-04).
+      Rule doc: docs/plan/security/ci-gates-e14.md#cv-drawings-text-to-html-sink.
+    metadata:
+      rule-id: cv-drawings-text-to-html-sink
+      dr: [DR6, DR7, DR9]
+      sr: SR-E14-01, SR-E14-02, SR-E14-04
+      references:
+        - docs/security/threat-models/E14-drawings.md DR6, DR7, DR9 (section 5), SR-E14-01, SR-E14-02, SR-E14-04 (section 6.2)
+        - .semgrep/cv-shell-dangerously-set-inner-html.yml
+    pattern-either:
+      - pattern: "<$EL ... dangerouslySetInnerHTML={...} ... />"
+      - pattern: "{..., dangerouslySetInnerHTML: ..., ...}"
+      - pattern: $X.innerHTML = $V
+      - pattern: $X.outerHTML = $V
+      - pattern: $X.insertAdjacentHTML(...)
+      # The same sinks named by a string key, which `no-unsanitized` does not read either.
+      - pattern: $X["innerHTML"] = $V
+      - pattern: $X["outerHTML"] = $V
+      - pattern: $X["insertAdjacentHTML"](...)
+      - pattern: $X.setHTMLUnsafe(...)
+      - pattern: $X["setHTMLUnsafe"](...)
+      - pattern: $D.parseHTMLUnsafe(...)
+      - pattern: $R.createContextualFragment(...)
+      - patterns:
+          - pattern-either:
+              - pattern: $D.write(...)
+              - pattern: $D.writeln(...)
+          - metavariable-regex:
+              metavariable: $D
+              regex: '^(?:[\w$.]*\.)?(?:document|contentDocument)$'
+      - pattern: <$EL ... srcDoc={...} ... />
+      - pattern: "{..., srcDoc: ..., ...}"
+      - pattern: $X.srcdoc = $V
+      - pattern: $X["srcdoc"] = $V
+      - patterns:
+          - pattern: $X.setAttribute($N, ...)
+          - metavariable-regex:
+              metavariable: $N
+              regex: '(?i)^["'']srcdoc["'']$'
+      # CSS strings: the CSSOM (`style.color = ...`, `setProperty`) takes a value, not a string of rules.
+      - patterns:
+          - pattern-either:
+              - pattern: $X.cssText = $V
+              - pattern: $X["cssText"] = $V
+              - pattern: $S.insertRule($V, ...)
+              - pattern: $X.setAttribute("style", $V)
+          - pattern-not: $X.cssText = "..."
+          - pattern-not: $X["cssText"] = "..."
+          - pattern-not: $S.insertRule("...", ...)
+          - pattern-not: $X.setAttribute("style", "...")
+      # URL, accessible-name and style attributes built by concatenation or templating. A literal, a call,
+      # a raw variable and a template without a substitution are not built; a `style` object is the CSSOM path.
+      - patterns:
+          - pattern-either:
+              - pattern: <$EL ... $A={$X + $Y} ... />
+              - pattern: "<$EL ... $A={`...${$X}...`} ... />"
+          - metavariable-regex:
+              metavariable: $A
+              regex: "^(?:href|src|style|aria-label|aria-description|title)$"
+      - patterns:
+          - pattern-either:
+              - pattern: "$R.createElement($T, {..., $K: $X + $Y, ...}, ...)"
+              - pattern: "$R.createElement($T, {..., $K: `...${$X}...`, ...}, ...)"
+          - metavariable-regex:
+              metavariable: $K
+              regex: '^["'']?(?:href|src|style|aria-label|aria-description|title)["'']?$'
+      - patterns:
+          - pattern-either:
+              - pattern: $E.setAttribute($N, $X + $Y)
+              - pattern: "$E.setAttribute($N, `...${$X}...`)"
+          - metavariable-regex:
+              metavariable: $N
+              regex: '(?i)^["''](?:href|src|style|aria-label|aria-description|title)["'']$'
+      - patterns:
+          - pattern-either:
+              - pattern: $E.$P = $X + $Y
+              - pattern: "$E.$P = `...${$X}...`"
+          - metavariable-regex:
+              metavariable: $P
+              regex: "^(?:href|src|style|title|ariaLabel|ariaDescription)$"
+    paths:
+      include:
+        - "apps/web/src/features/drawings/**"
+        - "apps/web/src/drawings/**"
+        - "apps/web/src/objecttree/**"
+        - "packages/chart-engine/src/layers/drawings/**"

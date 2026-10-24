@@ -1,8 +1,9 @@
 # CI security gates for the drawings persistence surface (E14-X03)
 
-> Owner: `@CandleViewer/security`. Ticket: E14-X03 (#549), slice PR-1 of 3. Threat model:
-> `docs/security/threat-models/E14-drawings.md` (DR1, DR10, DR12, DR20, DR21, DR23, DR29, DR30,
-> section 4). Programme rules: `docs/plan/04-security-program.md` section 12.2 (Semgrep composition,
+> Owner: `@CandleViewer/security`. Ticket: E14-X03 (#549), in three slices (PR-1 persistence, PR-2
+> render guards, PR-3 DAST). Threat model: `docs/security/threat-models/E14-drawings.md` (DR1, DR5 to
+> DR7, DR9, DR10, DR12, DR20, DR21, DR23, DR29, DR30, section 4; DR8, the SDF text layer, has no gate
+> here). Programme rules: `docs/plan/04-security-program.md` section 12.2 (Semgrep composition,
 > CI-SEC-006 suppressions) and 16.2 (exceptions). This page explains each gate; the rule YAML is the
 > source of truth for what is matched.
 
@@ -16,6 +17,8 @@
 - Fixtures are trees, `.semgrep/tests/<rule-id>/<repo path>/...`, staged at those paths, with a PEP
   695 file where the real file has generics (`api/drawings*.py`): Semgrep parses it another way
   (#3549).
+- The render-path guards: `vitest run test/features/drawings-lint-ban.test.ts` (in `apps/web`) and
+  `python tools/ci/check_no_inline_suppressions.py`.
 
 ## How these gates run
 
@@ -23,7 +26,7 @@
 in the same job: no workflow change, no new required-check name (C-9.1); `ERROR` blocks
 (`security_gate.py`), so the whole-tree scan keeps `services/api` at zero unsuppressed findings.
 
-**PR-2 owns the pin of the four exceptions below, and its CI step.** The pin is
+**PR-3 owns the pin of the four exceptions below, and its CI step.** The pin will be
 `scripts/tests/test_e14_security_gates.py` (it also pins each rule's metadata, scope and doc
 section). It needs the `semgrep` binary, which CI's governance shards do not have, so it would skip
 there; the CI step is a `semgrep scan --disable-nosem` of the five rules over
@@ -33,9 +36,8 @@ unit tests, which pin their statements.
 
 Every rule but the first is scoped by glob (`api/drawings*.py`; the batch rule also
 `storage/repositories/drawings*.py`): a router moved into a package `api/drawings/`, or a
-`drawing_*.py` module, is out of scope until the globs are widened. This is the persistence half of
-E14-X03; the render-sink rules, the lint ban, the bundle guard and the nightly ZAP profile are the
-next slices.
+`drawing_*.py` module, is out of scope until the globs are widened. The render-path guards (PR-2)
+follow the persistence rules; the nightly ZAP profile is PR-3.
 
 ## Reviewed exceptions
 
@@ -122,6 +124,82 @@ E15-T01's spec decision on #402, SR-E14-09).
 - **Does not match:** a comprehension or lambda variable `x` (as in `_parse_t`), a parameter.
   **Fixture:** `.semgrep/tests/cv-drawings-pixel-geometry/`.
 
+## cv-drawings-text-to-html-sink
+
+- **Protects:** DR6 (stored XSS), DR7 (the accessible-name path), DR9 (a style value in CSS);
+  SR-E14-01, SR-E14-02, SR-E14-04. A label, a note and a template name are user text and the server
+  encodes none of it: safety lives at the sink.
+- **Matches:** raw HTML (`dangerouslySetInnerHTML`, `innerHTML`, `outerHTML`, `insertAdjacentHTML`,
+  `setHTMLUnsafe`, `parseHTMLUnsafe`), `document.write(ln)`, `createContextualFragment`, `srcdoc`,
+  CSS strings (`cssText`, `insertRule`, `setAttribute("style", ...)` with a non-literal), each also
+  named by a string key (`el["innerHTML"] = s`, a local constant key included, which `no-unsanitized`
+  does not read), and `href`, `src`, `style`, `aria-label`, `aria-description` or `title` built by `+`
+  or a template with a substitution (JSX, `setAttribute` with the name in any case, a DOM property,
+  `createElement` props). Scope: the paths of
+  `tools/ci/no-inline-suppression-paths.json`. The message points to a React text child,
+  `textContent` or `setAttribute(name, raw)`, never to stripping characters (it breaks RTL text and
+  emoji).
+- **Shell rule:** `cv-shell-dangerously-set-inner-html` bans the raw-HTML sinks under `features`,
+  `lib`, `packages/ui/src` and more, but not in the literal drawing paths or the engine layer. This
+  rule repeats them for its own paths, so the drawing invariant does not rest on another epic's
+  scope; under `features/drawings` both fire.
+- **Does not match:** a raw variable (`aria-label={label}`), a literal, a call (`t(...)`), a template
+  without a substitution, a `style` object (the CSSOM path), a `data-*` attribute. It is syntactic:
+  `aria-label={`${kind} ${label}`}` fires whatever it is built from (use `{label}` or
+  `aria-labelledby`); with the scope removed it finds 5 such `aria-label`s in the frontend, none at
+  a raw-HTML sink. Not seen: a conditional of templates, `.join`, `DOMParser`, a raw `href` from data,
+  deliberate reflection (`Reflect.set(el, "innerHTML", s)`, a property descriptor's `set.call`), a
+  `document` reached through an alias or a cast, an attribute name held in a variable, and `.mts` or
+  `.cts` files, which Semgrep does not read (the lint ban covers them). Fixture-proven until E14-S08.
+- **Deliberate-regression fixture:** `.semgrep/tests/cv-drawings-text-to-html-sink/` (a `ruleid` per
+  sink, form and root; the shell rule alone misses 43 of its 49, every string-key,
+  `setHTMLUnsafe`, `style` and attribute-name form among them).
+
+## cv-drawings-pixel-geometry-ts
+
+- **Protects:** DR10, SR-040: the TypeScript arm of `cv-drawings-pixel-geometry`. The store holds
+  and persists chart space only, a time `t` and a price `p`.
+- **Matches:** in `apps/web/src/features/drawings/store/**`, an object with a key `x`, `y` or `px`
+  (shorthand and a destructuring too) and a write `o.x = ...` or `o["px"] = ...`. Fix: convert pixels
+  to chart coordinates in the engine first.
+- **Does not match:** a read (`e.x`), a name that holds the letters (`max`, `xs`), anything outside
+  the store: the engine works in pixels by design. Fixture-proven until E14-T02:
+  `.semgrep/tests/cv-drawings-pixel-geometry-ts/`.
+
+## The drawing render-path lint ban
+
+- **Protects:** DR6, SR-E14-01. `apps/web/eslint.config.mjs` sets `no-unsanitized/method` and
+  `/property` to error for `src/features/drawings`, `src/drawings` and `src/objecttree` (`.ts`, `.tsx`,
+  `.mts` and `.cts`) and `react/no-danger` for their `.ts` and `.tsx`, with
+  `linterOptions.noInlineConfig`: an `eslint-disable` or an `/* eslint <rule>: off */` there is inert
+  and ESLint warns that it has no effect, which `--max-warnings=0` fails. Elsewhere a directive still
+  works. `packages/chart-engine/eslint.config.mjs` sets `noInlineConfig` for `src/layers/drawings`, so
+  no comment there lifts C-2.16's DOM ban either.
+- **Proof:** `apps/web/test/features/drawings-lint-ban.test.ts` lints a virtual file under each path
+  with the app's config, `.mts` and `.cts` probes, and an engine-layer probe with the engine's
+  config; `projectService` refuses a virtual file even under the tsconfig `include`, so each is named
+  in `allowDefaultProject`. No block in `packages/ui`: no object-tree component
+  exists there. When one does, add its path to the list and a block to that config.
+
+## tools/ci/check_no_inline_suppressions.py
+
+- **Protects:** DR6, SR-E14-01: no silent suppression of the guards above; run by `_job-js.yml`'s
+  `lint` job.
+- **Matches:** in source files under the paths of `tools/ci/no-inline-suppression-paths.json`, a
+  comment holding `eslint-disable[-next-line|-line]`, an ESLint config comment such as
+  `/* eslint no-console: off */`, `@ts-ignore`, `@ts-expect-error`, `nosemgrep` or `nosem` that is no
+  reviewed annotation: `reason=<token> owner=@<handle> review=YYYY-MM-DD` in the same comment (the
+  grammar and 180-day cap of `tools/ci/suppressions.py`, CI-SEC-006). A marker that opens a line inside a block comment counts:
+  ESLint reads `/*`, a newline and `eslint-disable` as a directive.
+- **Does not match:** a word in a string, a Markdown file, a directory symlink or `@ts-nocheck`
+  (typescript-eslint bans it). An annotated `eslint-disable` in a listed path still fails the lint:
+  it is inert, so it warns.
+- **Extending:** add a glob to the JSON. Tests keep the lists honest: the Semgrep rule's
+  `paths.include` equals it, the ESLint proof lints a file under each `apps/web` entry, and a
+  tripwire fails when a `drawing*` directory (camel-cased `drawingTools` too) or `object-tree*` name
+  appears under `apps/*/src` or
+  `packages/*/src` outside it. Fixture: `scripts/tests/test_check_no_inline_suppressions.py`.
+
 ## Budget
 
 The ticket asks for under 30 s added to CI. Measured with Semgrep 1.181.0 on the shared 8-vCPU VPS,
@@ -136,6 +214,9 @@ under `nice -n 10`:
   took 30.3 and 31.5 s at load 8 to 13 against 34.4 and 36.1 s for five existing tree rules. A new
   rule costs one start-up, no more than an existing one, so the five add about 18 s on a quiet host
   and up to 30 s on a busy one: under the bound, then at it. Not measured on a CI runner.
+- **PR-2's two rules** take 2.8 s and 4.4 s in the checker at load 5.6, and read no file in the product
+  scan (their directories do not exist yet). With PR-1's five that is about 25 s on a quiet host, under
+  the bound, and over it on a busy one.
 
 ## Requesting an exception
 
