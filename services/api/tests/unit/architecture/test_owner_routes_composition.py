@@ -6,7 +6,8 @@ refused with the fail-closed 501/503. Only the SQL edges of those real classes, 
 table and the session/step-up/invite services are faked (the RBAC pack's seams; no Postgres, no
 network). #2648 adds the account-access read and write (`SqlAlchemyAccountAccessStore` under
 `AccountAccessService`), #965 the disable, #2649 the user read model, its PATCH and the admin
-session routes (`SqlAlchemyUserAdminStore`)."""
+session routes (`SqlAlchemyUserAdminStore`). #913 slice 3F adds `POST /orders` through
+`SessionTradingPrincipalResolver` over `SqlAlchemyScopeSource.load_trade_grants`."""
 
 from __future__ import annotations
 
@@ -33,6 +34,7 @@ from candleviewer.storage.repositories.account_access_sqlalchemy import (
 )
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.onboarding_sqlalchemy import SqlAlchemyOnboardingStore
+from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
 from candleviewer.storage.repositories.user_lifecycle_sqlalchemy import SqlAlchemyUserLifecycleStore
 from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserAdminStore
@@ -113,6 +115,23 @@ class _UserAdmin:
         raise AssertionError("no matrix cell reaches the update: its body or target stops first")
 
 
+#: A `load_trade_grants` row: `(account, can_view, can_trade, frozen)`.
+type _TradeRow = tuple[uuid.UUID, bool, bool, bool]
+
+
+class _TradeGrants:
+    """The rows behind `SqlAlchemyScopeSource.load_trade_grants` (#913 slice 3F), per user;
+    `calls` names the users whose rows were read."""
+
+    def __init__(self) -> None:
+        self.rows: dict[uuid.UUID, list[_TradeRow]] = {}
+        self.calls: list[uuid.UUID] = []
+
+    async def load_trade_grants(self, user_id: uuid.UUID) -> list[_TradeRow]:
+        self.calls.append(user_id)
+        return self.rows.get(user_id, [])
+
+
 def _loopback_only() -> list[str]:
     """The mesh self-check's host socket table (psutil / WSL portproxy), fixed: one loopback
     bind, so the checklist's `tailscale` probe is deterministic and reads nothing from the host."""
@@ -148,6 +167,8 @@ def deployed() -> Iterator[SimpleNamespace]:
             mp.setattr(SqlAlchemyUserAdminStore, name, _delegate(admin, name))
         for name in _ONBOARDING_EDGES:
             mp.setattr(SqlAlchemyOnboardingStore, name, _delegate(onboarding, name))
+        trade, grants = _TradeGrants(), "load_trade_grants"
+        mp.setattr(SqlAlchemyScopeSource, grants, _delegate(trade, grants))
         mp.setattr(appmod, "real_socket_enumerator", lambda: _loopback_only)
         app = appmod.create_app(real)  # nothing injected: the deployed composition
         ctx = app.state.app_context
@@ -163,6 +184,7 @@ def deployed() -> Iterator[SimpleNamespace]:
             audit=audit,
             onboarding=onboarding,
             admin=admin,
+            trade=trade,
         )
 
 
@@ -508,3 +530,29 @@ def test_deployed_app_answers_a_viewing_owners_read_as_the_viewed_user(
     headers = {"Authorization": f"Bearer tok-owner-as-{target}", **csrf_headers(codec, sid)}
     resp = deployed.client.get(rbac.fill_path(key.split(" ", 1)[1]), headers=headers)
     _assert_matrix_cell(key, target, resp)
+
+
+@pytest.mark.parametrize(
+    ("can_trade", "status", "code"),
+    [(True, 503, "oms_not_ready"), (False, 403, "account_scope_denied")],
+    ids=["trade-grant", "view-only"],
+)
+def test_deployed_app_places_an_order_as_the_sessions_principal_with_its_trade_grants(
+    deployed: SimpleNamespace, can_trade: bool, status: int, code: str
+) -> None:
+    """#913 slice 3F (CR-S3F2-03): `POST /orders` through the deployed principal source, no seam:
+    a Manager whose grant may trade passes RBAC and meets the OMS runtime the lifespan has not
+    started, `503 oms_not_ready`, never the 501 of a deployment with no principal source; a
+    view-only grant is refused 403 before it. Each request reads the caller's trade grants."""
+    manager = rbac.user_id_of("manager_with_grant")
+    deployed.trade.rows[manager] = [(rbac.GRANTED, True, can_trade, False)]
+    start = len(deployed.trade.calls)
+    try:
+        resp = deployed.client.post(
+            "/orders", json={"exchange_account_id": str(rbac.GRANTED)},
+            headers=_headers(deployed.client, "manager_with_grant"),
+        )  # fmt: skip
+    finally:
+        deployed.trade.rows.clear()
+    assert (resp.status_code, resp.json()["code"]) == (status, code), resp.text
+    assert deployed.trade.calls[start:] == [manager]
