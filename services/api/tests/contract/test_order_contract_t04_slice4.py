@@ -652,6 +652,18 @@ def test_the_1230z_rulings_word_the_deadline_the_retryable_flags_and_an_unbound_
     )
 
 
+def test_the_1742z_ruling_passes_another_per_order_refusal_through_cancel_all() -> None:
+    """The orchestrator's 17:42Z ruling (S4-E): a refusal of the per-order cancel that the list does
+    not name keeps its code and is not retryable; an order that ended otherwise first is, like a
+    fill, neither affected nor an error."""
+    assert not _missing(
+        _CANCEL_ALL,
+        "or another refusal of the per-order cancel, with its code as `cancelOrder` answers it",
+        "nor is one that ended otherwise first (`rejected`, `expired` or `killed`)",
+        "and false for another refusal of the per-order cancel",
+    )
+
+
 def test_the_security_look_fold_gates_a_price_move_and_closes_the_lows() -> None:
     """S4-A's Fable security look at `a579bb24`: SEC-S4A-01 (a `price` or `trigger_price`
     change on an order that is not reduce-only is risk-increasing), SEC-S4A-02 (one answer for a
