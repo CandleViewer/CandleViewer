@@ -15,12 +15,17 @@ every validity-look frame its reason and no lock, the view-as row first, the abs
 counts the spec, the boards and the PR body quote. The fixture is derived from the `22` storage example
 by the contract's own semantics: a reduction is a shorter TOTAL horizon (`21` `read_policy_row`), the
 fallback size is per symbol across its streams and its range is clamped to the recorded history.
-`--json` feeds the check-nums script; `--check` re-derives the spec's `audit:` markers;
-`--mutate-consequence` removes the consequence sentence from one reduction frame in memory and
-`--mutate-kinds` removes the undo line from one reduction-kind row; each passes only when exactly one
-FAIL results (the gates' mutation tests). Exit 1 on a gated FAIL or a failed gate.
+Whether a frame or a kind is a reduction is derived from its before / after horizons (DIFF_TABLE:
+total = the days for `drop`, max(the days, the `21` section 7 total) for `archive_parquet`), never
+from the frame's own Class cell, which must agree. `--json` feeds the check-nums script; `--check`
+re-derives the spec's `audit:` markers. The mutation modes change the spec in memory and pass only
+when exactly the FAIL they target results: `--mutate-consequence` removes the consequence sentence
+from one reduction frame, `--mutate-kinds` the undo line from one reduction-kind row,
+`--mutate-typed` the quoted typed-field label from the first destructive confirm, `--mutate-plain`
+turns the `drop` -> `archive_parquet` kind into a plain confirm. Exit 1 on a gated FAIL.
 
-Usage: python3 -I docs/design/_tools/e16_d03_retention_audit.py [--json] [--check] [--mutate-consequence] [--mutate-kinds] [--extra F]
+Usage: python3 -I docs/design/_tools/e16_d03_retention_audit.py [--json] [--check]
+  [--mutate-consequence | --mutate-kinds | --mutate-typed | --mutate-plain] [--extra F]
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
 TOKENS = ROOT / "packages" / "ui" / "tokens"
@@ -71,6 +77,11 @@ VIEW_AS = "Read-only while viewing as {user}."
 UNDO = "It cannot be undone. Replay, footprint history and the journal lose the deleted days."
 # The two timing clauses (BQ-8 / BQ-10 RULED): one of them in every destructive frame.
 TIMING = ("at the next retention run (daily, 03:00 UTC)", "a retention sweep starts now")
+# The typed field's label as the spec quotes it: the closing quote right after "confirm" tells it
+# apart from the Apply control's validity reason "Type trades to confirm." (same words, a full stop).
+TYPED_LABEL = '"Type trades to confirm"'
+# A confirm that names the plain variant is never a reduction's confirm.
+PLAIN_MARKS = ("CMP-044 standard", "plain confirm")
 # The worked example's typed constants beside the contract-derived ones (spec header): the lowered drop
 # window of kind K2, the per-symbol override days of F3 / K3 / K4, the running job's progress.
 EXAMPLE = {
@@ -79,6 +90,7 @@ EXAMPLE = {
     "drop_lower_to": 3,
     "override_days": 14,
     "progress_pct": 42,
+    "long_days": 1000,
 }
 # The absences (deferred capabilities drawn as absent, never as a lock): `22` :5086–5087.
 ABSENCES = ("downsample", "pin", "applies_to_pinned")
@@ -103,8 +115,8 @@ rule banner words | color.text.primary | color.status.info.subtle | text
 rule banner glyph | color.status.info.strong | color.status.info.subtle | non-text
 no-other-source warning words | color.text.primary | color.status.warning.subtle | text
 no-other-source warning glyph | color.status.warning.strong | color.status.warning.subtle | non-text
-job finished words | color.text.primary | color.status.success.subtle | text
-job finished glyph | color.status.success.strong | color.status.success.subtle | non-text
+job succeeded words | color.text.primary | color.status.success.subtle | text
+job succeeded glyph | color.status.success.strong | color.status.success.subtle | non-text
 job failed words | color.text.primary | color.status.danger.subtle | text
 job failed glyph | color.status.danger.strong | color.status.danger.subtle | non-text
 exempt pin glyph on raised | color.text.secondary | color.surface.raised | non-text
@@ -205,6 +217,7 @@ CITED_TABLE = """
 21 | 2972 | #### 3.6.3 `retention_policies`
 21 | 3001 | Resolution order for a (symbol, stream): pinned symbol → infinite retention
 21 | 3003 | `retain_days` reads by `action`, through one mapping (`read_policy_row`)
+21 | 3003 | the total horizon stays the stream's §7 total, never shorter than the hot window
 21 | 4482 | a `retention_purge` audit entry records symbol, stream, range and row count
 21 | 4496 | | `trades`                              | 30 d
 21 | 4497 | | `orderbook_deltas`                    | 7 d
@@ -301,9 +314,39 @@ STREAM_TABLE = (
     ("open_interest", "open_interest"),
     ("funding", "funding_rates"),
 )
+# frame or kind | stage | before | after — each side "stream days action", pairs joined by ";". The
+# numbers are fixture keys ({seed_*} the `21` section 7 seed, {example_days} `22`'s override row, the
+# rest EXAMPLE). A side's total horizon is its days for `drop` and max(its days, the section 7 total)
+# for `archive_parquet` (`21` :3003); a change is a reduction when any pair's total shrinks.
+# `SCR-141/confirm-kinds` stands for every K row.
+DIFF_TABLE = """
+SCR-141/editing-dirty-lengthen | edit | trades {seed_trades} archive_parquet | trades {lengthen_to} archive_parquet
+SCR-141/editing-dirty-tiering | edit | trades {seed_trades} archive_parquet | trades {reduce_to} archive_parquet
+SCR-141/editing-dirty-reduce | edit | trades {seed_trades} archive_parquet | trades {reduce_to} drop
+SCR-141/preview | preview | trades {seed_trades} archive_parquet | trades {reduce_to} drop
+SCR-141/confirm-reduce | confirm | trades {seed_trades} archive_parquet | trades {reduce_to} drop
+SCR-141/confirm-reduce-now | confirm | trades {seed_trades} archive_parquet | trades {reduce_to} drop
+SCR-141/confirm-kinds | confirm | kinds | kinds
+SCR-141/confirm-lengthen | confirm | trades {seed_trades} archive_parquet | trades {lengthen_to} archive_parquet
+SCR-141/row-removed | edit | orderbook_delta {example_days} drop | orderbook_delta {seed_orderbook_delta} archive_parquet
+K1 | confirm | trades {seed_trades} archive_parquet | trades {reduce_to} drop
+K2 | confirm | trades {reduce_to} drop | trades {drop_lower_to} drop
+K3 | confirm | trades {seed_trades} archive_parquet | trades {override_days} drop
+K4 | confirm | trades {override_days} archive_parquet | trades {reduce_to} drop
+K5 | confirm | trades {seed_trades} archive_parquet; orderbook_snapshot {seed_orderbook_snapshot} archive_parquet | trades {reduce_to} drop; orderbook_snapshot {reduce_to} drop
+K6 | confirm | trades {long_days} drop | trades {seed_trades} archive_parquet
+K7 | confirm | trades {long_days} archive_parquet | trades {seed_trades} archive_parquet
+"""
 # The one layout fixture of the spec (section 2): the dialog and the reflow viewport, in px.
 LAYOUT = {"dialog_w": 960, "dialog_max_h_vh": 85, "vp_w": 1280, "vp_h": 800, "zoom_pct": 200}
 LAYOUT.update({"row_px": 32, "nav_px": 240, "poll_s": 2, "reason_max": 60, "regions": 5})
+# mutation mode | the FAIL text it must produce, exactly once
+MUTATIONS = {
+    "consequence": "lacks its consequence sentence",
+    "kinds": "lacks the undo line",
+    "typed": "lacks the typed field",
+    "plain": "takes no typed confirm",
+}
 # section | pattern — the counted frame rows per spec section (start, end, regex).
 COUNTS = (
     ("frames_states", 4, 5, r"^\| `SCR-141/"),
@@ -397,7 +440,7 @@ def cells(line: str) -> list[str]:
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
-def contract_facts(t: dict[str, str]) -> dict[str, object]:
+def contract_facts(t: dict[str, str]) -> dict[str, Any]:
     """Every fact a board quotes, parsed from the plan text; nothing is executed."""
     api, db, d24 = t["22"], t["21"], t["24"]
     kinds = api[api.index("    StreamKind:") : api.index("    RetentionAction:")]
@@ -431,7 +474,7 @@ def contract_facts(t: dict[str, str]) -> dict[str, object]:
         r"symbol: (\w+),\s+used_bytes: (\d+),\s+daily_growth_bytes: (\d+),\s+pinned: (\w+),", usage
     )
     tiers = re.findall(r"\{ tier: (\w+), used_bytes: (\d+), retention_days: (\w+) \}", usage)
-    out: dict[str, object] = {
+    out: dict[str, Any] = {
         "stream_kinds": re.findall(r"^\s+(\w+),$", kinds, MULTI),
         "retention_actions": re.findall(r"\b(drop|archive_parquet|downsample|pin)\b", actions),
         "job_status": first(r"status: \{ type: string, enum: \[([^\]]+)\] \}", job).split(", "),
@@ -479,6 +522,8 @@ def contract_facts(t: dict[str, str]) -> dict[str, object]:
         "resolution_order": "pinned symbol → infinite retention; else symbol-scoped policy; else default policy; else the §7 per-stream default"
         in db,
         "read_policy_row": "`read_policy_row`" in db,
+        "archive_total_floor": "the total horizon stays the stream's §7 total, never shorter than the hot window"
+        in db,
         "mainnet_comment": "market data is mainnet even for demo trading" in db,
         "purge_audit_21": "a `retention_purge` audit entry records symbol, stream, range and row count"
         in db,
@@ -524,39 +569,54 @@ def contract_facts(t: dict[str, str]) -> dict[str, object]:
     return out
 
 
-def fixture(facts: dict[str, object]) -> dict[str, object]:
+def months_before(day: dt.datetime, months: int) -> dt.datetime:
+    y, m = divmod(day.year * 12 + day.month - 1 - months, 12)
+    return day.replace(year=y, month=m + 1)
+
+
+def fixture(facts: dict[str, Any]) -> dict[str, Any]:
     """The spec's worked examples, derived from the `22` storage example and the `21` section 7 seed.
 
-    The reduction is the ticket's trades 30 -> 7 days WITH the action set to `drop`: under `22` :5083-5085
-    a lowered `retain_days` on an `archive_parquet` row only moves days to Parquet sooner (a tiering
-    change), so the total horizon falls only through `drop`. The fallback size is `used_bytes` per symbol
-    across all its streams; its range is clamped to the recorded history (start = generated_at -
-    used_bytes / daily_growth_bytes), and when nothing predates the cut-off the sentence says so.
+    The reduction is the ticket's trades 30 -> 7 days WITH the action set to `drop`: under `22`
+    :5083-5085 a lowered `retain_days` on an `archive_parquet` row whose total stays the section 7
+    total only moves days to Parquet sooner (a tiering change). The fallback size is `used_bytes` per
+    symbol across all its streams; its range is clamped to the recorded history (start =
+    generated_at - used_bytes / daily_growth_bytes), and when nothing predates the cut-off the
+    sentence says so. The long-window example (EXAMPLE long_days) is the total that falls to the
+    section 7 total when its row becomes Move to Parquet after the seed days.
     """
     ex = facts["storage_example"]
     seed = facts["seed"]
     total = facts["total_horizon"]
-    syms = ex["symbols"]  # type: ignore[index]
-    gen_dt = dt.datetime.fromisoformat(str(ex["generated_at"]).replace("Z", "+00:00"))  # type: ignore[index]
+    syms = ex["symbols"]
+    gen_dt = dt.datetime.fromisoformat(str(ex["generated_at"]).replace("Z", "+00:00"))
     gen = gen_dt.date()
-    reduce_from, reduce_to = int(seed["trades"]), EXAMPLE["reduce_to"]  # type: ignore[index]
+    reduce_from, reduce_to = int(seed["trades"]), EXAMPLE["reduce_to"]
     days_removed = reduce_from - reduce_to
     nonpinned = {s: v for s, v in syms.items() if not v["pinned"]}
     pinned = {s: v for s, v in syms.items() if v["pinned"]}
     cutoff = gen_dt - dt.timedelta(days=reduce_to)
+    total_months = int(first(r"^(\d+) mo$", str(total["trades"])))
+    total_cutoff = months_before(gen_dt, total_months)
     held = {s: v["used_bytes"] / v["daily_growth_bytes"] for s, v in nonpinned.items()}
     since = {s: gen_dt - dt.timedelta(days=d) for s, d in held.items()}
-    eligible_now = sum(
-        max(0.0, (cutoff - since[s]).total_seconds() / 86400) * v["daily_growth_bytes"]
-        for s, v in nonpinned.items()
-    )
+
+    def eligible(cut: dt.datetime) -> float:
+        return float(
+            sum(
+                max(0.0, (cut - since[s]).total_seconds() / 86400) * v["daily_growth_bytes"]
+                for s, v in nonpinned.items()
+            )
+        )
+
     growth_np = sum(v["daily_growth_bytes"] for v in nonpinned.values())
-    longest = max(int(d) for d in seed.values())  # type: ignore[union-attr]
+    longest = max(int(d) for d in seed.values())
     steady = growth_np * longest
-    cap = int(ex["cap_bytes"])  # type: ignore[index]
-    tiers = ex["tiers"]  # type: ignore[index]
+    cap = int(ex["cap_bytes"])
+    tiers = ex["tiers"]
     used = int(tiers["questdb"]) + int(tiers["parquet"])
-    out: dict[str, object] = {
+    pinned_growth = sum(v["daily_growth_bytes"] for v in pinned.values())
+    out: dict[str, Any] = {
         "generated_at": gen.isoformat(),
         "reduce_from": reduce_from,
         "reduce_to": reduce_to,
@@ -566,13 +626,16 @@ def fixture(facts: dict[str, object]) -> dict[str, object]:
         "recorded_since": min(since.values()).date().isoformat(),
         "days_held": round(max(held.values()), 1),
         "predates_cutoff": any(since[s] <= cutoff for s in nonpinned),
-        "eligible_now_gb": gb(eligible_now),
-        "total_months": int(first(r"^(\d+) mo$", str(total["trades"]))),  # type: ignore[index]
+        "eligible_now_gb": gb(eligible(cutoff)),
+        "total_months": total_months,
+        "total_cutoff": total_cutoff.date().isoformat(),
+        "predates_total_cutoff": any(since[s] <= total_cutoff for s in nonpinned),
+        "eligible_total_gb": gb(eligible(total_cutoff)),
         "affected_symbols": len(nonpinned),
         "affected_symbol": ",".join(sorted(nonpinned)),
         "pinned_symbol": ",".join(sorted(pinned)),
         "pinned_gb": gb(sum(v["used_bytes"] for v in pinned.values())),
-        "pinned_growth_mb": round(sum(v["daily_growth_bytes"] for v in pinned.values()) / 1e6),
+        "pinned_growth_mb": round(pinned_growth / 1e6),
         "nonpinned_gb": gb(sum(v["used_bytes"] for v in nonpinned.values())),
         "nonpinned_growth_mb": round(growth_np / 1e6),
         "longest_days": longest,
@@ -581,37 +644,68 @@ def fixture(facts: dict[str, object]) -> dict[str, object]:
         "cap_gb": round(cap / 1e9),
         "used_gb": round(used / 1e9),
         "used_pct": round(used / cap * 100),
-        "override": next(r for r in facts["example_rows"] if r[3] != "null"),  # type: ignore[attr-defined]
-        "example_rows": len(facts["example_rows"]),  # type: ignore[arg-type]
+        "override": next(r for r in facts["example_rows"] if r[3] != "null"),
+        "example_rows": len(facts["example_rows"]),
     }
     out.update({k: v for k, v in EXAMPLE.items() if k != "reduce_to"})
     return out
 
 
-def sentences(fx: dict[str, object]) -> dict[str, str]:
+def size_clause(fx: dict[str, Any], cut: str, predates: bool, size_gb: str) -> str:
+    sym, since = fx["affected_symbol"], fx["recorded_since"]
+    if predates:
+        return (
+            f"About {size_gb} GB across {sym}'s recorded streams, recorded from {since} to {cut}, "
+            "goes at the first run."
+        )
+    return (
+        f"Nothing recorded before {cut} exists yet (about {size_gb} GB now; recording started "
+        f"about {since}), so the first run deletes nothing."
+    )
+
+
+def sentences(fx: dict[str, Any]) -> dict[str, str]:
     """The consequence sentences every reduction frame carries (BQ-10 RULED), from the fixture."""
     n, sym, m = fx["reduce_to"], fx["affected_symbol"], fx["total_months"]
     size_gb = f"{float(str(fx['eligible_now_gb'])):g}"
+    total_gb = f"{float(str(fx['eligible_total_gb'])):g}"
+    size = size_clause(fx, fx["cutoff"], fx["predates_cutoff"], size_gb)
+    size_total = size_clause(fx, fx["total_cutoff"], fx["predates_total_cutoff"], total_gb)
     if fx["predates_cutoff"]:
-        size = f"About {size_gb} GB across {sym}'s recorded streams, recorded from {fx['recorded_since']} to {fx['cutoff']}, goes at the first run."
         size_now = size.replace("goes at the first run", "goes in this sweep")
         row = f"{sym} · Trades · {fx['recorded_since']} · {fx['cutoff']} · about {size_gb} GB"
         total = f"About {size_gb} GB across {fx['affected_symbols']} symbol"
     else:
-        size = f"Nothing recorded before {fx['cutoff']} exists yet (about {size_gb} GB now; recording started about {fx['recorded_since']}), so the first run deletes nothing."
         size_now = size.replace("the first run deletes nothing", "this sweep deletes nothing")
-        row = f"{sym} · Trades · — · — · about {size_gb} GB now (recorded since about {fx['recorded_since']})"
+        since = fx["recorded_since"]
+        row = f"{sym} · Trades · — · — · about {size_gb} GB now (recorded since about {since})"
         total = f"About {size_gb} GB now across {fx['affected_symbols']} symbol"
     lead = f"Trades for {sym} older than {n} days"
+    every = "and at every run after it, Parquet included."
+    title_total = f"Shorten trades retention to {m} months?"
     return {
-        "consequence": f"{lead} become eligible for deletion {TIMING[0]} and at every run after it, Parquet included. {size}",
-        "consequence_now": f"{lead} are deleted when you apply: {TIMING[1]}, and every daily run repeats it, Parquet included. {size_now}",
+        "consequence": f"{lead} become eligible for deletion {TIMING[0]} {every} {size}",
+        "consequence_now": (
+            f"{lead} are deleted when you apply: {TIMING[1]}, and every daily run repeats it, "
+            f"Parquet included. {size_now}"
+        ),
+        "consequence_total": (
+            f"Trades for {sym} older than {m} months become eligible for deletion {TIMING[0]} "
+            f"{every} {size_total}"
+        ),
         "undo": UNDO,
         "typed": "Type trades to confirm",
         "pinned_note": f"{fx['pinned_symbol']} is pinned and is not affected.",
-        "tiering": f"Moves trades older than {n} days to Parquet sooner; it is still kept for {m} months. Nothing is deleted.",
-        "help_archive": f"Days in the fast store before the nightly move to Parquet. Parquet keeps it for {m} months in total.",
+        "tiering": (
+            f"Moves trades older than {n} days to Parquet sooner; it is still kept for {m} months. "
+            "Nothing is deleted."
+        ),
+        "help_archive": (
+            "Days in the fast store before the nightly move to Parquet. "
+            f"Parquet keeps it for {m} months in total."
+        ),
         "title": f"Delete trades after {n} days?",
+        "title_total": title_total,
         "preview_row": row,
         "preview_total": total,
         "kind_titles": " · ".join(
@@ -621,9 +715,59 @@ def sentences(fx: dict[str, object]) -> dict[str, str]:
                 f"Delete {sym} trades after {fx['override_days']} days?",
                 f"Remove the {sym} trades rule?",
                 "Shorten retention for 2 streams?",
+                title_total,
+                title_total,
             ]
         ),
     }
+
+
+def horizon(text: str) -> float:
+    """A `21` section 7 Total horizon cell in days: "24 mo", "90 d" or "∞"."""
+    if text.strip() == "∞":
+        return float("inf")
+    m = re.fullmatch(r"(\d+) (mo|d)", text.strip())
+    if not m:
+        raise ValueError(f"`21` section 7: unreadable total horizon {text!r}")
+    return int(m.group(1)) * (365 / 12 if m.group(2) == "mo" else 1)
+
+
+def side_totals(side: str, totals: dict[str, str]) -> dict[str, float]:
+    """`21` :3003: the total is the days for `drop`, never shorter than the hot window otherwise."""
+    out: dict[str, float] = {}
+    for pair in side.split(";"):
+        stream, days, action = pair.split()
+        hot = float(days)
+        out[stream] = hot if action == "drop" else max(hot, horizon(totals[stream]))
+    return out
+
+
+def diffs(facts: dict[str, Any], fx: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Every DIFF_TABLE row with its stage, its totals before and after and whether it reduces."""
+    keys: dict[str, Any] = {f"seed_{k}": v for k, v in facts["seed"].items()}
+    keys.update({k: v for k, v in fx.items() if isinstance(v, int | float | str)})
+    keys["example_days"] = fx["override"][1]
+    out: dict[str, dict[str, Any]] = {}
+    for name, stage, before, after in rows(DIFF_TABLE):
+        if before == "kinds":
+            out[name] = {"stage": stage, "kinds": True, "before": before, "after": after}
+            continue
+        b_side, a_side = before.format(**keys), after.format(**keys)
+        tb = side_totals(b_side, facts["total_horizon"])
+        ta = side_totals(a_side, facts["total_horizon"])
+        out[name] = {
+            "stage": stage,
+            "kinds": False,
+            "before": b_side,
+            "after": a_side,
+            "totals": {k: [tb[k], ta[k]] for k in tb},
+            "reduction": any(ta[k] < tb[k] for k in tb),
+        }
+    kinds = [v["reduction"] for k, v in out.items() if re.fullmatch(r"K\d+", k)]
+    for v in out.values():
+        if v["kinds"]:
+            v["reduction"] = bool(kinds) and all(kinds)
+    return out
 
 
 def frame_rows(spec: str, a: int, b: int) -> list[tuple[str, list[str]]]:
@@ -637,11 +781,11 @@ def frame_rows(spec: str, a: int, b: int) -> list[tuple[str, list[str]]]:
 def gates(
     files: list[Path],
     spec: str,
-    facts: dict[str, object],
+    facts: dict[str, Any],
     t: dict[str, str],
     sent: dict[str, str],
-    mutate: bool,
-    mutate_kinds: bool = False,
+    diff: dict[str, dict[str, Any]],
+    mode: str = "",
 ) -> list[str]:
     bad: list[str] = []
     constitution = (ROOT / "CONSTITUTION.md").read_text(encoding="utf-8")
@@ -655,12 +799,14 @@ def gates(
     for k in (
         "consequence",
         "consequence_now",
+        "consequence_total",
         "undo",
         "typed",
         "pinned_note",
         "tiering",
         "help_archive",
         "title",
+        "title_total",
         "preview_row",
         "preview_total",
     ):
@@ -683,11 +829,12 @@ def gates(
                 bad.append(
                     f"T2 reason {key}: {len(s)} chars; stop {s.endswith('.')}; digit {bool(re.search(r'[0-9]', s))}"
                 )
-    # (5) the per-frame gates over every state table (sections 4-9, 11)
+    # (5) the per-frame gates over every state table (sections 4-9, 11). Whether a frame is a
+    # reduction comes from DIFF_TABLE's horizons; its Class cell must agree, and never decides.
     tables = [(a, b) for _, a, b, p in COUNTS if p.startswith(r"^\| `SCR-141/")]
     seen: dict[str, int] = {}
     reductions = t2 = validity = 0
-    mutated = False
+    mutated = {"consequence": False, "typed": False}
     for a, b in sorted(set(tables)):
         for name, c in frame_rows(spec, a, b):
             seen[name] = seen.get(name, 0) + 1
@@ -695,23 +842,32 @@ def gates(
                 bad.append(f"spec section {a}: {name} has fewer than five columns")
                 continue
             shows, cls = c[2], c[3]
-            if (
-                "destructive" in cls or "reduction" in cls
-            ):  # a reduction frame: the consequence sentence always
+            d = diff.get(name, {"stage": "", "kinds": False, "reduction": False})
+            said = "destructive" in cls or "reduction" in cls
+            if said != d["reduction"]:
+                bad.append(
+                    f"spec section {a}: {name}: the Class cell says reduction={said}, "
+                    f"the before / after horizons say reduction={d['reduction']}"
+                )
+            if d["reduction"]:  # a reduction frame: the consequence sentence always
                 reductions += 1
                 row_text = shows
-                if mutate and not mutated:
-                    mutated = True
-                    row_text = row_text.replace(sent["consequence"], "").replace(
-                        sent["consequence_now"], ""
-                    )
+                if mode == "consequence" and not mutated["consequence"]:
+                    mutated["consequence"] = True
+                    for k in ("consequence", "consequence_now"):
+                        row_text = row_text.replace(sent[k], "")
+                confirm = d["stage"] == "confirm"
+                if mode == "typed" and confirm and not d["kinds"] and not mutated["typed"]:
+                    mutated["typed"] = True
+                    row_text = row_text.replace(TYPED_LABEL, "")
                 titles = sent["kind_titles"].split(" · ")
-                if (
-                    "kinds" in cls
-                ):  # the kinds frame: every reduction kind's title stands for its sentence
+                if d[
+                    "kinds"
+                ]:  # the kinds frame: every reduction kind's title stands for its sentence
                     if any(tt not in row_text for tt in titles):
                         bad.append(
-                            f"spec section {a}: reduction frame {name} lacks its consequence sentence (a kind title is missing)"
+                            f"spec section {a}: reduction frame {name} lacks its consequence "
+                            "sentence (a kind title is missing)"
                         )
                 elif (
                     sent["consequence"] not in row_text and sent["consequence_now"] not in row_text
@@ -719,10 +875,17 @@ def gates(
                     bad.append(
                         f"spec section {a}: reduction frame {name} lacks its consequence sentence"
                     )
-                if "destructive" in cls:
-                    if sent["typed"] not in row_text or "typed" not in cls:
+                if "Nothing is deleted." in row_text:
+                    bad.append(f"spec section {a}: reduction frame {name} says Nothing is deleted.")
+                if confirm:  # a destructive confirm: the typed field, never the plain variant
+                    if TYPED_LABEL not in row_text:
                         bad.append(
-                            f"spec section {a}: destructive frame {name} lacks the typed instruction"
+                            f"spec section {a}: destructive frame {name} lacks the typed field "
+                            f"(its quoted label {TYPED_LABEL})"
+                        )
+                    if any(pm in row_text for pm in PLAIN_MARKS):
+                        bad.append(
+                            f"spec section {a}: destructive frame {name} is drawn as a plain confirm"
                         )
                     if UNDO not in row_text:
                         bad.append(
@@ -738,42 +901,80 @@ def gates(
                     bad.append(f"spec section {a}: T2 frame {name} draws no lock")
                 if "rbac.view_as" not in c[4]:
                     bad.append(
-                        f"spec section {a}: T2 frame {name} is not the view-as leg (the only T2 on SCR-141)"
+                        f"spec section {a}: T2 frame {name} is not the view-as leg "
+                        "(the only T2 on SCR-141)"
                     )
             if "validity" in cls:
                 validity += 1
                 if "validity-reason" not in shows or "lock" in shows:
                     bad.append(
-                        f"spec section {a}: validity frame {name} must carry validity-reason and no lock"
+                        f"spec section {a}: validity frame {name} must carry validity-reason "
+                        "and no lock"
                     )
     for name, n in seen.items():
         if n > 1:
             bad.append(f"spec: frame {name} appears in {n} state rows (one row per frame)")
-    if mutate and reductions and not mutated:
-        bad.append("mutation: no reduction frame to mutate")
-    # the reduction-kinds table (section 5): every kind has a title ending "?", a body with the undo line
-    # (or the `retention.confirm.body` reference, whose deck row carries it) and a typed value in code style
+    for name in diff:
+        if name.startswith("SCR-141/") and name not in seen:
+            bad.append(f"DIFF_TABLE: frame {name} is not in the spec's state tables")
+    for k in ("consequence", "typed"):
+        if mode == k and not mutated[k]:
+            bad.append(f"mutation: no frame to mutate for {k}")
+    # the reduction-kinds table (section 5): every kind is a reduction by its horizons and takes the
+    # typed confirm: a title ending "?", a body with the undo line (or the `retention.confirm.body`
+    # reference, whose deck row carries it) and a typed value in code style, never the plain confirm
     kinds = re.findall(r"^\| (K\d) +\|(.*)$", section(spec, 5, 6), MULTI)
-    mutated_k = False
+    plain_target = next(
+        (
+            k
+            for k, v in diff.items()
+            if re.fullmatch(r"K\d+", k)
+            and str(v["before"]).endswith(" drop")
+            and str(v["after"]).endswith(" archive_parquet")
+        ),
+        "",
+    )
+    mutated_k = mutated_p = False
     for kid, rest in kinds:
         c = cells("|" + rest)
         if len(c) < 5:
             bad.append(f"spec section 5: kind {kid} has fewer than five columns")
             continue
-        body = c[3]
-        if mutate_kinds and not mutated_k:
+        body, typed = c[3], c[4]
+        if mode == "kinds" and not mutated_k:
             mutated_k = True
             body = body.replace("It cannot be undone.", "").replace("`retention.confirm.body`", "")
+        if mode == "plain" and kid == plain_target:
+            mutated_p = True
+            typed = "none: the plain confirm (Nothing is deleted.)"
         if not re.search(r'"[^"]+\?"', c[2]):
             bad.append(
                 f"spec section 5: kind {kid} has no quoted title ending with a question mark"
             )
         if "It cannot be undone." not in body and "`retention.confirm.body`" not in body:
             bad.append(f"spec section 5: kind {kid} lacks the undo line")
-        if not re.search(r"`[^`]+`", c[4]):
-            bad.append(f"spec section 5: kind {kid} has no typed value in code style")
-    if mutate_kinds and kinds and not mutated_k:
+        if kid not in diff:
+            bad.append(f"spec section 5: kind {kid} has no DIFF_TABLE row")
+            continue
+        d = diff[kid]
+        if not d["reduction"]:
+            bad.append(
+                f"spec section 5: kind {kid} is not a reduction by its horizons {d['totals']}"
+            )
+        elif not re.search(r"`[^`]+`", typed) or any(
+            pm in typed for pm in (*PLAIN_MARKS, "plain", "Nothing is deleted.")
+        ):
+            bad.append(
+                f"spec section 5: kind {kid} shrinks the total {d['totals']} but takes no typed "
+                "confirm"
+            )
+    for k in diff:
+        if re.fullmatch(r"K\d+", k) and k not in {kid for kid, _ in kinds}:
+            bad.append(f"DIFF_TABLE: kind {k} is not in the spec's kinds table")
+    if mode == "kinds" and kinds and not mutated_k:
         bad.append("mutation: no reduction kind to mutate")
+    if mode == "plain" and not mutated_p:
+        bad.append("mutation: no drop -> archive_parquet kind to mutate")
     # the classification table: the view-as row first among the gated rows; the absences row present
     s1 = section(spec, 1, 2)
     gated = re.findall(
@@ -785,9 +986,9 @@ def gates(
         bad.append(
             "spec section 1: SCR-141 has exactly one T2 row (view-as); over-conversion is a defect"
         )
-    for a in ABSENCES:
-        if f"`{a}`" not in s1:
-            bad.append(f"spec section 1: absence `{a}` is not named")
+    for absent in ABSENCES:
+        if f"`{absent}`" not in s1:
+            bad.append(f"spec section 1: absence `{absent}` is not named")
     lines = {k: v.split("\n") for k, v in t.items()}
     CITE_WARN.clear()
     for doc, line_s, want in rows(CITED_TABLE, 2):
@@ -827,16 +1028,17 @@ def gates(
                 bad.append(f"{f.name}: closing keyword before an issue number (text-first PR)")
     expect = {"stream_kinds": 8, "retention_actions": 4, "job_status": 5}
     for k, n in expect.items():
-        if len(facts[k]) != n:  # type: ignore[arg-type]
-            bad.append(f"`22`: {k} has {len(facts[k])} values, the spec assumes {n}")  # type: ignore[arg-type]
-    if [k for k, _ in STREAM_TABLE] != list(facts["stream_kinds"]):  # type: ignore[arg-type]
+        if len(facts[k]) != n:
+            bad.append(f"`22`: {k} has {len(facts[k])} values, the spec assumes {n}")
+    if [k for k, _ in STREAM_TABLE] != list(facts["stream_kinds"]):
         bad.append("`22` StreamKind order differs from the spec's eight rows")
-    for k, ok in facts["put_sentences"].items():  # type: ignore[union-attr]
+    for k, ok in facts["put_sentences"].items():
         if not ok:
             bad.append(f"`22` setRetentionPolicies: the {k} sentence is gone")
     for k in (
         "resolution_order",
         "read_policy_row",
+        "archive_total_floor",
         "mainnet_comment",
         "daily_job_24",
         "never_delete_referenced",
@@ -862,8 +1064,11 @@ def flatten(d: object, prefix: str = "") -> dict[str, object]:
 
 def main(argv: list[str]) -> int:
     extra = [Path(a) for a in argv[argv.index("--extra") + 1 :]] if "--extra" in argv else []
-    mutate = "--mutate-consequence" in argv
-    mutate_kinds = "--mutate-kinds" in argv
+    modes = [m for m in MUTATIONS if f"--mutate-{m}" in argv]
+    if len(modes) > 1:
+        print("one mutation mode at a time: " + ", ".join(modes))
+        return 2
+    mode = modes[0] if modes else ""
     themes = {k: load_theme(k) for k in THEMES}
     t = {k: p.read_text(encoding="utf-8") for k, p in DOCS.items()}
     pairs_text = (ROOT / "tools" / "contrast" / "pairs.mjs").read_text(encoding="utf-8")
@@ -908,10 +1113,12 @@ def main(argv: list[str]) -> int:
     facts = contract_facts(t)
     fx = fixture(facts)
     sent = sentences(fx)
+    diff = diffs(facts, fx)
     out.append("\n## 3. Contract facts parsed from text (and the derived fixture):")
-    out.append(json.dumps({"facts": facts, "fixture": fx, "sentences": sent}, ensure_ascii=False))
+    derived = {"facts": facts, "fixture": fx, "sentences": sent, "diffs": diff}
+    out.append(json.dumps(derived, ensure_ascii=False))
     spec = SPEC.read_text(encoding="utf-8")
-    bad = gates([SPEC, *extra], spec, facts, t, sent, mutate, mutate_kinds)
+    bad = gates([SPEC, *extra], spec, facts, t, sent, diff, mode)
     ok = (
         "OK — the `14` sentence verbatim; the consequence sentences in the deck and on every reduction frame, "
         "the destructive ones with the typed instruction, a timing clause and the undo line; every reduction kind with its title, "
@@ -936,7 +1143,7 @@ def main(argv: list[str]) -> int:
     all_rows = [c for a, b in tables for _, c in frame_rows(spec, a, b)]
     numbers["frames_total"] = len(all_rows)
     numbers["reduction_frames"] = sum(
-        ("destructive" in c[3] or "reduction" in c[3]) for c in all_rows if len(c) > 3
+        bool(diff.get(c[0].strip("`"), {}).get("reduction")) for c in all_rows
     )
     numbers["t2_frames"] = sum("T2" in c[3] for c in all_rows if len(c) > 3)
     numbers["validity_frames"] = sum("validity" in c[3] for c in all_rows if len(c) > 3)
@@ -944,6 +1151,9 @@ def main(argv: list[str]) -> int:
     numbers["kinds"] = count(r"^\| K\d +\|", section(spec, 5, 6))
     numbers["checklist_items"] = count(r"^\| 14:2759 ", spec)
     numbers["checklist_boxes_14"] = facts["checklist_boxes_14"]
+    numbers["typed_kinds"] = sum(
+        bool(v["reduction"]) for k, v in diff.items() if re.fullmatch(r"K\d+", k)
+    )
     numbers.update(
         {
             "pairs_rows": gated,
@@ -962,11 +1172,13 @@ def main(argv: list[str]) -> int:
     numbers["refusal_sentences"] = count(r"^\| `retention\.refused\.", deck)
     numbers["job_keys"] = count(r"^\| `retention\.job\.", deck)
     numbers.update({"missing_tokens": len(missing), "banned_copy_words": len(BANNED_COPY)})
-    numbers.update({"streams": len(facts["stream_kinds"]), "actions": len(facts["retention_actions"])})  # type: ignore[arg-type]
+    numbers.update({"streams": len(facts["stream_kinds"])})
+    numbers.update({"actions": len(facts["retention_actions"])})
     numbers.update(
         {"actions_offered": 2, "absences": len(ABSENCES), "absent_fields": len(ABSENT_FIELDS)}
     )
-    numbers.update({"job_states": len(facts["job_status"]), "retain_min": facts["retain_min"], "retain_max": facts["retain_max"]})  # type: ignore[arg-type]
+    numbers.update({"job_states": len(facts["job_status"])})
+    numbers.update({"retain_min": facts["retain_min"], "retain_max": facts["retain_max"]})
     numbers.update({"seed": facts["seed"], "fixture": fx, "layout": LAYOUT})
     numbers["example_rows_22"] = fx["example_rows"]
     flat = flatten(numbers)
@@ -982,22 +1194,19 @@ def main(argv: list[str]) -> int:
                 bad.append(f"marker audit:{key}={val} vs tool {have}")
         clean = not any(b.startswith("marker") for b in bad)
         out.append("markers: " + ("clean" if clean else "MISMATCH"))
+        out += [f"FAIL {b}" for b in bad if b.startswith("marker")]
     out.append("\n## 6. Counts: " + json.dumps(numbers, ensure_ascii=False))
-    if mutate or mutate_kinds:
-        needle = "lacks its consequence sentence" if mutate else "lacks the undo line"
-        what = (
-            "consequence sentence removed from one reduction frame"
-            if mutate
-            else "undo line removed from one reduction kind"
-        )
+    if mode:
+        needle = MUTATIONS[mode]
         hits = [b for b in bad if needle in b]
-        verdict = len(hits) == 1 and len(bad) == 1
+        passed = len(hits) == 1 and len(bad) == 1
         out.append(
-            f"\n## mutation ({what}): {len(hits)} FAIL — "
-            + ("as expected" if verdict else "UNEXPECTED")
+            f"\n## mutation --mutate-{mode} ({needle}): {len(hits)} FAIL — "
+            + ("as expected" if passed else "UNEXPECTED")
         )
+        out += [f"FAIL {b}" for b in bad]
         print("\n".join(out))
-        return 0 if verdict else 1
+        return 0 if passed else 1
     if "--json" in argv:
         palette = {th: {n: resolve(tk, n) for n in BINDINGS} for th, tk in themes.items()}
         payload = {
@@ -1006,6 +1215,7 @@ def main(argv: list[str]) -> int:
             "missing": missing,
             "facts": facts,
             "sentences": sent,
+            "diffs": diff,
         }
         payload.update({"problems": bad, "cite_warnings": CITE_WARN, "palette": palette})
         print(json.dumps(payload, ensure_ascii=False, indent=1))
