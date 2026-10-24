@@ -771,7 +771,8 @@ async def test_a_refused_mixed_patch_records_only_the_refusal() -> None:
 
 _RELAXES = [(_PIN, "put", {"pinned": False}), (_PIN, "put", {"pinned": False, "retention_days": 7}),
             ("/recording/symbols/{}", "patch", {"retention_days": 7}),
-            ("/recording/symbols/{}", "patch", {"pinned": False})]  # fmt: skip
+            ("/recording/symbols/{}", "patch", {"pinned": False}),
+            (_ADD, "post", {"symbol": "BTCUSDT", "retention_days": 7})]  # fmt: skip
 
 
 @pytest.mark.parametrize(("path", "method", "body"), _RELAXES)
@@ -798,6 +799,7 @@ async def test_a_non_owner_unpin_or_lower_retention_of_a_row_a_hidden_cause_hold
     assert fake.entries["BTCUSDT"] == entry
     assert [(a, r["outcome"], r["reason"]) for a, r in env.audit] == [
         ("retention.change", "denied", "relax_refused")] * 3  # fmt: skip
+    assert {r["object_id"] for _, r in env.audit} == {entry.id}  # the port's check, before writes
     smuggled = await env.http.request(method, url, json=body | {"restricted": False})
     assert smuggled.status_code == 422  # no body field names the view
     owner = _Env(fake, *W, elevated=True)
