@@ -200,8 +200,9 @@ def restricted_view(entry: RecordedEntry) -> RecordedEntry | None:
 
 
 def viewed(entry: RecordedEntry) -> RecordedEntry:
-    """`entry` as every answer shows it: a pinned entry keeps forever, so its stored
-    `retention_days` (inert while pinned, #2188 S3c) is shown as none."""
+    """`entry` as every answer shows it: a pinned entry keeps forever, so its `retention_days` is
+    shown as none. A pin nulls the stored days (#2188 S3c); a number still on a pinned row (a
+    failed second statement, or a direct policy call) is inert, and shown as none too."""
     return replace(entry, retention_days=None) if entry.pinned else entry
 
 

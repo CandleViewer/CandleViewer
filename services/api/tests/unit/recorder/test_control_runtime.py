@@ -374,14 +374,14 @@ async def test_a_restricted_status_drops_hidden_reasons_of_start_refused_symbols
     assert "position_open" not in str(env.cache.body(True))
 
 
-async def test_a_pinned_entry_shows_no_retention_while_its_stored_days_stay_inert(env: Any) -> None:
-    """A pin keeps the stored `retention_days` (inert while pinned, #2188 S3c); the view shows
-    none. An unpin naming no days stores NULL, the default."""
+async def test_a_pin_nulls_the_stored_retention_and_the_view_shows_none(env: Any) -> None:
+    """A pin nulls the stored `retention_days` (#2188 S3c); the view shows none. An unpin naming
+    no days keeps NULL, the default."""
     entry, _ = await env.c.add("BTCUSDT", rc.EntrySpec(), OWNER, restricted=False)
     await env.c.update(entry.id, rc.EntrySpec(retention_days=60), OWNER, restricted=False)
     pinned = await env.c.pin(entry.id, True, OWNER, restricted=False)
     assert pinned is not None and (pinned.pinned, pinned.retention_days) == (True, None)
-    assert env.rows.store.rows[entry.id]["retention_days"] == 60  # kept, inert
+    assert env.rows.store.rows[entry.id]["retention_days"] is None  # the pin nulled it
     for seen in (await env.c.get(entry.id), await _one(env.c, "BTCUSDT")):
         assert seen is not None and seen.retention_days is None
     unpinned = await env.c.pin(entry.id, False, OWNER, restricted=False)
