@@ -6,9 +6,10 @@ addresses, `fixture` labels, and ids and numeric exchange uids (the `ea_uid_fmt`
 only) derived from each handle's name with `uuid5`: the handles' rows are the same on every run. Two
 things are random by design: the default profile each account gets from the `trg_ea_default_profile`
 trigger, and the invite's token. Nothing here is a credential, an exchange key, a token or anyone's
-personal data, and `tests/unit/test_admin_fixture_handles.py`, `test_admin_fixture_seed.py`,
-`test_admin_corrupt_chain_fixture.py` and `test_admin_flag_overrides_fixture.py` pass every value,
-and this file, through the log redactor to keep it so.
+personal data, and the admin-fixture unit tests (`tests/unit/test_admin_*.py`) pass every value
+through the log redactor to keep it so; `test_admin_fixture_handles.py` passes this file too. One
+value is left out of that scan, by name: AUDIT-SECRET-MARKER's marker, which is secret-shaped on
+purpose (see its section).
 
 | File                 | What it holds                                                                                   |
 | -------------------- | ----------------------------------------------------------------------------------------------- |
@@ -21,6 +22,9 @@ and this file, through the log redactor to keep it so.
 | `world.py`           | `require_world`: the rows of slice A's world a later seed needs, each named if missing          |
 | `oob_writes.py`      | OOB-WRITES: four writes as `cv_app` outside the API, with no audit record, and their check      |
 | `forged_seal.py`     | SC-FORGED-SEAL: a snapshot changed after it was sealed, `forged_row` and its checks             |
+| `audit_session.py`   | The checked pool and real audit writer the writer-based seeds write through                     |
+| `secret_marker.py`   | AUDIT-SECRET-MARKER: `seed_secret_marker`, an entry whose states carry a marker to redact       |
+| `concurrent_rows.py` | AUDIT-CONCURRENT: `seed_concurrent_rows`, 1,000 audit rows from two connections, one raw        |
 | `payloads/`          | The health reports and the overview, as JSON bodies of the contract's models                    |
 | `README.md`          | This file                                                                                       |
 
@@ -288,14 +292,81 @@ await check_forged_seal(relational, keys, now=now)
 - **In process:** `forged_row` builds the same row without a database, and `check_left_out` checks
   any rows read back. The plan runs AD-T07-N01 in process only, over an injected store.
 - **Idempotent and self-checking:** a second run rewrites the same row (an upsert), and the check
-  passes again. `check_forged_seal` raises
-  `FixtureCheckError` unless the row is there once, its seal fails on the HMAC (not on an unknown
-  key or a hash) and the inspector, reading it back with the same keys, lists nothing and says
-  `error`. The critical `system_events` row AD-T07-N01 expects is not written by the inspector yet.
+  passes again. `check_forged_seal` raises `FixtureCheckError` unless the row is there once, its
+  seal fails on the HMAC (not on an unknown key or a hash) and the inspector, reading it back with
+  the same keys, lists nothing and says `error`. The critical `system_events` row AD-T07-N01
+  expects is not written by the inspector yet.
 - **Test databases only:** a database not named for tests is refused with `FixtureRefused` before
   any read.
 - `tests/integration/admin/test_admin_fixture_b4a_pg.py` runs the three seeds on Postgres 16,
   OOB-WRITES in its own database as `cv_app` through a stand-in role.
+
+## The secret marker (AUDIT-SECRET-MARKER)
+
+Into a migrated test database, from `services/api`; `tmp_path` holds the writer's WAL file:
+
+```python
+from tests.fixtures.admin.secret_marker import check_secret_marker, seed_secret_marker
+
+await seed_secret_marker(pg_dsn, tmp_path)  # pg_dsn: the SQLAlchemy asyncpg URL of a test database
+await check_secret_marker(pg_dsn)
+```
+
+- **What it writes:** one `api_key.import` entry through the real audit writer, which it builds on
+  `pg_dsn` (it cannot point at another database). Its `before_state` holds the marker under `api_key` and
+  its `after_state` under `api_secret`, as a caller's mistake would. The audit redactor decides by the
+  field's name, not by the value's shape, and writes `<redacted:secret>` in the value's place, so the
+  entry is stored with that in both, and no read of it shows the marker: AD-S04-07's scan of the drawer's DOM and of the exported file finds none. The entry's
+  `actor_label`, `fixture-secret-marker`, is how a case finds it.
+- **The marker:** `FIXTURE-SECRET-` and 24 letters and digits (`MARKER` in `secret_marker.py`). It is no
+  credential, and it is shaped like an exchange key so that the log redactor replaces it too. That is why
+  the fixtures' secret scan leaves this one value out, by name, and no other, and why it is in no file of
+  this directory but that module.
+- **Idempotent and self-checking:** a second run finds the entry and writes nothing, even after a run
+  that ended between its emit and its flush (the seed waits for the writer's replay before it reads).
+  `check_secret_marker`
+  raises `FixtureCheckError` unless the one entry is stored with the redacted states and the marker is in
+  none of its columns; it never prints a stored value.
+- **Test databases only, because it is permanent:** an entry can never be removed (C-5.7), so a database
+  not named `test` or `*_test` is refused with `FixtureRefused` before anything is read or written, and
+  before a writer is built. It needs no row of slice A's world.
+- `tests/integration/admin/test_admin_fixture_b4b_pg.py` reads the entry back as the Owner's raw read and
+  the export's batch read it; `tests/unit/test_admin_secret_marker_fixture.py` runs the real writer over an
+  in-memory `audit_log`.
+
+## The concurrent rows (AUDIT-CONCURRENT)
+
+```python
+from datetime import UTC, datetime
+
+from tests.fixtures.admin.concurrent_rows import check_concurrent_rows, seed_concurrent_rows
+
+first, last = await seed_concurrent_rows(pg_dsn, now=datetime.now(UTC))
+await check_concurrent_rows(pg_dsn)  # then verify from_id=first, to_id=last
+```
+
+- **What it writes:** AC-ADM-16's 1,000 audit rows from two connections, in 500 rounds. In each round
+  one insert goes through the app's insert path (the audit repository's `insert`, which the writer's
+  flusher calls) and one is a raw `INSERT` on a psycopg connection, which meets the chain lock only in
+  the trigger; the two are in flight together. Either may take the lock first, but a round ends before the next begins, so
+  the rows alternate in pairs. The trigger chains both, ids being drawn under the lock (0045), so a
+  verify over `first` to `last` must find no break. The rows are `auth.login` entries by
+  `fixture-concurrent-app` and `fixture-concurrent-raw`.
+- **The range:** the answer is the ids of the first and the last row, for a verify's `from_id` and
+  `to_id`. A verify over it passes whatever else lies in it, unless that includes an altered entry: do not
+  load AUDIT-CORRUPT's chain into the same range.
+- **Idempotent and self-checking:** a second run finds the rows and writes nothing; a part of them is
+  refused, as rows can never be removed. `check_concurrent_rows` raises `FixtureCheckError` unless each
+  connection wrote its 500, the rows alternate in pairs, and the app's own verify over them finds no
+  break.
+- **Test databases only, because it is permanent:** a database not named for tests is refused with
+  `FixtureRefused` before anything is read or written, on the pool and on the psycopg connection alike.
+  It needs no row of slice A's world.
+- `tests/unit/test_admin_concurrent_rows_fixture.py` shows with a barrier that the two inserts of a round
+  are in flight together; `tests/integration/admin/test_admin_fixture_b4b_pg.py` runs the seed on
+  Postgres 16. The seed does not make the two meet at the chain lock (the app's path takes it after
+  its `SET LOCAL`s), so it is no proof of contention: `tests/integration/audit/test_audit_repository.py`'s
+  `test_two_connection_inserts_link_in_id_order` is.
 
 ## The degraded snapshot (SC-CHAIN-TRIPS)
 
@@ -359,21 +430,25 @@ load_audit_10m(psycopg_dsn)  # about 30 to 45 minutes through the chain trigger
   pushes the altered entry out of an unbounded verify's window, and a bulk-loaded database must not also
   host AUDIT-CORRUPT: its verify reports the first bulk row, not the victim.
 - **Locks:** a chained batch holds the chain's advisory lock while it inserts its 250,000 rows (about a
-  minute), so no other audit writer runs during a load. The bulk load holds `audit_log`'s table lock for
-  the whole load. Both are for test databases only. The loader takes a session advisory lock on its own
-  connection, so two loaders never both load: the second waits, then finds the rows.
+  minute), so no other audit writer runs during a batch; each batch commits on its own, so another
+  writer can run between two. The bulk load holds `audit_log`'s table lock for the whole load. Both are
+  for test databases only. The loader takes a session advisory lock on its own connection, so two
+  loaders never both load: the second waits, then finds the rows.
 - **The bulk load is one transaction:** it reads the trigger's state, runs `DISABLE TRIGGER`, the inserts
   and `ENABLE TRIGGER`, reads the state again, and only then commits. An error, a cancellation or a
   killed loader rolls the trigger state back with the rows, and a trigger found off before the load or
   after it is a `FixtureCheckError` that commits nothing. `DISABLE TRIGGER` needs the table's owner (the
   role that ran the migrations: the test container's user), not a superuser. Every run, the second
   included, ends with `trg_audit_chain` enabled or a `FixtureCheckError`; a trigger found off is not
-  repaired, so enable it with `ALTER TABLE audit_log ENABLE TRIGGER trg_audit_chain`.
+  repaired, so enable it with `ALTER TABLE audit_log ENABLE TRIGGER trg_audit_chain`. The one
+  exception is a bulk load that finds it off after its own `ENABLE`: the rollback has restored it, and
+  the message says so, with no recovery line.
 - **Idempotent:** a second run in the same mode finds the dataset's rows and loads nothing. A call in the
   other mode is refused with `FixtureCheckError` naming both modes: a bulk set holds the genesis
-  `prev_hash` on every row, a chained set on at most its first. A partly loaded dataset is refused too:
-  audit rows can never be removed (C-5.7), so load into a fresh test database. The dataset's rows are
-  those labelled `user_00` to `user_49`: no other seed may use that label shape.
+  `prev_hash` on every row, a chained set on at most its first. A partly loaded dataset is refused too,
+  once its trigger is read (one found off is reported first): audit rows can never be removed (C-5.7),
+  so load into a fresh test database. The dataset's rows are those labelled `user_00` to `user_49`: no
+  other seed may use that label shape.
 - **Test databases only:** a database not named for tests is refused with `FixtureRefused` before any
   read. No test loads 10 M rows: `tests/unit/test_admin_audit_10m_fixture.py` checks the batches, the SQL
   and the guards over a fake, and `tests/integration/admin/test_admin_audit_10m_pg.py` loads 600 rows in

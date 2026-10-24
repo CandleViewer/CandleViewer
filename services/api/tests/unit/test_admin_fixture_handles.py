@@ -24,6 +24,7 @@ from candleviewer.db import models as m
 from candleviewer.observability.redaction import redact_text
 from candleviewer.storage.repositories.backups import BACKUP_ERROR_CODES
 from candleviewer.storage.repositories.backups_sqlalchemy import _path as backup_path_rule
+from tests.fixtures.admin import concurrent_rows, secret_marker
 from tests.fixtures.admin.handles import (
     ACCOUNTS,
     BACKUP_VERIFY_FAILED,
@@ -50,7 +51,21 @@ def _values() -> list[str]:
     backups = [
         s for b in BACKUPS for s in (b.handle, b.target_path, b.checksum_sha256, b.error) if s
     ]
-    return [*users, *accounts, *backups, *FLAGS, PLACEHOLDER_HASH]
+    audit = [  # all the audit-writer seeds' values but `secret_marker.MARKER`, left out below
+        secret_marker.ACTOR,
+        secret_marker.ACTION,
+        secret_marker.OBJECT_ID,
+        secret_marker.WAL_NAME,
+        concurrent_rows.APP_ACTOR,
+        concurrent_rows.RAW_ACTOR,
+        concurrent_rows.ACTION,
+    ]
+    return [*users, *accounts, *backups, *audit, *FLAGS, PLACEHOLDER_HASH]
+
+
+def test_the_scan_leaves_out_the_marker_which_is_secret_shaped_on_purpose() -> None:
+    assert secret_marker.MARKER not in _values()
+    assert redact_text(secret_marker.MARKER) != secret_marker.MARKER  # so the scan would flag it
 
 
 def _uid_format() -> re.Pattern[str]:

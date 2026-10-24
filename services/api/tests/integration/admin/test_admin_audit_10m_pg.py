@@ -99,22 +99,29 @@ async def test_a_chained_loads_range_verifies_with_the_apps_own_verify(fresh: st
 
 class _Killed(psycopg.Connection[Any]):
     """A connection that closes itself, sending no COMMIT or ROLLBACK, just before it would send a
-    statement holding `armed`, as a killed loader's does: the server rolls its transaction back."""
+    statement holding `armed`, as a killed loader's does: the server rolls its transaction back.
+    With `raises` set it raises that instead and stays up, as an interrupt does."""
 
     armed = ""
+    raises: BaseException | None = None
 
     def execute(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
         if self.armed and self.armed in str(query):
+            if self.raises is not None:
+                raise self.raises
             self.close()
         return super().execute(query, params, **kwargs)
 
 
-def _killed_at(marker: str) -> Callable[[str], psycopg.Connection[Any]]:
-    """The loader's `connect_test_database`, its connection dying at the statement with `marker`."""
+def _killed_at(
+    marker: str, raises: BaseException | None = None
+) -> Callable[[str], psycopg.Connection[Any]]:
+    """The loader's `connect_test_database`, its connection dying (or raising) at the statement
+    with `marker`."""
 
     def connect(dsn: str) -> psycopg.Connection[Any]:
         conn = _Killed.connect(dsn, autocommit=True)
-        conn.armed = marker
+        conn.armed, conn.raises = marker, raises
         return conn
 
     return connect
@@ -133,6 +140,21 @@ def test_a_bulk_load_killed_mid_transaction_leaves_the_trigger_on_and_no_row(
         audit_10m, "connect_test_database", _killed_at("generate_series(250::bigint")
     )
     with pytest.raises(psycopg.OperationalError):
+        load_audit_10m(fresh, _ROWS, _SIZE, chained=False)
+    assert _left_behind(fresh) == ([("O",)], [(0,)])
+
+
+def test_a_bulk_load_interrupted_mid_transaction_leaves_the_trigger_on_and_no_row(
+    fresh: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B3's re-check N2: a `KeyboardInterrupt` at the second batch, DISABLE and the first batch in,
+    on a connection that is still up: the transaction's exit rolls back on the server."""
+    monkeypatch.setattr(
+        audit_10m,
+        "connect_test_database",
+        _killed_at("generate_series(250::bigint", KeyboardInterrupt()),
+    )
+    with pytest.raises(KeyboardInterrupt):
         load_audit_10m(fresh, _ROWS, _SIZE, chained=False)
     assert _left_behind(fresh) == ([("O",)], [(0,)])
 

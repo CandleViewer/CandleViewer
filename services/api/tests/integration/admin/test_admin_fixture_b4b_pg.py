@@ -1,0 +1,170 @@
+"""Integration (E42-Q01, #962): the audit-writer seeds of slice B4b on a migrated Postgres 16:
+AUDIT-SECRET-MARKER and AUDIT-CONCURRENT.
+
+Each seed passes its own check, both pass in one database beside another actor's row, a second seed
+writes no row, and a database not named for tests is refused, before a table is touched: the refused
+database here is empty, so a seed that went on would fail on a missing table, not with
+`FixtureRefused`. Audit rows can never be removed (C-5.7), so each test runs in a database cloned
+from the migrated `test` one and named for tests. The marker entry is read back as the Owner's raw
+read and the export's batch read it, and neither holds the marker. Needs Docker (testcontainers); CI
+`integration` runs it.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import uuid
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import psycopg
+import pytest
+from psycopg import sql
+
+from candleviewer.audit.query import AuditQueryService
+from candleviewer.audit.redact import REDACTION_MARKER
+from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
+from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
+from tests.fixtures.admin.concurrent_rows import ROUNDS, check_concurrent_rows, seed_concurrent_rows
+from tests.fixtures.admin.secret_marker import (
+    ACTION,
+    ACTOR,
+    MARKER,
+    check_secret_marker,
+    seed_secret_marker,
+)
+from tests.fixtures.admin.seed import FixtureRefused
+from tests.integration import _refused
+
+pytestmark = pytest.mark.integration
+
+pg_dsn = _refused.pg_dsn  # the module-scoped Postgres 16, migrated; database and login `test`
+_NOW = datetime(2026, 10, 23, 19, 0, tzinfo=UTC)
+
+
+def _sync(dsn: str) -> str:
+    return dsn.replace("postgresql+asyncpg", "postgresql")
+
+
+def _rows(dsn: str, query: str, *params: Any) -> list[tuple[Any, ...]]:
+    with psycopg.connect(_sync(dsn)) as conn:
+        return conn.execute(query, params).fetchall()
+
+
+def _files(directory: Path) -> list[Path]:
+    return sorted(directory.iterdir())
+
+
+def _create(pg_dsn: str, name: str, template: str | None = None) -> str:
+    """The asyncpg DSN of a new database `name` on the container, cloned from `template` when
+    given. A template has no other connection while it is copied, so this connects through
+    `postgres`."""
+    server = pg_dsn.rsplit("/", 1)[0]
+    statement = sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name))
+    if template is not None:
+        statement += sql.SQL(" TEMPLATE {}").format(sql.Identifier(template))
+    with psycopg.connect(f"{_sync(server)}/postgres", autocommit=True) as conn:
+        conn.execute(statement)
+    return f"{server}/{name}"
+
+
+@pytest.fixture
+def fresh(pg_dsn: str) -> str:
+    """A migrated database of the test's own, named for tests."""
+    return _create(pg_dsn, f"b4b_{uuid.uuid4().hex[:12]}_test", template=pg_dsn.rsplit("/", 1)[1])
+
+
+@pytest.fixture
+def other_dsn(pg_dsn: str) -> str:
+    """An empty database whose name does not mark it for tests."""
+    return _create(pg_dsn, f"b4b_{uuid.uuid4().hex[:12]}")
+
+
+_LOG = "SELECT count(*) FROM audit_log"
+_OTHER_ROW = (
+    "INSERT INTO audit_log (record_id, actor_label, action, object_id, event_ts)"
+    " VALUES (%s, 'fixture-other-actor', 'auth.login', 'fixture-other', %s)"
+)
+
+
+def _other_actors_row(dsn: str) -> None:
+    with psycopg.connect(_sync(dsn)) as conn:
+        conn.execute(_OTHER_ROW, (uuid.uuid4(), _NOW))
+
+
+async def test_the_secret_marker_is_stored_redacted_and_a_second_seed_writes_no_row(
+    fresh: str, tmp_path: Path
+) -> None:
+    await seed_secret_marker(fresh, tmp_path)
+    await check_secret_marker(fresh)
+    await seed_secret_marker(fresh, tmp_path)
+    assert await asyncio.to_thread(_rows, fresh, _LOG) == [(1,)]
+
+
+async def test_the_owners_read_and_the_exports_batch_of_the_marker_entry_hold_no_marker(
+    fresh: str, tmp_path: Path
+) -> None:
+    await seed_secret_marker(fresh, tmp_path)
+    relational = SqlAlchemyRelationalRepository(fresh)
+    repository = SqlAlchemyAuditRepository(relational)
+    query = AuditQueryService(repository)
+    try:
+        page = await query.query(restrict_to_actor=None, owner=True, raw=True, actions=[ACTION])
+        [entry] = page.items
+        batch = await repository.fetch_export_batch(after_id=0, to_id=entry.id, limit=10)
+    finally:
+        query.close()
+        await relational.dispose()
+    assert entry.actor_username == ACTOR
+    assert entry.detail == {
+        "before": {"api_key": REDACTION_MARKER},
+        "after": {"api_secret": REDACTION_MARKER},
+    }
+    assert (MARKER in page.model_dump_json(), MARKER in repr(batch), len(batch)) == (
+        False,
+        False,
+        1,
+    )
+
+
+async def test_concurrent_rows_pass_their_check_and_a_second_seed_writes_none(
+    fresh: str,
+) -> None:
+    first, last = await seed_concurrent_rows(fresh, now=_NOW)
+    await check_concurrent_rows(fresh)
+    assert await seed_concurrent_rows(fresh, now=_NOW) == (first, last)
+    assert await asyncio.to_thread(_rows, fresh, _LOG) == [(2 * ROUNDS,)]
+
+
+async def test_both_seeds_beside_another_actors_row_pass_and_a_second_seed_writes_none(
+    fresh: str, tmp_path: Path
+) -> None:
+    """Each seed reads only its own actors' rows: another actor's entry ahead of both, and each
+    other's rows, change neither seed's answer nor its check."""
+    await asyncio.to_thread(_other_actors_row, fresh)
+    await seed_secret_marker(fresh, tmp_path)
+    first, last = await seed_concurrent_rows(fresh, now=_NOW)
+    await check_secret_marker(fresh)
+    await check_concurrent_rows(fresh)
+    await seed_secret_marker(fresh, tmp_path)
+    assert await seed_concurrent_rows(fresh, now=_NOW) == (first, last)
+    assert await asyncio.to_thread(_rows, fresh, _LOG) == [(2 * ROUNDS + 2,)]
+
+
+_REFUSED: dict[str, Callable[[str, Path], Awaitable[object]]] = {
+    "seed the marker": lambda dsn, wal: seed_secret_marker(dsn, wal),
+    "check the marker": lambda dsn, wal: check_secret_marker(dsn),
+    "seed the concurrent rows": lambda dsn, wal: seed_concurrent_rows(dsn, now=_NOW),
+    "check the concurrent rows": lambda dsn, wal: check_concurrent_rows(dsn),
+}
+
+
+@pytest.mark.parametrize("run", list(_REFUSED))
+async def test_a_database_not_named_for_tests_is_refused_before_a_table_is_touched(
+    other_dsn: str, tmp_path: Path, run: str
+) -> None:
+    with pytest.raises(FixtureRefused):
+        await _REFUSED[run](other_dsn, tmp_path)
+    assert await asyncio.to_thread(_files, tmp_path) == []  # no WAL file either
