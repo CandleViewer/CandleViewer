@@ -19,11 +19,12 @@ the router slice D2 serves. #889 S9-1b serves the contract-first `downloadAuditE
 lowers it to 126. #3085 S12 served two of its three contract-first operations (`getViewAs`,
 `endViewAs`): 124. #3085 S13b serves the third (`startViewAs`): 123, and #889 S7b
 `listAuditSigningKeys` and S7c `rotateAuditSigningKey`: 121. #492 (E16-T08) serves two frozen
-ones (`listRecordedSymbols`, `getRecordedSymbol`): 119, frozen 114. Keep both caps tight: a
-contract PR that adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, measured
-against current ``main`` with CI re-run there (two parallel raises merge cleanly yet both
-under-count); a PR that serves a frozen operation lowers ``FROZEN_BASELINE`` and
-``PENDING_BASELINE`` by the same amount.
+ones (`listRecordedSymbols`, `getRecordedSymbol`): 119, frozen 114; and two more
+(`listRecordingSessions`, `getStorageUsage`): 117, frozen 112. Keep both caps tight: a contract PR
+that adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, measured against
+current ``main`` with CI re-run there (two parallel raises merge cleanly yet both under-count); a
+PR that serves a frozen operation lowers ``FROZEN_BASELINE`` and ``PENDING_BASELINE`` by the same
+amount.
 """
 
 from __future__ import annotations
@@ -51,8 +52,8 @@ from candleviewer.statechart.registry import Registry
 PKG = Path(bindings_pkg.__file__).resolve().parents[2]
 API_DIR = PKG / "api"
 MAIN_TREE = ast.parse((PKG / "main.py").read_text(encoding="utf-8"))
-PENDING_BASELINE = 119
-FROZEN_BASELINE = 114
+PENDING_BASELINE = 117
+FROZEN_BASELINE = 112
 BASELINE_TICKET = "E49-K01-F4-baseline"
 REAL_TICKET = re.compile(r"^#\d+$|^E\d\d-[A-Z]\d\d$")
 ALLOW: dict[str, dict[str, dict[str, str]]] = json.loads(

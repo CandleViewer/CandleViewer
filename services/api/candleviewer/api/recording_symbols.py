@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from datetime import datetime
 from typing import Annotated, Any, Final
 from uuid import UUID
 
@@ -35,16 +34,12 @@ class _ListQuery(BaseModel):  # unknown parameters are ignored, as FastAPI's own
     pinned: bool | None = None
 
 
-def _z(value: Any) -> Any:
-    return value.isoformat().replace("+00:00", "Z") if isinstance(value, datetime) else value
-
-
 def _dump(e: rc.RecordedEntry) -> dict[str, Any]:
     body = {"id": e.id, "symbol": e.symbol, "reason": e.reason, "pinned": e.pinned,
             "state": e.state, "streams": list(e.streams), "depth": e.depth,
-            "started_at": _z(e.started_at), "retention_days": e.retention_days,
+            "started_at": common.iso_z(e.started_at), "retention_days": e.retention_days,
             "added_by": e.added_by}  # fmt: skip
-    return body | {k: _z(v) for k in _RUNTIME if (v := getattr(e, k)) is not None}
+    return body | {k: common.iso_z(v) for k in _RUNTIME if (v := getattr(e, k)) is not None}
 
 
 def make_recording_symbols_router(

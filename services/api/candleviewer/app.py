@@ -148,6 +148,7 @@ from candleviewer.api.onboarding_checklist import StepResult, bybit_key_restrict
 from candleviewer.api.openapi_publish import install_contract_openapi
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
 from candleviewer.api.recorder_purge import make_recorder_purge_router
+from candleviewer.api.recording_reports import make_recording_reports_router
 from candleviewer.api.recording_symbols import make_recording_symbols_router
 from candleviewer.api.response_headers import NoSniff
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
@@ -2457,6 +2458,18 @@ def create_app(
     app.include_router(
         make_recording_symbols_router(
             lambda: app.state.recording_control, audit_resolver, _LazyAuditEmitter(ctx.audit)
+        )
+    )
+    # The sessions page (same env) and the disk budget's last report; `503` without them.
+    app.state.recording_sessions = SqlAlchemyRecordingReads(_kb_pg) if _kb_pg is not None else None
+    app.include_router(
+        make_recording_reports_router(
+            lambda: app.state.recording_control,
+            lambda: app.state.recording_sessions,
+            lambda: app.state.disk_budget,
+            resolved.environment.value,
+            audit_resolver,
+            _LazyAuditEmitter(ctx.audit),
         )
     )
     # E16-T05: nightly roll-off composition (constructed only; scheduling is flag-gated).

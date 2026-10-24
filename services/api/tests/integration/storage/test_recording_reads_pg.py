@@ -135,7 +135,7 @@ async def test_sessions_page_newest_first_with_gap_counts(
     btc = _row(conn, "BTCUSDT")
     old = _session(conn, btc, "BTCUSDT", "stopped", 1, gaps=2)
     new = _session(conn, btc, "BTCUSDT", "recording", 5)
-    _session(conn, _row(conn, "ETHUSDT", "position_open"), "ETHUSDT", "recording", 3, gaps=1)
+    eth = _session(conn, _row(conn, "ETHUSDT", "position_open"), "ETHUSDT", "recording", 3, gaps=1)
     _session(conn, _row(conn, "XRPUSDT", env="live"), "XRPUSDT", "recording", 4)
 
     async def page(**q: Any) -> list[dict[str, Any]]:
@@ -152,3 +152,8 @@ async def test_sessions_page_newest_first_with_gap_counts(
                        after=(every[0]["started_at"], new))  # fmt: skip
     assert [r["id"] for r in older] == [old]
     assert [r["id"] for r in await page(since=_T0 + timedelta(hours=2))] == [new]
+    # each predicate alone, past the restricted view: symbol, from, to
+    assert [r["id"] for r in await page(hidden=(), symbol="ETHUSDT")] == [eth]
+    assert [r["id"] for r in await page(hidden=(), since=_T0 + timedelta(hours=2, minutes=30))] == [
+        new, eth]  # fmt: skip
+    assert [r["id"] for r in await page(hidden=(), until=_T0 + timedelta(hours=4))] == [eth, old]
