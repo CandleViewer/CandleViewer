@@ -90,6 +90,7 @@ from candleviewer.exchange.base.ports import TradingPort
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.storage.repositories.orders import OrderRow
 from candleviewer.storage.repositories.recorded_stops import (
+    STOP_AUDIT_TIMEOUT_S,
     WAITING_ENTRY,
     RecordedStopRow,
     ResolveWriteAhead,
@@ -97,7 +98,6 @@ from candleviewer.storage.repositories.recorded_stops import (
 )
 
 from .commands import LIVE_HISTORY_SPAN_S, found_view
-from .fakes import STOP_AUDIT_TIMEOUT_S
 from .ports import PositionKey
 from .routing import read_position
 
@@ -115,9 +115,9 @@ __all__ = [
 READ_TIMEOUT_S: Final = 5.0
 WHOLE_READ_TIMEOUT_S: Final = 15.0
 #: Each store call's bound (21 Sec.3.3.5): the stop audit's write-ahead bound
-#: (`STOP_AUDIT_TIMEOUT_S`, the recorded stops' `WRITE_AHEAD_TIMEOUT_S`) plus a margin for the
-#: statements around it, so a late audit reaches the caller as the store's `AuditNotDurable`, and
-#: only a store call stuck elsewhere (a lock wait, the pool) as this bound's `TimeoutError`.
+#: (`recorded_stops.STOP_AUDIT_TIMEOUT_S`, every recorded-stop store's default) plus a margin for
+#: the statements around it, so a late audit reaches the caller as the store's `AuditNotDurable`,
+#: and only a store call stuck elsewhere (a lock wait, the pool) as this bound's `TimeoutError`.
 STORE_MARGIN_S: Final = 2.0
 STORE_TIMEOUT_S: Final = STOP_AUDIT_TIMEOUT_S + STORE_MARGIN_S
 #: How many of the venue's 7-day history windows one read may walk (Fable, fold 2): 4 weeks, so
