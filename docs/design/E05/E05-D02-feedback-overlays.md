@@ -494,8 +494,8 @@ slices 1–3 keep their resolution.
     the CMP-027, CMP-028 and CMP-038 bullets, its accepted banner's role following E30-D04 §9; H2, H26), E30-D03† (the
     CMP-044, CMP-027 and CMP-046 bullets; H24, H31) and its handoff† (H21), E30-D04† (the CMP-044, CMP-028, CMP-038 and
     CMP-046 bullets; H5, H21, H24), E32-D02† (`Enter`, aligned), E33-D02† (the CMP-027 and CMP-044 bullets; H4, H21,
-    H33; its bar's motion, kept), E33-D03† (H4, H5, H33) and its handoff† (H3, H4, H21; its bar's motion, kept),
-    E35-D02† (the CMP-027 and CMP-046 bullets; H4, H21, H31, H33; its bar's motion, kept) and its handoff† (H4, H21; its
+    H33; its bar's motion, kept), E33-D03† (H4, H5, H33) and its handoff† (H3, H4, H5, H21; its bar's motion, kept),
+    E35-D02† (the CMP-027 and CMP-046 bullets; H4, H21, H31, H33; its bar's motion, kept) and its handoff† (H4, H21, H31; its
     bar's motion, kept), E35-D03† (H21, H33) and its handoff† (H21), E36-D02 (H10, H32), E36-D03 (H21, H31, H33) and its
     handoff (H21), E36-D04† (H10, H31–H33; `Enter`, aligned), E39-D02 (its meter fill, kept) and its handoff (H33),
     E39-D03 and its handoff (H21, H23), E40-D02 (H6, H26), E42-D02 (H1, H24, H32), E42-D03 (H22, H24, H33), E42-D04
