@@ -205,7 +205,87 @@ def test_only_the_rest_run_passes_the_strict_types(
     for name in ("REST_OUT", "WS_OUT", "CONTRACT_OUT"):
         monkeypatch.setattr(gen, name, tmp_path / name)
     gen.generate()
-    assert runs == [("openapi", gen._STRICT_SCALARS), ("jsonschema", ())]
+    sentinel = (*gen._STRICT_SCALARS, "--use-missing-sentinel")
+    assert runs == [("openapi", gen._STRICT_SCALARS), ("openapi", sentinel), ("jsonschema", ())]
+
+
+# What `--use-missing-sentinel` emits: an optional member with no default is `X | MISSING`.
+_SENTINEL_BLOCK = """\
+class Box(BaseModel):
+    plain: str | MISSING = MISSING
+    nullable: str | None | MISSING = MISSING
+    anything: Any | MISSING = MISSING
+    mapping: dict[str, int | None] | MISSING = MISSING
+    bounded: Annotated[int | MISSING, Field(ge=1)] = MISSING
+    required: str
+    defaulted: int = 1
+"""
+
+
+def test_the_sentinel_run_marks_the_optional_members_that_refuse_null() -> None:
+    """`None` or `Any` at the top of a member's union lets it be `null`; inside a `dict`, not."""
+    marked = _generator()._null_refused_members(_SENTINEL_BLOCK)
+    assert marked == {"Box": ["plain", "mapping", "bounded"]}
+
+
+# The normal output of five classes, each of which the sentinel run marks one member of.
+_NULL_BLOCK = """\
+from pydantic import (
+    BaseModel,
+)
+class Parent(BaseModel):
+    a: str | None = None
+class Child(Parent):
+    b: str | None = None
+class Shown(Parent):
+    c: str | None = None
+class Base(BaseModel):
+    d: str | None = None
+    f: int = 1
+class Sent(Base):
+    e: str | None = None
+"""
+_MARKED = {"Parent": ["a"], "Child": ["b"], "Shown": ["c"], "Base": ["d"], "Sent": ["e"]}
+_REQUESTED = {"Parent", "Child", "Sent"}
+
+
+def test_each_marked_class_gets_one_refusal_of_its_own() -> None:
+    patched = _generator()._add_null_refusals(_NULL_BLOCK, _MARKED, _REQUESTED)
+    assert [line.strip() for line in patched.splitlines() if "= field_validator(" in line] == [
+        '__null_refused = field_validator("a", mode="before")(_refuse_null)',
+        '__null_refused = field_validator("b", mode="before")(_refuse_null)',
+        '_Parent__null_refused = field_validator("a", mode="before")(_take_null)',
+        '_Base__null_refused = field_validator("d", mode="before")(_refuse_null)',
+        '__null_refused = field_validator("e", mode="before")(_refuse_null)',
+    ]
+
+
+def test_a_subclass_keeps_its_parents_null_refusals() -> None:
+    """No request model extends another on this contract, so a fixture shows the mangled names at
+    work: `Child` keeps `Parent`'s refusal; `Shown`, which no request body reaches, takes `null`
+    again; `Sent` refuses its base's `d`, which `Base` itself takes."""
+    namespace: dict[str, Any] = {}
+    patched = _generator()._add_null_refusals(_NULL_BLOCK, _MARKED, _REQUESTED)
+    code = compile(patched, "<patched>", "exec", dont_inherit=True)
+    exec(code, namespace)  # noqa: S102 - the generator's own output for a fixed fixture
+    probes = [("Parent", "a"), ("Child", "a"), ("Child", "b"), ("Shown", "a"), ("Shown", "c")]
+    probes += [("Base", "d"), ("Sent", "d"), ("Sent", "e")]
+    taken = [(name, member) for name, member in probes if _takes_null(namespace[name], member)]
+    assert taken == [("Shown", "a"), ("Shown", "c"), ("Base", "d")]
+
+
+def _takes_null(model: Any, member: str) -> bool:
+    try:
+        model.model_validate({member: None})
+    except ValidationError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize("marked", [{"Gone": ["a"]}, {"Base": ["f"]}], ids=["class", "default"])
+def test_a_mark_the_models_cannot_hold_stops_the_generator(marked: dict[str, list[str]]) -> None:
+    with pytest.raises(RuntimeError, match="update _null_refused_members"):
+        _generator()._add_null_refusals(_NULL_BLOCK, marked, _REQUESTED)
 
 
 def test_ws_models_module_imports_cleanly(generated_ws_module) -> None:  # type: ignore[no-untyped-def]

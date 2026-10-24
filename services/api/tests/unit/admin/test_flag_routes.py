@@ -141,6 +141,9 @@ def test_the_body_cap_is_exact_and_past_it_is_422_body_too_large() -> None:
         (_with("[" * 8 + "]" * 8), "value", "kind_mismatch"),  # as deep as the walk goes
         *((_with("[" * n + "]" * n), "", "json_invalid") for n in (9, 1000, 8000)),
         (write(**{"x" * 200: 1}), "x" * 128, "extra_forbidden"),  # the echoed name, cut
+        # #906 slice G2b: `null` where the contract has none, once a 200 or the writer's `required`
+        *((write(**{m: None}), m, "value_error") for m in ("overrides", "evidence_url")),
+        *((write(**{m: None}), m, "value_error") for m in ("reason", "expected_updated_at")),
     ],
 )
 def test_a_body_the_contract_refuses_is_422_and_audited(

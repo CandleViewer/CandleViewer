@@ -834,10 +834,10 @@ def test_a_verification_may_show_a_wildcard_and_a_range_the_whitelist_check_refu
     validate_example(_VERIFICATION, shown)
 
 
-# --- `read_only` is a JSON boolean (#906 slice G2a) --------------------------------------------
+# --- `read_only` is a JSON boolean, `label` is never `null` (#906 slices G2a, G2b) -------------
 
 
-async def _import_with(read_only: object) -> httpx.Response:
+async def _import_with(**sent: object) -> httpx.Response:
     """`createApiKey` as mounted, its body `CreateApiKeyRequest`. No principal resolver is wired,
     so a body that validates would reach the handler and answer 501; none of these does."""
     app = FastAPI()
@@ -846,7 +846,7 @@ async def _import_with(read_only: object) -> httpx.Response:
         None, AsyncMock(), None, egress_ip=None, rotation=KeyRotationPolicy()
     )
     app.include_router(router)
-    body = {"api_key": API_KEY, "api_secret": API_SECRET, "read_only": read_only}
+    body = {"api_key": API_KEY, "api_secret": API_SECRET, **sent}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         return await c.post(f"/exchange-accounts/{UUID(int=1)}/keys", json=body)
 
@@ -857,7 +857,7 @@ async def _import_with(read_only: object) -> httpx.Response:
 async def test_create_api_key_takes_read_only_as_a_json_boolean_only(sent: object) -> None:
     """A lax parser read `1`, `"yes"` and `"true"` as `true`; the contract says `type: boolean`.
     The 422 names the member, echoes nothing of the input and holds no key material."""
-    response = await _import_with(sent)
+    response = await _import_with(read_only=sent)
     assert response.status_code == 422
     assert response.json()["errors"] == [
         {
@@ -867,6 +867,16 @@ async def test_create_api_key_takes_read_only_as_a_json_boolean_only(sent: objec
         }
     ]
     assert len(response.content) < 1024
+    assert API_KEY not in response.text and API_SECRET not in response.text
+
+
+async def test_create_api_key_refuses_a_null_label() -> None:
+    """`label: null` was read as no label; the contract has no `null` there (#906 slice G2b). The
+    422 names the member with a constant message and holds no key material."""
+    response = await _import_with(label=None)
+    message = "Value error, null is not allowed: leave the member out"
+    refused = [{"field": "body.label", "rule": "value_error", "message": message}]
+    assert (response.status_code, response.json()["errors"]) == (422, refused)
     assert API_KEY not in response.text and API_SECRET not in response.text
 
 

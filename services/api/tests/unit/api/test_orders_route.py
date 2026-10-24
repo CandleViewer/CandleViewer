@@ -649,8 +649,8 @@ async def test_rbac_refuses_first_and_discloses_no_gate_reason(who: str) -> None
     assert (world.oms.route.switches.asked, world.audit.actions()) == (0, ["rbac.denied"])
 
 
-_REDUCE = BODY | {"reduce_only": True, "intent": "flatten", "order_type": "market", "price": None}
-_REDUCE.pop("stop_loss")
+_REDUCE = BODY | {"reduce_only": True, "intent": "flatten", "order_type": "market"}
+del _REDUCE["price"], _REDUCE["stop_loss"]  # left out: `null` is no price (#906 slice G2b)
 
 
 async def test_the_flag_passes_a_reduce_only_body_and_the_gate_still_takes_it() -> None:
@@ -701,14 +701,15 @@ async def test_a_repeated_account_key_is_read_once_for_rbac_and_for_the_order() 
         ({"leverage": "5"}, "leverage", "extra_forbidden"),
         ({"side": "BUY"}, "side", "literal_error"),
         ({"close_on_trigger": 1}, "close_on_trigger", "bool_type"),
+        ({"sizing": {"mode": "fixed_qty", "qty": None}}, "sizing.qty", "value_error"),  # G2b
     ],
-    ids=["limit_without_price", "algo", "extra_member", "side", "number_for_bool"],
+    ids=["limit_without_price", "algo", "extra_member", "side", "number_for_bool", "null_qty"],
 )
 async def test_the_body_is_read_strictly_audited_and_refused_before_the_pipeline(
     change: dict[str, Any], field: str, rule: str
 ) -> None:
     world = World()
-    answer = await post(world, body=BODY | change)
+    answer = await post(world, body={k: v for k, v in (BODY | change).items() if v is not None})
     errors = {(e["field"], e["rule"]) for e in answer.json()["errors"]}
     assert (answer.status_code, (field, rule) in errors) == (400, True)
     assert (world.audit.actions(), world.oms.submission.submitted) == (["orders.submit"], [])

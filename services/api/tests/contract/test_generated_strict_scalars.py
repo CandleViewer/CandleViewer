@@ -48,8 +48,10 @@ def test_every_model_a_request_body_reaches_is_paired_with_its_contract_schema()
 
 def test_the_request_scalars_the_proof_checks_hold_a_boolean_an_integer_and_a_number() -> None:
     members = {(m.__name__, name) for m in REQUEST_MODELS for name in scalar_members(m)}
+    assert len(members) >= 115  # the walk's reach, re-measured: a lost model's scalars fail it
     assert {
         ("CreateApiKeyRequest", "read_only"),
+        ("LayoutPaneInput", "slot_index"),  # only through a `list[...]` member (R2-02)
         ("ProfileRiskCaps", "max_open_positions"),
         ("ReplayControlRequest", "speed"),
         ("RetentionPolicyInput", "retain_days"),  # only from inside an inline body (R1C-02)

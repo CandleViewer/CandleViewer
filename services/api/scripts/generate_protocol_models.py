@@ -11,7 +11,9 @@ rather than accept float/str drift on the backend. That type enforces the contra
 pattern on the raw input, and a member the contract defaults and does not mark nullable refuses
 `null` (`--strict-nullable`): the generated models are no laxer than the contract (#906 slice G).
 A REST boolean, integer or number takes only its JSON type (`--strict-types`), and an integer keeps
-`5.0`, which the contract's `type: integer` takes too (`_patch_json_integer`, #906 slice G2a).
+`5.0`, which the contract's `type: integer` takes too (`_patch_json_integer`, #906 slice G2a). A
+request model refuses `null` where the contract does, on an optional member that a second REST
+run, `--use-missing-sentinel`, names (`_add_null_refusals`, #906 slice G2b).
 
 It also writes `candleviewer/api/_generated/contract_subset.json` (#2555): the pruned copy of
 the REST contract that the app reads at runtime, since the API image ships no `docs/plan`.
@@ -26,12 +28,17 @@ Usage: uv run python scripts/generate_protocol_models.py [--check]
 
 from __future__ import annotations
 
+import ast
 import importlib.util
+import json
 import re
 import subprocess
 import sys
+import tempfile
+from collections.abc import Mapping, Set
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -121,6 +128,21 @@ def _json_integer(value: object) -> object:
 
 JsonInt = Annotated[int, Strict(), BeforeValidator(_json_integer)]
 """A JSON Schema `integer`: an `int`, or a float with no fractional part, and nothing else."""
+'''
+
+# What a model's emitted `field_validator` line calls (`_add_null_refusals`): no input is echoed.
+_NULL_REFUSAL_SOURCE = '''\
+def _refuse_null(value: object) -> object:
+    """An optional member the contract does not let be `null` (#906 slice G2b): left out it is
+    `None`; sent as `null` it is refused, with a constant message that never carries the input."""
+    if value is None:
+        raise ValueError("null is not allowed: leave the member out")
+    return value
+
+
+def _take_null(value: object) -> object:
+    """A model no request body reaches takes `null` where a request model it extends refuses it."""
+    return value
 '''
 
 
@@ -245,10 +267,111 @@ def _patch_json_integer(source: str) -> str:
     return patched[:first_model] + _JSON_INTEGER_SOURCE + "\n\n" + patched[first_model:]
 
 
-def _write(path: Path, header: str, source: str) -> None:
+def _union_members(node: ast.expr) -> list[ast.expr]:
+    """The members of an `A | B` annotation, through `Annotated[...]`'s first argument."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _union_members(node.left) + _union_members(node.right)
+    if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Tuple):
+        if ast.unparse(node.value) == "Annotated":
+            return _union_members(node.slice.elts[0])
+    return [node]
+
+
+def _null_refused_members(sentinel_source: str) -> dict[str, list[str]]:
+    """Per class, the members the `--use-missing-sentinel` run types `X | MISSING`, with neither
+    `None` nor `Any` at the top of their own union (a `None` inside `dict[...]` is a value's)."""
+    found: dict[str, list[str]] = {}
+    for node in [n for n in ast.parse(sentinel_source).body if isinstance(n, ast.ClassDef)]:
+        for m in node.body:
+            if isinstance(m, ast.AnnAssign) and isinstance(m.target, ast.Name) and m.value:
+                top = {ast.unparse(each) for each in _union_members(m.annotation)}
+                if ast.unparse(m.value) == "MISSING" and not top & {"None", "Any"}:
+                    found.setdefault(node.name, []).append(m.target.id)
+    return found
+
+
+def _request_models(spec: dict[str, Any], source: str) -> set[str]:
+    """The classes of `source` a request body reaches: those its `$ref`s name (a shared
+    `requestBodies` entry's too), then each class a reached class's members or bases' members name:
+    codegen's own names, so an inline class (`Override1`) is found where its parent names it."""
+    ops = [op for item in spec["paths"].values() for op in item.values() if isinstance(op, dict)]
+    bodies = json.dumps([op.get("requestBody") for op in ops])
+    shared = spec.get("components", {}).get("requestBodies", {})
+    found = re.findall(r'"#/components/requestBodies/([^"]+)"', bodies)
+    bodies += json.dumps([shared[name] for name in found])
+    classes = {node.name: node for node in ast.parse(source).body if isinstance(node, ast.ClassDef)}
+
+    def named(node: ast.ClassDef) -> set[str]:
+        annotations = [m.annotation for m in node.body if isinstance(m, ast.AnnAssign)]
+        names = {n.id for each in annotations for n in ast.walk(each) if isinstance(n, ast.Name)}
+        for base in [b.id for b in node.bases if isinstance(b, ast.Name) and b.id in classes]:
+            names |= named(classes[base])
+        return names & classes.keys()
+
+    roots = set(re.findall(r'"\$ref": "#/components/schemas/([^"]+)"', bodies))
+    reached: set[str] = set()
+    pending = sorted(roots & classes.keys())
+    while pending:
+        if (name := pending.pop()) not in reached:
+            reached.add(name)
+            pending += sorted(named(classes[name]) - reached)
+    return reached
+
+
+def _add_null_refusals(source: str, refused: Mapping[str, list[str]], requested: Set[str]) -> str:
+    """Has each class a request body reaches (`requested`) refuse `null` for the members `refused`
+    names, by one line under its own mangled `__null_refused`, which a subclass keeps; any other
+    class takes `null` again where a base refuses it (ruling 1 of 2026-10-23 00:29Z)."""
+    classes = {node.name: node for node in ast.parse(source).body if isinstance(node, ast.ClassDef)}
+    for name, fields in refused.items():  # the two runs agree, or nothing is emitted
+        body = classes[name].body if name in classes else []
+        assigned = [m for m in body if isinstance(m, ast.AnnAssign)]
+        defaults = {ast.unparse(m.target): ast.unparse(m.value) for m in assigned if m.value}
+        if any(defaults.get(field) != "None" for field in fields):
+            message = f"the sentinel run marks members of {name} that are not `= None` here"
+            raise RuntimeError(
+                f"generate_protocol_models: {message}; update _null_refused_members."
+            )
+    held: dict[str, dict[str, bool]] = {}  # per class: whether each marked class's refusal holds
+    added: dict[int, list[str]] = {}
+    for name, node in classes.items():  # source order: a base comes before its subclasses
+        bases = [b.id for b in reversed(node.bases) if isinstance(b, ast.Name) and b.id in held]
+        holds = {owner: on for base in bases for owner, on in held[base].items()}
+        holds |= {name: False} if name in refused else {}
+        for owner in [owner for owner, on in holds.items() if on != (name in requested)]:
+            attribute = "__null_refused" if owner == name else f"_{owner}__null_refused"
+            members = ", ".join(f'"{member}"' for member in refused[owner])
+            check = "_refuse_null" if name in requested else "_take_null"
+            line = f'    {attribute} = field_validator({members}, mode="before")({check})\n'
+            added.setdefault(node.end_lineno or 0, []).append(line)
+            holds[owner] = name in requested
+        held[name] = holds
+    if not added:
+        return source
+    lines = source.splitlines(keepends=True)
+    for at in sorted(added, reverse=True):
+        lines[at:at] = added[at]
+    marker = "from pydantic import (\n"
+    if marker not in source:
+        raise RuntimeError(
+            "generate_protocol_models: no pydantic import tuple; update _add_null_refusals."
+        )
+    patched = "".join(lines).replace(marker, marker + "    field_validator,\n", 1)
+    first_model = patched.index("\nclass ") + 1
+    return patched[:first_model] + _NULL_REFUSAL_SOURCE + "\n\n" + patched[first_model:]
+
+
+def _write(
+    path: Path,
+    header: str,
+    source: str,
+    refused: Mapping[str, list[str]] | None = None,
+    requested: Set[str] = frozenset(),
+) -> None:
     body = _strip_generator_banner(source)
     body = _patch_decimal_money_type(body)
     body = _patch_json_integer(body)
+    body = _add_null_refusals(body, refused or {}, requested)
     path.write_text(header + body, encoding="utf-8", newline="\n")
 
 
@@ -272,7 +395,15 @@ def generate() -> None:
         extra=_STRICT_SCALARS,
     )
     raw_rest = REST_OUT.read_text(encoding="utf-8")
-    _write(REST_OUT, REST_HEADER, raw_rest)
+    with tempfile.TemporaryDirectory() as tmp:  # parsed for its member lists, never kept
+        sentinel = Path(tmp) / "openapi_models.py"
+        extra = (*_STRICT_SCALARS, "--use-missing-sentinel")
+        _run_datamodel_codegen(
+            input_path=OPENAPI_SPEC, input_file_type="openapi", output_path=sentinel, extra=extra
+        )
+        refused = _null_refused_members(sentinel.read_text(encoding="utf-8"))
+    spec = _contract_builder().load_openapi_spec(OPENAPI_SPEC) if refused else {"paths": {}}
+    _write(REST_OUT, REST_HEADER, raw_rest, refused, _request_models(spec, raw_rest))
 
     _run_datamodel_codegen(input_path=WS_SCHEMA, input_file_type="jsonschema", output_path=WS_OUT)
     raw_ws = WS_OUT.read_text(encoding="utf-8")
@@ -287,8 +418,6 @@ def check() -> None:
     (the `make gen && git diff --exit-code` pattern, run in-process). Byte equality, so a
     hand edit of any of the three outputs fails it as surely as a contract edit that skipped
     regeneration."""
-    import tempfile
-
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         saved_rest = REST_OUT.read_bytes() if REST_OUT.exists() else None
