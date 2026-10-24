@@ -36,6 +36,10 @@ account of the process's own environment, before anything hydrates (20 Sec.6.2).
 waiting rows of one key through `RecordedStopRepository`, with the account the key names (C-12.4):
 its callers are the stop-request gate and the startup pass (H3), after the submit pipeline's or
 B1's own admission, and no route reaches it.
+`oms/stop_gate.py`, that gate (H3), reads a key's waiting rows through `RecordedStopRepository`
+and runs the complete read for it: the key is the admitted request's (`submit.py`) or the stored
+order's (`commands.py`), its account resolved through the command port's `TradingAccounts` before
+any venue read, and no route reaches it.
 """
 
 from __future__ import annotations
@@ -62,6 +66,7 @@ ALLOWED = frozenset(
         "oms/idempotency.py",
         "oms/order_steps.py",
         "oms/repository.py",
+        "oms/stop_gate.py",
         "oms/stop_resolution.py",
         "oms/submit.py",
         "oms_wiring.py",

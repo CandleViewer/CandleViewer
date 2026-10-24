@@ -424,6 +424,26 @@ def test_an_answered_request_the_read_only_matched_is_held_for_reconciliation() 
     assert decision.outcome == "held_for_reconciliation"
 
 
+def test_a_request_held_through_its_entry_is_exposed_only_open_with_no_stop_at_all() -> None:
+    """The lead's rulings on H3's item 6: a position open with no stop-loss and no trail
+    (`shows_no_stop`; a take-profit, or a take-profit order, protects nothing) is a C-2.6
+    exposure, paged once per hold, unless a Partial stop-loss order of the key is open."""
+    trailing = position().model_copy(update={"trailing_stop_distance": Decimal("150")})
+    cases = [
+        (position(), (), True),
+        (position(take_profit=TP), (), True),
+        (position(), (tpsl_order("partial_take_profit", TP),), True),
+        (position(stop_loss=Decimal("55000")), (), False),
+        (trailing, (), False),
+        (position(), (tpsl_order("partial_stop_loss", Decimal("55000")),), False),
+        (flat(), (), False),
+    ]
+    history = (fired("partial_stop_loss", STOP),)
+    for pos, open_orders, exposed in cases:
+        decision = one(partial_rows(answered_at=T0), pos, history=history, open_orders=open_orders)
+        assert (decision.held, decision.exposed) == (ENTRY_HELD, exposed)
+
+
 # --- invariants --------------------------------------------------------------------------------
 
 TRIGGERS = st.sampled_from([STOP, Decimal("59000"), TP])

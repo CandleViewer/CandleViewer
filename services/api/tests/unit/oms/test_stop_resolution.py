@@ -264,8 +264,9 @@ async def test_a_held_trail_logs_the_consequence_and_writes_nothing() -> None:
     with capture_logs() as logs:
         (decision,) = await rig.resolve()
     assert decision.held == TRAIL_HELD and rig.store.calls == []
-    held = [e for e in logs if e["event"] == "oms_stop_request_held"]
-    assert [e["reason"] for e in held] == [TRAIL_HELD]
+    resolved = [e["held"] for e in logs if e["event"] == "oms_stop_request_resolved"]
+    assert resolved == [TRAIL_HELD]  # the gate logs the hold once per key (H3)
+    assert not [e for e in logs if e["event"] == "oms_stop_request_held"]
 
 
 @pytest.mark.parametrize(("environment", "outcome"), [("demo", "held"), ("live", "voided")])
