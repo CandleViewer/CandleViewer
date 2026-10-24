@@ -12,11 +12,11 @@ CMP-055 shows active filter chips plus "Add filter". Their own checklists apply.
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] **Final Penpot link** — file CandleViewer DS, page `E16-D02 SCR-140 Recorder`, board
-      `CMP-177 · RecorderStatusRow — states`: link and PNGs in `E16-D02.md` §"Penpot boards"; PNG per state under
-      `docs/design/E16/img/`. Pending: the boards land in the boards PR, which closes #323 (this text merges first).
+- [x] **Final Penpot link** — page `E16-D02` · id `2f3d2667-6b0f-80a6-8008-d51b2dd0486e`, board `20 CMP-177/states`
+      (id `00cd4910-e909-80cf-8008-d68719921682`); PNG `docs/design/E16/img/E16-D02-20-cmp-177-states.png`; every
+      board id and PNG in `E16-D02.md` §"Penpot boards".
 - [ ] **Variants × States matrix** — every state of the shipped spec is a Penpot variant and a Storybook story; table 1.
-      Pending with the boards.
+      Pending: board 20 draws every story as a composition labelled with its table-1 variant, not as a library variant.
 - [x] **Keyboard table** — table variant inside the CMP-049 grid (↑ ↓ rows, ← → into the row's controls); standalone
       variant (SCR-103) as a group of tab stops; a T2 control re-shows its reason on Enter / Space (E16-D02 §10.5); no
       single unmodified key changes recording; `Esc` / `Ctrl+K` untouched; table 2
