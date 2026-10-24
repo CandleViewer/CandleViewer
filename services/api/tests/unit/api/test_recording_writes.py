@@ -316,7 +316,7 @@ async def test_a_non_owner_re_add_of_a_row_its_view_hides_joins_it_and_keeps_its
 ) -> None:
     """Ruling (iii): the caller's manual cause joins the row through the normal add, `200` with
     the row as the caller's view shows it. A join changes none of the row's settings (no lower
-    retention, no unpin), and the route records no retention change the join does not make."""
+    retention, no unpin); a named pin or retention it does not honour gets its denied twin."""
     fake = _Spied()
     held = fake.put("SOLUSDT", cause, depth=50, streams=("trades", "tickers"), started_at=NOW,
                     refusals=(cause,), **kept)  # fmt: skip
@@ -328,9 +328,10 @@ async def test_a_non_owner_re_add_of_a_row_its_view_hides_joins_it_and_keeps_its
     assert joined.json() == (await env.http.get(f"/recording/symbols/{held.id}")).json()
     assert (row.pinned, row.retention_days, row.depth, row.streams) == (
         held.pinned, held.retention_days, 50, ("trades", "tickers"))  # fmt: skip
-    record = env.audit[0][1]  # the policy's own add record, the joined cause in it
-    assert (env.actions(), record["outcome"], record["reason"]) == (
-        ["recorder.start"], "success", "manual")  # fmt: skip
+    named = bool(extra.keys() & {"pinned", "retention_days"})  # not honoured: its denied twin
+    assert env.actions() == ["retention.change"] * named + ["recorder.start"]
+    record = env.audit[-1][1]  # the policy's own add record, the joined cause in it
+    assert (record["outcome"], record["reason"]) == ("success", "manual")
     assert record["after_state"]["trigger_ref"] == f"manual:{env.caller.user_id}"
     assert fake.specs == [rc.EntrySpec(("trades", "tickers"), 50, None, None)]  # the row's own
 
@@ -381,6 +382,29 @@ async def test_a_join_naming_pinned_without_the_step_up_is_403_and_records_nothi
     refused = await env.add(symbol="SOLUSDT", pinned=True)
     assert (refused.status_code, refused.json()["code"]) == (403, "step_up_required")
     assert fake.entries["SOLUSDT"] == held and env.actions() == []
+
+
+@pytest.mark.parametrize("extra", [{"retention_days": 7}, {"pinned": True}])
+async def test_a_join_naming_retention_records_its_denied_twin_ahead(extra: dict[str, Any]) -> None:
+    """The route records the request (C-2.9): a join honours no named pin or retention, so it
+    writes the denied `retention.change` first, ids only, reason `joined`; the 200 is the
+    same as a plain join's. Unwritten: 503 and nothing changes."""
+    plain_fake, fake = FakeRecorder(), FakeRecorder()
+    for f in (plain_fake, fake):
+        held = f.put("SOLUSDT", "position_open", streams=STREAMS, retention_days=90)
+    env, plain = _Env(fake, *W, owner=False, elevated=True), _Env(plain_fake, *W, owner=False)
+    plain.caller = env.caller
+    env.fail_audit = True
+    refused = await env.add(symbol="SOLUSDT", **extra)
+    assert (refused.status_code, fake.entries["SOLUSDT"]) == (503, held)
+    env.fail_audit = False
+    joined, alone = await env.add(symbol="SOLUSDT", **extra), await plain.add(symbol="SOLUSDT")
+    assert (joined.status_code, joined.content) == (200, alone.content)
+    action, record = env.audit[0]
+    assert (action, record["outcome"], record["reason"], record["object_id"]) == (
+        "retention.change", "denied", "joined", held.id)  # fmt: skip
+    assert "before_state" not in record and "after_state" not in record
+    assert env.actions() == ["retention.change", "recorder.start"]
 
 
 async def test_the_fake_promotes_a_held_row_as_the_policy_does() -> None:
