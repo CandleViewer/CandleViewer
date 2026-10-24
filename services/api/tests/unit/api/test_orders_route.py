@@ -901,6 +901,23 @@ async def test_a_replay_that_reads_another_group_fails_closed_and_pages() -> Non
     assert world.cache.get(str(USER), f"placeOrder:{KEY}") is None
 
 
+async def test_the_pipelines_own_repeat_that_reads_another_group_fails_closed_and_pages() -> None:
+    """DC-S3F2-01, step 12's twin of the test above: the pipeline's own repeat (`_repeat`), whose
+    scoped read finds a group other than the one the outcome names, is the same paged 500,
+    counted and kept nowhere, the pipeline asked once."""
+    world, first = World(), first_entry()
+    row, found = read_entry(first)
+    other = found.group.model_copy(update={"group_id": GroupId(UUID(int=99))})
+    another = TradeGroupWithLegs(group=other, legs=())
+    world.oms.route.orders.rows[row.id], world.oms.route.groups.found = row, another
+    world.oms.submission.outcome = replay_of(first)
+    answer = await post(world)
+    assert (answer.status_code, answer.json()["code"]) == (500, "internal_error")
+    assert world.pager.pages == ["orders_replay_group_mismatch"]
+    assert world.rejected("internal_error") == 1 and len(world.oms.submission.submitted) == 1
+    assert world.cache.get(str(USER), f"placeOrder:{KEY}") is None
+
+
 async def test_the_pipelines_own_repeat_answers_the_rows_as_read_now_and_is_not_kept() -> None:
     """A concurrent first request met the key held (`_repeat`): the earlier one's answer is kept."""
     world, first = World(), first_reduce_only()
