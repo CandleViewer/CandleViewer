@@ -12,7 +12,7 @@ import contextlib
 import pytest
 from prometheus_client import REGISTRY
 
-from candleviewer.replay import BudgetLane, ReplayConfigInvalid, ReplayLoopBudget
+from candleviewer.replay import BudgetLane, LoopTime, ReplayConfigInvalid, ReplayLoopBudget
 from tests.unit.replay._time import FakeTime
 
 SLICE = 0.002  # the clock's longest turn (ClockConfig.yield_slice_s)
@@ -300,3 +300,15 @@ async def test_budget_one_long_charge_is_counted_in_full_but_bounds_the_debt() -
     assert _sample("replay_loop_seconds_total") - work0 == pytest.approx(5.0 + BURST + SLICE)
     assert 0.0 < held_slow <= 0.25 / SHARE
     assert 0.0 < held_other <= 0.25 / SHARE
+
+
+def test_budget_is_built_with_loop_time_outside_a_running_loop() -> None:
+    """Composition may build the budget before the loop runs: nothing reads the time yet."""
+    budget = ReplayLoopBudget(SHARE, BURST, LoopTime())
+
+    async def run() -> float:
+        lane = budget.lane("s1")
+        lane.start()
+        return await lane.breathe()
+
+    assert asyncio.run(run()) == 0.0
