@@ -951,8 +951,12 @@ async def test_after_a_restart_reclaim_destroys_every_open_row_once_after_the_tt
     for sid in sids.values():
         assert await state_in_db(again, USER_A, sid) is ReplayState.DESTROYED
     assert await again.s.reclaim_idle(again.clock()) == 0  # INV-B12-e: a second pass is a no-op
-    reasons = [kw["reason"] for a, kw in again.audit.rows if a == "replay.session.destroyed"]
-    assert reasons == ["idle_reclaim"] * 3
+    destroyed = [
+        (kw["reason"], kw["actor_label"])
+        for a, kw in again.audit.rows
+        if a == "replay.session.destroyed"
+    ]
+    assert destroyed == [("idle_reclaim", "system:replay-reclaimer")] * 3
     assert again.handles.released == Counter(dict.fromkeys(sids.values(), 1))
     await again.s.create(USER_A, request())  # the quota is free again
     await again.s.stop()
