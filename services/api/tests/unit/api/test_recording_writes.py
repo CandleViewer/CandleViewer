@@ -109,7 +109,7 @@ async def test_the_cap_is_422_and_a_re_add_answers_200_with_the_row() -> None:
     assert again.json() == {k: v for k, v in first.json().items() if k != "estimate"}
     capped = await env.add(symbol="ETHUSDT")
     assert (capped.status_code, capped.json()["code"]) == (422, "recorder_symbol_limit")
-    assert list(env.fake.entries) == ["BTCUSDT"] and env.actions()[-1] == "recorder.start"
+    assert list(env.fake.entries) == ["BTCUSDT"] and env.actions() == ["recorder.start"] * 2
     assert env.audit[-1][1].items() >= {("outcome", "denied"), ("reason", "recorder_symbol_limit")}
 
 
@@ -273,7 +273,7 @@ async def test_a_non_owner_reads_its_write_through_the_restricted_view() -> None
 @pytest.mark.parametrize("cause", sorted(rc.HIDDEN_CAUSES))
 async def test_a_non_owner_re_add_of_a_row_its_view_hides_is_a_fresh_add(cause: Any) -> None:
     """Restricted refusal parity: `201` and the fresh-add body, none of the row's settings or
-    session; the server re-adds the row (its pin stays) and the record names what held it."""
+    session; the server re-adds the row (its pin stays) under the policy's own record."""
     fresh, fake = _Env(None, *W, owner=False), FakeRecorder()
     fake.put("SOLUSDT", cause, pinned=True, depth=500, streams=("trades",), started_at=NOW,
              refusals=(cause,))  # fmt: skip
@@ -282,8 +282,8 @@ async def test_a_non_owner_re_add_of_a_row_its_view_hides_is_a_fresh_add(cause: 
     first, again = await fresh.add(symbol="SOLUSDT"), await env.add(symbol="SOLUSDT")
     assert (again.status_code, again.content) == (201, first.content)
     assert fake.entries["SOLUSDT"].pinned and fake.entries["SOLUSDT"].reasons == ("manual", cause)
-    assert env.actions() == ["recorder.start"] == fresh.actions()
-    held_by = [e.audit[0][1]["after_state"]["held_by"] for e in (env, fresh)]
-    assert held_by == [cause, None]  # the record carries the real outcome
+    ref = ("recorder.start", f"manual:{env.caller.user_id}")  # the policy's, the same for both
+    assert [(a, r["after_state"]["trigger_ref"]) for e in (env, fresh) for a, r in e.audit] == [
+        ref, ref]  # fmt: skip
     seen = await _Env(fake, *W).add(symbol="SOLUSDT")  # the Owner sees the re-added row
     assert (seen.status_code, seen.json()["pinned"], seen.json()["depth"]) == (200, True, 500)
