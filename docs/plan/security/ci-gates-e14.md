@@ -217,6 +217,16 @@ E15-T01's spec decision on #402, SR-E14-09).
 - **Deliberate-regression fixture:** `scripts/tests/test_check_prod_bundle_handles.py` builds
   synthetic dists: a handle in a `.js` fails, one only in a `.map` passes, a clean dist passes.
 
+## test_drawings_nosniff.py
+
+- **Protects:** DR6, SR-E14-01: the stored-XSS abuse cases rest on hostile text being inert JSON, and
+  `nosniff` keeps a browser from reading it as HTML. `NoSniff` (#3990) already stamps every answer;
+  nothing pinned it on `/drawings*`, and ZAP's passive rule 10021 is Low, under the gate of
+  `security/zap/baseline_gate.py`.
+- **Matches:** the deployed `create_app(Settings())` answers each of the five `/drawings*` routes,
+  unauthenticated (a 401 or a 403), with one `X-Content-Type-Options: nosniff`; and it serves exactly
+  those five, so a sixth must be pinned. No product code changed.
+
 ## Budget
 
 The ticket asks for under 30 s added to CI. Measured with Semgrep 1.181.0 on the shared 8-vCPU VPS,
