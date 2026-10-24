@@ -84,6 +84,9 @@ _GET = sa.text(
     " FROM drawings WHERE id = CAST(:id AS uuid) "
     "AND owner_user_id = CAST(:owner AS uuid) AND deleted_at IS NULL"
 )
+# Unscoped by design (`UNSCOPED`, DR20): the 404 path asks whether the id is ANOTHER owner's live
+# drawing, so it must see other owners' rows; it answers a bool and returns no row or column.
+# nosemgrep: cv-drawings-query-missing-owner-filter reason=probe owner=@basiltt review=2027-03-25
 _EXISTS_OTHER = sa.text(
     "SELECT 1 FROM drawings WHERE id = CAST(:id AS uuid) "
     "AND owner_user_id <> CAST(:owner AS uuid) AND deleted_at IS NULL"
@@ -169,10 +172,16 @@ _LAYOUTS_SHARE = sa.text(
     "SELECT id::text AS id FROM layouts WHERE id = ANY(CAST(:ids AS uuid[])) "
     "AND owner_user_id = CAST(:owner AS uuid) AND deleted_at IS NULL ORDER BY id FOR SHARE"
 )
+# Unscoped by design (`UNSCOPED`, DR35): the retention job has no caller; it deletes only rows
+# soft-deleted past the cutoff, in bounded batches (`MAX_PURGE_BATCH`), across all owners.
+# nosemgrep: cv-drawings-query-missing-owner-filter reason=purge owner=@basiltt review=2027-03-25
 _PURGE = sa.text(
     "DELETE FROM drawings WHERE id IN (SELECT id FROM drawings WHERE deleted_at IS NOT NULL "
     "AND deleted_at < now() - make_interval(days => CAST(:days AS integer)) LIMIT :limit)"
 )
+# Unscoped by design (`UNSCOPED`, DR25): the live-rows gauge counts per tool across all owners and
+# exposes no row, id or owner (metrics only: per-tool counts, no user label).
+# nosemgrep: cv-drawings-query-missing-owner-filter reason=gauge owner=@basiltt review=2027-03-25
 _COUNT_LIVE = sa.text(
     "SELECT tool, count(*) AS n FROM drawings WHERE deleted_at IS NULL GROUP BY tool"
 )

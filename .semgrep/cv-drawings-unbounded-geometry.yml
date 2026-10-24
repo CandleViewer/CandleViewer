@@ -1,0 +1,51 @@
+# E14-X03 (#549), DR29/DR30/DR10, SR-040, threat model section 4. The bounds live in
+# `DrawingIn._tool_rules`, `POINT_COUNTS` and the caps of `api/drawings_models.py`; the repository
+# validates no geometry or style (the DB check `dr_geom` wants only an object with `points`). So this
+# is a tripwire on the roads round the validator, not a proof that a value is validated.
+# `DrawingFields(` is built only by `_fields(body)`; `_ListQuery` ignores unknown query parameters on
+# purpose (as FastAPI does) and is excepted by name.
+rules:
+  - id: cv-drawings-unbounded-geometry
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A drawing reaches the store round the bounded request models (DR29, DR30, DR10; SR-040):
+      `DrawingFields(` built outside `_fields` or changed by `dataclasses.replace(...)`,
+      `model_construct(...)` or `model_copy(update=...)` (none validates), a request model with
+      `extra="allow"` or `"ignore"` (models are closed, `extra="forbid"`), or a dict display handed
+      to the store. Parse with `DrawingIn` / `BatchIn`, build the fields with `_fields(body)` only.
+      Rule doc: docs/plan/security/ci-gates-e14.md#cv-drawings-unbounded-geometry.
+    metadata:
+      rule-id: cv-drawings-unbounded-geometry
+      dr: [DR29, DR30, DR10]
+      sr: SR-040
+      references:
+        - docs/security/threat-models/E14-drawings.md DR29, DR30, DR10 (section 5), section 4
+        - services/api/candleviewer/api/drawings_models.py
+    pattern-either:
+      - patterns:
+          - pattern: DrawingFields(...)
+          - pattern-not-inside: |
+              def _fields(...):
+                ...
+      - pattern: $X.model_construct(...)
+      - pattern: $X.model_copy(..., update=$U, ...)
+      - pattern: dataclasses.replace(...)
+      - patterns:
+          - pattern-either:
+              - pattern: ConfigDict(..., extra="allow", ...)
+              - pattern: ConfigDict(..., extra="ignore", ...)
+              - pattern: '{..., "extra": "allow", ...}'
+              - pattern: '{..., "extra": "ignore", ...}'
+          - pattern-not-inside: |
+              class _ListQuery(...):
+                ...
+      # A dict display where the store takes a `DrawingFields` or a list of batch ops.
+      - pattern-either:
+          - pattern: store().create(..., {...}, ...)
+          - pattern: store().update(..., {...}, ...)
+          - pattern: store().apply_batch(..., {...}, ...)
+          - pattern: store().apply_batch($O, [..., {...}, ...])
+    paths:
+      include:
+        - "services/api/candleviewer/api/drawings*.py"

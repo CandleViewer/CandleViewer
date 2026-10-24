@@ -1,0 +1,60 @@
+# E14-X03 (#549), DR1/DR12/DR20/DR21, SR-051. Text arm: a regex over the string literals of an SQL
+# statement (implicitly concatenated, any `r`/`u`/`f`/`b` prefix): it starts at a call taking SQL or
+# at an assignment, wants a first literal that opens with SELECT, UPDATE, DELETE, WITH or INSERT,
+# a `FROM|UPDATE|JOIN|USING drawings` in the run of literals (the words may straddle two literals)
+# and no `WHERE|AND|ON owner_user_id = [CAST(]:owner` in it: a `SET owner_user_id = ...` is a
+# transfer, not a scope. Core arm: a select, update or delete of the `drawings` table with no
+# `.where(... owner_user_id == ...)` in its chain. A statement that is unscoped by design carries a
+# reviewed `nosemgrep: <id> reason= owner= review=` on the line above.
+rules:
+  - id: cv-drawings-query-missing-owner-filter
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A SELECT, UPDATE or DELETE on `drawings` has no `WHERE owner_user_id = :owner` predicate (DR1,
+      DR12, DR20, DR21; SR-051, C-12.4): every statement is filtered by the caller from the session.
+      Add `AND owner_user_id = CAST(:owner AS uuid)`, bound to the principal's id. One unscoped by
+      design carries a reviewed `nosemgrep: cv-drawings-query-missing-owner-filter reason=<token>
+      owner=@<h> review=<date>` on the line above it.
+      Rule doc: docs/plan/security/ci-gates-e14.md#cv-drawings-query-missing-owner-filter.
+    metadata:
+      rule-id: cv-drawings-query-missing-owner-filter
+      dr: [DR1, DR12, DR20, DR21]
+      sr: SR-051
+      references:
+        - docs/security/threat-models/E14-drawings.md DR1, DR12, DR20, DR21, section 6.1
+    pattern-either:
+      - pattern-regex: |-
+          (?xi)
+          (?:\b(?:text|execute|executemany|exec_driver_sql|fetch|fetchrow|fetchval|fetchmany)|=)
+          [ \t]*\(?[ \t]*(?:\#[^\n]*)?\s*
+          (?= [rbuf]{0,2} ["']{1,3} \s* (?:select|update|delete|with|insert)\b )
+          (?= (?: [rbuf]{0,2} (?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*') (?:\s|\#[^\n]*)* )*?
+              [rbuf]{0,2} (?: "(?:[^"\\]|\\.)*? | '(?:[^'\\]|\\.)*? )
+              \b(?:from|update|join|using)
+              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])+ (?:\w+\.)?[\\"]*drawings\b )
+          (?! (?: [rbuf]{0,2} (?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*') (?:\s|\#[^\n]*)* )*?
+              [rbuf]{0,2} (?: "(?:[^"\\]|\\.)*? | '(?:[^'\\]|\\.)*? )
+              \b(?:where|and|on) (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])+ \(*
+              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])* (?:\w+\.)?owner_user_id
+              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])* =
+              (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])*
+              (?:cast (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])* \(
+                 (?:\s|["']\s*(?:\#[^\n]*\n\s*)?["'])* )? :owner\w* )
+          (?: [rbuf]{0,2} (?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*') (?:\s|\#[^\n]*)* )+
+      - patterns:
+          - pattern-either:
+              - pattern: $M.select(..., <... drawings ...>, ...)
+              - pattern: select(..., <... drawings ...>, ...)
+              - pattern: $M.update(<... drawings ...>)
+              - pattern: update(<... drawings ...>)
+              - pattern: $M.delete(<... drawings ...>)
+              - pattern: delete(<... drawings ...>)
+          - pattern-not-inside: $Q.where(..., <... $X.owner_user_id == $O ...>, ...)
+          - pattern-not-inside: $Q.filter(..., <... $X.owner_user_id == $O ...>, ...)
+          - pattern-not-inside: $Q.filter_by(..., owner_user_id=$O, ...)
+    paths:
+      include:
+        - "services/api/candleviewer/**"
+      exclude:
+        - "services/api/candleviewer/migrations/**"

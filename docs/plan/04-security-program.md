@@ -1607,6 +1607,11 @@ The E12 market-data gates (seven `.semgrep/cv-*` rules incl. the SR-054 category
 reason/owner rule, and the nightly ZAP profile for `/market/klines` + `/market/bars`) are explained in
 [`security/ci-gates-e12.md`](security/ci-gates-e12.md).
 
+The E14 drawings-persistence gates (E14-X03, #549: five `.semgrep/cv-drawings-*` rules for the owner
+filter, an owner taken from a request, geometry that skips the bounded models, batch ids resolved
+before any change and pixel geometry, with reviewed `nosemgrep` annotations on the four statements that
+are unscoped by design) are explained in [`security/ci-gates-e14.md`](security/ci-gates-e14.md).
+
 ### 12.3 Required status checks on `main`
 
 The exact required-check names are owned solely by `CONSTITUTION.md` §9 (C-16.5) — do not restate them
