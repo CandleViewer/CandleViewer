@@ -7,7 +7,7 @@
 > **low-confidence** because it rests on heuristics alone. The instruments in this directory let the owner run the
 > study later; results are added here as a dated addendum, and each label then becomes `(session: Pn)`.
 
-- **Ticket:** E15-D01 (#205) · **Status:** draft; text pass and boards r2 done · **Owner approval pending** (Agent-delivery
+- **Ticket:** E15-D01 (#205) · **Status:** draft; text pass and boards r3 done · **Owner approval pending** (Agent-delivery
   adaptations, owner decision 2026-09-25) · **Method:** heuristic and documentation review; no session was run.
 - **Scope:** SCR-011, SCR-020..029, SCR-049, SCR-150, SCR-153; CMP-073, CMP-080..083, CMP-196, CMP-214..218;
   US-LAY-001..008. Feeds E15-D02 (#248), then D04 (#320), D05 (#321), D06 (#360), D08 (#362), D15 (#369), the K01 spike
@@ -61,7 +61,7 @@ pending the owner run; **open** = needs sessions or an owner decision; **deviati
 | DoD: walkthrough with CDO, Architect and FE lead, attendance recorded                                                                 | §17, ready to post on #205; the owner's walk through it is the attendance record                                                                                                                                                                                                                                                   | open (not yet posted)                  |
 | DoD: CDO sign-off recorded on the ticket                                                                                              | the owner's `approved` comment on #205 (§17 item 7)                                                                                                                                                                                                                                                                                | open                                   |
 | Test plan 5: every US-LAY story named, or recorded as not covered                                                                     | US-LAY-001 §2, §6; US-LAY-002 §5, §8; US-LAY-003 §3; US-LAY-004 only §3.1 (Y-scale is its per-pane link, not a group axis; the link UI is E15-D06's and S05's); US-LAY-005 §4; US-LAY-006 §2, §6; US-LAY-007 (SCR-026) **not covered** (no research question: E15-D09, S07); US-LAY-008 only §7's 1280×800 findings (E15-D12, S08) | done                                   |
-| Penpot boards and PNGs (`docs/design/README.md` approval rule)                                                                        | Research boards, below; six boards drawn 2026-10-22                                                                                                                                                                                                                                                                                | done (boards r2)                       |
+| Penpot boards and PNGs (`docs/design/README.md` approval rule)                                                                        | Research boards, below; six boards drawn 2026-10-22, redrawn from r3 2026-10-24                                                                                                                                                                                                                                                    | done (boards r3)                       |
 
 ## Research boards (Penpot)
 
