@@ -34,6 +34,7 @@ from candleviewer.replay import (
     ReplayGap,
     ReplayInjector,
     ReplayItem,
+    ReplayLoopBudget,
     ReplayRequestInvalid,
     ReplayRun,
     StopReason,
@@ -226,6 +227,7 @@ def make_run(
         loop=loop,
         config=config,
         progress_interval_s=progress_interval_s,
+        budget_lane=None,
     )
 
 
@@ -676,6 +678,7 @@ def test_a_session_reading_a_stream_not_reemitted_is_refused_before_any_source_o
             injector=injector,
             port=RecordingPort(),
             time=FakeTime(),
+            budget_lane=None,
         )
     assert sources.opened == []
 
@@ -843,6 +846,7 @@ async def test_a_full_run_with_a_loop_never_reaches_the_live_book_or_live_topics
         speed=UNBOUNDED,
         loop=True,
         time=FakeTime(),
+        budget=ReplayLoopBudget(0.25, 0.05, FakeTime()),
     )
     port.on_loop_hook = lambda generation: run.set_loop(generation < 2)
     async with run:
@@ -865,7 +869,8 @@ async def test_a_full_run_with_a_loop_never_reaches_the_live_book_or_live_topics
 async def test_the_source_factory_opens_the_sessions_request_at_a_position() -> None:
     """The hook E26-T04's seek opens sources through: the session's request from `at_us` on."""
     harness = Harness(hot=STORED, req=request(streams=REEMITTED, end_us=60 * SECOND))
-    open_source = replay_source_factory(harness.req, harness.tiers)
+    lane = ReplayLoopBudget(0.25, 0.05, FakeTime()).lane("s")
+    open_source = replay_source_factory(harness.req, harness.tiers, lane=lane)
     whole, later = open_source(T0), open_source(T0 + 3 * SECOND)
     try:
         assert [i async for i in whole] == STORED
@@ -873,8 +878,36 @@ async def test_the_source_factory_opens_the_sessions_request_at_a_position() -> 
     finally:
         await whole.aclose()
         await later.aclose()
+    assert whole._lane is lane and later._lane is lane
     with pytest.raises(ReplayRequestInvalid):
         open_source(T0 + 60 * SECOND)  # the window's end: nothing left to open
+
+
+def test_runs_share_one_budget_and_a_runs_clock_and_source_share_its_lane() -> None:
+    """#2668 G1: one budget per process, one lane per session, held by the session's clock and
+    by the source it opens (every later one comes from the factory, pinned above)."""
+    budget = ReplayLoopBudget(0.25, 0.05, FakeTime())
+    harness = Harness(hot=STORED, req=request(streams=REEMITTED, end_us=60 * SECOND))
+
+    def build(session: uuid.UUID) -> ReplayRun:
+        return build_replay_run(
+            session_id=session,
+            request=harness.req,
+            tick_sizes={SYM: TICK},
+            tiers=harness.tiers,
+            bus=Bus(),
+            port=RecordingPort(),
+            speed=UNBOUNDED,
+            loop=True,
+            time=FakeTime(),
+            budget=budget,
+        )
+
+    one, two = build(SESSION), build(uuid.uuid4())
+    lane = one._clock._lane
+    assert lane is not two._clock._lane and lane.key == str(SESSION)
+    assert lane._budget is budget and two._clock._lane._budget is budget
+    assert one._clock._source._inner._lane is lane  # the first source, under its regrouping
 
 
 @settings(max_examples=40)

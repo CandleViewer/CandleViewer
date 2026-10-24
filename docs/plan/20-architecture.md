@@ -477,6 +477,8 @@ The matcher exposes the **same** interface the exchange adapter does (§9), so t
 
 Determinism: given the same stored data and the same `BarSpec`/engine config, replay produces identical derived series — asserted by a golden-file test in CI.
 
+Loop budget (#2668 G1, C-2.17): each session's clock and sources charge one lane of the process's `ReplayLoopBudget` (`CV_REPLAY_LOOP_SHARE`, `CV_REPLAY_LOOP_BURST_MS`, §7.2) before every await and breathe on it every 2 ms of work; a hold slows playback (the achieved ratio falls) and never changes the requested rate, which the session layer owns (B12 `rate`). A seek (scrub, E26-T04) works in chunks that start the session's lane on entry, charge it before every await and restart it after a pure wait, as the clock's turns do.
+
 ### 3.10 Auth / RBAC / Audit
 
 | Component        | Responsibility                                                                                                                                                                                                                  |
@@ -901,7 +903,7 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_REPLAY_MAX_LIFETIME_S`       | float  | `86400`                   | process | replay session older than this is DESTROYed (`max_lifetime`) whatever its activity; 3600-604800, never off          |
 | `CV_REPLAY_MAX_SESSIONS_PER_USER` | int   | `2`                       | process | open replay sessions per user; create / `PREPARE` past it refused                                                   |
 | `CV_REPLAY_MAX_WINDOW_HOURS`     | int    | `24`                      | process | replay window cap; a longer window is a 422 before any I/O                                                          |
-| `CV_REPLAY_LOOP_SHARE`           | float  | `0.25`                    | process | replay's share of the event loop, all sessions (#2668 G1, C-2.17); above 0, at most 0.5, no off value (C-4.14)      |
+| `CV_REPLAY_LOOP_SHARE`           | float  | `0.25`                    | process | replay's share of the event loop, all sessions (#2668 G1, C-2.17); 0.01 to 0.5, no off value (C-4.14)               |
 | `CV_REPLAY_LOOP_BURST_MS`        | int    | `50`                      | process | loop time a quiet loop banks for replay (#2668 G1); 5-250                                                           |
 | `CV_ORDER_RATE_PER_UID`          | int    | `8`                       | runtime | below Bybit's 10/s for headroom                                                                                     |
 | `CV_NATIVE_SL_DEADLINE_MS`       | int    | `3000`                    | runtime | NakedPositionAlert threshold                                                                                        |
@@ -1540,9 +1542,10 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | Replay | `replay_events_emitted_total` | counter | recorded events replay clocks delivered (E26-T03); throughput, no alert |
 | Replay | `replay_backpressure_seconds_total` | counter | wall time replay clocks gave up to slow consumers (E26-T03); the cause behind a low `replay_achieved_speed_ratio` |
 | Replay | `replay_achieved_speed_ratio` | gauge | lowest achieved/requested speed of the paced replay clocks (E26-T03); info when < 0.9 for 5 min, the SCR-097 honesty state |
-| Replay | `replay_loop_seconds_total` | counter | event-loop wall time charged to replay lanes by the loop budget (#2668 G1, C-2.17); warning when its 1 min rate exceeds 1.2 × `CV_REPLAY_LOOP_SHARE` for 5 min |
+| Replay | `replay_loop_seconds_total` | counter | event-loop wall time charged to replay lanes by the loop budget (#2668 G1, C-2.17); ticket `ReplayLoopShareHigh` when its 1 min rate exceeds 1.2 × `replay_loop_share_ratio` for 5 min |
 | Replay | `replay_budget_held_seconds_total` | counter | wall time replay lanes were held by the loop budget (#2668 G1); a held lane plays below its requested speed, no alert |
 | Replay | `replay_budget_waiters` | gauge | replay lanes waiting for the loop budget now (#2668 G1); each waits about one turn per lane ahead, no alert |
+| Replay | `replay_loop_share_ratio` | gauge | the configured `CV_REPLAY_LOOP_SHARE`, set when the wiring builds the budget (#2668 G1); the threshold of `ReplayLoopShareHigh`, no alert of its own |
 | Feature flags | `cv_feature_flag_evaluations_total{flag}`, `cv_feature_flag_unreadable_overrides_total{flag}` | counter | unreadable overrides > 0 (E42-T03) |
 | Feature flags | `cv_feature_flag_changes_total{flag,result}` | counter | conflict or refusal spikes show in `result` (E42-T03) |
 | Feature flags | `cv_flag_push_latency_seconds` | histogram | committed flag write -> last session frame queued; budget 2 s (E42-T03) |

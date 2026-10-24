@@ -4,7 +4,7 @@ Replay shares the API process's event loop with order entry, the gateway and ing
 replay turn already yields after `ClockConfig.yield_slice_s` of work, so no single turn holds the
 loop long; this budget caps what all replay turns *together* take. It is plain code on the hot
 path, never a statechart (C-2.20), and it has no off value (C-4.14): the settings bound the share
-to above 0 and up to 0.5, and the burst to 5..250 ms.
+to 0.01..0.5 and the burst to 5..250 ms.
 
 **Bucket.** A token bucket in loop seconds: it refills lazily at `share` loop seconds per wall
 second, capped at `burst_s`, and every lane's work is charged against it. A lane that breathes
@@ -23,21 +23,30 @@ so one admission costs O(N) wake-ups for N waiters (N is the number of sessions,
 
 **Charge before every await.** One lane may serve several tasks of a session, as one mark: a
 task's `start()` on resume overwrites the mark another task left. Every await on a replay path
-must therefore be preceded by `charge()` (or be a `breathe()`): an uncharged await overcharges the
-suspended task's lane by the time other tasks ran, or undercharges it when another task of the
-same lane restarts the mark meanwhile.
+must therefore be preceded by `charge()` (or be a `breathe()`), and a pure wait (a deadline, a
+queue, a storage read) followed by `start()`, in a `finally` so a cancelled wait is not charged
+either; an await that does the task's own work (a delivery) is not restarted after, so that work
+stays charged. Left: a `start()` still wipes another task's work since its last charge (at most
+one event's; a mark per task would remove it); any wait inside such an await is charged; and the
+on-loop part of a storage read is not (the QuestDB reader's PGWire row decode runs on the loop
+inside the await; the cold reader decodes off it).
+
+**Fairness is per waiting task, not per session**: each `breathe` queues once, so a session whose
+clock and producer both wait holds two places in line.
 
 **Wall time, not thread time.** Work is measured with `measure` (`time.perf_counter`), not
 `time.thread_time`: garbage collection, page faults and syscalls inside a turn hold the loop
-just as much as Python code does, and thread time would not see them. A turn that suspends
-inside a sink without charging first is charged the suspension too (on a lane no other task
-shares). That overcharge only makes replay yield more, which is the safe direction for the
-loop's other work; one charge adds at most `MAX_CHARGE_S` of debt, so one long suspension cannot
-hold every session for long.
+just as much as Python code does, and thread time would not see them. A suspension inside a
+delivery is charged too: replay yields more, the safe direction. One charge adds at most
+`MAX_CHARGE_S` of debt; the worst hold is the tail of the line: it waits for every charging
+task's debt (N x MAX_CHARGE_S / share, N x 25 s at the 0.01 floor) plus one more turn of each task
+admitted ahead of it, up to about (2N - 1) x MAX_CHARGE_S / share.
 
 **Metrics** (served by `replay.metrics`): `replay_loop_seconds_total` is the loop time charged to
-replay, `replay_budget_held_seconds_total` the wall time lanes were held, and
-`replay_budget_waiters` the lanes waiting now.
+replay, `replay_budget_held_seconds_total` the wall time lanes were held,
+`replay_budget_waiters` the lanes waiting now, and `replay_loop_share_ratio` the configured
+share (set by each budget built), the share alert's threshold. The budget reports holds and never
+changes a rate: the owner of B12's `rate`, the sessions service, acts on the achieved ratio.
 """
 
 from __future__ import annotations
@@ -46,7 +55,7 @@ import asyncio
 from collections import deque
 from collections.abc import Callable
 from time import perf_counter
-from typing import Final
+from typing import Final, Protocol
 
 from candleviewer.observability.metrics import Counter, Gauge
 from candleviewer.replay.errors import ReplayConfigInvalid
@@ -54,9 +63,9 @@ from candleviewer.replay.playback import MonotonicTime
 
 #: Bounds of the share and the burst; `settings.py` (M1, which may not import this module)
 #: repeats them on `CV_REPLAY_LOOP_SHARE` and `CV_REPLAY_LOOP_BURST_MS`.
-#: The share is above `SHARE_ABOVE` (exclusive: 0 would turn the budget off) and at most
-#: `MAX_SHARE`, so replay never takes more than half the loop.
-SHARE_ABOVE: Final = 0.0
+#: The share is `MIN_SHARE`..`MAX_SHARE`: never off, and never more than half the loop. The
+#: floor bounds a hold: a capped charge holds every lane at most MAX_CHARGE_S / MIN_SHARE (25 s).
+MIN_SHARE: Final = 0.01
 MAX_SHARE: Final = 0.5
 MIN_BURST_S: Final = 0.005
 MAX_BURST_S: Final = 0.25
@@ -81,6 +90,9 @@ replay_budget_held_seconds_total = Counter(
 replay_budget_waiters = Gauge(
     "replay_budget_waiters", "Replay lanes waiting for the loop budget now."
 )
+replay_loop_share_ratio = Gauge(
+    "replay_loop_share_ratio", "Configured share of the event loop the replay budget allows."
+)
 
 
 class ReplayLoopBudget:
@@ -93,15 +105,14 @@ class ReplayLoopBudget:
         time: MonotonicTime,
         measure: Callable[[], float] = perf_counter,
     ) -> None:
-        if not SHARE_ABOVE < share <= MAX_SHARE:  # also refuses NaN and inf
-            raise ReplayConfigInvalid(
-                f"the replay loop share must be above {SHARE_ABOVE} and at most {MAX_SHARE}"
-            )
+        if not MIN_SHARE <= share <= MAX_SHARE:  # also refuses NaN and inf
+            raise ReplayConfigInvalid(f"the replay loop share must be {MIN_SHARE}..{MAX_SHARE}")
         if not MIN_BURST_S <= burst_s <= MAX_BURST_S:
             raise ReplayConfigInvalid(
                 f"the replay loop burst must be {MIN_BURST_S}..{MAX_BURST_S} s"
             )
         self._share, self._burst = float(share), float(burst_s)
+        replay_loop_share_ratio.set(self._share)  # here, so the wiring that builds it sets it
         self._time, self._measure = time, measure
         self._tokens = self._burst
         self._stamp: float | None = None  # taken on the first refill: no running loop needed here
@@ -117,7 +128,8 @@ class ReplayLoopBudget:
         return self._burst
 
     def lane(self, key: str) -> BudgetLane:
-        """A new lane named `key` (one per replay session)."""
+        """A new lane named `key`: a mark on this one bucket, shared by one session's tasks (the
+        bucket, not the lane, is the account; the lane only says since when a task worked)."""
         return BudgetLane(self, key)
 
     def _refill(self) -> None:
@@ -208,3 +220,34 @@ class BudgetLane:
             return await budget._hold(wake)
         finally:
             self.start()
+
+
+class LoopLane(Protocol):
+    """What the clock and the source call: a `BudgetLane`, or `FREE_LANE` where a test built
+    them without a budget."""
+
+    def start(self) -> None: ...
+
+    def charge(self) -> float: ...
+
+    async def breathe(self, wake: asyncio.Event | None = None) -> float: ...
+
+
+class _FreeLane:
+    """No budget: charges nothing, and `breathe` is the plain yield replay made before #2668."""
+
+    __slots__ = ()
+
+    def start(self) -> None:
+        pass
+
+    def charge(self) -> float:
+        return 0.0
+
+    async def breathe(self, wake: asyncio.Event | None = None) -> float:
+        await asyncio.sleep(0)
+        return 0.0
+
+
+#: The lane of a clock or source built without one (tests and benches; never `build_replay_run`).
+FREE_LANE: Final[LoopLane] = _FreeLane()

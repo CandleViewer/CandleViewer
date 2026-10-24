@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 from pydantic import SecretStr, ValidationError
 
 from candleviewer import replay_wiring
@@ -102,6 +103,23 @@ def test_the_real_backend_wires_questdb_parquet_manifest_coverage_and_gaps(
     assert tiers.coverage is tiers.cold  # `auto` routes on the cold manifests
     assert tiers.gaps is gaps
     assert wiring.pg.name == "replay"  # the `wire` label of `questdb_pgwire_*`
+
+
+def test_the_wiring_builds_the_one_loop_budget_from_the_settings(tmp_path: Path) -> None:
+    """#2668 G1: `CV_REPLAY_LOOP_SHARE` as is, `CV_REPLAY_LOOP_BURST_MS` in seconds, and the
+    share on `replay_loop_share_ratio` for the share alert."""
+    settings = _settings(
+        storage_backend="real",
+        parquet_root=str(tmp_path / "parquet"),
+        replay_loop_share=0.3,
+        replay_loop_burst_ms=20,
+    )
+
+    wiring = build_replay_wiring(settings, StaticGapReader())
+
+    assert wiring is not None
+    assert (wiring.budget.share, wiring.budget.burst_s) == (0.3, 0.02)
+    assert REGISTRY.get_sample_value("replay_loop_share_ratio") == 0.3
 
 
 @pytest.mark.parametrize(

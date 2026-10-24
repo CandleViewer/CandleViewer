@@ -71,6 +71,7 @@ from typing import Any, Final, Literal
 import structlog
 
 from candleviewer.observability.metrics import Counter, Histogram
+from candleviewer.replay.budget import LoopLane
 from candleviewer.replay.errors import (
     ReplayConfigInvalid,
     ReplayError,
@@ -286,7 +287,12 @@ class RecordedMerge:
         window_us: int = DEFAULT_WINDOW_US,
         max_window_us: int = DEFAULT_MAX_WINDOW_US,
         io_timeout_s: float = DEFAULT_IO_TIMEOUT_S,
+        lane: LoopLane,
     ) -> None:
+        """`lane`: the session's loop-budget lane (#2668 G1), charged before every storage await
+        and restarted after it, so the wait is not loop time (the QuestDB reader's PGWire row
+        decode, on the loop inside the await, goes uncharged with it; the cold reader decodes off
+        the loop), and breathed on at every yield of a gap-marker build."""
         if window_us < 1 or max_window_us < window_us:
             raise ReplayConfigInvalid("read windows need 1 µs <= window_us <= max_window_us")
         if not (math.isfinite(io_timeout_s) and io_timeout_s > 0):
@@ -297,6 +303,7 @@ class RecordedMerge:
         self._tiers = tiers
         self._max_window_us = max_window_us
         self._io_timeout_s = io_timeout_s
+        self._lane = lane
         self._budget_bytes = budget_bytes
         self._tier: Tier | None = None
         self._started = False
@@ -474,6 +481,7 @@ class RecordedMerge:
         """Every storage await is time-bounded; a failure becomes one typed error carrying the
         storage error's code, never its text. Raised after the handler, so neither `__cause__`
         nor `__context__` keeps a storage error whose text or chain may hold a path (RP-I02)."""
+        self._lane.charge()  # another task of the session may run (and restart the lane) meanwhile
         try:
             async with asyncio.timeout(self._io_timeout_s):
                 return await awaitable
@@ -481,6 +489,8 @@ class RecordedMerge:
             reason = "timeout"
         except StorageError as exc:
             reason = exc.code
+        finally:  # a pure wait, answered, failed or cancelled: never charged as loop time
+            self._lane.start()
         raise ReplaySourceUnavailable(tier=tier, symbol=symbol, stream=stream, reason=reason)
 
     async def _markers(self, symbol_ord: int, symbol: str) -> _Markers:
@@ -509,7 +519,8 @@ class RecordedMerge:
         found: dict[_Key, _Entry] = {}
         for n, gap in enumerate(rows):
             if n and n % _MARKER_YIELD_EVERY == 0:
-                await asyncio.sleep(0)  # C-2.17: never hold the loop for a whole 8 192-row table
+                # C-2.17: never hold the loop for a whole 8 192-row table
+                await self._lane.breathe()
             if gap.symbol != symbol or gap.stream not in req.streams:
                 continue
             if gap.start_us >= end_us or gap.end_us <= start_us:
@@ -537,7 +548,8 @@ class RecordedMerge:
         looks only there. A symbol outside the replay or an instant outside its window (the end
         included, where a finished replay sits) is refused with `ReplayRequestInvalid`. A tier
         that answers with a row outside the bound fails the lookup (`anchor_out_of_bounds`)
-        rather than seed a wrong book."""
+        rather than seed a wrong book. It starts the lane: a seek's loop time counts from here."""
+        self._lane.start()
         req = self._request
         if symbol not in req.symbols:
             raise ReplayRequestInvalid("symbol is not part of this replay")

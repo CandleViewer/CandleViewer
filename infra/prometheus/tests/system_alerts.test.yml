@@ -2198,6 +2198,51 @@ tests:
   - eval_time: 6m
     alertname: AlertOutboxDeadLettered
     exp_alerts: []
+- interval: 30s
+  input_series:
+  - series: replay_loop_seconds_total{env="live"}
+    values: 0+10x40
+  - series: replay_loop_share_ratio{env="live"}
+    values: 0.25x40
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: ReplayLoopShareHigh
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: runtime
+        env: live
+      exp_annotations:
+        summary: Replay takes over 1.2 times its configured share of the event loop
+        runbook_url: docs/plan/07-release-and-prr.md#alert-replayloopsharehigh
+- interval: 30s
+  input_series:
+  - series: replay_loop_seconds_total{env="live"}
+    values: 0+8.5x40
+  - series: replay_loop_share_ratio{env="live"}
+    values: 0.25x40
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: ReplayLoopShareHigh
+    exp_alerts: []
+- interval: 30s
+  input_series:
+  - series: replay_loop_seconds_total{env="live"}
+    values: 0+10x40
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: ReplayLoopShareHigh
+    exp_alerts: []
+- interval: 30s
+  input_series:
+  - series: replay_loop_seconds_total{env="live"}
+    values: 0+10x40
+  - series: replay_loop_share_ratio{env="live"}
+    values: 0.5x40
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: ReplayLoopShareHigh
+    exp_alerts: []
 - interval: 1m
   input_series:
   - series: cv_audit_signing_key_boot_failures_total{env="live",step="destroy"}

@@ -42,6 +42,11 @@ next recorded snapshot (24 Sec.13.7, "A derivation never hides a gap").
 `progress_interval_s` (1 s): the throttled cursor and counters the session persists (24
 Sec.13.7: at most one cursor write a second) and the achieved rate, SCR-097's honesty figure.
 It costs one clock read and one comparison per event.
+
+**Loop budget** (#2668 G1). The run's `budget_lane` is the session's lane: the clock breathes on
+it and every source `open_source` returns charges it, so the session's share of the event loop
+is one account. A hold shows in the achieved ratio of `on_progress`; the run never changes the
+requested rate, which stays the session layer's (it owns B12's `rate`).
 """
 
 from __future__ import annotations
@@ -56,6 +61,7 @@ from typing import Any, Final, Protocol, Self
 import structlog
 
 from candleviewer.observability import spawn, spawn_child
+from candleviewer.replay.budget import LoopLane
 from candleviewer.replay.clock import ReplayClock
 from candleviewer.replay.errors import (
     ReplayClockStateError,
@@ -183,6 +189,7 @@ class ReplayRun:
         loop: bool = False,
         config: ClockConfig | None = None,
         progress_interval_s: float = DEFAULT_PROGRESS_INTERVAL_S,
+        budget_lane: LoopLane | None,
     ) -> None:
         check_reemitted(request)
         speed = check_speed(speed)
@@ -211,6 +218,7 @@ class ReplayRun:
             end_us=request.end_us,
             speed=speed,
             config=config,
+            budget_lane=budget_lane,
         )
 
     # -- lifecycle -----------------------------------------------------------------------------

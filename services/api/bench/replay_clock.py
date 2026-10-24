@@ -91,7 +91,16 @@ async def _once(
     )
     sink = _CountingSink(time)
     source = ReplaySource(request, tiers)
-    clock = ReplayClock(source, sink, _Quiet(), time=time, start_us=t02.H0, end_us=end, speed=speed)
+    clock = ReplayClock(
+        source,
+        sink,
+        _Quiet(),
+        time=time,
+        start_us=t02.H0,
+        end_us=end,
+        speed=speed,
+        budget_lane=None,
+    )
     began = time.now()
     async with clock:
         await clock.play()
