@@ -4086,24 +4086,28 @@ export interface paths {
      *     when an outcome is not known (that order `unknown`, never re-sent), `store_unavailable`
      *     (`retryable: true`) when a read before the send failed, the account's open orders
      *     included, `account_unavailable` (no retry) when the account cannot be sent for,
-     *     `conflict` when an order's state changed under the request into one a cancel refuses, or
-     *     `timeout`, `retryable: true`, when the deadline cut it short. `affected` counts the orders
-     *     cancelled; an order that filled before its cancel landed is neither affected nor an error,
-     *     and neither is one a `110001` parks in `unknown` (the venue no longer holds it resting;
-     *     24-internal-schemas.md section 8.6), `exchange_unavailable` being for an outcome the
-     *     command port raised on.
+     *     `conflict` when an order's state changed under the request into one a cancel refuses,
+     *     `timeout`, `retryable: true`, when the deadline cut it short or an order's cancel had not
+     *     settled within its own wait (that order left to B1, never re-sent), or another refusal of
+     *     the per-order cancel, with its code as `cancelOrder` answers it (the orchestrator's ruling
+     *     of 2026-10-24 17:42Z). `affected` counts the orders cancelled; an order that filled before
+     *     its cancel landed is neither affected nor an error, nor is one that ended otherwise first
+     *     (`rejected`, `expired` or `killed`), and neither is one a `110001` parks in `unknown` (the
+     *     venue no longer holds it resting; 24-internal-schemas.md section 8.6),
+     *     `exchange_unavailable` being for an outcome the command port raised on.
      *     At the deadline an account not finished reports `timeout`, which replaces any failure it
      *     met before, so the retryable signal wins: a cancel already sent stays with its order and
      *     is never sent again, and `affected` counts only the orders that ended cancelled by then.
      *     `retryable` is true for `store_unavailable`, `timeout` and `exchange_rate_limited`, and
      *     false for `exchange_unavailable`, `conflict`, `account_unavailable` and `exchange_error`
-     *     (the orchestrator's ruling of 2026-10-24 12:30Z). An order outside the selection, one whose cancel is already in flight
-     *     (`cancel_pending`), one not acknowledged yet or with an amend in flight (`validated`,
-     *     `submitting`, `amend_pending`), or one in `unknown`, `quarantined`, `held` or `untracked`
-     *     (until E29-T06 an `unknown` order is cancelled only by a KILL), is not sent anything and
-     *     counts in neither `affected` nor `error`. `requested` counts the accounts the request
-     *     covers once its scope check passed, and `succeeded` those `ok`. A retry of the request
-     *     takes a new `Idempotency-Key`: the same key replays the stored `200` for 24 h.
+     *     (the orchestrator's ruling of 2026-10-24 12:30Z), and false for another refusal of the
+     *     per-order cancel (the 17:42Z ruling). An order outside the selection, one whose cancel is
+     *     already in flight (`cancel_pending`), one not acknowledged yet or with an amend in flight
+     *     (`validated`, `submitting`, `amend_pending`), or one in `unknown`, `quarantined`, `held` or
+     *     `untracked` (until E29-T06 an `unknown` order is cancelled only by a KILL), is not sent
+     *     anything and counts in neither `affected` nor `error`. `requested` counts the accounts the
+     *     request covers once its scope check passed, and `succeeded` those `ok`. A retry of the
+     *     request takes a new `Idempotency-Key`: the same key replays the stored `200` for 24 h.
      *
      *     The request as a whole: `400 validation_failed` for a body `CancelAllRequest` refuses
      *     (an unknown field, a malformed id, an unknown intent); `409 idempotency_key_reuse`, or
