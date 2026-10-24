@@ -274,8 +274,8 @@ AMEND_AUDIT_GRACE_S: Final = 1.0
 #: How long before the amend's deadline its venue call must end, in seconds, so an answer that
 #: lands just inside it still leaves `_settle_stop` time to settle the rows (review fold 2).
 AMEND_SETTLE_RESERVE_S: Final = 0.5
-#: A read that failed before the amend's send (the 10:18Z ruling), its code, reason and retry.
-STORE_UNAVAILABLE: Final = "STORE_UNAVAILABLE"
+#: A read that failed before the amend's send (the 10:18Z ruling): `STORE_UNAVAILABLE` (as the
+#: cancel's) with this reason and retry.
 STORE_UNAVAILABLE_REASON: Final = "store_unavailable"
 STORE_RETRY_AFTER_S: Final = 5
 #: How old a create a restart resumes may be and still be re-sent where history never expires
