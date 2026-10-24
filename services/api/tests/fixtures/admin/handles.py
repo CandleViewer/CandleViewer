@@ -157,9 +157,9 @@ BACKUP_VERIFY_FAILED: Final = FixtureBackup(
 #: of its own: one database per backup handle.
 BACKUPS: Final[tuple[FixtureBackup, ...]] = (BACKUP_VERIFIED, BACKUP_VERIFY_FAILED)
 
-#: BACKUP-TAMPERED: a usable backup whose row holds a digest its run's record did not bind
-#: (AC-ADM-25). BACKUP-THEN-REVOKED: a usable backup older than the revocations after it
-#: (AC-ADM-24).
+#: BACKUP-TAMPERED: a backup whose row looks usable but holds a digest its run's record did not
+#: bind, so the restore guard refuses it (AC-ADM-25). BACKUP-THEN-REVOKED: a usable backup older
+#: than the revocations after it (AC-ADM-24).
 BACKUP_TAMPERED: Final = FixtureBackup("BACKUP-TAMPERED", "verified", timedelta(days=2))
 BACKUP_THEN_REVOKED: Final = FixtureBackup("BACKUP-THEN-REVOKED", "verified", timedelta(days=3))
 
