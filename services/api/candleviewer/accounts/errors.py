@@ -46,8 +46,11 @@ class AccountVersionConflictError(AccountsError):
 
 
 class ProfileUnavailableError(AccountsError):
-    """The effective profile could not be read: the store failed or timed out, or writes kept
-    overtaking the read. The order path fails closed on it (SR-E28-24), never using a default."""
+    """A profile could not be read. The effective read (the order path's cache) raises it when the
+    store failed or timed out, when writes kept overtaking the read, or for an unreadable stored
+    row (`invalid_row`), and the order path fails closed on it (SR-E28-24), never using a default.
+    The REST reads (`read_profiles`, `read_profile`, #906) raise it for an unreadable row, answered
+    503 `store_unavailable`."""
 
 
 class TradeGroupKeyReuseError(AccountsError):
