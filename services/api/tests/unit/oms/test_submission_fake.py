@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 from dataclasses import replace
+from datetime import timedelta
+from itertools import count
 from typing import Any, Final, cast
 from uuid import UUID, uuid4
 
@@ -33,6 +35,7 @@ from candleviewer.storage.repositories.submissions import (
     FirstPersisted,
 )
 from candleviewer.storage.repositories.submissions_sqlalchemy import SqlAlchemySubmissionStore
+from tests.unit.oms.recorded_stop_contract import RecordedStopContract
 from tests.unit.oms.store_reads_contract import StoreReadsContract
 from tests.unit.oms.submission_contract import (
     EVENT,
@@ -167,6 +170,18 @@ class TestInMemorySubmissionStores(SubmissionContract, StoreReadsContract):
         swept = await fake.stops.void_orphans(EVERY_ACCOUNT, at=T0, write_ahead=audit)
         expected = {stop.id for first, _ in persists for stop in first.recorded_stops}
         assert {stop.id for stop in swept} == expected and list(swept) == audited
+
+
+class TestInMemoryRecordedStopResolution(RecordedStopContract):
+    """S3-H's complete-read contract on the fakes, on a clock that moves a microsecond per write,
+    as Postgres stamps each transaction's rows apart."""
+
+    h = TestInMemorySubmissionStores.h
+
+    @pytest.fixture
+    def fake(self) -> Fake:
+        ticks = count()
+        return Fake(clock=lambda: T0 + timedelta(microseconds=next(ticks)))
 
 
 def test_the_hooks_default_bounds_are_the_adapters() -> None:
