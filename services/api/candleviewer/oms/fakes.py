@@ -40,6 +40,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     LIVE_STOP_STATUSES,
     REFUSED_BY,
     REFUSED_ENTRY,
+    STOP_AUDIT_TIMEOUT_S,
     UNSENT_ENTRY,
     UX_RS_IN_FLIGHT,
     WAITING_ENTRY,
@@ -166,11 +167,10 @@ _LEG_CHECKS: Final[dict[str, Callable[[NewTradeGroupLeg], bool]]] = {
 #: The leg trigger (`0039_trade_groups`, `USING CONSTRAINT`) that refuses a leg whose account is
 #: outside its group's environment (C-2.11), by the name Postgres reports.
 _TGL_ENV: Final = "trg_tgl_env"
-#: The write-ahead hooks' default bounds (s): `submissions_sqlalchemy.SUBMISSION_AUDIT_TIMEOUT_S`
-#: and the recorded stops' `WRITE_AHEAD_TIMEOUT_S`, which this driver-free module cannot import
-#: (ADR-0003); a unit test pins them equal.
+#: The submissions' write-ahead hook default bound (s): `submissions_sqlalchemy`'s
+#: `SUBMISSION_AUDIT_TIMEOUT_S`, which this driver-free module cannot import (ADR-0003); a unit
+#: test pins them equal. The recorded stops' bound is `recorded_stops.STOP_AUDIT_TIMEOUT_S`.
 SUBMISSION_AUDIT_TIMEOUT_S: Final = 0.5
-STOP_AUDIT_TIMEOUT_S: Final = 5.0
 
 
 def _canonical(ref: str) -> bool:

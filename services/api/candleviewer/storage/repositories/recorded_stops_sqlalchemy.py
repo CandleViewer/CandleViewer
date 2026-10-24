@@ -73,6 +73,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     LIVE_STOP_STATUSES,
     REFUSED_BY,
     REFUSED_ENTRY,
+    STOP_AUDIT_TIMEOUT_S,
     UNSENT_ENTRY,
     WAITING_ENTRY,
     FillPosition,
@@ -97,10 +98,7 @@ from candleviewer.storage.repositories.recorded_stops import (
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
-from candleviewer.storage.repositories.user_roles_sqlalchemy import (
-    WRITE_AHEAD_TIMEOUT_S,
-    bounded_write_ahead,
-)
+from candleviewer.storage.repositories.user_roles_sqlalchemy import bounded_write_ahead
 
 __all__ = [
     "STOP_COLUMNS", "STOP_FIELDS", "SYSTEM_STATEMENTS", "UNSCOPED", "SqlAlchemyRecordedStopStore",
@@ -385,7 +383,7 @@ class SqlAlchemyRecordedStopStore(CappedStore):
         relational: SqlAlchemyRelationalRepository,
         *,
         statement_timeout_ms: int = OMS_STATEMENT_TIMEOUT_MS,
-        audit_timeout_s: float = WRITE_AHEAD_TIMEOUT_S,
+        audit_timeout_s: float = STOP_AUDIT_TIMEOUT_S,
     ) -> None:
         super().__init__(relational, statement_timeout_ms=statement_timeout_ms)
         self._audit_timeout_s = require_audit_bound(audit_timeout_s)
