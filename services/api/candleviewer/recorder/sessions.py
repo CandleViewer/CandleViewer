@@ -125,8 +125,8 @@ class SessionStore(Protocol):
 
 
 class SessionAudit(Protocol):
-    """Subset of `AuditWriter.emit` (same shape as `recorder.policy.AuditSink`; injected —
-    M11 may not import `audit`, C-3.3).
+    """Subset of `AuditWriter.emit`, as `recorder.policy.AuditSink` is, but without its
+    `request_id` (crash recovery runs in no request); injected — M11 may not import `audit`, C-3.3.
 
     The sink MUST be cancellation-safe, as `AuditWriter` is (#2250): `_audit_restart`
     bounds `emit` with `asyncio.timeout`, so a cancelled emit must neither corrupt the

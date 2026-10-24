@@ -79,6 +79,32 @@ async def test_position_refused_by_manual_cap_is_warned_then_starts(
         await p.stop()
 
 
+async def test_a_refusal_whose_trigger_lapses_and_returns_is_announced_again(
+    clock: FakeClock, bus: FakeBus, audit: FakeAudit
+) -> None:
+    p = _cap1(clock, bus, audit)
+
+    def announced() -> tuple[int, int]:
+        denied = sum(
+            1 for a, kw in audit.records if a == "recorder.start" and kw["outcome"] == "denied"
+        )
+        return denied, sum(isinstance(e, RecorderCapRefused) for _t, e in bus.events)
+
+    try:
+        await p.add_manual("BTCUSDT", OWNER)  # takes the slot
+        await p.on_chart_opened("SOLUSDT", "c1")  # a young chart keeps the entry, wanting nothing
+        await p.on_position_opened("SOLUSDT", "p1")  # refused for the cap
+        for _ in range(3):
+            clock.advance(1)
+            await p.tick()  # retried every tick, announced once
+        assert announced() == (1, 1)
+        await p.on_position_closed("SOLUSDT", "p1")  # the trigger lapses ...
+        await p.on_position_opened("SOLUSDT", "p2")  # ... and returns: announced again
+        assert announced() == (2, 2)
+    finally:
+        await p.stop()
+
+
 async def test_audit_outage_recovers_via_retry(
     policy: RecordingPolicy, audit: FakeAudit, clock: FakeClock
 ) -> None:
@@ -248,6 +274,7 @@ async def test_retry_after_failed_stop_completes_stop(
     clock.advance(1_800)
     await policy.tick()
     assert policy.leaf("XRPUSDT") == "error"
+    assert policy.linger_until("XRPUSDT") is None  # its deadline is still set: the leaf answers
     clock.advance(1)
     await policy.tick()
     assert policy.leaf("XRPUSDT") is None and policy.effective_set() == {}
