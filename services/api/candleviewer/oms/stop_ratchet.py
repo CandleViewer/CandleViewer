@@ -22,10 +22,8 @@ __all__ = [
     "RatchetReason", "loosens", "ratchet_refusal", "tpsl_scope_refusal",
 ]  # fmt: skip
 
-#: The amend's TP/SL sides.
 TPSL_SIDES: Final = ("take_profit", "stop_loss")
-#: Q3's named rules (400 at the route); `native_stop_required` and `reduce_only_tpsl` are the
-#: create's (`errors.py`).
+#: Q3's named rules (400 at the route), beside the create's two (`errors.py`).
 RULE_TPSL_CLEAR_UNSUPPORTED: Final = "tpsl_clear_unsupported"
 RULE_TPSL_AFTER_FILL: Final = "tpsl_after_fill"
 RULE_TPSL_PARTIAL_MODE: Final = "tpsl_partial_mode"
