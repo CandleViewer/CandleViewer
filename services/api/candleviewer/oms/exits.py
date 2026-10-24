@@ -106,8 +106,8 @@ from .stop_ratchet import ratchet_refusal, tpsl_scope_refusal
 from .validator import Validator
 
 __all__ = [
-    "IN_FLIGHT_RETRY_AFTER_S", "MAX_IN_FLIGHT", "MAX_IN_FLIGHT_PER_PRINCIPAL", "NOT_GRANTED",
-    "NOT_ORDER_CREATOR",
+    "ALREADY_FINAL", "IN_FLIGHT_RETRY_AFTER_S", "MAX_IN_FLIGHT", "MAX_IN_FLIGHT_PER_PRINCIPAL",
+    "NOT_GRANTED", "NOT_ORDER_CREATOR",
     "SETTLE_TIMEOUT_S", "TRANSITION_TIMEOUT_S", "VIEW_ONLY", "AmendTerms", "CancelReason",
     "ExitCaller", "ExitCommands", "ExitDeps", "ExitMachines", "ExitOperation", "ExitOrders",
     "ExitOutcome", "InFlightGuard", "LiveStops", "OrderExits", "OutcomeKind", "UnknownReason",
@@ -139,6 +139,9 @@ STORE_TIMEOUT_S: Final = 2.0
 NOT_GRANTED: Final = "account_not_granted:orders:write:granted_accounts"
 VIEW_ONLY: Final = "trading_not_granted:orders:write:granted_accounts"
 NOT_ORDER_CREATOR: Final = "not_order_creator"
+#: The reason of a cancel's record when its order is already final, nothing to send (C-2.9; the
+#: orchestrator's ruling of 2026-10-24 21:47Z (2)).
+ALREADY_FINAL: Final = "already_final"
 _ACTIONS: Final[Mapping[ExitOperation, str]] = {
     "amend": "orders.amend",
     "cancel": "orders.cancel",
@@ -544,7 +547,7 @@ class OrderExits:
                     return await self._standing(row, "unknown", state, "timeout")
                 state = _CONFLICT
         if not isinstance(state, ExitOutcome) and state in _FINAL:
-            return await self._standing(row, "accepted", state)
+            return await self._final(row, operation, state, actor, request_id)
         if isinstance(state, ExitOutcome) or state not in _CANCELLABLE:
             refusal = state if isinstance(state, ExitOutcome) else _CONFLICT
             return await self.deny(row, operation, refusal, actor=actor, request_id=request_id)
@@ -557,6 +560,25 @@ class OrderExits:
             return await self.deny(row, operation, _CLOSED, actor=actor, request_id=request_id)
         send = self._dispatch(row, operation, "CANCEL", {}, actor=actor, request_id=request_id)
         return await self._shielded(send, operation)
+
+    async def _final(
+        self,
+        row: OrderRow,
+        operation: ExitOperation,
+        state: str,
+        actor: SubmitActor,
+        request_id: UUID | None,
+    ) -> ExitOutcome:
+        """A cancel of an order already final, nothing to send: the user's command is the action
+        all the same (C-2.9, the orchestrator's ruling of 2026-10-24 21:47Z (2)), so it is recorded
+        ahead of its `202`, `orders.cancel` with the reason `already_final` (outcome `success`: the
+        `audit_outcome` enum has no `noop`); else `503 audit_unavailable` in its place."""
+        detail = {"operation": operation, "state": state, "order_link_id": row.order_link_id}
+        if not await self._recorded(
+            row, "orders.cancel", "success", ALREADY_FINAL, detail, actor, request_id
+        ):
+            return _problem(503, "audit_unavailable", "The cancel could not be recorded.")
+        return await self._standing(row, "accepted", state)
 
     async def _lifecycle(self, row: OrderRow) -> str | ExitOutcome:
         """The order's B1 state: its machine's, else, with none here, its stored row's."""
