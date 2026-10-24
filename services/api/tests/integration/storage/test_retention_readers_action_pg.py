@@ -18,7 +18,8 @@ from testcontainers.postgres import PostgresContainer
 from candleviewer.recorder.retention import RetentionConfig
 from candleviewer.recorder.retention_defaults import STREAM_DEFAULTS
 from candleviewer.recorder.rolloff import RollOffConfig
-from candleviewer.retention_wiring import PgRetentionFacts
+from candleviewer.retention_wiring import PgRetentionFacts, replay_retention_guard
+from candleviewer.settings import Settings
 from candleviewer.storage.models import StreamKind
 from candleviewer.storage.repositories.recorder_sqlalchemy import SqlAlchemyRecorderRepository
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
@@ -76,7 +77,9 @@ def _record(conn: psycopg.Connection, *, pinned: bool = False) -> None:
 
 def _readers(dsns: tuple[str, str]) -> tuple[SqlAlchemyRecorderRepository, PgRetentionFacts]:
     rel = SqlAlchemyRelationalRepository(dsns[1])
-    return SqlAlchemyRecorderRepository(rel), PgRetentionFacts(rel)
+    return SqlAlchemyRecorderRepository(rel), PgRetentionFacts(
+        rel, replay_retention_guard(Settings(), rel)
+    )
 
 
 @pytest.mark.parametrize("stream", ["trades", "klines"])  # §7 total: 730 d; forever

@@ -1546,6 +1546,7 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | Replay | `replay_budget_held_seconds_total` | counter | wall time replay lanes were held by the loop budget (#2668 G1); a held lane plays below its requested speed, no alert |
 | Replay | `replay_budget_waiters` | gauge | replay lanes waiting for the loop budget now (#2668 G1); each waits about one turn per lane ahead, no alert |
 | Replay | `replay_loop_share_ratio` | gauge | the configured `CV_REPLAY_LOOP_SHARE`, set when the wiring builds the budget (#2668 G1); the threshold of `ReplayLoopShareHigh`, no alert of its own |
+| Replay | `replay_retention_guard_errors_total{where}` | counter | replay retention guard reads that failed, by `where` (`lease`, `reaper`, `compaction`, `downsample`); the partition is kept that pass, never dropped (#2674 G7); no alert, a sustained rate means `replay_sessions` is unreadable |
 | Feature flags | `cv_feature_flag_evaluations_total{flag}`, `cv_feature_flag_unreadable_overrides_total{flag}` | counter | unreadable overrides > 0 (E42-T03) |
 | Feature flags | `cv_feature_flag_changes_total{flag,result}` | counter | conflict or refusal spikes show in `result` (E42-T03) |
 | Feature flags | `cv_flag_push_latency_seconds` | histogram | committed flag write -> last session frame queued; budget 2 s (E42-T03) |

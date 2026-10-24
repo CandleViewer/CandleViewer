@@ -2,9 +2,9 @@
 the scraped registry.
 
 The series are defined beside the code that updates them (`replay.merge`, `replay.source`,
-`replay.clock`, `replay.budget`) and register on the library's default registry;
-`export_replay_metrics` serves them on the app's scraped registry with the `env` label, as every
-other module's exported series are.
+`replay.clock`, `replay.budget`, and `retention_wiring` for the retention guard's) and register on
+the library's default registry; `export_replay_metrics` serves them on the app's scraped registry
+with the `env` label, as every other module's exported series are.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "replay_budget_held_seconds_total",
         "replay_budget_waiters",
         "replay_loop_share_ratio",
+        "replay_retention_guard_errors_total",
     }
 )
 
