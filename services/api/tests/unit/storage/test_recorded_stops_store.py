@@ -428,7 +428,7 @@ async def _unaudited(rows: tuple[RecordedStopRow, RecordedStopRow]) -> None:
 
 
 async def test_a_release_and_bind_awaits_its_audit_before_the_one_commit() -> None:
-    rel = _Rel([_row(_SL, released_at=_T)], [_row(_TP, exchange_order_id="x-1")])
+    rel = _Rel([], [_row(_SL, released_at=_T)], [_row(_TP, exchange_order_id="x-1")])
     seen: list[tuple[tuple[RecordedStopRow, RecordedStopRow], int]] = []
 
     async def audit(rows: tuple[RecordedStopRow, RecordedStopRow]) -> None:
@@ -436,23 +436,42 @@ async def test_a_release_and_bind_awaits_its_audit_before_the_one_commit() -> No
 
     pair = await _store(rel).release_and_bind(_ACCOUNT, _SL, _TP, "x-1", at=_T, write_ahead=audit)
     assert (pair[0].id, pair[1].id, rel.commits) == (_SL, _TP, 1) and seen == [(pair, 0)]
-    release, bind = (_sql(stmt) for stmt in rel.statements)  # two updates, the release first
+    lock, release, bind = rel.statements  # the pair locked in id order, then the two updates
+    pinned = mod.lock_stops_statement(_ACCOUNT, [_TP, _SL])
+    assert _sql(lock) == _sql(pinned) and lock.compile().params == pinned.compile().params
+    release, bind = _sql(release), _sql(bind)
     assert release.startswith("UPDATE recorded_stops SET exchange_order_id=NULL, released_at=")
     assert bind.startswith("UPDATE recorded_stops SET exchange_order_id=$1::VARCHAR WHERE ")
 
 
 @pytest.mark.parametrize(
     ("script", "statements"),
-    [([[]], 1), ([[_row(_SL, released_at=_T)], []], 2)],
+    [([[], []], 2), ([[], [_row(_SL, released_at=_T)], []], 3)],
     ids=["the_release_misses", "the_bind_misses"],
 )
 async def test_a_release_and_bind_where_either_update_misses_commits_nothing_and_skips_the_audit(
     script: list[list[dict[str, Any]]], statements: int
 ) -> None:
-    rel = _Rel(*script)  # a miss before a bind skips the bind: nothing to take
+    rel = _Rel(*script)  # the lock first; a miss before a bind skips the bind: nothing to take
     with pytest.raises(RecordedStopNotBindable) as err:
         await _store(rel).release_and_bind(_ACCOUNT, _SL, _TP, "x-1", at=_T, write_ahead=_unaudited)
     assert (rel.commits, len(rel.statements)) == (0, statements) and "x-1" not in str(err.value)
+
+
+async def test_a_release_and_bind_whose_audit_fails_or_is_late_writes_nothing() -> None:
+    async def hangs(rows: tuple[RecordedStopRow, RecordedStopRow]) -> None:
+        await asyncio.Event().wait()
+
+    script: tuple[list[dict[str, Any]], ...] = ([], [_row(_SL, released_at=_T)], [_row(_TP)])
+    refused, late = _Rel(*script), _Rel(*script)
+    with pytest.raises(RuntimeError):
+        await _store(refused).release_and_bind(
+            _ACCOUNT, _SL, _TP, "x-1", at=_T, write_ahead=_unaudited
+        )
+    store = mod.SqlAlchemyRecordedStopStore(cast(Any, late), audit_timeout_s=0.01)
+    with pytest.raises(WriteAheadTimeout):
+        await store.release_and_bind(_ACCOUNT, _SL, _TP, "x-1", at=_T, write_ahead=hangs)
+    assert refused.commits == late.commits == 0
 
 
 @pytest.mark.parametrize(

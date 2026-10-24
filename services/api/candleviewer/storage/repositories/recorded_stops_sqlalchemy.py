@@ -32,6 +32,11 @@ Postgres breaks by failing one of the two transactions, nothing written by it (t
 or the read's, which the next request reads again). Ordering that lock, with a race test on
 Postgres, is left to H3: it is `orders_sqlalchemy.py`'s.
 
+`release_and_bind` locks its pair `FOR UPDATE` in id order first, as `settle` and `put_in_force`
+lock theirs, so none of them deadlock; it then releases and binds in one unit of work and awaits
+the writer's write-ahead audit, bounded, before the one commit (C-2.9): a miss on either update,
+or an audit that fails or is late, writes nothing.
+
 `void_orphans_statement` is R10's startup sweep (`RecordedStopStore.void_orphans`): one UPDATE that
 voids the pending entry-attach rows of an order of their account that was never placed (never sent,
 `UNSENT_ENTRY`; or refused by its create's own answer, `REFUSED_ENTRY` with the `REFUSED_BY` event),
@@ -495,6 +500,8 @@ class SqlAlchemyRecordedStopStore(CappedStore):
             raise ValueError("a release is audited write-ahead (C-2.9): no hook was given")
         release = release_statement(account_id, predecessor_id, exchange_order_id, at)
         async with self._unit_of_work() as uow:  # a refusal raised in here rolls both updates back
+            pair = (predecessor_id, successor_id)  # locked in id order, as `settle` locks its rows
+            await uow.session.execute(lock_stops_statement(account_id, pair))
             freed = list((await uow.session.execute(release)).mappings())
             if not freed:
                 raise RecordedStopNotBindable

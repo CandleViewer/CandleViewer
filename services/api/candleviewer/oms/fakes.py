@@ -1012,8 +1012,6 @@ class InMemoryRecordedStopStore:
             raise RecordedStopNotBindable
         released = replace(old, exchange_order_id=None, released_at=at)
         bound = replace(new, exchange_order_id=exchange_order_id)
-        if any(r.released_at is not None and r.exchange_order_id for r in (released, bound)):
-            raise port.OrderConstraintError("rs_release")  # the table's CHECK, at the statement
         hook = write_ahead((released, bound))
         await self._db._audited_commit(hook, self._audit_timeout_s, released, bound)
         return released, bound
