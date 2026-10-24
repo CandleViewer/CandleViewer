@@ -6,15 +6,18 @@ that tracks the run as `OmsRuntime.run` does. Nothing sleeps: an exit is held op
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.responses import JSONResponse, Response
 from starlette.requests import Request
 
+import candleviewer
 from candleviewer.api.order_exits_common import exit_caller, exit_refusals, run_claimed
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.auth.scopes import PrincipalSnapshot
@@ -156,3 +159,17 @@ def test_exit_refusals_is_the_catalogues_counter_one_for_every_router() -> None:
     first.labels("cancel", "conflict").inc()
     labels = {"env": "demo", "operation": "cancel", "code": "conflict"}
     assert metrics.registry.get_sample_value("oms_exit_refused_total", labels) == 1
+
+
+def test_run_claimed_is_the_in_flight_guards_one_claimer() -> None:
+    """SEC-S4C2A-01: a claim has no deadline, so the guard's 1,024 / 64 bounds hold only while
+    every claim is released at its exit's end, which `run_claimed` does on every path (the tests
+    above). No other module reaches the guard; a new caller is reviewed here first."""
+    pkg = Path(candleviewer.__file__).resolve().parent
+    reach = re.compile(r"\.guard\.claim\(|\bexits\.guard\b")
+    users = {
+        p.relative_to(pkg).as_posix()
+        for p in pkg.rglob("*.py")
+        if reach.search(p.read_text(encoding="utf-8"))
+    }
+    assert users == {"api/order_exits_common.py"}
