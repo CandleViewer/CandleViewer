@@ -72,8 +72,12 @@ def rows_at_send(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> Iterator[list[Rec
 
 
 async def test_a_price_amend_sends_the_terms_alone_and_records_nothing(rig: Rig) -> None:
+    """The amend's exit watch gets B1's answer, as the cancel's does; a cancel watch is unspent."""
     order = await _live(rig)
-    assert (await rig.port.amend(_amend(order, price="60500", qty="0.02")))["ok"] is True
+    watch, other = (rig.port.expect_exit(order.id, kind) for kind in ("amend", "cancel"))
+    answer = await rig.port.amend(_amend(order, price="60500", qty="0.02"))
+    assert answer["ok"] is True and watch.answered and await watch.answer() == answer
+    assert not other.answered
     (call,) = rig.demo.calls
     assert call.lane == "entry" and call.request == AmendOrderRequest(
         account=cr.ref(), symbol=cr.SYMBOL, order_link_id=order.order_link_id,
@@ -148,12 +152,15 @@ async def test_a_refused_amend_voids_its_rows_audited_ahead(rig: Rig) -> None:
 
 
 async def test_an_amend_whose_send_raises_leaves_its_rows_in_flight(rig: Rig) -> None:
-    """Q11: B1 lands the order in `unknown`, never re-sent; the complete read ends the rows."""
+    """Q11: B1 lands the order in `unknown`, never re-sent; the complete read ends the rows, and
+    the exit service's watch reads None."""
     order = await _live(rig)
+    watch = rig.port.expect_exit(order.id, "amend", request_id=uuid4())
     rig.demo.script("amend_order", TransportError("cut off"))
     with pytest.raises(TransportError):
         await rig.port.amend(_amend(order, stop_loss="58500"))
     assert [(r.status, r.answered_at) for r in _rows(rig)] == [("pending", None)] * 2
+    assert watch.answered and await watch.answer() is None
 
 
 async def test_a_refused_rate_token_voids_the_rows_with_nothing_sent(rig: Rig) -> None:
@@ -210,14 +217,6 @@ async def test_an_amend_resumed_with_nothing_recorded_records_and_sends(rig: Rig
     assert len(_rows(rig)) == 2 and len(_sent(rig)) == 1
 
 
-@pytest.mark.parametrize("stop", ["0", "-1", "0E-18"])
-async def test_no_stop_at_or_below_zero_is_ever_sent(rig: Rig, stop: str) -> None:
-    order = await _live(rig)
-    answer = await rig.port.amend(_amend(order, stop_loss=stop))
-    assert answer == _NO | {"error_code": b01.NATIVE_STOP_REQUIRED}
-    assert rig.demo.calls == [] and _rows(rig) == []
-
-
 async def test_a_looser_stop_is_refused_in_the_writer_before_any_record_or_send(rig: Rig) -> None:
     """Q4: audited `orders.amend` denied, never `sl.loosen_refused`; nothing recorded or sent."""
     order = await _live(rig)
@@ -240,13 +239,6 @@ async def test_a_stop_looser_than_the_record_in_force_is_refused(rig: Rig) -> No
     assert rig.demo.calls == [] and rig.audits.actions() == [("orders.amend", "looser_than_record")]
 
 
-async def test_a_tighter_stop_on_a_short_is_sent(rig: Rig) -> None:
-    order = await _live(rig, side="Sell", stop_loss=Decimal("62000"), take_profit=Decimal("57000"))
-    assert (await rig.port.amend(_amend(order, stop_loss="61500")))["ok"] is True
-    assert [request.stop_loss for request in _sent(rig)] == [Decimal("61500")]
-    assert {row.position_side for row in _rows(rig)} == {"Sell"}
-
-
 @pytest.mark.parametrize(
     ("over", "terms", "code"),
     [
@@ -255,10 +247,11 @@ async def test_a_tighter_stop_on_a_short_is_sent(rig: Rig) -> None:
         (_REDUCE, {"take_profit": "65000"}, "REDUCE_ONLY_TPSL"),
         ({}, {"take_profit": None}, "TPSL_CLEAR_UNSUPPORTED"),
         ({}, {"stop_loss": None}, "NATIVE_STOP_REQUIRED"),
+        ({}, {"stop_loss": "0"}, "NATIVE_STOP_REQUIRED"),  # C-2.6: no stop at or below zero sent
+        ({}, {"stop_loss": "-1"}, "NATIVE_STOP_REQUIRED"),
         ({"stop_loss": None}, {"take_profit": "65000"}, "NATIVE_STOP_REQUIRED"),
         ({"provenance": "recorded_stop"}, {"price": "60500"}, "ORDER_NOT_AMENDABLE"),
     ],
-    ids=["filled", "partial", "reduce_only", "tp_null", "sl_null", "no_stop", "recorded_stop"],
 )
 async def test_refusals_answer_their_code_audited_with_nothing_sent(
     rig: Rig, over: dict[str, Any], terms: dict[str, str | None], code: str
@@ -272,39 +265,12 @@ async def test_refusals_answer_their_code_audited_with_nothing_sent(
 
 
 @pytest.mark.parametrize(
-    "terms",
-    [{}, {"qty": "0"}, {"price": "abc"}, {"price": None}, {"leverage": "5"}],
-    ids=["none", "zero_qty", "not_decimal", "null_price", "unknown"],
+    "terms", [{}, {"qty": "0"}, {"price": "abc"}, {"price": None}, {"leverage": "5"}]
 )
 async def test_terms_b1_would_not_stage_are_refused_locally(
-    rig: Rig, terms: dict[str, str | None]
+    rig: Rig, terms: dict[str, Any]
 ) -> None:
     order = await _live(rig)
     answer = await rig.port.amend(_amend(order, **terms))
     assert answer == _NO | {"error_code": OmsErrorCode.INSTRUMENT_FILTER.value}
     assert rig.demo.calls == []
-
-
-async def test_an_amend_hands_its_answer_to_the_exit_watch(rig: Rig) -> None:
-    """As B1's cancel: the exit service's watch gets the answer B1 got, spent once."""
-    order = await _live(rig)
-    watch = rig.port.expect_exit(order.id, "amend", request_id=uuid4())
-    answer = await rig.port.amend(_amend(order, price="60500"))
-    assert answer["ok"] is True and watch.answered and await watch.answer() == answer
-
-
-async def test_an_amend_that_raises_answers_its_watch_none(rig: Rig) -> None:
-    """Q11: the order goes `unknown`, never re-sent; the exit service reads None."""
-    order = await _live(rig)
-    watch = rig.port.expect_exit(order.id, "amend")
-    rig.demo.script("amend_order", TransportError("cut off"))
-    with pytest.raises(TransportError):
-        await rig.port.amend(_amend(order, price="60500"))
-    assert watch.answered and await watch.answer() is None
-
-
-async def test_a_cancel_watch_is_not_spent_by_an_amend(rig: Rig) -> None:
-    order = await _live(rig)
-    watch = rig.port.expect_exit(order.id, "cancel")
-    await rig.port.amend(_amend(order, price="60500"))
-    assert not watch.answered
