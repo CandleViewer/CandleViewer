@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 
-from candleviewer.recorder.models import Actor
+from candleviewer.recorder.models import ORDERBOOK_DEPTHS, Actor
 
 if TYPE_CHECKING:
     from candleviewer.recorder.policy import PolicyConfig
@@ -131,6 +131,14 @@ class RecordedRows(Protocol):  # the row port; `env` comes from settings, never 
         hidden: tuple[str, ...], after: tuple[str, str] | None, limit: int,
     ) -> list[dict[str, Any]]: ...  # fmt: skip
     async def recorded_row(self, entry_id: str, *, env: str) -> dict[str, Any] | None: ...
+
+
+def setting_rule(depth: object) -> tuple[str, str]:
+    """`(rule, field)` of the policy's `RecorderInvalidUpdateError` for a change naming `depth`:
+    the depth's when the table refuses that depth, else the streams'."""
+    if depth is not None and (type(depth) is not int or depth not in ORDERBOOK_DEPTHS):
+        return "depth_allowed", "depth"
+    return "stream_names", "streams"
 
 
 def restricted_view(entry: RecordedEntry) -> RecordedEntry | None:

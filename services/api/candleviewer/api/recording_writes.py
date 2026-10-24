@@ -37,7 +37,8 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.recorder import control as rc
-from candleviewer.recorder.errors import RecorderSymbolLimitError
+from candleviewer.recorder.errors import RecorderInvalidUpdateError
+from candleviewer.recorder.errors import RecorderSymbolLimitError as LimitError
 from candleviewer.recorder.models import Actor
 from candleviewer.ws._generated.error_codes import ErrorCode
 
@@ -139,13 +140,21 @@ def _spec(body: BaseModel) -> rc.EntrySpec:
                         named.get("pinned"), named.get("retention_days"))  # fmt: skip
 
 
-def _fresh(seen: rc.RecordedEntry, body: api.AddRecordedSymbolRequest, actor: Actor,
+def _fresh(held: rc.RecordedEntry, body: api.AddRecordedSymbolRequest, actor: Actor,
            spec: rc.EntrySpec) -> rc.RecordedEntry:  # fmt: skip
-    """A re-add of a row hidden from the caller reads as a fresh add (restricted refusal parity)."""
+    """A re-add refused because a hidden cause alone holds the row reads as a fresh add
+    (restricted refusal parity): the request's settings, none of the row's."""
     days, streams = None if spec.pinned else spec.retention_days, tuple(body.streams)
-    return rc.RecordedEntry(seen.id, seen.symbol, seen.reasons, "starting", bool(spec.pinned),
+    refusals = tuple(r for r in held.refusals if r not in rc.HIDDEN_CAUSES)
+    return rc.RecordedEntry(held.id, held.symbol, ("manual",), "starting", bool(spec.pinned),
                             streams, body.depth, None, days, actor.id, lingering=False,
-                            refusals=seen.refusals)  # fmt: skip
+                            refusals=refusals)  # fmt: skip
+
+
+def _invalid(rule: str, field: str | None) -> common.Problem:
+    """`422` for a change the policy's own check refuses, naming its field and rule."""
+    named = {"field": field, "rule": rule, "message": "Refused by the recorder."}
+    return common.Problem(422, BAD, "Invalid body.", errors=[named])
 
 
 async def _stored[T](write: Coroutine[Any, Any, T]) -> T:
@@ -246,16 +255,31 @@ def make_recording_writes_router(
         if not listed(body.symbol):
             rule = {"field": "symbol", "rule": "listed_instrument", "message": "Not listed."}
             raise common.Problem(422, BAD, "The symbol is not a listed instrument.", errors=[rule])
-        spec = _spec(body)
+        spec, status = _spec(body), await call.control.status()
+        held = next((e for e in status.entries if e.symbol == body.symbol), None)
+        held_id = None if held is None else held.id
+        if held is not None and view(call, held) is None:  # a hidden refusal: nothing changes
+            await _record(call, "recorder.start", body.symbol, held.id, "held_hidden")
+            out = _dump(_fresh(held, body, call.actor, spec))
+            out["estimate"] = {"basis": _BASIS, "warning": _DEEP if body.depth == 500 else None}
+            return done(call, JSONResponse(out, 201))
+        if intent := "retention_days" in body.model_fields_set and not spec.pinned:
+            await _record(call, "retention.change", body.symbol, held_id,
+                          before_state={"retention_days": held.retention_days if held else None},
+                          after_state={"retention_days": spec.retention_days})  # fmt: skip
         try:  # the policy writes `recorder.start` ahead of the row (add_manual)
             entry, prior = await _stored(call.control.add(body.symbol, spec, call.actor))
-        except RecorderSymbolLimitError:  # refused before the policy's record
-            code = ErrorCode.RECORDER_SYMBOL_LIMIT
-            await _record(call, "recorder.start", body.symbol, None, code.value)
-            raise common.Problem(422, code, "The recorder's symbol cap is reached.") from None
+        except (LimitError, RecorderInvalidUpdateError) as exc:  # before its record
+            capped, (setting, field) = isinstance(exc, LimitError), rc.setting_rule(spec.depth)
+            cause = ErrorCode.RECORDER_SYMBOL_LIMIT.value if capped else setting
+            if intent:  # the route's retention record gets its denied twin
+                await _record(call, "retention.change", body.symbol, held_id, cause)
+            if not capped:
+                raise _invalid(setting, field) from None
+            await _record(call, "recorder.start", body.symbol, None, cause)
+            raise common.Problem(422, ErrorCode.RECORDER_SYMBOL_LIMIT,
+                                 "The recorder's symbol cap is reached.") from None  # fmt: skip
         seen = shown(call, entry)
-        if prior is not None and view(call, prior) is None:
-            prior, seen = None, _fresh(seen, body, call.actor, spec)
         out = _dump(seen)
         if prior is None:
             out["estimate"] = {"basis": _BASIS, "warning": _DEEP if seen.depth == 500 else None}

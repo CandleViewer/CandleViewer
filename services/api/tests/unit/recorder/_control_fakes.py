@@ -13,7 +13,7 @@ from candleviewer.recorder.errors import InvalidRecorderActorError, RecorderErro
 from candleviewer.recorder.errors import RecorderSymbolLimitError as LimitError
 from candleviewer.recorder.errors import RecorderSymbolNotRecordedError as NotRecorded
 from candleviewer.recorder.models import Actor
-from candleviewer.recorder.policy import RefusalCause
+from candleviewer.recorder.policy import RefusalCause, _check_settings
 
 NOW: Final = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
 GRACE: Final = timedelta(minutes=30)
@@ -58,6 +58,7 @@ class FakeRecorder:
         self, symbol: str, actor: Actor, streams: tuple[str, ...] = (), depth: int | None = None
     ) -> None:
         _user(actor)
+        _check_settings(streams, depth)  # the policy's own check, before any record
         if (old := self.entries.get(symbol)) and "manual" in old.reasons and not old.lingering:
             return  # the policy's no-op: no write, no record
         if old is None and len(self.entries) >= self.max_symbols:  # a re-add is never capped
