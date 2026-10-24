@@ -1,0 +1,7 @@
+{
+  "description": "Identifiers that must not appear in the production web bundle (E14-X03, #549; DR5, SR-E14-10). E14-Q03 registers its test-only handles here.",
+  "handles": [
+    { "identifier": "__cvEngine", "threat": "DR5", "requirement": "SR-E14-10" },
+    { "identifier": "projectForTest", "threat": "DR5", "requirement": "SR-E14-10" }
+  ]
+}

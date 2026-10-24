@@ -19,6 +19,9 @@
   (#3549).
 - The render-path guards: `vitest run test/features/drawings-lint-ban.test.ts` (in `apps/web`) and
   `python tools/ci/check_no_inline_suppressions.py`.
+- The bundle guard, after a web build:
+  `python tools/ci/check_prod_bundle_handles.py --dist apps/web/dist`. The nosniff pin, in
+  `services/api`: `pytest tests/drawings/test_drawings_nosniff.py`.
 
 ## How these gates run
 
@@ -199,6 +202,40 @@ E15-T01's spec decision on #402, SR-E14-09).
   tripwire fails when a `drawing*` directory (camel-cased `drawingTools` too) or `object-tree*` name
   appears under `apps/*/src` or
   `packages/*/src` outside it. Fixture: `scripts/tests/test_check_no_inline_suppressions.py`.
+
+## tools/ci/check_prod_bundle_handles.py
+
+- **Protects:** DR5 (spoofing: a test-only handle in a production bundle), SR-E14-10.
+  `__cvEngine.projectForTest` (E14-Q03) projects chart coordinates to pixels for a test; on a
+  production page a script could use it to spoof where a drawing sits.
+- **Matches:** a script file (`.js`, `.mjs`, `.cjs`) or a page (`.html`, `.htm`) of `apps/web/dist`
+  that holds an identifier of `tools/ci/prod-bundle-forbidden-handles.json`, as a substring
+  (`__cvEngineDebug` counts as `__cvEngine`). It runs in `_job-js.yml`'s `build` job after the
+  Electron-hardening step, which builds `apps/web`, and reads that dist (no second build; a test pins
+  the step's place and its `--dist`). A failure names the file, line, column, identifier, DR5 and
+  SR-E14-10. A dist with no script file fails, whatever pages it holds, so a missing or half-written
+  build never passes. Both of E14-Q03's names are registered already; E14-Q03 adds a positive
+  control (an E2E build that exposes the handle).
+- **Does not match:** source maps (`sourcesContent` holds the source of a correctly gated handle),
+  other file types, a name built at run time. `release.yml`'s `build-sign-installer` has no web-build
+  step (it only needs `apps/web/dist` to exist), so the guard sits where that build is made; a release
+  is cut from `main`, which passed it.
+- **Extending:** add an object to the manifest's `handles` with `identifier` (4 or more characters,
+  matched as a substring), `threat` and `requirement`, each non-empty; the guard refuses any other
+  entry, and an empty or unreadable manifest.
+- **Deliberate-regression fixture:** `scripts/tests/test_check_prod_bundle_handles.py` builds
+  synthetic dists: a handle in a `.js`, `.mjs`, `.cjs` or `.htm` file fails, one only in a `.map`
+  passes, a clean dist passes, and one with no script file fails.
+
+## test_drawings_nosniff.py
+
+- **Protects:** DR6, SR-E14-01: the stored-XSS abuse cases rest on hostile text being inert JSON, and
+  `nosniff` keeps a browser from reading it as HTML. `NoSniff` (#3990) already stamps every answer;
+  nothing pinned it on `/drawings*`, and ZAP's passive rule 10021 is Low, under the gate of
+  `security/zap/baseline_gate.py`.
+- **Matches:** the deployed `create_app(Settings())` answers each of the five `/drawings*` routes,
+  unauthenticated (a 401 or a 403), with one `X-Content-Type-Options: nosniff`; and it serves exactly
+  those five, so a sixth must be pinned. No product code changed.
 
 ## Budget
 

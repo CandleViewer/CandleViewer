@@ -168,6 +168,9 @@ jobs:
               - 'tools/ci/check_no_inline_suppressions.py'
               - 'tools/ci/no-inline-suppression-paths.json'
               - 'tools/ci/suppressions.py'
+              # E14-X03 (#549): the production-bundle guard and its list of forbidden identifiers.
+              - 'tools/ci/check_prod_bundle_handles.py'
+              - 'tools/ci/prod-bundle-forbidden-handles.json'
             py:
               - 'services/api/**'
               # Repo-level Python suites (xstate_contract, perf, load, chaos) are scanned by
