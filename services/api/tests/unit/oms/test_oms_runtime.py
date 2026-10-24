@@ -44,6 +44,7 @@ from candleviewer.oms.fakes import FakeClockHealth, InMemoryOrderStore, InMemory
 from candleviewer.oms.order_machine import OrderMachines
 from candleviewer.oms.ports import PositionKey
 from candleviewer.oms.repository import RecordedStopRepository
+from candleviewer.oms_lane import HOP_TIMEOUT_S, LaneStopped
 from candleviewer.oms_wiring import (
     HYDRATE_CONCURRENCY,
     SWEEP_MAX_FAILURES,
@@ -170,13 +171,17 @@ class InlineLane:
     """The order lane on the test's own loop, so these tests step one loop (`test_order_lane`
     runs the runtime on `OrderLane`'s thread): `call` tracks each task as the lane does."""
 
+    dead = False
+
     def __init__(self) -> None:
         self.tasks: set[asyncio.Task[Any]] = set()
 
     async def start(self) -> None:
         return None
 
-    def call[T](self, coro: Coroutine[Any, Any, T]) -> asyncio.Future[T]:
+    def call[T](
+        self, coro: Coroutine[Any, Any, T], *, timeout_s: float | None = None
+    ) -> asyncio.Future[T]:
         task = asyncio.ensure_future(coro)
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
@@ -205,6 +210,7 @@ class World:
     log: list[str] = field(default_factory=list)
     accounts: list[Any] = field(default_factory=list)
     sink_fails: Exception | None = None
+    lanes: list[InlineLane] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.health = FakeClockHealth(self.clock)
@@ -238,9 +244,13 @@ class World:
             "live_enabled": self.flags[1], "profiles": Profiles(), "persistence": bundle,
             "feed": feed, "stores": self.stores, "pager": self.pager, "now": lambda: T0,
             "monotonic": self.clock, "registry": REGISTRY, "oms_enabled": self.flags[0],
-            "sleep": self.clock.sleep, "lane": InlineLane,
+            "sleep": self.clock.sleep, "lane": self.lane,
         }  # fmt: skip
         return OmsRuntime(settings, **(built | over))
+
+    def lane(self) -> InlineLane:
+        self.lanes.append(InlineLane())
+        return self.lanes[-1]
 
     def gauge(self, port: str) -> float:
         line = f'oms_interim_ports{{env="demo",port="{port}"}}'
@@ -451,6 +461,11 @@ async def test_the_state_is_starting_while_the_startup_runs_and_degraded_once_fa
     world = World()
     async with started(world.runtime()) as runtime:
         assert (runtime.started, runtime.state) == (True, "starting")  # waiting on the flags
+        for flag in world.flags:
+            flag.read()
+        await until(lambda: runtime.state == "ok")
+        world.lanes[0].dead = True  # its thread's loop ended (CR-S3L1A-02)
+        assert runtime.state == "degraded"
     assert not runtime.started
     async with started(world.runtime("live", live_on=True)) as runtime:
         assert (runtime.started, runtime.state) == (True, "degraded")  # no bundle: never ready
@@ -547,6 +562,34 @@ async def test_run_before_any_start_or_after_a_failed_one_is_not_ready_and_close
     assert {inspect.getcoroutinestate(c) for c in (never, failed)} == {inspect.CORO_CLOSED}
 
 
+async def test_on_a_stopped_or_unanswering_lane_the_routes_calls_are_not_ready() -> None:
+    """CR-S3L1B-07, CR-S3L1A-02: a lane that stopped meanwhile, or that has not answered a read
+    within `HOP_TIMEOUT_S`, is `OmsNotReady` (503 `oms_not_ready`), not a 500; the submit has no
+    hop bound (its bound is the stop's drain), so the lane's timeout is not one it gets."""
+
+    class Refusing(InlineLane):
+        def __init__(self, error: Exception) -> None:
+            super().__init__()
+            self.error, self.bounds = error, list[float | None]()
+
+        def call[T](
+            self, coro: Coroutine[Any, Any, T], *, timeout_s: float | None = None
+        ) -> asyncio.Future[T]:
+            coro.close()
+            self.bounds.append(timeout_s)
+            raise self.error
+
+    async with started(World().runtime()) as runtime:
+        parts, nothing = runtime._composed(), cast(Any, None)
+        for error in (LaneStopped("stopped"), TimeoutError()):
+            on_lane = oms_wiring.OnLane(replace(parts, lane=(lane := Refusing(error))))
+            with pytest.raises(OmsNotReady):
+                await on_lane.environment_of(cr.ACCOUNT)
+            with pytest.raises(OmsNotReady if isinstance(error, LaneStopped) else TimeoutError):
+                await on_lane.submit(nothing, nothing)
+            assert lane.bounds == [HOP_TIMEOUT_S, None]
+
+
 async def test_an_error_out_of_the_startup_task_is_logged_with_its_type() -> None:
     """CR-S3E2-07: a flag view that raises ends the startup task, leaving `degraded`; the log says
     why, instead of asyncio's "never retrieved" at garbage collection."""
@@ -569,8 +612,9 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
     """CR-S3E2-04: each close step is isolated and has its share of `OMS_STOP_RESERVE_S`. The
     command port fails to close and the sink's drain never ends; the trading port, which needs a
     turn of the loop, and the pool still close, and the whole stop is bounded."""
-    # the hung sink, 5th of the 7 closers (the exits', then the stop gate's, CR-S3H3B-01), costs
-    # a third of it
+    # 9 closers share 0.5 s (the reserve less the lane's join): the drain's cancel, the lane's wait,
+    # the exits, the stop gate (CR-S3H3B-01), the machines, the commands, then the hung sink, which
+    # costs a third of what is left, the trading port and the pool
     monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 1.5)
 
     async def fails(self: OmsCommandPort) -> None:

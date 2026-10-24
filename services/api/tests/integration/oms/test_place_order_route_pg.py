@@ -223,11 +223,12 @@ async def _serving(
             if ready:
                 await asyncio.wait_for(runtime.wait_ready(), _READY_BOUND_S)
             yield client
+            parts = runtime._composed()  # the facade's tasks are the order lane's (CV-C13)
             async with asyncio.timeout(_READY_BOUND_S):  # the facade's turns settle (`Rig.settle`)
                 for _ in range(4):
                     for _ in range(32):
                         await asyncio.sleep(0)
-                    await runtime._composed().machines.idle()
+                    await parts.lane.call(parts.machines.idle())
     finally:
         await pool.dispose()
 
