@@ -242,6 +242,7 @@ async def test_a_failure_after_the_pin_leaves_a_pinned_row_whose_number_is_inert
     with pytest.raises(OSError, match="pg down"):
         await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
     assert _kept(store) == (True, 30)  # the pin went first: no unpinned row ever lost its days
+    assert policy.effective_set()["BTCUSDT"].pinned  # memory follows, so an unpin still acts
 
 
 async def test_a_restricted_retention_reset_of_a_pinned_hidden_held_row_is_no_refusal(

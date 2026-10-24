@@ -596,8 +596,9 @@ class RecordingPolicy:
         row (manual, or holding refs) and from memory (a manual entry, a trigger, a session).
         A pin writes the pin, then nulls the stored `retention_days` if it holds one (22); an unpin
         stores `retention_days` (None: NULL, the default) ahead of the unpin. A failure in between
-        leaves the row pinned either way. A `restricted` unpin of a row `relax_allowed` refuses is
-        refused before it is audited or written; an unpin of a row not pinned changes nothing."""
+        leaves the row pinned either way, and memory with it. A `restricted` unpin of a row
+        `relax_allowed` refuses is refused before it is audited or written; an unpin of a row
+        not pinned changes nothing."""
         if actor.kind != "user":
             raise InvalidRecorderActorError("a pin requires a user actor")
         _check_retention(retention_days)
@@ -633,8 +634,10 @@ class RecordingPolicy:
             before={"pinned": row["pinned"], "retention_days": _str(held)},
             extra={"pinned": pinned, "retention_days": _str(after)},
         )
-        if pinned and not await self._recorded.set_pinned(row["id"], True):  # the pin first
-            raise RecorderSymbolNotRecordedError("the recorded row was removed")
+        if pinned:  # the pin first; memory follows it, so a failure after it leaves both pinned
+            if not await self._recorded.set_pinned(row["id"], True):
+                raise RecorderSymbolNotRecordedError("the recorded row was removed")
+            s.pinned = True
         if after != held and not await self._recorded.set_retention(row["id"], after):
             raise RecorderSymbolNotRecordedError("the recorded row was removed")
         if not pinned and not await self._recorded.set_pinned(row["id"], False):  # the unpin last
