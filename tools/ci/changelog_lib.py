@@ -118,18 +118,21 @@ class ParsedCommit:
 
 
 def _visible(text: str) -> str:
-    """`text` without what GitHub does not render: HTML comments and fenced or indented code.
-    Mirrors the first three steps of `tools/ci/check_pr_metadata.py` `strip_markup` (not imported:
-    that script is the gate's own, and its inline-span step would alter a summary's backticks)."""
+    """`text` without what GitHub does not render: HTML comments, script and style blocks, and
+    fenced or indented code. Mirrors the comment, fence and indent steps of
+    `tools/ci/check_pr_metadata.py` `strip_markup` (not imported: that script is the gate's own,
+    and its inline-span step would alter a summary's backticks)."""
     text = re.sub(r"<!--.*?(?:-->|\Z)", "", text, flags=re.S)
+    text = re.sub(r"<(script|style)\b.*?(?:</\1>|\Z)", "", text, flags=re.S | re.I)
     text = re.sub(r"(```|~~~).*?(?:\1|\Z)", "", text, flags=re.S)
     return re.sub(r"^(?: {4}|\t).*$", "", text, flags=re.M)
 
 
-def security_footer(text: str) -> tuple[str | None, str | None]:
-    """(kept, rejected) for the visible `Changelog-Security:` footer in `text`. A summary that is
+def security_footer(visible: str) -> tuple[str | None, str | None]:
+    """(kept, rejected) for the `Changelog-Security:` footer in `visible`, text already passed
+    through `_visible` exactly once (the strip is not idempotent). A summary that is
     empty or fails `check_security_wording` is rejected, so it never reaches CHANGELOG.md."""
-    found = _SECURITY_FOOTER_RE.search(_visible(text or ""))
+    found = _SECURITY_FOOTER_RE.search(visible)
     if found is None:
         return None, None
     summary = found.group(1).strip()
@@ -178,7 +181,7 @@ def parse_commit(sha: str, message: str) -> ParsedCommit:
         bump = Bump.NONE
         category = None
 
-    kept, rejected = security_footer(body)
+    kept, rejected = security_footer(_visible(body))
     return ParsedCommit(
         sha=sha,
         subject_line=header,
