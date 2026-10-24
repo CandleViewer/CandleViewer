@@ -26,9 +26,11 @@ from tests.unit.replay._source import until_parked
 
 #: C-2.17's bound on one loop step, in seconds.
 STEP_BUDGET_S = 0.050
-#: Roughly one and a half times the default read-ahead (131 072 events), 100 us apart.
-EVENTS = 140_000
-FILLED = 100_000
+#: The default read-ahead, in events; the replay holds a little more than it, 100 us apart, and
+#: the span must cover at least three quarters of the fill.
+READ_AHEAD = ReadAheadConfig().readahead_events
+EVENTS = READ_AHEAD * 17 // 16
+FILLED = READ_AHEAD * 3 // 4
 
 
 class _SortedTier:
