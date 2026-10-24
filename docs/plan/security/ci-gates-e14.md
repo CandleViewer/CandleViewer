@@ -10,7 +10,9 @@
 ## Running locally
 
 - Validate: `semgrep --metrics=off --validate --config .semgrep`.
-- Prove the exception sites: `python tools/ci/check_drawings_exception_sites.py`.
+- Prove the exception sites, in a git checkout (Semgrep reads no file of a path-scoped rule's
+  subdirectory target outside one, and the pin then fails as having scanned nothing):
+  `python tools/ci/check_drawings_exception_sites.py`.
 - Prove the fixtures: `python tools/ci/check_semgrep_rule_tests.py`. Every rule needs at least one
   `# ruleid: <id>` line and, since E14-X03, one `# ok: <id>` line: a line a naive rule would flag.
   The checker cannot tell an `ok` line a rule scans from one outside its `paths.include`: place
@@ -172,12 +174,13 @@ E15-T01's spec decision on #402, SR-E14-09).
   `document` reached through an alias or a cast, an `Object.assign` bag's URL, name or `style` key, a
   computed key, a bag held in a variable or a spread argument, an attribute name held in a variable,
   a string-keyed `setAttribute` of a URL or name, a module-scope constant key read inside a function
-  declaration or a class method (inside an arrow or a function expression it is seen; an imported or
-  exported constant never is), and `.mts` or `.cts` files, which Semgrep does not read (the lint ban
-  covers only its `no-unsanitized` forms there: no `createElement` props, string keys or URL, name
-  and CSS arms, and the engine layer has no raw-HTML lint). Fixture-proven until E14-S08.
+  declaration or a class method (inside an arrow or a function expression it is seen; a constant
+  imported from another module never is), and `.mts` or `.cts` files, which Semgrep does not read
+  (the lint ban covers only its `no-unsanitized` forms there: no `createElement` props, string keys
+  or URL, name and CSS arms, and the engine layer has no raw-HTML lint). Fixture-proven until
+  E14-S08.
 - **Deliberate-regression fixture:** `.semgrep/tests/cv-drawings-text-to-html-sink/` (a `ruleid` per
-  sink, form and root; the shell rule alone misses 43 of its 49, every string-key,
+  sink, form and root; the shell rule alone misses 62 of its 68, every string-key,
   `setHTMLUnsafe`, `style` and attribute-name form among them).
 
 ## cv-drawings-pixel-geometry-ts
@@ -291,6 +294,9 @@ under `nice -n 10`:
 Fix the code if you can. Otherwise add
 `# nosemgrep: <rule-id> reason=<token> owner=@<handle> review=YYYY-MM-DD` (at most 180 days) on the
 line above the finding's first line, with the rationale above it, and tag `security-review`; an
-exception of a drawings persistence rule is also listed in `tools/ci/drawings-exception-sites.json`,
+exception of `cv-drawings-query-missing-owner-filter` is also listed in
+`tools/ci/drawings-exception-sites.json` (its one `rule` names that rule, the only one with exceptions
+today; another rule's exception needs the list to name rules per site), by the constant its statement
+assigns, else as `line N`, which moves with any edit above it,
 and a High finding or an exception that outlives a release also follows `04-security-program.md`
 section 16.2.

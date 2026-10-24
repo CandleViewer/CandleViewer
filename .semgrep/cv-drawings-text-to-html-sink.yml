@@ -2,8 +2,9 @@
 # user content. Syntactic, not taint: a text sink that builds a string is flagged whatever it is built
 # from; a raw variable is not "built". Beyond `cv-shell-dangerously-set-inner-html` (whose scope has no
 # literal drawing path nor the engine layer) it adds `document.write`, `createContextualFragment`,
-# `srcdoc`, `setHTMLUnsafe`, each sink named by a string key or an `Object.assign` property bag,
-# string-built URL, name and style attributes, and CSS strings.
+# `srcdoc`, `setHTMLUnsafe`, each sink named by a string key (the raw-HTML ones and a non-literal
+# `cssText` also by an `Object.assign` property bag), string-built URL, name and style attributes,
+# and CSS strings.
 rules:
   - id: cv-drawings-text-to-html-sink
     languages: [typescript, javascript]

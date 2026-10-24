@@ -168,9 +168,9 @@ def test_main_exits_0_when_the_scan_matches_the_list_and_1_when_it_does_not(
     assert text in captured.out + captured.err
 
 
-def _scanned(**paths: object) -> object:
-    """`subprocess.run` answering Semgrep's `--json --verbose` report with `paths`."""
-    report = json.dumps({"errors": [], "results": [], "paths": paths})
+def _scanned(errors: list[object] | None = None, **paths: object) -> object:
+    """`subprocess.run` answering Semgrep's `--json --verbose` report with `paths` and `errors`."""
+    report = json.dumps({"errors": errors or [], "results": [], "paths": paths})
     return lambda *a, **k: subprocess.CompletedProcess(a, 0, report, "")
 
 
@@ -183,6 +183,7 @@ def _scanned(**paths: object) -> object:
         "a result past the file",
         "nothing scanned",
         "a target left unread",
+        "semgrep reported errors",
     ],
 )
 def test_main_exits_2_when_the_scan_or_the_list_cannot_be_read(
@@ -202,6 +203,9 @@ def test_main_exits_2_when_the_scan_or_the_list_cannot_be_read(
         )
     if failure == "nothing scanned":  # a wrong root: Semgrep matches no target and says so
         monkeypatch.setattr(pin.subprocess, "run", _scanned(scanned=[], skipped=[]))
+    if failure == "semgrep reported errors":  # a rule or a target Semgrep could not run
+        error = {"type": "Rule parse error", "message": "bad pattern"}
+        monkeypatch.setattr(pin.subprocess, "run", _scanned([error], scanned=["a.py"], skipped=[]))
     if failure == "a target left unread":  # a file over the size cap, unread, sites unseen
         big = {"path": "services/api/candleviewer/big.py", "reason": "exceeded_size_limit"}
         monkeypatch.setattr(pin.subprocess, "run", _scanned(scanned=["a.py"], skipped=[big]))
@@ -214,6 +218,23 @@ def test_a_skip_configuration_explains_does_not_fail_the_scan(
     ignored = {"path": "services/api/candleviewer/x.py", "reason": "semgrepignore_patterns_match"}
     monkeypatch.setattr(pin.subprocess, "run", _scanned(scanned=["a.py"], skipped=[ignored]))
     assert pin.scan(ROOT) == []
+
+
+def test_the_pin_scans_the_five_persistence_rules() -> None:
+    assert pin.RULES == (
+        "cv-drawings-query-missing-owner-filter",
+        "cv-drawings-owner-from-body",
+        "cv-drawings-unbounded-geometry",
+        "cv-drawings-batch-unvalidated-ids",
+        "cv-drawings-pixel-geometry",
+    )
+
+
+def test_a_site_listed_twice_and_found_once_is_named() -> None:
+    listed = [_site("a.py", "_PURGE")] * 2 + [_site("b.py", "_COUNT")]
+    found = [_site("a.py", "_PURGE"), _site("b.py", "_COUNT")]
+    gone = f"listed in {pin.SITES}, but {RULE} no longer reports it: remove it from there"
+    assert pin.compare(found, listed) == [f"a.py: _PURGE: {gone}"]
 
 
 def test_the_configured_skips_are_the_security_gates() -> None:

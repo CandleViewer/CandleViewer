@@ -106,6 +106,29 @@ def test_only_the_security_team_may_own_a_drawing_path_suppression(tmp_path, cap
     assert code == 1 and f"owner '@basiltt' must be {OWNER}" in err
 
 
+@pytest.mark.parametrize("owner", ["@CandleViewer/frontend", "@CandleViewer/security-team"])
+def test_only_the_exact_security_team_handle_is_accepted(tmp_path, capsys, owner):
+    files = {f"{SCOPE}/a.ts": f"// @ts-ignore {OK.replace(OWNER, owner)}\n"}
+    code, err = _check(tmp_path, capsys, files)
+    assert code == 1 and f"owner '{owner}' must be {OWNER}" in err
+
+
+def test_a_finding_ends_with_the_annotation_to_use(tmp_path, capsys):
+    code, err = _check(tmp_path, capsys, {f"{SCOPE}/a.ts": "// @ts-ignore\n"})
+    hint = f"remove it, or annotate it: `reason=<token> owner={OWNER} review=YYYY-MM-DD`"
+    assert code == 1 and err.rstrip().endswith(f"no-inline-suppressions: DR6, SR-E14-01: {hint}")
+
+
+def test_a_clean_tree_names_what_it_read(tmp_path, capsys):
+    files = {f"{SCOPE}/a.ts": "export const a = 1;\n"}
+    for rel, text in {check.CONFIG: json.dumps({"paths": [f"{SCOPE}/**"]}), **files}.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text, encoding="utf-8")
+    assert check.main(["--root", str(tmp_path), "--today", TODAY]) == 0
+    out = capsys.readouterr().out
+    assert out == "no-inline-suppressions: OK: 1 file(s) under 1 path(s)\n"
+
+
 def test_a_drawing_path_suppression_names_one_owner(tmp_path, capsys):
     """The shared grammar reads the first `owner=`, so a second could ride behind the team's."""
     files = {f"{SCOPE}/a.ts": f"// @ts-ignore {OK} owner=@basiltt\n"}
