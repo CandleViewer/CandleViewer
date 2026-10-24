@@ -20,7 +20,7 @@ from structlog.testing import capture_logs
 from candleviewer.exchange.base.errors import ServiceUnavailableError
 from candleviewer.exchange.base.fakes import FakeTradingPort
 from candleviewer.exchange.base.models import AccountRef, Order, Position
-from candleviewer.oms import commands, fakes, stop_resolution
+from candleviewer.oms import commands, stop_resolution
 from candleviewer.oms.errors import AuditNotDurable
 from candleviewer.oms.fakes import InMemoryOrderStore, InMemoryRecordedStopStore
 from candleviewer.oms.repository import RecordedStopRepository
@@ -35,6 +35,7 @@ from candleviewer.oms.stop_resolution import (
     VoidReason,
     VoidWriteAhead,
 )
+from candleviewer.storage.repositories import recorded_stops
 from candleviewer.storage.repositories.orders import ORDER_STATE_OF, NewOrderEvent, OrderRow
 from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 from tests.unit.oms import submission_contract as sc
@@ -529,10 +530,13 @@ async def test_a_request_years_old_reads_a_bounded_history_and_still_decides(
 def test_the_store_bound_outlasts_the_stop_audit_bound_so_its_error_is_the_audits() -> None:
     """Opus Minor: the store-call bound is the stop audit's bound plus a margin, so a late audit
     reaches H3 as `AuditNotDurable`, never as this bound's `TimeoutError`."""
-    margin = stop_resolution.STORE_TIMEOUT_S - fakes.STOP_AUDIT_TIMEOUT_S
+    margin = stop_resolution.STORE_TIMEOUT_S - recorded_stops.STOP_AUDIT_TIMEOUT_S
     assert margin >= 1.0
     default = inspect.signature(StopResolver).parameters["store_timeout_s"].default
     assert default == stop_resolution.STORE_TIMEOUT_S
+    tree = ast.parse(inspect.getsource(stop_resolution))  # production never reads the fakes
+    imported = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
+    assert not {m for m in imported if m and m.split(".")[-1] == "fakes"}
 
 
 async def test_a_late_void_audit_reaches_the_caller_as_audit_not_durable() -> None:
