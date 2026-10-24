@@ -11,6 +11,7 @@ from typing import Any, Final
 from candleviewer.recorder import control as rc
 from candleviewer.recorder.errors import InvalidRecorderActorError, RecorderError
 from candleviewer.recorder.errors import RecorderSymbolLimitError as LimitError
+from candleviewer.recorder.errors import RecorderSymbolNotRecordedError as NotRecorded
 from candleviewer.recorder.models import Actor
 from candleviewer.recorder.policy import RefusalCause
 
@@ -21,10 +22,6 @@ STREAMS: Final = ("trades", "orderbook_delta", "tickers", "liquidations")  # the
 
 class RecorderSymbolNotManualError(RecorderError):
     """Mirrors #2188 S2b's `candleviewer.recorder.errors.RecorderSymbolNotManualError`."""
-
-
-class RecorderSymbolNotRecordedError(RecorderError):
-    """Mirrors #2188 S2b's `candleviewer.recorder.errors.RecorderSymbolNotRecordedError`."""
 
 
 def _user(actor: Actor) -> None:
@@ -61,13 +58,14 @@ class FakeRecorder:
         self, symbol: str, actor: Actor, streams: tuple[str, ...] = (), depth: int | None = None
     ) -> None:
         _user(actor)
-        old = self.entries.get(symbol)
+        if (old := self.entries.get(symbol)) and "manual" in old.reasons and not old.lingering:
+            return  # the policy's no-op: no write, no record
         if old is None and len(self.entries) >= self.max_symbols:  # a re-add is never capped
             raise LimitError(f"max {self.max_symbols} recorded symbols")
         held = () if old is None or old.lingering else old.reasons
         streams, depth = streams or ("trades",), depth or 200
-        await self._record("recorder.start", symbol, actor, "manual", streams=",".join(streams),
-                           depth=str(depth), held_by=",".join(held) or None)  # fmt: skip
+        await self._record("recorder.start", symbol, actor, "manual",
+                           trigger_ref=f"manual:{actor.id}")  # fmt: skip
         row = old or self.put(symbol, added_by=actor.id, state="starting")
         reasons = ("manual", *(r for r in held if r != "manual"))  # a re-add keeps the rest
         self.entries[symbol] = replace(row, reasons=reasons, streams=streams, depth=depth,
@@ -81,8 +79,9 @@ class FakeRecorder:
                                            linger_until=None if rest else NOW + GRACE)  # fmt: skip
 
     async def set_pin(self, symbol: str, pinned: bool, actor: Actor) -> None:
+        _user(actor)
         if (e := self.entries.get(symbol)) is None:  # no active row
-            raise RecorderSymbolNotRecordedError(symbol)
+            raise NotRecorded(symbol)
         if e.pinned == pinned:
             return
         await self._record("retention.change", symbol, actor, "pin" if pinned else "unpin",
@@ -145,15 +144,14 @@ class FakeRecorder:
 
     async def pin(self, entry_id: str, pinned: bool, actor: Actor, *,
                   retention_days: int | None = None) -> rc.RecordedEntry | None:  # fmt: skip
-        """A pin keeps forever; an unpin takes `retention_days` (none: the default) and removes
-        an idle row. No active row: `None` (S9 maps `RecorderSymbolNotRecordedError` so)."""
+        """Unpin takes `retention_days` (none: the default); no active row: `None`, as S9 maps."""
         if (symbol := self._symbol(entry_id)) is None:
             return None
         kept = replace(self.entries[symbol], pinned=pinned,
                        retention_days=None if pinned else retention_days)  # fmt: skip
         try:
             await self.set_pin(symbol, pinned, actor)
-        except RecorderSymbolNotRecordedError:
+        except NotRecorded:
             return None
         if symbol in self.entries:
             self.entries[symbol] = kept

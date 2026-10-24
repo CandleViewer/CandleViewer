@@ -233,8 +233,8 @@ def make_recording_writes_router(
         await _stored(audit.emit(
             action, actor_label=p.actor_name, actor_user_id=p.actor_id, actor_ip=p.ip,
             session_id=p.session_id, request_id=p.request_id, object_kind="recorded_symbol",
-            object_id=entry_id, object_label=symbol, **(out if refused else {}), **fields,
-            severity=Severity.WARNING if refused else Severity.INFO,
+            object_id=entry_id, object_label=symbol, **(out if refused is not None else {}),
+            **fields, severity=Severity.INFO if refused is None else Severity.WARNING,
         ))  # fmt: skip
 
     @router.post("/recording/symbols")
