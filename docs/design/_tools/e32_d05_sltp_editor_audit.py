@@ -8,12 +8,13 @@ spec binds, resolved or MISSING, and the glyph names no merged spec uses yet; (3
 `pairs.mjs` registers; (4) the contract facts the boards quote, parsed from text; (5) the trail
 arithmetic over the fixture (Decimal, tick 0.10): the readout's digits, the lockout stop, the
 loosen risk, the `22` example's implied reference, the ratchet's widest trail, the ladder frames'
-fixture; (6) the string gates (no banned word in the copy deck, no raw error-code token, every T2
-reason within 60 characters, the stale template's fixed text within 60, no private path, every
-cited id and line still valid, the C-2.6 sentences present, every drawn `SCR-064 /` row of
-sections 3 and 6 naming the stop Bybit holds now (C-2.6 per frame; `naked`: none, "Attach stop"),
-no LIVE frame without the arm or the step-up, no pending frame that reads as applied, no closing
-keyword in a draft passed with `--extra`); (7) the counts the boards and the draft quote.
+fixture; (6) the string gates (no banned word in the copy deck or in keyed copy in place, no raw
+error-code token, every T2 reason within 60 characters, the stale template's fixed text within 60,
+no private path, every cited id and line still found (a moved or repeated line is a WARN), the C-2.6
+sentences present, every drawn `SCR-064 /` row of sections 3 and 6 naming the stop Bybit holds now
+(C-2.6 per frame; `naked`: none, "Attach stop"), no LIVE frame without the arm or the step-up, no
+pending frame that reads as applied, no closing keyword in a draft passed with `--extra`); (7) the
+counts the boards and the draft quote.
 `--json` feeds the check-nums script; `--check` re-derives the spec's `audit:` markers;
 `--self-test` flips each gate on a copy of the spec in memory and expects exactly one named FAIL.
 Exit 1 on a gated FAIL or a failed gate.
@@ -57,7 +58,8 @@ FORBIDDEN = (
 )
 # Words that leave user-facing copy (the BQ-12 ruling; the memo SC-6, F6; `24` :2053's code-only
 # rule; a step-up class id or an audit action name is an annotation, never a sentence); checked on
-# the copy deck only.
+# the copy deck and on every keyed string in place (`key` "copy" or "copy" (`key`) outside
+# section 13).
 BANNED_COPY = (
     r"app-managed",
     r"client-side",
@@ -74,7 +76,10 @@ STOP_SENTENCES = (
     "the only path to a wider stop is the owner's flow",
     "every frame names the stop Bybit holds now",
     "Every `SCR-064 /` frame shows the stop Bybit holds now (the `stop-marker`)",
+    "every `SCR-064 /` frame that shows the position carries the stop Bybit holds now",
 )
+KEY = r"[a-z][a-z0-9_]*(?:\.[a-z0-9_{}]+)+"
+KEYED_COPY = rf'`({KEY})` "([^"\n]+)"|"([^"\n]+)" \(`({KEY})`'
 HELD_NOW = "Held by Bybit now"
 # The "Stop marker (held now)" cell of a drawn row: the marker's words and a tool-derived value.
 HELD_CELL = r"Held by Bybit now: [\d,]+\.\d <!-- audit:held\.[a-z_]+=[\d.]+ -->"
@@ -164,7 +169,9 @@ GLYPH_PRECEDENTS = (
     "E33/E33-D03.md",
     "E17/E17-D02.md",
 )
-# doc | line at the base | text the line must hold (re-found by content: drift = WARN, gone = FAIL).
+# doc | line at the boards-PR base e8f8558a (#4417's merge; the spec's cites were read at 27bd8e88)
+# | text the line must hold (re-found by content: drift or several hits = WARN naming the nearest
+# hit; gone = FAIL).
 CITED_TABLE = """
 14 | 1477 | ### SCR-064
 14 | 1498 | Every position keeps a native stop
@@ -179,41 +186,41 @@ CITED_TABLE = """
 15 | 799 | ### CMP-079 RbacGate
 15 | 224 | ### CMP-019 Icon
 15 | 2638 | ### CMP-227 EstimatedBadge
-22 | 6671 | /positions/{positionId}/tpsl:
-22 | 6680 | Trailing stop is a price distance on Bybit, not a percentage
-22 | 6690 | Only the owner can loosen a stop
-22 | 6704 | A trail is never cleared here
-22 | 6709 | x-rbac: { permissions: [positions:write], scope: granted_accounts }
-22 | 6723 | pctTrail:
-22 | 6748 | trailing_stop_distance: "757.43"
-22 | 11750 | `backups` and `sl_loosen` are no-grace
-22 | 11789 | Required for a no-grace class
-22 | 14242 | owner's loosened stop on `setPositionTpSl`
-22 | 15902 | enum: [ticks, percent, r_multiple, atr, price]
-22 | 18012 | move_stop_to_breakeven_at:
-22 | 18589 | Position:
-22 | 18616 | trailing_stop:
-22 | 18622 | native_stop_present:
-22 | 18647 | SetTpSlRequest:
-22 | 18666 | TpSlResult:
+22 | 6828 | /positions/{positionId}/tpsl:
+22 | 6837 | Trailing stop is a price distance on Bybit, not a percentage
+22 | 6847 | Only the owner can loosen a stop
+22 | 6861 | A trail is never cleared here
+22 | 6866 | x-rbac: { permissions: [positions:write], scope: granted_accounts }
+22 | 6880 | pctTrail:
+22 | 6905 | trailing_stop_distance: "757.43"
+22 | 11907 | `backups` and `sl_loosen` are no-grace
+22 | 11946 | Required for a no-grace class
+22 | 14401 | owner's loosened stop on `setPositionTpSl`
+22 | 16094 | enum: [ticks, percent, r_multiple, atr, price]
+22 | 18204 | move_stop_to_breakeven_at:
+22 | 18783 | Position:
+22 | 18810 | trailing_stop:
+22 | 18816 | native_stop_present:
+22 | 18841 | SetTpSlRequest:
+22 | 18860 | TpSlResult:
 23 | 3472 | ### 15.2 `PositionUpdate`
 23 | 4368 | ### 15.10 `MachineStateUpdate`
 24 | 165 | `InstrumentPolicy.round_price` (nearest, `ROUND_HALF_EVEN`)
 24 | 1385 | trailing_active_price: Px
-24 | 2053 | **Code-only rule
-24 | 2091 | ### 8.8 Safety invariant
-24 | 2101 | 5. Smarter stops (ATR trail, structure trail, breakeven)
-24 | 2111 | A tightening is never refused by it
-24 | 2143 | one-sided TP/SL modification via `trading-stop` breaks Bybit's OCO pairing
-24 | 2162 | tightens the stop, so it is never gated either
-24 | 2532 | **9.3.1 Stop resolution.**
-24 | 2889 | breakeven_offset_ticks: int = 2
-24 | 2896 | class TrailSpec(BaseModel):
-24 | 2902 | only_tighten: bool = True
-24 | 2906 | **price distance, not a percentage**
-24 | 3434 | `move_to_breakeven`
-24 | 3476 | `sys.breakeven_at_1r`
-24 | 4834 | `sl.loosened` and `sl.loosen_refused`
+24 | 2071 | **Code-only rule
+24 | 2113 | ### 8.8 Safety invariant
+24 | 2123 | 5. Smarter stops (ATR trail, structure trail, breakeven)
+24 | 2133 | A tightening is never refused by it
+24 | 2165 | one-sided TP/SL modification via `trading-stop` breaks Bybit's OCO pairing
+24 | 2184 | tightens the stop, so it is never gated either
+24 | 2556 | **9.3.1 Stop resolution.**
+24 | 2913 | breakeven_offset_ticks: int = 2
+24 | 2920 | class TrailSpec(BaseModel):
+24 | 2926 | only_tighten: bool = True
+24 | 2930 | **price distance, not a percentage**
+24 | 3458 | `move_to_breakeven`
+24 | 3500 | `sys.breakeven_at_1r`
+24 | 4858 | `sl.loosened` and `sl.loosen_refused` (§8.8 rule 5; E29-T07, #915)
 28 | 4161 | ## B8 — Position protection
 28 | 4458 | ### B8.2 States
 28 | 4477 | ### B8.3 Events and transitions
@@ -268,8 +275,8 @@ E17-D01 | 152 | Order entry off — <message>. <what still works>
 E17-D01 | 103 | Order entry off — <role-neutral message>. <what still works>
 E33-D02 | 338 | name "Emulated — run by CandleViewer, not Bybit"
 E32-D02 | 528 | 22,419.75
-22 | 6726 | trailing_stop: { unit: percent, value: "1.2" }
-24 | 2384 | fallback_sl_offset_pct: Decimal
+22 | 6883 | trailing_stop: { unit: percent, value: "1.2" }
+24 | 2408 | fallback_sl_offset_pct: Decimal
 E25-D01 | 329 | ### 9.5 Catalogue amendments
 README | 73 | one **page per screen**
 """
@@ -671,8 +678,9 @@ def cite_gates(t: dict[str, str]) -> list[str]:
             CITE_WARN.append(f"`{doc}` :{line} now at :{found[0]} ({want[:40]!r})")
         elif not found:
             bad.append(f"cited text gone: `{doc}` :{line} {want[:40]!r} is nowhere in the file")
-        else:
-            bad.append(f"cited text ambiguous: `{doc}` :{line} {want[:40]!r} at {found[:4]}")
+        else:  # several hits: the nearest to the pin is the cite (drift = WARN, gone = FAIL)
+            near = min(found, key=lambda n: (abs(n - line - shift), n))
+            CITE_WARN.append(f"`{doc}` :{line} now at :{near}, nearest of {len(found)} hits")
     return bad
 
 
@@ -714,6 +722,14 @@ def gates(
         for p in BANNED_COPY
         for m in re.finditer(p, deck)
     ]
+    in_place = spec.replace(deck, "")
+    for m in re.finditer(KEYED_COPY, in_place):
+        key, text = m.group(1) or m.group(4), m.group(2) or m.group(3)
+        bad += [
+            f"spec: banned word in in-place UI copy {key}: {w.group(0)!r}"
+            for p in BANNED_COPY
+            for w in re.finditer(p, text)
+        ]
     deck_strings = " ".join(re.findall(r'"([^"]+)"', deck))
     bad += [
         f"spec section 13: raw error-code token in UI copy: {c}"
@@ -754,7 +770,7 @@ def gates(
             and 'never "applied"' not in rest
         ):
             bad.append(f"spec section 3: {frame} is a pending frame that reads as applied")
-        if re.search(r"\bLIVE\b", rest) and not re.search(r"\barm|step-up|DEMO|never|not\b", rest):
+        if re.search(r"\bLIVE\b", rest) and not re.search(r"\barm|step-up|\bDEMO\b", rest):
             bad.append(f"spec section 3: {frame} draws LIVE with no arm or step-up in the frame")
         if "T2" in cls and "opacity.disabled" in rest:
             bad.append(f"spec section 3: {frame} is T2 and dims (over-conversion)")
@@ -892,17 +908,43 @@ def mutations() -> list[tuple[str, Callable[[str], str], str]]:
             "draws LIVE",
         ),
         (
+            "stop-clause",
+            swap(
+                "every `SCR-064 /` frame that shows the position carries the stop Bybit holds now",
+                "every `SCR-064 /` frame that shows the position may carry a stop",
+            ),
+            "C-2.6 sentence",
+        ),
+        (
+            "banned-in-place",
+            swap(
+                '| `trail.only_tighten` "Only tightens:',
+                '| `trail.only_tighten` "Only tightens (app-managed):',
+            ),
+            "in-place UI copy",
+        ),
+        (
+            "live-never",
+            sub(
+                r"^(\| 17 +\| `rejected` +\|[^\n]*?)the class line under the header",
+                r"\1the LIVE class line under the header",
+            ),
+            "draws LIVE",
+        ),
+        (
             "held",
-            lambda s: s.replace(
-                '+ `sltp.pending.held` "Held by Bybit now: 63,900.0."; after the 200',
-                "; after the 200",
-                1,
-            )
-            .replace("`sltp.pending.held` under it", "the line under it", 1)
-            .replace(
-                'reads "Held by Bybit now: 63,900.0 — last confirmed by the position read."',
-                "reads the read's confirmation",
-                1,
+            lambda s: (
+                s.replace(
+                    '+ `sltp.pending.held` "Held by Bybit now: 63,900.0."; after the 200',
+                    "; after the 200",
+                    1,
+                )
+                .replace("`sltp.pending.held` under it", "the line under it", 1)
+                .replace(
+                    'reads "Held by Bybit now: 63,900.0 — last confirmed by the position read."',
+                    "reads the read's confirmation",
+                    1,
+                )
             ),
             "stop in force",
         ),
