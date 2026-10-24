@@ -130,7 +130,9 @@ Served = tuple[World, Store]
 @pytest.fixture(scope="module")
 def _served() -> Iterator[Served]:
     store, mp = Store(), pytest.MonkeyPatch()
-    wiring = SimpleNamespace(repository=ProfilesRepository(cast(Any, store), cache=None))
+    # `effective` is the order path's cache, which the OMS runtime is handed; no read uses it.
+    repository = ProfilesRepository(cast(Any, store), cache=None)
+    wiring = SimpleNamespace(repository=repository, effective=None)
     try:
         mp.setattr(appmod, "wire_profiles", lambda *_args: wiring)
         mp.setattr(appmod, "_build_accounts_counts", lambda _settings: store)  # the M13 store
@@ -289,15 +291,19 @@ def test_the_list_is_one_page_in_the_stores_order_and_carries_no_etag(served: Se
 def test_a_caller_without_accounts_read_is_403_audited_and_never_reaches_the_store(
     served: Served, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The forbidden-role case, on both reads."""
+    """The forbidden-role case, on both reads. Each refusal's record is written, so none is logged
+    as an unaudited refusal."""
     world, store = served
     monkeypatch.setattr(world.resolver, "snapshot", lambda _actor: BARE)
-    for item, profile in ((False, None), (True, store.rows[GRANTED][0].id)):
-        resp = read(world, "viewer", GRANTED, profile)
-        assert resp.status_code == 403
-        assert answer(resp, item=item)["required_permissions"] == ["accounts:read"]
-        _denied(world.audit.records.pop(), resp, "viewer", "missing_permission:accounts:read:none")
+    reason = "missing_permission:accounts:read:none"
+    with capture_logs() as logs:
+        for item, profile in ((False, None), (True, store.rows[GRANTED][0].id)):
+            resp = read(world, "viewer", GRANTED, profile)
+            assert resp.status_code == 403
+            assert answer(resp, item=item)["required_permissions"] == ["accounts:read"]
+            _denied(world.audit.records.pop(), resp, "viewer", reason)
     assert (world.audit.records, store.seen) == ([], [])
+    assert not [log for log in logs if log["event"] == "profile_read_denial_unaudited"]
 
 
 @pytest.mark.parametrize(
