@@ -16,7 +16,8 @@ that can is the step-up purge with `include_pinned`.
 
 Replay guard (G7, #2674): data an open replay session reads is never dropped, compacted or
 downsampled. `ReplayRetentionGuard` asks `replay_sessions.live_covering` (every state but
-`destroyed`, created within `CV_REPLAY_MAX_LIFETIME_S`) and backs the recorder lease
+`destroyed`, created within `CV_REPLAY_MAX_LIFETIME_S` plus the sweep's lag; a book snapshot up
+to the seek-anchor lookback before a session's window counts as read) and backs the recorder lease
 (`PgRetentionFacts.lease`, any replayable stream of the symbol), `replay_session_for` (the E07
 reaper's port, per stream) and the cold-tier idle guards (the partition path's stream, symbol
 and range). A read that fails or times out keeps the data this pass (`GUARD_UNVERIFIED`), logs
@@ -44,6 +45,7 @@ from candleviewer.recorder.retention import (
 )
 from candleviewer.recorder.retention_defaults import STREAM_DEFAULTS, canonical_stream
 from candleviewer.recorder.rolloff import AuditEmitter
+from candleviewer.replay.merge import ANCHOR_LOOKBACK_US
 from candleviewer.settings import Settings
 from candleviewer.storage.cold.compactor import Compactor, IdleGuard
 from candleviewer.storage.cold.layout import DatasetRegistry, stream_dir_name
@@ -89,6 +91,12 @@ _POLICIES = sa.text(
 GUARD_UNVERIFIED: Final = "unverified"
 #: Bound on one guard decision, every stream it reads (C-2.18).
 GUARD_TIMEOUT_S: Final = 10.0
+#: Beyond the lifetime plus one reclaim interval, the time the sweep's pass may take to destroy
+#: the session (M2): until then the guard still keeps its data.
+SWEEP_LAG_MARGIN: Final = timedelta(seconds=60)
+#: A seek anchors on the latest book snapshot up to `ANCHOR_LOOKBACK_US` before its target
+#: (`replay/merge.py`), so a session reads snapshots from that long before its window (M1).
+_ANCHORED_STREAM: Final = StreamKind.ORDERBOOK_SNAPSHOT.value
 GuardSite = Literal["lease", "reaper", "compaction", "downsample"]
 GUARD_SITES: Final[tuple[GuardSite, ...]] = ("lease", "reaper", "compaction", "downsample")
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
@@ -141,10 +149,11 @@ class ReplayRetentionGuard:
         sessions: CoveringSessions,
         *,
         max_lifetime: timedelta,
+        reclaim_interval: timedelta,
         clock: Callable[[], datetime] = _utc_now,
         timeout_s: float = GUARD_TIMEOUT_S,
     ) -> None:
-        self._sessions, self._lifetime = sessions, max_lifetime
+        self._sessions, self._lifetime, self._reclaim = sessions, max_lifetime, reclaim_interval
         self._clock, self._timeout_s = clock, timeout_s
 
     async def covering(
@@ -154,10 +163,14 @@ class ReplayRetentionGuard:
             now = self._clock()
             if now.tzinfo is None:
                 raise ValueError("the guard clock must be tz-aware UTC")
-            born = now - self._lifetime  # G6: an older session is destroyed by the sweep
-            lo, hi = _EPOCH + timedelta(microseconds=lo_us), _EPOCH + timedelta(microseconds=hi_us)
+            # G6: an older session is destroyed by the sweep's next pass, not at once (M2).
+            born = now - self._lifetime - self._reclaim - SWEEP_LAG_MARGIN
+            lo = _EPOCH + timedelta(microseconds=lo_us)
             async with asyncio.timeout(self._timeout_s):
                 for stream in streams:
+                    # A snapshot up to the lookback before a session's start is its anchor (M1).
+                    end = hi_us + (ANCHOR_LOOKBACK_US if stream == _ANCHORED_STREAM else 0)
+                    hi = _EPOCH + timedelta(microseconds=end)
                     got = await self._sessions.live_covering(
                         symbol, stream, lo, hi, created_after=born
                     )
@@ -196,6 +209,7 @@ def replay_retention_guard(
     return ReplayRetentionGuard(
         SqlAlchemyReplaySessionRepository(relational),
         max_lifetime=timedelta(seconds=settings.replay_max_lifetime_s),
+        reclaim_interval=timedelta(seconds=settings.replay_reclaim_interval_s),
     )
 
 
