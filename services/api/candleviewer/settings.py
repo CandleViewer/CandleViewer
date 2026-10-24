@@ -309,8 +309,10 @@ class Settings(BaseSettings):
     """Root application settings, populated from the environment only.
 
     `git_sha`/`version` are build-time metadata (E02-T08 packaging injects
-    `CV_GIT_SHA`; defaults are `"unknown"`/the package version) surfaced by
-    `/healthz` and `/readyz` (E02-T05 acceptance criterion 3).
+    `CV_GIT_SHA`; defaults are `"unknown"`/the package version). `/healthz` and
+    `/readyz` surface `version` (E02-T05 acceptance criterion 3) and never
+    `git_sha`, which is read after authentication (E09-X02 F-8, #4222; the
+    `/metrics` `build_info` gauge still carries it: #4206).
     """
 
     model_config = SettingsConfigDict(

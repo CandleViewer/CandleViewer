@@ -1,10 +1,11 @@
 """`/health/live` and `/health/ready` (E04-T04, ADR-0014 section 7).
 
-Contract: `docs/plan/22-api-openapi.yaml` (server base `/api/v1`, mounted by the
-app under that prefix). The two probes are unauthenticated and therefore
-disclose only a coarse state word and component *names* - no versions, hosts,
-details or stack traces. `render_report` is the wire shape of `GET /admin/health`,
-which E42-T05 serves on the audited admin router (`api/admin_ops.py`).
+Contract: `docs/plan/22-api-openapi.yaml` (server base `/api/v1`; the app mounts this
+router with no prefix, so the probes answer at `/health/live` and `/health/ready`).
+The two probes are unauthenticated and therefore disclose only a coarse state word
+and component *names* - no versions, hosts, details or stack traces. `render_report` is
+the wire shape of `GET /admin/health`, which E42-T05 serves on the audited admin router
+(`api/admin_ops.py`).
 """
 
 from __future__ import annotations

@@ -1,7 +1,8 @@
 # E09-X02 — Abuse-case catalogue: auth, session, RBAC
 
 - Ticket: E09-X02 (#298). Threat source: `docs/security/threat-models/e09-auth-rbac.md` (E09-X01).
-- Method: white-box, in-process, fixed clock, in-memory fakes, no network. Automated cases live in
+- Method: white-box, in-process, fixed clock (AC-INFO-01's auth-window case alone runs on the real
+  clock), in-memory fakes, no network. Automated cases live in
   `services/api/tests/security/auth/` and are permanent regressions.
 - **Scope:** the durable in-process subset: the service-level cases, plus the HTTP, WS and
   observability cases of #2144 driven through the real `create_app()` stack. Rows marked **NOT RUN**
@@ -53,9 +54,12 @@ Each control was disabled on a scratch worktree or in place, the named case fail
 | `welcome_payload` puts `git_sha` back in the `welcome` (F-8)           | AC-INFO-01 `welcome`; `test_lifecycle*.py`, `test_app_wiring.py`                       |
 | the sha back under another key, in the `welcome` (F-8)                 | AC-INFO-01's value checks: the sha is not in the `welcome`                             |
 | the `welcome` carries only the sha's 7-character prefix (F-8)          | AC-INFO-01 `welcome` (the prefix check); the failed pre-auth sequence                  |
-| the sha in a pre-auth `err`, `bye` or close reason (F-8)               | AC-INFO-01's failed pre-auth sequence                                                  |
+| the sha in a pre-auth `err`, `bye` or close reason (F-8)               | AC-INFO-01's failed pre-auth sequence; its window and shed closes                      |
 | the gateway builds `auth_ok` without `git_sha` (F-8)                   | AC-INFO-01's `auth_ok` control; `test_app_wiring.py`, `test_lifecycle_socket.py`       |
 | the gateway builds a re-auth's `auth_ok` without `git_sha` (F-8)       | AC-INFO-01's re-auth case; the first-auth control still passes                         |
+| `git_sha` back in `_build_info` alone, which the model refuses (F-8)   | AC-INFO-01's probe cases and `test_app.py`: the probes answer 500                      |
+| `git_sha` back in `_build_info` and `BuildInfo` (F-8, the probes)      | AC-INFO-01's `/healthz` and `/readyz` cases, ready and degraded; `test_app.py`         |
+| the sha, or its 7-character prefix, appended to the probes' `version`  | AC-INFO-01's probe cases (the sha or its prefix in the body text); `test_app.py`       |
 
 AC-AUD-01/02 attack the real `cv_app`, so their controls are the shipped files that give it its
 rights. Each was changed on a scratch copy of `0003_audit_log` or `pg_bootstrap.sql`, except the last
@@ -150,7 +154,30 @@ race. The 3 unit cases, in `tests/unit/auth/test_mfa_service_edges.py`, are
 | AC-WS-04      | §5.2 §6 registry  | Authenticated socket                                | `sub` per name: `../admin`, `orders.*`, `/../`, control chars, case, 300 chars; mixed; unknown names  | Refused, nothing attached, socket stays open: a name that is not a topic name refuses its whole `sub` (§5.2, #2567); an unknown but well-formed name is refused per topic    | Malformed: `err invalid_options`, `topics[i]`; granted topic beside one not attached. Unknown: per topic       | DEFENDED                                                                  |
 | AC-AUD-01     | U14 SR-066        | `cv_app`: SELECT, INSERT only, on both audit tables | `UPDATE`, `DELETE`, `TRUNCATE` on `audit_log` and on `audit_checkpoints` as `cv_app`                  | `insufficient_privilege` for the missing table privilege; every row unchanged afterwards                                                                                     | Local PG 16.2: refused x6, rows unchanged (`test_cv_app_cannot_rewrite_audit_history`)                         | DEFENDED (integration lane: `pytest tests/integration -m integration`)    |
 | AC-AUD-02     | U14 SR-063 SR-066 | Same role, own login per attempt; owns nothing      | Drop, disable or replace each guard trigger and function; take ownership; replica mode; add a trigger | Each attempt `insufficient_privilege`; guard unchanged (triggers, enabled, function bodies, owners), still firing: owner UPDATE, DELETE, TRUNCATE refused, new row chained   | Local PG 16.2: refused x44 (4 with CREATE on the schema), guard intact: see the evidence note                  | DEFENDED (integration lane: `pytest tests/integration -m integration`)    |
-| AC-INFO-01    | U26 §4.3          | No credential: a socket before `auth`               | WS `hello`, read `welcome`; `sub`, then 3 bad `auth` to the close; `auth` twice, read `auth_ok`       | No git sha, whole or cut to 7 characters, in the pre-auth `welcome`, `err`, `bye` or close reason: only the build label (the version); the sha in each `auth_ok`             | `welcome` and the failed sequence: the version, no sha; a Manager's `auth_ok`, first and re-auth: the sha      | DEFENDED (F-8: the WS read; the probes #4222, `/metrics` #4206)           |
+| AC-INFO-01    | U26 §4.3          | No credential: a socket before `auth`; a bare `GET` | WS `hello`; `sub`, 3 bad `auth`s; the window and shed closes; `auth` twice. REST: the 4 probes        | No git sha, whole or cut to 7 characters, in a pre-auth `welcome`, `err`, `bye`, close reason or probe body: the build label (the version) only; the sha in each `auth_ok`   | WS and probes: the version, no sha. `auth_ok`, first and re-auth, and an Owner's `/admin/health`: the sha      | DEFENDED (F-8: the WS read and the probes; `/metrics` #4206)              |
+
+Evidence for AC-INFO-01 (#4236 for the WS half, #4222 for the probes and the two other pre-auth
+closes), all in `services/api/tests/security/auth/test_build_info_abuse.py`, through the real
+`create_app()` stack with a configured sha unless noted:
+
+- `test_ac_info_01_health_probe_before_auth_gives_no_sha`: `/healthz`, `/readyz`, `/health/live`
+  and `/health/ready` with no credential: no `git_sha` key at any depth, and neither the sha nor
+  its 7-character prefix anywhere in the body text or the headers. The app serves the last two at
+  their contract paths: it does not route the `/api/v1` server base for REST (only the WS router is
+  served under it), so that prefix answers 404 in process.
+- `test_ac_info_01_health_probe_still_gives_the_build_label_and_the_environment`, the control (the
+  probes still give both, and each body is pinned to its whole key set, so a new member is a
+  deliberate change), `test_ac_info_01_probe_bodies_have_no_sha_member_and_refuse_one` (both probe
+  models are `extra="forbid"` with no sha member, so a restored `git_sha` breaks the probes rather
+  than reaching a caller), and `test_ac_info_01_degraded_readyz_before_auth_gives_no_sha`: the
+  stack has no seam that fails a check, so `make_health_router` is bound to a retrying buffer.
+- After authentication, unchanged: `test_ac_info_01_admin_health_gives_the_sha_to_an_authenticated_owner`
+  (`GET /admin/health`, `git_sha`; no credential: 401 and no sha),
+  `test_ac_info_01_get_build_info_declares_the_sha_as_the_required_commit` (`getBuildInfo` is not
+  mounted yet, so the contract's own schema) and the two `auth_ok` cases.
+- The two other pre-auth closes: `test_ac_info_01_auth_window_close_gives_neither_the_sha_nor_its_prefix`
+  (the window cut to 0.2 s by `CV_WS_AUTH_TIMEOUT_S`, on the real clock) and
+  `test_ac_info_01_shed_close_gives_neither_the_sha_nor_its_prefix` (a hub that admits one socket).
 
 Evidence for AC-AUD-01/02, all in the CI integration lane (`pytest tests/integration -m integration`):
 
@@ -365,10 +392,10 @@ alerting on these signals is a detection-rule decision.
   - Repro (before #2124): an Owner invited with `"roles": ["manager"]`; redeeming it activated a
     Manager.
 - **F-8 (design gap, STRIDE: Information disclosure, severity Low) — FIXED for the WS `welcome`
-  by the #298 close-out; the health probes PENDING (#4221, then #4222); the metrics endpoint
-  PENDING (#4206)** (#2701 delegation (6284192190), LANE-28 2026-10-22 21:47Z and 22:15Z; the
-  split, LANE-29 2026-10-23 00:17Z; U26 relaxed, LANE-30 2026-10-23 01:24Z). U26: the public
-  health probes (`/healthz`, `/readyz`) and the pre-auth WS `welcome` carried the git sha and the
+  by the #298 close-out and for the health probes by #4222; the metrics endpoint PENDING
+  (#4206)** (#2701 delegation (6284192190), LANE-28 2026-10-22 21:47Z and 22:15Z; the split,
+  LANE-29 2026-10-23 00:17Z; U26 relaxed, LANE-30 2026-10-23 01:24Z). U26: the public health
+  probes (`/healthz`, `/readyz`) and the pre-auth WS `welcome` carried the git sha and the
   version to any client, while U26's mitigation said only the Owner sees build metadata.
   - Decision: redact. Before authentication only the build label (the version) is exposed; the
     sha only after it, in `auth_ok` (`23-ws-protocol.md` §4.3), to every authenticated role,
@@ -377,16 +404,28 @@ alerting on these signals is a detection-rule decision.
     accepted: review date 2027-01-22 (C-12.1).
   - Fix, the WS half: the `welcome` drops the sha, and `auth_ok` gains it as an optional, additive
     cv.v1 member. Regression: AC-INFO-01 (`test_build_info_abuse.py`) and the unit cases of
-    `test_app_wiring.py`, `test_lifecycle.py` and `test_lifecycle_socket.py`.
-  - Pending, the REST half: the probes keep the sha until the deploy smoke test reads the deployed
-    sha from the container (#4221); their redaction and AC-INFO-01's probe cases are #4222. Until
-    #4222 and #4206 land, the probes and the metrics endpoint leave the build pre-auth to every
-    mesh peer, as `welcome` did. One middleware guards every route, `/ws` included
-    (`net/middleware.py`).
+    `test_app_wiring.py`, `test_lifecycle.py` and `test_lifecycle_socket.py`. AC-INFO-01 also reads
+    the two other closes of a socket that is not authenticated, the auth window's `auth_timeout`
+    and the `server_shedding_load` of a full house (#4222): neither carries the sha.
+  - Fix, the REST half (#4222): `/healthz` and `/readyz`, ready or degraded, no longer carry
+    `git_sha`: `BuildInfo` has no such member, and its `extra="forbid"` makes a sha handed to it
+    an error, not a response. They keep the build label (the `version`) and the `environment`.
+    The deploy smoke test no longer reads the sha from them: it reads `CV_GIT_SHA` from the
+    running container (#4221). After authentication the sha is served as before: in `auth_ok`, in
+    an Owner's `GET /admin/health` (`git_sha`) and in `getBuildInfo` (`commit`, declared in 22 and
+    not mounted yet). `/health/live` and `/health/ready` never carried a version. The probes stay
+    unauthenticated, inside the loopback and mesh boundary (C-12.9), as `/metrics` does (#4206):
+    one middleware guards every route, `/ws` included (`net/middleware.py`). Regression: the
+    probe cases of AC-INFO-01 (`test_build_info_abuse.py`) and `tests/unit/test_app.py`.
   - Residual, outside this fix: the metrics endpoint's access policy inside the mesh, an Owner
-    decision (#4206).
-  - Residual, `post-ga` hardening: build info `ADMIN_READ`-only across `getBuildInfo` and
-    `auth_ok`; it rides #4222.
+    decision (#4206). Until it lands, `build_info{commit=...}` on `/metrics` leaves the build
+    pre-auth to every mesh peer, as the probes did.
+  - Residual, `post-ga` hardening, not part of #4222 (tracked as a row on #4222's closing comment,
+    owner E09-X02): build info `ADMIN_READ`-only across
+    `getBuildInfo` and `auth_ok`, a contract change in 22 and 23. 22's `BuildInfo` names the field
+    `commit`, while 22's `HealthReport` and 23's `auth_ok` say `git_sha`, after the `CV_GIT_SHA`
+    setting: each contract named the one value its own way, and renaming any of them is itself a
+    contract change, so this residual covers them under their own names.
   - Reproduction steps are withheld from this public repository, as for F-4.
 - **O-1..O-4 (observability gaps, STRIDE: Repudiation, severity Low).** Each attack was defended,
   but the defence was partly invisible (see "Observability per case"):

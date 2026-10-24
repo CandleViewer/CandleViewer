@@ -3,7 +3,8 @@
 Given the composition root, when `create_app()` is called in a unit test
 with fake storage clients, then it constructs without touching Postgres,
 QuestDB or the network, and `GET /healthz` returns 200 with a build-info body
-containing `gitSha`, `version` and `environment`.
+containing `version` and `environment`. Before authentication that body names no
+git sha (E09-X02 F-8, #4222): the sha is read after it, from `GET /admin/health`.
 """
 
 from __future__ import annotations
@@ -75,9 +76,9 @@ def test_healthz_returns_200_with_build_info() -> None:
     response = client.get("/healthz")
     assert response.status_code == 200
     body = response.json()
-    assert body["git_sha"] == "deadbeef"
     assert body["version"] == "9.9.9"
     assert body["environment"] == "demo"
+    assert "git_sha" not in body and "deadbeef" not in response.text  # E09-X02 F-8 (#4222)
 
 
 def test_readyz_returns_200_with_empty_checks_array() -> None:
@@ -85,15 +86,24 @@ def test_readyz_returns_200_with_empty_checks_array() -> None:
     client = TestClient(app, client=("127.0.0.1", 50000))
     response = client.get("/readyz")
     assert response.status_code == 200
+    assert response.json()["checks"] == []
+
+
+def test_readyz_body_is_the_label_the_environment_and_no_sha() -> None:
+    """E09-X02 F-8 (#4222): its members are exactly these, so no build fact is added unseen."""
+    client = TestClient(create_app(_fake_settings()), client=("127.0.0.1", 50000))
+    response = client.get("/readyz")
     body = response.json()
-    assert body["checks"] == []
+    assert (body["version"], body["environment"]) == ("9.9.9", "demo")
+    keys = {"status", "checks", "mesh_binding_safe", "mesh_reason_code", "version", "environment"}
+    assert set(body) == keys and "deadbeef" not in response.text
 
 
 def test_healthz_does_not_leak_internal_hostnames_or_datastore_versions() -> None:
     app = create_app(_fake_settings())
     client = TestClient(app, client=("127.0.0.1", 50000))
     body = client.get("/healthz").json()
-    assert set(body.keys()) == {"git_sha", "version", "environment", "status"}
+    assert set(body.keys()) == {"version", "environment", "status"}
 
 
 def test_metrics_returns_200_prometheus_exposition_format() -> None:
