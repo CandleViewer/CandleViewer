@@ -90,10 +90,15 @@ EXTRA_EXIT = (
 )
 # C-2.6 on an entry pair: each leg's read-out names its own stop at Bybit (the derived fixture).
 ENTRY_LEGS = (("Entry A", "stop_a"), ("Entry B", "stop_b"))
-# A LIVE run, row or badge is an absence in R3: every `LIVE` / `live` env token in sections 2-10
-# sits next to a negation.
-LIVE_WORD = r"\bLIVE\b|`live`"
+# The section 3 frames that show the entry legs, by name: each row carries both per-leg markers.
+ENTRY_FRAMES = ("SCR-069/editing-entry-pair", "SCR-076/oco")
+# A LIVE run, row or badge is an absence in R3: every LIVE env token in sections 2-10, in any case
+# (`LIVE`, `live`, "a Live row", "a live run"), has a negation in its own clause. Plain-English
+# "live" (a live link, live validation, aria-live) is not an env token.
+ENV_NOUN = r"(?:rows?|runs?|badges?|accounts?|env(?:ironment)?s?|modes?|algos?|sessions?|starts?)"
+LIVE_WORD = rf"\bLIVE\b|`live`|(?i:\blive\b(?= {ENV_NOUN}\b))"
 NEGATION = r"\b(?:no|never|not|nor|absence|absent|without)\b"
+CLAUSE_END = r"[.;|\n]"
 HALT = "Halted by risk control"
 MEMO_STRINGS = (
     CAVEAT_ENTRY,
@@ -195,23 +200,24 @@ BINDINGS = (
 )
 GLYPHS = ("lock", "alert-triangle", "refresh", "check", "x", "pause", "play")
 GLYPH_PRECEDENTS = ("E29/E29-D02.md", "E29/E29-D03.md", "E36/E36-D04.md", "E17/E17-D02.md")
-# doc | line at the base | text the line must hold; a `14` line may sit lower by the pointers.
+# doc | line at the base | text the line must hold; a `14` line may sit lower by the pointers. The
+# `22` lines past :11489 are pinned to the `origin/main` the spec header names (six below the base).
 CITED_TABLE = """
-14 | 1577 | explicitly labelled "emulated
+14 | 1577 | explicitly labelled "emulated — Bybit's API has no OCO"
 14 | 1581 | `role="note"`
-14 | 1582 | <=300 ms
+14 | 1582 | targeting <=300 ms from fill event
 14 | 1584 | entry+bracket and standalone-OCO
-14 | 1601 | WS `orders`
+14 | 1601 | **Data:** WS `orders`; `GET /api/v1/orders`
 14 | 1602 | degraded (backend reconnecting
 14 | 1604 | 'Cancel TWAP a_12 on BTCUSDT, Main'
-14 | 1605 | coalesced to 2 Hz
+14 | 1605 | Algo state arrives on `orders`, coalesced to 2 Hz
 14 | 1608 | 'pause all' and 'cancel all'
 22 | 281 | Read-only.
-22 | 17932 | AlgoSpec:
-22 | 18054 | CancelAllRequest:
-22 | 18545 | SetKillSwitchRequest:
-22 | 5871 | cancelAllOrders
-23 | 824 | 0 ms (never throttled)
+22 | 17938 | AlgoSpec:
+22 | 18060 | CancelAllRequest:
+22 | 18551 | SetKillSwitchRequest:
+22 | 5871 | operationId: cancelAllOrders
+23 | 824 | [`OrderUpdate`](#151-orderupdate)
 23 | 898 | `algo:{algo_id}`
 23 | 965 | `orders:read` on its account (E33-T02)
 24 | 2714 | class AlgoSpec
@@ -223,8 +229,13 @@ CITED_TABLE = """
 28 | 3002 | B4.3 Events
 28 | 4458 | B8.2 States
 11 | 3434 | reconciliation runs at least every 30 s
-20 | 912 | `CV_ACCOUNT_DOWN_S`
+20 | 912 | no WS or REST success this long = `down`
 """
+# Table-row needles carry pipes, so they sit outside the pipe-split table (same cite rule).
+CITED_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("28", "3382", "| `repricing` | _always_ | `two_consecutive_post_only_rejects` |"),
+    ("28", "3384", "| `cooling_down` | `COOLDOWN_DUE` | — | `submitting_slice` |"),
+)
 POINTER = "E33-D03.md](../design/E33/E33-D03.md)"
 DOC_NAMES = (
     "11-user-stories.md",
@@ -254,7 +265,8 @@ FIXTURE["ticks_down"] = round((FIXTURE["mark"] - FIXTURE["exit_stop"]) / FIXTURE
 FIXTURE["ticks_entry_a"] = round((FIXTURE["entry_a"] - FIXTURE["mark"]) / FIXTURE["tick"])
 FIXTURE["ticks_entry_b"] = round((FIXTURE["mark"] - FIXTURE["entry_b"]) / FIXTURE["tick"])
 # The 40-run bulk fixture: the kinds, what Pause all skips per kind (every skip a section 1.3
-# class) and the per-item result; the pausable counts are derived below, never typed.
+# class), the cooling-down icebergs it defers (B5 defers USER_PAUSE; never skipped) and the per-item
+# result; the paused, deferred and skipped counts are derived below, never typed.
 BULK: dict[str, float] = json.loads(
     '{"twap": 12, "chase": 9, "iceberg": 14, "oco": 5, "orders": 31, "btc": 2.14, '
     '"cancelled": 38, "failed": 2, "twap_price_blocked": 3, "chase_parked": 2, '
@@ -282,8 +294,10 @@ ROW_IDS = (("c_rows", "C"), ("cg_rows", "CG"), ("g_rows", "G"), ("a_rows", "A"),
 REASON_RE = r"^\| `((?:rbac|algo|recon)\.[a-z_.]+|frozen|lockout)` +\| ([^|]+?) +\|"
 
 
-# A `file:line` cite whose text moved is a WARN naming its current line (re-pin at the next text
-# touch); a cite whose text no longer exists in the file is a FAIL.
+# Cite rule: the needle must occur exactly once in its file. Once, at the cited line (or the cited
+# line plus the PR's pointer shift for `14`): OK. Once, elsewhere: WARN naming the current line
+# (drift at any distance; re-pin at the next text touch). Not at all: FAIL "cited text gone".
+# More than once: FAIL "cited text ambiguous" (lengthen the needle; do not re-pin).
 CITE_WARN: list[str] = []
 
 
@@ -454,23 +468,27 @@ def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, s
     bad += stop_gates(spec)
     body = section(spec, 2, 11)
     for m in re.finditer(LIVE_WORD, body):
-        if not re.search(NEGATION, body[max(0, m.start() - 60) : m.end() + 40], re.IGNORECASE):
+        starts = [e.end() for e in re.finditer(CLAUSE_END, body[: m.start()])]
+        end = re.search(CLAUSE_END, body[m.end() :])
+        clause = body[starts[-1] if starts else 0 : m.end() + (end.start() if end else 0)]
+        if not re.search(NEGATION, clause, re.IGNORECASE):
             bad.append(f"spec sections 2-10: {m.group(0)} without a negation (LIVE is an absence)")
     lines = {k: v.split("\n") for k, v in t.items()}
     CITE_WARN.clear()
-    for doc, line_s, want in rows(CITED_TABLE):
+    for doc, line_s, want in [*rows(CITED_TABLE), *CITED_ROWS]:
         line = int(line_s)
         shift = sum(POINTER in ln for ln in lines[doc][: line - 1]) if doc == "14" else 0
-        if any(
-            0 < n <= len(lines[doc]) and want in lines[doc][n - 1] for n in (line, line + shift)
-        ):
-            continue
         found = [i + 1 for i, ln in enumerate(lines[doc]) if want in ln]
-        if found:
-            near = min(found, key=lambda n: abs(n - line))
-            CITE_WARN.append(f"`{doc}` :{line} now at :{near} ({want[:40]!r})")
-        else:
-            bad.append(f"cited text gone: `{doc}` :{line} {want[:40]!r} is nowhere in the file")
+        total = sum(ln.count(want) for ln in lines[doc])
+        if total == 0:
+            bad.append(f"cited text gone: `{doc}` :{line} {want[:40]!r} (nowhere in the file)")
+        elif total > 1:
+            bad.append(
+                f"cited text ambiguous: `{doc}` :{line} {want[:40]!r} "
+                f"({total} matches: use a longer needle)"
+            )
+        elif found[0] not in (line, line + shift):
+            CITE_WARN.append(f"`{doc}` :{line} now at :{found[0]} ({want[:40]!r})")
     for f in files:
         txt = f.read_text(encoding="utf-8")
         bad += [f"{f.name}: forbidden text {p}" for p in FORBIDDEN if re.search(p, txt)]
@@ -493,6 +511,13 @@ def stop_gates(spec: str) -> list[str]:
         if not readouts or any(want not in r for r in readouts):
             bad.append(f"spec section 2: the {leg} read-out lacks its own stop ({want})")
     frames = re.findall(r"^\| `SCR-0(?:69|76)/[a-z0-9-]+` +\|[^\n]*", s3, MULTI)
+    by_name = {row.split("`")[1]: row for row in frames}
+    for name in ENTRY_FRAMES:
+        row = by_name.get(name, "")
+        for leg, key in ENTRY_LEGS:
+            want = f"stop {FIXTURE[key]:,.1f} at Bybit"
+            if want not in row:
+                bad.append(f"spec section 3: {name} lacks {leg}'s stop marker ({want})")
     for row in frames:
         name = row.split("`")[1]
         if re.search(r"Entry [AB]|both legs with", row) and not re.search(
@@ -593,12 +618,13 @@ def main(argv: list[str]) -> int:
         "pausable_iceberg": BULK["iceberg"] - BULK["iceberg_cooling"] - BULK["finishing_iceberg"],
         "finishing": BULK["finishing_twap"] + BULK["finishing_iceberg"],
     }
-    skipped = ("oco", "twap_price_blocked", "chase_parked", "iceberg_cooling")
+    skipped = ("oco", "twap_price_blocked", "chase_parked")
     pausable["skipped"] = sum(BULK[k] for k in skipped) + pausable["finishing"]
+    pausable["deferred"] = BULK["iceberg_cooling"]
     total = BULK["twap"] + BULK["chase"] + BULK["iceberg"] + BULK["oco"]
-    pausable["pausable"] = total - pausable["skipped"]
-    if pausable["pausable"] != sum(pausable[f"pausable_{k}"] for k in ("twap", "chase", "iceberg")):
-        bad.append("bulk fixture: the pausable counts do not add up to total - skipped")
+    pausable["pausable"] = sum(pausable[f"pausable_{k}"] for k in ("twap", "chase", "iceberg"))
+    if pausable["pausable"] + pausable["deferred"] + pausable["skipped"] != total:
+        bad.append("bulk fixture: paused + deferred + skipped does not reconcile to the total")
     if BULK["cancelled"] + BULK["failed"] != total or pausable["finishing"] + 1 != BULK["failed"]:
         bad.append("bulk fixture: the per-item result does not add up (finishing + 1 unanswered)")
     at_bybit = dict(AT_BYBIT)
