@@ -16,7 +16,6 @@ and users route. The last-owner races (AC-ADM-28, UL-AC03), the disabled invitee
 Waiting on other tickets (recorded in the catalogue, never skipped):
 - AC-ADM-12: `POST /orders` (E29-T07).
 - AC-ADM-20 past its 501, and AC-ADM-21: E42-T02 (#889), decision D1.
-- AC-ADM-22: #3085.
 - AC-ADM-23 at the route, and AC-ADM-24: #3084.
 - AC-ADM-25 through the routes: a verifier wired by the backup engine (#3319), and
   `restoreBackup` (E42-T05, #966).
@@ -34,7 +33,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -43,6 +42,7 @@ import candleviewer.app as appmod
 from candleviewer.admin.flags import catalogue
 from candleviewer.admin.flags.registry import Category, FlagSpec, UnsafeFlagDefinitionError
 from candleviewer.api.deny_by_default import served_operations
+from candleviewer.api.view_as_policy import OWN_OPERATIONS, PROTECTIVE_WRITES
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.statechart.bindings import b16_session
 from tests.contract.rbac import rbac_harness as matrix
@@ -50,6 +50,7 @@ from tests.security.admin._world import ORIGIN, AdminWorld, open_admin_world
 from tests.security.auth._stack import PW as STACK_PW
 from tests.security.auth._stack import Stack, open_stack
 from tests.security.auth.test_invite_http_abuse import _INVITE, _invite, _owner, _redeem
+from tests.unit.api.test_view_as_gate import _contract_own_operations
 
 #: Parallel attempts per race: enough to interleave on one loop, as a real burst would.
 N = 10
@@ -307,3 +308,143 @@ def test_ac_adm_07_a_kill_switch_releases_only_on_its_own_class_and_maintenance_
     assert ("flags.change", "success", "drill", mode) in engage
     assert {a for a, _, _, obj in engage if obj == mode} >= {"flags.change", "maintenance.enabled"}
     assert _flag_value(admin, mode) is True
+
+
+# -- AC-ADM-22: a view-as session cannot mutate ----------------------------------------------------
+
+#: The state-changing methods: view-as refuses by the method, never by the effect (22 "View-as
+#: session", "Read-only").
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+#: An all-roles UI flag that is on by default: a write turns it off, so one that got through can be
+#: read back.
+_UI_FLAG = "rules.graph_editor"
+
+
+def _coded(answer: httpx.Response) -> tuple[int, Any]:
+    """An answer's status and its problem `code` (None for a body with none, or not JSON)."""
+    try:
+        doc = answer.json()
+    except ValueError:
+        doc = None
+    return answer.status_code, doc.get("code") if isinstance(doc, dict) else None
+
+
+def _flag_updated_at(world: AdminWorld, key: str) -> Any:
+    listed = world.send("owner", "GET", "/admin/feature-flags", {}).json()["items"]
+    [item] = [i for i in listed if i["key"] == key]
+    return item["updated_at"]
+
+
+def _held(world: AdminWorld) -> dict[str, Any]:
+    """What a write the guard let through would change in this world: each user's roles, the grants
+    and who read them, and each session's revocation and view-as context."""
+    sessions = cast(Any, world.auth.view_as_store).sessions  # the fake store's rows
+    return {
+        "roles": dict(world.roles.roles),
+        "grants": {user: list(grants) for user, grants in world.access.grants.items()},
+        "grant_reads": list(world.access.calls),
+        "sessions": {sid: (row.revoked_at, row.view_as) for sid, row in sessions.items()},
+    }
+
+
+def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
+    """The deployed composition's whole path (the S13b security look's Low-2): an Owner starts
+    viewing as a Manager, `201`, which `GET /auth/session/view-as` reads back `active`, with the
+    start's record written and the Manager told, and ends it, `204` and its record. In between
+    the Owner sends every state-changing operation the app serves. Each but the viewer's own is
+    refused `403 view_as_read_only` and changes nothing, and each is recorded as the contract
+    says (22 "View-as session"): one `admin.view_as_refused`, outcome `denied`, naming the
+    operation's template, the viewer as actor and the viewer's session, never the Manager. The
+    routes come from the app's router, as `test_ac_adm_15` reads the audit routes, so a new write
+    route cannot escape the case. The carve-out is the contract's list of the viewer's own
+    operations, which the guard reads: a second start is the start route's own refusal, and
+    leaving is never refused. No protective write is registered yet (E39-S03, E29-T07, E34-S03),
+    so none is carved out; the day one is, this case must say what it admits."""
+    owner, manager = admin.actors["owner"], admin.actors["manager_with_grant"]
+    admin.elevate(["users", "flags"])  # the start's step-up class, and the control write's
+    stamp = _flag_updated_at(admin, _UI_FLAG)
+    start = {"json": {"target_user_id": str(manager.user_id), "reason": "AC-ADM-22"}}
+    started = admin.send("owner", "POST", "/admin/view-as", start)
+    assert started.status_code == 201, started.text
+    context = started.json()
+    assert (context["target_user_id"], context["target_username"]) == (
+        str(manager.user_id),
+        "manager_with_grant",
+    )
+    assert (context["state"], context["read_only"]) == ("active", True)
+    read = admin.send("owner", "GET", "/auth/session/view-as", {})
+    assert (read.status_code, read.json()) == (200, context)  # the context the start answered
+    (begun,) = _records(admin, "admin.view_as_started", "owner")  # written ahead
+    assert (begun["object_id"], str(begun["session_id"])) == (
+        str(manager.user_id),
+        str(owner.session_id),
+    )
+    assert begun["after_state"]["reason"] == "AC-ADM-22"
+    (notice,) = cast(Any, admin.auth.view_as_store).notices  # the Manager is told
+    assert notice.target_user_id == manager.user_id and "'owner'" in notice.message
+    assert "AC-ADM-22" not in notice.message  # the viewer by name, never the reason
+
+    unsafe = {op for op in served_operations(admin.app) if op[0] in _UNSAFE_METHODS}
+    protective = [operation for operation, _ in PROTECTIVE_WRITES.values()]
+    assert not [op for op in protective if admin.app.state.protective_writes.is_registered(op)]
+    assert _contract_own_operations() == OWN_OPERATIONS  # the contract's list, read from its prose
+    carved_out = {op for op in unsafe if op in OWN_OPERATIONS}
+    assert carved_out == {op for op in OWN_OPERATIONS if op[0] in _UNSAFE_METHODS}, carved_out
+    swept = sorted(unsafe - carved_out)
+    ids = {  # the viewed Manager's user and session, and a flag whose write can be read back
+        "userId": str(manager.user_id),
+        "sessionId": str(manager.session_id),
+        "flagKey": _UI_FLAG,
+    }
+    attempts: dict[tuple[str, str], dict[str, Any]] = {  # sent whole: a bypass would take effect
+        ("PUT", "/users/{userId}/roles"): {"roles": ["owner"]},
+        ("PUT", "/admin/feature-flags/{flagKey}"): {
+            "value": False,
+            "reason": "AC-ADM-22",
+            "expected_updated_at": stamp,
+        },
+    }
+    assert set(attempts) <= set(swept)  # so the sweep is never empty
+
+    before, mark = _held(admin), len(admin.audit.records)
+    counted = Stack.in_process("auth_view_as_refused_total", reason="view_as_read_only")
+    answers: dict[tuple[str, str], tuple[int, Any]] = {}
+    for method, template in swept:
+        path = matrix.fill_path(template, ids)
+        answers[method, template] = _coded(
+            admin.send("owner", method, path, {"json": attempts.get((method, template))})
+        )
+    assert {op: a for op, a in answers.items() if a != (403, "view_as_read_only")} == {}
+    assert _held(admin) == before  # nothing changed
+
+    written = admin.audit.records[mark:]
+    assert {r["action"] for r in written} == {"admin.view_as_refused"}  # no handler ran to record
+    assert len(written) == len(swept)  # one each
+    assert {(r["after_state"]["method"], r["after_state"]["path"]) for r in written} == set(swept)
+    assert all(r["object_id"] == r["after_state"]["path"] for r in written)
+    assert {(r["object_kind"], r["reason"], _outcome(r)) for r in written} == {
+        ("operation", "view_as_read_only", "denied")
+    }
+    viewer = (str(owner.user_id), "owner", str(owner.session_id))  # never the Manager
+    assert {(str(r["actor_user_id"]), r["actor_label"], str(r["session_id"])) for r in written} == {
+        viewer
+    }
+    refused = Stack.in_process("auth_view_as_refused_total", reason="view_as_read_only")
+    assert refused - counted == len(swept)
+
+    second = admin.send("owner", "POST", "/admin/view-as", start)  # the viewer's own: not refused
+    assert _coded(second) == (409, "view_as_active")  # as the start route answers it, not read-only
+    left = admin.send("owner", "DELETE", "/auth/session/view-as", {})
+    assert left.status_code == 204, left.text  # leaving is one call nothing refuses
+    assert admin.client.portal is not None
+    admin.client.portal.call(admin.app.state.csrf_refusal_audits.drain)  # the end's record lands
+    (ended,) = _records(admin, "admin.view_as_ended", "owner")
+    assert (ended["reason"], ended["object_id"], str(ended["session_id"])) == (
+        "ended",
+        str(manager.user_id),
+        str(owner.session_id),
+    )
+    assert _flag_value(admin, _UI_FLAG) is True  # the refused write changed nothing
+    accepted = _flag_put(admin, _UI_FLAG, {"value": False, "reason": "AC-ADM-22"})
+    assert accepted.status_code == 200, accepted.text  # the same write, once the view has ended
+    assert _flag_value(admin, _UI_FLAG) is False

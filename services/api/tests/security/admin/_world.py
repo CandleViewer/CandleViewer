@@ -39,6 +39,7 @@ from prometheus_client import REGISTRY
 
 import candleviewer.app as appmod
 from candleviewer.admin.backups.catalogue import BackupCatalogue
+from candleviewer.audit.actions import validate_action
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.metrics import normalise_permission
@@ -48,8 +49,7 @@ from candleviewer.auth.service import AuthService
 from candleviewer.auth.totp import generate_code, time_step_for
 from tests.contract.rbac import rbac_harness as matrix
 from tests.csrf_helpers import csrf_headers
-from tests.security.auth._stack import Clock
-from tests.security.auth._stack import RegistryAudit as AuditLog
+from tests.security.auth._stack import Clock, RegistryAudit
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
@@ -66,6 +66,15 @@ SIGNED_IN = tuple(a for a in matrix.ACTORS if a != UNAUTHENTICATED)
 
 def _actor_of(user_id: object) -> str:
     return next(a for a in SIGNED_IN if str(matrix.user_id_of(a)) == str(user_id))
+
+
+class AuditLog(RegistryAudit):
+    """The audit stand-in (`_stack.RegistryAudit`) that also takes a keyed record, as the writer's
+    `emit_keyed` does: a view-as context's end is written that way (#3085)."""
+
+    async def emit_keyed(self, action: str, name: str, **kw: Any) -> None:
+        validate_action(action)
+        self.records.append({"action": action, "name": name, **kw})
 
 
 class Identity:
@@ -86,6 +95,11 @@ class Identity:
             "permissions": sorted(matrix.actor_permissions(actor, self._spec)),
             "account_scope": [str(g) for g in matrix.actor_grants(actor)],
         }
+
+    async def names(self, user_id: str) -> tuple[str, str | None]:
+        """`SqlAlchemyIdentityProvider.names`, which `getViewAs` reads: the username, and no
+        display name."""
+        return str((await self.user(user_id))["username"]), None
 
 
 class TokenResolver:

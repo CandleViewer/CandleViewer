@@ -34,6 +34,7 @@ from candleviewer.ws.limits import (
 )
 from candleviewer.ws.machines import MachineEntity, MachineStateRegistry
 from candleviewer.ws.permissions import (
+    ConnectionAuthz,
     ConnectionRegistry,
     VersionedSnapshot,
     handle_ctl,
@@ -908,6 +909,32 @@ async def test_the_audit_queue_is_bounded_and_the_oldest_removal_is_dropped(
     (lost,) = logs  # the first removal's frames: two users, one named
     assert (lost["count"], lost["cause"]) == (3, "queue")
     assert (lost["users"], lost["actor_user_ids"]) == (2, [USER])
+
+
+async def test_a_dropped_removal_of_a_viewing_socket_names_its_viewer_and_never_its_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_abandon` logs the actors of the frames it drops (§9.6): a viewing socket's is the viewer
+    (`actor_user_id`), not the target whose principal it holds (the S11 code look's m-6)."""
+    monkeypatch.setattr(ws_wiring, "MACHINE_AUDIT_PENDING_MAX", 2)
+    viewer = uuid.UUID(int=0x777)
+    hub, conn = SequencingHub(), Conn(Source())
+    conn.authz = ConnectionAuthz(
+        conn.authz.principal, conn.authz.services, clock=conn.clock, viewer_user_id=viewer
+    )
+    registry = MachineStateRegistry(hub=hub)
+    _attach(conn, registry, hub)
+    writer = _writer(conn, registry, _Audit())
+    with capture_logs() as logs:
+        for n in (1, 2, 3):  # three removals of one frame each queue before the writer runs
+            order = MachineEntity("order", str(uuid.UUID(int=n)), ON_A)
+            registry.publish(order, _payload())
+            conn.sub(order.ch)
+            registry.remove(order)
+        await writer.drain()
+    (lost,) = [e for e in logs if e["event"] == "ws machine revocations not audited"]
+    assert (lost["count"], lost["cause"], lost["users"]) == (1, "queue", 1)
+    assert lost["actor_user_ids"] == [viewer] and conn.authz.principal.user_id == USER
 
 
 async def test_a_batch_that_raises_ends_only_itself_and_a_cancel_abandons_the_rest(
