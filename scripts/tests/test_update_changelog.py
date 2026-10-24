@@ -295,3 +295,16 @@ def test_any_commit_list_merged_twice_is_merged_once(
     assert apply_update(once, list(order)) == (once, False)
     entries = [ln for ln in once.splitlines() if ln.startswith("- ")]
     assert len(entries) == len(set(entries))
+
+
+def test_a_security_footer_commit_is_merged_once_and_a_second_run_changes_nothing() -> None:
+    """#4435: the footer's Security bullet is covered by the same `(#N)` / sha7 dedupe."""
+    footer = "Changelog-Security: Hardened the key path against a timing side channel"
+    sec = _commit("abcdef1", f"fix(auth-rbac): constant-time compare (#77)\n\n{footer}")
+    other = _commit("1234567", "fix(ingestion): resync on a gap (#78)")
+    once, changed = apply_update(_default_changelog(), [sec, other])
+    assert changed
+    assert once.count("Hardened the key path against a timing side channel (#77)") == 1
+    assert "constant-time compare" not in once
+    assert apply_update(once, [sec, other]) == (once, False)
+    assert apply_update(once, [other, sec]) == (once, False)

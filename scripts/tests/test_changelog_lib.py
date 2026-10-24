@@ -151,3 +151,52 @@ def test_check_security_wording_clean_lines_pass() -> None:
     result = check_security_wording(["- Hardened API-key decryption path against timing side-channel"])
     assert result.ok
     assert result.violations == []
+
+
+# --- #4435: `Changelog-Security:` footer (07 §3) -----------------------------------------------
+
+_SEC_FOOTER = "Changelog-Security: Hardened the key path against a timing side channel"
+_SEC_LINE = "- Hardened the key path against a timing side channel"
+
+
+def _update(message: str):
+    return build_changelog_update([parse_commit("abc1234def", message)])
+
+
+def test_security_footer_becomes_a_security_bullet_ending_with_the_pr_number() -> None:
+    update = _update(f"fix(auth-rbac): compare keys in constant time (#77)\n\nBody.\n\n{_SEC_FOOTER}\n")
+    assert update.entries == {Category.SECURITY: [f"{_SEC_LINE} (#77)"]}
+
+
+def test_security_footer_replaces_the_type_bullet_so_the_subject_is_not_published() -> None:
+    update = _update(f"fix(auth-rbac): constant-time compare (#77)\n\n{_SEC_FOOTER}")
+    assert Category.FIXES not in update.entries
+    assert update.bump == Bump.PATCH  # the type still decides the semver bump
+
+
+def test_security_footer_keeps_the_breaking_bullet_of_a_breaking_commit() -> None:
+    update = _update(f"fix(auth-rbac)!: rotate the token format (#78)\n\n{_SEC_FOOTER}")
+    assert set(update.entries) == {Category.SECURITY, Category.BREAKING}
+    assert update.bump == Bump.MAJOR
+
+
+def test_security_footer_without_a_pr_number_ends_with_the_short_sha() -> None:
+    update = _update(f"fix(auth-rbac): compare keys in constant time\n\n{_SEC_FOOTER}")
+    assert update.entries[Category.SECURITY] == [f"{_SEC_LINE} (abc1234)"]
+
+
+def test_security_footer_that_already_ends_with_the_pr_number_is_not_doubled() -> None:
+    update = _update("fix(auth-rbac): x (#77)\n\nChangelog-Security: Hardened a path (#77)")
+    assert update.entries[Category.SECURITY] == ["- Hardened a path (#77)"]
+
+
+def test_security_footer_with_exploit_detail_is_refused_at_the_pr_and_ignored_at_the_sync() -> None:
+    footer = "Changelog-Security: Fixed it, payload in the finding"
+    result = check_changelog_fragment("fix(auth-rbac): x", footer)
+    assert not result.ok and result.error_code == "CI-REL-001"
+    update = _update(f"fix(auth-rbac): x (#7)\n\n{footer}")
+    assert update.entries == {Category.FIXES: ["- **auth-rbac**: x (#7)"]}
+
+
+def test_a_clean_security_footer_passes_the_fragment_check_for_a_free_form_title() -> None:
+    assert check_changelog_fragment("wip", _SEC_FOOTER).ok

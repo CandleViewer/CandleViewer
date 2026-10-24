@@ -1085,48 +1085,23 @@ def test_a_sync_pr_passes_the_gate(title):
 @pytest.mark.parametrize(
     ("head", "number"),
     [
-        (_with(_SEC), 20),
-        (_with(_SEC.replace("(#20)", "(#20) (#20)")), 20),
+        (_with(_SEC), 20),  # a security fix's own impact-only line: the footer carries it instead
         (_with(_SEC + "\n- Also the token path (#20)"), 20),
-    ],
-)
-def test_a_security_fix_may_add_its_own_impact_only_lines(head, number):
-    """07 §3: the fixing PR writes its impact-only Security line itself, ending with its `(#N)`."""
-    paths = ["src/a.py", "CHANGELOG.md"]
-    errs, _ = _changelog_run("fix(auth-rbac): harden a path", paths, head, number)
-    assert "PR-CHANGELOG-001" not in codes(errs)
-
-
-@pytest.mark.parametrize(
-    ("head", "number"),
-    [
         (_with(_SEC.replace("(#20)", "(#21)")), 20),  # another PR's number
-        (_with(_SEC), None),  # no PR number to own it
-        (_with(_SEC.replace("(#20)", "(#20) trailing")), 20),  # the number not at the end
+        (_with(_SEC), None),  # no PR number
         (_with(_SEC, after="- **a**: one (1111111)"), 20),  # under Fixes, not Security
-        (_with(_SEC, after="- old (#1)"), 20),  # in a released section
         (_with(_SEC).replace("- **a**: one (1111111)\n", ""), 20),  # also removes a line
-        (_with(_SEC).replace("- Hardened a path (#10)", "- Hardened a path, reworded (#10)"), 20),
         (_with(""), 20),  # a blank line
-        (_with("### Security"), 20),  # a heading, not an entry
-        (_with(_SEC.removeprefix("- ")), 20),  # no bullet
-        (_with(_SEC.replace("(#20)", "(#None)")), None),  # no number, whatever the line says
         (_CL, 20),  # the file listed as changed, its lines the same (its mode, a final newline)
-        (_with(_SEC + "\n- And another PR's line (#21)"), 20),  # one own line, one not
     ],
 )
-def test_any_other_edit_by_a_non_sync_pr_is_refused(head, number):
+def test_no_non_sync_pr_may_change_the_changelog_not_even_a_security_fix(head, number):
+    """07 §3 (#4435 ruling): a security fix writes a `Changelog-Security:` footer in its body;
+    the sync renders it. The gate has no security allowance."""
     paths = ["src/a.py", "CHANGELOG.md"]
     errs, _ = _changelog_run("fix(auth-rbac): harden a path", paths, head, number)
-    assert "PR-CHANGELOG-001" in codes(errs)
-
-
-def test_a_security_line_added_to_a_released_section_is_refused():
-    base = _CL + "\n### Security\n- Hardened an old path (#2)\n"  # 0.1.0's own Security
-    head = _with(_SEC, after="- Hardened an old path (#2)", text=base)
-    paths = ["src/a.py", "CHANGELOG.md"]
-    errs, _ = _changelog_run("fix(auth-rbac): harden a path", paths, head, base=base)
-    assert "PR-CHANGELOG-001" in codes(errs)
+    (err,) = [e for e in errs if e.startswith("PR-CHANGELOG-001")]
+    assert "`Changelog-Security: <impact-only summary>`" in err
 
 
 def test_a_pr_of_another_type_that_changes_only_the_changelog_is_no_sync_pr():
