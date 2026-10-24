@@ -873,14 +873,14 @@ async def test_an_add_of_a_start_refused_symbol_with_no_row_is_a_fresh_add() -> 
     assert fake.entries["SOLUSDT"].streams == STREAMS
 
 
-async def test_a_pinned_rows_answer_shows_no_retention_though_its_days_are_kept() -> None:
-    """A pin keeps the stored days, inert (#2188 S3c); the answers show `retention_days: null`."""
+async def test_a_pin_nulls_the_rows_retention_and_the_answers_show_null() -> None:
+    """A pin nulls the stored days (#2188 S3c); the answers show `retention_days: null`."""
     fake = FakeRecorder()
     entry = fake.put("BTCUSDT", retention_days=60)
     env = _Env(fake, *W, elevated=True)
     pinned = await env.http.put(_PIN.format(entry.id), json={"pinned": True})
     assert (pinned.json()["pinned"], pinned.json()["retention_days"]) == (True, None)
-    assert fake.entries["BTCUSDT"].retention_days == 60  # stored, inert
+    assert fake.entries["BTCUSDT"].retention_days is None  # the pin nulled it
     assert (await env.http.get(_one(entry.id))).json()["retention_days"] is None
 
 
