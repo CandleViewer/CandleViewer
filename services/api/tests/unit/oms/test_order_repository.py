@@ -68,6 +68,7 @@ from candleviewer.storage.repositories.positions import NewPositionSnapshot, Pos
 from candleviewer.storage.repositories.recorded_stops import (
     EVERY_ACCOUNT,
     NewRecordedStop,
+    RecordedStopNotBindable,
     RecordedStopRow,
     SweptStop,
 )
@@ -276,15 +277,18 @@ SNAP = NewPositionSnapshot(
 
 
 class _AnyStore:
-    """A stub of any store: records each call and answers `result`, or raises `error`."""
+    """A stub of any store: records each call and answers `result`, or raises `error`. A call's
+    positional arguments go to `calls`, its keywords (`at=`) to `keywords`, one entry each."""
 
     def __init__(self, result: object = None, error: Exception | None = None) -> None:
         self.result, self.error = result, error
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
+        self.keywords: list[dict[str, Any]] = []
 
     def __getattr__(self, name: str) -> Callable[..., Awaitable[object]]:
-        async def call(*args: Any, **kwargs: Any) -> object:  # a keyword (`at=`) is not recorded
+        async def call(*args: Any, **kwargs: Any) -> object:
             self.calls.append((name, args))
+            self.keywords.append(kwargs)
             if self.error is not None:
                 raise self.error
             return self.result
@@ -313,6 +317,10 @@ async def _attached(rows: tuple[RecordedStopRow, ...]) -> None:
     return None  # the stop request's write-ahead audit (`sl.attached`)
 
 
+async def _released(rows: tuple[RecordedStopRow, RecordedStopRow]) -> None:
+    return None  # a release and bind's write-ahead audit
+
+
 FIRST = FirstPersist(
     anchor=NewAnchor(id=ANCHOR, created_by=uuid.UUID(int=4), operation="placeOrder",
                      client_ref=REF, request_sha256=SHA, order_id=ORDER),
@@ -330,6 +338,11 @@ STOP_ROW = RecordedStopRow(
     closed_at=None, released_at=None,
 )  # fmt: skip
 OUTCOME = AnchorOutcome(status=202, decided_at=T0)
+SUCCESSOR = uuid.UUID(int=7)
+#: A release and bind's two rows as the store answers (24 Sec.8.3 rule 7): the predecessor,
+#: released, then its successor; they differ in id, so a log line says which row it carries.
+RELEASED_ROW = replace(STOP_ROW, released_at=T0)
+BOUND_ROW = replace(STOP_ROW, id=SUCCESSOR)
 PERSISTED = FirstPersisted(order=_row(), anchor_id=ANCHOR, group=None, recorded_stops=())
 #: Each write by its table (the label it is timed on), and the call where a table has two.
 _WRITES: dict[str, tuple[Callable[[Any, WriteTimer], Awaitable[object]], object]] = {
@@ -349,6 +362,8 @@ _WRITES: dict[str, tuple[Callable[[Any, WriteTimer], Awaitable[object]], object]
                        write_ahead=_attached), (STOP_ROW,)),
     "recorded_stops settle": (lambda s, t: RecordedStopRepository(s, t).settle(ACCOUNT,
                               [STOP.id], "answered", at=T0), (STOP_ROW,)),
+    "recorded_stops release_and_bind": (lambda s, t: RecordedStopRepository(s, t).release_and_bind(
+        ACCOUNT, STOP.id, SUCCESSOR, "x-1", at=T0, write_ahead=_released), (STOP_ROW, STOP_ROW)),
 }  # fmt: skip
 
 
@@ -594,7 +609,8 @@ async def test_the_sweep_logs_one_warning_with_its_count_per_account_and_each_ro
 
 
 class _Settles:
-    """A `RecordedStopStore` whose settle keeps the hook it was handed, then answers or raises."""
+    """A `RecordedStopStore` whose settle, and release and bind, keep the hook they were handed,
+    then answer or raise."""
 
     def __init__(self, error: Exception | None = None) -> None:
         self.error, self.hooks = error, list[object]()
@@ -604,6 +620,14 @@ class _Settles:
         if self.error is not None:
             raise self.error
         return (STOP_ROW,)
+
+    async def release_and_bind(
+        self, *args: Any, write_ahead: object = None, **kwargs: Any
+    ) -> object:
+        self.hooks.append(write_ahead)
+        if self.error is not None:
+            raise self.error
+        return (RELEASED_ROW, BOUND_ROW)
 
 
 async def test_a_settle_hands_its_audit_to_the_store_and_a_late_audit_writes_nothing() -> None:
@@ -624,6 +648,63 @@ async def test_a_settle_hands_its_audit_to_the_store_and_a_late_audit_writes_not
         )
     assert store.hooks == late.hooks == [audit] and logs == []
     assert err.value.__cause__ is None and not isinstance(err.value, TimeoutError)
+
+
+async def test_a_release_hands_its_audit_to_the_store_and_logs_ids_only() -> None:
+    """24 Sec.8.3 rule 7 (C-2.9): the release's record is awaited in its transaction; the lines
+    carry the rows' ids and never the exchange order id."""
+    store = _Settles()
+    call = (ACCOUNT, STOP.id, SUCCESSOR, "x-secret-9")
+    with capture_logs() as logs:
+        rows = await RecordedStopRepository(cast(Any, store)).release_and_bind(
+            *call, at=T0, write_ahead=_released
+        )
+    assert rows == (RELEASED_ROW, BOUND_ROW) and store.hooks == [_released]
+    assert [(line["event"], line["record_id"]) for line in logs] == [
+        ("oms_stop_released", str(STOP.id)),
+        ("oms_stop_bound", str(SUCCESSOR)),
+    ]  # each line carries its own row: the released predecessor, then the bound successor
+    assert "x-secret-9" not in repr(logs)
+
+
+async def test_a_release_and_bind_passes_through_and_lets_a_refusal_pass_unmapped() -> None:
+    store = _AnyStore((STOP_ROW, STOP_ROW))
+    call = (ACCOUNT, STOP.id, SUCCESSOR, "x-1")
+    await RecordedStopRepository(cast(Any, store)).release_and_bind(
+        *call, at=T0, write_ahead=_released
+    )
+    assert store.calls == [("release_and_bind", call)]
+    [keywords] = store.keywords  # the caller's clock and hook reach the store as they were given
+    assert keywords["at"] is T0 and keywords["write_ahead"] is _released
+    error = RecordedStopNotBindable()
+    with capture_logs() as logs, pytest.raises(RecordedStopNotBindable) as err:
+        await RecordedStopRepository(cast(Any, _AnyStore(error=error))).release_and_bind(
+            *call, at=T0, write_ahead=_released
+        )
+    assert err.value is error and logs == []
+
+
+async def test_a_late_release_audit_is_not_durable() -> None:
+    """C-2.9: a release's audit that outlasts its bound is `AuditNotDurable`, unchained and not
+    a `TimeoutError`, with nothing logged."""
+    late = _Settles(WriteAheadTimeout("write-ahead audit exceeded 5.0 s"))
+    with capture_logs() as logs, pytest.raises(AuditNotDurable) as err:
+        await RecordedStopRepository(cast(Any, late)).release_and_bind(
+            ACCOUNT, STOP.id, SUCCESSOR, "x-1", at=T0, write_ahead=_released
+        )
+    assert late.hooks == [_released] and logs == []
+    assert err.value.__cause__ is None and not isinstance(err.value, TimeoutError)
+
+
+async def test_a_release_with_no_audit_reaches_no_store() -> None:
+    """C-2.9: a release is audited write-ahead, as a void is, so with no hook it is refused
+    before the store (`ValueError`)."""
+    store = _Settles()
+    with pytest.raises(ValueError, match="audited write-ahead"):
+        await RecordedStopRepository(cast(Any, store)).release_and_bind(
+            ACCOUNT, STOP.id, SUCCESSOR, "x-1", at=T0, write_ahead=cast(Any, None)
+        )
+    assert store.hooks == []
 
 
 @pytest.mark.parametrize("outcome", ["refused", "not_shown"])

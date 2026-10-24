@@ -153,6 +153,15 @@ def _bind_stop(dsn: str, record_id: uuid.UUID, exchange_order_id: str) -> None:
     _sql(dsn, sql, exchange_order_id, record_id)
 
 
+def _twin_stop(dsn: str, record_id: uuid.UUID, twin_id: uuid.UUID) -> None:
+    sql = (
+        "INSERT INTO recorded_stops SELECT (jsonb_populate_record(NULL::recorded_stops, "
+        "to_jsonb(r) || jsonb_build_object('id', %s::text, 'exchange_order_id', NULL))).* "
+        "FROM recorded_stops r WHERE r.id = %s"
+    )
+    _sql(dsn, sql, twin_id, record_id)
+
+
 @pytest_asyncio.fixture
 async def h(pg_dsn: str) -> AsyncIterator[Harness]:
     """The stores on one pool, as `cv_app`; every user, account and profile a new row."""
@@ -178,6 +187,8 @@ async def h(pg_dsn: str) -> AsyncIterator[Harness]:
             held=lambda first, order: _held(pg_dsn, first, order),
             move_stop=lambda record_id, status: _move_stop(pg_dsn, record_id, status),
             bind_stop=lambda record_id, xid: _bind_stop(pg_dsn, record_id, xid),
+            twin_stop=lambda record_id, twin_id: _twin_stop(pg_dsn, record_id, twin_id),
+            tick=lambda: None,
         )
     finally:
         await rel.dispose()

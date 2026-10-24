@@ -23,7 +23,7 @@ import sys
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final
@@ -47,6 +47,7 @@ from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderS
 from candleviewer.storage.repositories.recorded_stops import (
     EVERY_ACCOUNT,
     NewRecordedStop,
+    RecordedStopNotBindable,
     RecordedStopRow,
     StaleRecordedStop,
     SweptStop,
@@ -69,6 +70,7 @@ from candleviewer.storage.repositories.trade_groups import (
     NewTradeGroupLeg,
     TradeGroupStoreRefusedError,
 )
+from tests.unit.oms.submission_contract import audited, trading_stop
 
 pytestmark = pytest.mark.integration
 
@@ -409,6 +411,64 @@ async def test_a_stop_request_is_settled_once_and_only_in_its_account(
     assert noted == [(voided,)]  # the stale refusal wrote nothing, so audited nothing
     assert [row.id for row in await stops.for_order(account, order.id)] == [record]
     assert await stops.for_order(uuid.uuid4(), order.id) == ()
+
+
+async def test_two_successors_race_for_one_binding_and_the_loser_writes_nothing(
+    pg_dsn: str,
+) -> None:
+    """24 Sec.8.3 rule 7: A's pair holds the predecessor's row lock over its audit, B's pair waits
+    for it at its lock-first statement, then its release finds the id already released and is
+    refused, its own rows untouched."""
+    # `at_a != at_b` is what lets this test see the release's compare-and-set. A release without
+    # it would stamp the released row again: with a second timestamp `trg_rs_guard` refuses that
+    # (`OrderConstraintError`, not the typed refusal); with the same one it changes nothing, the
+    # trigger stays silent and never-two refuses B instead, so the test would still pass.
+    account, xid, at_a, at_b = _account(pg_dsn)[0], "x-race", _T0, _T0 + timedelta(minutes=1)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def hold(rows: tuple[RecordedStopRow, RecordedStopRow]) -> None:
+        entered.set()
+        await release.wait()
+
+    async with (
+        asyncio.timeout(20),
+        _racing(pg_dsn, "bind-race-a") as rel_a,
+        _racing(pg_dsn, "bind-race-b") as rel_b,
+    ):
+        a = SqlAlchemyRecordedStopStore(rel_a, statement_timeout_ms=15_000, audit_timeout_s=15)
+        b = SqlAlchemyRecordedStopStore(rel_b, statement_timeout_ms=15_000)
+        ids: list[uuid.UUID] = []
+        for _ in range(3):  # a predecessor and two later rows, each answered before the next
+            [stop] = await a.insert([trading_stop(account)])
+            await a.settle(account, [stop.id], "answered", at=_T0)
+            ids.append(stop.id)
+        old, one, two = ids
+        _sql(pg_dsn, "UPDATE recorded_stops SET exchange_order_id = %s WHERE id = %s", xid, old)
+        task_a = asyncio.create_task(
+            a.release_and_bind(account, old, one, xid, at=at_a, write_ahead=hold)
+        )
+        try:
+            await entered.wait()
+            task_b = asyncio.create_task(
+                b.release_and_bind(account, old, two, xid, at=at_b, write_ahead=audited)
+            )
+            await _wait_until_blocked(pg_dsn, "bind-race-b")
+            release.set()
+            await task_a
+            with pytest.raises(RecordedStopNotBindable):
+                await task_b
+        finally:
+            release.set()
+    rows = _sql(
+        pg_dsn,
+        "SELECT id, exchange_order_id, released_at FROM recorded_stops WHERE id = ANY(%s)",
+        ids,
+    )
+    assert {row[0]: row[1:] for row in rows} == {
+        old: (None, at_a),
+        one: (xid, None),
+        two: (None, None),
+    }
 
 
 # -- E29-T04 commit 4: the order step's settle and the startup sweep -------------------------------

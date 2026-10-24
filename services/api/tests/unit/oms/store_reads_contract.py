@@ -42,6 +42,7 @@ from tests.unit.oms.submission_contract import (
 XID: Final = "1b3c5d7e-9f01-4a23-b456-789abcdef012"  # made up: the shape of an exchange order id
 XID2: Final = "7d6c5b4a-3210-4fed-8cba-987654321098"
 RELEASED: Final = T0 + timedelta(minutes=1)
+LOW, HIGH, TOP = UUID(int=1), UUID(int=(1 << 128) - 2), UUID(int=(1 << 128) - 1)  # beyond a uuid4
 
 
 def bound(xid: str) -> Move:
@@ -70,9 +71,17 @@ async def advance(h: Harness, account: UUID, stop: RecordedStopRow, status: str)
             h.move_stop(stop.id, status)
 
 
-async def live_stop(h: Harness, account: UUID, status: str = "pending") -> RecordedStopRow:
-    """A system writer's stop-loss request for BTCUSDT 0, in flight (`pending`) or advanced."""
-    [stop] = await h.stops.insert([trading_stop(account)])
+async def live_stop(
+    h: Harness, account: UUID, status: str = "pending", **over: Any
+) -> RecordedStopRow:
+    """A system writer's request for BTCUSDT 0, its stop-loss or, as `over` says, its take-profit
+    (with the stop-loss every request carries), in flight (`pending`) or advanced. Each row is
+    younger than the last."""
+    h.tick()
+    stops = [trading_stop(account, **over)]
+    if stops[0].kind == "take_profit":
+        stops.insert(0, trading_stop(account))
+    stop = (await h.stops.insert(stops))[-1]
     if status != "pending":
         await advance(h, account, stop, status)
     return stop
@@ -345,6 +354,74 @@ class StoreReadsContract:
         }[who]  # fmt: skip
         old, new = await bound_stop(h, home), await live_stop(h, other)
         await refused(h, home, old.id, new.id, caller=caller)
+
+    @pytest.mark.parametrize(
+        "over",
+        [{"symbol": "ETHUSDT"}, {"position_idx": 1}, {"kind": "take_profit"}],
+        ids=["symbol", "position_idx", "kind"],
+    )
+    async def test_release_and_bind_successor_of_another_side_is_refused(
+        self, h: Harness, over: dict[str, Any]
+    ) -> None:
+        account, _ = h.new_account()
+        old = await bound_stop(h, account)
+        await refused(h, account, old.id, (await live_stop(h, account, **over)).id)
+
+    async def test_release_and_bind_earlier_successor_is_refused(self, h: Harness) -> None:
+        """Later is by age first: a larger id does not make an older row a successor."""
+        account, _ = h.new_account()
+        early = await live_stop(h, account, "answered", id=TOP)
+        await refused(h, account, (await bound_stop(h, account)).id, early.id)
+
+    async def test_release_and_bind_of_equal_age_takes_the_larger_id_only(self, h: Harness) -> None:
+        """Later is by `created_at`, then `id`: a successor of the same age takes the id only if
+        its own is larger."""
+        account, _ = h.new_account()
+        old = await live_stop(h, account, "answered")
+        h.twin_stop(old.id, LOW)
+        h.twin_stop(old.id, HIGH)
+        h.bind_stop(old.id, XID)
+        await refused(h, account, old.id, LOW)
+        _, bound = await h.stops.release_and_bind(
+            account, old.id, HIGH, XID, at=RELEASED, write_ahead=audited
+        )
+        assert bound.id == HIGH
+
+    async def test_release_and_bind_where_another_row_holds_the_id_is_refused(
+        self, h: Harness
+    ) -> None:
+        """One holder per order, never two: the release clears the predecessor, not the third."""
+        account, _ = h.new_account()
+        old = await bound_stop(h, account)
+        h.bind_stop((await live_stop(h, account, "answered")).id, XID)
+        await refused(h, account, old.id, (await live_stop(h, account)).id)
+
+    async def test_release_and_bind_where_an_ended_row_holds_the_id_is_refused(
+        self, h: Harness
+    ) -> None:
+        """Never two counts a holder in any status: an end keeps its id (24 Sec.8.3 rule 7), so a
+        third row of the account that ended holding it still refuses the pair."""
+        account, _ = h.new_account()
+        old, ended = await bound_stop(h, account), await live_stop(h, account)
+        h.bind_stop(ended.id, XID)
+        await advance(h, account, ended, "ended")
+        await refused(h, account, old.id, (await live_stop(h, account)).id)
+
+    async def test_release_and_bind_where_another_account_holds_the_id_is_not_blocked(
+        self, h: Harness
+    ) -> None:
+        """Never two is the account's own: a row of another account that holds the same exchange
+        order id is no holder here, so the pair moves the binding and leaves that row as it was."""
+        (mine, _), (theirs, _) = h.new_account(), h.new_account()
+        h.bind_stop((await live_stop(h, theirs, "answered")).id, XID)
+        [foreign] = await h.stops.for_exchange_order(theirs, XID)
+        old, new = await bound_stop(h, mine), await live_stop(h, mine)
+        released, bound = await h.stops.release_and_bind(
+            mine, old.id, new.id, XID, at=RELEASED, write_ahead=audited
+        )
+        assert (released.id, bound.id) == (old.id, new.id)
+        assert await h.stops.for_exchange_order(mine, XID) == (bound,)
+        assert await h.stops.for_exchange_order(theirs, XID) == (foreign,)
 
     async def test_release_and_bind_two_successors_at_once_one_wins_and_the_other_is_refused(
         self, h: Harness

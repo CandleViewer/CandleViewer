@@ -1002,12 +1002,21 @@ class InMemoryRecordedStopStore:
         _bindable((exchange_order_id,))
         stops = self._db._stops
         old, new = stops.get(predecessor_id), stops.get(successor_id)
+        holds = (account_id, exchange_order_id)
+        held = {
+            r.id for r in stops.values() if (r.exchange_account_id, r.exchange_order_id) == holds
+        }
         live = LIVE_STOP_STATUSES
+        # `held == {old.id}` is two predicates: the predecessor holds the id, and no other row of
+        # the account does (never two, in any status). The first makes the chain's `== account_id`
+        # redundant: `old` is the account's already (`held` reads only its rows), and `new` is
+        # `old`'s account. The check stays, as the SQL's release and bind each filter by account.
         if not (
             old and new and old.exchange_account_id == new.exchange_account_id == account_id
-            and old.status in live and old.released_at is None
-            and old.exchange_order_id == exchange_order_id
+            and old.status in live and old.released_at is None and held == {old.id}  # one holder
             and new.status in live and new.released_at is None and new.exchange_order_id is None
+            and (new.symbol, new.position_idx, new.kind) == (old.symbol, old.position_idx, old.kind)
+            and (new.created_at, new.id) > (old.created_at, old.id)
         ):  # fmt: skip
             raise RecordedStopNotBindable
         released = replace(old, exchange_order_id=None, released_at=at)

@@ -458,11 +458,12 @@ class RecordedStopStore(Protocol):
         """24 Sec.8.3 rule 7's one release, with its successor's bind, in one transaction. The
         predecessor, live and bound to this id (an end keeps its id, so an ended row is never
         released), loses it (`released_at` = `at`, never bound again); the successor, live, unbound,
-        never released and of the same account, takes it. If either updates no row both roll back
-        and `RecordedStopNotBindable` is raised, a replay of a committed pair too. `write_ahead`,
-        the writer's audit (C-2.9), is required: awaited with (released, bound) before the commit,
-        bounded; `WriteAheadTimeout` leaves both rows as they were. The first holder's bind is the
-        materialising one's."""
+        never released and a later row (by `created_at`, then `id`) of the predecessor's side
+        (account, symbol, `position_idx`, kind), takes it if no other row of the account holds it:
+        one holder, never two. If either updates no row both roll back and `RecordedStopNotBindable`
+        is raised, a replay of a committed pair too. `write_ahead`, the writer's audit (C-2.9), is
+        required: awaited with (released, bound) before the commit, bounded; `WriteAheadTimeout`
+        leaves both rows as they were. The first holder's bind is the materialising one's."""
         ...
 
     async def waiting_for_key(

@@ -130,7 +130,7 @@ def _built() -> dict[str, Any]:
         "live_for_key_statement": mod.live_for_key_statement(_ACCOUNT, "BTCUSDT", 0),
         "for_exchange_order_statement": mod.for_exchange_order_statement(_ACCOUNT, "x-1"),
         "release_statement": mod.release_statement(_ACCOUNT, _SL, "x-1", _T),
-        "bind_statement": mod.bind_statement(_ACCOUNT, _TP, "x-1"),
+        "bind_statement": mod.bind_statement(_ACCOUNT, _TP, "x-1", mod.stop_row(_row(_SL))),
         "void_orphans_statement": mod.void_orphans_statement(EVERY_ACCOUNT, _T),
         "waiting_for_key_statement": mod.waiting_for_key_statement(
             _ACCOUNT, "BTCUSDT", 0, now=_T, bound_s=5.0
@@ -200,15 +200,20 @@ def test_release_statement_clears_the_id_the_live_row_holds_and_stamps_the_relea
     )
 
 
-def test_bind_statement_binds_a_live_unreleased_row() -> None:
+def test_bind_statement_binds_a_later_row_of_the_same_side_while_no_row_holds_the_id() -> None:
     """`trg_rs_guard` admits that one bind; the statement names every condition: a live row that
-    holds none and was never released."""
+    holds none and was never released, of the released row's side, later by `(created_at, id)`,
+    and no other holder of the id."""
     sql = _sql(_built()["bind_statement"])
     assert sql.startswith("UPDATE recorded_stops SET exchange_order_id=$1::VARCHAR WHERE ")
     assert sql.split(" WHERE ", 1)[1].split(" RETURNING ", 1)[0] == (
         "recorded_stops.exchange_account_id = $2::UUID AND recorded_stops.id = $3::UUID AND "
         "recorded_stops.exchange_order_id IS NULL AND recorded_stops.released_at IS NULL AND "
-        "recorded_stops.status IN ('in_force', 'pending')"
+        "recorded_stops.status IN ('in_force', 'pending') AND "
+        "recorded_stops.symbol = $4::VARCHAR AND recorded_stops.position_idx = $5::SMALLINT AND "
+        "recorded_stops.kind = $6::VARCHAR AND (recorded_stops.created_at, recorded_stops.id) > "
+        "($7::TIMESTAMP WITH TIME ZONE, $8::UUID) AND NOT (EXISTS (SELECT 1 FROM recorded_stops AS "
+        "held WHERE held.exchange_account_id = $9::UUID AND held.exchange_order_id = $10::VARCHAR))"
     )
 
 

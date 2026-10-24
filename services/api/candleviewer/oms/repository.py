@@ -74,6 +74,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     NewRecordedStop,
     RecordedStopRow,
     RecordedStopStore,
+    ReleaseWriteAhead,
     ResolveOutcome,
     ResolveWriteAhead,
     SettleWriteAhead,
@@ -476,6 +477,33 @@ class RecordedStopRepository:
         """The account's rows bound to the exchange order id, in any status, oldest first
         (`RecordedStopStore.for_exchange_order`); a released row holds none."""
         return await self._store.for_exchange_order(account_id, exchange_order_id)
+
+    async def release_and_bind(
+        self,
+        account_id: UUID,
+        predecessor_id: UUID,
+        successor_id: UUID,
+        exchange_order_id: str,
+        *,
+        at: datetime,
+        write_ahead: ReleaseWriteAhead,
+    ) -> tuple[RecordedStopRow, RecordedStopRow]:
+        """The release of 24 Sec.8.3 rule 7 with its successor's bind (`RecordedStopStore`);
+        returns (released, bound). The audit is required (C-2.9): none is `ValueError` before the
+        store, a late one `AuditNotDurable`; `RecordedStopNotBindable` passes through. Ids only."""
+        if write_ahead is None:
+            raise ValueError("a release is audited write-ahead (C-2.9): no hook was given")
+        try:
+            with self._timer.measure("recorded_stops"):
+                rows = await self._store.release_and_bind(
+                    account_id, predecessor_id, successor_id, exchange_order_id,
+                    at=at, write_ahead=write_ahead,
+                )  # fmt: skip
+        except WriteAheadTimeout:
+            raise AuditNotDurable("the release's write-ahead audit did not land in time") from None
+        _log_stops("oms_stop_released", rows[:1])
+        _log_stops("oms_stop_bound", rows[1:])
+        return rows
 
     async def waiting_for_key(
         self,
