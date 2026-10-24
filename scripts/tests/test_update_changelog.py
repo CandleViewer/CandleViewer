@@ -308,3 +308,15 @@ def test_a_security_footer_commit_is_merged_once_and_a_second_run_changes_nothin
     assert "constant-time compare" not in once
     assert apply_update(once, [sec, other]) == (once, False)
     assert apply_update(once, [other, sec]) == (once, False)
+
+
+def test_the_sync_warns_once_per_commit_whose_security_footer_was_dropped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    message = "fix(a): x (#7)\n\nChangelog-Security: payload"
+    dropped = {"sha": "abcdef1" + "0" * 33, "message": message}
+    kept = {"sha": "1234567" + "0" * 33, "message": "fix(a): y (#8)"}
+    path, raw = _files(tmp_path, _default_changelog(), [dropped, kept])
+    assert uc.main(["--commits-json", str(raw), "--changelog", str(path)]) == 0
+    warnings = [ln for ln in capsys.readouterr().out.splitlines() if "Changelog-Security" in ln]
+    assert len(warnings) == 1 and warnings[0].startswith("::warning") and "abcdef1" in warnings[0]

@@ -1057,15 +1057,20 @@ def test_a_feature_pr_that_edits_the_changelog_is_refused_naming_the_footer_and_
     assert "`Changelog: <one-line" in err and "#4435" in err and "07 §3" in err
 
 
-@pytest.mark.parametrize(
-    "title", ["docs(changelog): update unreleased", "docs(docs): sync the Unreleased section"]
-)
-def test_a_sync_pr_passes_the_gate(title):
-    """Scenario: A sync PR passes the gate: a `docs` title and CHANGELOG.md its only file, whatever
-    the sync changed there (the scope rule is PR-TITLE-003's, apart)."""
+def test_a_sync_pr_passes_the_gate():
+    """Scenario: A sync PR passes the gate. `changelog` is no commitlint scope (adding one is a
+    `commitlint.config.cjs` change outside #4435), so the sync's title is `docs(docs): ...` (ruling
+    Q2: a `docs` title, CHANGELOG.md the only changed file) and it passes every rule."""
+    title = "docs(docs): update unreleased"
     assert m.changelog_edit_errors(title, [m.CHANGELOG_PATH]) == []
     errs, _ = _changelog_run(title, ["CHANGELOG.md"])
-    assert "PR-CHANGELOG-001" not in codes(errs)
+    assert errs == []
+
+
+def test_a_docs_pr_that_deletes_the_changelog_is_no_sync_pr():
+    title = "docs(docs): update unreleased"
+    errs = m.changelog_edit_errors(title, [m.CHANGELOG_PATH], frozenset({m.CHANGELOG_PATH}))
+    assert [e.split()[0] for e in errs] == ["PR-CHANGELOG-001"]
 
 
 @pytest.mark.parametrize("title", ["fix(auth-rbac): harden a path", "feat(ui): a pane"])
