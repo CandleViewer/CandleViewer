@@ -319,7 +319,7 @@ class ReplaySessionRepositoryContract:
         assert await self._covering(h) == row.id
 
     @pytest.mark.parametrize("state", sorted(set(ReplayState) - COVERING_STATES))
-    async def test_live_covering_ignores_a_session_in_each_ended_state(
+    async def test_live_covering_ignores_a_session_in_the_terminal_state(
         self, h: Harness, state: ReplayState
     ) -> None:
         await h.in_state(state)

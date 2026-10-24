@@ -1396,7 +1396,10 @@ async def test_audit_rows_are_attributable_session_records() -> None:
         assert (kw["actor_user_id"], kw["object_kind"], kw["object_id"]) == (
             USER_A, "replay_session", sid,
         )  # fmt: skip
-        allowed = {"symbol", "state", "range_start", "range_end", "reason", "paper_account_id"}
+        allowed = {
+            "symbol", "symbols", "streams", "state", "range_start", "range_end", "reason",
+            "paper_account_id",
+        }  # fmt: skip
         assert set(kw["after_state"]) <= allowed
 
 

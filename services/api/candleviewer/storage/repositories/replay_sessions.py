@@ -63,14 +63,15 @@ class SourceTier(StrEnum):
 LIVE_STATES = frozenset(
     {ReplayState.BUFFERING, ReplayState.PLAYING, ReplayState.PAUSED, ReplayState.STEPPING}
 )
-#: What the retention guard (`live_covering`, G7) protects: the live states and `created`, which
-#: holds no buffer yet but will read its window. `finished` and `error` are not covered.
-COVERING_STATES = LIVE_STATES | {ReplayState.CREATED}
 #: Every replayable stream by its `StreamKind` name (CHECK `rps_streams`): what a session made
 #: without a stream list stores, as 0051's backfill did.
 ALL_REPLAY_STREAMS: Final[tuple[str, ...]] = tuple(s.value for s in REPLAYABLE_STREAMS)
 #: B12's only final state; terminal rows refuse every update (the owner may still delete them).
 TERMINAL_STATES = frozenset({ReplayState.DESTROYED})
+#: What the retention guard (`live_covering`, G7) protects: every state but the terminal one,
+#: failing toward retaining. `created` will read its window, and B12 SEEKs back out of `finished`
+#: and `error`, which the quota counts and the sweep reclaims like any other open row.
+COVERING_STATES = frozenset(ReplayState) - TERMINAL_STATES
 #: Entering one of these stamps `finished_at`.
 FINISHED_STATES = frozenset({ReplayState.FINISHED, ReplayState.DESTROYED})
 #: Upper bound for one page / one sweep batch; callers' limits are clamped into `1..MAX_PAGE_LIMIT`.

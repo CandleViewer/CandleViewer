@@ -463,6 +463,8 @@ class ReplaySessionService:
             "symbol": req.symbol, "state": ReplayState.CREATED.value,
             "range_start": req.range_start.isoformat(), "range_end": req.range_end.isoformat(),
             "paper_account_id": req.paper_account_id,  # RP-R02: paper attach is recorded
+            # What the row stores and the retention guard reads (G7): names only.
+            "symbols": list(req.stored_symbols), "streams": list(req.stored_streams),
         }  # fmt: skip
         async with self._quota_lock(uid):  # re-checked as one decision with the insert
             await self._check_quota(uid, opening=True)
