@@ -3,6 +3,10 @@
     "candleviewer.api.auth_perf": {
       "reason": "perf instrumentation: create_app() includes it only while CV_AUTH_PERF_ENABLED is on (keyless testnet); the default app runs with it off",
       "ticket": "#2097"
+    },
+    "candleviewer.api.profile_writes": {
+      "reason": "the profile writes merge unmounted and mount in #906 slice D2's last PR (ruling B12)",
+      "ticket": "#906"
     }
   },
   "context_modules": {},
