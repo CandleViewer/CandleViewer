@@ -20,6 +20,7 @@ from candleviewer.api.recording_symbols import make_recording_symbols_router
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.recorder import control as rc
+from candleviewer.recorder import policy
 from tests.unit.recorder._control_fakes import NOW, STREAMS, FakeRecorder
 
 W = ("recording:read", "recording:write")
@@ -111,6 +112,11 @@ async def test_the_cap_is_422_and_a_re_add_answers_200_with_the_row() -> None:
     assert (capped.status_code, capped.json()["code"]) == (422, "recorder_symbol_limit")
     assert list(env.fake.entries) == ["BTCUSDT"] and env.actions() == ["recorder.start"] * 2
     assert env.audit[-1][1].items() >= {("outcome", "denied"), ("reason", "recorder_symbol_limit")}
+    env.elevated, env.audit = True, []
+    await env.add(symbol="ETHUSDT", retention_days=7)  # the retention record's denied twin first
+    assert [(a, r.get("outcome"), r.get("reason")) for a, r in env.audit] == [
+        ("retention.change", None, None), ("retention.change", "denied", "recorder_symbol_limit"),
+        ("recorder.start", "denied", "recorder_symbol_limit")]  # fmt: skip
 
 
 async def test_a_key_replays_its_answer_and_another_body_under_it_is_409() -> None:
@@ -127,7 +133,9 @@ async def test_a_key_replays_its_answer_and_another_body_under_it_is_409() -> No
     assert list(env.fake.entries) == ["BTCUSDT"]
 
 
-async def test_no_control_is_503_and_an_unlisted_symbol_or_a_bad_body_is_422() -> None:
+async def test_no_control_is_503_and_an_unlisted_symbol_or_a_bad_body_is_422(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     env = _Env(None, *W)
     env.writer = None
     unbound = await env.add(symbol="BTCUSDT")
@@ -141,6 +149,10 @@ async def test_no_control_is_503_and_an_unlisted_symbol_or_a_bad_body_is_422() -
         answer = await env.http.post(_ADD, json=bad)
         assert (answer.status_code, answer.json()["code"]) == (422, "validation_failed")
     assert (await env.http.post(_ADD, content=b"")).status_code == 422
+    monkeypatch.setattr(policy, "STREAM_KINDS", frozenset({"trades"}))  # the policy's own check
+    refused = await env.add(symbol="BTCUSDT", streams=["tickers"])
+    assert refused.json()["errors"] == [{"field": "streams", "rule": "stream_names",
+                                         "message": "Refused by the recorder."}]  # fmt: skip
     assert env.fake.entries == {} and env.actions() == []
 
 
@@ -264,6 +276,7 @@ async def test_a_non_owner_reads_its_write_through_the_restricted_view() -> None
     env = _Env(fake, *W, owner=False)
     again = await env.add(symbol="SOLUSDT")
     assert again.status_code == 200 and "position_open" not in again.text
+    assert env.actions() == []  # an authorized re-add of a manual entry: no record
     hidden = fake.put("XRPUSDT", "position_open")
     env.elevated = True
     assert (await env.http.put(_PIN.format(hidden.id), json={"pinned": True})).status_code == 404
@@ -271,19 +284,46 @@ async def test_a_non_owner_reads_its_write_through_the_restricted_view() -> None
 
 
 @pytest.mark.parametrize("cause", sorted(rc.HIDDEN_CAUSES))
-async def test_a_non_owner_re_add_of_a_row_its_view_hides_is_a_fresh_add(cause: Any) -> None:
-    """Restricted refusal parity: `201` and the fresh-add body, none of the row's settings or
-    session; the server re-adds the row (its pin stays) under the policy's own record."""
+async def test_a_non_owner_re_add_of_a_row_its_view_hides_is_a_hidden_refusal(cause: Any) -> None:
+    """Restricted refusal parity: `201` and the fresh-add body, byte for byte, but nothing
+    changes; the route writes its own record ahead (denied, `held_hidden`, ids only)."""
     fresh, fake = _Env(None, *W, owner=False), FakeRecorder()
-    fake.put("SOLUSDT", cause, pinned=True, depth=500, streams=("trades",), started_at=NOW,
-             refusals=(cause,))  # fmt: skip
+    held = fake.put("SOLUSDT", cause, pinned=True, depth=500, streams=("trades",),
+                    started_at=NOW, refusals=(cause,))  # fmt: skip
     env = _Env(fake, *W, owner=False)
     env.caller = fresh.caller
     first, again = await fresh.add(symbol="SOLUSDT"), await env.add(symbol="SOLUSDT")
     assert (again.status_code, again.content) == (201, first.content)
-    assert fake.entries["SOLUSDT"].pinned and fake.entries["SOLUSDT"].reasons == ("manual", cause)
-    ref = ("recorder.start", f"manual:{env.caller.user_id}")  # the policy's, the same for both
-    assert [(a, r["after_state"]["trigger_ref"]) for e in (env, fresh) for a, r in e.audit] == [
-        ref, ref]  # fmt: skip
-    seen = await _Env(fake, *W).add(symbol="SOLUSDT")  # the Owner sees the re-added row
+    assert fake.entries["SOLUSDT"] == held and len(env.audit) == 1
+    action, record = env.audit[0]
+    assert (action, record["outcome"], record["reason"], record["object_id"]) == (
+        "recorder.start", "denied", "held_hidden", held.id)  # fmt: skip
+    assert "before_state" not in record and "after_state" not in record
+    env.fail_audit = True  # write-ahead: no record, no answer
+    assert (await env.add(symbol="SOLUSDT")).status_code == 503
+    seen = await _Env(fake, *W).add(symbol="SOLUSDT")  # the Owner's re-add is a real one
     assert (seen.status_code, seen.json()["pinned"], seen.json()["depth"]) == (200, True, 500)
+
+
+@pytest.mark.parametrize(
+    ("extra", "actions"),
+    [({"retention_days": 7}, ["retention.change", "recorder.start"]),
+     ({"pinned": False, "retention_days": None}, ["retention.change", "recorder.start"]),
+     ({"pinned": True, "retention_days": 7}, ["recorder.start", "retention.change"])],
+)  # fmt: skip
+async def test_an_add_naming_retention_days_records_it_ahead_as_put_and_patch_do(
+    extra: Any, actions: list[str]
+) -> None:
+    """The route's own `retention.change` unless a pin (the policy's record) names it."""
+    env = _Env(None, *W, elevated=True)
+    env.caller, env.fail_audit = dataclasses.replace(env.caller, request_id=uuid.uuid4()), True
+    refused = await env.add(symbol="SOLUSDT", **extra)
+    assert (refused.status_code, env.fake.entries) == (503, {})
+    env.fail_audit = False
+    assert (await env.add(symbol="SOLUSDT", **extra)).status_code == 201
+    assert env.actions() == actions
+    if actions[0] == "retention.change":
+        route = env.audit[0][1]
+        assert (route["before_state"], route["after_state"]) == (
+            {"retention_days": None}, {"retention_days": extra["retention_days"]})  # fmt: skip
+        assert route["request_id"] == env.caller.request_id
