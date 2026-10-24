@@ -106,6 +106,11 @@ READ_INPUTS = (
     ("js", "tools/ci/run-allowed-postinstall.mjs", "tools/ci/allowed-postinstall.json"),
     ("js", "tools/ci/check_no_inline_suppressions.py", "tools/ci/no-inline-suppression-paths.json"),
     ("js", "tools/ci/check_prod_bundle_handles.py", "tools/ci/prod-bundle-forbidden-handles.json"),
+    (
+        "security",
+        "tools/ci/check_drawings_exception_sites.py",
+        "tools/ci/drawings-exception-sites.json",
+    ),
     ("engine-bench", "tools/ci/run-allowed-postinstall.mjs", "tools/ci/allowed-postinstall.json"),
     ("e2e", "tools/ci/run-allowed-postinstall.mjs", "tools/ci/allowed-postinstall.json"),  # #1819
     ("migrations", "tools/ci/migration_lint.py", "tools/ci/security-sensitive-tables.txt"),

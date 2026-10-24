@@ -216,6 +216,17 @@ jobs:
           fi
           python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif --semgrep-json semgrep.json
 
+      # E14-X03 (#549): the statements the drawings rules report with `nosemgrep` disabled are the
+      # sites of tools/ci/drawings-exception-sites.json, so a fifth annotation, or one moved to
+      # another statement, needs the security team's entry (scripts/tests/test_e14_security_gates.py).
+      - name: Drawings rules (the reviewed-exception sites are exactly the listed ones)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          export PATH="$RUNNER_TEMP/semgrep-venv/bin:$PATH"
+          python tools/ci/check_drawings_exception_sites.py
+
       - uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         # Upload only when the scanner wrote a report; the semgrep step (not this upload)
         # decides pass/fail. Code scanning is on: run 39041114804 posted the Semgrep OSS and

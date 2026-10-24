@@ -10,6 +10,7 @@
 ## Running locally
 
 - Validate: `semgrep --metrics=off --validate --config .semgrep`.
+- Prove the exception sites: `python tools/ci/check_drawings_exception_sites.py`.
 - Prove the fixtures: `python tools/ci/check_semgrep_rule_tests.py`. Every rule needs at least one
   `# ruleid: <id>` line and, since E14-X03, one `# ok: <id>` line: a line a naive rule would flag.
   The checker cannot tell an `ok` line a rule scans from one outside its `paths.include`: place
@@ -26,16 +27,18 @@
 ## How these gates run
 
 `_job-security.yml` passes every `.semgrep/cv-*.yml` to `semgrep scan` and runs the fixture checker
-in the same job: no workflow change, no new required-check name (C-9.1); `ERROR` blocks
+in the same job: no new required-check name (C-9.1; the one step added is below); `ERROR` blocks
 (`security_gate.py`), so the whole-tree scan keeps `services/api` at zero unsuppressed findings.
 
-**PR-3 owns the pin of the four exceptions below, and its CI step.** The pin will be
-`scripts/tests/test_e14_security_gates.py` (it also pins each rule's metadata, scope and doc
-section). It needs the `semgrep` binary, which CI's governance shards do not have, so it would skip
-there; the CI step is a `semgrep scan --disable-nosem` of the five rules over
-`services/api/candleviewer` in `semgrep-bandit`, compared with a committed site list. Until then a
-fifth annotation rests on review (CI-SEC-006 checks its grammar only) and on the annotated modules'
-unit tests, which pin their statements.
+**The four exceptions below are pinned by statement, not by count.**
+`tools/ci/check_drawings_exception_sites.py` scans `services/api/candleviewer` with the five rules and
+`--disable-nosem`, names each finding by its file and the statement it opens (`_PURGE`), and compares
+them with `tools/ci/drawings-exception-sites.json`. The `semgrep-bandit` job runs it, so a fifth
+unscoped statement, or an annotation moved to another statement of the same file, fails until the
+security team lists it (a count of (file, rule) pairs passed both). `scripts/tests/test_e14_security_gates.py`
+runs the same scan where `semgrep` is installed (CI's governance shards have none, so that test skips
+there), checks the annotations in the source against the list without it, and pins each rule's
+metadata, scope and doc section.
 
 Every rule but the first is scoped by glob (`api/drawings*.py`; the batch rule also
 `storage/repositories/drawings*.py`): a router moved into a package `api/drawings/`, or a
@@ -265,10 +268,18 @@ under `nice -n 10`:
 - **PR-2's two rules** take 2.8 s and 4.4 s in the checker at load 5.6, and read no file in the product
   scan (their directories do not exist yet). With PR-1's five that is about 25 s on a quiet host, under
   the bound, and over it on a busy one.
+- **The exception-site pin** (`check_drawings_exception_sites.py`) is one more `semgrep scan` of the
+  five rules over `services/api/candleviewer` with `--disable-nosem`: 26 s of CPU and 51 s wall at
+  load 17 on the shared VPS, of which the matching is about a second (the rest is Semgrep's start-up
+  and the tree walk). It is a step of its own in `semgrep-bandit`, within that job's budget, and the
+  part of this gate that goes over the ticket's 30 s when added to the rules above on a busy host.
+  Not measured on a CI runner.
 
 ## Requesting an exception
 
 Fix the code if you can. Otherwise add
 `# nosemgrep: <rule-id> reason=<token> owner=@<handle> review=YYYY-MM-DD` (at most 180 days) on the
-line above the finding's first line, with the rationale above it, and tag `security-review`; a High
-finding or an exception that outlives a release also follows `04-security-program.md` section 16.2.
+line above the finding's first line, with the rationale above it, and tag `security-review`; an
+exception of a drawings persistence rule is also listed in `tools/ci/drawings-exception-sites.json`,
+and a High finding or an exception that outlives a release also follows `04-security-program.md`
+section 16.2.
