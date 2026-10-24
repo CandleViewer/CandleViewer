@@ -1220,7 +1220,7 @@ class OmsCommandPort:
         if sides and stop is None:  # an entry carries its native stop (C-2.6): never sent bare
             rule = "native_stop_required"
             return await self._amend_refused(row, b01.NATIVE_STOP_REQUIRED, rule, detail)
-        if stop is not None and "stop_loss" in sides:  # Q4: before any record or send
+        if stop is not None:  # Q4: every stop recorded or sent, a re-paired one too
             in_force = await self._bounded(
                 self._stops.live_for_key(row.exchange_account_id, row.symbol, row.position_idx)
             )
@@ -1248,7 +1248,7 @@ class OmsCommandPort:
             key = PositionKey(account.account_id, row.symbol, row.position_idx)
             try:
                 await self._bounded(self._gate.clear(key))
-                recorded = await self._record_amend(row, stop, take_profit, detail)
+                recorded = await self._record_amend(row, stop, take_profit, detail, sides)
             except (StopRequestPending, StopRequestInFlight) as held:
                 _log().warning("oms_amend_stop_key_held", order_link_id=row.order_link_id)
                 wait = STOP_REQUEST_RETRY_AFTER_S
@@ -1288,9 +1288,15 @@ class OmsCommandPort:
         return {"ok": False, "error_code": code}
 
     async def _record_amend(
-        self, row: OrderRow, stop: Decimal, tp: Decimal | None, detail: Mapping[str, str | None]
+        self,
+        row: OrderRow,
+        stop: Decimal,
+        tp: Decimal | None,
+        detail: Mapping[str, str | None],
+        changed: Mapping[str, object],
     ) -> tuple[RecordedStopRow, ...]:
-        """Q2: one `entry_attach` insert naming the order, each row audited in its transaction."""
+        """Q2: one `entry_attach` insert naming the order, each row audited in its transaction;
+        a re-paired side the amend does not change is audited `changed: "false"`."""
         sides: dict[StopKind, Decimal | None] = {"stop_loss": stop, "take_profit": tp}
         news = [
             NewRecordedStop(
@@ -1303,8 +1309,11 @@ class OmsCommandPort:
             for kind, price in sides.items()
             if price is not None
         ]  # fmt: skip
+        marked = {kind: {**detail, "changed": str(kind in changed).lower()} for kind in sides}
         records = [
-            _stop_record(_MODIFIED[new.kind], new, "success", "info", AMEND_REASON, detail)
+            _stop_record(
+                _MODIFIED[new.kind], new, "success", "info", AMEND_REASON, marked[new.kind]
+            )
             for new in news
         ]
 
