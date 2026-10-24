@@ -227,14 +227,27 @@ DOC_NAMES = (
     "28-statechart-catalogue.md",
 )
 DOCS = {n[:2]: PLAN / n for n in DOC_NAMES}
-FIXTURE = json.loads(
+FIXTURE: dict[str, float] = json.loads(
     '{"entry": 64010.0, "stop": 63900.0, "target": 64230.0, "mark": 64012.0, "size": 0.25, '
-    '"leg_qty": 0.5, "double": 1.0, "fill": 64001.0, "ticks_up": 2200, "ticks_down": 1100, '
-    '"twap_total": 2.0, "twap_filled": 1.2, "twap_left": 0.8, "avg": 64004.0}'
+    '"leg_qty": 0.5, "double": 1.0, "fill": 64001.0, "tick": 0.1, "entry_a": 64050.0, '
+    '"entry_b": 63990.0, "exit_stop": 63950.0, "twap_total": 2.0, "twap_filled": 1.2, '
+    '"twap_left": 0.8, "avg": 64004.0}'
 )
-BULK = json.loads(
+# Derived, never typed: each entry leg's stop sits where E32-D02's stop sits under its entry; every
+# tick distance is measured from the mark (the exit pair's stop leg is above the held stop).
+_STOP_GAP = FIXTURE["entry"] - FIXTURE["stop"]
+FIXTURE["stop_a"] = round(FIXTURE["entry_a"] - _STOP_GAP, 1)
+FIXTURE["stop_b"] = round(FIXTURE["entry_b"] - _STOP_GAP, 1)
+FIXTURE["ticks_up"] = round((FIXTURE["target"] - FIXTURE["mark"]) / FIXTURE["tick"])
+FIXTURE["ticks_down"] = round((FIXTURE["mark"] - FIXTURE["exit_stop"]) / FIXTURE["tick"])
+FIXTURE["ticks_entry_a"] = round((FIXTURE["entry_a"] - FIXTURE["mark"]) / FIXTURE["tick"])
+FIXTURE["ticks_entry_b"] = round((FIXTURE["mark"] - FIXTURE["entry_b"]) / FIXTURE["tick"])
+# The 40-run bulk fixture: the kinds, what Pause all skips per kind (every skip a section 1.3
+# class) and the per-item result; the pausable counts are derived below, never typed.
+BULK: dict[str, float] = json.loads(
     '{"twap": 12, "chase": 9, "iceberg": 14, "oco": 5, "orders": 31, "btc": 2.14, '
-    '"cancelled": 38, "failed": 2}'
+    '"cancelled": 38, "failed": 2, "twap_price_blocked": 3, "chase_parked": 2, '
+    '"iceberg_cooling": 2, "finishing_twap": 0, "finishing_iceberg": 1}'
 )
 AT_BYBIT = json.loads(
     '{"twap": 0.07, "chase": 1.0, "iceberg": 0.25, "oco_entry": 1.0, "oco_exit": 0.5, "orders": 7}'
@@ -255,7 +268,7 @@ COUNTS = (
     ("light_twins", 0, 1, r"^\| \d\d +\| `[^`]+-light`"),
 )
 ROW_IDS = (("c_rows", "C"), ("cg_rows", "CG"), ("g_rows", "G"), ("a_rows", "A"), ("q_rows", "Q"))
-REASON_RE = r"^\| `((?:rbac|algo|recon)\.[a-z_.]+|frozen|lockout)` +\| \"([^\"]+)\""
+REASON_RE = r"^\| `((?:rbac|algo|recon)\.[a-z_.]+|frozen|lockout)` +\| ([^|]+?) +\|"
 
 
 def rows(table: str) -> list[list[str]]:
@@ -367,6 +380,9 @@ def contract_facts(t: dict[str, str]) -> dict[str, object]:
         "b4_has_user_pause": "USER_PAUSE" in b4,
         "b4_has_ws_disconnect": "WS_DISCONNECT" in b4,
         "b8_tags": sorted(set(re.findall(r"`(protected|naked)`", b8))),
+        "b8_states": re.findall(r"^\| `sl\.([a-z_]+)` \| atomic", b8, MULTI),
+        "b8_public_id": "B8 `position_protection`" in t["23"]
+        and "have no public id yet" in t["23"],
         "b04_shipped_states": b04,
         "b04_equals_b4": b04 == b4_states,
         "scr070_3ms": "3 ms" in scr070,
@@ -402,14 +418,23 @@ def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, s
         for p in BANNED_COPY
         for m in re.finditer(p, deck)
     ]
-    for key, s in re.findall(REASON_RE, deck, MULTI):
+    for key, cell in re.findall(REASON_RE, deck, MULTI):
         if key in ("frozen", "lockout"):
             continue  # E30-D02 §14 registered strings, cited verbatim; not this spec's to shorten
-        if len(s) > 60 or not s.endswith(".") or re.search(r"\d", s):
-            digit = bool(re.search(r"\d", s))
-            bad.append(f"T2 reason {key}: {len(s)} chars; stop {s.endswith('.')}; digit {digit}")
-    if re.search(r"^\| `SCR-069/[a-z0-9-]+` +\|(?![^\n]*CMP-158)", section(spec, 3, 4), MULTI):
+        for s in re.findall(r'"([^"]+)"', cell):  # every string a key row carries, not the first
+            if len(s) > 60 or not s.endswith(".") or re.search(r"\d", s):
+                digit = bool(re.search(r"\d", s))
+                stop = s.endswith(".")
+                bad.append(f"T2 reason {key}: {len(s)} chars; stop {stop}; digit {digit}")
+    s3 = section(spec, 3, 4)
+    if re.search(r"^\| `SCR-069/[a-z0-9-]+` +\|(?![^\n]*CMP-158)", s3, MULTI):
         bad.append("spec section 3: a SCR-069 frame lacks the CMP-158 line")
+    flat_uncond = (
+        r"^\| `SCR-0(?:69|76)/[a-z0-9-]+` +\|"
+        r"(?=[^\n]*`caveat\.oco_entry`)(?![^\n]*`stop\.interim`)"
+    )
+    if re.search(flat_uncond, s3, MULTI):
+        bad.append("spec section 3: an entry-pair frame binds the unconditional stop sentence")
     if re.search(r"\bLIVE (?:row|run|badge) drawn\b", section(spec, 5, 8)):
         bad.append("spec sections 5-7: a LIVE run is drawn (LIVE is an absence in R3)")
     lines = {k: v.split("\n") for k, v in t.items()}
@@ -510,6 +535,20 @@ def main(argv: list[str]) -> int:
         key = src.split(" ")[0].strip("`*")
         by_source[key] = by_source.get(key, 0) + 1
     reasons = [k for k, _ in re.findall(REASON_RE, deck, MULTI)]
+    pausable = {
+        "pausable_twap": BULK["twap"] - BULK["twap_price_blocked"] - BULK["finishing_twap"],
+        "pausable_chase": BULK["chase"] - BULK["chase_parked"],
+        "pausable_iceberg": BULK["iceberg"] - BULK["iceberg_cooling"] - BULK["finishing_iceberg"],
+        "finishing": BULK["finishing_twap"] + BULK["finishing_iceberg"],
+    }
+    skipped = ("oco", "twap_price_blocked", "chase_parked", "iceberg_cooling")
+    pausable["skipped"] = sum(BULK[k] for k in skipped) + pausable["finishing"]
+    total = BULK["twap"] + BULK["chase"] + BULK["iceberg"] + BULK["oco"]
+    pausable["pausable"] = total - pausable["skipped"]
+    if pausable["pausable"] != sum(pausable[f"pausable_{k}"] for k in ("twap", "chase", "iceberg")):
+        bad.append("bulk fixture: the pausable counts do not add up to total - skipped")
+    if BULK["cancelled"] + BULK["failed"] != total or pausable["finishing"] + 1 != BULK["failed"]:
+        bad.append("bulk fixture: the per-item result does not add up (finishing + 1 unanswered)")
     at_bybit = dict(AT_BYBIT)
     at_bybit["btc"] = round(sum(v for k, v in AT_BYBIT.items() if k != "orders"), 2)
     handoff = HANDOFF.read_text(encoding="utf-8") if HANDOFF.exists() else ""
@@ -537,12 +576,10 @@ def main(argv: list[str]) -> int:
     }
     ms = {"cancel_timeout": facts["cancel_timeout_ms_default_22"], "confirm_gate": 400}
     numbers["ms"] = {**ms, "flash_max": 200, "sl_deadline_s": 2, "budget_scripting": 3}
-    numbers["bulk"] = {
-        **BULK,
-        "total": BULK["twap"] + BULK["chase"] + BULK["iceberg"] + BULK["oco"],
-    }
+    numbers["bulk"] = {**BULK, "total": total, **pausable}
     numbers.update({"rows": ROWS, "at_bybit": at_bybit, "fixture": FIXTURE})
     numbers.update({"b4_states": len(b4_states), "algo_state_status": len(statuses)})
+    numbers["b8_states"] = len(list(facts["b8_states"]))  # type: ignore[call-overload]
     flat = flatten(numbers)
     if "--check" in argv:
         for key, val in re.findall(r"<!-- audit:([a-z0-9_.-]+)=([^ ]+) -->", spec):
