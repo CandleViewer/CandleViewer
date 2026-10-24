@@ -15,10 +15,11 @@ import pytest
 from fastapi.responses import JSONResponse, Response
 from starlette.requests import Request
 
-from candleviewer.api.order_exits_common import exit_caller, run_claimed
+from candleviewer.api.order_exits_common import exit_caller, exit_refusals, run_claimed
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.observability.context import bind_context
+from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.errors import OmsNotReady
 from candleviewer.oms.exits import ExitOutcome, InFlightGuard
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
@@ -144,3 +145,14 @@ def test_exit_caller_takes_the_principals_scope_actor_and_request_id(owner: bool
     assert (caller.actor.user_id, caller.actor.session_id) == (USER, principal.session_id)
     assert caller.actor.role == ",".join(sorted(roles))
     assert caller.request_id == request_id
+
+
+def test_exit_refusals_is_the_catalogues_counter_one_for_every_router() -> None:
+    """Ruling Q14: one `oms_exit_refused_total{operation,code}`, which D1's and cancel-all's
+    routers both count through; a second router's call returns the same counter."""
+    metrics = Metrics("demo")
+    first, again = exit_refusals(metrics), exit_refusals(metrics)
+    assert first is again
+    first.labels("cancel", "conflict").inc()
+    labels = {"env": "demo", "operation": "cancel", "code": "conflict"}
+    assert metrics.registry.get_sample_value("oms_exit_refused_total", labels) == 1

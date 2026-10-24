@@ -250,6 +250,7 @@
 ["oms_clock_drift_blocked_total", "counter", [], "planned", "E29"]
 ["oms_clock_halt_trips_total", "counter", [], "planned", "E29"]
 ["oms_db_write_seconds", "histogram", ["table"], "planned", "E29"]
+["oms_exit_refused_total", "counter", ["operation", "code"], "planned", "E29"]
 ["oms_illegal_transitions_total", "counter", [], "planned", "E29"]
 ["oms_interim_ports", "gauge", ["port"], "planned", "E29"]
 ["oms_native_stop_backstop_total", "counter", [], "planned", "E29"]

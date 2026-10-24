@@ -7,6 +7,8 @@ orchestrator's ruling of 2026-10-24 19:43Z):
 
 - `exit_caller`: who asks, as the exit service takes it (`oms.exits.ExitCaller`): the accounts the
   principal reaches, its records' actor and the request's correlation id;
+- `exit_refusals`: `oms_exit_refused_total{operation,code}` (20 Sec.12.1, ruling Q14), the one
+  counter every exit refusal is counted in, the unaudited `501` and `oms_not_ready` included;
 - `run_claimed`: step 9's in-flight guard around step 11's run. The principal's key is claimed for
   the operation, or the guard's refusal (`409 idempotency_in_flight`, `429 rate_limited`, each
   with `Retry-After: 1`) goes to the caller's `refused`, which records it before it is answered
@@ -19,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
 from fastapi import Request
 from fastapi.responses import Response
@@ -28,9 +30,13 @@ from candleviewer.api.order_admission import submit_actor
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.auth.scopes import account_scope
 from candleviewer.observability.context import current_request_uuid
+from candleviewer.observability.metrics import BoundedMetric, Metrics
+from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms.exits import ExitCaller, ExitOperation, ExitOutcome, InFlightGuard
 
-__all__ = ["ExitRuntime", "exit_caller", "run_claimed"]
+__all__ = ["EXIT_REFUSED_METRIC", "ExitRuntime", "exit_caller", "exit_refusals", "run_claimed"]
+
+EXIT_REFUSED_METRIC: Final = "oms_exit_refused_total"
 
 
 class _Exits(Protocol):
@@ -45,6 +51,13 @@ class ExitRuntime(Protocol):
     def exits(self) -> _Exits: ...
 
     def run(self, coro: Coroutine[Any, Any, Response]) -> asyncio.Task[Response]: ...
+
+
+def exit_refusals(metrics: Metrics) -> BoundedMetric:
+    """`oms_exit_refused_total`, labelled `operation` then `code`, as the catalogue declares it:
+    every exit router takes the same counter (a repeated, identical registration returns it)."""
+    spec = next(spec for spec in CATALOGUE if spec.name == EXIT_REFUSED_METRIC)
+    return metrics.counter(spec.name, spec.help, spec.labels, max_series=spec.max_series)
 
 
 def exit_caller(principal: TradingPrincipal, request: Request) -> ExitCaller:
