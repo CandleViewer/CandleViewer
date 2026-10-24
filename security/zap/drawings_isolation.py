@@ -28,7 +28,7 @@ import json
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Final, NamedTuple
 from urllib.parse import urlencode, urlsplit
 from uuid import UUID
 
@@ -48,6 +48,9 @@ INPUT = (
     "z_index",
 )
 PROBE_LABEL = "zap cross-owner probe"
+#: Refusals the API reaches only after a row's owner check passed (22-api: the version token, the
+#: immutable `symbol` and `tool`): a probe that meets one got past it to the Owner's row.
+PAST_THE_OWNER: Final = frozenset({"version_conflict", "immutable_field"})
 #: 500 rows a page; a scan's rows past 20 pages are a flood to look at, not a list to read.
 MAX_PAGES = 20
 
@@ -135,6 +138,15 @@ def seed(
     return {"created": created}
 
 
+def _rules(answer: Any) -> set[str]:
+    """The answer's `code` and its errors' `rule`s."""
+    if not isinstance(answer, dict):
+        return set()
+    errors = answer.get("errors") if isinstance(answer.get("errors"), list) else []
+    found = [answer.get("code"), *(e.get("rule") for e in errors if isinstance(e, dict))]
+    return {str(x) for x in found if x}
+
+
 def _said(answer: Any) -> str:
     """A refusal's `code`, or for the batch's `conflict` its first error's `rule`."""
     if not isinstance(answer, dict):
@@ -186,6 +198,11 @@ def probe(
             said, name = _said(answer), f"the Manager's {p.what} of the Owner's drawing {row['id']}"
             if 200 <= status < 300:
                 problems.append(f"{name} answered HTTP {status}: a cross-owner write ({p.threat})")
+            elif past := sorted(_rules(answer) & PAST_THE_OWNER):
+                problems.append(
+                    f"{name} answered HTTP {status} {', '.join(past)}: past the owner check, a"
+                    f" cross-owner write refused only on the row's own terms ({p.threat})"
+                )
             elif (status, said) != (p.status, p.said):
                 problems.append(
                     f"{name} answered HTTP {status} {said or '(no code)'}, not {p.status} {p.said}:"
