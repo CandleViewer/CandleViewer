@@ -12,7 +12,7 @@ from candleviewer.recorder.models import SYSTEM_ACTOR
 from candleviewer.recorder.policy import PolicyConfig, RecordingPolicy, user_actor
 from candleviewer.statechart import build
 from candleviewer.statechart.factory import default_clock
-from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock
+from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, Mem
 
 OWNER = user_actor("owner-1")
 
@@ -27,17 +27,22 @@ async def _stop_cycle(p: RecordingPolicy, clock: FakeClock) -> None:
 async def test_two_policies_audit_to_their_own_sink_and_env(clock: FakeClock) -> None:
     live_audit, demo_audit = FakeAudit(), FakeAudit()
     live = RecordingPolicy(
-        disk_refuses=bool, bus=FakeBus(), audit=live_audit, env="live", now=clock
+        disk_refuses=bool, bus=FakeBus(), audit=live_audit, env="live", now=clock, recorded=Mem()
     )
     live.positions_reloaded()
     demo = RecordingPolicy(
-        disk_refuses=bool, bus=FakeBus(), audit=demo_audit, env="demo", now=clock
+        disk_refuses=bool, bus=FakeBus(), audit=demo_audit, env="demo", now=clock, recorded=Mem()
     )
     try:
         await live.on_position_opened("BTCUSDT", "p1")
         await demo.stop()  # stopping one policy must not detach the other's hook
         demo = RecordingPolicy(
-            disk_refuses=bool, bus=FakeBus(), audit=demo_audit, env="demo", now=clock
+            disk_refuses=bool,
+            bus=FakeBus(),
+            audit=demo_audit,
+            env="demo",
+            now=clock,
+            recorded=Mem(),
         )
         demo.positions_reloaded()
         await _stop_cycle(demo, clock)
@@ -78,18 +83,28 @@ async def test_add_manual_rejects_system_actor(policy: RecordingPolicy) -> None:
     assert policy.effective_set() == {}
 
 
-async def test_remove_manual_audits_the_remover(
+async def test_remove_manual_audits_the_remover(policy: RecordingPolicy, audit: FakeAudit) -> None:
+    await policy.add_manual("BTCUSDT", OWNER)
+    await policy.remove_manual("BTCUSDT", user_actor("mgr-2"))  # recorded at the call
+    stop = audit.records[-1]
+    assert stop[0] == "recorder.stop" and stop[1]["actor_label"] == "user:mgr-2"
+
+
+async def test_the_lifecycle_stop_after_a_remove_is_the_systems(
     policy: RecordingPolicy, audit: FakeAudit, clock: FakeClock
 ) -> None:
     await policy.add_manual("BTCUSDT", OWNER)
     await policy.remove_manual("BTCUSDT", user_actor("mgr-2"))
     clock.advance(1_800)
-    await policy.tick()
+    await policy.tick()  # the grace ends: B11 stops the session
     stop = audit.records[-1]
-    assert stop[0] == "recorder.stop" and stop[1]["actor_label"] == "user:mgr-2"
+    assert stop[0] == "recorder.stop" and stop[1]["actor_label"] == "system:recorder-policy"
 
 
-async def test_set_pin_is_audited_with_actor(policy: RecordingPolicy, audit: FakeAudit) -> None:
+async def test_set_pin_is_audited_with_actor(
+    policy: RecordingPolicy, audit: FakeAudit, store: Mem
+) -> None:
+    await store.upsert_manual("BTCUSDT", None, (), None, "demo")  # a pin needs a recorded row
     await policy.set_pin("BTCUSDT", True, OWNER)
     await policy.set_pin("BTCUSDT", True, OWNER)  # no-op: no second record
     assert [(a, kw["actor_label"]) for a, kw in audit.records] == [
@@ -111,7 +126,9 @@ async def test_trigger_refs_kept_per_reason(
 
 
 async def test_chart_flood_cannot_starve_position(clock: FakeClock) -> None:
-    p = RecordingPolicy(disk_refuses=bool, bus=FakeBus(), audit=FakeAudit(), env="demo", now=clock)
+    p = RecordingPolicy(
+        disk_refuses=bool, bus=FakeBus(), audit=FakeAudit(), env="demo", now=clock, recorded=Mem()
+    )
     p.positions_reloaded()
     try:
         for i in range(1_024):
@@ -127,7 +144,13 @@ async def test_chart_flood_cannot_starve_position(clock: FakeClock) -> None:
 async def test_refused_manual_add_leaves_no_residue(clock: FakeClock) -> None:
     cfg = PolicyConfig(max_symbols=1)
     p = RecordingPolicy(
-        disk_refuses=bool, bus=FakeBus(), audit=FakeAudit(), env="demo", now=clock, config=cfg
+        disk_refuses=bool,
+        bus=FakeBus(),
+        audit=FakeAudit(),
+        env="demo",
+        now=clock,
+        config=cfg,
+        recorded=Mem(),
     )
     p.positions_reloaded()
     try:

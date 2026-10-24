@@ -271,9 +271,10 @@ class SessionManager:
         if row is not None:
             rsid = str(row["id"])
         else:
-            # Auto-record rows are created here until #2188 item 4 persists them on add; the
-            # ref is constant so a re-open never grows `reason_refs` (containment check).
+            # The policy writes the row before B11 starts (#2188), so this is a fallback. Its ref
+            # is constant, so a re-open never grows `reason_refs`, and names no real trigger.
             ref = {"kind": "recorder", "id": "session"}
+            logger().warning("recorder_session_row_fallback", symbol=symbol, env=env)
             rsid = await self._call(lambda: self._store.upsert_auto(symbol, reason, ref, env))
         started = self._now_us()
         sid = await self._call(

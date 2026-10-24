@@ -11,7 +11,7 @@ from candleviewer.recorder.metrics import (
 )
 from candleviewer.recorder.models import RecorderCapRefused
 from candleviewer.recorder.policy import PolicyConfig, RecordingPolicy, user_actor
-from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock
+from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, Mem
 
 OWNER = user_actor("owner-1")
 
@@ -24,6 +24,7 @@ def _cap1(clock: FakeClock, bus: FakeBus, audit: FakeAudit) -> RecordingPolicy:
         env="demo",
         now=clock,
         config=PolicyConfig(max_symbols=1),
+        recorded=Mem(),
     )
     p.positions_reloaded()
     return p
@@ -106,7 +107,9 @@ async def test_audit_outage_recovers_via_retry(
 async def test_warmup_gate_blocks_stop_until_positions_reloaded(
     clock: FakeClock, bus: FakeBus, audit: FakeAudit
 ) -> None:
-    p = RecordingPolicy(disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock)
+    p = RecordingPolicy(
+        disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock, recorded=Mem()
+    )
     try:
         await p.on_position_opened("ETHUSDT", "p1")
         await p.on_position_closed("ETHUSDT", "p1")
@@ -131,6 +134,7 @@ async def test_preemption_waits_for_warmup_gate(
         env="demo",
         now=clock,
         config=PolicyConfig(max_symbols=1),
+        recorded=Mem(),
     )
     try:
         await p.on_chart_opened("ETHUSDT", "c1")
