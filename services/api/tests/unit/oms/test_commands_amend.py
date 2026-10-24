@@ -5,6 +5,7 @@ a held key answered in flight; no stop at or below zero is ever sent (C-2.6)."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import timedelta
@@ -22,6 +23,7 @@ from candleviewer.oms.order_machine import OrderAuditRecord
 from candleviewer.oms.ports import KeyedRecord
 from candleviewer.oms_wiring import STOP_REQUEST_BOUND_S
 from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.statechart.config import CV_COMMAND_TIMEOUT
 from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.command_rig import T0, T0_US, Rig
@@ -310,3 +312,34 @@ async def test_the_record_in_force_is_read_after_the_gate_clears() -> None:
     answer = await rig.port.amend(_amend(order, stop_loss="58500"))
     assert answer == _NO | {"error_code": oc.STOP_LOOSENING_REFUSED}
     assert rig.demo.calls == [] and len(_rows(rig)) == 1
+
+
+async def _hangs(*_args: object, **_kwargs: object) -> Any:
+    await asyncio.Event().wait()
+
+
+@pytest.mark.parametrize("hung", ["stored_row", "account", "gate", "venue"])
+async def test_one_deadline_ends_all_of_an_amend(
+    hung: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fold m3: `AMEND_TIMEOUT_S` bounds the whole amend inside B1's `CV_COMMAND_TIMEOUT`, as
+    `CANCEL_TIMEOUT_S` bounds a cancel: a call it ends raises (`unknown`, never re-sent)."""
+    rig = cr.build_rig(amend_timeout_s=0.05, port_timeout_s=60.0, submit_timeout_s=60.0)
+    order = await _live(rig)
+    target = {"stored_row": (rig.orders, "get"), "account": (rig.accounts, "trading_account")}
+    target |= {"gate": (rig.port._gate, "clear"), "venue": (rig.demo, "amend_order")}
+    monkeypatch.setattr(*target[hung], _hangs)
+    task = asyncio.ensure_future(rig.port.amend(_amend(order, stop_loss="58500")))
+    done, _ = await asyncio.wait([task], timeout=5.0)
+    if not done:
+        task.cancel()
+        await asyncio.wait([task])
+        pytest.fail("the amend outlasted its deadline")
+    with pytest.raises(TimeoutError):
+        task.result()
+
+
+def test_the_amend_bound_is_inside_b1s_and_only_ever_tightened() -> None:
+    assert oc.AMEND_TIMEOUT_S < CV_COMMAND_TIMEOUT
+    with pytest.raises(ValueError, match="tightened"):
+        cr.build_rig(amend_timeout_s=oc.AMEND_TIMEOUT_S + 1)
