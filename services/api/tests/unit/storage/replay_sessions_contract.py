@@ -325,6 +325,14 @@ class ReplaySessionRepositoryContract:
         await h.in_state(state)
         assert await self._covering(h) is None
 
+    @pytest.mark.parametrize("state", [S.FINISHED, S.ERROR])
+    async def test_live_covering_names_a_finished_or_failed_session_it_may_seek_back_into(
+        self, h: Harness, state: ReplayState
+    ) -> None:
+        row = await h.in_state(state)
+        assert await self._covering(h) == row.id
+        assert await self._covering(h, lo=T2H, hi=T2H + timedelta(hours=1)) is None
+
     async def test_live_covering_sees_every_symbol_and_stream_of_a_session(
         self, h: Harness
     ) -> None:

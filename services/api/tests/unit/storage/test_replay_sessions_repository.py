@@ -295,10 +295,12 @@ def test_only_the_idle_sweeps_and_the_retention_guard_are_unscoped() -> None:
     assert mod.UNSCOPED == {"idle_statement", "reclaim_statement", "covering_statement"}
 
 
-def test_covering_states_are_the_live_states_and_created() -> None:
-    """A `created` session has not buffered yet but will: retention must not take its data."""
-    assert COVERING_STATES == LIVE_STATES | {S.CREATED}
-    assert not COVERING_STATES & (FINISHED_STATES | TERMINAL_STATES | {S.ERROR})
+def test_covering_states_are_every_state_but_the_terminal_one() -> None:
+    """Fail toward retaining: `created` will read its window, and B12 SEEKs back out of
+    `finished` and `error`, which the quota counts and the sweep reclaims like any open row."""
+    assert COVERING_STATES == frozenset(ReplayState) - TERMINAL_STATES
+    assert {S.CREATED, S.FINISHED, S.ERROR} <= COVERING_STATES
+    assert not COVERING_STATES & TERMINAL_STATES
 
 
 def test_the_retention_guard_reads_one_bound_id_by_both_lists_window_and_lifetime() -> None:
@@ -306,8 +308,9 @@ def test_the_retention_guard_reads_one_bound_id_by_both_lists_window_and_lifetim
     sql = _sql(stmt)
     assert sql.startswith("SELECT replay_sessions.id \nFROM replay_sessions \nWHERE ")
     assert (
-        "replay_sessions.state IN ('buffering', 'created', 'paused', 'playing', 'stepping')" in sql
-    )
+        "replay_sessions.state IN "
+        "('buffering', 'created', 'error', 'finished', 'paused', 'playing', 'stepping')"
+    ) in sql
     assert "= ANY (replay_sessions.symbols)" in sql and "= ANY (replay_sessions.streams)" in sql
     assert "replay_sessions.range_start < " in sql and "replay_sessions.range_end > " in sql
     assert "replay_sessions.created_at > " in sql

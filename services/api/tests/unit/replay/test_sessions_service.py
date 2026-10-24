@@ -42,6 +42,7 @@ from candleviewer.statechart import build as build_chart
 from candleviewer.statechart.gateway import Gateway, GatewayError
 from candleviewer.statechart.registry import Registry
 from candleviewer.storage.repositories.replay_sessions import (
+    ALL_REPLAY_STREAMS,
     ReplaySessionCreate,
     ReplaySessionIllegalUpdateError,
     ReplaySessionNotFoundError,
@@ -226,6 +227,17 @@ async def test_create_writes_the_created_audit_record() -> None:
     env = make_env()
     await env.s.create(USER_A, request())
     assert env.audit.actions() == ["replay.session.created"]
+
+
+async def test_create_audits_the_stored_symbols_and_streams_by_name() -> None:
+    env = make_env()
+    await env.s.create(USER_A, request(symbols=("BTCUSDT", "ETHUSDT"), streams=("klines",)))
+    await env.s.create(USER_A, request())  # no lists: the stored ones are audited
+    (_, first), (_, second) = env.audit.rows
+    after = first["after_state"]
+    assert (after["symbols"], after["streams"]) == (["BTCUSDT", "ETHUSDT"], ["klines"])
+    assert second["after_state"]["symbols"] == ["BTCUSDT"]
+    assert second["after_state"]["streams"] == list(ALL_REPLAY_STREAMS)
 
 
 async def test_create_seeds_the_recorder_gap_into_the_chart() -> None:
