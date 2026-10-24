@@ -6,9 +6,9 @@ DSN or host address belongs in this file.
 ## What is set, and why
 
 The `postgres` service in `infra/compose/docker-compose.yml` starts with two server settings. The
-deploys start that file with `docker-compose.dev.yml` (`tools/ci/deploy_dev.py`,
-`DEFAULT_COMPOSE_FILES`). Neither that override nor `docker-compose.vps.yml` replaces the command;
-`services/api/tests/unit/storage/test_postgres_server_log.py` pins both facts.
+deploys start that file with `docker-compose.deploy.yml` (`tools/ci/deploy_dev.py`,
+`DEFAULT_COMPOSE_FILES`). No override in `infra/compose/` replaces the command;
+`services/api/tests/unit/storage/test_postgres_server_log.py` pins that for each of them.
 
 - **`log_error_verbosity = terse`: the control.** An error's line in the server log keeps its
   message and drops its `DETAIL`, `HINT`, `QUERY` and `CONTEXT`. For an integrity error the
@@ -65,10 +65,11 @@ short. The check below counts the setting, so one left behind is a finding.
 
 ## Check it
 
-On the host, from the repo root, with the deploy's files:
+On the host, from the repo root, with the deploy's files (its `infra/compose/.env` supplies the
+`api` image variables the overlay reads):
 
 ```bash
-docker compose -f infra/compose/docker-compose.yml -f infra/compose/docker-compose.dev.yml \
+docker compose -f infra/compose/docker-compose.yml -f infra/compose/docker-compose.deploy.yml \
   --profile core exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At' <<'SQL'
 SELECT name, setting, source FROM pg_settings
  WHERE name IN ('log_error_verbosity', 'log_parameter_max_length_on_error');
@@ -90,12 +91,12 @@ The command takes effect when the container is recreated. The next deploy's
 earlier, in a quiet moment:
 
 ```bash
-docker compose -f infra/compose/docker-compose.yml -f infra/compose/docker-compose.dev.yml \
+docker compose -f infra/compose/docker-compose.yml -f infra/compose/docker-compose.deploy.yml \
   --profile core up -d postgres
 ```
 
 Postgres restarts. The API's pool reconnects; requests in flight at that moment fail once. If the
-stack was started with `docker-compose.vps.yml`, use it in place of the dev file in both commands.
+stack was started with other files, such as `docker-compose.vps.yml`, use those in both commands.
 
 ## Who can change it
 

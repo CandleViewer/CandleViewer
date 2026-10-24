@@ -9,28 +9,29 @@ Flow (ticket "Scope / Deliverables" + acceptance scenarios):
   1. `cosign verify` the image digest *before* touching any container
      (CI-DEP-001 on failure — deployment aborts, ledger records the
      failure, nothing is replaced).
-  2. Render `infra/compose/.env` with `CV_IMAGE_DIGEST`/`CV_GIT_SHA` set to
-     the just-verified build and run
-     `docker compose ... up -d --wait` (waits on the `api` service's own
-     healthcheck, which is only `/healthz`; the stronger sha-match check
-     happens in step 3).
+  2. Render `infra/compose/.env` with `CV_API_IMAGE_REF`/`CV_IMAGE_DIGEST`/
+     `CV_GIT_SHA` set to the just-verified build and run
+     `docker compose ... up -d --wait --no-build` over the base file and the
+     deploy overlay `infra/compose/docker-compose.deploy.yml`: the `api`
+     service runs the verified `<ref>@<digest>`, which compose also gets in
+     its own environment (`--wait` waits on the `api` healthcheck, which is
+     only `/healthz`; step 3 checks the image).
   3. Smoke test: poll `GET /healthz` and `GET /readyz` until both report
-     `status: ok`, then read `CV_GIT_SHA` from the running `api` container
-     (`docker compose ps -q api`, then `docker inspect` with a template that
-     prints only that variable, so no other variable of the container's
-     environment reaches this process) and assert it equals the sha we just
-     deployed, so the container was recreated from this deploy's `.env`
-     (CI-DEP-003 on mismatch, CI-DEP-002 if the container cannot be read).
+     `status: ok`, then check that the running `api` container's image id
+     equals the verified image's id (`check_running_image`; CI-DEP-003
+     naming both ids if they differ, CI-DEP-002 if either cannot be read).
   4. Append a `deployments/ledger.jsonl` record (success or failure).
   5. Dev-only: on smoke failure, automatically redeploy the previous digest
-     (recorded in the ledger) and record that as its own entry — staging
-     never auto-rolls-back (ticket "Technical notes").
+     (recorded in the ledger) through steps 1-3 with the same compose files,
+     and record that as its own entry — staging never auto-rolls-back
+     (ticket "Technical notes"); a staging rollback is a deploy of the
+     previous digest.
 
 Stdlib + `urllib.request` only; no third-party HTTP client needed for a
 handful of polling GETs from a CI/runner context.
 
 Error codes: CI-DEP-001 signature verification failed, CI-DEP-002 smoke
-failed, CI-DEP-003 sha mismatch after deploy, CI-DEP-004 migration lock
+failed, CI-DEP-003 image mismatch after deploy, CI-DEP-004 migration lock
 timeout (surfaced by the migration job itself; this script only waits on
 the compose healthcheck, which stays unhealthy while the boot-time
 migration/advisory-lock step is in progress).
@@ -40,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -53,7 +55,7 @@ from typing import Literal
 DEFAULT_LEDGER = Path("deployments/ledger.jsonl")
 DEFAULT_COMPOSE_FILES = (
     "infra/compose/docker-compose.yml",
-    "infra/compose/docker-compose.dev.yml",
+    "infra/compose/docker-compose.deploy.yml",
 )
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 
@@ -191,13 +193,14 @@ def render_env_file(
     env_example_path: Path,
     env_out_path: Path,
     *,
+    image_ref: str,
     image_digest: str,
     git_sha: str,
 ) -> None:
-    """Render `.env` from `.env.example` plus the digest/sha for this deploy.
+    """Render `.env` from `.env.example` plus the image and sha for this deploy.
 
     Never invents new secret-like values (SR-140/SR-144): every CV_* value
-    besides the two build-metadata overrides below comes verbatim from the
+    besides the build-metadata values below comes verbatim from the
     committed `.env.example` (demo/fixture defaults only, per that file's
     own header) so a rendered dev deploy never introduces a value CI itself
     fabricated.
@@ -217,6 +220,7 @@ def render_env_file(
             continue
         rendered.append(line)
         seen.add(key)
+    rendered.append(f"CV_API_IMAGE_REF={image_ref}")
     rendered.append(f"CV_IMAGE_DIGEST={image_digest}")
     env_out_path.write_text("\n".join(rendered) + "\n", encoding="utf-8")
 
@@ -229,9 +233,15 @@ def _compose_args(compose_files: tuple[str, ...], profile: str) -> list[str]:
     return [*args, "--profile", profile]
 
 
-def compose_up(compose_files: tuple[str, ...], *, profile: str = "core") -> None:
-    args = [*_compose_args(compose_files, profile), "up", "-d", "--wait"]
-    result = subprocess.run(args, capture_output=True, text=True, check=False)
+def compose_up(
+    compose_files: tuple[str, ...], *, image_ref: str, digest: str, profile: str = "core"
+) -> None:
+    """`up -d --wait --no-build`, so nothing is built, with the verified ref and digest set in
+    compose's own environment: they win over `.env` and the runner's environment when compose
+    interpolates the deploy overlay's `image:`. CI-DEP-002 if `up` fails."""
+    args = [*_compose_args(compose_files, profile), "up", "-d", "--wait", "--no-build"]
+    env = {**os.environ, "CV_API_IMAGE_REF": image_ref, "CV_IMAGE_DIGEST": digest}
+    result = subprocess.run(args, capture_output=True, text=True, check=False, env=env)
     if result.returncode != 0:
         raise DeployError(
             "CI-DEP-002",
@@ -244,13 +254,10 @@ def _get_json(url: str, timeout_s: float = 3.0) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-# Docker filters inside its own template, so of the container's environment only `CV_GIT_SHA`
-# is printed: no other variable (the stack's credentials, C-12.2, C-12.6) reaches this process.
-_INSPECT_SHA_TEMPLATE = (
-    '{{range .Config.Env}}{{if eq (index (split . "=") 0) "CV_GIT_SHA"}}{{.}}{{end}}{{end}}'
-)
-_SHA_ENTRY_PREFIX = "CV_GIT_SHA="
+# Each query prints one field (`{{.Image}}`, `{{.Id}}`), checked before use: no other part of the
+# container's configuration (its environment holds credentials, C-12.2, C-12.6) is ever read.
 _CONTAINER_ID_RE = re.compile(r"[0-9a-f]{12,64}")
+_IMAGE_ID_RE = re.compile(r"sha256:[0-9a-f]{64}")
 _DOCKER_QUERY_TIMEOUT_S = 20.0
 
 
@@ -270,12 +277,25 @@ def _docker_query(args: list[str], what: str) -> str:
     return result.stdout
 
 
-def read_container_sha(compose_files: tuple[str, ...], *, profile: str = "core") -> str:
-    """`CV_GIT_SHA` of the one running `api` container, else CI-DEP-002 (fail closed).
+def _one_image_id(answer: str, what: str) -> str:
+    """The one `sha256:<64 hex>` line `what` printed, else CI-DEP-002 (never repeating it)."""
+    lines = [line for line in answer.splitlines() if line.strip()]
+    if len(lines) != 1 or not _IMAGE_ID_RE.fullmatch(lines[0]):
+        raise DeployError(
+            "CI-DEP-002", f"{what} did not print exactly one image id ({len(lines)} line(s))"
+        )
+    return lines[0]
 
-    Anything but one container and one `CV_GIT_SHA=` entry is refused, and no message repeats
-    what docker printed.
-    """
+
+def image_id_of(image: str) -> str:
+    """The docker daemon's image id for `image`; `docker image inspect` reads images only."""
+    what = f"docker image inspect {image}"
+    answer = _docker_query(["docker", "image", "inspect", "--format", "{{.Id}}", image], what)
+    return _one_image_id(answer, what)
+
+
+def running_image_id(compose_files: tuple[str, ...], *, profile: str = "core") -> str:
+    """The image id of the one running `api` container, else CI-DEP-002 (fail closed)."""
     ids = _docker_query(
         [*_compose_args(compose_files, profile), "ps", "-q", "api"], "docker compose ps -q api"
     ).split()
@@ -285,38 +305,51 @@ def read_container_sha(compose_files: tuple[str, ...], *, profile: str = "core")
             f"no single running api container: docker compose ps -q api printed {len(ids)} "
             "value(s), not exactly one container id",
         )
+    what = "docker inspect --type container"
     answer = _docker_query(
-        ["docker", "inspect", "--type", "container", "--format", _INSPECT_SHA_TEMPLATE, ids[0]],
-        "docker inspect",
+        ["docker", "inspect", "--type", "container", "--format", "{{.Image}}", ids[0]], what
     )
-    lines = [line for line in answer.splitlines() if line.strip()]
-    if len(lines) != 1 or not lines[0].startswith(_SHA_ENTRY_PREFIX):
+    return _one_image_id(answer, what)
+
+
+def check_running_image(
+    compose_files: tuple[str, ...], image: str, *, profile: str = "core"
+) -> str:
+    """Check that the running `api` container runs `image`, and return its image id.
+
+    Both ids are the docker daemon's (the image config digest on the classic image store, the
+    manifest or index digest on the containerd image store), so they are compared with each
+    other, never with the registry digest. CI-DEP-003 names both when they differ.
+    """
+    running = running_image_id(compose_files, profile=profile)
+    expected = image_id_of(image)
+    if running != expected:
         raise DeployError(
-            "CI-DEP-002",
-            f"docker inspect did not print exactly one CV_GIT_SHA entry ({len(lines)} line(s))",
+            "CI-DEP-003",
+            f"image mismatch after deploy: the running api container's image id is {running}, "
+            f"the image id of {image} is {expected}",
         )
-    return lines[0].removeprefix(_SHA_ENTRY_PREFIX)
+    print(f"smoke: the api container runs {image} (image id {running})")
+    return running
 
 
 def smoke_test(
     base_url: str,
-    expected_sha: str,
+    image: str,
     compose_files: tuple[str, ...],
     *,
     timeout_s: float = 60.0,
 ) -> None:
     """Poll `/healthz` + `/readyz` until both are ok, then check the running `api` container.
 
-    Its `CV_GIT_SHA` (`read_container_sha`, never a probe body) must equal `expected_sha`: the
-    container was then recreated from this deploy's `.env`. The poll repeats until `timeout_s`;
-    CI-DEP-003 (naming both values) if the sha still differs, CI-DEP-002 if the probes never
-    turn green or the container cannot be found or read (never a pass).
+    `check_running_image` must find that it runs `image`, the verified `<ref>@<digest>`. A
+    mismatch raises CI-DEP-003 at once: a container's image changes only when it is recreated,
+    and `up --wait` has finished. Probes that are not ok and ids that cannot be read (each docker
+    query is bounded at 20 s) are retried every 2 s until `timeout_s`, then CI-DEP-002.
     """
     deadline = time.monotonic() + timeout_s
     last_error: str = "no attempt made"  # only ever reported when the loop never ran
-    seen_sha: str | None = None
     while time.monotonic() < deadline:
-        seen_sha = None
         try:
             live = _get_json(f"{base_url}/healthz")
             ready = _get_json(f"{base_url}/readyz")
@@ -329,20 +362,14 @@ def smoke_test(
             time.sleep(2.0)
             continue
         try:
-            seen_sha = read_container_sha(compose_files)
+            check_running_image(compose_files, image)
         except DeployError as exc:
-            last_error = str(exc)
+            if exc.code == "CI-DEP-003":
+                raise
+            last_error = str(exc).removeprefix(f"{exc.code}: ")
             time.sleep(2.0)
             continue
-        if seen_sha == expected_sha:
-            return
-        time.sleep(2.0)
-    if seen_sha is not None:
-        raise DeployError(
-            "CI-DEP-003",
-            f"sha mismatch after deploy: expected {expected_sha!r}, the running api "
-            f"container's CV_GIT_SHA is {seen_sha[:80]!r}",
-        )
+        return
     raise DeployError("CI-DEP-002", f"smoke test timed out after {timeout_s}s: {last_error}")
 
 
@@ -393,11 +420,12 @@ def deploy(
         print(str(exc), file=sys.stderr)
         return 1
 
-    render_env_file(env_example, env_out, image_digest=digest, git_sha=sha)
+    image = f"{image_ref}@{digest}"
+    render_env_file(env_example, env_out, image_ref=image_ref, image_digest=digest, git_sha=sha)
 
     try:
-        compose_up(compose_files)
-        smoke_test(base_url, sha, compose_files, timeout_s=smoke_timeout_s)
+        compose_up(compose_files, image_ref=image_ref, digest=digest)
+        smoke_test(base_url, image, compose_files, timeout_s=smoke_timeout_s)
     except DeployError as exc:
         outcome: Literal["smoke-failed", "sha-mismatch"] = (
             "sha-mismatch" if exc.code == "CI-DEP-003" else "smoke-failed"
@@ -465,7 +493,9 @@ def _auto_rollback(
 
     Looks up the previous `success` entry *excluding* the failed attempt we
     just wrote (which itself is not a success), so this never loops back to
-    the digest that just failed.
+    the digest that just failed. The previous digest then goes through what a
+    forward deploy does: `cosign verify`, `compose_up` with the same compose
+    files and the full smoke test, image-id check included.
     """
     previous_digest = read_last_success_digest(environment, ledger_path)
     if previous_digest is None or previous_digest == failed_digest:
@@ -475,30 +505,20 @@ def _auto_rollback(
             file=sys.stderr,
         )
         return
-    # We do not have the previous sha on hand here (only the digest is
-    # ledgered); the smoke test for a rollback verifies readiness only,
-    # not a specific sha, since the ledger is the sha<->digest source of
-    # truth for whichever entry produced `previous_digest`.
     start = time.monotonic()
     try:
         verify_signature(image_ref, previous_digest, repository=repository, environment=environment)
-        render_env_file(env_example, env_out, image_digest=previous_digest, git_sha="rollback")
-        compose_up(compose_files)
-        # Readiness-only wait; sha is not re-asserted because the rollback
-        # target's sha is not carried forward from the failed attempt.
-        deadline = time.monotonic() + smoke_timeout_s
-        healthy = False
-        while time.monotonic() < deadline:
-            try:
-                ready = _get_json(f"{base_url}/readyz")
-                if ready.get("status") == "ok":
-                    healthy = True
-                    break
-            except (urllib.error.URLError, TimeoutError, OSError):
-                pass
-            time.sleep(2.0)
-        if not healthy:
-            raise DeployError("CI-DEP-002", "rollback smoke test did not become ready")
+        render_env_file(
+            env_example,
+            env_out,
+            image_ref=image_ref,
+            image_digest=previous_digest,
+            git_sha="rollback",
+        )
+        compose_up(compose_files, image_ref=image_ref, digest=previous_digest)
+        smoke_test(
+            base_url, f"{image_ref}@{previous_digest}", compose_files, timeout_s=smoke_timeout_s
+        )
     except DeployError as exc:
         append_ledger(
             LedgerEntry(

@@ -2,8 +2,8 @@
 
 The base compose file starts Postgres with `log_error_verbosity=terse`, which drops an error's
 DETAIL, HINT, QUERY and CONTEXT (`Failing row contains (...)`, `Key (col)=(val)`), and pins
-`log_parameter_max_length_on_error=0`. The deploys start it with the dev override
-(`tools/ci/deploy_dev.py`), and the VPS override exists too: no override may replace the
+`log_parameter_max_length_on_error=0`. The deploys start it with the deploy overlay
+(`tools/ci/deploy_dev.py`), and the dev and VPS overrides exist too: no override may replace the
 command or the entrypoint. Pure unit test: it reads the committed files; no docker.
 """
 

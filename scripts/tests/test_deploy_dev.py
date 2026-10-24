@@ -10,11 +10,15 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "infra" / "scripts"))
 
+import lint_compose
 from tools.ci import deploy_dev as dd
 
 
@@ -27,27 +31,36 @@ def env_example(tmp_path: Path) -> Path:
     return p
 
 
+REPO = Path(__file__).resolve().parents[2]
+OVERLAY = REPO / "infra" / "compose" / "docker-compose.deploy.yml"
 CONTAINER_ID = "c0ffee000000"  # 12 hex digits, as `docker compose ps -q` prints one
 COMPOSE = ("infra/compose/docker-compose.yml",)
 DECOY = "decoy-decoy-decoy"  # a credential in the container's environment
+REF, DIGEST = "ghcr.io/o/img", "sha256:" + "a" * 64
+IMAGE = f"{REF}@{DIGEST}"  # the verified image
+IMAGE_ID, OTHER_ID = "sha256:" + "d" * 64, "sha256:" + "e" * 64  # its daemon id, another's
+DIGEST_A, DIGEST_B = "sha256:" + "1" * 64, "sha256:" + "2" * 64
+IDS = {DIGEST_A: "sha256:" + "3" * 64, DIGEST_B: "sha256:" + "4" * 64}  # daemon ids
 
 
 def fake_docker(
     monkeypatch: pytest.MonkeyPatch,
     ps: tuple[int, str] = (0, CONTAINER_ID + "\n"),
-    inspect: tuple[int, str] | list[tuple[int, str]] = (0, "CV_GIT_SHA=abc1234\n"),
+    inspect: tuple[int, str] = (0, IMAGE_ID + "\n"),
+    image: tuple[int, str] = (0, IMAGE_ID + "\n"),
 ) -> SimpleNamespace:
-    """Fake `subprocess.run`: cosign and `compose up` succeed, the smoke test's two
-    queries answer (rc, stdout); a list of `inspect` answers is used one per call.
+    """Fake `subprocess.run`: cosign and `compose up` succeed, the smoke test's three
+    queries answer (rc, stdout): `compose ps`, the container's `inspect`, `image inspect`.
     `.calls` logs each argv, `.kwargs` its keywords."""
     log = SimpleNamespace(calls=[], kwargs=[])
-    answers = list(inspect) if isinstance(inspect, list) else [inspect]
 
     def run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
         log.calls.append(cmd)
         log.kwargs.append(kwargs)
-        if cmd[:2] == ["docker", "inspect"]:
-            rc, out = answers.pop(0) if len(answers) > 1 else answers[0]
+        if cmd[:3] == ["docker", "image", "inspect"]:
+            rc, out = image
+        elif cmd[:2] == ["docker", "inspect"]:
+            rc, out = inspect
         else:
             rc, out = ps if "ps" in cmd else (0, "")
         return SimpleNamespace(returncode=rc, stdout=out, stderr="")
@@ -56,27 +69,83 @@ def fake_docker(
     return log
 
 
-def probes(monkeypatch: pytest.MonkeyPatch, **healthz: object) -> list[str]:
-    """Both probes say ok (`healthz` adds keys to its body); returns the urls polled."""
+def stateful_docker(
+    monkeypatch: pytest.MonkeyPatch, pinned: list[str] | None = None
+) -> SimpleNamespace:
+    """`compose up` runs the digest in its environment or, for the first ups, the next one in
+    `pinned` (a later file pinning that image); ids come from `IDS`. `.ups` logs up's digests."""
+    log = SimpleNamespace(calls=[], ups=[], running="")
+    queue = list(pinned or [])
+
+    def run(cmd: list[str], **kwargs: Any) -> SimpleNamespace:
+        log.calls.append(cmd)
+        out = CONTAINER_ID + "\n" if "ps" in cmd else ""
+        if "up" in cmd:
+            log.ups.append(kwargs["env"]["CV_IMAGE_DIGEST"])
+            log.running = queue.pop(0) if queue else log.ups[-1]
+        elif cmd[:3] == ["docker", "image", "inspect"]:
+            out = IDS[cmd[-1].split("@")[1]] + "\n"
+        elif cmd[:2] == ["docker", "inspect"]:
+            out = IDS[log.running] + "\n"
+        return SimpleNamespace(returncode=0, stdout=out, stderr="")
+
+    monkeypatch.setattr(dd.subprocess, "run", run)
+    return log
+
+
+def run_deploy(tmp_path: Path, env_example: Path, ledger: Path, **overrides: Any) -> int:
+    """`dd.deploy` with this module's defaults; `overrides` replace them."""
+    kwargs: dict[str, Any] = dict(
+        image_ref=REF, digest=DIGEST, sha="abc1234", environment="dev", actor="ci",
+        repository="o/r", env_example=env_example, env_out=tmp_path / ".env",
+        compose_files=COMPOSE, base_url="http://x", ledger_path=ledger, smoke_timeout_s=5.0,
+        auto_rollback=False,
+    )
+    return dd.deploy(**{**kwargs, **overrides})
+
+
+def probes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Both probes say ok; returns the urls polled."""
     urls: list[str] = []
 
     def fake_get_json(url: str, timeout_s: float = 3.0) -> dict:
         urls.append(url)
-        return {"status": "ok", **healthz} if "healthz" in url else {"status": "ok"}
+        return {"status": "ok"}
 
     monkeypatch.setattr(dd, "_get_json", fake_get_json)
     return urls
 
 
-def test_render_env_file_sets_digest_and_sha(tmp_path: Path, env_example: Path) -> None:
+def test_render_env_file_sets_the_image_and_the_sha(tmp_path: Path, env_example: Path) -> None:
     out = tmp_path / ".env"
-    dd.render_env_file(
-        env_example, out, image_digest="sha256:" + "a" * 64, git_sha="abc1234"
-    )
+    dd.render_env_file(env_example, out, image_ref=REF, image_digest=DIGEST, git_sha="abc1234")
     text = out.read_text(encoding="utf-8")
     assert "CV_GIT_SHA=abc1234" in text
-    assert "CV_IMAGE_DIGEST=sha256:" + "a" * 64 in text
+    assert f"CV_API_IMAGE_REF={REF}\n" in text
+    assert f"CV_IMAGE_DIGEST={DIGEST}\n" in text
     assert "CV_FEED=synthetic" in text
+
+
+def test_default_compose_files_are_the_base_and_the_deploy_overlay() -> None:
+    assert dd.DEFAULT_COMPOSE_FILES == (
+        "infra/compose/docker-compose.yml",
+        "infra/compose/docker-compose.deploy.yml",
+    )
+    assert all((REPO / name).is_file() for name in dd.DEFAULT_COMPOSE_FILES)
+
+
+def test_compose_up_never_builds_and_pins_the_verified_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CV_IMAGE_DIGEST", "stale")  # never wins compose's interpolation
+    monkeypatch.setenv("DOCKER_HOST", "unix:///run/docker.sock")
+    docker = fake_docker(monkeypatch)
+    dd.compose_up(COMPOSE, image_ref=REF, digest=DIGEST)
+    (up,) = docker.calls
+    assert up[-4:] == ["up", "-d", "--wait", "--no-build"]
+    env = docker.kwargs[0]["env"]
+    assert (env["CV_API_IMAGE_REF"], env["CV_IMAGE_DIGEST"]) == (REF, DIGEST)
+    assert env["DOCKER_HOST"] == "unix:///run/docker.sock"  # the rest of the environment
 
 
 def test_verify_signature_raises_ci_dep_001_on_failure(
@@ -172,29 +241,33 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(dd.time, "sleep", sleep)
 
 
-def test_smoke_test_passes_when_the_container_has_the_deployed_sha(
-    monkeypatch: pytest.MonkeyPatch,
+def test_smoke_test_passes_when_the_api_runs_the_verified_image(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     urls = probes(monkeypatch)
-    docker = fake_docker(monkeypatch)
-    dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
+    fake_docker(monkeypatch)
+    dd.smoke_test("http://x", IMAGE, COMPOSE, timeout_s=5.0)
     assert urls == ["http://x/healthz", "http://x/readyz"]
-    ps, inspect = docker.calls
+    out = capsys.readouterr().out
+    assert out == f"smoke: the api container runs {IMAGE} (image id {IMAGE_ID})\n"
+
+
+def test_the_image_id_queries_are_fixed_and_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The running container's image id and the verified image's id, each queried by its
+    object type with a fixed argv."""
+    probes(monkeypatch)
+    docker = fake_docker(monkeypatch)
+    dd.smoke_test("http://x", IMAGE, COMPOSE, timeout_s=5.0)
+    ps, inspect, image = docker.calls
     assert " ".join(ps) == (
         "docker compose -f infra/compose/docker-compose.yml --profile core ps -q api"
     )
-    assert inspect[:5] == ["docker", "inspect", "--type", "container", "--format"]
-    assert inspect[5:] == [dd._INSPECT_SHA_TEMPLATE, CONTAINER_ID]
+    assert inspect[:6] == ["docker", "inspect", "--type", "container", "--format", "{{.Image}}"]
+    assert inspect[6:] == [CONTAINER_ID]
+    assert image == ["docker", "image", "inspect", "--format", "{{.Id}}", IMAGE]
     # The module's subprocess style: captured output, no `check`, and a bound.
     assert all(k["capture_output"] and k["check"] is False for k in docker.kwargs)
     assert all(k["timeout"] for k in docker.kwargs)
-
-
-def test_inspect_template_prints_only_the_sha_entry() -> None:
-    assert dd._INSPECT_SHA_TEMPLATE == (
-        '{{range .Config.Env}}{{if eq (index (split . "=") 0) "CV_GIT_SHA"}}'
-        "{{.}}{{end}}{{end}}"
-    )
 
 
 def test_smoke_test_passes_with_a_healthz_body_without_git_sha(
@@ -204,28 +277,22 @@ def test_smoke_test_passes_with_a_healthz_body_without_git_sha(
     body = {"status": "ok", "version": "0.1.0"}
     monkeypatch.setattr(dd, "_get_json", lambda *a, **k: body)
     fake_docker(monkeypatch)
-    dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
+    dd.smoke_test("http://x", IMAGE, COMPOSE, timeout_s=5.0)
 
 
-def test_smoke_test_sha_mismatch_raises_ci_dep_003(
+def test_smoke_test_image_mismatch_raises_ci_dep_003_naming_both_ids(
     monkeypatch: pytest.MonkeyPatch, clock: None
 ) -> None:
-    probes(monkeypatch, git_sha="new-sha")  # /healthz claims the deployed sha, the
-    fake_docker(monkeypatch, inspect=(0, "CV_GIT_SHA=old-sha\n"))  # container does not
+    """At once: a container's image changes only when it is recreated, and `up --wait` is done."""
+    urls = probes(monkeypatch)
+    fake_docker(monkeypatch, inspect=(0, OTHER_ID + "\n"))
     with pytest.raises(dd.DeployError) as exc:
-        dd.smoke_test("http://x", "new-sha", COMPOSE, timeout_s=5.0)
-    assert exc.value.code == "CI-DEP-003"
-    assert "new-sha" in str(exc.value) and "old-sha" in str(exc.value)
-
-
-def test_smoke_test_retries_until_the_container_has_the_deployed_sha(
-    monkeypatch: pytest.MonkeyPatch, clock: None
-) -> None:
-    probes(monkeypatch)
-    answers = [(0, "CV_GIT_SHA=old-sha\n"), (0, "CV_GIT_SHA=abc1234\n")]
-    docker = fake_docker(monkeypatch, inspect=answers)
-    dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
-    assert sum(c[:2] == ["docker", "inspect"] for c in docker.calls) == 2
+        dd.smoke_test("http://x", IMAGE, COMPOSE, timeout_s=5.0)
+    assert str(exc.value) == (
+        "CI-DEP-003: image mismatch after deploy: the running api container's image id is "
+        f"{OTHER_ID}, the image id of {IMAGE} is {IMAGE_ID}"
+    )
+    assert urls == ["http://x/healthz", "http://x/readyz"]  # one poll, no retry
 
 
 def test_smoke_test_with_no_api_container_fails_closed(
@@ -234,24 +301,26 @@ def test_smoke_test_with_no_api_container_fails_closed(
     probes(monkeypatch)
     docker = fake_docker(monkeypatch, ps=(0, ""))
     with pytest.raises(dd.DeployError) as exc:
-        dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
+        dd.smoke_test("http://x", IMAGE, COMPOSE, timeout_s=5.0)
     assert exc.value.code == "CI-DEP-002"
     assert "printed 0 value(s)" in str(exc.value)
     assert "no attempt made" not in str(exc.value)  # the loop ran
-    assert not any(c[:2] == ["docker", "inspect"] for c in docker.calls)
+    assert str(exc.value).count("CI-DEP-002") == 1
+    retries = [c[-3:] for c in docker.calls]  # every 2 s until the 5 s deadline
+    assert retries == [["ps", "-q", "api"]] * 3
 
 
-@pytest.mark.parametrize("query", ["ps", "inspect"])
+@pytest.mark.parametrize("query", ["ps", "inspect", "image"])
 def test_smoke_test_failed_docker_query_fails_closed(
     monkeypatch: pytest.MonkeyPatch, clock: None, query: str
 ) -> None:
     """The exit status decides, not stdout: a query that exits 1 yet prints a
     plausible answer must not be believed."""
     probes(monkeypatch)
-    plausible = {"ps": (1, CONTAINER_ID + "\n"), "inspect": (1, "CV_GIT_SHA=abc1234\n")}
-    fake_docker(monkeypatch, **{query: plausible[query]})
+    plausible = {"ps": CONTAINER_ID + "\n", "inspect": IMAGE_ID + "\n", "image": IMAGE_ID + "\n"}
+    fake_docker(monkeypatch, **{query: (1, plausible[query])})
     with pytest.raises(dd.DeployError) as exc:
-        dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
+        dd.smoke_test("http://x", IMAGE, COMPOSE, timeout_s=5.0)
     assert exc.value.code == "CI-DEP-002"
     assert "failed (exit 1)" in str(exc.value)
     assert "no attempt made" not in str(exc.value)
@@ -276,50 +345,54 @@ def test_smoke_test_docker_that_cannot_run_fails_closed(
 
     monkeypatch.setattr(dd.subprocess, "run", boom)
     with pytest.raises(dd.DeployError) as exc:
-        dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
+        dd.smoke_test("http://x", IMAGE, COMPOSE, timeout_s=5.0)
     assert exc.value.code == "CI-DEP-002"
     assert "did not complete" in str(exc.value)
 
 
 LEAK = f"POSTGRES_PASSWORD={DECOY}"
-OK_ID, OK_SHA = (0, CONTAINER_ID + "\n"), (0, "CV_GIT_SHA=abc1234\n")
 
 
 @pytest.mark.parametrize(
-    ("ps", "inspect"),
+    "answer",
     [
-        (OK_ID, (0, LEAK + "\n")),  # another variable, not the sha
-        (OK_ID, (0, LEAK + "\nCV_GIT_SHA=abc1234\n")),  # docker did not filter
-        (OK_ID, (0, "CV_GIT_SHA=abc1234\n" + LEAK + "\n")),
-        ((0, LEAK + "\n"), OK_SHA),  # a variable where a container id belongs
-        ((0, CONTAINER_ID + " " + LEAK + "\n"), OK_SHA),
+        {"inspect": (0, LEAK + "\n")},  # a variable, not an image id
+        {"inspect": (0, LEAK + "\n" + IMAGE_ID + "\n")},  # more than the one id
+        {"inspect": (0, IMAGE_ID + "\n" + LEAK + "\n")},
+        {"image": (0, LEAK + "\n")},
+        {"image": (0, f"{IMAGE_ID} {LEAK}\n")},
+        {"ps": (0, LEAK + "\n")},  # a variable where a container id belongs
+        {"ps": (0, CONTAINER_ID + " " + LEAK + "\n")},
     ],
 )
 def test_smoke_test_never_echoes_what_docker_printed(
     monkeypatch: pytest.MonkeyPatch,
     clock: None,
     capsys: pytest.CaptureFixture[str],
-    ps: tuple[int, str],
-    inspect: tuple[int, str],
+    answer: dict[str, tuple[int, str]],
 ) -> None:
-    """Anything docker prints beyond the one CV_GIT_SHA entry is refused, and no
+    """Anything docker prints beyond one container id or one image id is refused, and no
     message, repr or output repeats it (C-12.2, C-12.6)."""
     probes(monkeypatch)
-    fake_docker(monkeypatch, ps=ps, inspect=inspect)
+    fake_docker(monkeypatch, **answer)
     with pytest.raises(dd.DeployError) as exc:
-        dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
+        dd.smoke_test("http://x", IMAGE, COMPOSE, timeout_s=5.0)
     assert exc.value.code == "CI-DEP-002"
     out, err = capsys.readouterr()
     assert DECOY not in f"{exc.value} {exc.value!r} {out} {err}"
 
 
+@pytest.mark.parametrize("starting", ["healthz", "readyz"])
 def test_smoke_test_never_ready_raises_ci_dep_002(
-    monkeypatch: pytest.MonkeyPatch, clock: None
+    monkeypatch: pytest.MonkeyPatch, clock: None, starting: str
 ) -> None:
-    monkeypatch.setattr(dd, "_get_json", lambda *a, **k: {"status": "starting"})
+    """Both probes must say ok: either one still starting fails the smoke test."""
+    monkeypatch.setattr(
+        dd, "_get_json", lambda url, *a, **k: {"status": "starting" if starting in url else "ok"}
+    )
     docker = fake_docker(monkeypatch)
     with pytest.raises(dd.DeployError) as exc:
-        dd.smoke_test("http://x", "abc1234", COMPOSE, timeout_s=5.0)
+        dd.smoke_test("http://x", IMAGE, COMPOSE, timeout_s=5.0)
     assert exc.value.code == "CI-DEP-002"
     assert "not ready" in str(exc.value)
     assert docker.calls == []  # the container is only looked at once the probes are ok
@@ -382,11 +455,11 @@ def test_deploy_success_path_writes_success_ledger(
     assert rows[-1]["outcome"] == "success"
 
 
-def test_deploy_container_sha_mismatch_records_sha_mismatch(
+def test_deploy_image_mismatch_records_sha_mismatch(
     tmp_path: Path, env_example: Path, monkeypatch: pytest.MonkeyPatch, clock: None
 ) -> None:
     probes(monkeypatch)
-    docker = fake_docker(monkeypatch, inspect=(0, "CV_GIT_SHA=old-sha\n"))
+    docker = fake_docker(monkeypatch, inspect=(0, OTHER_ID + "\n"))
     ledger = tmp_path / "ledger.jsonl"
     rc = dd.deploy(
         image_ref="ghcr.io/o/img",
@@ -406,11 +479,12 @@ def test_deploy_container_sha_mismatch_records_sha_mismatch(
     assert rc == 1
     rows = [json.loads(x) for x in ledger.read_text(encoding="utf-8").splitlines()]
     assert rows[-1]["outcome"] == "sha-mismatch"
-    assert "old-sha" in rows[-1]["detail"]
-    assert "new-sha" in rows[-1]["detail"]
+    assert OTHER_ID in rows[-1]["detail"]
+    assert IMAGE_ID in rows[-1]["detail"]
     # The container is looked up in the compose project this deploy brought up.
+    up = next(c for c in docker.calls if "up" in c)
     ps = next(c for c in docker.calls if "ps" in c)
-    assert ps[:7] == ["docker", "compose", "-f", "a.yml", "-f", "b.yml", "--profile"]
+    assert ps[: ps.index("ps")] == up[: up.index("up")]
 
 
 def test_deploy_tampered_image_aborts_before_compose_up(
@@ -453,7 +527,7 @@ def test_deploy_tampered_image_aborts_before_compose_up(
 
 
 def test_deploy_failed_smoke_triggers_dev_auto_rollback(
-    tmp_path: Path, env_example: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, env_example: Path, monkeypatch: pytest.MonkeyPatch, clock: None
 ) -> None:
     """Acceptance scenario: a failed smoke test marks the deployment failed
     and the previous digest is automatically restored (dev only)."""
@@ -470,22 +544,12 @@ def test_deploy_failed_smoke_triggers_dev_auto_rollback(
         ),
         ledger,
     )
-
-    monkeypatch.setattr(
-        dd.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stderr="")
-    )
-    monkeypatch.setattr(dd, "compose_up", lambda *a, **k: None)
-    monkeypatch.setattr(dd.time, "sleep", lambda _s: None)
-
-    call_count = {"n": 0}
+    docker = fake_docker(monkeypatch)
 
     def fake_get_json(url: str, timeout_s: float = 3.0) -> dict:
-        call_count["n"] += 1
-        # Forward deploy never becomes ready -> CI-DEP-002; rollback's
-        # readiness-only poll succeeds immediately.
-        if "readyz" in url and call_count["n"] > 2:
-            return {"status": "ok"}
-        return {"status": "starting"}
+        # The forward deploy never becomes ready (CI-DEP-002); the rollback's stack does.
+        rolled_back = sum("up" in c for c in docker.calls) > 1
+        return {"status": "ok" if rolled_back else "starting"}
 
     monkeypatch.setattr(dd, "_get_json", fake_get_json)
 
@@ -511,6 +575,46 @@ def test_deploy_failed_smoke_triggers_dev_auto_rollback(
     assert "rolled-back" in outcomes
     rolled_back_row = next(r for r in rows if r["outcome"] == "rolled-back")
     assert rolled_back_row["digest"] == good_digest
+
+
+def test_dev_rollback_runs_the_previous_digest_and_checks_its_image_id(
+    tmp_path: Path, env_example: Path, monkeypatch: pytest.MonkeyPatch, clock: None
+) -> None:
+    """The api runs A while B was verified: CI-DEP-003 names both ids, then dev runs the
+    previous digest A through the same compose files and the smoke test checks A's id."""
+    ledger = tmp_path / "ledger.jsonl"
+    previous = dd.LedgerEntry("prev-sha", DIGEST_A, "dev", "ci", "2026-01-01T00:00:00Z", "success")
+    dd.append_ledger(previous, ledger)
+    docker = stateful_docker(monkeypatch, pinned=[DIGEST_A])
+    probes(monkeypatch)
+    assert run_deploy(tmp_path, env_example, ledger, digest=DIGEST_B, auto_rollback=True) == 1
+    assert docker.ups == [DIGEST_B, DIGEST_A]
+    forward_up, rollback_up = (c for c in docker.calls if "up" in c)
+    assert forward_up == rollback_up  # the same files, overlay and --no-build
+    checked = [c[-1] for c in docker.calls if c[:3] == ["docker", "image", "inspect"]]
+    assert checked == [f"{REF}@{DIGEST_B}", f"{REF}@{DIGEST_A}"]
+    rows = [json.loads(x) for x in ledger.read_text(encoding="utf-8").splitlines()][1:]
+    outcomes = [(r["outcome"], r["digest"]) for r in rows]
+    assert outcomes == [("sha-mismatch", DIGEST_B), ("rolled-back", DIGEST_A)]
+    assert IDS[DIGEST_A] in rows[0]["detail"] and IDS[DIGEST_B] in rows[0]["detail"]
+
+
+@pytest.mark.parametrize("pinned", [[], [DIGEST_B]], ids=["runs-it", "runs-another-image"])
+def test_staging_rollback_checks_the_rollback_digests_image_id(
+    tmp_path: Path, env_example: Path, monkeypatch: pytest.MonkeyPatch, clock: None, pinned: Any
+) -> None:
+    """A staging rollback deploys the previous digest A: the smoke test checks A's image id,
+    and a mismatch fails it with CI-DEP-003 and no rollback of its own."""
+    ledger = tmp_path / "ledger.jsonl"
+    docker = stateful_docker(monkeypatch, pinned=pinned)
+    probes(monkeypatch)
+    rollback = {"digest": DIGEST_A, "sha": "rollback", "environment": "staging"}
+    assert run_deploy(tmp_path, env_example, ledger, **rollback) == (1 if pinned else 0)
+    assert docker.ups == [DIGEST_A]
+    checked = [c[-1] for c in docker.calls if c[:3] == ["docker", "image", "inspect"]]
+    assert checked == [f"{REF}@{DIGEST_A}"]
+    outcomes = [json.loads(x)["outcome"] for x in ledger.read_text(encoding="utf-8").splitlines()]
+    assert outcomes == ["sha-mismatch" if pinned else "success"]
 
 
 def test_read_last_success_digest_missing_ledger_returns_none(tmp_path: Path) -> None:
@@ -589,7 +693,7 @@ def test_compose_up_raises_ci_dep_002_on_failure(
         ),
     )
     with pytest.raises(dd.DeployError) as exc:
-        dd.compose_up(("infra/compose/docker-compose.yml",))
+        dd.compose_up(COMPOSE, image_ref=REF, digest=DIGEST)
     assert exc.value.code == "CI-DEP-002"
     assert "port in use" in str(exc.value)
 
@@ -691,7 +795,7 @@ def test_auto_rollback_never_ready_raises_ci_dep_002(
     )
     rows = [json.loads(l) for l in ledger.read_text(encoding="utf-8").splitlines()]
     assert rows[-1]["outcome"] == "smoke-failed"
-    assert "rollback smoke test did not become ready" in rows[-1]["detail"]
+    assert "auto-rollback failed: CI-DEP-002: smoke test timed out" in rows[-1]["detail"]
 
 
 def test_main_success_returns_zero_and_defaults_auto_rollback_for_dev(
@@ -814,3 +918,23 @@ def test_deploy_staging_never_auto_rolls_back(
     assert rc == 1
     rows = [json.loads(l) for l in ledger.read_text(encoding="utf-8").splitlines()]
     assert all(r["outcome"] != "rolled-back" for r in rows)
+
+
+def test_committed_deploy_overlay_passes_lint() -> None:
+    """lint_compose's overlay rule, also run with this suite (infra/scripts/tests has the rest)."""
+    assert lint_compose.lint(OVERLAY, deploy_overlay=True) == []
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "why"),
+    [
+        ("build", {"context": "../..", "target": "builder"}, "builds locally"),
+        ("volumes", ["../../services/api/candleviewer:/app/candleviewer:ro"], "mounts"),
+    ],
+    ids=["build", "source-mount"],
+)
+def test_deploy_overlay_lint_refuses(key: str, value: object, why: str) -> None:
+    overlay = yaml.safe_load(OVERLAY.read_text(encoding="utf-8"))
+    overlay["services"]["api"][key] = value
+    errors = lint_compose.check_deploy_overlay(overlay)
+    assert len(errors) == 1 and why in errors[0], errors
