@@ -1,0 +1,29 @@
+name: dast-drawings-nightly
+
+# E14-X03 (#549, AC4): the nightly (never per-PR) OWASP ZAP scan of /drawings* (plan:
+# .zap/e14-drawings.yaml), authenticated as a synthetic Manager (a Viewer cannot write drawings,
+# DR38) on a throwaway stack (_dast-low-priv.yml, #3991). A synthetic Owner's drawings
+# (.zap/e14-drawings-seed.json) stand on that stack with fixed ids: after the scan the Manager's own
+# writes to them must be refused, and they must be unchanged and unlisted for the Manager
+# (security/zap/drawings_isolation.py; DR12, DR20, DR21).
+# Gate: the scan stays signed in, no High/Medium alert outside .zap/e14-drawings-baseline.json
+# (security/zap/baseline_gate.py), and that check. Nightly and by hand, never per-PR; never a live
+# exchange; no repository secret.
+on:
+  schedule:
+    - cron: "57 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  zap-drawings:
+    uses: ./.github/workflows/_dast-low-priv.yml
+    with:
+      profile: drawings
+      report: drawings-manager
+      baseline: .zap/e14-drawings-baseline.json
+      artifact: zap-drawings
+      role: manager
+      fixture: .zap/e14-drawings-seed.json

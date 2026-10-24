@@ -238,12 +238,24 @@ To triage a red `dast-rules` or `dast-market` run (#3991: `dast-rules-nightly.ym
 `dast-market-nightly.yml`, through `_dast-low-priv.yml`, as a synthetic Viewer), find the step that
 failed: "Start the API" as above; "Write the plan" means the contract has no path on the profile's
 surface (exit 1) or `--out` was refused (exit 2); a red "The passive and active scan, as the
-Viewer" is a failed image pull, a failed sign-in (`mint_sessions.py`) or ZAP's own exit code (read
+scan role" is a failed image pull, a failed sign-in (`mint_sessions.py`) or ZAP's own exit code (read
 the plan failures and warnings at the end of its log); "The scan stayed signed in, and no new
 medium+ alert" is `check_liveness.py` (both `/me` requestors ran and answered 200), then
 `baseline_gate.py` against the profile's baseline, which also names each alert the plan's
 `alertFilter` waived as a false positive; "No session value in the plan, logs or report" as above.
 These two nightlies file no issue yet (#4151): look at the run.
+
+`dast-drawings` (E14-X03, `dast-drawings-nightly.yml`, through `_dast-low-priv.yml` as a synthetic
+Manager with a seeded Owner) reads the same, plus two steps: "Seed the Owner's rows" (a failed
+sign-in, or `POST /drawings/batch` with the status named) and "The Owner's rows are unchanged and the
+scan role cannot list them", whose `::error` lines name the drawing. "A cross-owner write" (one of
+the Manager's own probes answered 2xx), "changed" or "gone" is a cross-owner write that succeeded,
+"the Manager lists the Owner's drawing" a cross-owner read: treat each as High (DR12, DR20, DR21),
+never as a baseline entry; so is "past the owner check" (a probe refused only for the row's own
+version token or immutable fields, which the API checks after the owner). "The probe never reached
+the owner check" (a probe refused for another reason, such as a 422 or a 404 without `not_found`)
+means the check proved nothing that night: fix the probe or the stack, as for a failed sign-in. It
+files no issue either.
 
 ## 3. Reading the `ci-required` resolver summary
 

@@ -1,12 +1,15 @@
 name: _dast-low-priv
 
-# #3991: one low-privilege ZAP nightly, called by dast-rules-nightly.yml (E35-X02, /rules*) and
-# dast-market-nightly.yml (E12-X03, /market/klines and /market/bars). It scans the profile's
-# surface authenticated as a synthetic Viewer with a real TOTP method and no MFA exception, against
+# #3991: one low-privilege ZAP nightly, called by dast-rules-nightly.yml (E35-X02, /rules*),
+# dast-market-nightly.yml (E12-X03, /market/klines and /market/bars) and dast-drawings-nightly.yml
+# (E14-X03, /drawings*). It scans the profile's surface authenticated as a synthetic Viewer, or a
+# Manager where the profile writes (`role`), with a real TOTP method and no MFA exception, against
 # a throwaway stack on this runner, never a live exchange, as dast-admin-nightly.yml does (#1026).
+# A profile with a `fixture` also has a synthetic Owner (a TOTP method too) whose rows are seeded
+# before the scan and checked after it (security/zap/drawings_isolation.py).
 # A synthetic user signs in only with CV_STORAGE_BACKEND=real (app.build_auth_service).
 # Every credential is made here, per run, masked and never echoed: no repository secret is read,
-# and the target is loopback, never an input (mint_sessions.py refuses any other). The Viewer's
+# and the target is loopback, never an input (mint_sessions.py refuses any other). The scan role's
 # bearer and CSRF pair reach ZAP through the environment and security/zap/role_session.js
 # (ZAP_PROFILE), never through a plan. "The scan stayed signed in" (check_liveness.py: both /me
 # requestors answered 200) fails a scan that lost its session, and "no new medium+ alert"
@@ -33,6 +36,14 @@ on:
         description: The artefact's name
         type: string
         required: true
+      role:
+        description: The synthetic role the scan signs in as, `viewer`, or `manager` where it writes
+        type: string
+        default: viewer
+      fixture:
+        description: The Owner's drawings drawings_isolation.py seeds and checks, or empty for none
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -46,6 +57,8 @@ jobs:
       ZAP_TARGET: http://127.0.0.1:8000
       ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.17.0@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef
       ZAP_PROFILE: ${{ inputs.profile }}
+      ZAP_ROLE: ${{ inputs.role }}
+      ZAP_FIXTURE: ${{ inputs.fixture }}
       ZAP_REPORT: zap-reports/${{ inputs.report }}.json
       ZAP_BASELINE: ${{ inputs.baseline }}
       WORK: zap-work
@@ -72,13 +85,14 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
+          case "$ZAP_ROLE" in viewer | manager) ;; *) echo "::error::role is viewer or manager"; exit 1 ;; esac
           mkdir -p "$WORK" "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane"
           secret() { v=$(openssl rand -hex 32); echo "::add-mask::$v"; echo "$1=$v" >> "$GITHUB_ENV"; }
           for name in POSTGRES_PASSWORD CV_AUTH_PEPPER CV_AUTH_TOTP_KEY_HEX \
             CV_AUTH_RECOVERY_HMAC_KEY_HEX CV_AUTH_CSRF_KEY_HEX ZAP_OWNER_PASSWORD \
-            ZAP_VIEWER_PASSWORD; do secret "$name"; done
+            ZAP_VIEWER_PASSWORD ZAP_MANAGER_PASSWORD; do secret "$name"; done
           suffix=$(openssl rand -hex 4)
-          for role in owner viewer; do echo "ZAP_${role^^}_USER=zap-$role-$suffix" >> "$GITHUB_ENV"; done
+          for role in owner viewer manager; do echo "ZAP_${role^^}_USER=zap-$role-$suffix" >> "$GITHUB_ENV"; done
           # The audit lane key (ADR-0037 decision 6): 64 hex digits in a file of mode 0400, in a
           # directory of its own: the settings refuse a backup root in, or around, the key's directory.
           (umask 277 && openssl rand -hex 32 > "$RUNNER_TEMP/cv-lane/lane.key")
@@ -86,7 +100,7 @@ jobs:
       - name: Start Postgres and QuestDB (the compose data stores, loopback only)
         run: docker compose -f infra/compose/docker-compose.yml --profile core up -d --wait postgres questdb
 
-      - name: Migrate, then seed the Owner the owner floor needs and the synthetic Viewer (testnet)
+      - name: Migrate, then seed the Owner the owner floor needs and the scan role's user (testnet)
         working-directory: services/api
         env:
           CV_ENVIRONMENT: testnet
@@ -95,12 +109,16 @@ jobs:
           export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
           uv sync --frozen
           uv run --frozen alembic upgrade head
-          # The owner floor refuses a user while no active Owner exists; this one never signs in.
+          # The owner floor refuses a user while no active Owner exists. The Owner signs in only
+          # to seed and check a fixture's rows, with a TOTP method; else it never signs in.
+          owner_totp=()
+          if [ -n "$ZAP_FIXTURE" ]; then owner_totp=(--totp-secret-out "$RUNNER_TEMP/cv/owner.totp"); fi
           CV_SEED_USERNAME="$ZAP_OWNER_USER" CV_SEED_PASSWORD="$ZAP_OWNER_PASSWORD" \
-            uv run --frozen python scripts/seed_fixture_user.py
-          CV_SEED_USERNAME="$ZAP_VIEWER_USER" CV_SEED_PASSWORD="$ZAP_VIEWER_PASSWORD" \
-            uv run --frozen python scripts/seed_fixture_user.py --role viewer \
-            --totp-secret-out "$RUNNER_TEMP/cv/viewer.totp"
+            uv run --frozen python scripts/seed_fixture_user.py "${owner_totp[@]}"
+          user="ZAP_${ZAP_ROLE^^}_USER" password="ZAP_${ZAP_ROLE^^}_PASSWORD"
+          CV_SEED_USERNAME="${!user}" CV_SEED_PASSWORD="${!password}" \
+            uv run --frozen python scripts/seed_fixture_user.py --role "$ZAP_ROLE" \
+            --totp-secret-out "$RUNNER_TEMP/cv/$ZAP_ROLE.totp"
 
       - name: Start the API (testnet, real storage backend, loopback)
         working-directory: services/api
@@ -141,17 +159,31 @@ jobs:
           tail -n 200 "$RUNNER_TEMP/cv/api.log"
           exit 1
 
+      - name: Seed the Owner's rows (a profile with a fixture)
+        id: seed
+        if: ${{ inputs.fixture != '' }}
+        run: |
+          set -euo pipefail
+          python3 security/zap/mint_sessions.py --target "$ZAP_TARGET" --username "$ZAP_OWNER_USER" \
+            --password-env ZAP_OWNER_PASSWORD --totp-secret-file "$RUNNER_TEMP/cv/owner.totp" \
+            --out "$RUNNER_TEMP/cv/owner-seed.env"
+          # The rows the check compares against stay out of the scan's writable mount ($WORK).
+          python3 security/zap/drawings_isolation.py seed --target "$ZAP_TARGET" \
+            --session "$RUNNER_TEMP/cv/owner-seed.env" --fixture "$ZAP_FIXTURE" \
+            --out "$RUNNER_TEMP/cv/owner-rows.json"
+
       - name: Write the plan (nightly_plans.py, importing the contract cut to the surface)
         run: uv run --frozen --project services/api python security/zap/nightly_plans.py --profile "$ZAP_PROFILE" --out "$WORK"
 
-      - name: The passive and active scan, as the Viewer
+      - name: The passive and active scan, as the scan role
         run: |
           set -euo pipefail
           mkdir -p zap-reports && chmod a+rwx zap-reports "$WORK" # the image runs as its own user
           docker pull --quiet "$ZAP_IMAGE" # before the mint, so a cold pull spends no bearer time
-          envfile="$RUNNER_TEMP/cv/viewer-scan.env" # a fresh session: a bearer lives 12 minutes
-          python3 security/zap/mint_sessions.py --target "$ZAP_TARGET" --username "$ZAP_VIEWER_USER" \
-            --password-env ZAP_VIEWER_PASSWORD --totp-secret-file "$RUNNER_TEMP/cv/viewer.totp" \
+          user="ZAP_${ZAP_ROLE^^}_USER" # the Viewer, or the Manager where the profile writes
+          envfile="$RUNNER_TEMP/cv/$ZAP_ROLE-scan.env" # a fresh session: a bearer lives 12 minutes
+          python3 security/zap/mint_sessions.py --target "$ZAP_TARGET" --username "${!user}" \
+            --password-env "ZAP_${ZAP_ROLE^^}_PASSWORD" --totp-secret-file "$RUNNER_TEMP/cv/$ZAP_ROLE.totp" \
             --out "$envfile"
           docker run --rm --network host --env-file "$envfile" -e ZAP_TARGET -e ZAP_PROFILE \
             -v "$PWD:/zap/wrk:rw" "$ZAP_IMAGE" zap.sh -cmd -silent -autorun "/zap/wrk/$WORK/$ZAP_PROFILE-scan.yaml" \
@@ -167,11 +199,28 @@ jobs:
           python3 security/zap/baseline_gate.py "$ZAP_REPORT" "$ZAP_BASELINE" || rc=1
           exit "$rc"
 
-      - name: Keep the API's log with the plan and report
+      - name: The Owner's rows are unchanged and the scan role cannot list them (a fixture)
+        if: ${{ !cancelled() && steps.seed.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          for who in owner "$ZAP_ROLE"; do # fresh sessions: the scan's bearer has expired by now
+            user="ZAP_${who^^}_USER"
+            python3 security/zap/mint_sessions.py --target "$ZAP_TARGET" --username "${!user}" \
+              --password-env "ZAP_${who^^}_PASSWORD" --totp-secret-file "$RUNNER_TEMP/cv/$who.totp" \
+              --out "$RUNNER_TEMP/cv/$who-check.env"
+          done
+          python3 security/zap/drawings_isolation.py verify --target "$ZAP_TARGET" \
+            --owner-session "$RUNNER_TEMP/cv/owner-check.env" \
+            --manager-session "$RUNNER_TEMP/cv/$ZAP_ROLE-check.env" \
+            --seeded "$RUNNER_TEMP/cv/owner-rows.json"
+
+      - name: Keep the API's log and the Owner's rows with the plan and report
         if: always()
         run: |
           mkdir -p "$WORK"
-          if [ -f "$RUNNER_TEMP/cv/api.log" ]; then cp "$RUNNER_TEMP/cv/api.log" "$WORK/api.log"; fi
+          for kept in api.log owner-rows.json; do # after the check has read the rows
+            if [ -f "$RUNNER_TEMP/cv/$kept" ]; then cp "$RUNNER_TEMP/cv/$kept" "$WORK/$kept"; fi
+          done
 
       - name: No session value in the plan, logs or report (else nothing is uploaded)
         id: scrub
@@ -181,7 +230,7 @@ jobs:
         # TOTP seed seed_fixture_user.py wrote and the audit lane key.
         run: |
           python3 security/zap/check_artefact_secrets.py --env-dir "$RUNNER_TEMP/cv" \
-            --env ZAP_OWNER_PASSWORD --env ZAP_VIEWER_PASSWORD \
+            --env ZAP_OWNER_PASSWORD --env ZAP_VIEWER_PASSWORD --env ZAP_MANAGER_PASSWORD \
             --env POSTGRES_PASSWORD --env CV_AUTH_PEPPER --env CV_AUTH_TOTP_KEY_HEX \
             --env CV_AUTH_RECOVERY_HMAC_KEY_HEX --env CV_AUTH_CSRF_KEY_HEX \
             --secret-file "$RUNNER_TEMP/cv/*.totp" --secret-file "$RUNNER_TEMP/cv-lane/lane.key" \
