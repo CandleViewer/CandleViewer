@@ -45,11 +45,9 @@ from candleviewer.storage.repositories.recorded_stops import (
     WAITING_ENTRY,
     FillPosition,
     InForce,
-    InForceWriteAhead,
     InsertWriteAhead,
     NewRecordedStop,
     RecordedStopRow,
-    Resolved,
     ResolveOutcome,
     ResolveWriteAhead,
     SettleWriteAhead,
@@ -1034,7 +1032,7 @@ class InMemoryRecordedStopStore:
         rows: Sequence[RecordedStopRow],
         *,
         at: datetime,
-        write_ahead: InForceWriteAhead | None = None,
+        write_ahead: ResolveWriteAhead | None = None,
     ) -> InForce:
         check_in_force(account_id, rows)
         port.require_aware("at", at)
@@ -1072,12 +1070,13 @@ class InMemoryRecordedStopStore:
         check_resolve(rows, outcome, at, position_state, write_ahead)
         await self._db._turn()
         held = self._as_read(account_id, rows)
-        if outcome == "answered":
+        if outcome in ("answered", "replaced"):
             done = tuple(replace(r, answered_at=r.answered_at or at) for r in held)
+            if outcome == "replaced":
+                done = tuple(replace(r, status="replaced", closed_at=at) for r in done)
         else:
             done = tuple(replace(r, status="void", closed_at=at) for r in held)
-        record = Resolved(done, outcome, position_state)
-        hook = None if write_ahead is None else write_ahead(record)
+        hook = None if write_ahead is None else write_ahead(done)
         await self._db._audited_commit(hook, self._audit_timeout_s, *done)
         return done
 

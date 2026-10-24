@@ -67,11 +67,9 @@ from candleviewer.storage.repositories.recorded_stops import (
     WAITING_ENTRY,
     FillPosition,
     InForce,
-    InForceWriteAhead,
     InsertWriteAhead,
     NewRecordedStop,
     RecordedStopRow,
-    Resolved,
     ResolveOutcome,
     ResolveWriteAhead,
     SettleWriteAhead,
@@ -279,8 +277,11 @@ def resolve_statement(
     stmt = sa.update(recorded_stops).where(
         _S.exchange_account_id == account_id, _S.status == "pending", _as_read(rows)
     )
-    voided = {"status": "void", "closed_at": at}
-    values = {"answered_at": _stamped(at)} if outcome == "answered" else voided
+    values: dict[str, Any] = {"answered_at": _stamped(at)}
+    if outcome == "replaced":  # as `put_in_force` replaces
+        values = {"status": "replaced", "answered_at": _stamped(at), "closed_at": at}
+    elif outcome != "answered":
+        values = {"status": "void", "closed_at": at}
     return stmt.values(values).returning(*STOP_COLUMNS)
 
 
@@ -472,7 +473,7 @@ class SqlAlchemyRecordedStopStore(CappedStore):
         rows: Sequence[RecordedStopRow],
         *,
         at: datetime,
-        write_ahead: InForceWriteAhead | None = None,
+        write_ahead: ResolveWriteAhead | None = None,
     ) -> InForce:
         check_in_force(account_id, rows)
         require_aware("at", at)
@@ -514,7 +515,6 @@ class SqlAlchemyRecordedStopStore(CappedStore):
             if len(resolved) != len(ids):
                 raise StaleRecordedStop
             if write_ahead is not None:
-                record = Resolved(resolved, outcome, position_state)
-                await bounded_write_ahead(write_ahead(record), self._audit_timeout_s)
+                await bounded_write_ahead(write_ahead(resolved), self._audit_timeout_s)
             await uow.commit()
         return resolved
