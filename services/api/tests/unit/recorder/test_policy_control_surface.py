@@ -41,7 +41,13 @@ def test_recording_policy_satisfies_the_control_surface(policy: RecordingPolicy)
 def test_the_comparison_catches_a_rename_a_changed_default_and_a_sync_async_swap() -> None:
     class Drifted:
         def add_manual(  # sync where the surface is async
-            self, symbol: str, actor: Actor, streams: tuple[str, ...] = (), depth: int | None = None
+            self,
+            symbol: str,
+            actor: Actor,
+            streams: tuple[str, ...] = (),
+            depth: int | None = None,
+            *,
+            held_hidden: bool = False,
         ) -> None: ...
         async def remove_manual(self, symbol: str, who: Actor) -> None: ...
         async def set_pin(self, symbol: str, pinned: bool, actor: Actor) -> None: ...

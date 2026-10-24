@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -47,6 +48,7 @@ from pydantic import ValidationError
 
 import candleviewer.statechart.bindings.b11_recording as b11
 from candleviewer.bus.models import Topic
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.recorder.errors import (
     InvalidRecordedSymbolError,
     InvalidRecorderActorError,
@@ -137,7 +139,8 @@ AuditState = Mapping[str, str | bool | None]
 
 class AuditSink(Protocol):
     """The subset of `AuditWriter.emit` used here, injected (M11 may not import `audit`,
-    C-3.3). `env` is the exchange env string the policy runs in (C-2.11)."""
+    C-3.3). `env` is the exchange env string the policy runs in (C-2.11); `request_id` is the
+    request the record is written in, None outside one."""
 
     async def emit(
         self,
@@ -152,6 +155,7 @@ class AuditSink(Protocol):
         after_state: AuditState,
         env: str,
         outcome: str = "success",
+        request_id: uuid.UUID | None = None,
     ) -> None: ...
 
 
@@ -186,11 +190,19 @@ class PolicyControlSurface(Protocol):
     nothing and raise nothing."""
 
     async def add_manual(
-        self, symbol: str, actor: Actor, streams: tuple[str, ...] = (), depth: int | None = None
+        self,
+        symbol: str,
+        actor: Actor,
+        streams: tuple[str, ...] = (),
+        depth: int | None = None,
+        *,
+        held_hidden: bool = False,
     ) -> None:
         """Add a manual entry, or give a listed symbol the manual reason; one already manual is
-        left as it is. Raises `InvalidRecorderActorError` (not a user), `InvalidRecordedSymbolError`
-        and `RecorderInvalidUpdateError` (a depth or stream the table refuses), and
+        left as it is. `held_hidden` marks a join onto a row the actor's view hides: the add's
+        `recorder.start` record then carries `held_hidden: True`, and nothing else changes.
+        Raises `InvalidRecorderActorError` (not a user), `InvalidRecordedSymbolError` and
+        `RecorderInvalidUpdateError` (a depth or stream the table refuses), and
         `RecorderSymbolLimitError` (the cap)."""
 
     async def remove_manual(self, symbol: str, actor: Actor) -> None:
@@ -390,11 +402,15 @@ class RecordingPolicy:
         actor: Actor,
         streams: tuple[str, ...] = (),
         depth: int | None = None,
+        *,
+        held_hidden: bool = False,
     ) -> None:
         """Add a manual entry, or give a listed symbol the manual reason; one already manual is
         left as it is (22 `addRecordedSymbol`: changes go through `update_manual`). Validated,
         audited as `recorder.start` by the user, written, then applied, so a refused write leaves
-        its record and no change. The session's own start is a later system record."""
+        its record and no change. The session's own start is a later system record.
+        `held_hidden` only adds its key to the user's record: an add that writes none (a symbol
+        already manual) writes none for it either."""
         if actor.kind != "user":
             raise InvalidRecorderActorError("manual add requires a user actor")
         _valid(symbol)
@@ -415,7 +431,8 @@ class RecordingPolicy:
                     symbol,
                     actor,
                     reason="manual",
-                    extra={"trigger_ref": f"manual:{actor.id}"},
+                    extra={"trigger_ref": f"manual:{actor.id}"}
+                    | ({"held_hidden": True} if held_hidden else {}),
                 )
                 row = await self._recorded.upsert_manual(
                     symbol, actor.id, streams or DEFAULT_STREAMS, depth, self._env
@@ -916,6 +933,7 @@ class RecordingPolicy:
             SYSTEM_ACTOR,
             reason=cause or reason,
             extra={"trigger_ref": ",".join(s.refs(reason)) or None},
+            from_hook=True,
         )
         if name == "unsubscribe":
             s.stop_cause = None
@@ -930,7 +948,11 @@ class RecordingPolicy:
         extra: Mapping[str, str | bool | None],
         outcome: str = "success",
         before: AuditState | None = None,
+        from_hook: bool = False,
     ) -> None:
+        """The write-ahead record, stamped with this call's request. A B11 hook's is not: the
+        chart's task copied the context `build()` ran in, so an id read there names the request
+        that started the chart, however late the hook runs."""
         await self._audit.emit(
             action,
             actor_label=f"{actor.kind}:{actor.id}",
@@ -942,6 +964,7 @@ class RecordingPolicy:
             after_state={"symbol": symbol, "reason": reason, "actor": actor.id, **extra},
             env=self._env,
             outcome=outcome,
+            request_id=None if from_hook else current_request_uuid(),
         )
 
     # --- lifecycle ---------------------------------------------------------------------
