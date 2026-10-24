@@ -13,7 +13,13 @@ import pytest
 from pydantic import BaseModel, RootModel, ValidationError
 
 from candleviewer.api._generated import openapi_models as api
-from tests.contract._generated_contract import REQUEST_MODELS, SPEC, contract_accepts, model_accepts
+from tests.contract._generated_contract import (
+    REQUEST_MODELS,
+    SPEC,
+    _request_roots,
+    contract_accepts,
+    model_accepts,
+)
 from tests.contract.test_generate_protocol_models import _generator
 
 _REFUSED = "Value error, null is not allowed: leave the member out"
@@ -51,6 +57,26 @@ def test_the_generator_marks_the_models_a_request_body_reaches_and_the_proof_che
     probed = {(m.__name__, n) for m in REQUEST_MODELS for n in _optionals(m)}
     assert len(probed) >= 248  # every optional member of a request model, re-measured
     assert {("CreateApiKeyRequest", "label"), ("TakeProfitLevel", "offset")} <= probed
+
+
+def test_only_null_is_refused() -> None:
+    """One function carries every refused member: it refuses `None` and hands any other value back
+    as it came, a falsy or empty one included (R1C-04)."""
+    values: tuple[object, ...] = (0, False, "", [], {})
+    for value in values:
+        assert api._refuse_null(value) is value
+    with pytest.raises(ValueError, match="null is not allowed"):
+        api._refuse_null(None)
+
+
+def test_a_request_root_without_a_model_holds_no_object() -> None:
+    """R1S-02: both walks start at the request roots codegen made a class of; one it collapsed is
+    safe only while it holds no object, whose models both walks would then miss alike."""
+    for name in sorted(_request_roots()):
+        found = getattr(api, name, None)
+        if not (isinstance(found, type) and issubclass(found, BaseModel)):
+            held = SPEC["components"]["schemas"][name].keys()
+            assert not held & {"properties", "items", "allOf", "oneOf", "anyOf"}, name
 
 
 @pytest.mark.parametrize(

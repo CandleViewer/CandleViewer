@@ -693,23 +693,35 @@ async def test_a_repeated_account_key_is_read_once_for_rbac_and_for_the_order() 
     assert order.account_id == ACCOUNT
 
 
+_DROP = object()  # a member left out of the body, where `None` sends `null`
+
+
 @pytest.mark.parametrize(
     ("change", "field", "rule"),
     [
-        ({"price": None}, "price", "required"),
+        ({"price": _DROP}, "price", "required"),
+        ({"price": None}, "price", "value_error"),  # G2b: a sent null is refused, never left out
         ({"algo": {"kind": "twap"}}, "algo.kind", "algo_unsupported"),
         ({"leverage": "5"}, "leverage", "extra_forbidden"),
         ({"side": "BUY"}, "side", "literal_error"),
         ({"close_on_trigger": 1}, "close_on_trigger", "bool_type"),
         ({"sizing": {"mode": "fixed_qty", "qty": None}}, "sizing.qty", "value_error"),  # G2b
     ],
-    ids=["limit_without_price", "algo", "extra_member", "side", "number_for_bool", "null_qty"],
+    ids=[
+        "limit_without_price",
+        "null_price",
+        "algo",
+        "extra_member",
+        "side",
+        "number_for_bool",
+        "null_qty",
+    ],
 )
 async def test_the_body_is_read_strictly_audited_and_refused_before_the_pipeline(
     change: dict[str, Any], field: str, rule: str
 ) -> None:
     world = World()
-    answer = await post(world, body={k: v for k, v in (BODY | change).items() if v is not None})
+    answer = await post(world, body={k: v for k, v in (BODY | change).items() if v is not _DROP})
     errors = {(e["field"], e["rule"]) for e in answer.json()["errors"]}
     assert (answer.status_code, (field, rule) in errors) == (400, True)
     assert (world.audit.actions(), world.oms.submission.submitted) == (["orders.submit"], [])

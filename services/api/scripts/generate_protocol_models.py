@@ -324,14 +324,15 @@ def _add_null_refusals(source: str, refused: Mapping[str, list[str]], requested:
     class takes `null` again where a base refuses it (ruling 1 of 2026-10-23 00:29Z)."""
     classes = {node.name: node for node in ast.parse(source).body if isinstance(node, ast.ClassDef)}
     for name, fields in refused.items():  # the two runs agree, or nothing is emitted
-        body = classes[name].body if name in classes else []
-        assigned = [m for m in body if isinstance(m, ast.AnnAssign)]
-        defaults = {ast.unparse(m.target): ast.unparse(m.value) for m in assigned if m.value}
-        if any(defaults.get(field) != "None" for field in fields):
+        if name not in classes:
+            message = f"the sentinel run marks {name}, which the normal run does not define"
+        else:
+            assigned = [m for m in classes[name].body if isinstance(m, ast.AnnAssign)]
+            defaults = {ast.unparse(m.target): ast.unparse(m.value) for m in assigned if m.value}
+            if all(defaults.get(field) == "None" for field in fields):
+                continue
             message = f"the sentinel run marks members of {name} that are not `= None` here"
-            raise RuntimeError(
-                f"generate_protocol_models: {message}; update _null_refused_members."
-            )
+        raise RuntimeError(f"generate_protocol_models: {message}; update _null_refused_members.")
     held: dict[str, dict[str, bool]] = {}  # per class: whether each marked class's refusal holds
     added: dict[int, list[str]] = {}
     for name, node in classes.items():  # source order: a base comes before its subclasses
@@ -348,7 +349,7 @@ def _add_null_refusals(source: str, refused: Mapping[str, list[str]], requested:
         held[name] = holds
     if not added:
         return source
-    lines = source.splitlines(keepends=True)
+    lines = re.split(r"(?<=\n)", source)  # only "\n" ends a line, as `end_lineno` counts them
     for at in sorted(added, reverse=True):
         lines[at:at] = added[at]
     marker = "from pydantic import (\n"
@@ -402,7 +403,10 @@ def generate() -> None:
             input_path=OPENAPI_SPEC, input_file_type="openapi", output_path=sentinel, extra=extra
         )
         refused = _null_refused_members(sentinel.read_text(encoding="utf-8"))
-    spec = _contract_builder().load_openapi_spec(OPENAPI_SPEC) if refused else {"paths": {}}
+    if not refused:  # a sentinel run whose shape changed marks nothing: stop, never drop the lines
+        message = "the sentinel run marked no member"
+        raise RuntimeError(f"generate_protocol_models: {message}; update _null_refused_members.")
+    spec = _contract_builder().load_openapi_spec(OPENAPI_SPEC)
     _write(REST_OUT, REST_HEADER, raw_rest, refused, _request_models(spec, raw_rest))
 
     _run_datamodel_codegen(input_path=WS_SCHEMA, input_file_type="jsonschema", output_path=WS_OUT)
