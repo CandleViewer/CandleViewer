@@ -238,3 +238,21 @@ def test_a_dropped_security_footer_is_kept_on_the_commit_for_the_sync_to_report(
     assert marked.security_summary is None and marked.security_rejected == "the payload"
     assert empty.security_summary is None and empty.security_rejected == ""
     assert clean.security_rejected is None
+
+
+def test_a_nested_comment_is_stripped_once_so_the_pr_and_the_sync_agree() -> None:
+    body = "<!<!-- x -->--\nChangelog-Security: Hardened a path\n-->"
+    accepted = check_changelog_fragment("wip", body).ok
+    rendered = Category.SECURITY in _update(f"fix(auth-rbac): x (#7)\n\n{body}").entries
+    assert accepted == rendered
+
+
+def test_a_fenced_changelog_footer_is_not_a_fragment() -> None:
+    assert not check_changelog_fragment("wip", "```\nChangelog: foo\n```").ok
+
+
+@pytest.mark.parametrize("tag", ["script", "style", "SCRIPT"])
+def test_a_footer_inside_a_script_or_style_block_is_neither_accepted_nor_rendered(tag: str) -> None:
+    hidden = f"<{tag}>\n{_SEC_FOOTER}\n</{tag}>"
+    assert not check_changelog_fragment("wip", hidden).ok
+    assert Category.SECURITY not in _update(f"fix(auth-rbac): x (#7)\n\n{hidden}").entries
