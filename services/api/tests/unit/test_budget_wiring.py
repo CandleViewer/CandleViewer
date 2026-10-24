@@ -4,6 +4,7 @@ SR-096 shared-volume refusal, and `CV_DISK_*` settings (E16-FR-11). I/O only und
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -15,6 +16,7 @@ from pydantic import ValidationError
 from candleviewer import budget_wiring
 from candleviewer.budget_wiring import (
     HOT_STREAMS,
+    METER_PART_BUDGET_S,
     FileSeriesStore,
     VolumeMeter,
     _OneThread,
@@ -25,10 +27,16 @@ from candleviewer.budget_wiring import (
     recording_refusal,
     written_by_symbol,
 )
-from candleviewer.recorder.budget import US_PER_DAY, BudgetConfig, DiskBudget, Point
+from candleviewer.recorder.budget import (
+    BREAKDOWN_TIMEOUT_S,
+    US_PER_DAY,
+    BudgetConfig,
+    DiskBudget,
+    Point,
+)
 from candleviewer.recorder.metrics import recorder_bytes_written_total
 from candleviewer.recorder.models import DiskPressureLevel
-from candleviewer.settings import Settings
+from candleviewer.settings import Environment, Settings
 from tests.unit.recorder._budget_fakes import CAP, NOW, FakeEvents
 from tests.unit.recorder._fakes import FakeBus
 from tests.unit.recorder._session_fakes import UsClock
@@ -170,7 +178,13 @@ def test_disk_settings_default_to_the_k01_cap_and_refuse_the_hatch_outside_testn
 class _Repo:
     at = datetime(2026, 10, 1, tzinfo=UTC)
 
-    async def list_recorded(self) -> list[dict[str, object]]:
+    def __init__(self) -> None:
+        self.envs: list[str] = []
+
+    async def list_recorded(self, env: str = "live") -> list[dict[str, object]]:
+        self.envs.append(env)
+        if env != "demo":  # another environment's rows are never read for demo
+            return [{"symbol": "LIVEUSDT", "pinned": True}]
         return [{"symbol": "BTCUSDT", "pinned": True}, {"symbol": "ETHUSDT", "pinned": False}]
 
     async def gaps_in(self, symbol: str, lo: datetime, hi: datetime) -> list[dict[str, object]]:
@@ -181,10 +195,87 @@ class _Repo:
 async def test_gap_pin_and_written_sources() -> None:
     repo = cast(Any, _Repo())
     us = int(_Repo.at.timestamp()) * 1_000_000
-    assert await recorded_gaps(repo, 0, 2 * us) == [(us, us + 1_000_000)]
-    assert await pinned_symbols(repo) == {"BTCUSDT"}
+    assert await recorded_gaps(repo, "demo", 0, 2 * us) == [(us, us + 1_000_000)]
+    assert await pinned_symbols(repo, "demo") == {"BTCUSDT"}
+    assert set(repo.envs) == {"demo"}
     recorder_bytes_written_total.labels(symbol="ZZWIRINGUSDT", stream="trades").inc(5)
     assert written_by_symbol()["ZZWIRINGUSDT"] >= 5
+
+
+async def test_a_demo_budget_composes_sources_that_read_only_demo_rows(tmp_path: Path) -> None:
+    root = tmp_path / "data" / "parquet"
+    root.mkdir(parents=True)
+    settings = Settings(
+        storage_backend="real",
+        environment=Environment.DEMO,
+        parquet_root=str(root),
+        bars_state_root=str(tmp_path / "bars"),
+    )
+    repo = _Repo()
+    budget = build_disk_budget(settings, bus=FakeBus(), recorder_repo=cast(Any, repo))
+    assert budget is not None
+    us = int(_Repo.at.timestamp()) * 1_000_000
+    gaps, pinned = budget._gaps, budget._pinned
+    assert gaps is not None and pinned is not None
+    assert await gaps(0, 2 * us) == [(us, us + 1_000_000)]
+    assert await pinned() == {"BTCUSDT"}
+    assert set(repo.envs) == {"demo"}  # dropping the env argument reads the live rows
+    await budget.stop()
+
+
+def test_parquet_usage_refuses_a_root_it_cannot_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_scandir = os.scandir
+
+    def denied(path: Any) -> Any:
+        if str(path) == str(tmp_path):
+            raise PermissionError(13, "denied", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", denied)
+    with pytest.raises(PermissionError):  # never a fresh (0, {})
+        parquet_usage(tmp_path)
+
+
+def test_parquet_usage_tolerates_a_subdirectory_removed_mid_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _tree(tmp_path, {"trades/symbol=BTCUSDT/a.parquet": 7, "gone/b.parquet": 1})
+    real_scandir = os.scandir
+
+    def vanishing(path: Any) -> Any:
+        if str(path).endswith("gone"):
+            raise FileNotFoundError(2, "removed by retention", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", vanishing)
+    assert parquet_usage(tmp_path) == (7, {"BTCUSDT": 7})
+
+
+async def test_the_volume_of_a_vanished_root_fails_the_pass_not_the_parent_filesystem(
+    tmp_path: Path,
+) -> None:
+    meter = VolumeMeter(tmp_path / "unmounted", None)
+    with pytest.raises(FileNotFoundError, match="recording root missing"):
+        await meter.volume()
+    await meter.close()
+
+
+def test_parquet_usage_refuses_a_root_that_is_not_a_directory(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="recording root missing"):
+        parquet_usage(tmp_path / "unmounted")  # never a fresh (0, {})
+
+
+async def test_a_missing_recording_root_fails_the_breakdown_pass(tmp_path: Path) -> None:
+    meter = VolumeMeter(tmp_path / "unmounted", None)
+    with pytest.raises(FileNotFoundError):  # a failed part, never a measured 0
+        await meter.breakdown()
+    await meter.close()
+
+
+def test_a_meter_part_budget_fits_inside_the_breakdown_timeout() -> None:
+    assert METER_PART_BUDGET_S < BREAKDOWN_TIMEOUT_S
 
 
 async def test_one_thread_consumes_a_late_result_instead_of_restarting() -> None:
