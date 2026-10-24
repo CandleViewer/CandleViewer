@@ -24,9 +24,11 @@ from candleviewer.db import models as m
 from candleviewer.observability.redaction import redact_text
 from candleviewer.storage.repositories.backups import BACKUP_ERROR_CODES
 from candleviewer.storage.repositories.backups_sqlalchemy import _path as backup_path_rule
-from tests.fixtures.admin import concurrent_rows, secret_marker
+from tests.fixtures.admin import backup_worlds, concurrent_rows, secret_marker
 from tests.fixtures.admin.handles import (
     ACCOUNTS,
+    BACKUP_TAMPERED,
+    BACKUP_THEN_REVOKED,
     BACKUP_VERIFY_FAILED,
     BACKUPS,
     FLAGS,
@@ -41,6 +43,8 @@ from tests.fixtures.admin.handles import (
 from tests.fixtures.admin.seed import is_test_database
 
 _README = Path(__file__).resolve().parents[1] / "fixtures" / "admin" / "README.md"
+#: Every backup handle: the two of `seed_backups`, and one world each for the later two.
+_BACKUPS = (*BACKUPS, BACKUP_TAMPERED, BACKUP_THEN_REVOKED)
 #: Each defeats one loosening of the rule: `endswith("test")`, `"_test" in`, `.lower()`.
 _REFUSE = "candleviewer testdb test_candleviewer prod latest candleviewer_test_backup Test".split()
 
@@ -49,7 +53,7 @@ def _values() -> list[str]:
     users = [s for u in USERS for s in (u.handle, u.username, u.email)]
     accounts = [s for a in ACCOUNTS for s in (a.handle, a.label, a.exchange_uid)]
     backups = [
-        s for b in BACKUPS for s in (b.handle, b.target_path, b.checksum_sha256, b.error) if s
+        s for b in _BACKUPS for s in (b.handle, b.target_path, b.checksum_sha256, b.error) if s
     ]
     audit = [  # all the audit-writer seeds' values but `secret_marker.MARKER`, left out below
         secret_marker.ACTOR,
@@ -59,6 +63,7 @@ def _values() -> list[str]:
         concurrent_rows.APP_ACTOR,
         concurrent_rows.RAW_ACTOR,
         concurrent_rows.ACTION,
+        backup_worlds.BOUND_DIGEST,
     ]
     return [*users, *accounts, *backups, *audit, *FLAGS, PLACEHOLDER_HASH]
 
@@ -204,7 +209,9 @@ def test_the_users_cover_every_role() -> None:
 
 
 def test_the_handles_are_unique() -> None:
-    handles = [u.handle for u in USERS] + [a.handle for a in ACCOUNTS] + [b.handle for b in BACKUPS]
+    handles = (
+        [u.handle for u in USERS] + [a.handle for a in ACCOUNTS] + [b.handle for b in _BACKUPS]
+    )
     assert len(handles) == len(set(handles))
 
 
@@ -251,11 +258,11 @@ def test_the_failed_backups_code_is_one_the_store_records() -> None:
     assert BACKUP_VERIFY_FAILED.error in BACKUP_ERROR_CODES
 
 
-@pytest.mark.parametrize("backup", BACKUPS, ids=[b.handle for b in BACKUPS])
+@pytest.mark.parametrize("backup", _BACKUPS, ids=[b.handle for b in _BACKUPS])
 def test_a_backups_path_passes_the_stores_rule_for_a_target_path(backup: FixtureBackup) -> None:
     assert backup_path_rule(backup.target_path) == backup.target_path
 
 
-@pytest.mark.parametrize("backup", BACKUPS, ids=[b.handle for b in BACKUPS])
+@pytest.mark.parametrize("backup", _BACKUPS, ids=[b.handle for b in _BACKUPS])
 def test_a_backups_digest_is_sha256_hex(backup: FixtureBackup) -> None:
     assert re.fullmatch(r"[0-9a-f]{64}", backup.checksum_sha256)

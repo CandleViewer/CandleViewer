@@ -152,8 +152,16 @@ BACKUP_VERIFIED: Final = FixtureBackup("BACKUP-VERIFIED", "verified", timedelta(
 BACKUP_VERIFY_FAILED: Final = FixtureBackup(
     "BACKUP-VERIFY-FAILED", "failed", timedelta(hours=1), error="checksum_mismatch"
 )
-#: Both rows are the whole catalogue of BACKUP-VERIFY-FAILED; a world without them is BACKUPS-NONE.
+#: Both rows are the whole catalogue of BACKUP-VERIFY-FAILED. BACKUPS-NONE is a catalogue with no
+#: row at all, so a world holding any backup handle's row is not it. Each backup handle is a world
+#: of its own: one database per backup handle.
 BACKUPS: Final[tuple[FixtureBackup, ...]] = (BACKUP_VERIFIED, BACKUP_VERIFY_FAILED)
+
+#: BACKUP-TAMPERED: a usable backup whose row holds a digest its run's record did not bind
+#: (AC-ADM-25). BACKUP-THEN-REVOKED: a usable backup older than the revocations after it
+#: (AC-ADM-24).
+BACKUP_TAMPERED: Final = FixtureBackup("BACKUP-TAMPERED", "verified", timedelta(days=2))
+BACKUP_THEN_REVOKED: Final = FixtureBackup("BACKUP-THEN-REVOKED", "verified", timedelta(days=3))
 
 
 def user(handle: str) -> FixtureUser:
