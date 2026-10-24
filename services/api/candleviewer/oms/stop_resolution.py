@@ -1,11 +1,11 @@
-"""The decision of the complete read of a position's waiting stop requests (E29-T04 #913 S3-H;
+"""The complete read of a position's waiting stop requests (E29-T04 #913 S3-H;
 21-database-schema.md Sec.3.3.11, 24-internal-schemas.md Sec.8.8 rule 6).
 
 A recorded stop left unanswered past its request's bound, or an entry's attach row waiting for the
 complete read (`WAITING_ENTRY`), holds its key until that read resolves it. This module decides
-what the read showed, purely; the read itself and the writes, through the recorded stops' M14
-facade (`RecordedStopRepository`'s `put_in_force` and `resolve`), follow it, and the gate that
-asks for it (its cap, its cooldown, its metric and its pages) is slice H3's.
+what the read showed, purely (1-3), then reads and writes it (4-5) through the recorded stops' M14
+facade (`RecordedStopRepository`'s `put_in_force` and `resolve`); the gate that asks for it (its
+cap, its cooldown, its metric and its pages) is slice H3's.
 
 1. **Grouping.** The key's waiting rows of the account (C-12.4), `pending`, grouped by request:
    one request's rows come from one INSERT and share `(source, order_id, created_at)` (Q9). A
@@ -46,6 +46,20 @@ asks for it (its cap, its cooldown, its metric and its pages) is slice H3's.
    by its entry's order (`WAITING_ENTRY`); any other entry's request that leaves a row answered
    or kept, on a row answered already or whose stored order `WAITING_ENTRY` holds
    (`Reading.waiting_entries`), carries `ENTRY_HELD` with its outcome, as that row stays listed.
+4. **The read** (`CompleteRead`), every read a `poll` lane read, each bounded at
+   `READ_TIMEOUT_S` and the whole at `WHOLE_READ_TIMEOUT_S`: the position always
+   (`routing.read_position`); an entry's order through `find_by_link_id`, credited only when
+   `b01.full_match(found_view(order))` passes (SR-E29-03), so a squatter's fill is never the
+   entry's; and, for a Partial side or a Full side whose position is flat (Q3), the open orders of
+   the symbol and the order history from 5 s before the oldest request, kept to the key and the
+   TP/SL kinds. One that fails or does not answer decides nothing (None). The venue's retention
+   comes from its port's `ExchangeCapabilities.order_retention_days` (demo 7 d, less rule 6's
+   day; none on live), never an environment check (24 Sec.14.2 rule 3). The read keeps no state
+   between calls: the cooldown and the attach's reserved slot are H3's gate's.
+5. **The writes** (`StopResolver`): answers, then the `replaced` rows, then each request's rows in
+   force (whose transaction also replaces the older answered rows of their kind), then the voids,
+   each audited write-ahead (C-2.9). A write that fails or loses its compare-and-set raises; the
+   key is read again on the next request.
 
 Nothing here ends a row, materialises one, binds or releases an `exchange_order_id` or tells B1 a
 stop was seen or lost (INV-B1-f).
@@ -53,25 +67,39 @@ stop was seen or lost (INV-B1-f).
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import asyncio
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Final, Literal
+from decimal import Decimal
+from typing import Any, Final, Literal, Protocol
 from uuid import UUID
 
-from candleviewer.exchange.base.models import Order, Position
+import structlog
+
+from candleviewer.exchange.base.models import AccountRef, Order, Position
+from candleviewer.exchange.base.ports import TradingPort
+from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.storage.repositories.orders import OrderRow
 from candleviewer.storage.repositories.recorded_stops import RecordedStopRow, StopKind
 
-from .commands import LIVE_HISTORY_SPAN_S
+from .commands import LIVE_HISTORY_SPAN_S, found_view, place_request
+from .order_link_resolution import find_by_link_id
 from .ports import PositionKey
+from .routing import read_position
 
 __all__ = [
-    "ENTRY_HELD", "FILL_PAGE", "HISTORY_LEAD_S", "HISTORY_SPAN_S", "RESTORE_HELD", "SPAN_HELD",
-    "TRAIL_HELD", "UNSEEN_PAGE", "EntryState", "Move", "Outcome", "PageReason", "PositionState",
-    "Reading", "RequestDecision", "StopRequest", "VoidReason", "decide", "full_shows",
-    "group_requests", "order_matches", "position_state", "shows_no_stop", "trail_unreadable",
+    "ENTRY_HELD", "FILL_PAGE", "HISTORY_LEAD_S", "HISTORY_SPAN_S", "READ_TIMEOUT_S",
+    "RESTORE_HELD", "SPAN_HELD", "TRAIL_HELD", "UNSEEN_PAGE", "WHOLE_READ_TIMEOUT_S",
+    "CompleteRead", "EntryOrders", "EntryState", "Move", "Outcome", "PageReason", "PositionState",
+    "Reading", "RequestDecision", "ResolutionStore", "StopRequest", "StopResolver", "VoidAudit",
+    "VoidReason", "VoidWriteAhead", "decide", "entry_view", "full_shows", "group_requests",
+    "order_matches", "position_state", "shows_no_stop", "trail_unreadable",
 ]  # fmt: skip
 
+#: Each venue read's bound, and the whole read's, in seconds (the orchestrator's 00:47Z spec).
+READ_TIMEOUT_S: Final = 5.0
+WHOLE_READ_TIMEOUT_S: Final = 15.0
 #: The order history is read from this long before the request (21 Sec.3.3.11).
 HISTORY_LEAD_S: Final = 5.0
 #: The venue's history span (24 Sec.14.1, `commands.LIVE_HISTORY_SPAN_S`): an ended order older
@@ -102,6 +130,8 @@ type EntryState = Literal["resting", "filled", "gone", "unseen"]
 #: Why a decision pages (`RequestDecision.page_reason`): the fill void of an open stop-loss, or the
 #: void of an unseen entry on a position open with no stop at all (the 06:38Z ruling).
 type PageReason = Literal["entry_filled_stop_absent", "entry_unseen"]
+#: A void's write-ahead hook (`ResolveWriteAhead`, H1): awaited before the commit, with the rows.
+type VoidWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
 
 #: Why a request is held for reconciliation (`RequestDecision.held`, the log line's text).
 TRAIL_HELD: Final = (
@@ -126,10 +156,18 @@ _STOP_ORDERS: Final = frozenset({"partial_stop_loss", "trailing_stop"})
 
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _LEAD_US: Final = round(HISTORY_LEAD_S * 1_000_000)
+_DAY_US: Final = 86_400_000_000
 _PARTIAL_KIND: Final[Mapping[StopKind, str]] = {
     "stop_loss": "partial_stop_loss",
     "take_profit": "partial_take_profit",
 }
+_STOP_KINDS: Final = frozenset({"trailing_stop", *_PARTIAL_KIND, *_PARTIAL_KIND.values()})
+_VOIDS: Final[tuple[VoidReason, ...]] = ("in_flight_resolved", "entry_filled_stop_absent")
+
+
+def _log() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -449,3 +487,272 @@ def _decision(
     return RequestDecision(
         request, outcome, moves, state, pages, page=FILL_PAGE, page_reason=reason
     )
+
+
+# --- the ports the read and the writes take --------------------------------------------------
+
+
+class ResolutionStore(Protocol):
+    """The recorded stops' calls the resolution makes, as H1 names them, each scoped by the
+    account it is given (C-12.4)."""
+
+    async def waiting_for_key(
+        self,
+        account_id: UUID,
+        symbol: str,
+        position_idx: int,
+        *,
+        now: datetime,
+        bound_s: float | None,
+    ) -> Sequence[RecordedStopRow]: ...
+
+    async def in_force_for_key(
+        self, account_id: UUID, symbol: str, position_idx: int
+    ) -> Sequence[RecordedStopRow]: ...
+
+    async def put_in_force(
+        self, account_id: UUID, rows: Sequence[RecordedStopRow], *, at: datetime
+    ) -> object: ...
+
+    async def resolve(
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        outcome: Literal["answered", "replaced", VoidReason],
+        *,
+        at: datetime,
+        write_ahead: VoidWriteAhead | None = None,
+        position_state: PositionState | None = None,
+    ) -> Sequence[RecordedStopRow]: ...
+
+
+class EntryOrders(Protocol):
+    """The stored orders (`OrderRepository.get`): an entry's row, None outside the account."""
+
+    async def get(self, account_id: UUID, order_id: UUID) -> OrderRow | None: ...
+
+
+class VoidAudit(Protocol):
+    """The write-ahead hook of a void (C-2.9): one `sl.modified` / `tp.modified` record per row,
+    with `reason`, actor `system:oms`, ids only (21 Sec.3.3.11 "Audit")."""
+
+    def hook(self, reason: VoidReason, position_state: PositionState) -> VoidWriteAhead: ...
+
+
+def entry_view(row: OrderRow) -> dict[str, Any]:
+    """The stored entry as B1's context names it for `b01.full_match` (24 Sec.8.1): ids, text,
+    `reduce_only`, and money as canonical decimal text."""
+    money = {
+        key: None if value is None else _decimal_text(value)
+        for key, value in (
+            ("qty", row.qty),
+            ("price", row.price),
+            ("trigger_price", row.trigger_price),
+            ("stop_loss", row.stop_loss),
+            ("take_profit", row.take_profit),
+        )
+    }
+    return {
+        "order_id": str(row.id),
+        "order_link_id": row.order_link_id,
+        "account_id": str(row.exchange_account_id),
+        "symbol": row.symbol,
+        "side": row.side.lower(),
+        "reduce_only": row.reduce_only,
+        **money,
+    }
+
+
+def _decimal_text(value: Decimal) -> str:
+    out = format(value, "f")
+    out = out.rstrip("0").rstrip(".") if "." in out else out
+    return "0" if out == "-0" else out
+
+
+# --- the read --------------------------------------------------------------------------------
+
+
+class CompleteRead:
+    """The venue read of one key (24 Sec.8.8 rule 6), in the `poll` lane: the position; each
+    entry's order, credited only on its full match; and the key's TP/SL orders when a side needs
+    them. None when any read fails or outlasts its bound: nothing is decided on half a read."""
+
+    def __init__(
+        self,
+        orders: EntryOrders,
+        *,
+        read_timeout_s: float = READ_TIMEOUT_S,
+        whole_timeout_s: float = WHOLE_READ_TIMEOUT_S,
+    ) -> None:
+        self._orders = orders
+        self._read_timeout_s = read_timeout_s
+        self._whole_timeout_s = whole_timeout_s
+
+    async def read(
+        self,
+        port: TradingPort,
+        account: AccountRef,
+        key: PositionKey,
+        requests: Sequence[StopRequest],
+        *,
+        now: datetime,
+    ) -> Reading | None:
+        """The key's reading at `now`, or None when a read fails or outlasts its bound."""
+        if account.account_id != key.account_id:
+            raise ValueError("the account read is the key's (C-12.4)")
+        try:
+            async with asyncio.timeout(self._whole_timeout_s):
+                reading = await self._read(port, account, key, requests)
+        except Exception as exc:  # CancelledError is no Exception: a cancel goes through
+            _log().warning("oms_stop_read_failed", symbol=key.symbol, failure=type(exc).__name__)
+            return None
+        now_us = _us(now)
+        days = port.capabilities.order_retention_days  # a demo venue's retention; None on live
+        kept = 0 if days is None else now_us - (days - 1) * _DAY_US  # rule 6's margin of a day
+        return replace(
+            reading,
+            history_from_us=now_us - round(HISTORY_SPAN_S * 1_000_000),
+            retention_from_us=kept,
+        )
+
+    async def _read(
+        self,
+        port: TradingPort,
+        account: AccountRef,
+        key: PositionKey,
+        requests: Sequence[StopRequest],
+    ) -> Reading:
+        position = await self._one(read_position(port, account, key.symbol, key.position_idx))
+        entries: dict[UUID, EntryState] = {}
+        for request in requests:
+            if request.source == "entry_attach" and request.order_id is not None:
+                entries[request.order_id] = await self._entry(port, account, request.order_id)
+        rows = [row for request in requests for row in request.rows]
+        if not any(r.tpsl_mode == "Partial" or position_state(r, position) == "flat" for r in rows):
+            return Reading(position, entries)
+        start = _us(min(r.created_at for r in rows)) - _LEAD_US
+        open_now = await self._one(port.open_orders(account, key.symbol))
+        history = await self._one(port.order_history(account, start=start))
+        place = (key.account_id, key.symbol, key.position_idx)
+
+        def kept(orders: Sequence[Order]) -> tuple[Order, ...]:
+            return tuple(
+                o
+                for o in orders
+                if (o.account_id, o.symbol, o.position_idx) == place and o.order_kind in _STOP_KINDS
+            )
+
+        return Reading(position, entries, kept(open_now), kept(history))
+
+    async def _entry(self, port: TradingPort, account: AccountRef, order_id: UUID) -> EntryState:
+        """The entry's order, by its bound id when it has one: `gone` when it is not stored for
+        the account, not found, or found and not the row's (a squatter's fill is never ours)."""
+        row = await self._one(self._orders.get(account.account_id, order_id))
+        if row is None:
+            return "gone"
+        found = await self._one(find_by_link_id(port, place_request(row, account)))
+        if found is None:
+            return "gone"
+        order, source = found
+        bound = row.exchange_order_id
+        try:
+            ours = b01.full_match(entry_view(row), found_view(order))
+        except ValueError:  # malformed money, which B1's guards deny too
+            ours = False
+        if not ours or (bound is not None and order.exchange_order_id != bound):
+            _log().warning("oms_stop_read_entry_unmatched", order_link_id=row.order_link_id)
+            return "gone"
+        if order.filled_qty > 0:
+            return "filled"
+        return "resting" if source == "realtime" else "gone"
+
+    async def _one[T](self, call: Awaitable[T]) -> T:
+        async with asyncio.timeout(self._read_timeout_s):
+            return await call
+
+
+# --- the resolution --------------------------------------------------------------------------
+
+
+class StopResolver:
+    """One key's resolution: its waiting rows re-read, grouped, read at the venue, decided and
+    written. The gate (H3) runs one per key at a time, bounds it and counts its outcomes."""
+
+    def __init__(
+        self,
+        store: ResolutionStore,
+        read: CompleteRead,
+        audit: VoidAudit,
+        *,
+        now: Callable[[], datetime],
+    ) -> None:
+        self._store = store
+        self._read = read
+        self._audit = audit
+        self._now = now
+
+    async def resolve_key(
+        self, port: TradingPort, account: AccountRef, key: PositionKey, *, bound_s: float | None
+    ) -> tuple[RequestDecision, ...] | None:
+        """The key's decisions, written; None when the read decided nothing (`read_failed`).
+        A store read or write that fails raises, with what was written before it kept."""
+        if account.account_id != key.account_id:
+            raise ValueError("the account resolved is the key's (C-12.4)")
+        now = self._now()
+        listed = await self._store.waiting_for_key(
+            key.account_id, key.symbol, key.position_idx, now=now, bound_s=bound_s
+        )
+        requests = group_requests(key, listed)
+        if not requests:
+            return ()
+        live = [r for r in requests if r.source != "restore"]
+        reading = Reading(None, {})
+        if live:
+            read = await self._read.read(port, account, key, live, now=now)
+            if read is None:
+                return None
+            stored = await self._store.in_force_for_key(
+                key.account_id, key.symbol, key.position_idx
+            )
+            reading = replace(read, in_force=tuple(stored))
+        decisions = decide(requests, reading)
+        await self._write(key, decisions)
+        for d in decisions:
+            _log().info(
+                "oms_stop_request_resolved",
+                symbol=key.symbol,
+                outcome=d.outcome,
+                rows=[str(row.id) for row, _ in d.moves],
+                pages=[str(i) for i in d.pages],
+            )
+            if d.held is not None:  # H3 counts it and keeps one line per key
+                _log().warning("oms_stop_request_held", symbol=key.symbol, reason=d.held)
+        return decisions
+
+    async def _write(self, key: PositionKey, decisions: Sequence[RequestDecision]) -> None:
+        """Answers, replaced rows, rows in force (replacing the older answered rows of their
+        kind), then voids, each audited write-ahead. Never an end, a bind or a release."""
+        at, account_id = self._now(), key.account_id
+        for outcome in ("answered", "replaced"):
+            for d in decisions:
+                rows = [r for r, m in d.moves if m == outcome]
+                rows = [r for r in rows if outcome == "replaced" or r.answered_at is None]
+                if rows:
+                    await self._store.resolve(account_id, rows, outcome, at=at)
+        for d in decisions:
+            shown = [r for r, m in d.moves if m == "in_force"]
+            if shown:
+                await self._store.put_in_force(account_id, shown, at=at)
+        for d in decisions:
+            for reason in _VOIDS:
+                voided = [r for r, m in d.moves if m == reason]
+                if voided:
+                    state = d.position_state if reason == "entry_filled_stop_absent" else None
+                    await self._store.resolve(
+                        account_id,
+                        voided,
+                        reason,
+                        at=at,
+                        write_ahead=self._audit.hook(reason, d.position_state),
+                        position_state=state,
+                    )
