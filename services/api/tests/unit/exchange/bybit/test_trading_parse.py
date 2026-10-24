@@ -197,6 +197,7 @@ def test_a_partly_filled_row_maps_every_field_to_its_own() -> None:
         avg_fill_price=Decimal("60010.5"),
         created_at=1_700_000_000_001_000,
         terminal_at=None,
+        updated_at=1_700_000_000_002_000,
         reduce_only=True,
         trigger_price=Decimal("59000"),
         stop_loss=Decimal("58000"),

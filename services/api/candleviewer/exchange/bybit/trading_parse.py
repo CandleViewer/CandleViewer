@@ -690,6 +690,7 @@ def to_order(row: OrderRow, account: AccountRef) -> Order:
         avg_fill_price=row.avgPrice,
         created_at=row.createdTime * 1000,
         terminal_at=row.updatedTime * 1000 if row.orderStatus in _TERMINAL else None,
+        updated_at=row.updatedTime * 1000,
         reduce_only=row.reduceOnly,
         trigger_price=row.triggerPrice,
         stop_loss=row.stopLoss,

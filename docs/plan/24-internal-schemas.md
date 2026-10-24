@@ -2214,6 +2214,8 @@ _Added for E29-T05 (#848), contract first: nothing runs it yet._ The consumer re
 | `position`       | always                                                                                                                                          | the position projection (`positions`, and a `position_snapshots` row with the reason `ws_push`), and the protection readings (below)                                                           |
 | `wallet`         | not dated ahead of the host clock                                                                                                               | E27-T04's wallet cache (`AccountHealthFeed.wallet_pushed`), never B1; a frame dated ahead is refused before it, as it would block every later refresh                                          |
 
+An order row's event carries, as its `updated_time`, the venue's own time of the order's last change (`Order.updated_at`, §14.4), never the time the row was received. The exchange is the truth for ordering: a read received after an older push does not win on its receipt time (S5, §8.2). Only a row whose source sends no such time falls back to the push's creation time (`PrivateEvent.ts_event`); its `updated_at` of `None` marks it.
+
 **The end (the orchestrator's Q4 ruling, 2026-10-22).** `EXPIRE` exactly when the order's time in force is `ioc` or `fok` and it ended `cancelled` or `partially_filled_canceled`; `REMOTE_CANCELLED` for every other end, `deactivated` and a rejection after the acceptance included. The venue's status is kept verbatim on the step's `order_events` row (the push's `order_status`) and in its audit record, and an end waits for the fills it reports (INV-B1-k). No row maps to `AMEND_REJECTED`: an amend the venue refuses is answered by its own call, an `amend` result that is not `ret_code_ok` (INV-B1-c).
 
 **Pairing (§8.3 rule 7, SR-E29-03), in this order.**
@@ -4478,6 +4480,8 @@ class Order(BaseModel):                    # a read's row (§8.5); the OMS aggre
     avg_fill_price: Px | None
     created_at: TsUs
     terminal_at: TsUs | None
+    updated_at: TsUs | None = None         # the venue's own time of the order's last change: B1's
+                                           # updated_time (§8.12); None only where a source has none
     reduce_only: bool = False              # with trigger_price and stop_loss: B1's full match
     trigger_price: Px | None = None
     stop_loss: Px | None = None
