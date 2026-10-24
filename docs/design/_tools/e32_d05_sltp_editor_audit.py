@@ -10,11 +10,13 @@ arithmetic over the fixture (Decimal, tick 0.10): the readout's digits, the lock
 loosen risk, the `22` example's implied reference, the ratchet's widest trail, the ladder frames'
 fixture; (6) the string gates (no banned word in the copy deck, no raw error-code token, every T2
 reason within 60 characters, the stale template's fixed text within 60, no private path, every
-cited id and line still valid, the C-2.6 sentences present, no LIVE frame without the arm or the
-step-up, no pending frame that reads as applied, no closing keyword in a draft passed with
-`--extra`); (7) the counts the boards and the draft quote. `--json` feeds the check-nums script;
-`--check` re-derives the spec's `audit:` markers; `--self-test` flips each gate on a copy of the
-spec in memory and expects exactly one named FAIL. Exit 1 on a gated FAIL or a failed gate.
+cited id and line still valid, the C-2.6 sentences present, every drawn `SCR-064 /` row of
+sections 3 and 6 naming the stop Bybit holds now (C-2.6 per frame; `naked`: none, "Attach stop"),
+no LIVE frame without the arm or the step-up, no pending frame that reads as applied, no closing
+keyword in a draft passed with `--extra`); (7) the counts the boards and the draft quote.
+`--json` feeds the check-nums script; `--check` re-derives the spec's `audit:` markers;
+`--self-test` flips each gate on a copy of the spec in memory and expects exactly one named FAIL.
+Exit 1 on a gated FAIL or a failed gate.
 
 Usage: python3 -I docs/design/_tools/e32_d05_sltp_editor_audit.py [--json] [--check] [--self-test]
        [--extra F ...]
@@ -70,8 +72,12 @@ STOP_SENTENCES = (
     "never empty at rest, no clear glyph, no toggle",
     "the board self-check throws on a `SCR-064 /` frame without its `stop-marker`",
     "the only path to a wider stop is the owner's flow",
+    "every frame names the stop Bybit holds now",
+    "Every `SCR-064 /` frame shows the stop Bybit holds now (the `stop-marker`)",
 )
 HELD_NOW = "Held by Bybit now"
+# The "Stop marker (held now)" cell of a drawn row: the marker's words and a tool-derived value.
+HELD_CELL = r"Held by Bybit now: [\d,]+\.\d <!-- audit:held\.[a-z_]+=[\d.]+ -->"
 # element | fg | bg | role — every pair the two screens draw (spec section 14, rows in order).
 PAIRS_TABLE = """
 dialog body, field values, read-out words | color.text.primary | color.surface.overlay | text
@@ -321,7 +327,8 @@ COUNT_RE = {
     "q_rows": r"^\| D05-Q\d+ ",
     "bq_rows": r"^\| BQ-\d+ ",
 }
-STATE_ROW = r"^\| (\d+) +\| `([^`]+)`[^|]*\| ([^|]+?) +\| ([^|]+?) +\|([^\n]*)"
+STATE_ROW = r"^\| (\d+) +\| `([^`]+)`[^|]*\| ([^|]+?) +\| ([^|]+?) +\| ([^|]*?) *\|([^\n]*)"
+LOOSEN_ROW = r"^\| \d+ +\| `(SCR-064 / [^`]+)`[^|]*\| ([^|]*?) *\|"
 REASON_RE = r"^\| `((?:rbac|arm|submit)\.[a-z_.]+|frozen|lockout)` +\| ([^|]+?) +\|"
 DECK_RE = r"^\| (`[^|]+?`|— [^|]*?) +\| ([^|]*?) +\| ([^|]+?) +\|$"
 POINTERS = {
@@ -559,6 +566,17 @@ def arithmetic() -> dict[str, object]:
         "wider_ticks": ticks_between(F["stop"], loosen),
     }
     liq = {"ticks": 250, "cleared": num(Decimal("64010.0") - 250 * TICK)}
+    # The stop each drawn frame's marker names (C-2.6 per frame): the fixture's, the short mirror
+    # (entry + the long's distance), E32-D02 row 6's placeholder, the applied tighten, the ladder
+    # fixture's and the loosened one.
+    held = {
+        "long": num(F["stop"]),
+        "short": num(F["entry"] + (F["entry"] - F["stop"])),
+        "beyond_liq": 63500.0,
+        "applied": num(pend_stop),
+        "ladder": num(ladder_stop),
+        "loosened": num(loosen),
+    }
     return {
         "fixture": fixture,
         "trail": trail,
@@ -567,6 +585,7 @@ def arithmetic() -> dict[str, object]:
         "loosen": loosened,
         "liq": liq,
         "ladder_fixture": ladder_fixture,
+        "held": held,
     }
 
 
@@ -651,9 +670,23 @@ def cite_gates(t: dict[str, str]) -> list[str]:
     return bad
 
 
-def state_rows(spec: str) -> list[tuple[str, str, str, str]]:
-    """(frame, board, class, the rest of the row) for every section 3 state row."""
-    return [(m[1], m[2], m[3], m[4]) for m in re.findall(STATE_ROW, section(spec, 3, 4), MULTI)]
+def state_rows(spec: str) -> list[tuple[str, str, str, str, str]]:
+    """(frame, board, class, the held-now cell, the rest of the row) for every section 3 row."""
+    return [
+        (m[1], m[2], m[3], m[4], m[5]) for m in re.findall(STATE_ROW, section(spec, 3, 4), MULTI)
+    ]
+
+
+def held_gates(spec: str) -> list[str]:
+    """C-2.6 per frame: every drawn `SCR-064 /` row of sections 3 and 6 names the stop held now."""
+    drawn = [(3, f"SCR-064 / {f}", h) for f, b, _, h, _ in state_rows(spec) if "not drawn" not in b]
+    drawn += [(6, f, h) for f, h in re.findall(LOOSEN_ROW, section(spec, 6, 7), MULTI)]
+    bad = []
+    for sec, frame, held in drawn:
+        naked = frame == "SCR-064 / naked" and "none" in held and '"Attach stop"' in held
+        if not naked and not re.fullmatch(HELD_CELL, held):
+            bad.append(f"spec section {sec}: {frame} names no stop held now (C-2.6 per frame)")
+    return bad
 
 
 def gates(
@@ -664,6 +697,7 @@ def gates(
     deck = section(spec, 13, 14)
     header = spec[: spec.index("\n## 0.")]
     bad += [f"spec: C-2.6 sentence missing: {s[:48]}" for s in STOP_SENTENCES if s not in spec]
+    bad += held_gates(spec)
     bad += [
         f"spec section 13: banned word in UI copy: {m.group(0)!r}"
         for p in BANNED_COPY
@@ -689,7 +723,7 @@ def gates(
         bad.append("spec section 13: e32.stale.entry_off (E17-D01's form instantiated) is missing")
     elif len(stale.replace("{message}", "")) > 60 or "still works." not in stale:
         bad.append(f"spec section 13: e32.stale.entry_off fixed text {len(stale) - 9} chars / form")
-    for frame, board, cls, rest in state_rows(spec):
+    for frame, board, cls, _, rest in state_rows(spec):
         drawn = "not drawn" not in board
         if drawn and not re.fullmatch(r"\d\d", board):
             bad.append(f"spec section 3: {frame} has no board number ({board!r})")
@@ -766,8 +800,10 @@ def counts(spec: str, handoff: str) -> dict[str, object]:
     row01 = first(r"^(\| 01 +\|[^\n]*)", s0, MULTI)
     numbers["key_frames"] = int("`Key —" in row01) + int("`Fixture" in row01)
     numbers["frames_064_rows"] = len(rows3)
-    numbers["frames_064"] = sum("not drawn" not in b for _, b, _, _ in rows3)
-    numbers["loosen_frames"] = sum("loosen ·" in f and "not drawn" not in b for f, b, _, _ in rows3)
+    numbers["frames_064"] = sum("not drawn" not in b for _, b, _, _, _ in rows3)
+    numbers["loosen_frames"] = sum(
+        "loosen ·" in f and "not drawn" not in b for f, b, _, _, _ in rows3
+    )
     numbers["frames_120"] = count(r"^\| \d+ +\| `[a-z]", section(spec, 4, 5))
     numbers["frames_total"] = (
         int(str(numbers["frames_064"]))
@@ -838,7 +874,10 @@ def mutations() -> list[tuple[str, Callable[[str], str], str]]:
         ),
         (
             "live",
-            sub(r"^(\| 1 +\| `loading` +\| 04 +\| status +\| )the layout", r"\1the LIVE layout"),
+            sub(
+                r"^(\| 1 +\| `loading` +\| 04 +\| status +\|[^|\n]*\| )the layout",
+                r"\1the LIVE layout",
+            ),
             "draws LIVE",
         ),
         (
@@ -857,9 +896,18 @@ def mutations() -> list[tuple[str, Callable[[str], str], str]]:
             "stop in force",
         ),
         (
+            "held-row",
+            sub(
+                r"^(\| 16 +\| `applied` +\|[^|\n]*\|[^|\n]*\| )Held by Bybit now: [^|\n]*?( +\|)",
+                r"\1—\2",
+            ),
+            "names no stop held now",
+        ),
+        (
             "optimistic",
             sub(
-                r"^(\| 11 +\| `pending-acknowledgement` +\| 04 +\| status +\| )Apply on a tighten",
+                r"^(\| 11 +\| `pending-acknowledgement` +\| 04 +\| status +\|[^|\n]*\| )"
+                r"Apply on a tighten",
                 r"\1✓ applied: Apply on a tighten",
             ),
             "reads as applied",
@@ -973,7 +1021,8 @@ def main(argv: list[str]) -> int:
     if not facts["position_lacks_activation_price"]:
         CITE_WARN.append("gap closed — `22` Position now carries activation_price: update D05-G4")
     ok = (
-        "OK — the C-2.6 sentences present; no banned word or raw error-code token in the copy "
+        "OK — the C-2.6 sentences present; every drawn SCR-064 row names the stop held now; "
+        "no banned word or raw error-code token in the copy "
         "deck; every T2 reason within 60 characters; every pending frame names the stop in force "
         "and never reads as applied; no LIVE frame without the arm or the step-up; no private "
         "path; every C / CMP / SCR id "
