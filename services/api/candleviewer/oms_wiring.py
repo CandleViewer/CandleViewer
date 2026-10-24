@@ -15,7 +15,6 @@ Part 3: the OMS runtime (`build_oms_runtime`, `OmsRuntime`), which the lifespan 
 from __future__ import annotations
 
 import asyncio
-import inspect
 import math
 import re
 import time
@@ -43,6 +42,7 @@ from candleviewer.domain.order_entry import OrderEntryCheck, OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId, Environment, GroupId, Px, Symbol
 from candleviewer.exchange.base.errors import AuthError, ExchangeError, OmsErrorCode
 from candleviewer.exchange.base.models import AccountRef, RateHeadroom, RateLane, TickerEvent
+from candleviewer.exchange.base.ports import PrivateStream
 from candleviewer.observability import spawn, spawn_child
 from candleviewer.observability.metrics import BoundedMetric, Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
@@ -106,7 +106,7 @@ from candleviewer.oms.submit import (
     SubmitOutcome,
 )
 from candleviewer.oms.validator import ReadOnlyCheck, Validator
-from candleviewer.oms_lane import LANE_JOIN_S, Lane, OrderLane, Serving
+from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, Lane, LaneStopped, OrderLane, Serving
 from candleviewer.settings import OMS_INFLIGHT_STUCK_MAX_S, OMS_STOP_RESERVE_S, Settings
 from candleviewer.statechart.bindings.b01_order import ALREADY_TERMINAL
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
@@ -831,28 +831,51 @@ class OrderStateFeed:
 # #4370), the metrics and the pager.
 
 
+class PrivateStreamRefused(RuntimeError):
+    """`ServedPort.subscribe_private`: a private stream stays on the loop that opens it, never the
+    order lane (20 Sec.6.2)."""
+
+
+def _served[**P, R](
+    serving: Serving, member: Callable[P, Coroutine[Any, Any, R]]
+) -> Callable[P, Coroutine[Any, Any, R]]:
+    async def served(*args: P.args, **kwargs: P.kwargs) -> R:
+        return await serving.call(member(*args, **kwargs))
+
+    return served
+
+
 class ServedPort:
     """The router's port until L3's second PR (ruling Q11): every call the trading port signs
     borrows M2's key on the serving loop, whose credential read, write-ahead audit and touch tasks
-    are that loop's, so each coroutine member is awaited there within `HOP_TIMEOUT_S`; a private
-    stream stays on the loop that opens it, so `subscribe_private` is refused. `headroom` reads
-    the governor in place, under its own lock (#4370)."""
+    are that loop's, so each coroutine member is declared here, typed as the port's, and awaited
+    there within `HOP_TIMEOUT_S`; a private stream stays on the loop that opens it, so
+    `subscribe_private` is `PrivateStreamRefused`. `headroom` reads the governor in place, under
+    its own lock (#4370)."""
 
     def __init__(self, port: OwnedPort, serving: Serving) -> None:
-        self.capabilities, self._port, self._serving = port.capabilities, port, serving
+        self.capabilities, self._port = port.capabilities, port
+        self.place_order = _served(serving, port.place_order)
+        self.place_batch = _served(serving, port.place_batch)
+        self.amend_order = _served(serving, port.amend_order)
+        self.cancel_order = _served(serving, port.cancel_order)
+        self.cancel_all = _served(serving, port.cancel_all)
+        self.set_trading_stop = _served(serving, port.set_trading_stop)
+        self.set_leverage = _served(serving, port.set_leverage)
+        self.open_orders = _served(serving, port.open_orders)
+        self.order_history = _served(serving, port.order_history)
+        self.positions = _served(serving, port.positions)
+        self.executions = _served(serving, port.executions)
+        self.closed_pnl = _served(serving, port.closed_pnl)
+        self.wallet = _served(serving, port.wallet)
+        self.fee_rate = _served(serving, port.fee_rate)
+        self.account_info = _served(serving, port.account_info)
 
     def headroom(self, account: AccountRef, lane: RateLane) -> RateHeadroom:
         return self._port.headroom(account, lane)
 
-    def __getattr__(self, name: str) -> Callable[..., Awaitable[Any]]:
-        member = getattr(self._port, name)
-        if name == "subscribe_private" or not inspect.iscoroutinefunction(member):
-            raise AttributeError(name)
-
-        async def served(*args: Any, **kwargs: Any) -> Any:
-            return await self._serving.call(member(*args, **kwargs))
-
-        return served
+    async def subscribe_private(self, account: AccountRef) -> PrivateStream:
+        raise PrivateStreamRefused("a private stream stays on the loop that opens it")
 
 
 class ServedAudit:
@@ -1214,25 +1237,26 @@ class OnLane:
     """What `POST /orders` reaches of the composed OMS from the serving loop (20 Sec.6.2, CV-C13):
     the pipeline's submit and replay answer, the anchors' lookup, and steps 4 and 8's account and
     order reads, each awaited on the order lane (`Lane.call`), where the OMS and its pool run.
-    Cancelling the await cancels the lane's task; the route's shield keeps the submit's."""
+    Cancelling the await cancels the lane's task; the route's shield keeps the submit's (`_on_lane`
+    for when the lane does not answer)."""
 
     parts: _Parts
 
     async def submit(self, request: OrderRequest, context: SubmitContext) -> SubmitOutcome:
-        return await self.parts.lane.call(self.parts.submission.submit(request, context))
+        return await _on_lane(self.parts, self.parts.submission.submit(request, context), None)
 
     async def answer_replay(self, account_id: AccountId, replay: Replay) -> SubmitOutcome:
-        return await self.parts.lane.call(self.parts.submission.answer_replay(account_id, replay))
+        return await _on_lane(self.parts, self.parts.submission.answer_replay(account_id, replay))
 
     async def lookup(self, created_by: UUID, client_ref: UUID, request_sha256: str) -> Lookup:
         found = self.parts.anchors.lookup(created_by, client_ref, request_sha256)
-        return await self.parts.lane.call(found)
+        return await _on_lane(self.parts, found)
 
     async def environment_of(self, account_id: AccountId) -> Environment:
-        return await self.parts.lane.call(self.parts.route.accounts.environment_of(account_id))
+        return await _on_lane(self.parts, self.parts.route.accounts.environment_of(account_id))
 
     async def get(self, account_id: UUID, order_id: UUID) -> OrderRow | None:
-        return await self.parts.lane.call(self.parts.route.orders.get(account_id, order_id))
+        return await _on_lane(self.parts, self.parts.route.orders.get(account_id, order_id))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1242,7 +1266,22 @@ class OnLaneGroups:
     parts: _Parts
 
     async def get(self, scope: AccountScope, group_id: GroupId) -> ScopedTradeGroup:
-        return await self.parts.lane.call(self.parts.route.groups.get(scope, group_id))
+        return await _on_lane(self.parts, self.parts.route.groups.get(scope, group_id))
+
+
+async def _on_lane[T](
+    parts: _Parts, coro: Coroutine[Any, Any, T], timeout_s: float | None = HOP_TIMEOUT_S
+) -> T:
+    """`coro` awaited on the lane: `OmsNotReady` once the lane has stopped (CR-S3L1B-07), and, with
+    `timeout_s`, past it (CR-S3L1A-02): a read's bound; the submit's is the stop's drain."""
+    try:
+        return await parts.lane.call(coro, timeout_s=timeout_s)
+    except LaneStopped:
+        raise OmsNotReady from None
+    except TimeoutError:
+        if timeout_s is None:
+            raise
+        raise OmsNotReady from None
 
 
 async def _drained(tasks: set[asyncio.Task[Any]], timeout_s: float) -> set[asyncio.Task[Any]]:
@@ -1388,7 +1427,10 @@ class OmsRuntime:
     @property
     def state(self) -> OmsState:
         """`ok` once ready; `degraded` once it will not get ready (it failed closed, its sweep
-        refused, or its startup task ended without it); else `starting` (20 Sec.6.2)."""
+        refused, or its startup task ended without it) or its order lane died; else `starting`
+        (20 Sec.6.2)."""
+        if (parts := self._parts) is not None and parts.lane.dead:
+            return "degraded"
         if self._ready.is_set():
             return "ok"
         startup = self._startup
@@ -1670,7 +1712,7 @@ class OmsRuntime:
         port = self._venue.trading_port(env, clock_offset_ms=ingestion.clock_offset_ms)
         closers: list[_Closer] = [("trading_port", lambda: serving.call(port.aclose()))]
         try:
-            served = cast(RoutedPort, ServedPort(port, serving))  # the port's members, on its loop
+            served: RoutedPort = ServedPort(port, serving)  # the port's members, on its loop
             router = TradingRouter({env: served}, lane_waits=self._venue.lane_waits())
             self._phase = "stores"
             stores = self._stores()
