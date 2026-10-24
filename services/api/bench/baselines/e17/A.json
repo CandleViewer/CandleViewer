@@ -1,0 +1,77 @@
+{
+  "cgroup": "none",
+  "commit": "1b69803c3d3e02b20edb9fee860faae08b609c25",
+  "cpu_model": "Intel(R) Xeon(R) Gold 6252 CPU @ 2.10GHz",
+  "flag": "on",
+  "gate": "warn-only",
+  "harness_version": "e17-q03/1",
+  "higher_is_better": [],
+  "k6_version": "v2.3.0",
+  "loop": "asyncio",
+  "machine_profile": "bench-runner",
+  "metrics": {
+    "backend_cpu_s_per_s": {
+      "count": 1.0,
+      "max": 0.6426088470367398,
+      "p50": 0.6426088470367398,
+      "p95": 0.6426088470367398
+    },
+    "backend_rss_mb": {
+      "count": 1.0,
+      "max": 272.74609375,
+      "p50": 272.74609375,
+      "p95": 272.74609375
+    },
+    "event_loop_lag_ms": {
+      "count": 1.0,
+      "max": 22.80118551746235,
+      "p50": 22.80118551746235,
+      "p95": 22.80118551746235
+    },
+    "fanout_ms": {
+      "count": 53644.0,
+      "p50": 1.7990464368334933,
+      "p95": 11.816256830601079,
+      "p99": 33.86253521126748
+    },
+    "release_decode_bars_ms": {
+      "count": 284733.0,
+      "max": 30.0,
+      "p50": 30.0,
+      "p95": 30.0
+    },
+    "release_decode_book_ms": {
+      "count": 951729.0,
+      "max": 20.0,
+      "p50": 20.0,
+      "p95": 20.0
+    },
+    "resnapshot_kib": {
+      "count": 1.0,
+      "max": 15.8369140625,
+      "p50": 15.8369140625,
+      "p95": 15.8369140625
+    },
+    "resnapshot_ms": {
+      "count": 1.0,
+      "max": 79.0,
+      "p50": 79.0,
+      "p95": 79.0
+    },
+    "rw_bandwidth_kib_s": {
+      "count": 1.0,
+      "max": 8.888216145833333,
+      "p50": 8.888216145833333,
+      "p95": 8.888216145833333
+    },
+    "tick_to_decode_trades_ms": {
+      "count": 479809.0,
+      "p50": 3.0,
+      "p95": 25.0,
+      "p99": 48.0
+    }
+  },
+  "profile_scaling": "steady 3600 s",
+  "run_profile": "full",
+  "scenario": "A"
+}
