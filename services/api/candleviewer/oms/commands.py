@@ -309,8 +309,8 @@ _DIRECTIONS: Final[Mapping[int, Literal["rise", "fall"]]] = {1: "rise", 2: "fall
 _MODES: Final[Mapping[str, Literal["full", "partial"]]] = {"Full": "full", "Partial": "partial"}
 _POSITION_IDX: Final[Mapping[int, Literal[0, 1, 2]]] = {0: 0, 1: 1, 2: 2}
 
-#: The exits an exit service waits on (`expect_exit`): B1's cancel; S4-B2 adds the amend.
-type ExitKind = Literal["cancel"]
+#: The exits an exit service waits on (`expect_exit`): B1's cancel and its amend.
+type ExitKind = Literal["cancel", "amend"]
 type StoredOrder = NewOrder | OrderRow
 
 
@@ -571,8 +571,8 @@ class PlaceWatch:
 
 @dataclass(eq=False, slots=True)
 class ExitWatch:
-    """An exit service's wait on one order's cancel (`OmsCommandPort.expect_exit`), as `PlaceWatch`
-    is the pipeline's on a create: `answer()` resolves once B1's own cancel was answered, with the
+    """An exit service's wait on one order's cancel or amend (`OmsCommandPort.expect_exit`), as
+    `PlaceWatch` on a create: `answer()` resolves once B1's own call was answered, with the
     answer it gave; with None when the call raised (B1 then lands the order in `unknown`, never
     re-sent, Q11) or when the registration was replaced, dropped (`MAX_WATCHES`) or forgotten
     unspent. A KILL's cancel spends none. `request_id` and `actor` name the request the exit is
@@ -1063,8 +1063,8 @@ class OmsCommandPort:
         request_id: UUID | None = None,
         actor: SubmitActor | None = None,
     ) -> ExitWatch:
-        """Register the exit an exit service is about to command (`CANCEL`): B1's call for it
-        answers the watch with what B1 was answered. As `expect`: a second registration of the
+        """Register the exit an exit service is about to command (`CANCEL`, `AMEND`): B1's call for
+        it answers the watch with what B1 was answered. As `expect`: a second registration of the
         order's exit replaces the first, answered None, and past `max_watches` the oldest is
         dropped, answered None (C-2.18)."""
         future = asyncio.get_running_loop().create_future()
@@ -1159,7 +1159,20 @@ class OmsCommandPort:
     # --- amend -----------------------------------------------------------------------------
 
     async def amend(self, command: b01.Command) -> Mapping[str, Any]:
-        """`amend_pending`'s call: the stored order changed in place (module docstring)."""
+        """`amend_pending`'s call: the stored order changed in place (module docstring); the
+        order's amend registration (`expect_exit`) gets the answer, None when the call raises."""
+        watch = self._exits.pop((_uuid(command.order.get("order_id")), "amend"), None)
+        try:
+            answer = await self._amend(command)
+        except BaseException:
+            if watch is not None:
+                watch.resolve(None)
+            raise
+        if watch is not None:
+            watch.resolve(answer)
+        return answer
+
+    async def _amend(self, command: b01.Command) -> dict[str, Any]:
         account_id = _uuid(command.order.get("account_id"))
         order_id = _uuid(command.order.get("order_id"))
         row = await self._bounded(self._orders.get(account_id, order_id))
