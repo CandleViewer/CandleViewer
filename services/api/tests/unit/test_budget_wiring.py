@@ -201,6 +201,26 @@ async def test_gap_pin_and_written_sources() -> None:
     assert written_by_symbol()["ZZWIRINGUSDT"] >= 5
 
 
+async def test_a_demo_budget_composes_sources_that_read_only_demo_rows(tmp_path: Path) -> None:
+    root = tmp_path / "data" / "parquet"
+    root.mkdir(parents=True)
+    settings = Settings(
+        storage_backend="real",
+        environment="demo",
+        parquet_root=str(root),
+        bars_state_root=str(tmp_path / "bars"),
+    )
+    repo = _Repo()
+    budget = build_disk_budget(settings, bus=FakeBus(), recorder_repo=cast(Any, repo))
+    assert budget is not None
+    us = int(_Repo.at.timestamp()) * 1_000_000
+    gaps, pinned = budget._gaps, budget._pinned
+    assert await gaps(0, 2 * us) == [(us, us + 1_000_000)]
+    assert await pinned() == {"BTCUSDT"}
+    assert set(repo.envs) == {"demo"}  # dropping the env argument reads the live rows
+    await budget.stop()
+
+
 def test_parquet_usage_refuses_a_root_that_is_not_a_directory(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="recording root missing"):
         parquet_usage(tmp_path / "unmounted")  # never a fresh (0, {})
