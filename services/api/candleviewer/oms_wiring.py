@@ -679,14 +679,16 @@ class OmsAudit:
 UNOWNED_NOTICES: Final = MappingProxyType(
     {"request_reconciliation": "E29-T06", "request_fallback_sl": "E32"}
 )
-#: The alert the pager takes as a ticket, not a page: an order a restart found never sent.
-_TICKETS: Final = frozenset({NEVER_SENT_ALERT})
+#: The alerts the pager takes as a ticket, not a page: an order a restart found never sent, and one
+#: the venue does not hold (110001), `unknown` until reconciliation reads it (S4-B1's ruling).
+_TICKETS: Final = frozenset({NEVER_SENT_ALERT, "order_already_terminal"})
 #: The alerts an order raises, a closed set: the order machine's (`raise_unknown_alert`,
 #: `raise_critical_alert` on `quarantined` and `held`, `raise_naked_position_alert`) and the one a
 #: resumed create past its history raises (`oms.commands`). Only these are logged and paged by
 #: name, so a value of any other source, a key among them, is never a name (SEC-S3C2-01, C-12.6).
 ORDER_ALERTS: Final = frozenset(
     {"order_unknown", "order_quarantined", "order_held", "SL_ATTACH_FAILED", NEVER_SENT_ALERT}
+    | _TICKETS
 )
 #: The codes of a refused amend, a closed set too: the adapters' taxonomy (24 Sec.8.6).
 _ERROR_CODES: Final = frozenset(code.value for code in OmsErrorCode)

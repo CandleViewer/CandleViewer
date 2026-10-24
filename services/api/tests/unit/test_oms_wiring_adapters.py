@@ -8,6 +8,7 @@ import json
 import uuid
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -15,7 +16,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.admin import wiring as admin_wiring
 from candleviewer.audit.writer import AuditUnavailable, AuditWriter, keyed_record_id
-from candleviewer.exchange.base.errors import OmsErrorCode
+from candleviewer.exchange.base.errors import NotFoundError, OmsErrorCode
 from candleviewer.oms.commands import NEVER_SENT_ALERT
 from candleviewer.oms.order_machine import (
     CompositePublisher,
@@ -257,7 +258,33 @@ async def test_the_closed_alert_set_is_what_the_order_machine_and_the_resume_rai
         context: dict[str, Any] = {}
         await b01.ACTIONS[action](_At(state), context, None, None)
         raised |= {entry["alert"] for entry in context["outbox"] if entry["kind"] == "alert"}
+    marked: dict[str, Any] = {b01.ALREADY_TERMINAL: 110001}  # `unknown`'s 110001 mark (S4-B1)
+    await b01.raise_unknown_alert(None, marked, None, None)
+    raised.add(marked["outbox"][0]["alert"])
     assert raised | {NEVER_SENT_ALERT} == ORDER_ALERTS
+
+
+async def test_the_venues_110001_is_a_ticket_and_a_later_transport_fault_pages() -> None:
+    """S4-B1's rulings, through the router the facade forwards to: the venue's 110001 is no
+    transport fault but `order_already_terminal` with its code, a ticket, and reconciliation is
+    asked for the order (unowned until E29-T06, a page); a transport fault on the same order then
+    pages as `order_unknown`: the mark ends with its `unknown` entry."""
+    context, pager = dict[str, Any](), _Pager()
+    gone = NotFoundError("the venue does not hold the order", exchange_ret_code=110001)
+    with capture_logs() as logs:
+        for fault in (gone, TimeoutError()):  # `onError`'s action, then `unknown`'s entry
+            await b01.record_transport_fault(None, context, SimpleNamespace(error=fault), None)
+            await b01.raise_unknown_alert(None, context, None, None)
+    for entry in context["outbox"]:
+        await OrderNoticesRouter(pager).notify(_notice(entry.pop("kind"), **entry))
+    assert [(e["event"], e.get("exchange_ret_code")) for e in logs] == [
+        ("b01_already_terminal", 110001), ("b01_order_unknown", 110001),
+        ("b01_transport_fault", None), ("b01_order_unknown", None),
+    ]  # fmt: skip
+    assert [(severity, summary) for severity, summary, _ in pager.alerts] == [
+        ("page", "order notice request_reconciliation has no owner until E29-T06"),
+        ("alert", "order alert order_already_terminal"), ("page", "order alert order_unknown"),
+    ]  # fmt: skip
 
 
 async def test_the_router_never_raises_with_a_failing_pager_or_a_broken_notice() -> None:

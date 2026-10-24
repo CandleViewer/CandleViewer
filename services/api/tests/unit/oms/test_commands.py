@@ -14,7 +14,10 @@ and alerted ([LANE-26]). `lookup` raises rather than answer empty after a failed
 audits the request ahead, sends both sides, settles and reads back; a Partial stop is refused (Q-F).
 No stop or take-profit that is no price above zero is sent (#2877 ruling 2); the venue's outage is
 raised, never a refusal, and never repeated (#2863); a registered order's records carry its
-request's correlation id ([AUDIT-REQUEST-ID]).
+request's correlation id ([AUDIT-REQUEST-ID]). `cancel` (S4-B1) sends one cancel of the stored
+order in the `critical` lane, ungated, its refusal and its raise as a create's, by one deadline
+inside B1's own bound on it; a recorded stop's row is never a KILL's to cancel, nor a user's while
+a read does not show its position flat (C-2.6, Q9); `expect_exit` gets an exit service B1's answer.
 """
 
 from __future__ import annotations
@@ -33,18 +36,27 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.audit.actions import AUDIT_ACTIONS
+from candleviewer.domain.order_link import ext_key
 from candleviewer.exchange.base.errors import (
     AmbiguousResultError,
     AuthError,
     ClockDriftError,
     DuplicateClientIdError,
+    ExchangeError,
+    NotFoundError,
     OmsErrorCode,
     RateBudgetExceededError,
     ServiceUnavailableError,
     TransportError,
 )
 from candleviewer.exchange.base.fakes import FakeReject, LandedThenAmbiguous
-from candleviewer.exchange.base.models import OrderAck, PlaceOrderRequest, TradingStopRequest
+from candleviewer.exchange.base.models import (
+    CancelOrderRequest,
+    OrderAck,
+    PlaceOrderRequest,
+    TradingStopRequest,
+)
+from candleviewer.exchange.bybit.trading import CRITICAL_WAIT_S
 from candleviewer.observability.context import bind_context
 from candleviewer.oms.commands import (
     ALREADY_SET,
@@ -53,7 +65,9 @@ from candleviewer.oms.commands import (
     LIVE_RESEND_MAX_AGE_S,
     NEVER_SENT_ALERT,
     PARTIAL_STOP_UNSUPPORTED,
+    RECORDED_STOP_READ_S,
     RESEND_REFUSED,
+    STORE_UNAVAILABLE,
     SUBMIT_TIMEOUT_S,
     OmsCommandPort,
     found_view,
@@ -73,7 +87,7 @@ from candleviewer.oms.errors import (
     problem_for,
 )
 from candleviewer.oms.fakes import FakeClockHealth
-from candleviewer.oms.order_machine import OrderAuditRecord
+from candleviewer.oms.order_machine import OrderAuditRecord, _data_refusal
 from candleviewer.oms.ports import (
     KeyedRecord,
     NoHandoverStore,
@@ -82,8 +96,12 @@ from candleviewer.oms.ports import (
 )
 from candleviewer.oms_wiring import STOP_REQUEST_BOUND_S, ClockHealthBinding
 from candleviewer.statechart.bindings import b01_order as b01
-from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
-from candleviewer.storage.repositories.orders import NewOrder
+from candleviewer.statechart.config import (
+    CV_COMMAND_TIMEOUT,
+    CV_KILL_CANCEL_TIMEOUT,
+    CV_PERSIST_TIMEOUT,
+)
+from candleviewer.storage.repositories.orders import NewOrder, OrderRow
 from candleviewer.storage.repositories.recorded_stops import NewRecordedStop
 from tests.unit.oms.command_rig import (
     ACCOUNT,
@@ -1681,23 +1699,338 @@ def test_the_port_holds_at_least_one_registration() -> None:
         build_rig(max_watches=0)
 
 
-async def test_cancel_and_amend_go_to_their_services_or_raise_unwired() -> None:
+async def test_amend_raises_unwired_with_nothing_sent_until_its_slice() -> None:
+    """S4-B2 implements the amend; until then B1's `amend_pending` lands the order in `unknown`
+    (S1) with nothing sent. Both injected services are gone: the port's own cancel follows."""
+    rig = build_rig()
+    row = await _live(rig)
+    with pytest.raises(b01.PortMissingError):
+        await rig.port.amend(command("amend", row))
+    params = inspect.signature(OmsCommandPort).parameters
+    assert rig.calls() == [] and {"cancels", "amends"}.isdisjoint(params)
+
+
+# --- cancel and a KILL's cancel (24 Sec.8.8 rule 6; INV-B1-h, INV-B1-j; S4 rulings Q8, Q9, Q11) --
+
+_STOP_ID = "x-sl-0005"
+#: A recorded stop's two rows over a long's position (24 Sec.8.8 rule 6), each with its trigger.
+_RECORDED = [("stop_loss", STOP), ("take_profit", new_order().take_profit)]
+_KEPT = {"ok": False, "error_code": b01.NATIVE_STOP_REQUIRED}
+
+
+async def _live(rig: Rig, order: NewOrder | None = None, **venue: Any) -> OrderRow:
+    """`order` resting at the venue, stored `submitted` and bound to the venue's id for it."""
+    order = order if order is not None else new_order()
+    resting = exchange_order(order, **venue)
+    rig.demo.seed_order(resting, uid=UIDS["demo"])
+    bound = dataclasses.replace(order, exchange_order_id=resting.exchange_order_id)
+    return await rig.stored(bound, lifecycle="submitted")
+
+
+async def _recorded_stop(
+    rig: Rig, intent: str = "stop_loss", trigger: Decimal | None = STOP
+) -> OrderRow:
+    """A recorded stop's row (24 Sec.8.3 rule 7): the stop-loss or take-profit order of a long's
+    position, Sell, reduce-only and close-on-trigger, resting at the venue under the `ext-` key of
+    its id, materialised `submitted` and bound."""
+    stop = new_order(
+        seq=5, order_link_id=ext_key(_STOP_ID), side="Sell", intent=intent,
+        order_type="Market", price=None, trigger_price=trigger, stop_loss=None, take_profit=None,
+        reduce_only=True, close_on_trigger=True, tpsl_mode="Partial", provenance="recorded_stop",
+    )  # fmt: skip
+    return await _live(rig, stop, exchange_order_id=_STOP_ID)
+
+
+@pytest.mark.parametrize(("kind", "bound"), [("cancel", True), ("kill_cancel", False)])
+async def test_a_cancel_names_the_stored_order_once_in_the_critical_lane(
+    kind: b01.CommandKind, bound: bool
+) -> None:
+    """By its exchange order id once bound (an `ext-` key never goes on the wire, 24 Sec.14.2
+    rule 11), else by its own id, as a KILL out of `unknown` sends it (Q8): the stored row's,
+    the same id every time (C-2.10), drawn from the `critical` lane's reserve (C-12.7)."""
+    rig = build_rig()
     order = new_order()
-    unwired = build_rig()
-    with pytest.raises(b01.PortMissingError):
-        await unwired.port.cancel(command("cancel", order))
-    with pytest.raises(b01.PortMissingError):
-        await unwired.port.amend(command("amend", order))
-    seen: list[str] = []
+    if bound:
+        row = await _live(rig, order)
+    else:
+        rig.demo.seed_order(exchange_order(order), uid=UIDS["demo"])
+        row = await rig.stored(order, lifecycle="unknown")
+    answer = await rig.port.cancel(command(kind, row))
+    (call,) = rig.demo.calls
+    assert (call.method, call.lane) == ("cancel_order", "critical")
+    assert call.request == CancelOrderRequest(
+        account=ref(), symbol=SYMBOL, order_link_id=row.order_link_id,
+        exchange_order_id=row.exchange_order_id,
+    )  # fmt: skip
+    assert answer == {"ok": True, "exchange_order_id": exchange_order(order).exchange_order_id}
+    assert rig.audits.written == [] and rig.switches.asked == []
 
-    async def service(sent: b01.Command) -> Mapping[str, Any]:
-        seen.append(sent.kind)
-        return {"ok": True}
 
-    wired = build_rig(cancels=service, amends=service)
-    assert await wired.port.cancel(command("kill_cancel", order)) == {"ok": True}
-    assert await wired.port.amend(command("amend", order)) == {"ok": True}
-    assert seen == ["kill_cancel", "amend"]
+@pytest.mark.parametrize(
+    ("kind", "code", "ret_code", "reported", "halted", "logged"),
+    [("kill_cancel", "INSTRUMENT_FILTER", 110017, [], False, ["INSTRUMENT_FILTER"]),
+     ("cancel", "AUTH_ERROR", 10003, [(ACCOUNT, "AUTH_ERROR", 10003)], False, []),
+     ("cancel", "CLOCK_DRIFT", 10002, [], True, [])],
+)  # fmt: skip
+async def test_a_refused_cancel_answers_its_codes_after_the_10003_and_10002_reactions(
+    kind: b01.CommandKind, code: str, ret_code: int, reported: list[Any], halted: bool, logged: Any
+) -> None:
+    """INV-B1-j: B1 takes the order back live on the refusal, which carries its codes and never
+    the exchange's text (SR-E29-09); 24 Sec.8.6 runs first, as for a create: `10003` goes to the
+    credential report, `10002` trips the clock halt and one resync. A KILL's refused cancel is
+    logged at ERROR: B18 and reconciliation settle the venue (INV-B1-h)."""
+    rig = build_rig()
+    row = await _live(rig)
+    rig.demo.script("cancel_order", FakeReject(OmsErrorCode(code), ret_code, "do not show"))
+    with capture_logs() as logs:
+        answer = await rig.port.cancel(command(kind, row))
+    assert answer == {"ok": False, "error_code": code, "exchange_ret_code": ret_code}
+    assert rig.calls() == ["cancel_order"] and rig.credentials.calls == reported
+    assert isinstance(rig.halt.refusal(), ClockDriftBlocked) is halted
+    assert (rig.port.resync_task is not None) is halted
+    await rig.port.aclose()  # the resync, where one began, ends with the port
+    assert [e["error_code"] for e in logs if e["event"] == "oms_kill_cancel_refused"] == logged
+
+
+@pytest.mark.parametrize(
+    ("venue", "raised", "ret_code"),
+    [(outage(), ServiceUnavailableError, 10019),
+     (FakeReject(OmsErrorCode.ORDER_NOT_FOUND, 110001), NotFoundError, 110001)],
+    ids=["outage", "already_terminal"],
+)  # fmt: skip
+async def test_a_cancel_the_venue_leaves_open_is_raised_after_one_call_its_watch_answered_none(
+    venue: Any, raised: type[ExchangeError], ret_code: int
+) -> None:
+    """Q11, S1: raised, so B1 lands the order in `unknown` and never sends it again, though the
+    outage says `retryable`; so is the venue's 110001 (the S4-B1 ruling), as `NotFoundError` with
+    its code: the venue does not hold the order, which says nothing of how it ended. Neither is a
+    data refusal a step could mean. The exit service's watch answers None, never a refusal."""
+    rig = build_rig()
+    row = await _live(rig)
+    watch = rig.port.expect_exit(row.id, "cancel", request_id=_REQUEST)
+    rig.demo.script("cancel_order", venue)
+    with pytest.raises(raised) as error:
+        await rig.port.cancel(command("cancel", row))
+    assert error.value.exchange_ret_code == ret_code and not _data_refusal(error.value)
+    assert rig.calls() == ["cancel_order"] and watch.answered and await watch.answer() is None
+
+
+async def test_a_cancel_refused_a_rate_token_answers_its_retry_with_nothing_sent() -> None:
+    """24 Sec.8.7: the `critical` lane gave no token within its wait, so nothing left: B1 takes
+    the order back live, and the exit service answers 429 with the retry."""
+    rig = build_rig()
+    row = await _live(rig)
+    rig.demo.script("cancel_order", RateBudgetExceededError("no token", retry_after_s=2.2))
+    answer = await rig.port.cancel(command("cancel", row))
+    assert answer == {"ok": False, "error_code": "RATE_BUDGET_EXCEEDED", "retry_after_s": 3}
+
+
+async def test_a_kills_cancel_goes_out_while_the_switches_refuse_and_the_clock_halt_stands() -> (
+    None
+):
+    """24 Sec.8.10's carve-out (C-2.6, C-4.14): an exit is never gated, so the kill switch, live
+    enablement, the order-entry gate and the clock halt never stop a KILL's own cancel, and the
+    switches are never asked."""
+    rig = build_rig()
+    row = await _live(rig)
+    rig.switches.refusals[ACCOUNT] = TradingDisabled()
+    rig.halt.trip()
+    answer = await rig.port.cancel(command("kill_cancel", row))
+    assert answer["ok"] is True and rig.calls() == ["cancel_order"] and rig.switches.asked == []
+
+
+_UNREAD = {"ok": False, "error_code": STORE_UNAVAILABLE, "retry_after_s": 1}
+
+
+@pytest.mark.parametrize(
+    ("kind", "bound", "hung", "outcome"),
+    [("kill_cancel", {"kill_cancel_timeout_s": 0.05}, ("orders", "get_by_link_id"), _UNREAD),
+     ("kill_cancel", {"kill_cancel_timeout_s": 0.05}, ("accounts", "trading_account"), _UNREAD),
+     ("kill_cancel", {"kill_cancel_timeout_s": 0.05}, ("demo", "cancel_order"), TimeoutError),
+     ("cancel", {"cancel_timeout_s": 0.05}, ("demo", "cancel_order"), TimeoutError)],
+)  # fmt: skip
+async def test_one_deadline_ends_all_of_a_cancel_by_its_kinds_own_bound(
+    kind: b01.CommandKind, bound: Any, hung: Any, outcome: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """All of a cancel, its reads and its call, ends by one deadline of its own kind's bound: a
+    read cut off answers `STORE_UNAVAILABLE`, nothing sent; a call cut off is raised (B1's
+    `kill_cancel_timeout`, or `unknown`). The other kind's bound, or none, would outlast 3 s."""
+    rig = build_rig(port_timeout_s=60.0, **bound)
+    row = await _live(rig)
+    monkeypatch.setattr(getattr(rig, hung[0]), hung[1], _hangs)
+    task = await _within(rig.port.cancel(command(kind, row)), 3.0)
+    assert (type(error) if (error := task.exception()) else task.result()) == outcome
+
+
+async def test_a_cancel_naming_another_order_is_a_defect_raised_never_an_unread_store() -> None:
+    """The reads' carve-out: a command whose ids disagree with the stored row is a defect,
+    raised (B1 lands it in `unknown`), never answered `STORE_UNAVAILABLE`; nothing is sent."""
+    rig = build_rig()
+    row = await _live(rig)
+    with pytest.raises(ValueError, match="another order"):
+        await rig.port.cancel(command("cancel", row, order_id=str(uuid5(NAMESPACE_URL, "x"))))
+    assert rig.calls() == []
+
+
+def test_the_cancel_bounds_sit_inside_b1s_own_and_a_users_outlasts_the_critical_lane() -> None:
+    """A KILL's cancel ends inside B1's `CV_KILL_CANCEL_TIMEOUT`; a user's inside its
+    `CV_COMMAND_TIMEOUT` and past the adapter's `critical` lane wait, so a token that does not
+    come is a refusal (429, the order live), never `unknown` (Q8). Each is only ever tightened."""
+    params = inspect.signature(OmsCommandPort).parameters
+    kill, user = (params[name].default for name in ("kill_cancel_timeout_s", "cancel_timeout_s"))
+    assert 0 < kill < CV_KILL_CANCEL_TIMEOUT and CRITICAL_WAIT_S < user < CV_COMMAND_TIMEOUT
+    assert RECORDED_STOP_READ_S + CRITICAL_WAIT_S < user  # the call keeps the lane's wait (Q9)
+    outside = (float("inf"), float("nan"), 0.0, -1.0)
+    for wider in (kill + 0.001, *outside):
+        with pytest.raises(ValueError, match="tightened"):
+            build_rig(kill_cancel_timeout_s=wider)
+    for wider in (user + 0.001, *outside):
+        with pytest.raises(ValueError, match="tightened"):
+            build_rig(cancel_timeout_s=wider)
+
+
+async def test_a_recorded_stops_position_read_ends_by_its_own_bound_and_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Q9 inside the cancel's bound: a read that does not answer ends by `RECORDED_STOP_READ_S`,
+    not the whole cancel's, so the call would keep the `critical` lane's wait; it refuses, as an
+    unread position does, nothing sent (C-2.6)."""
+    monkeypatch.setattr("candleviewer.oms.commands.RECORDED_STOP_READ_S", 0.05)
+    rig = build_rig(port_timeout_s=60.0)
+    row = await _recorded_stop(rig)
+    monkeypatch.setattr(rig.demo, "positions", _hangs)
+    task = await _within(rig.port.cancel(command("cancel", row)), 3.0)
+    assert task.result() == _KEPT and rig.calls() == []
+
+
+# --- the native stop (C-2.6): a recorded stop's row is never a KILL's, nor an open position's ----
+
+
+@pytest.mark.parametrize(("intent", "trigger"), _RECORDED)
+async def test_native_sl_a_kill_never_cancels_a_recorded_stops_row_nothing_read_or_sent(
+    intent: str, trigger: Decimal | None
+) -> None:
+    """INV-B1-p, C-2.6: B1's guarded arm consumes a KILL of the row, its stop-loss or its
+    take-profit; should one reach the port all the same, it is refused at once, CRITICAL, nothing
+    asked of the venue, even over a flat position, where a user's cancel of it would go out."""
+    rig = build_rig()
+    row = await _recorded_stop(rig, intent, trigger)
+    rig.demo.seed_position(position(side=None, qty="0"))
+    with capture_logs() as logs:
+        answer = await rig.port.cancel(command("kill_cancel", row))
+    assert answer == _KEPT and rig.calls() == []
+    spared = [log["log_level"] for log in logs if log["event"] == "oms_kill_spared_recorded_stop"]
+    assert spared == ["critical"]
+
+
+@pytest.mark.parametrize(("intent", "trigger"), _RECORDED)
+async def test_native_sl_a_kill_that_cannot_read_the_row_sends_nothing(
+    intent: str, trigger: Decimal | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail closed (C-2.6, the 10:29Z condition): a KILL whose row read fails cannot tell a
+    recorded stop from a plain order, so nothing is sent: `STORE_UNAVAILABLE`, the stop kept."""
+    rig = build_rig(port_timeout_s=60.0, kill_cancel_timeout_s=0.05)
+    row = await _recorded_stop(rig, intent, trigger)
+    monkeypatch.setattr(rig.orders, "get_by_link_id", _hangs)
+    task = await _within(rig.port.cancel(command("kill_cancel", row)), 3.0)
+    assert task.result() == _UNREAD and rig.calls() == []
+
+
+_READ, _SENT = [("positions", "poll")], [("positions", "poll"), ("cancel_order", "critical")]
+_LET = {"ok": True, "exchange_order_id": _STOP_ID}
+
+
+@pytest.mark.parametrize(("intent", "trigger"), _RECORDED)
+@pytest.mark.parametrize(
+    ("seed", "answer", "calls", "released"),
+    [(lambda rig: rig.demo.seed_position(position(qty="0.010")), _KEPT, _READ, []),
+     (lambda rig: rig.demo.seed_position(position(qty="-0.010")), _KEPT, _READ, []),
+     (lambda rig: rig.demo.script("positions", TransportError("cut off")), _KEPT, _READ, []),
+     (lambda rig: rig.demo.seed_position(position(side=None, qty="0")), _LET, _SENT, []),
+     (lambda rig: None, _LET, _SENT, ["none"])],
+    ids=["open", "negative", "unread", "flat", "none"],
+)  # fmt: skip
+async def test_native_sl_the_cancel_port_refuses_a_recorded_stops_row_unless_it_reads_flat(
+    seed: Any, answer: Any, calls: Any, released: list[str], intent: str, trigger: Decimal | None
+) -> None:
+    """Q9, fail closed: a user's cancel of either row goes out only once a `poll`-lane read shows
+    its position flat (or none, which is logged apart); a position of any size, or a read that
+    fails, keeps the stop, nothing sent (24 Sec.8.8 rule 6). The call names the row by its
+    exchange id, which alone goes on the wire, never its `ext-` key (24 Sec.14.2 rule 11)."""
+    rig = build_rig()
+    row = await _recorded_stop(rig, intent, trigger)
+    seed(rig)
+    with capture_logs() as logs:
+        assert await rig.port.cancel(command("cancel", row)) == answer
+    assert [(call.method, call.lane) for call in rig.demo.calls] == calls
+    assert {getattr(c.request, "exchange_order_id", _STOP_ID) for c in rig.demo.calls} <= {_STOP_ID}
+    assert [e["position"] for e in logs if e["event"] == "oms_recorded_stop_released"] == released
+
+
+# --- the exit services' watch (`expect_exit`), as the pipeline's (`expect`) -----------------------
+
+
+async def test_an_exit_watch_answers_b1s_cancel_and_a_kills_cancel_spends_none() -> None:
+    rig = build_rig()
+    row = await _live(rig)
+    watch = rig.port.expect_exit(row.id, "cancel", request_id=_REQUEST)
+    assert (watch.order_id, watch.kind, watch.request_id, watch.actor) == (
+        row.id, "cancel", _REQUEST, None,
+    )  # fmt: skip
+    rig.demo.script("cancel_order", FakeReject(OmsErrorCode.INSTRUMENT_FILTER))
+    await rig.port.cancel(command("kill_cancel", row))  # refused: a KILL's spends no watch
+    assert not watch.answered
+    answer = await rig.port.cancel(command("cancel", row))
+    assert answer["ok"] is True and watch.answered and await watch.answer() == answer
+
+
+async def test_exit_watches_are_bounded_replaced_and_forgotten_each_answered_none() -> None:
+    """C-2.18 and S2-Q5, as the pipeline's: a second registration replaces the first, the oldest
+    goes past the bound, and an exit whose command was refused is forgotten, each answered None."""
+    rig = build_rig(max_watches=2)
+    first = rig.port.expect_exit(UUID(int=1), "cancel")
+    second = rig.port.expect_exit(UUID(int=1), "cancel")
+    third, fourth = (rig.port.expect_exit(UUID(int=n), "cancel") for n in (2, 3))
+    assert [w.answered for w in (first, second, third, fourth)] == [True, True, False, False]
+    assert await first.answer() is None and await second.answer() is None
+    rig.port.forget_exit(UUID(int=3), "cancel")
+    rig.port.forget_exit(UUID(int=3), "cancel")  # nothing registered: nothing to drop
+    assert fourth.answered and await fourth.answer() is None and not third.answered
+
+
+@pytest.mark.parametrize(("kind", "spent"), [("cancel", True), ("kill_cancel", False)])
+async def test_a_cancelled_cancel_answers_its_watch_none_and_stays_cancelled(
+    kind: b01.CommandKind, spent: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As a cancelled `place` (CR-2B1-02 (d)): B1's cancel cut off mid-send answers the exit's
+    watch None, never leaving it pending, and re-raises the cancellation; a KILL's spends none."""
+    rig = build_rig()
+    row = await _live(rig)
+    monkeypatch.setattr(rig.demo, "cancel_order", _hangs)
+    watch = rig.port.expect_exit(row.id, "cancel")
+    task = asyncio.ensure_future(rig.port.cancel(command(kind, row)))
+    for _ in range(64):  # into the venue's call, which never answers
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert watch.answered is spent and (not spent or await watch.answer() is None)
+
+
+async def test_a_cancelled_exit_waiter_never_cancels_the_answer() -> None:
+    """As `PlaceWatch`'s: `ExitWatch.answer()` shields the answer, so a waiter's own cancellation
+    leaves it pending for B1's cancel, and a later waiter gets it."""
+    rig = build_rig()
+    row = await _live(rig)
+    watch = rig.port.expect_exit(row.id, "cancel")
+    waiter = asyncio.ensure_future(watch.answer())
+    await asyncio.sleep(0)  # one turn of the loop: the waiter is now awaiting the answer
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert not watch.answered
+    answer = await rig.port.cancel(command("cancel", row))
+    assert answer["ok"] is True and watch.answered and await watch.answer() == answer
 
 
 def test_the_stop_request_bound_exceeds_an_entrys_answer_path() -> None:
