@@ -847,3 +847,16 @@ async def test_deny_records_the_refusal_ahead_or_answers_503_audit_unavailable(
     rig.port.audits.refuse = RuntimeError("the audit WAL refused the record")
     got = await exits.deny(row, "cancel", ex._CONFLICT, actor=actor(), request_id=None)
     assert (got.kind, got.status, got.code) == ("refused", 503, "audit_unavailable")
+
+
+async def test_deny_names_the_routes_refusing_step_only_when_it_is_given(rig: SubmitRig) -> None:
+    """The orchestrator's ruling of 2026-10-24 20:08Z (2a): a route's refusal at 24 Sec.8.4 step
+    7, 8 or 9 names it (`key`, `replay`, `guard`) in its record's `step`, as `placeOrder`'s do;
+    the service's own refusals name none."""
+    row, exits = await placed(rig), exits_of(rig)
+    await exits.deny(row, "cancel", ex._CONFLICT, actor=actor(), request_id=REQUEST, step="guard")
+    await exits.deny(row, "cancel", ex._CONFLICT, actor=actor(), request_id=REQUEST)
+    records = [r for r in rig.records("orders.cancel") if isinstance(r, RequestRecord)]
+    [guarded, plain] = [record.detail for record in records]
+    assert guarded["step"] == "guard" and "step" not in plain
+    assert {k: v for k, v in guarded.items() if k != "step"} == plain
