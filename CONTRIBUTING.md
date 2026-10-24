@@ -47,7 +47,9 @@ a bug to report.
    (docs/plan/07-release-and-prr.md §3). Never edit `CHANGELOG.md` in a feature PR: `pr-metadata`
    (PR-CHANGELOG-001) fails any change to it outside a sync PR (a `docs` title, `CHANGELOG.md` the only
    changed file). For a security fix, add a `Changelog-Security: <impact-only summary>` footer to the PR
-   body; the sync renders it under `Unreleased` › `Security`, ending with your PR number `(#N)`.
+   body; the sync renders it under `Unreleased` › `Security`, ending with your PR number `(#N)`. The
+   summary is impact-only plain text (no links or mentions), reviewed at the fixing PR and again in
+   the sync PR.
 6. **Rebase, never merge** (`git pull --rebase origin main`). PRs land on `main` as a squash. `main` is
    protected: no direct pushes, no force-pushes (§4.5).
 7. **Keep it small.** ≤400 changed LOC preferred; >800 needs a `large-pr-approved` label with a written
