@@ -115,7 +115,10 @@ class Harness:
     share-locked re-check refuse it from now on (SR-E28-15); `held` counts a persist's anchor,
     group, leg, order and recorded-stop rows as stored; `move_stop` makes a lifecycle move no store
     writes yet (`in_force`, `replaced` or `ended`), as `trg_rs_guard` and `rs_times` admit it;
-    `bind_stop` an exchange order id no store binds yet, as `trg_rs_guard` admits the one bind."""
+    `bind_stop` an exchange order id no store binds yet, as `trg_rs_guard` admits the one bind.
+    The exit routes' scope (E29-T04 slice 4): `grant` gives a user a viewing grant on an account,
+    trading when `trade`, frozen when `frozen`; `owner` a live owner role; `elsewhere` a live
+    account, of another environment than `new_account`'s."""
 
     submissions: SubmissionStore
     anchors: IdempotencyAnchorStore
@@ -129,6 +132,9 @@ class Harness:
     held: Callable[[FirstPersist, NewOrder], tuple[int, ...]]
     move_stop: Callable[[UUID, str], None]
     bind_stop: Callable[[UUID, str], None]
+    grant: Callable[[UUID, UUID, bool, bool], None]
+    owner: Callable[[UUID], None]
+    elsewhere: Callable[[], tuple[UUID, UUID]]
 
 
 def link() -> str:
