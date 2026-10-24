@@ -63,8 +63,8 @@ rows or sealed snapshots (AUDIT-10M, AUDIT-CORRUPT, AUDIT-KEY-ENTRY, AUDIT-SECRE
 AUDIT-CONCURRENT, SC-FORGED-SEAL, BACKUP-TAMPERED, BACKUP-THEN-REVOKED), an Owner role row and
 `trading.live_enabled` outside the API (OOB-WRITES), or a demoted Owner (BACKUP-THEN-REVOKED) loads only
 into a database named for tests: audit tables are append-only (C-5.7), so rows
-loaded anywhere else could never be removed, and a stray Owner row or a set live gate would stay as a
-standing privilege. E42-X03's threat model asks this plan for the seeds that need state outside the API:
+loaded anywhere else could never be removed, a stray Owner row or a set live gate would stay as a
+standing privilege, and a demoted Owner would cost a real one their role. E42-X03's threat model asks this plan for the seeds that need state outside the API:
 AC-ADM-09 (FLAG-OVERRIDE-ROWS), AC-ADM-15 (any audit rows: AUDIT-10M), AC-ADM-16 (AUDIT-CONCURRENT),
 AC-ADM-24 (BACKUP-THEN-REVOKED), AC-ADM-25 (BACKUP-TAMPERED) and AC-ADM-31 (OOB-WRITES).
 

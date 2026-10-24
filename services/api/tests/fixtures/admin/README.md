@@ -367,10 +367,11 @@ await check_backup_then_revoked(pg_dsn)
   own.
 - **Idempotent and self-checking:** rows are conditional or `DO NOTHING` and a record the trail holds is not
   written again, so a second run writes nothing, a WAL backlog included, as BACKUP-TAMPERED's; `now` must be
-  the first's, as a record's time is not refreshed. `check_backup_then_revoked` raises `FixtureCheckError` naming each fact that does not hold: the
-  row's values, `covers_to` equal to when its run ended, the record binding the row's digest and
-  `covers_to`, one passing `backup.verified`, one `users.access_change` and one `roles.revoke` after
-  `covers_to`, the grant soft-revoked, and OWNER-2's roles `viewer` alone.
+  the first's, as a record's time is not refreshed. `check_backup_then_revoked` raises `FixtureCheckError`
+  naming each fact that does not hold: the row's values, `covers_to` equal to when its run ended, the
+  record binding the row's digest and `covers_to`, one passing `backup.verified`, one
+  `users.access_change` and one `roles.revoke` after `covers_to`, the grant soft-revoked and never frozen,
+  OWNER-2's roles `viewer` alone, and OWNER still holding `owner`.
 - **Test databases only:** a database not named for tests is refused before anything is read or written.
 - `tests/integration/admin/test_admin_fixture_b4b_pg.py` runs both seeds on Postgres 16 and reads the
   records back with the app's own evidence reader, as the restore guard does.

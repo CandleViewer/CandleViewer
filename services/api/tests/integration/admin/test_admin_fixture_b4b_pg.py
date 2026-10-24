@@ -1,8 +1,8 @@
 """Integration (E42-Q01, #962): the audit-writer seeds of slice B4b on a migrated Postgres 16:
 AUDIT-SECRET-MARKER, AUDIT-CONCURRENT, BACKUP-TAMPERED and BACKUP-THEN-REVOKED.
 
-Each seed passes its own check, the marker and the concurrent rows pass in one database beside
-another actor's row, a second seed writes no row, and a database not named for tests is refused,
+Each seed passes its own check, each also beside another actor's row (the marker and the concurrent
+rows in one database), a second seed writes no row, and a database not named for tests is refused,
 before a table is touched: the refused database here is empty, so a seed that went on would fail on
 a missing table, not with `FixtureRefused`. Audit rows can never be removed (C-5.7) and each backup
 handle is a world of its own, so each test runs in a database cloned from the migrated `test` one

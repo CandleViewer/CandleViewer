@@ -71,8 +71,8 @@ _REVOKED_DELETES = ("user_roles",)
 
 
 async def _seeded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, world: str) -> FakeDb:
-    """`world`'s seed run on the fake. It applies no UPDATE or DELETE, so the rows BACKUP-THEN-
-    REVOKED's revocations leave are made by hand."""
+    """`world`'s seed run on the fake. It applies no UPDATE or DELETE, so the rows that
+    BACKUP-THEN-REVOKED's revocations leave are made by hand."""
     db = _slice_a(_REVOKED_DELETES if world == "revoked" else ())
     patch_audit_session(monkeypatch, db)
     await _SEEDS[world](tmp_path)
