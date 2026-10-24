@@ -35,8 +35,9 @@ its source so a reviewer can re-grep it:
    cluster line in a gated or board row, Release T2 when engaged, every PROPOSED ``health.*``
    sentence <= 60 characters with a full stop, the SCR-157 phrase, no "same as dark", no
    placeholders, no chrome trading word, no local path, no Penpot host (a generic pattern; no
-   host named), no pageLink, no closing keyword with an issue number, every planned board
-   PENDING, the nine catalogue pointer lines, every ``US-…`` id cited exists in
+   host named), no pageLink, no closing keyword with an issue number, every board row drawn
+   (a board id plus a PNG that exists from the repo root, with a self-test of the negatives),
+   the nine catalogue pointer lines, every ``US-…`` id cited exists in
    ``docs/plan/11-user-stories.md``).
 9. The counts the boards and the PR draft quote (``--json`` feeds the local check-nums).
 
@@ -51,6 +52,7 @@ import importlib.util
 import json
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -1020,6 +1022,18 @@ NOT_T2_RE = re.compile(r"\b(?:not|never|no)\s+T2(?![\w-])", re.IGNORECASE)
 CARVE_OUT_SENTENCE = "View-as never gates the C-2.6 protective writes"
 PROTECTIVE = ("FLATTEN ALL", "CANCEL ALL", "FREEZE", "Kill switch…", "the cluster")
 FALLBACK_CMD = "candleviewer kill"
+# the exact carve-out clauses each gated place must keep (the delta lens's Nit 1: a reworded row
+# or a dropped section 6.1 / row 4 clause must fail, not only a leading "view-as;")
+CARVE_OUT_CLAUSES = (
+    "never view-as — the C-2.6 carve-out keeps both enabled on the target's accounts",
+    (
+        "view-as on the global scope and Release… only — engaging on the target's accounts"
+        " stays enabled"
+    ),
+    "view-as on every write command but the C-2.6 protective ones",
+)
+PALETTE_CARVE_OUT = '"Cancel all orders on this account…" stays enabled while viewing as'
+FALLBACK_LINE = "Fallback: the server console command"
 AGGREGATE_LINE = "Safety · your role can't use these"  # D02 :84's cluster line, superseded (C25)
 RELEASE_SENTENCE = "Only the owner can release the kill switch."  # E09-D09 §3.1 :97 (C28)
 # the PROPOSED state keys and their sentences
@@ -1039,6 +1053,49 @@ NINE = (
 
 def table_rows(block: str) -> list[str]:
     return [ln for ln in block.splitlines() if ln.startswith("| ") and not re.match(r"^\| -", ln)]
+
+
+AS_DRAWN_RE = re.compile(
+    r"(?m)^- `(\d\d) [a-z0-9-]+` — board id `([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})` — "
+    r"`(docs/design/E10/img/[A-Za-z0-9-]+\.png)` \(\d+ \u00d7 \d+\)$"
+)
+
+
+def board_row_drawn(row: str, s0: str, exists: Callable[[str], bool]) -> bool:
+    """A section-0 board row is drawn: its status cell reads ``drawn`` and the as-drawn list has
+    its number with a board id and a PNG path, ending in the row's export name, that exists."""
+    cells = [c.strip() for c in row.split("|")[1:-1]]
+    if len(cells) < 2 or cells[-1] != "drawn" or not re.fullmatch(r"\d\d", cells[0]):
+        return False
+    export = re.search(r"`(E10-D03-\d\d-[A-Za-z0-9-]+\.png)`", row)
+    hits = [m for m in AS_DRAWN_RE.finditer(s0) if m.group(1) == cells[0]]
+    return (
+        export is not None
+        and len(hits) == 1
+        and hits[0].group(3).endswith("/" + export.group(1))
+        and exists(hits[0].group(3))
+    )
+
+
+def board_gate_selftest() -> dict[str, bool]:
+    """The drawn-row gate refuses a PENDING row, a missing board id and a missing PNG."""
+    png = "docs/design/E10/img/E10-D03-99-x.png"
+    row = "| 99  | `99 x` | shows | `SCR-010/x` | 1 | `E10-D03-99-x.png` | {} |"
+    item = "- `99 x` — board id `{}` — `" + png + "` (10 \u00d7 10)"
+    uid = "b9d0ba8b-4f7a-80a6-8008-d621cafcaa53"
+
+    def yes(_: str) -> bool:
+        return True
+
+    def no(_: str) -> bool:
+        return False
+
+    return {
+        "drawn_row_accepted": board_row_drawn(row.format("drawn"), item.format(uid), yes),
+        "pending_row_refused": not board_row_drawn(row.format("PENDING"), item.format(uid), yes),
+        "no_board_id_refused": not board_row_drawn(row.format("drawn"), item.format("tbd"), yes),
+        "missing_png_refused": not board_row_drawn(row.format("drawn"), item.format(uid), no),
+    }
 
 
 def us_ids(spec: str) -> list[str]:
@@ -1088,13 +1145,27 @@ def string_report(fails: list[str], spec: str) -> dict[str, Any]:
         and "enabled on the target's accounts" in cell6
         and not any(p in before for p in PROTECTIVE)
         and not any(r.split("|")[2].strip().startswith("view-as;") for r in rows13[:2])
+        and len(rows13) == 6
+        and all(
+            clause in r.split("|")[2]
+            and not re.search(r"view-as on every scope|engaging included", r)
+            for clause, r in zip(CARVE_OUT_CLAUSES, (rows13[0], rows13[1], rows13[3]), strict=True)
+        )
+        and PALETTE_CARVE_OUT in rows13[3]
+        and "never on a C-2.6 protective command" in section(spec, "### 6.1", "### 6.2")
+        and PALETTE_CARVE_OUT in section(spec, "### 6.1", "### 6.2")
     )
     va = s1.find(VIEW_AS)
     g["view_as_first"] = 0 <= va < s1.find(PERMISSION) and va < s1.find(OWNER_ONLY)
     g["update_phrase_on_scr157"] = UPDATE_PHRASE in s9 and UPDATE_PHRASE in s4
     s92 = section(spec, "### 9.2", "### 9.3")
     variants = [r for r in table_rows(s92) if re.match(r"^\| (?:offline|tailnet-unreachable) ", r)]
-    g["offline_fallback_named"] = len(variants) == 2 and all(FALLBACK_CMD in r for r in variants)
+    # both columns of both rows: the page ("Where") and its copy name the command (Nit 1)
+    vcells = [[c.strip() for c in r.split("|")[1:-1]] for r in variants]
+    g["offline_fallback_named"] = len(variants) == 2 and all(
+        len(c) == 4 and FALLBACK_CMD in c[2] and FALLBACK_CMD in c[3] and FALLBACK_LINE in c[3]
+        for c in vcells
+    )
     g["no_same_as_dark"] = "same as dark" not in spec.lower()
     g["no_placeholders"] = not re.search(r"SET-ME|TODO|TBD", spec)
     g["no_local_path"] = not LOCAL_PATH_RE.search(spec)
@@ -1104,9 +1175,11 @@ def string_report(fails: list[str], spec: str) -> dict[str, Any]:
     board_rows = [
         r for r in table_rows(section(spec, "## 0.", "## 1.")) if re.match(r"^\| \d\d ", r)
     ]
-    g["boards_pending"] = bool(board_rows) and all(
-        re.search(r"PENDING\s*\|\s*$", r) for r in board_rows
+    s0_text = section(spec, "## 0.", "## 1.")
+    g["boards_drawn"] = bool(board_rows) and all(
+        board_row_drawn(r, s0_text, lambda rel: (ROOT / rel).is_file()) for r in board_rows
     )
+    g |= {f"board_selftest_{k}": ok for k, ok in board_gate_selftest().items()}
     g["stamps_present"] = "PROPOSED" in spec and "RULED" in spec
     g["shape_sentence"] = SHAPE_SENTENCE in spec
     g["validity_sentence"] = VALIDITY_SENTENCE in spec
