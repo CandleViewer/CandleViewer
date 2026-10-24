@@ -95,6 +95,7 @@ from .errors import (
     OrderStepRefused,
     OrderStepUnknown,
     ReconcileAnomaly,
+    VersionConflict,
 )
 from .execution import apply_fields
 from .order_steps import OrderStepWriter, event_kind
@@ -621,6 +622,15 @@ class OrderMachines:
         o = self._orders.get(order_id)
         return None if o is None else (o.lifecycle, o.protection)
 
+    def version(self, order_id: UUID) -> int | None:
+        """The order's version (E29-T04 slice 4, the `ETag`'s seq, ruling Q5): the `event_seq` of
+        its last committed step, the `order_events` row that step wrote, while its machine lives;
+        None once it is gone, so a final order's answer carries none. It reads the plain view only
+        (C-2.20); `command`'s `expected_seq` checks it again under the order's lock."""
+        o = self._orders.get(order_id)
+        seq = None if o is None else o.view.get("event_seq")
+        return seq if type(seq) is int else None
+
     async def start(
         self,
         order: NewOrder,
@@ -727,6 +737,7 @@ class OrderMachines:
         payload: Mapping[str, Any] | None = None,
         *,
         actor: Actor,
+        expected_seq: int | None = None,
     ) -> str:
         """A command to the order, from a route, a rule, an algo or E29-T06's reconciler. Refused
         with `IllegalTransition` unless it is one of `COMMAND_EVENTS` with no `type` in its
@@ -737,7 +748,9 @@ class OrderMachines:
         may have committed all the same: the machine is then rebuilt from the order's events
         before this returns, and the caller reads the order's state again rather than resending.
         A command that waited while a resync rebuilt the order's machine is taken by the rebuilt
-        one."""
+        one. With `expected_seq` (an exit route's `If-Match`, slice 4's ruling Q5), a command the
+        gates above admit is refused with `VersionConflict` when the order's `version` has moved
+        on, checked under the order's lock, with nothing sent or written."""
         payload = payload or {}
         self._vet(COMMAND_EVENTS, event, payload)
         o = self._live(account_id, order_id)
@@ -746,7 +759,7 @@ class OrderMachines:
                 break
             async with self._holding(o):
                 if o.interp is not None:
-                    self._admit(o, event, actor)
+                    self._admit(o, event, actor, expected_seq)
                     try:
                         await self._send_order(o, event, payload)
                     finally:
@@ -1166,10 +1179,10 @@ class OrderMachines:
 
     # --- Gates, sends and pushes (C-2.21, S5, S6, S9) -------------------------------------------
 
-    def _admit(self, o: _Order, event: str, actor: Actor) -> None:
+    def _admit(self, o: _Order, event: str, actor: Actor, expected_seq: int | None = None) -> None:
         """The synchronous gates of a command, before any send: the chain-trip latch (CV-C63), S9
-        and SR-E29-12 (whose source may send it), a recorded stop's amend (24 Sec.8.8 rule 6), and
-        legality."""
+        and SR-E29-12 (whose source may send it), a recorded stop's amend (24 Sec.8.8 rule 6),
+        legality, and last, when given, the version the command expects (slice 4, Q5)."""
         if event in ORDER_PATH:
             key = MachineKey(MACHINE, o.key, o.environment)
             if getattr(o.interp, "chain_trips", 0) and not self._latch.is_latched(key):
@@ -1188,6 +1201,9 @@ class OrderMachines:
             self.legality.require(o.lifecycle, event)
         except IllegalTransition:
             raise self._refuse(o.lifecycle, event) from None
+        if expected_seq is not None and o.view.get("event_seq") != expected_seq:
+            logger().warning("oms_version_conflict", state=o.lifecycle, attempted=event)
+            raise VersionConflict
 
     def _refuse(self, state: str, attempted: str) -> IllegalTransition:
         """`ILLEGAL_TRANSITION`, counted and logged: nothing was sent or written."""

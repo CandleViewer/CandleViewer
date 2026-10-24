@@ -3,11 +3,14 @@ stores: `start(first=...)` reaches the step writer's first persist, a refused st
 is a typed OMS error and never a foreign one, the native-stop backstop is logged and counted, the
 `oms_unknown_orders` gauge follows the live machines, and `abandon` ends a never-sent order.
 Slice 2b: `settled`, the pipeline's wait on the create's outcome, which follows a resync and reads
-the row of an order whose machine is gone."""
+the row of an order whose machine is gone. Slice 4 (S4-B1): `version`, the order's last step's
+`event_seq`, and `command(expected_seq=)`, checked under the order's lock after every other gate,
+and a cancel through the real command port, landing where B1 says."""
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
@@ -16,11 +19,14 @@ from uuid import UUID
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.exchange.base.errors import OmsErrorCode
+from candleviewer.exchange.base.fakes import FakeReject
 from candleviewer.oms.errors import (
     AnchorTaken,
     IllegalTransition,
     OrderNotLoaded,
     OrderStepRefused,
+    VersionConflict,
 )
 from candleviewer.oms.fakes import InMemoryOrderStore
 from candleviewer.oms.repository import SubmissionRepository
@@ -33,6 +39,7 @@ from candleviewer.storage.repositories.submissions import (
     FirstPersist,
     FirstPersisted,
 )
+from tests.unit.oms import command_rig as cr
 from tests.unit.oms.order_rig import (
     ACCOUNT,
     GATES,
@@ -40,6 +47,7 @@ from tests.unit.oms.order_rig import (
     T0,
     Rig,
     build_rig,
+    fill_of,
     gated,
     order_of,
     placed,
@@ -371,3 +379,119 @@ async def test_settled_reads_the_row_of_a_machine_closed_while_in_the_state(rig:
         await rig.facade._close(o, publish=False)
     assert await waiting == "submitting"
     gate.set()
+
+
+# --- the version (E29-T04 S4-B1; the S4 ruling Q5's `ETag`): `version`, `command(expected_seq=)` --
+
+
+async def test_the_version_is_the_last_steps_seq_and_follows_each_step_a_fill_included(
+    rig: Rig,
+) -> None:
+    """Q5: the seq of `"<orderId>:<seq>"` is the `event_seq` of the order's last committed step,
+    its last `order_events` row: each step moves it, a fill included, and an order with no
+    machine (none yet, or evicted once final) has none."""
+    order = order_of()
+    assert rig.facade.version(order.id) is None
+    await rig.start(order)
+    seen = [rig.facade.version(order.id)]
+    await rig.facade.command(ACCOUNT, order.id, "SEND", actor="user")
+    await rig.quiet()
+    seen.append(rig.facade.version(order.id))
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+    seen.append(rig.facade.version(order.id))
+    events = await rig.events.list_for_order(ACCOUNT, order.id)
+    assert seen == [0, 2, 3] and [event.seq for event in events] == [0, 1, 2, 3]
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.6"))
+    await rig.quiet()
+    assert rig.facade.state(order.id) is None and rig.facade.version(order.id) is None
+
+
+async def test_a_stale_expected_seq_is_a_conflict_with_nothing_sent_written_or_moved(
+    rig: Rig,
+) -> None:
+    """Q5: after every other gate (legality first: 409 and 422 before 412), a version that has
+    moved on refuses the command with `VersionConflict`, nothing sent or written; the current one
+    admits it."""
+    unsent = order_of(2)
+    await rig.start(unsent)
+    with pytest.raises(IllegalTransition):
+        await rig.facade.command(ACCOUNT, unsent.id, "CANCEL", actor="user", expected_seq=99)
+    order = await rig.submitted()
+    seq = rig.facade.version(order.id)
+    assert seq is not None
+    with capture_logs() as logs, pytest.raises(VersionConflict):
+        await rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user", expected_seq=seq - 1)
+    assert [log["event"] for log in logs] == ["oms_version_conflict"]
+    assert rig.facade.state(order.id) == ("submitted", "not_required")
+    assert rig.facade.version(order.id) == seq and "cancel" not in rig.commands.kinds()
+    await rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user", expected_seq=seq)
+    await rig.quiet()
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and row.lifecycle_state == "cancelled"
+    assert rig.commands.kinds().count("cancel") == 1
+
+
+async def test_the_version_is_checked_under_the_orders_lock(rig: Rig) -> None:
+    """Q5's atomic home: a command that read the version, then waited on the order's lock while
+    a fill committed, meets the new version once it holds the lock, and sends nothing."""
+    order = await rig.submitted()
+    seq = rig.facade.version(order.id)
+    o = rig.facade._orders[order.id]
+    async with o.lock:
+        fill = asyncio.create_task(
+            rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+        )
+        cancel = asyncio.create_task(
+            rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user", expected_seq=seq)
+        )
+        for _ in range(64):
+            await asyncio.sleep(0)
+        assert not fill.done() and not cancel.done()
+    await fill
+    with pytest.raises(VersionConflict):
+        await cancel
+    assert seq is not None and rig.facade.version(order.id) == seq + 1
+    assert "cancel" not in rig.commands.kinds()
+
+
+@pytest.fixture
+async def wired(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[tuple[Rig, cr.Rig]]:
+    """The facade on the real command port over the fake venue (`command_rig`), one store."""
+    monkeypatch.setattr(b01, "_ATTEMPTS", OrderedDict())
+    venue = cr.build_rig()
+    out = build_rig(venue.store)
+    b01.set_ports(dataclasses.replace(b01._ports, commands=venue.port))  # `stop()` unwires it
+    yield out, venue
+    await out.facade.stop()
+
+
+@pytest.mark.parametrize(
+    ("venue_answer", "landed"),
+    [(None, "cancelled"), (FakeReject(OmsErrorCode.ORDER_NOT_FOUND, 110001), "submitted"),
+     (cr.outage(), "unknown")],
+    ids=["accepted", "refused", "raised"],
+)  # fmt: skip
+async def test_a_cancel_through_the_port_lands_where_b1_says_and_answers_its_watch(
+    wired: tuple[Rig, cr.Rig], venue_answer: Any, landed: str
+) -> None:
+    """S4-B1 end to end on the facade: the current version admits the exit's `CANCEL`, B1's
+    `cancel_pending` sends it once through the real port, and the order lands `cancelled`, back
+    live on a refusal (INV-B1-j), or `unknown` when the call raised (Q11), never sent again; the
+    watch answers what B1 was answered, None on the raise."""
+    rig, venue = wired
+    order = cr.new_order()
+    venue.port.expect(order)
+    await rig.facade.start(order, environment="demo", gates=GATES)
+    await rig.facade.command(cr.ACCOUNT, order.id, "SEND", actor="user")
+    await rig.quiet()
+    if venue_answer is not None:
+        venue.demo.script("cancel_order", venue_answer)
+    watch = venue.port.expect_exit(order.id, "cancel")
+    seq = rig.facade.version(order.id)
+    await rig.facade.command(cr.ACCOUNT, order.id, "CANCEL", actor="user", expected_seq=seq)
+    answer = await watch.answer()
+    await rig.quiet()
+    row = await venue.orders.get(cr.ACCOUNT, order.id)
+    assert row is not None and row.lifecycle_state == landed
+    assert venue.calls().count("cancel_order") == 1
+    assert (answer is None) == (landed == "unknown")
