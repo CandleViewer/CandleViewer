@@ -20,6 +20,7 @@ from candleviewer.exchange.bybit.key_info import refusal
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from candleviewer.oms import submit
 from candleviewer.oms.errors import OmsNotReady
+from candleviewer.oms_lane import BLOCK_TIMEOUT_S, HOP_TIMEOUT_S, LANE_JOIN_S, LANE_START_S
 from candleviewer.oms_wiring import (
     REFERENCE_DEMAND_MAX,
     REFERENCE_DEMAND_NEW,
@@ -444,8 +445,7 @@ def test_20_says_what_a_second_oms_process_and_a_testnet_one_do() -> None:
     `SEND` race on the order row), a testnet process's `/readyz`, and the loop of the facade."""
     assert not _missing(
         _RUNTIME,
-        "builds it in its `start()`, on the serving loop until 29 CV-C13's dedicated order lane "
-        "is built (23 §6.4), and unwires it in its `stop()`.",
+        "builds it in its `start()`, on the order lane (below), and unwires it in its `stop()`.",
         "`ready` is never set early. Until it is set, `placeOrder` answers `503 oms_not_ready` "
         "with `Retry-After`. The sweep, its wait included, must fit a deploy's 60 s `/readyz` "
         "smoke window (`tools/ci/deploy_dev.py`), so `CV_OMS_STARTUP_WAIT_S` is at most 45 s. "
@@ -477,9 +477,8 @@ def test_20_says_what_a_second_oms_process_and_a_testnet_one_do() -> None:
 
 def test_21_and_23_note_the_label_the_sweeps_cap_and_the_order_feed() -> None:
     """CR-S3N-02, -04, -08, -09c: 21 owns `actor_label` and the sweep's cap, whose figures are the
-    code's (15 s at 200 k rows/s is 3 M rows); 23 says where the facade runs until CV-C13's lane
-    (recorded, not a waiver), that the runtime holds `OmsRuntime.run` to it for each route submit,
-    and that an `order` machine's feed removes no entry."""
+    code's (15 s at 200 k rows/s is 3 M rows); 23 says the facade runs on CV-C13's lane, its feed
+    hopping to the serving loop, and that an `order` machine's feed removes no entry."""
     row = next(line for line in _SCHEMA_DOC.splitlines() if line.startswith("| `actor_label`"))
     assert _words(row).endswith("survives user deletion; OMS, key import: `user:<role>` |")
     assert (
@@ -505,11 +504,10 @@ def test_21_and_23_note_the_label_the_sweeps_cap_and_the_order_feed() -> None:
     listing = ", ".join(f"`{kind}`" for kind in others[:-1]) + f" and `{others[-1]}`"
     assert not _missing(
         _words(_WS_DOC),
-        "the order facade (E29-T04) runs on the serving loop, which `OmsRuntime.run` enforces "
-        "for each route submit, until 29 CV-C13's dedicated order lane is built; that lane hops "
-        "with `call_soon_threadsafe`, as a machine on any other event loop must first.",
-        "Sharing the serving loop is slice 3's recorded interim, not a waiver of CV-C13: the "
-        "lane is a named slice of #913 that merges before the ticket closes.",
+        "the order facade (E29-T04) runs on 29 CV-C13's dedicated order lane, its own thread "
+        "and event loop (`20-architecture.md` §6.2), so `OrderStateFeed` gets each publish on "
+        "the serving loop through `call_soon_threadsafe`, never awaited, as a machine on any "
+        "other event loop must.",
         "and the OMS runtime attaches the `order` kind (B1, E29-T04 slice 3, `OrderStateFeed`, "
         "bound per order with its account, on the real backend).",
         "A stopped machine removes its entry, except an `order` machine's: `OrderStateFeed` "
@@ -548,3 +546,29 @@ def test_24_gives_the_demand_and_the_audit_labels_the_code_holds() -> None:
         "`audit_log` has no account column (21 §3.10.1), so one account's order actions are "
         "read by scanning `after_state`.",
     )
+
+
+def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() -> None:
+    """#913 slice 3 L1 (29 CV-C13): rule 1's one explicit thread; the lane, its crossings and its
+    stop inside the grace, from the code's own bounds; the hops named until L2 and L3."""
+    rule = _between(_ARCH, "\n1. **One serving loop, and the order lane.**", "\n2. ")
+    assert "the one explicit thread is the order lane's" in rule
+    assert not _missing(
+        _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading"),
+        "one daemon thread with its own event loop, which never runs a platform-lane task",
+        f"failing closed when its loop does not run within {LANE_START_S:g} s",
+        "the OMS's own Postgres pool, whose connections belong to the loop that made them",
+        "so `ready` is set and cleared on that loop alone",
+        "awaited and cut at `CV_COMMAND_TIMEOUT`: the profile cache and the clock guard's resync; "
+        "until L2 gives the lane its own, the audit writer",
+        "until L3 lets the lane sign and send from its own loop, every venue call",
+        "waits at most `CV_PERSIST_TIMEOUT` for the call to begin",
+        f"within {LANE_JOIN_S:g} s (`LANE_JOIN_S`), the last of the 5 s the drain leaves",
+    )
+    assert (HOP_TIMEOUT_S, BLOCK_TIMEOUT_S) == (CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT)
+    assert "awaits the pipeline on the order lane" in _ROUTE
+    ws = _words((OPENAPI_SPEC_PATH.parent / "23-ws-protocol.md").read_text(encoding="utf-8"))
+    assert "until #913's L2 gives it its own writer and sink" in ws
+    plan = (OPENAPI_SPEC_PATH.parent / "29-statechart-adoption-plan.md").read_text(encoding="utf-8")
+    [row] = [line for line in plan.splitlines() if line.startswith("| CV-C13 ")]
+    assert "STANDS" in row and "F lane table, `OrderLane`, nightly bench" in row
