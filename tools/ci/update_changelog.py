@@ -25,7 +25,7 @@ import json
 import re
 import sys
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -74,6 +74,7 @@ class MergeResult:
     pending: int
     duplicates: int
     security_violations: list[str]
+    dropped_footers: list[str] = field(default_factory=list)
 
 
 def _default_changelog() -> str:
@@ -188,7 +189,9 @@ def merge_unreleased(changelog_text: str, commits: list[ParsedCommit]) -> MergeR
     present = [line for lines in entries.values() for line in lines]
     tokens = referenced_tokens([*present, *_version_section_entries(changelog_text)])
     seen = {line.rstrip() for line in present}
-    update = build_changelog_update([c for c in commits if not is_referenced(c, tokens)])
+    pending_commits = [c for c in commits if not is_referenced(c, tokens)]
+    dropped = [c.sha[:7] for c in pending_commits if c.security_rejected is not None]
+    update = build_changelog_update(pending_commits)
     pending = 0
     for cat, new_lines in update.entries.items():
         for line in new_lines:
@@ -202,7 +205,9 @@ def merge_unreleased(changelog_text: str, commits: list[ParsedCommit]) -> MergeR
     text = before + "\n".join(section) + "\n" + after if changed else changelog_text
     security = check_security_wording(entries.get(Category.SECURITY, []))
     total = sum(len(lines) for lines in entries.values())
-    return MergeResult(text, changed, section, total, pending, duplicates, security.violations)
+    return MergeResult(
+        text, changed, section, total, pending, duplicates, security.violations, dropped
+    )
 
 
 def apply_update(changelog_text: str, commits: list[ParsedCommit]) -> tuple[str, bool]:
@@ -273,6 +278,11 @@ def main(argv: list[str] | None = None) -> int:
     warnings = [
         f"Security changelog line may contain exploit detail: {line}"
         for line in result.security_violations
+    ]
+    warnings += [
+        f"Changelog-Security footer dropped for commit {sha} (empty or failed the wording check): "
+        "its Security line is missing, check the fixing PR's body"
+        for sha in result.dropped_footers
     ]
     if result.pending > PENDING_WARN_THRESHOLD:
         warnings.insert(
