@@ -22,7 +22,7 @@ from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.recorder import control as rc
 from candleviewer.recorder import policy
-from candleviewer.recorder.errors import RecorderInvalidUpdateError
+from candleviewer.recorder.errors import RecorderInvalidUpdateError, RecorderSymbolNotRecordedError
 from candleviewer.recorder.models import Actor
 from candleviewer.recorder.sessions import DEFAULT_STREAMS
 from tests.unit.recorder._control_fakes import NOW, STREAMS, FakeRecorder
@@ -821,3 +821,18 @@ async def test_a_relax_the_policy_refuses_after_the_ports_check_is_recorded_once
     assert [(a, r["outcome"], r["actor_label"]) for a, r in env.audit] == [
         ("retention.change", "denied", f"user:{env.caller.actor_id}")]  # the policy's  # fmt: skip
     assert fake.entries["BTCUSDT"] == entry
+
+
+class _Stopped(FakeRecorder):
+    """A stop races the add: the row is gone when the port reads it back."""
+
+    async def add(self, symbol: str, spec: rc.EntrySpec, actor: Any, *, restricted: bool) -> Any:
+        raise RecorderSymbolNotRecordedError("the recorded row was removed")
+
+
+async def test_an_add_whose_row_a_racing_stop_removed_is_404_audited_as_denied() -> None:
+    env = _Env(_Stopped(), *W)
+    gone = await env.add(symbol="BTCUSDT")
+    assert (gone.status_code, gone.json()["code"]) == (404, "not_found")
+    assert [(a, r["outcome"], r["reason"]) for a, r in env.audit] == [
+        ("recorder.start", "denied", "not_recorded")]  # fmt: skip
