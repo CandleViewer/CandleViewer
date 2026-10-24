@@ -37,6 +37,7 @@ from candleviewer.storage.repositories.idempotency_anchors import (
 )
 from candleviewer.storage.repositories.recorded_stops import (
     EVERY_ACCOUNT,
+    LIVE_STOP_STATUSES,
     REFUSED_BY,
     REFUSED_ENTRY,
     UNSENT_ENTRY,
@@ -384,6 +385,14 @@ class InMemoryOrderStore:
     async def get_by_link_id(self, account_id: UUID, order_link_id: str) -> Row | None:
         await asyncio.sleep(0)
         return next((r for r in self._rows(account_id) if r.order_link_id == order_link_id), None)
+
+    async def get_by_exchange_order_id(
+        self, account_id: UUID, exchange_order_id: str
+    ) -> Row | None:
+        await asyncio.sleep(0)
+        _bindable((exchange_order_id,))  # the statement's value is bound before it runs
+        rows = self._rows(account_id)
+        return next((r for r in rows if r.exchange_order_id == exchange_order_id), None)
 
     async def list_open(self, account_id: UUID, *, symbol: str | None = None) -> tuple[Row, ...]:
         await asyncio.sleep(0)
@@ -937,6 +946,16 @@ class InMemoryRecordedStopStore:
         mine = (account_id, order_id)
         rows = (r for r in self._db._stops.values() if (r.exchange_account_id, r.order_id) == mine)
         return tuple(sorted(rows, key=_age))
+
+    async def live_for_key(
+        self, account_id: UUID, symbol: str, position_idx: int
+    ) -> tuple[RecordedStopRow, ...]:
+        await asyncio.sleep(0)
+        _bindable((symbol,))  # the statement's value is bound before it runs
+        key = (account_id, symbol, position_idx)
+        live = (r for r in self._db._stops.values() if r.status in LIVE_STOP_STATUSES)
+        mine = (r for r in live if (r.exchange_account_id, r.symbol, r.position_idx) == key)
+        return tuple(sorted(mine, key=_age))
 
     async def waiting_for_key(
         self,

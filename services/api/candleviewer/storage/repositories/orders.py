@@ -484,6 +484,15 @@ class OrderStore(Protocol):
 
     async def get_by_link_id(self, account_id: UUID, order_link_id: str) -> OrderRow | None: ...
 
+    async def get_by_exchange_order_id(
+        self, account_id: UUID, exchange_order_id: str
+    ) -> OrderRow | None:
+        """The account's order bound to this exchange order id, in any state (`ux_orders_exch_id`,
+        21 Sec.13.1 row 12): 24 Sec.8.12's pairing step 1. A final row's push is Sec.8.2's S6
+        anomaly, so it is read, not hidden. The exact text; another account's order reads as
+        missing, and an unbound order is never found."""
+        ...
+
     async def list_open(
         self, account_id: UUID, *, symbol: str | None = None
     ) -> tuple[OrderRow, ...]:

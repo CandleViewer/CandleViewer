@@ -266,6 +266,7 @@ _STATEMENTS: dict[str, Any] = {
     "create_statement": mod.create_statement(_new_order(), _SECRET_EVENT),
     "get_statement": mod.get_statement(ACCOUNT, ORDER),
     "get_by_link_statement": mod.get_by_link_statement(ACCOUNT, LINK),
+    "get_by_exchange_statement": mod.get_by_exchange_statement(ACCOUNT, "x-1"),
     "list_open_statement": mod.list_open_statement(ACCOUNT, "BTCUSDT"),
     "link_taken_statement": mod.link_taken_statement(LINK),
     "lock_statement": mod.lock_statement(ACCOUNT, ORDER),
@@ -319,6 +320,16 @@ async def test_list_unfinished_reads_no_orders_for_no_account_and_nothing_for_no
     with pytest.raises(ValueError, match="limit"):
         await _store(rel).list_unfinished("demo", limit=0)
     assert len(rel.units) == 1
+
+
+def test_get_by_exchange_statement_binds_the_account_and_the_exact_exchange_id() -> None:
+    """21 Sec.13.1 row 12: equality on the account and the id alone, whatever the order's state."""
+    stmt = _STATEMENTS["get_by_exchange_statement"]
+    where = _sql(stmt).split("\nWHERE ", 1)[1]
+    assert "orders.exchange_account_id = $1::UUID" in where
+    assert "orders.exchange_order_id = $2::VARCHAR" in where
+    assert _bound(stmt) == [ACCOUNT, "x-1"]
+    assert not any(part in where for part in ("LIKE", "lower(", "orders.state", " OR "))
 
 
 def test_create_writes_the_order_and_its_first_event_in_one_statement() -> None:
@@ -646,6 +657,7 @@ async def test_reads_map_rows_and_absence() -> None:
     rel = _Rel(
         _Result([_order_row()]), _Result(), _Result([_order_row(), _order_row()]), _Result(),
         _Result(scalar=True), _Result([_event_row(seq=4, order_link_id=LINK)]),
+        _Result([_order_row(exchange_order_id="x-1")]), _Result(),
     )  # fmt: skip
     store = _store(rel)
     assert (await store.get(ACCOUNT, ORDER)) == OrderRow(**_order_row())
@@ -655,6 +667,9 @@ async def test_reads_map_rows_and_absence() -> None:
     assert await store.link_id_taken(LINK) is True
     (event,) = await store.list_for_order(ACCOUNT, ORDER, after_seq=3, limit=1)
     assert (event.seq, rel.commits) == (4, 0)
+    bound = await store.get_by_exchange_order_id(ACCOUNT, "x-1")
+    assert bound == OrderRow(**_order_row(exchange_order_id="x-1"))
+    assert await store.get_by_exchange_order_id(ACCOUNT, "x-2") is None and rel.commits == 0
 
 
 async def test_append_outside_the_account_is_not_found_and_writes_nothing() -> None:
@@ -751,6 +766,7 @@ _CALLS: dict[str, tuple[Callable[[mod.SqlAlchemyOrderStore], Awaitable[object]],
     "create": (lambda st: st.create(_new_order(), _event()), [_Result([_order_row()])]),
     "get": (lambda st: st.get(ACCOUNT, ORDER), [_Result()]),
     "get_by_link_id": (lambda st: st.get_by_link_id(ACCOUNT, LINK), [_Result()]),
+    "get_by_exchange_order_id": (lambda st: st.get_by_exchange_order_id(ACCOUNT, "x"), [_Result()]),
     "list_open": (lambda st: st.list_open(ACCOUNT), [_Result()]),
     "link_id_taken": (lambda st: st.link_id_taken(LINK), [_Result(scalar=False)]),
     "append": (
@@ -875,8 +891,9 @@ async def test_any_other_database_error_keeps_only_its_sqlstate(
 
 @pytest.mark.parametrize(
     "read",
-    ["get", "get_by_link_id", "link_id_taken", "list_for_order", "list_open", "list_unfinished"],
-)
+    ["get", "get_by_link_id", "get_by_exchange_order_id", "link_id_taken", "list_for_order",
+     "list_open", "list_unfinished"],
+)  # fmt: skip
 async def test_a_failed_read_keeps_only_its_sqlstate_like_a_write(read: str) -> None:
     """One error family for the OMS (24 Sec.8.2 S7): the allocator's lookup and every other read
     raise `StorageQueryFailed` when a statement fails (57014: the cap), as the writes do."""

@@ -5,7 +5,8 @@ migrations as `cv_owner`) and the stores run as `cv_app`. What only a database p
 one-statement create and its atomicity, `ux_orders_link` surfacing as `DuplicateOrderLinkId`,
 numeric(38,18) through asyncpg with no float, the named constraints the store reports, account
 scoping, a dense `seq` under concurrent appends, `list_open` planned over `ix_orders_open`, the
-store's statement cap on a lock wait, and a redacted payload, `ret_code` and `ret_msg` at rest;
+pairing reads (E29-T05) planned over `ux_orders_exch_id` and `ix_rs_live`, the store's statement
+cap on a lock wait, and a redacted payload, `ret_code` and `ret_msg` at rest;
 for fills and positions, one row per fill whatever reports it, the account-scoped order link of a
 fill, the position upsert with a cleared stop, a stale position write that leaves the newer row, a
 future-dated position time refused and a future-dated row healed, and `list_unprotected` planned
@@ -58,6 +59,7 @@ from candleviewer.storage.repositories.orders import (
 )
 from candleviewer.storage.repositories.orders_sqlalchemy import (
     SqlAlchemyOrderStore,
+    get_by_exchange_statement,
     list_open_statement,
 )
 from candleviewer.storage.repositories.positions import (
@@ -69,6 +71,7 @@ from candleviewer.storage.repositories.positions_sqlalchemy import (
     SqlAlchemyPositionStore,
     list_unprotected_statement,
 )
+from candleviewer.storage.repositories.recorded_stops_sqlalchemy import live_for_key_statement
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -313,12 +316,14 @@ def _plan(dsn: str, stmt: Any) -> str:
 
 
 def _closed_history(dsn: str, account: uuid.UUID, n: int) -> None:
-    """`n` filled orders: most of an account's rows are closed once it has traded a while."""
+    """`n` filled orders, each with its exchange order id (`x1`, `x2`...): most of an account's
+    rows are closed and acknowledged once it has traded a while."""
     _sql(
         dsn,
         "INSERT INTO orders (id, exchange_account_id, order_link_id, symbol, side, intent, "
-        "order_type, qty, state) SELECT gen_random_uuid(), %s, 'ext-' || md5(%s::text || g), "
-        "'BTCUSDT', 'Buy', 'entry', 'Market', 1, 'filled' FROM generate_series(1, %s) AS g",
+        "order_type, qty, state, exchange_order_id) SELECT gen_random_uuid(), %s, "
+        "'ext-' || md5(%s::text || g), 'BTCUSDT', 'Buy', 'entry', 'Market', 1, 'filled', "
+        "'x' || g FROM generate_series(1, %s) AS g",
         account, account.hex, n,
     )  # fmt: skip
 
@@ -341,6 +346,43 @@ async def test_list_open_is_planned_over_ix_orders_open(
     plan = _plan(pg_dsn, list_open_statement(accounts[0], symbol))
     assert "ix_orders_open" in plan, plan
     assert ("symbol" in plan.split("ix_orders_open", 1)[1]) is (symbol is not None), plan
+
+
+async def test_get_by_exchange_order_id_is_planned_over_ux_orders_exch_id(pg_dsn: str) -> None:
+    """21 Sec.13.1 row 12: the pairing read is one probe of the unique index, on a table shaped by
+    history (mostly closed, acknowledged orders) with statistics as autovacuum keeps them."""
+    accounts = [_account(pg_dsn), _account(pg_dsn)]
+    for account in accounts:
+        _closed_history(pg_dsn, account, 300)
+    _sql(pg_dsn, "ANALYZE orders")
+    plan = _plan(pg_dsn, get_by_exchange_statement(accounts[0], "x7"))
+    assert "ux_orders_exch_id" in plan, plan
+
+
+def _stop_history(dsn: str, account: uuid.UUID, n: int) -> None:
+    """`n` void stops, each on a key of its own, and one live `pending` stop-loss on BTCUSDT 0."""
+    _sql(
+        dsn,
+        "INSERT INTO recorded_stops (id, exchange_account_id, symbol, position_idx, "
+        "position_side, kind, source, tpsl_mode, trigger_price, status, closed_at, "
+        "audit_record_id) SELECT gen_random_uuid(), %s, 'S' || g || 'USDT', g %% 3, 'Buy', "
+        "'stop_loss', 'trading_stop', 'Full', 100, 'void', now(), gen_random_uuid() "
+        "FROM generate_series(1, %s) AS g UNION ALL SELECT gen_random_uuid(), %s, 'BTCUSDT', 0, "
+        "'Buy', 'stop_loss', 'trading_stop', 'Full', 100, 'pending', NULL, gen_random_uuid()",
+        account, n, account,
+    )  # fmt: skip
+
+
+async def test_live_for_key_is_planned_over_ix_rs_live(pg_dsn: str) -> None:
+    """21 Sec.13.1 row 45: the key's live rows are a scan of the partial index, the symbol in its
+    index condition (the statuses render as literals, so the planner matches the predicate)."""
+    accounts = [_account(pg_dsn), _account(pg_dsn)]
+    for account in accounts:
+        _stop_history(pg_dsn, account, 300)
+    _sql(pg_dsn, "ANALYZE recorded_stops")
+    plan = _plan(pg_dsn, live_for_key_statement(accounts[0], "BTCUSDT", 0))
+    assert "ix_rs_live" in plan, plan
+    assert "symbol" in plan.split("ix_rs_live", 1)[1], plan
 
 
 async def test_appends_take_dense_sequence_numbers_even_concurrently(

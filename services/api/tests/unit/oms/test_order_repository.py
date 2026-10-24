@@ -134,6 +134,12 @@ class _Store:
         self._call("get_by_link_id", account_id, order_link_id)
         return None
 
+    async def get_by_exchange_order_id(
+        self, account_id: uuid.UUID, exchange_order_id: str
+    ) -> OrderRow | None:
+        self._call("get_by_exchange_order_id", account_id, exchange_order_id)
+        return _row(exchange_order_id=exchange_order_id)
+
     async def list_open(
         self, account_id: uuid.UUID, *, symbol: str | None = None
     ) -> tuple[OrderRow, ...]:
@@ -199,10 +205,12 @@ async def test_reads_pass_the_account_through() -> None:
     repo = OrderRepository(store)
     assert (await repo.get(ACCOUNT, ORDER)) == _row()
     assert await repo.get_by_link_id(ACCOUNT, LINK) is None
+    assert await repo.get_by_exchange_order_id(ACCOUNT, "x-1") == _row(exchange_order_id="x-1")
     assert await repo.list_open(ACCOUNT, symbol="ETHUSDT") == (_row(),)
     assert store.calls == [
         ("get", (ACCOUNT, ORDER), {}),
         ("get_by_link_id", (ACCOUNT, LINK), {}),
+        ("get_by_exchange_order_id", (ACCOUNT, "x-1"), {}),
         ("list_open", (ACCOUNT,), {"symbol": "ETHUSDT"}),
     ]
 
@@ -510,6 +518,14 @@ async def test_an_entrys_stops_are_read_in_its_account() -> None:
     store = _AnyStore((STOP_ROW,))
     assert await RecordedStopRepository(cast(Any, store)).for_order(ACCOUNT, ORDER) == (STOP_ROW,)
     assert store.calls == [("for_order", (ACCOUNT, ORDER))]
+
+
+async def test_live_for_key_passes_the_key_through_and_logs_nothing() -> None:
+    store = _AnyStore((STOP_ROW,))
+    with capture_logs() as logs:
+        rows = await RecordedStopRepository(cast(Any, store)).live_for_key(ACCOUNT, "BTCUSDT", 1)
+    assert rows == (STOP_ROW,) and logs == []
+    assert store.calls == [("live_for_key", (ACCOUNT, "BTCUSDT", 1))]
 
 
 async def test_a_stop_request_in_flight_refuses_the_next_one_and_logs_nothing() -> None:

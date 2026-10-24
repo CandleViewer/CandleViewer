@@ -56,6 +56,7 @@ from candleviewer.storage.repositories.orders_sqlalchemy import (
 )
 from candleviewer.storage.repositories.recorded_stops import (
     EVERY_ACCOUNT,
+    LIVE_STOP_STATUSES,
     REFUSED_BY,
     REFUSED_ENTRY,
     UNSENT_ENTRY,
@@ -82,7 +83,8 @@ from candleviewer.storage.repositories.user_roles_sqlalchemy import (
 
 __all__ = [
     "STOP_COLUMNS", "STOP_FIELDS", "SYSTEM_STATEMENTS", "UNSCOPED", "SqlAlchemyRecordedStopStore",
-    "for_order_statement", "in_given_order", "insert_stops_statement", "lock_stops_statement",
+    "for_order_statement", "in_given_order", "insert_stops_statement",
+    "live_for_key_statement", "lock_stops_statement",
     "settle_statement", "stop_row", "void_orphans_statement", "waiting_for_key_statement",
 ]  # fmt: skip
 
@@ -134,6 +136,21 @@ def settle_statement(
 def for_order_statement(account_id: UUID, order_id: UUID) -> sa.Select[Any]:
     stmt = sa.select(*STOP_COLUMNS).where(
         _S.exchange_account_id == account_id, _S.order_id == order_id
+    )
+    return stmt.order_by(_S.created_at, _S.id)
+
+
+def live_for_key_statement(account_id: UUID, symbol: str, position_idx: int) -> sa.Select[Any]:
+    """21 Sec.13.1 row 45: the key's live rows, oldest first; `ix_rs_live` serves it. The statuses
+    render as literals, so the planner matches the partial index's predicate (as `_holds`)."""
+    live: sa.BindParameter[Any] = sa.bindparam(
+        "live", sorted(LIVE_STOP_STATUSES), expanding=True, literal_execute=True
+    )
+    stmt = sa.select(*STOP_COLUMNS).where(
+        _S.exchange_account_id == account_id,
+        sa.type_coerce(_S.symbol, sa.Text) == symbol,  # SQLAlchemy has no DOMAIN operator class
+        _S.position_idx == position_idx,
+        _S.status.in_(live),
     )
     return stmt.order_by(_S.created_at, _S.id)
 
@@ -273,6 +290,14 @@ class SqlAlchemyRecordedStopStore(CappedStore):
     async def for_order(self, account_id: UUID, order_id: UUID) -> tuple[RecordedStopRow, ...]:
         async with self._unit_of_work() as uow:
             result = await uow.session.execute(for_order_statement(account_id, order_id))
+            return tuple(stop_row(m) for m in result.mappings())
+
+    async def live_for_key(
+        self, account_id: UUID, symbol: str, position_idx: int
+    ) -> tuple[RecordedStopRow, ...]:
+        stmt = live_for_key_statement(account_id, symbol, position_idx)
+        async with self._unit_of_work() as uow:
+            result = await uow.session.execute(stmt)
             return tuple(stop_row(m) for m in result.mappings())
 
     async def waiting_for_key(

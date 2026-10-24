@@ -5,7 +5,8 @@ database set up like production (`pg_bootstrap.sql`'s roles, then the migrations
 and on the in-memory stores in `test_submission_fake.py`, so the fakes the OMS's unit suites use
 take only what Postgres takes, by the names Postgres gives (C-13.3). The races, the rollbacks and
 the share-locked re-check are real here; `test_order_submission_pg.py` keeps the cases only a
-database can stage (lock waits, the sweep over every account).
+database can stage (lock waits, the sweep over every account). The pairing reads' contract
+(`store_reads_contract.py`, E29-T05) runs here too, beside it.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import sys
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import psycopg
 import pytest
@@ -39,6 +40,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 )
 from candleviewer.storage.repositories.submissions import FirstPersist, SubmissionRefusal
 from candleviewer.storage.repositories.submissions_sqlalchemy import SqlAlchemySubmissionStore
+from tests.unit.oms.store_reads_contract import StoreReadsContract
 from tests.unit.oms.submission_contract import Bounded, Harness, SubmissionContract
 
 pytestmark = pytest.mark.integration
@@ -133,6 +135,19 @@ def _held(dsn: str, first: FirstPersist, order: NewOrder) -> tuple[int, ...]:
     return tuple(int(n) for n in counts)
 
 
+#: A lifecycle move no store writes yet, as `trg_rs_guard` and `rs_times` admit it (fixed SQL).
+_MOVES: Final = {
+    "in_force": "UPDATE recorded_stops SET status = 'in_force', in_force_at = now(), "
+                "answered_at = coalesce(answered_at, now()) WHERE id = %s",
+    "replaced": "UPDATE recorded_stops SET status = 'replaced', closed_at = now() WHERE id = %s",
+    "ended": "UPDATE recorded_stops SET status = 'ended', closed_at = now() WHERE id = %s",
+}  # fmt: skip
+
+
+def _move_stop(dsn: str, record_id: uuid.UUID, status: str) -> None:
+    _sql(dsn, _MOVES[status], record_id)
+
+
 @pytest_asyncio.fixture
 async def h(pg_dsn: str) -> AsyncIterator[Harness]:
     """The stores on one pool, as `cv_app`; every user, account and profile a new row."""
@@ -156,10 +171,11 @@ async def h(pg_dsn: str) -> AsyncIterator[Harness]:
             refuse=lambda account, reason: _refuse(pg_dsn, account, reason),
             bounded=bounded,
             held=lambda first, order: _held(pg_dsn, first, order),
+            move_stop=lambda record_id, status: _move_stop(pg_dsn, record_id, status),
         )
     finally:
         await rel.dispose()
 
 
-class TestSubmissionContractOnPostgres(SubmissionContract):
-    """E29-T04's submission contract on real row locks and real rollbacks."""
+class TestSubmissionContractOnPostgres(SubmissionContract, StoreReadsContract):
+    """E29-T04's submission contract on real row locks and real rollbacks, and E29-T05's reads."""

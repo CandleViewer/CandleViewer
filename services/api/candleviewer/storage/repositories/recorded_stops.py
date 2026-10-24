@@ -47,7 +47,8 @@ from candleviewer.storage.repositories.orders import (
 )
 
 __all__ = [
-    "EVERY_ACCOUNT", "MAX_MARKER_CHARS", "REFUSED_BY", "REFUSED_ENTRY", "SWEEP_REASON",
+    "EVERY_ACCOUNT", "LIVE_STOP_STATUSES", "MAX_MARKER_CHARS", "REFUSED_BY", "REFUSED_ENTRY",
+    "SWEEP_REASON",
     "UNSENT_ENTRY", "UX_RS_IN_FLIGHT", "UX_RS_IN_FORCE", "WAITING_ENTRY", "InsertWriteAhead",
     "NewRecordedStop", "RecordedStopRow", "RecordedStopStore", "SettleWriteAhead",
     "StaleRecordedStop", "StopEnd", "StopKind", "StopOutcome", "StopSource", "StopStatus",
@@ -57,6 +58,9 @@ __all__ = [
 StopKind = Literal["stop_loss", "take_profit"]
 StopSource = Literal["entry_attach", "trading_stop", "restore"]
 StopStatus = Literal["pending", "in_force", "replaced", "ended", "void"]
+#: The live statuses: the `ix_rs_live` predicate (a unit test pins it), what `live_for_key` reads
+#: (21 Sec.13.1 row 45). Driver-free, so the in-memory store can use it.
+LIVE_STOP_STATUSES: Final = frozenset[StopStatus]({"pending", "in_force"})
 #: How an `ended` row ended (24 Sec.8.8 rule 6, 21 Sec.3.3.11): `in_force`, after a read showed its
 #: stop, or `answered_unread`, a request the exchange accepted that no read showed before its
 #: position closed (no `in_force_at`, which `rs_times` admits only with `answered_at` set).
@@ -333,6 +337,18 @@ class RecordedStopStore(Protocol):
 
     async def for_order(self, account_id: UUID, order_id: UUID) -> tuple[RecordedStopRow, ...]:
         """An entry's attach rows, oldest first; empty outside the account."""
+        ...
+
+    async def live_for_key(
+        self, account_id: UUID, symbol: str, position_idx: int
+    ) -> tuple[RecordedStopRow, ...]:
+        """The key's live rows, oldest first (`created_at`, then `id`): the `pending` and
+        `in_force` ones (`LIVE_STOP_STATUSES`, 21 Sec.13.1 row 45), whatever their source, bound to
+        an exchange order or not, released or not: the matcher of 24 Sec.8.8 rule 6 skips a row
+        with an id or a `released_at`, the store never filters on either. Empty outside the
+        account. Bounded by construction: `ux_rs_in_force` allows one row in force per key and
+        kind, `ux_rs_in_flight` one unanswered stop-loss, and a position read puts an answered row
+        in force or replaces it, so no `LIMIT`."""
         ...
 
     async def waiting_for_key(
