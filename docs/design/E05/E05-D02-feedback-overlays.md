@@ -15,10 +15,10 @@ ConfirmDialog, CMP-045 Toast, CMP-046 Drawer, CMP-089 ForbiddenState, CMP-090 No
 GlobalErrorBoundaryFallback. Slice 5 covers the rest.
 **Companion:** `E05-D02-feedback-overlays-a11y-audit.md` (accessibility pre-review of this slice).
 **Builds on:** slice 1's conventions 1–14, token mirror, exceptions and decisions A1–A12, B1–B7, C1–C15 and D1–D17 (D13
-is superseded by E09-D09 §2.2 T2); the conventions 15–20 and decisions E1–E27 of slice 2 (#4290, head `fd4ea21d1`);
-and the conventions 21–29 and decisions G1–G21 of slice 3 (#4322, head `838bbb768`), the base of this branch. Slices 2
-and 3 are read at those heads and cited as they stand, if their PRs merge as is. They apply unchanged and are cited as
-"slice 1 A8", "slice 2 (#4290) E20" and "slice 3 (#4322) conventions 24".
+is superseded by E09-D09 §2.2 T2); the conventions 15–20 and decisions E1–E27 of slice 2 (#4290, merged); and the
+conventions 21–29 and decisions G1–G23 of slice 3 (#4322, head `3f91af926`), the base of this branch, read at that head
+and cited as it stands, if #4322 merges as is. They apply unchanged and are cited as "slice 1 A8", "slice 2 (#4290) E20"
+and "slice 3 (#4322) conventions 24".
 **Key.** `05`, `14`, `15`, `16` are the `docs/plan/` documents by number; D09 is `docs/design/E09/E09-D09.md`, D08
 `docs/design/E09/E09-D08.md`. `path:line` references are at `origin/main` `5a382efec`; slices 2 and 3 are cited by
 section.
@@ -141,11 +141,13 @@ ticket lists them as cross-band v0 additions. The brief's "slice 2 E-row on CMP-
     item's (§7 CMP-041), CMP-006's option (slice 1). _Wrapper:_ CMP-079 RbacGate wraps the step-3 leg (D09 §2.1 step 3;
     §8, `E09-D09.md:204`) in slice 3 (#4322) G15's `form` — `inline` by default, `tooltip` for an
     icon-only control or a toolbar segment without room, `notice` for one reason line that several controls point at; a
-    step-4 state reason goes to the control's own `disabledReason` (slice 3 (#4322) conventions 24).
-    _Semantics:_ the control keeps its role and its full label; `aria-disabled="true"`, never `disabled`, so it stays in
-    the Tab order and a menu item stays arrow-reachable; the CMP-019 `lock` glyph (`decorative=false`, name "Not
-    available") leads the label in rendering 2a, and is the badge on an icon-only control in 2b; the reason is in the
-    DOM at mount, linked by `aria-describedby`. _Visual:_ the label and the lock in `color.text.tertiary`, the reason in
+    step-4 state reason goes to the control's own `disabledReason`, unless a wrapper composes CMP-079 with the
+    registered state key (slice 3 (#4322) conventions 24). _Semantics:_ the control keeps its role and its full label;
+    `aria-disabled="true"`, never `disabled`, so it stays in the Tab order and a menu item stays arrow-reachable; the
+    CMP-019 `lock` glyph (`decorative=false`, name "Not available") leads the label in rendering 2a (on a field, the
+    value inside the well: slice 3 (#4322) conventions 24, G23), and is the badge on an icon-only control in 2b; the
+    reason is in the DOM at mount, linked by `aria-describedby`. _Visual:_ the label and the lock in
+    `color.text.tertiary` (on a field, the lock and the value, its label `color.text.secondary`), the reason in
     `color.text.secondary`, a filled control's fill to `color.surface.raised` with a 1 px `color.border.default`
     hairline (`border.hairline`); never `color.text.disabled`, never `opacity.disabled` on the label, glyph or reason
     (D09 §2.2, `E09-D09.md:49`, measured 2.86–4.31:1 in D09 §11; slice 3 conventions 24). _Keys:_ Tab reaches it;
