@@ -208,6 +208,7 @@
 ["cv_ws_queue_bytes", "histogram", [], "live", "E17"]
 ["cv_ws_queue_frames", "histogram", [], "live", "E17"]
 ["cv_ws_rebuild_refused_total", "counter", ["kind", "cause"], "live", "E17"]
+["cv_ws_recorder_subscriptions_in_use", "gauge", [], "live", "E16"]
 ["cv_ws_resync_total", "counter", ["reason"], "live", "E17"]
 ["cv_ws_revoked_total", "counter", ["reason"], "live", "E17"]
 ["cv_ws_rtt_seconds", "histogram", [], "live", "E17"]

@@ -49,6 +49,7 @@ from candleviewer.book.resync import BookEngine
 from candleviewer.book.snapshot_source import BookSnapshotSource, Record
 from candleviewer.observability.context import spawn
 from candleviewer.orderbook_wiring import BookStream
+from candleviewer.recorder.ws_topic import RecorderTopic
 from candleviewer.rules.manager import Actor, RuleRow, rule_visible
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
 from candleviewer.ws import permissions as ws_permissions
@@ -245,6 +246,14 @@ def alerts_topic(hub: SequencingHub) -> AlertsTopic[SnapshotBody]:
     or resyncs an owner's subscriptions through it. The composition root attaches the deliveries
     reader; before, `build` gives `None`."""
     return AlertsTopic(hub.publish, hub.flush_pending, hub.resnapshot, SnapshotBody)
+
+
+def recorder_topic(hub: SequencingHub) -> RecorderTopic[SnapshotBody]:
+    """E16-T08 (#492): the `recorder` family's adapter, which the recorder module owns: it renders
+    through the gateway's `SnapshotBody`, publishes each 1 Hz status through `hub` (one frame per
+    group of subscriptions) and resyncs through it. The recording status cache attaches to it;
+    before, `build` gives `None`."""
+    return RecorderTopic(hub.subscriptions, hub.publish, hub.resnapshot, SnapshotBody)
 
 
 def rule_frame_visible(row: RuleRow, principal: PrincipalSnapshot) -> bool:

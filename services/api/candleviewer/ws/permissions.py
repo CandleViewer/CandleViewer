@@ -77,6 +77,7 @@ from candleviewer.ws.limits import (
 )
 from candleviewer.ws.metrics import (
     count_audit_failure,
+    cv_ws_recorder_subscriptions_in_use,
     cv_ws_subscribe_denied_unaudited_total,
     cv_ws_subscribe_granted_unaudited_total,
     cv_ws_subscribe_narrowed_total,
@@ -152,6 +153,7 @@ cv_ws_alerts_subscriptions_in_use = Gauge(
 )
 #: The family the gauge above counts.
 _ALERTS: Final = "alerts"
+_RECORDER: Final = "recorder"  # `cv_ws_recorder_subscriptions_in_use` (ws/metrics.py) counts it
 cv_ws_permission_snapshots_refused_total = Counter(
     "cv_ws_permission_snapshots_refused_total",
     "Older WS permission snapshots refused because a newer one was applied (SR-189).",
@@ -367,6 +369,10 @@ class Subscription:
     #: user (`sequencing.in_scope`). A connection's principal never changes user
     #: (`apply_snapshot`), so it holds for the subscription's life.
     owner: uuid.UUID | None = None
+    #: #492 (ruling Q6): the principal was not the Owner at admit or at a later §9.5
+    #: re-evaluation (`apply_snapshot`), never a client value; the `recorder` topic serves such a
+    #: subscription its role-restricted view (R-I2). Only a new `sub` widens it again.
+    role_restricted: bool = False
 
     @property
     def ch(self) -> str:
@@ -689,6 +695,7 @@ class ConnectionAuthz:
             # #2521: SELF families are owned by the principal (by value: a test may reload the
             # generated `Scope`, a StrEnum, which leaves two classes behind).
             owner=self.principal.user_id if fam.scope == Scope.SELF else None,
+            role_restricted=not self.principal.is_owner,
         )
         if not snapshot and not self._continuity(sub):
             sub.snapshot_pending = forced = True  # §7.6: continuity unproven -> snap anyway
@@ -769,6 +776,8 @@ class ConnectionAuthz:
         self._by_topic.setdefault(sub.ch, set()).add(sub.sub_id)
         if sub.topic.family.family == _ALERTS:
             cv_ws_alerts_subscriptions_in_use.inc()
+        elif sub.topic.family.family == _RECORDER:
+            cv_ws_recorder_subscriptions_in_use.inc()
         for symbol in sub.symbols:  # fixed for its life: `symbols` is a scope option (no `ctl`)
             self.held_symbols[symbol] = self.held_symbols.get(symbol, 0) + 1
 
@@ -957,6 +966,8 @@ class ConnectionAuthz:
         if (held := self.by_id.pop(sub.sub_id, None)) is not None:  # once, if dropped twice
             if held.topic.family.family == _ALERTS:  # with `by_id`: exact, whatever raises below
                 cv_ws_alerts_subscriptions_in_use.dec()
+            elif held.topic.family.family == _RECORDER:
+                cv_ws_recorder_subscriptions_in_use.dec()
             for symbol in held.symbols:  # with `by_id`, before a release below can raise
                 if (count := self.held_symbols.pop(symbol, 1) - 1) > 0:  # never a KeyError
                     self.held_symbols[symbol] = count
@@ -1158,12 +1169,24 @@ class ConnectionAuthz:
             if frame is not None:
                 frames.append(frame)
                 affected.append(sub)
+        # #492 (ruling Q6): a principal no longer the Owner narrows the recorded view now, and a
+        # `recorder` subscription is re-snapped in it; a new Owner keeps it until a new `sub`
+        viewed: set[str] = set()
+        if not new.principal.is_owner:
+            known = {s.sub_id for s in affected}
+            for sub in sorted(self.by_id.values(), key=lambda s: (s.ch, s.sub_id)):
+                if not sub.role_restricted:
+                    sub.role_restricted = True
+                    if sub.topic.family.family == _RECORDER and sub.sub_id not in known:
+                        affected.append(sub)
+                        viewed.add(sub.sub_id)
         # #415: a grant or a permission withdrawn alike, one rule at the sending boundary (C-12.4)
         purged = self.on_purge(affected) if self.on_purge is not None and affected else set()
         self._dropped(affected)  # the discard comes first (§9.5)
         for sub in affected:  # then a narrowed one is re-pended unless paused (its resume
             # re-snapshots it, §5.4, §8.4 step 1): flag on always, flag off once its frames went
-            if self.on_drop is None and (sub.ch, sub.replay_session_id) not in purged:
+            gone = (sub.ch, sub.replay_session_id) in purged
+            if self.on_drop is None and not gone and sub.sub_id not in viewed:
                 continue
             paused = sub.effective.get("paused") is True
             if sub.sub_id in self.by_id and not (sub.snapshot_pending or paused):
