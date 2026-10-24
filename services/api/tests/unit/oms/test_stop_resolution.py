@@ -531,7 +531,8 @@ def test_the_store_bound_outlasts_the_stop_audit_bound_so_its_error_is_the_audit
     """Opus Minor: the store-call bound is the stop audit's bound plus a margin, so a late audit
     reaches H3 as `AuditNotDurable`, never as this bound's `TimeoutError`."""
     margin = stop_resolution.STORE_TIMEOUT_S - recorded_stops.STOP_AUDIT_TIMEOUT_S
-    assert margin >= 1.0
+    assert margin >= 5.0  # the lock and the update (2 s each, OMS_STATEMENT_TIMEOUT_MS) and slack
+    assert "PageReason" in stop_resolution.__all__
     default = inspect.signature(StopResolver).parameters["store_timeout_s"].default
     assert default == stop_resolution.STORE_TIMEOUT_S
     tree = ast.parse(inspect.getsource(stop_resolution))  # production never reads the fakes
