@@ -522,7 +522,7 @@ tab | SCR-031 Scales tab (CMP-043 lg) | rows `size.row.height`; two columns, sta
 tab | Toggle / segmented targets | toggles 24 \u00d7 44; segments ≥ 24 \u00d7 56 | same | same | — |
   — | `radius.control` | 1.0 | DOM | E11-D03 §12 :451
 tab | CMP-228 PreviewTile | — | — | — | `color.surface.sunken` | — | `radius.md` | 1.0 | DOM | `15`
-  CMP-228 :2678
+  CMP-228 :2644
 table | Row height (bar, level, header) | `size.row.comfortable` 32 | `size.row.compact` 24 | — |
   zebra `color.surface.canvas` / `color.surface.raised`; header + hover `color.surface.hover`;
   selected `color.surface.selected`; dividers `color.border.subtle` | — | — | 1.0 | DOM | E11-D04 §2
@@ -1239,6 +1239,11 @@ def short_source(src: str) -> str:
     return name
 
 
+# E11-D07 cites `14` at its own pin; the pack reads `14` at its re-pinned `main`, so a D07 source
+# line in `14` that moved is mapped by content (SCR-049's A11y line, `Ctrl+Alt+1..9`).
+D07_SOURCE_REPIN = {("`14`", "1072"): "1106"}
+
+
 def keymap_rows() -> dict[str, Any]:
     """E11-D07's 134 atomic bindings with the pack's columns; None when the D07 tool is absent."""
     if d07 is None:
@@ -1310,7 +1315,7 @@ def keymap_rows() -> dict[str, Any]:
                     "registered": reg,
                     "k": ", ".join(ks) if ks else "—",
                     "status": status,
-                    "source": f"{src_short} :{line}",
+                    "source": f"{src_short} :{D07_SOURCE_REPIN.get((src_short, str(line)), line)}",
                 }
             )
     return {
@@ -1473,7 +1478,7 @@ pane focus bar | DOM | `color.action.primary.default` (2 px) | CSS | non-text | 
 focus ring on surrogates (CMP-039) | DOM | `color.focus.ring` (2 px, 2 px offset); halo
   `color.surface.canvas` | CSS | non-text | E11-D02 §7 :240; E11-D05 §9.1 :436
 tooltip box | DOM | `color.surface.overlay` + `color.border.default`; `radius.card`;
-  `elevation.popover` | CSS | surface | E11-D02 §7.3 :304\u2013307; `15` CMP-197 :2370
+  `elevation.popover` | CSS | surface | E11-D02 §7.3 :304\u2013307; `15` CMP-197 :2336
 tooltip title, labels and values | DOM | `color.text.secondary` (title, labels);
   `color.text.primary` (values); title `type.ui.caption` (`type.ui.label` at comfortable);
   `type.num.*`; `space.inset.xs` / `space.inset.sm` / `space.inset.md` per density | CSS | text |
@@ -1511,7 +1516,7 @@ loading band; skeleton blocks | DOM | `color.surface.hover` + `color.text.second
 countdown (CMP-226) normal / warn / closed | DOM | `color.text.secondary`; warn
   `color.status.warning.subtle` + `color.text.primary` + `color.status.warning.strong` +
   `font.weight.medium`; closed `color.text.tertiary`; `type.ui.caption` / `type.num.sm`;
-  `font.family.mono` | CSS | text / non-text | E11-D02 §7.4 :330\u2013332; `15` CMP-226 :2655
+  `font.family.mono` | CSS | text / non-text | E11-D02 §7.4 :330\u2013332; `15` CMP-226 :2621
 lock badge (button) | DOM | `color.surface.raised` + `color.border.strong` + `color.text.primary` |
   CSS | text | E11-D02 §7.1 :244; E11-D03 §5 :193
 splitter grip rest / hover / drag; hairline hover | DOM / GL | `color.text.tertiary` →
@@ -1538,7 +1543,7 @@ SCR-044 T2 quick jumps (T2-08, T2-09) | DOM | label + lock glyph `color.text.ter
 SCR-031 Scales tab (CMP-043 lg) | DOM | `color.surface.overlay`; `elevation.dialog`;
   `radius.dialog`; helper `color.text.tertiary`; toggles `CR:color.border.field` (D03-CR-5) | CSS |
   text / surface | E11-D03 §6.1 :209\u2013245; §14.2 :663
-CMP-228 PreviewTile | DOM | `color.surface.sunken`; `radius.md` | CSS | surface | `15` CMP-228 :2678
+CMP-228 PreviewTile | DOM | `color.surface.sunken`; `radius.md` | CSS | surface | `15` CMP-228 :2644
 table body, rows, header, selection | DOM | `color.surface.canvas` (odd rows) /
   `color.surface.raised` (even) / `color.surface.hover` (header, hover) / `color.surface.selected`
   (selected) / `color.surface.app` (sub-table) / `color.surface.sunken` (code chip);
@@ -1753,44 +1758,44 @@ SCR-030 chassis | empty history (SCR-047 1a / 1b; T2-06) | heading + cause + the
   ruling); Manager / Viewer: the T2-06 sentence form, `rbac.owner_only` "Only the owner can start
   recording." (`rbac.view_as` first while viewing as) — T2 per §8.1 | same | same | long symbol
   names wrap at 200 % | the heading and the timestamp | E11-D04-08-empty-reasons-dark.png (F-27 /
-  F-28 re-draw the sentence) | `14` :684; E11-D04 §11.2 :338, :347; E11-D07 §9.5 T2-06 :445
+  F-28 re-draw the sentence) | `14` :695; E11-D04 §11.2 :338, :347; E11-D07 §9.5 T2-06 :445
 SCR-030 chassis | symbol delisted / paused (SCR-047 3) | heading "instrument not trading" + cause;
   live-data sentence only where true | same | same | long `status_reason` wraps at 200 % | the
-  heading | E11-D04-08-empty-reasons-dark.png | `14` :684; E11-D04 §11.2 :338
+  heading | E11-D04-08-empty-reasons-dark.png | `14` :695; E11-D04 §11.2 :338
 SCR-030 bar series (E12-D02) | cache-loading | previous frame held; pending mark on the toolbar
   target; strip line after 600 ms | same | same | a fresh panel shows CMP-029 (static under reduce)
-  | the pill's pending mark; the strip text | E12-D02 §7 boards (E12's) | `14` :699
+  | the pill's pending mark; the strip text | E12-D02 §7 boards (E12's) | `14` :710
 SCR-030 bar series (E12-D02) | progressive-backfill | E11-D02's loading band left of the oldest
   loaded bar | same | same | as S-002 (the band keeps its width at every density) | "Loading older
-  bars…" | E11-D02-09-feed-states.png | `14` :700
+  bars…" | E11-D02-09-feed-states.png | `14` :711
 SCR-030 bar series (E12-D02) | streaming | baseline: live bars, no chrome; stale / disconnected per
   E11-D02 §10 | same | same | as S-003 | the status-row chip when degraded |
-  E11-D02-01-chassis-anatomy.png | `14` :701
+  E11-D02-01-chassis-anatomy.png | `14` :712
 SCR-030 bar series (E12-D02) | forming-bar | a distinct non-colour treatment on the last bar
   (E12-D06's form); CMP-226 countdown | same | same | activity progress in its slot on non-time bars
-  | the countdown; the treatment's shape | E12-D02 §7 boards (E12's) | `14` :702
+  | the countdown; the treatment's shape | E12-D02 §7 boards (E12's) | `14` :713
 SCR-030 bar series (E12-D02) | closed-bar | solid baseline treatment; an amended bar carries a
-  "corrected" marker | same | same | n/a — no density note in `14` :703; E12-D06 owns the marker's
-  form | the "corrected" marker | E12-D02 §7 boards (E12's) | `14` :703
+  "corrected" marker | same | same | n/a — no density note in `14` :714; E12-D06 owns the marker's
+  form | the "corrected" marker | E12-D02 §7 boards (E12's) | `14` :714
 SCR-030 bar series (E12-D02) | rebuilding | previous series stays drawn; strip phases: text + static
   glyph from 600 ms, progress bar with `Cancel` after 2 s | same | same | n/a — no density note in
-  `14` :704; the strip is E12-D02's | the strip text and the pending pill | E12-D02 §7 boards
-  (E12's) | `14` :704
+  `14` :715; the strip is E12-D02's | the strip text and the pending pill | E12-D02 §7 boards
+  (E12's) | `14` :715
 SCR-030 bar series (E12-D02) | partial-history | dashed full-height boundary with a text tag
   (recording start / built range / lookback) | same | same | non-time: E11-D02's loading band | the
-  tag's words | E12-D02 §7 boards (E12's) | `14` :705
+  tag's words | E12-D02 §7 boards (E12's) | `14` :716
 SCR-030 bar series (E12-D02) | coverage-gap | hatched, labelled band over the gap's time slots
   (`pattern.hatch.gap`), or the labelled seam | same | same | a column spanning a seam still shows
-  it | the label | E11-D02-05-time-axis.png | `14` :706; E11-D05 §7 :315
+  it | the label | E11-D02-05-time-axis.png | `14` :717; E11-D05 §7 :315
 SCR-030 bar series (E12-D02) | LOD-aggregated | E11-D02's status-row chip, persistent while active,
   never a toast; L1 keeps hairline wicks | same | same | as S-011 (ratio live; the chip never wraps)
-  | the chip's words and ratio | E11-D02-09-feed-states.png | `14` :707
+  | the chip's words and ratio | E11-D02-09-feed-states.png | `14` :718
 SCR-030 bar series (E12-D02) | empty | SCR-047 replaces the pane stack, no GL context; toolbar,
   status row and strip stay usable | same | same | see S-112 (SCR-047's edge-density row) |
-  SCR-047's heading | E11-D04-08-empty-reasons-dark.png | `14` :708
+  SCR-047's heading | E11-D04-08-empty-reasons-dark.png | `14` :719
 SCR-030 bar series (E12-D02) | error | SCR-048 replaces the pane stack; toolbar, status row and
   strip stay usable | same | same | see S-117 (SCR-048's edge-density row) | SCR-048's heading |
-  E11-D04-10-error-engine.png | `14` :709
+  E11-D04-10-error-engine.png | `14` :720
 SCR-030 chassis motion (E11-D06 §6) | countdown warn / closed (D12) | the word "closing" + weight;
   the flip is instant in both modes | same | same | the chip 24 / 20 / 20 and never wraps (E11-D02
   §10 :422) | the word | E11-D06-05-countdown-stale-strips.png | E11-D06 §6.1 :207; M-32
@@ -1861,7 +1866,7 @@ SCR-031 Scales tab | error | preview "Preview unavailable — chart error; setti
   Logarithmic disabled with the E11-D03 D4 reason (a data state, not T2); a stepper out of range
   shows CMP-007's invalid state (red border + icon + "Enter 0 to 25"; the field stays enabled —
   neither T2 nor the validity look) | same | same | see S-053 | the sentences; the field's error
-  text | E11-D03-06-scales-tab-states.png | E11-D03 §10 :404; `15` :109
+  text | E11-D03-06-scales-tab-states.png | E11-D03 §10 :404; `15` :113
 SCR-031 Scales tab | populated | every field at its value; the preview live; "Apply to: This panel";
   Save T2 for a session without `workspaces:write` — C-14 (PROPOSED) | board 06 | board 06 |
   comfortable default; compact rows 24; columns side by side above 720 px | the state words beside
@@ -2081,13 +2086,13 @@ SCR-046 diagnostics overlay | threshold-breach | the "above budget" chip: `color
 SCR-049 grid cell | populated | the cell header's sync-group tag: `color.text.primary` chip on
   `color.surface.raised` with a 2 px border in the group's colour, the letter as text | same | same
   | 1\u00d72 … 3\u00d73 and custom grids (E15's) | the letter | E11-D02-08-multi-pane-chrome.png |
-  E11-D02 §8 :377; `14` :1085
+  E11-D02 §8 :377; `14` :1111
 SCR-049 grid cell | focused cell | the focused cell gets the chart ring; "Chart 2 of 4, group A" |
   same | same | n/a — no density variant in E11-D02 §8 :377 (the ring is CMP-039's) | the ring; the
   name | E11-D02-08-multi-pane-chrome.png | E11-D02 §8 :377
 SCR-049 grid cell | degraded (GPU budget) | E15's: the explicit reduce-quality prompt when the grid
-  exceeds the GPU budget | same | same | n/a — E15's prompt (`14` :1085); no chassis treatment | the
-  prompt's words | text-only — `14` :1085 (E15's) | `14` :1085
+  exceeds the GPU budget | same | same | n/a — E15's prompt (`14` :1111); no chassis treatment | the
+  prompt's words | text-only — `14` :1111 (E15's) | `14` :1111
 """
 
 # Source state labels → the row label in the pack's §7 (typed once; the tool asserts presence).
@@ -2108,7 +2113,7 @@ SOURCE_STATE_MAP: dict[str, dict[str, str]] = {
         "scale locked": "scale locked",
         "empty / error": "empty / error",
     },
-    "14 :684": {
+    "14 :695": {
         "loading": "loading",
         "streaming": "streaming",
         "stale": "stale",
@@ -2160,7 +2165,7 @@ def source_states() -> dict[str, Any]:
     ]
     return {
         "D02 §10": d02,
-        "14 :684": p14_states,
+        "14 :695": p14_states,
         "14 E12-D02": e12,
         "D03 §10": d03,
         "D04 §15": d04,
