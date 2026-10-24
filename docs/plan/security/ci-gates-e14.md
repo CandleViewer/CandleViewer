@@ -62,7 +62,8 @@ E15-T01's spec decision on #402, SR-E14-09).
 - **Matches:** a `SELECT`, `UPDATE`, `DELETE` or `INSERT ... SELECT` on `drawings` with no
   `WHERE|AND|ON owner_user_id = :owner` predicate (a `SET owner_user_id = ...` is a transfer, not a
   scope), as text SQL (`text(`, `execute(`, `fetch(` ... or an assignment whose first literal opens
-  with the verb; any `r`/`u`/`f`/`b` prefix) or as a Core `select`/`update`/`delete` with no
+  with the verb; any `r`/`u`/`f`/`b` prefix) or as a Core `select`/`update`/`delete` of the table,
+  bare or module-qualified (`drawings`, `m.drawings`, `models.drawings`), with no
   `.where(... owner_user_id == ...)`. Scope: `services/api/candleviewer/**`, not migrations. Fix:
   add `AND owner_user_id = CAST(:owner AS uuid)`, or annotate with a reason.
 - **Does not match:** `INSERT ... VALUES` (an upsert too), `drawing_templates`, text built before
