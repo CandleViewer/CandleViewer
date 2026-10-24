@@ -151,9 +151,8 @@ class ReplayClock:
         self._pacer: Pacer | None = None
         self._window = RateWindow(self._cfg.rate_window_s)
         self._wake = asyncio.Event()
-        self._halt = (
-            asyncio.Event()
-        )  # a pause or a destroy: ends a budget hold (a speed change not)
+        # a pause, speed 0 or a destroy: ends a budget hold (any other speed change does not)
+        self._halt = asyncio.Event()
         self._lane = FREE_LANE if budget_lane is None else budget_lane
         self._task: asyncio.Task[StopReason] | None = None
         self._stack: AsyncExitStack | None = None
@@ -253,6 +252,8 @@ class ReplayClock:
         self._speed = speed
         if not self.playing:
             return
+        if speed == STEP:  # speed 0 pauses: like a pause, it ends a budget hold
+            self._halt.set()
         if self._starting:  # `_play` has not anchored yet: it anchors at this speed
             self._stop |= speed == STEP
             return
@@ -536,6 +537,9 @@ class ReplayClock:
             except StopAsyncIteration:
                 self._drained = True
                 return None
+            except asyncio.CancelledError:  # destroyed while waiting for the source: idle, not ours
+                self._lane.start()
+                raise
             except Exception as exc:  # any source failure ends it (`ReplaySource`): remember it
                 self._failed = exc
                 raise

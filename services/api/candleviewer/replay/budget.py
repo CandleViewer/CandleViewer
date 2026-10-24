@@ -24,11 +24,12 @@ so one admission costs O(N) wake-ups for N waiters (N is the number of sessions,
 **Charge before every await.** One lane may serve several tasks of a session, as one mark: a
 task's `start()` on resume overwrites the mark another task left. Every await on a replay path
 must therefore be preceded by `charge()` (or be a `breathe()`), and a pure wait (a deadline, a
-queue, a storage read decoded off the loop) followed by `start()`, in a `finally` so a cancelled
-wait is not charged either; an await that does the task's own work (a delivery) is not restarted
-after, so that work stays charged. Left: a `start()` still wipes another task's work since its
-last charge (at most one event's; a mark per task would remove it), and any wait inside such an
-await is charged.
+queue, a storage read) followed by `start()`, in a `finally` so a cancelled wait is not charged
+either; an await that does the task's own work (a delivery) is not restarted after, so that work
+stays charged. Left: a `start()` still wipes another task's work since its last charge (at most
+one event's; a mark per task would remove it); any wait inside such an await is charged; and the
+on-loop part of a storage read is not (the QuestDB reader's PGWire row decode runs on the loop
+inside the await; the cold reader decodes off it).
 
 **Fairness is per waiting task, not per session**: each `breathe` queues once, so a session whose
 clock and producer both wait holds two places in line.
@@ -37,8 +38,9 @@ clock and producer both wait holds two places in line.
 `time.thread_time`: garbage collection, page faults and syscalls inside a turn hold the loop
 just as much as Python code does, and thread time would not see them. A suspension inside a
 delivery is charged too: replay yields more, the safe direction. One charge adds at most
-`MAX_CHARGE_S` of debt; the worst hold is the tail of the line, which waits for every charging
-task's debt: N x MAX_CHARGE_S / share (N x 25 s at the 0.01 floor).
+`MAX_CHARGE_S` of debt; the worst hold is the tail of the line: it waits for every charging
+task's debt (N x MAX_CHARGE_S / share, N x 25 s at the 0.01 floor) plus one more turn of each task
+admitted ahead of it, up to about (2N - 1) x MAX_CHARGE_S / share.
 
 **Metrics** (served by `replay.metrics`): `replay_loop_seconds_total` is the loop time charged to
 replay, `replay_budget_held_seconds_total` the wall time lanes were held,
