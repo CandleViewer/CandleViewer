@@ -1012,8 +1012,9 @@ operations:
     permissions: ['orders:write']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
+    request:
+      json: {exchange_account_ids: ['00000000-0000-4000-8000-00000000000a']}
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   GET /orders/{orderId}:
     permissions: ['orders:read']

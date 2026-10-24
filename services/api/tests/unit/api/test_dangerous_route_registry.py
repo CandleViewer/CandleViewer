@@ -98,6 +98,11 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     ),
     ("DELETE", "/rules/{ruleId}"): "deleteRule: refused while the rule is `armed`",
     ("PUT", "/rules/{ruleId}/active-version"): "setActiveRuleVersion: `Problem` says no step-up",
+    # 04 §7.2.2 row 14: cancel-all takes no step-up; like every cancel it is a risk-reducing exit,
+    # never gated by the arm token or the switches either (C-2.6).
+    ("POST", "/orders/cancel-all"): (
+        "cancelAllOrders: no step-up (04 row 14); a risk-reducing exit, never gated (C-2.6)"
+    ),
 }
 
 

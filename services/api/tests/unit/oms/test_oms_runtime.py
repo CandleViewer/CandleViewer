@@ -343,6 +343,9 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
             assert exits.profiles is parts.submission._deps.profiles
             assert isinstance(exits.profiles, oms_wiring.ServedProfiles)
             assert exits.environment == parts.route.environment == "demo"
+            cancel_all = parts.cancel_all  # S4-E: over that exit service and the order store
+            assert cancel_all._exits is parts.exits
+            assert cast(object, cancel_all._reads) is parts.route.orders  # the one repository
             assert world.log == ["sink.start"]
     warned = [e["port"] for e in logs if e["event"] == "oms_interim_port"]
     assert warned == [*INTERIMS, "machine_event_sink"]  # one WARNING each
@@ -400,6 +403,8 @@ async def test_a_composition_that_fails_late_closes_what_it_built_and_fails_clos
                 _ = runtime.anchors
             with pytest.raises(OmsNotReady):
                 _ = runtime.exits
+            with pytest.raises(OmsNotReady):
+                _ = runtime.cancel_all
 
 
 async def test_one_facade_per_process_stop_unwires_it_and_a_second_start_works() -> None:
