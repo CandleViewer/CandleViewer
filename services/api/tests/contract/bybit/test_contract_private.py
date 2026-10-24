@@ -72,6 +72,21 @@ def test_every_documented_push_is_read_field_for_field(path: str) -> None:
 
 
 @pytest.mark.usefixtures("no_unknown_fields")
+def test_an_order_push_carries_the_venues_update_time_not_the_frames() -> None:
+    """24 Sec.8.12: B1's `updated_time` is the venue's own time of the order's last change, so the
+    row keeps `updatedTime`, apart from the frame's creation time and from `createdTime`."""
+    pushed = pp.classify(push("order", linear_order()))
+    assert isinstance(pushed, pp.Push)
+    [event] = pp.read_push(pushed, account(), now_us=NOW_US)
+    assert isinstance(event.payload, Order)
+    assert (event.payload.updated_at, event.payload.created_at) == (
+        1_672_364_262_457_000,
+        1_672_364_262_444_000,
+    )
+    assert event.ts_event == 1_672_364_262_474_000
+
+
+@pytest.mark.usefixtures("no_unknown_fields")
 def test_the_documented_order_and_wallet_rows_read_as_linear_usdt_ones() -> None:
     """Derived in-test: the option order as a linear USDT order, the BTC wallet row as USDT's."""
     for text, payload in (

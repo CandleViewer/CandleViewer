@@ -2214,6 +2214,8 @@ _Added for E29-T05 (#848), contract first: nothing runs it yet._ The consumer re
 | `position`       | always                                                                                                                                          | the position projection (`positions`, and a `position_snapshots` row with the reason `ws_push`), and the protection readings (below)                                                           |
 | `wallet`         | not dated ahead of the host clock                                                                                                               | E27-T04's wallet cache (`AccountHealthFeed.wallet_pushed`), never B1; a frame dated ahead is refused before it, as it would block every later refresh                                          |
 
+An order row's event carries, as its `updated_time` (in milliseconds), the venue's own time of the order's last change (`Order.updated_at`, §14.4), never the time the row was received. The exchange is the truth for ordering: a read received after an older push does not win on its receipt time (S5, §8.2). Only a row whose source sends no such time falls back to the push's creation time (`PrivateEvent.ts_event`); its `updated_at` of `None` marks it.
+
 **The end (the orchestrator's Q4 ruling, 2026-10-22).** `EXPIRE` exactly when the order's time in force is `ioc` or `fok` and it ended `cancelled` or `partially_filled_canceled`; `REMOTE_CANCELLED` for every other end, `deactivated` and a rejection after the acceptance included. The venue's status is kept verbatim on the step's `order_events` row (the push's `order_status`) and in its audit record, and an end waits for the fills it reports (INV-B1-k). No row maps to `AMEND_REJECTED`: an amend the venue refuses is answered by its own call, an `amend` result that is not `ret_code_ok` (INV-B1-c).
 
 **Pairing (§8.3 rule 7, SR-E29-03), in this order.**
@@ -4478,6 +4480,8 @@ class Order(BaseModel):                    # a read's row (§8.5); the OMS aggre
     avg_fill_price: Px | None
     created_at: TsUs
     terminal_at: TsUs | None
+    updated_at: TsUs | None = None         # the venue's own time of the order's last change: B1's
+                                           # updated_time (§8.12); None only where a source has none
     reduce_only: bool = False              # with trigger_price and stop_loss: B1's full match
     trigger_price: Px | None = None
     stop_loss: Px | None = None
@@ -5859,3 +5863,8 @@ This number follows G-8b's §19.25 (#4135), open when this was written; whicheve
 ### 19.31 2026-10-23 — §9.2 a stored profile's REST answer (E28-T02, #906)
 
 - §9.2: `StoredProfile`, with `ProfilesRepository.read_profiles` and `read_profile`, answers each live profile with its row's `created_at`, and a stored row that the store or the model cannot read is `ProfileUnavailableError` (SR-E28-24). `candleviewer.api.profile_projection` renders `AccountProfile` (`22-api-openapi.yaml`) from the REST projection table: every member at every depth, each decimal as stored with no exponent and no trailing fractional zero, the times in RFC 3339 to the microsecond, a read's warnings, the account's `environment` (an argument, from the account the caller resolves first) and `ProfileETag`. No contract, table or column changes, and no route serves it yet.
+
+### 19.32 2026-10-24 — §8.12, §14.4: an order read's last-change time, the clock of an order row's B1 event (E29-T05, #848)
+
+- §14.4: `Order` gains `updated_at: TsUs | None = None`, the venue's own time of the order's last change. The adapter sets it from the order row's own last-change time, for the REST reads and the private stream alike (one mapper), and the row model requires that time.
+- §8.12: an order row's B1 event carries it, in milliseconds, as its `updated_time`, never the time the row was received, so a read received after an older push never wins on its receipt time (§8.2 S5). Only a row whose source sends no such time falls back to the push's creation time (`PrivateEvent.ts_event`), which an `updated_at` of `None` marks. This is the orchestrator's Q4 ruling for E29-T05 S3 (2026-10-24).

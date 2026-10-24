@@ -137,6 +137,7 @@ def test_the_realtime_row_maps_field_for_field() -> None:
         "avg_fill_price": None,
         "created_at": 1684738540559000,
         "terminal_at": None,
+        "updated_at": 1684738540561000,
         "reduce_only": False,
         "trigger_price": None,
         "stop_loss": Decimal("1500.00"),
@@ -159,6 +160,7 @@ def test_the_history_row_maps_a_cancelled_post_only_order() -> None:
         "post_only",
         1684476068372000,
     )
+    assert order.updated_at == order.terminal_at  # an end is the order's last change
     assert (order.tpsl_mode, order.stop_loss, order.take_profit) == (None, None, None)
     assert order.order_link_id == ext_key("14bad3a1-6454-43d8-bcf2-5345896cf74d")
 
