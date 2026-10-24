@@ -413,7 +413,7 @@ def main(argv: list[str]) -> int:
         out.append(f"arming.py {a['code']} {a['status']} | {a['message']}")
     out.append(
         f"rules_crud.py accepts {facts['crud_accepted']} | 22 setRuleMode body "
-        f"{facts['setRuleMode_body']} (D02-G4)"
+        f"{facts['setRuleMode_body']} (D02-CG1, a contract-gap row)"
     )
     out.append(
         f"simulate example {facts['simulate_example']} | RuleRunStatus {facts['run_status']}"
@@ -464,8 +464,10 @@ def main(argv: list[str]) -> int:
         "reason_keys": len(re.findall(r"^\| `(?:rbac|rule)\.[a-z_.]+` +\|", deck, MULTI)),
         "g_rows": len(re.findall(r"^\| D02-G\d+ +\|", s11, MULTI)),
         "c_rows": len(re.findall(r"^\| D02-C\d+ +\|", s11, MULTI)),
+        "cg_rows": len(re.findall(r"^\| D02-CG\d+ +\|", s11, MULTI)),
         "a_rows": len(re.findall(r"^\| D02-A\d+ +\|", s11, MULTI)),
         "q_rows": len(re.findall(r"^\| BQ-\d+ +\|", s1, MULTI)),
+        "q_ruled": len(re.findall(r"^\| BQ-\d+ +\|.*\| RULED 6377845082 +\|$", s1, MULTI)),
         "handoff_blocks": len(re.findall(r"^## Handoff checklist — ", hand, MULTI)),
         "checklist_ticked": len(re.findall(r"^\| \[x\] ", s1, MULTI)),
         "producibility_rows": len(re.findall(r"^\| `SCR-08[45]/[a-z-]+` +\|", sec["6"], MULTI)),
@@ -482,6 +484,8 @@ def main(argv: list[str]) -> int:
         },
         "pairs_registry": len(registered),
     }  # fmt: skip
+    if numbers["q_ruled"] != numbers["q_rows"]:
+        bad.append(f"BQ rows RULED {numbers['q_ruled']} of {numbers['q_rows']}")
     out.append("\n## 6. Counts: " + json.dumps(numbers, ensure_ascii=False))
     flat = flatten(
         {
