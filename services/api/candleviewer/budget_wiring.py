@@ -62,7 +62,13 @@ def parquet_usage(root: Path) -> tuple[int, dict[str, int]]:
         raise FileNotFoundError("recording root missing")
     total = 0
     per: dict[str, int] = {}
-    for dirpath, _dirs, files in os.walk(root):
+
+    def failed(err: OSError) -> None:
+        # A subdirectory removed mid-walk is tolerated; the root or any other error fails the part.
+        if err.filename == str(root) or not isinstance(err, FileNotFoundError):
+            raise err
+
+    for dirpath, _dirs, files in os.walk(root, onerror=failed):
         parts = Path(dirpath).relative_to(root).parts
         symbol = next((p[7:] for p in parts if p.startswith("symbol=")), None)
         size = 0
@@ -122,7 +128,11 @@ def _existing(path: Path) -> Path:
 
 
 def _volume(root: Path) -> tuple[int, int]:
-    usage = shutil.disk_usage(_existing(root))  # statvfs on POSIX
+    """Total and free bytes of the recording volume. A vanished root fails the pass: the parent's
+    filesystem is never reported in its place (the ladder keeps its last level)."""
+    if not root.is_dir():
+        raise FileNotFoundError("recording root missing")
+    usage = shutil.disk_usage(root)  # statvfs on POSIX
     return usage.total, usage.free
 
 

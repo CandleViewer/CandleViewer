@@ -36,7 +36,7 @@ from candleviewer.recorder.budget import (
 )
 from candleviewer.recorder.metrics import recorder_bytes_written_total
 from candleviewer.recorder.models import DiskPressureLevel
-from candleviewer.settings import Settings
+from candleviewer.settings import Environment, Settings
 from tests.unit.recorder._budget_fakes import CAP, NOW, FakeEvents
 from tests.unit.recorder._fakes import FakeBus
 from tests.unit.recorder._session_fakes import UsClock
@@ -207,7 +207,7 @@ async def test_a_demo_budget_composes_sources_that_read_only_demo_rows(tmp_path:
     root.mkdir(parents=True)
     settings = Settings(
         storage_backend="real",
-        environment="demo",
+        environment=Environment.DEMO,
         parquet_root=str(root),
         bars_state_root=str(tmp_path / "bars"),
     )
