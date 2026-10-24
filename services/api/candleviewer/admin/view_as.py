@@ -15,7 +15,10 @@ on the row until the sweeper writes it late (`recorded_late`), or a start on the
 it late first, inside its own unit of work. It is keyed by its context id
 (`AuditWriter.emit_keyed`), so writing it again, after a crash too, stores no second row. Its
 actor is the viewer and the viewer's session; the target is only its object (Q2), and no state
-dict holds a session id (the redactor masks one).
+dict holds a session id (the redactor masks one). The start's record and the end of the viewer's
+own leave name the address their request came from (`actor_ip`), as every admin record of a
+request does; the record of any other end names none (no request of the viewer's own ended it),
+nor does a record written late (the row keeps no address).
 """
 
 from __future__ import annotations
@@ -65,6 +68,7 @@ class ViewAsAudit(Protocol):  # `AuditWriter.emit_keyed` (Q3) and `emit` (the st
         *,
         actor_label: str,
         actor_user_id: UUID,
+        actor_ip: str | None,
         session_id: UUID,
         object_kind: str,
         object_id: str,
@@ -83,6 +87,7 @@ class ViewAsAudit(Protocol):  # `AuditWriter.emit_keyed` (Q3) and `emit` (the st
         *,
         actor_label: str,
         actor_user_id: UUID,
+        actor_ip: str | None,
         session_id: UUID,
         object_kind: str,
         object_id: str,
@@ -219,13 +224,16 @@ class ViewAsService:
         return True
 
     @audited("admin.view_as_ended")
-    async def leave(self, record: SessionRecord, *, now: datetime) -> SessionRecord | None:
+    async def leave(
+        self, record: SessionRecord, *, now: datetime, ip: str | None = None
+    ) -> SessionRecord | None:
         """The viewer's `DELETE /auth/session/view-as`: one conditional write ends the context if it
         has not ended (`ended`, or `expired` at `expires_at` once that passed) and clears it, so a
         store failure raises with nothing changed. The row, or `None` when nothing applied (no
         context, or a cleared one). Only when this call ended it are the session's sockets closed,
         `view_as_changed` (the session is back in the viewer's scope), and `admin.view_as_ended`
-        written, never waited on; leaving a held context keeps its end, pending or not."""
+        written, never waited on, naming `ip`, the address the request came from; leaving a held
+        context keeps its end, pending or not."""
         state = record.view_as
         if state is None or state.cleared_at is not None:
             return None
@@ -240,21 +248,24 @@ class ViewAsService:
             return None
         row, ended_here = left
         if ended_here:
-            await self._ended(row, state.context_id, "view_as_changed")
+            await self._ended(row, state.context_id, "view_as_changed", ip=ip)
         return row
 
     @audited("admin.view_as_ended")
-    async def write_end_record(self, record: SessionRecord, *, late: bool) -> bool:
+    async def write_end_record(
+        self, record: SessionRecord, *, late: bool, ip: str | None = None
+    ) -> bool:
         """Write the `admin.view_as_ended` of `record`'s ended context, keyed by the context, with
-        `recorded_late` only when `late` (the sweeper's path), then mark it recorded. True once
-        written; False, logged, when a read or the write failed or outlasted the bound, and the
-        end stays pending. It never raises for the record; an unended context is a caller error."""
+        `recorded_late` only when `late` (the sweeper's path), then mark it recorded; `ip` is the
+        address of the request that ended it, none for a late write. True once written; False,
+        logged, when a read or the write failed or outlasted the bound, and the end stays pending.
+        It never raises for the record; an unended context is a caller error."""
         state = record.view_as
         if state is None or state.ended_at is None or state.end_reason is None:
             raise ValueError("only an ended view-as context has an end record")
         try:
             async with asyncio.timeout(self._record_timeout_s):
-                await self._emit_end_record(record, late=late)
+                await self._emit_end_record(record, late=late, ip=ip)
                 await self._store.mark_view_as_recorded(
                     str(record.id), state.context_id, now=self._clock()
                 )
@@ -263,7 +274,9 @@ class ViewAsService:
             return False
         return True
 
-    async def _emit_end_record(self, record: SessionRecord, *, late: bool) -> None:
+    async def _emit_end_record(
+        self, record: SessionRecord, *, late: bool, ip: str | None = None
+    ) -> None:
         """The keyed `admin.view_as_ended` of `record`'s ended context (`write_end_record`, and a
         start's late flush under the row's lock); raises what the read or the write raises."""
         state = record.view_as
@@ -276,6 +289,7 @@ class ViewAsService:
             str(state.context_id),  # its key: one record per context
             actor_label=names.get(record.user_id) or str(record.user_id),
             actor_user_id=record.user_id,
+            actor_ip=ip,  # the viewer's own leave only: no other end has a request of theirs
             session_id=record.id,
             object_kind="user",
             object_id=str(state.target_user_id),
@@ -295,7 +309,13 @@ class ViewAsService:
 
     @audited("admin.view_as_started", "admin.view_as_ended")  # the ended: a pending one, late
     async def start(
-        self, record: SessionRecord, target_user_id: UUID, *, reason: str, now: datetime
+        self,
+        record: SessionRecord,
+        target_user_id: UUID,
+        *,
+        reason: str,
+        now: datetime,
+        ip: str | None = None,
     ) -> ViewAsStartResult:
         """The start request's own write (22 `startViewAs`; plan section 1.6), after its refusals:
         a fresh context (`uuid4`, so no two starts share one) on `record`'s session, the target's
@@ -306,7 +326,8 @@ class ViewAsService:
         `view_as_active`) or neither (the session is gone). Nothing starts when a record cannot be
         written:
         `ViewAsStartUnavailable`, `audit_unavailable` or `store_unavailable`. A self-targeting
-        start is a caller error (`ValueError`): the route refuses it first."""
+        start is a caller error (`ValueError`): the route refuses it first. `ip` is the address the
+        start came from, which `admin.view_as_started` names (`actor_ip`)."""
         state = ViewAsState.start(uuid4(), target_user_id, now=now)
         try:
             async with asyncio.timeout(self._record_timeout_s):
@@ -323,6 +344,7 @@ class ViewAsService:
                     _STARTED_ACTION,
                     actor_label=viewer,
                     actor_user_id=row.user_id,
+                    actor_ip=ip,
                     session_id=row.id,
                     object_kind="user",
                     object_id=str(target_user_id),
@@ -418,9 +440,12 @@ class ViewAsService:
         then the bounded record. A late write before then could race it (`recorded_late`)."""
         return timedelta(seconds=self._close_timeout_s + self._record_timeout_s)
 
-    async def _ended(self, row: SessionRecord, context_id: UUID, why: CloseReason) -> None:
+    async def _ended(
+        self, row: SessionRecord, context_id: UUID, why: CloseReason, *, ip: str | None = None
+    ) -> None:
         """This call's write ended the context: close the session's sockets, bounded, then hand
-        over the record. A failed close is logged by its context, never raised: the end stands."""
+        over the record, which names `ip`, the address of the request that ended it. A failed close
+        is logged by its context, never raised: the end stands."""
         try:
             async with asyncio.timeout(self._close_timeout_s):
                 await self._sockets.close_family(str(row.id), context_id=context_id, reason=why)
@@ -432,16 +457,18 @@ class ViewAsService:
                 error=type(exc).__name__,
             )
         finally:  # a caller cancelled during the close still leaves the record to the tracker
-            self._record_soon(row, context_id)
+            self._record_soon(row, context_id, ip=ip)
 
-    def _record_soon(self, ended: SessionRecord, context_id: UUID) -> None:
+    def _record_soon(
+        self, ended: SessionRecord, context_id: UUID, *, ip: str | None = None
+    ) -> None:
         """Hand the end's record to the tracker; at its cap the end stays pending."""
         if self._runner.full:
             _pending(context_id, "tracker_full")
             return
         self._runner.track(
-            self._record(ended), on_lost=partial(_pending, context_id, "lost_at_shutdown")
+            self._record(ended, ip=ip), on_lost=partial(_pending, context_id, "lost_at_shutdown")
         )
 
-    async def _record(self, ended: SessionRecord) -> None:
-        await self.write_end_record(ended, late=False)
+    async def _record(self, ended: SessionRecord, *, ip: str | None = None) -> None:
+        await self.write_end_record(ended, late=False, ip=ip)

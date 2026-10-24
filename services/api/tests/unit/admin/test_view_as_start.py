@@ -64,6 +64,7 @@ async def test_started_written_ahead_same_step(monkeypatch: pytest.MonkeyPatch) 
         "action": "admin.view_as_started",
         "actor_label": "ana",
         "actor_user_id": _VIEWER,
+        "actor_ip": None,  # the route gives the service its address; none is given here
         "session_id": record.id,
         "object_kind": "user",
         "object_id": str(_TARGET),

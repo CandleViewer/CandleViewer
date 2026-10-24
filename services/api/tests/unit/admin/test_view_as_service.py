@@ -196,6 +196,7 @@ async def test_end_record_names_the_viewer_and_no_session_in_its_states(
             "name": str(rig.held(record).context_id),
             "actor_label": labels[0],
             "actor_user_id": _VIEWER,
+            "actor_ip": None,  # the server's end: no request of the viewer's own ended it
             "session_id": record.id,
             "object_kind": "user",
             "object_id": str(_TARGET),

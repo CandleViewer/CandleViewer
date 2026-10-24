@@ -47,6 +47,7 @@ from tests.unit.test_view_as_wiring import _real
 
 _SPEC = load_openapi_spec()
 _DECLARED = frozenset(declared_operations(_SPEC))
+_SOURCE = "203.0.113.9"  # where every request of this module's worlds comes from
 
 
 class Store(FakeSessionRepository):
@@ -154,7 +155,9 @@ class World:
                 audit=self.audit,
                 allowed_origins=frozenset(),
             )
-        self.client = AsyncClient(transport=ASGITransport(app=app), base_url=BASE)
+        self.client = AsyncClient(
+            transport=ASGITransport(app=app, client=(_SOURCE, 4171)), base_url=BASE
+        )
 
     async def sign_in(self, **kwargs: Any) -> MintedSession:
         return await self.sessions.mint(str(_VIEWER), **kwargs)
@@ -372,6 +375,18 @@ async def test_delete_ends_and_clears_a_live_context_and_records_it_once() -> No
     assert (held.ended_at, held.end_reason, held.cleared_at) == (_at(5), "ended", _at(5))
     assert w.ports.closed == [(str(minted.session_id), "view_as_changed")]
     assert [(c["action"], c["reason"]) for c in w.ports.calls] == [("admin.view_as_ended", "ended")]
+
+
+async def test_delete_records_the_address_the_leave_came_from() -> None:
+    """The end's record names the request's source address (`actor_ip`), as the other routes'
+    records do (the #4245 re-check's n-7); a server's end names none (`test_view_as_service.py`)."""
+    w = World()
+    minted = await w.sign_in()
+    await w.view(minted)
+    w.clock.now = _at(5)
+    assert (await w.call("DELETE", minted)).status_code == 204
+    await w.rig.settled()
+    assert [call.get("actor_ip") for call in w.ports.calls] == [_SOURCE]
 
 
 async def test_a_leave_ends_only_its_own_sessions_context() -> None:

@@ -380,6 +380,7 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
         str(owner.session_id),
     )
     assert begun["after_state"]["reason"] == "AC-ADM-22"
+    assert begun["actor_ip"] == "127.0.0.1"  # the request's address, as `admin.area_entered` has it
     (notice,) = cast(Any, admin.auth.view_as_store).notices  # the Manager is told
     assert notice.target_user_id == manager.user_id and "'owner'" in notice.message
     assert "AC-ADM-22" not in notice.message  # the viewer by name, never the reason
@@ -444,6 +445,7 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
         str(manager.user_id),
         str(owner.session_id),
     )
+    assert ended["actor_ip"] == "127.0.0.1"  # the leave's address
     assert _flag_value(admin, _UI_FLAG) is True  # the refused write changed nothing
     accepted = _flag_put(admin, _UI_FLAG, {"value": False, "reason": "AC-ADM-22"})
     assert accepted.status_code == 200, accepted.text  # the same write, once the view has ended
