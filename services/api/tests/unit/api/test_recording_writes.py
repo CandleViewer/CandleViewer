@@ -871,3 +871,28 @@ async def test_an_add_of_a_start_refused_symbol_with_no_row_is_a_fresh_add() -> 
     added = await env.add(symbol="SOLUSDT")
     assert (added.status_code, added.json()["reason"]) == (201, "manual")
     assert fake.entries["SOLUSDT"].streams == STREAMS
+
+
+async def test_a_pinned_rows_answer_shows_no_retention_though_its_days_are_kept() -> None:
+    """A pin keeps the stored days, inert (#2188 S3c); the answers show `retention_days: null`."""
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT", retention_days=60)
+    env = _Env(fake, *W, elevated=True)
+    pinned = await env.http.put(_PIN.format(entry.id), json={"pinned": True})
+    assert (pinned.json()["pinned"], pinned.json()["retention_days"]) == (True, None)
+    assert fake.entries["BTCUSDT"].retention_days == 60  # stored, inert
+    assert (await env.http.get(_one(entry.id))).json()["retention_days"] is None
+
+
+@pytest.mark.parametrize(("days", "status"), [(7, 403), (60, 200)])
+async def test_a_non_owner_retention_change_on_a_null_row_reads_null_as_the_default(
+    days: int, status: int
+) -> None:
+    """21 §3.6.1: an unpinned NULL keeps the default (30 days), so NULL -> 7 lowers and is
+    refused where a hidden cause holds the row; NULL -> 60 raises it and passes."""
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT", "manual", "position_open")
+    env = _Env(fake, *W, owner=False, elevated=True)
+    answer = await env.http.patch(_one(entry.id), json={"retention_days": days})
+    assert answer.status_code == status
+    assert fake.entries["BTCUSDT"].retention_days == (None if status == 403 else days)
