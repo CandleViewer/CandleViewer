@@ -1,7 +1,8 @@
 # CI security gates for the drawings persistence surface (E14-X03)
 
-> Owner: `@CandleViewer/security`. Ticket: E14-X03 (#549), in three slices (PR-1 persistence, PR-2
-> render guards, PR-3 DAST). Threat model: `docs/security/threat-models/E14-drawings.md` (DR1, DR5 to
+> Owner: `@CandleViewer/security`. Ticket: E14-X03 (#549), in slices (the persistence rules, the
+> render-path guards, the production-bundle guard, then the nightly DAST profile and the wrap-up
+> with the carried gaps). Threat model: `docs/security/threat-models/E14-drawings.md` (DR1, DR5 to
 > DR7, DR9, DR10, DR12, DR20, DR21, DR23, DR29, DR30, section 4; DR8, the SDF text layer, has no gate
 > here). Programme rules: `docs/plan/04-security-program.md` section 12.2 (Semgrep composition,
 > CI-SEC-006 suppressions) and 16.2 (exceptions). This page explains each gate; the rule YAML is the
@@ -48,7 +49,7 @@ doc section.
 Every rule but the first is scoped by glob (`api/drawings*.py`; the batch rule also
 `storage/repositories/drawings*.py`): a router moved into a package `api/drawings/`, or a
 `drawing_*.py` module, is out of scope until the globs are widened. The render-path guards (PR-2)
-follow the persistence rules; the nightly ZAP profile is PR-3.
+follow the persistence rules; the nightly ZAP profile is under DAST below.
 
 ## Reviewed exceptions
 
@@ -264,6 +265,63 @@ E15-T01's spec decision on #402, SR-E14-09).
 - **Matches:** the deployed `create_app(Settings())` answers each of the five `/drawings*` routes,
   unauthenticated (a 401 or a 403), with one `X-Content-Type-Options: nosniff`; and it serves exactly
   those five, so a sixth must be pinned. No product code changed.
+
+## DAST
+
+- **Workflow:** `.github/workflows/dast-drawings-nightly.yml`, `schedule` (03:57 UTC) and
+  `workflow_dispatch` only, **never on a pull request**. It calls `_dast-low-priv.yml` (#3991) with
+  `role: manager` and a `fixture`: a throwaway stack on the runner (the compose data stores and the
+  API on loopback), as `dast-market-nightly` does. "Staging" in the ticket is E17's target, and the
+  harness refuses any target but loopback (`mint_sessions.py`): a run against it is the owner's call.
+- **Plan:** `.zap/e14-drawings.yaml` imports `22-api-openapi.yaml` cut to `/drawings`,
+  `/drawings/batch` and `/drawings/{drawingId}` by `security/zap/nightly_plans.py`, then runs an
+  active scan for SQL injection, reflected and persistent XSS (a label is stored text), command
+  injection, path traversal and template injection, at most 8 minutes. The ticket's
+  `security/zap/e14-drawings.conf` is a baseline-rule file, which cannot hold contexts, users or
+  active policies; an automation plan is the form E12, E35 and E42 use.
+- **Principals:** a Viewer cannot write drawings (DR38), so the scan role is a synthetic **Manager**,
+  with a real TOTP method and no MFA exception. A synthetic Owner (TOTP too) signs in to seed one
+  drawing with a fixed client id (`.zap/e14-drawings-seed.json`, a batch `create`) and again after the
+  scan. ZAP's `{drawingId}` example names that id and its PUT body is valid for it, so a cross-owner
+  PUT or DELETE reaches the owner check. `security/zap/drawings_isolation.py verify` then requires the
+  Owner's row exactly as seeded (no cross-owner write, DR12, DR21) and none of the Owner's rows in the
+  Manager's list (no cross-owner read, DR20), whatever ZAP raised: the AF `accessControl` job is used
+  nowhere in this repo and is unverified in the pinned image, so ZAP's alerts do not judge it.
+- **The documented 404 and the batch 409** (DR20, DR21) raise 90022 on their problem+json text: an
+  `alertFilter` marks that alert "False Positive" on `/drawings*` when the evidence is one of our
+  codes. Injection and disclosure rules are never filtered.
+- **Not here:** a body over 64 KiB is no plan literal (`test_drawings_abuse_exhaustion.py` covers the
+  cap). The batch route is driven by ZAP's generated bodies: an update or delete needs the row's live
+  `updated_at`, which the plan cannot know, so its cross-owner behaviour is the contract tests' (DR21)
+  and this nightly only judges the row after the whole scan.
+- **Baseline:** `.zap/e14-drawings-baseline.json` (empty at merge). `security/zap/baseline_gate.py`
+  fails the job on any High or Medium alert whose `pluginId METHOD path` is not in it (entries need
+  `reason`, `owner` and a `review` date). Triage is the SR-134 clock, as for E12: 48 hours, 7 days
+  for a Medium.
+- **First run:** a workflow must be on the default branch to be dispatched, so the first real run, one
+  `workflow_dispatch`, and its baseline triage (a comment on #549) come after merge. Until then the
+  plan is proven offline: `python security/zap/nightly_plans.py --profile drawings --out DIR` and
+  `scripts/tests/test_zap_nightly.py`.
+
+## CodeQL
+
+`.github/codeql/codeql-config.yml` is untouched. The `codeql` job runs the action's default query
+suite over `javascript-typescript` and `python`, which holds the XSS and `py/sql-injection` queries;
+a query pack cannot be scoped to a path, and `security-extended` is repo-wide, left to E43 as for E12.
+The ticket's custom taint source (a drawing's `label`, `text` and template name as user input) needs
+an anchor for CodeQL's API graph on a runtime value, a `@candleviewer/protocol` decoder or the store
+selector (TypeScript types are erased), and none exists until E14-T02 or E14-S08: it can be neither
+written nor proven now. It lands with E14-T02, as a models-as-data extension; the deferral is a
+comment on #549 (the filing freeze: no new issue).
+
+## SCA
+
+No sanitiser or geometry dependency exists, and E14 adds none: the backend sanitiser is the standard
+library (`sanitize_text`, `drawings_models.py`) and the client renders text as text (`pnpm-lock.yaml`
+holds no DOMPurify, sanitize-html or xss). The ticket's "SCA allowlist" is the licence allowlist
+`tools/ci/licenses-allowlist.json` with C-12.3: a new dependency is pinned, justified, licence-checked
+and has a CODEOWNER. A sanitiser library, should one be proposed, is security-critical: it needs an
+ADR, a pinned version and an update watch, and the lockfile and licence gates already apply.
 
 ## Budget
 
