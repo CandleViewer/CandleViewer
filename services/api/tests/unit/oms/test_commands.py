@@ -1706,15 +1706,10 @@ def test_the_port_holds_at_least_one_registration() -> None:
         build_rig(max_watches=0)
 
 
-async def test_amend_raises_unwired_with_nothing_sent_until_its_slice() -> None:
-    """S4-B2 implements the amend; until then B1's `amend_pending` lands the order in `unknown`
-    (S1) with nothing sent. Both injected services are gone: the port's own cancel follows."""
-    rig = build_rig()
-    row = await _live(rig)
-    with pytest.raises(b01.PortMissingError):
-        await rig.port.amend(command("amend", row))
+def test_no_cancel_or_amend_service_is_injected() -> None:
+    """The port's own cancel and amend (S4-B2: `test_commands_amend.py`) replace both services."""
     params = inspect.signature(OmsCommandPort).parameters
-    assert rig.calls() == [] and {"cancels", "amends"}.isdisjoint(params)
+    assert {"cancels", "amends"}.isdisjoint(params)
 
 
 # --- cancel and a KILL's cancel (24 Sec.8.8 rule 6; INV-B1-h, INV-B1-j; S4 rulings Q8, Q9, Q11) --
