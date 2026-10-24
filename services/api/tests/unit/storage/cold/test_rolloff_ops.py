@@ -16,6 +16,7 @@ import pyarrow.parquet as pq
 import pytest
 from structlog.testing import capture_logs
 
+import candleviewer.retention_wiring as rw
 from candleviewer.storage.cold.compaction_run import compact_all
 from candleviewer.storage.cold.compactor import Compactor
 from candleviewer.storage.cold.exporter import ColdExporter
@@ -32,6 +33,7 @@ from candleviewer.storage.cold.rolloff_ops import (
 from candleviewer.storage.cold.watermarks import FileWatermarkStore
 from candleviewer.storage.errors import StorageExportVerifyFailed, StoragePartitionDropNotApplied
 from candleviewer.storage.models import StreamKind, TimeRange
+from candleviewer.storage.repositories.replay_sessions import ReplayState
 from tests.unit.storage.cold._helpers import (
     DAY_START_US,
     FakeHotSource,
@@ -41,6 +43,9 @@ from tests.unit.storage.cold._helpers import (
     trades_table,
 )
 from tests.unit.storage.cold._replay_rows import MemHotSource
+from tests.unit.storage.fakes_replay_sessions import FakeClock as ReplayClock
+from tests.unit.storage.fakes_replay_sessions import FakeReplaySessionRepository
+from tests.unit.storage.fakes_replay_sessions import open_session as open_replay_session
 
 T = StreamKind.TRADES
 D = StreamKind.ORDERBOOK_DELTA  # `PARTITION BY HOUR` in QuestDB (#3794)
@@ -679,6 +684,37 @@ async def test_downsampler_replaces_old_book_partitions_not_merges(tmp_path: Pat
     )
     assert again == through  # idempotent
     assert pq.read_table(part / entries[0].file).num_rows == 5
+
+
+async def test_downsampler_defers_a_book_hour_an_open_replay_session_reads(tmp_path: Path) -> None:
+    """G7 (#2674): the wiring's guard reads the partition's own hour; a session elsewhere in the
+    day does not hold it."""
+    reg = DatasetRegistry(tmp_path)
+    table = pa.table(
+        {
+            "ts": pa.array([DAY_START_US + i * 100_000 for i in range(20)], pa.int64()),
+            "symbol": ["BTCUSDT"] * 20, "depth": [200] * 20, "side": ["bid"] * 20,
+            "price": [1.0] * 20, "size": [float(i) for i in range(20)],
+        }
+    )  # fmt: skip
+    rng = TimeRange(start_us=DAY_START_US, end_us=DAY_START_US + 3_600_000_000)
+    await ColdExporter(reg, FakeHotSource(table), clock=fixed_clock).export_partition(
+        "BTCUSDT", StreamKind.ORDERBOOK_DELTA, rng, partition_extra={"hour": "00"}
+    )
+    hour0 = datetime.fromtimestamp(DAY_START_US / 1e6, tz=UTC)
+    clock = ReplayClock(hour0 + timedelta(days=3))
+    repo = FakeReplaySessionRepository(clock)
+    row = await open_replay_session(repo, ReplayState.PAUSED, hour0, hour0 + timedelta(minutes=5))
+    await open_replay_session(
+        repo, ReplayState.PLAYING, hour0 + timedelta(hours=1), hour0 + timedelta(hours=2)
+    )
+    guard = rw.ReplayRetentionGuard(repo, max_lifetime=timedelta(days=4), clock=clock)
+    sampler = ColdDownsampler(reg, idle_guard=guard.partition_guard(reg.root, site="downsample"))
+    before = DAY_START_US + 2 * 86_400_000_000
+    assert await sampler.downsample_before("BTCUSDT", StreamKind.ORDERBOOK_DELTA, before) == 0
+    await repo.update_state(row.user_id, row.id, state=ReplayState.DESTROYED)
+    through = await sampler.downsample_before("BTCUSDT", StreamKind.ORDERBOOK_DELTA, before)
+    assert through == DAY_START_US + 86_400_000_000
 
 
 async def test_downsampler_refuses_non_book_stream(tmp_path: Path) -> None:
