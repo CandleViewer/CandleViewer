@@ -16,9 +16,8 @@ GlobalErrorBoundaryFallback. Slice 5 covers the rest.
 **Companion:** `E05-D02-feedback-overlays-a11y-audit.md` (accessibility pre-review of this slice).
 **Builds on:** slice 1's conventions 1–14, token mirror, exceptions and decisions A1–A12, B1–B7, C1–C15 and D1–D17 (D13
 is superseded by E09-D09 §2.2 T2); the conventions 15–20 and decisions E1–E27 of slice 2 (#4290, merged); and the
-conventions 21–29 and decisions G1–G23 of slice 3 (#4322, head `3f91af926`), the base of this branch, read at that head
-and cited as it stands, if #4322 merges as is. They apply unchanged and are cited as "slice 1 A8", "slice 2 (#4290) E20"
-and "slice 3 (#4322) conventions 24".
+conventions 21–29 and decisions G1–G23 of slice 3 (#4322, merged as `3a2fc5c29`). They apply unchanged and are cited as
+"slice 1 A8", "slice 2 (#4290) E20" and "slice 3 (#4322) conventions 24".
 **Order-ticket contracts.** Three merged order-ticket specs are locked inputs here: E30-D02 (#3923, `f798a64e6`),
 SCR-060's order ticket, whose accepted and protective-stop banners, D16 error summary and submit progress use this
 slice's atoms; E30-D03 (#4179, `b7154f951`; its boards #4292, `035c4b069`), whose SCR-076 is a CMP-044 instance (A10,
@@ -27,9 +26,10 @@ E30-D04 (#4271, `ca7d61fa1`), the design-system contract of the order-ticket com
 motions, §2.3 `unprotected` banner and §3.3 icon table meet CMP-038, 044, 046, 028 and 027. Where this slice meets them,
 §5.2 records each clash.
 **Key.** `05`, `14`, `15`, `16` are the `docs/plan/` documents by number; D09 is `docs/design/E09/E09-D09.md`, D08
-`docs/design/E09/E09-D08.md`. `path:line` references are at `origin/main` `5a382efec`, except E30-D03 and its handoff
-(as its boards PR left them), E30-D04, E10-D03, E13-D04, E13-D05, E14-D07, E29-D02 and E29-D03, which merged or changed
-after it and are cited at this branch's base `2b25eff38`; slices 2 and 3 are cited by section.
+`docs/design/E09/E09-D08.md`. This branch's base is `origin/main` `b8212be90`, where the merged specs are read unless a
+line says otherwise. `path:line` references are at `origin/main` `5a382efec`, except E30-D03 and its handoff (as its
+boards PR left them), E30-D04, E10-D03, E13-D04, E13-D05, E14-D07, E29-D02 and E29-D03, which merged or changed after it
+and are cited at the previous base `2b25eff38`; slices 2 and 3 are cited by section.
 
 ## 1. What this slice specifies
 
