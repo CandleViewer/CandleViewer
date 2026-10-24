@@ -24,6 +24,7 @@ from candleviewer.recorder.policy import (
     PolicyControlSurface,
     RecordingPolicy,
     RefusalCause,
+    StartRefused,
     user_actor,
 )
 from candleviewer.recorder.sessions import DEFAULT_STREAMS
@@ -50,7 +51,18 @@ def test_the_comparison_catches_a_rename_a_changed_default_and_a_sync_async_swap
             held_hidden: bool = False,
         ) -> None: ...
         async def remove_manual(self, symbol: str, who: Actor) -> None: ...
-        async def set_pin(self, symbol: str, pinned: bool, actor: Actor) -> None: ...
+        async def set_pin(
+            self,
+            symbol: str,
+            pinned: bool,
+            actor: Actor,
+            *,
+            restricted: bool,
+            retention_days: int | None = None,
+        ) -> None: ...
+        async def set_retention(
+            self, symbol: str, retention_days: int | None, actor: Actor, *, restricted: bool
+        ) -> None: ...
         async def update_manual(
             self,
             symbol: str,
@@ -64,8 +76,14 @@ def test_the_comparison_catches_a_rename_a_changed_default_and_a_sync_async_swap
 
         async def linger_until(self, symbol: str) -> datetime | None: ...  # likewise
         def start_refusal(self, symbol: str) -> RefusalCause | None: ...  # as the surface has it
+        def start_refused(self) -> tuple[StartRefused, ...]:  # likewise
+            return ()
+
         def chart_open(self, sym: str) -> bool:  # a renamed parameter
             return False
+
+        def relax_allowed(self, symbol: str, *, restricted: bool) -> bool:  # as the surface has it
+            return True
 
     assert surface_mismatches(Drifted, PolicyControlSurface) == [
         "add_manual", "remove_manual", "update_manual", "position_open", "linger_until",
@@ -80,8 +98,8 @@ def test_the_comparison_reports_a_missing_member_and_an_annotation_it_cannot_res
         remove_manual.__annotations__["actor"] = "NoSuchType"  # no name resolves it
 
     assert surface_mismatches(Partial, PolicyControlSurface) == [
-        "add_manual", "remove_manual", "set_pin", "update_manual", "position_open", "linger_until",
-        "start_refusal", "chart_open",
+        "add_manual", "remove_manual", "set_pin", "set_retention", "update_manual", "position_open",
+        "linger_until", "start_refusal", "start_refused", "chart_open", "relax_allowed",
     ]  # fmt: skip
 
 

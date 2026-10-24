@@ -5,22 +5,36 @@ the policy's shape before the row changes (none on a raise, none for a change to
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 
 from candleviewer.recorder import control as rc
-from candleviewer.recorder.errors import InvalidRecorderActorError, RecorderSymbolNotManualError
+from candleviewer.recorder.errors import (
+    InvalidRecorderActorError,
+    RecorderRelaxRefusedError,
+    RecorderSymbolNotManualError,
+)
 from candleviewer.recorder.errors import RecorderInvalidUpdateError as InvalidUpdate
 from candleviewer.recorder.errors import RecorderSymbolLimitError as LimitError
 from candleviewer.recorder.errors import RecorderSymbolNotRecordedError as NotRecorded
 from candleviewer.recorder.models import Actor
-from candleviewer.recorder.policy import RefusalCause, _check_settings
+from candleviewer.recorder.policy import (
+    PolicyConfig,
+    RefusalCause,
+    StartRefused,
+    _check_retention,
+    _check_settings,
+    _lowers,
+    _str,
+)
 from candleviewer.recorder.sessions import DEFAULT_STREAMS
 
 NOW: Final = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
 GRACE: Final = timedelta(minutes=30)
 STREAMS: Final = ("trades", "orderbook_delta", "tickers", "liquidations")  # the add's default
+DEFAULT_DAYS: Final = PolicyConfig().default_retention_days  # what a NULL keeps
 
 
 def _user(actor: Actor) -> None:
@@ -32,21 +46,22 @@ class FakeRecorder:
     def __init__(self, max_symbols: int = 20) -> None:
         self.entries: dict[str, rc.RecordedEntry] = {}
         self.refused: dict[str, RefusalCause] = {}
+        self.refused_reasons: dict[str, tuple[rc.RecordReason, ...]] = {}  # default: chart_open
         self.max_symbols = max_symbols
         self.status_fields: dict[str, Any] = {}  # `ControlStatus` beside its entries
         self.audit: Any = None  # the policy's injected `AuditSink`; `None`: no records
         self.adders: dict[str, str] = {}  # symbol -> the user who made it manual
 
     async def _record(self, action: str, symbol: str, actor: Actor, reason: str,
-                      before: dict[str, str | None] | None = None,
-                      **extra: str | bool | None) -> None:  # fmt: skip
+                      before: Mapping[str, str | bool | None] | None = None, *,
+                      outcome: str = "success", **extra: str | bool | None) -> None:  # fmt: skip
         user, label = actor.id if actor.kind == "user" else None, f"{actor.kind}:{actor.id}"
         after = {"symbol": symbol, "reason": reason, "actor": actor.id, **extra}
         if self.audit is not None:  # the policy's `_audit_emit`, keyword for keyword
             await self.audit.emit(action, actor_label=label, actor_user_id=user,
                                   object_kind="recorded_symbol", object_id=symbol, reason=reason,
                                   before_state=before, after_state=after, env="demo",
-                                  outcome="success")  # fmt: skip
+                                  outcome=outcome)  # fmt: skip
 
     def put(self, symbol: str, *reasons: rc.RecordReason, **fields: Any) -> rc.RecordedEntry:
         """Seed (or replace) an entry recording for `reasons`; ids follow creation order."""
@@ -94,18 +109,50 @@ class FakeRecorder:
             self.entries[symbol] = replace(e, reasons=rest or e.reasons, lingering=not rest,
                                            linger_until=None if rest else NOW + GRACE)  # fmt: skip
 
-    async def set_pin(self, symbol: str, pinned: bool, actor: Actor) -> None:
+    def relax_allowed(self, symbol: str, *, restricted: bool) -> bool:
+        e = self.entries.get(symbol)
+        return restricted is False or e is None or not rc.HIDDEN_CAUSES.intersection(e.reasons)
+
+    async def _refuse_relax(self, symbol: str, actor: Actor, restricted: bool) -> None:
+        """The policy's refusal: the denied twin, ids only, then the error; nothing else."""
+        if not self.relax_allowed(symbol, restricted=restricted):
+            await self._record("retention.change", symbol, actor, "relax_refused",
+                               outcome="denied")  # fmt: skip
+            raise RecorderRelaxRefusedError
+
+    async def set_pin(self, symbol: str, pinned: bool, actor: Actor, *, restricted: bool,
+                      retention_days: int | None = None) -> None:  # fmt: skip
         _user(actor)
+        _check_retention(retention_days)
         if (e := self.entries.get(symbol)) is None:  # no active row
             raise NotRecorded(symbol)
         if e.pinned == pinned:
             return
+        if not pinned:
+            await self._refuse_relax(symbol, actor, restricted)
+        days = e.retention_days if pinned else retention_days  # a pin leaves the days alone
         await self._record("retention.change", symbol, actor, "pin" if pinned else "unpin",
-                           pinned=pinned)  # fmt: skip
+                           {"pinned": e.pinned, "retention_days": _str(e.retention_days)},
+                           pinned=pinned, retention_days=_str(days))  # fmt: skip
         if not pinned and e.state == "stopped":  # an idle row unpinned goes
             del self.entries[symbol]
         else:
-            self.entries[symbol] = replace(e, pinned=pinned)
+            self.entries[symbol] = replace(e, pinned=pinned, retention_days=days)
+
+    async def set_retention(self, symbol: str, retention_days: int | None, actor: Actor, *,
+                            restricted: bool) -> None:  # fmt: skip
+        _user(actor)
+        _check_retention(retention_days)
+        if (e := self.entries.get(symbol)) is None:  # no active row
+            raise NotRecorded(symbol)
+        if e.retention_days == retention_days:
+            return  # a change to nothing: no write, no record
+        if _lowers(e.pinned, e.retention_days, retention_days, DEFAULT_DAYS):
+            await self._refuse_relax(symbol, actor, restricted)
+        await self._record("retention.change", symbol, actor, "retention",
+                           {"retention_days": _str(e.retention_days)},
+                           retention_days=_str(retention_days))  # fmt: skip
+        self.entries[symbol] = replace(e, retention_days=retention_days)
 
     def lapse(self, symbol: str) -> None:
         """The grace window ends: a pinned row is demoted and kept, `stopped`; another goes."""
@@ -137,6 +184,10 @@ class FakeRecorder:
 
     def start_refusal(self, symbol: str) -> RefusalCause | None:
         return self.refused.get(symbol)
+
+    def start_refused(self) -> tuple[StartRefused, ...]:
+        return tuple(StartRefused(sym, cause, self.refused_reasons.get(sym, ("chart_open",)))
+                     for sym, cause in sorted(self.refused.items()))  # fmt: skip
 
     def chart_open(self, symbol: str) -> bool:
         return symbol in self.entries and "chart_open" in self.entries[symbol].reasons
@@ -173,7 +224,8 @@ class FakeRecorder:
         kept = replace(self.entries[symbol], pinned=pinned,
                        retention_days=None if pinned else retention_days)  # fmt: skip
         try:
-            await self.set_pin(symbol, pinned, actor)
+            await self.set_pin(symbol, pinned, actor, restricted=False,
+                               retention_days=retention_days)  # fmt: skip  # the port: no view yet
         except NotRecorded:
             return None
         if symbol in self.entries:

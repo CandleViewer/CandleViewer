@@ -150,7 +150,7 @@ async def test_policy_remove_manual_then_grace_and_pin_exposed(
     policy: RecordingPolicy, clock: FakeClock, bus: FakeBus
 ) -> None:
     await policy.add_manual("BTCUSDT", OWNER)
-    await policy.set_pin("BTCUSDT", True, OWNER)
+    await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
     assert policy.effective_set()["BTCUSDT"].pinned
     await policy.on_position_opened("BTCUSDT", "p1")
     await policy.remove_manual("BTCUSDT", OWNER)

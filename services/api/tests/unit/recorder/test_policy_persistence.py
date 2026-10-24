@@ -253,7 +253,7 @@ async def test_a_trigger_held_before_the_manual_row_survives_the_remove(
     await policy.tick()  # the chart's dwell passes
     await policy.remove_manual("BTCUSDT", OWNER)
     assert (_row(store)["reason"], _row(store)["reason_refs"]) == ("chart_open", [CHART])
-    await policy.set_pin("BTCUSDT", True, OWNER)  # a pin needs the active row
+    await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)  # a pin needs the active row
     assert _row(store)["pinned"]
 
 
@@ -262,7 +262,7 @@ async def test_set_pin_audits_then_writes_then_applies(
 ) -> None:
     await policy.add_manual("BTCUSDT", OWNER)
     trace.clear()
-    await policy.set_pin("BTCUSDT", True, OWNER)
+    await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
     assert trace == ["get_by_symbol", "audit:retention.change", "set_pinned"]
     assert _row(store)["pinned"] and policy.effective_set()["BTCUSDT"].pinned
 
@@ -273,13 +273,13 @@ async def test_a_failed_pin_write_leaves_memory_unchanged(
     await policy.add_manual("BTCUSDT", OWNER)
     store.fail.add("set_pinned")
     with pytest.raises(OSError, match="pg down"):
-        await policy.set_pin("BTCUSDT", True, OWNER)
+        await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
     assert not policy.effective_set()["BTCUSDT"].pinned
 
 
 async def test_a_pin_needs_an_active_row(policy: RecordingPolicy, audit: FakeAudit) -> None:
     with pytest.raises(RecorderSymbolNotRecordedError):
-        await policy.set_pin("BTCUSDT", True, OWNER)
+        await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
     assert audit.records == [] and policy._syms == {}
 
 
@@ -292,7 +292,7 @@ async def test_set_pin_does_not_swallow_a_false_from_the_store(
     await policy.add_manual("BTCUSDT", OWNER)
     monkeypatch.setattr(store, "set_pinned", row_gone)
     with pytest.raises(RecorderSymbolNotRecordedError):
-        await policy.set_pin("BTCUSDT", True, OWNER)
+        await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
     assert not policy.effective_set()["BTCUSDT"].pinned
 
 
@@ -300,8 +300,8 @@ async def test_unpinning_an_idle_symbol_soft_removes_the_row_only_the_pin_kept(
     policy: RecordingPolicy, store: Mem
 ) -> None:
     await _stale_row(store)
-    await policy.set_pin("BTCUSDT", True, OWNER)
-    await policy.set_pin("BTCUSDT", False, OWNER)
+    await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
+    await policy.set_pin("BTCUSDT", False, OWNER, restricted=False)
     assert store.active("BTCUSDT") is None
 
 
@@ -313,8 +313,8 @@ async def test_unpinning_keeps_a_row_whose_reason_memory_does_not_hold(
         await store.upsert_manual("BTCUSDT", None, (), None, "demo")
     else:
         await store.upsert_auto("BTCUSDT", "chart_open", CHART, "demo")
-    await policy.set_pin("BTCUSDT", True, OWNER)
-    await policy.set_pin("BTCUSDT", False, OWNER)
+    await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
+    await policy.set_pin("BTCUSDT", False, OWNER, restricted=False)
     assert not _row(store)["pinned"]  # still active: the row's own reason kept it
 
 
@@ -331,8 +331,8 @@ async def test_unpinning_keeps_the_row_and_the_entry_of_a_symbol_still_held(
         await policy.on_position_opened("BTCUSDT", "p1")
     else:
         await _lingering(policy)
-    await policy.set_pin("BTCUSDT", True, OWNER)
-    await policy.set_pin("BTCUSDT", False, OWNER)
+    await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
+    await policy.set_pin("BTCUSDT", False, OWNER, restricted=False)
     assert not _row(store)["pinned"] and "BTCUSDT" in policy._syms
 
 
@@ -340,8 +340,8 @@ async def test_an_unpinned_lingering_symbol_still_stops_after_the_grace(
     policy: RecordingPolicy, store: Mem, clock: FakeClock
 ) -> None:
     await _lingering(policy)
-    await policy.set_pin("BTCUSDT", True, OWNER)
-    await policy.set_pin("BTCUSDT", False, OWNER)
+    await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
+    await policy.set_pin("BTCUSDT", False, OWNER, restricted=False)
     await _expire(policy, clock)
     assert (policy.leaf("BTCUSDT"), store.active("BTCUSDT")) == (None, None)
 
@@ -454,7 +454,7 @@ async def test_a_stop_keeps_a_pinned_row(
     policy: RecordingPolicy, store: Mem, clock: FakeClock
 ) -> None:
     await policy.on_position_opened("BTCUSDT", "p1")
-    await policy.set_pin("BTCUSDT", True, OWNER)
+    await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
     await policy.on_position_closed("BTCUSDT", "p1")
     await _expire(policy, clock)
     assert (policy.leaf("BTCUSDT"), _row(store)["pinned"]) == (None, True)
@@ -486,7 +486,8 @@ async def test_a_stop_in_flight_cannot_erase_a_manual_add(
 async def test_a_stop_in_flight_cannot_erase_a_pin(
     policy: RecordingPolicy, store: Mem, clock: FakeClock
 ) -> None:
-    raised = await _stop_races(policy, store, clock, policy.set_pin("BTCUSDT", True, OWNER))
+    pin = policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
+    raised = await _stop_races(policy, store, clock, pin)
     assert isinstance(raised, RecorderSymbolNotRecordedError)  # the row went first, unpinned
     assert not any(r["pinned"] and r["removed"] for r in store.rows.values())
 
@@ -506,7 +507,7 @@ async def test_the_demo_policy_leaves_the_live_rows_alone(
     await policy.add_manual("BTCUSDT", OWNER)
     await policy.update_manual("BTCUSDT", OWNER, depth=500)
     await policy.on_position_opened("BTCUSDT", "p1")  # the ref mirror
-    await policy.set_pin("BTCUSDT", True, OWNER)  # left pinned: an unpin would hide a live pin
+    await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)  # left pinned, never unpinned
     await policy.remove_manual("BTCUSDT", OWNER)
     await policy.on_position_opened("ETHUSDT", "p1")
     await policy.on_position_closed("ETHUSDT", "p1")
@@ -566,8 +567,8 @@ async def test_unpinning_keeps_the_row_of_a_refused_position(
     await p.add_manual("ETHUSDT", OWNER)
     await _stale_row(store)
     await p.on_position_opened("BTCUSDT", "p1")  # refused: no victim, no B11
-    await p.set_pin("BTCUSDT", True, OWNER)
-    await p.set_pin("BTCUSDT", False, OWNER)
+    await p.set_pin("BTCUSDT", True, OWNER, restricted=False)
+    await p.set_pin("BTCUSDT", False, OWNER, restricted=False)
     assert not _row(store)["pinned"]  # still active: the position kept it
     await p.stop()
 
@@ -582,7 +583,7 @@ async def test_a_trigger_during_the_linger_after_a_remove_gets_its_row(
     assert store.active("BTCUSDT") is None  # lingering, with no row
     await policy.on_position_opened("BTCUSDT", "p1")
     assert (_row(store)["reason"], _row(store)["reason_refs"]) == ("position_open", [POS])
-    await policy.set_pin("BTCUSDT", True, OWNER)
+    await policy.set_pin("BTCUSDT", True, OWNER, restricted=False)
     assert _row(store)["pinned"]
 
 
@@ -614,5 +615,5 @@ async def test_remove_and_pin_refuse_a_non_user_actor_before_any_io(
         if op == "remove":
             await policy.remove_manual("BTCUSDT", SYSTEM_ACTOR)
         else:
-            await policy.set_pin("BTCUSDT", True, SYSTEM_ACTOR)
+            await policy.set_pin("BTCUSDT", True, SYSTEM_ACTOR, restricted=False)
     assert (audit.records, trace) == ([], [])

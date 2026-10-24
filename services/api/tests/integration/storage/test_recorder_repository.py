@@ -488,3 +488,49 @@ async def test_set_pinned_on_a_removed_row_returns_false_and_leaves_it(
     removed = _state(conn, rid)
     assert await repo.set_pinned(rid, True) is False
     assert _state(conn, rid) == removed
+
+
+def _days(conn: Conn, rid: str) -> int | None:
+    sql = "SELECT retention_days FROM recorded_symbols WHERE id = %s::uuid"
+    found = conn.execute(sql, (rid,)).fetchone()
+    assert found is not None
+    days: int | None = found[0]
+    return days
+
+
+async def test_set_retention_writes_the_days_and_none_restores_the_default(
+    repo: Repo, conn: Conn
+) -> None:
+    rid = await _manual(repo)
+    inserted = _state(conn, rid)["updated_at"]
+    assert _days(conn, rid) is None  # NULL: the default
+    assert await repo.set_retention(rid, 7) is True
+    assert _days(conn, rid) == 7 and _state(conn, rid)["updated_at"] > inserted
+    assert ((await repo.get_by_symbol("BTCUSDT")) or {})["retention_days"] == 7  # the policy's read
+    assert await repo.set_retention(rid, 7) is True  # the value it holds
+    assert await repo.set_retention(rid, None) is True and _days(conn, rid) is None
+
+
+async def test_set_retention_with_a_missing_id_returns_false(repo: Repo) -> None:
+    assert await repo.set_retention(str(uuid.uuid4()), 7) is False
+
+
+async def test_set_retention_on_a_removed_row_returns_false_and_leaves_it(
+    repo: Repo, conn: Conn
+) -> None:
+    rid = await _manual(repo)
+    assert await repo.set_retention(rid, 7) and await repo.soft_remove(rid)
+    removed = _state(conn, rid)
+    assert await repo.set_retention(rid, 30) is False
+    assert (_state(conn, rid), _days(conn, rid)) == (removed, 7)
+
+
+@pytest.mark.parametrize("days", [0, 3651])
+async def test_set_retention_refuses_what_rs_retention_refuses(
+    repo: Repo, conn: Conn, days: int
+) -> None:
+    rid = await _manual(repo)
+    with pytest.raises(StorageConstraintViolated) as refused:
+        await repo.set_retention(rid, days)
+    assert (refused.value.sqlstate, refused.value.constraint) == ("23514", "rs_retention")
+    assert _days(conn, rid) is None
