@@ -35,6 +35,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     WAITING_ENTRY,
     FillPosition,
     NewRecordedStop,
+    RecordedStopNotBindable,
     RecordedStopRow,
     StaleRecordedStop,
     SweptStop,
@@ -128,6 +129,8 @@ def _built() -> dict[str, Any]:
         "for_order_statement": mod.for_order_statement(_ACCOUNT, _ORDER),
         "live_for_key_statement": mod.live_for_key_statement(_ACCOUNT, "BTCUSDT", 0),
         "for_exchange_order_statement": mod.for_exchange_order_statement(_ACCOUNT, "x-1"),
+        "release_statement": mod.release_statement(_ACCOUNT, _SL, "x-1", _T),
+        "bind_statement": mod.bind_statement(_ACCOUNT, _TP, "x-1"),
         "void_orphans_statement": mod.void_orphans_statement(EVERY_ACCOUNT, _T),
         "waiting_for_key_statement": mod.waiting_for_key_statement(
             _ACCOUNT, "BTCUSDT", 0, now=_T, bound_s=5.0
@@ -183,6 +186,30 @@ def test_for_exchange_order_statement_reads_the_accounts_rows_for_the_id_any_sta
     )
     assert "status" not in where and "LIKE" not in where and "lower(" not in where
     assert sql.endswith("ORDER BY recorded_stops.created_at, recorded_stops.id")
+
+
+def test_release_statement_clears_the_id_the_live_row_holds_and_stamps_the_release() -> None:
+    """`rs_release` wants both together; `trg_rs_guard` admits the release in any status, so the
+    status is the statement's: an end keeps its id."""
+    sql = _sql(_built()["release_statement"])
+    assert sql.startswith("UPDATE recorded_stops SET exchange_order_id=NULL, released_at=$1::")
+    assert sql.split(" WHERE ", 1)[1].split(" RETURNING ", 1)[0] == (
+        "recorded_stops.exchange_account_id = $2::UUID AND recorded_stops.id = $3::UUID AND "
+        "recorded_stops.exchange_order_id = $4::VARCHAR AND recorded_stops.released_at IS NULL AND "
+        "recorded_stops.status IN ('in_force', 'pending')"
+    )
+
+
+def test_bind_statement_binds_a_live_unreleased_row() -> None:
+    """`trg_rs_guard` admits that one bind; the statement names every condition: a live row that
+    holds none and was never released."""
+    sql = _sql(_built()["bind_statement"])
+    assert sql.startswith("UPDATE recorded_stops SET exchange_order_id=$1::VARCHAR WHERE ")
+    assert sql.split(" WHERE ", 1)[1].split(" RETURNING ", 1)[0] == (
+        "recorded_stops.exchange_account_id = $2::UUID AND recorded_stops.id = $3::UUID AND "
+        "recorded_stops.exchange_order_id IS NULL AND recorded_stops.released_at IS NULL AND "
+        "recorded_stops.status IN ('in_force', 'pending')"
+    )
 
 
 _OTHER = uuid.UUID(int=0x4002)
@@ -389,6 +416,59 @@ async def test_for_exchange_order_with_an_id_no_order_can_hold_runs_no_statement
     rel = _Rel()
     with pytest.raises(ValueError, match="1 to 64 characters"):
         await _store(rel).for_exchange_order(_ACCOUNT, text)
+    assert rel.units == 0
+
+
+async def _audit(rows: tuple[RecordedStopRow, RecordedStopRow]) -> None:
+    return None
+
+
+async def _unaudited(rows: tuple[RecordedStopRow, RecordedStopRow]) -> None:
+    raise RuntimeError("the audit trail refused the record")
+
+
+async def test_a_release_and_bind_awaits_its_audit_before_the_one_commit() -> None:
+    rel = _Rel([_row(_SL, released_at=_T)], [_row(_TP, exchange_order_id="x-1")])
+    seen: list[tuple[tuple[RecordedStopRow, RecordedStopRow], int]] = []
+
+    async def audit(rows: tuple[RecordedStopRow, RecordedStopRow]) -> None:
+        seen.append((rows, rel.commits))
+
+    pair = await _store(rel).release_and_bind(_ACCOUNT, _SL, _TP, "x-1", at=_T, write_ahead=audit)
+    assert (pair[0].id, pair[1].id, rel.commits) == (_SL, _TP, 1) and seen == [(pair, 0)]
+    release, bind = (_sql(stmt) for stmt in rel.statements)  # two updates, the release first
+    assert release.startswith("UPDATE recorded_stops SET exchange_order_id=NULL, released_at=")
+    assert bind.startswith("UPDATE recorded_stops SET exchange_order_id=$1::VARCHAR WHERE ")
+
+
+@pytest.mark.parametrize(
+    ("script", "statements"),
+    [([[]], 1), ([[_row(_SL, released_at=_T)], []], 2)],
+    ids=["the_release_misses", "the_bind_misses"],
+)
+async def test_a_release_and_bind_where_either_update_misses_commits_nothing_and_skips_the_audit(
+    script: list[list[dict[str, Any]]], statements: int
+) -> None:
+    rel = _Rel(*script)  # a miss before a bind skips the bind: nothing to take
+    with pytest.raises(RecordedStopNotBindable) as err:
+        await _store(rel).release_and_bind(_ACCOUNT, _SL, _TP, "x-1", at=_T, write_ahead=_unaudited)
+    assert (rel.commits, len(rel.statements)) == (0, statements) and "x-1" not in str(err.value)
+
+
+@pytest.mark.parametrize(
+    ("xid", "at", "hook", "reason"),
+    [
+        ("", _T, _audit, "1 to 64 characters"),
+        ("x-1", datetime(2026, 10, 21), _audit, "timezone-aware"),
+        ("x-1", _T, None, "audited write-ahead"),
+    ],
+)
+async def test_a_release_and_bind_malformed_is_refused_before_any_statement(
+    xid: str, at: datetime, hook: Any, reason: str
+) -> None:
+    rel = _Rel()
+    with pytest.raises(ValueError, match=reason):
+        await _store(rel).release_and_bind(_ACCOUNT, _SL, _TP, xid, at=at, write_ahead=hook)
     assert rel.units == 0
 
 
