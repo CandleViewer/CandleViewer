@@ -191,7 +191,7 @@ def board_row_ok(r: list[str]) -> bool:
     """A section 0 board row counts while PENDING, or once drawn with its board id and its PNG.
 
     The drawn form needs ``drawn`` and a board id in the State cell and an Export cell naming a
-    ``docs/design/E13/img/E13-D05-0n-*.png`` that exists in the working tree.
+    ``docs/design/E13/img/E13-D05-0n-*.png`` that exists under the repo root (not the cwd).
     """
     if len(r) < 5:
         return False
@@ -203,7 +203,7 @@ def board_row_ok(r: list[str]) -> bool:
         state.strip().startswith("drawn")
         and re.search(BOARD_ID, state) is not None
         and m is not None
-        and Path(m.group(1)).is_file()
+        and (ROOT / m.group(1)).is_file()
     )
 
 
