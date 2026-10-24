@@ -61,9 +61,11 @@ E15-T01's spec decision on #402, SR-E14-09).
   add `AND owner_user_id = CAST(:owner AS uuid)`, or annotate with a reason.
 - **Does not match:** `INSERT ... VALUES` (an upsert too), `drawing_templates`, text built before
   the call (`cv-no-raw-sql-interpolation` owns construction). The predicate is looked for, not
-  parsed: one under `OR`/`or_()` or in a subselect passes (the repository's unit test covers its
+  parsed: one under `OR`/`or_()`, `not_()` or `~`, in a subselect, in a SQL comment, or compared with
+  any right-hand side (`== body.owner_user_id`) passes (the repository's unit test covers its
   constants). Not seen: comma joins, a literal that is returned or held in a dict, `MERGE`, anything
-  after the first `+` of a `+`-joined statement; in Core, `select_from(drawings)` and table methods
+  after the first `+` of a `+`-joined statement, a name split after its schema qualifier
+  (`"FROM public." "drawings"`, prefixed or not); in Core, `select_from(drawings)` and table methods
   such as `drawings.update()` (Core is unused for drawings today).
 - **Deliberate-regression fixture:** the `ruleid` lines of
   `.semgrep/tests/cv-drawings-query-missing-owner-filter/`, with the annotated multi-line statement
@@ -81,8 +83,8 @@ E15-T01's spec decision on #402, SR-E14-09).
 - **Does not match:** `request` alone (`caller(request, ...)` stays clean), request data at a
   non-owner argument, response models (`..Out`, `..Response`, `..Row`). Search mode, not taint mode:
   one rule cannot hold the structural schema arm. Not seen: a handler parameter named `owner`,
-  `getattr`, a non-owner-named intermediate, camelCase fields, a hoisted `repo = store()` receiver;
-  DR1's 422 test and the repository tests own the rest. **Fixture:**
+  `getattr`, a non-owner-named intermediate, camelCase fields, a hoisted `repo = store()` receiver,
+  a `user_id=` keyword or dict key; DR1's 422 test and the repository tests own the rest. **Fixture:**
   `.semgrep/tests/cv-drawings-owner-from-body/`.
 
 ## cv-drawings-unbounded-geometry
@@ -95,8 +97,8 @@ E15-T01's spec decision on #402, SR-E14-09).
   `_parse(DrawingIn, text)`, then `_fields(body)`.
 - **Does not match:** `_ListQuery` (`extra="ignore"`: unknown query parameters are ignored, as
   FastAPI does), `model_copy()` without `update`. A tripwire on the roads round the validator, not a
-  proof. Not seen: `__new__`, `Extra.allow`, a v1 `class Config`, a dict held in a variable, a
-  free-form `dict`/`Any` field on a request model. **Fixture:**
+  proof. Not seen: `__new__`, `Extra.allow`, a v1 `class Config`, a dict held in a variable or built
+  by `dict(geometry=...)`, a free-form `dict`/`Any` field on a request model. **Fixture:**
   `.semgrep/tests/cv-drawings-unbounded-geometry/`.
 
 ## cv-drawings-batch-unvalidated-ids
@@ -110,7 +112,8 @@ E15-T01's spec decision on #402, SR-E14-09).
   `store().apply_batch(owner, ops)`.
 - **Does not match:** `_INSERT_MANY` (a create touches no existing row; a key collision is refused
   atomically). A structural heuristic: not seen are a snapshot taken in a helper, `enumerate(ops)`,
-  a generator inside `gather` and an aliased constant. **Fixture:**
+  `list(ops)`, a loop over `ids` or another name than `ops`/`operations`, a generator inside
+  `gather` and an aliased constant. **Fixture:**
   `.semgrep/tests/cv-drawings-batch-unvalidated-ids/`.
 
 ## cv-drawings-pixel-geometry

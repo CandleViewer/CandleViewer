@@ -1,5 +1,8 @@
 # Fixture for cv-drawings-unbounded-geometry (E14-X03, DR29/DR30): the roads round the validator, in a
 # file with PEP 695 generics (#3549). A marker sits on the line a finding starts on.
+import dataclasses as dc
+from dataclasses import replace
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -18,6 +21,9 @@ async def routes(store, owner, body, raw):
     unchecked = DrawingIn.model_construct(symbol="BTCUSDT")  # ruleid: cv-drawings-unbounded-geometry
     moved = body.model_copy(update={"geometry": {}})  # ruleid: cv-drawings-unbounded-geometry
     swapped = dataclasses.replace(fields, geometry={"points": []})  # ruleid: cv-drawings-unbounded-geometry
+    aliased = dc.replace(fields, geometry={"points": []})  # ruleid: cv-drawings-unbounded-geometry
+    imported = replace(fields, geometry={"points": []})  # ruleid: cv-drawings-unbounded-geometry
+    text = raw.replace("a", "b")  # ok: cv-drawings-unbounded-geometry
     same = body.model_copy()  # ok: cv-drawings-unbounded-geometry
     parsed = _parse(DrawingIn, raw)  # ok: cv-drawings-unbounded-geometry
     await store().update(owner, "id", _fields(parsed), if_match=None)  # ok: cv-drawings-unbounded-geometry

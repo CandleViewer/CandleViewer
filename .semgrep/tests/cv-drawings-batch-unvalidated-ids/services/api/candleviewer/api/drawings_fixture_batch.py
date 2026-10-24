@@ -13,6 +13,8 @@ async def batch_one_by_one(request, store, repo, owner, body, ops):
     for op in body.operations:
         await store().soft_delete(owner, op.id)  # ruleid: cv-drawings-batch-unvalidated-ids
         await repo.update(owner, op.id, op.fields, if_match=None)  # ruleid: cv-drawings-batch-unvalidated-ids
+    async for op in ops:
+        await repo.soft_delete(owner, op.id)  # ruleid: cv-drawings-batch-unvalidated-ids
     return [await store().create(owner, op.id, op.fields) for op in ops]  # ruleid: cv-drawings-batch-unvalidated-ids
 
 
