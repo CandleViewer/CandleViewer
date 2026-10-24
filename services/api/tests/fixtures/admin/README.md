@@ -25,7 +25,7 @@ purpose (see its section).
 | `audit_session.py`   | The checked pool and real audit writer the writer-based seeds write through                     |
 | `secret_marker.py`   | AUDIT-SECRET-MARKER: `seed_secret_marker`, an entry whose states carry a marker to redact       |
 | `concurrent_rows.py` | AUDIT-CONCURRENT: `seed_concurrent_rows`, 1,000 audit rows from two connections, one raw        |
-| `backup_worlds.py`   | BACKUP-TAMPERED and BACKUP-THEN-REVOKED: a usable backup each, with the records a restore reads |
+| `backup_worlds.py`   | BACKUP-TAMPERED and BACKUP-THEN-REVOKED: a backup row each, with the records a restore reads    |
 | `payloads/`          | The health reports and the overview, as JSON bodies of the contract's models                    |
 | `README.md`          | This file                                                                                       |
 
@@ -321,13 +321,16 @@ await check_backup_tampered(pg_dsn)
   BACKUP-THEN-REVOKED. The seed refuses, before it writes, a catalogue that holds another backup, naming it.
 - **What it writes,** for AC-ADM-25 (AD-S06-05's third arm): a backup row two days before `now`, `verified`,
   encrypted and kept, whose digest is not the one its run's record bound. That record is a `backup.run` at
-  `stage: finished`, written through the real audit writer with the engine's own builder, as the system
-  actor of a scheduled run; it binds `BOUND_DIGEST`. A restore reads the bound digest from the record,
+  `stage: finished`, written through the real audit writer with the engine's own builder and named for the
+  system actor (today's app names the user who asked; the restore's reader ignores the actor); it binds
+  `BOUND_DIGEST`. A restore reads the bound digest from the record,
   never from the row (`admin/backups/evidence.py`), so the guard finds the two differ and refuses the
   backup as `backup_not_usable`, arranged as `test_restore_guard.py` arranges it. Both digests are synthetic
   sha256 values of fixed names, and no artefact exists behind the row.
 - **Idempotent and self-checking:** the row is `ON CONFLICT (id) DO NOTHING` and a record the trail holds is
-  not written again, so a second run writes nothing, whatever its `now`. `check_backup_tampered` raises
+  not written again, so a second run writes nothing, whatever its `now`. The seed waits for its writer's
+  flush before it reads the trail, so a record a run cut before its flush left in the WAL is replayed, not
+  written twice. `check_backup_tampered` raises
   `FixtureCheckError` naming each value of the row that differs, as `check_backups` names them, and unless
   the backup's successful `stage: finished` records bind exactly `BOUND_DIGEST`. It reads only its own row
   and records.
@@ -354,7 +357,7 @@ await check_backup_then_revoked(pg_dsn)
     `frozen` is the risk freeze, which a revocation never writes. Its record, two days before `now`, is
     built by the app's own function: the grants before and after.
   - **A role removed:** OWNER-2's `owner` role is replaced by `viewer`, as the role route does it, so a
-    `roles.revoke` (`owner`) and a `roles.grant` (`viewer`) follow an hour after. It is the
+    `roles.grant` (`viewer`) and a `roles.revoke` (`owner`) follow an hour after, in the route's order. It is the
     highest-privilege role, so a restore that brings it back is the worst rollback; the owner floor allows
     it, since OWNER stays an Owner; and no other handle is OWNER-2, so the case has two independent
     revocations. A removed role leaves nothing in the rows but its absence, so its record is the evidence.
@@ -363,8 +366,8 @@ await check_backup_then_revoked(pg_dsn)
   it names the revoked grant and the replaced role. Seed the world and check it first, in a database of its
   own.
 - **Idempotent and self-checking:** rows are conditional or `DO NOTHING` and a record the trail holds is not
-  written again, so a second run writes nothing; `now` must be the first's, as a record's time is not
-  refreshed. `check_backup_then_revoked` raises `FixtureCheckError` naming each fact that does not hold: the
+  written again, so a second run writes nothing, a WAL backlog included, as BACKUP-TAMPERED's; `now` must be
+  the first's, as a record's time is not refreshed. `check_backup_then_revoked` raises `FixtureCheckError` naming each fact that does not hold: the
   row's values, `covers_to` equal to when its run ended, the record binding the row's digest and
   `covers_to`, one passing `backup.verified`, one `users.access_change` and one `roles.revoke` after
   `covers_to`, the grant soft-revoked, and OWNER-2's roles `viewer` alone.

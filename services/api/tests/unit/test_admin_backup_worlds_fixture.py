@@ -11,17 +11,21 @@ import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import sqlalchemy as sa
 
 from candleviewer.audit.models import AuditOutcome
+from candleviewer.audit.repository import AuditRepository
+from candleviewer.audit.writer import AuditWriter
 from candleviewer.db import models as m
 from candleviewer.storage.repositories.backups import SUCCESS_STATUSES
+from tests.fixtures.admin.audit_session import emit_at
 from tests.fixtures.admin.backup_worlds import (
     BOUND_DIGEST,
     REVOKED_AGO,
+    _run,
     check_backup_tampered,
     check_backup_then_revoked,
     seed_backup_tampered,
@@ -33,6 +37,7 @@ from tests.fixtures.admin.handles import (
     BACKUPS,
     OWNER,
     account,
+    fixture_id,
     user,
 )
 from tests.fixtures.admin.seed import FixtureCheckError, FixtureRefused, backup_row
@@ -91,6 +96,12 @@ async def test_the_fake_allows_only_the_delete_a_test_names() -> None:
         await db.conn.execute(sa.delete(m.backups))
 
 
+async def test_the_fake_with_a_named_delete_still_refuses_a_text_it_does_not_model() -> None:
+    db = FakeDb(deletes=("user_roles",))
+    with pytest.raises(AssertionError, match="does not model"):
+        await db.conn.execute(sa.text("DROP TABLE x"))
+
+
 def test_a_tampered_row_holds_a_digest_its_record_did_not_bind() -> None:
     assert re.fullmatch(r"[0-9a-f]{64}", BOUND_DIGEST)
     assert _T.checksum_sha256 != BOUND_DIGEST
@@ -131,35 +142,93 @@ async def test_the_tampered_seed_writes_a_verified_row_and_a_record_binding_the_
     await _CHECKS["tampered"]()
 
 
-async def test_the_revoked_seed_writes_the_backup_its_records_and_the_revocations(
+async def test_the_tampered_seed_needs_no_world_and_writes_only_its_row_and_record(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    db = await _seeded(monkeypatch, tmp_path, "revoked")
-    [row] = db.tables["backups"]
-    covers_to = row["covers_to"]
-    assert covers_to == row["finished_at"] == backup_row(_R, _NOW)["finished_at"]
-    records = db.tables["audit_log"]
-    assert [r["action"] for r in records] == [
+    db = FakeDb()  # no row of slice A, and no delete allowed
+    patch_audit_session(monkeypatch, db)
+    await _SEEDS["tampered"](tmp_path)
+    assert [s for s in db.shapes if s.split()[0] in ("INSERT", "UPDATE", "DELETE")] == [
+        "INSERT backups"
+    ]
+    assert [r["action"] for r in db.tables["audit_log"]] == ["backup.run"]
+
+
+class _Down:
+    """An `audit_log` that is unreachable: a record stays in the WAL."""
+
+    async def insert(self, record: dict[str, Any]) -> None:
+        raise OSError("the database is down")
+
+
+async def test_a_seed_after_a_run_cut_before_its_flush_writes_no_second_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A run that ended between its emit and its flush leaves the record in the WAL. The next
+    run's writer replays it inside its flusher, after `start()` returns: a seed that read the trail
+    before the flush would find no record and write a second one, which can never be removed."""
+    wal = tmp_path / f"fixture-{_T.handle.lower()}.wal"
+    cut = AuditWriter(cast("AuditRepository", _Down()), str(wal))
+    await cut.start()
+    action, _, at, fields = _run(_T, backup_row(_T, _NOW), BOUND_DIGEST)
+    await emit_at(cut, action, at, **fields)
+    await cut.stop(0.05)
+    db = await _seeded(monkeypatch, tmp_path, "tampered")
+    assert [r["action"] for r in db.tables["audit_log"]] == ["backup.run"]
+
+
+@pytest.fixture
+async def revoked(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeDb:
+    """BACKUP-THEN-REVOKED seeded on the fake, with its revocations' rows made by hand."""
+    return await _seeded(monkeypatch, tmp_path, "revoked")
+
+
+def _records(db: FakeDb) -> dict[str, dict[str, Any]]:
+    """Each record by its action: the seed writes one of each."""
+    return {r["action"]: r for r in db.tables["audit_log"]}
+
+
+async def test_the_revoked_seeds_row_covers_to_when_its_run_ended(revoked: FakeDb) -> None:
+    [row] = revoked.tables["backups"]
+    assert row["covers_to"] == row["finished_at"] == backup_row(_R, _NOW)["finished_at"]
+
+
+async def test_the_revoked_seed_writes_its_records_in_the_apps_order(revoked: FakeDb) -> None:
+    assert [r["action"] for r in revoked.tables["audit_log"]] == [
         "backup.run",
         "backup.verified",
         "users.access_change",
-        "roles.revoke",
         "roles.grant",
+        "roles.revoke",
     ]
-    run, verified, access, revoke, grant = records
-    assert run["after_state"] == {
+
+
+async def test_the_revoked_seeds_run_record_binds_its_digest_and_covers_to(
+    revoked: FakeDb,
+) -> None:
+    [row] = revoked.tables["backups"]
+    assert _records(revoked)["backup.run"]["after_state"] == {
         "stage": "finished",
         "size_bytes": row["size_bytes"],
         "checksum_sha256": _R.checksum_sha256,
         "error": None,
-        "covers_to": covers_to.isoformat(),
+        "covers_to": row["covers_to"].isoformat(),
     }
+
+
+async def test_the_revoked_seeds_verification_passes_when_its_row_was_verified(
+    revoked: FakeDb,
+) -> None:
+    [row] = revoked.tables["backups"]
+    verified = _records(revoked)["backup.verified"]
     assert (verified["event_ts"], verified["after_state"]["error"]) == (row["verified_at"], None)
-    assert (access["event_ts"], revoke["event_ts"]) == (
-        _NOW - REVOKED_AGO,
-        _NOW - REVOKED_AGO + timedelta(hours=1),
-    )
-    assert access["event_ts"] > covers_to
+
+
+async def test_the_grant_revocation_is_recorded_by_owner_after_covers_to(revoked: FakeDb) -> None:
+    [row] = revoked.tables["backups"]
+    access = _records(revoked)["users.access_change"]
+    assert access["event_ts"] == _NOW - REVOKED_AGO
+    assert access["event_ts"] > row["covers_to"]
     assert (access["actor_user_id"], access["object_kind"], access["object_id"]) == (
         str(OWNER.id),
         "user",
@@ -169,23 +238,37 @@ async def test_the_revoked_seed_writes_the_backup_its_records_and_the_revocation
         "grants": [{"exchange_account_id": str(_SUB_S), "level": "trade", "frozen": False}]
     }
     assert access["after_state"]["grants"] == []
+
+
+async def test_the_role_swap_is_recorded_an_hour_later_as_the_route_records_it(
+    revoked: FakeDb,
+) -> None:
+    records = _records(revoked)
+    grant, revoke = records["roles.grant"], records["roles.revoke"]
+    assert grant["event_ts"] == revoke["event_ts"] == _NOW - REVOKED_AGO + timedelta(hours=1)
     assert (revoke["reason"], revoke["before_state"], revoke["after_state"]) == (
         "owner",
         {"roles": ["owner"]},
         {"roles": ["viewer"]},
     )
     assert (grant["reason"], grant["object_id"]) == ("viewer", str(_OWNER_2))
+
+
+async def test_the_revoked_world_passes_its_check(revoked: FakeDb) -> None:
     await _CHECKS["revoked"]()
 
 
-async def test_the_revoked_seed_soft_revokes_the_grant_and_swaps_the_role_in_one_transaction(
+async def test_the_revoked_seed_soft_revokes_the_grant_and_swaps_the_role(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """The statements; that they share one transaction the fake cannot see, and the Postgres
+    case reads the rows they leave."""
     db = _slice_a()
     patch_audit_session(monkeypatch, db)
     await _SEEDS["revoked"](tmp_path)
     soft = _sent(db, sa.Update, "user_account_access").compile().params
-    assert (soft["can_view"], soft["can_trade"]) == (False, False)  # never `frozen`: not written
+    assert (soft["can_view"], soft["can_trade"]) == (False, False)
+    assert "frozen" not in soft  # the risk freeze, which a revocation never writes
     assert {_MGR_M, _SUB_S} <= set(soft.values())
     live = "(user_account_access.can_view OR user_account_access.can_trade)"
     assert live in str(_sent(db, sa.Update, "user_account_access"))  # so a second run writes none
@@ -208,6 +291,14 @@ async def test_a_second_seed_writes_no_record_and_each_row_is_do_nothing_on_its_
     assert len(db.tables["audit_log"]) == records
     backup = _sent(db, sa.Insert, "backups")
     assert "ON CONFLICT (id) DO NOTHING" in str(backup.compile())
+
+
+async def test_a_second_revoked_seed_adds_the_viewer_role_only_if_it_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db = await _seeded(monkeypatch, tmp_path, "revoked")
+    viewer = _sent(db, sa.Insert, "user_roles")
+    assert "ON CONFLICT (user_id, role_id) DO NOTHING" in str(viewer.compile())
 
 
 @_BOTH
@@ -242,6 +333,7 @@ _OTHERS = [
     ("tampered", BACKUPS[1].id, "BACKUP-VERIFY-FAILED"),
     ("tampered", _R.id, "BACKUP-THEN-REVOKED"),
     ("revoked", _T.id, "BACKUP-TAMPERED"),
+    ("revoked", fixture_id("OOB-BACKUP"), "OOB-BACKUP"),
     ("revoked", uuid.UUID(int=7), "a row that is not a fixture's"),
 ]
 
@@ -287,6 +379,13 @@ def _edit(action: str, **changed: Any) -> Callable[[FakeDb], None]:
     )
 
 
+def _twice(action: str) -> Callable[[FakeDb], None]:
+    """The record of `action`, written a second time."""
+    return lambda db: db.tables["audit_log"].append(
+        dict(next(r for r in db.tables["audit_log"] if r["action"] == action))
+    )
+
+
 def _bound(**changed: Any) -> Callable[[FakeDb], None]:
     """The `backup.run` record's state, with `changed`."""
 
@@ -319,6 +418,8 @@ _SPOILS: list[tuple[str, str, Callable[[FakeDb], None], str]] = [
      "not one passing backup.verified record"),
     ("revoked", "a failed verification",
      _edit("backup.verified", after_state={"stage": "finished", "error": "checksum_mismatch"}),
+     "not one passing backup.verified record"),
+    ("revoked", "two passing verifications", _twice("backup.verified"),
      "not one passing backup.verified record"),
     ("revoked", "the grant record before covers_to",
      _edit("users.access_change", event_ts=_NOW - timedelta(days=9)),

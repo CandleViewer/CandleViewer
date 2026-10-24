@@ -1,9 +1,12 @@
-"""BACKUP-TAMPERED and BACKUP-THEN-REVOKED (E42-Q01, #962): two usable backups, each written with
-the audit records a restore reads, and each a world of its own: one database per backup handle.
+"""BACKUP-TAMPERED and BACKUP-THEN-REVOKED (E42-Q01, #962): two backups whose rows look usable,
+each written with the audit records a restore reads, and each a world of its own: one database per
+backup handle.
 
 A restore reads its backup's digest and `covers_to` from the append-only trail, never from the row
 (`admin/backups/evidence.py`): from the newest successful `backup.run` record at `stage: finished`.
-Both seeds write that record through the real audit writer, with the engine's own builder.
+Both seeds write that record through the real audit writer, with the engine's own builder. The
+`backup.run` and `backup.verified` records name `system:backups` as their actor, where today's app
+names the user who asked; the restore's reader ignores the actor.
 
 - **BACKUP-TAMPERED** (AC-ADM-25): a `verified`, encrypted, kept row whose digest is not the one its
   run's record bound, as after an edit of the row or a swap of the artefact. The restore guard
@@ -16,13 +19,15 @@ Both seeds write that record through the real audit writer, with the engine's ow
   freeze, which a revocation never writes. OWNER-2's `owner` role is replaced by `viewer`
   (`roles.revoke`): the highest-privilege role, so a restore that brings it back is the worst
   rollback, and legal under the owner floor, as OWNER stays an Owner. A removed role leaves only
-  its record as evidence.
+  its records as evidence: `roles.grant`, then `roles.revoke`, the role route's order.
 
 Neither shares a database with `seed_backups`, whose check holds the catalogue to its two rows, nor
-with the other: a seed refuses a catalogue that holds another backup, before it writes. BACKUP-
-THEN-REVOKED builds on slice A's world (OWNER, OWNER-2, MGR-M, SUB-S) and never writes it; after it,
-`check_admin_world` names the revoked grant and the replaced role. A database not named for tests
-is `FixtureRefused` before anything is read or written.
+with the other: a seed refuses a catalogue that holds another backup, before it writes.
+BACKUP-THEN-REVOKED builds on slice A's world (OWNER, OWNER-2, MGR-M, SUB-S) and never writes it;
+after it, `check_admin_world` names the revoked grant and the replaced role. BACKUP-TAMPERED needs
+no world and writes only its row and its record. Each seed waits for its writer's flush before it
+reads the trail, so a record left in the WAL by a run cut before its flush is replayed, not written
+twice. A database not named for tests is `FixtureRefused` before anything is read or written.
 """
 
 from __future__ import annotations
@@ -75,6 +80,7 @@ async def _own_catalogue(conn: AsyncConnection, b: FixtureBackup) -> None:
     """`FixtureCheckError` unless `b`'s row is the only one in the catalogue, or none is."""
     held: Sequence[Any] = (await conn.execute(sa.select(m.backups.c.id))).scalars().all()
     named = {x.id: x.handle for x in (*BACKUPS, BACKUP_TAMPERED, BACKUP_THEN_REVOKED)}
+    named[fixture_id("OOB-BACKUP")] = "OOB-BACKUP"  # OOB-WRITES' row (`oob_writes.BACKUP_ID`)
     if others := [named.get(i, "a row that is not a fixture's") for i in held if i != b.id]:
         raise FixtureCheckError(f"{b.handle} shares no database with another backup: {others}")
 
@@ -101,6 +107,7 @@ async def _seed(
     # One WAL per world: a backlog is replayed on start, into the database the writer points at.
     wal = wal_dir / f"fixture-{b.handle.lower()}.wal"
     async with audit_session(dsn, wal) as (relational, writer):
+        await writer.flush(60)  # a backlog `start()` replays lands before the trail is read
         async with relational.engine.begin() as conn:
             await _own_catalogue(conn, b)
             if prepare is not None:
@@ -164,7 +171,7 @@ async def seed_backup_then_revoked(dsn: str, wal_dir: Path, *, now: datetime) ->
         ("users.access_change", str(manager), now - REVOKED_AGO,
          {**by, "object_id": str(manager), "before_state": before, "after_state": after}),
     ]  # fmt: skip
-    for action, role in (("roles.revoke", "owner"), ("roles.grant", "viewer")):
+    for action, role in (("roles.grant", "viewer"), ("roles.revoke", "owner")):
         fields = {**by, "object_id": str(demoted), "reason": role}
         fields |= {"before_state": {"roles": ["owner"]}, "after_state": {"roles": ["viewer"]}}
         records.append((action, str(demoted), now - REVOKED_AGO + timedelta(hours=1), fields))
