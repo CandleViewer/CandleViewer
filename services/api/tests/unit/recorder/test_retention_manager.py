@@ -8,8 +8,12 @@ shortening retention previews the exact bytes and range first.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from typing import Any, cast
+
 import pytest
 
+import candleviewer.retention_wiring as rw
 from candleviewer.recorder.retention import (
     US_PER_DAY,
     CheckpointCorrupt,
@@ -18,7 +22,14 @@ from candleviewer.recorder.retention import (
     PruneScope,
     RetentionBusy,
 )
-from tests.unit.recorder._retention_fakes import NOW_US, Crash, T, World, day, manager
+from candleviewer.storage.repositories.replay_sessions import ReplayState
+from tests.unit.recorder._retention_fakes import NOW, NOW_US, Crash, T, World, day, manager
+from tests.unit.storage.fakes_replay_sessions import (
+    FailingCoveringRead,
+    FakeClock,
+    FakeReplaySessionRepository,
+    open_session,
+)
 
 
 def _world() -> World:
@@ -119,6 +130,43 @@ async def test_lease_taken_after_plan_is_honoured_at_delete_time() -> None:
     report = await m.run(plan, dry_run=False)
     assert report.deleted == [] and [p.reason for p in report.skipped] == ["leased"]
     assert w.data_deleted() == []
+
+
+def _wired_lease(sessions: Any, clock: FakeClock) -> rw.PgRetentionFacts:
+    guard = rw.ReplayRetentionGuard(
+        sessions, max_lifetime=timedelta(days=1), reclaim_interval=timedelta(minutes=1), clock=clock
+    )
+    return rw.PgRetentionFacts(cast(Any, None), guard)
+
+
+def _at(us: int) -> datetime:
+    return datetime(1970, 1, 1, tzinfo=UTC) + timedelta(microseconds=us)
+
+
+async def test_an_open_replay_session_leases_its_symbols_cold_partition_until_destroyed() -> None:
+    w = _world()
+    key = w.add_cold("BTCUSDT", T, 40)
+    clock = FakeClock(NOW)
+    repo = FakeReplaySessionRepository(clock)
+    lo = _at(day(40) + 3_600_000_000)
+    row = await open_session(repo, ReplayState.FINISHED, lo, lo + timedelta(hours=1))
+    m = manager(w, lease=_wired_lease(repo, clock).lease)
+    plan = await m.preview()
+    assert [(p.item.key, p.reason, p.info) for p in plan.protected] == [
+        (key, "leased", f"lease={row.id}")
+    ]
+    assert (await m.run_nightly()).deleted == [] and w.deletes == []
+    await repo.update_state(row.user_id, row.id, state=ReplayState.DESTROYED)
+    assert [i.key for i in (await m.run_nightly()).deleted] == [key]
+
+
+async def test_an_unreadable_replay_guard_keeps_the_partition_this_pass() -> None:
+    w = _world()
+    key = w.add_cold("BTCUSDT", T, 40)
+    m = manager(w, lease=_wired_lease(FailingCoveringRead(OSError()), FakeClock(NOW)).lease)
+    plan = await m.preview()
+    assert [(p.item.key, p.info) for p in plan.protected] == [(key, "lease=unverified")]
+    assert (await m.run_nightly()).deleted == [] and w.deletes == []
 
 
 async def test_unarchived_hot_day_is_never_dropped_and_alerts() -> None:

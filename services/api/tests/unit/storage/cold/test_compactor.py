@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -16,13 +17,21 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from structlog.testing import capture_logs
 
+import candleviewer.retention_wiring as rw
 from candleviewer.observability.logging import configure_logging
 from candleviewer.storage.cold import compactor as compactor_mod
 from candleviewer.storage.cold.compactor import Compactor, should_compact
 from candleviewer.storage.cold.manifest import ManifestEntry, ManifestStore, sha256_of
 from candleviewer.storage.cold.writer import normalise_ts, write_parquet_file
 from candleviewer.storage.errors import StorageExportVerifyFailed
+from candleviewer.storage.repositories.replay_sessions import ReplayState
 from tests.unit.storage.cold._helpers import RecordingSink, SimulatedKill
+from tests.unit.storage.fakes_replay_sessions import (
+    FailingCoveringRead,
+    FakeClock,
+    FakeReplaySessionRepository,
+    open_session,
+)
 
 MIB = 1024 * 1024
 PART = Path("trades") / "symbol=BTCUSDT" / "dt=2026-10-17"
@@ -134,6 +143,49 @@ async def test_active_replay_session_skips_partition_and_logs_session_id(
 async def test_default_idle_guard_reads_empty_set_and_compacts(tmp_path: Path) -> None:
     _seed(tmp_path, [[(1, 1.0)], [(2, 1.0)]])
     assert (await _compact(tmp_path)).skipped is False
+
+
+#: G7 (#2674): `PART` is BTCUSDT trades on 2026-10-17; a session replays one hour of it.
+_W0 = datetime(2026, 10, 17, 9, tzinfo=UTC)
+
+
+async def test_the_wired_replay_guard_keeps_a_partition_an_open_session_reads(
+    tmp_path: Path,
+) -> None:
+    _seed(tmp_path, [[(1, 1.0)], [(2, 1.0)]])
+    clock = FakeClock(_W0 + timedelta(hours=3))
+    repo = FakeReplaySessionRepository(clock)
+    row = await open_session(repo, ReplayState.ERROR, _W0, _W0 + timedelta(hours=1))
+    other = await open_session(
+        repo, ReplayState.PLAYING, _W0, _W0 + timedelta(hours=1), streams=("klines",)
+    )
+    guard = rw.ReplayRetentionGuard(
+        repo, max_lifetime=timedelta(days=1), reclaim_interval=timedelta(minutes=1), clock=clock
+    )
+    result = await _compact(tmp_path, idle_guard=guard.partition_guard(tmp_path, site="compaction"))
+    assert result.skipped and row.id in result.reason and other.id not in result.reason
+    assert len(list((tmp_path / PART).iterdir())) == 2
+    await repo.update_state(row.user_id, row.id, state=ReplayState.DESTROYED)
+    result = await _compact(tmp_path, idle_guard=guard.partition_guard(tmp_path, site="compaction"))
+    assert result.skipped is False  # the klines session never reads trades
+
+
+async def test_an_unreadable_replay_guard_defers_the_partition_never_merges_it(
+    tmp_path: Path,
+) -> None:
+    _seed(tmp_path, [[(1, 1.0)], [(2, 1.0)]])
+    clock = FakeClock(_W0)
+    broken = rw.ReplayRetentionGuard(
+        FailingCoveringRead(OSError()),
+        max_lifetime=timedelta(days=1),
+        reclaim_interval=timedelta(minutes=1),
+        clock=clock,
+    )
+    result = await _compact(
+        tmp_path, idle_guard=broken.partition_guard(tmp_path, site="compaction")
+    )
+    assert result.skipped and result.reason.startswith("active replay")  # the pass defers it
+    assert len(list((tmp_path / PART).iterdir())) == 2
 
 
 @pytest.mark.parametrize(

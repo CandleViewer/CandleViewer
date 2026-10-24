@@ -18,7 +18,7 @@ import uuid
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import psycopg
 import pytest
@@ -27,8 +27,10 @@ import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 from testcontainers.postgres import PostgresContainer
 
+import candleviewer.retention_wiring as rw
 from candleviewer.db import models
 from candleviewer.storage.errors import StorageQueryFailed
+from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories import replay_sessions_sqlalchemy as mod
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -41,9 +43,11 @@ from candleviewer.storage.repositories.replay_sessions import (
     ReplaySessionRow,
     ReplayState,
 )
+from candleviewer.storage.retention.ports import Partition
 from tests.unit.storage.fakes_replay_sessions import FakeClock
 from tests.unit.storage.replay_sessions_contract import (
     T0,
+    T2H,
     Harness,
     ReplaySessionRepositoryContract,
 )
@@ -141,6 +145,26 @@ async def h(pg_dsn: str) -> AsyncIterator[Harness]:
 
 class TestPostgresRepository(ReplaySessionRepositoryContract):
     """The whole behavioural contract, against the real adapter on real Postgres."""
+
+
+async def test_the_retention_guard_keeps_a_live_sessions_data_never_a_destroyed_ones(
+    h: Harness, tmp_path: Path
+) -> None:
+    """G7 (#2674) end to end on Postgres: the recorder lease, `replay_session_for` and the cold
+    idle guard keep what an open session replays; a destroyed session holds nothing."""
+    live = await h.in_state(S.PLAYING)  # BTCUSDT, every stream, [T0, T2H)
+    await h.in_state(S.DESTROYED, symbol="ETHUSDT")
+    guard = rw.ReplayRetentionGuard(
+        h.repo, max_lifetime=timedelta(days=1), reclaim_interval=timedelta(minutes=1), clock=h.clock
+    )
+    facts = rw.PgRetentionFacts(cast(Any, None), guard)  # no policy read: the guard alone
+    lo, hi = (int(t.timestamp()) * 1_000_000 for t in (T0, T2H))
+    cold = guard.partition_guard(tmp_path, site="compaction")
+    for symbol, want in (("BTCUSDT", live.id), ("ETHUSDT", None)):
+        part = Partition(symbol, StreamKind.TRADES, "cold", TimeRange(start_us=lo, end_us=hi), 1, 1)
+        assert await facts.lease(symbol, lo, hi) == want
+        assert await facts.replay_session_for(part) == want
+        assert await cold(tmp_path / "trades" / f"symbol={symbol}" / f"dt={T0:%Y-%m-%d}") == want
 
 
 # -- foreign keys: names and actions ------------------------------------------------------------

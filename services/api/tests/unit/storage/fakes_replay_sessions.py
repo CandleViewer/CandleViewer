@@ -332,3 +332,32 @@ class FakeReplaySessionRepository:
             return False
         del self._rows[row.id]
         return True
+
+
+async def open_session(
+    repo: FakeReplaySessionRepository, state: ReplayState, lo: datetime, hi: datetime, **over: Any
+) -> ReplaySessionRow:
+    """A session over `[lo, hi)` (BTCUSDT and every stream unless `over` names others), moved
+    straight to `state` (legality is the B12 machine's call), for the retention-guard tests."""
+    fields: dict[str, Any] = {
+        "id": str(uuid.uuid4()), "user_id": str(uuid.uuid4()), "symbol": "BTCUSDT",
+        "range_start": lo, "range_end": hi,
+    } | over  # fmt: skip
+    row = await repo.create(ReplaySessionCreate(**fields))
+    if state is ReplayState.CREATED:
+        return row
+    return await repo.update_state(row.user_id, row.id, state=state)
+
+
+class FailingCoveringRead:
+    """A `live_covering` that raises `error` on every call (a driver error, a cancellation)."""
+
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+        self.calls = 0
+
+    async def live_covering(
+        self, symbol: str, stream: str, lo: datetime, hi: datetime, *, created_after: datetime
+    ) -> str | None:
+        self.calls += 1
+        raise self.error

@@ -12,6 +12,7 @@ from candleviewer.recorder.retention import (
     ColdPartition,
     Facts,
     HotDay,
+    LeaseCheck,
     MemoryCheckpoint,
     PolicyRow,
     RetentionConfig,
@@ -187,12 +188,16 @@ class FakeLock:
 
 
 def manager(
-    w: World, ckpt: MemoryCheckpoint | None = None, config: RetentionConfig | None = None
+    w: World,
+    ckpt: MemoryCheckpoint | None = None,
+    config: RetentionConfig | None = None,
+    lease: LeaseCheck | None = None,
 ) -> RetentionManager:
     """`config` replaces the default (trades only, 7 d / 30 d hard default) for a test that needs
-    other streams; pass it here rather than poking the manager's private `_cfg`."""
+    other streams; pass it here rather than poking the manager's private `_cfg`. `lease` replaces
+    the `w.leases` check (the wiring's replay guard, G7)."""
 
-    async def lease(symbol: str, lo: int, hi: int) -> str | None:
+    async def leases(symbol: str, lo: int, hi: int) -> str | None:
         for a, b in w.leases.get(symbol, []):
             if a < hi and b > lo:
                 return "replay-1"
@@ -211,7 +216,7 @@ def manager(
         events=FakeEvents(w),
         lock=FakeLock(w),
         checkpoint=ckpt or MemoryCheckpoint(),
-        lease=lease,
+        lease=lease or leases,
         config=config or RetentionConfig(hot_streams=(T,), cold_streams=(T,), hard_default=(7, 30)),
         clock=lambda: NOW,
         sleep=no_sleep,
