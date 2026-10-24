@@ -293,8 +293,9 @@ class PolicyControlSurface(Protocol):
 
     def start_refusal(self, symbol: str) -> RefusalCause | None:
         """Why the latest start was refused, or None: not refused, started or no longer wanted.
-        When several reasons are refused the one refused last answers, the lowest in precedence of
-        those refused together (a chart's `disk_pressure` reads over a position's `symbol_cap`)."""
+        When several reasons are refused, the one whose refusal began last answers (a reason
+        refused again keeps its place): the lowest in precedence of those refused together (a
+        chart's `disk_pressure` reads over a position's `symbol_cap`)."""
 
     def start_refused(self) -> tuple[StartRefused, ...]:
         """Every symbol with a start refusal now, in symbol order, each as `start_refusal(symbol)`
@@ -909,10 +910,10 @@ class RecordingPolicy:
             await self._recorded.soft_remove(row["id"])  # B11 stopped: the auto row goes too
         interp = self._charts.pop(symbol, None)
         self._gateway.unregister(symbol)
-        if interp is not None:
-            await interp.stop()
         if (s := self._syms.get(symbol)) is not None:
             s.linger_deadline = None  # a pinned entry stays: its spent deadline must not stay due
+        if interp is not None:
+            await interp.stop()  # after the clear: a stop that raises leaves no deadline due
 
     async def _retry_error(self, symbol: str, s: _Sym) -> None:
         """B11 `error --RETRY--> starting` with bounded backoff (audit outage, C-2.9)."""
