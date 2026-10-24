@@ -37,6 +37,7 @@ from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailab
 from candleviewer.storage.repositories import executions_sqlalchemy as ex
 from candleviewer.storage.repositories import orders as port
 from candleviewer.storage.repositories import orders_sqlalchemy as mod
+from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
 from candleviewer.storage.repositories.exchange_payload import MAX_CODE_CHARS, OVERSIZE, REDACTED
 from candleviewer.storage.repositories.orders import (
     EVENT_FIELDS,
@@ -57,7 +58,8 @@ from candleviewer.storage.repositories.orders import (
 from tests.unit.oms.write_ahead_contract import event, fill, step
 
 T0 = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
-ACCOUNT, ORDER = uuid.UUID(int=1), uuid.UUID(int=2)
+ACCOUNT, ORDER, USER = uuid.UUID(int=1), uuid.UUID(int=2), uuid.UUID(int=3)
+_GRANT = GrantScope(USER, frozenset({ACCOUNT}))
 LINK = "cvl-0TLr6mSAQFGvyfsJ0nLDCh-d0hb-00en"  # the #845 Gherkin id
 _MAC = "9f" * 32  # synthetic 64-hex shape, digits and letters
 _KEY = "DUMMYKEY_" + "Q3w9" * 5  # synthetic, built at run time (SR-145)
@@ -303,7 +305,11 @@ _STATEMENTS: dict[str, Any] = {
     "settle_entry_stops_statement": mod.settle_entry_stops_statement(ACCOUNT, ORDER, "void", T0),
     "environment_accounts_statement": mod.environment_accounts_statement("demo"),
     "list_unfinished_statement": mod.list_unfinished_statement([ACCOUNT], 4097),
+    "in_scope_statement": mod.in_scope_statement(_GRANT, ORDER, "demo"),
+    "accounts_in_scope_statement": mod.accounts_in_scope_statement(_GRANT, "demo", [ACCOUNT]),
 }
+#: The exit routes' reads (E29-T04 slice 4), scoped by the principal: the grant bound to its user.
+_BY_PRINCIPAL = {"in_scope_statement", "accounts_in_scope_statement"}
 
 
 def test_the_statement_set_is_pinned() -> None:
@@ -318,7 +324,26 @@ def test_every_statement_but_create_and_the_id_check_is_account_scoped(name: str
     scoped = "orders.exchange_account_id = $" in sql or (
         name == "settle_entry_stops_statement" and "recorded_stops.exchange_account_id = $" in sql
     )
+    scoped |= name in _BY_PRINCIPAL and "user_account_access.user_id = $" in sql
     assert scoped is (name not in mod.UNSCOPED)
+
+
+def test_the_exit_reads_hold_the_owner_or_the_grant_predicate_in_sql() -> None:
+    """E29-T04 slice 4 (C-12.4): `scope_clause`, once: a live account of the environment, then a
+    live owner role, or a grant among the snapshot's ids whose live row lets it view, unfrozen,
+    and trade for the trade flag; the anchor read only for an order with no group (`coalesce`)."""
+    live = "exchange_accounts.deleted_at IS NULL AND exchange_accounts.env = $"
+    owner = _sql(mod.in_scope_statement(OwnerScope(USER), ORDER, "demo"))
+    assert live in owner and "user_account_access" not in owner
+    assert "WHERE user_roles.user_id = $" in owner and "roles.name = $" in owner
+    grant = _sql(_STATEMENTS["in_scope_statement"])
+    assert live in grant and "exchange_accounts.id IN ($" in grant and "user_roles" not in grant
+    assert grant.count("user_account_access.can_view AND NOT user_account_access.frozen") == 2
+    assert grant.count("user_account_access.can_trade") == 1  # the `can_trade` column alone
+    assert "coalesce(trade_groups.created_by, (SELECT idempotency_anchors.created_by" in grant
+    assert grant.endswith(") AS scoped ON true")
+    nothing = _sql(mod.accounts_in_scope_statement(GrantScope(USER, frozenset()), "demo", ()))
+    assert nothing.endswith("WHERE false ORDER BY exchange_accounts.id")
 
 
 def test_only_the_insert_the_id_check_and_the_hydration_read_are_unscoped() -> None:
