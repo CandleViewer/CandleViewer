@@ -488,6 +488,17 @@ LABELLED: dict[str, tuple[tuple[str, str, str, bool, dict[str, str]], ...]] = {
 }
 
 # alert -> [(values, eval_time, fires)]: more cases on the same series (`_xN`: N missed scrapes).
+# #2668 G1: rate(...[1m]) needs samples under a minute apart, so these cases sample every 30 s.
+# The configured share is 0.25, so the threshold is 0.3 loop seconds per second: 10 per 30 s fires
+# (0.333), 8.5 per 30 s (0.283) and a missing share gauge (replay not wired) stay quiet.
+_LOOP, _SHARE = 'replay_loop_seconds_total{env="live"}', 'replay_loop_share_ratio{env="live"}'
+FINE: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
+    "ReplayLoopShareHigh": (
+        ("10m", True, {_LOOP: "0+10x40", _SHARE: "0.25x40"}),
+        ("10m", False, {_LOOP: "0+8.5x40", _SHARE: "0.25x40"}),
+        ("10m", False, {_LOOP: "0+10x40"}),
+    ),
+}
 EXTRA: dict[str, list[tuple[str, str, bool]]] = {
     # #2496 item 3: the page rides out a gap shorter than its 15m window (the restart after a
     # break-glass run, a failed scrape) and ends once the last reading of 1 has aged out of it.
@@ -608,6 +619,19 @@ def build() -> dict[str, Any]:
                 {
                     "interval": "1m",
                     "input_series": [{"series": s, "values": v} for s, v in case_series.items()],
+                    "alert_rule_test": [
+                        {"eval_time": at, "alertname": name, "exp_alerts": expected}
+                    ],
+                }
+            )
+    for name, fine in FINE.items():
+        for at, fires, case_series in fine:
+            labels, notes = {**labels_of(name), "env": "live"}, annotations_of(name)
+            expected = [{"exp_labels": labels, "exp_annotations": notes}] if fires else []
+            tests.append(
+                {
+                    "interval": "30s",
+                    "input_series": [{"series": k, "values": v} for k, v in case_series.items()],
                     "alert_rule_test": [
                         {"eval_time": at, "alertname": name, "exp_alerts": expected}
                     ],

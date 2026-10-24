@@ -12,13 +12,14 @@ from candleviewer.replay import (
     UNBOUNDED,
     ClockConfig,
     ReplayClock,
+    ReplayClockStateError,
     ReplayItem,
     ReplayLoopBudget,
     ReplaySource,
 )
 from candleviewer.replay.budget import BudgetLane
 from candleviewer.storage.repositories.recorded import RecordedEvent
-from tests.unit.replay._events import SECOND, T0, Harness, request, trade
+from tests.unit.replay._events import SECOND, T0, BoundedTier, Harness, request, trade
 from tests.unit.replay._playback import ListStream, RecordingObserver, RecordingSink
 from tests.unit.replay._source import SMALL, many
 from tests.unit.replay._time import FakeTime
@@ -215,3 +216,100 @@ async def test_source_producer_breathes_per_batch_and_is_held_in_debt() -> None:
             await asyncio.sleep(0)
         assert source.buffered_events > 0 and spy.breaths > 1
         assert spy.charges >= spy.breaths  # every await of the producer is charged first
+
+
+def _charged() -> float:
+    return REGISTRY.get_sample_value("replay_loop_seconds_total") or 0.0
+
+
+async def _settle(rounds: int = 50) -> None:
+    for _ in range(rounds):
+        await asyncio.sleep(0)
+
+
+def _indebt(budget: ReplayLoopBudget, work: Work) -> None:
+    """Another session's turn leaves the budget 0.15 s in debt: a 0.6 s hold at the share."""
+    other = budget.lane("other")
+    other.start()
+    work.t += 0.2
+    other.charge()
+
+
+async def test_clock_destroy_during_a_natural_wait_charges_no_idle_time() -> None:
+    """Review M1: a cancelled deadline wait restarts the lane, so the wait is never charged."""
+    time = FakeTime(auto=False)
+    budget, sink = ReplayLoopBudget(SHARE, BURST, time, measure=time.now), RecordingSink(time)
+    clock = _clock(_events(3, 10 * SECOND), sink, budget.lane("s"), speed=1.0)
+    async with clock:
+        clock.play()
+        await _settle()
+        time.advance(5.0)  # idle, waiting for the second event
+        before = _charged()
+        await clock.aclose()
+    assert len(sink.events) == 1 and _charged() - before < 0.01
+
+
+async def test_source_destroy_with_the_producer_parked_charges_no_idle_time() -> None:
+    time = FakeTime(auto=False)
+    budget = ReplayLoopBudget(SHARE, BURST, time, measure=time.now)
+    harness = Harness(hot=many(1_000), req=request(end_us=60 * SECOND))
+    source = ReplaySource(harness.req, harness.tiers, config=SMALL, lane=budget.lane("s"))
+    async with source:
+        await source.__anext__()
+        await _settle()  # the producer parks on the full queue
+        time.advance(600.0)
+        before = _charged()
+    assert _charged() - before < 0.01
+
+
+async def test_source_a_storage_wait_is_not_charged_as_loop_time() -> None:
+    """Review M1 (security lens): a read that waits off the loop charges only loop work."""
+    time = FakeTime()
+    reads = list[int]()
+
+    class WaitingTier(BoundedTier):
+        async def read(self, *args: object, **kwargs: object) -> list[RecordedEvent]:
+            reads.append(1)
+            time.advance(0.03)  # 30 ms waiting on storage, no loop work
+            await asyncio.sleep(0)
+            return await super().read(*args, **kwargs)  # type: ignore[arg-type]
+
+    harness = Harness(req=request(end_us=60 * SECOND))
+    harness.replace_ports(hot=WaitingTier(many(1_000)))
+    lane = ReplayLoopBudget(SHARE, BURST, time, measure=time.now).lane("s")
+    before = _charged()
+    async with ReplaySource(harness.req, harness.tiers, config=SMALL, lane=lane) as source:
+        assert len([i async for i in source]) == 1_000
+    assert reads and _charged() - before < 0.01  # merge work is 0 fake seconds here
+
+
+async def test_clock_destroy_ends_a_step_hold() -> None:
+    """Review m2: a step held by the budget ends when the session is destroyed."""
+    time, work = FakeTime(auto=False), Work()
+    budget = ReplayLoopBudget(SHARE, BURST, time, measure=work.now)
+    _indebt(budget, work)
+    clock = _clock(_events(1_000, 1_000), WorkSink(time, work), budget.lane("s"))
+    async with clock:
+        step = asyncio.ensure_future(clock.step_events(1_000))
+        await _settle()
+        assert not step.done()  # held
+        await clock.aclose()
+        await _settle()
+        assert step.done() and isinstance(step.exception(), ReplayClockStateError)
+
+
+async def test_clock_a_speed_change_does_not_end_a_hold() -> None:
+    """Review m3: only a pause or a destroy ends a hold; a speed change re-anchors and waits on."""
+    time, work = FakeTime(auto=False), Work()
+    budget = ReplayLoopBudget(SHARE, BURST, time, measure=work.now)
+    _indebt(budget, work)
+    sink = WorkSink(time, work)
+    async with _clock(_events(1_000, 100), sink, budget.lane("s"), speed=1.0) as clock:
+        task = clock.play()
+        await _settle()
+        held_at = len(sink.events)
+        clock.set_speed(2.0)
+        await _settle()
+        assert len(sink.events) == held_at  # still held
+        await clock.pause()
+        assert task.result() == "paused"
