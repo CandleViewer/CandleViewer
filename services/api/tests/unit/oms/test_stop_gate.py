@@ -232,6 +232,70 @@ async def test_at_most_eight_reads_run_and_the_last_slot_is_kept_for_an_attach()
     await rig.idle()
 
 
+async def busy(rig: Rig) -> list[PositionKey]:
+    """Every slot taken: seven entries' reads and an attach's, each held at the venue; a ninth key
+    waits too."""
+    keys = [PositionKey(cr.ACCOUNT, f"COIN{n}USDT", 0) for n in range(MAX_RESOLUTIONS + 1)]
+    for key in keys:
+        await request(rig, symbol=key.symbol)
+    rig.venue.open.clear()
+    for key in keys[: MAX_RESOLUTIONS - 1]:
+        await refused(rig, key)
+    await refused(rig, keys[MAX_RESOLUTIONS - 1], wait_s=0.01, protective=True)  # the kept slot
+    await until(lambda: rig.venue.reads() == MAX_RESOLUTIONS)
+    return keys
+
+
+async def turns(n: int = 100) -> None:
+    """Turn the loop `n` times: what is waiting stays waiting, and nothing sleeps."""
+    for _ in range(n):
+        await asyncio.sleep(0)
+
+
+async def test_an_attach_that_finds_every_slot_taken_waits_for_one_within_its_wait() -> None:
+    """SEC-S3H3A-02 (C-2.6): a protective attach is not refused for want of a slot while its wait
+    lasts; once a read ends it starts its key's read and clears when that read has."""
+    rig = build()
+    keys = await busy(rig)
+    attach = asyncio.create_task(rig.gate.clear(keys[-1], wait_s=5.0, protective=True))
+    await turns()
+    assert not attach.done() and keys[-1] not in rig.gate._running  # waiting for a slot
+    rig.gate._running[keys[0]].cancel()  # one read ends
+    await until(lambda: rig.venue.reads() == MAX_RESOLUTIONS + 1)  # the attach's read starts
+    assert keys[-1] in rig.gate._running
+    rig.venue.open.set()
+    await attach  # its read ended and a fresh read lists nothing
+    await rig.idle()
+
+
+async def test_an_attach_waits_for_a_slot_no_longer_than_its_wait_and_an_entry_not_at_all() -> None:
+    """SEC-S3H3A-02: with no slot freed the attach is refused once its wait is spent, nothing
+    started for it; an entry under the same load is refused at once, whatever wait it names."""
+    rig = build()
+    keys = await busy(rig)
+    attach = asyncio.create_task(rig.gate.clear(keys[-1], wait_s=0.05, protective=True))
+    entry = asyncio.create_task(rig.gate.clear(keys[-1], wait_s=5.0))
+    await turns()
+    assert entry.done() and not attach.done()
+    with pytest.raises(StopRequestPending):
+        await entry
+    with pytest.raises(StopRequestPending):
+        await attach
+    assert keys[-1] not in rig.gate._running and rig.venue.reads() == MAX_RESOLUTIONS
+    rig.venue.open.set()
+    await rig.idle()
+
+
+async def test_a_resolution_with_the_floor_unread_decides_nothing() -> None:
+    """SEC-S3H3A-01: never resolved with no bound, which would list every unanswered row and void
+    an entry still on its way blind (21 Sec.3.3.11); it counts `read_failed` and cools its key."""
+    rig = build(started_at=None)
+    row = await request(rig)
+    await rig.gate._resolve(KEY)
+    assert rig.venue.calls == [] and status(rig, row) == "pending"
+    assert rig.count("read_failed") == 1 and KEY in rig.gate._cooling
+
+
 async def test_a_failed_read_keeps_the_key_refused_and_cools_it_for_entries_never_attaches() -> (
     None
 ):
