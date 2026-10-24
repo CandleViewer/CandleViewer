@@ -25,7 +25,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
-from tools.ci.suppressions import field_problems  # noqa: E402 - sys.path first
+from tools.ci.suppressions import field_problems  # noqa: E402 - sys.path first (#549)
 
 CONFIG = "tools/ci/no-inline-suppression-paths.json"
 SOURCE_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"})
@@ -53,9 +53,8 @@ def covered(relpath: str, paths: Sequence[str]) -> bool:
 
 
 def load_paths(config: Path) -> list[str]:
-    data = json.loads(
-        config.read_text(encoding="utf-8")
-    )  # an OSError or ValueError is the caller's
+    # An OSError, or a ValueError for bad JSON, is the caller's to report.
+    data = json.loads(config.read_text(encoding="utf-8"))
     paths = data.get("paths") if isinstance(data, dict) else None
     if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p for p in paths):
         raise ValueError("'paths' must be a non-empty list of globs")

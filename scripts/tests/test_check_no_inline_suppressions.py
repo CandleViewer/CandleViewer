@@ -15,7 +15,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-import tools.ci.check_no_inline_suppressions as check  # noqa: E402 - sys.path first
+import tools.ci.check_no_inline_suppressions as check  # noqa: E402 - sys.path first (#549)
 
 TODAY = "2026-10-24"
 OK = "reason=reviewed-case owner=@basiltt review=2026-12-01"
@@ -127,7 +127,7 @@ def test_a_bad_path_list_is_a_config_error(tmp_path, capsys, config):
 def test_the_script_runs_as_a_command(tmp_path, capsys):
     _check(tmp_path, capsys, {f"{SCOPE}/a.ts": "// nosemgrep: cv-x\n"})
     script = str(ROOT / "tools/ci/check_no_inline_suppressions.py")
-    run = subprocess.run(  # noqa: S603 - the interpreter and the script under test
+    run = subprocess.run(  # noqa: S603 - the interpreter and the script under test (#549)
         [sys.executable, script, "--root", str(tmp_path), "--today", TODAY],
         capture_output=True,
         text=True,
