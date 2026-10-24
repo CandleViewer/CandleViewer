@@ -3,8 +3,12 @@ session (401), permission (403, audited), a user actor (403), the per-user write
 `Idempotency-Key` and the body (422), the store (503), the `recorder` step-up where the write
 changes retention (403), a replay (409 on another body), the entry in the settings' env and the
 caller's view (404), then the write, which the policy records ahead of the store (503 when it
-cannot); the routes record what they refuse and a `retention_days` no policy member records.
-No control writes until the recorder runtime is bound (#2188): until then every write is 503."""
+cannot); a pin, an unpin and a retention change included (#2188 S3c), so the routes record only
+what they refuse. The caller's view goes to the port from the principal only (C-12.4): an unpin or
+a lower retention that a cause outside it holds is 403, recorded once; on an add the manual
+reason may already have landed (recorded by the policy) when a hidden cause took the row
+between the port's checks. No control writes until the recorder runtime is bound (#2188 S4b):
+until then every write is 503."""
 
 from __future__ import annotations
 
@@ -37,7 +41,7 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.recorder import control as rc
-from candleviewer.recorder.errors import RecorderInvalidUpdateError
+from candleviewer.recorder.errors import RecorderInvalidUpdateError, RecorderSymbolNotRecordedError
 from candleviewer.recorder.errors import RecorderSymbolLimitError as LimitError
 from candleviewer.recorder.models import Actor
 from candleviewer.ws._generated.error_codes import ErrorCode
@@ -50,6 +54,7 @@ _BASIS: Final = "~0.5-0.75 GB/day/symbol compressed at depth 200"
 _DEEP: Final = "Depth 500 records more than the depth-200 planning rate."
 _WINDOW_S: Final = 60.0
 _NO_AUDIT: Final = "The audit record could not be written; nothing changed."
+_RELAX: Final = "Only the owner can unpin this row or lower its retention."
 
 
 class WriteLimiter:
@@ -168,9 +173,10 @@ def _missing() -> common.Problem:
 def _spec(body: BaseModel) -> rc.EntrySpec:
     """The fields the body names; the rest keep their setting (or take the default)."""
     named = {k: getattr(body, k) for k in body.model_fields_set}
-    streams = named.get("streams")
+    streams, days = named.get("streams"), named.get("retention_days")
     return rc.EntrySpec(None if streams is None else tuple(streams), named.get("depth"),
-                        named.get("pinned"), named.get("retention_days"))  # fmt: skip
+                        named.get("pinned"), days,
+                        "retention_days" in named and days is None)  # fmt: skip
 
 
 def _invalid(rule: str, field: str | None) -> common.Problem:
@@ -268,6 +274,14 @@ def make_recording_writes_router(
             **fields, severity=Severity.INFO if refused is None else Severity.WARNING,
         ))  # fmt: skip
 
+    async def relax_refused(call: _Call, refused: rc.RelaxRefused, symbol: str,
+                            entry_id: str | None) -> NoReturn:  # fmt: skip
+        """`403` for an unpin or a lower retention the caller's view does not cover (ruled
+        05:10Z), nothing changed: one denied `retention.change`, the policy's or this one."""
+        if not refused.recorded:
+            await _audit(call, "retention.change", symbol, entry_id, "relax_refused")
+        raise common.Problem(403, ErrorCode.FORBIDDEN, _RELAX)
+
     async def audit_refusal(
         call: _Call, entry: rc.RecordedEntry, causes: tuple[rc.Refusal, ...]
     ) -> NoReturn:
@@ -291,26 +305,29 @@ def make_recording_writes_router(
             rule = {"field": "symbol", "rule": "listed_instrument", "message": "Not listed."}
             raise common.Problem(422, BAD, "The symbol is not a listed instrument.", errors=[rule])
         spec, status = _spec(body), await call.control.status()
-        held = next((e for e in status.entries if e.symbol == body.symbol), None)
-        held_id, intent = None if held is None else held.id, False
+        entries = (e for e in status.entries if e.symbol == body.symbol and e.id)  # rows: an id
+        held = next(entries, None)
+        held_id = None if held is None else held.id
         if held is not None and view(call, held) is None:  # held only by a cause outside the view
             if not held.streams:  # no stored streams to keep: the policy would name its default
                 raise common.unavailable()
             if body.model_fields_set & _RETAINS:  # a join honours neither: the request's record
                 await _audit(call, "retention.change", body.symbol, held.id, "joined")
             spec = rc.EntrySpec(held.streams, held.depth)  # a join adds a cause, changes no setting
-        # Recorded even when it names the row's own value: it records the request, as PUT, PATCH.
-        elif intent := "retention_days" in body.model_fields_set and not spec.pinned:
-            await _audit(call, "retention.change", body.symbol, held_id,
-                          before_state={"retention_days": held.retention_days if held else None},
-                          after_state={"retention_days": spec.retention_days})  # fmt: skip
         try:  # the policy writes `recorder.start` ahead of the row (add_manual)
-            entry, prior = await _stored(call.control.add(body.symbol, spec, call.actor))
+            restricted = not call.p.is_owner  # the principal's view, never the request's
+            entry, prior = await _stored(
+                call.control.add(body.symbol, spec, call.actor, restricted=restricted)
+            )
+        except rc.RelaxRefused as refused:
+            await relax_refused(call, refused, body.symbol, held_id)
+        except RecorderSymbolNotRecordedError:  # a racing stop took the row after the add; the
+            # record's `object_id` is null when this add created the row (no id was read before)
+            await _audit(call, "recorder.start", body.symbol, held_id, "not_recorded")
+            raise _missing() from None
         except (LimitError, RecorderInvalidUpdateError) as exc:  # before its record
             capped, (setting, field) = isinstance(exc, LimitError), rc.setting_rule(spec.depth)
             cause = ErrorCode.RECORDER_SYMBOL_LIMIT.value if capped else setting
-            if intent:  # the route's retention record gets its denied twin
-                await _audit(call, "retention.change", body.symbol, held_id, cause)
             if not capped:
                 raise _invalid(setting, field) from None
             await _audit(call, "recorder.start", body.symbol, None, cause)
@@ -331,12 +348,12 @@ def make_recording_writes_router(
         if call.replayed is not None:
             return call.replayed
         entry = await visible(call, entry_id)
-        if body.retention_days is not None and not body.pinned:  # no policy member records it
-            await _audit(call, "retention.change", entry.symbol, entry.id,
-                          before_state={"retention_days": entry.retention_days},
-                          after_state={"retention_days": body.retention_days})  # fmt: skip
-        pinned = await _stored(call.control.pin(entry.id, body.pinned, call.actor,
-                                                retention_days=body.retention_days))  # fmt: skip
+        try:  # the policy records the pin or the unpin, its retention too, ahead of the row
+            pinned = await _stored(call.control.pin(
+                entry.id, body.pinned, call.actor, restricted=not call.p.is_owner,
+                retention_days=body.retention_days))  # fmt: skip
+        except rc.RelaxRefused as refused:
+            await relax_refused(call, refused, entry.symbol, entry.id)
         if pinned is None:  # the row went after the lookup: no active row to pin
             await _audit(call, "retention.change", entry.symbol, entry.id, "not_recorded")
             raise _missing()
@@ -348,24 +365,22 @@ def make_recording_writes_router(
     ) -> Response:
         """`pinned` or `retention_days` under the `recorder` step-up (04 row 9); `streams` and
         `depth` alone without (row 8). The policy records `recorder.update` (update_manual) and
-        a pin's `retention.change` (set_pin); `retention_days` with no pin, which no policy
-        member records, the route records ahead of the store, with its denied twin when the
-        policy refuses the change. The answer reports the stored values; it promises no change
-        to a running session."""
+        `retention.change` (set_pin, set_retention) ahead of its store. `retention_days` on a
+        row that stays pinned is ignored: a pin keeps forever (22 nulls the days). The answer
+        reports the stored values; it promises no change to a running session."""
         body, call = await begin(request, "updateRecordedSymbol", _update,
                                  lambda b: bool(b.model_fields_set & _RETAINS))  # fmt: skip
         if call.replayed is not None:
             return call.replayed
         entry, spec = await visible(call, entry_id), _spec(body)
-        if intent := "retention_days" in body.model_fields_set and not spec.pinned:
-            await _audit(call, "retention.change", entry.symbol, entry.id,
-                          before_state={"retention_days": entry.retention_days},
-                          after_state={"retention_days": spec.retention_days})  # fmt: skip
         try:
-            updated = await _stored(call.control.update(entry.id, spec, call.actor))
+            restricted = not call.p.is_owner  # the principal's view, never the request's
+            updated = await _stored(
+                call.control.update(entry.id, spec, call.actor, restricted=restricted)
+            )
+        except rc.RelaxRefused as refused:
+            await relax_refused(call, refused, entry.symbol, entry.id)
         except rc.ChangeRefused as refused:
-            if intent:  # the route's retention record gets its denied twin
-                await _audit(call, "retention.change", entry.symbol, entry.id, refused.rule)
             if refused.rule != "not_manual":  # the policy's own check of the change
                 raise _invalid(refused.rule, refused.field) from None
             await _audit(call, "recorder.update", entry.symbol, entry.id, refused.rule)

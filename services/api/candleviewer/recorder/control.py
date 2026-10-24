@@ -1,8 +1,9 @@
 """`RecordingControl`, the recorder's port for the recording routes and WS topic (E16-T08, #492).
 Until a runtime is bound (#2188), only reads exist: `StoredRecordingControl` maps Postgres rows
 from the row port `RecordedRows` (M10), and what only a runtime knows (lingering, refusals, size,
-rows, lag) stays unset, never guessed. Writes have no implementation yet (503). The restricted
-view (`HIDDEN_CAUSES`, `restricted_view`) is defined here once, for the routes and the topic."""
+rows, lag) stays unset, never guessed. Once one is, `control_runtime.RuntimeRecordingControl`
+serves reads and writes. The restricted view (`HIDDEN_CAUSES`, `restricted_view`) is defined here
+once, for the routes and the topic."""
 
 from __future__ import annotations
 
@@ -87,6 +88,7 @@ class EntrySpec:  # an add or an update; `None` keeps a setting (or takes its de
     depth: int | None = None
     pinned: bool | None = None
     retention_days: int | None = None
+    default_retention: bool = False  # `retention_days: null` named: back to the global default
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,16 +121,21 @@ class RecordingControl(RecordingReads, Protocol):  # `add` also returns the entr
     # the global default). Each write is recorded by the policy ahead of the store (C-2.9).
     # `remove` ends the manual reason; while a `STOP_CAUSES` member holds, and without `force`,
     # it changes nothing and raises `StopRefused`; `update` refuses with `ChangeRefused`.
-    async def add(self, symbol: str, spec: EntrySpec,
-                  actor: Actor) -> tuple[RecordedEntry, RecordedEntry | None]: ...  # fmt: skip
+    # `restricted` is the caller's view, from the server-side principal only (C-12.4), never
+    # from a request: an unpin or a lower retention it does not cover raises `RelaxRefused`
+    # before any write, and an add onto a row it hides is a join (`held_hidden`). `add`,
+    # `update` and `pin` raise it unrecorded (`recorded=False`: the caller writes the denied
+    # record) when the port's own check refuses, recorded when the policy's refuses.
+    async def add(self, symbol: str, spec: EntrySpec, actor: Actor, *,
+                  restricted: bool) -> tuple[RecordedEntry, RecordedEntry | None]: ...  # fmt: skip
     # `add` raises the policy's `RecorderInvalidUpdateError` and `RecorderSymbolLimitError`
     # unchanged (the route maps them), where `update` maps its refusals to a port error. It
     # forwards `spec.streams` and `spec.depth` as given: a join names the stored row's own.
-    async def update(self, entry_id: str, spec: EntrySpec,
-                     actor: Actor) -> RecordedEntry | None: ...  # fmt: skip
+    async def update(self, entry_id: str, spec: EntrySpec, actor: Actor, *,
+                     restricted: bool) -> RecordedEntry | None: ...  # fmt: skip
     async def remove(self, entry_id: str, actor: Actor, *,
                      force: bool = False) -> RecordedEntry | None: ...  # fmt: skip
-    async def pin(self, entry_id: str, pinned: bool, actor: Actor, *,
+    async def pin(self, entry_id: str, pinned: bool, actor: Actor, *, restricted: bool,
                   retention_days: int | None = None) -> RecordedEntry | None: ...  # fmt: skip
     # `status` entries carry the STORED row's streams and depth, never the policy's `()`/`None`.
     async def status(self) -> ControlStatus: ...
@@ -158,6 +165,16 @@ class StopRefused(Exception):
         self.causes = causes
 
 
+class RelaxRefused(Exception):
+    """An unpin or a lower retention the caller's view does not cover: a cause it does not see
+    holds the row (ruled 05:10Z, #2188 S3c). Nothing changed; `recorded`: the policy wrote the
+    denied record (else the caller writes it)."""
+
+    def __init__(self, symbol: str, *, recorded: bool) -> None:
+        super().__init__(symbol)
+        self.recorded = recorded
+
+
 class ChangeRefused(Exception):
     """`update` refused, nothing changed: `rule` says why, `not_manual` (streams and depth
     change only on a manual entry) or the rule of the invalid `field`."""
@@ -182,14 +199,22 @@ def restricted_view(entry: RecordedEntry) -> RecordedEntry | None:
     return replace(entry, reasons=reasons, refusals=refusals) if reasons else None
 
 
+def viewed(entry: RecordedEntry) -> RecordedEntry:
+    """`entry` as every answer shows it: a pinned entry keeps forever, so its `retention_days` is
+    shown as none. A pin nulls the stored days (#2188 S3c); a number still on a pinned row (a
+    failed second statement, or a direct policy call) is inert, and shown as none too."""
+    return replace(entry, retention_days=None) if entry.pinned else entry
+
+
 def entry_from_row(row: Mapping[str, Any]) -> RecordedEntry:
-    """A recorded row: its latest session's state (`idle` with none) and, once started, start."""
+    """A recorded row: its latest session's state (`idle` with none) and, once started, start;
+    `viewed`, so a pinned row shows no retention."""
     state: RecordingState = row["session_state"] or "idle"
     started = row["session_started_at"] if state in _STARTED else None
-    return RecordedEntry(
+    return viewed(RecordedEntry(
         row["id"], row["symbol"], (row["reason"],), state, row["pinned"], tuple(row["streams"]),
         row["depth"], started, row["retention_days"], row["added_by"],
-    )  # fmt: skip
+    ))  # fmt: skip
 
 
 class StoredRecordingControl:

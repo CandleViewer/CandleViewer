@@ -9,14 +9,18 @@ import asyncio
 import json
 import re
 from collections.abc import Iterator
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.recorder.control_runtime import RuntimeRecordingControl
+from candleviewer.recorder.policy import PolicyConfig, RefusalCause, StartRefused
 from tests.contract._admin_support import validate_example
 from tests.contract.rbac.rbac_harness import World, bearer, build_world
-from tests.unit.recorder._control_fakes import FakeRecorder
+from tests.unit.recorder._control_fakes import EmptyRows, FakeRecorder
 
 _SPEC: Any = load_openapi_spec()
 _PATH = "/recording/status"
@@ -87,3 +91,55 @@ def test_each_problem_body_is_its_declared_response(world: World) -> None:
             status, "application/problem+json")  # fmt: skip
         response = f"/components/responses/{_PROBLEMS[status]}/content/application~1problem+json"
         validate_example(f"{response}/schema", resp.json())
+
+
+class _RefusingPolicy:
+    """The S3c policy surface with nothing recorded and two starts refused at the cap: SOLUSDT's
+    chart (the 22 example) and LINKUSDT's position, a cause the R-I2 view hides."""
+
+    def start_refused(self) -> tuple[StartRefused, ...]:
+        return (StartRefused("LINKUSDT", "symbol_cap", ("position_open",)),
+                StartRefused("SOLUSDT", "symbol_cap", ("chart_open",)))  # fmt: skip
+
+    def start_refusal(self, symbol: str) -> RefusalCause | None:
+        return "symbol_cap" if symbol in ("LINKUSDT", "SOLUSDT") else None
+
+    def linger_until(self, symbol: str) -> None:
+        return None
+
+    def chart_open(self, symbol: str) -> bool:
+        return symbol == "SOLUSDT"
+
+    def position_open(self, symbol: str) -> bool:
+        return symbol == "LINKUSDT"
+
+
+@dataclass(frozen=True)
+class _Wiring:
+    policy: Any
+    rows: Any
+    budget: None
+    env: str
+
+
+def test_start_refused_symbols_with_no_row_through_the_bound_runtime(world: World) -> None:
+    """Through `create_app()` with the runtime control bound: the Owner's body lists SOLUSDT and
+    LINKUSDT, each once, refused for `symbol_cap`; the restricted body only SOLUSDT."""
+    fake = world.app.state.recording_runtime
+    world.app.state.recording_runtime = RuntimeRecordingControl(
+        _Wiring(_RefusingPolicy(), EmptyRows(), None, "demo"), config=PolicyConfig(),
+        now=lambda: datetime(2026, 10, 24, tzinfo=UTC),
+    )  # fmt: skip
+    _refresh(world)
+    try:
+        bodies = {a: world.client.get(_PATH, headers=bearer(a)).json() for a in _ROLES}
+        for body in bodies.values():
+            validate_example(_OK, body)
+        owner = [(r["symbol"], r["state"], r["refusal"]) for r in bodies["owner"]["symbols"]]
+        assert owner == [("LINKUSDT", "idle", "symbol_cap"), ("SOLUSDT", "idle", "symbol_cap")]
+        for actor in _ROLES[1:]:
+            assert [r["symbol"] for r in bodies[actor]["symbols"]] == ["SOLUSDT"]
+            assert "position_open" not in json.dumps(bodies[actor])
+    finally:
+        world.app.state.recording_runtime = fake
+        _refresh(world)

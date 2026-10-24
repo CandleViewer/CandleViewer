@@ -30,6 +30,7 @@ from typing import Any, ClassVar, cast
 import structlog
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.datastructures import State
 from starlette.types import ASGIApp
 
 from candleviewer.account_fixture_wiring import AccountFixture, build_account_fixture
@@ -310,8 +311,10 @@ from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
 from candleviewer.profiles_wiring import wire_profiles
 from candleviewer.recorder.control import StoredRecordingControl
+from candleviewer.recorder.control_runtime import RecorderWiring, RuntimeRecordingControl
 from candleviewer.recorder.coverage import CoverageService
 from candleviewer.recorder.metrics import current_write_backlog_rows, export_recorder_metrics
+from candleviewer.recorder.policy import PolicyConfig
 from candleviewer.recorder.service import RecorderService
 from candleviewer.recorder.status import RecordingStatusCache
 from candleviewer.replay.metrics import export_replay_metrics
@@ -540,6 +543,18 @@ class AppContext:
 def _oms_state(runtime: OmsRuntime | None) -> str | None:
     """`/readyz`'s `oms` check: the runtime's state while it runs, else no check."""
     return runtime.state if runtime is not None and runtime.started else None
+
+
+def bind_recording_runtime(
+    state: State, wiring: RecorderWiring | None, config: PolicyConfig
+) -> None:
+    """E16-T08 S9 (#492): with #2188's composed recorder, one `RuntimeRecordingControl` serves
+    the recorded-set reads, the writes and the status (`state` is `app.state`). Without it nothing
+    changes: the stored reads stay, the writes answer 503 and the status `not_deployed`."""
+    if wiring is None:
+        return
+    control = RuntimeRecordingControl(wiring, config=config, now=lambda: datetime.now(UTC))
+    state.recording_control = state.recording_writer = state.recording_runtime = control
 
 
 def _same_user(value: object, user: uuid.UUID) -> bool:
@@ -2582,6 +2597,10 @@ def create_app(
     # The recorded-set writes: no control has them until the recorder runtime is bound (#2188),
     # so `recording_writer` stays `None` and every write answers `503` until then.
     app.state.recording_writer = None
+    # #492 S9: #2188 S4b's composed recorder (`RecorderWiring`, on the context once it lands)
+    # binds the runtime control here; `None` until then.
+    recorder_config = PolicyConfig(default_retention_days=resolved.recorder_retention_days)
+    bind_recording_runtime(app.state, None, recorder_config)
 
     async def _recording_elevation(session_id: uuid.UUID | None) -> JSONResponse | None:
         return await require_session_elevation(ctx.auth, session_id, "recorder")

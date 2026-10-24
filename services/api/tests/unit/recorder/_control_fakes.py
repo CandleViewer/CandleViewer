@@ -192,10 +192,32 @@ class FakeRecorder:
     def chart_open(self, symbol: str) -> bool:
         return symbol in self.entries and "chart_open" in self.entries[symbol].reasons
 
+    @staticmethod
+    def _target(e: rc.RecordedEntry, spec: rc.EntrySpec) -> tuple[bool, int | None]:
+        """As S9's control: a pin nulls the days; an unpin takes the named ones (or none)."""
+        pinned = e.pinned if spec.pinned is None else spec.pinned
+        if pinned:
+            return True, None
+        if (
+            spec.retention_days is not None
+            or spec.default_retention
+            or (spec.pinned is False and e.pinned)
+        ):
+            return False, spec.retention_days
+        return False, e.retention_days
+
+    def _relax(self, e: rc.RecordedEntry, spec: rc.EntrySpec, restricted: bool) -> None:
+        """The port's check ahead of any write (unrecorded: the route records it)."""
+        pinned, days = self._target(e, spec)
+        unpin = e.pinned and not pinned
+        lower = not pinned and _lowers(e.pinned, e.retention_days, days, DEFAULT_DAYS)
+        if (unpin or lower) and not self.relax_allowed(e.symbol, restricted=restricted):
+            raise rc.RelaxRefused(e.symbol, recorded=False)
+
     async def list(self, query: rc.EntryQuery) -> rc.EntryPage:
         q = query
         hits = [
-            e for _, e in sorted(self.entries.items())
+            rc.viewed(e) for _, e in sorted(self.entries.items())
             if q.state in (None, e.state) and q.reason in (None, e.reason)
             and q.pinned in (None, e.pinned) and (q.after is None or (e.symbol, e.id) > q.after)
             and not (q.hidden and set(e.reasons) <= q.hidden)
@@ -203,42 +225,40 @@ class FakeRecorder:
         return rc.EntryPage(tuple(hits[: q.limit]), len(hits) > q.limit)
 
     async def get(self, entry_id: str) -> rc.RecordedEntry | None:
-        return next((e for e in self.entries.values() if e.id == entry_id), None)
+        return next((rc.viewed(e) for e in self.entries.values() if e.id == entry_id), None)
 
     # The `RecordingControl` writes, by entry id, over the policy members above (as S9 maps them).
     def _symbol(self, entry_id: str) -> str | None:
         return next((s for s, e in self.entries.items() if e.id == entry_id), None)
 
-    async def add(self, symbol: str, spec: rc.EntrySpec,
-                  actor: Actor) -> tuple[rc.RecordedEntry, rc.RecordedEntry | None]:  # fmt: skip
+    async def add(self, symbol: str, spec: rc.EntrySpec, actor: Actor, *, restricted: bool,
+                  ) -> tuple[rc.RecordedEntry, rc.RecordedEntry | None]:  # fmt: skip
         old = self.entries.get(symbol)
         streams, depth = (old.streams, old.depth) if old else (STREAMS, 200)
-        await self.add_manual(symbol, actor, spec.streams or streams, spec.depth or depth)
-        return await self._settle(symbol, spec, actor), old
+        join = restricted and old is not None and rc.restricted_view(old) is None
+        if old is not None and not join:  # as S9's control: before any write
+            self._relax(rc.viewed(old), spec, restricted)
+        await self.add_manual(symbol, actor, spec.streams or streams, spec.depth or depth,
+                              held_hidden=join)  # fmt: skip
+        return await self._settle(symbol, spec, actor, restricted) or self.entries[symbol], old
 
-    async def pin(self, entry_id: str, pinned: bool, actor: Actor, *,
+    async def pin(self, entry_id: str, pinned: bool, actor: Actor, *, restricted: bool,
                   retention_days: int | None = None) -> rc.RecordedEntry | None:  # fmt: skip
         """Unpin takes `retention_days` (none: the default); no active row: `None`, as S9 maps."""
         if (symbol := self._symbol(entry_id)) is None:
             return None
-        kept = replace(self.entries[symbol], pinned=pinned,
-                       retention_days=None if pinned else retention_days)  # fmt: skip
-        try:
-            await self.set_pin(symbol, pinned, actor, restricted=False,
-                               retention_days=retention_days)  # fmt: skip  # the port: no view yet
-        except NotRecorded:
-            return None
-        if symbol in self.entries:
-            self.entries[symbol] = kept
-        return kept
+        spec = rc.EntrySpec(pinned=pinned, retention_days=retention_days)
+        self._relax(rc.viewed(self.entries[symbol]), spec, restricted)
+        return await self._settle(symbol, spec, actor, restricted)
 
     async def update(
-        self, entry_id: str, spec: rc.EntrySpec, actor: Actor
+        self, entry_id: str, spec: rc.EntrySpec, actor: Actor, *, restricted: bool
     ) -> rc.RecordedEntry | None:
         """Streams and depth through `update_manual`, as S9 maps its refusals: a symbol with no
         manual reason -> `ChangeRefused("not_manual")`; an invalid change -> its field's rule."""
         if (symbol := self._symbol(entry_id)) is None:
             return None
+        self._relax(rc.viewed(self.entries[symbol]), spec, restricted)
         if spec.streams is not None or spec.depth is not None:
             try:
                 await self.update_manual(symbol, actor, streams=spec.streams, depth=spec.depth)
@@ -246,7 +266,7 @@ class FakeRecorder:
                 raise rc.ChangeRefused("not_manual") from None
             except InvalidUpdate:
                 raise rc.ChangeRefused(*rc.setting_rule(spec.depth)) from None
-        return await self._settle(symbol, spec, actor)
+        return await self._settle(symbol, spec, actor, restricted)
 
     async def remove(
         self, entry_id: str, actor: Actor, *, force: bool = False
@@ -260,16 +280,26 @@ class FakeRecorder:
         await self.remove_manual(symbol, actor)
         return self.entries.get(symbol)
 
-    async def _settle(self, symbol: str, spec: rc.EntrySpec, actor: Actor) -> rc.RecordedEntry:
-        e = self.entries[symbol]
-        if spec.pinned is not None:
-            return await self.pin(e.id, spec.pinned, actor, retention_days=spec.retention_days) or e
-        if spec.retention_days is not None:
-            self.entries[symbol] = e = replace(e, retention_days=spec.retention_days)
-        return e
+    async def _settle(self, symbol: str, spec: rc.EntrySpec, actor: Actor,
+                      restricted: bool) -> rc.RecordedEntry | None:  # fmt: skip
+        """The pin, else the retention, through the policy members, as S9's control does."""
+        e = rc.viewed(self.entries[symbol])
+        pinned, days = self._target(e, spec)
+        try:
+            if pinned != e.pinned:
+                await self.set_pin(symbol, pinned, actor, restricted=restricted,
+                                   retention_days=days)  # fmt: skip
+            elif not pinned and days != e.retention_days:
+                await self.set_retention(symbol, days, actor, restricted=restricted)
+        except NotRecorded:
+            return None
+        except RecorderRelaxRefusedError:
+            raise rc.RelaxRefused(symbol, recorded=True) from None
+        kept = self.entries.get(symbol) or replace(e, pinned=pinned, retention_days=days)
+        return rc.viewed(kept)
 
     async def status(self) -> rc.ControlStatus:
-        entries = tuple(e for _, e in sorted(self.entries.items()))
+        entries = tuple(rc.viewed(e) for _, e in sorted(self.entries.items()))
         return rc.ControlStatus(entries, **self.status_fields)
 
 
