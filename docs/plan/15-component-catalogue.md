@@ -507,11 +507,11 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-044 ConfirmDialog
 
 - **Tier**: Molecule (composed on CMP-043) · **Purpose**: destructive/irreversible action gate (flatten all, cancel all, Demo→Live switch, delete API key). **E35-D02 —** the rule arming dialog SCR-085 is **not** a ConfirmDialog — it composes CMP-043 with its own footer (E35-D02 §4), the card appearing at once while the scrim fades (E35-D04 F-13, T-01); the rule disarm confirm is `variant="standard"` (CA-31).
-- **Props**: `title` · `message` · `role?` (CMP-043's: `alertdialog` for a destructive confirm, `dialog` with the close button for an order confirm) · `restatement?` (what the confirm does, the dialog's description: the "What this does" group, or an order's environment sentence and full-intent line) · `legs?` (a fan-out's leg table) · `confirmLabel` (names the effect, never "Confirm") · `cancelLabel` · `variant: "standard"|"typed"|"hold"` · `typedConfirmValue?: string` (must match, e.g. symbol name; the object's own name, or a fixed word where the scope has none: `FLATTEN`, `LIVE`; it also gates a `hold` Confirm, whose hold starts only on a match) · `holdDurationMs?` (with discrete keyboard fallback per `05-accessibility-standard.md` §3.1.4; default 800 ms, PROPOSED `motion.duration.hold-confirm`, within a 300–2,000 ms setting) · `confirmDelayMs?` (default 400; Confirm ignores any activation before it) · `autoCancelMs?` (an inactivity time-out that cancels, never confirms, with the CMP-035 countdown; SCR-076 sets 20,000 from SCR-114's setting) · `initialFocus?: "cancel"` · `busy?` · `onConfirm` · `onCancel`.
+- **Props**: `title` · `message` · `role?` (CMP-043's: `alertdialog` for a destructive confirm, `dialog` with the close button for an order confirm) · `restatement?` (what the confirm does, the dialog's description: the "What this does" group, or an order's environment sentence and full-intent line) · `legs?` (a fan-out's leg table) · `confirmLabel` (names the effect, never "Confirm") · `cancelLabel` · `variant: "standard"|"typed"|"hold"` · `typedConfirmValue?: string` (must match, e.g. symbol name; the object's own name, or a fixed word where the scope has none: `FLATTEN`, `LIVE`; it also gates a `hold` Confirm, whose hold starts only on a match) · `holdDurationMs?` (with discrete keyboard fallback per `05-accessibility-standard.md` §3.1.4; default 800 ms, PROPOSED `motion.duration.hold-confirm`, within a 300–2,000 ms setting) · `confirmDelayMs?` (default 400; Confirm ignores any activation before it) · `autoCancelMs?` (an inactivity time-out that cancels, never confirms, with the CMP-035 countdown; SCR-076 sets 20,000 from SCR-114's setting) · `initialFocus?: "cancel"` · `busy?` · `onConfirm` · `onCancel` · `rung?: 0|1|2|3|4` (`variant` derives from it: 0 hold, 1–2 standard, 3 typed, 4 typed where a token exists, else standard; passing both is an error) · `blastRadius?` (counts fetched before render) · `choices?: {id, label, consequence, disabledReason?}[]` (the two-choice block: none pre-selected, Esc = nothing changed; `disabledReason` is a key of the vocabulary in `docs/design/E09/E09-D09.md` §3, of a state vocabulary it registers, or one proposed to it until registered, rendered as the option's second line) · `acknowledge?` (the unknown-positions tick) · `stepUpState?: "none"|"grace"|"code"|"fresh"` · `auditCodes: string[]`.
 - **States**: standard; typed (Confirm natively disabled until the summary has loaded and the field matches exactly: form validity, not a gate); hold (idle, holding with its ring and percentage, armed by a first key press); busy (after Confirm); partial failure (a CMP-027 inline error with Retry); a gated Confirm (CMP-079 RbacGate; `docs/design/E09/E09-D09.md` §2.2 T2: the CMP-019 `lock` leads the full label in `color.text.tertiary`, the fill becomes `color.surface.raised` with a `color.border.default` hairline, the host's reason sits under the footer in `color.text.secondary`, `aria-disabled` + `aria-describedby`; in place, when the session loses its leg while the dialog is open); counting down (`autoCancelMs`: the countdown, restarted by any key or pointer event inside the dialog); timed out (at 0:00 the dialog cancels, never confirms, and focus returns to the trigger).
-- **A11y**: `variant="hold"` always ships a keyboard-operable discrete alternative (press-and-hold OR two sequential `Enter` presses within a visible countdown) — never a mouse-only/timing-only gate. `role="alertdialog"` for a destructive confirm, `role="dialog"` with the close button for an order confirm (`docs/design/E30/E30-D03.md` §2, A10); focus starts on Cancel; Confirm ignores an activation — `Enter`, `Space` or a pointer — in the first `confirmDelayMs` after the dialog opens (E30-D03 D3 (2)) and ignores key repeats; `Enter` in the typed field never confirms; the hold keyboard paths are a held `Enter` or two non-repeat presses of `Enter` or `Space` at least 250 ms apart within 5 s (the first arms and renames the button "Press again to …"; `Space` has no hold path), and `Esc` or blur disarms; under reduced motion the ring does not sweep and its percentage text carries the progress; an `autoCancelMs` countdown restarts on any key or pointer event inside the dialog, is `aria-live="off"`, is announced politely at 0:10 and 0:00, and cancels, never confirms (E30-D03 D3 (6)); a gated Confirm keeps focus and announces once.
+- **A11y**: `variant="hold"` always ships a keyboard-operable discrete alternative (press-and-hold OR two sequential `Enter` presses within a visible countdown) — never a mouse-only/timing-only gate. `role="alertdialog"` for a destructive confirm, `role="dialog"` with the close button for an order confirm (`docs/design/E30/E30-D03.md` §2, A10); focus starts on Cancel; Confirm ignores an activation — `Enter`, `Space` or a pointer — in the first `confirmDelayMs` after the dialog opens (E30-D03 D3 (2)) and ignores key repeats; `Enter` in the typed field never confirms; the hold keyboard paths are a held `Enter` or two non-repeat presses of `Enter` or `Space` at least 250 ms apart within 5 s (the first arms and renames the button "Press again to …"; `Space` has no hold path), and `Esc` or blur disarms; under reduced motion the ring does not sweep and its percentage text carries the progress; an `autoCancelMs` countdown restarts on any key or pointer event inside the dialog, is `aria-live="off"`, is announced politely at 0:10 and 0:00, and cancels, never confirms (E30-D03 D3 (6)); a gated Confirm keeps focus and announces once. With `choices`, DOM and Tab order: the `role="radiogroup"` (labelled by the lead, `aria-required="true"`, none checked; Tab enters without selecting, Space selects, arrows move and select, except that a disabled-with-reason option keeps `role="radio"` and `aria-disabled`, the CMP-019 `lock` glyph leads its label, its reason is its second line by `aria-describedby` (`docs/design/E09/E09-D09.md` §2.2); the option is wrapped in CMP-079 RbacGate once its key is registered (until then its `disabledReason` carries the reason), and it is focused without being checked and never checked by Space) → `acknowledge` → Cancel → Confirm; Confirm stays natively disabled (form validity, as the typed state, not a gate) until a choice is made, then until `acknowledge` is ticked, then with `variant="typed"` until the value matches, and the visible hint names the first unmet input ("Choose an option first.", "Tick the acknowledgement first.", then the typed-confirm hint); a disabled choice never enables it; Enter in the group never confirms.
 - **Tokens**: CMP-043's; Confirm a CMP-001 `danger` (`color.status.danger.default`, `color.text.on-action`), or the side's CMP-001 `buy` / `sell` for an order confirm (`color.buy.default` / `color.sell.default`, `color.text.inverse`; `docs/design/E30/E30-D03.md` §2); the restatement box (a "What this does" group) `color.surface.raised`, `radius.card`, `space.inset.md`; the hold ring `color.status.danger.default` over `color.border.strong`, its percentage `type.num.sm` + `color.text.secondary`; the countdown CMP-035 in `color.text.primary`, its number swapped once a second, no colour change (`docs/design/E30/E30-D04.md` M7). (Replaces `color.status.danger`, read as `.default`, and `elevation.4`, a primitive.)
-- **Storybook**: Standard, TypedConfirm, HoldToConfirm(with keyboard fallback demo), Busy, PartialFailure, ConfirmGated, OrderConfirm. **E35-D02 —** RuleDisarm.
+- **Storybook**: Standard, TypedConfirm, HoldToConfirm(with keyboard fallback demo), Busy, PartialFailure, ConfirmGated, OrderConfirm, Rung1, Rung2, Rung3, Rung4, TwoChoice, TwoChoiceUnknown. **E35-D02 —** RuleDisarm.
 - **Tests**: unit, visual, axe, keyboard-only path for hold-variant (explicit CI gate per a11y standard §3.1.4).
 - **As built (E05-S03)**: no `initialFocus` prop: focus always starts on Cancel (H32). Adds `confirmVariant?: "danger"|"buy"|"sell"|"primary"` (default `danger`), `restatementLabel?` (default "What this does"), `typedInstruction?` (default "Type {token} to confirm"), `armedLabel?` (default "Press again to {effect}"), `summaryLoading?` (Confirm natively disabled until the summary loads), `failure?: {message, retry?, details?}` (the partial-failure state), `confirmDisabledReason?` (the gated Confirm), `size?`, `fallbackFocusRef?` and an injected `now?` clock. `onConfirm(meta)` carries `{variant, gate, elapsedMs}`, where `gate` is `click`, `typed`, `pointer-hold`, `key-hold` or `double-press` (the audit hook under Observability); `onCancel(reason)` adds `cancel` and `timeout` to CMP-043's reasons. Storybook ships Standard, Guard, Typed, TypedMatch, Hold, HoldReleasedEarly, Holding, Armed, HoldKeyboard (the keyboard path), HoldReducedMotion, Busy, PartialFailure, ConfirmGated, OrderConfirm, CountingDown, TimedOut, LongText and a contrast pair; no RuleDisarm story yet. The gate × state matrix for E05-X02 is in `docs/plan/qa/E05-S03-qa-handoff.md`.
 - **Motion spec**: [E42-D04.md](../design/E42/E42-D04.md) (E42-D04 §13, after E09-D08 D2; the scrim fades over `normal`, the card is a cut focused in frame 0, the exit `fast` — PROPOSED).
@@ -944,20 +944,20 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 ### CMP-087 AdminLayout (RBAC-gated shell)
 
-- **Tier**: Organism · **Purpose**: shell for `/admin/*` routes, requires re-auth token badge and distinct visual treatment (per `14-screens-catalogue.md` §0.3 re-auth ≤15min rule).
-- **Props**: `children` · `reauthExpiresAt`.
-- **A11y**: distinct `aria-label="Admin area"` landmark; re-auth countdown uses CMP-035 pattern.
-- **Tokens**: `color.surface.admin-tint`.
-- **Storybook**: Default, ReauthExpiringSoon.
+- **Tier**: Organism · **Purpose**: shell for `/admin/*` routes: the "Admin area" band with the route, a 4 px rule, the "Needs your action" strip and comfortable density, distinct from the trading app without colour; the re-auth badge with an admin window or the step-up grace line with per-action step-up (the re-auth decision, #1085) (`docs/design/E42/E42-D03.md` §4).
+- **Props**: `children` · `routeLabel` · `env` · `strip` (the "Needs your action" slot) · `reauthExpiresAt?` (variant (a) only; a server value, never a client clock) · `grace?: {classLabel, expiresAt}` (variant (b), from the step-up answer).
+- **A11y**: the band is the first child of `<main>`, `role="region"` `aria-label="Admin area"`, never focusable; the strip is a `role="region"` list, not live; the route announcer reads "Admin · <route> · <ENV>"; the countdown (CMP-035 pattern) is never live: one announcement at 5 min (polite), 1 min and expiry (assertive); never a second alertdialog (CMP-098 stays the idle warning).
+- **Tokens**: `color.surface.admin-tint` (→ `color.surface.raised`), `color.border.admin` (→ `color.text.tertiary`, 4 px), `color.surface.hover`, `color.text.secondary`, `color.status.warning.subtle`/`.strong`, `color.status.danger.subtle`/`.strong`, `size.control.comfortable`, `space.inset.lg`, `type.ui.heading-md`, `type.num.base`.
+- **Storybook**: Default, ReauthExpiringSoon, ReauthFinalMinute, ReauthExpired, PerActionOnly, PerActionGrace, AfterIdleUnlock, StripEmpty, StripWithItems — each in dark, light and high contrast.
 - **Tests**: unit, visual, axe.
 
 ### CMP-088 PageHeader
 
 - **Tier**: Molecule · **Purpose**: full-page area header (Journal, Rules, Alerts, Replay, Admin sub-pages) — title + primary actions + breadcrumb.
-- **Props**: `title` · `breadcrumb?` · `actions?`.
-- **A11y**: single `h1` per route.
-- **Tokens**: `space.pageheader.*`.
-- **Storybook**: Default, WithBreadcrumb.
+- **Props**: `title` · `breadcrumb?` (omitted in admin: the CMP-087 band carries the route) · `actions?` · `meta?` (one plain line, e.g. "All times UTC · as of 14:02:11") · `marker?` (a CMP-093 audited-read marker).
+- **A11y**: single `h1` per route, the skip-link target; `meta` and `marker` are plain text, never live; the primary action follows the `h1` in Tab order.
+- **Tokens**: `type.ui.heading-md`, `type.ui.caption`, `color.text.tertiary`, `space.inset.lg`, `space.stack.sm`.
+- **Storybook**: Default, WithBreadcrumb, Admin, AdminWithMeta, AdminAuditedRead.
 - **Tests**: unit, visual, axe.
 
 ### CMP-089 ForbiddenState (403)
@@ -1001,10 +1001,10 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-093 AuditActionTrigger (wraps any state-changing control to guarantee audit emission)
 
 - **Tier**: Molecule (utility) · **Purpose**: development-time contract wrapper ensuring every state-changing action emits the audit record shape from `14-screens-catalogue.md` §0.5.8; not a visual component but catalogued because it participates in the DoD checklist for every action-producing organism.
-- **Props**: `action: string` · `target` · `before?/after?` · `children`.
-- **A11y**: none additional (pass-through).
+- **Props**: `action: string` · `target` · `before?/after?` · `marker?: {label, codes}` (renders "Recorded in the audit log · <label> (<code>)") · `children`.
+- **A11y**: pass-through; a `marker` is plain text that joins the wrapped control's `aria-describedby`; a disabled control keeps its marker.
 - **Tokens**: n/a.
-- **Storybook**: n/a (documented via integration test, not visual story).
+- **Storybook**: Marker (the visible line); otherwise documented via integration test.
 - **Tests**: integration test asserting audit POST fired with correct shape for a representative sample of wrapped actions.
 
 ### CMP-094 HotkeyOverlay ("? " cheatsheet)
@@ -2142,27 +2142,11 @@ interface ReplayScrubberProps {
 ### CMP-173 AuditRow
 
 - **Tier**: Molecule (owner/admin) · **Purpose**: one append-only audit log entry — actor, role, action, target, before/after diff, timestamp, IP, session.
-- **Props**: `entry: AuditEntry` · `onExpand` (shows before/after diff).
-- **A11y**: extends CMP-049 row contract; before/after diff rendered via CMP-068 CopyableCodeBlock inside an expandable region.
-- **Tokens**: `font.mono`.
-- **API sketch**:
-
-```ts
-interface AuditEntry {
-  id: string;
-  actor: string;
-  role: string;
-  action: string;
-  target: string;
-  before?: Record<string, unknown>;
-  after?: Record<string, unknown>;
-  ts: number;
-  ip: string;
-  sessionId: string;
-}
-```
-
-- **Storybook**: Default, ExpandedDiff, SystemActor.
+- **Props**: `entry: AuditEntry` (the generated type from `packages/protocol`, never hand-written) · `variant: "row" | "compact"` · `onExpand` (row only; shows before/after diff).
+- **A11y**: `row` extends CMP-049 row contract; before/after diff rendered via CMP-068 CopyableCodeBlock inside an expandable region; `compact` rows form a list — time (UTC), actor, action label and code, subject label, outcome and severity as words — each linking to SCR-136.
+- **Tokens**: `type.num.sm` (`font.family.mono`), `color.text.primary`, `color.text.secondary`, `color.text.tertiary`.
+- **Data contract**: `AuditEntry` of `22-api-openapi.yaml`, the generated type, not restated here; compact rows use `ts`, `actor_username`, `action`, `subject_label`, `outcome` and `severity`.
+- **Storybook**: Default, ExpandedDiff, SystemActor, Compact, CompactDenied, CompactElided.
 - **Tests**: unit, visual, axe.
 
 ### CMP-174 AuditFilterBar
@@ -2202,10 +2186,11 @@ interface AuditEntry {
 
 ### CMP-178 SystemHealthTile
 
-- **Tier**: Molecule (owner/admin) · **Purpose**: one metric tile on the admin Health screen — ingestion lag, WS state, DB status, engine FPS, each with threshold-based tone.
-- **Props**: `label` · `value` · `unit` · `tone: "ok"|"warning"|"danger"` · `sparkline?: number[]`.
-- **Tokens**: inherits CMP-050 Card + CMP-024 Sparkline.
-- **Storybook**: Ok, Warning, Danger.
+- **Tier**: Molecule (owner/admin) · **Purpose**: one metric tile on the admin Health screen or the SCR-120 overview — ingestion lag, WS state, DB status, engine FPS, a slice's counts — each with threshold-based tone and its own loading, error, unavailable and stale state.
+- **Props**: `label` · `value` · `unit` · `state: "loading"|"ready"|"error"|"unavailable"` · `tone: "ok"|"warning"|"danger"|"stale"` · `asOf?` · `lastGoodAt?` · `detail?` · `stopsWorking?` · `onRetry?` · `href` · `env?` · `sparkline?: number[]`.
+- **A11y**: `role="region"` labelled by its heading, which is the link; the state word always rendered with one glyph shape per tone (check, triangle, octagon, clock); "Attention:" prefixes a warning; no number for a field not received; age text never live; the shell announces transitions once (degraded or down assertive, recovery polite).
+- **Tokens**: inherits CMP-050 Card + CMP-024 Sparkline; `color.surface.raised`, `radius.card`, `color.text.primary`/`secondary`/`tertiary`, `color.status.success.strong`, `color.status.warning.strong`, `color.status.danger.strong`, `color.data-confidence.stale.indicator`, `type.num.base`.
+- **Storybook**: Ok, Warning, Danger, Loading, Error, Unavailable, Stale, WithEnvBadge, NotReceived.
 - **Tests**: unit, visual, axe.
 
 ### CMP-179 FeatureFlagRow (admin feature flags screen)
