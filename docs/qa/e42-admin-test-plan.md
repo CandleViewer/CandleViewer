@@ -1205,12 +1205,11 @@ order is placed after a disable in AD-X-01; and the view-as entry criterion in s
 - the group's `contract` cases are green in CI;
 - the D02 frames the group's cases cite are signed off, and any §9 question a case depends on is answered or
   the case is marked blocked on it;
-- for S03's view-as cases (AD-S03-05, AD-S03-N01 to AD-S03-N03, AD-S03-N06 to AD-S03-N08 and
-  AD-S03-N11), `POST /admin/view-as` is mounted: on `main` today it is not (its `rbac/matrix.yaml` row is
-  `not_mounted`, and AC-ADM-22 waits on #3085's server slice), so no context can start and those cases
-  are blocked; AD-S03-05's protective-write half also needs the four handlers, E39-S03 (`setKillSwitch`),
-  E29-T07 (`amendOrder`, `setPositionTpSl`) and E34-S03 (`amendTradeGroup`), since until each is mounted
-  the guard refuses it like any other write;
+- for S03's view-as cases (AD-S03-05, AD-S03-N01 to AD-S03-N03, AD-S03-N06 to AD-S03-N08 and AD-S03-N11),
+  `POST /admin/view-as` is mounted, as it is on `main` since #3085's server slices (AC-ADM-22 is
+  `test_ac_adm_22_view_as_cannot_mutate`); AD-S03-05's protective-write half also needs the four handlers,
+  E39-S03 (`setKillSwitch`), E29-T07 (`amendOrder`, `setPositionTpSl`) and E34-S03 (`amendTradeGroup`), since
+  until each is mounted the guard refuses it like any other write;
 - for S08's latch cases (AD-S08-02 and AD-S08-03), Q-7 is answered: until the story's contract slice
   registers the acknowledge operation, its step-up class and its audit action, both are blocked; so are
   AD-S05-07 (Q-29) and AD-S06-04's "stale since" half (Q-27).
