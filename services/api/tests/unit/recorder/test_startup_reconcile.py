@@ -4,7 +4,7 @@ back, and nothing stops before the warm-up gate opens. The step order: `test_ses
 from __future__ import annotations
 
 import copy
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 
 import pytest
@@ -12,12 +12,25 @@ from structlog.testing import capture_logs
 
 from candleviewer.recorder.errors import RecorderGateOpenError
 from candleviewer.recorder.policy import PolicyConfig, RecordingPolicy
-from candleviewer.recorder.sessions import SessionManager, startup_reconcile
+from candleviewer.recorder.sessions import PositionSeed, SessionManager, startup_reconcile
+from candleviewer.statechart.factory import default_clock
+from candleviewer.statechart.persistence import (
+    ChainTripLatch,
+    InMemoryDrainJournal,
+    MachineKey,
+    Persister,
+    Restorer,
+    SealedSnapshot,
+    hmac_sealer,
+)
+from candleviewer.statechart.registry import Registry
 from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, FakeSeed, Mem, no_restore
 from tests.unit.recorder._session_fakes import MemRecorderStore, UsClock
+from tests.xstate_contract._harness import Audit, Keys, Pager, Repo
 
 GRACE = 1_800.0  # `PolicyConfig.autostop_grace_s`
 CHART = {"kind": "chart", "id": "c1"}
+KEY = MachineKey("recording", "ETHUSDT", "demo")
 
 
 @pytest.fixture
@@ -35,10 +48,15 @@ async def cold(
     await p.stop()
 
 
-async def _startup(policy: RecordingPolicy, pairs: list[tuple[str, str]] | None = None) -> None:
+async def _startup(
+    policy: RecordingPolicy,
+    pairs: list[tuple[str, str]] | None = None,
+    seed: PositionSeed | None = None,
+    restore: Callable[[], Awaitable[None]] = no_restore,
+) -> None:
     sessions = SessionManager(MemRecorderStore(), now_us=UsClock(0), audit=FakeAudit())
-    seed = FakeSeed(pairs or [])
-    await startup_reconcile(sessions, policy, process_start_us=0, restore_b11=no_restore, seed=seed)
+    seed = seed or FakeSeed(pairs or [])
+    await startup_reconcile(sessions, policy, process_start_us=0, restore_b11=restore, seed=seed)
 
 
 def _starts(audit: FakeAudit) -> list[tuple[str, str, str, str | None]]:
@@ -189,3 +207,92 @@ async def test_adoption_is_refused_once_the_gate_is_open(cold: RecordingPolicy) 
         await cold.adopt_recorded([])
     with pytest.raises(RecorderGateOpenError):
         await cold.adopt_positions([])
+
+
+class Down:
+    """A position source that is deployed and down."""
+
+    async def open_positions(self) -> list[tuple[str, str]]:
+        raise OSError("oms down")
+
+
+async def test_a_failing_step_leaves_the_gate_closed_and_nothing_running_and_a_retry_completes(
+    cold: RecordingPolicy, store: Mem, audit: FakeAudit, bus: FakeBus
+) -> None:
+    await store.upsert_manual("BTCUSDT", "u-1", ("trades",), 50, "demo")
+    with pytest.raises(OSError, match="oms down"):
+        await _startup(cold, seed=Down())  # the rows were adopted; nothing was started
+    assert cold.position_open("SOLUSDT") and (audit.records, bus.events) == ([], [])
+    await _startup(cold)  # the runtime's retry
+    assert cold.leaf("BTCUSDT") == "recording" and not cold.position_open("SOLUSDT")
+
+
+async def _snapshot(clock: FakeClock, *, held: bool) -> tuple[Restorer, SealedSnapshot]:
+    """ETHUSDT's B11 chart as a dead process left it: recording for a position, or, once that
+    closed, lingering until the deadline it set then."""
+    old = RecordingPolicy(
+        disk_refuses=bool, bus=FakeBus(), audit=FakeAudit(), env="demo", now=clock, recorded=Mem()
+    )
+    old.positions_reloaded()
+    await old.on_position_opened("ETHUSDT", "p1")
+    if not held:
+        await old.on_position_closed("ETHUSDT", "p1")
+    registry, journal, repo = Registry(), InMemoryDrainJournal(), Repo()
+    seal = hmac_sealer(Keys(), registry.get("recording"))
+    await Persister(
+        repo=repo, journal=journal, audit=Audit(), seal=seal, machine_hash_of=registry.hash,
+        pager=Pager(),
+    ).persist(old._charts["ETHUSDT"], key=KEY)  # fmt: skip
+    await old.stop()
+    restorer = Restorer(
+        registry=registry, keys=Keys(), journal=journal, audit=Audit(), pager=Pager(),
+        latch=ChainTripLatch(), plugins=lambda _key: [], clock=default_clock(), lane="platform",
+    )  # fmt: skip
+    return restorer, repo.rows[KEY]
+
+
+async def test_a_restored_chart_is_adopted_with_no_second_start_when_the_startup_retries(
+    cold: RecordingPolicy, store: Mem, audit: FakeAudit, clock: FakeClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    restorer, sealed = await _snapshot(clock, held=True)
+    await store.upsert_auto("ETHUSDT", "position_open", {"kind": "position", "id": "p1"}, "demo")
+    sent: list[str] = []
+    send = cold._send_recording
+
+    async def spy(symbol: str, event: str, /, **payload: object) -> bool:
+        sent.append(event)
+        return await send(symbol, event, **payload)
+
+    monkeypatch.setattr(cold, "_send_recording", spy)
+
+    def restore() -> Awaitable[None]:
+        return cold.restore(restorer, KEY, sealed)
+
+    with pytest.raises(OSError, match="oms down"):
+        await _startup(cold, seed=Down(), restore=restore)
+    await _startup(cold, [("ETHUSDT", "p1")], restore=restore)  # the retry restores it again
+    assert cold.leaf("ETHUSDT") == "recording"
+    assert "REASON_ADDED" not in sent and audit.actions() == []  # its reasons, not a new session
+
+
+async def test_a_restored_lingering_chart_keeps_its_persisted_deadline(
+    cold: RecordingPolicy, store: Mem, clock: FakeClock
+) -> None:
+    restorer, sealed = await _snapshot(clock, held=False)
+    persisted = datetime.fromtimestamp(clock() + GRACE, UTC)
+    await store.upsert_auto("ETHUSDT", "position_open", {"kind": "position", "id": "p1"}, "demo")
+    clock.advance(600)
+    await _startup(cold, restore=lambda: cold.restore(restorer, KEY, sealed))
+    assert cold.leaf("ETHUSDT") == "lingering" and cold.linger_until("ETHUSDT") == persisted
+
+
+async def test_a_restored_chart_whose_trigger_is_gone_lingers_from_now(
+    cold: RecordingPolicy, store: Mem, clock: FakeClock
+) -> None:
+    restorer, sealed = await _snapshot(clock, held=True)
+    await store.upsert_auto("ETHUSDT", "position_open", {"kind": "position", "id": "p1"}, "demo")
+    clock.advance(600)  # the position closed while the process was down: none is seeded
+    await _startup(cold, restore=lambda: cold.restore(restorer, KEY, sealed))
+    deadline = datetime.fromtimestamp(clock() + GRACE, UTC)
+    assert cold.leaf("ETHUSDT") == "lingering" and cold.linger_until("ETHUSDT") == deadline

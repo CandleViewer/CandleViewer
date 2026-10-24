@@ -1056,8 +1056,10 @@ class RecordingPolicy:
         """Rehydrate one symbol's chart via `statechart.persistence` only. Reasons already
         recorded in the snapshot are adopted, so no duplicate session (REASON_ADDED from
         idle/stopped) is opened for a symbol that was recording or lingering."""
-        res = await restore_chart(restorer, key, sealed)
         symbol = key.entity_id
+        if symbol in self._charts:
+            return  # a retried startup: this chart is already restored (and registered)
+        res = await restore_chart(restorer, key, sealed)
         self._register(symbol, res.interpreter)
         s = self._sym(symbol, kind="protected") or _Sym()
         s.started_reasons = {r for r in res.interpreter.context.get("reasons") or ()}
