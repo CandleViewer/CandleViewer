@@ -384,19 +384,23 @@ async def test_a_join_naming_pinned_without_the_step_up_is_403_and_records_nothi
     assert fake.entries["SOLUSDT"] == held and env.actions() == []
 
 
+@pytest.mark.parametrize("cause", sorted(rc.HIDDEN_CAUSES))
 @pytest.mark.parametrize("extra", [{"retention_days": 7}, {"pinned": True}])
-async def test_a_join_naming_retention_records_its_denied_twin_ahead(extra: dict[str, Any]) -> None:
+async def test_a_join_naming_retention_records_its_denied_twin_ahead(
+    extra: dict[str, Any], cause: Any
+) -> None:
     """The route records the request (C-2.9): a join honours no named pin or retention, so it
     writes the denied `retention.change` first, ids only, reason `joined`; the 200 is the
     same as a plain join's. Unwritten: 503 and nothing changes."""
     plain_fake, fake = FakeRecorder(), FakeRecorder()
-    for f in (plain_fake, fake):
-        held = f.put("SOLUSDT", "position_open", streams=STREAMS, retention_days=90)
+    plain_fake.put("SOLUSDT", cause, streams=STREAMS, retention_days=90)
+    held = fake.put("SOLUSDT", cause, streams=STREAMS, retention_days=90)
     env, plain = _Env(fake, *W, owner=False, elevated=True), _Env(plain_fake, *W, owner=False)
     plain.caller = env.caller
     env.fail_audit = True
     refused = await env.add(symbol="SOLUSDT", **extra)
-    assert (refused.status_code, fake.entries["SOLUSDT"]) == (503, held)
+    assert (refused.status_code, refused.json()["code"], fake.entries["SOLUSDT"]) == (
+        503, "audit_unavailable", held)  # fmt: skip
     env.fail_audit = False
     joined, alone = await env.add(symbol="SOLUSDT", **extra), await plain.add(symbol="SOLUSDT")
     assert (joined.status_code, joined.content) == (200, alone.content)
