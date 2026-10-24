@@ -8,7 +8,8 @@ things are random by design: the default profile each account gets from the `trg
 trigger, and the invite's token. Nothing here is a credential, an exchange key, a token or anyone's
 personal data, and `tests/unit/test_admin_fixture_handles.py`, `test_admin_fixture_seed.py`,
 `test_admin_corrupt_chain_fixture.py` and `test_admin_flag_overrides_fixture.py` pass every value,
-and this file, through the log redactor to keep it so.
+and this file, through the log redactor to keep it so. One value is left out of that scan, by name:
+AUDIT-SECRET-MARKER's marker, which is secret-shaped on purpose (see its section).
 
 | File                 | What it holds                                                                                   |
 | -------------------- | ----------------------------------------------------------------------------------------------- |
@@ -21,6 +22,9 @@ and this file, through the log redactor to keep it so.
 | `world.py`           | `require_world`: the rows of slice A's world a later seed needs, each named if missing          |
 | `oob_writes.py`      | OOB-WRITES: four writes as `cv_app` outside the API, with no audit record, and their check      |
 | `forged_seal.py`     | SC-FORGED-SEAL: a snapshot changed after it was sealed, `forged_row` and its checks             |
+| `audit_session.py`   | The checked pool and real audit writer the writer-based seeds write through                     |
+| `secret_marker.py`   | AUDIT-SECRET-MARKER: `seed_secret_marker`, an entry whose states carry a marker to redact       |
+| `concurrent_rows.py` | AUDIT-CONCURRENT: `seed_concurrent_rows`, 1,000 audit rows from two connections, one raw        |
 | `payloads/`          | The health reports and the overview, as JSON bodies of the contract's models                    |
 | `README.md`          | This file                                                                                       |
 
@@ -296,6 +300,69 @@ await check_forged_seal(relational, keys, now=now)
   any read.
 - `tests/integration/admin/test_admin_fixture_b4a_pg.py` runs the three seeds on Postgres 16,
   OOB-WRITES in its own database as `cv_app` through a stand-in role.
+
+## The secret marker (AUDIT-SECRET-MARKER)
+
+Into a migrated test database, from `services/api`; `tmp_path` holds the writer's WAL file:
+
+```python
+from tests.fixtures.admin.secret_marker import check_secret_marker, seed_secret_marker
+
+await seed_secret_marker(pg_dsn, tmp_path)  # pg_dsn: the SQLAlchemy asyncpg URL of a test database
+await check_secret_marker(pg_dsn)
+```
+
+- **What it writes:** one `api_key.import` entry through the real audit writer, which it builds on
+  `pg_dsn` (it cannot point at another database). Its `before_state` holds the marker under `api_key` and
+  its `after_state` under `api_secret`, as a caller's mistake would. The audit redactor replaces a value by
+  the name of its field, so the entry is stored with `<redacted:secret>` in both, and no read of it shows
+  the marker: AD-S04-07's scan of the drawer's DOM and of the exported file finds none. The entry's
+  `actor_label`, `fixture-secret-marker`, is how a case finds it.
+- **The marker:** `FIXTURE-SECRET-` and 24 letters and digits (`MARKER` in `secret_marker.py`). It is no
+  credential, and it is shaped like an exchange key so that the log redactor replaces it too. That is why
+  the fixtures' secret scan leaves this one value out, by name, and no other, and why it is in no file of
+  this directory but that module.
+- **Idempotent and self-checking:** a second run finds the entry and writes nothing. `check_secret_marker`
+  raises `FixtureCheckError` unless the one entry is stored with the redacted states and the marker is in
+  none of its columns; it never prints a stored value.
+- **Test databases only, because it is permanent:** an entry can never be removed (C-5.7), so a database
+  not named `test` or `*_test` is refused with `FixtureRefused` before anything is read or written, and
+  before a writer is built. It needs no row of slice A's world.
+- `tests/integration/admin/test_admin_fixture_b4b_pg.py` reads the entry back as the Owner's raw read and
+  the export's batch read it; `tests/unit/test_admin_secret_marker_fixture.py` runs the real writer over an
+  in-memory `audit_log`.
+
+## The concurrent rows (AUDIT-CONCURRENT)
+
+```python
+from datetime import UTC, datetime
+
+from tests.fixtures.admin.concurrent_rows import check_concurrent_rows, seed_concurrent_rows
+
+first, last = await seed_concurrent_rows(pg_dsn, now=datetime.now(UTC))
+await check_concurrent_rows(pg_dsn)  # then verify from_id=first, to_id=last
+```
+
+- **What it writes:** AC-ADM-16's 1,000 audit rows from two connections, in 500 rounds. In each round
+  one insert goes through the app's insert path (the audit repository's `insert`, which the writer's
+  flusher calls) and one is a raw `INSERT` on a psycopg connection, which meets the chain lock only in
+  the trigger; the two race for it. Either may win a round, but a round ends before the next begins, so
+  the rows alternate in pairs. The trigger chains both, ids being drawn under the lock (0045), so a
+  verify over `first` to `last` must find no break. The rows are `auth.login` entries by
+  `fixture-concurrent-app` and `fixture-concurrent-raw`.
+- **The range:** the answer is the ids of the first and the last row, for a verify's `from_id` and
+  `to_id`. A verify over it passes whatever else lies in it, unless that includes an altered entry: do not
+  load AUDIT-CORRUPT's chain into the same range.
+- **Idempotent and self-checking:** a second run finds the rows and writes nothing; a part of them is
+  refused, as rows can never be removed. `check_concurrent_rows` raises `FixtureCheckError` unless each
+  connection wrote its 500, the rows alternate in pairs, and the app's own verify over them finds no
+  break.
+- **Test databases only, because it is permanent:** a database not named for tests is refused with
+  `FixtureRefused` before anything is read or written, on the pool and on the psycopg connection alike.
+  It needs no row of slice A's world.
+- `tests/unit/test_admin_concurrent_rows_fixture.py` shows with a barrier that the two inserts of a round
+  are in flight together; `tests/integration/admin/test_admin_fixture_b4b_pg.py` runs the seed on
+  Postgres 16.
 
 ## The degraded snapshot (SC-CHAIN-TRIPS)
 
