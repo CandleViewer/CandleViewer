@@ -6,10 +6,12 @@ from __future__ import annotations
 import copy
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.recorder import policy as policy_module
 from candleviewer.recorder.errors import RecorderGateOpenError
 from candleviewer.recorder.policy import PolicyConfig, RecordingPolicy
 from candleviewer.recorder.sessions import PositionSeed, SessionManager, startup_reconcile
@@ -265,6 +267,14 @@ async def test_a_restored_chart_is_adopted_with_no_second_start_when_the_startup
         return await send(symbol, event, **payload)
 
     monkeypatch.setattr(cold, "_send_recording", spy)
+    restored: list[MachineKey] = []
+    real_restore = policy_module.restore_chart
+
+    async def counted(restorer: Restorer, key: MachineKey, sealed: SealedSnapshot) -> Any:
+        restored.append(key)
+        return await real_restore(restorer, key, sealed)
+
+    monkeypatch.setattr(policy_module, "restore_chart", counted)
 
     def restore() -> Awaitable[None]:
         return cold.restore(restorer, KEY, sealed)
@@ -274,6 +284,7 @@ async def test_a_restored_chart_is_adopted_with_no_second_start_when_the_startup
     await _startup(cold, [("ETHUSDT", "p1")], restore=restore)  # the retry restores it again
     assert cold.leaf("ETHUSDT") == "recording"
     assert "REASON_ADDED" not in sent and audit.actions() == []  # its reasons, not a new session
+    assert restored == [KEY]  # the guard comes first: no second, unregistered interpreter
 
 
 async def test_a_restored_lingering_chart_keeps_its_persisted_deadline(
