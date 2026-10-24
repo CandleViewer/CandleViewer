@@ -1313,7 +1313,8 @@ class OmsCommandPort:
     async def _amend_refused(
         self, row: OrderRow, code: str, reason: str, detail: Mapping[str, str | None], *, by: float
     ) -> dict[str, Any]:
-        """A refusal, nothing recorded or sent, audited ahead (`orders.amend` denied, C-2.9)."""
+        """A refusal, nothing recorded or sent, audited ahead (`orders.amend` denied, C-2.9),
+        within `AMEND_AUDIT_GRACE_S` past the amend's bound, as `_unread`'s."""
         await self._audit_order(
             row.id,
             row.exchange_account_id,
@@ -1322,7 +1323,7 @@ class OmsCommandPort:
             "warning",
             reason,
             detail,
-            by=by,
+            by=by + AMEND_AUDIT_GRACE_S,
         )
         _log().warning("oms_amend_refused", order_link_id=row.order_link_id, code=code)
         return {"ok": False, "error_code": code}
