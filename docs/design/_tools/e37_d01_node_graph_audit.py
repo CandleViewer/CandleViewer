@@ -117,6 +117,7 @@ CITES: dict[tuple[str, int], str] = {
     ("14", 1865): "warning banner above 120 nodes",
     ("14", 1866): "(**audited**). **Stories:** US-RULE-009",
     ("14", 1868): "auto-layout result reviewed on a 60-node graph",
+    ("14", 1869): "**UX research (E37-D01):**",
     ("14", 1874): "which editor it opens in.",
     ("14", 1877): "'Opens in the form editor'",
     ("14", 1973): "the round-trip diff as a path table",
@@ -198,6 +199,8 @@ CITES: dict[tuple[str, int], str] = {
     ("24", 3014): "class TemporalNode(BaseModel):",
     ("24", 3368): "**Form subset** (`form_compatible == true`)",
     ("24", 3370): "this rule uses graph-only features",
+    ("24", 3372): 'a disagreement shows as "server differs"',
+    ("24", 4844): "The `profile.*` records (E28-T02, #906)",
     ("24", 3374): "`MULTIPLE_SINKS` means the actions hang off more than one condition",
     ("22", 7083): "`editor` records which editor last authored it",
     ("22", 7200): "type: trigger.metric",
@@ -272,6 +275,7 @@ CITES: dict[tuple[str, int], str] = {
     ("E36-D01", 158): "### 5.5 R5",
     ("E35-D01", 317): "## 7. Terminology check",
     ("E35-D01", 321): "the graph node (E37-D01)",
+    ("form.py", 1): "Form-subset detection",
     ("form.py", 23): "arithmetic operand in",
     ("form.py", 31): "temporal op '{node.op}' is graph-only",
     ("form.py", 35): "temporal node must directly wrap a comparison",
@@ -899,11 +903,19 @@ def check_cites(text: str, label: str = "memo") -> tuple[list[str], list[str], i
 
 
 def check_rules(text: str) -> list[str]:
-    const = read(FILES["CONSTITUTION.md"])
+    """Every cited ``C-x.y`` must be declared: a line of CONSTITUTION.md opening ``**C-x.y``.
+
+    The same rule as ``scripts/check_rule_refs.py`` (a mention elsewhere is not a declaration).
+    """
+    declared = {
+        m.group(1)
+        for row in lines_of(FILES["CONSTITUTION.md"])
+        if (m := re.match(r"\*\*(C-\d+\.\d+)\b", row.strip()))
+    }
     return [
-        f"FAIL rule id not in CONSTITUTION.md: {rid}"
+        f"FAIL rule id not declared in CONSTITUTION.md: {rid}"
         for rid in sorted(set(re.findall(r"\bC-\d+\.\d+\b", text)))
-        if f"**{rid}" not in const and f"{rid} " not in const
+        if rid not in declared
     ]
 
 
