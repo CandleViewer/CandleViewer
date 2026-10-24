@@ -1613,8 +1613,8 @@ The E14 drawings-persistence gates (E14-X03, #549: five `.semgrep/cv-drawings-*`
 filter, an owner taken from a request, geometry that skips the bounded models, batch ids resolved
 before any change and pixel geometry, with reviewed `nosemgrep` annotations on the four statements that
 are unscoped by design) are explained in [`security/ci-gates-e14.md`](security/ci-gates-e14.md),
-with the render-path guards: two more rules, the scoped ESLint ban, the inline-suppression check
-and the production-bundle guard.
+with the render-path guards: two more rules, the scoped ESLint ban, the inline-suppression check,
+the production-bundle guard and the `/drawings` nosniff test.
 
 ### 12.3 Required status checks on `main`
 
