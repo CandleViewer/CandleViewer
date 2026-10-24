@@ -197,6 +197,9 @@ jobs:
               - 'tools/a11y/**/*.py'
               - 'packages/fixtures/**'
               - '.github/workflows/_job-coverage.yml'
+              # Python under docs/ (design-audit tools, research scripts) is scanned by the same
+              # Semgrep/Bandit lane; #4325 merged a design tool green without it (#4348).
+              - 'docs/**/*.py'
             engine:
               - 'packages/chart-engine/**'
               - 'packages/rule-graph/**'
