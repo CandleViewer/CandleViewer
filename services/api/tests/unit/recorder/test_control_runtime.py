@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI
+from starlette.datastructures import State
 
 from candleviewer.api.recording_writes import make_recording_writes_router
 from candleviewer.app import bind_recording_runtime
@@ -235,11 +236,11 @@ def test_the_hour_windows_are_bounded() -> None:
 
 
 def test_the_composition_binds_the_runtime_only_when_the_wiring_exists(env: Any) -> None:
-    state = SimpleNamespace(recording_control="stored", recording_writer=None,
-                            recording_runtime=None)  # fmt: skip
+    state = State({"recording_control": "stored", "recording_writer": None,
+                   "recording_runtime": None})  # fmt: skip
     bind_recording_runtime(state, None, CONFIG, 30)
-    assert vars(state) == dict(recording_control="stored", recording_writer=None,
-                               recording_runtime=None)  # fmt: skip
+    assert (state.recording_control, state.recording_writer, state.recording_runtime) == (
+        "stored", None, None)  # fmt: skip
     bind_recording_runtime(state, _Wiring(env.p, env.rows, None, "demo"), CONFIG, 30)
     bound = state.recording_writer
     assert isinstance(bound, RuntimeRecordingControl)

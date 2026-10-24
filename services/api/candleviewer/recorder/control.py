@@ -123,7 +123,9 @@ class RecordingControl(RecordingReads, Protocol):  # `add` also returns the entr
     # it changes nothing and raises `StopRefused`; `update` refuses with `ChangeRefused`.
     # `restricted` is the caller's view, from the server-side principal only (C-12.4), never
     # from a request: an unpin or a lower retention it does not cover raises `RelaxRefused`
-    # before any write, and an add onto a row it hides is a join (`held_hidden`).
+    # before any write, and an add onto a row it hides is a join (`held_hidden`). `add`,
+    # `update` and `pin` raise it unrecorded (`recorded=False`: the caller writes the denied
+    # record) when the port's own check refuses, recorded when the policy's refuses.
     async def add(self, symbol: str, spec: EntrySpec, actor: Actor, *,
                   restricted: bool) -> tuple[RecordedEntry, RecordedEntry | None]: ...  # fmt: skip
     # `add` raises the policy's `RecorderInvalidUpdateError` and `RecorderSymbolLimitError`
