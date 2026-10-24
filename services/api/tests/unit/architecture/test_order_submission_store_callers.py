@@ -36,6 +36,11 @@ account of the process's own environment, before anything hydrates (20 Sec.6.2).
 waiting rows of one key through `RecordedStopRepository`, with the account the key names (C-12.4):
 its callers are the stop-request gate and the startup pass (H3), after the submit pipeline's or
 B1's own admission, and no route reaches it.
+`oms/exits.py` (slice 4, S4-C) reads one key's recorded stops in force (`live_for_key`) for an
+amend's ratchet (ruling Q4), and nothing else of this surface: the key is the one of an order its
+own `scope` read in the caller's `AccountScope` (C-12.4, SR-E29-13), or of a row cancel-all
+admitted by account (04 Sec.7.2.2 row 14); it records, settles and sweeps nothing, and no route
+reaches it before that admission.
 """
 
 from __future__ import annotations
@@ -58,6 +63,7 @@ NAMES = re.compile(
 ALLOWED = frozenset(
     {
         "oms/commands.py",
+        "oms/exits.py",
         "oms/fakes.py",
         "oms/idempotency.py",
         "oms/order_steps.py",
