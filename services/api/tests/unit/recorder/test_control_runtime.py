@@ -26,7 +26,7 @@ from candleviewer.observability.context import bind_context
 from candleviewer.recorder import control as rc
 from candleviewer.recorder.control_runtime import HourWindows, RuntimeRecordingControl
 from candleviewer.recorder.policy import PolicyConfig, RecordingPolicy, user_actor
-from candleviewer.recorder.status import Budget
+from candleviewer.recorder.status import Budget, RecordingStatusCache
 from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, Mem
 from tests.unit.recorder._s3c_policy import S3cPolicy
 
@@ -88,7 +88,9 @@ async def env(clock: FakeClock, bus: FakeBus, audit: FakeAudit, store: Mem) -> A
         _Wiring(p, rows, None, "demo"), config=CONFIG, default_retention_days=30,
         now=lambda: datetime.fromtimestamp(clock.t, UTC),
     )  # fmt: skip
-    yield SimpleNamespace(p=p, rows=rows, c=control, clock=clock, audit=audit, disk=disk)
+    cache = RecordingStatusCache(lambda: control, None)
+    yield SimpleNamespace(p=p, rows=rows, c=control, clock=clock, audit=audit, disk=disk,
+                          cache=cache)  # fmt: skip
     await policy.stop()
 
 
@@ -137,6 +139,8 @@ async def test_a_start_refusal_heads_the_refusals_of_a_stored_row(env: Any) -> N
     env.clock.advance(CONFIG.autostart_delay_s)
     await env.p.tick()
     assert (await _one(env.c, "SOLUSDT")).refusals == ("disk_pressure", "chart_open")
+    assert env.p.start_refused()[0].symbol == "SOLUSDT"  # refused, yet answered from its row
+    assert [e.symbol for e in (await env.c.status()).entries] == ["SOLUSDT"]  # once
 
 
 async def test_a_restricted_add_onto_a_row_a_position_holds_is_a_join(env: Any) -> None:
@@ -325,3 +329,48 @@ async def test_the_policys_records_through_the_route_carry_the_request_and_the_a
     assert [a for a, _ in mine] == ["recorder.start", "retention.change"]
     assert {(r["request_id"], r["actor_user_id"]) for _, r in mine} == {
         (caller.p.request_id, OWNER.id)}  # fmt: skip
+
+
+_FULL = ("ADAUSDT", "BTCUSDT", "DOTUSDT", "ETHUSDT", "XRPUSDT")  # CONFIG.max_symbols manual rows
+
+
+async def _refused_at_the_cap(env: Any) -> None:
+    """The cap full of manual rows; SOLUSDT's chart start refused for `symbol_cap` (the 22
+    example), and a position on LINKUSDT and AVAXUSDT refused too; AVAX also has a chart."""
+    for symbol in _FULL:
+        await env.c.add(symbol, rc.EntrySpec(), OWNER, restricted=False)
+    for symbol in ("SOLUSDT", "AVAXUSDT"):
+        await env.p.on_chart_opened(symbol, "c1")
+    for symbol in ("LINKUSDT", "AVAXUSDT"):
+        await env.p.on_position_opened(symbol, "p1")
+    env.clock.advance(CONFIG.autostart_delay_s)
+    await env.p.tick()
+
+
+async def test_a_start_refused_symbol_with_no_row_is_in_the_owners_status(env: Any) -> None:
+    await _refused_at_the_cap(env)
+    sol = await _one(env.c, "SOLUSDT")
+    assert (sol.state, sol.reasons, sol.refusals) == (
+        "idle", ("chart_open",), ("symbol_cap", "chart_open"))  # fmt: skip
+    symbols = [e.symbol for e in (await env.c.status()).entries]
+    assert symbols == sorted([*_FULL, "AVAXUSDT", "LINKUSDT", "SOLUSDT"])  # each once
+    await env.cache.refresh_once()
+    owner = {row["symbol"]: row for row in env.cache.body(False)["symbols"]}
+    assert owner["SOLUSDT"] == {"symbol": "SOLUSDT", "state": "idle", "rows_last_hour": 0,
+                                "resyncs_last_hour": 0, "lingering": False,
+                                "refusal": "symbol_cap"}  # fmt: skip
+
+
+async def test_a_restricted_status_drops_hidden_reasons_of_start_refused_symbols(env: Any) -> None:
+    """Only a hidden cause (a position) holds LINKUSDT: the restricted view lists it not at all;
+    AVAXUSDT is also held by a chart: listed, without the hidden reason."""
+    await _refused_at_the_cap(env)
+    avax = await _one(env.c, "AVAXUSDT")
+    assert avax.reasons == ("position_open", "chart_open")
+    seen = rc.restricted_view(avax)
+    assert seen is not None and (seen.reasons, seen.refusals) == (
+        ("chart_open",), ("symbol_cap", "chart_open"))  # fmt: skip
+    await env.cache.refresh_once()
+    restricted = [row["symbol"] for row in env.cache.body(True)["symbols"]]
+    assert "LINKUSDT" not in restricted and "AVAXUSDT" in restricted
+    assert "position_open" not in str(env.cache.body(True))
