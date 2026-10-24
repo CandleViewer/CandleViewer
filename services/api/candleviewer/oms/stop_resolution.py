@@ -34,8 +34,10 @@ asks for it (its cap, its cooldown, its metric and its pages) is slice H3's.
    reason `in_flight_resolved`. A history miss decides nothing only where it can hide a match
    (`SPAN_HELD`): a request older than the venue's span (24 Sec.14.1) whose position is flat, or
    older than a demo venue's retention whatever its position, is held; while the position is
-   open on its side a live miss past the span still decides. A request still listed whose rows
-   the read only matched, all answered already, is held by its entry's order (`WAITING_ENTRY`).
+   open on its side a live miss past the span still decides, and a key whose position, open on
+   either side, shows no stop at all (`shows_no_stop`) is never held on this rule. A request
+   still listed whose rows the read only matched, all answered already, is held by its entry's
+   order (`WAITING_ENTRY`).
 
 Nothing here ends a row, materialises one, binds or releases an `exchange_order_id` or tells B1 a
 stop was seen or lost (INV-B1-f).
@@ -59,7 +61,7 @@ __all__ = [
     "ENTRY_HELD", "HISTORY_LEAD_S", "HISTORY_SPAN_S", "RESTORE_HELD", "SPAN_HELD", "TRAIL_HELD",
     "EntryState", "Move", "Outcome", "PositionState",
     "Reading", "RequestDecision", "StopRequest", "VoidReason", "decide", "full_shows",
-    "group_requests", "order_matches", "position_state", "trail_unreadable",
+    "group_requests", "order_matches", "position_state", "shows_no_stop", "trail_unreadable",
 ]  # fmt: skip
 
 #: The order history is read from this long before the request (21 Sec.3.3.11).
@@ -204,6 +206,17 @@ def trail_unreadable(row: RecordedStopRow, position: Position | None) -> bool:
     )
 
 
+def shows_no_stop(position: Position | None) -> bool:
+    """A position open on either side that shows no stop at all: no stop-loss and no trail (a
+    take-profit alone protects nothing, C-2.6). A history miss never holds its key."""
+    return (
+        position is not None
+        and position.qty > 0
+        and position.stop_loss is None
+        and position.trailing_stop_distance is None
+    )
+
+
 def order_matches(row: RecordedStopRow, order: Order, *, since_us: int) -> bool:
     """An order of the row's key that closes its side, created since `since_us`, of the row's
     kind: a Partial one at its trigger and size, a Full one at its trigger, a trail by its kind
@@ -297,7 +310,10 @@ def _decide(request: StopRequest, reading: Reading, later: frozenset[StopKind]) 
     if entry == "resting":
         return _whole(request, state, "kept", "entry_resting")
     since = _us(request.created_at) - _LEAD_US
-    if (since < reading.history_from_us and state == "flat") or since < reading.retention_from_us:
+    past = (
+        since < reading.history_from_us and state == "flat"
+    ) or since < reading.retention_from_us
+    if past and not shows_no_stop(reading.position):
         return _held(request, state, SPAN_HELD)  # a miss there could hide a match
     return _whole(request, state, "in_flight_resolved", "in_flight_resolved")
 
