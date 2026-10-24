@@ -51,8 +51,9 @@ __all__ = [
     "STOP_AUDIT_TIMEOUT_S", "SWEEP_REASON", "UNSENT_ENTRY", "UX_RS_IN_FLIGHT", "UX_RS_IN_FORCE",
     "WAITING_ENTRY",
     "FillPosition", "InForce", "InForceWriteAhead", "InsertWriteAhead", "NewRecordedStop",
-    "RecordedStopRow",
-    "RecordedStopStore", "ResolveOutcome", "ResolveWriteAhead", "SettleWriteAhead",
+    "RecordedStopNotBindable", "RecordedStopRow",
+    "RecordedStopStore", "ReleaseWriteAhead", "ResolveOutcome", "ResolveWriteAhead",
+    "SettleWriteAhead",
     "StaleRecordedStop", "StopEnd", "StopKind", "StopOutcome", "StopSource", "StopStatus",
     "SweepScope", "SweepWriteAhead", "SweptStop", "check_in_force", "check_request",
     "check_resolve", "request_cutoff",
@@ -310,6 +311,11 @@ SettleWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
 #: (`audit_record_id`). A hook that raises, or outlasts the store's audit bound
 #: (`WriteAheadTimeout`), leaves nothing written, so the position stays free for the next request.
 InsertWriteAhead = Callable[[tuple[RecordedStopRow, ...]], Awaitable[None]]
+#: Awaited once in a release and bind's transaction, after both updates and before its commit, with
+#: the rows as written (the predecessor, released; the successor, bound): the writer's write-ahead
+#: audit (C-2.9). A hook that raises, or outlasts the audit bound (`WriteAheadTimeout`), leaves both
+#: rows as they were.
+ReleaseWriteAhead = Callable[[tuple[RecordedStopRow, RecordedStopRow]], Awaitable[None]]
 
 
 #: A `put_in_force` hook, awaited before the commit with every row it changed (replaced first), a
@@ -372,6 +378,14 @@ class StaleRecordedStop(OrderStoreError):
         super().__init__("a recorded stop is no longer in flight: nothing was written")
 
 
+class RecordedStopNotBindable(OrderStoreError):
+    """A release and bind met rows it may not change (24 Sec.8.3 rule 7): nothing was written.
+    Names no value, no id."""
+
+    def __init__(self) -> None:
+        super().__init__("a recorded stop cannot take that binding: nothing was written")
+
+
 class RecordedStopStore(Protocol):
     """The recorded stops' writes and reads; no route reaches it (C-12.4)."""
 
@@ -429,6 +443,26 @@ class RecordedStopStore(Protocol):
         text only; `ValueError` before any statement unless the id is text of 1 to
         `MAX_EXCHANGE_ORDER_ID_CHARS` characters (`require_exchange_order_id`); empty outside the
         account."""
+        ...
+
+    async def release_and_bind(
+        self,
+        account_id: UUID,
+        predecessor_id: UUID,
+        successor_id: UUID,
+        exchange_order_id: str,
+        *,
+        at: datetime,
+        write_ahead: ReleaseWriteAhead,
+    ) -> tuple[RecordedStopRow, RecordedStopRow]:
+        """24 Sec.8.3 rule 7's one release, with its successor's bind, in one transaction. The
+        predecessor, live and bound to this id (an end keeps its id, so an ended row is never
+        released), loses it (`released_at` = `at`, never bound again); the successor, live, unbound,
+        never released and of the same account, takes it. If either updates no row both roll back
+        and `RecordedStopNotBindable` is raised, a replay of a committed pair too. `write_ahead`,
+        the writer's audit (C-2.9), is required: awaited with (released, bound) before the commit,
+        bounded; `WriteAheadTimeout` leaves both rows as they were. The first holder's bind is the
+        materialising one's."""
         ...
 
     async def waiting_for_key(

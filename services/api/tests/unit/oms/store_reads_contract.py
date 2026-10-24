@@ -1,13 +1,17 @@
 """Contract of the stores' pairing reads (E29-T05 #848, 24 Sec.8.12): the order bound to an exchange
 order id (`OrderStore.get_by_exchange_order_id`, 21 Sec.13.1 row 12), a position key's live
-recorded stops (`RecordedStopStore.live_for_key`, row 45) and the recorded stops bound to an
-exchange order (`for_exchange_order`, row 46). A mixin beside `SubmissionContract`, on its `h`, run
-on the in-memory stores (`test_submission_fake.py`) and on Postgres
+recorded stops (`RecordedStopStore.live_for_key`, row 45), the recorded stops bound to an
+exchange order (`for_exchange_order`, row 46) and a stop's successor taking that binding
+(`release_and_bind`, 24 Sec.8.3 rule 7). A mixin beside `SubmissionContract`, on its `h`, run on
+the in-memory stores (`test_submission_fake.py`) and on Postgres
 (`test_order_submission_contract_pg.py`), so the fake reads what Postgres reads (C-13.3). Every
 case works in accounts of its own, so a shared database never mixes them."""
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import replace
+from datetime import timedelta
 from typing import Any, Final
 from uuid import UUID, uuid4
 
@@ -15,9 +19,13 @@ import pytest
 
 from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories.orders import NewOrder
-from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
+from candleviewer.storage.repositories.recorded_stops import (
+    RecordedStopNotBindable,
+    RecordedStopRow,
+)
 from tests.unit.oms.submission_contract import (
     EVENT,
+    HOOKS,
     SEND,
     T0,
     TP,
@@ -26,11 +34,14 @@ from tests.unit.oms.submission_contract import (
     audited,
     entry,
     reduce_only,
+    refuses,
     to,
     trading_stop,
 )
 
 XID: Final = "1b3c5d7e-9f01-4a23-b456-789abcdef012"  # made up: the shape of an exchange order id
+XID2: Final = "7d6c5b4a-3210-4fed-8cba-987654321098"
+RELEASED: Final = T0 + timedelta(minutes=1)
 
 
 def bound(xid: str) -> Move:
@@ -65,6 +76,27 @@ async def live_stop(h: Harness, account: UUID, status: str = "pending") -> Recor
     if status != "pending":
         await advance(h, account, stop, status)
     return stop
+
+
+async def bound_stop(h: Harness, account: UUID, end: str | None = None) -> RecordedStopRow:
+    """A stop-loss bound to `XID`, answered, or taken on to `end` (it keeps the id)."""
+    stop = await live_stop(h, account)
+    h.bind_stop(stop.id, XID)
+    await advance(h, account, stop, end or "answered")
+    [row] = await h.stops.for_exchange_order(account, XID)
+    return row
+
+
+async def refused(
+    h: Harness, home: UUID, old: UUID, new: UUID, *, caller: UUID | None = None, xid: str = XID
+) -> None:
+    """The pair is refused before its audit and writes nothing: `XID`'s holders read as before."""
+    held = await h.stops.for_exchange_order(home, XID)
+    with pytest.raises(RecordedStopNotBindable):
+        await h.stops.release_and_bind(
+            caller or home, old, new, xid, at=RELEASED, write_ahead=refuses
+        )
+    assert await h.stops.for_exchange_order(home, XID) == held
 
 
 class StoreReadsContract:
@@ -230,3 +262,138 @@ class StoreReadsContract:
         h.bind_stop((await live_stop(h, mine, "answered")).id, XID)
         for key in ((theirs, XID), (mine, XID.upper()), (mine, XID[:-1]), (mine, XID + "0")):
             assert await h.stops.for_exchange_order(*key) == ()
+
+    # -- a stop's successor takes its order's binding (24 Sec.8.3 rule 7) ----------------------
+
+    @pytest.mark.parametrize(
+        ("held", "taking"),
+        [("answered", "pending"), ("in_force", "pending"), ("answered", "in_force")],
+        ids=["answered_to_pending", "in_force_to_pending", "answered_to_in_force"],
+    )
+    async def test_release_and_bind_moves_the_binding_to_the_successor_in_one_commit(
+        self, h: Harness, held: str, taking: str
+    ) -> None:
+        """Only `exchange_order_id` and `released_at` change, whichever live status the two rows
+        are in, in the transaction the audit is awaited in, where every other reader still sees the
+        old holder; after it the id lists the successor only, never the released predecessor."""
+        account, _ = h.new_account()
+        old, new = await bound_stop(h, account, held), await live_stop(h, account, taking)
+        [new] = [r for r in await h.stops.live_for_key(account, "BTCUSDT", 0) if r.id == new.id]
+        seen: list[tuple[tuple[RecordedStopRow, RecordedStopRow], tuple[RecordedStopRow, ...]]] = []
+
+        async def audit(rows: tuple[RecordedStopRow, RecordedStopRow]) -> None:
+            seen.append((rows, await h.stops.for_exchange_order(account, XID)))
+
+        released, bound = await h.stops.release_and_bind(
+            account, old.id, new.id, XID, at=RELEASED, write_ahead=audit
+        )
+        assert released == replace(old, exchange_order_id=None, released_at=RELEASED)
+        assert bound == replace(new, exchange_order_id=XID)
+        assert await h.stops.for_exchange_order(account, XID) == (bound,)
+        assert seen == [((released, bound), (old,))]
+
+    async def test_release_and_bind_replay_of_a_committed_pair_is_refused(self, h: Harness) -> None:
+        account, _ = h.new_account()
+        old, new = await bound_stop(h, account), await live_stop(h, account)
+        await h.stops.release_and_bind(
+            account, old.id, new.id, XID, at=RELEASED, write_ahead=audited
+        )
+        await refused(h, account, old.id, new.id)
+
+    @pytest.mark.parametrize("end", ["void", "replaced", "ended"])
+    async def test_release_and_bind_dead_or_ended_predecessor_is_refused(
+        self, h: Harness, end: str
+    ) -> None:
+        """An end keeps its id, and `trg_rs_guard` would admit the release of an ended row, so the
+        store refuses it (R-5)."""
+        account, _ = h.new_account()
+        old = await bound_stop(h, account, end)
+        await refused(h, account, old.id, (await live_stop(h, account)).id)
+
+    async def test_release_and_bind_names_the_id_its_predecessor_holds(self, h: Harness) -> None:
+        account, _ = h.new_account()
+        old, new = await bound_stop(h, account), await live_stop(h, account)
+        await refused(h, account, old.id, new.id, xid=XID2)
+
+    @pytest.mark.parametrize(
+        "state", ["itself", "bound_elsewhere", "released", "void", "replaced", "ended"]
+    )
+    async def test_release_and_bind_successor_must_be_live_unbound_and_unreleased(
+        self, h: Harness, state: str
+    ) -> None:
+        account, _ = h.new_account()
+        old = await bound_stop(h, account)
+        new = old if state == "itself" else await live_stop(h, account)
+        if state in {"bound_elsewhere", "released"}:
+            h.bind_stop(new.id, XID2)
+        if state == "released":  # answered, then a younger row took XID2 from it
+            await advance(h, account, new, "answered")
+            younger = await live_stop(h, account)
+            await h.stops.release_and_bind(
+                account, new.id, younger.id, XID2, at=RELEASED, write_ahead=audited
+            )
+        elif state not in {"itself", "bound_elsewhere"}:
+            await advance(h, account, new, state)
+        await refused(h, account, old.id, new.id)
+
+    @pytest.mark.parametrize("who", ["caller", "predecessor", "successor"])
+    async def test_release_and_bind_across_accounts_is_refused(self, h: Harness, who: str) -> None:
+        (mine, _), (theirs, _) = h.new_account(), h.new_account()
+        home, other, caller = {
+            "caller": (mine, mine, theirs), "predecessor": (theirs, mine, mine),
+            "successor": (mine, theirs, mine),
+        }[who]  # fmt: skip
+        old, new = await bound_stop(h, home), await live_stop(h, other)
+        await refused(h, home, old.id, new.id, caller=caller)
+
+    async def test_release_and_bind_two_successors_at_once_one_wins_and_the_other_is_refused(
+        self, h: Harness
+    ) -> None:
+        account, _ = h.new_account()
+        old = await bound_stop(h, account)
+        successors = [await live_stop(h, account, "answered") for _ in range(2)]
+        both = await asyncio.gather(
+            *(h.stops.release_and_bind(account, old.id, s.id, XID, at=RELEASED, write_ahead=audited)
+              for s in successors),
+            return_exceptions=True,
+        )  # fmt: skip
+        [(released, bound)] = [r for r in both if isinstance(r, tuple)]
+        assert sum(isinstance(r, RecordedStopNotBindable) for r in both) == 1
+        assert released.id == old.id and bound.id in {s.id for s in successors}
+        assert await h.stops.for_exchange_order(account, XID) == (bound,)
+
+    @pytest.mark.parametrize(
+        ("xid", "at", "hook", "error"),
+        [
+            ("", RELEASED, audited, ValueError),
+            ("x" * 65, RELEASED, audited, ValueError),
+            ("a\x00b", RELEASED, audited, StorageQueryFailed),
+            (XID, RELEASED.replace(tzinfo=None), audited, ValueError),
+            (XID, RELEASED, None, ValueError),
+        ],
+        ids=["empty_id", "overlong_id", "nul_id", "naive_time", "no_hook"],
+    )
+    async def test_release_and_bind_malformed_call_is_refused_before_it_writes(
+        self, h: Harness, xid: str, at: Any, hook: Any, error: type[Exception]
+    ) -> None:
+        account, _ = h.new_account()
+        old, new = await bound_stop(h, account), await live_stop(h, account)
+        with pytest.raises(error):
+            await h.stops.release_and_bind(account, old.id, new.id, xid, at=at, write_ahead=hook)
+        assert await h.stops.for_exchange_order(account, XID) == (old,)
+
+    @pytest.mark.parametrize("hook", sorted(HOOKS))
+    async def test_release_and_bind_whose_audit_fails_writes_nothing(
+        self, h: Harness, hook: str
+    ) -> None:
+        account, _ = h.new_account()
+        old, new = await bound_stop(h, account), await live_stop(h, account)
+        audit, raised = HOOKS[hook]
+        with pytest.raises(raised):
+            await h.bounded(0.05).stops.release_and_bind(
+                account, old.id, new.id, XID, at=RELEASED, write_ahead=audit
+            )
+        assert await h.stops.for_exchange_order(account, XID) == (old,)
+        await h.stops.release_and_bind(
+            account, old.id, new.id, XID, at=RELEASED, write_ahead=audited
+        )

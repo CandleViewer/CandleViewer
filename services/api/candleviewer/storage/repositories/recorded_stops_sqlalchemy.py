@@ -32,6 +32,11 @@ Postgres breaks by failing one of the two transactions, nothing written by it (t
 or the read's, which the next request reads again). Ordering that lock, with a race test on
 Postgres, is left to H3: it is `orders_sqlalchemy.py`'s.
 
+`release_and_bind` locks its pair `FOR UPDATE` in id order first, as `settle` and `put_in_force`
+lock theirs, so none of them deadlock; it then releases and binds in one unit of work and awaits
+the writer's write-ahead audit, bounded, before the one commit (C-2.9): a miss on either update,
+or an audit that fails or is late, writes nothing.
+
 `void_orphans_statement` is R10's startup sweep (`RecordedStopStore.void_orphans`): one UPDATE that
 voids the pending entry-attach rows of an order of their account that was never placed (never sent,
 `UNSENT_ENTRY`; or refused by its create's own answer, `REFUSED_ENTRY` with the `REFUSED_BY` event),
@@ -81,7 +86,9 @@ from candleviewer.storage.repositories.recorded_stops import (
     InForceWriteAhead,
     InsertWriteAhead,
     NewRecordedStop,
+    RecordedStopNotBindable,
     RecordedStopRow,
+    ReleaseWriteAhead,
     ResolveOutcome,
     ResolveWriteAhead,
     SettleWriteAhead,
@@ -102,11 +109,11 @@ from candleviewer.storage.repositories.user_roles_sqlalchemy import bounded_writ
 
 __all__ = [
     "STOP_COLUMNS", "STOP_FIELDS", "SYSTEM_STATEMENTS", "UNSCOPED", "SqlAlchemyRecordedStopStore",
-    "for_exchange_order_statement", "for_order_statement", "in_force_for_key_statement",
-    "in_force_statement", "in_given_order", "insert_stops_statement", "live_for_key_statement",
-    "lock_key_statement", "lock_stops_statement", "replace_statement", "resolve_statement",
-    "settle_statement", "stop_row", "to_replace", "void_orphans_statement",
-    "waiting_for_key_statement", "waiting_keys_statement",
+    "bind_statement", "for_exchange_order_statement", "for_order_statement",
+    "in_force_for_key_statement", "in_force_statement", "in_given_order", "insert_stops_statement",
+    "live_for_key_statement", "lock_key_statement", "lock_stops_statement", "release_statement",
+    "replace_statement", "resolve_statement", "settle_statement", "stop_row", "to_replace",
+    "void_orphans_statement", "waiting_for_key_statement", "waiting_keys_statement",
 ]  # fmt: skip
 
 _S = recorded_stops.c
@@ -168,6 +175,34 @@ def for_exchange_order_statement(account_id: UUID, exchange_order_id: str) -> sa
         _S.exchange_account_id == account_id, _S.exchange_order_id == exchange_order_id
     )
     return stmt.order_by(_S.created_at, _S.id)
+
+
+def release_statement(
+    account_id: UUID, record_id: UUID, exchange_order_id: str, at: datetime
+) -> sa.Update:
+    """24 Sec.8.3 rule 7's release (`rs_release`). `trg_rs_guard` admits it in any status, so the
+    status is checked here: an end keeps its id."""
+    stmt = sa.update(recorded_stops).where(
+        _S.exchange_account_id == account_id,
+        _S.id == record_id,
+        _S.exchange_order_id == exchange_order_id,
+        _S.released_at.is_(None),
+        _holds(_S.status, LIVE_STOP_STATUSES),
+    )
+    return stmt.values(exchange_order_id=sa.null(), released_at=at).returning(*STOP_COLUMNS)
+
+
+def bind_statement(account_id: UUID, record_id: UUID, exchange_order_id: str) -> sa.Update:
+    """The successor's bind (`trg_rs_guard` admits that one bind), run after the release of its
+    predecessor: a live row that holds none and was never released."""
+    stmt = sa.update(recorded_stops).where(
+        _S.exchange_account_id == account_id,
+        _S.id == record_id,
+        _S.exchange_order_id.is_(None),
+        _S.released_at.is_(None),
+        _holds(_S.status, LIVE_STOP_STATUSES),
+    )
+    return stmt.values(exchange_order_id=exchange_order_id).returning(*STOP_COLUMNS)
 
 
 def live_for_key_statement(account_id: UUID, symbol: str, position_idx: int) -> sa.Select[Any]:
@@ -448,6 +483,37 @@ class SqlAlchemyRecordedStopStore(CappedStore):
         async with self._unit_of_work() as uow:
             result = await uow.session.execute(stmt)
             return tuple(stop_row(m) for m in result.mappings())
+
+    async def release_and_bind(
+        self,
+        account_id: UUID,
+        predecessor_id: UUID,
+        successor_id: UUID,
+        exchange_order_id: str,
+        *,
+        at: datetime,
+        write_ahead: ReleaseWriteAhead,
+    ) -> tuple[RecordedStopRow, RecordedStopRow]:
+        require_exchange_order_id(exchange_order_id)
+        require_aware("at", at)
+        if write_ahead is None:  # 21 Sec.3.3.11: no release unaudited
+            raise ValueError("a release is audited write-ahead (C-2.9): no hook was given")
+        release = release_statement(account_id, predecessor_id, exchange_order_id, at)
+        async with self._unit_of_work() as uow:  # a refusal raised in here rolls both updates back
+            pair = (predecessor_id, successor_id)  # locked in id order, as `settle` locks its rows
+            await uow.session.execute(lock_stops_statement(account_id, pair))
+            freed = list((await uow.session.execute(release)).mappings())
+            if not freed:
+                raise RecordedStopNotBindable
+            old = stop_row(freed[0])
+            take = bind_statement(account_id, successor_id, exchange_order_id)
+            taken = list((await uow.session.execute(take)).mappings())
+            if not taken:
+                raise RecordedStopNotBindable
+            rows = (old, stop_row(taken[0]))
+            await bounded_write_ahead(write_ahead(rows), self._audit_timeout_s)
+            await uow.commit()
+        return rows
 
     async def waiting_for_key(
         self,

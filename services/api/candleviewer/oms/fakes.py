@@ -49,7 +49,9 @@ from candleviewer.storage.repositories.recorded_stops import (
     InForceWriteAhead,
     InsertWriteAhead,
     NewRecordedStop,
+    RecordedStopNotBindable,
     RecordedStopRow,
+    ReleaseWriteAhead,
     ResolveOutcome,
     ResolveWriteAhead,
     SettleWriteAhead,
@@ -981,6 +983,38 @@ class InMemoryRecordedStopStore:
         return tuple(
             sorted((r for r in mine if r.exchange_order_id == exchange_order_id), key=_age)
         )
+
+    async def release_and_bind(
+        self,
+        account_id: UUID,
+        predecessor_id: UUID,
+        successor_id: UUID,
+        exchange_order_id: str,
+        *,
+        at: datetime,
+        write_ahead: ReleaseWriteAhead,
+    ) -> tuple[RecordedStopRow, RecordedStopRow]:
+        port.require_exchange_order_id(exchange_order_id)
+        port.require_aware("at", at)
+        if write_ahead is None:  # 21 Sec.3.3.11: no release unaudited
+            raise ValueError("a release is audited write-ahead (C-2.9): no hook was given")
+        await self._db._turn()
+        _bindable((exchange_order_id,))
+        stops = self._db._stops
+        old, new = stops.get(predecessor_id), stops.get(successor_id)
+        live = LIVE_STOP_STATUSES
+        if not (
+            old and new and old.exchange_account_id == new.exchange_account_id == account_id
+            and old.status in live and old.released_at is None
+            and old.exchange_order_id == exchange_order_id
+            and new.status in live and new.released_at is None and new.exchange_order_id is None
+        ):  # fmt: skip
+            raise RecordedStopNotBindable
+        released = replace(old, exchange_order_id=None, released_at=at)
+        bound = replace(new, exchange_order_id=exchange_order_id)
+        hook = write_ahead((released, bound))
+        await self._db._audited_commit(hook, self._audit_timeout_s, released, bound)
+        return released, bound
 
     async def waiting_for_key(
         self,
