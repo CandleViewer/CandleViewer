@@ -254,3 +254,15 @@ async def test_a_relax_the_policy_refuses_after_the_check_is_recorded_by_the_pol
     assert refused.value.recorded and env.audit.records[-1][0] == "retention.change"
     assert env.audit.records[-1][1]["outcome"] == "denied" and env.rows.store.active("ETHUSDT")[
         "pinned"]  # fmt: skip
+
+
+async def test_a_fresh_add_whose_row_a_hidden_cause_holds_by_then_refuses_before_the_retention(
+    env: Any,
+) -> None:
+    """No row at the first read; by the second a cause outside the view holds it: the port's
+    check runs again before the retention write, so the policy writes no retention record."""
+    env.p.relax_allowed = lambda symbol, *, restricted: not restricted
+    with pytest.raises(rc.RelaxRefused) as refused:
+        await env.c.add("BTCUSDT", rc.EntrySpec(retention_days=7), USER, restricted=True)
+    assert not refused.value.recorded and env.rows.writes == []
+    assert env.audit.actions() == ["recorder.start"]  # the add landed: the narrow race, recorded
