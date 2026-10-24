@@ -40,19 +40,27 @@ from candleviewer.storage.repositories.recorded_stops import (
     LIVE_STOP_STATUSES,
     REFUSED_BY,
     REFUSED_ENTRY,
+    STOP_AUDIT_TIMEOUT_S,
     UNSENT_ENTRY,
     UX_RS_IN_FLIGHT,
     WAITING_ENTRY,
+    FillPosition,
+    InForce,
+    InForceWriteAhead,
     InsertWriteAhead,
     NewRecordedStop,
     RecordedStopRow,
+    ResolveOutcome,
+    ResolveWriteAhead,
     SettleWriteAhead,
     StaleRecordedStop,
     StopOutcome,
     SweepScope,
     SweepWriteAhead,
     SweptStop,
+    check_in_force,
     check_request,
+    check_resolve,
     request_cutoff,
 )
 from candleviewer.storage.repositories.submissions import (
@@ -159,11 +167,10 @@ _LEG_CHECKS: Final[dict[str, Callable[[NewTradeGroupLeg], bool]]] = {
 #: The leg trigger (`0039_trade_groups`, `USING CONSTRAINT`) that refuses a leg whose account is
 #: outside its group's environment (C-2.11), by the name Postgres reports.
 _TGL_ENV: Final = "trg_tgl_env"
-#: The write-ahead hooks' default bounds (s): `submissions_sqlalchemy.SUBMISSION_AUDIT_TIMEOUT_S`
-#: and the recorded stops' `WRITE_AHEAD_TIMEOUT_S`, which this driver-free module cannot import
-#: (ADR-0003); a unit test pins them equal.
+#: The submissions' write-ahead hook default bound (s): `submissions_sqlalchemy`'s
+#: `SUBMISSION_AUDIT_TIMEOUT_S`, which this driver-free module cannot import (ADR-0003); a unit
+#: test pins them equal. The recorded stops' bound is `recorded_stops.STOP_AUDIT_TIMEOUT_S`.
 SUBMISSION_AUDIT_TIMEOUT_S: Final = 0.5
-STOP_AUDIT_TIMEOUT_S: Final = 5.0
 
 
 def _canonical(ref: str) -> bool:
@@ -899,7 +906,7 @@ class InMemoryRecordedStopStore:
     compare-and-set, a void (`refused`, `not_shown`) refused before anything with no write-ahead
     hook (C-2.9), as the SQL store refuses it; every read and update inside the account but the
     startup sweep over every account. A write's write-ahead hook is awaited, bounded, before its
-    commit."""
+    commit. `put_in_force` and `resolve` compare-and-set on `(status, answered_at)` as read."""
 
     def __init__(
         self, db: InMemoryOrderStore, *, audit_timeout_s: float = STOP_AUDIT_TIMEOUT_S
@@ -1008,6 +1015,95 @@ class InMemoryRecordedStopStore:
         hook = write_ahead(tuple(swept)) if swept else None
         await self._db._audited_commit(hook, self._audit_timeout_s, *voided)
         return tuple(swept)
+
+    async def waiting_keys(
+        self, account_id: UUID, *, now: datetime, bound_s: float | None
+    ) -> tuple[tuple[str, int], ...]:
+        cutoff = request_cutoff(now, bound_s)  # a naive `now` is refused before the read
+        await asyncio.sleep(0)
+        mine = {(r.symbol, r.position_idx) for r in self._db._stops.values()
+                if r.exchange_account_id == account_id}  # fmt: skip
+        rows = sorted(
+            (r for k in mine for r in self._db._waiting(account_id, *k, cutoff)), key=_age
+        )
+        keys = ((r.symbol, r.position_idx) for r in rows)
+        return tuple(dict.fromkeys(keys))
+
+    async def in_force_for_key(
+        self, account_id: UUID, symbol: str, position_idx: int
+    ) -> tuple[RecordedStopRow, ...]:
+        await asyncio.sleep(0)
+        key, rows = (account_id, symbol, position_idx, "in_force"), self._db._stops.values()
+        shown = (
+            r for r in rows if (r.exchange_account_id, r.symbol, r.position_idx, r.status) == key
+        )
+        return tuple(sorted(shown, key=lambda r: r.kind))
+
+    async def put_in_force(
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        *,
+        at: datetime,
+        write_ahead: InForceWriteAhead | None = None,
+    ) -> InForce:
+        check_in_force(account_id, rows)
+        port.require_aware("at", at)
+        await self._db._turn()
+        held = self._as_read(account_id, rows)
+        born = {r.kind: r.created_at for r in held}
+        key, ids = (account_id, rows[0].symbol, rows[0].position_idx), {r.id for r in rows}
+        replaced = tuple(
+            replace(r, status="replaced", answered_at=r.answered_at or at, closed_at=at)
+            for r in sorted(self._db._stops.values(), key=lambda r: r.id)
+            if (r.exchange_account_id, r.symbol, r.position_idx) == key
+            and r.id not in ids
+            and r.kind in born
+            and (r.status == "in_force" or (r.status == "pending" and r.answered_at is not None
+                                            and r.created_at < born[r.kind]))
+        )  # fmt: skip
+        shown = tuple(
+            replace(r, status="in_force", answered_at=r.answered_at or at, in_force_at=at)
+            for r in held
+        )
+        hook = None if write_ahead is None else write_ahead((*replaced, *shown))
+        await self._db._audited_commit(hook, self._audit_timeout_s, *replaced, *shown)
+        return InForce(replaced=replaced, in_force=shown)
+
+    async def resolve(
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        outcome: ResolveOutcome,
+        *,
+        at: datetime,
+        position_state: FillPosition | None = None,
+        write_ahead: ResolveWriteAhead | None = None,
+    ) -> tuple[RecordedStopRow, ...]:
+        check_resolve(rows, outcome, at, position_state, write_ahead)
+        await self._db._turn()
+        held = self._as_read(account_id, rows)
+        if outcome in ("answered", "replaced"):
+            done = tuple(replace(r, answered_at=r.answered_at or at) for r in held)
+            if outcome == "replaced":
+                done = tuple(replace(r, status="replaced", closed_at=at) for r in done)
+        else:
+            done = tuple(replace(r, status="void", closed_at=at) for r in held)
+        hook = None if write_ahead is None else write_ahead(done, position_state)
+        await self._db._audited_commit(hook, self._audit_timeout_s, *done)
+        return done
+
+    def _as_read(self, account_id: UUID, rows: Sequence[RecordedStopRow]) -> list[RecordedStopRow]:
+        """The stored rows if each is as read (account, key, kind, `pending`, `answered_at`)."""
+        held = [self._db._stops.get(row.id) for row in rows]
+        if any(
+            h is None
+            or (h.exchange_account_id, h.symbol, h.position_idx, h.kind, h.status, h.answered_at)
+            != (account_id, r.symbol, r.position_idx, r.kind, "pending", r.answered_at)
+            for h, r in zip(held, rows, strict=True)
+        ):
+            raise StaleRecordedStop
+        return [h for h in held if h is not None]
 
 
 class FakeClockHealth:

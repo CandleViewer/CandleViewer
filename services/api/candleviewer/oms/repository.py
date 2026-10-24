@@ -67,15 +67,21 @@ from candleviewer.storage.repositories.positions import (
 from candleviewer.storage.repositories.recorded_stops import (
     SWEEP_REASON,
     UX_RS_IN_FLIGHT,
+    FillPosition,
+    InForce,
+    InForceWriteAhead,
     InsertWriteAhead,
     NewRecordedStop,
     RecordedStopRow,
     RecordedStopStore,
+    ResolveOutcome,
+    ResolveWriteAhead,
     SettleWriteAhead,
     StopOutcome,
     SweepScope,
     SweepWriteAhead,
     SweptStop,
+    check_resolve,
 )
 from candleviewer.storage.repositories.submissions import (
     AnchorTakenError,
@@ -530,6 +536,67 @@ class RecordedStopRepository:
                 kind=stop.kind,
             )
         return swept
+
+    async def waiting_keys(
+        self, account_id: UUID, *, now: datetime, bound_s: float | None
+    ) -> tuple[tuple[str, int], ...]:
+        """`RecordedStopStore.waiting_keys`: the startup pass's input, per account (C-2.11). A
+        read, untimed as `for_order` and `waiting_for_key` are: the timer is the writes'
+        (`oms_db_write_seconds`, its `table` label bounded by the tables written)."""
+        return await self._store.waiting_keys(account_id, now=now, bound_s=bound_s)
+
+    async def in_force_for_key(
+        self, account_id: UUID, symbol: str, position_idx: int
+    ) -> tuple[RecordedStopRow, ...]:
+        """The key's rows in force, by kind (`RecordedStopStore.in_force_for_key`); a read, untimed
+        as `waiting_keys`."""
+        return await self._store.in_force_for_key(account_id, symbol, position_idx)
+
+    async def put_in_force(
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        *,
+        at: datetime,
+        write_ahead: InForceWriteAhead | None = None,
+    ) -> InForce:
+        """`RecordedStopStore.put_in_force`; `AuditNotDurable` for a hook past its bound."""
+        try:
+            with self._timer.measure("recorded_stops"):
+                done = await self._store.put_in_force(
+                    account_id, rows, at=at, write_ahead=write_ahead
+                )
+        except WriteAheadTimeout:
+            raise AuditNotDurable("the stops' write-ahead audit did not land in time") from None
+        _log_stops("oms_stops_replaced", done.replaced)
+        _log_stops("oms_stops_in_force", done.in_force)
+        return done
+
+    async def resolve(
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        outcome: ResolveOutcome,
+        *,
+        at: datetime,
+        position_state: FillPosition | None = None,
+        write_ahead: ResolveWriteAhead | None = None,
+    ) -> tuple[RecordedStopRow, ...]:
+        """`RecordedStopStore.resolve`, its call refused before the store (`check_resolve`: C-2.9,
+        CR-S3H0-08); the hook is given the rows and `position_state`. `replaced` trusts the
+        caller, as the store does. `AuditNotDurable` for a hook past its bound: nothing voided or
+        answered."""
+        check_resolve(rows, outcome, at, position_state, write_ahead)
+        try:
+            with self._timer.measure("recorded_stops"):
+                done = await self._store.resolve(
+                    account_id, rows, outcome, at=at, position_state=position_state,
+                    write_ahead=write_ahead,
+                )  # fmt: skip
+        except WriteAheadTimeout:
+            raise AuditNotDurable("the resolve's write-ahead audit did not land in time") from None
+        _log_stops("oms_stops_resolved", done, outcome=outcome)
+        return done
 
 
 def _log_stops(name: str, rows: Sequence[RecordedStopRow], **extra: str) -> None:

@@ -33,6 +33,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     SWEEP_REASON,
     UNSENT_ENTRY,
     WAITING_ENTRY,
+    FillPosition,
     NewRecordedStop,
     RecordedStopRow,
     StaleRecordedStop,
@@ -131,6 +132,12 @@ def _built() -> dict[str, Any]:
         "waiting_for_key_statement": mod.waiting_for_key_statement(
             _ACCOUNT, "BTCUSDT", 0, now=_T, bound_s=5.0
         ),
+        "waiting_keys_statement": mod.waiting_keys_statement(_ACCOUNT, now=_T, bound_s=5.0),
+        "lock_key_statement": mod.lock_key_statement(_ACCOUNT, "BTCUSDT", 0),
+        "replace_statement": mod.replace_statement(_ACCOUNT, [_SL], _T),
+        "in_force_statement": mod.in_force_statement(_ACCOUNT, _rows(_row(_SL)), _T),
+        "in_force_for_key_statement": mod.in_force_for_key_statement(_ACCOUNT, "BTCUSDT", 0),
+        "resolve_statement": mod.resolve_statement(_ACCOUNT, _rows(_row(_SL)), "answered", _T),
     }
 
 
@@ -651,3 +658,155 @@ def test_an_entry_waits_once_it_ended_with_nothing_filled() -> None:
         "cum_exec_qty": Decimal(0),
     }
     assert set(WAITING_ENTRY) <= set(models.orders.c.keys())
+
+
+# -- slice 3 (S3-H): what the complete read writes ------------------------------------------------
+
+_STAMP = "answered_at=coalesce(recorded_stops.answered_at, $2::TIMESTAMP WITH TIME ZONE)"
+_LATER, _OLD, _NEW = _T + timedelta(seconds=1), uuid.UUID(int=0x6000), uuid.UUID(int=0x6003)
+
+
+def _rows(*maps: dict[str, Any]) -> list[RecordedStopRow]:
+    return [mod.stop_row(m) for m in maps]
+
+
+def _sets(stmt: Any) -> str:
+    return _sql(stmt).split(" SET ", 1)[1].split(" WHERE ", 1)[0]
+
+
+def test_the_complete_reads_statements_lock_in_id_order_and_keep_answered_at_once_set() -> None:
+    lock = _sql(mod.lock_key_statement(_ACCOUNT, "BTCUSDT", 1))
+    assert "recorded_stops.status IN (" in lock and "recorded_stops.position_idx = $" in lock
+    assert lock.endswith("ORDER BY recorded_stops.id FOR UPDATE")
+    gone = mod.replace_statement(_ACCOUNT, [_SL], _T)
+    assert _sets(gone) == f"status=$1::VARCHAR, {_STAMP}, closed_at=$3::TIMESTAMP WITH TIME ZONE"
+    rows = _rows(_row(_SL), _row(_TP, kind="take_profit", answered_at=_T))
+    shown = mod.in_force_statement(_ACCOUNT, rows, _T)
+    assert _sets(shown) == f"status=$1::VARCHAR, {_STAMP}, in_force_at=$3::TIMESTAMP WITH TIME ZONE"
+    # SEC-BND-02: the in-force and resolve UPDATEs compare-and-set each row's `answered_at` as read
+    assert _sql(shown).count("recorded_stops.answered_at IS NOT DISTINCT FROM ") == 2
+    answer = mod.resolve_statement(_ACCOUNT, rows, "answered", _T)
+    assert _sets(answer) == _STAMP.replace("$2", "$1")
+    void = mod.resolve_statement(_ACCOUNT, rows, "entry_filled_stop_absent", _T)
+    assert _sets(void) == "status=$1::VARCHAR, closed_at=$2::TIMESTAMP WITH TIME ZONE"
+    gone = mod.resolve_statement(_ACCOUNT, rows, "replaced", _T)
+    assert _sets(gone) == f"status=$1::VARCHAR, {_STAMP}, closed_at=$3::TIMESTAMP WITH TIME ZONE"
+    assert _sql(void).count("recorded_stops.answered_at IS NOT DISTINCT FROM ") == 2
+    # a row is compared as read on its key too, as the fake compares it
+    assert _sql(void).count("recorded_stops.symbol = $") == 2
+    assert _sql(void).count("recorded_stops.position_idx = $") == 2
+    keys = _sql(mod.waiting_keys_statement(_ACCOUNT, now=_T, bound_s=5.0))
+    assert "recorded_stops.answered_at IS NULL AND recorded_stops.created_at <= $" in keys
+    assert keys.endswith("ORDER BY min(recorded_stops.created_at), recorded_stops.symbol, "
+                         "recorded_stops.position_idx")  # fmt: skip
+
+
+def _live(i: uuid.UUID, kind: str, status: str, answered: Any, born: datetime = _T) -> Any:
+    return {"id": i, "kind": kind, "status": status, "answered_at": answered, "created_at": born}
+
+
+async def test_a_put_in_force_refuses_a_malformed_call_before_any_statement() -> None:
+    rel, tp = _Rel(), _row(_TP, kind="take_profit", position_idx=1)
+    for rows, at, reason in (([_row(_SL)] * 2, _T, "named once"), ([_row(_SL), _row(_TP)], _T,
+                             "per key and kind"), ([_row(_SL), tp], _T, "of one key"),
+                             ([_row(_SL)], _T.replace(tzinfo=None), "timezone-aware")):  # fmt: skip
+        with pytest.raises(ValueError, match=reason):
+            await _store(rel).put_in_force(_ACCOUNT, _rows(*rows), at=at)
+    assert rel.statements == []
+
+
+async def test_a_put_in_force_locks_replaces_first_then_sets_audited_before_its_commit() -> None:
+    """21 Sec.3.3.11: it replaces the row in force of its kind and its older answered rows; never
+    a younger row, an unanswered one or one of another kind."""
+    gone, shown = {"status": "replaced"}, {"status": "in_force"}
+    older, unanswered = uuid.UUID(int=0x6004), uuid.UUID(int=0x6005)
+    locked = [_live(_OLD, "stop_loss", "in_force", _T), _live(_SL, "stop_loss", "pending", None,
+              _LATER), _live(_TP, "take_profit", "in_force", _T), _live(_NEW, "stop_loss",
+              "pending", _T, _LATER + timedelta(1)), _live(older, "stop_loss", "pending", _T),
+              _live(unanswered, "stop_loss", "pending", None)]  # fmt: skip
+    rel = _Rel(locked, [_row(_OLD, **gone), _row(older, **gone)], [_row(_SL, **shown)])
+    seen: list[tuple[list[uuid.UUID], int]] = []
+
+    async def audit(rows: tuple[RecordedStopRow, ...]) -> None:
+        seen.append(([row.id for row in rows], rel.commits))
+
+    done = await _store(rel).put_in_force(_ACCOUNT, _rows(_row(_SL)), at=_T, write_ahead=audit)
+    assert [r.id for r in done.replaced] == [_OLD, older] and [r.id for r in done.in_force] == [_SL]
+    assert seen == [([_OLD, older, _SL], 0)] and rel.commits == 1
+    assert [s.compile().params.get("status") for s in rel.statements] == [
+        None, "replaced", "in_force"
+    ]  # fmt: skip
+    alone = _Rel([_live(_SL, "stop_loss", "pending", None)], [_row(_SL, **shown)])
+    assert (await _store(alone).put_in_force(_ACCOUNT, _rows(_row(_SL)), at=_T)).replaced == ()
+    assert len(alone.statements) == 2 and alone.commits == 1
+
+
+@pytest.mark.parametrize("script", ["lost_at_the_lock", "short_update", "late_audit"])
+async def test_a_put_in_force_that_loses_its_race_or_its_audit_writes_nothing(script: str) -> None:
+    async def hangs(rows: tuple[RecordedStopRow, ...]) -> None:
+        await asyncio.Event().wait()
+
+    answered = _T if script == "lost_at_the_lock" else None
+    shown = [] if script == "short_update" else [_row(_SL, status="in_force")]
+    rel = _Rel([_live(_SL, "stop_loss", "pending", answered)], shown)
+    store = mod.SqlAlchemyRecordedStopStore(cast(Any, rel), audit_timeout_s=0.01)
+    raised = WriteAheadTimeout if script == "late_audit" else StaleRecordedStop
+    with pytest.raises(raised):
+        await store.put_in_force(_ACCOUNT, _rows(_row(_SL)), at=_T, write_ahead=hangs)
+    assert rel.commits == 0
+
+
+async def test_a_resolve_locks_then_sets_every_row_or_none_audited_before_its_commit() -> None:
+    voided_cols = {"status": "void", "closed_at": _T}
+    rel = _Rel([], [_row(_TP, kind="take_profit", **voided_cols), _row(_SL, **voided_cols)])
+    seen: list[tuple[list[uuid.UUID], FillPosition | None, int]] = []
+
+    async def audit(rows: tuple[RecordedStopRow, ...], state: FillPosition | None) -> None:
+        seen.append(([row.id for row in rows], state, rel.commits))
+
+    rows = _rows(_row(_SL), _row(_TP, kind="take_profit"))
+    done = await _store(rel).resolve(_ACCOUNT, rows, "entry_filled_stop_absent", at=_T,
+                                     position_state="open", write_ahead=audit)  # fmt: skip
+    assert [r.id for r in done] == [_SL, _TP] and seen == [([_SL, _TP], "open", 0)]
+    assert rel.commits == 1
+    assert "FOR UPDATE" in _sql(rel.statements[0])
+    stale = _Rel([], [_row(_SL)])
+    with pytest.raises(StaleRecordedStop):
+        await _store(stale).resolve(_ACCOUNT, rows, "answered", at=_T)
+    refused: tuple[tuple[list[uuid.UUID], datetime, FillPosition | None, str], ...] = (
+        ([_SL, _SL], _T, None, "names each row"), ([], _T, None, "names each row"),
+        ([_SL], _T.replace(tzinfo=None), None, "timezone-aware"),
+        ([_SL], _T, "flat", "position_state"),
+    )  # fmt: skip
+    for ids, at, state, reason in refused:
+        with pytest.raises(ValueError, match=reason):
+            await _store(stale).resolve(_ACCOUNT, _rows(*map(_row, ids)), "answered", at=at,
+                                        position_state=state)  # fmt: skip
+    with pytest.raises(ValueError, match="position_state"):  # refused for a replace
+        await _store(stale).resolve(_ACCOUNT, rows, "replaced", at=_T, position_state="open")
+    with pytest.raises(ValueError, match="position_state"):  # required for the fill void
+        await _store(stale).resolve(_ACCOUNT, rows, "entry_filled_stop_absent", at=_T,
+                                    write_ahead=audit)  # fmt: skip
+    voided = _Rel([], [_row(_SL, **voided_cols)])
+    await _store(voided).resolve(_ACCOUNT, rows[:1], "in_flight_resolved", at=_T,
+                                 position_state="open", write_ahead=audit)  # fmt: skip
+    assert seen[-1][:2] == ([_SL], "open") and voided.commits == 1  # optional: given to the hook
+    assert stale.commits == 0 and len(stale.statements) == 2
+
+
+async def test_the_store_reads_a_keys_rows_in_force_by_kind() -> None:
+    rel = _Rel([_row(_SL, status="in_force"), _row(_TP, kind="take_profit", status="in_force")])
+    rows = await _store(rel).in_force_for_key(_ACCOUNT, "BTCUSDT", 0)
+    assert [row.kind for row in rows] == ["stop_loss", "take_profit"] and rel.commits == 0
+    sql = _sql(rel.statements[0])
+    assert "recorded_stops.status = $" in sql and "recorded_stops.position_idx = $" in sql
+    assert sql.endswith("ORDER BY recorded_stops.kind")
+
+
+async def test_the_store_reads_the_waiting_keys_and_a_naive_now_runs_nothing() -> None:
+    rel = _Rel([{"symbol": "BTCUSDT", "position_idx": 0}, {"symbol": "ETHUSDT", "position_idx": 2}])
+    keys = await _store(rel).waiting_keys(_ACCOUNT, now=_T, bound_s=5.0)
+    assert keys == (("BTCUSDT", 0), ("ETHUSDT", 2)) and rel.commits == 0
+    with pytest.raises(ValueError, match="timezone-aware"):
+        await _store(rel).waiting_keys(_ACCOUNT, now=_T.replace(tzinfo=None), bound_s=5.0)
+    assert len(rel.statements) == 1

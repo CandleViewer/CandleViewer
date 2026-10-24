@@ -22,6 +22,16 @@ unanswered ones past their request's bound (`request_cutoff`; every unanswered o
 is missing or unusable), and an entry's pending rows whose order of the row's account
 `WAITING_ENTRY` holds.
 
+Slice 3's complete read (S3-H): `put_in_force` locks the key's live rows in id order, compares,
+then replaces before it sets, so `ux_rs_in_force` never holds two; `resolve` locks as `settle` does
+and compares-and-sets in its UPDATE (each row's key and `answered_at` as read);
+`waiting_keys_statement` shares `_waits` with the key's read. An order step that settles its
+entry's rows (`orders_sqlalchemy.settle_entry_stops_statement`) locks them in its UPDATE's scan
+order, not in id order: a step and a read meeting on an entry's two rows can deadlock, which
+Postgres breaks by failing one of the two transactions, nothing written by it (the step's write
+or the read's, which the next request reads again). Ordering that lock, with a race test on
+Postgres, is left to H3: it is `orders_sqlalchemy.py`'s.
+
 `void_orphans_statement` is R10's startup sweep (`RecordedStopStore.void_orphans`): one UPDATE that
 voids the pending entry-attach rows of an order of their account that was never placed (never sent,
 `UNSENT_ENTRY`; or refused by its create's own answer, `REFUSED_ENTRY` with the `REFUSED_BY` event),
@@ -63,33 +73,40 @@ from candleviewer.storage.repositories.recorded_stops import (
     LIVE_STOP_STATUSES,
     REFUSED_BY,
     REFUSED_ENTRY,
+    STOP_AUDIT_TIMEOUT_S,
     UNSENT_ENTRY,
     WAITING_ENTRY,
+    FillPosition,
+    InForce,
+    InForceWriteAhead,
     InsertWriteAhead,
     NewRecordedStop,
     RecordedStopRow,
+    ResolveOutcome,
+    ResolveWriteAhead,
     SettleWriteAhead,
     StaleRecordedStop,
     StopOutcome,
     SweepScope,
     SweepWriteAhead,
     SweptStop,
+    check_in_force,
     check_request,
+    check_resolve,
     request_cutoff,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
-from candleviewer.storage.repositories.user_roles_sqlalchemy import (
-    WRITE_AHEAD_TIMEOUT_S,
-    bounded_write_ahead,
-)
+from candleviewer.storage.repositories.user_roles_sqlalchemy import bounded_write_ahead
 
 __all__ = [
     "STOP_COLUMNS", "STOP_FIELDS", "SYSTEM_STATEMENTS", "UNSCOPED", "SqlAlchemyRecordedStopStore",
-    "for_exchange_order_statement", "for_order_statement", "in_given_order",
-    "insert_stops_statement", "live_for_key_statement", "lock_stops_statement",
-    "settle_statement", "stop_row", "void_orphans_statement", "waiting_for_key_statement",
+    "for_exchange_order_statement", "for_order_statement", "in_force_for_key_statement",
+    "in_force_statement", "in_given_order", "insert_stops_statement", "live_for_key_statement",
+    "lock_key_statement", "lock_stops_statement", "replace_statement", "resolve_statement",
+    "settle_statement", "stop_row", "to_replace", "void_orphans_statement",
+    "waiting_for_key_statement", "waiting_keys_statement",
 ]  # fmt: skip
 
 _S = recorded_stops.c
@@ -176,6 +193,27 @@ def waiting_for_key_statement(
     when that is None (fail closed), and an entry's rows, answered or not, whose order, of the
     row's account, `WAITING_ENTRY` holds (`ix_rs_live` serves the key). `ValueError` for a naive
     `now`, before any statement."""
+    stmt = sa.select(*STOP_COLUMNS).where(
+        _S.exchange_account_id == account_id,
+        sa.type_coerce(_S.symbol, sa.Text) == symbol,  # SQLAlchemy has no DOMAIN operator class
+        _S.position_idx == position_idx,
+        _waits(now, bound_s),
+    )
+    return stmt.order_by(_S.created_at, _S.id)
+
+
+def waiting_keys_statement(
+    account_id: UUID, *, now: datetime, bound_s: float | None
+) -> sa.Select[Any]:
+    """The account's keys with a row `waiting_for_key_statement` lists, the oldest row's first."""
+    stmt = sa.select(_S.symbol, _S.position_idx).where(
+        _S.exchange_account_id == account_id, _waits(now, bound_s)
+    )
+    stmt = stmt.group_by(_S.symbol, _S.position_idx)
+    return stmt.order_by(sa.func.min(_S.created_at), _S.symbol, _S.position_idx)
+
+
+def _waits(now: datetime, bound_s: float | None) -> sa.ColumnElement[bool]:
     cutoff = request_cutoff(now, bound_s)
     unanswered: sa.ColumnElement[bool] = _S.answered_at.is_(None)
     if cutoff is not None:
@@ -186,14 +224,103 @@ def waiting_for_key_statement(
         o.exchange_account_id == _S.exchange_account_id,
         *(_holds(o[name], value) for name, value in WAITING_ENTRY.items()),
     )
+    entry = sa.and_(_S.source == "entry_attach", sa.exists(ended))
+    return sa.and_(_S.status == "pending", sa.or_(unanswered, entry))
+
+
+def lock_key_statement(account_id: UUID, symbol: str, position_idx: int) -> sa.Select[Any]:
+    """The key's live rows (`ix_rs_live`), `FOR UPDATE` in id order."""
+    stmt = sa.select(_S.id, _S.kind, _S.status, _S.answered_at, _S.created_at).where(
+        _S.exchange_account_id == account_id,
+        sa.type_coerce(_S.symbol, sa.Text) == symbol,
+        _S.position_idx == position_idx,
+        _S.status.in_(("pending", "in_force")),
+    )
+    return stmt.order_by(_S.id).with_for_update()
+
+
+def in_force_for_key_statement(account_id: UUID, symbol: str, position_idx: int) -> sa.Select[Any]:
     stmt = sa.select(*STOP_COLUMNS).where(
         _S.exchange_account_id == account_id,
-        sa.type_coerce(_S.symbol, sa.Text) == symbol,  # SQLAlchemy has no DOMAIN operator class
+        sa.type_coerce(_S.symbol, sa.Text) == symbol,
         _S.position_idx == position_idx,
-        _S.status == "pending",
-        sa.or_(unanswered, sa.and_(_S.source == "entry_attach", sa.exists(ended))),
+        _S.status == "in_force",
     )
-    return stmt.order_by(_S.created_at, _S.id)
+    return stmt.order_by(_S.kind)
+
+
+def to_replace(
+    locked: Sequence[Mapping[Any, Any]], rows: Sequence[RecordedStopRow]
+) -> tuple[UUID, ...] | None:
+    """Per kind, the row in force and older answered rows; None if a row is not locked as read."""
+    by_id = {UUID(str(m["id"])): m for m in locked}
+    read = {row.id: (row.kind, "pending", row.answered_at) for row in rows}
+    held = {i: (m["kind"], m["status"], m["answered_at"]) for i, m in by_id.items()}
+    if any(held.get(i) != as_read for i, as_read in read.items()):
+        return None
+    born = {row.kind: by_id[row.id]["created_at"] for row in rows}
+
+    def replaced(m: Mapping[Any, Any]) -> bool:
+        if m["kind"] not in born:
+            return False
+        older = m["answered_at"] is not None and m["created_at"] < born[m["kind"]]
+        return bool(m["status"] == "in_force" or older)
+
+    return tuple(i for i, m in sorted(by_id.items()) if i not in read and replaced(m))
+
+
+def replace_statement(account_id: UUID, record_ids: Sequence[UUID], at: datetime) -> sa.Update:
+    stmt = sa.update(recorded_stops).where(
+        _S.exchange_account_id == account_id,
+        _S.id.in_(sorted(set(record_ids))),
+        _S.status.in_(("pending", "in_force")),
+    )
+    values = {"status": "replaced", "answered_at": _stamped(at), "closed_at": at}
+    return stmt.values(values).returning(*STOP_COLUMNS)
+
+
+def in_force_statement(
+    account_id: UUID, rows: Sequence[RecordedStopRow], at: datetime
+) -> sa.Update:
+    stmt = sa.update(recorded_stops).where(
+        _S.exchange_account_id == account_id, _S.status == "pending", _as_read(rows)
+    )
+    values = {"status": "in_force", "answered_at": _stamped(at), "in_force_at": at}
+    return stmt.values(values).returning(*STOP_COLUMNS)
+
+
+def resolve_statement(
+    account_id: UUID, rows: Sequence[RecordedStopRow], outcome: ResolveOutcome, at: datetime
+) -> sa.Update:
+    stmt = sa.update(recorded_stops).where(
+        _S.exchange_account_id == account_id, _S.status == "pending", _as_read(rows)
+    )
+    values: dict[str, Any] = {"answered_at": _stamped(at)}
+    if outcome == "replaced":  # as `put_in_force` replaces
+        values = {"status": "replaced", "answered_at": _stamped(at), "closed_at": at}
+    elif outcome != "answered":
+        values = {"status": "void", "closed_at": at}
+    return stmt.values(values).returning(*STOP_COLUMNS)
+
+
+def _as_read(rows: Sequence[RecordedStopRow]) -> sa.ColumnElement[bool]:
+    """SEC-BND-02: each of `rows` only on the key and with the `answered_at` it was read with."""
+    return sa.or_(
+        *(
+            sa.and_(
+                _S.id == r.id,
+                sa.type_coerce(_S.symbol, sa.Text) == r.symbol,
+                _S.position_idx == r.position_idx,
+                _S.answered_at.is_not_distinct_from(r.answered_at),
+            )
+            for r in rows
+        )
+    )
+
+
+def _stamped(at: datetime) -> sa.ColumnElement[Any]:
+    """`answered_at` kept once set (`trg_rs_guard`), else `at`."""
+    return sa.func.coalesce(_S.answered_at, at)
 
 
 def void_orphans_statement(scope: UUID | SweepScope, at: datetime) -> sa.Update:
@@ -256,7 +383,7 @@ class SqlAlchemyRecordedStopStore(CappedStore):
         relational: SqlAlchemyRelationalRepository,
         *,
         statement_timeout_ms: int = OMS_STATEMENT_TIMEOUT_MS,
-        audit_timeout_s: float = WRITE_AHEAD_TIMEOUT_S,
+        audit_timeout_s: float = STOP_AUDIT_TIMEOUT_S,
     ) -> None:
         super().__init__(relational, statement_timeout_ms=statement_timeout_ms)
         self._audit_timeout_s = require_audit_bound(audit_timeout_s)
@@ -357,3 +484,73 @@ class SqlAlchemyRecordedStopStore(CappedStore):
                 await bounded_write_ahead(write_ahead(swept), self._audit_timeout_s)
             await uow.commit()
         return swept
+
+    async def waiting_keys(
+        self, account_id: UUID, *, now: datetime, bound_s: float | None
+    ) -> tuple[tuple[str, int], ...]:
+        stmt = waiting_keys_statement(account_id, now=now, bound_s=bound_s)  # a naive `now` first
+        async with self._unit_of_work() as uow:
+            result = await uow.session.execute(stmt)
+            return tuple((m["symbol"], m["position_idx"]) for m in result.mappings())
+
+    async def in_force_for_key(
+        self, account_id: UUID, symbol: str, position_idx: int
+    ) -> tuple[RecordedStopRow, ...]:
+        async with self._unit_of_work() as uow:
+            result = await uow.session.execute(
+                in_force_for_key_statement(account_id, symbol, position_idx)
+            )
+            return tuple(stop_row(m) for m in result.mappings())
+
+    async def put_in_force(
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        *,
+        at: datetime,
+        write_ahead: InForceWriteAhead | None = None,
+    ) -> InForce:
+        check_in_force(account_id, rows)
+        require_aware("at", at)
+        ids = [row.id for row in rows]
+        async with self._unit_of_work() as uow:
+            lock = lock_key_statement(account_id, rows[0].symbol, rows[0].position_idx)
+            old = to_replace(list((await uow.session.execute(lock)).mappings()), rows)
+            if old is None:
+                raise StaleRecordedStop
+            replaced: tuple[RecordedStopRow, ...] = ()
+            if old:  # first: `ux_rs_in_force` admits one row in force per key and kind
+                done = await uow.session.execute(replace_statement(account_id, old, at))
+                replaced = in_given_order(list(done.mappings()), old)
+            done = await uow.session.execute(in_force_statement(account_id, rows, at))
+            shown = in_given_order(list(done.mappings()), ids)
+            if len(replaced) != len(old) or len(shown) != len(ids):
+                raise StaleRecordedStop  # the locks rule it out; never commit half
+            if write_ahead is not None:
+                await bounded_write_ahead(write_ahead((*replaced, *shown)), self._audit_timeout_s)
+            await uow.commit()
+        return InForce(replaced=replaced, in_force=shown)
+
+    async def resolve(
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        outcome: ResolveOutcome,
+        *,
+        at: datetime,
+        position_state: FillPosition | None = None,
+        write_ahead: ResolveWriteAhead | None = None,
+    ) -> tuple[RecordedStopRow, ...]:
+        check_resolve(rows, outcome, at, position_state, write_ahead)
+        ids = [row.id for row in rows]
+        async with self._unit_of_work() as uow:
+            await uow.session.execute(lock_stops_statement(account_id, ids))
+            done = await uow.session.execute(resolve_statement(account_id, rows, outcome, at))
+            resolved = in_given_order(list(done.mappings()), ids)
+            if len(resolved) != len(ids):
+                raise StaleRecordedStop
+            if write_ahead is not None:
+                hook = write_ahead(resolved, position_state)
+                await bounded_write_ahead(hook, self._audit_timeout_s)
+            await uow.commit()
+        return resolved

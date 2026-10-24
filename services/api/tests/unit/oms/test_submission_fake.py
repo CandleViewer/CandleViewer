@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 from dataclasses import replace
+from datetime import timedelta
+from itertools import count
 from typing import Any, Final, cast
 from uuid import UUID, uuid4
 
@@ -22,6 +24,7 @@ from candleviewer.oms import fakes
 from candleviewer.oms.fakes import InMemoryOrderStore as Fake
 from candleviewer.oms.fakes import InMemoryRecordedStopStore, InMemorySubmissionStore
 from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.repositories import recorded_stops, user_roles_sqlalchemy
 from candleviewer.storage.repositories.orders import NewOrder
 from candleviewer.storage.repositories.recorded_stops import EVERY_ACCOUNT, StopStatus, SweptStop
 from candleviewer.storage.repositories.recorded_stops_sqlalchemy import (
@@ -33,6 +36,7 @@ from candleviewer.storage.repositories.submissions import (
     FirstPersisted,
 )
 from candleviewer.storage.repositories.submissions_sqlalchemy import SqlAlchemySubmissionStore
+from tests.unit.oms.recorded_stop_contract import RecordedStopContract
 from tests.unit.oms.store_reads_contract import StoreReadsContract
 from tests.unit.oms.submission_contract import (
     EVENT,
@@ -175,16 +179,31 @@ class TestInMemorySubmissionStores(SubmissionContract, StoreReadsContract):
         assert {stop.id for stop in swept} == expected and list(swept) == audited
 
 
+class TestInMemoryRecordedStopResolution(RecordedStopContract):
+    """S3-H's complete-read contract on the fakes, on a clock that moves a microsecond per write,
+    as Postgres stamps each transaction's rows apart."""
+
+    h = TestInMemorySubmissionStores.h
+
+    @pytest.fixture
+    def fake(self) -> Fake:
+        ticks = count()
+        return Fake(clock=lambda: T0 + timedelta(microseconds=next(ticks)))
+
+
 def test_the_hooks_default_bounds_are_the_adapters() -> None:
-    """The fakes cannot import the drivers' modules (ADR-0003), so they keep their own copies."""
+    """The fakes cannot import the drivers' modules (ADR-0003), so they keep their own copy of the
+    submissions' bound; the recorded stops' bound lives driver-free in `recorded_stops`, every
+    store's default, and stays the drivers' shared write-ahead bound."""
 
     def default(store: type) -> object:
         return inspect.signature(store).parameters["audit_timeout_s"].default
 
     assert default(SqlAlchemySubmissionStore) == fakes.SUBMISSION_AUDIT_TIMEOUT_S
     assert default(InMemorySubmissionStore) == fakes.SUBMISSION_AUDIT_TIMEOUT_S
-    assert default(SqlAlchemyRecordedStopStore) == fakes.STOP_AUDIT_TIMEOUT_S
-    assert default(InMemoryRecordedStopStore) == fakes.STOP_AUDIT_TIMEOUT_S
+    assert default(SqlAlchemyRecordedStopStore) == recorded_stops.STOP_AUDIT_TIMEOUT_S
+    assert default(InMemoryRecordedStopStore) == recorded_stops.STOP_AUDIT_TIMEOUT_S
+    assert recorded_stops.STOP_AUDIT_TIMEOUT_S == user_roles_sqlalchemy.WRITE_AHEAD_TIMEOUT_S
 
 
 #: The CHECKs the fakes do not meet themselves, by the name Postgres reports: a value outside its
