@@ -298,7 +298,8 @@ def test_an_id_route_answers_404_and_keeps_403_for_capability(route: str, op: An
 def test_an_id_parameter_answers_a_foreign_id_as_a_missing_one(name: str) -> None:
     text = _words(_PARAMS[name]["description"])
     assert "is answered exactly as an id that does not exist: `404` `not_found`" in text
-    assert "it is never a scope answer" in text
+    # #913 slice 4 ruling Q7: a view-only grant on the order write routes is a scope answer
+    assert ("it is never a scope answer" in text) is (name == "PositionId")
 
 
 def test_a_trade_group_with_an_ungranted_leg_is_answered_as_missing() -> None:
