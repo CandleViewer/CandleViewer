@@ -171,7 +171,7 @@ Related:
 
 - [ ] Structured logs / metrics / alerts added or updated; no `print()` or `console.log` left behind
 - [ ] Docs updated **in this PR**: plan docs, ADR, `AGENTS.md` (if commands/layout/standards changed), package README (C-15.2, C-15.4)
-- [ ] Changelog (C-15.6): conventional-commit title for a user-visible change; a security fix adds an impact-only `CHANGELOG.md` Unreleased › Security line ending `(#N)` (07 §3) — or N/A
+- [ ] Changelog fragment (C-15.6, 07 §3): conventional PR title or a `Changelog: <one-line user-facing summary>` footer in the body; a security fix adds a `Changelog-Security: <impact-only summary>` footer. Do not edit `CHANGELOG.md` by hand: it is generated in `docs(changelog)` sync PRs (PR-CHANGELOG-001) — or N/A
 
 ### Reviews required (§10)
 
