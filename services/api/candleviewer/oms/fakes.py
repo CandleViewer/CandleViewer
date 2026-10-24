@@ -43,10 +43,13 @@ from candleviewer.storage.repositories.recorded_stops import (
     UNSENT_ENTRY,
     UX_RS_IN_FLIGHT,
     WAITING_ENTRY,
+    FillPosition,
     InForce,
+    InForceWriteAhead,
     InsertWriteAhead,
     NewRecordedStop,
     RecordedStopRow,
+    Resolved,
     ResolveOutcome,
     ResolveWriteAhead,
     SettleWriteAhead,
@@ -57,6 +60,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     SweptStop,
     check_in_force,
     check_request,
+    check_resolve,
     request_cutoff,
 )
 from candleviewer.storage.repositories.submissions import (
@@ -1020,7 +1024,7 @@ class InMemoryRecordedStopStore:
         rows: Sequence[RecordedStopRow],
         *,
         at: datetime,
-        write_ahead: ResolveWriteAhead | None = None,
+        write_ahead: InForceWriteAhead | None = None,
     ) -> InForce:
         check_in_force(account_id, rows)
         port.require_aware("at", at)
@@ -1052,20 +1056,18 @@ class InMemoryRecordedStopStore:
         outcome: ResolveOutcome,
         *,
         at: datetime,
+        position_state: FillPosition | None = None,
         write_ahead: ResolveWriteAhead | None = None,
     ) -> tuple[RecordedStopRow, ...]:
-        if not rows or len({row.id for row in rows}) != len(rows):
-            raise ValueError("a resolve names each row of the request once")
-        port.require_aware("at", at)
-        if outcome != "answered" and write_ahead is None:  # 21 Sec.3.3.11: no void unaudited
-            raise ValueError("a void is audited write-ahead (C-2.9): no hook was given")
+        check_resolve(rows, outcome, at, position_state, write_ahead)
         await self._db._turn()
         held = self._as_read(account_id, rows)
         if outcome == "answered":
             done = tuple(replace(r, answered_at=r.answered_at or at) for r in held)
         else:
             done = tuple(replace(r, status="void", closed_at=at) for r in held)
-        hook = None if write_ahead is None else write_ahead(done)
+        record = Resolved(done, outcome, position_state)
+        hook = None if write_ahead is None else write_ahead(record)
         await self._db._audited_commit(hook, self._audit_timeout_s, *done)
         return done
 

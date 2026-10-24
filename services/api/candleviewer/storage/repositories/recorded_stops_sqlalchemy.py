@@ -65,10 +65,13 @@ from candleviewer.storage.repositories.recorded_stops import (
     REFUSED_ENTRY,
     UNSENT_ENTRY,
     WAITING_ENTRY,
+    FillPosition,
     InForce,
+    InForceWriteAhead,
     InsertWriteAhead,
     NewRecordedStop,
     RecordedStopRow,
+    Resolved,
     ResolveOutcome,
     ResolveWriteAhead,
     SettleWriteAhead,
@@ -79,6 +82,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     SweptStop,
     check_in_force,
     check_request,
+    check_resolve,
     request_cutoff,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -249,11 +253,11 @@ def replace_statement(account_id: UUID, record_ids: Sequence[UUID], at: datetime
     return stmt.values(values).returning(*STOP_COLUMNS)
 
 
-def in_force_statement(account_id: UUID, record_ids: Sequence[UUID], at: datetime) -> sa.Update:
+def in_force_statement(
+    account_id: UUID, rows: Sequence[RecordedStopRow], at: datetime
+) -> sa.Update:
     stmt = sa.update(recorded_stops).where(
-        _S.exchange_account_id == account_id,
-        _S.id.in_(sorted(set(record_ids))),
-        _S.status == "pending",
+        _S.exchange_account_id == account_id, _S.status == "pending", _as_read(rows)
     )
     values = {"status": "in_force", "answered_at": _stamped(at), "in_force_at": at}
     return stmt.values(values).returning(*STOP_COLUMNS)
@@ -262,15 +266,19 @@ def in_force_statement(account_id: UUID, record_ids: Sequence[UUID], at: datetim
 def resolve_statement(
     account_id: UUID, rows: Sequence[RecordedStopRow], outcome: ResolveOutcome, at: datetime
 ) -> sa.Update:
-    """Each of `rows` only while `pending` with the `answered_at` it was read with."""
-    as_read = (sa.and_(_S.id == r.id, _S.answered_at.is_not_distinct_from(r.answered_at))
-               for r in rows)  # fmt: skip
     stmt = sa.update(recorded_stops).where(
-        _S.exchange_account_id == account_id, _S.status == "pending", sa.or_(*as_read)
+        _S.exchange_account_id == account_id, _S.status == "pending", _as_read(rows)
     )
     voided = {"status": "void", "closed_at": at}
     values = {"answered_at": _stamped(at)} if outcome == "answered" else voided
     return stmt.values(values).returning(*STOP_COLUMNS)
+
+
+def _as_read(rows: Sequence[RecordedStopRow]) -> sa.ColumnElement[bool]:
+    """SEC-BND-02: each of `rows` only with the `answered_at` it was read with."""
+    return sa.or_(
+        *(sa.and_(_S.id == r.id, _S.answered_at.is_not_distinct_from(r.answered_at)) for r in rows)
+    )
 
 
 def _stamped(at: datetime) -> sa.ColumnElement[Any]:
@@ -445,7 +453,7 @@ class SqlAlchemyRecordedStopStore(CappedStore):
         rows: Sequence[RecordedStopRow],
         *,
         at: datetime,
-        write_ahead: ResolveWriteAhead | None = None,
+        write_ahead: InForceWriteAhead | None = None,
     ) -> InForce:
         check_in_force(account_id, rows)
         require_aware("at", at)
@@ -459,7 +467,7 @@ class SqlAlchemyRecordedStopStore(CappedStore):
             if old:  # first: `ux_rs_in_force` admits one row in force per key and kind
                 done = await uow.session.execute(replace_statement(account_id, old, at))
                 replaced = in_given_order(list(done.mappings()), old)
-            done = await uow.session.execute(in_force_statement(account_id, ids, at))
+            done = await uow.session.execute(in_force_statement(account_id, rows, at))
             shown = in_given_order(list(done.mappings()), ids)
             if len(replaced) != len(old) or len(shown) != len(ids):
                 raise StaleRecordedStop  # the locks rule it out; never commit half
@@ -475,14 +483,11 @@ class SqlAlchemyRecordedStopStore(CappedStore):
         outcome: ResolveOutcome,
         *,
         at: datetime,
+        position_state: FillPosition | None = None,
         write_ahead: ResolveWriteAhead | None = None,
     ) -> tuple[RecordedStopRow, ...]:
+        check_resolve(rows, outcome, at, position_state, write_ahead)
         ids = [row.id for row in rows]
-        if not ids or len(set(ids)) != len(ids):
-            raise ValueError("a resolve names each row of the request once")
-        require_aware("at", at)
-        if outcome != "answered" and write_ahead is None:  # 21 Sec.3.3.11: no void unaudited
-            raise ValueError("a void is audited write-ahead (C-2.9): no hook was given")
         async with self._unit_of_work() as uow:
             await uow.session.execute(lock_stops_statement(account_id, ids))
             done = await uow.session.execute(resolve_statement(account_id, rows, outcome, at))
@@ -490,6 +495,7 @@ class SqlAlchemyRecordedStopStore(CappedStore):
             if len(resolved) != len(ids):
                 raise StaleRecordedStop
             if write_ahead is not None:
-                await bounded_write_ahead(write_ahead(resolved), self._audit_timeout_s)
+                record = Resolved(resolved, outcome, position_state)
+                await bounded_write_ahead(write_ahead(record), self._audit_timeout_s)
             await uow.commit()
         return resolved

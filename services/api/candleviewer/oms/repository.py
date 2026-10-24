@@ -67,7 +67,9 @@ from candleviewer.storage.repositories.positions import (
 from candleviewer.storage.repositories.recorded_stops import (
     SWEEP_REASON,
     UX_RS_IN_FLIGHT,
+    FillPosition,
     InForce,
+    InForceWriteAhead,
     InsertWriteAhead,
     NewRecordedStop,
     RecordedStopRow,
@@ -79,6 +81,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     SweepScope,
     SweepWriteAhead,
     SweptStop,
+    check_resolve,
 )
 from candleviewer.storage.repositories.submissions import (
     AnchorTakenError,
@@ -539,7 +542,7 @@ class RecordedStopRepository:
         rows: Sequence[RecordedStopRow],
         *,
         at: datetime,
-        write_ahead: ResolveWriteAhead | None = None,
+        write_ahead: InForceWriteAhead | None = None,
     ) -> InForce:
         """`RecordedStopStore.put_in_force`: `StaleRecordedStop` on a lost race, and
         `AuditNotDurable` for a hook past its bound, each with nothing written."""
@@ -561,17 +564,18 @@ class RecordedStopRepository:
         outcome: ResolveOutcome,
         *,
         at: datetime,
+        position_state: FillPosition | None = None,
         write_ahead: ResolveWriteAhead | None = None,
     ) -> tuple[RecordedStopRow, ...]:
-        """`RecordedStopStore.resolve`; a void without its hook is refused before the store (C-2.9).
-        `AuditNotDurable` for a hook past its bound: nothing is voided or answered."""
-        if outcome != "answered" and write_ahead is None:
-            raise ValueError("a void is audited write-ahead (C-2.9): no hook was given")
+        """`RecordedStopStore.resolve`, its call refused before the store (`check_resolve`: C-2.9,
+        CR-S3H0-08). `AuditNotDurable` for a hook past its bound: nothing voided or answered."""
+        check_resolve(rows, outcome, at, position_state, write_ahead)
         try:
             with self._timer.measure("recorded_stops"):
                 done = await self._store.resolve(
-                    account_id, rows, outcome, at=at, write_ahead=write_ahead
-                )
+                    account_id, rows, outcome, at=at, position_state=position_state,
+                    write_ahead=write_ahead,
+                )  # fmt: skip
         except WriteAheadTimeout:
             raise AuditNotDurable("the resolve's write-ahead audit did not land in time") from None
         _log_stops("oms_stops_resolved", done, outcome=outcome)
