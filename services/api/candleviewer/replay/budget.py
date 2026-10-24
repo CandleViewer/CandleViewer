@@ -122,22 +122,26 @@ class ReplayLoopBudget:
         signal = wake if wake is not None else self._never
         self._waiters.append(ticket)
         replay_budget_waiters.inc()
-        began = time.now()
+        began, waited = time.now(), False
         try:
             while not signal.is_set():
                 self._refill()
                 debt = -self._tokens
                 if debt > _EPS:  # every waiter, first or not, sleeps until the debt is paid
+                    waited = True
                     await time.wait_until(time.now() + debt / self._share, signal)
                 elif self._waiters[0] is ticket:
                     break
                 else:  # paid, and the waiter ahead is about to run: let it
+                    waited = True
                     await asyncio.sleep(0)
         finally:
             self._waiters.remove(ticket)
             replay_budget_waiters.dec()
             held = max(time.now() - began, 0.0)
             replay_budget_held_seconds_total.inc(held)
+        if not waited:  # a wake set already (or a debt just paid): still one yield (C-2.17)
+            await asyncio.sleep(0)
         return held
 
 
@@ -170,8 +174,9 @@ class BudgetLane:
 
     async def breathe(self, wake: asyncio.Event | None = None) -> float:
         """Charge, then yield once, or hold while the budget is in debt or others wait. Returns
-        the seconds held (0.0 for a plain yield); `wake` ends a hold early. The lane is started
-        again on return, so neither the yield nor the hold is charged to it."""
+        the seconds held (0.0 for a plain yield); `wake` ends a hold early. Every call suspends at
+        least once, even with `wake` already set. The lane is started again on return, so neither
+        the yield nor the hold is charged to it."""
         budget = self._budget
         self.charge()
         try:
