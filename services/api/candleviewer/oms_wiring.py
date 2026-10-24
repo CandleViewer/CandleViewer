@@ -15,8 +15,10 @@ Part 3: the OMS runtime (`build_oms_runtime`, `OmsRuntime`), which the lifespan 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import math
 import re
+import threading
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Collection, Coroutine, Mapping, Sequence
@@ -838,7 +840,8 @@ class OrderStateFeed:
 # the instrument catalogue (a frozen snapshot swapped by one assignment), the ticker stream's last
 # ticker and phase (one dict read each, of a frozen event), the clock guard's health
 # (`ServedClock`), the read-only gate and the governor's headroom (each under its own lock,
-# #4370), the metrics and the pager.
+# #4370), the persistence bundle's chain-trip latch (a dict the serving loop's restores write an
+# item at a time), the metrics and the pager.
 
 
 class PrivateStreamRefused(RuntimeError):
@@ -917,17 +920,25 @@ class ServedProfiles:
         return await self._serving.call(read)
 
 
+#: The lane's gate's answer for an account whose rejected credential has not reached the key
+#: standing yet (`ServedStandings.refused`); the standing's own answer once it has.
+_REJECTED: Final = OrderEntryRefusal("no_active_key", "The account has no verified active key.")
+
+
 class ServedGate:
     """The order-entry gate as the lane asks it (C-2.21). Its account check reads the key standing,
     whose read also drops a rejection a later pass cleared, so it is not safe from another thread:
     the lane's thread waits for the serving loop's answer (`Serving.block`), and a gate that does
-    not begin to answer within `BLOCK_TIMEOUT_S` is `OmsNotReady`, nothing sent. A rejection the
-    lane notified before (`ServedStandings`) lands before this read does."""
+    not begin to answer within `BLOCK_TIMEOUT_S` is `OmsNotReady`, nothing sent. An account whose
+    rejected credential the lane notified (`ServedStandings`) is refused at once, before the notice
+    lands, so no later read has to wait for it (CR-S3L1B-04)."""
 
-    def __init__(self, gate: OrderEntryCheck, serving: Serving) -> None:
-        self._gate, self._serving = gate, serving
+    def __init__(self, gate: OrderEntryCheck, serving: Serving, standings: ServedStandings) -> None:
+        self._gate, self._serving, self._standings = gate, serving, standings
 
     def refusal(self, account_id: UUID) -> OrderEntryRefusal | None:
+        if self._standings.refused(account_id):
+            return _REJECTED
         try:
             return self._serving.block(lambda: self._gate.refusal(account_id))
         except TimeoutError:
@@ -949,14 +960,26 @@ class ServedSink:
 
 class ServedStandings:
     """The key standing, which is for one loop (`accounts/key_standing.py`), told of a rejected
-    credential from the lane: notified to the serving loop, never awaited. It lands there before
-    any later read the lane makes of the gate (`ServedGate`), which refuses the account then."""
+    credential from the lane: notified to the serving loop, never awaited, and refused on the lane
+    at once (`refused`) until the notice has landed there (C-2.21). A notice lost or failed there
+    leaves the account refused in this process."""
 
     def __init__(self, standings: KeyStandingReactions, serving: Serving) -> None:
         self._standings, self._serving = standings, serving
+        #: Each account's last rejection, set once its notice has landed; changed on the lane only.
+        self._sent: dict[UUID, threading.Event] = {}
 
     def credential_rejected(self, account_id: UUID, refusal: Refusal) -> None:
-        self._serving.notify(self._standings.credential_rejected, account_id, refusal)
+        landed = self._sent[account_id] = threading.Event()
+        self._serving.notify(self._land, account_id, refusal, landed)
+
+    def _land(self, account_id: UUID, refusal: Refusal, landed: threading.Event) -> None:
+        self._standings.credential_rejected(account_id, refusal)
+        landed.set()
+
+    def refused(self, account_id: UUID) -> bool:
+        landed = self._sent.get(account_id)
+        return landed is not None and not landed.is_set()
 
 
 class ServedFeed:
@@ -1536,7 +1559,8 @@ class OmsRuntime:
         return self._parts
 
     async def wait_ready(self) -> None:
-        """Until the startup sweep has set `ready` (E29-T05's consumer waits on it)."""
+        """Until the startup sweep has set `ready` (E29-T05's consumer waits on it), on the serving
+        loop only: `ready` is an `asyncio.Event` of that loop."""
         await self._ready.wait()
 
     def run[T](self, coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
@@ -1585,7 +1609,10 @@ class OmsRuntime:
             _log().critical("oms_runtime_failed_closed", phase=phase, error=type(exc).__name__)
             _page(self._pager, f"oms_runtime_failed_closed: {phase}")
             return
-        except BaseException:
+        except BaseException:  # cancelled: the compose closes what it built on the lane first
+            with contextlib.suppress(LaneStopped, TimeoutError):
+                async with asyncio.timeout(OMS_STOP_RESERVE_S):
+                    await lane.idle()
             await lane.stop()
             raise
         self._startup = spawn(self._started(), name="oms-startup")
@@ -1613,9 +1640,11 @@ class OmsRuntime:
         closers: list[_Closer] = [("cancelled", lambda: asyncio.wait(pending))] if pending else []
         if parts is not None:
             closers += [("lane", parts.lane.idle), *parts.closers]
-        await _closed(closers, deadline)
-        if parts is not None:
-            await parts.lane.stop()
+        try:
+            await _closed(closers, deadline)
+        finally:
+            if parts is not None:  # cancelled or not: its own join bounds it (`LANE_JOIN_S`)
+                await parts.lane.stop()
         self._failed = False
 
     async def _started(self) -> None:
@@ -1758,11 +1787,12 @@ class OmsRuntime:
         bounds = OmsBounds.from_settings(settings)
         ports = SubmissionPorts.interim(now=self._now)
         announce_interim_ports(ports, metrics=metrics)
+        standings = ServedStandings(self._standings, serving)  # its refusals, the lane's gate's
         switches = TradingSwitchesBinding(
             live_enabled=settings.trading_live_enabled,
             live_flag=self._live_enabled,
             kill_switch=InterimKillSwitch(),
-            gate=ServedGate(self._gate, serving),
+            gate=ServedGate(self._gate, serving, standings),
         )
         switches.announce(metrics=metrics)
         self._phase = "sink"
@@ -1802,9 +1832,7 @@ class OmsRuntime:
                 metrics=metrics, pager=self._pager,
             )  # fmt: skip
             rejections = CredentialRejectionsBinding(
-                ServedStandings(self._standings, serving),
-                key_refusal=self._venue.key_refusal,
-                pager=self._pager,
+                standings, key_refusal=self._venue.key_refusal, pager=self._pager
             )
             commands = OmsCommandPort(
                 router=router, accounts=command_accounts, orders=orders, stops=stops,
