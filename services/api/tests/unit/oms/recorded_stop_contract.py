@@ -70,6 +70,9 @@ class RecordedStopContract:
         mid, new, young = [await request(h, account, profile) for _ in range(3)]
         done = await repo(h).put_in_force(account, new[:1], at=LATER, write_ahead=sc.audited)
         assert {r.id for r in done.replaced} == {old[0].id, mid[0].id}
+        shown = await repo(h).in_force_for_key(account, "BTCUSDT", 0)  # by kind, of the account
+        assert [r.id for r in shown] == [new[0].id, old[1].id]
+        assert await repo(h).in_force_for_key(h.new_account()[0], "BTCUSDT", 0) == ()
         assert shape(await now_of(h, (*old, mid[1], *new, *young))) == [
             ("replaced", AT, AT, LATER), ("in_force", AT, AT, None), ("pending", T0, None, None),
             ("in_force", T0, LATER, None), ("pending", T0, None, None),
