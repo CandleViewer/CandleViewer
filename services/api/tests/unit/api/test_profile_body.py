@@ -1,13 +1,14 @@
-"""The profile writes' request edge (E28-T02 #906, slice D2-3; the D2 spec, Sec.6.3): the body
-under its cap, its JSON, the generated model's entries, the `name` code-point check, `If-Match`,
-the `Idempotency-Key`, and the codes the writes answer. No I/O: a request is a bare ASGI scope
-whose body a scripted `receive` hands over chunk by chunk.
+"""The profile writes' request edge (E28-T02 #906, slice D2-3; 22's profile write operations):
+the body under its cap, its JSON, the generated model's entries, the `name` code-point check,
+`If-Match`, the `Idempotency-Key`, and the codes the writes answer. No I/O: a request is a bare
+ASGI scope whose body a scripted `receive` hands over chunk by chunk.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -16,6 +17,7 @@ from fastapi import Request
 from pydantic import BaseModel, ValidationError, field_validator
 
 from candleviewer.accounts.profile_input import ProfileFieldError, schema_errors
+from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.profile_body import (
     MAX_BINDING_BODY_BYTES,
@@ -33,6 +35,7 @@ from candleviewer.api.profile_body import (
     read_capped,
     refused,
 )
+from candleviewer.api.profile_projection import profile_etag
 from candleviewer.api.profiles import problem
 from tests.contract._admin_support import SPEC
 
@@ -40,6 +43,7 @@ _PROFILE = UUID("0b5f6d0e-28a1-4c1e-9e01-000000000001")
 _BINDING = "7d3c9a10-28a1-4c1e-9e01-0000000000a1:default"
 _PLANTED = "AbCdEfGhIjKlMnOpQrSt12"  # key-shaped: `redact_text` masks it
 _VALID = {"name": "Swing", "leverage": "2", "sizing": {"mode": "fixed_qty", "qty": "1"}}
+_FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "profiles" / "risk_based.json"
 
 
 def _request(
@@ -53,8 +57,29 @@ def _request(
         more = len(reads) < len(chunks)
         return {"type": "http.request", "body": chunks[len(reads) - 1], "more_body": more}
 
-    pairs = [(name.encode(), value.encode()) for name, value in headers]
+    # latin-1, as Starlette decodes a header: the string a test sends is the one the edge reads
+    pairs = [(name.encode(), value.encode("latin-1")) for name, value in headers]
     return Request({"type": "http", "method": "PUT", "headers": pairs}, receive), reads
+
+
+def test_the_caps_are_the_contracts_numbers() -> None:
+    """22: 64 KiB for a profile body and 1 KiB for the binding's; B1 Sec.3: the model's first 20
+    entries. Pinned by value, since the tests below read the same constants (R1C-02)."""
+    caps = (MAX_PROFILE_BODY_BYTES, MAX_BINDING_BODY_BYTES, MODEL_ERRORS_SHOWN)
+    assert caps == (65_536, 1_024, 20)
+
+
+@pytest.mark.parametrize(
+    "length",
+    ["9" * 20, "9" * 5000, "\u00b2", "+5", "0x10", ""],
+    ids=["20-digits", "5000-digits", "superscript-two", "plus", "hex", "empty"],
+)
+async def test_an_unusable_content_length_falls_to_the_stream_cap(length: str) -> None:
+    """A `Content-Length` that is not 1 to 19 ASCII digits is never parsed (a 5000-digit one
+    would raise in `int`, a `²` passes `str.isdigit`): the body is read under the stream cap, never
+    a 500 (R1C-02)."""
+    request, _ = _request(("content-length", length), chunks=[b"{}"])
+    assert await read_capped(request, MAX_BINDING_BODY_BYTES) == b"{}"
 
 
 @pytest.mark.parametrize("cap", [MAX_PROFILE_BODY_BYTES, MAX_BINDING_BODY_BYTES])
@@ -126,6 +151,28 @@ class _Echoes(BaseModel):
     @classmethod
     def _refuse(cls, value: str) -> str:
         raise ValueError(f"cannot take {value}")
+
+
+@pytest.mark.parametrize(
+    ("model", "raw", "prefix", "field"),
+    [
+        (api.AccountProfileInput, [], "", ""),
+        (api.AccountProfileInput, None, "", ""),
+        (api.AccountProfileInput, {**_VALID, "take_profit_ladder": [1]}, "",
+         "take_profit_ladder[0]"),
+        (api.AccountDefaultBindingInput, [], "body", "body"),
+    ],
+    ids=["list", "null", "ladder-rung", "binding"],
+)  # fmt: skip
+def test_a_member_that_is_not_an_object_is_named_plainly(
+    model: type[BaseModel], raw: object, prefix: str, field: str
+) -> None:
+    """pydantic names the class it expected, which `redact_text` would read as a key: the entry
+    says plainly that an object was expected (R1C-01)."""
+    with pytest.raises(ValidationError) as ei:
+        model.model_validate(raw)
+    named = [(e.rule, e.message) for e in model_errors(ei.value, prefix=prefix) if e.field == field]
+    assert named == [("model_type", "Input should be an object.")]
 
 
 def test_every_model_message_passes_the_redaction_rules() -> None:
@@ -207,6 +254,13 @@ def test_if_match_names_one_version_of_this_resource(
     else:
         with pytest.raises(answer):
             if_match_version(request, resource)
+
+
+def test_the_tag_a_profile_answers_is_the_tag_if_match_reads() -> None:
+    """The emitter (`profile_etag`) and the parser (`if_match_version`) agree (R1C-02)."""
+    profile = AccountProfile.model_validate_json(_FIXTURE.read_text(encoding="utf-8"))
+    request, _ = _request(("if-match", profile_etag(profile)))
+    assert if_match_version(request, str(profile.profile_id)) == profile.version
 
 
 def test_the_idempotency_key_is_a_uuid_or_refused_unechoed() -> None:

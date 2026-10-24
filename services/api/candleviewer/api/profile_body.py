@@ -1,6 +1,6 @@
-"""The profile writes' request edge (E28-T02 #906, slice D2-3; the D2 spec, Sec.6.3).
+"""The profile writes' request edge (E28-T02 #906, slice D2-3; 22's profile write operations).
 
-The write handlers call these in the D2 spec's Sec.2.2 order, and each refuses with a typed error
+The write handlers call these in their admission order (#906), and each refuses with a typed error
 the handler answers: the `Idempotency-Key` (`Refused`, 422), the raw body under its operation's
 cap (`BodyTooLarge`, 413) before anything parses it, its JSON (`Refused`), the generated model's
 failures as `ProfileRejected` entries, the `name` code-point check, and `If-Match`
@@ -49,6 +49,8 @@ _NOT_A_KEY: Final = ProfileFieldError(
     "Idempotency-Key", "uuid_parsing", "Idempotency-Key must be a UUID."
 )
 _NOT_JSON: Final = "The body is not UTF-8 JSON."
+#: pydantic names the class it expected, which `redact_text` would read as a key (R1C-01).
+_NOT_AN_OBJECT: Final = "Input should be an object."
 _TOO_DEEP: Final = f"JSON nesting is deeper than {MAX_JSON_DEPTH} levels."
 
 
@@ -79,7 +81,7 @@ class IfMatchRefused(Exception):
 def refused(
     errors: Sequence[ProfileFieldError], *, noun: str = "member", limits: bool = False
 ) -> Refused:
-    """A 422 of `errors`, its `detail` counting their distinct fields (the D2 spec, Sec.3): "n
+    """A 422 of `errors`, its `detail` counting their distinct fields (22's `ProfileRejected`): "n
     member(s) failed validation.", or with `limits` "n member(s) break(s) an exchange limit."; the
     binding body's noun is "field"."""
     n = len({e.field for e in errors})
@@ -134,13 +136,16 @@ def decode(raw: bytes, *, field: str = "") -> object:
 def model_errors(exc: ValidationError, *, prefix: str = "") -> list[ProfileFieldError]:
     """The generated model's first `MODEL_ERRORS_SHOWN` failures, each at its member's path under
     `prefix` with the validator's own type as its rule: an unknown member at its parent, never by
-    its key; no input and no context; each message through `redact_text`."""
+    its key; no input and no context; each message through `redact_text`, but a non-object's,
+    which is a constant."""
     found = exc.errors(include_url=False, include_input=False, include_context=False)
     entries = []
     for error in found[:MODEL_ERRORS_SHOWN]:
         loc = error["loc"][:-1] if error["type"] == "extra_forbidden" else error["loc"]
         path = ".".join(part for part in (prefix, field_path(loc)) if part)
-        entries.append(ProfileFieldError(path, error["type"], redact_text(error["msg"])))
+        model_type = error["type"] == "model_type"  # names a class, not a value
+        message = _NOT_AN_OBJECT if model_type else redact_text(error["msg"])
+        entries.append(ProfileFieldError(path, error["type"], message))
     return entries
 
 

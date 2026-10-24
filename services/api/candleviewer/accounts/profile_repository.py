@@ -94,10 +94,12 @@ def _stored(row: AccountProfileRow) -> StoredProfile:
     return StoredProfile(profile_from_row(row), to_us(row.created_at))
 
 
-def _unreadable(account_id: UUID, exc: Exception) -> ProfileUnavailableError:
+def _unreadable(
+    account_id: UUID, exc: Exception, reason: str = "invalid_row"
+) -> ProfileUnavailableError:
     _log().warning(
         "profile.read_failed_closed",
-        reason="invalid_row",
+        reason=reason,
         account_id=str(account_id),
         error=type(exc).__name__,  # never a value
     )
@@ -106,13 +108,14 @@ def _unreadable(account_id: UUID, exc: Exception) -> ProfileUnavailableError:
 
 def _read_back(account_id: UUID, row: AccountProfileRow | None) -> StoredProfile:
     """A write's row as a read answers it: `None` is the one not-found, and a row the model
-    cannot read `ProfileUnavailableError`, though the write committed (a 503, never a 500)."""
+    cannot read `ProfileUnavailableError`, though the write committed (a 503, never a 500), logged
+    as `committed_row_unreadable` so an operator knows it committed."""
     if row is None:
         raise AccountNotFoundError("profile")
     try:
         return _stored(row)
     except _UNREADABLE as exc:
-        raise _unreadable(account_id, exc) from None
+        raise _unreadable(account_id, exc, "committed_row_unreadable") from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,9 +284,9 @@ class ProfilesRepository:
             raise self._map(exc) from None
         finally:
             self._invalidate(account_id)
-        updated = _read_back(account_id, row)
-        self._written(1)
-        return updated
+        if row is not None:  # committed: counted whether or not the row reads back
+            self._written(1)
+        return _read_back(account_id, row)
 
     async def set_default_profile(
         self,
@@ -310,13 +313,14 @@ class ProfilesRepository:
             self._invalidate(account_id)
         if move is None:
             raise AccountNotFoundError("profile")
+        if move.written:  # committed: counted whether or not its rows read back
+            self._written(1 + (move.previous is not None))
         try:
             previous = None if move.previous is None else profile_from_row(move.previous)
             profile = profile_from_row(move.profile)
         except _UNREADABLE as exc:
-            raise _unreadable(account_id, exc) from None
-        if move.written:
-            self._written(1 + (previous is not None))
+            reason = "committed_row_unreadable" if move.written else "invalid_row"
+            raise _unreadable(account_id, exc, reason) from None
         return DefaultProfileMove(profile=profile, previous=previous, version=move.version)
 
     async def delete_profile(
@@ -341,9 +345,9 @@ class ProfilesRepository:
             raise self._map(exc) from None
         finally:
             self._invalidate(account_id)
-        deleted = _read_back(account_id, row).profile
-        self._written(1)
-        return deleted
+        if row is not None:  # committed: counted whether or not the row reads back
+            self._written(1)
+        return _read_back(account_id, row).profile
 
     async def get_revision(
         self, scope: AccountScope, account_id: UUID, profile_id: UUID, version: int

@@ -346,35 +346,46 @@ _MOVE: Any = _WRITES["set_default"][1]
 
 
 @pytest.mark.parametrize(
-    ("write", "answer"),
+    ("write", "answer", "bumped"),
     [
-        ("create", _row(version=1, **_BAD)),
-        ("update", _row(version=4, **_BAD)),
-        ("delete", _row(version=4, **_BAD)),
-        ("set_default", dataclasses.replace(_MOVE, profile=_row(version=4, **_BAD))),
-        ("set_default", dataclasses.replace(_MOVE, previous=_row(_profile(name="B"), **_BAD))),
+        ("create", _row(version=1, **_BAD), 0),
+        ("update", _row(version=4, **_BAD), 1),
+        ("delete", _row(version=4, **_BAD), 1),
+        ("set_default", dataclasses.replace(_MOVE, profile=_row(version=4, **_BAD)), 1),
+        ("set_default", dataclasses.replace(_MOVE, previous=_row(_profile(name="B"), **_BAD)), 2),
     ],
     ids=["create", "update", "delete", "move-target", "move-previous"],
 )
 async def test_a_write_answers_its_stored_row_and_an_unreadable_one_fails_closed(
-    write: str, answer: object
+    write: str, answer: object, bumped: int
 ) -> None:
     """#906 D2-3: a create and a replace answer the model with its row's `created_at`, for their
     documents; a written row the model cannot read is `ProfileUnavailableError` from every write
-    (SR-E28-24), unchained and logged by its class alone, with the account invalidated: the write
-    committed, so its caller answers 503, never a 500."""
+    (SR-E28-24), unchained and logged by its class alone as a committed row, with the account
+    invalidated and its version bumps counted (R1C-04): the write committed, so its caller answers
+    503, never a 500."""
     if write in ("create", "update"):
         row: Any = _WRITES[write][1]
         repo, _, _, _ = _repo(row)
         assert await _write(repo, write) == StoredProfile(profile_from_row(row), _CREATED)
-    repo, _, cache, _ = _repo(answer)
+    repo, _, cache, bumps = _repo(answer)
     with structlog.testing.capture_logs() as logs, pytest.raises(ProfileUnavailableError) as ei:
         await _write(repo, write)
     assert ei.value.__cause__ is None and ei.value.__suppress_context__
-    assert [(log["event"], log["error"]) for log in logs] == [
-        ("profile.read_failed_closed", "ValidationError")
+    assert [(log["event"], log["reason"], log["error"]) for log in logs] == [
+        ("profile.read_failed_closed", "committed_row_unreadable", "ValidationError")
     ]
-    assert cache.invalidated == [_P.account_id]
+    assert cache.invalidated == [_P.account_id] and bumps.total == bumped
+
+
+async def test_an_unreadable_row_from_a_move_that_wrote_nothing_is_not_called_committed() -> None:
+    """A move that found the profile already the default committed nothing: its unreadable row is
+    `invalid_row`, with nothing counted (R1C-04)."""
+    move = dataclasses.replace(_MOVE, profile=_row(version=4, **_BAD), written=False)
+    repo, _, _, bumps = _repo(move)
+    with structlog.testing.capture_logs() as logs, pytest.raises(ProfileUnavailableError):
+        await _write(repo, "set_default")
+    assert [log["reason"] for log in logs] == ["invalid_row"] and bumps.total == 0
 
 
 @pytest.mark.parametrize("refused", [False, True], ids=["committed", "refused"])
