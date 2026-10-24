@@ -66,6 +66,12 @@ class CredentialUnavailable(SecretsError):
     code = "credential_unavailable"
 
 
+class SigningLoopMismatch(CredentialUnavailable):
+    """A loop's signing used on another loop or after its close (#913 L3b): a wiring fault."""
+
+    code = "signing_loop_mismatch"
+
+
 class WithdrawPermissionRejected(SecretsError):
     """The key reports any withdraw permission (C-2.8)."""
 

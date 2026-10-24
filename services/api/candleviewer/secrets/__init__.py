@@ -14,7 +14,7 @@ its `CandidateSigner`, a `SigningCapability`, and stores it only after the check
 `audit`'s ports (#889, ADR-0039 decision 3): a signature and public key material, never a seed.
 It mints `SigningKeyRotator` for `admin` too (#889 S7): the signing key's rotation, which answers
 with public key material, or `ExportKeyRotationError`; and `RotationRunning` for the export route
-(#889 S10): whether a rotation runs, a bool.
+(#889 S10): whether a rotation runs, a bool; and `LoopSigning`, the order lane's (#913 L3b).
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ from candleviewer.secrets.models import KekCheckResult, RewrapReport, StoredCred
 from candleviewer.secrets.secret import Secret
 from candleviewer.secrets.service import (
     CredentialBorrower,
+    LoopSigning,
     SecretsLifecycle,
     SecretsLifecycleFacade,
     SecretsMetadata,
@@ -46,6 +47,7 @@ from candleviewer.secrets.service import (
     mint_borrower,
     mint_candidate_keys,
     mint_export_signer,
+    mint_loop_signing,
     mint_rotation_running,
     mint_signing_key_rotator,
     mint_signing_keys,
@@ -77,6 +79,7 @@ __all__ = [
     "KekRotationError",
     "KekSourceNotPermitted",
     "KekUnavailable",
+    "LoopSigning",
     "Purpose",
     "RequestSignature",
     "RewrapReport",
@@ -97,6 +100,7 @@ __all__ = [
     "mint_borrower",
     "mint_candidate_keys",
     "mint_export_signer",
+    "mint_loop_signing",
     "mint_rotation_running",
     "mint_signing_key_rotator",
     "mint_signing_keys",

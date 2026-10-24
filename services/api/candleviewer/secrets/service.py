@@ -20,7 +20,7 @@ are the audit export's `ExportSigner` and `SigningKeys` (#889): a signature and 
 material, never a seed. So is `SigningKeyRotator` (#889 S7), the signing key's rotation for
 `admin`, which answers with public key material and, once its new key passes the check, makes
 export available again with no restart, and `RotationRunning` (#889 S10), which tells the export
-route only whether a rotation runs.
+route only whether a rotation runs. `mint_loop_signing` (#913 L3b) binds signing to the order lane.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.secrets import _export_custody, _kek, _source, export_rotator, export_signer
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets._rotation import RotatingBroker
-from candleviewer.secrets.broker import ALLOWED_CALLERS, Purpose, _m2_only
+from candleviewer.secrets.broker import _IO_TIMEOUT_S, ALLOWED_CALLERS, Purpose, _LoopIo, _m2_only
 from candleviewer.secrets.candidate import CANDIDATE_HOLD_S, CandidateKeys, hold_candidate
 from candleviewer.secrets.errors import (
     CredentialUnavailable,
@@ -154,15 +154,28 @@ class SigningCapability(Protocol):
     ) -> RequestSignature: ...
 
 
-def _sealed_borrower(resolve: Callable[[], RotatingBroker], caller: str) -> CredentialBorrower:
+def _sealed_borrower(
+    resolve: Callable[[], RotatingBroker], caller: str, io: _LoopIo | None = None
+) -> CredentialBorrower:
     """Build a signer whose broker resolver lives only in a closure (no attribute to reach)."""
     if caller not in ALLOWED_CALLERS:
         raise ValueError("caller not permitted to borrow credentials")
 
     async def sign(key_id: UUID, message: SigningMessage, purpose: Purpose) -> RequestSignature:
-        return await resolve().borrow_handle(caller).sign(key_id, message, purpose=purpose)
+        return await resolve().borrow_handle(caller, io=io).sign(key_id, message, purpose=purpose)
 
     return CredentialBorrower(sign)
+
+
+async def _sink_call(sink: AuditSink | None, action: str, fields: dict[str, str]) -> None:
+    """One M2 record, bounded, actor `system/secrets` unless named; failing: `audit_unavailable`."""
+    if sink is None:
+        raise KekLoadError("audit_unavailable")
+    try:
+        async with asyncio.timeout(_AUDIT_TIMEOUT_S):
+            await sink(action, {"actor_kind": "system", "actor_role": "secrets", **fields})
+    except Exception:
+        raise KekLoadError("audit_unavailable") from None
 
 
 @final
@@ -187,6 +200,25 @@ class CredentialBorrower:
         """Sign `message` (byte segments, `KEY_ID_SLOT` where the key id goes) with the
         credential's API secret inside M2; audited write-ahead as `credential_borrowed`."""
         return await self.__borrow(key_id, message, purpose)
+
+
+@final
+class LoopSigning:
+    """Signing bound to the order lane's loop (#913 L3b, 29 CV-C13): `borrower` reads and records
+    through that loop's own store and sink, and refuses any other loop. Closures only (C-3.2)."""
+
+    def __init_subclass__(cls, **kw: Any) -> None:
+        _m2_only(cls)
+        super().__init_subclass__(**kw)
+
+    __slots__ = ("__close", "borrower")
+
+    def __init__(self, borrower: CredentialBorrower, close: Callable[[], Awaitable[None]]) -> None:
+        self.borrower, self.__close = borrower, close
+
+    async def aclose(self) -> None:
+        """On its own loop only: no more signing; its writes cancelled and awaited. Idempotent."""
+        await self.__close()
 
 
 class SecretsLifecycleFacade:
@@ -280,14 +312,7 @@ class SecretsService:
         self._rotating = False
 
     async def _audit(self, action: str, fields: dict[str, str]) -> None:
-        if self._audit_sink is None:
-            raise KekLoadError("audit_unavailable")
-        try:
-            async with asyncio.timeout(_AUDIT_TIMEOUT_S):
-                await self._audit_sink(action, {"actor_kind": "system", "actor_role": "secrets",
-                                                **fields})  # fmt: skip
-        except Exception:
-            raise KekLoadError("audit_unavailable") from None
+        await _sink_call(self._audit_sink, action, fields)
 
     async def _load(self, source: _kek.KekSource) -> _kek.LoadedKek:
         """Worker-thread load; on timeout/cancel the late result is zeroed, never leaked."""
@@ -400,6 +425,7 @@ class SecretsService:
             broker = RotatingBroker(
                 self._store, self._audit, kek, prev_kek=prev,
                 dek_cache_ttl_s=settings.dek_cache_ttl_s, env_name=settings.environment.value,
+                loop=asyncio.get_running_loop(),  # #913 L3b: its store and sink serve this loop
             )  # fmt: skip
             try:  # #2266: the previous KEK first, so a wrong one never pins v(n+1)
                 if prev is not None:
@@ -442,9 +468,12 @@ class SecretsService:
         if self._export_keys is not None:
             try:
                 await self._open_export_key(self._export_keys, kek, prev)
-            except BaseException:  # a cancelled boot: unpublished, the KEKs zeroed, latched
+            except BaseException as exc:  # a cancelled boot: unpublished, KEKs zeroed, latched
                 self._broker = None
-                broker.drop_kek()
+                if isinstance(exc, GeneratorExit):  # the collector's, maybe holding `_guard`
+                    broker._zero_keks()  # no lock: nothing signs before this returns
+                else:
+                    broker.drop_kek()
                 m.kek_version.set(0)
                 self._latch(ctx, "kek_unavailable")
                 raise
@@ -819,6 +848,33 @@ def mint_borrower(service: SecretsService, caller_module: str) -> CredentialBorr
     """Wiring-time signing capability bound to `caller_module`. Called once, in
     `admin.wiring.build_secrets_service`; fails closed while degraded."""
     return _sealed_borrower(service._require, caller_module)
+
+
+def mint_loop_signing(
+    service: SecretsService, caller_module: str
+) -> Callable[[CredentialStore, AuditSink], LoopSigning]:
+    """Wiring-time binder of signing to one more event loop (#913 L3b), minted once, in
+    `admin.wiring.secrets_bundle`. It runs on the loop it serves (else `RuntimeError`) with that
+    loop's store and sink, wrapped as the service's own; its borrower resolves the broker per call,
+    as `mint_borrower`'s: closed while degraded."""
+    if caller_module not in ALLOWED_CALLERS:
+        raise ValueError("caller not permitted to borrow credentials")
+
+    def bind(store: CredentialStore, audit: AuditSink) -> LoopSigning:
+        async def sink(action: str, fields: dict[str, str]) -> None:
+            await _sink_call(audit, action, fields)
+
+        io = _LoopIo(store, sink, asyncio.get_running_loop())
+
+        async def close() -> None:
+            broker = service._broker  # each wait bounded by its `io_timeout_s`, as its `aclose`
+            await io.aclose(_IO_TIMEOUT_S if broker is None else broker._timeout)
+            if broker is not None:
+                broker._leave(io)
+
+        return LoopSigning(_sealed_borrower(service._require, caller_module, io), close)
+
+    return bind
 
 
 def mint_candidate_keys(
