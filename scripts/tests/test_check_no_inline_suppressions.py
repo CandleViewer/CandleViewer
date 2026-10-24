@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -16,9 +17,11 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 import tools.ci.check_no_inline_suppressions as check  # noqa: E402 - sys.path first (#549)
+import tools.ci.suppressions as suppressions  # noqa: E402 - sys.path first (#549)
 
 TODAY = "2026-10-24"
-OK = "reason=reviewed-case owner=@basiltt review=2026-12-01"
+OWNER = "@CandleViewer/security"
+OK = f"reason=reviewed-case owner={OWNER} review=2026-12-01"
 SCOPE = "apps/web/src/features/drawings"
 # One form per marker; `{a}` is the annotation (a block comment holds it inside).
 FORMS = [
@@ -26,15 +29,20 @@ FORMS = [
     "/* eslint-disable{a} */",
     "foo(); // eslint-disable-line no-console{a}",
     "// @ts-ignore{a}",
+    "// @ts-ignorexyz{a}",
     "// @ts-expect-error{a}",
+    "// @ts-expect-errorxyz{a}",
     "// nosemgrep: cv-drawings-text-to-html-sink{a}",
     "// nosem{a}",
     "// NOSEMGREP{a}",
     "// NoSemgrep: cv-drawings-text-to-html-sink{a}",
+    "// nosemantic{a}",
+    "// nosem_reason{a}",
     "/* eslint no-restricted-globals: off{a} */",
+    "/* eslint @typescript-eslint/no-explicit-any: off{a} */",
 ]
 MARKER = re.compile(
-    r"eslint-disable(?:-next-line|-line)?|@ts-ignore|@ts-expect-error|(?i:nosem(?:grep)?)|eslint(?= )"
+    r"eslint-disable(?:-next-line|-line)?|@ts-ignore|@ts-expect-error|(?i:nosem\w*)|eslint(?= )"
 )
 
 
@@ -60,7 +68,12 @@ def test_a_bare_suppression_fails_naming_file_line_and_marker(tmp_path, capsys, 
 
 
 @pytest.mark.parametrize(
-    "lines", [["/*", "eslint-disable react/no-danger", "*/"], ["/**", " * @ts-ignore", " */"]]
+    "lines",
+    [
+        ["/*", "eslint-disable react/no-danger", "*/"],
+        ["/**", " * @ts-ignore", " */"],
+        ["/*", "** @ts-expect-error because", "*/"],  # tsc reads `(?:/|*)*` before the marker
+    ],
 )
 def test_a_marker_opening_a_line_inside_a_block_comment_counts(tmp_path, capsys, lines):
     text = "\n".join(["export const a = 1;", *lines, "export const b = 2;"])
@@ -73,6 +86,26 @@ def test_a_marker_opening_a_block_comment_line_takes_its_annotation(tmp_path, ca
     assert _check(tmp_path, capsys, {f"{SCOPE}/a.ts": text}) == (0, "")
 
 
+def test_every_marker_on_a_line_is_judged_not_only_the_first(tmp_path, capsys):
+    first = f"/* nosemgrep -- {OK} */"
+    code, err = _check(
+        tmp_path, capsys, {f"{SCOPE}/a.ts": f"{first} // @ts-expect-error: hidden\n"}
+    )
+    assert code == 1 and f"{SCOPE}/a.ts:1: @ts-expect-error: suppression missing" in err
+    both = {f"{SCOPE}/a.ts": f"{first} // @ts-ignore -- {OK}\n"}
+    assert _check(tmp_path / "two", capsys, both) == (0, "")
+
+
+def test_only_the_security_team_may_own_a_drawing_path_suppression(tmp_path, capsys):
+    """The shared grammar takes any `@handle`, the team form too: on these paths the escape is the
+    Security engineer's review, not self-service (#4377's L5)."""
+    handle = OK.replace(OWNER, "@basiltt")
+    assert suppressions.field_problems(OK, date.fromisoformat(TODAY)) == []
+    assert suppressions.field_problems(handle, date.fromisoformat(TODAY)) == []
+    code, err = _check(tmp_path, capsys, {f"{SCOPE}/a.ts": f"// @ts-ignore {handle}\n"})
+    assert code == 1 and f"owner '@basiltt' must be {OWNER}" in err
+
+
 @pytest.mark.parametrize("form", FORMS)
 def test_a_reviewed_annotation_passes(tmp_path, capsys, form):
     files = {f"{SCOPE}/a.ts": form.format(a=f" -- {OK}") + "\n"}
@@ -82,9 +115,9 @@ def test_a_reviewed_annotation_passes(tmp_path, capsys, form):
 @pytest.mark.parametrize(
     ("text", "problem"),
     [
-        ("// @ts-expect-error reason=x owner=@basiltt review=2026-10-23", "has expired"),
-        ("// @ts-expect-error reason=x owner=@basiltt review=2027-06-01", "expiry too far"),
-        ("// @ts-expect-error owner=@basiltt review=2026-12-01", "missing reason"),
+        (f"// @ts-expect-error reason=x owner={OWNER} review=2026-10-23", "has expired"),
+        (f"// @ts-expect-error reason=x owner={OWNER} review=2027-06-01", "expiry too far"),
+        (f"// @ts-expect-error owner={OWNER} review=2026-12-01", "missing reason"),
         ("// @ts-expect-error reason=x owner=basiltt review=2026-12-01", "is not @<handle>"),
         (f"/* eslint-disable */ {OK}", "missing reason, owner, review"),  # outside the comment
         (f"// @ts-ignore\n// {OK}", "missing reason, owner, review"),  # in the next comment
@@ -116,11 +149,46 @@ def test_only_source_files_under_the_listed_paths_are_read(tmp_path, capsys):
     files = {
         "apps/web/src/features/indicators/a.ts": bare,  # another feature
         f"{SCOPE}/notes.md": bare,  # not source
-        f"{SCOPE}/node_modules/x/a.ts": bare,  # a build tree
+        **{f"{SCOPE}/{d}/x/a.ts": bare for d in ("node_modules", "dist", "coverage", ".turbo")},
         f"{SCOPE}/s.ts": "export const s = \"eslint-disable\"; const t = '@ts-ignore';\n",
         f"{SCOPE}/p.ts": "export const p = 1; // note: see the lint config\n",
     }
     assert _check(tmp_path, capsys, files) == (0, "")
+
+
+def test_a_directory_symlink_is_not_entered(tmp_path, capsys):
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "outside/a.ts").write_text("// @ts-ignore\n", encoding="utf-8")
+    (tmp_path / SCOPE).mkdir(parents=True)
+    (tmp_path / SCOPE / "link").symlink_to(tmp_path / "outside", target_is_directory=True)
+    assert _check(tmp_path, capsys, {f"{SCOPE}/b.ts": "export {};\n"}) == (0, "")
+
+
+@pytest.mark.parametrize("suffix", [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"])
+def test_each_source_suffix_is_read(tmp_path, capsys, suffix):
+    code, err = _check(tmp_path, capsys, {f"{SCOPE}/a{suffix}": "// @ts-ignore\n"})
+    assert code == 1 and f"a{suffix}:1" in err
+
+
+def test_a_config_other_than_the_default_names_the_paths(tmp_path, capsys):
+    (tmp_path / "other").mkdir()
+    config = tmp_path / "other/paths.json"
+    config.write_text(json.dumps({"paths": ["lib/**"]}), encoding="utf-8")
+    for rel in ("lib/a.ts", f"{SCOPE}/a.ts"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("// @ts-ignore\n", encoding="utf-8")
+    assert check.main(["--root", str(tmp_path), "--config", str(config), "--today", TODAY]) == 1
+    err = capsys.readouterr().err
+    assert "lib/a.ts:1" in err and SCOPE not in err
+
+
+def test_without_a_day_the_review_date_is_judged_against_today(tmp_path, capsys):
+    today = datetime.now(UTC).date()
+    for review, code in ((today + timedelta(days=10), 0), (today - timedelta(days=10), 1)):
+        text = f"// @ts-ignore reason=x owner={OWNER} review={review}\n"
+        _check(tmp_path, capsys, {f"{SCOPE}/a.ts": text})
+        assert check.main(["--root", str(tmp_path)]) == code
+    assert "has expired" in capsys.readouterr().err
 
 
 def test_extending_the_path_list_extends_the_scan(tmp_path, capsys):
@@ -156,14 +224,23 @@ def test_the_script_runs_as_a_command(tmp_path, capsys):
     assert run.returncode == 1 and f"{SCOPE}/a.ts:1: nosemgrep" in run.stderr
 
 
-def test_the_repository_is_clean() -> None:
-    assert check.main([]) == 0
+def test_the_repository_is_clean(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Judged apart from the review window: a future expiry fails the lint job, which runs the check
+    on the real clock, and not every pull request's governance shard (#4377's Nit 6)."""
+    real = suppressions.field_problems
+    window = ("has expired", "expiry too far")
+    monkeypatch.setattr(
+        check,
+        "field_problems",
+        lambda t, day: [p for p in real(t, day) if not any(w in p for w in window)],
+    )
+    assert check.main(["--today", TODAY]) == 0
 
 
 def _unlisted(root: Path, paths: list[str]) -> list[str]:
     """Drawing or object-tree code (a `drawing*` dir, camel-cased too, an `object-tree*` name) not
     in `paths`."""
-    named = re.compile(r"^[Dd]rawings?(?:[-_.A-Z0-9]|$)|(?i:^object-?tree)")
+    named = re.compile(r"^(?i:drawings?)(?:[-_.A-Z0-9]|$)|(?i:^object-?tree)")
     missing: list[str] = []
     for src in [*root.glob("apps/*/src"), *root.glob("packages/*/src")]:
         for dirpath, dirnames, filenames in os.walk(src):
@@ -182,6 +259,8 @@ def test_the_tripwire_names_drawing_and_object_tree_code_outside_the_list(tmp_pa
         f"{SCOPE}/a.ts",  # listed
         "apps/web/src/features/drawings-legacy/a.ts",
         "apps/web/src/features/drawingTools/a.ts",
+        "apps/web/src/features/DRAWINGS/a.ts",
+        "apps/web/src/features/DRAWING_TOOLS/a.ts",
         "apps/web/src/features/drawingsheet/a.ts",  # one word: not drawing code
         "apps/web/src/objecttree/a.ts",
         "packages/ui/src/components/ObjectTree.tsx",
@@ -191,6 +270,8 @@ def test_the_tripwire_names_drawing_and_object_tree_code_outside_the_list(tmp_pa
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text("", encoding="utf-8")
     assert _unlisted(tmp_path, [f"{SCOPE}/**"]) == [
+        "apps/web/src/features/DRAWINGS",
+        "apps/web/src/features/DRAWING_TOOLS",
         "apps/web/src/features/drawingTools",
         "apps/web/src/features/drawings-legacy",
         "apps/web/src/objecttree",
