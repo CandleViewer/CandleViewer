@@ -100,23 +100,14 @@ not hold the order, which says nothing of how it ended, so reconciliation reads 
 of its kind bounds all of it. An exit service's `expect_exit` gets the answer B1 got, None when
 the call raised; a KILL's cancel spends none.
 
-**amend** (the orchestrator's Q2 to Q4 and Q11 rulings; 24 Sec.8.8 rules 5 and 6, Sec.8.9). The
-terms are the stored order's, changed in place at the venue in the lane `place` would take. Terms B1
-could not have staged send nothing (`INSTRUMENT_FILTER`), and a recorded stop's TP/SL order is not
-amended here (`ORDER_NOT_AMENDABLE`). A TP or SL change is checked first, each refusal audited
-`orders.amend` denied and nothing recorded or sent: Q3's scope (an unfilled, Full-mode entry that is
-not reduce-only; a cleared stop is `NATIVE_STOP_REQUIRED`, a cleared take-profit
-`TPSL_CLEAR_UNSUPPORTED`), then `stop_ratchet`'s one loosening check against the order's stop and
-the key's record in force (`STOP_LOOSENING_REFUSED`). It is re-paired (both sides sent, the
-unchanged one at the order's value, a side the order lacks left out), the key's gate cleared, and
-both sides recorded ahead as one insert, `entry_attach` with the order's id, audited `sl.modified`
-/ `tp.modified` with reason `amend` in its transaction. A key a request still holds answers
-`STOP_REQUEST_IN_FLIGHT` with its `Retry-After`, never a raise, so B1 keeps the prior order live;
-a resumed amend whose first attempt left its rows in flight meets them so. The answer settles the
-rows (`answered`, or `refused` with each void audited, reason `amend_refused`; a refused rate token
-voids them, as nothing left). A send that raises leaves them in flight for the complete read, and
-is raised, so B1 lands the order in `unknown`, never re-sent (S1). No stop or take-profit that is
-no finite price above zero is ever sent (C-2.6).
+**amend** (the orchestrator's Q2 to Q4 and Q11 rulings; 24 Sec.8.8 rules 5 and 6, Sec.8.9). A TP/SL
+change meets Q3's scope and `stop_ratchet` before anything is recorded or sent (each refusal
+audited `orders.amend` denied), is re-paired (both sides sent, the unchanged one at the order's
+value, a side the order lacks left out), and both sides are recorded ahead as one `entry_attach`
+insert naming the order (`sl.modified` / `tp.modified`, reason `amend`), then sent and settled
+(`answered`, or `refused` audited `amend_refused`; a refused rate token voids them too). A held key
+answers `STOP_REQUEST_IN_FLIGHT`, never a raise, so B1 keeps the prior order live; a send that
+raises leaves the rows in flight and is raised (`unknown`, never re-sent, S1).
 """
 
 from __future__ import annotations
@@ -282,12 +273,8 @@ ADOPTED: Final = "adopted_after_lookup"
 SL_ATTACHED: Final = "sl.attached"
 SL_MODIFIED: Final = "sl.modified"
 TP_MODIFIED: Final = "tp.modified"
-#: `amend`'s records and its local refusals' codes (the orchestrator's Q2 to Q4 rulings): the
-#: amended sides' rows are audited `sl.modified` / `tp.modified` with reason `amend`, a refusal of
-#: them `amend_refused`; a refused amend `orders.amend` denied. A Q3 refusal answers its rule in
-#: capitals (`TPSL_AFTER_FILL`, `NATIVE_STOP_REQUIRED`, ...), the ratchet's
-#: `STOP_LOOSENING_REFUSED` (403 `risk_limit_breached` at the route), a held key
-#: `STOP_REQUEST_IN_FLIGHT` (409 `stop_request_in_flight`).
+#: `amend`'s audit reasons and local codes: a Q3 refusal answers its rule in capitals, the ratchet
+#: `STOP_LOOSENING_REFUSED` (403 `risk_limit_breached`), a held key `STOP_REQUEST_IN_FLIGHT` (409).
 AMEND_REASON: Final = "amend"
 AMEND_REFUSED: Final = "amend_refused"
 ORDERS_AMEND: Final = "orders.amend"
@@ -356,7 +343,9 @@ def place_request(order: StoredOrder, account: AccountRef) -> PlaceOrderRequest:
     """The create for the stored `order`, in the trading port's vocabulary, for `account`: the same
     id, terms and native stop on every send (C-2.10, C-2.6). `critical` only for a reduce-only order
     whose intent reduces (SR-E29-01; the reserve is the exits', C-12.7), else `entry`."""
-    lane = _lane(order)
+    lane: OrderLane = "entry"
+    if order.reduce_only and order.intent in REDUCING_INTENTS:
+        lane = "critical"
     trigger_by = None if order.trigger_by is None else _TRIGGERS[order.trigger_by]
     direction = order.trigger_direction
     return PlaceOrderRequest(
@@ -379,12 +368,6 @@ def place_request(order: StoredOrder, account: AccountRef) -> PlaceOrderRequest:
         tpsl_mode=_MODES[order.tpsl_mode],
         lane=lane,
     )
-
-
-def _lane(order: StoredOrder) -> OrderLane:
-    """`critical` only for a reduce-only order whose intent reduces (SR-E29-01), else `entry`: a
-    create's lane, and an amend's (24 Sec.8.7)."""
-    return "critical" if order.reduce_only and order.intent in REDUCING_INTENTS else "entry"
 
 
 def found_view(order: Order) -> dict[str, Any]:
@@ -495,9 +478,8 @@ def _check_stops(order: StoredOrder) -> None:
 
 
 def _amend_terms(terms: Mapping[str, Any]) -> dict[str, Decimal | None] | None:
-    """The amend's terms as B1 staged them (`stage_amend`: decimal text above zero for `qty` and
-    `b01.TERMS`), else None, so nothing is sent. A TP or SL side may be `None` or no price above
-    zero here: Q3's scope names that (`tpsl_scope_refusal`), never this parse."""
+    """The terms as B1 stages them (decimal text above zero), else None; a TP/SL side may be None
+    or no price above zero here, as Q3's scope (`tpsl_scope_refusal`) names that."""
     if not terms or any(key not in _AMENDABLE for key in terms):
         return None
     out: dict[str, Decimal | None] = {}
@@ -520,9 +502,8 @@ def _amend_terms(terms: Mapping[str, Any]) -> dict[str, Decimal | None] | None:
 def _paired(
     row: OrderRow, sides: Mapping[str, Decimal | None]
 ) -> tuple[Decimal | None, Decimal | None]:
-    """24 Sec.8.9's re-pairing: when either TP or SL changes, both are sent, the unchanged side at
-    the order's own value; a side the order lacks (no price above zero) is left out, so nothing
-    is removed by implication. (None, None) when the amend changes neither."""
+    """24 Sec.8.9's re-pairing: when TP or SL changes, both are sent, the unchanged side at the
+    order's value; a side the order lacks is left out. (None, None) when neither changes."""
     if not sides:
         return None, None
     kept = {
@@ -535,9 +516,8 @@ def _paired(
 
 
 def _check_amend_stops(request: AmendOrderRequest) -> None:
-    """C-2.6, again just before the send, whatever was checked above: a stop or take-profit the
-    amend sends is a finite price above zero (the venue reads `0` as "remove"). `ValueError`
-    otherwise, logged CRITICAL, with nothing recorded or sent."""
+    """C-2.6 just before the send: a stop or take-profit sent is a finite price above zero (the
+    venue reads `0` as "remove"); `ValueError`, logged CRITICAL, with nothing recorded or sent."""
     for name, value in (("stop_loss", request.stop_loss), ("take_profit", request.take_profit)):
         if value is not None and not _price(value):
             _log().critical("oms_amend_price_refused", order_link_id=request.order_link_id)
@@ -1186,12 +1166,9 @@ class OmsCommandPort:
     # --- amend -----------------------------------------------------------------------------
 
     async def amend(self, command: b01.Command) -> Mapping[str, Any]:
-        """`amend_pending`'s call (module docstring, **amend**): the stored order's terms changed
-        in place at the venue, its amended stop recorded ahead when TP or SL changes."""
-        account_id, order_id = (
-            _uuid(command.order.get("account_id")),
-            _uuid(command.order.get("order_id")),
-        )
+        """`amend_pending`'s call: the stored order changed in place (module docstring)."""
+        account_id = _uuid(command.order.get("account_id"))
+        order_id = _uuid(command.order.get("order_id"))
         row = await self._bounded(self._orders.get(account_id, order_id))
         if row is None:
             raise ValueError("no stored order of the account has the command's id")
@@ -1203,9 +1180,7 @@ class OmsCommandPort:
             return {"ok": False, "error_code": OmsErrorCode.INSTRUMENT_FILTER.value}
         if row.provenance != "placed":  # a recorded stop's TP/SL order is not the user's to amend
             return await self._amend_refused(row, ORDER_NOT_AMENDABLE, "not_amendable", detail)
-        sides: dict[str, Decimal | None] = {
-            side: requested[side] for side in TPSL_SIDES if side in requested
-        }
+        sides = {side: value for side, value in requested.items() if side in TPSL_SIDES}
         rule = tpsl_scope_refusal(
             sides, reduce_only=row.reduce_only, tpsl_mode=row.tpsl_mode, filled_qty=row.cum_exec_qty
         )
@@ -1235,7 +1210,7 @@ class OmsCommandPort:
             trigger_price=requested.get("trigger_price"),
             take_profit=take_profit,
             stop_loss=stop,
-            lane=_lane(row),
+            lane="critical" if row.reduce_only and row.intent in REDUCING_INTENTS else "entry",
         )
         _check_amend_stops(request)
         recorded: tuple[RecordedStopRow, ...] = ()
@@ -1259,22 +1234,16 @@ class OmsCommandPort:
             if recorded:
                 await self._settle_stop(recorded, False, code, detail, reason=AMEND_REFUSED)
             _log().warning("oms_amend_rate_refused", order_link_id=row.order_link_id)
-            return {
-                "ok": False,
-                "error_code": code,
-                "retry_after_s": retry_after(exc.retry_after_s),
-            }
+            retry = retry_after(exc.retry_after_s)
+            return {"ok": False, "error_code": code, "retry_after_s": retry}
         if not ack.ok:
             await self._venue(account, ack.error_code, ack.exchange_ret_code)
         if recorded:
             await self._settle_stop(recorded, ack.ok, ack.error_code, detail, reason=AMEND_REFUSED)
         if ack.ok:
             kept = order_id_kept(ack.exchange_order_id)
-            return {
-                "ok": True,
-                **({} if kept is None else {"exchange_order_id": kept}),
-                **_record(ack),
-            }
+            bound = {} if kept is None else {"exchange_order_id": kept}
+            return {"ok": True, **bound, **_record(ack)}
         refused = {"ok": False, "error_code": ack.error_code}
         return {**refused, "exchange_ret_code": ack.exchange_ret_code, **_record(ack)}
 
@@ -1290,38 +1259,22 @@ class OmsCommandPort:
         return {"ok": False, "error_code": code}
 
     async def _record_amend(
-        self,
-        row: OrderRow,
-        stop: Decimal,
-        take_profit: Decimal | None,
-        detail: Mapping[str, str | None],
+        self, row: OrderRow, stop: Decimal, tp: Decimal | None, detail: Mapping[str, str | None]
     ) -> tuple[RecordedStopRow, ...]:
-        """The amended sides as one insert (Q2): `entry_attach` rows naming the order, Full mode,
-        each audited in the insert's transaction (`sl.modified` / `tp.modified`, reason `amend`),
-        the record each row names (`audit_record_id`)."""
-        sides: list[tuple[StopKind, Decimal]] = [("stop_loss", stop)]
-        if take_profit is not None:
-            sides.append(("take_profit", take_profit))
-        news: list[NewRecordedStop] = []
-        for kind, price in sides:
-            stop_id = uuid4()
-            news.append(
-                NewRecordedStop(
-                    id=stop_id,
-                    exchange_account_id=row.exchange_account_id,
-                    symbol=row.symbol,
-                    position_idx=_POSITION_IDX[row.position_idx],
-                    position_side=row.side,
-                    kind=kind,
-                    source="entry_attach",
-                    order_id=row.id,
-                    tpsl_mode="Full",
-                    trigger_price=price,
-                    size=None,
-                    audit_record_id=self._submit_audit.record_id(_MODIFIED[kind], str(stop_id)),
-                    actor_user_id=None,
-                )
+        """Q2: the amended sides as one insert, `entry_attach` rows naming the order, each audited
+        in the insert's transaction (`sl.modified` / `tp.modified`, reason `amend`)."""
+        sides: dict[StopKind, Decimal | None] = {"stop_loss": stop, "take_profit": tp}
+        news = [
+            NewRecordedStop(
+                id=(i := uuid4()), exchange_account_id=row.exchange_account_id, symbol=row.symbol,
+                position_idx=_POSITION_IDX[row.position_idx], position_side=row.side, kind=kind,
+                source="entry_attach", order_id=row.id, tpsl_mode="Full", trigger_price=price,
+                size=None, audit_record_id=self._submit_audit.record_id(_MODIFIED[kind], str(i)),
+                actor_user_id=None,
             )
+            for kind, price in sides.items()
+            if price is not None
+        ]  # fmt: skip
         records = [
             _stop_record(_MODIFIED[new.kind], new, "success", "info", AMEND_REASON, detail)
             for new in news
