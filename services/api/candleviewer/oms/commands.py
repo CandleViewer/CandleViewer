@@ -106,14 +106,11 @@ the `critical` lane's own wait, so a token that does not come is a refusal, neve
 exit service that registered the order's cancel (`expect_exit`, as the pipeline's `expect`) gets
 the answer B1 got, None when the call raised; a KILL's cancel spends none.
 
-**amend** (the orchestrator's Q2 to Q4 and Q11 rulings; 24 Sec.8.8 rules 5 and 6, Sec.8.9). A TP/SL
-change meets Q3's scope and `stop_ratchet` before anything is recorded or sent (each refusal
-audited `orders.amend` denied), is re-paired (both sides sent, the unchanged one at the order's
-value, a side the order lacks left out), and both sides are recorded ahead as one `entry_attach`
-insert naming the order (`sl.modified` / `tp.modified`, reason `amend`), then sent and settled
-(`answered`, or `refused` audited `amend_refused`; a refused rate token voids them too). A held key
-answers `STOP_REQUEST_IN_FLIGHT`, never a raise, so B1 keeps the prior order live; a send that
-raises leaves the rows in flight and is raised (`unknown`, never re-sent, S1).
+**amend** (the S4 rulings Q2 to Q4 and Q11; 24 Sec.8.8 rules 5 and 6, Sec.8.9). A TP/SL change
+meets Q3's scope and `stop_ratchet` before any record or send (refusals audited `orders.amend`
+denied), is re-paired (both sides, a side the order lacks left out) and recorded ahead as one
+`entry_attach` insert naming the order (`sl.modified` / `tp.modified`, reason `amend`), then sent
+and settled. A held key answers `STOP_REQUEST_IN_FLIGHT`; a raise leaves the rows in flight (S1).
 """
 
 from __future__ import annotations
@@ -478,8 +475,7 @@ def _check_stops(order: StoredOrder) -> None:
 
 
 def _amend_terms(terms: Mapping[str, Any]) -> dict[str, Decimal | None] | None:
-    """The terms as B1 stages them (decimal text above zero), else None; a TP/SL side may be None
-    or no price above zero here, as Q3's scope (`tpsl_scope_refusal`) names that."""
+    """B1's staged terms as `Decimal`, else None; a TP/SL side may be None or <= 0 (Q3 names it)."""
     if not terms or any(key not in _AMENDABLE for key in terms):
         return None
     out: dict[str, Decimal | None] = {}
@@ -502,8 +498,7 @@ def _amend_terms(terms: Mapping[str, Any]) -> dict[str, Decimal | None] | None:
 def _paired(
     row: OrderRow, sides: Mapping[str, Decimal | None]
 ) -> tuple[Decimal | None, Decimal | None]:
-    """24 Sec.8.9's re-pairing: when TP or SL changes, both are sent, the unchanged side at the
-    order's value; a side the order lacks is left out. (None, None) when neither changes."""
+    """24 Sec.8.9's re-pairing: both sides, unchanged at the order's value, a lacking one out."""
     if not sides:
         return None, None
     kept = {
@@ -516,8 +511,7 @@ def _paired(
 
 
 def _check_amend_stops(request: AmendOrderRequest) -> None:
-    """C-2.6 just before the send: a stop or take-profit sent is a finite price above zero (the
-    venue reads `0` as "remove"); `ValueError`, logged CRITICAL, with nothing recorded or sent."""
+    """C-2.6 before the send: a TP/SL sent is a price above zero (the venue reads `0` as remove)."""
     for name, value in (("stop_loss", request.stop_loss), ("take_profit", request.take_profit)):
         if value is not None and not _price(value):
             _log().critical("oms_amend_price_refused", order_link_id=request.order_link_id)
@@ -1156,8 +1150,6 @@ class OmsCommandPort:
             return False
         return True
 
-    # --- amend -----------------------------------------------------------------------------
-
     async def amend(self, command: b01.Command) -> Mapping[str, Any]:
         """`amend_pending`'s call: the stored order changed in place (module docstring); the
         order's amend registration (`expect_exit`) gets the answer, None when the call raises."""
@@ -1256,8 +1248,7 @@ class OmsCommandPort:
     async def _amend_refused(
         self, row: OrderRow, code: str, reason: str, detail: Mapping[str, str | None]
     ) -> dict[str, Any]:
-        """A refusal before anything is recorded or sent, audited ahead (`orders.amend` denied,
-        C-2.9): the answer keeps the prior order live (B1's `keep_prior_order_live`, S2)."""
+        """A refusal, nothing recorded or sent, audited ahead (`orders.amend` denied, C-2.9)."""
         await self._audit_order(
             row.id, row.exchange_account_id, ORDERS_AMEND, "denied", "warning", reason, detail
         )
@@ -1267,8 +1258,7 @@ class OmsCommandPort:
     async def _record_amend(
         self, row: OrderRow, stop: Decimal, tp: Decimal | None, detail: Mapping[str, str | None]
     ) -> tuple[RecordedStopRow, ...]:
-        """Q2: the amended sides as one insert, `entry_attach` rows naming the order, each audited
-        in the insert's transaction (`sl.modified` / `tp.modified`, reason `amend`)."""
+        """Q2: one `entry_attach` insert naming the order, each row audited in its transaction."""
         sides: dict[StopKind, Decimal | None] = {"stop_loss": stop, "take_profit": tp}
         news = [
             NewRecordedStop(
