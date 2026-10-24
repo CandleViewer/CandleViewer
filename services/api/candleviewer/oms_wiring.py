@@ -93,6 +93,7 @@ from candleviewer.oms.routing import RoutedPort, TradingRouter
 from candleviewer.oms.submit import RESULT_WAIT_S, STORE_TIMEOUT_S, OrderSubmission, SubmissionDeps
 from candleviewer.oms.validator import ReadOnlyCheck, Validator
 from candleviewer.settings import OMS_INFLIGHT_STUCK_MAX_S, OMS_STOP_RESERVE_S, Settings
+from candleviewer.statechart.bindings.b01_order import ALREADY_TERMINAL
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
 from candleviewer.statechart.persistence import ChainTripLatch
 from candleviewer.statechart.plugins import LogPager, MachineEventSink, Pager
@@ -679,14 +680,18 @@ class OmsAudit:
 UNOWNED_NOTICES: Final = MappingProxyType(
     {"request_reconciliation": "E29-T06", "request_fallback_sl": "E32"}
 )
-#: The alert the pager takes as a ticket, not a page: an order a restart found never sent.
-_TICKETS: Final = frozenset({NEVER_SENT_ALERT})
+#: The alerts the pager takes as a ticket, not a page: an order a restart found never sent, and one
+#: the venue does not hold (110001), `unknown` until reconciliation reads it (S4-B1's ruling). The
+#: request to reconcile that order (`reason` `already_terminal`) is a ticket too: one case, one
+#: notice (ruling A); `quarantined`'s request names no reason and pages.
+_TICKETS: Final = frozenset({NEVER_SENT_ALERT, "order_already_terminal"})
 #: The alerts an order raises, a closed set: the order machine's (`raise_unknown_alert`,
 #: `raise_critical_alert` on `quarantined` and `held`, `raise_naked_position_alert`) and the one a
 #: resumed create past its history raises (`oms.commands`). Only these are logged and paged by
 #: name, so a value of any other source, a key among them, is never a name (SEC-S3C2-01, C-12.6).
 ORDER_ALERTS: Final = frozenset(
     {"order_unknown", "order_quarantined", "order_held", "SL_ATTACH_FAILED", NEVER_SENT_ALERT}
+    | _TICKETS
 )
 #: The codes of a refused amend, a closed set too: the adapters' taxonomy (24 Sec.8.6).
 _ERROR_CODES: Final = frozenset(code.value for code in OmsErrorCode)
@@ -707,11 +712,12 @@ def _named(value: object, known: frozenset[str]) -> str:
 class OrderNoticesRouter:
     """`order_machine.OrderNotices`: an `alert` goes to the pager (a page, but a never-sent
     order's, which is a ticket); `request_reconciliation` and `request_fallback_sl` are an ERROR
-    and a page until E29-T06 and E32 own them; `amend_rejected` is a log line. It logs the order's
-    ids and the notice's names only, never a price, a size or a key (C-12.6): an alert is named
-    only from `ORDER_ALERTS` and an amend's code from `OmsErrorCode`, else `unnamed`. It never
-    raises: a notice it cannot route is a CRITICAL log and a page, whatever it was, and a failing
-    pager is logged at CRITICAL."""
+    and a page until E29-T06 and E32 own them (but a reconciliation asked for an order the venue
+    does not hold, which is a ticket); `amend_rejected` is a log line. It logs the order's
+    ids, the notice's names and the venue's code when an integer, never a price, a size or a key
+    (C-12.6): an alert is named only from `ORDER_ALERTS` and an amend's code from `OmsErrorCode`,
+    else `unnamed`. It never raises: a notice it cannot route is a CRITICAL log and a page,
+    whatever it was, and a failing pager is logged at CRITICAL."""
 
     def __init__(self, pager: Pager) -> None:
         self._pager = pager
@@ -734,12 +740,18 @@ class OrderNoticesRouter:
         kind = notice.kind
         if kind == "alert":
             alert = _named(notice.detail.get("alert"), ORDER_ALERTS)
-            log.error("oms_order_alert", alert=alert, **ids)
+            ret = notice.detail.get("exchange_ret_code")  # logged only as an integer (C-12.6)
+            shown = {"exchange_ret_code": ret} if type(ret) is int else {}
+            log.error("oms_order_alert", alert=alert, **ids, **shown)
             self._raise("alert" if alert in _TICKETS else "page", f"order alert {alert}")
         elif kind in UNOWNED_NOTICES:
             owner = UNOWNED_NOTICES[kind]
             log.error("oms_order_notice_unowned", kind=kind, owner=owner, **ids)
-            self._raise("page", f"order notice {kind} has no owner until {owner}")
+            reason = notice.detail.get("reason") if kind == "request_reconciliation" else None
+            if reason == ALREADY_TERMINAL and notice.detail.get("alerted") is True:
+                return  # its case's `order_already_terminal` alert is the one ticket (14:30Z)
+            summary = f"order notice {kind} has no owner until {owner}"
+            self._raise("alert" if reason == ALREADY_TERMINAL else "page", summary)
         elif kind == "amend_rejected":
             code = _named(notice.detail.get("error_code"), _ERROR_CODES)
             log.warning("oms_amend_rejected", error_code=code, **ids)
