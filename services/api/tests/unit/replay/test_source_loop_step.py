@@ -42,12 +42,14 @@ def longest_step(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[float]]:
             steps.append(time.perf_counter() - started)
 
     monkeypatch.setattr(events.Handle, "_run", timed)
+    was_enabled = gc.isenabled()
     gc.collect()
     gc.disable()
     try:
         yield steps
     finally:
-        gc.enable()
+        if was_enabled:
+            gc.enable()
 
 
 @pytest.mark.perf  # a wall-clock budget (C-13.9): run by `py-perf`, not the default unit run
