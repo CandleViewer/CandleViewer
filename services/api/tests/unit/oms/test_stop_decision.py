@@ -15,6 +15,7 @@ from hypothesis import strategies as st
 from candleviewer.exchange.base.models import Order, Position
 from candleviewer.oms.ports import PositionKey
 from candleviewer.oms.stop_resolution import (
+    ENTRY_HELD,
     SPAN_HELD,
     TRAIL_HELD,
     EntryState,
@@ -23,6 +24,7 @@ from candleviewer.oms.stop_resolution import (
     decide,
     group_requests,
     order_matches,
+    shows_no_stop,
 )
 from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 from tests.unit.oms.command_rig import ACCOUNT, LIVE_ACCOUNT, STOP, SYMBOL, T0, T0_US, position
@@ -282,6 +284,84 @@ def test_a_matching_order_beats_the_fill_case() -> None:
     sl, tp = entry_rows(answered_at=T0)
     decision = one((sl, tp), flat(), "filled", history=(fired("stop_loss", STOP),))
     assert moves(decision) == {sl.id: "answered", tp.id: "entry_filled_stop_absent"}
+    assert decision.held == ENTRY_HELD  # the answered stop-loss stays listed through its entry
+
+
+# --- the H lens folds: the fill case's history miss, the entry's hold, Partial protection -------
+
+
+def test_a_fill_case_void_past_the_span_is_held_unless_the_position_shows_no_stop() -> None:
+    """Opus Major 1: a Full stop that fired past the span leaves a flat key and no match in the
+    history read; the fill case holds it as any request does, never voiding it unpaged."""
+    past = T0_US
+    for over in ({"history_from_us": past}, {"retention_from_us": past}):
+        decision = one(entry_rows(answered_at=T0), flat(), "filled", **over)
+        assert decision.outcome == "held_for_reconciliation" and decision.held == SPAN_HELD
+        assert set(moves(decision).values()) == {"kept"} and decision.pages == ()
+    shown = one(entry_rows(), position(stop_loss=STOP), "filled", retention_from_us=past)
+    assert shown.held == SPAN_HELD  # its take-profit's miss could hide a match too
+    other_side = one(entry_rows(), position(side="sell"), "filled", history_from_us=past)
+    assert other_side.outcome == "entry_filled_stop_absent" and other_side.held is None
+    sl, tp = entry_rows()
+    whole = one((sl, tp), position(stop_loss=STOP, take_profit=TP), "filled", history_from_us=past)
+    assert moves(whole) == {sl.id: "in_force", tp.id: "in_force"}  # nothing voided: no hold
+
+
+def test_an_entry_unseen_past_the_span_is_held_unless_the_position_shows_no_stop() -> None:
+    """A lookup that misses the entry where a miss proves nothing (`unseen`) decides nothing."""
+    decision = one(entry_rows(), flat(), "unseen")
+    assert decision.outcome == "held_for_reconciliation" and decision.held == SPAN_HELD
+    assert one(entry_rows(), position(), "unseen").outcome == "in_flight_resolved"
+    shown = one(entry_rows(), position(stop_loss=STOP), "unseen")
+    assert shown.outcome == "in_force" and shown.held is None
+
+
+def test_answered_rows_a_read_leaves_listed_carry_the_entry_hold() -> None:
+    """Fable Major (a): an entry's answered row whose move writes nothing stays listed through its
+    order (`WAITING_ENTRY`), so every such request carries `ENTRY_HELD`, whatever its outcome."""
+    sl, tp = entry_rows(answered_at=T0)
+    shown = one((sl, tp), position(stop_loss=STOP), "gone")
+    assert shown.outcome == "in_force" and shown.held == ENTRY_HELD
+    later = stop_row(status="in_force", created_at=T0 + timedelta(seconds=1))
+    replaced = one((sl, tp), position(), "gone", in_force=(later,))
+    assert moves(replaced) == {sl.id: "replaced", tp.id: "answered"}
+    assert replaced.held == ENTRY_HELD
+    fill = one((sl, tp), position(stop_loss=STOP), "filled")  # every row written: none listed
+    assert fill.held is None
+    trading = one(request_rows(answered_at=T0), position(stop_loss=STOP))
+    assert trading.held is None  # not an entry's: its answered rows are never listed
+
+
+def test_rows_newly_answered_carry_the_entry_hold_while_its_stored_order_waits() -> None:
+    """Fable Major (b): the read's own answer leaves a row listed when the stored order holds it
+    (`Reading.waiting_entries`, from `WAITING_ENTRY` on the order row)."""
+    sl, tp = entry_rows()
+    waiting = one((sl, tp), position(stop_loss=STOP), "gone", waiting_entries=frozenset({ENTRY}))
+    assert waiting.outcome == "in_force" and waiting.held == ENTRY_HELD
+    assert one((sl, tp), position(stop_loss=STOP), "gone").held is None
+    resting = one((sl, tp), position(), "resting", waiting_entries=frozenset({ENTRY}))
+    assert resting.outcome == "entry_resting" and resting.held == ENTRY_HELD
+
+
+def test_an_open_partial_stop_or_trail_order_is_a_stop_once_orders_were_read() -> None:
+    """The orchestrator's ruling: Partial-mode protection shows as an open `partial_stop_loss` or
+    `trailing_stop` order closing the position; a take-profit order never does; with no order
+    read, the position alone says."""
+    past, pos = T0_US, position(side="sell")
+    guard = tpsl_order("partial_stop_loss", STOP, side="buy")
+    for kind in ("partial_stop_loss", "trailing_stop"):
+        order = tpsl_order(kind, STOP, side="buy")
+        assert not shows_no_stop(pos, (order,))
+        read = one(request_rows(), pos, open_orders=(order,), orders_read=True,
+                   history_from_us=past)  # fmt: skip
+        assert read.held == SPAN_HELD
+    for other in (tpsl_order("partial_take_profit", TP, side="buy"),
+                  tpsl_order("partial_stop_loss", STOP),  # the open side's, closes nothing
+                  tpsl_order("partial_stop_loss", STOP, side="buy", position_idx=1)):  # fmt: skip
+        assert shows_no_stop(pos, (other,))
+    assert shows_no_stop(pos, None) and shows_no_stop(pos, ())
+    unread = one(request_rows(), pos, open_orders=(guard,), history_from_us=past)
+    assert unread.outcome == "in_flight_resolved"  # not read: the position alone
 
 
 def test_a_later_request_in_force_in_the_same_read_replaces_the_older_side() -> None:
@@ -325,7 +405,7 @@ TRIGGERS = st.sampled_from([STOP, Decimal("59000"), TP])
     shown=st.one_of(st.none(), TRIGGERS),
     side=st.sampled_from(["buy", "sell", None]),
     order_state=st.sampled_from([None, "untriggered", "filled", "cancelled"]),
-    entry=st.sampled_from([None, "resting", "filled", "gone"]),
+    entry=st.sampled_from([None, "resting", "filled", "gone", "unseen"]),
     answered=st.booleans(),
 )
 def test_property_a_request_is_voided_whole_unless_filled_and_pages_only_an_open_stop_loss(
