@@ -195,7 +195,7 @@ async def test_a_refused_audit_write_answers_503_and_reads_nothing() -> None:
 
 async def test_the_fake_keeps_an_active_row_when_it_is_unpinned() -> None:
     fake = _seeded()
-    await fake.set_pin("BTCUSDT", False, Actor(kind="user", id="u-1"))
+    await fake.set_pin("BTCUSDT", False, Actor(kind="user", id="u-1"), restricted=False)
     assert fake.entries["BTCUSDT"].pinned is False and fake.entries["BTCUSDT"].state == "recording"
 
 
