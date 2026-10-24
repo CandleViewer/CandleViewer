@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections import OrderedDict, deque
+from collections import Counter, OrderedDict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
@@ -95,6 +95,7 @@ from .errors import (
     OrderStepRefused,
     OrderStepUnknown,
     ReconcileAnomaly,
+    VersionConflict,
 )
 from .execution import apply_fields
 from .order_steps import OrderStepWriter, event_kind
@@ -123,6 +124,7 @@ __all__ = [
     "OrderNotice",
     "OrderNotices",
     "PushEvent",
+    "is_data_refusal",
 ]
 
 
@@ -213,8 +215,10 @@ _REFUSALS: Final = frozenset({"audit_command_refused_unowned", "audit_operator_c
 #: The context keys the facade reads after each committed step: its plain view (C-2.20).
 _VIEW: Final = (
     "order_link_id", "symbol", "exchange_order_id", "filled_qty", "halted_by_kill", "recon_misses",
-    "event_seq", "reduce_only", "recorded_stop",
+    "event_seq", "reduce_only", "recorded_stop", b01.KILL_CANCEL,
 )  # fmt: skip
+#: The KILL cancels' outcomes (`b01.KILL_CANCEL`) that leave nothing of the order at the venue.
+_KILL_DONE: Final = frozenset({"sent", b01.ALREADY_TERMINAL})
 ANOMALY: Final = "oms.reconcile_anomaly"
 
 #: B1's audit records (`b01_order`'s hook names, catalogue B1.6) and the registered M19 action,
@@ -235,6 +239,9 @@ B1_AUDITS: Final[Mapping[str, tuple[str, Outcome, Severity]]] = MappingProxyType
     "kill_cancel_timeout": ("orders.cancel", "failure", "error"),
     "kill_cancel_failed": ("orders.cancel", "failure", "error"),
     "kill_cancel_lost": ("orders.cancel", "failure", "error"),
+    "kill_cancel_refused": ("orders.cancel", "failure", "error"),
+    "kill_cancel_rate_budget_exceeded": ("orders.cancel", "failure", "error"),
+    "kill_cancel_already_terminal": ("orders.cancel", "failure", "warning"),
     "guard_denied": (ANOMALY, "denied", "error"),
     "reconcile_anomaly": (ANOMALY, "denied", "error"),
     "terms_refused": (ANOMALY, "denied", "error"),
@@ -456,6 +463,10 @@ def _data_refusal(error: BaseException) -> bool:
     return isinstance(error, _DATA_REFUSALS)
 
 
+#: The public name of `_data_refusal`, for the command port's pre-send reads (S4-B1).
+is_data_refusal = _data_refusal
+
+
 def _summary(view: Mapping[str, Any]) -> dict[str, Any]:
     """23 Sec.6.4's `context_summary` for `order`: `symbol`, `halted_by_kill`, `recon_misses`."""
     summary = {
@@ -506,6 +517,8 @@ class _Order:
     denied: OrderedDict[str, str] = field(default_factory=OrderedDict)
     #: The step count a lost KILL was last sent again at.
     kill_sent_at: int = -1
+    #: A KILL's result has counted this order's cancel: no other result counts it again.
+    kill_counted: bool = False
     published: dict[str, Any] | None = None
     task: asyncio.Task[None] | None = None
     #: While hydration replays the order: the recorded steps not yet replayed (`_persist`).
@@ -621,6 +634,15 @@ class OrderMachines:
         o = self._orders.get(order_id)
         return None if o is None else (o.lifecycle, o.protection)
 
+    def version(self, order_id: UUID) -> int | None:
+        """The order's version (E29-T04 slice 4, the `ETag`'s seq, ruling Q5): the `event_seq` of
+        its last committed step, the `order_events` row that step wrote, while its machine lives;
+        None once it is gone, so a final order's answer carries none. It reads the plain view only
+        (C-2.20); `command`'s `expected_seq` checks it again under the order's lock."""
+        o = self._orders.get(order_id)
+        seq = None if o is None else o.view.get("event_seq")
+        return seq if type(seq) is int else None
+
     async def start(
         self,
         order: NewOrder,
@@ -727,6 +749,7 @@ class OrderMachines:
         payload: Mapping[str, Any] | None = None,
         *,
         actor: Actor,
+        expected_seq: int | None = None,
     ) -> str:
         """A command to the order, from a route, a rule, an algo or E29-T06's reconciler. Refused
         with `IllegalTransition` unless it is one of `COMMAND_EVENTS` with no `type` in its
@@ -737,7 +760,9 @@ class OrderMachines:
         may have committed all the same: the machine is then rebuilt from the order's events
         before this returns, and the caller reads the order's state again rather than resending.
         A command that waited while a resync rebuilt the order's machine is taken by the rebuilt
-        one."""
+        one. With `expected_seq` (an exit route's `If-Match`, slice 4's ruling Q5), a command the
+        gates above admit is refused with `VersionConflict` when the order's `version` has moved
+        on, checked under the order's lock, with nothing sent or written."""
         payload = payload or {}
         self._vet(COMMAND_EVENTS, event, payload)
         o = self._live(account_id, order_id)
@@ -746,7 +771,7 @@ class OrderMachines:
                 break
             async with self._holding(o):
                 if o.interp is not None:
-                    self._admit(o, event, actor)
+                    self._admit(o, event, actor, expected_seq)
                     try:
                         await self._send_order(o, event, payload)
                     finally:
@@ -862,6 +887,7 @@ class OrderMachines:
         reason = reason[: b01.MAX_TEXT] or "kill"
         targets = {o.order_id: o for o in self._orders.values()} | self._resyncing
         live = [o for o in targets.values() if account_id in (None, o.account_id)]
+        before = {o.order_id for o in live if o.view.get(b01.KILL_CANCEL) is not None}
         done = await asyncio.gather(
             *(self._kill_one(o, reason) for o in live), return_exceptions=True
         )
@@ -871,7 +897,33 @@ class OrderMachines:
                 self._page("oms_kill_not_recorded", o, error=type(outcome).__name__)
             if outcome is not True:
                 failed.append(o.order_id)
+        self._kill_result([o for o in live if o.order_id not in before])
         return tuple(failed)
+
+    def _kill_result(self, killed: list[_Order]) -> None:
+        """The KILL's own result (the S4-B1 ruling): its cancels counted by outcome, logged as one;
+        those not done (no store read or rate token let them out, the venue refused, or they were
+        cut off) page as `n cancels not done`, by code, never as a clean KILL. An order still in
+        `cancel_pending` under the KILL (`in_flight`) relies on a user's cancel in flight, whose
+        outcome the re-sent KILL's own result reports (`_resend_kill`)."""
+        outcomes: Counter[str] = Counter()
+        in_flight = 0
+        for o in killed:
+            while o.successor is not None:  # the order a resync rebuilt was killed
+                o = o.successor
+            outcome = b01.text_id(o.view.get(b01.KILL_CANCEL))
+            if o.lifecycle == "cancel_pending" and o.view.get("halted_by_kill") is True:
+                in_flight += 1
+            elif outcome is not None and not o.kill_counted:
+                o.kill_counted = True
+                outcomes[outcome] += 1
+        undone = {code: n for code, n in sorted(outcomes.items()) if code not in _KILL_DONE}
+        not_done = sum(undone.values())
+        log = logger().warning if undone else logger().info
+        log("oms_kill_result", cancels=dict(outcomes), not_done=not_done, in_flight=in_flight)
+        if undone:
+            detail = ", ".join(f"{code} {n}" for code, n in undone.items())
+            self._raise_alert("page", f"kill: {not_done} cancels not done: {detail}")
 
     async def _kill_one(self, o: _Order, reason: str) -> bool:
         """One order's KILL, under its lock, on the machine that holds the order: one a resync
@@ -1166,10 +1218,10 @@ class OrderMachines:
 
     # --- Gates, sends and pushes (C-2.21, S5, S6, S9) -------------------------------------------
 
-    def _admit(self, o: _Order, event: str, actor: Actor) -> None:
+    def _admit(self, o: _Order, event: str, actor: Actor, expected_seq: int | None = None) -> None:
         """The synchronous gates of a command, before any send: the chain-trip latch (CV-C63), S9
-        and SR-E29-12 (whose source may send it), a recorded stop's amend (24 Sec.8.8 rule 6), and
-        legality."""
+        and SR-E29-12 (whose source may send it), a recorded stop's amend (24 Sec.8.8 rule 6),
+        legality, and last, when given, the version the command expects (slice 4, Q5)."""
         if event in ORDER_PATH:
             key = MachineKey(MACHINE, o.key, o.environment)
             if getattr(o.interp, "chain_trips", 0) and not self._latch.is_latched(key):
@@ -1188,6 +1240,9 @@ class OrderMachines:
             self.legality.require(o.lifecycle, event)
         except IllegalTransition:
             raise self._refuse(o.lifecycle, event) from None
+        if expected_seq is not None and o.view.get("event_seq") != expected_seq:
+            logger().warning("oms_version_conflict", state=o.lifecycle, attempted=event)
+            raise VersionConflict
 
     def _refuse(self, state: str, attempted: str) -> IllegalTransition:
         """`ILLEGAL_TRANSITION`, counted and logged: nothing was sent or written."""
@@ -1407,11 +1462,13 @@ class OrderMachines:
 
     async def _resend_kill(self, o: _Order) -> None:
         """Sends KILL again, once per committed step: the order reaches `killed`, whose entry
-        cancels it through the audited cancel service (SR-E29-06)."""
+        cancels it through the audited cancel service (SR-E29-06). That cancel is the KILL's own
+        for this order, so its result is reported here: one not done pages (INV-B1-h)."""
         o.kill_sent_at = o.steps
         logger().error("oms_kill_resent", order_link_id=o.view.get("order_link_id"))
         await self._record(o, "kill_cancel_lost", {"state": o.lifecycle})
         await self._kill(o, "kill_cancel_lost")
+        self._kill_result([o])
 
     async def _kill(self, o: _Order, reason: str) -> None:
         """KILL. Both regions take it, so where B1 lists it into `killed` the configuration, not
