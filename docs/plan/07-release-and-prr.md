@@ -961,14 +961,14 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 
 ### ReplayLoopShareHigh
 
-| Element               | Detail                                                                                                                |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| 1. What fired         | Loop time charged to replay above 1.2 × `replay_loop_share_ratio` (`CV_REPLAY_LOOP_SHARE`) for 5 minutes. Ticket.     |
-| 2. User impact        | Order entry, the gateway and ingestion share the api's event loop with replay; they run slower while it holds more.   |
-| 3. What is still safe | Native stop-losses. Replay sessions still play, below their requested speed.                                          |
-| 5. Remediation        | Find the work that is not charged (a sink or read that blocks the loop); pause replay sessions; file a bug naming it. |
-| 6. Escalation         | Owner within one working session; at once if `EventLoopLagHigh` also fires.                                           |
-| 7. Verify recovery    | Charged rate at or below the share for 15 minutes.                                                                    |
+| Element               | Detail                                                                                                                                                                                                                                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | Loop time charged to replay above 1.2 × `replay_loop_share_ratio` (`CV_REPLAY_LOOP_SHARE`) for 5 minutes. Ticket.                                                                                                                                                                                                                                 |
+| 2. User impact        | Order entry, the gateway and ingestion share the api's event loop with replay; they run slower while it holds more.                                                                                                                                                                                                                               |
+| 3. What is still safe | Native stop-losses. Replay sessions still play, below their requested speed.                                                                                                                                                                                                                                                                      |
+| 5. Remediation        | Two causes: replay over its share, or one charge over `MAX_CHARGE_S` (a turn that blocks the loop, or a wait inside a delivery). Read `event_loop_lag_seconds` with it: lag high is a real long turn (follow `EventLoopLagHigh`); lag normal is a charged wait, not loop pressure. Pause replay sessions; file a bug naming the turn or the wait. |
+| 6. Escalation         | Owner within one working session; at once if `EventLoopLagHigh` also fires.                                                                                                                                                                                                                                                                       |
+| 7. Verify recovery    | Charged rate at or below the share for 15 minutes.                                                                                                                                                                                                                                                                                                |
 
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: rate at or under the share.)
 
