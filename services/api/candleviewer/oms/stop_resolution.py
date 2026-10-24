@@ -38,12 +38,14 @@ asks for it (its cap, its cooldown, its metric and its pages) is slice H3's.
    either side, shows no stop at all (`shows_no_stop`: no stop-loss, no trail and, when the
    orders were read, no open `partial_stop_loss` or `trailing_stop` order closing it; a
    take-profit is never a stop) is never held on this rule. The rule holds a fill case that would
-   void a side as it holds any request, and an entry the lookup missed where a miss proves
-   nothing (`unseen`). An entry partly filled and still resting is a fill. A request still
-   listed whose rows the read only matched, all answered already, is held by its entry's order
-   (`WAITING_ENTRY`); any other entry's request that leaves a row answered or kept, on a row
-   answered already or whose stored order `WAITING_ENTRY` holds (`Reading.waiting_entries`),
-   carries `ENTRY_HELD` with its outcome, as that row stays listed.
+   void a side as it holds any request. An entry the lookup missed where a miss proves nothing
+   (`unseen`) is decided as one `gone`, held only where the rule holds; voided on a position open
+   with no stop at all, it pages its stop-loss row (`UNSEEN_PAGE`, the 06:38Z ruling), as the
+   fill case pages its open stop-loss (`FILL_PAGE`). An entry partly filled and still resting is
+   a fill. A request still listed whose rows the read only matched, all answered already, is held
+   by its entry's order (`WAITING_ENTRY`); any other entry's request that leaves a row answered
+   or kept, on a row answered already or whose stored order `WAITING_ENTRY` holds
+   (`Reading.waiting_entries`), carries `ENTRY_HELD` with its outcome, as that row stays listed.
 
 Nothing here ends a row, materialises one, binds or releases an `exchange_order_id` or tells B1 a
 stop was seen or lost (INV-B1-f).
@@ -64,8 +66,8 @@ from .commands import LIVE_HISTORY_SPAN_S
 from .ports import PositionKey
 
 __all__ = [
-    "ENTRY_HELD", "HISTORY_LEAD_S", "HISTORY_SPAN_S", "RESTORE_HELD", "SPAN_HELD", "TRAIL_HELD",
-    "EntryState", "Move", "Outcome", "PositionState",
+    "ENTRY_HELD", "FILL_PAGE", "HISTORY_LEAD_S", "HISTORY_SPAN_S", "RESTORE_HELD", "SPAN_HELD",
+    "TRAIL_HELD", "UNSEEN_PAGE", "EntryState", "Move", "Outcome", "PositionState",
     "Reading", "RequestDecision", "StopRequest", "VoidReason", "decide", "full_shows",
     "group_requests", "order_matches", "position_state", "shows_no_stop", "trail_unreadable",
 ]  # fmt: skip
@@ -108,6 +110,15 @@ SPAN_HELD: Final = (
 )
 RESTORE_HELD: Final = "a restore request is E29-T06's: held for its pass"
 ENTRY_HELD: Final = "answered rows its entry's order still holds: held for E29-T06's pass"
+#: Why a decision pages (`RequestDecision.page`, H3's page text): `<reason>: <what is exposed>`.
+FILL_PAGE: Final = (
+    "entry_filled_stop_absent: a stop-loss voided while its position is open on its side (C-2.6)"
+)
+UNSEEN_PAGE: Final = (
+    "entry_unseen: rows voided while the position is open with no stop at all (C-2.6)"
+)
+#: The open orders that count as a stop for `shows_no_stop` (Partial-mode protection and a
+#: trail). A Full-mode `stop_loss` order is left out: the position's own `stop_loss` shows it.
 _STOP_ORDERS: Final = frozenset({"partial_stop_loss", "trailing_stop"})
 
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
@@ -162,6 +173,8 @@ class RequestDecision:
     #: Why a `held_for_reconciliation` request is held, and until when, or, with any outcome,
     #: `ENTRY_HELD` for rows it leaves listed through their entry's order: the log line's text.
     held: str | None = None
+    #: Why `pages` pages (`FILL_PAGE`, `UNSEEN_PAGE`); None when nothing pages.
+    page: str | None = None
 
 
 # --- grouping and the pure matchers ----------------------------------------------------------
@@ -346,9 +359,13 @@ def _moves(request: StopRequest, reading: Reading, later: frozenset[StopKind]) -
         return _whole(request, state, "answered", "answered")
     if entry == "resting":
         return _whole(request, state, "kept", "entry_resting")
-    if (entry == "unseen" and not _no_stop(reading)) or _missed(request, reading, state):
+    if _missed(request, reading, state):
         return _held(request, state, SPAN_HELD)  # a miss there could hide a match
-    return _whole(request, state, "in_flight_resolved", "in_flight_resolved")
+    voided = _whole(request, state, "in_flight_resolved", "in_flight_resolved")
+    if entry == "unseen" and _no_stop(reading):  # the 06:38Z ruling: void, and page
+        stops = tuple(r.id for r in rows if r.kind == "stop_loss")
+        return replace(voided, pages=stops, page=UNSEEN_PAGE)
+    return voided
 
 
 def _missed(request: StopRequest, reading: Reading, state: PositionState) -> bool:
@@ -419,4 +436,4 @@ def _decision(
         for r, move in moves
         if move == "entry_filled_stop_absent" and r.kind == "stop_loss" and state == "open"
     )
-    return RequestDecision(request, outcome, moves, state, pages)
+    return RequestDecision(request, outcome, moves, state, pages, page=FILL_PAGE if pages else None)
