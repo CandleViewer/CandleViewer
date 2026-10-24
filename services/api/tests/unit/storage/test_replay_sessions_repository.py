@@ -219,6 +219,7 @@ def test_naive_datetimes_are_refused_everywhere_they_could_misorder() -> None:
     for call in (
         repo.touch("u", "s", naive),
         repo.list_idle_since(naive, 1),
+        repo.list_non_terminal_since(naive, 1),
         repo.update_cursor("u", "s", cursor_ts=naive),
     ):
         with pytest.raises(ValueError, match="timezone-aware"):
@@ -684,6 +685,24 @@ async def test_list_idle_since_clamps_the_limit_and_maps_the_projection() -> Non
     (idle,) = await _repo(rel).list_idle_since(T0, 10**6)
     assert idle == IdleReplaySession(str(_SID), str(_UID), "BTCUSDT", S.PLAYING, None, T0)
     assert rel.params()["param_1"] == MAX_PAGE_LIMIT
+
+
+async def test_list_non_terminal_since_clamps_the_limit_and_maps_the_projection() -> None:
+    rel = _Rel(_Result([{"id": _SID, "user_id": _UID, "symbol": "BTCUSDT", "state": "finished",
+                         "paper_account_id": None, "updated_at": T0}]))  # fmt: skip
+    (idle,) = await _repo(rel).list_non_terminal_since(T0, 10**6)
+    assert idle == IdleReplaySession(str(_SID), str(_UID), "BTCUSDT", S.FINISHED, None, T0)
+    assert rel.params()["param_1"] == MAX_PAGE_LIMIT
+    with pytest.raises(ValueError, match="timezone-aware"):
+        await _repo(rel).list_non_terminal_since(datetime(2026, 10, 1), 1)
+
+
+async def test_count_non_terminal_reports_the_count_and_never_queries_a_malformed_user() -> None:
+    rel = _Rel(_Result(scalar=5))
+    repo = _repo(rel)
+    assert await repo.count_non_terminal(str(_UID)) == 5
+    assert await repo.count_non_terminal("not-a-uuid") == 0
+    assert len(rel.statements) == 1 and rel.commits == 0
 
 
 async def test_delete_and_count_report_what_the_database_said() -> None:

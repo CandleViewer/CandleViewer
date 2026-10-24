@@ -3,7 +3,7 @@
 CI-only (testcontainers; no docker socket locally). The shared behavioural contract runs here
 exactly as it does against the fake (`tests/unit/storage/replay_sessions_contract.py`), plus what
 only a real database can prove: FK names and actions, the planner's use of `ix_rps_user_time` and
-`ix_rps_live`, and the compare-and-set under concurrency.
+`ix_rps_live` (the open-session count included), and the compare-and-set under concurrency.
 """
 
 from __future__ import annotations
@@ -226,12 +226,14 @@ async def test_the_planner_uses_the_indexes_the_table_was_designed_around(
         next_page = await _plan(rel, mod.list_statement(user, None, after, 51))
         by_state = await _plan(rel, mod.list_statement(user, S.PAUSED, None, 51))
         count = await _plan(rel, mod.count_statement(user))
+        open_count = await _plan(rel, mod.open_count_statement(user))
         sweep = await _plan(rel, mod.idle_statement(now - timedelta(hours=2), 200))
     finally:
         await rel.dispose()
     assert "ix_rps_user_time" in page and "ix_rps_user_time" in next_page
     assert "Seq Scan" not in by_state  # a state filter still reads through an index
     assert "ix_rps_live" in count
+    assert "ix_rps_user_time" in open_count and "Seq Scan" not in open_count  # the quota read
     assert "ix_rps_live" in sweep and "Seq Scan" not in sweep
 
 

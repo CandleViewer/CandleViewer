@@ -265,10 +265,26 @@ class FakeReplaySessionRepository:
             r.user_id == _canon(user_id) and r.state in LIVE_STATES for r in self._rows.values()
         )
 
+    async def count_non_terminal(self, user_id: str) -> int:
+        return sum(
+            r.user_id == _canon(user_id) and r.state not in TERMINAL_STATES
+            for r in self._rows.values()
+        )
+
     async def list_idle_since(self, before: datetime, limit: int) -> list[IdleReplaySession]:
+        return self._idle(before, limit, LIVE_STATES)
+
+    async def list_non_terminal_since(
+        self, before: datetime, limit: int
+    ) -> list[IdleReplaySession]:
+        return self._idle(before, limit, frozenset(ReplayState) - TERMINAL_STATES)
+
+    def _idle(
+        self, before: datetime, limit: int, states: frozenset[ReplayState]
+    ) -> list[IdleReplaySession]:
         require_aware(before, "before")
         idle = sorted(
-            (r for r in self._rows.values() if r.state in LIVE_STATES and r.updated_at < before),
+            (r for r in self._rows.values() if r.state in states and r.updated_at < before),
             key=lambda r: (r.updated_at, r.id),
         )
         return [
