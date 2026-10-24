@@ -26,6 +26,7 @@ from tests.unit.exchange.bybit._trading import ACCOUNT_A, ACCOUNT_B, NOW_US, acc
 XID = "9aac161b-8ed6-450d-9cab-c5cc67c21784"  # the transcribed fill's order
 T0 = datetime(2026, 10, 24, 12, 0, tzinfo=UTC)
 F = pg.NoAnswer.FAILED
+type Push = Order | Execution
 #: A Partial-mode stop-loss order of a long (a sell) at 94000; `_record()` is its record.
 STOP = {
     "stopOrderType": "PartialStopLoss", "tpslMode": "Partial", "triggerPrice": "94000",
@@ -70,44 +71,55 @@ def _none(**read: Any) -> pg.Reads:  # steps 1 and 2 found nothing
 
 FILL = _fill()  # the transcribed fill: a foreign one, its order link id empty
 READ = _order(orderId=XID, **STOP)  # its order as a read returns it
+#: A fill and an order push, each under one of our order link ids: both reach steps 1 and 2.
+OURS = [_fill(orderLinkId=link()), _order(orderId=XID, orderLinkId=link())]
 
 
 def test_pair_reads_in_the_contracts_order() -> None:
+    """Derived: a fill, then an order push; each read is asked once the steps before found none."""
     steps = [pg.Reads(), pg.Reads(bound=None), _none(), _none(order=READ)]
     assert [pg.pair(FILL, s) for s in steps] == [
         pg.NeedBound(XID), pg.NeedNamed(FILL.order_link_id), pg.NeedOrder(XID),
         pg.NeedStops("BTCUSDT", 0),
     ]  # fmt: skip
-    assert pg.pair(READ, _none()) == pg.NeedStops("BTCUSDT", 0)  # an order push asks the same
+    assert [pg.pair(READ, s) for s in steps[:3]] == [
+        pg.NeedBound(XID), pg.NeedNamed(READ.order_link_id), pg.NeedStops("BTCUSDT", 0),
+    ]  # fmt: skip
 
 
+@pytest.mark.parametrize("push", OURS, ids=["fill", "order"])
 @pytest.mark.parametrize("state", get_args(OrderState))
-def test_pair_bound_row_takes_the_push_in_any_state(state: OrderState) -> None:
-    """A final row's fill still pairs: the facade's hand-off of an evicted row needs it."""
+def test_pair_bound_row_takes_the_push_in_any_state(push: Push, state: OrderState) -> None:
+    """Derived: a final row's fill still pairs, as the facade's hand-off of an evicted row needs."""
     bound = _row(state=state)
-    assert pg.pair(FILL, pg.Reads(bound=bound)) == pg.ToRow(bound)
+    assert pg.pair(push, pg.Reads(bound=bound)) == pg.ToRow(bound)
 
 
 def test_pair_bound_row_wins_over_the_row_its_link_names() -> None:
+    """Derived: a fill under one of our order link ids, which an unbound row has too."""
     bound, named = _row(), _row(id=UUID(int=2), exchange_order_id=None, state="submitted")
     assert pg.pair(_fill(orderLinkId=link()), pg.Reads(bound, named)) == pg.ToRow(bound)
 
 
+@pytest.mark.parametrize("push", OURS, ids=["fill", "order"])
 @pytest.mark.parametrize("state", ["pending_submit", "submitted", "unknown", "quarantined"])
-def test_pair_unbound_live_row_its_link_names_waits_for_its_bind(state: OrderState) -> None:
+def test_pair_unbound_live_row_its_link_names_waits_for_its_bind(push: Push, state: str) -> None:
+    """Derived: a push under one of our order link ids, whose row has no exchange order id yet."""
     named = _row(state=state, exchange_order_id=None)
-    assert pg.pair(_fill(orderLinkId=link()), pg.Reads(None, named)) == pg.WaitOnRow(named)
+    assert pg.pair(push, pg.Reads(None, named)) == pg.WaitOnRow(named)
 
 
 def test_pair_named_row_held_final_or_bound_is_passed_over() -> None:
+    """Derived: the row a fill's order link id names is held, final, or bound to another order."""
     for over in ({"state": "held"}, {"state": "filled"}, {"exchange_order_id": "other"}):
         named = _row(**({"exchange_order_id": None} | over))
         assert pg.pair(_fill(orderLinkId=link()), pg.Reads(None, named)) == pg.NeedOrder(XID)
 
 
-def test_pair_named_row_bound_to_the_push_since_step_1_takes_it() -> None:
+@pytest.mark.parametrize("push", OURS, ids=["fill", "order"])
+def test_pair_named_row_bound_to_the_push_since_step_1_takes_it(push: Push) -> None:
     """Derived: its bind landed between the two reads, so it is the push's row (rule 7)."""
-    assert pg.pair(_fill(orderLinkId=link()), pg.Reads(None, _row())) == pg.ToRow(_row())
+    assert pg.pair(push, pg.Reads(None, _row())) == pg.ToRow(_row())
 
 
 def test_pair_failed_or_cut_short_read_decides_nothing() -> None:
@@ -130,15 +142,23 @@ def test_pair_push_no_row_or_record_takes_has_no_intent_keyed_by_its_own_id(plac
 
 
 def test_pair_stop_claim_matching_a_live_record_goes_to_that_record() -> None:
-    """Derived: a Partial-mode stop at the record's size, and a fired (filled) Full-mode stop's
-    order of another size: no size, no status."""
-    fired = {"stopOrderType": "StopLoss", "tpslMode": "Full", "qty": "0.7", "orderStatus": "Filled"}
-    full = _order(**(STOP | fired))
-    for stop, recorded in ((READ, _record()), (full, _record(tpsl_mode="Full"))):
+    """Derived: each kind and mode; a short's `in_force` stop, which a buy order closes; and a fired
+    (filled) Full-mode stop's order of another size: no size, no status."""
+    full, rec = {"stopOrderType": "StopLoss", "tpslMode": "Full"}, {"tpsl_mode": "Full"}
+    cases = [
+        ({}, {}),  # a Partial-mode stop-loss of a long, at the record's size
+        (full | {"qty": "0.7", "orderStatus": "Filled"}, rec),  # a fired Full-mode stop's order
+        (full | {"side": "Buy"}, rec | {"position_side": "Sell", "status": "in_force"}),
+        ({"stopOrderType": "PartialTakeProfit"}, {"kind": "take_profit"}),
+        ({"stopOrderType": "TakeProfit", "tpslMode": "Full"}, rec | {"kind": "take_profit"}),
+    ]
+    for over, record in cases:
+        stop, recorded = _order(**(STOP | over)), _record(**record)
         assert pg.pair(stop, _none(stops=(recorded,))) == pg.ToRecordedStop(recorded, stop)
 
 
 def test_pair_fill_of_a_stop_order_matching_a_record_goes_to_that_record() -> None:
+    """Derived: the fill's order, read by its exchange order id, is the record's stop."""
     recorded = _record()
     assert pg.pair(FILL, _none(order=READ, stops=(recorded,))) == pg.ToRecordedStop(recorded, READ)
 
@@ -163,6 +183,7 @@ def test_matching_record_misses_on_each_field_it_matches() -> None:
 
 
 def test_matching_record_latest_of_several_binds_never_two() -> None:
+    """Derived: of two matches the later by creation time binds, a tie going to the greater id."""
     old, new = _record(id=UUID(int=2)), _record(id=UUID(int=1), created_at=T0.replace(second=1))
     tied = [_record(id=UUID(int=3)), _record(id=UUID(int=4))]
     assert pg.matching_record(READ, [old, new]) == new
@@ -180,6 +201,7 @@ def test_pair_stop_claim_no_live_record_matches_has_no_intent() -> None:
     """Derived: a foreign stop, and the accepted residual (Q3): `Order` carries no trail, so a fired
     native trail the OMS recorded reads as no OMS intent until E29-K01 gives `Order` the trail."""
     trail = _order(**(STOP | {"stopOrderType": "TrailingStop"}))
+    assert pg.pair(trail, _none()) == pg.NeedStops("BTCUSDT", 0)  # still a claim
     for stops in ((), (_record(trailing_distance=Decimal(100)),)):
         assert pg.pair(trail, _none(stops=stops)) == pg.NoIntent(
             "order", trail.exchange_order_id, False
@@ -214,5 +236,6 @@ def test_pair_only_an_order_or_a_trade_execution_is_paired() -> None:
 
 
 def test_takes_waiting_is_every_unfinished_state_but_held() -> None:
+    """Derived: a row in each `OrderState`, none bound."""
     rows = [_row(state=s, exchange_order_id=None) for s in get_args(OrderState)]
     assert {r.state for r in rows if pg.takes_waiting(r)} == UNFINISHED_STATES - {"held"}

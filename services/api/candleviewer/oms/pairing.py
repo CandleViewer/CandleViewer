@@ -3,14 +3,15 @@ Sec.8.3 rule 7, SR-E29-03). Pure: no I/O, no clock, no interpreter (C-2.20), on 
 contract. `pair` decides from the reads made so far (`Reads`) and otherwise names the read it needs
 next, each step's read only once the steps before it found nothing: (1) the row bound to the push's
 exchange order id, in any state; (2) a live row of the account, unbound and not held, that the
-push's normalised order link id names, whose reorder buffer holds it until its own bind decides;
-(3) for an order the stream or a fill's order read shows as a TP/SL claim, the latest live record
-of its position whose side it matches (Sec.8.8 rule 6, [O-4], failing closed); (4) no OMS intent.
-A read that failed or that the hand-over bound cut short decides nothing, and so does a completed
-read of a fill's order that found none. A row pairs through the bound id alone: an order link id
-only names a row to wait on, and a fill is never matched on its own symbol, side or direction. A
-read that answers another account's row, or a step-1 row bound to another exchange order id, is a
-store or adapter defect: refused, never paired (C-12.4).
+push's normalised order link id names, whose reorder buffer holds it until its own bind decides (a
+named row already bound to the push's own order, its bind having landed since step 1's read, is
+that push's row, as in step 1); (3) for an order the stream or a fill's order read shows as a TP/SL
+claim, the latest live record of its position whose side it matches (Sec.8.8 rule 6, [O-4], failing
+closed); (4) no OMS intent. A read that failed or that the hand-over bound cut short decides
+nothing, and so does a completed read of a fill's order that found none. A row pairs through the
+bound id alone: an order link id only names a row to wait on, and a fill is never matched on its own
+symbol, side or direction. A read that answers another account's row, or a step-1 row bound to
+another exchange order id, is a store or adapter defect: refused, never paired (C-12.4).
 
 Known residual (the orchestrator's Q3 ruling): `Order` carries no trail, so a trailing order and a
 record with a trail never match: a fired native trail the OMS recorded reads as no OMS intent (a
@@ -73,7 +74,8 @@ class NeedStops:
 
 @dataclass(frozen=True, slots=True)
 class ToRow:
-    """Step 1: the row bound to the push's exchange order id takes it, in any state."""
+    """Step 1: the row bound to the push's exchange order id takes it, in any state. Step 2 returns
+    it too for a named row whose bind landed between the two reads."""
 
     row: OrderRow
 
@@ -125,7 +127,7 @@ STOP_SIDES: Final[Mapping[str, tuple[StopKind, TpslMode]]] = MappingProxyType({
     "partial_take_profit": ("take_profit", "Partial"),
 })  # fmt: skip
 _CLAIMS: Final = frozenset(STOP_SIDES) | {"trailing_stop"}
-_CLOSING: Final = {"Buy": "sell", "Sell": "buy"}  # a record's position side -> the order's side
+_CLOSING: Final = MappingProxyType({"Buy": "sell", "Sell": "buy"})  # record side -> order side
 _REFUSED: Final = "a read answered a row that is not the push's: nothing is paired"
 
 
