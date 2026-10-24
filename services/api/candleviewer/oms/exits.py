@@ -40,6 +40,7 @@ from candleviewer.statechart.persistence import DegradedLatchError
 from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.accounts import AccountScope, GrantScope
 from candleviewer.storage.repositories.orders import (
+    AccountsOutOfScope,
     OrderRow,
     OrderStoreError,
     OutOfScope,
@@ -62,6 +63,7 @@ from .errors import (
     FieldError,
     IdempotencyInFlight,
     IllegalTransition,
+    OmsNotReady,
     OrderEntryRefused,
     OrderInvalid,
     OrderNotAmendable,
@@ -79,15 +81,14 @@ from .errors import (
 )
 from .order_machine import Actor, CommandEvent
 from .ports import RequestRecord, SubmitActor, SubmitAudit
-from .repository import OrderRepository
 from .routing import retry_after
 
 __all__ = [
     "IN_FLIGHT_RETRY_AFTER_S", "MAX_IN_FLIGHT", "MAX_IN_FLIGHT_PER_PRINCIPAL", "NOT_GRANTED",
     "NOT_ORDER_CREATOR",
     "SETTLE_TIMEOUT_S", "TRANSITION_TIMEOUT_S", "VIEW_ONLY", "CancelReason",
-    "ExitCaller", "ExitCommands", "ExitDeps", "ExitMachines", "ExitOperation", "ExitOutcome",
-    "InFlightGuard", "OrderExits", "OutcomeKind", "UnknownReason",
+    "ExitCaller", "ExitCommands", "ExitDeps", "ExitMachines", "ExitOperation", "ExitOrders",
+    "ExitOutcome", "InFlightGuard", "OrderExits", "OutcomeKind", "UnknownReason",
 ]  # fmt: skip
 
 #: What an exit's answer is (the 12:30Z ruling): taken, its outcome not known, or refused.
@@ -217,13 +218,15 @@ _GUARD_FULL: Final = _problem(
     429, "rate_limited", "Too many exits are in flight; retry shortly.", IN_FLIGHT_RETRY_AFTER_S
 )
 _IN_FLIGHT: Final = _refused(IdempotencyInFlight(retry_after_s=IN_FLIGHT_RETRY_AFTER_S))
+#: An exit asked once the service closed (`aclose`): as the runtime answers once stopped.
+_CLOSED: Final = _refused(OmsNotReady())
 
 
 class InFlightGuard:
     """Ruling Q11's in-flight guard (24 Sec.8.4, the exit routes' step 9; D4), reusable by every
     exit (`operation`): one exit at a time per principal, operation and `Idempotency-Key`, in this
-    process, with no anchor (OM-T11). `claim` answers the release, which the claim's holder calls
-    once its exit has ended (its task's end, not its request's), or the refusal, nothing sent:
+    process, with no anchor (OM-T11). `claim` answers the claim's own release, which its holder
+    calls once its exit has ended (its task's end, not its request's), or the refusal, nothing sent:
     `409 idempotency_in_flight` while the key's exit runs; `429 rate_limited` while `max_keys` are
     held, or `max_per_principal` of the principal's (SEC-S4A-03), so no principal holds the others
     out, their protective cancels included; each with `Retry-After: 1`. One event loop's, as the
@@ -238,7 +241,7 @@ class InFlightGuard:
         if not 1 <= max_per_principal <= max_keys:
             raise ValueError("the in-flight guard holds at least one key, a principal's within all")
         self._max, self._per = max_keys, max_per_principal
-        self._held = set[tuple[UUID, ExitOperation, UUID]]()
+        self._held: dict[tuple[UUID, ExitOperation, UUID], object] = {}
         self._mine = Counter[UUID]()
 
     def claim(
@@ -249,14 +252,15 @@ class InFlightGuard:
             return _IN_FLIGHT
         if len(self._held) >= self._max or self._mine[user_id] >= self._per:
             return _GUARD_FULL
-        self._held.add(held)
+        self._held[held] = token = object()
         self._mine[user_id] += 1
-        return functools.partial(self._release, held)
+        return functools.partial(self._release, held, token)
 
-    def _release(self, held: tuple[UUID, ExitOperation, UUID]) -> None:
-        """Once per claim: a second call frees nothing more."""
-        if held in self._held:
-            self._held.remove(held)
+    def _release(self, held: tuple[UUID, ExitOperation, UUID], token: object) -> None:
+        """The claim's own, once: a second call, or one once the key was claimed anew, frees
+        nothing, as the key no longer holds the claim's token."""
+        if self._held.get(held) is token:
+            del self._held[held]
             self._mine[held[0]] -= 1
             if not self._mine[held[0]]:
                 del self._mine[held[0]]
@@ -310,21 +314,37 @@ class ExitCommands(Protocol):
     def forget_exit(self, order_id: UUID, kind: ExitKind) -> None: ...
 
 
+class ExitOrders(Protocol):
+    """`repository.OrderRepository` as the exits read it: the stored row and the two reads in the
+    caller's scope (C-12.4), and no write."""
+
+    async def get(self, account_id: UUID, order_id: UUID) -> OrderRow | None: ...
+
+    async def get_in_scope(
+        self, scope: AccountScope, order_id: UUID, *, environment: Environment
+    ) -> ScopedOrder | OutOfScope: ...
+
+    async def accounts_in_scope(
+        self, scope: AccountScope, environment: Environment, requested: Collection[UUID]
+    ) -> tuple[UUID, ...]: ...
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ExitDeps:
     """What the composition root (`oms_wiring`) builds the exits over: the facade and the command
-    port the pipeline drives, the order store and the audit."""
+    port the pipeline drives, the order store's reads and the audit."""
 
     machines: ExitMachines
     commands: ExitCommands
-    orders: OrderRepository
+    orders: ExitOrders
     audit: SubmitAudit
     environment: Environment
 
 
 class OrderExits:
     """The exit service of this process's environment (module docstring); `guard` is the exit
-    routes' in-flight guard. `aclose()` cancels the exits still running once their callers left."""
+    routes' in-flight guard. `aclose()` closes it: no exit starts after it, and the exits still
+    running once their callers left are cancelled."""
 
     def __init__(
         self,
@@ -345,9 +365,12 @@ class OrderExits:
         self._waits = (transition_timeout_s, settle_timeout_s, store_timeout_s)
         self.guard = InFlightGuard()
         self._running: set[asyncio.Task[ExitOutcome]] = set()
+        self._closed = False
 
     async def aclose(self) -> None:
-        """At shutdown: the exits whose callers left are cancelled and awaited."""
+        """At shutdown: no exit starts after it (`503 oms_not_ready`, as the runtime answers once
+        stopped), and the exits whose callers left are cancelled and awaited."""
+        self._closed = True
         running = set(self._running)
         for task in running:
             task.cancel()
@@ -382,10 +405,13 @@ class OrderExits:
     ) -> tuple[UUID, ...]:
         """Cancel-all's accounts of this environment (`OrderRepository.accounts_in_scope`):
         `AccountScopeDenied` for the whole request when one requested is outside the scope
-        (SR-E29-13), `StoreUnavailable` when the read fails; nothing sent either way."""
+        (SR-E29-13), a store's own refusal too, `StoreUnavailable` when the read fails; nothing
+        sent either way."""
         try:
             read = self._d.orders.accounts_in_scope(scope, self._env, requested)
             return await self._bounded(read)
+        except AccountsOutOfScope:  # met unwrapped: the caller's scope, never an outage
+            raise AccountScopeDenied from None
         except _UNREAD as exc:
             _log().warning("oms_exit_accounts_unread", failure=type(exc).__name__)
             raise StoreUnavailable from None
@@ -427,13 +453,21 @@ class OrderExits:
         """The per-order cancel of the route (after `scope`) and of cancel-all, one code path
         (module docstring): no creator check here, as cancel-all covers every order of a granted
         trade account (04 Sec.7.2.2 row 14); `reason` names the request in its `orders.cancel`."""
+        if self._closed:
+            return _CLOSED
         operation: ExitOperation = "cancel_all" if reason == "cancel_all" else "cancel"
         state = await self._lifecycle(row)
         if not isinstance(state, ExitOutcome) and state in _SETTLING:
-            try:
-                state = await self._d.machines.settled(
-                    row.exchange_account_id, row.id, leaving=state, timeout_s=self._waits[0]
-                )
+            try:  # D9: hop by hop (`validated`, then `submitting`), all within the one bound
+                async with asyncio.timeout(self._waits[0]):
+                    while state in _SETTLING:
+                        left = state
+                        state = await self._d.machines.settled(
+                            row.exchange_account_id, row.id, leaving=left,
+                            timeout_s=self._waits[0],
+                        )  # fmt: skip
+                        if state == left:  # its row's, no machine here to move it on
+                            break
             except (TimeoutError, OrderNotLoaded):
                 if state == "cancel_pending":  # the cancel in flight is B1's: as it stands
                     return await self._standing(row, "unknown", state, "timeout")
@@ -448,7 +482,9 @@ class OrderExits:
             row, "orders.cancel", "success", reason, detail, actor, request_id
         ):
             return _problem(503, "audit_unavailable", "The cancel could not be recorded.")
-        send = self._send(row, "cancel", "CANCEL", {}, actor=actor, request_id=request_id)
+        if self._closed:  # `aclose` ran while the intent was written: nothing starts
+            return await self.deny(row, operation, _CLOSED, actor=actor, request_id=request_id)
+        send = self._send(row, operation, "CANCEL", {}, actor=actor, request_id=request_id)
         return await self._shielded(send, operation)
 
     async def _lifecycle(self, row: OrderRow) -> str | ExitOutcome:
@@ -484,7 +520,7 @@ class OrderExits:
     async def _send(
         self,
         row: OrderRow,
-        kind: ExitKind,
+        operation: ExitOperation,
         event: CommandEvent,
         payload: Mapping[str, str],
         *,
@@ -494,7 +530,8 @@ class OrderExits:
         terms: Mapping[str, Decimal] | None = None,
     ) -> ExitOutcome:
         """The command through the exit watch (the principal its `actor`), then B1's settle, at
-        most `SETTLE_TIMEOUT_S`; its outcome recorded best effort (the intent was, ahead)."""
+        most `SETTLE_TIMEOUT_S`; its outcome recorded beside its intent (`_outcome`)."""
+        kind = _kind(operation)
         account, pending = row.exchange_account_id, f"{kind}_pending"
         watch = self._d.commands.expect_exit(row.id, kind, request_id=request_id, actor=actor)
         try:
@@ -508,7 +545,10 @@ class OrderExits:
             self._d.commands.forget_exit(row.id, kind)
             if not isinstance(exc, (VersionConflict, *_NOT_TAKEN)):
                 raise
-            return await self._outcome(row, kind, _taken_not(kind, exc), actor, request_id)
+            state = await self._moved(row, kind, exc)
+            if state is None:
+                refusal = _taken_not(kind, exc)
+                return await self._outcome(row, operation, refusal, actor, request_id)
         if state == pending:
             try:
                 state = await self._d.machines.settled(
@@ -520,7 +560,19 @@ class OrderExits:
         held = self._d.machines.state(row.id)
         state = state if state is not None else (None if held is None else held[0])
         outcome = await self._result(row, kind, state, answer, watch.answered, terms)
-        return await self._outcome(row, kind, outcome, actor, request_id)
+        return await self._outcome(row, operation, outcome, actor, request_id)
+
+    async def _moved(self, row: OrderRow, kind: ExitKind, error: BaseException) -> str | None:
+        """A cancel the order moved under at the facade (`IllegalTransition`) answers as the order
+        then stands (22 `cancelOrder`: `202`), read again as `_lifecycle` reads it: a final order,
+        or another request's cancel in flight, waited for as this one's own would be. None for any
+        other refusal or state: `_taken_not`'s answer."""
+        if kind != "cancel" or not isinstance(error, IllegalTransition):
+            return None
+        state = await self._lifecycle(row)
+        if isinstance(state, ExitOutcome):
+            return None
+        return state if state in _FINAL or state == "cancel_pending" else None
 
     async def _result(
         self,
@@ -582,21 +634,24 @@ class OrderExits:
     async def _outcome(
         self,
         row: OrderRow,
-        kind: ExitKind,
+        operation: ExitOperation,
         outcome: ExitOutcome,
         actor: SubmitActor,
         request_id: UUID | None,
     ) -> ExitOutcome:
-        """The exit's outcome, recorded best effort beside its intent (as `orders.submit`'s)."""
-        result: Mapping[OutcomeKind, Literal["success", "failure", "denied"]] = {
-            "accepted": "success", "unknown": "failure", "refused": "denied",
-        }  # fmt: skip
-        reason = outcome.lifecycle_state if outcome.kind == "accepted" else None
+        """The exit's outcome beside its intent. A refusal is recorded before it is answered, by
+        `deny` (C-2.9; 24 Sec.8.4: the command port records none of a cancel it refuses), so one
+        whose record cannot be written answers `503 audit_unavailable`; an accepted or unknown
+        outcome is recorded best effort (as `orders.submit`'s)."""
+        if outcome.kind == "refused":
+            return await self.deny(row, operation, outcome, actor=actor, request_id=request_id)
+        accepted = outcome.kind == "accepted"
+        result: Literal["success", "failure"] = "success" if accepted else "failure"
+        reason = outcome.lifecycle_state if accepted else None
         reason = reason or outcome.unknown_reason or outcome.code or ""
+        kind = _kind(operation)
         detail = {"operation": kind, "code": outcome.code, "state": outcome.lifecycle_state}
-        await self._record(
-            row, _ACTIONS[kind], result[outcome.kind], reason, detail, actor, request_id
-        )
+        await self._record(row, _ACTIONS[kind], result, reason, detail, actor, request_id)
         return outcome
 
     # --- the rest --------------------------------------------------------------------------------
@@ -649,6 +704,11 @@ def _ok(answer: Mapping[str, Any] | None) -> bool:
     return answer is not None and answer.get("ok") is True
 
 
+def _kind(operation: ExitOperation) -> ExitKind:
+    """The B1 exit an operation commands: a cancel-all's is a cancel."""
+    return "amend" if operation == "amend" else "cancel"
+
+
 def _int(answer: Mapping[str, Any] | None, key: str) -> int | None:
     value = None if answer is None else answer.get(key)
     return value if type(value) is int else None
@@ -687,8 +747,8 @@ def _answered(kind: ExitKind, answer: Mapping[str, Any]) -> ExitOutcome:
     delay = max(1, retry or 1)
     if code == OmsErrorCode.RATE_BUDGET_EXCEEDED:
         return _refused(RateBudgetExceeded(retry_after_s=delay))
-    if code == STORE_UNAVAILABLE:
-        return replace(_store(), retry_after_s=delay)
+    if code == STORE_UNAVAILABLE:  # the one shared retry (the 11:34Z ruling), never the port's
+        return _store()
     if code == ACCOUNT_UNAVAILABLE:
         return _ACCOUNT_UNAVAILABLE
     if code == STOP_REQUEST_IN_FLIGHT:
