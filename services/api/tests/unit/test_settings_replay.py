@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from candleviewer.replay.budget import MAX_BURST_S, MAX_SHARE, MIN_BURST_S, MIN_SHARE
 from candleviewer.settings import Settings
 
 
@@ -44,3 +45,17 @@ def test_the_replay_loop_budget_settings_take_their_bounds_from_the_environment(
     s = _settings()
     assert (s.replay_loop_share, s.replay_loop_burst_ms) == (0.05, 250)
     assert _settings(replay_loop_share=0.75, replay_loop_burst_ms=5).replay_loop_share == 0.75
+
+
+def _bounds(name: str) -> tuple[float, float]:
+    meta = Settings.model_fields[name].metadata
+    ge = next(m.ge for m in meta if hasattr(m, "ge"))
+    le = next(m.le for m in meta if hasattr(m, "le"))
+    return float(ge), float(le)
+
+
+def test_the_replay_loop_settings_bounds_are_the_budgets_own() -> None:
+    """M1 may not import `replay`, so settings repeats the budget's bounds: they never drift."""
+    assert _bounds("replay_loop_share") == (MIN_SHARE, MAX_SHARE)
+    low, high = _bounds("replay_loop_burst_ms")
+    assert (low / 1000, high / 1000) == (MIN_BURST_S, MAX_BURST_S)

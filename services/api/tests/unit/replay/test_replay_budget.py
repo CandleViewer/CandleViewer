@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Callable
 
 import pytest
 from prometheus_client import REGISTRY
@@ -25,6 +26,14 @@ def _budget(time: FakeTime, *, share: float = SHARE, burst_s: float = BURST) -> 
 
 def _sample(name: str) -> float:
     return REGISTRY.get_sample_value(name) or 0.0
+
+
+@pytest.fixture
+def waiters() -> Callable[[], float]:
+    """Lanes waiting now, beyond the gauge's value when the test started (the gauge is
+    process-wide)."""
+    base = _sample("replay_budget_waiters")
+    return lambda: _sample("replay_budget_waiters") - base
 
 
 async def _settle(rounds: int = 20) -> None:
@@ -136,7 +145,7 @@ def _indebt(time: FakeTime, budget: ReplayLoopBudget) -> None:
     debtor.charge()
 
 
-async def test_budget_admits_waiters_first_in_first_out() -> None:
+async def test_budget_admits_waiters_first_in_first_out(waiters: Callable[[], float]) -> None:
     """The lanes queue in the order b, c, a while their tasks run in the order c, a, b: once the
     debt is paid they are admitted in queue order, never in task order."""
     time = FakeTime(auto=False)
@@ -156,11 +165,11 @@ async def test_budget_admits_waiters_first_in_first_out() -> None:
         for name in ("b", "c", "a"):
             gates[name].set()
             await _settle()
-        assert _sample("replay_budget_waiters") == 3
+        assert waiters() == 3
         time.advance(1.0)
 
     assert admitted == ["b", "c", "a"]
-    assert _sample("replay_budget_waiters") == 0
+    assert waiters() == 0
 
 
 async def test_budget_a_later_lane_queues_behind_a_waiter_even_with_the_debt_paid() -> None:
@@ -194,7 +203,9 @@ async def test_budget_a_later_lane_queues_behind_a_waiter_even_with_the_debt_pai
     assert held > 0.0  # it waited for the debt "first" ran up, instead of overtaking
 
 
-async def test_budget_a_cancelled_waiter_leaves_and_the_next_is_admitted() -> None:
+async def test_budget_a_cancelled_waiter_leaves_and_the_next_is_admitted(
+    waiters: Callable[[], float],
+) -> None:
     time = FakeTime(auto=False)
     budget = _budget(time)
     _indebt(time, budget)
@@ -202,20 +213,20 @@ async def test_budget_a_cancelled_waiter_leaves_and_the_next_is_admitted() -> No
     await _settle()
     nxt = asyncio.create_task(budget.lane("next").breathe())
     await _settle()
-    assert _sample("replay_budget_waiters") == 2
+    assert waiters() == 2
 
     head.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await head
-    assert _sample("replay_budget_waiters") == 1
+    assert waiters() == 1
     time.advance(1.0)
 
     assert await nxt > 0.0
-    assert _sample("replay_budget_waiters") == 0
+    assert waiters() == 0
 
 
 @pytest.mark.parametrize("position", ["head", "behind"])
-async def test_budget_wake_cuts_a_hold_short(position: str) -> None:
+async def test_budget_wake_cuts_a_hold_short(position: str, waiters: Callable[[], float]) -> None:
     time = FakeTime(auto=False)
     budget = _budget(time)
     _indebt(time, budget)
@@ -235,10 +246,12 @@ async def test_budget_wake_cuts_a_hold_short(position: str) -> None:
         assert not ahead.done()  # the wake ended only its own hold
         time.advance(1.0)
         await ahead
-    assert _sample("replay_budget_waiters") == 0
+    assert waiters() == 0
 
 
-async def test_budget_metrics_count_loop_work_holds_and_waiters() -> None:
+async def test_budget_metrics_count_loop_work_holds_and_waiters(
+    waiters: Callable[[], float],
+) -> None:
     time = FakeTime()
     lane = _budget(time).lane("s1")
     work0 = _sample("replay_loop_seconds_total")
@@ -249,7 +262,7 @@ async def test_budget_metrics_count_loop_work_holds_and_waiters() -> None:
 
     assert _sample("replay_loop_seconds_total") - work0 == pytest.approx(BURST + 0.010)
     assert _sample("replay_budget_held_seconds_total") - held0 == pytest.approx(held)
-    assert _sample("replay_budget_waiters") == 0
+    assert waiters() == 0
 
 
 def test_budget_lane_keeps_its_key() -> None:
