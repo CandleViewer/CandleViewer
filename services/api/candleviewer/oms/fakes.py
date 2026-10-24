@@ -1018,6 +1018,16 @@ class InMemoryRecordedStopStore:
         keys = ((r.symbol, r.position_idx) for r in rows)
         return tuple(dict.fromkeys(keys))
 
+    async def in_force_for_key(
+        self, account_id: UUID, symbol: str, position_idx: int
+    ) -> tuple[RecordedStopRow, ...]:
+        await asyncio.sleep(0)
+        key, rows = (account_id, symbol, position_idx, "in_force"), self._db._stops.values()
+        shown = (
+            r for r in rows if (r.exchange_account_id, r.symbol, r.position_idx, r.status) == key
+        )
+        return tuple(sorted(shown, key=lambda r: r.kind))
+
     async def put_in_force(
         self,
         account_id: UUID,
