@@ -16,6 +16,7 @@ def test_replay_settings_default_to_the_ticket_values() -> None:
     s = _settings()
     assert (s.replay_idle_ttl_s, s.replay_reclaim_interval_s) == (7200.0, 60.0)
     assert (s.replay_max_sessions_per_user, s.replay_max_window_hours) == (2, 24)
+    assert s.replay_max_lifetime_s == 86_400.0  # 24 h, a bound that cannot be switched off
 
 
 @pytest.mark.parametrize(
@@ -25,6 +26,7 @@ def test_replay_settings_default_to_the_ticket_values() -> None:
         ("replay_reclaim_interval_s", 0.5), ("replay_reclaim_interval_s", 3_601),
         ("replay_max_sessions_per_user", 0), ("replay_max_sessions_per_user", 17),
         ("replay_max_window_hours", 0), ("replay_max_window_hours", 24 * 31 + 1),
+        ("replay_max_lifetime_s", 3_599), ("replay_max_lifetime_s", 604_801),
     ],
 )  # fmt: skip
 def test_replay_settings_outside_their_bounds_are_refused(name: str, value: float) -> None:

@@ -43,6 +43,7 @@ def test_build_replay_sessions_takes_its_limits_from_the_settings() -> None:
         replay_reclaim_interval_s=5,
         replay_max_sessions_per_user=3,
         replay_max_window_hours=6,
+        replay_max_lifetime_s=7200,
     )
     sessions = _build_replay_sessions(
         settings, cast(Any, object()), cast(Any, _CoverageService()), cast(Any, object())
@@ -52,6 +53,7 @@ def test_build_replay_sessions_takes_its_limits_from_the_settings() -> None:
         max_sessions_per_user=3,
         max_window=timedelta(hours=6),
         reclaim_interval_s=5.0,
+        max_lifetime=timedelta(hours=2),
     )
 
 
