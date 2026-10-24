@@ -16,11 +16,12 @@ from uuid import uuid4
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.exchange.base.errors import OmsErrorCode, RateBudgetExceededError, TransportError
 from candleviewer.exchange.base.fakes import FakeReject
 from candleviewer.exchange.base.models import AmendOrderRequest, OrderAck
 from candleviewer.oms import commands as oc
-from candleviewer.oms.errors import StoreUnavailable
+from candleviewer.oms.errors import AccountScopeDenied, OrderEntryRefused, StoreUnavailable
 from candleviewer.oms.order_machine import OrderAuditRecord
 from candleviewer.oms.ports import KeyedRecord, SubmitActor
 from candleviewer.oms_wiring import STOP_REQUEST_BOUND_S
@@ -356,6 +357,8 @@ async def test_one_deadline_ends_all_of_an_amend(
     """Fold m3: `AMEND_TIMEOUT_S` bounds the whole amend inside B1's `CV_COMMAND_TIMEOUT`, as
     `CANCEL_TIMEOUT_S` bounds a cancel. A read it ends before the send is `STORE_UNAVAILABLE`
     (the 10:18Z ruling); the venue call it ends raises (`unknown`, never re-sent)."""
+    monkeypatch.setattr(oc, "AMEND_SETTLE_RESERVE_S", 0.01)  # the timeline scaled down, as
+    monkeypatch.setattr(oc, "AMEND_AUDIT_GRACE_S", 0.01)  # the constructor bounds it (L1)
     rig = cr.build_rig(amend_timeout_s=0.05, port_timeout_s=60.0, submit_timeout_s=60.0)
     order = await _live(rig)
     target = {"stored_row": (rig.orders, "get"), "account": (rig.accounts, "trading_account")}
@@ -375,10 +378,16 @@ async def test_one_deadline_ends_all_of_an_amend(
 
 
 def test_the_amend_bound_is_inside_b1s_and_only_ever_tightened() -> None:
-    """The refusal's audit has its grace past the amend's bound, still inside B1's."""
+    """The refusal's audit has its grace past the amend's bound, still inside B1's; and #4395's
+    Low L1: a bound that leaves the venue call no time before the settle's reserve and the audit's
+    grace is refused."""
     assert oc.AMEND_TIMEOUT_S + oc.AMEND_AUDIT_GRACE_S < CV_COMMAND_TIMEOUT
     with pytest.raises(ValueError, match="tightened"):
         cr.build_rig(amend_timeout_s=oc.AMEND_TIMEOUT_S + 1)
+    floor = oc.AMEND_SETTLE_RESERVE_S + oc.AMEND_AUDIT_GRACE_S
+    with pytest.raises(ValueError, match="no time"):
+        cr.build_rig(amend_timeout_s=floor)
+    assert cr.build_rig(amend_timeout_s=floor + 0.001).port is not None
 
 
 @pytest.mark.parametrize("side", ["stop_loss", "take_profit"])
@@ -391,7 +400,7 @@ def test_the_send_belt_refuses_a_side_at_or_below_zero_critically(side: str) -> 
     assert [log["log_level"] for log in logs] == ["critical"]
 
 
-_UNAVAILABLE: dict[str, Any] = {"ok": False, "error_code": "STORE_UNAVAILABLE", "retry_after_s": 5}
+_UNAVAILABLE: dict[str, Any] = {"ok": False, "error_code": "STORE_UNAVAILABLE", "retry_after_s": 1}
 
 
 async def _raises(exc: BaseException) -> Any:
@@ -492,3 +501,36 @@ async def test_a_refusal_audit_has_the_grace_past_the_amends_deadline(
     answer = await rig.port.amend(_amend(order, stop_loss="57999"))
     assert answer["error_code"] == oc.STOP_LOOSENING_REFUSED
     assert audit_by == [fixed + oc.AMEND_AUDIT_GRACE_S]
+
+
+def test_the_store_retry_is_the_one_second_the_cancel_shares() -> None:
+    """The 11:34Z ruling: one `Retry-After` for an exit's read that failed, the cancel's 1 s."""
+    assert oc.STORE_UNAVAILABLE_RETRY_AFTER_S == 1.0 and _UNAVAILABLE["retry_after_s"] == 1
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    [AccountScopeDenied(), OrderEntryRefused(OrderEntryRefusal("no_active_key", "No key."))],
+    ids=["refused", "no_active_key"],
+)
+async def test_an_account_the_port_cannot_sign_for_answers_account_unavailable(
+    rig: Rig, refusal: Exception, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 11:34Z ruling, B: no outage, so no retry; audited, nothing sent, the order live, where
+    a raise would land it in `unknown`."""
+    order = await _live(rig)
+    monkeypatch.setattr(rig.accounts, "trading_account", lambda *_a, **_k: _raises(refusal))
+    answer = await rig.port.amend(_amend(order, stop_loss="58500"))
+    assert answer == _NO | {"error_code": oc.ACCOUNT_UNAVAILABLE}
+    assert rig.demo.calls == [] and _rows(rig) == []
+    assert rig.audits.actions() == [("orders.amend", "account_unavailable")]
+
+
+async def test_another_gate_refusal_of_the_account_still_raises(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    order = await _live(rig)
+    gate = OrderEntryRefused(OrderEntryRefusal("maintenance", "Paused."))
+    monkeypatch.setattr(rig.accounts, "trading_account", lambda *_a, **_k: _raises(gate))
+    with pytest.raises(OrderEntryRefused):
+        await rig.port.amend(_amend(order, stop_loss="58500"))
