@@ -417,12 +417,19 @@ class ReferencePricesBinding:
     """`ReferencePrices` over the ticker stream (24 Sec.9.3 step 2): the mid of the best bid and
     ask, else the last price; None with neither, with the symbol stale, or with no stream
     composed, which the pipeline answers 503 `exchange_unavailable`: a stale price never sizes,
-    caps or checks a market order (the orchestrator's ruling, 2026-10-23)."""
+    caps or checks a market order (the orchestrator's ruling, 2026-10-23). With `demand`, each
+    ask is told to it, so a symbol no consumer holds is subscribed for the retry (CR-S3B2-03)."""
 
-    def __init__(self, tickers: Tickers | None) -> None:
-        self._tickers = tickers
+    def __init__(self, tickers: Tickers | None, *, demand: ReferenceDemand | None = None) -> None:
+        self._tickers, self._demand = tickers, demand
 
     async def reference_price(self, symbol: Symbol) -> Px | None:
+        price = self._price(symbol)
+        if self._demand is not None:
+            self._demand.asked(symbol, priced=price is not None)
+        return price
+
+    def _price(self, symbol: Symbol) -> Px | None:
         if self._tickers is None or self._tickers.is_stale(symbol):
             return None
         ticker = self._tickers.latest(symbol)
@@ -436,6 +443,99 @@ class ReferencePricesBinding:
 
 def _priced(price: Px) -> bool:
     return price.is_finite() and price > 0
+
+
+#: CR-S3B2-03: how many symbols the reference prices hold a ticker demand for at once (C-2.18),
+#: and, in seconds, how long after the last ask for a symbol the next ask of any releases it (no
+#: timer runs: with no later ask it is held until the runtime's stop); the stream then keeps the
+#: topic its own grace (`ingestion.planner.DEFAULT_GRACE_S`, 30 s). CR-S3E4-02: at most
+#: `REFERENCE_DEMAND_NEW` new symbols a `REFERENCE_DEMAND_WINDOW_S`, so market orders on distinct
+#: symbols cannot drive the public stream's subscribe frames at the request rate.
+REFERENCE_DEMAND_MAX: Final = 16
+REFERENCE_DEMAND_TTL_S: Final = 120.0
+REFERENCE_DEMAND_NEW: Final = 4
+REFERENCE_DEMAND_WINDOW_S: Final = 60.0
+
+
+class TickerDemand(Protocol):
+    """`ingestion.ticker_stream.TickerStream`'s demand: it subscribes a symbol only while a
+    consumer holds it, and keeps it a grace after the last one lets go."""
+
+    def acquire(self, consumer: str, symbol: str) -> None: ...
+
+    def release(self, consumer: str, symbol: str) -> None: ...
+
+
+class DemandTickers(Tickers, TickerDemand, Protocol):
+    """The ticker stream as the runtime composes it: its reads and its demand."""
+
+
+class ReferenceDemand:
+    """CR-S3B2-03: the ticker stream subscribes on demand, so a market order on a symbol no
+    consumer holds has no reference price and is answered 503 `exchange_unavailable`. On such a
+    refusal the reference prices take a demand for the symbol, so the client's retry after
+    `Retry-After` finds a price. At most `REFERENCE_DEMAND_MAX` symbols are held, the one asked
+    for least recently let go first; each is released at the next ask made `REFERENCE_DEMAND_TTL_S`
+    (120 s) after the last one for it: each ask checks, no timer runs, so with no later ask the
+    symbols stay held, and subscribed, until `close()`, at the runtime's stop, lets every one go.
+    At most `REFERENCE_DEMAND_NEW` new symbols are taken per `REFERENCE_DEMAND_WINDOW_S` across
+    the runtime (CR-S3E4-02): past that `asked` takes no new demand, so the order answers 503 as
+    before, and the cap is logged once a window. A symbol the stream refuses (no catalogue lists
+    it) takes none, and once closed `asked` does nothing (CR-S3E4-05)."""
+
+    CONSUMER: ClassVar[str] = "oms-reference-prices"
+
+    def __init__(
+        self, stream: TickerDemand, *, monotonic: Callable[[], float] = time.monotonic
+    ) -> None:
+        self._stream, self._monotonic = stream, monotonic
+        self._held: OrderedDict[str, float] = OrderedDict()
+        self._window_at, self._taken, self._capped = -math.inf, 0, False
+        self._closed = False
+
+    def asked(self, symbol: str, *, priced: bool) -> None:
+        """An ask for `symbol`'s price, `priced` when it had one: held ones are kept from now."""
+        if self._closed:
+            return
+        now = self._monotonic()
+        for held, at in list(self._held.items()):
+            if now - at >= REFERENCE_DEMAND_TTL_S:
+                self._let_go(held)
+        if symbol not in self._held:
+            if priced or not self._within_budget(now):
+                return
+            try:
+                self._stream.acquire(self.CONSUMER, symbol)
+            except ValueError:  # a symbol no catalogue lists: no topic to hold
+                return
+            self._taken += 1
+        self._held[symbol] = now
+        self._held.move_to_end(symbol)
+        while len(self._held) > REFERENCE_DEMAND_MAX:
+            self._let_go(next(iter(self._held)))
+
+    def _within_budget(self, now: float) -> bool:
+        """Whether one more new symbol fits this window; the first refusal of a window is logged."""
+        if now - self._window_at >= REFERENCE_DEMAND_WINDOW_S:
+            self._window_at, self._taken, self._capped = now, 0, False
+        if self._taken < REFERENCE_DEMAND_NEW:
+            return True
+        if not self._capped:
+            self._capped = True
+            _log().warning(
+                "oms_reference_demand_capped",
+                new=REFERENCE_DEMAND_NEW, window_s=REFERENCE_DEMAND_WINDOW_S,
+            )  # fmt: skip
+        return False
+
+    async def close(self) -> None:
+        self._closed = True
+        for symbol in list(self._held):
+            self._let_go(symbol)
+
+    def _let_go(self, symbol: str) -> None:
+        del self._held[symbol]
+        self._stream.release(self.CONSUMER, symbol)
 
 
 # --- part 2: the reads and adapters (#913 slice 3C) ---
@@ -770,7 +870,7 @@ class Ingestion(Protocol):
     def clock(self) -> ClockHealth | None: ...
 
     @property
-    def tickers(self) -> Tickers | None: ...
+    def tickers(self) -> DemandTickers | None: ...
 
     @property
     def instruments(self) -> InstrumentCatalogue | None: ...
@@ -1315,10 +1415,16 @@ class OmsRuntime:
                 timeout_s=bounds.store_timeout_s,
                 stuck_after_s=bounds.stuck_after_s,
             )
+            tickers = ingestion.tickers
+            demand = (
+                None if tickers is None else ReferenceDemand(tickers, monotonic=self._monotonic)
+            )
+            if demand is not None:
+                closers.insert(2, ("ticker_demand", demand.close))
             deps = SubmissionDeps(
                 accounts=accounts,
                 instruments=InstrumentsBinding(ingestion.instruments),
-                prices=ReferencePricesBinding(ingestion.tickers),
+                prices=ReferencePricesBinding(tickers, demand=demand),
                 profiles=self.profiles,
                 switches=switches,
                 gate=gate,

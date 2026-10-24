@@ -14,6 +14,7 @@ from uuid import UUID
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer import oms_wiring
 from candleviewer.accounts.verification import Refusal
 from candleviewer.admin.flags import LIVE_ENABLED, StoredFlag
 from candleviewer.domain.events import Instrument
@@ -36,11 +37,16 @@ from candleviewer.oms.errors import (
 from candleviewer.oms.fakes import FakeClockHealth
 from candleviewer.oms.ports import INTERIM_PORTS_METRIC
 from candleviewer.oms_wiring import (
+    REFERENCE_DEMAND_MAX,
+    REFERENCE_DEMAND_NEW,
+    REFERENCE_DEMAND_TTL_S,
+    REFERENCE_DEMAND_WINDOW_S,
     ClockHealthBinding,
     CredentialRejectionsBinding,
     InstrumentsBinding,
     InterimKillSwitch,
     OmsBounds,
+    ReferenceDemand,
     ReferencePricesBinding,
     TradingSwitchesBinding,
 )
@@ -392,3 +398,89 @@ async def test_the_reference_price_is_the_quoted_mid_else_the_last_price_else_no
     tickers: _Tickers | None, price: Decimal | None
 ) -> None:
     assert await ReferencePricesBinding(tickers).reference_price("BTCUSDT") == price
+
+
+class _Stream(_Tickers):
+    """The ticker stream with its demand: a symbol held has a quote; one no catalogue lists is
+    refused, as `TickerStream.acquire` refuses it."""
+
+    def __init__(self) -> None:
+        super().__init__("100", "101", "99")
+        self.held, self.acquired, self.released = set[str](), list[str](), list[str]()
+
+    def latest(self, symbol: str) -> TickerEvent | None:
+        return cast(TickerEvent, self.ticker) if symbol in self.held else None
+
+    def acquire(self, consumer: str, symbol: str) -> None:
+        if symbol == "UNLISTED":
+            raise ValueError(symbol)
+        self.held.add(symbol)
+        self.acquired.append(symbol)
+
+    def release(self, consumer: str, symbol: str) -> None:
+        self.held.discard(symbol)
+        self.released.append(symbol)
+
+
+async def test_a_symbol_with_no_price_takes_a_ticker_demand_so_the_retry_finds_one() -> None:
+    """CR-S3B2-03: the stream subscribes on demand; the first ask is None (503), the retry is
+    priced, and the demand is taken once."""
+    stream = _Stream()
+    prices = ReferencePricesBinding(stream, demand=ReferenceDemand(stream, monotonic=lambda: 0.0))
+    assert await prices.reference_price("SOLUSDT") is None
+    assert await prices.reference_price("SOLUSDT") == Decimal("100.5")
+    assert stream.acquired == ["SOLUSDT"]
+
+
+async def test_the_demand_holds_16_symbols_each_released_at_the_next_ask_after_120_s(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-S3B2-03's bounds: past `REFERENCE_DEMAND_MAX` the least recently asked for is let go;
+    the next ask releases each one last asked for `REFERENCE_DEMAND_TTL_S` ago (CR-S3E4-01), a
+    priced ask keeps a held one, and the stop lets every one go. A symbol the stream refuses takes
+    none. The new-symbol cap is lifted here (its own test, below)."""
+    monkeypatch.setattr(oms_wiring, "REFERENCE_DEMAND_NEW", 99)
+    stream, now = _Stream(), [0.0]
+    demand = ReferenceDemand(stream, monotonic=lambda: now[0])
+    symbols = [f"S{n}USDT" for n in range(REFERENCE_DEMAND_MAX + 1)]
+    for symbol in symbols:
+        demand.asked(symbol, priced=False)
+    assert stream.released == symbols[:1]
+    now[0] = REFERENCE_DEMAND_TTL_S - 1
+    demand.asked(symbols[1], priced=True)
+    now[0] = REFERENCE_DEMAND_TTL_S
+    demand.asked("ETHUSDT", priced=True)  # priced and not held: no demand
+    assert stream.released == [symbols[0], *symbols[2:]]
+    demand.asked("UNLISTED", priced=False)
+    await demand.close()
+    assert stream.released[-1] == symbols[1] and stream.held == set()
+    assert "ETHUSDT" not in stream.acquired and "UNLISTED" not in stream.acquired
+
+
+async def test_the_ticker_demand_takes_four_new_symbols_a_minute_and_logs_the_cap_once() -> None:
+    """CR-S3E4-02: market orders on distinct listed symbols cannot drive the public stream's
+    subscribes past `REFERENCE_DEMAND_NEW` a `REFERENCE_DEMAND_WINDOW_S`. Past it `asked` takes no
+    new demand (the order answers 503 as before), logged once for the window; the next window
+    takes more."""
+    stream, now = _Stream(), [0.0]
+    demand = ReferenceDemand(stream, monotonic=lambda: now[0])
+    symbols = [f"S{n}USDT" for n in range(REFERENCE_DEMAND_NEW + 3)]
+    with capture_logs() as logs:
+        for symbol in symbols:
+            demand.asked(symbol, priced=False)
+        assert stream.acquired == symbols[:REFERENCE_DEMAND_NEW]
+        assert [e["event"] for e in logs] == ["oms_reference_demand_capped"]  # for three, once
+        now[0] = REFERENCE_DEMAND_WINDOW_S  # the next window
+        demand.asked(symbols[-1], priced=False)
+    assert stream.acquired == [*symbols[:REFERENCE_DEMAND_NEW], symbols[-1]]
+
+
+async def test_a_closed_ticker_demand_takes_no_further_ask() -> None:
+    """CR-S3E4-05: `close()` is terminal; an ask after the stop would take a demand nothing
+    releases."""
+    stream = _Stream()
+    demand = ReferenceDemand(stream, monotonic=lambda: 0.0)
+    demand.asked("SOLUSDT", priced=False)
+    await demand.close()
+    demand.asked("ETHUSDT", priced=False)
+    assert stream.acquired == ["SOLUSDT"] and stream.held == set()

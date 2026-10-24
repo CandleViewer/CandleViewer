@@ -1058,3 +1058,18 @@ async def test_a_sweep_that_ends_while_the_stop_drains_does_not_set_ready_again(
         assert not runtime._ready.is_set()
         submit.cancel()
         await stopping
+
+
+async def test_a_refused_reference_price_holds_a_ticker_demand_until_the_stop() -> None:
+    """CR-S3B2-03, composed: the pipeline's price binding asks the runtime's ticker demand, which
+    the stop lets go."""
+    world, demands = World(), list[tuple[str, str]]()
+    world.ingestion.tickers = SimpleNamespace(
+        latest=lambda _symbol: None,
+        is_stale=lambda _symbol: False,
+        acquire=lambda _consumer, symbol: demands.append(("acquire", symbol)),
+        release=lambda _consumer, symbol: demands.append(("release", symbol)),
+    )
+    async with started(world.runtime()) as runtime:
+        assert await runtime.submission._deps.prices.reference_price("SOLUSDT") is None
+    assert demands == [("acquire", "SOLUSDT"), ("release", "SOLUSDT")]
