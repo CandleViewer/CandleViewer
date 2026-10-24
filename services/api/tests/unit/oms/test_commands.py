@@ -30,7 +30,7 @@ from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import UUID
 
 import pytest
 from structlog.testing import capture_logs
@@ -102,7 +102,6 @@ from candleviewer.statechart.config import (
     CV_PERSIST_TIMEOUT,
 )
 from candleviewer.storage.repositories.orders import NewOrder, OrderRow
-from candleviewer.storage.repositories.recorded_stops import NewRecordedStop
 from tests.unit.oms.command_rig import (
     ACCOUNT,
     DAY_US,
@@ -122,6 +121,9 @@ from tests.unit.oms.command_rig import (
     outage,
     position,
     ref,
+)
+from tests.unit.oms.command_rig import (
+    earlier_request as _earlier_request,
 )
 
 _DUP = OmsErrorCode.DUPLICATE_CLIENT_ID.value
@@ -1269,30 +1271,6 @@ async def test_an_attach_sends_while_the_switches_refuse_and_the_clock_halt_stan
     assert answer["ok"] is True and answer["position"]["stop_loss"] == "58000"
     assert rig.calls() == ["positions", "set_trading_stop", "positions"]
     assert rig.switches.asked == [] and [row.status for row in _rows(rig)] == ["pending"]
-
-
-async def _earlier_request(rig: Any) -> None:
-    """A trading-stop request of the key, in flight since `T0` (the store's clock)."""
-    earlier = NewRecordedStop(
-        id=uuid5(NAMESPACE_URL, "earlier"),
-        exchange_account_id=ACCOUNT,
-        symbol=SYMBOL,
-        position_idx=0,
-        position_side="Buy",
-        kind="stop_loss",
-        source="trading_stop",
-        order_id=None,
-        tpsl_mode="Full",
-        trigger_price=Decimal("57000"),
-        size=None,
-        audit_record_id=uuid5(NAMESPACE_URL, "earlier-record"),
-        actor_user_id=None,
-    )
-
-    async def audited(_rows: Any) -> None:
-        return None
-
-    await rig.stops.record([earlier], write_ahead=audited)
 
 
 async def test_a_row_waiting_for_the_complete_read_refuses_the_attach_at_once() -> None:
