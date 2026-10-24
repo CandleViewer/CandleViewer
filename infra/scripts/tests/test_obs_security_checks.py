@@ -9,9 +9,17 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import obs_security_checks as o
+
+#: A label that holds one of these is a UID, or an account, order, key or session identity, or the
+#: size half of AC5's symbol-plus-size, however it is spelled (user_id, order_link_id, key_id, qty).
+BANNED_FRAGMENTS = (
+    "uid", "user", "account", "order", "key", "secret", "signature",
+    "token", "session", "password", "size", "qty", "notional",
+)  # fmt: skip
 
 
 def test_repo_passes_all_checks() -> None:
@@ -128,12 +136,37 @@ def test_page_alert_payload_carries_no_ids_or_key_material() -> None:
     blob = json.dumps(fixture).lower()
     for banned in ("order_id", "orderlinkid", "account_id", "api_key", "secret", "signature"):
         assert banned not in blob
+    # #4361: infra/prometheus/alerts/ingestion.yml (E08-T06, a day after this test) names these
+    # bounded market-data dimensions: `scope` is public|account, never a UID; `reason`, `stream`
+    # and `class` are closed enums; a topic, symbol or endpoint class names a feed, an instrument
+    # or a rate limit (docs/plan/24-internal-schemas.md). Page alerts use only `symbol`.
+    market_data = {"topic", "symbol", "stream", "reason", "scope", "endpoint_class", "class"}
+    allowed = {"env", "component", "instance", "job", "alertname", "severity"} | market_data
+    # An annotation never interpolates a UID, or an account, order or key identity (RSK-013, AC5),
+    # so the allow-list must not admit one, whatever else it grows to hold: by name, or by any
+    # fragment of BANNED_FRAGMENTS.
+    identity = {"uid", "account_id", "order_id", "orderlinkid"}
+    key_material = {"key", "api_key", "secret", "signature"}
+    banned_labels = identity | key_material
+
+    def banned(label: str) -> bool:
+        return label in banned_labels or any(part in label for part in BANNED_FRAGMENTS)
+
+    admitted = sorted(filter(banned, allowed))
+    assert not admitted, f"the allow-list admits {admitted}"
     for rule in (o.REPO / "infra/prometheus/alerts").glob("*.yml"):
         text = rule.read_text(encoding="utf-8")
         for m in re.finditer(r"\$labels\.(\w+)", text):
-            assert m.group(1) in {"env", "component", "instance", "job", "alertname", "severity"}, (
-                f"{rule.name}: annotation interpolates ${m.group(1)}"
-            )
+            label = m.group(1)
+            assert not banned(label), f"{rule.name}: annotation interpolates banned ${label}"
+            assert label in allowed, f"{rule.name}: annotation interpolates ${label}"
+        # AC5 also bars a symbol-plus-size: a rule that prints a symbol never prints its value.
+        for group in yaml.safe_load(text).get("groups") or []:
+            for alert in group.get("rules") or []:
+                shown = json.dumps([alert.get("labels"), alert.get("annotations")])
+                assert not (re.search(r"\$labels\.symbol\b", shown) and "$value" in shown), (
+                    f"{rule.name}: {alert.get('alert')} prints a symbol with its value"
+                )
 
 
 def test_gitleaks_allowlist_violation_does_not_echo_matched_line() -> None:
