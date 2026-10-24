@@ -21,8 +21,9 @@ the reaper and the roll-off readers do not read `action` yet (a follow-up with #
 row currently keeps data at least as long as asked.
 
 Every stream the API covers needs one default row (no symbol) in the set, because the PUT replaces
-the whole set and the readers' fallbacks for a stream with no row differ. Follow-up (DATA-4, with
-#2188 S2c's shared helper): the derived-stream check under `drop` is not made here yet."""
+the whole set and the readers' fallbacks for a stream with no row differ. DATA-4: a `drop N` row
+is read as a total of N, and each derived stream the API cannot set takes its own default row,
+before `validate_policies` refuses any derived stream that would outlive `trades` (`_checked`)."""
 
 from __future__ import annotations
 
