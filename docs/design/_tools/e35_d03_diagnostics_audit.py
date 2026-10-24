@@ -157,7 +157,7 @@ FRAME_SECTIONS = (
     ("scr088_deltas", "SCR-088", "7"),
     ("scr089_deltas", "SCR-089", "8"),
 )
-# name -> (old, new, the expected outcome); CITE-LINE / CITE-FRAG edit the first cite in the spec
+# name -> (old, new, the expected outcome); CITE-LINE / CITE-FRAG / CITE-AMBIG edit the first cite
 MUTATIONS: dict[str, tuple[str, str, str]] = {
     "a section 6 row dropped": ("| `stale_data`", "| `stale_datum`", "FAIL"),
     "a CA quote altered": ("controls always go first.", "controls usually go first.", "FAIL"),
@@ -168,6 +168,7 @@ MUTATIONS: dict[str, tuple[str, str, str]] = {
     ),
     "a cite's line moved": ("CITE-LINE", "", "WARN"),
     "a cite's fragment gone": ("CITE-FRAG", "", "FAIL"),
+    "a cite's fragment ambiguous": ("CITE-AMBIG", "", "FAIL"),
 }
 
 
@@ -342,7 +343,9 @@ def spec_sections(spec: str) -> dict[str, str]:
 
 
 def cite_check(spec: str) -> tuple[list[str], list[str]]:
-    """WARN when a cited line moved (the fragment found elsewhere); FAIL when it is gone."""
+    """WARN when a cited line moved at any distance (the fragment found once elsewhere); FAIL
+    when the fragment is gone, or when it occurs on more than one line (ambiguous: the fix is a
+    longer fragment, not a re-pin)."""
     warns, fails = [], []
     for m in CITE.finditer(spec):
         path = DESIGN / m[1].split("-")[0] / f"{m[1]}.md"
@@ -350,13 +353,13 @@ def cite_check(spec: str) -> tuple[list[str], list[str]]:
             fails.append(f"cite {m[1]}.md:{m[2]}: no such file")
             continue
         lines, n, frag = read(path).splitlines(), int(m[2]), m[3]
-        if 0 < n <= len(lines) and frag in lines[n - 1]:
-            continue
         found = [i + 1 for i, ln in enumerate(lines) if frag in ln]
-        if found:
-            warns.append(f'cite {m[1]}.md:{n} "{frag}" drifted — now at line {found[0]}')
-        else:
+        if len(found) > 1:
+            fails.append(f'cite {m[1]}.md:{n} "{frag}" is ambiguous: {len(found)} matches')
+        elif not found:
             fails.append(f'cite {m[1]}.md:{n} "{frag}" is gone from the file')
+        elif found[0] != n:
+            warns.append(f'cite {m[1]}.md:{n} "{frag}" drifted — now at line {found[0]}')
     return warns, fails
 
 
@@ -444,6 +447,8 @@ def mutate(spec: str, old: str, new: str) -> str:
         return spec.replace(m[0], m[0].replace(f":{m[2]}`", f":{int(m[2]) + 1}`"), 1)
     if old == "CITE-FRAG" and m:
         return spec.replace(m[0], m[0].replace(m[3], "zzqx not in any file"), 1)
+    if old == "CITE-AMBIG" and m:
+        return spec.replace(m[0], m[0].replace(m[3], "|"), 1)
     return spec.replace(old, new)
 
 
