@@ -7,8 +7,9 @@ light / high-contrast (`themes.json` layering) and the validity composite; (2) e
 spec binds, resolved or MISSING, and the glyph names no merged spec uses yet; (3) the pairs
 `pairs.mjs` registers; (4) the contract facts the boards quote, parsed from text; (5) the trail
 arithmetic over the fixture (Decimal, tick 0.10): the readout's digits, the lockout stop, the
-loosen risk, the `22` example's implied reference; (6) the string gates (no banned word in the
-copy deck, no raw error-code token, every T2 reason within 60 characters, no private path, every
+loosen risk, the `22` example's implied reference, the ratchet's widest trail, the ladder frames'
+fixture; (6) the string gates (no banned word in the copy deck, no raw error-code token, every T2
+reason within 60 characters, the stale template's fixed text within 60, no private path, every
 cited id and line still valid, the C-2.6 sentences present, no LIVE frame without the arm or the
 step-up, no pending frame that reads as applied, no closing keyword in a draft passed with
 `--extra`); (7) the counts the boards and the draft quote. `--json` feeds the check-nums script;
@@ -52,14 +53,17 @@ FORBIDDEN = (
     r"file-i[d]=",
     r"~/[a-z0-9-]+/",
 )
-# Words that leave user-facing copy (the lane ruling on BQ-12; the memo SC-6, F6; `24` :2053's
-# code-only rule); checked on the copy deck only.
+# Words that leave user-facing copy (the BQ-12 ruling; the memo SC-6, F6; `24` :2053's code-only
+# rule; a step-up class id or an audit action name is an annotation, never a sentence); checked on
+# the copy deck only.
 BANNED_COPY = (
     r"app-managed",
     r"client-side",
     r"engine-managed",
     r"retMsg",
     r"ret_msg",
+    r"sl_loosen",
+    r"sl\.loosened",
 )
 # The C-2.6 sentences the spec must carry verbatim (section 1.1 and the state rows).
 STOP_SENTENCES = (
@@ -249,6 +253,11 @@ E30-D04 | 180 | ### 2.3 `unprotected`
 E30-D04 | 201 | ### 2.5 The two disabled looks, written once
 E09-D02 | 186 | ## 9. SCR-006 Step-up modal
 E17-D01 | 152 | Order entry off — <message>. <what still works>
+E17-D01 | 103 | Order entry off — <role-neutral message>. <what still works>
+E33-D02 | 338 | name "Emulated — run by CandleViewer, not Bybit"
+E32-D02 | 528 | 22,419.75
+22 | 6726 | trailing_stop: { unit: percent, value: "1.2" }
+24 | 2384 | fallback_sl_offset_pct: Decimal
 E25-D01 | 329 | ### 9.5 Catalogue amendments
 README | 73 | one **page per screen**
 """
@@ -276,6 +285,7 @@ DESIGN_DOCS = {
     "E30-D04": "E30/E30-D04.md",
     "E17-D01": "E17/E17-D01.md",
     "E25-D01": "E25/E25-D01.md",
+    "E33-D02": "E33/E33-D02.md",
     "README": "README.md",
 }
 MERGE_SHAS = (
@@ -503,6 +513,23 @@ def arithmetic() -> dict[str, object]:
         ),
         "revert_distance": 300.0,
         "revert_activation": num(r_to_price(Decimal("2.0"))),
+        # the widest trail the ratchet accepts on this fixture: arming at +1.0 R the trigger must
+        # stay at or above the stop in force; arming at once, from the mark
+        "max_at_activation": num(act - F["stop"]),
+        "max_at_once": num(F["mark"] - F["stop"]),
+    }
+    # The two ladder pending frames use E32-D02 section 5.1's scaled entry (its table, quoted and
+    # re-found by the cite gate): levels 1-2 filled, the stop 2 % below the far end, re-derived.
+    ladder_far_end = Decimal("63700.0")
+    ladder_stop = ladder_far_end * (1 - Decimal("0.02"))
+    ladder_tighten = Decimal("62476.0")
+    ladder_fixture = {
+        "size": 0.351,
+        "avg": 63873.9,
+        "far_end": num(ladder_far_end),
+        "stop": num(ladder_stop),
+        "tighten": num(ladder_tighten),
+        "tighter_ticks": ticks_between(ladder_stop, ladder_tighten),
     }
     lockout = {
         "pct": 0.15,
@@ -539,6 +566,7 @@ def arithmetic() -> dict[str, object]:
         "pending": pending,
         "loosen": loosened,
         "liq": liq,
+        "ladder_fixture": ladder_fixture,
     }
 
 
@@ -656,6 +684,11 @@ def gates(
                     f"T2 reason {key}: {len(s)} chars; stop {s.endswith('.')}; "
                     f"digit {bool(re.search(r'[0-9]', s))}"
                 )
+    stale = first(r'^\| `e32\.stale\.entry_off` +\| "([^"]+)"', deck, MULTI)
+    if stale == "MISSING":
+        bad.append("spec section 13: e32.stale.entry_off (E17-D01's form instantiated) is missing")
+    elif len(stale.replace("{message}", "")) > 60 or "still works." not in stale:
+        bad.append(f"spec section 13: e32.stale.entry_off fixed text {len(stale) - 9} chars / form")
     for frame, board, cls, rest in state_rows(spec):
         drawn = "not drawn" not in board
         if drawn and not re.fullmatch(r"\d\d", board):
@@ -748,6 +781,7 @@ def counts(spec: str, handoff: str) -> dict[str, object]:
     numbers["reason_keys"] = len(re.findall(REASON_RE, deck, MULTI))
     numbers["checklist_items"] = count(r"^\| 14:1504 ", section(spec, 15, 16))
     numbers["handoff_blocks"] = count(r"^## Handoff checklist", handoff)
+    numbers["cites_pinned"] = len(rows(CITED_TABLE))
     numbers["gestures"] = count(
         r"^\| (?:select|drag|drop|switch|release|abort) ", section(spec, 9, 10)
     )
@@ -813,7 +847,13 @@ def mutations() -> list[tuple[str, Callable[[str], str], str]]:
                 '+ `sltp.pending.held` "Held by Bybit now: 63,900.0."; after the 200',
                 "; after the 200",
                 1,
-            ).replace("`sltp.pending.held` under it", "the line under it", 1),
+            )
+            .replace("`sltp.pending.held` under it", "the line under it", 1)
+            .replace(
+                'reads "Held by Bybit now: 63,900.0 — last confirmed by the position read."',
+                "reads the read's confirmation",
+                1,
+            ),
             "stop in force",
         ),
         (
@@ -832,6 +872,15 @@ def mutations() -> list[tuple[str, Callable[[str], str], str]]:
                 "`sltp.applied.none`",
             ),
             "validity-look row carries",
+        ),
+        (
+            "stale-long",
+            sub(
+                r'^(\| `e32\.stale\.entry_off` +\| "Order entry off — \{message\}\. )'
+                r"Tightening the stop still works\.",
+                r"\1Tightening the stop and attaching one still work as before.",
+            ),
+            "e32.stale.entry_off",
         ),
         (
             "revert",
