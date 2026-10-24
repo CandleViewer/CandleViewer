@@ -751,6 +751,53 @@ async def test_a_step_slower_than_the_bound_is_destroyed_when_it_ends(
     await env.s.stop()
 
 
+async def test_stop_logs_each_destroy_still_waiting_on_a_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = asyncio.Event()
+    env, _sleep = _stepping(monkeypatch, gate)
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.transition(USER_A, sid, "STEP")
+    assert await env.s.destroy(USER_A, sid) is DestroyOutcome.DESTROYING
+    with capture_logs() as logs:
+        await env.s.stop()  # the intent is held in memory only: a restart drops it
+    pending = [e for e in logs if e["event"] == "replay_session_destroy_pending"]
+    assert pending == [
+        {"event": "replay_session_destroy_pending", "session_id": sid, "user_id": USER_A,
+         "log_level": "warning"},
+    ]  # fmt: skip
+
+
+async def test_the_sweep_retries_a_deferred_destroy_that_failed_with_its_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = asyncio.Event()
+    env, _sleep = _stepping(monkeypatch, gate)
+    await env.s.start()
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.transition(USER_A, sid, "STEP")
+    assert await env.s.destroy(USER_A, sid) is DestroyOutcome.DESTROYING
+    env.audit.fail = True  # the mirror task's completion cannot write its record
+    with capture_logs() as logs:
+        gate.set()
+
+        async def failed() -> bool:
+            return any(e["event"] == "replay_session_mirror_failed" for e in logs)
+
+        await until(failed)
+    assert env.s.state_of(sid) == "paused" and env.handles.released[sid] == 0
+    env.audit.fail = False
+    assert await env.s.reclaim_idle(env.clock()) == 1  # not idle, not old: the pending intent
+    assert await env.s.reclaim_idle(env.clock()) == 0
+    assert env.handles.released[sid] == 1
+    assert await state_in_db(env, USER_A, sid) is ReplayState.DESTROYED
+    rows = [
+        (kw["reason"], kw["actor_label"]) for a, kw in env.audit.rows if a.endswith("destroyed")
+    ]
+    assert rows == [("client", f"user:{USER_A}")]
+    await env.s.stop()
+
+
 async def test_the_sweep_waits_no_longer_than_the_bound_on_a_running_step(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
