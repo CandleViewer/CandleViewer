@@ -13,6 +13,7 @@ Jobs run as tracked tasks with a bounded store; one compaction at a time.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import json
 import re
@@ -142,6 +143,8 @@ class AdminJobStore:
         self._by_key: dict[tuple[str, str], tuple[str, str]] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._clock = clock
+        #: Kinds held before their job exists (`reserve`), which `ensure_free` refuses.
+        self._reserved: set[str] = set()
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
@@ -158,8 +161,18 @@ class AdminJobStore:
         return job, hit[1]
 
     def ensure_free(self, kind: str) -> None:
-        if any(j.kind == kind and j.status in ("queued", "running") for j in self._jobs.values()):
+        busy = (j.kind == kind and j.status in ("queued", "running") for j in self._jobs.values())
+        if kind in self._reserved or any(busy):
             raise JobConflict(kind)
+
+    def reserve(self, kind: str) -> Callable[[], None]:
+        """Hold `kind`'s single-flight before its job exists (#889 S10: an export's write-ahead
+        record comes first), so `ensure_free` refuses `kind` until the release this returns runs;
+        the holder releases it, then submits with no `await` between. `JobConflict` while `kind`
+        is held, queued or running."""
+        self.ensure_free(kind)
+        self._reserved.add(kind)
+        return functools.partial(self._reserved.discard, kind)
 
     def _evict(self) -> None:
         while len(self._jobs) > MAX_JOBS:

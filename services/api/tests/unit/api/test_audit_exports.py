@@ -448,6 +448,33 @@ async def test_a_failing_probe_degrades_export_alone(
     assert not reader.exports.links_ok and os.listdir(reader.root / EXPORT_DIR) == []
 
 
+async def test_a_tick_probes_again_until_the_volume_takes_hard_links(
+    reader: _Reader, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#889 S10 (S9's security lens, Info 5): while the probe has not passed, each tick probes
+    before it sweeps, so a remount recovers export with no restart; once it passes, no tick
+    probes again. The first failure is logged critical, a repeat at warning (the code lens's
+    C3-1: not a critical line a minute)."""
+    ticking, _, parked = _ticking(reader.root, park_at=4)
+    probes, link = list[bool](), os.link
+
+    def linked(*args: Any, **kwargs: Any) -> None:
+        probes.append(len(probes) >= 2)  # the boot's probe and the first tick's fail
+        if not probes[-1]:
+            raise OSError(errno.EPERM, "no hard links")
+        link(*args, **kwargs)
+
+    monkeypatch.setattr(os, "link", linked)
+    with capture_logs() as logs:
+        await ticking.exports.start()
+        assert not ticking.exports.links_ok
+        await _within(parked.wait())
+    await ticking.exports.stop()
+    assert probes == [False, False, True] and ticking.exports.links_ok
+    failed = [(e["log_level"], e["errno"]) for e in logs if e["event"].endswith("probe_failed")]
+    assert failed == [("critical", "EPERM"), ("warning", "EPERM")]
+
+
 async def test_one_unlink_that_fails_leaves_the_rest_of_the_batch(reader: _Reader) -> None:
     exports = reader.root / EXPORT_DIR
     (exports / f"{JOB}.ndjson").mkdir(parents=True)  # unlink(2) refuses a directory
