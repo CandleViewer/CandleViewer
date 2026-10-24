@@ -10,6 +10,7 @@ the span: a collection over a large heap is a pause of its own, not the producer
 from __future__ import annotations
 
 import asyncio
+import bisect
 import gc
 import time
 from asyncio import events
@@ -18,6 +19,8 @@ from collections.abc import Iterator
 import pytest
 
 from candleviewer.replay import ReadAheadConfig, ReplaySource
+from candleviewer.storage.models import StreamKind, TimeRange
+from candleviewer.storage.repositories.recorded import RecordedEvent
 from tests.unit.replay._events import Harness, request, trade
 from tests.unit.replay._source import until_parked
 
@@ -26,6 +29,28 @@ STEP_BUDGET_S = 0.050
 #: Roughly one and a half times the default read-ahead (131 072 events), 100 us apart.
 EVENTS = 140_000
 FILLED = 100_000
+
+
+class _SortedTier:
+    """Trades of one symbol, time-sorted, with bisect range reads. The stock in-memory tier scans
+    and sorts every stored row on each read, which is a long loop step of the fixture's own (an
+    awaited store would not hold the loop), so the probe would time the stand-in, not the source."""
+
+    def __init__(self, rows: list[RecordedEvent]) -> None:
+        self._rows = rows
+        self._ts = [row.ts_us for row in rows]
+
+    async def read(
+        self, symbol: str, stream: StreamKind, rng: TimeRange, *, depth: int, limit: int
+    ) -> list[RecordedEvent]:
+        lo = bisect.bisect_left(self._ts, rng.start_us)
+        hi = bisect.bisect_left(self._ts, rng.end_us)
+        return self._rows[lo : min(hi, lo + limit)]
+
+    async def snapshot_at(
+        self, symbol: str, depth: int, at_us: int, *, not_before_us: int
+    ) -> RecordedEvent | None:
+        return None
 
 
 @pytest.fixture
@@ -57,14 +82,19 @@ async def test_dense_replay_start_keeps_every_loop_step_under_50_ms(
     longest_step: list[float],
 ) -> None:
     rows = [trade(i * 100, trade_id=f"t{i:06}") for i in range(EVENTS)]
-    harness = Harness(hot=rows, req=request(end_us=60_000_000))
+    harness = Harness(req=request(end_us=60_000_000))
+    harness.replace_ports(hot=_SortedTier(rows))
     await asyncio.sleep(0)  # the step that built the fixture is not the producer's
     longest_step.clear()
 
     async with ReplaySource(harness.req, harness.tiers, config=ReadAheadConfig()) as source:
         await source.__anext__()
+        # The consumer is handed the first batch while the producer is still early in the fill; a
+        # producer that ran the whole fill in one step would park on the full queue before it.
+        at_first_item = source.buffered_events
         await until_parked(source, at_least=FILLED)
         filled = source.buffered_events
 
+    assert at_first_item < FILLED // 2, f"{at_first_item} events queued at the first item"
     assert filled >= FILLED  # the span covered the read-ahead fill, not a short one
     assert max(longest_step) < STEP_BUDGET_S, f"longest loop step {max(longest_step) * 1e3:.1f} ms"
