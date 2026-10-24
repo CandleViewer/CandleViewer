@@ -1,19 +1,18 @@
 """#492 S1: the fake behind the recording tests.
 
 `FakeRecorder` mirrors #2188's `PolicyControlSurface` member for member (`surface_mismatches`:
-names, signatures, sync versus async) as S3c leaves it (`control_runtime.RuntimePolicy` until S3c
-is on main): the S3b accessors, `set_pin` and `set_retention` with the view, `relax_allowed`. It
-keeps the policy's rules: the cap, a re-add of a
-manual entry that changes and records nothing, the depth and stream check before any record, pin
-and unpin, a stop that lingers and keeps its pin, an update only of a manual entry (none when it
-changes nothing), a user actor on every manual change, and the policy's records."""
+names, signatures, sync versus async), #2188 S3c's members included: `set_pin` and
+`set_retention` with the view, `relax_allowed`, `start_refused`. It keeps the policy's rules: the
+cap, a re-add of a manual entry that changes and records nothing, the depth and stream check
+before any record, pin and unpin, a stop that lingers and keeps its pin, an update only of a
+manual entry (none when it changes nothing), a user actor on every manual change, and the
+policy's records."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
-from candleviewer.recorder.control_runtime import RuntimePolicy
 
 from candleviewer.recorder.errors import (
     InvalidRecorderActorError,
@@ -31,17 +30,7 @@ USER = Actor(kind="user", id="u-1")
 
 
 def test_the_fake_mirrors_the_policy_control_surface() -> None:
-    assert surface_mismatches(fakes.FakeRecorder, RuntimePolicy) == []
-
-
-def test_the_s3c_surface_differs_from_mains_only_in_set_pin_and_start_refused() -> None:
-    """Holds until the rebase onto #2188 S3c, which changes `set_pin` (the view, the unpin's
-    retention) and adds `set_retention`, `relax_allowed` and `start_refused` to
-    `PolicyControlSurface`; then `RuntimePolicy` is that surface and this test goes."""
-    assert set(surface_mismatches(RuntimePolicy, PolicyControlSurface)) == {"set_pin"}
-    added = {n for n in vars(RuntimePolicy) if not n.startswith("_")} - set(
-        vars(PolicyControlSurface))  # fmt: skip
-    assert added == {"set_retention", "relax_allowed", "start_refused"}
+    assert surface_mismatches(fakes.FakeRecorder, PolicyControlSurface) == []
 
 
 class _Sink(list[tuple[str, dict[str, Any]]]):

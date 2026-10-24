@@ -546,17 +546,14 @@ def _oms_state(runtime: OmsRuntime | None) -> str | None:
 
 
 def bind_recording_runtime(
-    state: State, wiring: RecorderWiring | None, config: PolicyConfig, default_retention_days: int
+    state: State, wiring: RecorderWiring | None, config: PolicyConfig
 ) -> None:
     """E16-T08 S9 (#492): with #2188's composed recorder, one `RuntimeRecordingControl` serves
     the recorded-set reads, the writes and the status (`state` is `app.state`). Without it nothing
     changes: the stored reads stay, the writes answer 503 and the status `not_deployed`."""
     if wiring is None:
         return
-    control = RuntimeRecordingControl(
-        wiring, config=config, default_retention_days=default_retention_days,
-        now=lambda: datetime.now(UTC),
-    )  # fmt: skip
+    control = RuntimeRecordingControl(wiring, config=config, now=lambda: datetime.now(UTC))
     state.recording_control = state.recording_writer = state.recording_runtime = control
 
 
@@ -2602,7 +2599,8 @@ def create_app(
     app.state.recording_writer = None
     # #492 S9: #2188 S4b's composed recorder (`RecorderWiring`, on the context once it lands)
     # binds the runtime control here; `None` until then.
-    bind_recording_runtime(app.state, None, PolicyConfig(), resolved.recorder_retention_days)
+    recorder_config = PolicyConfig(default_retention_days=resolved.recorder_retention_days)
+    bind_recording_runtime(app.state, None, recorder_config)
 
     async def _recording_elevation(session_id: uuid.UUID | None) -> JSONResponse | None:
         return await require_session_elevation(ctx.auth, session_id, "recorder")
