@@ -819,12 +819,19 @@ async def test_a_stop_request_answered_between_tries_lets_the_entry_through(rig:
 async def test_a_row_waiting_for_the_complete_read_refuses_at_once_with_retry_after_5(
     rig: SubmitRig,
 ) -> None:
-    """Q-A and Q-D: only the complete read clears it, so no retry: 409 at once, nothing tried."""
-    await _record_in_flight(rig)
+    """24 Sec.8.4: 409 at once, nothing tried or sent, and the complete read it started runs on,
+    so the same request, sent again once that read voided the row, is a first submission."""
+    stop = await _record_in_flight(rig)
     rig.port.now.us += 11_000_000  # past the request's bound: it waits for the complete read
     refused = await _refused(rig)
     assert isinstance(refused, StopRequestPending) and refused.retry_after_s == 5
-    assert rig.sleeps.waits == [] and rig.calls() == []
+    assert rig.sleeps.waits == [] and "place_order" not in rig.calls()
+    for _ in range(10_000):  # the read runs on: a bound on the test, not a time
+        if rig.port.store._stops[stop.id].status == "void":
+            break
+        await asyncio.sleep(0)
+    assert rig.port.store._stops[stop.id].status == "void"
+    assert (await rig.submit()).status == 202
 
 
 async def test_a_stop_gate_that_does_not_answer_is_503_with_nothing_sent(

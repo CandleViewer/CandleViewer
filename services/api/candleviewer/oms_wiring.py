@@ -72,7 +72,6 @@ from candleviewer.oms.ports import (
     KeyedRecord,
     NoHandoverStore,
     Profiles,
-    RefuseWhileWaiting,
     RequestRecord,
     RuntimePortName,
     SubmissionPorts,
@@ -90,6 +89,8 @@ from candleviewer.oms.repository import (
     WriteTimer,
 )
 from candleviewer.oms.routing import RoutedPort, TradingRouter
+from candleviewer.oms.stop_gate import ResolvingStopGate, StopVoidAudit
+from candleviewer.oms.stop_resolution import CompleteRead, StopResolver
 from candleviewer.oms.submit import RESULT_WAIT_S, STORE_TIMEOUT_S, OrderSubmission, SubmissionDeps
 from candleviewer.oms.validator import ReadOnlyCheck, Validator
 from candleviewer.settings import OMS_INFLIGHT_STUCK_MAX_S, OMS_STOP_RESERVE_S, Settings
@@ -147,7 +148,7 @@ if TYPE_CHECKING:
     from candleviewer.app import AppContext
 
 #: The stop request's bound (21 Sec.3.3.11, [LANE-25]), in seconds: how long an unanswered stop
-#: request holds its key before it waits for the complete read (`RefuseWhileWaiting`); above an
+#: request holds its key before it waits for the complete read (`ResolvingStopGate`); above an
 #: entry's answer path, 3 x `CV_PERSIST_TIMEOUT` + the submit timeout, and at least an attach's,
 #: B1's `CV_COMMAND_TIMEOUT` (`OmsBounds`). No safety knob: either side of it refuses a second
 #: request for the key.
@@ -1025,6 +1026,7 @@ class _Parts:
     audit: OmsAudit
     sweep: UnfinishedOrders
     route: OrderRoute
+    gate: ResolvingStopGate
 
 
 async def _drained(tasks: set[asyncio.Task[Any]], timeout_s: float) -> set[asyncio.Task[Any]]:
@@ -1246,10 +1248,11 @@ class OmsRuntime:
 
     async def stop(self) -> None:
         """Clear `ready`; give the submits in flight at most `CV_OMS_DRAIN_S`; cancel what remains
-        and the startup task; then close the facade (it unwires B1's ports), the command port, the
-        sink it owns, the trading port and its pool, each isolated, within its share of what is
-        left, and all by `OMS_STOP_RESERVE_S` after the drain, inside the OMS module's 15 s grace
-        (20 Sec.6.2). The shared profile cache is its owner's to close."""
+        and the startup task; then close the stop gate (its complete reads and passes cancelled
+        with the startup task, before the machines), the facade (it unwires B1's ports), the
+        command port, the sink it owns, the trading port and its pool, each isolated, within its
+        share of what is left, and all by `OMS_STOP_RESERVE_S` after the drain, inside the OMS
+        module's 15 s grace (20 Sec.6.2). The shared profile cache is its owner's to close."""
         self._ready.clear()
         self._stopping = True
         pending = await _drained(set(self._running), self._settings.oms_drain_s)
@@ -1304,10 +1307,12 @@ class OmsRuntime:
         """Steps 2 to 4; False when step 3 refuses `ready`, past `MAX_MACHINES` orders (paged)."""
         env, machines, began = self._env, parts.machines, self._monotonic()
         accounts = await self._bounded(parts.sweep.environment_accounts(env))
+        await self._bounded(parts.gate.start_floor())  # Q7: once, before this runtime writes a stop
         for account_id in accounts:  # step 2: this environment's accounts only (C-2.11)
             write_ahead = _sweep_audit(parts.audit)
             void = parts.stops.void_orphans(account_id, at=self._now(), write_ahead=write_ahead)
             await self._bounded(void)
+            parts.gate.start_pass(account_id)  # the complete read, never awaited: no `ready` wait
         rows = await self._bounded(parts.sweep.list_unfinished(env, limit=self._max + 1))
         if len(rows) > self._max:  # more than the facade holds: never ready
             self._failed = True
@@ -1433,13 +1438,20 @@ class OmsRuntime:
             halt = ClockHalt(
                 ClockHealthBinding(ingestion.clock), monotonic=self._monotonic, metrics=metrics
             )
-            gate = RefuseWhileWaiting(stops, now=self._now, bound_s=bounds.stop_request_s)
+            command_accounts = CommandAccounts(accounts, self._pager)
+            resolver = StopResolver(
+                stops, CompleteRead(orders), StopVoidAudit(audit), now=self._now
+            )
+            gate = ResolvingStopGate(
+                stops, resolver, accounts=command_accounts, port_for=router.port_for,
+                bound_s=bounds.stop_request_s, now=self._now, monotonic=self._monotonic,
+                metrics=metrics, pager=self._pager,
+            )  # fmt: skip
             rejections = CredentialRejectionsBinding(
                 self._standings, key_refusal=self._venue.key_refusal, pager=self._pager
             )
             commands = OmsCommandPort(
-                router=router, accounts=CommandAccounts(accounts, self._pager), orders=orders,
-                stops=stops,
+                router=router, accounts=command_accounts, orders=orders, stops=stops,
                 handovers=NoHandoverStore(), credentials=rejections, clock_halt=halt,
                 switches=switches, audit=audit, submit_audit=audit, gate=gate, notices=notices,
                 now_us=self._now_us, submit_timeout_s=bounds.submit_timeout_s,
@@ -1463,7 +1475,10 @@ class OmsRuntime:
                 latch=ChainTripLatch() if bundle is None else bundle.latch,
                 now_us=self._now_us, registry=self._registry, max_machines=self._max,
             )  # fmt: skip
-            closers[:0] = [("machines", machines.stop), ("commands", commands.aclose)]
+            closers[:0] = [
+                ("stop_gate", gate.aclose),  # first: its reads end with the startup task's
+                ("machines", machines.stop), ("commands", commands.aclose),
+            ]  # fmt: skip
             self._phase = "pipeline"
             anchors = AnchorService(
                 IdempotencyAnchorRepository(stores.anchors, timer),
@@ -1476,7 +1491,7 @@ class OmsRuntime:
                 None if tickers is None else ReferenceDemand(tickers, monotonic=self._monotonic)
             )
             if demand is not None:
-                closers.insert(2, ("ticker_demand", demand.close))
+                closers.insert(3, ("ticker_demand", demand.close))  # after the commands
             deps = SubmissionDeps(
                 accounts=accounts,
                 instruments=InstrumentsBinding(ingestion.instruments),
@@ -1502,12 +1517,12 @@ class OmsRuntime:
             if owned is not None:
                 self._phase = "sink_start"
                 await owned.start()
-                closers.insert(2, ("sink", owned.stop))
+                closers.insert(3, ("sink", owned.stop))  # after the commands
         except BaseException:
             await _closed(closers, asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S)
             raise
         return _Parts(
-            submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route
+            submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route, gate
         )
 
     def _now_us(self) -> int:

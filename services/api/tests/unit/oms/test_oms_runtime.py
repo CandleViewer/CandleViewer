@@ -30,13 +30,19 @@ from candleviewer.api.health import make_health_router
 from candleviewer.domain.order_link import ext_key
 from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.fakes import FakeTradingPort
-from candleviewer.exchange.base.models import AccountRef, RateLane
+from candleviewer.exchange.base.models import AccountRef, Position, RateLane
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.commands import OmsCommandPort
-from candleviewer.oms.errors import AccountScopeDenied, OmsNotReady, OrderEntryRefused
+from candleviewer.oms.errors import (
+    AccountScopeDenied,
+    OmsNotReady,
+    OrderEntryRefused,
+    StoreUnavailable,
+)
 from candleviewer.oms.fakes import FakeClockHealth, InMemoryOrderStore, InMemorySubmissionStore
 from candleviewer.oms.order_machine import OrderMachines
+from candleviewer.oms.ports import PositionKey
 from candleviewer.oms.repository import RecordedStopRepository
 from candleviewer.oms_wiring import (
     HYDRATE_CONCURRENCY,
@@ -531,7 +537,8 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
     """CR-S3E2-04: each close step is isolated and has its share of `OMS_STOP_RESERVE_S`. The
     command port fails to close and the sink's drain never ends; the trading port, which needs a
     turn of the loop, and the pool still close, and the whole stop is bounded."""
-    monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 1.5)  # the hung sink costs a third of it
+    # the hung sink, 4th of the 6 closers (the stop gate's first, CR-S3H3B-01), costs a third of it
+    monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 1.5)
 
     async def fails(self: OmsCommandPort) -> None:
         raise RuntimeError("the resync would not end")
@@ -1107,3 +1114,100 @@ async def test_a_refused_reference_price_holds_a_ticker_demand_until_the_stop() 
     async with started(world.runtime()) as runtime:
         assert await runtime.submission._deps.prices.reference_price("SOLUSDT") is None
     assert demands == [("acquire", "SOLUSDT"), ("release", "SOLUSDT")]
+
+
+class Stalled(Port):
+    """A venue whose positions read never answers; it notes the read and its cancellation."""
+
+    asked = cancelled = False
+
+    async def positions(self, account: AccountRef) -> list[Position]:
+        self.asked = True
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        raise AssertionError("unreachable")
+
+
+@dataclass
+class StalledVenue(Venue):
+    def trading_port(self, env: str, *, clock_offset_ms: Any = None) -> Port:
+        self.ports.append(Stalled(environment=cast(Environment, env)))
+        return self.ports[-1]
+
+
+async def waiting_stop(world: World, *, deleted: bool = False) -> None:
+    """The demo account's trading-stop request, left unanswered by a process that went down."""
+    InMemorySubmissionStore(world.store).seed_account(cr.ref())
+    world.accounts.append(TradingAccountRow(cr.ACCOUNT, "demo", cr.UIDS["demo"], deleted, KEY))
+    row = NewRecordedStop(
+        id=UUID(int=31), exchange_account_id=cr.ACCOUNT, symbol=cr.SYMBOL, position_idx=0,
+        position_side="Buy", kind="stop_loss", source="trading_stop", order_id=None,
+        tpsl_mode="Full", trigger_price=cr.STOP, size=None, audit_record_id=UUID(int=32),
+        actor_user_id=None,
+    )  # fmt: skip
+    await RecordedStopRepository(world.store.stops).record([row], write_ahead=_written)
+    for flag in world.flags:
+        flag.read()
+
+
+async def test_the_startup_pass_never_holds_ready_and_stop_cancels_its_read() -> None:
+    """20 Sec.6.2 step 2: the complete read of a waiting key starts after `void_orphans` and nothing
+    waits for it, so a venue that never answers leaves `ready` set; `stop()` cancels the read."""
+    world = World(venue=StalledVenue())
+    await waiting_stop(world)
+    async with started(world.runtime()) as runtime:
+        [port] = world.venue.ports
+        assert isinstance(port, Stalled)
+        await until(lambda: port.asked and runtime.state != "starting")
+        assert runtime.state == "ok"
+        closers = [name for name, _ in runtime._composed().closers]
+        assert closers[:2] == ["stop_gate", "machines"]  # its reads end first (CR-S3H3B-01)
+    assert port.cancelled
+    assert [row.status for row in world.store._stops.values()] == ["pending"]
+
+
+async def test_a_refused_accounts_waiting_keys_are_paged_and_never_read() -> None:
+    """20 Sec.6.2 step 2: an account the binding refuses (soft-deleted) is paged, and its keys stay
+    refused, never read, while the runtime gets ready."""
+    world = World()
+    await waiting_stop(world, deleted=True)
+    async with started(world.runtime()) as runtime:
+        await until(lambda: runtime.state != "starting" and bool(world.pager.calls))
+        assert runtime.state == "ok" and world.venue.ports[0].calls == []
+    assert world.pager.calls == [f"oms_order_account_refused: account {cr.ACCOUNT}"]
+    assert [row.status for row in world.store._stops.values()] == ["pending"]
+
+
+async def test_a_floor_read_that_fails_is_retried_and_the_gate_refuses_until_it_is_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-S3H3B-02 (20 Sec.6.2, Q7): the database's clock failing once fails the sweep, which
+    retries after its backoff; meanwhile the gate judges nothing (`StoreUnavailable`), and once
+    the start is read the runtime gets ready and the gate answers."""
+    world, release, backoffs = World(), asyncio.Event(), list[float]()
+    database_now, failures = world.store.stops.database_now, [StorageQueryFailed("down")]
+
+    async def flaky() -> datetime:
+        if failures:
+            raise failures.pop()
+        return await database_now()
+
+    async def backoff(seconds: float) -> None:
+        backoffs.append(seconds)
+        await release.wait()
+
+    monkeypatch.setattr(world.store.stops, "database_now", flaky)
+    for flag in world.flags:
+        flag.read()
+    key = PositionKey(cr.ACCOUNT, cr.SYMBOL, 0)
+    async with started(world.runtime(sleep=backoff)) as runtime:
+        await until(lambda: bool(backoffs))
+        with pytest.raises(StoreUnavailable):
+            await runtime._composed().gate.clear(key)
+        release.set()
+        await until(lambda: runtime.state == "ok")
+        await runtime._composed().gate.clear(key)  # read: nothing waits for the key
+    assert backoffs == [1.0]

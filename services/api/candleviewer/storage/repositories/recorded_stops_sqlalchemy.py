@@ -4,9 +4,10 @@ SQLAlchemy Core over `db.models.recorded_stops` (revision `0043_order_submission
 21-database-schema.md Sec.3.3.11): every value is a bound parameter, and reads select the
 allow-list `STOP_COLUMNS`, every column in table order. Every statement filters on
 `recorded_stops.exchange_account_id` (C-12.4) but the one in `UNSCOPED`, the insert, which writes
-the account each row names, and the one in `SYSTEM_STATEMENTS`, the startup sweep, which covers
-every account when it is asked to (`EVERY_ACCOUNT`); a unit test pins both sets, as
-`orders_sqlalchemy.UNSCOPED` and `trade_groups_sqlalchemy.SYSTEM_STATEMENTS` are pinned.
+the account each row names, and the two in `SYSTEM_STATEMENTS`, reached only at startup: the sweep,
+which covers every account when it is asked to (`EVERY_ACCOUNT`), and the database's clock, which
+reads no table; a unit test pins both sets, as `orders_sqlalchemy.UNSCOPED` and
+`trade_groups_sqlalchemy.SYSTEM_STATEMENTS` are pinned.
 
 `insert_stops_statement` writes one request's rows in one statement, once `check_request` found
 them one request's; the first persist of an entry (`submissions_sqlalchemy.py`) runs it in its own
@@ -26,11 +27,10 @@ Slice 3's complete read (S3-H): `put_in_force` locks the key's live rows in id o
 then replaces before it sets, so `ux_rs_in_force` never holds two; `resolve` locks as `settle` does
 and compares-and-sets in its UPDATE (each row's key and `answered_at` as read);
 `waiting_keys_statement` shares `_waits` with the key's read. An order step that settles its
-entry's rows (`orders_sqlalchemy.settle_entry_stops_statement`) locks them in its UPDATE's scan
-order, not in id order: a step and a read meeting on an entry's two rows can deadlock, which
-Postgres breaks by failing one of the two transactions, nothing written by it (the step's write
-or the read's, which the next request reads again). Ordering that lock, with a race test on
-Postgres, is left to H3: it is `orders_sqlalchemy.py`'s.
+entry's rows (`orders_sqlalchemy.settle_entry_stops_statement`) locks them first in id order, as
+these writes do (`orders_sqlalchemy.lock_entry_stops_statement`, H3), after its order row, which
+none of these writes locks: a step and a read meeting on an entry's rows never deadlock (40P01),
+as a race test on Postgres pins.
 
 `release_and_bind` locks its pair `FOR UPDATE` in id order first, as `settle` and `put_in_force`
 lock theirs, so none of them deadlock; it then releases and binds in one unit of work and awaits
@@ -109,7 +109,7 @@ from candleviewer.storage.repositories.user_roles_sqlalchemy import bounded_writ
 
 __all__ = [
     "STOP_COLUMNS", "STOP_FIELDS", "SYSTEM_STATEMENTS", "UNSCOPED", "SqlAlchemyRecordedStopStore",
-    "bind_statement", "for_exchange_order_statement", "for_order_statement",
+    "bind_statement", "clock_statement", "for_exchange_order_statement", "for_order_statement",
     "in_force_for_key_statement", "in_force_statement", "in_given_order", "insert_stops_statement",
     "live_for_key_statement", "lock_key_statement", "lock_stops_statement", "release_statement",
     "replace_statement", "resolve_statement", "settle_statement", "stop_row", "to_replace",
@@ -121,9 +121,15 @@ STOP_FIELDS: Final = tuple(f.name for f in fields(RecordedStopRow))
 STOP_COLUMNS: Final = tuple(_S[name] for name in STOP_FIELDS)
 #: Statements without a `recorded_stops.exchange_account_id` filter (module docstring); tested.
 UNSCOPED: Final = frozenset({"insert_stops_statement"})
-#: Statements that may cover every account, reached only through the startup sweep (SEC-2A-02).
-SYSTEM_STATEMENTS: Final = frozenset({"void_orphans_statement"})
+#: Statements that may cover every account, reached only at startup (SEC-2A-02): the sweep, and
+#: `clock_statement`, which reads no table: the database clock for the startup floor, 21 Sec.3.3.11.
+SYSTEM_STATEMENTS: Final = frozenset({"void_orphans_statement", "clock_statement"})
 _UUIDS: Final = typed_fields(RecordedStopRow, UUID)
+
+
+def clock_statement() -> sa.Select[Any]:
+    """The database's clock, the startup floor's start (S3-H's Q7): it reads no table."""
+    return sa.select(sa.func.now())
 
 
 def insert_stops_statement(stops: Sequence[NewRecordedStop]) -> sa.Insert:
@@ -374,7 +380,14 @@ def _stamped(at: datetime) -> sa.ColumnElement[Any]:
 def void_orphans_statement(scope: UUID | SweepScope, at: datetime) -> sa.Update:
     """Pending entry-attach rows whose order, of their account, was never placed (module
     docstring): the `scope` account's, or for `EVERY_ACCOUNT` every account's, the sweep at
-    startup. Any other scope, a forgotten account (`None`) among them, is a `TypeError`."""
+    startup. Any other scope, a forgotten account (`None`) among them, is a `TypeError`.
+
+    It locks its rows in scan order, not by id as a resolution does, which is safe beside the
+    eager pass a retried sweep has started for the account (SEC-S3H3B-01): the first run voided
+    every row it targets, no unplaced entry is recorded before `ready`, and a resumed create
+    refused at startup voids its own rows, so a re-run and the pass write disjoint rows; were they
+    ever to deadlock, Postgres aborts one, the sweep retries and the resolution counts
+    `read_failed`, nothing written either way."""
     o, rs, e = orders.c, recorded_stops.c, order_events.c
     unsent = sa.and_(*(_holds(o[name], value) for name, value in UNSENT_ENTRY.items()))
     refusal = sa.select(sa.literal(1)).where(
@@ -580,6 +593,11 @@ class SqlAlchemyRecordedStopStore(CappedStore):
                 in_force_for_key_statement(account_id, symbol, position_idx)
             )
             return tuple(stop_row(m) for m in result.mappings())
+
+    async def database_now(self) -> datetime:
+        async with self._unit_of_work() as uow:
+            now: datetime = (await uow.session.execute(clock_statement())).scalar_one()
+            return now
 
     async def put_in_force(
         self,

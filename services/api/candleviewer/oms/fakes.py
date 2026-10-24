@@ -367,6 +367,11 @@ class InMemoryOrderStore:
         self.anchors = InMemoryIdempotencyAnchorStore(self)
         self.stops = InMemoryRecordedStopStore(self)
 
+    def now(self) -> datetime:
+        """The store's clock, as Postgres's `now()` reads it: the recorded stops' fake reads it
+        through here, as M2's guard names no other object's private clock (`_clock`)."""
+        return self._clock()
+
     def fail_next(self, error: BaseException, *, committed: bool = False) -> None:
         """Raise `error` at the next commit: with nothing written, as an outage or a timeout
         before the commit; or, `committed`, once its rows are written, as a commit whose answer a
@@ -1081,6 +1086,10 @@ class InMemoryRecordedStopStore:
             r for r in rows if (r.exchange_account_id, r.symbol, r.position_idx, r.status) == key
         )
         return tuple(sorted(shown, key=lambda r: r.kind))
+
+    async def database_now(self) -> datetime:
+        await asyncio.sleep(0)
+        return self._db.now()
 
     async def put_in_force(
         self,

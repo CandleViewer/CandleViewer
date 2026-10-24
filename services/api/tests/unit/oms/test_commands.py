@@ -62,11 +62,13 @@ from candleviewer.observability.context import bind_context
 from candleviewer.oms.commands import (
     ACCOUNT_UNAVAILABLE,
     ALREADY_SET,
+    ATTACH_GATE_WAIT_S,
     EXPIRED_UNSENT_REASON,
     LIVE_HISTORY_SPAN_S,
     LIVE_RESEND_MAX_AGE_S,
     NEVER_SENT_ALERT,
     PARTIAL_STOP_UNSUPPORTED,
+    PORT_TIMEOUT_S,
     RECORDED_STOP_READ_S,
     RESEND_REFUSED,
     STORE_UNAVAILABLE,
@@ -95,11 +97,12 @@ from candleviewer.oms.errors import (
 from candleviewer.oms.fakes import FakeClockHealth
 from candleviewer.oms.order_machine import OrderAuditRecord, _data_refusal
 from candleviewer.oms.ports import (
+    STOP_GATE_READ_TIMEOUT_S,
     KeyedRecord,
     NoHandoverStore,
     PositionKey,
-    RefuseWhileWaiting,
 )
+from candleviewer.oms.stop_gate import ResolvingStopGate
 from candleviewer.oms_wiring import NO_ACTIVE_KEY, STOP_REQUEST_BOUND_S, ClockHealthBinding
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import (
@@ -1282,13 +1285,31 @@ async def test_an_attach_sends_while_the_switches_refuse_and_the_clock_halt_stan
     assert rig.switches.asked == [] and [row.status for row in _rows(rig)] == ["pending"]
 
 
-async def test_a_row_waiting_for_the_complete_read_refuses_the_attach_at_once() -> None:
-    """Q-A and Q-D: 409 `stop_request_in_flight`, `Retry-After: 5`, nothing recorded or sent."""
+async def test_a_row_waiting_for_the_complete_read_holds_the_attach_until_its_read_ends() -> None:
+    """24 Sec.8.4: the attach waits for the complete read it starts, which voids the earlier request
+    its position does not show (`in_flight_resolved`, audited ahead); then it sends its own."""
     rig = build_rig()
     order = await _filled(rig)
     rig.demo.seed_position(position())
     await _earlier_request(rig)
-    rig.now.us = T0_US + round(STOP_REQUEST_BOUND_S * 1_000_000)  # the bound fails closed
+    rig.now.us = T0_US + round(STOP_REQUEST_BOUND_S * 1_000_000)  # at the bound: it waits
+    answer = await rig.port.attach_stop(_attach(order))
+    assert answer["ok"] is True
+    assert rig.calls() == ["positions", "positions", "set_trading_stop", "positions"]
+    assert [row.status for row in _rows(rig)] == ["void", "pending"]
+    assert rig.audits.actions()[:2] == [
+        ("sl.modified", "in_flight_resolved"), ("sl.attached", "first_fill_attach"),
+    ]  # fmt: skip
+
+
+async def test_an_attach_whose_key_stays_held_is_refused_as_an_entry_is() -> None:
+    """Q-A and Q-D: a key its read cannot clear (a `restore` row, E29-T06's) is 409
+    `stop_request_in_flight`, `Retry-After: 5`, nothing recorded or sent: B1's `sl_missing`."""
+    rig = build_rig()
+    order = await _filled(rig)
+    rig.demo.seed_position(position())
+    await _earlier_request(rig, "restore")
+    rig.now.us = T0_US + round(STOP_REQUEST_BOUND_S * 1_000_000)
     with pytest.raises(StopRequestPending) as refused:
         await rig.port.attach_stop(_attach(order))
     assert refused.value.retry_after_s == 5
@@ -2089,5 +2110,13 @@ def test_the_stop_request_bound_exceeds_an_entrys_answer_path() -> None:
     assert defaults["submit_timeout_s"].default == SUBMIT_TIMEOUT_S
     first, send, result = CV_PERSIST_TIMEOUT, CV_PERSIST_TIMEOUT, CV_PERSIST_TIMEOUT
     assert STOP_REQUEST_BOUND_S > first + send + SUBMIT_TIMEOUT_S + result
-    bound = inspect.signature(RefuseWhileWaiting).parameters["bound_s"]
+    bound = inspect.signature(ResolvingStopGate).parameters["bound_s"]
     assert bound.default is inspect.Parameter.empty  # given: `OmsBounds.stop_request_s`
+
+
+def test_the_attachs_wait_for_its_read_fits_its_bound_and_b1s_attempt() -> None:
+    """24 Sec.8.4 (Q2): the gate's two reads around the 2 s wait fit `PORT_TIMEOUT_S`, which bounds
+    the call; with the `trading-stop` call's deadline, B1's attempt (`CV_COMMAND_TIMEOUT`)."""
+    gate = 2 * STOP_GATE_READ_TIMEOUT_S + ATTACH_GATE_WAIT_S
+    assert ATTACH_GATE_WAIT_S == 2.0 and gate < PORT_TIMEOUT_S
+    assert gate + SUBMIT_TIMEOUT_S < CV_COMMAND_TIMEOUT

@@ -595,3 +595,58 @@ async def test_a_gate_tasks_unexpected_error_is_logged_by_its_type(
         (e["log_level"], e["failure"]) for e in logs if e["event"] == "oms_stop_gate_task_failed"
     ]
     assert failed == [("error", "RuntimeError")]
+
+
+async def test_the_floors_start_is_read_once_from_the_databases_clock() -> None:
+    """Q7: once, so a sweep retried after this runtime wrote a row never moves it past that row."""
+    rig = build(started_at=None)
+    rig.clock.at = cr.T0 + timedelta(seconds=1)
+    assert await rig.gate.start_floor() == cr.T0 + timedelta(seconds=1)
+    rig.clock.at = cr.T0
+    assert await rig.gate.start_floor() == cr.T0 + timedelta(seconds=1)
+
+
+@pytest.mark.parametrize("refused_account", [False, True])
+async def test_the_startup_pass_resolves_each_waiting_key_never_a_refused_accounts(
+    refused_account: bool,
+) -> None:
+    """20 Sec.6.2 step 2: each waiting key of the account read once; an account the binding
+    refuses (paged there) leaves its keys refused, never read."""
+    rig = build(accounts=() if refused_account else (cr.ref(),))
+    rows = [await request(rig, symbol=symbol) for symbol in ("BTCUSDT", "ETHUSDT")]
+    with capture_logs() as logs:
+        rig.gate.start_pass(cr.ACCOUNT)
+        await until(lambda: not rig.gate._passes)
+        await rig.idle()
+    assert rig.venue.reads() == (0 if refused_account else 2)
+    assert [status(rig, row) for row in rows] == ["pending" if refused_account else "void"] * 2
+    skipped = [entry["failure"] for entry in logs if entry["event"] == "oms_stop_pass_skipped"]
+    assert skipped == (["AccountScopeDenied"] if refused_account else [])
+
+
+async def test_a_pass_over_more_keys_than_slots_leaves_the_kept_slot_and_follows_as_they_free() -> (
+    None
+):
+    """CR-S3H3B-02 and -03 (C-2.18): one pass per account, the sweep's retry adding none; it starts
+    seven reads, waits for a slot rather than take the one kept for an attach (which an attach
+    still takes), and starts each next key as a read ends."""
+    rig = build()
+    keys = [PositionKey(cr.ACCOUNT, f"COIN{n}USDT", 0) for n in range(MAX_RESOLUTIONS + 1)]
+    rows = [await request(rig, symbol=key.symbol) for key in keys]
+    rig.venue.open.clear()
+    for _ in range(2):  # the sweep retried while its pass runs
+        rig.gate.start_pass(cr.ACCOUNT)
+    await until(lambda: rig.venue.reads() == MAX_RESOLUTIONS - 1)
+    for _ in range(64):  # turns enough for an eighth read, which never starts
+        await asyncio.sleep(0)
+    passes = [t for t in asyncio.all_tasks() if t.get_name() == "oms-stop-pass"]
+    assert rig.venue.reads() == MAX_RESOLUTIONS - 1 and len(passes) == 1
+    unread = next(key for key in keys if key not in rig.gate._running)
+    attach = asyncio.create_task(rig.gate.clear(unread, wait_s=5.0, protective=True))
+    await until(lambda: rig.venue.reads() == MAX_RESOLUTIONS)
+    rig.venue.open.set()
+    await attach
+    await until(lambda: not rig.gate._passes)
+    await rig.idle()
+    assert rig.venue.reads() == len(keys)
+    assert [status(rig, row) for row in rows] == ["void"] * len(keys)

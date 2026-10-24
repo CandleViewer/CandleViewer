@@ -42,7 +42,7 @@ from candleviewer.storage.repositories.submissions import (
     FirstPersisted,
 )
 from candleviewer.storage.repositories.submissions_sqlalchemy import SqlAlchemySubmissionStore
-from tests.unit.oms.recorded_stop_contract import RecordedStopContract
+from tests.unit.oms.recorded_stop_contract import RecordedStopContract, StopGateContract
 from tests.unit.oms.store_reads_contract import StoreReadsContract
 from tests.unit.oms.submission_contract import (
     EVENT,
@@ -209,6 +209,13 @@ class TestInMemoryRecordedStopResolution(RecordedStopContract):
     def fake(self) -> Fake:
         ticks = count()
         return Fake(clock=lambda: T0 + timedelta(microseconds=next(ticks)))
+
+
+class TestInMemoryStopGate(StopGateContract):
+    """H3's gate end to end on the fakes, on the same ticking clock."""
+
+    h = TestInMemorySubmissionStores.h
+    fake = TestInMemoryRecordedStopResolution.fake
 
 
 @pytest.mark.parametrize(

@@ -238,7 +238,9 @@ async def test_a_submitting_order_left_by_a_crash_is_resumed_under_its_own_id(
 ) -> None:
     """20 Sec.6.2 step 3, 24 Sec.8.3 rule 6: a create at the venue's door when its process went
     down is hydrated `submitting` and resumed: looked up first, then sent once under its persisted
-    id with its native stop (C-2.10, C-2.6)."""
+    id with its native stop (C-2.10, C-2.6). Before the send only reads reach the venue: the
+    lookups, and the position the stop gate's eager pass may read first for the entry's stop row,
+    which the startup floor holds (S3-H3b, 20 Sec.6.2 step 2); nothing else is sent."""
     rig, order_id = await _crashed(rel, pg_dsn, monkeypatch, "place")
     row = _order(pg_dsn, order_id)
     assert (row.lifecycle_state, row.submit_attempts) == ("submitting", 1)
@@ -254,7 +256,8 @@ async def test_a_submitting_order_left_by_a_crash_is_resumed_under_its_own_id(
         methods = rig.calls()
         sent = methods.index("place_order")
         assert methods.count("place_order") == 1
-        assert sent > 0 and set(methods[:sent]) <= {"open_orders", "order_history"}
+        assert sent > 0 and set(methods[:sent]) <= {"open_orders", "order_history", "positions"}
+        assert {"open_orders", "order_history"} & set(methods[:sent])  # looked up first
         [create] = rig.creates()
         assert (create.order_link_id, create.stop_loss) == (row.order_link_id, STOP)
     finally:

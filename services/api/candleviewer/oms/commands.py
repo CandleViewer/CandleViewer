@@ -74,7 +74,8 @@ does not; a hand-over that fails raises, as an empty answer would send the order
 **attach_stop** (24 Sec.8.8 rules 2 and 6). The position is read first. One that shows the
 requested stop is answered with that reading and audited (`sl.attached`, `already_set`), and
 nothing is recorded or sent (the orchestrator's Q-E ruling). Otherwise the gate clears the
-position's key (21 Sec.3.3.11, bounded as every other call), the request is recorded ahead
+position's key (21 Sec.3.3.11, bounded as every other call), waiting up to `ATTACH_GATE_WAIT_S`
+for a complete read it starts or joins (protective, 24 Sec.8.4), the request is recorded ahead
 (`trading_stop`, audited `sl.attached` in the insert's transaction), and one `trading-stop` call
 sends the stop with the take-profit the position shows (24 Sec.8.9: both sides), that side left
 out when the reading shows no finite price above zero, so nothing is removed by implication. Its
@@ -205,6 +206,7 @@ __all__ = [
     "AMEND_REFUSED",
     "AMEND_SETTLE_RESERVE_S",
     "AMEND_TIMEOUT_S",
+    "ATTACH_GATE_WAIT_S",
     "CANCEL_TIMEOUT_S",
     "EXPIRED_UNSENT_REASON",
     "KILL_CANCEL_TIMEOUT_S",
@@ -241,6 +243,10 @@ SUBMIT_TIMEOUT_S: Final = 5.0
 #: The bound on each other call (a read, the store, an audit, a notice, a hand-over, the stop
 #: gate), in seconds; inside `place` its deadline may end one sooner.
 PORT_TIMEOUT_S: Final = 5.0
+#: How long an attach waits for its key's complete read (24 Sec.8.4, the Q2 ruling), in seconds:
+#: with the gate's read before and after it (`STOP_GATE_READ_TIMEOUT_S` each) inside
+#: `PORT_TIMEOUT_S`, and with the `trading-stop` call's `SUBMIT_TIMEOUT_S` inside B1's attempt.
+ATTACH_GATE_WAIT_S: Final = 2.0
 #: The bound on all of a user's `cancel` (B1's `cancel_pending`), in seconds: inside B1's
 #: `CV_COMMAND_TIMEOUT` and past a recorded stop's read plus the `critical` lane's wait (24
 #: Sec.8.7), so, while the store reads answer promptly, a token that does not come is a refusal (the
@@ -1001,13 +1007,18 @@ class OmsCommandPort:
             )
             return {"ok": True, "position": _reading(before)}
         key = PositionKey(account.account_id, row.symbol, row.position_idx)
-        await self._bounded(self._gate.clear(key))  # whatever the gate bounds itself (C-2.18)
+        cleared = self._gate.clear(key, wait_s=ATTACH_GATE_WAIT_S, protective=True)
+        await self._bounded(cleared)  # whatever the gate bounds itself (C-2.18)
         recorded = await self._record_stop(row, stop, detail)
         request = TradingStopRequest(
             account=account,
             symbol=row.symbol,
             position_idx=_POSITION_IDX[row.position_idx],
             stop_loss=stop,
+            # read ahead of the gate: after its wait (4 s at most) a take-profit moved at the venue
+            # meanwhile is sent back as read, never the stop (CR-S3H3B-04); a fresh read, bounded
+            # at `PORT_TIMEOUT_S`, would not fit with the gate and `SUBMIT_TIMEOUT_S` in B1's
+            # attempt (`CV_COMMAND_TIMEOUT`)
             take_profit=_kept_take_profit(before),
         )
         by = self._deadline(self._submit_timeout_s)  # a raise leaves the row in flight
