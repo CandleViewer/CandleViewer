@@ -6,11 +6,12 @@ can match against the partial index `ix_rps_live`), and nothing is built from st
 adapters in this package use static `sa.text`; this table's statements vary by optional filters,
 and Core keeps them checked against the model that `alembic check` pins to the migration.
 
-Every statement but `list_idle_since` is filtered by `user_id` (C-12.4 data-layer re-check). A write
+Every statement but the two system sweeps (`UNSCOPED`) is filtered by `user_id` (C-12.4 data-layer
+re-check). A write
 that matches no row is disambiguated in the same unit of work: no row for this owner is
 `ReplaySessionNotFoundError`; a terminal row, or a lost compare-and-set, is
 `ReplaySessionIllegalUpdateError`. Reads select explicit column allow-lists (`ROW_COLUMNS`,
-`IDLE_COLUMNS`), never `*`, and the system-only sweep never selects `bookmarks` (P1, 21 §12).
+`IDLE_COLUMNS`), never `*`, and the system-only sweeps never select `bookmarks` (P1, 21 §12).
 A database error never leaves a write with its statement, bound parameters or the server's
 `DETAIL: Failing row contains (...)`, any of which can carry a `bookmarks` note (C-12.6): it is
 re-raised `from None`, as a named `ReplaySessionConstraintError` or `StorageQueryFailed(sqlstate)`.
@@ -68,7 +69,7 @@ ROW_COLUMNS = (
 IDLE_COLUMNS = (_C.id, _C.user_id, _C.symbol, _C.state, _C.paper_account_id, _C.updated_at)
 
 #: Statements allowed to omit the `user_id` filter (see module docstring); tested.
-UNSCOPED = frozenset({"idle_statement"})
+UNSCOPED = frozenset({"idle_statement", "open_idle_statement"})
 
 _LIVE_VALUES = sorted(s.value for s in LIVE_STATES)
 _TERMINAL_VALUES = sorted(s.value for s in TERMINAL_STATES)
@@ -130,6 +131,27 @@ def idle_statement(before: datetime, limit: int) -> sa.Select[Any]:
     return (
         sa.select(*IDLE_COLUMNS)
         .where(_C.state.in_(_live()), _C.updated_at < before)
+        .order_by(_C.updated_at, _C.id)
+        .limit(limit)
+    )
+
+
+def open_count_statement(uid: uuid.UUID) -> sa.Select[Any]:
+    """The user's non-terminal rows: `ix_rps_user_time` narrows to the user, the state filters."""
+    return (
+        sa.select(sa.func.count())
+        .select_from(_TABLE)
+        .where(_C.user_id == uid, _C.state.not_in(_TERMINAL_VALUES))
+    )
+
+
+def open_idle_statement(before: datetime, limit: int) -> sa.Select[Any]:
+    """System-only sweep over every non-terminal row. No index covers `created`/`finished`/`error`
+    by `updated_at`, so Postgres scans the table: one bounded batch per sweep interval over a
+    table of the owner's and a few managers' sessions."""
+    return (
+        sa.select(*IDLE_COLUMNS)
+        .where(_C.state.not_in(_TERMINAL_VALUES), _C.updated_at < before)
         .order_by(_C.updated_at, _C.id)
         .limit(limit)
     )
@@ -339,10 +361,25 @@ class SqlAlchemyReplaySessionRepository:
         async with self._relational.unit_of_work() as uow:
             return int((await uow.session.execute(count_statement(uid))).scalar_one())
 
+    async def count_non_terminal(self, user_id: str) -> int:
+        uid = _uuid(user_id)
+        if uid is None:
+            return 0
+        async with self._relational.unit_of_work() as uow:
+            return int((await uow.session.execute(open_count_statement(uid))).scalar_one())
+
     async def list_idle_since(self, before: datetime, limit: int) -> list[IdleReplaySession]:
         require_aware(before, "before")
         async with self._relational.unit_of_work() as uow:
             result = await uow.session.execute(idle_statement(before, clamp_limit(limit)))
+            return [_to_idle(m) for m in result.mappings()]
+
+    async def list_non_terminal_since(
+        self, before: datetime, limit: int
+    ) -> list[IdleReplaySession]:
+        require_aware(before, "before")
+        async with self._relational.unit_of_work() as uow:
+            result = await uow.session.execute(open_idle_statement(before, clamp_limit(limit)))
             return [_to_idle(m) for m in result.mappings()]
 
     async def delete(self, user_id: str, session_id: str) -> bool:
@@ -394,5 +431,6 @@ async def _refuse(
 
 __all__ = [
     "IDLE_COLUMNS", "ROW_COLUMNS", "UNSCOPED", "SqlAlchemyReplaySessionRepository",
-    "count_statement", "get_statement", "idle_statement", "list_statement", "update_statement",
+    "count_statement", "get_statement", "idle_statement", "list_statement", "open_count_statement",
+    "open_idle_statement", "update_statement",
 ]  # fmt: skip
