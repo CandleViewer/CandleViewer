@@ -4,6 +4,7 @@ scenario "A feature merge lands in the Unreleased changelog" (E03-T11).
 
 from __future__ import annotations
 
+import itertools
 import json
 import sys
 from pathlib import Path
@@ -236,3 +237,86 @@ def test_header_text_never_counts_as_a_reference() -> None:
     commit = _commit("abc1234", "feat(a): one (#77)")
     new, changed = apply_update(text, [commit])
     assert changed and commit.changelog_line() in new.splitlines()
+
+
+# --- #4435: the ticket's scenarios, pinned as written ----------------------------------------
+# The sync has been idempotent since #3072; these name the ticket's Gherkin so a change to the
+# merge that re-adds or drops a line fails under the scenario it breaks.
+
+
+def test_a_commit_already_under_unreleased_is_left_and_a_new_one_is_appended_once() -> None:
+    """Scenario: The generator is idempotent."""
+    present = _commit("abc1234", "fix(oms-execution): correct rounding")
+    text = _changelog(f"\n### Fixes\n{present.changelog_line()}\n")
+    new = _commit("def5678", "fix(oms-execution): keep the stop on amend")
+    merged, changed = apply_update(text, [present, new])
+    entries = [ln for ln in merged.splitlines() if ln.startswith("- ")]
+    assert changed
+    assert entries == [present.changelog_line(), new.changelog_line()]
+
+
+def test_the_sync_twice_on_one_commits_json_writes_the_same_bytes(tmp_path: Path) -> None:
+    """Scenario: Running the sync twice changes nothing (the CLI, as a sync PR runs it)."""
+    commits = [
+        {"sha": "1111111" + "0" * 33, "message": "feat(chart-engine): add a pane (#12)"},
+        {"sha": "2222222" + "0" * 33, "message": "fix(ingestion): resync on a gap"},
+        {"sha": "3333333" + "0" * 33, "message": "refactor(ui): rename a prop"},
+    ]
+    path, raw = _files(tmp_path, _changelog("\n### Features\n- **a**: kept (9999999)\n"), commits)
+    assert uc.main(["--commits-json", str(raw), "--changelog", str(path)]) == 0
+    once = path.read_bytes()
+    assert uc.main(["--commits-json", str(raw), "--changelog", str(path)]) == 0
+    assert path.read_bytes() == once
+    assert once.count(b"add a pane") == once.count(b"resync on a gap") == 1
+
+
+_CORPUS = [
+    _commit("aaaaaaa", "feat(chart-engine): one (#1)"),
+    _commit("bbbbbbb", "fix(ingestion): two"),
+    _commit("ccccccc", "perf(order-flow): three"),
+]
+_STARTS = {
+    "empty": _default_changelog(),
+    "one present": _changelog(f"\n### Features\n{_CORPUS[0].changelog_line()}\n"),
+    "duplicated": _changelog("\n### Fixes\n" + f"{_CORPUS[1].changelog_line()}\n" * 3),
+}
+
+
+@pytest.mark.parametrize("start", sorted(_STARTS))
+@pytest.mark.parametrize(
+    "order", [p for n in range(len(_CORPUS) + 1) for p in itertools.permutations(_CORPUS, n)]
+)
+def test_any_commit_list_merged_twice_is_merged_once(
+    start: str, order: tuple[ParsedCommit, ...]
+) -> None:
+    """The idempotency property over every ordered subset of a corpus and three start files:
+    a second merge of the same list changes nothing, and no commit is listed twice."""
+    once, _ = apply_update(_STARTS[start], list(order))
+    assert apply_update(once, list(order)) == (once, False)
+    entries = [ln for ln in once.splitlines() if ln.startswith("- ")]
+    assert len(entries) == len(set(entries))
+
+
+def test_a_security_footer_commit_is_merged_once_and_a_second_run_changes_nothing() -> None:
+    """#4435: the footer's Security bullet is covered by the same `(#N)` / sha7 dedupe."""
+    footer = "Changelog-Security: Hardened the key path against a timing side channel"
+    sec = _commit("abcdef1", f"fix(auth-rbac): constant-time compare (#77)\n\n{footer}")
+    other = _commit("1234567", "fix(ingestion): resync on a gap (#78)")
+    once, changed = apply_update(_default_changelog(), [sec, other])
+    assert changed
+    assert once.count("Hardened the key path against a timing side channel (#77)") == 1
+    assert "constant-time compare" not in once
+    assert apply_update(once, [sec, other]) == (once, False)
+    assert apply_update(once, [other, sec]) == (once, False)
+
+
+def test_the_sync_warns_once_per_commit_whose_security_footer_was_dropped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    message = "fix(a): x (#7)\n\nChangelog-Security: payload"
+    dropped = {"sha": "abcdef1" + "0" * 33, "message": message}
+    kept = {"sha": "1234567" + "0" * 33, "message": "fix(a): y (#8)"}
+    path, raw = _files(tmp_path, _default_changelog(), [dropped, kept])
+    assert uc.main(["--commits-json", str(raw), "--changelog", str(path)]) == 0
+    warnings = [ln for ln in capsys.readouterr().out.splitlines() if "Changelog-Security" in ln]
+    assert len(warnings) == 1 and warnings[0].startswith("::warning") and "abcdef1" in warnings[0]

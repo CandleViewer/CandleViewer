@@ -1041,3 +1041,81 @@ def test_closing_refs_count_nodes_the_token_cannot_read():
     node = {"number": 5, "repository": {"nameWithOwner": "o/r"}}
     hidden = _refs(totalCount=2, nodes=[None, node])  # null: a node the token may not read
     assert m.online_closing_refs(lambda q, v: hidden, "o/r", "7") == ["o/r#5", "+1 more"]
+
+
+# --- #4435: CHANGELOG.md changes only in a changelog sync PR (PR-CHANGELOG-001) ---------------
+
+
+def _changelog_run(title, paths):
+    return run(pr(title=title), rows(*[("1", "0", path) for path in paths]))
+
+
+def test_a_feature_pr_that_edits_the_changelog_is_refused_naming_the_footer_and_the_ticket():
+    """Scenario: A feature PR that edits CHANGELOG.md is refused by the gate."""
+    errs, _ = _changelog_run("feat(oms-execution): add a thing", ["src/a.py", "CHANGELOG.md"])
+    (err,) = [e for e in errs if e.startswith("PR-CHANGELOG-001")]
+    assert "`Changelog: <one-line" in err and "#4435" in err and "07 §3" in err
+
+
+def test_a_sync_pr_passes_the_gate():
+    """Scenario: A sync PR passes the gate. `changelog` is no commitlint scope (adding one is a
+    `commitlint.config.cjs` change outside #4435), so the sync's title is `docs(docs): ...` (ruling
+    Q2: a `docs` title, CHANGELOG.md the only changed file) and it passes every rule."""
+    title = "docs(docs): update unreleased"
+    assert m.changelog_edit_errors(title, [m.CHANGELOG_PATH]) == []
+    errs, _ = _changelog_run(title, ["CHANGELOG.md"])
+    assert errs == []
+
+
+def test_a_docs_pr_that_deletes_the_changelog_is_no_sync_pr():
+    title = "docs(docs): update unreleased"
+    errs = m.changelog_edit_errors(title, [m.CHANGELOG_PATH], frozenset({m.CHANGELOG_PATH}))
+    assert [e.split()[0] for e in errs] == ["PR-CHANGELOG-001"]
+
+
+@pytest.mark.parametrize("title", ["fix(auth-rbac): harden a path", "feat(ui): a pane"])
+def test_no_non_sync_pr_may_change_the_changelog_not_even_a_security_fix(title):
+    """07 §3 (#4435 ruling): a security fix writes a `Changelog-Security:` footer in its body;
+    the sync renders it. The gate has no security allowance, whatever the PR's own number."""
+    errs, _ = _changelog_run(title, ["src/a.py", "CHANGELOG.md"])
+    (err,) = [e for e in errs if e.startswith("PR-CHANGELOG-001")]
+    assert "`Changelog-Security: <impact-only summary>`" in err
+
+
+def test_a_pr_of_another_type_that_changes_only_the_changelog_is_no_sync_pr():
+    errs, _ = _changelog_run("fix(oms-execution): a bullet by hand", ["CHANGELOG.md"])
+    assert "PR-CHANGELOG-001" in codes(errs)
+
+
+def test_a_docs_pr_that_changes_another_file_too_is_no_sync_pr():
+    errs, _ = _changelog_run("docs(docs): sync and a note", ["CHANGELOG.md", "docs/a.md"])
+    assert "PR-CHANGELOG-001" in codes(errs)
+
+
+def test_a_pr_that_leaves_the_changelog_alone_is_not_judged_on_it():
+    assert m.changelog_edit_errors("feat(ui): a pane", ["src/a.py"]) == []
+
+
+def test_main_refuses_a_head_that_changes_the_changelog_and_passes_one_that_does_not(
+    repo, monkeypatch, capsys
+):
+    root, _ = repo
+    (root / "CHANGELOG.md").write_text("# Changelog\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "base changelog")
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR_NUMBER", "20")
+    _git(root, "checkout", "-qb", "fix")
+    (root / "src").mkdir()
+    (root / "src/a.py").write_text("x\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "head")
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    own = {**pr(title="fix(auth-rbac): harden a path"), "number": 20}
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, head, own)) == 0
+    (root / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n")
+    _git(root, "commit", "-qam", "a hand-added line")
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, head, own)) == 1
+    assert "PR-CHANGELOG-001" in capsys.readouterr().err

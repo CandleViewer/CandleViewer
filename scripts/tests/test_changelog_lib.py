@@ -9,6 +9,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.ci.changelog_lib import (
@@ -151,3 +153,106 @@ def test_check_security_wording_clean_lines_pass() -> None:
     result = check_security_wording(["- Hardened API-key decryption path against timing side-channel"])
     assert result.ok
     assert result.violations == []
+
+
+# --- #4435: `Changelog-Security:` footer (07 §3) -----------------------------------------------
+
+_SEC_FOOTER = "Changelog-Security: Hardened the key path against a timing side channel"
+_SEC_LINE = "- Hardened the key path against a timing side channel"
+
+
+def _update(message: str):
+    return build_changelog_update([parse_commit("abc1234def", message)])
+
+
+def test_security_footer_becomes_a_security_bullet_ending_with_the_pr_number() -> None:
+    update = _update(f"fix(auth-rbac): compare keys in constant time (#77)\n\nBody.\n\n{_SEC_FOOTER}\n")
+    assert update.entries == {Category.SECURITY: [f"{_SEC_LINE} (#77)"]}
+
+
+def test_security_footer_replaces_the_type_bullet_so_the_subject_is_not_published() -> None:
+    update = _update(f"fix(auth-rbac): constant-time compare (#77)\n\n{_SEC_FOOTER}")
+    assert Category.FIXES not in update.entries
+    assert update.bump == Bump.PATCH  # the type still decides the semver bump
+
+
+def test_security_footer_keeps_the_breaking_bullet_of_a_breaking_commit() -> None:
+    update = _update(f"fix(auth-rbac)!: rotate the token format (#78)\n\n{_SEC_FOOTER}")
+    assert set(update.entries) == {Category.SECURITY, Category.BREAKING}
+    assert update.bump == Bump.MAJOR
+
+
+def test_security_footer_without_a_pr_number_ends_with_the_short_sha() -> None:
+    update = _update(f"fix(auth-rbac): compare keys in constant time\n\n{_SEC_FOOTER}")
+    assert update.entries[Category.SECURITY] == [f"{_SEC_LINE} (abc1234)"]
+
+
+def test_security_footer_that_already_ends_with_the_pr_number_is_not_doubled() -> None:
+    update = _update("fix(auth-rbac): x (#77)\n\nChangelog-Security: Hardened a path (#77)")
+    assert update.entries[Category.SECURITY] == ["- Hardened a path (#77)"]
+
+
+def test_security_footer_with_exploit_detail_is_refused_at_the_pr_and_ignored_at_the_sync() -> None:
+    footer = "Changelog-Security: Fixed it, payload in the finding"
+    result = check_changelog_fragment("fix(auth-rbac): x", footer)
+    assert not result.ok and result.error_code == "CI-REL-001"
+    update = _update(f"fix(auth-rbac): x (#7)\n\n{footer}")
+    assert update.entries == {Category.FIXES: ["- **auth-rbac**: x (#7) (abc1234)"]}
+
+
+def test_a_clean_security_footer_passes_the_fragment_check_for_a_free_form_title() -> None:
+    assert check_changelog_fragment("wip", _SEC_FOOTER).ok
+
+
+@pytest.mark.parametrize(
+    "empty", ["Changelog-Security:", "Changelog-Security:   ", "Changelog-Security:\t"]
+)
+def test_an_empty_security_footer_never_takes_the_next_line_as_its_summary(empty: str) -> None:
+    body = f"{empty}\nCloses #4435\n"
+    result = check_changelog_fragment("fix(auth-rbac): x", body)
+    assert not result.ok and result.error_code == "CI-REL-001"
+    update = _update(f"fix(auth-rbac): x (#7)\n\n{body}")
+    assert update.entries == {Category.FIXES: ["- **auth-rbac**: x (#7) (abc1234)"]}
+    assert "Closes" not in repr(update.entries)
+
+
+def test_an_empty_changelog_footer_never_takes_the_next_line_as_its_summary() -> None:
+    assert not check_changelog_fragment("wip", "Changelog:\nCloses #4435").ok
+
+
+@pytest.mark.parametrize(
+    "hidden",
+    [f"<!--\n{_SEC_FOOTER}\n-->", f"```\n{_SEC_FOOTER}\n```", f"~~~\n{_SEC_FOOTER}\n~~~"],
+)
+def test_a_hidden_footer_is_neither_accepted_nor_rendered(hidden: str) -> None:
+    assert not check_changelog_fragment("wip", hidden).ok
+    assert check_changelog_fragment("docs(docs): example", hidden).ok  # a docs PR may show one
+    update = _update(f"fix(auth-rbac): x (#7)\n\n{hidden}")
+    assert Category.SECURITY not in update.entries
+
+
+def test_a_dropped_security_footer_is_kept_on_the_commit_for_the_sync_to_report() -> None:
+    marked = parse_commit("abc1234def", "fix(a): x (#7)\n\nChangelog-Security: the payload")
+    empty = parse_commit("abc1234def", "fix(a): x (#7)\n\nChangelog-Security:\n")
+    clean = parse_commit("abc1234def", f"fix(a): x (#7)\n\n{_SEC_FOOTER}")
+    assert marked.security_summary is None and marked.security_rejected == "the payload"
+    assert empty.security_summary is None and empty.security_rejected == ""
+    assert clean.security_rejected is None
+
+
+def test_a_nested_comment_is_stripped_once_so_the_pr_and_the_sync_agree() -> None:
+    body = "<!<!-- x -->--\nChangelog-Security: Hardened a path\n-->"
+    accepted = check_changelog_fragment("wip", body).ok
+    rendered = Category.SECURITY in _update(f"fix(auth-rbac): x (#7)\n\n{body}").entries
+    assert accepted == rendered
+
+
+def test_a_fenced_changelog_footer_is_not_a_fragment() -> None:
+    assert not check_changelog_fragment("wip", "```\nChangelog: foo\n```").ok
+
+
+@pytest.mark.parametrize("tag", ["script", "style", "SCRIPT"])
+def test_a_footer_inside_a_script_or_style_block_is_neither_accepted_nor_rendered(tag: str) -> None:
+    hidden = f"<{tag}>\n{_SEC_FOOTER}\n</{tag}>"
+    assert not check_changelog_fragment("wip", hidden).ok
+    assert Category.SECURITY not in _update(f"fix(auth-rbac): x (#7)\n\n{hidden}").entries
