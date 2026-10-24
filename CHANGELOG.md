@@ -5157,3 +5157,4 @@ tracker).
 - **backend-platform**: black, now only the protocol-model generator's formatter, moves to 26.10.1 and clears GHSA-cg8m-r9f2-5wm2, in its GitHub Action, which no workflow here runs; the accepted-risk entry for it is removed (#3639) (#4232)
 - **auth-rbac**: the unauthenticated health probes `/healthz` and `/readyz` no longer give the exact build (the git sha); they keep the build label and the environment (#4222) (#4349)
 - **infra-devops**: the infra script, alert-rule and dashboard tests now run on every pull request, and a check fails on any test file no workflow runs; one stale alert-label assertion the missing run had hidden is corrected (#4361) (#4383)
+- **recorder-replay**: the per-user replay-session quota now counts every open session after a restart, and the idle sweep reclaims every one of them after the idle time-out, not only the sessions holding buffers (#2795) (#4415)
