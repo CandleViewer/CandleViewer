@@ -18,11 +18,13 @@ from fastapi.responses import JSONResponse
 from httpx import ASGITransport, AsyncClient
 
 from candleviewer.api.contract_conformance import load_openapi_spec
-from candleviewer.api.deny_by_default import declared_operations
+from candleviewer.api.deny_by_default import declared_operations, rbac_permissions
 from candleviewer.api.view_as_guard import STATE_KEY, make_view_as_guard
 from candleviewer.api.view_as_policy import OWN_OPERATIONS, PROTECTIVE_WRITES, ProtectiveWrites
 from candleviewer.api.view_as_refusals import VIEW_AS_REFUSED, ViewAsRefusalRecorder
 from candleviewer.auth.errors import AuthError, SessionReadOnly
+from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.metrics import authz_denied_total
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.view_as import ViewAsEndReason, ViewAsPhase, current_view_as
 from tests.unit.admin.test_view_as_service import _TARGET, _VIEWER, _at, _Rig
@@ -77,6 +79,29 @@ class _StepUp:
             raise SessionReadOnly(until=None)
 
 
+class _Identity:
+    """The identity store's reads of the target: an active Manager holding `held`; `row` and
+    `missing` make it one who cannot act, `fails` one whose read fails."""
+
+    def __init__(self) -> None:
+        self.held = frozenset(p.value for p in Permission)
+        self.row: dict[str, Any] = {"roles": ["manager"], "status": "active"}
+        self.missing = False
+        self.fails: Exception | None = None
+        self.asked: list[str] = []
+
+    async def user(self, user_id: str) -> dict[str, Any]:
+        self.asked.append(user_id)
+        if self.fails is not None:
+            raise self.fails
+        if self.missing:
+            raise LookupError(user_id)
+        return self.row
+
+    async def session_info(self, user_id: str) -> dict[str, Any]:
+        return {"permissions": sorted(self.held)}
+
+
 class _Auth:
     def __init__(self, rig: _Rig) -> None:
         self.sessions, self.step_up = _Sessions(rig), _StepUp()
@@ -95,6 +120,7 @@ class _Gate:
         )
         self.service: Any = self.rig.service
         self.protective = ProtectiveWrites(_declared())
+        self.identity = _Identity()
         self.seen: list[tuple[str, str, Any, Any]] = []
         app = FastAPI()
 
@@ -119,6 +145,9 @@ class _Gate:
                 protective=self.protective,
                 operations=_declared(),
                 clock=self.rig.clock,
+                permissions=rbac_permissions(_spec()),
+                identity=self.identity,
+                denials=self.writer,
             )
         )
         self.client = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
@@ -131,6 +160,9 @@ class _Gate:
 
     def refused(self) -> list[dict[str, Any]]:
         return [kw for action, kw, _ in self.writer.records if action == VIEW_AS_REFUSED]
+
+    def denied(self) -> list[dict[str, Any]]:
+        return [kw for action, kw, _ in self.writer.records if action == "rbac.denied"]
 
 
 def _code(response: httpx.Response) -> tuple[int, str]:
@@ -522,3 +554,149 @@ async def test_every_other_write_is_still_refused_with_the_cancels_registered(
         gate.protective.register(operation_id)
     response = await gate.call(method, path, record)
     assert _code(response) == (403, "view_as_read_only") and gate.seen == []
+
+
+def _denials(permission: Permission) -> float:
+    return authz_denied_total.labels(permission=permission.value)._value.get()
+
+
+#: What each protective write's `x-rbac` names (22), as the guard reads it from the contract.
+_PERMISSION = {
+    "setKillSwitch": Permission.KILLSWITCH_WRITE,
+    "amendOrder": Permission.ORDERS_WRITE,
+    "amendTradeGroup": Permission.ORDERS_WRITE,
+    "setPositionTpSl": Permission.POSITIONS_WRITE,
+    "cancelOrder": Permission.ORDERS_WRITE,
+    "cancelAllOrders": Permission.ORDERS_WRITE,
+}
+
+
+def test_the_guard_reads_each_protective_writes_permission_from_the_contract() -> None:
+    permissions = rbac_permissions(_spec())
+    assert {i: permissions[operation] for i, (operation, _) in PROTECTIVE_WRITES.items()} == {
+        i: {permission} for i, permission in _PERMISSION.items()
+    }
+
+
+@pytest.mark.parametrize("operation_id", sorted(PROTECTIVE_WRITES))
+async def test_a_live_protective_write_the_target_may_not_make_is_forbidden(
+    operation_id: str,
+) -> None:
+    """22: a protective write is admitted only when the target's `x-rbac` allows it too. The guard
+    checks that half for every registered protective write, so no handler can forget it: `403
+    forbidden` before the handler, counted, and one `rbac.denied` naming the viewer and the
+    viewer's session as the actor and the target as the object (22's audit rule)."""
+    gate = _Gate()
+    record = await gate.rig.viewing()
+    gate.identity.held = frozenset(p.value for p in Permission) - {_PERMISSION[operation_id].value}
+    (method, template), _ = PROTECTIVE_WRITES[operation_id]
+    gate.protective.register(operation_id)
+    before = _denials(_PERMISSION[operation_id])
+    response = await gate.call(method, _path(template), record)
+    assert _code(response) == (403, "forbidden") and gate.seen == [] and gate.refused() == []
+    assert _denials(_PERMISSION[operation_id]) == before + 1
+    ((kw),) = gate.denied()
+    assert (kw["actor_user_id"], kw["session_id"]) == (_VIEWER, record.id)
+    assert (kw["object_kind"], kw["object_id"]) == ("user", str(_TARGET))
+    assert (kw["outcome"], kw["severity"]) == ("denied", "warning")
+    assert kw["reason"] == f"missing_permission:{_PERMISSION[operation_id].value}:none"
+
+
+async def test_a_live_protective_write_the_target_may_make_passes_as_the_viewer() -> None:
+    gate = _Gate()
+    record = await gate.rig.viewing()
+    gate.identity.held = frozenset({Permission.ORDERS_WRITE.value})
+    gate.protective.register("cancelOrder")
+    assert (await gate.call("DELETE", "/orders/x", record)).status_code == 200
+    assert gate.identity.asked == [str(_TARGET)] and gate.denied() == []
+    ((_, _, stamp, _),) = gate.seen
+    assert (stamp.subject_user_id, stamp.target_user_id) == (_VIEWER, _TARGET)
+
+
+async def test_in_the_hold_a_protective_write_reads_no_target() -> None:
+    """In the hold it runs in the viewer's own scope (22): there is no target to allow it."""
+    gate = _Gate()
+    record = await gate.rig.viewing()
+    gate.identity.held = frozenset()
+    gate.protective.register("cancelAllOrders")
+    gate.rig.clock.now = _at(31)
+    assert (await gate.call("POST", "/orders/cancel-all", record)).status_code == 200
+    assert gate.identity.asked == [] and gate.denied() == []
+
+
+@pytest.mark.parametrize("cannot_act", ["missing", "disabled", "unknown_role"])
+async def test_a_target_who_cannot_act_allows_no_protective_write(cannot_act: str) -> None:
+    """Fail closed: a target the context outlived holds no permission."""
+    gate = _Gate()
+    record = await gate.rig.viewing()
+    if cannot_act == "missing":
+        gate.identity.missing = True
+    else:
+        disabled = cannot_act == "disabled"
+        gate.identity.row = {
+            "roles": ["manager" if disabled else "not_a_role"],
+            "status": "disabled" if disabled else "active",
+        }
+    gate.protective.register("cancelOrder")
+    response = await gate.call("DELETE", "/orders/x", record)
+    assert _code(response) == (403, "forbidden") and gate.seen == [] and len(gate.denied()) == 1
+
+
+async def test_a_target_read_that_fails_is_the_stores_unavailability() -> None:
+    """Never a pass, and no denial is recorded for a read that never answered."""
+    gate = _Gate()
+    record = await gate.rig.viewing()
+    gate.identity.fails = RuntimeError("identity store down")
+    gate.protective.register("cancelOrder")
+    response = await gate.call("DELETE", "/orders/x", record)
+    assert _code(response) == (503, "store_unavailable") and gate.seen == []
+    assert gate.denied() == []
+
+
+async def test_a_target_denial_whose_record_cannot_be_written_is_still_forbidden() -> None:
+    """As `enforce`'s: the 403 stands, counted, when its `rbac.denied` cannot be written."""
+    gate = _Gate()
+    record = await gate.rig.viewing()
+    gate.identity.held = frozenset()
+    gate.protective.register("cancelOrder")
+    gate.writer.mode = "fail"
+    before = _denials(Permission.ORDERS_WRITE)
+    response = await gate.call("DELETE", "/orders/x", record)
+    assert _code(response) == (403, "forbidden") and gate.seen == []
+    assert _denials(Permission.ORDERS_WRITE) == before + 1
+
+
+async def test_a_guard_with_no_target_read_refuses_every_live_protective_write() -> None:
+    """Built without the contract's permissions or the identity reads, the guard cannot check the
+    target: a live protective write is `503 store_unavailable`, never a pass."""
+    gate = _Gate()
+    record = await gate.rig.viewing()
+    app = FastAPI()
+
+    @app.api_route("/{path:path}", methods=_METHODS)
+    async def route(path: str) -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    app.middleware("http")(
+        make_view_as_guard(
+            gate.auth, views=lambda: gate.service, refusals=lambda: gate.refusals,
+            protective=gate.protective, operations=_declared(), clock=gate.rig.clock,
+        )
+    )  # fmt: skip
+    gate.protective.register("cancelOrder")
+    headers = {"Authorization": f"Bearer {record.id}"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.delete("/orders/x", headers=headers)
+    assert _code(response) == (503, "store_unavailable")
+
+
+def test_a_protective_write_with_no_x_rbac_permission_fails_the_build() -> None:
+    permissions = rbac_permissions(_spec())
+    del permissions[PROTECTIVE_WRITES["cancelOrder"][0]]
+    gate = _Gate()
+    with pytest.raises(ValueError, match="cancelOrder"):
+        make_view_as_guard(
+            gate.auth, views=lambda: gate.service, refusals=lambda: gate.refusals,
+            protective=gate.protective, operations=_declared(), clock=gate.rig.clock,
+            permissions=permissions, identity=gate.identity, denials=gate.writer,
+        )  # fmt: skip
