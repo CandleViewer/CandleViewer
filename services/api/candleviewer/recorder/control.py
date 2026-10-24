@@ -118,12 +118,14 @@ class RecordingControl(RecordingReads, Protocol):  # `add` also returns the entr
     async def add(self, symbol: str, spec: EntrySpec,
                   actor: Actor) -> tuple[RecordedEntry, RecordedEntry | None]: ...  # fmt: skip
     # `add` raises the policy's `RecorderInvalidUpdateError` and `RecorderSymbolLimitError`
-    # unchanged (the route maps them), where `update` maps its refusals to a port error.
+    # unchanged (the route maps them), where `update` maps its refusals to a port error. It
+    # forwards `spec.streams` and `spec.depth` as given: a join names the stored row's own.
     async def update(self, entry_id: str, spec: EntrySpec,
                      actor: Actor) -> RecordedEntry | None: ...  # fmt: skip
     async def remove(self, entry_id: str, actor: Actor) -> RecordedEntry | None: ...
     async def pin(self, entry_id: str, pinned: bool, actor: Actor, *,
                   retention_days: int | None = None) -> RecordedEntry | None: ...  # fmt: skip
+    # `status` entries carry the STORED row's streams and depth, never the policy's `()`/`None`.
     async def status(self) -> ControlStatus: ...
 
 

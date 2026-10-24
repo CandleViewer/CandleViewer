@@ -248,6 +248,8 @@ def make_recording_writes_router(
         held = next((e for e in status.entries if e.symbol == body.symbol), None)
         held_id, intent = None if held is None else held.id, False
         if held is not None and view(call, held) is None:  # held only by a cause outside the view
+            if not held.streams:  # no stored streams to keep: the policy would name its default
+                raise common.unavailable()
             spec = rc.EntrySpec(held.streams, held.depth)  # a join adds a cause, changes no setting
         # Recorded even when it names the row's own value: it records the request, as PUT, PATCH.
         elif intent := "retention_days" in body.model_fields_set and not spec.pinned:
