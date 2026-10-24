@@ -397,6 +397,7 @@ async def test_a_read_that_fails_before_the_send_answers_store_unavailable(
     assert await rig.port.amend(_amend(order, stop_loss="58500")) == _UNAVAILABLE
     assert rig.demo.calls == [] and _rows(rig) == []
     assert rig.audits.actions() == [("orders.amend", "store_unavailable")]
+    monkeypatch.undo()
     assert await rig.orders.get(order.exchange_account_id, order.id) == before
 
 
