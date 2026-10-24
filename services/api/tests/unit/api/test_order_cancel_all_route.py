@@ -601,28 +601,7 @@ async def test_cancel_all_reads_no_arm_token_switch_or_flag() -> None:
     assert answer.status_code == 200
 
 
-def _ordered(app: FastAPI) -> list[tuple[str, str]]:
-    """The served operations in the order the app matches them."""
-    out: list[tuple[str, str]] = []
-
-    def walk(routes: Any, prefix: str) -> None:
-        for route in routes:
-            inner = getattr(route, "original_router", None)
-            if inner is not None:
-                context = getattr(route, "include_context", None)
-                walk(inner.routes, prefix + (getattr(context, "prefix", "") or ""))
-                continue
-            for method in sorted(getattr(route, "methods", None) or ()):
-                out.append((method, prefix + getattr(route, "path", "")))
-
-    walk(app.routes, "")
-    return out
-
-
-def test_the_app_serves_cancel_all_ahead_of_every_order_id_route() -> None:
-    """The 19:43Z ruling: included ahead of the exit routes' router (`/orders/{orderId}`)."""
-    app = create_app()
-    assert ("POST", CANCEL_ALL_PATH) in served_operations(app)
-    ordered = _ordered(app)
-    at = ordered.index(("POST", CANCEL_ALL_PATH))
-    assert all(i > at for i, (_m, p) in enumerate(ordered) if p.startswith("/orders/{"))
+def test_the_app_serves_cancel_all() -> None:
+    """`create_app()` mounts the route; that it mounts ahead of the exit routes' router (the 19:43Z
+    ruling) is `test_order_exits_route.py::test_the_order_routers_mount_in_their_ruled_order`."""
+    assert ("POST", CANCEL_ALL_PATH) in served_operations(create_app())

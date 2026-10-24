@@ -2345,8 +2345,8 @@ def create_app(
     )
     # #913 slice 4 S4-E (24 Sec.8.4, the exit routes): `cancelAllOrders`' own router over the same
     # runtime, principals and records, included ahead of the exit routes' router (the 19:43Z
-    # ruling; the order is pinned by `test_order_cancel_all_route.py`). `trading.oms_enabled` never
-    # gates it: a cancel is a risk-reducing exit (C-2.6).
+    # ruling; pinned with the exit routes' below). `trading.oms_enabled` never gates it: a cancel is
+    # a risk-reducing exit (C-2.6).
     app.include_router(
         make_cancel_all_router(
             order_principals,

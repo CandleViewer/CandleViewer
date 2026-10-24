@@ -71,6 +71,7 @@ from candleviewer.api.order_admission import (
 from candleviewer.api.order_exits_common import (
     ExitRuntime,
     exit_caller,
+    exit_problem,
     exit_refusals,
     run_claimed,
 )
@@ -196,17 +197,6 @@ def _result(outcome: CancelAllOutcome) -> dict[str, Any]:
         results=results, requested=outcome.requested, succeeded=outcome.succeeded
     )
     return body.model_dump(mode="json")
-
-
-def _guard_problem(outcome: ExitOutcome) -> JSONResponse:
-    """The in-flight guard's refusal (22's problem for its code), with its `Retry-After`."""
-    code, retry = outcome.code or "rate_limited", outcome.retry_after_s
-    detail = outcome.detail or ERROR_META[ErrorCode(code)].title
-    if retry is None:
-        return problem(outcome.status, code, detail)
-    answer = problem(outcome.status, code, detail, retry_after_seconds=retry)
-    answer.headers["Retry-After"] = str(retry)
-    return answer
 
 
 def make_cancel_all_router(
@@ -358,7 +348,7 @@ def make_cancel_all_router(
             return cached
 
         async def guard_refused(outcome: ExitOutcome) -> Response:
-            answer = functools.partial(_guard_problem, outcome)
+            answer = functools.partial(exit_problem, outcome)
             code = outcome.code or "rate_limited"
             return await recorded(accounts, caller, "guard", code, outcome.status, answer)
 
