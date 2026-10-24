@@ -419,6 +419,11 @@ def test_rule_7_releases_a_record_only_by_its_successors_bind() -> None:
         "record of the side binding the same `orderId` once its own match accepts the order "
         "(§8.8 rule 6), the release first and the bind after it, in one transaction, so both "
         "happen or neither does.",
+        "Where more than one live record of the side matches the order, the latest of them "
+        "binds, at materialisation or as the successor; never two.",
+        "Both run where a push or a read of the order reaches its row: on the push at §8.12 step "
+        "1, beside `TERMS_CHANGED`, and on the read at §8.5 step 3a or 3b, as step 3c skips an "
+        "order already bound.",
         "E29-T05 releases on the push and E29-T06 on the read.",
         "A foreign or venue in-place change keeps the binding (`[O-4]`): `TERMS_CHANGED` "
         "updates the materialised row as the sixth point below bounds it, and §8.5 step 5 "
@@ -427,11 +432,18 @@ def test_rule_7_releases_a_record_only_by_its_successors_bind() -> None:
         "An end never releases it: a record that ends with its position, or whose order is "
         "cancelled, rejected, expired or deactivated, keeps the id, so the fills of a stop that "
         "closed its position still pair; a record that has ended keeps it whatever a later push "
-        "or read of its order shows.",
+        "or read of its order shows, and a successor binds an order that has ended only when "
+        "that order filled.",
         "The materialised `orders` row is never released.",
     )
     assert not _missing(
         binding,
+        "in the transaction that materialises the side's TP/SL order as an `orders` row (on the "
+        "order push that follows the request, 24 §8.9; in reconciliation, 24 §8.5 step 3c or 3d; "
+        "or on the private-stream consumer's read of a fill's order, 24 §8.12 step 3), or by its "
+        "bind as a successor (below)",
+        "Where more than one live record of the side matches the order, the latest binds; never "
+        "two.",
         "It is released only by its successor's bind: the OMS's own later record binding the "
         "same `orderId`, release first in that transaction; a foreign or venue in-place change "
         "keeps the binding (`[O-4]`), `TERMS_CHANGED` updates the materialised row, and 24 §8.5 "
