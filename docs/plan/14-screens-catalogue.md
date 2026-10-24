@@ -1901,6 +1901,7 @@ Drag preview                Drop zones
 - **Performance:** Simulation runs backend-side over recorded history with progress streamed; the UI must remain fully interactive during a run. Target: 14 days of one symbol at 1-minute granularity completes in <=60 s, with partial results streamed as they are produced.
 - **Analytics/audit:** `rule.simulation_started` `{ruleId, range, symbol, accountId}`, `rule.simulation_completed` `{fires, actions, errors, durationMs}`, `rule.simulation_cancelled` - **audited**, because a simulation result is the evidence used to justify arming a rule.
 - **Design sign-off acceptance checklist:** [ ] range, symbol and account selectors drawn [ ] the available-history statement ('13 of 14 days - recording started 09-01') drawn [ ] progress and cancel [ ] result summary (fires, actions by type, errors) [ ] a per-firing timeline with the context that triggered it [ ] 'simulation is not a backtest of PnL' caveat stated [ ] insufficient-history state
+- **Design (wireframe → hi-fi):** [E35-D02.md](../design/E35/E35-D02.md) §2–§3 · [E35-D02-handoff.md](../design/E35/E35-D02-handoff.md) (E35-D02; owner approval pending; the six states as frames with the untested windows named and the gate strip, a behaviour preview without a profit figure, the dense timeline with its text-list equivalent, CMP-154 / CMP-156 contracts PROPOSED for E35-D05; Penpot page by name + id in the spec).
 
 ### SCR-085 — Rule arming dialog
 
@@ -1927,6 +1928,7 @@ Drag preview                Drop zones
 - **Stories:** US-RULE-008, US-RULE-013.
 - **Design sign-off acceptance checklist:** [ ] plain-language restatement of what the rule will do [ ] environment choice with DEMO default [ ] scope (accounts, symbols) restated [ ] typed confirmation for LIVE arming plus step-up [ ] estimated-detector dependency warning [ ] conflict warning if another armed rule targets the same scope (links to SCR-086) [ ] disarm path
 - **UX research:** [e36-rules-in-words.md](../design/research/e36-rules-in-words.md) §5.4–§5.5 (E36-D01; heuristic, pending owner approval; the restatement is the same string as the editor header, with the standing limits read out; "Uses estimated detectors?" names each detector with E25-D01 R4's inline callout, its C16).
+- **Design (wireframe → hi-fi):** [E35-D02.md](../design/E35/E35-D02.md) §4–§5 (E35-D02; owner approval pending; the reading order environment → restatement → acts on → evidence → safety → what stops it → confirm, DEMO preselected and LIVE a destructive-class step through SCR-006's step-up, the blocked, pending, flatten-all, disarm and arm-again frames, every gated control disabled with its visible reason; the catalogue's "Type ARM" mock superseded, recorded as a contradiction for the catalogue owner).
 
 ### SCR-086 — Rule conflict resolver
 
