@@ -78,6 +78,12 @@ STOP_SENTENCES = (
 HELD_NOW = "Held by Bybit now"
 # The "Stop marker (held now)" cell of a drawn row: the marker's words and a tool-derived value.
 HELD_CELL = r"Held by Bybit now: [\d,]+\.\d <!-- audit:held\.[a-z_]+=[\d.]+ -->"
+# The two frames on which Bybit holds no stop: the none form is required there, a held value fails
+# (naked: E30-D04 section 2.3; closed: E32-D02 :461, `28` B8 `protected -> flat`).
+HELD_NONE = {
+    "SCR-064 / naked": r'none — Apply reads "Attach stop"',
+    "SCR-064 / position-closed-while-editing": r"none — the position is closed",
+}
 # element | fg | bg | role — every pair the two screens draw (spec section 14, rows in order).
 PAIRS_TABLE = """
 dialog body, field values, read-out words | color.text.primary | color.surface.overlay | text
@@ -683,9 +689,14 @@ def held_gates(spec: str) -> list[str]:
     drawn += [(6, f, h) for f, h in re.findall(LOOSEN_ROW, section(spec, 6, 7), MULTI)]
     bad = []
     for sec, frame, held in drawn:
-        naked = frame == "SCR-064 / naked" and "none" in held and '"Attach stop"' in held
-        if not naked and not re.fullmatch(HELD_CELL, held):
+        if frame in HELD_NONE:
+            if not re.fullmatch(HELD_NONE[frame], held):
+                bad.append(f"spec section {sec}: {frame} must name no stop held (Bybit holds none)")
+        elif not re.fullmatch(HELD_CELL, held):
             bad.append(f"spec section {sec}: {frame} names no stop held now (C-2.6 per frame)")
+    seen = {frame for _, frame, _ in drawn}
+    missing = [f for f in HELD_NONE if f not in seen]
+    bad += [f"spec section 3: {f} is not drawn (its none form is gated)" for f in missing]
     return bad
 
 
@@ -904,6 +915,15 @@ def mutations() -> list[tuple[str, Callable[[str], str], str]]:
             "names no stop held now",
         ),
         (
+            "held-none",
+            sub(
+                r"^(\| 18 +\| `position-closed-while-editing` +\|[^|\n]*\|[^|\n]*\| )"
+                r"none — the position is closed( +\|)",
+                r"\1Held by Bybit now: 63,900.0 <!-- audit:held.long=63900.0 -->\2",
+            ),
+            "must name no stop held",
+        ),
+        (
             "optimistic",
             sub(
                 r"^(\| 11 +\| `pending-acknowledgement` +\| 04 +\| status +\|[^|\n]*\| )"
@@ -1021,7 +1041,8 @@ def main(argv: list[str]) -> int:
     if not facts["position_lacks_activation_price"]:
         CITE_WARN.append("gap closed — `22` Position now carries activation_price: update D05-G4")
     ok = (
-        "OK — the C-2.6 sentences present; every drawn SCR-064 row names the stop held now; "
+        "OK — the C-2.6 sentences present; every drawn SCR-064 row names the stop held now "
+        "(none on naked and position-closed-while-editing); "
         "no banned word or raw error-code token in the copy "
         "deck; every T2 reason within 60 characters; every pending frame names the stop in force "
         "and never reads as applied; no LIVE frame without the arm or the step-up; no private "
