@@ -82,7 +82,8 @@ def _logger() -> Any:
 class _NonClosingTransport(httpx.AsyncBaseTransport):
     """#2893 S4: the adapter's one account REST transport as its clients see it. Requests go
     through; `aclose()` does not, since each key's client is closed after its check while the
-    transport serves the next key. Only its owner, the composition root, may close it."""
+    transport serves the next key. Only its owner, the composition root, may close it. A lane's
+    own transport is wrapped alike (#913 L3b)."""
 
     def __init__(self, transport: httpx.AsyncBaseTransport) -> None:
         self._transport = transport
@@ -280,6 +281,41 @@ class ExchangeBybitService:
             clock_offset_ms=clock_offset_ms,
             entry_wait_s=entry_wait_s,
             private_streams=streams,
+        )
+
+    def lane_trading_port(
+        self,
+        env: str,
+        *,
+        credentials: CredentialBorrower,
+        transport: httpx.AsyncBaseTransport | None = None,
+        clock_offset_ms: Callable[[], int | None] | None = None,
+        entry_wait_s: float = DEFAULT_ENTRY_WAIT_S,
+    ) -> BybitTradingPort:
+        """#913 L3b: `trading_port` for the order lane's loop, signed by M2's borrower for that
+        loop, with no private stream; refused as `trading_port` is, and for the adapter's own.
+        `transport` is the lane's, never the adapter's: no transport is shared across loops. With
+        the dev-only account fixture the composition root (L1b) builds one on the lane's loop and
+        closes it there; without one, a fixture-mode lane is refused, never dialling the host.
+        `clock_offset_ms` is called on the lane's loop, so it must be a side-effect-free read:
+        never the serving clock guard's reader, whose host-step check can change the guard and
+        spawn its resync on the calling loop."""
+        if credentials is self._credentials:
+            raise ValueError("the lane signs through its own loop's borrower")
+        if env != self._environment:
+            raise ValueError("not this process's environment")
+        if (shared := self._rest_transport) is not None:  # the account fixture's (#2893)
+            if transport is None:
+                raise RuntimeError("a fixture-mode lane needs a transport of its own loop")
+            if transport is shared or transport is shared._transport:
+                raise ValueError("the lane never uses the adapter's transport")
+        return BybitTradingPort(
+            environment=env,
+            credentials=credentials,
+            governor=self._governor,
+            transport=None if transport is None else _NonClosingTransport(transport),
+            clock_offset_ms=clock_offset_ms,
+            entry_wait_s=entry_wait_s,
         )
 
     @staticmethod

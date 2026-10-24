@@ -229,6 +229,8 @@ async def _activated(
     destroy fails too (it records its own failure). A cancellation always goes on as it is."""
     try:
         await activate(stored)
+    except GeneratorExit:  # the collector's: `destroy` takes `_guard`, which it may hold
+        raise
     except BaseException as exc:
         try:
             await broker.destroy(stored.key_id, actor=actor)
