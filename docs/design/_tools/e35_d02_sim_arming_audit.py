@@ -10,10 +10,16 @@ never gated; (2) every token the spec and the handoff bind, resolved or MISSING;
 `pairs.mjs` registers (a text scan of its `fg` / `bg` literals) and which are PROPOSED; (4) the
 shipped facts the boards quote, parsed from file text; (5) the copy gates — the memo's `unchanged`
 and `binding-pending-owner` rows byte-for-byte, the two required sentences, the #4118 string, the
-forbidden UI words, private paths, dangling `C-x.y` / `CMP-nnn` / `SCR-nnn` ids; (6) the counts.
-`--check` re-derives every `<!-- audit:NAME=VALUE -->` marker in the spec. Exit 1 on a gated FAIL.
+forbidden UI words, private paths, dangling `C-x.y` / `CMP-nnn` / `SCR-nnn` ids, and the standing
+rule "no path arms LIVE without the `22` step-up" over the spec's section 4 classification table,
+section 5 frame table and section 8 copy deck (`live_step_up`); (6) the counts. `--check` re-derives
+every `<!-- audit:NAME=VALUE -->` marker in the spec. `--selftest` runs `live_step_up` on the spec
+and on mutated copies of it held in memory (an armed frame moved ahead of the hand-off, SCR-006
+dropped from the hand-off, the override drawn for DEMO only, a LIVE arm without the hand-off): the
+spec must pass and every mutation must fail. Exit 1 on a gated FAIL or a mutation that passes.
 
-Usage: python3 -I docs/design/_tools/e35_d02_sim_arming_audit.py [--json] [--check] [--extra F ...]
+Usage: python3 -I docs/design/_tools/e35_d02_sim_arming_audit.py [--json] [--check] [--selftest]
+       [--extra F ...]
 """
 
 from __future__ import annotations
@@ -289,6 +295,114 @@ def spec_sections(spec: str) -> dict[str, str]:
     return out
 
 
+HAND_OFF = "SCR-006 / no-grace-live-enable"
+LIVE_ARM = re.compile(r"Arm (?:again )?on LIVE…")
+DEMO_ARM = re.compile(r'"(Arm (?:again )?on DEMO[^"]*)"')
+# classes whose rows cannot arm: a gate, an absence, a status, a refusal or an outcome
+NO_PRESS = ("T2", "**T2", "absence", "**absence", "status", "**status", "T4", "**T4", "outcome")
+
+
+def cells(line: str) -> list[str]:
+    return [c.strip() for c in re.split(r"(?<!\\)\|", line)[1:-1]]
+
+
+def frame_rows(spec: str) -> list[list[str]]:
+    """Section 5's frame and treatment rows, in order."""
+    sec = spec_sections(spec).get("5", "")
+    return [
+        cells(ln) for ln in sec.splitlines() if re.match(r"\| (?:`SCR-085/[a-z-]+`|treatment )", ln)
+    ]
+
+
+def live_step_up(spec: str) -> list[str]:
+    """The standing rule: no path arms LIVE without the `22` step-up (`setRuleMode`, `authStepUp`).
+
+    (1) the hand-off frame names SCR-006's no-grace frame and `step_up_required` and comes before
+    `pending` and `armed`; (2) every section 4 classification row and section 5 row that names a
+    LIVE arm control and can be pressed routes through `step-up-hand-off` or SCR-006; (3) every
+    DEMO arm label in the copy deck has its LIVE twin there, named by a pressable section 5 row that
+    routes through the hand-off — so no override or re-arm is drawn for DEMO only.
+    """
+    bad: list[str] = []
+    rows = frame_rows(spec)
+    names = [r[0] for r in rows]
+    order = {
+        n: names.index(f"`SCR-085/{n}`")
+        for n in ("step-up-hand-off", "pending", "armed")
+        if f"`SCR-085/{n}`" in names
+    }
+    if len(order) < 3:
+        bad.append("step-up rule: section 5 lacks step-up-hand-off, pending or armed")
+    elif not order["step-up-hand-off"] < order["pending"] < order["armed"]:
+        bad.append("step-up rule: an armed or pending frame comes before step-up-hand-off")
+    hand = next((r for r in rows if r[0] == "`SCR-085/step-up-hand-off`"), [])
+    if HAND_OFF not in " ".join(hand) or "step_up_required" not in " ".join(hand):
+        bad.append(f"step-up rule: step-up-hand-off does not name {HAND_OFF} and step_up_required")
+    sec4 = spec_sections(spec).get("4", "")
+    table4 = sec4[sec4.find("**The classification table") :]
+    rows4 = [cells(ln) for ln in table4.splitlines() if ln.startswith("| ") and "---" not in ln]
+    routes = ("`step-up-hand-off`", "SCR-006")
+
+    def pressable(row: list[str], cls: int) -> bool:
+        return len(row) > cls and not row[cls].startswith(NO_PRESS)
+
+    for row, cls in [(r, 1) for r in rows4[1:]] + [(r, 5) for r in rows]:
+        text = " ".join(row)
+        if LIVE_ARM.search(text) and pressable(row, cls) and not any(k in text for k in routes):
+            bad.append(f"step-up rule: {row[0][:48]} arms LIVE without the hand-off")
+    deck = spec_sections(spec).get("8", "")
+    strings = set(re.findall(r'^\| [^|]+\|[^|]+\| "([^"]+)"', deck, MULTI))
+    for demo in sorted({m for s in strings for m in DEMO_ARM.findall(f'"{s}"')}):
+        twin = (
+            demo.replace("on DEMO…", "on LIVE…")
+            if "on DEMO…" in demo
+            else demo.replace("on DEMO", "on LIVE…")
+        )
+        named = [
+            r
+            for r in rows
+            if twin in " ".join(r) and pressable(r, 5) and any(k in " ".join(r) for k in routes)
+        ]
+        if twin not in strings or not named:
+            bad.append(f"step-up rule: {demo!r} has no LIVE twin {twin!r} routed to the hand-off")
+    return bad
+
+
+# name -> (the section 5 row it edits, or "" for the whole spec; old text or "move"; new text)
+MUTATIONS: dict[str, tuple[str, str, str]] = {
+    "an armed frame ahead of the hand-off": ("`SCR-085/armed`", "move", ""),
+    "SCR-006 dropped from the hand-off": ("`SCR-085/step-up-hand-off`", HAND_OFF, "the dialog"),
+    "the override drawn for DEMO only": ("", "Arm on LIVE… — override", "Arm on DEMO — override"),
+    "a LIVE arm without the hand-off": ("`SCR-085/review-live`", "`step-up-hand-off`", "`armed`"),
+}
+
+
+def mutate(spec: str, row: str, old: str, new: str) -> str:
+    """A copy of the spec with one edit; the file on disk is never touched."""
+    if not row:
+        return spec.replace(old, new)
+    lines = spec.splitlines(keepends=True)
+    i = next(k for k, ln in enumerate(lines) if ln.startswith(f"| {row} "))
+    if old == "move":  # move that section 5 row above the step-up-hand-off row
+        moved = lines.pop(i)
+        dst = next(k for k, ln in enumerate(lines) if ln.startswith("| `SCR-085/step-up-hand-off`"))
+        lines.insert(dst, moved)
+    else:
+        lines[i] = lines[i].replace(old, new)
+    return "".join(lines)
+
+
+def selftest(spec: str) -> tuple[bool, list[str]]:
+    out = [f"spec: {'pass' if not live_step_up(spec) else 'FAIL ' + str(live_step_up(spec))}"]
+    ok = not live_step_up(spec)
+    for name, (row, old, new) in MUTATIONS.items():
+        mutated = mutate(spec, row, old, new)
+        found = live_step_up(mutated) if mutated != spec else []
+        ok = ok and bool(found)
+        out.append(f"mutation {name}: {'refused' if found else 'PASSED (the check is blind)'}")
+    return ok, out
+
+
 def gates(
     spec: str, hand: str, extra: list[Path], memo: dict[str, tuple[str, list[str]]]
 ) -> list[str]:
@@ -337,11 +451,17 @@ def gates(
             for s in sorted(set(re.findall(r"\bSCR-\d{3}\b", t)))
             if f"### {s} " not in cat14
         ]
-    return bad
+    return bad + live_step_up(spec)
 
 
 def main(argv: list[str]) -> int:
     extra = [Path(a) for a in argv[argv.index("--extra") + 1 :]] if "--extra" in argv else []
+    if "--selftest" in argv:
+        passed, lines = selftest(SPEC.read_text(encoding="utf-8"))
+        refused = sum(ln.endswith("refused") for ln in lines)
+        print("\n".join(lines))
+        print(f"--selftest: {'ok' if passed else 'FAIL'} — {refused} of {len(MUTATIONS)} refused")
+        return 0 if passed else 1
     themes = {k: load_theme(k) for k in THEMES}
     registered = set(
         re.findall(
@@ -437,7 +557,7 @@ def main(argv: list[str]) -> int:
     bad += gates(spec, hand, extra, memo) if spec else ["spec missing"]
     out.append(
         "OK — required sentences, the #4118 string, the live sentence, no banned UI word, "
-        "memo rows byte-equal, no private path, ids resolve"
+        "memo rows byte-equal, no private path, ids resolve, no LIVE arm without the step-up"
         if not bad
         else "\n".join("FAIL " + b for b in bad)
     )
