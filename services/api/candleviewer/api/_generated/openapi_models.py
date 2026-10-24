@@ -2639,7 +2639,8 @@ class CancelAllRequest(BaseModel):
     exchange_account_ids: Annotated[
         list[UUID] | None,
         Field(
-            description="Empty means the caller's granted accounts that allow trading (an Owner's: every account of the environment); one id outside them, or one that does not exist, refuses the whole request (SR-E29-13)."
+            description="Empty means the caller's granted accounts that allow trading (an Owner's: every account of the environment); one id outside them, or one that does not exist, refuses the whole request (SR-E29-13).",
+            max_length=100,
         ),
     ] = None
     symbol: Symbol | None = None
