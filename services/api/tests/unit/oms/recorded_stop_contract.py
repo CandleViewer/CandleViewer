@@ -296,7 +296,7 @@ class StopGateContract:
         venue.seed_position(cr.position(AccountId(account), stop_loss=sc.SL, take_profit=sc.TP))
         now = rows[0].created_at + timedelta(seconds=1)
         key = PositionKey(AccountId(account), "BTCUSDT", 0)
-        await gate(h, account, Audit(h, rows), venue, now).clear(key, wait_s=5.0)
+        await gate(h, account, Audit(h, rows), venue, now).clear(key, wait_s=5.0, protective=True)
         assert [r.status for r in await now_of(h, rows)] == ["in_force", "in_force"]
 
     async def test_a_void_is_audited_before_its_commit(self, h: Harness) -> None:
@@ -307,6 +307,6 @@ class StopGateContract:
         venue, audit = FakeTradingPort(environment="demo", now_us=lambda: cr.T0_US), Audit(h, rows)
         now = rows[0].created_at + timedelta(seconds=sc.BOUND_S + 1)  # past the bound, in the span
         key = PositionKey(AccountId(account), "BTCUSDT", 0)
-        await gate(h, account, audit, venue, now).clear(key, wait_s=5.0)
+        await gate(h, account, audit, venue, now).clear(key, wait_s=5.0, protective=True)
         assert audit.seen == [("in_flight_resolved", ["pending", "pending"])] * 2
         assert [r.status for r in await now_of(h, rows)] == ["void", "void"]

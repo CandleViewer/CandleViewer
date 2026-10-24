@@ -622,3 +622,31 @@ async def test_the_startup_pass_resolves_each_waiting_key_never_a_refused_accoun
     assert [status(rig, row) for row in rows] == ["pending" if refused_account else "void"] * 2
     skipped = [entry["failure"] for entry in logs if entry["event"] == "oms_stop_pass_skipped"]
     assert skipped == (["AccountScopeDenied"] if refused_account else [])
+
+
+async def test_a_pass_over_more_keys_than_slots_leaves_the_kept_slot_and_follows_as_they_free() -> (
+    None
+):
+    """CR-S3H3B-02 and -03 (C-2.18): one pass per account, the sweep's retry adding none; it starts
+    seven reads, waits for a slot rather than take the one kept for an attach (which an attach
+    still takes), and starts each next key as a read ends."""
+    rig = build()
+    keys = [PositionKey(cr.ACCOUNT, f"COIN{n}USDT", 0) for n in range(MAX_RESOLUTIONS + 1)]
+    rows = [await request(rig, symbol=key.symbol) for key in keys]
+    rig.venue.open.clear()
+    for _ in range(2):  # the sweep retried while its pass runs
+        rig.gate.start_pass(cr.ACCOUNT)
+    await until(lambda: rig.venue.reads() == MAX_RESOLUTIONS - 1)
+    for _ in range(64):  # turns enough for an eighth read, which never starts
+        await asyncio.sleep(0)
+    passes = [t for t in asyncio.all_tasks() if t.get_name() == "oms-stop-pass"]
+    assert rig.venue.reads() == MAX_RESOLUTIONS - 1 and len(passes) == 1
+    unread = next(key for key in keys if key not in rig.gate._running)
+    attach = asyncio.create_task(rig.gate.clear(unread, wait_s=5.0, protective=True))
+    await until(lambda: rig.venue.reads() == MAX_RESOLUTIONS)
+    rig.venue.open.set()
+    await attach
+    await until(lambda: not rig.gate._passes)
+    await rig.idle()
+    assert rig.venue.reads() == len(keys)
+    assert [status(rig, row) for row in rows] == ["void"] * len(keys)
