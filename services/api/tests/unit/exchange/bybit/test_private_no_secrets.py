@@ -37,9 +37,11 @@ from tests.unit.exchange.bybit._private_venue import (
 )
 from tests.unit.exchange.bybit._trading import account
 
+#: A fixed prefix no identifier, hex id or timestamp carries, so a drawn id can be in a text only
+#: by leaking there; a bare draw could be part of a class name the logs print (#4430).
 _KEY_IDS = st.text(
-    alphabet="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789", min_size=18, max_size=36
-)
+    alphabet="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789", min_size=15, max_size=33
+).map(lambda tail: "kq7" + tail)
 _WHERE = st.sampled_from(
     [
         "auth-reply",
