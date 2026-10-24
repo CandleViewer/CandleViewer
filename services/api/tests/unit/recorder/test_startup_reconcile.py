@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.recorder.errors import RecorderGateOpenError
 from candleviewer.recorder.policy import PolicyConfig, RecordingPolicy
@@ -84,6 +85,38 @@ async def test_auto_rows_nothing_holds_linger_from_now_and_a_pin_is_restored(
         ("BTCUSDT", "chart_open"), ("ETHUSDT", "chart_open"),
         ("SOLUSDT", "position_open"), ("XRPUSDT", "chart_open"),
     ]  # fmt: skip
+
+
+async def test_a_resumed_auto_row_keeps_its_reason_in_its_set_changes_and_its_stop_record(
+    cold: RecordingPolicy, store: Mem, bus: FakeBus, audit: FakeAudit, clock: FakeClock
+) -> None:
+    """Derived: the position of a `position_open` row is gone, so the row lingers, then stops."""
+    await store.upsert_auto("SOLUSDT", "position_open", {"kind": "position", "id": "gone"}, "demo")
+    await _startup(cold)
+    clock.advance(GRACE + 60)
+    await cold.tick()
+    stops = [(kw["object_id"], kw["reason"]) for a, kw in audit.records if a == "recorder.stop"]
+    assert stops == [("SOLUSDT", "position_open")]
+    changes = [
+        (e.change, e.reason, e.priority) for _, e in bus.events if getattr(e, "change", None)
+    ]
+    assert changes == [("added", "position_open", 200), ("removed", "position_open", 200)]
+
+
+async def test_a_row_reason_no_trigger_of_the_policy_holds_is_skipped_with_a_warning(
+    cold: RecordingPolicy, store: Mem
+) -> None:
+    """Derived: a `rule_dependency` row, a reason nothing in the policy starts or stops."""
+    await store.upsert_auto("ADAUSDT", "rule_dependency", {"kind": "rule", "id": "r1"}, "demo")
+    await store.upsert_auto("SOLUSDT", "chart_open", CHART, "demo")
+    with capture_logs() as logs:
+        await _startup(cold)
+    assert list(cold.effective_set()) == ["SOLUSDT"]  # and reading the set raises nothing
+    assert cold.leaf("ADAUSDT") is None
+    skipped = [log for log in logs if log["event"] == "recorder_adopt_skipped"]
+    assert [(log["symbol"], log["reason"], log["log_level"]) for log in skipped] == [
+        ("ADAUSDT", "rule_dependency", "warning")
+    ]
 
 
 async def test_a_seeded_position_resumes_recording_for_position_open_with_or_without_a_row(

@@ -299,6 +299,8 @@ class _Sym:
     retry_at: float | None = None
     #: The reason an auto row held in the last run (`adopt_recorded`); `_reconcile` starts it.
     resumed: Reason | None = None
+    #: The reason `_resume` started it for: what its records name until another is published.
+    resumed_from: Reason | None = None
 
     def refs(self, reason: Reason) -> list[str]:
         """Trigger refs per reason (not last-writer-wins)."""
@@ -641,6 +643,9 @@ class RecordingPolicy:
                 if row["env"] != self._env or row.get("removed_at") is not None:
                     logger().warning("recorder_adopt_skipped", symbol=symbol, env=row["env"])
                     continue  # `load_recorded` scopes both; this keeps a wrong read out
+                if row["reason"] not in PRECEDENCE:  # a rule or alert dependency: none of ours
+                    logger().warning("recorder_adopt_skipped", symbol=symbol, reason=row["reason"])
+                    continue
                 s = self._protected(symbol)
                 s.pinned = bool(row["pinned"])
                 if row["reason"] == "manual":
@@ -817,6 +822,7 @@ class RecordingPolicy:
             symbol, "REASON_ADDED", reason=reason, symbol=symbol, streams=[]
         ):
             s.started_reasons.add(reason)
+            s.resumed_from = reason
 
     async def _refuse(
         self, symbol: str, s: _Sym, reason: Reason, cause: RefusalCause = "symbol_cap"
@@ -944,7 +950,10 @@ class RecordingPolicy:
         )
 
     def _last_reason(self, symbol: str) -> Reason:
-        return self._published.get(symbol, "chart_open")
+        """The reason a symbol holding none is named for: the one last published, else the one a
+        resumed row held, else `chart_open`."""
+        s = self._syms.get(symbol)
+        return self._published.get(symbol) or (s.resumed_from if s else None) or "chart_open"
 
     def effective_set(self) -> dict[str, EffectiveEntry]:
         out = {sym: self._entry(sym) for sym in self._charts}
@@ -999,7 +1008,7 @@ class RecordingPolicy:
         s = self._syms.get(symbol) or _Sym()
         raw = context.get("reasons")
         held = [r for r in PRECEDENCE if isinstance(raw, list) and r in raw]
-        reason: Reason = held[0] if held else self._published.get(symbol, "chart_open")
+        reason: Reason = held[0] if held else self._last_reason(symbol)
         cause = s.stop_cause if name == "unsubscribe" else None
         await self._audit_emit(
             "recorder.start" if name == "subscribe" else "recorder.stop",
