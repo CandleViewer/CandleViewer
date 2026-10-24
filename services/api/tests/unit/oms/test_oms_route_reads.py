@@ -42,13 +42,16 @@ async def test_the_routes_reads_are_the_ones_the_pipeline_was_built_with() -> No
     world = World()
     world.accounts.append(TradingAccountRow(cr.ACCOUNT, "demo", cr.UIDS["demo"], False, KEY))
     async with started(world.runtime()) as runtime:
-        route, deps = runtime.route, runtime.submission._deps
+        parts = runtime._composed()
+        route, deps = parts.route, parts.submission._deps
         assert isinstance(route.accounts, TradingAccountsBinding)
         assert route.accounts is deps.accounts and route.switches is deps.switches
         assert isinstance(route.arm_records, NoArmRecords)
-        assert route.arm_records is runtime.submission._ports.arm_records
+        assert route.arm_records is parts.submission._ports.arm_records
         assert isinstance(route.orders, OrderRepository) and route.orders._store is world.store
         assert isinstance(route.groups, TradeGroupReader)
-        assert await route.accounts.environment_of(cr.ACCOUNT) == "demo"
+        served = runtime.route  # CV-C13: what the route reaches, its reads awaited on the lane
+        assert served.arm_records is route.arm_records and served.switches is route.switches
+        assert await served.accounts.environment_of(cr.ACCOUNT) == "demo"
         with pytest.raises(AccountScopeDenied):
-            await route.accounts.environment_of(cr.LIVE_ACCOUNT)
+            await served.accounts.environment_of(cr.LIVE_ACCOUNT)

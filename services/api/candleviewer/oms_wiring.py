@@ -15,6 +15,7 @@ Part 3: the OMS runtime (`build_oms_runtime`, `OmsRuntime`), which the lifespan 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import math
 import re
 import time
@@ -28,7 +29,9 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.accounts.trade_group_repository import TradeGroupReader, TradeGroupRepository
+from candleviewer.accounts.trade_groups import ScopedTradeGroup
 from candleviewer.accounts.verification import Refusal
 from candleviewer.admin.wiring import (
     MachineEventSinkMetrics,
@@ -37,9 +40,9 @@ from candleviewer.admin.wiring import (
 )
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.order_entry import OrderEntryCheck, OrderEntryRefusal
-from candleviewer.domain.primitives import AccountId, Environment, Px, Symbol
+from candleviewer.domain.primitives import AccountId, Environment, GroupId, Px, Symbol
 from candleviewer.exchange.base.errors import AuthError, ExchangeError, OmsErrorCode
-from candleviewer.exchange.base.models import AccountRef, RateLane, TickerEvent
+from candleviewer.exchange.base.models import AccountRef, RateHeadroom, RateLane, TickerEvent
 from candleviewer.observability import spawn, spawn_child
 from candleviewer.observability.metrics import BoundedMetric, Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
@@ -55,11 +58,12 @@ from candleviewer.oms.errors import (
     TradingDisabled,
 )
 from candleviewer.oms.exits import ExitDeps, OrderExits
-from candleviewer.oms.idempotency import AnchorService
+from candleviewer.oms.idempotency import AnchorService, Lookup, Replay
 from candleviewer.oms.order_link_allocator import OrderLinkIdAllocator
 from candleviewer.oms.order_machine import (
     MAX_MACHINES,
     CompositePublisher,
+    MachinePublisher,
     OrderAuditRecord,
     OrderMachinePorts,
     OrderMachines,
@@ -92,8 +96,17 @@ from candleviewer.oms.repository import (
 from candleviewer.oms.routing import RoutedPort, TradingRouter
 from candleviewer.oms.stop_gate import ResolvingStopGate, StopVoidAudit
 from candleviewer.oms.stop_resolution import CompleteRead, StopResolver
-from candleviewer.oms.submit import RESULT_WAIT_S, STORE_TIMEOUT_S, OrderSubmission, SubmissionDeps
+from candleviewer.oms.submit import (
+    RESULT_WAIT_S,
+    STORE_TIMEOUT_S,
+    OrderRequest,
+    OrderSubmission,
+    SubmissionDeps,
+    SubmitContext,
+    SubmitOutcome,
+)
 from candleviewer.oms.validator import ReadOnlyCheck, Validator
+from candleviewer.oms_lane import LANE_JOIN_S, Lane, OrderLane, Serving
 from candleviewer.settings import OMS_INFLIGHT_STUCK_MAX_S, OMS_STOP_RESERVE_S, Settings
 from candleviewer.statechart.bindings.b01_order import ALREADY_TERMINAL
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
@@ -107,6 +120,7 @@ from candleviewer.statechart.plugins.state_feed import (
 from candleviewer.statechart.registry import Registry
 from candleviewer.statechart_wiring import EventFramesAdapter, EventsAdapter, PersistOps
 from candleviewer.storage.errors import StorageError
+from candleviewer.storage.repositories.accounts import AccountScope
 from candleviewer.storage.repositories.executions import ExecutionStore
 from candleviewer.storage.repositories.executions_sqlalchemy import SqlAlchemyExecutionStore
 from candleviewer.storage.repositories.idempotency_anchors import IdempotencyAnchorStore
@@ -147,6 +161,7 @@ from candleviewer.storage.repositories.trading_accounts_sqlalchemy import (
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
+    from candleviewer.statechart.plugins.audit import MachineEventRow
 
 #: The stop request's bound (21 Sec.3.3.11, [LANE-25]), in seconds: how long an unanswered stop
 #: request holds its key before it waits for the complete read (`ResolvingStopGate`); above an
@@ -417,6 +432,12 @@ class Tickers(Protocol):
     def is_stale(self, symbol: str) -> bool: ...
 
 
+class AskedPrices(Protocol):
+    """What the reference prices tell of each ask: `ReferenceDemand`, or its bridge on the lane."""
+
+    def asked(self, symbol: str, *, priced: bool) -> None: ...
+
+
 class ReferencePricesBinding:
     """`ReferencePrices` over the ticker stream (24 Sec.9.3 step 2): the mid of the best bid and
     ask, else the last price; None with neither, with the symbol stale, or with no stream
@@ -424,7 +445,7 @@ class ReferencePricesBinding:
     caps or checks a market order (the orchestrator's ruling, 2026-10-23). With `demand`, each
     ask is told to it, so a symbol no consumer holds is subscribed for the retry (CR-S3B2-03)."""
 
-    def __init__(self, tickers: Tickers | None, *, demand: ReferenceDemand | None = None) -> None:
+    def __init__(self, tickers: Tickers | None, *, demand: AskedPrices | None = None) -> None:
         self._tickers, self._demand = tickers, demand
 
     async def reference_price(self, symbol: Symbol) -> Px | None:
@@ -777,9 +798,8 @@ class OrderStateFeed:
     again.
 
     It publishes into the WS registry directly, which is single-threaded and bound to the serving
-    loop, so it must run on that loop: the runtime builds the order facade there (slice 3E), and a
-    machine on another loop would have to hop with `call_soon_threadsafe` first
-    (`machine_state_wiring`)."""
+    loop, so it runs there: the order facade runs on the order lane (CV-C13), and `ServedFeed`
+    hops each publish over with `call_soon_threadsafe` (`machine_state_wiring`)."""
 
     def __init__(self, feed: MachineStatePort, *, max_orders: int = MAX_MACHINES) -> None:
         if max_orders < 1:  # 0 would bind again at every step and hold no slot
@@ -798,6 +818,154 @@ class OrderStateFeed:
             if len(self._handles) > self._max:
                 self._handles.popitem(last=False)
         handle.publish(payload, last=last)
+
+
+# --- the order lane's bridges (#913 slice 3 L1, 29 CV-C13) ---
+#
+# The OMS runs on the order lane (`oms_lane.OrderLane`); each class below carries one dependency
+# bound to the serving loop across to it (`oms_lane.Serving`). The lane reads the rest in place,
+# each safe from another thread: the setting and the flag views (one value each, replaced whole),
+# the instrument catalogue (a frozen snapshot swapped by one assignment), the ticker stream's last
+# ticker and phase (one dict read each, of a frozen event), the clock guard's health
+# (`ServedClock`), the read-only gate and the governor's headroom (each under its own lock,
+# #4370), the metrics and the pager.
+
+
+class ServedPort:
+    """The router's port until L3's second PR (ruling Q11): every call the trading port signs
+    borrows M2's key on the serving loop, whose credential read, write-ahead audit and touch tasks
+    are that loop's, so each coroutine member is awaited there within `HOP_TIMEOUT_S`; a private
+    stream stays on the loop that opens it, so `subscribe_private` is refused. `headroom` reads
+    the governor in place, under its own lock (#4370)."""
+
+    def __init__(self, port: OwnedPort, serving: Serving) -> None:
+        self.capabilities, self._port, self._serving = port.capabilities, port, serving
+
+    def headroom(self, account: AccountRef, lane: RateLane) -> RateHeadroom:
+        return self._port.headroom(account, lane)
+
+    def __getattr__(self, name: str) -> Callable[..., Awaitable[Any]]:
+        member = getattr(self._port, name)
+        if name == "subscribe_private" or not inspect.iscoroutinefunction(member):
+            raise AttributeError(name)
+
+        async def served(*args: Any, **kwargs: Any) -> Any:
+            return await self._serving.call(member(*args, **kwargs))
+
+        return served
+
+
+class ServedAudit:
+    """`AuditWriterPort` over the serving loop's audit writer, whose lock binds to that loop
+    (`audit/writer.py`), until L2 gives the lane its own: each append is awaited there, so a
+    refusal reaches the OMS (C-2.9)."""
+
+    def __init__(self, writer: AuditWriterPort, serving: Serving) -> None:
+        self._writer, self._serving = writer, serving
+
+    async def emit(self, action: str, **fields: Any) -> None:
+        await self._serving.call(self._writer.emit(action, **fields))
+
+    async def emit_keyed(self, action: str, name: str, **fields: Any) -> None:
+        await self._serving.call(self._writer.emit_keyed(action, name, **fields))
+
+
+class ServedProfiles:
+    """`Profiles` over the process's profile cache, which is for one loop
+    (`accounts/profile_cache.py`): each read is awaited on the serving loop."""
+
+    def __init__(self, profiles: Profiles, serving: Serving) -> None:
+        self._profiles, self._serving = profiles, serving
+
+    async def get_effective_profile(
+        self, account_id: UUID, profile_id: UUID | None = None
+    ) -> AccountProfile:
+        read = self._profiles.get_effective_profile(account_id, profile_id)
+        return await self._serving.call(read)
+
+
+class ServedGate:
+    """The order-entry gate as the lane asks it (C-2.21). Its account check reads the key standing,
+    whose read also drops a rejection a later pass cleared, so it is not safe from another thread:
+    the lane's thread waits for the serving loop's answer (`Serving.block`), and a gate that does
+    not begin to answer within `BLOCK_TIMEOUT_S` is `OmsNotReady`, nothing sent. A rejection the
+    lane notified before (`ServedStandings`) lands before this read does."""
+
+    def __init__(self, gate: OrderEntryCheck, serving: Serving) -> None:
+        self._gate, self._serving = gate, serving
+
+    def refusal(self, account_id: UUID) -> OrderEntryRefusal | None:
+        try:
+            return self._serving.block(lambda: self._gate.refusal(account_id))
+        except TimeoutError:
+            _log().error("oms_gate_unanswered", account_id=str(account_id))
+            raise OmsNotReady from None
+
+
+class ServedSink:
+    """A persistence bundle's `machine_events` sink, which runs on the serving loop, as B1 appends
+    to it from the lane until L2 gives the lane its own: each append waits for that loop's answer,
+    so a refusal is never lost (`audit/machine_events.py`)."""
+
+    def __init__(self, sink: MachineEventSink, serving: Serving) -> None:
+        self._sink, self._serving = sink, serving
+
+    def append(self, row: MachineEventRow) -> None:
+        self._serving.block(lambda: self._sink.append(row))
+
+
+class ServedStandings:
+    """The key standing, which is for one loop (`accounts/key_standing.py`), told of a rejected
+    credential from the lane: notified to the serving loop, never awaited. It lands there before
+    any later read the lane makes of the gate (`ServedGate`), which refuses the account then."""
+
+    def __init__(self, standings: KeyStandingReactions, serving: Serving) -> None:
+        self._standings, self._serving = standings, serving
+
+    def credential_rejected(self, account_id: UUID, refusal: Refusal) -> None:
+        self._serving.notify(self._standings.credential_rejected, account_id, refusal)
+
+
+class ServedFeed:
+    """`OrderStateFeed` from the lane: the WS registry is single-threaded on the serving loop (23
+    Sec.6.4), so each publish is notified there, never awaited."""
+
+    def __init__(self, feed: MachinePublisher, serving: Serving) -> None:
+        self._feed, self._serving = feed, serving
+
+    def publish(
+        self, order_id: UUID, account_id: UUID, payload: Mapping[str, Any], *, last: bool
+    ) -> None:
+        self._serving.notify(self._feed.publish, order_id, account_id, payload, last=last)
+
+
+class ServedDemand:
+    """The reference prices' ticker demand (`ReferenceDemand`), the serving loop's as the stream it
+    holds is: each ask is notified there, never awaited."""
+
+    def __init__(self, demand: AskedPrices, serving: Serving) -> None:
+        self._demand, self._serving = demand, serving
+
+    def asked(self, symbol: str, *, priced: bool) -> None:
+        self._serving.notify(self._demand.asked, symbol, priced=priced)
+
+
+class ServedClock:
+    """The clock guard as `ClockHalt` reads it from the lane: its health reads are attribute reads
+    of values the guard replaces whole, safe from another thread; a resync measures on the serving
+    loop, awaited there."""
+
+    def __init__(self, guard: ClockHealth, serving: Serving) -> None:
+        self._guard, self._serving = guard, serving
+
+    def assert_healthy(self) -> None:
+        self._guard.assert_healthy()
+
+    def offset_age_s(self) -> float:
+        return self._guard.offset_age_s()
+
+    async def resync_after_signature_failure(self, *, reason: str) -> int:
+        return await self._serving.call(self._guard.resync_after_signature_failure(reason=reason))
 
 
 # --- part 3: the runtime (#913 slice 3E) ---
@@ -939,7 +1107,7 @@ class OmsStores:
     accounts: TradingAccountReads
     sweep: UnfinishedOrders
     sink: Callable[[], OwnedSink]
-    release: Callable[[], Awaitable[None]]
+    release: Callable[[], Coroutine[Any, Any, None]]
 
 
 def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
@@ -999,21 +1167,28 @@ class OrderRead(Protocol):
     async def get(self, account_id: UUID, order_id: UUID) -> OrderRow | None: ...
 
 
+class GroupRead(Protocol):
+    """`OrderRoute.groups`: a replay's one read of its group, through the principal-scoped reader
+    (`TradeGroupReader`, SR-E28-21), never the system facade (C-12.4)."""
+
+    async def get(self, scope: AccountScope, group_id: GroupId) -> ScopedTradeGroup: ...
+
+
 @dataclass(frozen=True, slots=True)
 class OrderRoute:
     """What `POST /orders` reads of the composed OMS beside the pipeline and its anchors (24
     Sec.8.4), each the instance the pipeline was built with: the existence read (step 4), the arm
     records (step 5), the switches B1's `SEND` asks too (step 10), and a replay's rows (steps 8 and
     12): the order by its account, and the group through the principal-scoped reader (SR-E28-21),
-    never the system facade (C-12.4). The account and order reads are typed as the one read each
-    step uses. The exit routes (E29-T04 slice 4) read the arm records too, and the process's
+    never the system facade (C-12.4). The account, order and group reads are typed as the one read
+    each step uses. The exit routes (E29-T04 slice 4) read the arm records too, and the process's
     `environment`, which every order `OrderExits.scope` answers is of."""
 
     accounts: AccountExistence
     arm_records: ArmRecords
     switches: TradingSwitchesBinding
     orders: OrderRead
-    groups: TradeGroupReader
+    groups: GroupRead
     environment: Environment
 
 
@@ -1031,6 +1206,43 @@ class _Parts:
     route: OrderRoute
     gate: ResolvingStopGate
     exits: OrderExits
+    lane: Lane
+
+
+@dataclass(frozen=True, slots=True)
+class OnLane:
+    """What `POST /orders` reaches of the composed OMS from the serving loop (20 Sec.6.2, CV-C13):
+    the pipeline's submit and replay answer, the anchors' lookup, and steps 4 and 8's account and
+    order reads, each awaited on the order lane (`Lane.call`), where the OMS and its pool run.
+    Cancelling the await cancels the lane's task; the route's shield keeps the submit's."""
+
+    parts: _Parts
+
+    async def submit(self, request: OrderRequest, context: SubmitContext) -> SubmitOutcome:
+        return await self.parts.lane.call(self.parts.submission.submit(request, context))
+
+    async def answer_replay(self, account_id: AccountId, replay: Replay) -> SubmitOutcome:
+        return await self.parts.lane.call(self.parts.submission.answer_replay(account_id, replay))
+
+    async def lookup(self, created_by: UUID, client_ref: UUID, request_sha256: str) -> Lookup:
+        found = self.parts.anchors.lookup(created_by, client_ref, request_sha256)
+        return await self.parts.lane.call(found)
+
+    async def environment_of(self, account_id: AccountId) -> Environment:
+        return await self.parts.lane.call(self.parts.route.accounts.environment_of(account_id))
+
+    async def get(self, account_id: UUID, order_id: UUID) -> OrderRow | None:
+        return await self.parts.lane.call(self.parts.route.orders.get(account_id, order_id))
+
+
+@dataclass(frozen=True, slots=True)
+class OnLaneGroups:
+    """`OrderRoute.groups` from the serving loop: a replay's group read, awaited on the lane."""
+
+    parts: _Parts
+
+    async def get(self, scope: AccountScope, group_id: GroupId) -> ScopedTradeGroup:
+        return await self.parts.lane.call(self.parts.route.groups.get(scope, group_id))
 
 
 async def _drained(tasks: set[asyncio.Task[Any]], timeout_s: float) -> set[asyncio.Task[Any]]:
@@ -1112,12 +1324,13 @@ async def _closed(closers: Sequence[_Closer], deadline: float) -> None:
 
 class OmsRuntime:
     """The OMS of this process (20 Sec.6.2). `build_oms_runtime` builds it with no I/O, and
-    `start()`, which the lifespan awaits after the account health runtime's, composes it on the
-    serving loop: the order facade wires B1's process-wide ports and refuses a second one, so it
-    lives from `start()` to `stop()`, never in `create_app()`. A task it tracks runs the startup
-    sweep, which sets `ready` at its end only. What `start()` cannot compose fails the runtime
-    closed: logged by step (`phase`) and paged, `degraded` and never ready, while market data
-    stays up. `run` tracks the route's submits, which `stop()` drains."""
+    `start()`, which the lifespan awaits after the account health runtime's, starts the order lane
+    (`oms_lane.OrderLane`, 29 CV-C13) and composes the OMS there: the order facade wires B1's
+    process-wide ports and refuses a second one, so it lives from `start()` to `stop()`, never in
+    `create_app()`. A task it tracks runs the startup sweep, steps 2 to 4 on the lane, and sets
+    `ready` at its end only. What `start()` cannot compose fails the runtime closed: logged by
+    step (`phase`) and paged, `degraded` and never ready, while market data stays up. `run` tracks
+    the route's submits, which `stop()` drains."""
 
     def __init__(
         self,
@@ -1142,8 +1355,9 @@ class OmsRuntime:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         max_machines: int = MAX_MACHINES,
         registry: Registry | None = None,
+        lane: Callable[[], Lane] = OrderLane,
     ) -> None:
-        self._settings, self._metrics = settings, metrics
+        self._settings, self._metrics, self._lanes = settings, metrics, lane
         self._env: Environment = settings.environment.value
         self._venue, self._ingestion, self._read_only = venue, ingestion, read_only
         self._audit, self._gate, self._standings = audit, gate, standings
@@ -1182,20 +1396,25 @@ class OmsRuntime:
         return "degraded" if failed else "starting"
 
     @property
-    def submission(self) -> OrderSubmission:
-        """The pipeline, once composed; `OmsNotReady` before."""
-        return self._composed().submission
+    def submission(self) -> OnLane:
+        """The pipeline, on the order lane once composed; `OmsNotReady` before."""
+        return OnLane(self._composed())
 
     @property
-    def anchors(self) -> AnchorService:
-        """The anchor service the pipeline was built with, which the route's lookup reads
+    def anchors(self) -> OnLane:
+        """The anchor service the pipeline was built with, whose lookup the route reads on the lane
         (SEC-S3D-02); `OmsNotReady` before it is composed."""
-        return self._composed().anchors
+        return OnLane(self._composed())
 
     @property
     def route(self) -> OrderRoute:
-        """The route's reads of the composed OMS (`OrderRoute`); `OmsNotReady` before."""
-        return self._composed().route
+        """The route's reads of the composed OMS (`OrderRoute`): the account, order and group reads
+        on the lane, the arm records and the switches in place; `OmsNotReady` before."""
+        parts = self._composed()
+        lane, raw = OnLane(parts), parts.route
+        return OrderRoute(
+            lane, raw.arm_records, raw.switches, lane, OnLaneGroups(parts), raw.environment
+        )
 
     @property
     def exits(self) -> OrderExits:
@@ -1214,16 +1433,16 @@ class OmsRuntime:
 
     def run[T](self, coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
         """The route's submit, as a task the runtime tracks and the route shields (24 Sec.8.4 step
-        12): `stop()` drains it. Before anything is composed, or once the stop has begun,
-        `OmsNotReady`. On the loop that started the runtime only, the facade's and the state
-        feed's (CR-S3C2-01): another is a `RuntimeError`. Refused either way, the coroutine is
-        closed."""
+        12), which awaits the pipeline on the order lane (`OnLane`): `stop()` drains it. Before
+        anything is composed, or once the stop has begun, `OmsNotReady`. On the serving loop, the
+        one that started the runtime, only, where the task keeps the 24 h record (CR-S3C2-01):
+        another is a `RuntimeError`. Refused either way, the coroutine is closed."""
         if self._stopping or self._parts is None:
             coro.close()
             raise OmsNotReady
         if self._loop is not asyncio.get_running_loop():
             coro.close()
-            raise RuntimeError("the OMS runs on the event loop that started it (CR-S3C2-01)")
+            raise RuntimeError("the OMS's submits run on the loop that started it (CR-S3C2-01)")
         task = spawn(coro, name="oms-submit")
         self._running.add(task)
         task.add_done_callback(self._ended)
@@ -1241,28 +1460,38 @@ class OmsRuntime:
             _log().critical("oms_startup_failed", error=type(error).__name__)
 
     async def start(self) -> None:
-        """Compose the OMS on this loop, then spawn the startup task (20 Sec.6.2). A second call
-        does nothing until `stop()`. What cannot be composed fails the runtime closed."""
+        """Start the order lane and compose the OMS on it, then spawn the startup task (20
+        Sec.6.2). A second call does nothing until `stop()`. What cannot be composed, the lane
+        included, fails the runtime closed, the lane stopped again."""
         if self._loop is not None and not self._stopping:
             return
         self._loop, self._stopping, self._failed = asyncio.get_running_loop(), False, False
+        lane = self._lanes()
         try:
-            self._parts = await self._compose()
+            self._phase = "lane"
+            await lane.start()
+            self._parts = await lane.call(self._compose(lane, Serving(self._loop, self._metrics)))
         except Exception as exc:  # fail closed (C-2.21): never ready, no order admitted
+            await lane.stop()
             self._failed, phase = True, self._phase
             _log().critical("oms_runtime_failed_closed", phase=phase, error=type(exc).__name__)
             _page(self._pager, f"oms_runtime_failed_closed: {phase}")
             return
+        except BaseException:
+            await lane.stop()
+            raise
         self._startup = spawn(self._started(), name="oms-startup")
         self._startup.add_done_callback(self._startup_ended)
 
     async def stop(self) -> None:
         """Clear `ready`; give the submits in flight at most `CV_OMS_DRAIN_S`; cancel what remains
-        and the startup task; then close the stop gate (its complete reads and passes cancelled
-        with the startup task, before the machines), the facade (it unwires B1's ports), the
-        command port, the sink it owns, the trading port and its pool, each isolated, within its
-        share of what is left, and all by `OMS_STOP_RESERVE_S` after the drain, inside the OMS
-        module's 15 s grace (20 Sec.6.2). The shared profile cache is its owner's to close."""
+        and the startup task, their work on the lane with them, and wait for it to end there; then
+        close the stop gate (its complete reads and passes cancelled with the startup task, before
+        the machines), the facade (it unwires B1's ports), the command port, the sink it owns, the
+        trading port and its pool, each on its own loop, isolated, within its share of what is
+        left; then stop the lane and join its thread. All of it ends by `OMS_STOP_RESERVE_S` after
+        the drain, `LANE_JOIN_S` of it the join's, inside the OMS module's 15 s grace (20
+        Sec.6.2). The shared profile cache is its owner's to close."""
         self._ready.clear()
         self._stopping = True
         pending = await _drained(set(self._running), self._settings.oms_drain_s)
@@ -1271,10 +1500,14 @@ class OmsRuntime:
             pending.add(startup)
         for task in pending:
             task.cancel()
-        deadline = asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S
+        deadline = asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S - LANE_JOIN_S
         parts, self._parts = self._parts, None
-        cancelled: list[_Closer] = [("cancelled", lambda: asyncio.wait(pending))] if pending else []
-        await _closed([*cancelled, *(() if parts is None else parts.closers)], deadline)
+        closers: list[_Closer] = [("cancelled", lambda: asyncio.wait(pending))] if pending else []
+        if parts is not None:
+            closers += [("lane", parts.lane.idle), *parts.closers]
+        await _closed(closers, deadline)
+        if parts is not None:
+            await parts.lane.stop()
         self._failed = False
 
     async def _started(self) -> None:
@@ -1287,7 +1520,7 @@ class OmsRuntime:
         stuck = 0  # the failures no retry can outlast (CR-S3E3-02)
         while True:
             try:
-                swept = await self._swept(parts)
+                swept = await parts.lane.call(self._swept(parts))  # on the order lane (CV-C13)
             except Exception as exc:  # a store or audit failure: retried, never ready on it
                 causes = _causes(exc)
                 kinds = sorted({type(cause).__name__ for cause in causes})
@@ -1404,11 +1637,13 @@ class OmsRuntime:
         clock = self._ingestion.clock
         return clock is None or math.isfinite(clock.offset_age_s())
 
-    async def _compose(self) -> _Parts:
-        """The C6 rig's composition, for the process's environment only (C-2.11): the switches,
-        bindings and announcements, the sink and latch (20 Sec.6.2), the trading port and router,
-        then over the pool the stores, the command port, the facade, the anchors and the pipeline.
-        A failure once the port exists closes what was built before it goes on."""
+    async def _compose(self, lane: Lane, serving: Serving) -> _Parts:
+        """The C6 rig's composition, on the order lane (CV-C13), for the process's environment only
+        (C-2.11): the switches, bindings and announcements, the sink and latch (20 Sec.6.2), the
+        trading port and router, then over the pool, made here, the stores, the command port, the
+        facade, the anchors and the pipeline; what the serving loop holds, through its bridge
+        (`Served*`). A failure once the port exists closes what was built before it goes on, each
+        closer on its own loop."""
         self._phase = "settings"
         settings, env, metrics = self._settings, self._env, self._metrics
         ingestion = self._ingestion
@@ -1419,7 +1654,7 @@ class OmsRuntime:
             live_enabled=settings.trading_live_enabled,
             live_flag=self._live_enabled,
             kill_switch=InterimKillSwitch(),
-            gate=self._gate,
+            gate=ServedGate(self._gate, serving),
         )
         switches.announce(metrics=metrics)
         self._phase = "sink"
@@ -1433,21 +1668,22 @@ class OmsRuntime:
             raise NoProfileCache
         self._phase = "port"
         port = self._venue.trading_port(env, clock_offset_ms=ingestion.clock_offset_ms)
-        closers: list[_Closer] = [("trading_port", port.aclose)]
+        closers: list[_Closer] = [("trading_port", lambda: serving.call(port.aclose()))]
         try:
-            router = TradingRouter({env: port}, lane_waits=self._venue.lane_waits())
+            served = cast(RoutedPort, ServedPort(port, serving))  # the port's members, on its loop
+            router = TradingRouter({env: served}, lane_waits=self._venue.lane_waits())
             self._phase = "stores"
             stores = self._stores()
-            closers.append(("pool", stores.release))
+            closers.append(("pool", lambda: lane.call(stores.release())))
             self._phase = "commands"
             timer = WriteTimer(_histogram(metrics, "oms_db_write_seconds"))
             orders = OrderRepository(stores.orders, timer)
             stops = RecordedStopRepository(stores.stops, timer)
-            audit, notices = OmsAudit(self._audit, environment=env), OrderNoticesRouter(self._pager)
+            audit = OmsAudit(ServedAudit(self._audit, serving), environment=env)
+            notices = OrderNoticesRouter(self._pager)
             accounts = TradingAccountsBinding(stores.accounts, environment=env)
-            halt = ClockHalt(
-                ClockHealthBinding(ingestion.clock), monotonic=self._monotonic, metrics=metrics
-            )
+            clock = None if ingestion.clock is None else ServedClock(ingestion.clock, serving)
+            halt = ClockHalt(ClockHealthBinding(clock), monotonic=self._monotonic, metrics=metrics)
             command_accounts = CommandAccounts(accounts, self._pager)
             resolver = StopResolver(
                 stops, CompleteRead(orders), StopVoidAudit(audit), now=self._now
@@ -1458,7 +1694,9 @@ class OmsRuntime:
                 metrics=metrics, pager=self._pager,
             )  # fmt: skip
             rejections = CredentialRejectionsBinding(
-                self._standings, key_refusal=self._venue.key_refusal, pager=self._pager
+                ServedStandings(self._standings, serving),
+                key_refusal=self._venue.key_refusal,
+                pager=self._pager,
             )
             commands = OmsCommandPort(
                 router=router, accounts=command_accounts, orders=orders, stops=stops,
@@ -1473,8 +1711,11 @@ class OmsRuntime:
                 submissions=SubmissionRepository(stores.submissions, timer),
             )
             owned = stores.sink() if bundle is None else None
-            sink: MachineEventSink = bundle.sink if bundle is not None else cast(OwnedSink, owned)
-            feed = CompositePublisher(OrderStateFeed(self._feed, max_orders=self._max))
+            sink: MachineEventSink = (
+                ServedSink(bundle.sink, serving) if bundle is not None else cast(OwnedSink, owned)
+            )
+            states = OrderStateFeed(self._feed, max_orders=self._max)
+            feed = CompositePublisher(ServedFeed(states, serving))
             self._phase = "facade"
             machines = OrderMachines(
                 OrderMachinePorts(
@@ -1486,9 +1727,11 @@ class OmsRuntime:
                 now_us=self._now_us, registry=self._registry, max_machines=self._max,
             )  # fmt: skip
             closers[:0] = [
-                ("stop_gate", gate.aclose),  # first: its reads end with the startup task's
-                ("machines", machines.stop), ("commands", commands.aclose),
-            ]  # fmt: skip
+                # the stop gate first: its reads end with the startup task's, before the machines
+                ("stop_gate", lambda: lane.call(gate.aclose())),
+                ("machines", lambda: lane.call(machines.stop())),
+                ("commands", lambda: lane.call(commands.aclose())),
+            ]
             self._phase = "pipeline"
             anchors = AnchorService(
                 IdempotencyAnchorRepository(stores.anchors, timer),
@@ -1500,15 +1743,17 @@ class OmsRuntime:
             demand = (
                 None if tickers is None else ReferenceDemand(tickers, monotonic=self._monotonic)
             )
+            asked = None if demand is None else ServedDemand(demand, serving)
             if demand is not None:
-                closers.insert(3, ("ticker_demand", demand.close))  # after the commands
+                # after the commands
+                closers.insert(3, ("ticker_demand", lambda: serving.call(demand.close())))
             instruments = InstrumentsBinding(ingestion.instruments)
             validator = Validator(read_only_gate=self._read_only)
             deps = SubmissionDeps(
                 accounts=accounts,
                 instruments=instruments,
-                prices=ReferencePricesBinding(tickers, demand=demand),
-                profiles=self.profiles,
+                prices=ReferencePricesBinding(tickers, demand=asked),
+                profiles=ServedProfiles(self.profiles, serving),
                 switches=switches,
                 gate=gate,
                 audit=audit,
@@ -1535,23 +1780,16 @@ class OmsRuntime:
             if owned is not None:
                 self._phase = "sink_start"
                 await owned.start()
-                closers.insert(3, ("sink", owned.stop))  # after the commands
-            closers.insert(0, ("exits", exits.aclose))  # its exits end before the facade stops
+                closers.insert(3, ("sink", lambda: lane.call(owned.stop())))  # after the commands
+            # its exits end before the facade stops
+            closers.insert(0, ("exits", lambda: lane.call(exits.aclose())))
         except BaseException:
             await _closed(closers, asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S)
             raise
         return _Parts(
-            submission,
-            anchors,
-            machines,
-            tuple(closers),
-            stops,
-            audit,
-            stores.sweep,
-            route,
-            gate,
-            exits,
-        )
+            submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route, gate,
+            exits, lane,
+        )  # fmt: skip
 
     def _now_us(self) -> int:
         return (self._now() - _EPOCH) // _US

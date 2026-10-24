@@ -1,7 +1,7 @@
 """#913 slice 3 L1 (E29-T04, 29 CV-C13): the order lane, `oms_lane.OrderLane`, one daemon thread
-running its own event loop; and the hops back to the serving loop, `oms_lane.Serving`, this
-test's loop. No timing is asserted: each wait on the lane's thread is a bound on the test, and a
-stalled serving loop is one blocked on an event."""
+running its own event loop; the hops back to the serving loop, `oms_lane.Serving`, this test's
+loop; and the OMS runtime composed on the lane (20 Sec.6.2). No timing is asserted: each wait on
+the lane's thread is a bound on the test, and a stalled serving loop is one blocked on an event."""
 
 from __future__ import annotations
 
@@ -17,10 +17,14 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
-from candleviewer import oms_lane
+from candleviewer import oms_lane, oms_wiring
 from candleviewer.observability.metrics import Metrics
-from candleviewer.oms_lane import LaneStopped, OrderLane, Serving
+from candleviewer.oms_lane import LANE_JOIN_S, LaneStopped, OrderLane, Serving
+from candleviewer.settings import OMS_STOP_RESERVE_S, TEARDOWN_BUDGET_S, Settings
+from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.gateway import Gateway, LoopAffinityError
+from tests.unit.oms import command_rig as cr
+from tests.unit.oms.test_oms_runtime import SENDING, Port, World, crashed, started
 
 #: A bound on each test's waits for the lane's thread, never a time the test expects.
 BOUND_S = 10.0
@@ -53,6 +57,10 @@ async def _where() -> tuple[asyncio.AbstractEventLoop, threading.Thread]:
 
 async def _raises(error: Exception) -> None:
     raise error
+
+
+async def _awaited(future: Awaitable[Any]) -> Any:
+    return await future
 
 
 async def _held(began: threading.Event, outcome: list[str], release: asyncio.Event) -> str:
@@ -353,3 +361,62 @@ async def test_a_machine_on_the_lane_takes_a_send_there_and_refuses_one_from_thi
             await gateway.send("order:1", "EXEC")
         await lane.call(gateway.send("order:1", "EXEC"))
     assert interpreter.sent == ["EXEC"]
+
+
+def _noting(real: Any, threads: list[threading.Thread]) -> Any:
+    async def noted(self: Port, req: Any) -> Any:
+        threads.append(threading.current_thread())
+        return await real(self, req)
+
+    return noted
+
+
+async def test_the_oms_runs_on_the_lane_and_its_stop_drains_cancels_closes_and_joins_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """20 Sec.6.2 on `OrderLane`: the sweep resumes a create left at the venue's door, whose venue
+    call runs on the serving loop (ruling Q11's interim); the facade's machine refuses a send from
+    this loop; the route's reads answer from the lane. The stop drains (its bound spent at once
+    here), cancels a submit still on the lane and waits for it there, closes each part, then stops
+    the lane: its closers' deadline leaves `LANE_JOIN_S` of the reserve for the join."""
+    drains, reserves, threads = list[float](), list[float](), list[threading.Thread]()
+    drained, closed = oms_wiring._drained, oms_wiring._closed
+
+    async def spent(tasks: set[asyncio.Task[Any]], timeout_s: float) -> set[asyncio.Task[Any]]:
+        drains.append(timeout_s)
+        return await drained(tasks, 0)
+
+    async def timed(closers: Any, deadline: float) -> None:
+        reserves.append(deadline - asyncio.get_running_loop().time())
+        await closed(closers, deadline)
+
+    monkeypatch.setattr(oms_wiring, "_drained", spent)
+    monkeypatch.setattr(oms_wiring, "_closed", timed)
+    monkeypatch.setattr(Port, "place_order", _noting(Port.place_order, threads))
+    world = World()
+    await crashed(world)
+    for flag in world.flags:
+        flag.read()
+    async with asyncio.timeout(BOUND_S), started(world.runtime(lane=OrderLane)) as runtime:
+        await runtime.wait_ready()
+        parts = runtime._composed()
+        loop, thread = await parts.lane.call(_where())
+        resumed = parts.machines.settled(
+            cr.ACCOUNT, SENDING.id, leaving="submitting", timeout_s=BOUND_S
+        )
+        assert await parts.lane.call(resumed) == "submitted"
+        assert threads == [threading.current_thread()]  # the create went out on this loop
+        with pytest.raises(LoopAffinityError):
+            await parts.machines._gateway.send(str(SENDING.id), "KILL")
+        assert await runtime.route.accounts.environment_of(cr.ACCOUNT) == "demo"
+        began, outcome = threading.Event(), list[str]()
+        answered = runtime.run(_awaited(parts.lane.call(asyncio.sleep(0, result="202"))))
+        hung = runtime.run(_awaited(parts.lane.call(_held(began, outcome, asyncio.Event()))))
+        assert await answered == "202"
+        await _began(began)
+    assert drains == [Settings().oms_drain_s] and hung.cancelled() and outcome == ["cancelled"]
+    reserve = OMS_STOP_RESERVE_S - LANE_JOIN_S
+    assert reserve - 1 < reserves[-1] <= reserve  # the join's share is the reserve's last
+    assert Settings().oms_drain_s + OMS_STOP_RESERVE_S <= TEARDOWN_BUDGET_S  # the 15 s grace
+    assert not thread.is_alive() and loop.is_closed() and not b01.ports_wired()
+    assert world.log == ["sink.start", "sink.stop", "pool.release"] and world.venue.ports[0].closed

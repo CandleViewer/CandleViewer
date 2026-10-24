@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Coroutine, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -166,6 +166,30 @@ class Writer:
         self.actions.append((action, fields.get("reason")))
 
 
+class InlineLane:
+    """The order lane on the test's own loop, so these tests step one loop (`test_order_lane`
+    runs the runtime on `OrderLane`'s thread): `call` tracks each task as the lane does."""
+
+    def __init__(self) -> None:
+        self.tasks: set[asyncio.Task[Any]] = set()
+
+    async def start(self) -> None:
+        return None
+
+    def call[T](self, coro: Coroutine[Any, Any, T]) -> asyncio.Future[T]:
+        task = asyncio.ensure_future(coro)
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+        return task
+
+    async def idle(self) -> None:
+        while pending := [task for task in self.tasks if task is not asyncio.current_task()]:
+            await asyncio.wait(pending)
+
+    async def stop(self) -> None:
+        return None
+
+
 @dataclass
 class World:
     """Everything a runtime is built over, the in-memory order store its stores' tables."""
@@ -214,7 +238,7 @@ class World:
             "live_enabled": self.flags[1], "profiles": Profiles(), "persistence": bundle,
             "feed": feed, "stores": self.stores, "pager": self.pager, "now": lambda: T0,
             "monotonic": self.clock, "registry": REGISTRY, "oms_enabled": self.flags[0],
-            "sleep": self.clock.sleep,
+            "sleep": self.clock.sleep, "lane": InlineLane,
         }  # fmt: skip
         return OmsRuntime(settings, **(built | over))
 
@@ -267,12 +291,13 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
         async with started(world.runtime()) as runtime:
             [port] = world.venue.ports
             assert port.environment == "demo" and b01.ports_wired()
-            assert runtime.submission._anchors is runtime.anchors  # SEC-S3D-02: the one service
-            exits = runtime.exits._d  # slice 4: the exits drive the pipeline's facade and port
+            parts = runtime._composed()
+            assert parts.submission._anchors is parts.anchors  # SEC-S3D-02: the one service
+            exits = parts.exits._d  # slice 4: the exits drive the pipeline's facade and port
             assert (exits.machines, exits.commands) == (
-                runtime.submission._machines, runtime.submission._commands,
+                parts.submission._machines, parts.submission._commands,
             )  # fmt: skip
-            assert exits.environment == runtime.route.environment == "demo"
+            assert exits.environment == parts.route.environment == "demo"
             assert world.log == ["sink.start"]
     warned = [e["port"] for e in logs if e["event"] == "oms_interim_port"]
     assert warned == [*INTERIMS, "machine_event_sink"]  # one WARNING each
@@ -1120,7 +1145,7 @@ async def test_a_refused_reference_price_holds_a_ticker_demand_until_the_stop() 
         release=lambda _consumer, symbol: demands.append(("release", symbol)),
     )
     async with started(world.runtime()) as runtime:
-        assert await runtime.submission._deps.prices.reference_price("SOLUSDT") is None
+        assert await runtime._composed().submission._deps.prices.reference_price("SOLUSDT") is None
     assert demands == [("acquire", "SOLUSDT"), ("release", "SOLUSDT")]
 
 
