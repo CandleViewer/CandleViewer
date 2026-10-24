@@ -136,6 +136,7 @@ def _built() -> dict[str, Any]:
             _ACCOUNT, "BTCUSDT", 0, now=_T, bound_s=5.0
         ),
         "waiting_keys_statement": mod.waiting_keys_statement(_ACCOUNT, now=_T, bound_s=5.0),
+        "clock_statement": mod.clock_statement(),
         "lock_key_statement": mod.lock_key_statement(_ACCOUNT, "BTCUSDT", 0),
         "replace_statement": mod.replace_statement(_ACCOUNT, [_SL], _T),
         "in_force_statement": mod.in_force_statement(_ACCOUNT, _rows(_row(_SL)), _T),
@@ -146,7 +147,8 @@ def _built() -> dict[str, Any]:
 
 def test_every_statement_but_the_insert_and_the_system_sweep_filters_the_account() -> None:
     """C-12.4 (SEC-2A-02): the sweep is built over every account here, its system form, so the
-    pin sees the one unscoped read-and-write the startup wiring alone may run."""
+    pin sees the one unscoped read-and-write the startup wiring alone may run, beside the clock
+    the startup reads, which reads no table."""
     built = _built()
     assert set(built) == {name for name in vars(mod) if name.endswith("_statement")}
     unscoped = {
@@ -155,7 +157,13 @@ def test_every_statement_but_the_insert_and_the_system_sweep_filters_the_account
     assert unscoped == mod.UNSCOPED | mod.SYSTEM_STATEMENTS
     assert not mod.UNSCOPED & mod.SYSTEM_STATEMENTS
     assert mod.UNSCOPED == frozenset({"insert_stops_statement"})
-    assert mod.SYSTEM_STATEMENTS == frozenset({"void_orphans_statement"})
+    assert mod.SYSTEM_STATEMENTS == frozenset({"void_orphans_statement", "clock_statement"})
+
+
+def test_the_clock_statement_reads_no_table() -> None:
+    """S3-H's startup floor (Q7): a system statement, as it reads no row of any account."""
+    assert _sql(mod.clock_statement()) == "SELECT now() AS now_1"
+    assert not mod.clock_statement().get_final_froms()
 
 
 def test_live_stop_statuses_are_the_ix_rs_live_predicate() -> None:

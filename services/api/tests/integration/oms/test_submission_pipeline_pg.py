@@ -70,7 +70,6 @@ from candleviewer.oms.ports import (
     InterimStopResolver,
     KeyedRecord,
     OrderEffect,
-    RefuseWhileWaiting,
     RequestRecord,
     StopOffset,
     SubmissionPorts,
@@ -93,7 +92,6 @@ from candleviewer.oms.submit import (
     SubmitOutcome,
 )
 from candleviewer.oms.validator import Validator
-from candleviewer.oms_wiring import STOP_REQUEST_BOUND_S
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
 from candleviewer.statechart.plugins import InMemoryMachineEventSink
@@ -558,7 +556,7 @@ def _build(
     health.measure()
     halt = ClockHalt(health, monotonic=monotonic, metrics=metrics)
     router = TradingRouter({"demo": venue, "live": live}, lane_waits=cr.LANE_WAITS)
-    gate = RefuseWhileWaiting(stops, now=clock, bound_s=STOP_REQUEST_BOUND_S)
+    gate = cr.stop_gate(stops, orders, audits, accounts, router, clock, monotonic, metrics)
     commands = OmsCommandPort(
         router=router, accounts=accounts, orders=orders, stops=stops, handovers=cr.Handovers(),
         credentials=cr.Credentials(), clock_halt=halt, switches=switches, audit=audits,
