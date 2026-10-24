@@ -30,6 +30,7 @@ from candleviewer.accounts.profile_repository import (
     StoredProfile,
 )
 from candleviewer.accounts.profiles import AccountProfile, profile_from_row, profile_values
+from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
 from candleviewer.storage.repositories.account_profiles import (
     DEFAULT_MOVES_ALONE,
     AccountProfileRevision,
@@ -126,6 +127,8 @@ async def test_reads_map_rows_to_the_domain_model() -> None:
 _READS: dict[str, Any] = {
     "read_profiles": lambda r: r.read_profiles(_OWNER, _P.account_id),
     "read_profile": lambda r: r.read_profile(_OWNER, _P.account_id, _P.profile_id),
+    "list_profiles": lambda r: r.list_profiles(_OWNER, _P.account_id),
+    "get_profile": lambda r: r.get_profile(_OWNER, _P.account_id, _P.profile_id),
 }
 
 
@@ -140,9 +143,11 @@ async def test_a_read_answers_each_profile_with_its_rows_created_at() -> None:
     assert [s.profile for s in read] == [profile_from_row(row) for row in rows]
     assert await repo.list_profiles(_OWNER, _P.account_id) == tuple(s.profile for s in read)
     assert store.calls[0] == ("list_profiles", (_OWNER, _P.account_id), {})
-    one, _, _, _ = _repo(first)
+    one, one_store, _, _ = _repo(first)
     assert await one.read_profile(_OWNER, _P.account_id, _P.profile_id) == read[0]
     assert await one.get_profile(_OWNER, _P.account_id, _P.profile_id) == read[0].profile
+    # the caller's scope and both ids, as given, once per read
+    assert one_store.calls == [("get_profile", (_OWNER, _P.account_id, _P.profile_id), {})] * 2
     assert isinstance(read[0], StoredProfile)
 
 
@@ -160,7 +165,7 @@ async def test_an_unreadable_stored_row_fails_closed_and_logs_no_value(
 ) -> None:
     """SR-E28-24: `ProfileUnavailableError`, unchained, as the order path's cache answers it; the
     log line names the error's class and never a value (C-12.6)."""
-    listed = read == "read_profiles" and not isinstance(answer, BaseException)
+    listed = read in ("read_profiles", "list_profiles") and not isinstance(answer, BaseException)
     repo, _, _, _ = _repo((answer,) if listed else answer)
     with structlog.testing.capture_logs() as logs, pytest.raises(ProfileUnavailableError) as ei:
         await _READS[read](repo)
@@ -175,6 +180,19 @@ async def test_an_unreadable_stored_row_fails_closed_and_logs_no_value(
             "log_level": "warning",
         }
     ]
+
+
+@pytest.mark.parametrize("read", list(_READS))
+@pytest.mark.parametrize(
+    "raised", [StorageTierUnavailable("pg"), StorageQueryFailed("57014")], ids=["tier", "query"]
+)
+async def test_a_storage_error_reaches_the_caller_unchanged(read: str, raised: Exception) -> None:
+    """An outage is not an unreadable row (#906 D1b, code lens R1C-03): D1c's 503 logs the class
+    and sqlstate it receives, so the reads pass a `StorageError` through as raised."""
+    repo, _, _, _ = _repo(raised)
+    with pytest.raises(type(raised)) as ei:
+        await _READS[read](repo)
+    assert ei.value is raised
 
 
 @pytest.mark.parametrize(

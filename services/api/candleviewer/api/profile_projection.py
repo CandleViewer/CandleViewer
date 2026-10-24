@@ -26,8 +26,9 @@ from candleviewer.domain.primitives import TsUs
 
 
 def plain(value: Decimal) -> str:
-    """C6: every digit, no exponent and no trailing fractional zero (`1E+2` is `100`, `1.500` is
-    `1.5`). Never `normalize()`, which rounds at 28 digits: a `numeric(38,18)` holds 38."""
+    """Every digit and no exponent (22's C6 and its `Decimal` pattern), and no trailing fractional
+    zero, this projection's own rule (`1E+2` is `100`, `1.500` is `1.5`). Never `normalize()`,
+    which rounds at 28 digits: a `numeric(38,18)` holds 38."""
     text = format(value, "f")
     return text.rstrip("0").rstrip(".") if "." in text else text
 

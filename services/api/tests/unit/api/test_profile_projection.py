@@ -32,6 +32,7 @@ from candleviewer.api.profile_projection import (
     profile_body,
     profile_document,
     profile_etag,
+    rfc3339,
 )
 from candleviewer.storage.repositories.account_profiles import (
     AccountProfileRow,
@@ -107,6 +108,11 @@ def test_the_risk_based_fixture_reads_as_its_document(
     doc = profile_document(p, created_at=_CREATED, environment=environment)
     assert doc == {**_RISK_BASED, "environment": answered}
     assert profile_etag(p) == 'W/"0b5f6d0e-28a1-4c1e-9e01-000000000001:3"'
+
+
+def test_a_time_is_every_microsecond_in_utc() -> None:
+    """C7 to the microsecond (#906 D1b, code lens R1C-01): no digit is dropped or rounded."""
+    assert rfc3339(1_790_843_415_123_456) == "2026-10-01T08:30:15.123456Z"
 
 
 def _at(doc: Any, path: tuple[str | int, ...]) -> Any:
