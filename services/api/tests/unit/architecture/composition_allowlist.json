@@ -362,10 +362,6 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
-    "POST /recording/symbols": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
     "POST /replay/sessions": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -451,10 +447,6 @@
       "ticket": "E49-K01-F4-baseline"
     },
     "PUT /positions/{positionId}/tpsl": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
-    "PUT /recording/symbols/{recordedSymbolId}/pin": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },

@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 
-from candleviewer.recorder.models import Actor
+from candleviewer.recorder.models import ORDERBOOK_DEPTHS, Actor
 
 if TYPE_CHECKING:
     from candleviewer.recorder.policy import PolicyConfig
@@ -112,13 +112,20 @@ class RecordingReads(Protocol):  # a lookup answers `None` for no such entry
     async def get(self, entry_id: str) -> RecordedEntry | None: ...
 
 
-class RecordingControl(RecordingReads, Protocol):  # `add` also says if it created the entry
+class RecordingControl(RecordingReads, Protocol):  # `add` also returns the entry it re-added
+    # (`None`: it created one). A pin keeps forever; an unpin takes `retention_days` (`None`:
+    # the global default). Each write is recorded by the policy ahead of the store (C-2.9).
     async def add(self, symbol: str, spec: EntrySpec,
-                  actor: Actor) -> tuple[RecordedEntry, bool]: ...  # fmt: skip
+                  actor: Actor) -> tuple[RecordedEntry, RecordedEntry | None]: ...  # fmt: skip
+    # `add` raises the policy's `RecorderInvalidUpdateError` and `RecorderSymbolLimitError`
+    # unchanged (the route maps them), where `update` maps its refusals to a port error. It
+    # forwards `spec.streams` and `spec.depth` as given: a join names the stored row's own.
     async def update(self, entry_id: str, spec: EntrySpec,
                      actor: Actor) -> RecordedEntry | None: ...  # fmt: skip
     async def remove(self, entry_id: str, actor: Actor) -> RecordedEntry | None: ...
-    async def pin(self, entry_id: str, pinned: bool, actor: Actor) -> RecordedEntry | None: ...
+    async def pin(self, entry_id: str, pinned: bool, actor: Actor, *,
+                  retention_days: int | None = None) -> RecordedEntry | None: ...  # fmt: skip
+    # `status` entries carry the STORED row's streams and depth, never the policy's `()`/`None`.
     async def status(self) -> ControlStatus: ...
 
 
@@ -128,6 +135,14 @@ class RecordedRows(Protocol):  # the row port; `env` comes from settings, never 
         hidden: tuple[str, ...], after: tuple[str, str] | None, limit: int,
     ) -> list[dict[str, Any]]: ...  # fmt: skip
     async def recorded_row(self, entry_id: str, *, env: str) -> dict[str, Any] | None: ...
+
+
+def setting_rule(depth: object) -> tuple[str, str]:
+    """`(rule, field)` of the policy's `RecorderInvalidUpdateError` for a change naming `depth`:
+    the depth's when the table refuses that depth, else the streams'."""
+    if depth is not None and (type(depth) is not int or depth not in ORDERBOOK_DEPTHS):
+        return "depth_allowed", "depth"
+    return "stream_names", "streams"
 
 
 def restricted_view(entry: RecordedEntry) -> RecordedEntry | None:
