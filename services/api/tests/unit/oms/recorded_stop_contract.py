@@ -153,8 +153,10 @@ class RecordedStopContract:
         self, h: Harness, outcome: Outcome, answered: bool
     ) -> None:
         """Audited before the commit, when hooked (inside the hook every reader still sees the rows
-        as they were; a void needs it); `position_state` is the `entry_filled_stop_absent` void's
-        alone (CR-S3H0-08), and its hook is given it; an answer, and a replace, stamp only a NULL
+        as they were; a void needs it); `position_state` is required for the
+        `entry_filled_stop_absent` void (CR-S3H0-08), optional for `in_flight_resolved` (the 06:38Z
+        ruling: an unseen entry's void on a position with no stop carries it) and refused for an
+        answer or a replace; the hook is given it; an answer, and a replace, stamp only a NULL
         `answered_at`."""
         account, profile = h.new_account()
         rows = await request(h, account, profile, answered=answered)
@@ -163,12 +165,14 @@ class RecordedStopContract:
         async def audit(done: tuple[RecordedStopRow, ...], given: FillPosition | None) -> None:
             seen.append((done, await now_of(h, rows), given))
 
-        state: FillPosition | None = "flat" if outcome == ABSENT else None
+        states: dict[str, FillPosition | None] = {ABSENT: "flat", "in_flight_resolved": "open"}
+        state = states.get(outcome)
         wrong: FillPosition | None = None if outcome == ABSENT else "open"
         for writer in (repo(h), h.stops):  # refused before anything, by the facade and the store
-            with pytest.raises(ValueError, match="position_state"):
-                await writer.resolve(account, rows, outcome, at=AT, position_state=wrong,
-                                     write_ahead=audit)  # fmt: skip
+            if outcome != "in_flight_resolved":  # optional there: either is accepted
+                with pytest.raises(ValueError, match="position_state"):
+                    await writer.resolve(account, rows, outcome, at=AT, position_state=wrong,
+                                         write_ahead=audit)  # fmt: skip
             if outcome in ("in_flight_resolved", ABSENT):  # C-2.9: no void unaudited
                 with pytest.raises(ValueError, match="audited write-ahead"):
                     await writer.resolve(account, rows, outcome, at=AT, position_state=state)
