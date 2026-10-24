@@ -8,6 +8,7 @@ import json
 import uuid
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -15,7 +16,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.admin import wiring as admin_wiring
 from candleviewer.audit.writer import AuditUnavailable, AuditWriter, keyed_record_id
-from candleviewer.exchange.base.errors import OmsErrorCode
+from candleviewer.exchange.base.errors import NotFoundError, OmsErrorCode
 from candleviewer.oms.commands import NEVER_SENT_ALERT
 from candleviewer.oms.order_machine import (
     CompositePublisher,
@@ -162,6 +163,16 @@ _VALUES = {"price": "63099.8", "qty": "0.5", "api_key": "DUMMYKEY_" + "Q3w9" * 5
             ("page", "order notice request_reconciliation has no owner until E29-T06"),
         ),
         (
+            _notice("request_reconciliation", reason="already_terminal"),
+            "error",
+            ("alert", "order notice request_reconciliation has no owner until E29-T06"),
+        ),
+        (
+            _notice("request_reconciliation", reason="not_held_unbound"),
+            "error",
+            ("page", "order notice request_reconciliation has no owner until E29-T06"),
+        ),
+        (
             _notice("request_fallback_sl"),
             "error",
             ("page", "order notice request_fallback_sl has no owner until E32"),
@@ -169,8 +180,9 @@ _VALUES = {"price": "63099.8", "qty": "0.5", "api_key": "DUMMYKEY_" + "Q3w9" * 5
         (_notice("amend_rejected", error_code="RATE_LIMITED"), "warning", None),
         (_notice("surprise"), "error", ("page", "order notice of an unknown kind")),
     ],
-    ids=["alert", "never-sent", "reconciliation", "fallback-sl", "amend-rejected", "unknown"],
-)
+    ids=["alert", "never-sent", "quarantined", "terminal", "unbound", "fallback", "amend-rejected",
+         "unknown"],
+)  # fmt: skip
 async def test_each_notice_goes_where_its_kind_says_and_logs_ids_and_names_only(
     notice: OrderNotice, level: str, alert: tuple[str, str] | None
 ) -> None:
@@ -180,6 +192,23 @@ async def test_each_notice_goes_where_its_kind_says_and_logs_ids_and_names_only(
     assert [(entry["log_level"], entry["order_id"]) for entry in logs] == [(level, str(ORDER))]
     assert pager.alerts == ([] if alert is None else [(*alert, "order")])
     assert not any(value in str(logs) for value in _VALUES.values())
+
+
+@pytest.mark.parametrize(
+    ("code", "logged"),
+    [(110001, 110001), (True, None), (_VALUES["api_key"], None), (None, None)],
+    ids=["int", "bool", "text", "absent"],
+)
+async def test_a_tickets_log_line_carries_the_venues_integer_code_and_no_other_value(
+    code: Any, logged: int | None
+) -> None:
+    """S4-B1 re-check, Finding 7: `order_already_terminal` reaches the log with the venue's code
+    when it is an integer; text, which could be anything, never goes into a log line (C-12.6)."""
+    notice = _notice("alert", alert="order_already_terminal", exchange_ret_code=code)
+    with capture_logs() as logs:
+        await OrderNoticesRouter(_Pager()).notify(notice)
+    assert [entry.get("exchange_ret_code") for entry in logs] == [logged]
+    assert str(_VALUES["api_key"]) not in str(logs)
 
 
 async def test_each_name_of_the_closed_sets_is_logged_and_paged_as_it_is() -> None:
@@ -257,7 +286,37 @@ async def test_the_closed_alert_set_is_what_the_order_machine_and_the_resume_rai
         context: dict[str, Any] = {}
         await b01.ACTIONS[action](_At(state), context, None, None)
         raised |= {entry["alert"] for entry in context["outbox"] if entry["kind"] == "alert"}
+    marked: dict[str, Any] = {b01.ALREADY_TERMINAL: 110001}  # `unknown`'s 110001 mark (S4-B1)
+    await b01.raise_unknown_alert(None, marked, None, None)
+    raised.add(marked["outbox"][0]["alert"])
     assert raised | {NEVER_SENT_ALERT} == ORDER_ALERTS
+
+
+async def test_the_venues_110001_is_a_ticket_and_a_later_transport_fault_pages() -> None:
+    """S4-B1's rulings, through the router the facade forwards to: the venue's 110001 is no
+    transport fault but `order_already_terminal` with its code, a ticket, and the reconciliation
+    asked for the order (unowned until E29-T06) is a ticket too: one case, one notice. A transport
+    fault on the same order then pages as `order_unknown`: the mark ends with its `unknown` entry.
+    `quarantined`'s own request, which names no reason, keeps paging."""
+    context, pager = dict[str, Any](), _Pager()
+    gone = NotFoundError("the venue does not hold the order", exchange_ret_code=110001)
+    with capture_logs() as logs:
+        for fault in (gone, TimeoutError()):  # `onError`'s action, then `unknown`'s entry
+            event = SimpleNamespace(type="error.platform.cancel", error=fault)
+            await b01.record_transport_fault(None, context, event, None)
+            await b01.raise_unknown_alert(None, context, None, None)
+    await b01.request_reconciliation(None, context, None, None)  # `quarantined`'s
+    for entry in context["outbox"]:
+        await OrderNoticesRouter(pager).notify(_notice(entry.pop("kind"), **entry))
+    assert [(e["event"], e.get("exchange_ret_code")) for e in logs] == [
+        ("b01_already_terminal", 110001), ("b01_order_unknown", 110001),
+        ("b01_transport_fault", None), ("b01_order_unknown", None),
+    ]  # fmt: skip
+    unowned = "order notice request_reconciliation has no owner until E29-T06"
+    assert [(severity, summary) for severity, summary, _ in pager.alerts] == [
+        ("alert", unowned), ("alert", "order alert order_already_terminal"),
+        ("page", "order alert order_unknown"), ("page", unowned),
+    ]  # fmt: skip
 
 
 async def test_the_router_never_raises_with_a_failing_pager_or_a_broken_notice() -> None:

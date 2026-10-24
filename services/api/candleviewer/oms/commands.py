@@ -2,8 +2,8 @@
 Sec.8.4, Sec.8.6, Sec.8.8).
 
 B1's services call it (`statechart/bindings/b01_order.py`, `_dispatch`): `place` in `submitting`,
-`lookup` before a create this process did not begin, `attach_stop` in `sl_pending`, and `cancel`
-and `amend`, which go to slice 3's services. Every call reaches the exchange through
+`lookup` before a create this process did not begin, `attach_stop` in `sl_pending`, `cancel` in
+`cancel_pending` and a KILL's, `amend` once S4-B2 wires it. Every call reaches the exchange through
 `routing.TradingRouter`, so it is signed for its account's own environment (C-2.11), and every
 answer is a mapping B1's guards read (24 Sec.14.4 `OrderAck`), never the exchange's text
 (SR-E29-09). Logs carry ids, codes and state names, never a price or a size (21 Sec.12).
@@ -84,6 +84,23 @@ Partial-mode stop is refused, audited, before anything is sent (Q-F: no stop siz
 until G-8b's `sl_size`, #3963), so B1 goes to `sl_missing` and B8. The kill switch, the switches
 and the clock halt never gate it: a protective write, which 24 Sec.8.10 carves out (C-2.6,
 C-4.14).
+
+**cancel** (24 Sec.8.8 rule 6, SR-E29-06; INV-B1-h, INV-B1-j; the S4 rulings Q8, Q9 and Q11).
+B1's cancel in `cancel_pending` and a KILL's (`kill_cancel`): one `cancel` call names the stored
+row by its exchange order id once bound, else by its own id (a KILL out of `unknown`), the same
+every time (C-2.10; no `ext-` key on the wire, 24 Sec.14.2 rule 11), from the `critical` lane
+(C-12.7). Nothing gates it: an exit is never gated (24 Sec.8.10, C-2.6). A recorded stop's row
+is never a KILL's to cancel (C-2.6, INV-B1-p); a user's cancel of one goes out only once a
+`poll`-lane read shows its position flat (Q9, fail closed); both refuse `NATIVE_STOP_REQUIRED`,
+so B1 keeps the row live (INV-B1-j), as on `STORE_UNAVAILABLE`, a read before the send that failed
+(nothing sent, retried after `STORE_UNAVAILABLE_RETRY_AFTER_S`) and `ACCOUNT_UNAVAILABLE`, an
+account out of scope or with no active key (no outage, so no retry; the wiring pages it). A command
+naming another order is a defect, raised. Else it answers as a create
+does (24 Sec.8.6), and anything raised once the call began is raised, never repeated (Q11: B1 lands
+the order in `unknown`), the venue's 110001 too, as `NotFoundError` with its code: the venue does
+not hold the order, which says nothing of how it ended, so reconciliation reads it. One deadline
+of its kind bounds all of it. An exit service's `expect_exit` gets the answer B1 got, None when
+the call raised but for the venue's 110001, which says why the order parks; a KILL's spends none.
 """
 
 from __future__ import annotations
@@ -104,11 +121,13 @@ from candleviewer.exchange.base.errors import (
     AuthError,
     ClockDriftError,
     ExchangeError,
+    NotFoundError,
     OmsErrorCode,
     RateBudgetExceededError,
 )
 from candleviewer.exchange.base.models import (
     AccountRef,
+    CancelOrderRequest,
     Order,
     OrderAck,
     OrderLane,
@@ -118,17 +137,22 @@ from candleviewer.exchange.base.models import (
 )
 from candleviewer.observability import spawn
 from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_KILL_CANCEL_TIMEOUT
+from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.orders import NewOrder, OrderRow
 from candleviewer.storage.repositories.recorded_stops import NewRecordedStop, RecordedStopRow
 
 from .classify import REDUCING_INTENTS
 from .clock_halt import ClockHalt
 from .errors import (
+    AccountScopeDenied,
     AckWithoutOrderId,
     HandoverUnavailable,
     OmsNotReady,
+    OrderEntryRefused,
     OrderRefused,
     ResendRefused,
+    StoreUnavailable,
     problem_for,
 )
 from .order_link_resolution import (
@@ -141,7 +165,7 @@ from .order_link_resolution import (
     find_by_link_id,
     place_or_adopt,
 )
-from .order_machine import OrderAudit, OrderAuditRecord, OrderNotice, OrderNotices
+from .order_machine import OrderAudit, OrderAuditRecord, OrderNotice, OrderNotices, _data_refusal
 from .ports import (
     AuditOutcome,
     AuditSeverity,
@@ -150,6 +174,7 @@ from .ports import (
     OrderHandovers,
     PositionKey,
     StopRequestGate,
+    SubmitActor,
     SubmitAudit,
     TradingAccounts,
     TradingSwitches,
@@ -158,17 +183,24 @@ from .repository import OrderRepository, RecordedStopRepository
 from .routing import RoutedPort, TradingRouter, read_position, retry_after
 
 __all__ = [
+    "ACCOUNT_UNAVAILABLE",
     "ALREADY_SET",
+    "CANCEL_TIMEOUT_S",
     "EXPIRED_UNSENT_REASON",
+    "KILL_CANCEL_TIMEOUT_S",
     "LIVE_HISTORY_SPAN_S",
     "LIVE_RESEND_MAX_AGE_S",
     "MAX_WATCHES",
     "NEVER_SENT_ALERT",
     "PARTIAL_STOP_UNSUPPORTED",
     "PORT_TIMEOUT_S",
+    "RECORDED_STOP_READ_S",
     "RESEND_REFUSED",
+    "STORE_UNAVAILABLE",
+    "STORE_UNAVAILABLE_RETRY_AFTER_S",
     "SUBMIT_TIMEOUT_S",
-    "CommandHandler",
+    "ExitKind",
+    "ExitWatch",
     "OmsCommandPort",
     "PlaceWatch",
     "found_view",
@@ -187,6 +219,29 @@ SUBMIT_TIMEOUT_S: Final = 5.0
 #: The bound on each other call (a read, the store, an audit, a notice, a hand-over, the stop
 #: gate), in seconds; inside `place` its deadline may end one sooner.
 PORT_TIMEOUT_S: Final = 5.0
+#: The bound on all of a user's `cancel` (B1's `cancel_pending`), in seconds: inside B1's
+#: `CV_COMMAND_TIMEOUT` and past a recorded stop's read plus the `critical` lane's wait (24
+#: Sec.8.7), so, while the store reads answer promptly, a token that does not come is a refusal (the
+#: order live), not `unknown` (Q8).
+CANCEL_TIMEOUT_S: Final = CV_COMMAND_TIMEOUT - 1.0
+#: The bound on a recorded stop's position read, in seconds: the call keeps the lane's wait (Q9).
+RECORDED_STOP_READ_S: Final = 3.0
+#: An exit's answer when a read before its send fails: nothing sent, so the order stays live, to be
+#: retried after `retry_after_s` (the S4 rulings: an exit raises only once its venue call began).
+STORE_UNAVAILABLE: Final = "STORE_UNAVAILABLE"
+#: The wait `STORE_UNAVAILABLE` advises, in seconds: one figure for the cancel and the amend alike
+#: (the S4-B1 ruling; S4-B2 imports it). `retry_after` rounds it up to the answer's whole seconds.
+STORE_UNAVAILABLE_RETRY_AFTER_S: Final = 1.0
+#: An exit's answer when the account it is signed for refuses its read, out of scope or with no
+#: active key: no outage, so no `retry_after_s` (a client must not read it as a conflict, nor wait
+#: for it). Nothing is sent, the order stays live, and the wiring has paged it (S4-B1 ruling B).
+ACCOUNT_UNAVAILABLE: Final = "ACCOUNT_UNAVAILABLE"
+#: What the account read refuses with: the pair `oms_wiring.CommandAccounts` pages CRITICAL.
+_ACCOUNT_REFUSED: Final = (AccountScopeDenied, OrderEntryRefused)
+#: The bound on all of a KILL's cancel, in seconds, inside B1's `CV_KILL_CANCEL_TIMEOUT`: it runs in
+#: B1's `killed` entry, under the order's lock. Tighten each bound, never raise it: the
+#: constructor refuses a larger figure.
+KILL_CANCEL_TIMEOUT_S: Final = CV_KILL_CANCEL_TIMEOUT - 1.0
 #: How old a create a restart resumes may be and still be re-sent where history never expires
 #: (`order_retention_days` None: live), in seconds ([LANE-26], binding). Tighten it, never raise
 #: it: a resumed send survives a restart or a dropped connection measured in seconds, and after
@@ -238,8 +293,8 @@ _DIRECTIONS: Final[Mapping[int, Literal["rise", "fall"]]] = {1: "rise", 2: "fall
 _MODES: Final[Mapping[str, Literal["full", "partial"]]] = {"Full": "full", "Partial": "partial"}
 _POSITION_IDX: Final[Mapping[int, Literal[0, 1, 2]]] = {0: 0, 1: 1, 2: 2}
 
-#: A slice 3 service B1's `cancel` or `amend` goes to.
-type CommandHandler = Callable[[b01.Command], Awaitable[Mapping[str, Any]]]
+#: The exits an exit service waits on (`expect_exit`): B1's cancel; S4-B2 adds the amend.
+type ExitKind = Literal["cancel"]
 type StoredOrder = NewOrder | OrderRow
 
 
@@ -451,6 +506,33 @@ class PlaceWatch:
             self._future.set_result(answer)
 
 
+@dataclass(eq=False, slots=True)
+class ExitWatch:
+    """An exit service's wait on one order's cancel (`expect_exit`), as `PlaceWatch` is the
+    pipeline's on a create: it answers what B1's own cancel was answered, or None when the call
+    raised (Q11) or the registration was replaced, dropped or forgotten; the venue's 110001 answers
+    why the order parks (`_parked`), as S4-C reads it apart from a fault. A KILL's spends none.
+    `request_id` and `actor` name the request the exit is for (#3990)."""
+
+    order_id: UUID
+    kind: ExitKind
+    _future: asyncio.Future[Mapping[str, Any] | None] = field(repr=False)
+    request_id: UUID | None = None
+    actor: SubmitActor | None = None
+
+    @property
+    def answered(self) -> bool:
+        return self._future.done()
+
+    async def answer(self) -> Mapping[str, Any] | None:
+        """The answer; a waiter's own cancellation never cancels it."""
+        return await asyncio.shield(self._future)
+
+    def resolve(self, answer: Mapping[str, Any] | None) -> None:
+        if not self._future.done():
+            self._future.set_result(answer)
+
+
 class OmsCommandPort:
     """B1's `CommandPort` (module docstring), one per process with the facade it is wired into."""
 
@@ -470,9 +552,9 @@ class OmsCommandPort:
         gate: StopRequestGate,
         notices: OrderNotices,
         now_us: Callable[[], int],
-        cancels: CommandHandler | None = None,
-        amends: CommandHandler | None = None,
         submit_timeout_s: float = SUBMIT_TIMEOUT_S,
+        cancel_timeout_s: float = CANCEL_TIMEOUT_S,
+        kill_cancel_timeout_s: float = KILL_CANCEL_TIMEOUT_S,
         port_timeout_s: float = PORT_TIMEOUT_S,
         live_resend_max_age_s: float = LIVE_RESEND_MAX_AGE_S,
         max_watches: int = MAX_WATCHES,
@@ -481,6 +563,12 @@ class OmsCommandPort:
             raise ValueError("max_watches holds at least one registration")
         if not 0 <= live_resend_max_age_s <= LIVE_RESEND_MAX_AGE_S:  # NaN fails it too
             raise ValueError("the live re-send bound is only ever tightened, never raised")
+        bounds = (
+            (cancel_timeout_s, CANCEL_TIMEOUT_S),
+            (kill_cancel_timeout_s, KILL_CANCEL_TIMEOUT_S),
+        )
+        if not all(0 < bound <= most for bound, most in bounds):  # NaN fails it too
+            raise ValueError("a cancel bound is only ever tightened, inside B1's own")
         self._router = router
         self._accounts = accounts
         self._orders = orders
@@ -494,13 +582,14 @@ class OmsCommandPort:
         self._gate = gate
         self._notices = notices
         self._now_us = now_us
-        self._cancels = cancels
-        self._amends = amends
         self._submit_timeout_s = submit_timeout_s
+        self._cancel_timeout_s = cancel_timeout_s
+        self._kill_cancel_timeout_s = kill_cancel_timeout_s
         self._port_timeout_s = port_timeout_s
         self._live_resend_max_age_us = round(live_resend_max_age_s * 1_000_000)
         self._max_watches = max_watches
         self._watches: OrderedDict[UUID, PlaceWatch] = OrderedDict()
+        self._exits: OrderedDict[tuple[UUID, ExitKind], ExitWatch] = OrderedDict()
         self._resync: asyncio.Task[None] | None = None
         self._closed = False
 
@@ -893,19 +982,128 @@ class OmsCommandPort:
         except Exception as exc:  # the rows stay in flight, which only the complete read ends
             _log().error("oms_stop_settle_failed", answered=ack.ok, failure=type(exc).__name__)
 
-    # --- cancel and amend: slice 3's services ----------------------------------------------
+    # --- cancel, B1's and a KILL's, and the exit services' watch; amend (S4-B2) -----------------
+
+    def expect_exit(
+        self,
+        order_id: UUID,
+        kind: ExitKind,
+        *,
+        request_id: UUID | None = None,
+        actor: SubmitActor | None = None,
+    ) -> ExitWatch:
+        """Register the exit an exit service is about to command (`CANCEL`), answered as B1 was. As
+        `expect`: a second registration replaces the first, and past `max_watches` the oldest is
+        dropped, each answered None (C-2.18)."""
+        future = asyncio.get_running_loop().create_future()
+        watch = ExitWatch(order_id, kind, future, request_id, actor)
+        replaced = self._exits.pop((order_id, kind), None)
+        if replaced is not None:
+            replaced.resolve(None)
+        self._exits[(order_id, kind)] = watch
+        while len(self._exits) > self._max_watches:
+            _, dropped = self._exits.popitem(last=False)
+            _log().error("oms_exit_watch_dropped", order_id=str(dropped.order_id))
+            dropped.resolve(None)
+        return watch
+
+    def forget_exit(self, order_id: UUID, kind: ExitKind) -> None:
+        """Drop the order's exit registration while B1 has not spent it: its command was refused
+        (a conflict, a stale version), so no call comes for it. Its watch answers None."""
+        watch = self._exits.pop((order_id, kind), None)
+        if watch is not None:
+            watch.resolve(None)
 
     async def cancel(self, command: b01.Command) -> Mapping[str, Any]:
-        """A cancel, or a KILL's (`kill_cancel`), through slice 3's audited service (SR-E29-06)."""
-        if self._cancels is None:
-            raise b01.PortMissingError("no cancel service is wired yet (slice 3)")
-        return await self._cancels(command)
+        """B1's cancel (`cancel_pending`) and a KILL's (`kill_cancel`), module docstring; the
+        order's exit registration is spent by B1's own cancel only, never by a KILL's."""
+        kill = command.kind == "kill_cancel"
+        order_id = _uuid(command.order.get("order_id"))  # parsed before any registration is popped
+        watch = None if kill else self._exits.pop((order_id, "cancel"), None)
+        try:
+            answer = await self._cancel(command, kill=kill)
+        except BaseException as exc:
+            if watch is not None:
+                watch.resolve(_parked(exc))
+            raise
+        if watch is not None:
+            watch.resolve(answer)
+        return answer
+
+    async def _cancel(self, command: b01.Command, *, kill: bool) -> dict[str, Any]:
+        bound = self._kill_cancel_timeout_s if kill else self._cancel_timeout_s
+        by = self._deadline(bound)  # all of the cancel, inside B1's own bound on it
+        try:  # the reads before the send: one that fails sends nothing, so the order stays live
+            row = await self._stored(command, by=by)
+            link, recorded = row.order_link_id, row.provenance == "recorded_stop"
+            if recorded and kill:  # C-2.6, INV-B1-p: B1's guarded arm spares it, and the port too
+                _log().critical("oms_kill_spared_recorded_stop", order_link_id=link)
+                return {"ok": False, "error_code": b01.NATIVE_STOP_REQUIRED}
+            account = await self._account(row, by=by)
+        except ValueError:  # the command names another order or account: a defect, raised
+            raise
+        except _ACCOUNT_REFUSED as exc:  # no outage, so no retry is advised: answered, not retried
+            _log().warning("oms_cancel_account_refused", kill=kill, refusal=type(exc).__name__)
+            return {"ok": False, "error_code": ACCOUNT_UNAVAILABLE}
+        except Exception as exc:  # unread (an outage): answered, retried after the shared wait
+            if _transient(exc):
+                _log().warning("oms_cancel_unread", kill=kill, failure=type(exc).__name__)
+            else:  # a defect reads as an outage: still answered so, but it is seen
+                _log().error("oms_cancel_unread_unexpected", kill=kill, failure=type(exc).__name__)
+            wait = retry_after(STORE_UNAVAILABLE_RETRY_AFTER_S)
+            return {"ok": False, "error_code": STORE_UNAVAILABLE, "retry_after_s": wait}
+        port = self._router.port_for(account.environment)
+        if recorded and not await self._flat(account, port, row, by=by):
+            return {"ok": False, "error_code": b01.NATIVE_STOP_REQUIRED}
+        request = CancelOrderRequest(
+            account=account,
+            symbol=row.symbol,
+            order_link_id=link,
+            exchange_order_id=row.exchange_order_id,
+        )
+        try:
+            ack = await self._venue_gated(account, port.cancel_order(request), by=by)
+        except RateBudgetExceededError as exc:
+            _log().warning("oms_cancel_rate_refused", order_link_id=link, kill=kill)
+            code, wait = OmsErrorCode.RATE_BUDGET_EXCEEDED.value, retry_after(exc.retry_after_s)
+            return {"ok": False, "error_code": code, "retry_after_s": wait}
+        if ack.ok:  # it binds nothing: B1 compares the id it names with the bound one (OM-S05)
+            kept = order_id_kept(ack.exchange_order_id)
+            return {"ok": True, "exchange_order_id": kept, **_record(ack)}
+        if ack.error_code == OmsErrorCode.ORDER_NOT_FOUND:  # 24 Sec.8.6: reconcile, never back live
+            ret_code = ack.exchange_ret_code
+            raise NotFoundError("the venue does not hold the order", exchange_ret_code=ret_code)
+        if kill:  # INV-B1-h: B18's cancel-all and reconciliation settle the venue
+            _log().error("oms_kill_cancel_refused", order_link_id=link, error_code=ack.error_code)
+        return await self._sent(account, ack, by=by)
+
+    async def _flat(
+        self, account: AccountRef, port: RoutedPort, row: OrderRow, *, by: float
+    ) -> bool:
+        """Q9, fail closed: a recorded stop's row is cancelled only once a `poll`-lane read, ended
+        by `RECORDED_STOP_READ_S`, shows its position flat, or none (logged apart: a missed position
+        would too); one that shows it open, or fails, keeps the stop (24 Sec.8.8 rule 6), logged."""
+        link, read = row.order_link_id, read_position(port, account, row.symbol, row.position_idx)
+        within = min(by, self._deadline(RECORDED_STOP_READ_S))
+        try:
+            held = await self._venue_gated(account, read, by=within)
+            if held is not None and held.qty != 0:  # any size, a NaN's too, is a position held
+                _log().warning("oms_recorded_stop_kept", order_link_id=link, position="open")
+                return False
+        except Exception as exc:  # unread: the stop stays, as over an open position (C-2.6)
+            failure = type(exc).__name__
+            _log().warning(
+                "oms_recorded_stop_kept", order_link_id=link, position="unread", failure=failure
+            )
+            return False
+        if held is None:  # flat, but a position the read missed (a materialisation defect) too
+            _log().warning("oms_recorded_stop_released", order_link_id=link, position="none")
+        return True
 
     async def amend(self, command: b01.Command) -> Mapping[str, Any]:
-        """An amend, through slice 3's audited service."""
-        if self._amends is None:
-            raise b01.PortMissingError("no amend service is wired yet (slice 3)")
-        return await self._amends(command)
+        """B1's amend: unwired until S4-B2 (#913) re-pairs its sides and records the amended stop.
+        It raises with nothing sent, so B1 lands the order in `unknown` (S1), as it did unwired."""
+        raise b01.PortMissingError("no amend is wired yet (E29-T04 slice 4, S4-B2)")
 
     # --- the rest ----------------------------------------------------------------------------
 
@@ -1011,6 +1209,26 @@ class OmsCommandPort:
             action, order_id, account_id, outcome, severity, reason, detail, request_id
         )
         await self._bounded(self._audit.write(record), by=by)
+
+
+def _transient(error: Exception) -> bool:
+    """What an outage raises, which a later read may pass: a timeout, `StoreUnavailable`, or a
+    storage failure that is no data refusal (the order machine's test of what every try meets)."""
+    if isinstance(error, TimeoutError | StoreUnavailable):
+        return True
+    return isinstance(error, StorageError) and not _data_refusal(error)
+
+
+def _parked(error: BaseException) -> dict[str, Any] | None:
+    """An exit watch's answer to a cancel that raised: None, but for the venue's 110001, which says
+    why B1 parks the order in `unknown` (and its code), so an exit service tells it from a fault."""
+    if not isinstance(error, NotFoundError):
+        return None
+    return {
+        "ok": False,
+        "unknown": b01.ALREADY_TERMINAL,
+        "exchange_ret_code": error.exchange_ret_code,
+    }
 
 
 def _check_names(command: b01.Command, order: StoredOrder) -> None:
