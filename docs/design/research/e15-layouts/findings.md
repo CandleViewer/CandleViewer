@@ -67,19 +67,21 @@ pending the owner run; **open** = needs sessions or an owner decision; **deviati
 
 Page **`E15-D01 Layout UX research`** · page id `f624df56-f905-8048-8008-d3a73fdb2b4b` (page name and id only). Six
 greyscale research boards, not visual design, drawn 2026-10-22 from board script `r2` (posted on PR #4079 with sha256;
-not in this diff): one board per call, relaid out, in one row, exported as PNG at scale 1 by the plugin's `shape.export`
-(the bridge's export timed out) to `docs/design/E15/img/`. Boards 03 and 04 are the sync stimulus, with a facilitator
-card (no answer key): each configuration frame (`/ 03 / C1` to `/ 04 / C6`) exports alone, letters only, text 16 px or
-more, its `/ reveal` frame (shared axes) hidden but for step (2); board 05 holds `E15-D01 / 05 / focus`.
+not in this diff) and redrawn 2026-10-24 from `r3` (sha256 `83a1815bcc2a41af…`, carry m1 of #248's boards PR: every id
+joined with U+2011, the AM-1 box citing the ruling): one board per call, relaid out, in one row, exported as PNG at
+scale 1 by the plugin's `shape.export` (the bridge's export timed out) to `docs/design/E15/img/`. Boards 03 and 04 are
+the sync stimulus, with a facilitator card (no answer key): each configuration frame (`/ 03 / C1` to `/ 04 / C6`)
+exports alone, letters only, text 16 px or more, its `/ reveal` frame (shared axes) hidden but for step (2); board 05
+holds `E15-D01 / 05 / focus`.
 
 | #   | Board · board id · PNG                                                                                                              | Illustrates                                                                           |
 | --- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| 01  | `E15-D01 / 01 journey` · `f624df56-f905-8048-8008-d3cc9fa8b0e9` · [PNG](../../E15/img/E15-D01-01-journey.png)                       | §2–§5: six stages, set up to save, by does, risk, decision and keyboard; participants |
-| 02  | `E15-D01 / 02 presets` · `f624df56-f905-8048-8008-d3cced8bdebb` · [PNG](../../E15/img/E15-D01-02-presets.png)                       | §2.2: the ten presets and two grids ranked, storable today, first-run defaults        |
-| 03  | `E15-D01 / 03 sync-c1-c3` · `f624df56-f905-8048-8008-d3cc2125e200` · [PNG](../../E15/img/E15-D01-03-sync-c1-c3.png)                 | §3.2: configurations C1–C3 (stimulus)                                                 |
-| 04  | `E15-D01 / 04 sync-c4-c6` · `f624df56-f905-8048-8008-d3cc60cc477b` · [PNG](../../E15/img/E15-D01-04-sync-c4-c6.png)                 | §3.2: configurations C4–C6 (stimulus)                                                 |
-| 05  | `E15-D01 / 05 dock-and-keys` · `f624df56-f905-8048-8008-d3d010aac4f3` · [PNG](../../E15/img/E15-D01-05-dock-and-keys.png)           | §4, §6: the reduce proposal, move mode step by step, the key map                      |
-| 06  | `E15-D01 / 06 findings-decisions` · `f624df56-f905-8048-8008-d3cdac73f8b8` · [PNG](../../E15/img/E15-D01-06-findings-decisions.png) | §9, §13, §14: findings, decisions, amendments                                         |
+| 01  | `E15-D01 / 01 journey` · `504cb790-0152-809d-8008-d6c8852b3fe0` · [PNG](../../E15/img/E15-D01-01-journey.png)                       | §2–§5: six stages, set up to save, by does, risk, decision and keyboard; participants |
+| 02  | `E15-D01 / 02 presets` · `504cb790-0152-809d-8008-d6c8dede526e` · [PNG](../../E15/img/E15-D01-02-presets.png)                       | §2.2: the ten presets and two grids ranked, storable today, first-run defaults        |
+| 03  | `E15-D01 / 03 sync-c1-c3` · `504cb790-0152-809d-8008-d6c9317f50cf` · [PNG](../../E15/img/E15-D01-03-sync-c1-c3.png)                 | §3.2: configurations C1–C3 (stimulus)                                                 |
+| 04  | `E15-D01 / 04 sync-c4-c6` · `504cb790-0152-809d-8008-d6c97434782e` · [PNG](../../E15/img/E15-D01-04-sync-c4-c6.png)                 | §3.2: configurations C4–C6 (stimulus)                                                 |
+| 05  | `E15-D01 / 05 dock-and-keys` · `504cb790-0152-809d-8008-d6c9bf743115` · [PNG](../../E15/img/E15-D01-05-dock-and-keys.png)           | §4, §6: the reduce proposal, move mode step by step, the key map                      |
+| 06  | `E15-D01 / 06 findings-decisions` · `504cb790-0152-809d-8008-d6ca2a64a6a9` · [PNG](../../E15/img/E15-D01-06-findings-decisions.png) | §9, §13, §14: findings, decisions, amendments                                         |
 
 Contrast (`docs/design/_tools/contrast_check.py`, dark; canvas / raised / sunken): text primary 15.20 / 14.35 / 17.42,
 secondary 9.33 / 8.81 / 10.69 (also the cue outlines), tertiary 5.96 / 5.62 / 6.83 (footnotes); borders are decorative.
