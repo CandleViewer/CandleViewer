@@ -44,9 +44,10 @@ from tests.fixtures.admin.handles import (
 
 #: How long INVITED-I's invite stays open after the seed's `now`.
 _INVITE_OPEN: Final = timedelta(days=7)
-#: A fixture backup's kind, size and how long its run, and then its verification, took.
+#: A fixture backup's kind, size, trigger and how long its run, and then its verification, took.
 _BACKUP_KIND: Final = "pg_basebackup"
 _BACKUP_BYTES: Final = 1_073_741_824
+_BACKUP_TRIGGER: Final = "schedule"
 _BACKUP_RUN: Final = timedelta(minutes=10)
 #: How a verified fixture backup was verified (`bk_verify` lists the methods).
 _VERIFY_METHOD: Final = "checksum"
@@ -252,7 +253,16 @@ def _backup_columns(b: FixtureBackup) -> dict[str, Any]:
         "checksum_sha256": b.checksum_sha256,
         "verify_method": _VERIFY_METHOD if b.status == "verified" else None,
         "error_message": b.error,
+        "size_bytes": _BACKUP_BYTES,
+        "triggered_by": _BACKUP_TRIGGER,
+        "encrypted": True,  # the column's default, written so that the check can read it back
     }
+
+
+def _stamp(value: datetime | None) -> str:
+    """Whether a time is set: the check cannot know the instant the seed ran at, so it compares
+    only this."""
+    return "NULL" if value is None else "set"
 
 
 async def seed_backups(conn: AsyncConnection, *, now: datetime) -> None:
@@ -267,11 +277,9 @@ async def seed_backups(conn: AsyncConnection, *, now: datetime) -> None:
             .values(
                 **_backup_columns(b),
                 id=b.id,
-                size_bytes=_BACKUP_BYTES,
                 started_at=started,
                 finished_at=started + _BACKUP_RUN,
                 verified_at=started + 2 * _BACKUP_RUN if verified else None,
-                triggered_by="schedule",
             )
             .on_conflict_do_nothing(index_elements=["id"])
         )
@@ -280,7 +288,8 @@ async def seed_backups(conn: AsyncConnection, *, now: datetime) -> None:
 async def check_backups(conn: AsyncConnection) -> None:
     """Raise `FixtureCheckError` naming each way the catalogue is not the fixture's two backups."""
     await refuse_unless_test_database(conn)
-    names = ("id", "started_at", "verified_at", *_backup_columns(BACKUP_VERIFY_FAILED))
+    times = ("started_at", "finished_at", "verified_at", "deleted_at")
+    names = ("id", *times, *_backup_columns(BACKUP_VERIFY_FAILED))
     read = sa.select(*(m.backups.c[n] for n in names))  # a test catalogue: a handful of rows
     rows = (await conn.execute(read)).mappings().all()
     held = {r["id"]: r for r in rows}
@@ -292,8 +301,18 @@ async def check_backups(conn: AsyncConnection) -> None:
         if row is None:
             failed.append(f"{b.handle}: no row")
             continue
-        got = {**row, "verified_at": "NULL" if row["verified_at"] is None else "set"}
-        want = _backup_columns(b) | {"verified_at": "set" if b.status == "verified" else "NULL"}
+        ran = "NULL" if row["finished_at"] is None else str(row["finished_at"] - row["started_at"])
+        got = {
+            **row,
+            "verified_at": _stamp(row["verified_at"]),
+            "deleted_at": _stamp(row["deleted_at"]),
+            "finished_at after started_at": ran,
+        }
+        want = _backup_columns(b) | {
+            "verified_at": "set" if b.status == "verified" else "NULL",
+            "deleted_at": "NULL",  # a deleted artefact no longer counts as the last verified one
+            "finished_at after started_at": str(_BACKUP_RUN),
+        }
         failed += [
             f"{b.handle}: {c} is {got[c]!r}, not {v!r}" for c, v in want.items() if got[c] != v
         ]

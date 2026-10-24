@@ -109,7 +109,7 @@ replaced by one that raises `AuditUnavailable` for that record only, as
 | BACKUP-VERIFY-FAILED, BACKUPS-NONE    | The latest backup failing verification; no backup at all                                                                                   |
 | BACKUP-THEN-REVOKED                   | A backup, then later revocations it predates (AC-ADM-24; with #3084)                                                                       |
 | BACKUP-TAMPERED                       | A backup whose artefact digest differs from its bound record (AC-ADM-25)                                                                   |
-| GROUP-G                               | An enabled trade group with an open group trade                                                                                            |
+| GROUP-G                               | An enabled trade group with an open group trade; blocked: the trade-group routes are not mounted (AD-S07-04)                               |
 | SC-CHAIN-TRIPS                        | A machine of a kind with a public entity id, restored with `chain_trips` above 0                                                           |
 | SC-FORGED-SEAL                        | A persisted snapshot whose seal fails; it loads only into a test database                                                                  |
 
@@ -311,7 +311,7 @@ destructive action")
   `login`): the sign-in is refused with no session and recorded `auth.login_failed` (Q-15). On Enable,
   `users.enable`; the grants, sessions and disarmed rules stay gone, and a scheduled purge is cancelled.
 - **AD-S02-N05 The status chips** (`e2e`; D02 D8): LOCKED-L shows "Locked out (sign-in)", and a manager under
-  a risk lockout "Trading locked (risk)", each with its until-time.
+  a risk lockout "Trading locked (risk)", each with its until-time. Audit: none (a read).
 - **AD-S02-N06 An invite without a live `users` grace is challenged** (`contract`, `integration`; SR-025;
   D02 §13.2; Q-17): OWNER, holding no `users` grace, sends `POST /users` with a valid viewer body. It
   answers `403 step_up_required` (`action_class: users`) and creates no user and no invite. The gate runs
@@ -435,19 +435,17 @@ UL3-T1)
   viewing as MGR-M gets MGR-M's answers, statuses and refusals (an Owner-only route answers `403 forbidden`),
   and every record names the owner.
 - **AD-S03-N04 The key restriction on SCR-122** (`e2e`; D02 D8): SUB-K's row shows the 48-hour restriction
-  with its absolute unlock time.
+  with its absolute unlock time. Audit: none (a read).
 - **AD-S03-N05 A stale grant set re-grants a revoked account** (`integration`, `e2e`; 22
   `setUserAccountAccess`; E42-S03 technical notes; Q-16): OWNER and OWNER-2 each hold a live `users`
-  grace, and MGR-MANY's open-position state is readable (else a grant save answers
-  `409 positions_unknown`). OWNER loads MGR-MANY's grants (SUB-S, SUB-T, SUB-U); OWNER-2 then removes
+  grace, and every save carries `acknowledge_unknown_positions=true` (§1). OWNER loads MGR-MANY's
+  grants (SUB-S, SUB-T, SUB-U); OWNER-2 then removes
   SUB-S and saves; OWNER, whose page still lists SUB-S, changes SUB-U's level and saves, the payload
   being the complete set (replace semantics). The route takes no `If-Match`, so the
   save answers `200` with the stored set, SUB-S included, and SUB-S is a live grant again (its soft-revoked
   row is revived, its freeze state and caps as they were). Nothing refuses it. Audit: `users.access_change`
   for each save: OWNER-2's has SUB-S in its `before_state` only, OWNER's in its `after_state` only. Until
   Q-16 is answered the case records this end state, and a tester files it against Q-16, not as a defect.
-  **Blocked** until a position source is wired (§1), since the open-position state it needs is
-  unreadable.
 - **AD-S03-N06 The view-as start's gates** (`contract`, `security`; 22 `startViewAs`; AC-ADM-22; SR-025):
   - a valid start (an eligible target and a good reason) with no live `users` grace answers
     `403 step_up_required` (`action_class: users`, `action_summary` "View as user '<username>', read-only").
@@ -486,11 +484,11 @@ UL3-T1)
   `PUT /users/{userId}/roles` with `[manager]` answers `503 audit_unavailable`, and VIEWER-V's roles are
   as before. Audit: no `roles.grant` or `roles.revoke`.
 - **AD-S03-N10 An unwritable audit record leaves a grant change unchanged** (`integration`; 22
-  `setUserAccountAccess`; UL-AC05): OWNER, elevated; MGR-MANY subscribed to SUB-S, its open-position state
-  readable; the `users.access_change` record unwritable (§1). Removing the SUB-S grant answers
-  `503 audit_unavailable`: the grant set is as before and MGR-MANY's subscription carries on, with no
-  `revoked` frame. Audit: no `users.access_change` and no `ws.subscription.revoked`. **Blocked** until a
-  position source is wired (§1).
+  `setUserAccountAccess`; UL-AC05): OWNER, elevated; MGR-MANY subscribed to SUB-S; the `users.access_change`
+  record unwritable (§1). Removing the SUB-S grant, the request carrying
+  `acknowledge_unknown_positions=true` (§1), answers `503 audit_unavailable`: the grant set is as before
+  and MGR-MANY's subscription carries on, with no `revoked` frame. Audit: no `users.access_change` and
+  no `ws.subscription.revoked`.
 - **AD-S03-N11 An unwritable audit record stops a view-as start** (`integration`; 22 `startViewAs`;
   AC-ADM-22): OWNER with a live `users` grace; MGR-M; the `admin.view_as_started` record unwritable (§1).
   The guard's `admin.area_entered` stays writable, so the refusal is the start's. The start answers
@@ -569,17 +567,18 @@ audited"; D11; 22 `exportAuditLog`; 24 "Verification"; AC-ADM-20)
   The export control names the real format. Every verification step passes; the same file with one byte
   altered, or checked against another environment's pin, fails.
 - Audit: `admin.audit_export` for the request, written before the job exists; `security.audit_export_signed`
-  before it signs; the completion record, also `admin.audit_export`, the registry's only export action
-  (job id, window, span, row count, digest, actor); and `admin.audit_export` with reason `downloaded`,
-  written before any byte is streamed (22 `exportAuditLog`; ADR-0039 decision 7). See Q-5.
+  before it signs; the completion record, also `admin.audit_export` since the registry names no action
+  for it, with the job id, window, span, row count, digest and actor; and `admin.audit_export` with
+  reason `downloaded`, written before any byte is streamed (22 `exportAuditLog`; ADR-0039 decision 7).
+  See Q-5.
 
 **AD-S04-06 A failed export offers no partial file** (`e2e`; E42-S04 "Export job fails")
 
 - Pre: an export job that ends `failed`.
 - Expected: the failure shows its reason and a retry action, and no partial file is offered.
 - Audit: the request's `admin.audit_export`, and its completion with reason `failed` naming the job's `error`;
-  none with reason `downloaded`, since no file is offered; a failure at signing also writes
-  `security.audit_export_sign_failed`.
+  none with reason `downloaded`, since no file is offered; a failure at signing writes
+  `security.audit_export_signed` first, then `security.audit_export_sign_failed`.
 
 **AD-S04-07 A secret-bearing entry shows fingerprints only [R]** (`e2e`, `security`; E42-S04 "Secret-bearing
 entry"; C-12.6)
@@ -870,13 +869,16 @@ fails")
   with an exchange key. Its synthetic keys are what the key step can verify; never a real Bybit key
   (§0), since the server verifies a candidate key with the exchange first (22 `createApiKey`). On this
   `main` the transport still refuses every request, until #2893's serving slices land, so the key step
-  is blocked.
+  is blocked, and so are the sub-account and profile steps: `POST /exchange-accounts` and the profile
+  routes are `not_mounted` (`tests/contract/rbac/matrix.yaml`), and nothing emits `profile.created` or
+  `profile.bound` yet.
 - Steps: start the manager onboarding flow and complete it, ending with the invite.
 - Expected: it walks through sub-account creation, the 48-hour key restriction, key creation with 2FA,
   permission scoping, IP whitelisting, profile creation and limits, and the invite, marking each
   completed step. The invite is a redeemable link, and its step is challenged when no `users` grace is
   live (SR-025; AD-S02-N06).
-- Audit: each step's own record: the key's `api_key.import`, the profile's `profile.created` and
+- Audit: each step's own record: the sub-account's `accounts.create`, the key's `api_key.import`,
+  the profile's `profile.created` and
   `profile.bound`, the grant's `users.access_change` and the invite's `users.invited`; the onboarding
   records E42-S07 names are not registered: see Q-22.
 - End: the invite link is redeemed or revoked (`users.invite_revoked`), so none outlives the case.
@@ -899,6 +901,9 @@ flow"; D02 D8)
 
 **AD-S07-04 Disable a trade group** (`e2e`, `integration`; E42-S07 "Disable a trade group")
 
+- **Blocked:** the trade-group routes (the `/trade-group-definitions*` and `/trade-groups*` blocks)
+  are `not_mounted` on this `main` (`tests/contract/rbac/matrix.yaml`), so GROUP-G cannot be made or
+  changed through the API.
 - Pre: GROUP-G, enabled, with an open group trade.
 - Steps: disable G.
 - Expected: G leaves the ticket's targets, and the positions opened through G stay fully manageable. The
@@ -910,6 +915,8 @@ flow"; D02 D8)
 **AD-S07-05 A membership change keeps the open trade's snapshot** (`integration`; E42-S07 "Membership change
 during an open trade")
 
+- **Blocked** with AD-S07-04: a membership change is `PUT /trade-group-definitions/{definitionId}`,
+  `not_mounted` with the rest of the two blocks.
 - Pre: GROUP-G with an open group trade.
 - Steps: change G's membership.
 - Expected: the open trade keeps its original membership. The group version its detail should show has
@@ -920,6 +927,7 @@ during an open trade")
 **AD-S07-06 A secret is never shown again [R]** (`e2e`, `security`; E42-S07 "Secret never re-displayed";
 C-2.7)
 
+- **Blocked** with AD-S07-01's key step: the fixture transport refuses every request on this `main`.
 - Pre: as AD-S07-01, a synthetic key from the fixture transport.
 - Steps: enter an API secret at the key step; go back to that step.
 - Expected: only the key's fingerprint and status are shown. No secret value was written outside the
@@ -958,8 +966,16 @@ C-2.7)
 
 ### E42-T07 and E42-S08: the statechart inspector
 
+A deployed cv-api wires no key provider that opens snapshot seals (#2701), so its inspector reads no
+snapshot: `snapshots` is `unavailable` and the list empty (`admin_wiring.py`,
+`build_statechart_inspector`). AD-T07-01, AD-T07-N01, the Owner half of AD-T07-N02 and AD-S08-01 therefore
+run in process only, over an injected store of rows sealed with a test key, as SC-CHAIN-TRIPS and
+SC-FORGED-SEAL are built. AD-T07-N01's critical `system_events` row is not written yet either
+(`admin/inspector.py`: it waits for the store).
+
 **AD-T07-01 List the live machines** (`contract`; E42-T07 "List live machines"; 22 `listStatecharts`)
 
+- **In process only:** see the section's note above.
 - Pre: several machines running, among them one of a kind with no public entity id (B8, B9, B13 or B15).
 - Expected: one row per live machine of a kind that has a public entity id, with its kind, state,
   `machine_hash` and `chain_trips`; a kind with none gets no row and appears only in `kinds`'
@@ -989,27 +1005,34 @@ registered chart"; 22 `exportStatechart`)
 - Audit: none beyond `admin.area_entered`.
 
 **AD-T07-N01 A snapshot whose seal fails is left out** (`security`; 22 `listStatecharts`): Pre:
-SC-FORGED-SEAL (see §1), on a test database. It is left out of the list, `snapshots` says `error` with a
-fixed reason, and a critical event is raised once per machine, environment and snapshot. Audit: none
-beyond `admin.area_entered`; the critical event is a `system_events` row, not an audit record.
+SC-FORGED-SEAL (see §1), on a test database, in process only (see the section's note). It is left
+out of the list, and `snapshots` says `error` with a fixed reason. The critical event's half is
+**blocked** until the `system_events` store lands (`admin/inspector.py`, the section's note): a critical
+event is then raised once per machine, environment and snapshot. Audit: none beyond
+`admin.area_entered`; the critical event is a `system_events` row, not an audit record.
 
 **AD-T07-N02 A machine the caller may not see is invisible** (`contract`, `security`; 22 `listStatecharts`,
 `getStatechart`; C-12.4): the inspector is the Owner's (`admin:read`), so a Manager or Viewer gets
 `403 forbidden` on both reads. The Owner sees an `alert`, `replay` or `session` machine only if it is its
 own; a row it may not see is omitted, never redacted. `GET` of a machine the Owner may not see answers
 `404 not_found`, as an unknown machine does, even when that machine's seal fails (the visibility check
-comes first). Audit: `admin.area_entered` with outcome `denied` for the Manager's and the Viewer's
-reads, and none beyond `admin.area_entered` for the Owner's.
+comes first). The Owner's list half is in process only (see the section's note), and the `GET` half is
+**blocked**: `GET /admin/statecharts/{machineKey}` is `not_mounted` on this `main`
+(`tests/contract/rbac/matrix.yaml`); only the list and the export are served. Audit:
+`admin.area_entered` with outcome `denied` for the Manager's and the Viewer's reads, and none beyond
+`admin.area_entered` for the Owner's.
 
 **AD-T07-N03 The context summary is redacted** (`contract`, `security`; 22 `getStatechart`; C-12.6): a
 machine's `context_summary` holds only the keys its kind's `machines.{entity}.state` topic allows, and
 never a secret, a user id, free text, a deadline, an exchange id, a price, a quantity, a balance or a
-limit. Audit: none beyond `admin.area_entered`.
+limit. **Blocked:** `GET /admin/statecharts/{machineKey}` is `not_mounted` on this `main`
+(`tests/contract/rbac/matrix.yaml`), so no `context_summary` is served. Audit: none beyond
+`admin.area_entered`.
 
 **AD-S08-01 See a degraded machine [R]** (`e2e`; E42-S08 "See a degraded machine")
 
 - Pre: SC-CHAIN-TRIPS, a machine of a kind that has a public entity id (so it has a row), restored with
-  `chain_trips` above 0.
+  `chain_trips` above 0; in process only (see the E42-T07 note above).
 - Expected: it is listed as degraded (`degraded: true`), with its `chain_trips` count shown; its kind's
   `dropped_receipts` count is on the `kinds` summary, `null` until a metrics source exists, so no count
   can be shown today (Q-24).
@@ -1066,15 +1089,13 @@ catalogue's, and it is measured between server timestamps.
 **AD-X-02 The owner revokes a grant while the manager is subscribed [R]** (`e2e`; 22
 `setUserAccountAccess`; 23 §16.4 "Grant revocation mid-stream")
 
-- B: MGR-MANY, subscribed to SUB-S's and SUB-T's private topics, its open-position state readable (else
-  the grant save answers `409 positions_unknown`).
-- A: OWNER, elevated (`users`), removes MGR-MANY's grant on SUB-S.
+- B: MGR-MANY, subscribed to SUB-S's and SUB-T's private topics.
+- A: OWNER, elevated (`users`), removes MGR-MANY's grant on SUB-S, the request carrying
+  `acknowledge_unknown_positions=true` (§1).
 - Expected: B receives `revoked` for SUB-S's subscriptions within **≤2 s** of the `users.access_change`
   record (22 `setUserAccountAccess`; `23` §16.4's matrix asks ≤1 s, see Q-14), and the SUB-T topics carry
   on. B's next read of SUB-S answers as for an account it was never granted, and resubscribing to SUB-S
   alone is refused `account_scope_denied` (a refused `sub_ok` result, 23 §6.2; `403` on REST).
-- **Blocked** until a position source is wired (§1): the grant removal needs a readable open-position
-  state.
 - Audit: `users.access_change` (before and after grant sets), `ws.subscription.revoked`, then, for the
   resubscribe, one `ws.subscribe.denied` naming B's session (23 §5.2).
 
@@ -1105,13 +1126,13 @@ catalogue's, and it is measured between server timestamps.
 Each charter is timeboxed, within `03-testing-strategy.md` §11.2's 60 to 120 minutes. A charter ends with
 notes, the defects filed and the coverage it reached.
 
-| Charter                                                                                                                                                                                                  | Timebox | What would make this a finding                                                                                                                                                  |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **CH-AD-1** Try to see data outside your scope as a manager: deep links with foreign ids, the scope selector, `/me`, WebSocket subscriptions, the own-redacted audit view, exports                       | 90 min  | Any byte of another user's or an ungranted account's data; or a foreign id answered differently from a missing one                                                              |
-| **CH-AD-2** Try to make the audit log look editable: SCR-135 and SCR-136 controls, every HTTP verb on `/admin/audit*`, the export, a detail view edited in the browser, the chain check on AUDIT-CORRUPT | 60 min  | Any control or verb that changes a record; any affordance that suggests editing; a verify of AUDIT-CORRUPT that reports an intact chain or another `first_bad_id`               |
-| **CH-AD-3** Try to reach an admin screen without elevation: deep links, the back button after a cancelled gate, a second tab, a grace lapsing mid-load, a view-as session                                | 60 min  | A step-up-gated action that succeeds with no grace or bound grant; a state change or admin-area call with no record; an Owner-only route not refused `403` in a view-as session |
-| **CH-AD-4** Try to lose form content by letting the step-up lapse, on every admin form                                                                                                                   | 60 min  | A form whose content is lost, that saves twice, or that saves without passing the gate                                                                                          |
-| **CH-AD-5** Try to make two tiles block each other: SCR-120 with subsystems slowed, failing and flapping                                                                                                 | 60 min  | One tile's failure or slowness delays another past 800 ms; a retry that blocks the page                                                                                         |
+| Charter                                                                                                                                                                                                  | Timebox | What would make this a finding                                                                                                                                                       |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **CH-AD-1** Try to see data outside your scope as a manager: deep links with foreign ids, the scope selector, `/me`, WebSocket subscriptions, the own-redacted audit view, exports                       | 90 min  | Any byte of another user's or an ungranted account's data; or a foreign id answered differently from a missing one                                                                   |
+| **CH-AD-2** Try to make the audit log look editable: SCR-135 and SCR-136 controls, every HTTP verb on `/admin/audit*`, the export, a detail view edited in the browser, the chain check on AUDIT-CORRUPT | 60 min  | Any control or verb that changes a record; any affordance that suggests editing; a verify of AUDIT-CORRUPT that reports an intact chain or another `first_bad_id`                    |
+| **CH-AD-3** Try to reach an admin screen without elevation: deep links, the back button after a cancelled gate, a second tab, a grace lapsing mid-load, a view-as session                                | 60 min  | A step-up-gated action that succeeds with no live grace or bound grant; a state change or admin-area call with no record; an Owner-only route not refused `403` in a view-as session |
+| **CH-AD-4** Try to lose form content by letting the step-up lapse, on every admin form                                                                                                                   | 60 min  | A form whose content is lost, that saves twice, or that saves without passing the gate                                                                                               |
+| **CH-AD-5** Try to make two tiles block each other: SCR-120 with subsystems slowed, failing and flapping                                                                                                 | 60 min  | One tile's failure or slowness delays another past 800 ms; a retry that blocks the page                                                                                              |
 
 CH-AD-2's chain check runs on AUDIT-CORRUPT, in a test database only, never on staging: a stored record
 changed there would permanently break an append-only, hash-chained log.
@@ -1212,7 +1233,8 @@ order is placed after a disable in AD-X-01; and the view-as entry criterion in s
   until each is mounted the guard refuses it like any other write;
 - for S08's latch cases (AD-S08-02 and AD-S08-03), Q-7 is answered: until the story's contract slice
   registers the acknowledge operation, its step-up class and its audit action, both are blocked; so are
-  AD-S05-07 (Q-29) and AD-S06-04's "stale since" half (Q-27).
+  AD-S05-07 (Q-29), AD-S06-04's "stale since" half (Q-27), AD-S04-04's UI half (Q-19) and AD-S07-05's
+  version half (Q-22).
 
 **Exit.** A story group is done when all of these hold:
 
@@ -1267,7 +1289,7 @@ never lost.
    expiry; never on every tick.
 10. **Unbind with open positions (D3, SCR-122):** the choice is an `alertdialog` with two named buttons,
     "Leave positions open — you take over" and "Flatten first, then remove access", neither pre-selected
-    or focused; `Esc` changes nothing and says so.
+    or focused; `Esc` changes nothing and says so. **Waits** on POS-M-S: no position source is wired (§1).
 11. **Maintenance mode (D15):** the entry and the exit dialogs are `alertdialog`s with Cancel first and
     the consequences read as a list; neither asks for a typed word; the exit's fresh-code dialog
     replaces it and returns to it.
@@ -1276,7 +1298,8 @@ never lost.
     available yet" or a rate-limit time is reached by keyboard and read in words.
 13. **Restore (D14):** the stepper marks the current step with `aria-current="step"`, each step is a
     labelled region, the typed-date and reason fields have visible labels, Back never discards the typed
-    reason, progress is read in text percentages and a refusal says the code was spent.
+    reason, progress is read in text percentages and a refusal says the code was spent. **Waits** on
+    the restore route, `not_mounted` on this `main` (AD-S06-05).
 14. **The onboarding wizard (E42-S07):** a labelled stepper with `aria-current="step"`; each step's
     status is a word (complete, blocked, current), a blocked step says why and until when in text, the
     secret field states it will not be shown again, and on return only the fingerprint is read.
@@ -1322,7 +1345,10 @@ guess. A question marked (answered) stays, so the numbers do not move.
   endpoint on `main` (D02 §6.4, §13.1 and O-G). AD-S03-04 is blocked until both exist.
 - **Q-5:** E42-S04 expects `audit.exported` for an export. The registry has `admin.audit_export`, which the
   contract writes for the request and, with reason `downloaded`, for the download; it names no action
-  for the completion record, so AD-S04-05 expects that under `admin.audit_export` too.
+  for the completion record, so AD-S04-05 expects that under `admin.audit_export` too. The registry's
+  other export actions are the signer's `security.audit_export_signed` and
+  `security.audit_export_sign_failed` and a diagnostics bundle's `health.diagnostics_exported`, none of
+  them a completion; #889 S10, which serves the export, should confirm the completion's action.
 - **Q-6:** E42-S05 requires a typed confirmation to enter maintenance mode. D02 D15 drops it, since it has no
   server counterpart, and leaves the choice open (O-E). AD-S05-05 asserts the rungs and not a typed word.
 - **Q-7:** E42-S08's latch acknowledgement has no operation in `22`, no registered audit action and no
@@ -1387,7 +1413,8 @@ guess. A question marked (answered) stays, so the numbers do not move.
   within 2 s of the commit. AD-S05-01 asserts the story's ≤10 s until they agree.
 - **Q-22:** E42-S07's scope names actions the registry does not hold: `user.onboarding_started`,
   `user.onboarding_resumed`, `user.onboarding_completed`, `trade_group.enabled`, `trade_group.disabled`,
-  `trade_group.renamed`, `trade_group.reordered` and `trade_group.membership_changed`. And `22` has no
+  `trade_group.renamed`, `trade_group.reordered` and `trade_group.membership_changed`; nor does the
+  registry hold E28's `tradegroup.updated`, which AD-S07-04 and AD-S07-05 name. And `22` has no
   group-level enable or disable, no per-user allowlist (`enabled` is per member) and no group version:
   neither `TradeGroup` nor `TradeGroupDefinition` carries one, though the story wants the trade detail
   to show the version a trade used. AD-S07-01 to AD-S07-05 assert the records the steps' own operations
@@ -1409,9 +1436,10 @@ guess. A question marked (answered) stays, so the numbers do not move.
   and the 3 s can only bound a tile's own request.
 - **Q-26:** E42-S06's health scenarios list more than D02 and `22` carry. D02 §6.9, §13.1 and §14 draw
   `HealthReport.components[]` only (state, number, detail, last good); per-account private-WebSocket
-  rows, REST latency per class and per-UID budgets are SCR-147's (`CapacityReport.rate_budget`) and
-  database sizes SCR-142's, and neither D02 nor `22` has a field for queue depths or error rates; `22`
-  carries `uptime_seconds`, which D02 does not draw. The drill-down is a history disclosure with a table
+  rows, REST latency per class and per-UID budgets are SCR-147's (`CapacityReport.rate_budget`), so is
+  the ingestion queue depth (`CapacityReport.ingestion.queue_depth`), and database sizes are SCR-142's;
+  neither D02 nor `22` has a field for error rates; `22` carries `uptime_seconds`, which D02 does not
+  draw. The drill-down is a history disclosure with a table
   alternative and the incident-log link, not recent errors and reconnects. The single `bybit_private_ws`
   row covers every account, with a fixed "what stops" sentence and no separate remediation hint, not a
   tile for `sub_002`. AD-S06-01 to AD-S06-03 assert what D02 draws; the rest waits for the story or the

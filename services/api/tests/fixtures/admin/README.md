@@ -93,8 +93,11 @@ async with engine.begin() as conn:
 
 - **Idempotent:** `ON CONFLICT (id) DO NOTHING`: a second run, whatever its `now`, keeps the first's.
 - **Self-checking:** `check_backups` raises `FixtureCheckError` naming each difference: a value that
-  is not the seed's, a `verified_at` missing on the verified row or set on the failed one, a missing
-  row, a failed row that is not the latest, or any row besides these two.
+  is not the seed's (`kind`, `status`, `target_path`, `checksum_sha256`, `verify_method`,
+  `error_message`, `size_bytes`, `triggered_by`, `encrypted`), a `finished_at` that is not ten minutes
+  after `started_at`, a `verified_at` missing on the verified row or set on the failed one, a
+  `deleted_at` set on either (a deleted artefact no longer counts as the last verified one), a
+  missing row, a failed row that is not the latest, or any row besides these two.
 - **Test databases only:** both refuse a database not named `test` or `*_test`, with `FixtureRefused`
   and before anything else is sent: the app's role cannot delete a backup row. `seed_backups` needs
   a `now` with a timezone (`ValueError` otherwise); `check_backups` takes none.
@@ -124,6 +127,13 @@ payload = json.loads(Path("tests/fixtures/admin/payloads/health_degraded.json").
 | `overview_recorder_down.json` | HEALTH-RECORDER-DOWN  | `AdminOverview`: the recorder slice `error`, `source failed`             |
 | `overview_recorder_hang.json` | HEALTH-RECORDER-HANG  | `AdminOverview`: the recorder slice `error`, `timed out after 300 ms`    |
 
+- **Ten components, not fifteen:** a real `GET /admin/health` sends five rows more than a health
+  payload, which holds the ten required components only. The five more are `hot_tier_write_behind`,
+  `ingestion`, `secrets`, `bars` and `bars_writer`, which `app.py` registers. No plan case reads them.
+- **No stack switch makes a health payload:** on this `main` the registry holds `oms`, `rule_engine`,
+  `recorder`, `bybit_rest` and `bybit_private_ws` as `not_deployed` placeholders, so a state of
+  theirs, HEALTH-SUB002-WS-DOWN's degraded `bybit_private_ws` included, is a harness's, served in
+  place of the real call.
 - **Two recorder handles, a file each:** AD-S01-03 runs both, and a failed read and a read that
   outran the fan-out's 300 ms budget carry different details; "Error — timed out after 300 ms
   [Retry]" is the second's. Both are `error`, the status that gives the tile its Retry. On this
@@ -160,8 +170,10 @@ async def test_verify_reports_the_victim(pg_dsn: str, tmp_path: Path) -> None:
   `fixture-3`) and the forged `reason` are fixed. Row ids, `record_id`, `event_ts` and the hashes
   differ on every run, as the writer draws them.
 - **The verify range must hold the victim:** a body of `{}` verifies only the newest 1,000,000 ids
-  (`audit_verify_max_span`; each entry takes two ids). A chain with more rows after the victim than
-  that needs a `from_id` at or below the victim's id.
+  (`audit_verify_max_span`; each entry takes two ids), about 500,000 entries. A chain with more rows
+  after the victim than that needs a `from_id` at or below the victim's id and within
+  `audit_verify_max_span` of it: the range then holds that many ids from `from_id` on, or stops at
+  the head if that is nearer (`audit/query.py`).
 - **Who can run it:** altering a row behind the chain needs the owner of `audit_log` (the role that
   ran the migrations), as an attacker holding the owner role would: the test container's user. The
   app's role holds no `UPDATE`. The append-only trigger is off inside one transaction only, so a
@@ -172,8 +184,9 @@ async def test_verify_reports_the_victim(pg_dsn: str, tmp_path: Path) -> None:
   `FixtureRefused` before an entry is written, whether the alteration's connection or the writer's
   pool reaches it.
 - **Self-checking:** `FixtureCheckError` when the chain does not hold exactly the seven entries, or
-  when `trg_audit_append` is not enabled after the seed (a second run reports a guard a crashed
-  run left off).
+  when `trg_audit_append` is not enabled after the seed. The alteration rolls back with its own
+  transaction, so a crash of the fixture cannot leave the guard off; a second run reports one that
+  something else left off.
 - `tests/integration/admin/test_admin_corrupt_chain_pg.py` runs it through the verify route on
   Postgres 16, and `tests/unit/test_admin_corrupt_chain_fixture.py` shows each guard on a fake
   connection.
