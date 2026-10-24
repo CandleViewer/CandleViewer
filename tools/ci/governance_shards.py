@@ -15,11 +15,12 @@ exclusion that no gating workflow runs. The files are the ones `pytest <suites>`
 mixes `scripts/` and `infra/` files reads the root pytest.ini, whose addopts match
 scripts/pytest.ini's. Files go greedily, heaviest first, to the lightest shard. `WEIGHTS` holds the
 measured cost, in seconds, of every file that took 0.5 s or more (one sequential run of
-`pytest -n 0 --durations=0` with coverage on, setup and teardown included; 2026-10-24: 5,959 tests,
-174 s; #4361's two entries ran beside six of the table's files, scaled to them), and any other
-file costs `DEFAULT_WEIGHT`, about the median of the rest. So a new, renamed or moved file always
-lands in a shard, and the split is deterministic for a given set of files; stale weights cost
-balance, never coverage.
+`pytest -n 0 --durations=0` with coverage on, setup and teardown included, measured the way CI's
+governance job runs it: semgrep and gitleaks off PATH, so the tests gated on those tools skip,
+as they do there; 2026-10-24: 6,171 tests, about 125 s; the lower of two runs per file), and any
+other file costs `DEFAULT_WEIGHT`, about the median of the rest. So a new, renamed or moved file
+always lands in a shard, and the split is deterministic for a given set of files; stale weights
+cost balance, never coverage.
 
 Two rules for whoever edits the table. (a) A file that is not in the table falls to the
 lightest shard and is never dropped; `test_the_shards_partition_every_test_file` (in
@@ -56,42 +57,43 @@ EXCLUDED: dict[str, str] = {
 PYTHON_FILES = ("test_*.py", "*_test.py")  # pytest's default; no pytest.ini sets another
 DEFAULT_WEIGHT = 0.1
 WEIGHTS: dict[str, float] = {
-    "scripts/tests/test_e12_security_gates.py": 48.98,
-    "scripts/tests/test_pr_gate.py": 33.17,
-    "scripts/tests/test_backlog_validate_check.py": 12.11,
-    "scripts/tests/test_event_coverage.py": 6.33,
-    "scripts/tests/test_check_auth_semgrep.py": 5.72,
-    "scripts/tests/test_pr_yml_path_filters.py": 5.09,
-    "scripts/tests/test_error_registry.py": 4.76,
-    "scripts/tests/test_pr_yml_gates.py": 4.12,
-    "scripts/tests/test_zap_admin.py": 3.82,
-    "scripts/tests/test_migration_lint.py": 3.66,
-    "scripts/tests/test_pr_yml_merge_group.py": 3.55,
-    "scripts/tests/test_check_secrets_hygiene.py": 3.46,
-    "scripts/tests/test_check_gen_freshness.py": 3.18,
-    "scripts/tests/test_dependabot_alert_gate.py": 3.13,
-    "scripts/tests/test_zap_nightly.py": 2.61,
-    "scripts/tests/test_check_required_check_reconciliation.py": 2.57,
-    "scripts/tests/test_perf_ingestion_nightly.py": 2.56,
-    "scripts/tests/test_relayroom_scripts.py": 1.97,
-    "scripts/tests/test_check_accepted_risk_expiry.py": 1.94,
-    "scripts/tests/test_security_lane.py": 1.88,
-    "scripts/tests/test_pr_metadata_yml.py": 1.57,
-    "infra/alertmanager/tests/test_alerting_config.py": 1.33,
-    "scripts/tests/test_pnpm_effective_policy.py": 1.25,
-    "scripts/tests/test_codeowners_backend_paths.py": 1.25,
-    "scripts/tests/test_security_gate.py": 1.15,
-    "scripts/tests/test_allowed_postinstall_runner.py": 1.08,
-    "scripts/tests/test_perf_ws_load.py": 1.02,
-    "scripts/tests/test_check_pr_metadata.py": 0.93,
-    "scripts/tests/test_ws_contracts.py": 0.91,
-    "scripts/tests/test_fuzz_nightly_budget.py": 0.91,
-    "scripts/tests/test_perf_storage_nightly.py": 0.77,
-    "scripts/tests/test_prepull_images.py": 0.68,
-    "scripts/tests/test_nightly_issue.py": 0.62,
-    "scripts/tests/test_web_tests_build_deps.py": 0.53,
-    "scripts/tests/test_no_orphaned_test_dirs.py": 0.53,
-    "scripts/tests/test_check_backlog_twin_eol.py": 0.52,
+    "scripts/tests/test_backlog_validate_check.py": 13.08,
+    "scripts/tests/test_event_coverage.py": 6.67,
+    "scripts/tests/test_pr_yml_path_filters.py": 6.42,
+    "scripts/tests/test_pr_gate.py": 5.32,
+    "scripts/tests/test_error_registry.py": 5.23,
+    "scripts/tests/test_pr_yml_gates.py": 4.69,
+    "scripts/tests/test_migration_lint.py": 4.63,
+    "scripts/tests/test_pr_yml_merge_group.py": 3.98,
+    "scripts/tests/test_zap_admin.py": 3.93,
+    "scripts/tests/test_relayroom_scripts.py": 3.92,
+    "scripts/tests/test_check_secrets_hygiene.py": 3.80,
+    "scripts/tests/test_dependabot_alert_gate.py": 3.47,
+    "scripts/tests/test_check_gen_freshness.py": 3.44,
+    "scripts/tests/test_perf_ingestion_nightly.py": 2.97,
+    "scripts/tests/test_check_required_check_reconciliation.py": 2.89,
+    "scripts/tests/test_check_accepted_risk_expiry.py": 2.31,
+    "scripts/tests/test_zap_nightly.py": 2.23,
+    "scripts/tests/test_security_lane.py": 2.15,
+    "infra/alertmanager/tests/test_alerting_config.py": 2.10,
+    "scripts/tests/test_pr_metadata_yml.py": 1.93,
+    "scripts/tests/test_pnpm_effective_policy.py": 1.53,
+    "scripts/tests/test_codeowners_backend_paths.py": 1.50,
+    "scripts/tests/test_perf_ws_load.py": 1.20,
+    "scripts/tests/test_check_pr_metadata.py": 1.10,
+    "scripts/tests/test_allowed_postinstall_runner.py": 1.03,
+    "scripts/tests/test_perf_storage_nightly.py": 1.02,
+    "scripts/tests/test_fuzz_nightly_budget.py": 1.00,
+    "scripts/tests/test_ws_contracts.py": 0.94,
+    "scripts/tests/test_prepull_images.py": 0.74,
+    "scripts/tests/test_no_orphaned_test_dirs.py": 0.73,
+    "scripts/tests/test_nightly_issue.py": 0.72,
+    "scripts/tests/test_web_tests_build_deps.py": 0.72,
+    "scripts/tests/test_storybook_job.py": 0.62,
+    "infra/grafana/tests/test_dashboards.py": 0.57,
+    "scripts/tests/test_check_backlog_twin_eol.py": 0.57,
+    "scripts/tests/test_security_gate.py": 0.57,
+    "scripts/tests/test_workflow_concurrency.py": 0.51,
 }
 
 
