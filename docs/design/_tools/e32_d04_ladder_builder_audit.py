@@ -20,12 +20,18 @@ still valid — drift is a WARN naming the current line, a missing or ambiguous 
 the per-frame C-2.6 gate: every position-opening `SCR-065 /` row of the state table carries its
 stop marker, pre-send rows in the state-true tense "held by Bybit once placed", post-confirm rows
 "held by Bybit (exchange)", an empty-stop row no stop value; a present-tense marker beside an
-entry on a pre-send row is a FAIL; every request or cap figure carries `(provisional)` while
-G-9 / G-10 / G-14 are open; every DCA figure carries the G-21 marker); (6) the counts the boards
+entry on a pre-send row is a FAIL; on a mixed post-confirm row every per-level clause (`rows a-b
+"<where>" … "stop …"`, the range with the spec's en dash) is gated by its where word — resting /
+filled → the custodian string, placing… / queued → "once placed" and never the present tense,
+failed → "not sent"; every request
+or cap figure carries `(provisional)` while G-9 / G-10 / G-14 are open; every row drawn on the DCA
+fixture carries the G-21 marker; the read-only row says "no CMP-158"); (6) the counts the boards
 quote. `--json` feeds the check-nums script; `--check` re-derives the spec's `audit:` markers;
 `--self-test` mutates copies in memory (a moved, a deleted and a duplicated cite → WARN / FAIL /
-FAIL; a removed stop marker → FAIL; a present-tense marker on a pre-send row → FAIL) and prints
-`self-test: clean` only if every mutation is caught. Exit 1 on a gated FAIL or a failed gate.
+FAIL; a removed stop marker → FAIL; a present-tense marker on a pre-send row → FAIL; on the
+`placing` row a present-tense marker on the placing… clause → FAIL and that clause's marker
+removed → FAIL) and prints `self-test: clean` only if every mutation is caught. Exit 1 on a gated
+FAIL or a failed gate.
 
 Usage: python3 -I docs/design/_tools/e32_d04_ladder_builder_audit.py [--json] [--check]
        [--self-test] [--extra F ...]
@@ -96,6 +102,13 @@ POST_CONFIRM = (
     "cancelled",
 )
 STOP_EMPTY = "preview · stop empty"
+# Rows drawn on the DCA fixture: the server cannot preview a DCA ladder (E32-D02 G-21 lists SCR-065
+# rows 7 and 14), so each carries the G-21 marker.
+DCA_ROWS = ("preview · DCA", "risk-cap refusal")
+# One per-level clause of a mixed row: `rows a-b "<where>" … ` (the spec writes the range with an
+# en dash) up to the next clause or `;`.
+EN_DASH = "\u2013"
+CHILD_CLAUSE = rf'rows (\d+){EN_DASH}(\d+) "([^"]+)"((?:(?!rows \d+{EN_DASH}|; ).)*)'
 PROVISIONAL = "(provisional)"
 # element | fg | bg | role — every pair SCR-065 draws (spec section 13, rows in order).
 PAIRS_TABLE = """
@@ -269,6 +282,13 @@ CITED_TABLE = """
 16 | 113 | | **Compact** (default for trading surfaces)
 16 | 114 | | **Comfortable** (default for admin/onboarding/settings)
 16 | 125 | 1. Density changes spacing-token resolution only
+23 | 4348 | `oms.account_stale`
+E32-D02 | 285 | Account stale (`oms.account_stale`
+E32-D02 | 369 | `ladder.cancel.confirm` · `ladder.cancelled`
+E32-D02 | 466 | stale refuses order entry, never a tighten
+E32-D02 | 811 | so the server cannot preview a DCA ladder
+E32-D02 | 835 | SCR-065 7, 14 (DCA, risk cap)
+E30-D04 | 219 | `frozen.reason` "Trading frozen by the owner — new orders off." (PROPOSED
 """
 POINTER = "E32-D04.md](../design/E32/E32-D04.md)"
 DOC_NAMES = (
@@ -339,7 +359,9 @@ COUNTS = (
     ),
 )
 ROW_IDS = (("d_rows", "D"), ("c_rows", "C"), ("g_rows", "G"), ("a_rows", "A"), ("q_rows", "Q"))
-REGISTERED_REASONS = ("lockout", "frozen", "arm.locked", "arm.unknown", "submit.not_connected")
+# `lockout` carries its registered reason in the same deck cell as its banner; `frozen` is a banner
+# only — Place's reason is `frozen.reason` (E30-D04 §2.5 / G6), which the gate measures.
+REGISTERED_REASONS = ("lockout", "arm.locked", "arm.unknown", "submit.not_connected")
 CITE_WARN: list[str] = []
 
 
@@ -676,6 +698,28 @@ FRAME_ROW = r"^\| \d+ +\| `([^`]+)` +\| \d\d +\| (?:full|inset)[^\n]*"
 STOP_VALUE = r"stop [\d,]+\.\d"
 
 
+def child_clauses(row: str) -> list[str]:
+    """The per-child tense on a mixed row: each `rows a-b "<where>" …` clause by its where word."""
+    bad: list[str] = []
+    clauses = list(re.finditer(CHILD_CLAUSE, row))
+    if not clauses:
+        return ['a post-confirm row without a per-level clause (rows a-b "<where>" …)']
+    for m in clauses:
+        where, rest = m.group(3), m.group(4)
+        span = f'rows {m.group(1)}{EN_DASH}{m.group(2)} "{where}"'
+        if re.search(r"resting|filled", where):
+            if CUSTODIAN not in rest:
+                bad.append(f"{span}: a resting child without {CUSTODIAN!r}")
+        elif re.search(r"placing|queued", where):
+            if PRE_SEND not in rest:
+                bad.append(f"{span}: a not-yet-confirmed child without {PRE_SEND!r}")
+            if CUSTODIAN in rest:
+                bad.append(f"{span}: present-tense custodian on a not-yet-confirmed child")
+        elif "failed" in where and "not sent" not in where + rest:
+            bad.append(f"{span}: a failed child without 'not sent'")
+    return bad
+
+
 def frame_gates(spec: str) -> list[str]:
     """C-2.6 per row, the tense, the empty stop, LIVE, CMP-158, the class, provisional."""
     bad: list[str] = []
@@ -685,7 +729,10 @@ def frame_gates(spec: str) -> list[str]:
         tag = f"spec section 3 `{name}`"
         if not re.search(r"\| \*\*(?:T1|T2|T4|validity look|status|outcome|absence)", row):
             bad.append(f"{tag}: no class named")
-        if name != "viewer-read-only" and "CMP-158" not in row:
+        if name == "viewer-read-only":
+            if "no CMP-158" not in row:
+                bad.append(f"{tag}: the read-only row must say 'no CMP-158' (spec section 2)")
+        elif "CMP-158" not in row:
             bad.append(f"{tag}: the CMP-158 line is missing")
         if name == STOP_EMPTY:
             if re.search(STOP_VALUE, row) or CUSTODIAN in row:
@@ -698,6 +745,7 @@ def frame_gates(spec: str) -> list[str]:
             if name in POST_CONFIRM:
                 if CUSTODIAN not in row:
                     bad.append(f"{tag}: post-confirm row without {CUSTODIAN!r}")
+                bad += [f"{tag}: {b}" for b in child_clauses(row)]
             else:
                 if PRE_SEND not in row:
                     bad.append(f"{tag}: pre-send row without {PRE_SEND!r} (state-true tense)")
@@ -709,8 +757,8 @@ def frame_gates(spec: str) -> list[str]:
         figure = re.search(r"a minute|batch request|loss budget|request[s]? now", row)
         if figure and PROVISIONAL not in row:
             bad.append(f"{tag}: a request or cap figure without (provisional)")
-        if name == "preview · DCA" and "G-21" not in row:
-            bad.append(f"{tag}: a DCA row without the G-21 marker")
+        if name in DCA_ROWS and "G-21" not in row:
+            bad.append(f"{tag}: a row on the DCA fixture without the G-21 marker")
     tiles = section(spec, 8, 9)
     for key in ("tile.risk_cap", "tile.requests"):
         row = next((ln for ln in tiles.splitlines() if ln.startswith(f"| `{key}`")), "")
@@ -723,7 +771,7 @@ def frame_gates(spec: str) -> list[str]:
 def cite_gate(texts: dict[str, str]) -> tuple[list[str], list[str]]:
     bad: list[str] = []
     warn: list[str] = []
-    lines = {k: v.split("\n") for k, v in texts.items() if k in DOCS}
+    lines = {k: v.split("\n") for k, v in texts.items()}
     for doc, line_s, want in cites():
         line = int(line_s)
         found = [i + 1 for i, ln in enumerate(lines[doc]) if want in ln]
@@ -813,6 +861,23 @@ def self_test(spec: str, texts: dict[str, str]) -> list[str]:
     tense = spec.replace(row, row.replace(f"{PRE_SEND}", CUSTODIAN))
     if not any("present-tense stop marker" in b for b in frame_gates(tense)):
         failures.append("a present-tense marker on a pre-send row was not a FAIL")
+    placing = next(
+        (m.group(0) for m in re.finditer(FRAME_ROW, s3, MULTI) if m.group(1) == "placing"), ""
+    )
+    clause = next((m for m in re.finditer(CHILD_CLAUSE, placing) if "placing" in m.group(3)), None)
+    if clause is None or PRE_SEND not in clause.group(4):
+        failures.append("the `placing` row lacks the placing… clause the self-test mutates")
+        return failures
+    present = placing.replace(clause.group(0), clause.group(0).replace(PRE_SEND, CUSTODIAN))
+    if not any("present-tense custodian" in b for b in frame_gates(spec.replace(placing, present))):
+        failures.append("a present-tense marker on the placing… clause was not a FAIL")
+    bare = clause.group(0)[: clause.group(0).index(" with ")] if " with " in clause.group(0) else ""
+    if not bare:
+        failures.append("the placing… clause has no ` with ` marker to remove")
+        return failures
+    gone_marker = spec.replace(placing, placing.replace(clause.group(0), bare))
+    if not any("not-yet-confirmed child without" in b for b in frame_gates(gone_marker)):
+        failures.append("a removed marker on the placing… clause was not a FAIL")
     return failures
 
 
@@ -872,6 +937,18 @@ def main(argv: list[str]) -> int:
     budget["minute_budget"] = str(PROFILE["max_orders_per_minute"])
     budget["over_by"] = str(OVER_BUDGET_LEVELS - PROFILE["max_orders_per_minute"])
     wide = widths(fixtures)
+    # The scaled-ladder refusal inset (spec section 6.1): the anatomy ladder's fully-filled worst
+    # case against the same daily-loss headroom — a `cap_breached` answer the server can return
+    # today (no G-21 dependency), unlike the DCA frame.
+    anatomy_totals = cast(dict[str, str], fixtures["anatomy"]["totals"])
+    anatomy_worst = D(anatomy_totals["worst_case_usdt"].replace(",", ""))
+    headroom = DAILY["cap"] - DAILY["used"]
+    scaled_refusal = {
+        "worst_case": money(anatomy_worst),
+        "headroom": money(headroom),
+        "over_by": money(anatomy_worst - headroom),
+        "breached": anatomy_worst > headroom,
+    }
     out.append(
         "\n## 3-4. pairs.mjs status is per row above; the ladder arithmetic (the merged tool's):"
     )
@@ -887,6 +964,7 @@ def main(argv: list[str]) -> int:
             f" merged {fx['merged']} above mark {fx['above_mark']} split {fx['split']}"
         )
     out.append(f"dca: {json.dumps(dca_fx, ensure_ascii=False)}")
+    out.append(f"scaled refusal inset: {scaled_refusal}")
     out.append(f"over-budget: {budget}")
     out.append(f"widths: {wide}")
     spec = SPEC.read_text(encoding="utf-8") if SPEC.exists() else ""
@@ -904,8 +982,9 @@ def main(argv: list[str]) -> int:
         " class word, the CMP-158 sentence and 14's sub-minimum line verbatim; no retired word in"
         " UI"
         " copy; every T2 reason within 60 characters, no digit; every position-opening row carries"
-        " its stop in the state-true tense (C-2.6); every request and cap figure (provisional); no"
-        " private text; every C / CMP / SCR id exists; every cited text found once"
+        " its stop in the state-true tense, per child on the mixed rows (C-2.6); every request and"
+        " cap figure (provisional); every DCA-fixture row stamped G-21; no private text; every C /"
+        " CMP / SCR id exists; every cited text found once"
     )
     out.append("\n## 5. String gates: " + (ok if not bad else "\n".join("FAIL " + b for b in bad)))
     out += [f"WARN cited line drifted: {w}" for w in CITE_WARN]
@@ -950,6 +1029,7 @@ def main(argv: list[str]) -> int:
         for k, fx in fixtures.items()
     }
     numbers["dca"] = {k: v for k, v in dca_fx.items() if k not in ("levels", "call")}
+    numbers["scaled_refusal"] = scaled_refusal
     numbers["levels"] = {"min": 2, "max": 50, "batch_cap": str(lm.BATCH_CAP)}
     numbers["skew"] = {"min": "0.5", "max": "3.0", "step": "0.1"}  # PROPOSED bounds (D04-G2)
     flat = flatten(numbers)
@@ -970,7 +1050,8 @@ def main(argv: list[str]) -> int:
         bad += [f"self-test: {f}" for f in failed]
         out.append(
             "self-test: clean (moved → WARN, gone → FAIL, ambiguous → FAIL, stop marker removed →"
-            " FAIL, present tense pre-send → FAIL)"
+            " FAIL, present tense pre-send → FAIL, placing clause present tense → FAIL, placing"
+            " clause marker removed → FAIL)"
             if not failed
             else "self-test: FAILED " + "; ".join(failed)
         )
