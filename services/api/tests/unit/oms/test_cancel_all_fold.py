@@ -1,6 +1,8 @@
-"""The venue cancel-all fold's standalone rules (E29-T04 #913 slice 4, S4-F; 24 Sec.8.7): a
-symbol's cancels fold only when every plain order resting there is selected, and one venue
-`cancel-all` leaves per UID per second, on an injected monotonic clock."""
+"""The venue cancel-all fold's standalone parts (E29-T04 #913 slice 4, S4-F; 24 Sec.8.7): a
+symbol's cancels fold only when every plain order resting there is selected; one venue
+`cancel-all` leaves per UID per second, on an injected monotonic clock; and its members meet at a
+join that sends one call once all have arrived, else none (the fail-safe). Nothing sleeps: the
+gather's bound is an injected sleep the test releases."""
 
 from __future__ import annotations
 
@@ -13,10 +15,13 @@ from uuid import UUID
 import pytest
 
 from candleviewer.domain.primitives import AccountId
-from candleviewer.exchange.base.models import Order
+from candleviewer.exchange.base.errors import TransportError, UnknownStateError
+from candleviewer.exchange.base.models import Order, OrderAck
 from candleviewer.oms.cancel_all_fold import (
     CANCEL_ALL_INTERVAL_S,
     FOLDED_KIND,
+    GATHER_S,
+    CancelAllJoin,
     CancelAllSpacer,
     covers,
 )
@@ -180,3 +185,210 @@ def test_the_interval_is_finite_and_above_zero(interval_s: float) -> None:
 def test_at_least_one_uid_is_remembered(max_uids: int) -> None:
     with pytest.raises(ValueError, match="max_uids"):
         CancelAllSpacer(monotonic=_Clock(), max_uids=max_uids)
+
+
+def _ack(link: str | None, *, ok: bool = True) -> OrderAck:
+    return OrderAck(
+        ok=ok, order_link_id=link, exchange_order_id=None if link is None else f"x-{link}",
+        error_code=None if ok else "RATE_LIMITED", latency_ms=3, transport="rest",
+    )  # fmt: skip
+
+
+class _Venue:
+    """The fold's one call: `acks` (or `error`) once `hold` is released, each call counted."""
+
+    def __init__(self, acks: list[OrderAck] | None = None, error: BaseException | None = None):
+        self.acks, self.error, self.calls = acks, error, 0
+        self.hold: asyncio.Event | None = None
+
+    async def send(self) -> list[OrderAck] | None:
+        self.calls += 1
+        if self.hold is not None:
+            await self.hold.wait()
+        if self.error is not None:
+            raise self.error
+        return self.acks
+
+
+class _Gather:
+    """The gather's sleep: it ends only when the test lets the bound pass."""
+
+    def __init__(self) -> None:
+        self.passed, self.asked = asyncio.Event(), list[float]()
+
+    async def sleep(self, seconds: float) -> None:
+        self.asked.append(seconds)
+        await self.passed.wait()
+
+
+def _join(
+    venue: _Venue, *members: str, clock: _Clock | None = None
+) -> tuple[CancelAllJoin, _Gather]:
+    gather = _Gather()
+    join = CancelAllJoin(
+        members or ("a", "b"), venue.send, monotonic=clock or _Clock(), sleep=gather.sleep
+    )
+    return join, gather
+
+
+async def _settle() -> None:
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+
+async def test_once_every_member_arrives_one_call_answers_each_by_its_own_ack() -> None:
+    venue = _Venue([_ack("a"), _ack("b")])
+    join, _ = _join(venue)
+    first = asyncio.create_task(join.arrive("a"))
+    await _settle()
+    assert not first.done() and venue.calls == 0  # waits for the other member
+    assert await join.arrive("b") == _ack("b")
+    assert await first == _ack("a") and venue.calls == 1
+
+
+async def test_a_member_the_acks_do_not_name_sends_its_own_cancel() -> None:
+    """The venue's 500-order cap, or a race: the member's own cancel follows (24 Sec.8.7)."""
+    join, _ = _join(_Venue([_ack("a")]))
+    first = asyncio.create_task(join.arrive("a"))
+    assert await join.arrive("b") is None
+    assert await first == _ack("a")
+
+
+@pytest.mark.parametrize(
+    "acks",
+    [[_ack(None, ok=False)], [_ack(None)], None],
+    ids=["refused", "none_cancelled", "spacer_refused"],
+)
+async def test_a_call_that_names_no_member_leaves_each_to_its_own_cancel(
+    acks: list[OrderAck] | None,
+) -> None:
+    join, _ = _join(_Venue(acks))
+    first = asyncio.create_task(join.arrive("a"))
+    assert await join.arrive("b") is None
+    assert await first is None
+
+
+async def test_a_gather_past_its_bound_sends_nothing_and_each_sends_its_own() -> None:
+    venue = _Venue([_ack("a"), _ack("b")])
+    join, gather = _join(venue)
+    first = asyncio.create_task(join.arrive("a"))
+    await _settle()
+    assert gather.asked == [pytest.approx(GATHER_S)]
+    gather.passed.set()  # "b" never arrived in time
+    assert await first is None
+    assert await join.arrive("b") is None and venue.calls == 0  # a late member sends its own
+
+
+async def test_the_last_member_arriving_past_the_bound_sends_nothing() -> None:
+    clock, venue = _Clock(), _Venue([_ack("a"), _ack("b")])
+    join, _ = _join(venue, clock=clock)
+    first = asyncio.create_task(join.arrive("a"))
+    await _settle()
+    clock.now += GATHER_S + 0.1  # the watchdog has not run yet, the clock has passed
+    assert await join.arrive("b") is None
+    assert await first is None and venue.calls == 0
+
+
+async def test_a_member_that_leaves_abandons_the_fold_at_once() -> None:
+    venue = _Venue([_ack("a"), _ack("b")])
+    join, gather = _join(venue)
+    first = asyncio.create_task(join.arrive("a"))
+    await _settle()
+    join.leave("b")  # refused before its send: it will never arrive
+    assert await first is None and venue.calls == 0 and not gather.passed.is_set()
+
+
+async def test_a_leave_once_the_call_has_left_changes_nothing() -> None:
+    venue = _Venue([_ack("a"), _ack("b")])
+    venue.hold = asyncio.Event()
+    join, _ = _join(venue)
+    first = asyncio.create_task(join.arrive("a"))
+    last = asyncio.create_task(join.arrive("b"))
+    await _settle()
+    assert venue.calls == 1
+    join.leave("a")
+    venue.hold.set()
+    assert (await first, await last) == (_ack("a"), _ack("b"))
+
+
+async def test_the_bound_passing_while_the_call_is_out_keeps_its_answer() -> None:
+    venue = _Venue([_ack("a"), _ack("b")])
+    venue.hold = asyncio.Event()
+    join, gather = _join(venue)
+    first = asyncio.create_task(join.arrive("a"))
+    last = asyncio.create_task(join.arrive("b"))
+    await _settle()
+    gather.passed.set()  # the watchdog was stopped when the call left; nothing changes
+    await _settle()
+    venue.hold.set()
+    assert (await first, await last) == (_ack("a"), _ack("b"))
+
+
+async def test_a_call_that_raises_raises_for_every_member_and_is_never_resent() -> None:
+    """Its outcome is not known, as a member's own call's would not be (B1 parks it)."""
+    fault = TransportError("the venue did not answer")
+    venue = _Venue(error=fault)
+    join, _ = _join(venue)
+    first = asyncio.create_task(join.arrive("a"))
+    with pytest.raises(TransportError):
+        await join.arrive("b")
+    with pytest.raises(TransportError):
+        await first
+    assert venue.calls == 1
+
+
+async def test_a_call_cut_short_leaves_the_others_an_unknown_outcome() -> None:
+    venue = _Venue([_ack("a"), _ack("b")])
+    venue.hold = asyncio.Event()
+    join, _ = _join(venue)
+    first = asyncio.create_task(join.arrive("a"))
+    last = asyncio.create_task(join.arrive("b"))  # the last member makes the call
+    await _settle()
+    last.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await last
+    with pytest.raises(UnknownStateError) as unknown:
+        await first
+    assert unknown.value.retryable is False
+
+
+async def test_a_waiting_member_cancelled_before_the_call_abandons_the_fold() -> None:
+    venue = _Venue([_ack("a"), _ack("b"), _ack("c")])
+    join, _ = _join(venue, "a", "b", "c")
+    first = asyncio.create_task(join.arrive("a"))
+    second = asyncio.create_task(join.arrive("b"))
+    await _settle()
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert await second is None
+    assert await join.arrive("c") is None and venue.calls == 0
+
+
+async def test_a_member_arriving_again_gets_its_answer_again() -> None:
+    join, _ = _join(_Venue([_ack("a"), _ack("b")]))
+    first = asyncio.create_task(join.arrive("a"))
+    await join.arrive("b")
+    await first
+    assert await join.arrive("a") == _ack("a")
+
+
+async def test_only_a_member_arrives() -> None:
+    join, _ = _join(_Venue([]))
+    with pytest.raises(ValueError, match="member"):
+        await join.arrive("z")
+
+
+async def test_a_fold_has_a_member_and_a_finite_gather() -> None:
+    with pytest.raises(ValueError, match="member"):
+        CancelAllJoin((), _Venue([]).send, monotonic=_Clock())
+    for gather_s in (0, -1.0, math.nan, math.inf, True):
+        with pytest.raises(ValueError, match="gather_s"):
+            CancelAllJoin(("a",), _Venue([]).send, monotonic=_Clock(), gather_s=gather_s)
+
+
+async def test_a_lone_member_sends_at_once() -> None:
+    venue = _Venue([_ack("a")])
+    join, gather = _join(venue, "a")
+    assert await join.arrive("a") == _ack("a")
+    assert venue.calls == 1 and gather.asked == []
