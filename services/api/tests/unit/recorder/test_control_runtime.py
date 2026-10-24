@@ -265,4 +265,5 @@ async def test_a_fresh_add_whose_row_a_hidden_cause_holds_by_then_refuses_before
     with pytest.raises(rc.RelaxRefused) as refused:
         await env.c.add("BTCUSDT", rc.EntrySpec(retention_days=7), USER, restricted=True)
     assert not refused.value.recorded and env.rows.writes == []
-    assert env.audit.actions() == ["recorder.start"]  # the add landed: the narrow race, recorded
+    actions = env.audit.actions()  # the add landed (the narrow race), recorded; no retention
+    assert "recorder.start" in actions and "retention.change" not in actions

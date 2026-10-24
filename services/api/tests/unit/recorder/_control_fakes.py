@@ -221,6 +221,8 @@ class FakeRecorder:
         old = self.entries.get(symbol)
         streams, depth = (old.streams, old.depth) if old else (STREAMS, 200)
         join = restricted and old is not None and rc.restricted_view(old) is None
+        if old is not None and not join:  # as S9's control: before any write
+            self._relax(old, spec, restricted)
         await self.add_manual(symbol, actor, spec.streams or streams, spec.depth or depth,
                               held_hidden=join)  # fmt: skip
         return await self._settle(symbol, spec, actor, restricted) or self.entries[symbol], old
