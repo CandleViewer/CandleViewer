@@ -13,20 +13,38 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
+from structlog.testing import capture_logs
 
+from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.scopes import DenyReason
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.domain.order_link import ext_key
 from candleviewer.exchange.base.errors import OmsErrorCode, TransportError
 from candleviewer.exchange.base.fakes import FakeReject
 from candleviewer.oms import commands as oc
 from candleviewer.oms import exits as ex
-from candleviewer.oms.errors import AccountScopeDenied, OrderEntryRefused, StoreUnavailable
+from candleviewer.oms.errors import (
+    AccountScopeDenied,
+    IllegalTransition,
+    OrderEntryRefused,
+    OrderNotLoaded,
+    OrderStepRefused,
+    OrderStepUnknown,
+    StoreUnavailable,
+    VersionConflict,
+)
 from candleviewer.oms.exits import ExitCaller, ExitDeps, ExitOutcome, InFlightGuard, OrderExits
 from candleviewer.oms.ports import RequestRecord, SubmitActor
 from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.statechart.persistence import DegradedLatchError
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
-from candleviewer.storage.repositories.orders import NewOrder, OrderRow, ScopedOrder
+from candleviewer.storage.repositories.orders import (
+    LifecycleState,
+    NewOrder,
+    OrderRow,
+    ScopedOrder,
+)
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms import submit_rig as sr
 from tests.unit.oms.submit_rig import SubmitRig
@@ -139,6 +157,27 @@ async def test_accounts_in_scope_refuses_the_whole_request_or_a_read_that_fails(
         await exits_of(rig, orders=cast(Any, _Down())).accounts_in_scope(OwnerScope(OWNER), ())
 
 
+async def test_a_stores_own_scope_refusal_of_the_account_set_is_403_never_503(
+    rig: SubmitRig,
+) -> None:
+    """SR-E29-13: a scope refusal is no outage. Met unwrapped, the store's `AccountsOutOfScope`
+    rather than the repository's `AccountScopeDenied`, it is still `403 account_scope_denied`."""
+    exits = exits_of(rig, orders=rig.store)
+    with pytest.raises(AccountScopeDenied):
+        await exits.accounts_in_scope(OwnerScope(OWNER), (cr.ACCOUNT, uuid4()))
+
+
+def test_the_rbac_denied_reasons_are_those_enforce_builds_from_its_enums() -> None:
+    """Ruling Q12: `rbac.denied`'s reasons as `auth.scopes.enforce` writes them for `orders:write`
+    on `granted_accounts` (F's route builds the first so), never a literal adrift of the enums."""
+
+    def built(reason: DenyReason) -> str:
+        return f"{reason.value}:{Permission.ORDERS_WRITE.value}:{Scope.GRANTED_ACCOUNTS.value}"
+
+    granted, trading = DenyReason.ACCOUNT_NOT_GRANTED, DenyReason.TRADING_NOT_GRANTED
+    assert (ex.NOT_GRANTED, ex.VIEW_ONLY) == (built(granted), built(trading))
+
+
 # --- cancel_admitted (rulings Q8, Q9, Q11; the 12:30Z rulings) -----------------------------------
 
 
@@ -204,14 +243,29 @@ async def test_the_venues_refusal_is_502_with_its_code_and_the_order_live(rig: S
 
 
 async def test_the_venues_110001_parks_the_order_unknown_never_re_sent(rig: SubmitRig) -> None:
-    """On this base the watch answers None for any raise: `transport`; S4-B1's follow-up marks
-    110001 `already_terminal` (`test_the_watchs_110001_mark_is_already_terminal`)."""
+    """D2 and the 12:30Z ruling 2: the base's B1 (S4-B1's follow-up) marks the venue's 110001 on
+    the watch, so the order is parked `unknown` as `already_terminal`, with its code, for
+    reconciliation to end; the cancel is never re-sent (24 Sec.8.2 S1)."""
     row = await placed(rig)
     gone = FakeReject(OmsErrorCode.ORDER_NOT_FOUND, exchange_ret_code=110001)
     rig.port.demo.script("cancel_order", gone)
     got = await exits_of(rig).cancel_admitted(row, actor=actor(), reason="user", request_id=None)
     assert (got.kind, got.status, got.lifecycle_state) == ("unknown", 202, "unknown")
-    assert (got.unknown_reason, got.retryable) == ("transport", False)
+    assert (got.unknown_reason, got.retryable) == ("already_terminal", False)
+    assert got.exchange_ret_code == 110001
+    assert [c.method for c in rig.port.demo.calls].count("cancel_order") == 1
+
+
+async def test_any_other_raise_of_the_cancel_parks_the_order_unknown_transport(
+    rig: SubmitRig,
+) -> None:
+    """The watch answers None for any raise but the 110001, read as `transport`: the order parked
+    `unknown`, never re-sent."""
+    row = await placed(rig)
+    rig.port.demo.script("cancel_order", TransportError("the line went down"))
+    got = await exits_of(rig).cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert (got.kind, got.status, got.lifecycle_state) == ("unknown", 202, "unknown")
+    assert (got.unknown_reason, got.retryable, got.exchange_ret_code) == ("transport", False, None)
     assert [c.method for c in rig.port.demo.calls].count("cancel_order") == 1
 
 
@@ -236,18 +290,39 @@ async def test_native_sl_a_recorded_stops_cancel_is_403_while_its_position_is_op
     assert (rig.machines.state(row.id) or ("",))[0] == "submitted"  # INV-B1-j: kept live
 
 
+async def test_two_cancels_of_one_order_under_two_keys_are_both_202_and_one_is_sent(
+    rig: SubmitRig,
+) -> None:
+    """22 `cancelOrder`: an order whose cancel is in flight answers `202`. Two cancels of one
+    order under two keys, which the in-flight guard holds apart: the second meets the first's
+    `cancel_pending` at the facade (`IllegalTransition`) and answers as the order then stands,
+    never `409`; the venue sees one cancel."""
+    row, exits = await placed(rig), exits_of(rig)
+    first, second = await asyncio.gather(
+        exits.cancel_admitted(row, actor=actor(), reason="user", request_id=REQUEST),
+        exits.cancel_admitted(row, actor=actor(OWNER), reason="cancel_all", request_id=None),
+    )
+    assert [(o.kind, o.status, o.lifecycle_state) for o in (first, second)] == [
+        ("accepted", 202, "cancelled"), ("accepted", 202, "cancelled"),
+    ]  # fmt: skip
+    assert [c.method for c in rig.port.demo.calls].count("cancel_order") == 1
+
+
 # --- the waits, a cancelled caller and the watch's answer, on a scripted facade ------------------
 
 
 @dataclass
 class Watches:
-    """`ExitCommands`: each watch kept for the scripted facade to answer."""
+    """`ExitCommands`: each watch kept for the scripted facade to answer; `made` every one
+    registered, in order."""
 
     held: dict[tuple[UUID, str], oc.ExitWatch] = field(default_factory=dict)
+    made: list[oc.ExitWatch] = field(default_factory=list)
 
     def expect_exit(self, order_id: UUID, kind: oc.ExitKind, **kw: Any) -> oc.ExitWatch:
         future = asyncio.get_running_loop().create_future()
         watch = self.held[(order_id, kind)] = oc.ExitWatch(order_id, kind, future, **kw)
+        self.made.append(watch)
         return watch
 
     def forget_exit(self, order_id: UUID, kind: oc.ExitKind) -> None:
@@ -258,7 +333,9 @@ class Watches:
 class Scripted:
     """`ExitMachines` a test scripts: `held` the state, each of `settles` one `settled` call's
     answer (a state, the watch then answered `answer`, or an error raised), each bound asked kept
-    in `waits` and each command in `sent`; `gate`, when set, holds every `settled` until set."""
+    in `waits` and each command taken in `sent`; `refuse`, when set, is what `command` raises,
+    taking nothing, the order then in `moved` when one is given (another request took it), or
+    its machine evicted when `gone`; `gate`, when set, holds every `settled` until set."""
 
     held: str | None
     settles: list[str | BaseException]
@@ -266,6 +343,9 @@ class Scripted:
     answer: dict[str, Any] | None
     waits: list[float] = field(default_factory=list)
     sent: list[str] = field(default_factory=list)
+    refuse: BaseException | None = None
+    moved: str | None = None
+    gone: bool = False
     gate: asyncio.Event | None = None
     entered: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -278,6 +358,9 @@ class Scripted:
     async def command(
         self, account_id: UUID, order_id: UUID, event: Any, *_a: Any, **_k: Any
     ) -> str:
+        if self.refuse is not None:
+            self.held = None if self.gone else self.moved or self.held
+            raise self.refuse
         self.sent.append(event)
         self.held = "cancel_pending"
         return self.held
@@ -303,17 +386,46 @@ _SENT = ["CANCEL"]
 
 
 async def scripted(
-    held: str | None, *settles: str | BaseException, answer: dict[str, Any] | None = _OK
+    held: str | None,
+    *settles: str | BaseException,
+    answer: dict[str, Any] | None = _OK,
+    stored: LifecycleState = "submitted",
+    **over: Any,
 ) -> tuple[OrderExits, Scripted, OrderRow, cr.Rig]:
+    """The exits over `Scripted` and the command rig's stores, the order stored `stored`, and
+    `over` replacing any other dependency."""
     port = cr.build_rig()
-    row = await port.stored(cr.new_order(), lifecycle="submitted")
+    row = await port.stored(cr.new_order(), lifecycle=stored)
     watches = Watches()
     machines = Scripted(held, list(settles), watches, answer)
     deps = ExitDeps(
         machines=machines, commands=watches, orders=port.orders, audit=port.audits,
         environment="demo",
     )  # fmt: skip
-    return OrderExits(deps), machines, row, port
+    return OrderExits(replace(deps, **over)), machines, row, port
+
+
+def written(port: cr.Rig) -> list[tuple[str, str]]:
+    """The exit's own records on the command rig, in order: (outcome, reason)."""
+    return [(r.outcome, r.reason) for r, _ in port.audits.written if isinstance(r, RequestRecord)]
+
+
+async def forgotten(machines: Scripted) -> bool:
+    """Whether the one watch the exit registered was forgotten: dropped, and answered None."""
+    [watch] = machines.watches.made
+    return machines.watches.held == {} and watch.answered and await watch.answer() is None
+
+
+def refuse_after(audits: cr.Audits, landed: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`audits` lands `landed` records, then refuses every later one."""
+    write = audits.write
+
+    async def counted(record: cr.AnyRecord) -> None:
+        if len(audits.written) >= landed:
+            raise RuntimeError("the audit WAL refused the record")
+        await write(record)
+
+    monkeypatch.setattr(audits, "write", counted)
 
 
 @pytest.mark.parametrize(
@@ -322,20 +434,25 @@ async def scripted(
         ("amend_pending", [TimeoutError()], "refused", None, [10.0], []),
         ("cancel_pending", [TimeoutError()], "unknown", "cancel_pending", [10.0], []),
         ("submitted", [TimeoutError()], "unknown", "cancel_pending", [11.0], _SENT),
-        ("validated", ["submitted", "cancelled"], "accepted", "cancelled", [10.0, 11.0], _SENT),
+        ("validated", ["submitting", "submitted", "cancelled"], "accepted", "cancelled",
+         [10.0, 10.0, 11.0], _SENT),
+        ("validated", ["submitting", TimeoutError()], "refused", None, [10.0, 10.0], []),
+        ("submitting", ["submitting"], "refused", None, [10.0], []),
         ("held", [], "refused", None, [], []),
         (None, [], "refused", None, [], []),
     ],
-    ids=["transitional", "in-flight", "own-settle", "both", "q8-state", "no-machine"],
+    ids=["transitional", "in-flight", "own-settle", "hop-by-hop", "a-hop-unsettled",
+         "row-unmoved", "q8-state", "no-machine"],
 )  # fmt: skip
 async def test_the_waits_are_bounded_and_each_answers_as_the_contract_says(
     held: str | None, settles: list[Any], kind: str, state: str | None, waits: list[float],
     sent: list[str],
 ) -> None:  # fmt: skip
-    """D9: a transitional step is waited out at most `CV_COMMAND_TIMEOUT` (else `409 conflict`;
-    a cancel already in flight is B1's, `unknown` `timeout`), then the cancel's own settle at most
-    `CV_COMMAND_TIMEOUT` + 1 s, so about 21 s in all, never unbounded; no accepted outcome but a
-    settled one (the 12:30Z ruling 6)."""
+    """D9: a transitional step is waited out hop by hop (`validated`, then `submitting`), all
+    within one `CV_COMMAND_TIMEOUT` (else `409 conflict`; a cancel already in flight is B1's,
+    `unknown` `timeout`), then the cancel's own settle at most `CV_COMMAND_TIMEOUT` + 1 s, so
+    about 21 s in all, never unbounded; no accepted outcome but a settled one (the 12:30Z ruling
+    6)."""
     exits, machines, row, _ = await scripted(held, *settles)
     got = await exits.cancel_admitted(row, actor=actor(), reason="cancel_all", request_id=None)
     assert (got.kind, got.lifecycle_state, machines.waits, machines.sent) == (
@@ -346,22 +463,6 @@ async def test_the_waits_are_bounded_and_each_answers_as_the_contract_says(
     )
     assert got.code == ("conflict" if kind == "refused" else None)
     assert got.retryable is (kind == "unknown")
-
-
-@pytest.mark.parametrize(
-    ("answer", "why", "ret"),
-    [({"ok": False, "unknown": b01.ALREADY_TERMINAL, "exchange_ret_code": 110001},
-      "already_terminal", 110001), (None, "transport", None)],
-    ids=["110001", "raised"],
-)  # fmt: skip
-async def test_the_watchs_110001_mark_is_already_terminal_any_other_raise_transport(
-    answer: dict[str, Any] | None, why: str, ret: int | None
-) -> None:
-    """D2 and the 12:30Z ruling 2: S4-B1's follow-up answers the watch with the mark, read
-    defensively, so None (this base's answer to every raise) is `transport`."""
-    exits, _, row, _ = await scripted("submitted", "unknown", answer=answer)
-    got = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
-    assert (got.kind, got.unknown_reason, got.exchange_ret_code) == ("unknown", why, ret)
 
 
 async def test_a_caller_cancelled_before_the_write_ahead_commits_sends_nothing(
@@ -386,8 +487,7 @@ async def test_a_caller_cancelled_before_the_write_ahead_commits_sends_nothing(
 
 
 async def test_a_caller_cancelled_after_the_command_leaves_the_cancel_with_b1() -> None:
-    """The 12:30Z ruling 5: never re-sent, never undone; it settles and is recorded; `aclose`
-    is the shutdown's, which ends an exit no caller waits for."""
+    """The 12:30Z ruling 5: never re-sent, never undone; it settles and is recorded."""
     exits, machines, row, port = await scripted("submitted", "cancelled")
     machines.gate = asyncio.Event()
     task = asyncio.ensure_future(
@@ -405,11 +505,12 @@ async def test_a_caller_cancelled_after_the_command_leaves_the_cancel_with_b1() 
         "cancelled",
         ["CANCEL"],
     )
-    written = [
-        (r.outcome, r.reason) for r, _ in port.audits.written if isinstance(r, RequestRecord)
-    ]
-    assert written == [("success", "cancel_all"), ("success", "cancelled")]
+    assert written(port) == [("success", "cancel_all"), ("success", "cancelled")]
     assert exits._running == set()
+
+
+async def test_aclose_ends_an_exit_still_running_at_shutdown() -> None:
+    """`aclose` is the shutdown's: it cancels the exits still running and awaits them."""
     exits, machines, row, _ = await scripted("submitted", "cancelled")
     machines.gate = asyncio.Event()
     task = asyncio.ensure_future(
@@ -420,6 +521,193 @@ async def test_a_caller_cancelled_after_the_command_leaves_the_cancel_with_b1() 
     with pytest.raises(asyncio.CancelledError):
         await task
     assert exits._running == set()
+
+
+async def test_after_aclose_a_cancel_starts_nothing() -> None:
+    """Once the service is closed no exit starts: `503 oms_not_ready`, as the runtime answers
+    once stopped, with nothing recorded, commanded or sent."""
+    exits, machines, row, port = await scripted("submitted", "cancelled")
+    await exits.aclose()
+    got = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert (got.kind, got.status, got.code) == ("refused", 503, "oms_not_ready")
+    assert (machines.sent, machines.watches.made, written(port)) == ([], [], [])
+    assert exits._running == set()
+
+
+async def test_a_cancel_whose_intent_was_written_as_aclose_ran_starts_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`aclose` while the cancel's intent is written: nothing starts, `503 oms_not_ready`, the
+    refusal recorded beside the intent (C-2.9)."""
+    exits, machines, row, port = await scripted("submitted", "cancelled")
+    entered, release, write = asyncio.Event(), asyncio.Event(), port.audits.write
+
+    async def held(record: cr.AnyRecord) -> None:
+        entered.set()
+        await release.wait()
+        await write(record)
+
+    monkeypatch.setattr(port.audits, "write", held)
+    task = asyncio.ensure_future(
+        exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    )
+    await entered.wait()
+    await exits.aclose()
+    release.set()
+    got = await task
+    assert (got.kind, got.status, got.code) == ("refused", 503, "oms_not_ready")
+    assert (machines.sent, machines.watches.made, exits._running) == ([], [], set())
+    assert written(port) == [("success", "user"), ("denied", "oms_not_ready")]
+
+
+# --- the cancel core's error paths ---------------------------------------------------------------
+
+
+async def test_a_cancel_whose_intent_cannot_be_recorded_is_503_and_sends_nothing() -> None:
+    """C-2.9: the write-ahead `orders.cancel` that does not land answers `503 audit_unavailable`
+    before anything is commanded: no watch, no task, nothing sent."""
+    exits, machines, row, port = await scripted("submitted", "cancelled")
+    port.audits.refuse = RuntimeError("the audit WAL refused the record")
+    got = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert (got.kind, got.status, got.code) == ("refused", 503, "audit_unavailable")
+    assert (machines.sent, machines.watches.made, written(port)) == ([], [], [])
+    assert exits._running == set()
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    [
+        (VersionConflict(), 412, "version_conflict"),
+        (OrderStepRefused("CANCEL", "StorageTierUnavailable"), 503, "store_unavailable"),
+        (IllegalTransition("held", "CANCEL"), 409, "conflict"),
+        (OrderNotLoaded("no machine in this process holds the order"), 409, "conflict"),
+        (DegradedLatchError("latched"), 409, "conflict"),
+    ],
+    ids=["version", "step-refused", "illegal", "not-loaded", "latched"],
+)
+async def test_a_command_the_facade_did_not_take_is_refused_and_its_watch_forgotten(
+    error: BaseException, status: int, code: str
+) -> None:
+    """`_taken_not`: a stale version (412), a step the store refused (503, the shared retry), a
+    state the order no longer takes it in, an order not loaded or a latched machine (409, CV-C63):
+    nothing sent, the watch forgotten (it answers None), the refusal recorded beside the intent."""
+    exits, machines, row, port = await scripted("submitted")
+    machines.refuse = error
+    got = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert (got.kind, got.status, got.code) == ("refused", status, code)
+    assert machines.sent == [] and await forgotten(machines)
+    assert written(port) == [("success", "user"), ("denied", code)]
+
+
+async def test_a_step_whose_outcome_is_not_known_answers_the_order_as_it_stands() -> None:
+    """`OrderStepUnknown`: B1 rebuilt the order from its events, so the cancel is never re-sent
+    and answers the state the order stands in, `unknown`, `timeout`."""
+    exits, machines, row, port = await scripted("submitted")
+    machines.refuse = OrderStepUnknown("CANCEL", "StepOutcomeUnknown")
+    machines.moved = "cancel_pending"
+    got = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert (got.kind, got.status, got.lifecycle_state, got.unknown_reason) == (
+        "unknown", 202, "cancel_pending", "timeout",
+    )  # fmt: skip
+    assert machines.sent == [] and await forgotten(machines)
+    assert written(port) == [("success", "user"), ("failure", "timeout")]
+
+
+async def test_an_unlisted_raise_forgets_the_watch_and_is_raised_and_logged_once() -> None:
+    """A defect at the facade: the watch forgotten, the raise the caller's, the exit's task
+    logged failed once as it ends (`_ended`); only the intent was recorded."""
+    exits, machines, row, port = await scripted("submitted")
+    machines.refuse = RuntimeError("a defect")
+    with capture_logs() as logs, pytest.raises(RuntimeError, match="a defect"):
+        await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert machines.sent == [] and await forgotten(machines) and exits._running == set()
+    assert written(port) == [("success", "user")]
+    failed = [(log["event"], log["failure"]) for log in logs if log["log_level"] == "error"]
+    assert failed == [("oms_exit_task_failed", "RuntimeError")]
+
+
+async def test_a_stored_row_that_cannot_be_read_is_503_and_nothing_is_sent() -> None:
+    """With no machine here the stored row decides (`_lifecycle`): a read that fails answers `503
+    store_unavailable` with the shared retry, recorded, nothing sent."""
+    exits, machines, row, port = await scripted(None, orders=cast(Any, _Down()))
+    got = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert (got.kind, got.status, got.code, got.retry_after_s) == (
+        "refused", 503, "store_unavailable", 1,
+    )  # fmt: skip
+    assert (machines.sent, machines.watches.made) == ([], [])
+    assert written(port) == [("denied", "store_unavailable")]
+
+
+async def test_a_re_read_that_fails_answers_the_order_as_the_caller_read_it() -> None:
+    """`_fresh`: once B1 settled the cancel, a re-read that fails answers the row the caller
+    passed, logged; the settled state stands."""
+    exits, _, row, _ = await scripted("submitted", "cancelled", orders=cast(Any, _Down()))
+    with capture_logs() as logs:
+        got = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert (got.kind, got.lifecycle_state, got.row) == ("accepted", "cancelled", row)
+    assert "oms_exit_reread_failed" in [log["event"] for log in logs]
+
+
+@pytest.mark.parametrize(
+    ("moved", "gone", "stored", "settles", "state", "waits"),
+    [
+        ("cancel_pending", False, "submitted", ["cancelled"], "cancelled", [11.0]),
+        ("filled", False, "submitted", [], "filled", []),
+        (None, True, "cancelled", [], "cancelled", []),
+    ],
+    ids=["another-cancel-in-flight", "filled-meanwhile", "ended-its-machine-gone"],
+)  # fmt: skip
+async def test_a_cancel_the_order_moved_under_answers_as_it_then_stands(
+    moved: str | None, gone: bool, stored: LifecycleState, settles: list[str], state: str,
+    waits: list[float],
+) -> None:  # fmt: skip
+    """22 `cancelOrder`: an order whose cancel is in flight, or that ended (its machine gone, its
+    row then the answer), answers `202` as it stands, never `409`: another request's cancel is
+    waited for as this one's own would be."""
+    exits, machines, row, port = await scripted("submitted", *settles, stored=stored)
+    machines.refuse = IllegalTransition(moved or stored, "CANCEL")
+    machines.moved, machines.gone = moved, gone
+    got = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert (got.kind, got.status, got.lifecycle_state, machines.waits) == (
+        "accepted", 202, state, waits,
+    )  # fmt: skip
+    assert machines.sent == [] and await forgotten(machines)
+    assert written(port) == [("success", "user"), ("success", state)]
+
+
+_PORT_REFUSALS: list[tuple[dict[str, Any], int, str]] = [
+    ({"error_code": b01.NATIVE_STOP_REQUIRED}, 403, "risk_limit_breached"),
+    ({"error_code": oc.ACCOUNT_UNAVAILABLE}, 409, "account_unavailable"),
+    ({"error_code": "RATE_BUDGET_EXCEEDED", "retry_after_s": 3}, 429, "exchange_rate_limited"),
+    ({"error_code": "INSUFFICIENT_MARGIN", "exchange_ret_code": 110007}, 502, "exchange_error"),
+    ({"error_code": oc.STORE_UNAVAILABLE, "retry_after_s": 1}, 503, "store_unavailable"),
+]
+_PORT_IDS = ["native-stop", "account", "rate", "venue", "store"]
+
+
+@pytest.mark.parametrize(("answer", "status", "code"), _PORT_REFUSALS, ids=_PORT_IDS)
+async def test_a_refusal_the_port_answers_is_recorded_denied_by_the_exit_service(
+    answer: dict[str, Any], status: int, code: str
+) -> None:
+    """24 Sec.8.4: the command port records none of a user's cancel it refuses, so the exit
+    service does, before it answers: `orders.cancel` denied with the code, beside the intent."""
+    exits, _, row, port = await scripted("submitted", "submitted", answer={"ok": False} | answer)
+    got = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert (got.kind, got.status, got.code) == ("refused", status, code)
+    assert written(port) == [("success", "user"), ("denied", code)]
+
+
+@pytest.mark.parametrize("answer", [answer for answer, _, _ in _PORT_REFUSALS], ids=_PORT_IDS)
+async def test_a_port_refusal_whose_record_cannot_be_written_is_503_audit_unavailable(
+    answer: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-2.9, 24 Sec.8.4: as any later refusal the route makes, never answered beside a lone
+    `success` intent: `503 audit_unavailable`."""
+    exits, _, row, port = await scripted("submitted", "submitted", answer={"ok": False} | answer)
+    refuse_after(port.audits, 1, monkeypatch)
+    got = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert (got.kind, got.status, got.code) == ("refused", 503, "audit_unavailable")
+    assert written(port) == [("success", "user")]
 
 
 def test_an_exits_bounds_are_b1s_and_only_ever_tightened() -> None:
@@ -438,7 +726,7 @@ def test_an_exits_bounds_are_b1s_and_only_ever_tightened() -> None:
     [
         ("cancel", {"error_code": "RATE_BUDGET_EXCEEDED", "retry_after_s": 3}, 429,
          "exchange_rate_limited", 3, True),
-        ("cancel", {"error_code": oc.STORE_UNAVAILABLE, "retry_after_s": 1}, 503,
+        ("cancel", {"error_code": oc.STORE_UNAVAILABLE, "retry_after_s": 5}, 503,
          "store_unavailable", 1, True),
         ("amend", {"error_code": oc.ACCOUNT_UNAVAILABLE}, 409, "account_unavailable", None, False),
         ("amend", {"error_code": oc.STOP_REQUEST_IN_FLIGHT, "retry_after_s": 5}, 409,
@@ -460,7 +748,8 @@ def test_the_command_ports_refusals_map_as_24_sec_8_4_says(
     retryable: bool,
 ) -> None:  # fmt: skip
     """Rulings Q9 and Q11, the 11:34Z ruling (`account_unavailable`, never `conflict`; the 503's
-    one retry) and cancel-all's `retryable` (the 12:30Z ruling 7)."""
+    one shared retry, whatever figure the port gives) and cancel-all's `retryable` (the 12:30Z
+    ruling 7)."""
     got = ex._answered(kind, {"ok": False} | answer)
     assert (got.kind, got.status, got.code, got.retry_after_s) == ("refused", status, code, retry)
     assert got.retryable is retryable
@@ -476,6 +765,22 @@ def test_the_in_flight_guard_holds_one_exit_per_principal_operation_and_key() ->
     assert (again.status, again.code, again.retry_after_s) == (409, "idempotency_in_flight", 1)
     release()
     release()
+    assert callable(guard.claim(user, "cancel", key))
+
+
+def test_a_release_frees_its_own_claim_only_never_a_later_one_of_the_key() -> None:
+    """Each claim is released by its own release alone: one called again once the key was claimed
+    anew frees nothing, so the new claim's repeat is still `409` while its exit runs."""
+    guard, user, key = InFlightGuard(), uuid4(), uuid4()
+    first = guard.claim(user, "cancel", key)
+    assert callable(first)
+    first()
+    second = guard.claim(user, "cancel", key)
+    assert callable(second)
+    first()
+    held = guard.claim(user, "cancel", key)
+    assert isinstance(held, ExitOutcome) and held.code == "idempotency_in_flight"
+    second()
     assert callable(guard.claim(user, "cancel", key))
 
 

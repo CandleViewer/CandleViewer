@@ -503,11 +503,6 @@ async def test_a_refusal_audit_has_the_grace_past_the_amends_deadline(
     assert audit_by == [fixed + oc.AMEND_AUDIT_GRACE_S]
 
 
-def test_the_store_retry_is_the_one_second_the_cancel_shares() -> None:
-    """The 11:34Z ruling: one `Retry-After` for an exit's read that failed, the cancel's 1 s."""
-    assert oc.STORE_UNAVAILABLE_RETRY_AFTER_S == 1.0 and _UNAVAILABLE["retry_after_s"] == 1
-
-
 @pytest.mark.parametrize(
     "refusal",
     [AccountScopeDenied(), OrderEntryRefused(OrderEntryRefusal("no_active_key", "No key."))],
