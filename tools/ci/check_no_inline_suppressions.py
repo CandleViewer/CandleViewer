@@ -106,6 +106,8 @@ def findings_in(path: Path, rel: str, today: date) -> list[str]:
             comment = line[m.start("marker") :].split("*/", 1)[0]
             problems = field_problems(comment, today)
             owner = field(comment, "owner")
+            if len(re.findall(r"(?<![\w-])owner=", comment)) > 1:
+                problems.append("a suppression on a drawing path names one owner, not several")
             if owner and owner != OWNER:
                 problems.append(f"suppression owner {owner!r} must be {OWNER} on a drawing path")
             if problems:

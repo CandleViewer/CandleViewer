@@ -38,15 +38,18 @@ rules:
       - pattern: $D.parseHTMLUnsafe(...)
       - pattern: $R.createContextualFragment(...)
       - pattern: $R["createContextualFragment"](...)
+      # `!` and `?.` are strict TypeScript's spellings of a nullable `contentDocument` (#4411's L3).
       - patterns:
           - pattern-either:
               - pattern: $D.write(...)
               - pattern: $D.writeln(...)
+              - pattern: $D?.write(...)
+              - pattern: $D?.writeln(...)
               - pattern: $D["write"](...)
               - pattern: $D["writeln"](...)
           - metavariable-regex:
               metavariable: $D
-              regex: '^(?:[\w$.]*\.)?(?:document|contentDocument)$'
+              regex: '^(?:[\w$.!?]*\.)?(?:document|contentDocument)!?$'
       - pattern: <$EL ... srcDoc={...} ... />
       - pattern: "{..., srcDoc: ..., ...}"
       - patterns:
@@ -54,6 +57,16 @@ rules:
           - metavariable-regex:
               metavariable: $K
               regex: '^["'']?(?:innerHTML|outerHTML|srcdoc)["'']?$'
+      # A CSS string in a bag, unless it is a literal (#4411's L4), as the `cssText` arms above.
+      - patterns:
+          - pattern: "Object.assign($X, ..., {..., $K: $V, ...}, ...)"
+          - metavariable-regex:
+              metavariable: $K
+              regex: '^["'']?cssText["'']?$'
+          - metavariable-pattern:
+              metavariable: $V
+              patterns:
+                - pattern-not: '"..."'
       - pattern: $X.srcdoc = $V
       - pattern: $X["srcdoc"] = $V
       # Semgrep binds a template-literal name without its closing backtick (`` `srcdoc ``): `?` below.

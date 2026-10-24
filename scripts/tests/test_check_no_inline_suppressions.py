@@ -106,6 +106,13 @@ def test_only_the_security_team_may_own_a_drawing_path_suppression(tmp_path, cap
     assert code == 1 and f"owner '@basiltt' must be {OWNER}" in err
 
 
+def test_a_drawing_path_suppression_names_one_owner(tmp_path, capsys):
+    """The shared grammar reads the first `owner=`, so a second could ride behind the team's."""
+    files = {f"{SCOPE}/a.ts": f"// @ts-ignore {OK} owner=@basiltt\n"}
+    code, err = _check(tmp_path, capsys, files)
+    assert code == 1 and "names one owner, not several" in err
+
+
 @pytest.mark.parametrize("form", FORMS)
 def test_a_reviewed_annotation_passes(tmp_path, capsys, form):
     files = {f"{SCOPE}/a.ts": form.format(a=f" -- {OK}") + "\n"}

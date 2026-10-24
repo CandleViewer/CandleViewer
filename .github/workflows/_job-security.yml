@@ -165,7 +165,7 @@ jobs:
   semgrep-bandit:
     name: semgrep-bandit
     runs-on: ubuntu-latest
-    timeout-minutes: 30 # semgrep 15 + bandit 10 + 5 for setup
+    timeout-minutes: 36 # semgrep 15 + bandit 10 + the drawings pin 6 + 5 for setup
     permissions:
       contents: read
       security-events: write
@@ -218,7 +218,8 @@ jobs:
 
       # E14-X03 (#549): the statements the drawings rules report with `nosemgrep` disabled are the
       # sites of tools/ci/drawings-exception-sites.json, so a fifth annotation, or one moved to
-      # another statement, needs the security team's entry (scripts/tests/test_e14_security_gates.py).
+      # another statement, needs an entry there, reviewed under C-10.1
+      # (scripts/tests/test_e14_security_gates.py).
       - name: Drawings rules (the reviewed-exception sites are exactly the listed ones)
         if: ${{ !cancelled() }}
         timeout-minutes: 6

@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 import tools.ci.check_drawings_exception_sites as pin  # noqa: E402 - sys.path first (#549)
+import tools.ci.security_gate as gate  # noqa: E402 - sys.path first (#549)
 
 DOC = ROOT / "docs" / "plan" / "security" / "ci-gates-e14.md"
 RULE = "cv-drawings-query-missing-owner-filter"
@@ -167,8 +168,22 @@ def test_main_exits_0_when_the_scan_matches_the_list_and_1_when_it_does_not(
     assert text in captured.out + captured.err
 
 
+def _scanned(**paths: object) -> object:
+    """`subprocess.run` answering Semgrep's `--json --verbose` report with `paths`."""
+    report = json.dumps({"errors": [], "results": [], "paths": paths})
+    return lambda *a, **k: subprocess.CompletedProcess(a, 0, report, "")
+
+
 @pytest.mark.parametrize(
-    "failure", ["no semgrep", "bad list", "semgrep failed", "a result past the file"]
+    "failure",
+    [
+        "no semgrep",
+        "bad list",
+        "semgrep failed",
+        "a result past the file",
+        "nothing scanned",
+        "a target left unread",
+    ],
 )
 def test_main_exits_2_when_the_scan_or_the_list_cannot_be_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
@@ -185,4 +200,21 @@ def test_main_exits_2_when_the_scan_or_the_list_cannot_be_read(
         monkeypatch.setattr(
             pin.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 7, "", "boom")
         )
+    if failure == "nothing scanned":  # a wrong root: Semgrep matches no target and says so
+        monkeypatch.setattr(pin.subprocess, "run", _scanned(scanned=[], skipped=[]))
+    if failure == "a target left unread":  # a file over the size cap, unread, sites unseen
+        big = {"path": "services/api/candleviewer/big.py", "reason": "exceeded_size_limit"}
+        monkeypatch.setattr(pin.subprocess, "run", _scanned(scanned=["a.py"], skipped=[big]))
     assert pin.main(["--root", str(tmp_path), "--sites", str(sites)]) == 2
+
+
+def test_a_skip_configuration_explains_does_not_fail_the_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ignored = {"path": "services/api/candleviewer/x.py", "reason": "semgrepignore_patterns_match"}
+    monkeypatch.setattr(pin.subprocess, "run", _scanned(scanned=["a.py"], skipped=[ignored]))
+    assert pin.scan(ROOT) == []
+
+
+def test_the_configured_skips_are_the_security_gates() -> None:
+    assert pin.CONFIGURED_SKIPS == gate._CONFIGURED_SKIPS

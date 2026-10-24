@@ -8,7 +8,9 @@ shows none. This scans `services/api/candleviewer` with the five persistence rul
 assigned constant's name, else `line N`), and compares them with
 `tools/ci/drawings-exception-sites.json`. A fifth unscoped statement fails, and so does an
 annotation moved to another statement of the same file: a count of (file, rule) pairs would pass
-both. It needs the `semgrep` binary: the `semgrep-bandit` job's venv has it, CI's governance shards
+both. A scan that read no file, or left a target unread for any reason but configuration (the
+skips `security_gate.py` allows), fails too: an exception there could not be seen. It needs the
+`semgrep` binary: the `semgrep-bandit` job's venv has it, CI's governance shards
 do not (`scripts/tests/test_e14_security_gates.py` checks the annotations against the list there,
 without Semgrep).
 
@@ -37,6 +39,16 @@ RULES = (
     "cv-drawings-unbounded-geometry",
     "cv-drawings-batch-unvalidated-ids",
     "cv-drawings-pixel-geometry",
+)
+#: The skip reasons configuration explains, as `security_gate._CONFIGURED_SKIPS` (a test keeps
+#: them equal): any other leaves a target unread.
+CONFIGURED_SKIPS = frozenset(
+    {
+        "Gitignore_patterns_match",
+        "semgrepignore_patterns_match",
+        "cli_include_flags_do_not_match",
+        "cli_exclude_flags_match",
+    }
 )
 ASSIGNED = re.compile(r"\s*([A-Za-z_]\w*)\s*(?::[^=\n]+)?=(?!=)")
 #: A site: the rule, the file (relative to the repo root) and the statement.
@@ -81,7 +93,7 @@ def compare(found: Sequence[Site], listed: Sequence[Site]) -> list[str]:
 
 def scan(root: Path) -> list[dict[str, Any]]:
     """The five rules' results over the service, annotations disabled."""
-    argv = ["semgrep", "scan", "--metrics=off", "--quiet", "--json", "--disable-nosem"]
+    argv = ["semgrep", "scan", "--metrics=off", "--verbose", "--json", "--disable-nosem"]
     argv += ["--timeout", "120", "--max-target-bytes", "5000000"]
     for rule in RULES:
         argv += ["--config", f".semgrep/{rule}.yml"]
@@ -100,6 +112,16 @@ def scan(root: Path) -> list[dict[str, Any]]:
     data = json.loads(proc.stdout)
     if data["errors"]:
         raise RuntimeError(f"semgrep reported errors: {data['errors']}")
+    paths = data.get("paths") or {}  # --verbose writes both lists
+    if not paths.get("scanned"):
+        raise RuntimeError(f"semgrep read no file under {TARGET}: is --root the repository?")
+    lost = [
+        f"{entry.get('path')} ({entry.get('reason')})"
+        for entry in paths.get("skipped", [])
+        if entry.get("reason") not in CONFIGURED_SKIPS
+    ]
+    if lost:
+        raise RuntimeError(f"semgrep left targets unread: {', '.join(lost[:5])}")
     results: list[dict[str, Any]] = data["results"]
     return results
 

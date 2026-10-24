@@ -34,8 +34,11 @@ in the same job: no new required-check name (C-9.1; the one step added is below)
 `tools/ci/check_drawings_exception_sites.py` scans `services/api/candleviewer` with the five rules and
 `--disable-nosem`, names each finding by its file and the statement it opens (`_PURGE`), and compares
 them with `tools/ci/drawings-exception-sites.json`. The `semgrep-bandit` job runs it, so a fifth
-unscoped statement, or an annotation moved to another statement of the same file, fails until the
-security team lists it (a count of (file, rule) pairs passed both). `scripts/tests/test_e14_security_gates.py`
+unscoped statement, or an annotation moved to another statement of the same file, fails the job (the
+pin, with the whole-tree scan's zero-finding gate beside it) until an entry in the list lands,
+reviewed under C-10.1: the list is not a C-10.2 path, so it forces no CODEOWNER review (a count of
+(file, rule) pairs passed both). A scan that read no file, or left a target unread for a reason
+other than configuration, fails too. `scripts/tests/test_e14_security_gates.py`
 runs the same scan where `semgrep` is installed (CI's governance shards have none, so that test skips
 there), checks the annotations in the source against the list without it, and pins each rule's
 metadata, scope and doc section.
@@ -72,8 +75,12 @@ E15-T01's spec decision on #402, SR-E14-09).
   any right-hand side (`== body.owner_user_id`) passes (the repository's unit test covers its
   constants). Not seen: comma joins, a literal that is returned or held in a dict, `MERGE`, anything
   after the first `+` of a `+`-joined statement, a name split after its schema qualifier
-  (`"FROM public." "drawings"`, prefixed or not); in Core, `select_from(drawings)` and table methods
-  such as `drawings.update()` (Core is unused for drawings today).
+  (`"FROM public." "drawings"`, prefixed or not) or quoted (`"public"."drawings"`), a predicate on a
+  joined table's `owner_user_id` (`JOIN layouts l ... WHERE l.owner_user_id = :owner` passes), any
+  bind named `:owner...` (`:owner_from_body` passes); in Core, `select_from(drawings)`, table
+  methods such as `drawings.update()`, a table held in a variable or an attribute (the class-based
+  repository's idiom, `self.table = m.drawings`), `sa.table("drawings")` and
+  `getattr(m, "drawings")` (Core is unused for drawings today).
 - **Deliberate-regression fixture:** the `ruleid` lines of
   `.semgrep/tests/cv-drawings-query-missing-owner-filter/`, with the annotated multi-line statement
   that proves the marker placement the four exceptions use.
@@ -143,8 +150,10 @@ E15-T01's spec decision on #402, SR-E14-09).
   `setHTMLUnsafe`, `parseHTMLUnsafe`), `document.write(ln)`, `createContextualFragment`, `srcdoc`,
   CSS strings (`cssText`, `insertRule`, `setAttribute("style", ...)` with a non-literal), each also
   named by a string key (`el["innerHTML"] = s`, a local constant key included, which `no-unsanitized`
-  does not read; `setAttribute("srcdoc" | "style", ...)` too) and by an `Object.assign` property bag
-  (`Object.assign(el, { innerHTML: s })`), and `href`, `src`, `style`, `aria-label`,
+  does not read; `setAttribute("srcdoc" | "style", ...)` too), the raw-HTML keys and a non-literal
+  `cssText` also by an `Object.assign` property bag (`Object.assign(el, { innerHTML: s })`), and
+  `document.write(ln)` reached through strict TypeScript's `!` or `?.`
+  (`frame.contentDocument!.write(s)`), and `href`, `src`, `style`, `aria-label`,
   `aria-description` or `title` built by `+` or a template with a substitution (JSX, `setAttribute`
   with the name in any case or a backtick string, a DOM property, `createElement` props). Scope: the paths of
   `tools/ci/no-inline-suppression-paths.json`. The message points to a React text child,
@@ -160,12 +169,13 @@ E15-T01's spec decision on #402, SR-E14-09).
   `aria-labelledby`); with the scope removed it finds 5 such `aria-label`s in the frontend, none at
   a raw-HTML sink. Not seen: a conditional of templates, `.join`, `DOMParser`, a raw `href` from data,
   deliberate reflection (`Reflect.set(el, "innerHTML", s)`, a property descriptor's `set.call`), a
-  `document` reached through an alias or a cast, an attribute name held in a variable, a string-keyed
-  `setAttribute` of a URL or name, a module-scope constant key read inside a function declaration or
-  a class method (inside an arrow or a function expression it is seen; an imported or exported
-  constant never is), and `.mts` or `.cts` files, which Semgrep does not read (the lint ban covers
-  only its `no-unsanitized` forms there: no `createElement` props, string keys or URL, name and CSS
-  arms, and the engine layer has no raw-HTML lint). Fixture-proven until E14-S08.
+  `document` reached through an alias or a cast, an `Object.assign` bag's URL, name or `style` key, a
+  computed key, a bag held in a variable or a spread argument, an attribute name held in a variable,
+  a string-keyed `setAttribute` of a URL or name, a module-scope constant key read inside a function
+  declaration or a class method (inside an arrow or a function expression it is seen; an imported or
+  exported constant never is), and `.mts` or `.cts` files, which Semgrep does not read (the lint ban
+  covers only its `no-unsanitized` forms there: no `createElement` props, string keys or URL, name
+  and CSS arms, and the engine layer has no raw-HTML lint). Fixture-proven until E14-S08.
 - **Deliberate-regression fixture:** `.semgrep/tests/cv-drawings-text-to-html-sink/` (a `ruleid` per
   sink, form and root; the shell rule alone misses 43 of its 49, every string-key,
   `setHTMLUnsafe`, `style` and attribute-name form among them).

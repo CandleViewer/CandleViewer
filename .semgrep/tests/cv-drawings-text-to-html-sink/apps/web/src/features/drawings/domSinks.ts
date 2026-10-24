@@ -54,6 +54,14 @@ export function sinks(): void {
   Object.assign(el, { innerHTML: label }); // ruleid: cv-drawings-text-to-html-sink
   Object.assign(el, { title: "x" }, { outerHTML: label }); // ruleid: cv-drawings-text-to-html-sink
   Object.assign(el, { srcdoc: label }); // ruleid: cv-drawings-text-to-html-sink
+  frame.contentDocument!.write(label); // ruleid: cv-drawings-text-to-html-sink
+  frame.contentDocument!["write"](label); // ruleid: cv-drawings-text-to-html-sink
+  frame.contentDocument?.write(label); // ruleid: cv-drawings-text-to-html-sink
+  frame.contentDocument?.writeln(label); // ruleid: cv-drawings-text-to-html-sink
+  frame.contentWindow!.document.write(label); // ruleid: cv-drawings-text-to-html-sink
+  frame.contentWindow?.document.write(label); // ruleid: cv-drawings-text-to-html-sink
+  Object.assign(el.style, { cssText: css }); // ruleid: cv-drawings-text-to-html-sink
+  Object.assign(el.style, { "cssText": "color: " + css }); // ruleid: cv-drawings-text-to-html-sink
 }
 
 // The text-node forms the message points to, and what a naive rule on the same words would flag:
@@ -78,4 +86,5 @@ export function safe(): void {
   sheet["insertRule"]("li { color: red }"); // ok: cv-drawings-text-to-html-sink
   el["setAttribute"]("style", "display: none"); // ok: cv-drawings-text-to-html-sink
   Object.assign(el, { textContent: label }); // ok: cv-drawings-text-to-html-sink
+  Object.assign(el.style, { cssText: "display: none" }); // ok: cv-drawings-text-to-html-sink
 }
