@@ -322,7 +322,8 @@ async def test_a_stop_loss_voided_on_its_open_position_pages_with_its_ids() -> N
     [(record, _)] = rig.audits.written
     assert (record.reason, record.detail["position_state"]) == ("entry_filled_stop_absent", "open")
     assert rig.pager.calls == [
-        f"oms_stop_entry_filled_stop_absent: C-2.6 exposure, {WHERE}, {row.id}"
+        f"oms_stop_entry_filled_stop_absent: C-2.6 exposure, {WHERE}, {row.id}: a stop-loss voided"
+        " while its position is open on its side (C-2.6)"
     ]
     assert rig.count("entry_filled_stop_absent") == 1
 

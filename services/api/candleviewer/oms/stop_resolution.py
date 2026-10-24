@@ -46,6 +46,9 @@ cap, its cooldown, its metric and its pages) is slice H3's.
    by its entry's order (`WAITING_ENTRY`); any other entry's request that leaves a row answered
    or kept, on a row answered already or whose stored order `WAITING_ENTRY` holds
    (`Reading.waiting_entries`), carries `ENTRY_HELD` with its outcome, as that row stays listed.
+   A request held through its entry's order is `exposed` when its position, open on its side,
+   shows no stop at all and no Partial stop-loss order of the key is open (a take-profit never
+   counts): a C-2.6 exposure H3's gate pages once per hold.
 4. **The read** (`CompleteRead`), every read a `poll` lane read, each bounded at
    `READ_TIMEOUT_S` and the whole at `WHOLE_READ_TIMEOUT_S`: the position always
    (`routing.read_position`); an entry's order by its id among the open orders, then in the
@@ -248,6 +251,10 @@ class RequestDecision:
     page: str | None = None
     #: The same, typed, for code to branch on: None when nothing pages.
     page_reason: PageReason | None = None
+    #: A request held through its entry's order (`ENTRY_HELD`) whose position, open on its side,
+    #: shows no stop at all (`shows_no_stop`, open orders included): a C-2.6 exposure H3's gate
+    #: pages once per hold.
+    exposed: bool = False
 
 
 # --- grouping and the pure matchers ----------------------------------------------------------
@@ -428,7 +435,8 @@ def _moves(request: StopRequest, reading: Reading, later: frozenset[StopKind]) -
         return _decision(request, state, tuple((r, _later_or(r, later, "answered")) for r in rows))
     if matched:
         if all(r.answered_at is not None for r in rows):  # still listed: its entry's order holds it
-            return _held(request, state, ENTRY_HELD)
+            exposed = state == "open" and shows_no_stop(reading.position, reading.open_orders)
+            return replace(_held(request, state, ENTRY_HELD), exposed=exposed)
         return _whole(request, state, "answered", "answered")
     if entry == "resting":
         return _whole(request, state, "kept", "entry_resting")
@@ -765,16 +773,24 @@ class StopResolver:
         self._store_timeout_s = store_timeout_s
 
     async def resolve_key(
-        self, port: TradingPort, account: AccountRef, key: PositionKey, *, bound_s: float | None
+        self,
+        port: TradingPort,
+        account: AccountRef,
+        key: PositionKey,
+        *,
+        bound_s: float | None,
+        now: datetime | None = None,
     ) -> tuple[RequestDecision, ...] | None:
         """The key's decisions, written; None when the read decided nothing (`read_failed`).
         A store read or write that fails raises, with what was written before it kept: a void
         audit past its bound as `AuditNotDurable` (through `RecordedStopRepository`, the store H3
         wires; a bare store raises `WriteAheadTimeout`), a store call past `STORE_TIMEOUT_S` as
-        `TimeoutError`, a lost compare-and-set as `StaleRecordedStop`."""
+        `TimeoutError`, a lost compare-and-set as `StaleRecordedStop`. `now`, the listing's, is the
+        one the caller's `bound_s` was worked out against (H3's startup floor); by default the
+        clock's. The gate logs a hold once per key (`oms_stop_request_held`)."""
         if account.account_id != key.account_id:
             raise ValueError("the account resolved is the key's (C-12.4)")
-        now = self._now()
+        now = self._now() if now is None else now
         listed = await self._bounded(
             self._store.waiting_for_key(
                 key.account_id, key.symbol, key.position_idx, now=now, bound_s=bound_s
@@ -802,9 +818,8 @@ class StopResolver:
                 outcome=d.outcome,
                 rows=[str(row.id) for row, _ in d.moves],
                 pages=[str(i) for i in d.pages],
+                held=d.held,
             )
-            if d.held is not None:  # H3 counts it and keeps one line per key
-                _log().warning("oms_stop_request_held", symbol=key.symbol, reason=d.held)
         return decisions
 
     async def _write(self, key: PositionKey, decisions: Sequence[RequestDecision]) -> None:

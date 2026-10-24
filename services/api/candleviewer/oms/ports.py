@@ -533,11 +533,12 @@ class PositionKey:
 class StopRequestGate(Protocol):
     """Asked before every stop request for a position leaves (21 Sec.3.3.11): an entry's first
     persist, and `attach_stop` before its record. `clear` returns when the key may take a request,
-    and raises `StopRequestPending` while a row of the key waits for the complete read, which only
-    that read (slice 3) resolves. The caller bounds the call as any other
-    (`commands.PORT_TIMEOUT_S`, C-2.18), whatever the gate bounds itself."""
+    and raises `StopRequestPending` while a row of the key waits for the complete read, which
+    S3-H's `stop_gate.ResolvingStopGate` starts: an entry is refused at once (`wait_s` 0), an
+    attach after waiting up to `wait_s` for that read (24 Sec.8.4). The caller bounds the call as
+    any other (`commands.PORT_TIMEOUT_S`, C-2.18), whatever the gate bounds itself."""
 
-    async def clear(self, key: PositionKey) -> None: ...
+    async def clear(self, key: PositionKey, *, wait_s: float = 0.0) -> None: ...
 
 
 class WaitingRows(Protocol):
@@ -556,9 +557,10 @@ class WaitingRows(Protocol):
 
 
 #: The `Retry-After` of a request refused because a row of its key waits for the complete read, in
-#: seconds: only that read clears it (the orchestrator's Q-D ruling).
+#: seconds: only that read clears it (the orchestrator's Q-D ruling); a key whose read cleared
+#: nothing waits as long before an entry asks the venue again.
 STOP_REQUEST_RETRY_AFTER_S: Final = 5
-#: The interim gate's bound on its read, in seconds.
+#: The gate's bound on each of its reads of the key's waiting rows, in seconds.
 STOP_GATE_READ_TIMEOUT_S: Final = 1.0
 
 
@@ -567,7 +569,8 @@ class RefuseWhileWaiting:
     it resolves no waiting row, it refuses while the key has one (fail closed). A read that fails,
     or does not answer within `timeout_s`, refuses too (`StoreUnavailable`): no stop request leaves
     unchecked. `bound_s` is how long an unanswered request holds its key before it waits for the
-    complete read, the stop request's bound (`oms_wiring.OmsBounds.stop_request_s`)."""
+    complete read, the stop request's bound (`oms_wiring.OmsBounds.stop_request_s`). It starts no
+    read, so it never waits: `wait_s` is the resolving gate's, which replaces it once wired."""
 
     def __init__(
         self,
@@ -582,7 +585,7 @@ class RefuseWhileWaiting:
         self._bound_s = bound_s
         self._timeout_s = timeout_s
 
-    async def clear(self, key: PositionKey) -> None:
+    async def clear(self, key: PositionKey, *, wait_s: float = 0.0) -> None:
         try:
             async with asyncio.timeout(self._timeout_s):
                 waiting = await self._rows.waiting_for_key(
