@@ -45,6 +45,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     WAITING_ENTRY,
     FillPosition,
     InForce,
+    InForceWriteAhead,
     InsertWriteAhead,
     NewRecordedStop,
     RecordedStopRow,
@@ -1032,7 +1033,7 @@ class InMemoryRecordedStopStore:
         rows: Sequence[RecordedStopRow],
         *,
         at: datetime,
-        write_ahead: ResolveWriteAhead | None = None,
+        write_ahead: InForceWriteAhead | None = None,
     ) -> InForce:
         check_in_force(account_id, rows)
         port.require_aware("at", at)
@@ -1076,17 +1077,17 @@ class InMemoryRecordedStopStore:
                 done = tuple(replace(r, status="replaced", closed_at=at) for r in done)
         else:
             done = tuple(replace(r, status="void", closed_at=at) for r in held)
-        hook = None if write_ahead is None else write_ahead(done)
+        hook = None if write_ahead is None else write_ahead(done, position_state)
         await self._db._audited_commit(hook, self._audit_timeout_s, *done)
         return done
 
     def _as_read(self, account_id: UUID, rows: Sequence[RecordedStopRow]) -> list[RecordedStopRow]:
-        """The stored rows if each is as read (account, kind, `pending`, `answered_at`)."""
+        """The stored rows if each is as read (account, key, kind, `pending`, `answered_at`)."""
         held = [self._db._stops.get(row.id) for row in rows]
         if any(
             h is None
-            or (h.exchange_account_id, h.kind, h.status, h.answered_at)
-            != (account_id, r.kind, "pending", r.answered_at)
+            or (h.exchange_account_id, h.symbol, h.position_idx, h.kind, h.status, h.answered_at)
+            != (account_id, r.symbol, r.position_idx, r.kind, "pending", r.answered_at)
             for h, r in zip(held, rows, strict=True)
         ):
             raise StaleRecordedStop

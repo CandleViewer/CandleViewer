@@ -24,7 +24,13 @@ is missing or unusable), and an entry's pending rows whose order of the row's ac
 
 Slice 3's complete read (S3-H): `put_in_force` locks the key's live rows in id order, compares,
 then replaces before it sets, so `ux_rs_in_force` never holds two; `resolve` locks as `settle` does
-and compares-and-sets in its UPDATE; `waiting_keys_statement` shares `_waits` with the key's read.
+and compares-and-sets in its UPDATE (each row's key and `answered_at` as read);
+`waiting_keys_statement` shares `_waits` with the key's read. An order step that settles its
+entry's rows (`orders_sqlalchemy.settle_entry_stops_statement`) locks them in its UPDATE's scan
+order, not in id order: a step and a read meeting on an entry's two rows can deadlock, which
+Postgres breaks by failing one of the two transactions, nothing written by it (the step's write
+or the read's, which the next request reads again). Ordering that lock, with a race test on
+Postgres, is left to H3: it is `orders_sqlalchemy.py`'s.
 
 `void_orphans_statement` is R10's startup sweep (`RecordedStopStore.void_orphans`): one UPDATE that
 voids the pending entry-attach rows of an order of their account that was never placed (never sent,
@@ -67,6 +73,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     WAITING_ENTRY,
     FillPosition,
     InForce,
+    InForceWriteAhead,
     InsertWriteAhead,
     NewRecordedStop,
     RecordedStopRow,
@@ -286,9 +293,17 @@ def resolve_statement(
 
 
 def _as_read(rows: Sequence[RecordedStopRow]) -> sa.ColumnElement[bool]:
-    """SEC-BND-02: each of `rows` only with the `answered_at` it was read with."""
+    """SEC-BND-02: each of `rows` only on the key and with the `answered_at` it was read with."""
     return sa.or_(
-        *(sa.and_(_S.id == r.id, _S.answered_at.is_not_distinct_from(r.answered_at)) for r in rows)
+        *(
+            sa.and_(
+                _S.id == r.id,
+                sa.type_coerce(_S.symbol, sa.Text) == r.symbol,
+                _S.position_idx == r.position_idx,
+                _S.answered_at.is_not_distinct_from(r.answered_at),
+            )
+            for r in rows
+        )
     )
 
 
@@ -473,7 +488,7 @@ class SqlAlchemyRecordedStopStore(CappedStore):
         rows: Sequence[RecordedStopRow],
         *,
         at: datetime,
-        write_ahead: ResolveWriteAhead | None = None,
+        write_ahead: InForceWriteAhead | None = None,
     ) -> InForce:
         check_in_force(account_id, rows)
         require_aware("at", at)
@@ -515,6 +530,7 @@ class SqlAlchemyRecordedStopStore(CappedStore):
             if len(resolved) != len(ids):
                 raise StaleRecordedStop
             if write_ahead is not None:
-                await bounded_write_ahead(write_ahead(resolved), self._audit_timeout_s)
+                hook = write_ahead(resolved, position_state)
+                await bounded_write_ahead(hook, self._audit_timeout_s)
             await uow.commit()
         return resolved
