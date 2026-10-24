@@ -12,7 +12,8 @@ and the fixture arithmetic (the E32-D01 ladder tool's formulas re-implemented; n
 `--json` feeds the check-nums script; `--check` re-derives the spec's `audit:` markers;
 `--self-test` mutation-tests the cite rule (moved line = WARN; vanished or ambiguous = FAIL) and
 the section 3 frame gates on this spec (a present-tense stop marker on one pre-send row = one
-FAIL; the viewer row without its stop = one FAIL).
+FAIL, in three phrasings; a renamed pre-send row = one FAIL; the viewer row without its stop =
+one FAIL; a post-confirm control = no FAIL).
 Exit 1 on a gated FAIL or a failed gate.
 
 Usage: python3 -I docs/design/_tools/e32_d03_bracket_builder_audit.py [--json|--check|--self-test]
@@ -51,7 +52,8 @@ FORBIDDEN = (
 )
 # The class word the orchestrator's ruling retired from user copy (RULED 2026-10-24); UI sections.
 BANNED_COPY = (r"app-managed",)
-RULED_WORD = "Emulated · run by CandleViewer, not Bybit"
+# Byte-equal to E33-D03 section 13 `tag.emulated`'s accessible name (em dash; HA-14).
+RULED_WORD = "Emulated — run by CandleViewer, not Bybit"
 NOTE_DRAFT = (
     "Every position keeps a native stop — you can move it, not delete it. "
     "It is placed with the order, not after it."
@@ -82,6 +84,8 @@ PRE_SEND = (
 PRESENT_HELD = (
     r"held by Bybit(?! once placed| \(exchange\))",
     r"stop [\d,.]+ held by Bybit(?! once)",
+    r"held by the exchange",
+    r"\d[\d,.]*(?: ·)? held by Bybit \(exchange\)",
 )
 CLASS_RE = r"\*\*(?:T2|T4|validity|status|outcome|T1|—)\*\*"
 # element | fg | bg | role — every pair the screen draws (spec section 11, rows in order).
@@ -649,13 +653,17 @@ def frame_gates(s3: str) -> list[str]:
                 bad.append(f"spec section 3: `{name}` is pre-send but says present-tense {at!r}")
     if len(frames) != len(set(frames)):
         bad.append("spec section 3: a frame name repeats")
+    missing = [n for n in PRE_SEND if n not in frames]
+    if missing:
+        bad.append(f"spec section 3: pre-send rows missing or renamed: {missing}")
     return bad
 
 
 def self_test_frames() -> list[str]:
     """Mutation-test the frame gates on this spec: the head is clean; one present-tense marker
-    on one pre-send row is exactly one FAIL; the viewer row without its stop is exactly one FAIL;
-    a present-tense marker on a post-confirm row (`submitting`) is no FAIL."""
+    on one pre-send row is exactly one FAIL (three phrasings); a renamed pre-send row is exactly
+    one FAIL; the viewer row without its stop is exactly one FAIL; a present-tense marker on a
+    post-confirm row (`submitting`) is no FAIL."""
     s3 = section(SPEC.read_text(encoding="utf-8"), 3, 4)
     bad: list[str] = []
     if frame_gates(s3):
@@ -664,8 +672,11 @@ def self_test_frames() -> list[str]:
     rows3 = s3.split("\n")
     for want, name, old, new in (
         (1, "editing`", draft, '"stop 63,900.0 held by Bybit"'),
+        (1, "editing`", draft, '"stop 63,900.0 held by the exchange"'),
+        (1, "blocked`", draft, '"Stop · 63,900.0 · held by Bybit (exchange)"'),
+        (1, "blocked`", "`SCR-069 / blocked`", "`SCR-069 / blocked (renamed)`"),
         (1, "viewer-read-only`", "", ""),
-        (0, "submitting`", "held by Bybit", "held by Bybit"),
+        (0, "submitting`", "stop · 63,900.0 held by Bybit", "stop 63,900.0 held by Bybit"),
     ):
         hit = [i for i, ln in enumerate(rows3) if f"`SCR-069 / {name}" in ln]
         if len(hit) != 1 or old not in rows3[hit[0]]:  # "" plants on any row
@@ -677,6 +688,9 @@ def self_test_frames() -> list[str]:
         else:  # strip every stop marker from the row
             for mk in STOP_MARKERS:
                 mutated[hit[0]] = mutated[hit[0]].replace(mk, "—")
+        if mutated[hit[0]] == rows3[hit[0]]:
+            bad.append(f"self-test: the {name[:-1]} mutation changed nothing")
+            continue
         got = len(frame_gates("\n".join(mutated)))
         if got != want:
             bad.append(f"self-test: the {name[:-1]} mutation gave {got} FAIL, not {want}")
@@ -779,9 +793,10 @@ def flatten(d: object, prefix: str = "") -> dict[str, object]:
 def main(argv: list[str]) -> int:
     if "--self-test" in argv:
         bad = self_test() + self_test_frames()
-        msg = "clean (cite: moved → WARN, gone → FAIL, ambiguous → FAIL; frames: pre-send "
-        msg += "present tense → 1 FAIL, viewer without its stop → 1 FAIL, post-confirm → 0)"
-        print("self-test: " + (msg if not bad else "\n".join(bad)))
+        msg = "self-test: clean (cite: moved → WARN, gone → FAIL, ambiguous → FAIL; frames: "
+        msg += "pre-send present tense (3 phrasings) → 1 FAIL, a renamed pre-send row → 1 FAIL, "
+        msg += "viewer without its stop → 1 FAIL, post-confirm → 0)"
+        print(msg if not bad else "\n".join(bad))
         return 1 if bad else 0
     themes = {k: load_theme(k) for k in THEMES}
     t = {k: p.read_text(encoding="utf-8") for k, p in DOCS.items()}
