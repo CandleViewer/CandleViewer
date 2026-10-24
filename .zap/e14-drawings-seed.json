@@ -1,0 +1,21 @@
+{
+  "operations": [
+    {
+      "op": "create",
+      "id": "0193f2bb-0000-7000-8000-00000000d001",
+      "drawing": {
+        "symbol": "BTCUSDT",
+        "tool": "horizontal_line",
+        "geometry": {
+          "points": [
+            {
+              "t": "2026-09-13T12:00:00Z",
+              "p": "61200.00"
+            }
+          ]
+        },
+        "label": "zap owner level"
+      }
+    }
+  ]
+}
