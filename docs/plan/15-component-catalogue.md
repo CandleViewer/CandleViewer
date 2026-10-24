@@ -109,29 +109,31 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-007 TextInput
 
 - **Tier**: Atom · **Purpose**: base single-line text entry, wrapped by molecules (PriceInput, QtyInput, SymbolSearchInput).
-- **Props**: `value` · `onChange` · `placeholder?` · `prefix?/suffix?: ReactNode` · `size` · `invalid?: boolean` · `errorMessage?` · `disabled?` · `readOnly?` · `inputMode?` · `maxLength?`.
-- **States**: default, focus, invalid (red border + icon + message, not colour-only), disabled, readOnly.
-- **A11y**: `<input>` with `aria-invalid`, `aria-describedby` → error message id, `aria-errormessage` where supported.
-- **Tokens**: `color.border.*`, `color.text.error`, `radius.sm`, `font.mono` (numeric inputs only).
-- **Storybook**: Default, WithPrefixSuffix, Invalid, Disabled.
+- **Props**: `value` · `onChange` · `placeholder?` (an example, never the label) · `prefix?/suffix?: ReactNode` · `size` · `invalid?: boolean` · `errorMessage?` · `disabled?` · `disabledReason?` (`docs/design/E09/E09-D09.md` §2.2 T2, through CMP-040 or CMP-079) · `readOnly?` · `inputMode?` · `maxLength?`.
+- **States**: default; hover (the 1 px boundary steps from `color.text.tertiary` to `color.text.secondary`); focus-visible (the CMP-039 ring, on pointer focus too); invalid (a 2 px `color.status.danger.default` boundary, the `danger` glyph and the message under the field, never colour alone); disabled (unavailable to everyone in this state: the whole field at `opacity.disabled`, native `disabled`; never for a gate or for validity); disabled-with-reason (`docs/design/E09/E09-D09.md` §2.2 T2 through CMP-079: `aria-disabled` + `readonly`, never `disabled`; the well `color.surface.raised` with a `color.border.default` hairline; the CMP-019 `lock` glyph leads the value inside the well, both `color.text.tertiary`, and the label is unchanged (`docs/design/E30/E30-D04.md` §2.5); the reason sits under the field, through CMP-040); read-only (no fill, a `color.border.default` hairline, the value `color.text.primary`, focusable).
+- **A11y**: `<input>` with `aria-invalid`, `aria-describedby` → error message id (the only reference to the message: no `aria-errormessage`); the message is in the DOM at mount and announced politely once when blur validation shows or changes it; a T2 field keeps its Tab stop and its `aria-describedby` points at the reason alone.
+- **Tokens**: well `color.surface.app` with a 1 px `color.text.tertiary` boundary (hover `color.text.secondary`; invalid 2 px `color.status.danger.default`, `border.thick`; read-only and T2 a `color.border.default` hairline, T2 on `color.surface.raised`), `radius.control`, `size.control.height` (min-height), `space.inset.sm` (padding), `space.inset.xs` (gap); value `type.ui.body` + `color.text.primary` (numeric inputs `type.num.base`); placeholder and affixes `color.text.tertiary`; `size.icon` (prefix glyph, T2 `lock`); `color.focus.ring` + `border.focus`; `opacity.disabled`. (Replaces `color.border.*`, `color.text.error`, `radius.sm` and `font.mono`, which are not shipped semantic tokens.)
+- **Storybook**: Default, WithPrefixSuffix, Invalid, Disabled, ReadOnly, DisabledWithReason.
 - **Tests**: unit, visual, axe, keyboard, invalid-state announcement test (live region / aria-invalid change).
 
 ### CMP-008 NumericStepperInput
 
 - **Tier**: Atom · **Purpose**: base numeric input with +/- step buttons; underlies PriceInput/QtyInput (CMP-100/101).
-- **Props**: `value: number` · `min?/max?` · `step: number` · `precision: number` · `onChange` · `onStep(direction)` · `disabled?`.
-- **A11y**: `role="spinbutton"` semantics (`aria-valuenow/min/max/text`), `↑/↓` arrow keys step by `step`, `PageUp/PageDown` step ×10, `Home/End` jump to min/max.
-- **Tokens**: `font.mono`, `color.border.*`.
-- **Storybook**: Default, MinMaxClamped, KeyboardStepDemo.
+- **Props**: `value: number` · `min?/max?` · `step: number` · `largeStep?: number` (default 10 × `step`) · `precision: number` · `suffix?` (the unit) · `onChange` · `onStep(direction)` · `invalid?` · `disabled?` · `disabledReason?` · `readOnly?`.
+- **States**: default, hover, focus-visible, invalid, disabled, disabled-with-reason (`docs/design/E09/E09-D09.md` §2.2 T2 through CMP-079, as CMP-007: the CMP-019 `lock` leads the value inside the well; the step buttons share the field's reason), read-only (as CMP-007); at a bound the matching step button is plain disabled (availability, not T2).
+- **A11y**: `role="spinbutton"` semantics (`aria-valuenow/min/max/text`, the unit in `aria-valuetext`), `↑/↓` arrow keys step by `step`, `Shift+↑/↓` by 10 × `step`, `PageUp/PageDown` by `largeStep` (default ×10), `Home/End` jump to min/max; the `[−]`/`[+]` buttons are `tabindex="-1"` and named "Decrease {label}"/"Increase {label}"; typed text is parsed, rounded to `precision` and range-checked on blur, never mid-keystroke, and a value out of range is invalid, never silently clamped.
+- **Tokens**: the CMP-007 well and its states; value `type.num.base`, end-aligned; step buttons CMP-002 ghost (`color.text.secondary`; hover `color.surface.hover` + `color.text.primary`), `size.control.height` square, `space.inset.xs` apart and from the well. (Replaces `font.mono` and `color.border.*`.)
+- **Storybook**: Default, MinMaxClamped, KeyboardStepDemo, Invalid, DisabledWithReason.
 - **Tests**: unit (clamping/precision rounding), visual, axe, keyboard step interaction, fuzz test for float precision edge cases.
 
 ### CMP-009 Select (native-pattern dropdown)
 
 - **Tier**: Atom · **Purpose**: single choice from a closed list (interval picker, order category).
-- **Props**: `options[]` · `value` · `onChange` · `size` · `disabled?` · `searchable?: boolean`.
-- **A11y**: WAI-ARIA APG "Listbox"/"Combobox" pattern (uses Radix Select primitive), `aria-expanded`, `aria-activedescendant`, type-ahead.
-- **Tokens**: `color.surface.overlay`, `elevation.2`, `radius.md`.
-- **Storybook**: Default, Searchable, Disabled, LongList (virtualized).
+- **Props**: `options[]` (each may carry `disabled?`, `unavailableReason?` or `disabledReason?`) · `value` · `onChange` · `placeholder?` · `size` · `invalid?` · `disabled?` · `disabledReason?` · `searchable?: boolean` (renders CMP-048's editable combobox).
+- **States**: default, hover, focus-visible, open (the listbox on `color.surface.overlay`), invalid, disabled, disabled-with-reason (`docs/design/E09/E09-D09.md` §2.2 T2 through CMP-079 and CMP-040: the CMP-019 `lock` leads the value in the trigger; the listbox never opens); options: active (`color.surface.hover`), selected (the `check` glyph), disabled (skipped by the arrows), unavailable (`docs/design/E30/E30-D04.md` §2.5's validity look with only the label dimmed, `docs/design/E05/E05-D02-form-controls.md` §5.2: the label at `opacity.disabled`, `unavailableReason` as the second line at full opacity, reachable by the arrows, never chosen, no lock), disabled-with-reason (T2: the `lock` glyph and the full label in `color.text.tertiary`, the reason as the second line, reachable by the arrows, never chosen).
+- **A11y**: WAI-ARIA APG "Listbox"/"Combobox" pattern (any primitive that meets the select-only combobox, `docs/design/E05/E05-D02-form-controls.md` §6 G9), `aria-expanded`, `aria-activedescendant`, type-ahead; the trigger keeps focus and `aria-activedescendant` names the active option (the APG select-only combobox); `Esc` closes with the value unchanged; an unavailable or T2 option takes `aria-disabled` + `aria-describedby` → its reason line, and neither `Enter` nor `Tab` chooses it; an option's name is its label; its second line and its reason line are its description (a T2 option's, the reason alone).
+- **Tokens**: trigger the CMP-007 well with a `chevron-down` (`size.icon`, `color.text.secondary`); listbox `color.surface.overlay`, `elevation.popover`, `radius.card`, a 1 px `color.border.default` edge, at most 10 rows; options `size.row.height`, `space.inset.sm`, `type.ui.body` + `color.text.primary`, active `color.surface.hover`, `check` glyph `color.text.primary`; an unavailable option's label at `opacity.disabled`, its reason `type.ui.caption` + `color.text.secondary`. (Replaces `elevation.2` and `radius.md`, which are primitives.)
+- **Storybook**: Default, Searchable, Disabled, LongList (virtualized), Open, UnavailableOption, DisabledWithReason.
 - **Tests**: unit, visual, axe, keyboard (type-ahead, arrow nav, Esc closes, focus returns to trigger).
 
 ### CMP-010 Slider
@@ -363,10 +365,11 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-034 MaskedValue ("secret reveal")
 
 - **Tier**: Atom · **Purpose**: masked API key/secret display with reveal toggle (admin key screens).
-- **Props**: `value: string` · `revealed?: boolean` · `onToggleReveal` · `autoHideMs?: number` (default 10000, re-masks automatically).
-- **A11y**: toggle is CMP-002 IconButton with label "Show secret"/"Hide secret"; auto-hide timer announced via polite live region ~2s before hiding ("Secret will hide in 2 seconds") satisfying WCAG 2.2.1 (no silent unannounced timing change).
-- **Tokens**: `font.mono`, `color.surface.raised`.
-- **Storybook**: Masked, Revealed, AutoHideCountdown.
+- **Props**: `value: string` (a value the client holds in the current flow, never a stored secret: C-2.7) · `label: string` (what it is, e.g. "API secret"; names the group and the buttons) · `revealed?: boolean` (never `true` at mount) · `onToggleReveal` · `autoHideMs?: number` (default 10000, re-masks automatically) · `copyable?: boolean` (default `false`; CMP-033).
+- **States**: masked (default, at every mount: an 8-character mask whatever the value's length), revealed (only after a press of the toggle), expiring (the last 2 s, announced once), copied (CMP-033).
+- **A11y**: toggle is CMP-002 IconButton with label "Show {label}"/"Hide {label}" ("Show secret"/"Hide secret" when `label` is "secret"); auto-hide timer announced via polite live region ~2s before hiding ("Secret will hide in 2 seconds") satisfying WCAG 2.2.1 (no silent unannounced timing change). A route change, window blur, the idle lock and sign-out re-mask; while masked the DOM holds the mask only, never the value; copy logs nothing and the live region never holds the value; the value never enters browser storage (`docs/design/E05/E05-D02-form-controls.md` §7, rules S1–S7; flagged for E05-X02; recovery codes are CMP-206's).
+- **Tokens**: box `color.surface.raised` with a 1 px `color.border.default` hairline, `radius.control`, `size.control.height`, `space.inset.sm`; value `type.num.base` + `color.text.primary`; mask `color.text.secondary`; countdown (CMP-035) `type.ui.caption` + `color.text.tertiary`; buttons `space.inset.xs` apart. (Replaces `font.mono`.)
+- **Storybook**: Masked, Revealed, AutoHideCountdown, Copyable.
 - **Tests**: unit, visual, axe, timing-announcement test.
 
 ### CMP-035 Countdown / Timer text
@@ -423,10 +426,12 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-040 FormField
 
 - **Tier**: Molecule · **Purpose**: label + control + help/error text wrapper composing any atom input.
-- **Props**: `label` · `htmlFor` · `required?` · `help?` · `error?` · `children`.
-- **A11y**: `<label for>` association, `aria-describedby` chains help+error ids, `aria-required`.
-- **Tokens**: `space.field.*`, `color.text.secondary`.
-- **Storybook**: Default, WithError, WithHelp, Required.
+- **Props**: `label` · `htmlFor` · `labelId?` (generated when absent) · `required?` (sets `aria-required`; no asterisk) · `optional?` (shows "(optional)" in a form that mixes both) · `help?` · `error?` · `disabledReason?` (`docs/design/E09/E09-D09.md` §2.2 T2) · `layout?: "stacked"|"inline"` (default `stacked`) · `children`.
+- **Variants**: stacked (the label over the control), inline (a label column the host sizes, then the control; it stacks below its fit width).
+- **States**: default, invalid (the error line: the `danger` glyph and the message), disabled, disabled-with-reason (`docs/design/E09/E09-D09.md` §2.2 T2 through CMP-079: the label unchanged and the CMP-019 `lock` glyph leading the child's value inside its well, `docs/design/E30/E30-D04.md` §2.5; the reason sits under the control in `color.text.secondary`), read-only.
+- **A11y**: `<label for>` association (a child that is not a native labelable element — a radiogroup, a slider, a grid, a div combobox — takes `aria-labelledby` → `labelId`), `aria-describedby` chains the error then the help id (while T2, the reason id alone), `aria-required`; the error node is in the DOM at mount, a polite live region announced once when blur validation shows or changes the message.
+- **Tokens**: label `type.ui.label` + `color.text.secondary`, T2 included ("(optional)" `color.text.tertiary`); help and reason `type.ui.caption` + `color.text.secondary`; error `type.ui.caption` + `color.text.primary` with the `danger` glyph in `color.status.danger.strong`; `space.stack.xs` (label to control, control to lines, between lines), `space.inset.xs` (glyph to text), `space.field.gap` (inline column gap). (Replaces `space.field.*`, of which `space.field.gap` is the one shipped token.)
+- **Storybook**: Default, WithError, WithHelp, Required, Optional, Inline, ReadOnly, DisabledWithReason.
 - **Tests**: unit, visual, axe.
 
 ### CMP-041 Menu (dropdown/context menu)
@@ -486,28 +491,33 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-047 DatePicker / DateRangePicker
 
 - **Tier**: Molecule · **Purpose**: date/time range selection (replay session range, journal filter, recorder retention override).
-- **Props**: `value` · `onChange` · `mode: "single"|"range"` · `min?/max?` · `timezone: "UTC"` (locked, 24/7 market — no user-timezone ambiguity per research digest).
-- **A11y**: WAI-ARIA "Date Picker Dialog" pattern, full keyboard grid navigation (arrows move by day, `PageUp/Down` by month), live region announces selected range.
-- **Tokens**: `color.surface.overlay`, `color.action.selected`.
-- **Storybook**: Single, Range, WithMinMax.
+- **Props**: `value` · `onChange` · `mode: "single"|"range"` · `min?/max?` · `rangeCaption?` (the host's sentence naming `min`–`max`) · `withTime?: boolean` (an `HH:MM` field beside each date) · `formatHint?` (default "YYYY-MM-DD") · `timezone: "UTC"` (locked, 24/7 market — no user-timezone ambiguity per research digest) · `invalid?` · `disabled?` · `disabledReason?` · `readOnly?`.
+- **Variants**: single, range (Start and End fields, one calendar button); each with or without time.
+- **States**: field: default, hover, focus-visible, invalid, disabled, disabled-with-reason (`docs/design/E09/E09-D09.md` §2.2 T2 through CMP-079: the CMP-019 `lock` leads each field's value inside its well, the fields `readonly`, the calendar button `aria-disabled`, the dialog never opens), read-only, open; days: today (a 1 px `color.text.tertiary` ring), selected and range ends (`color.action.selected` with a 2 px `color.border.selected` outline), in range (`color.surface.selected`), out of range (`aria-disabled`, at `opacity.disabled`, the caption naming the range).
+- **A11y**: WAI-ARIA "Date Picker Dialog" pattern, full keyboard grid navigation (arrows move by day, `PageUp/Down` by month), live region announces selected range. The dialog is modal: focus moves to the selected day (else today, else the first allowed day) and returns to the calendar button on close; `Home`/`End` move to the week's first and last day, `Shift+PageUp/Down` by year; weeks start on Monday; every value is UTC.
+- **Tokens**: the CMP-007 well for each field (a "UTC" suffix, the calendar button flush at its end); dialog `color.surface.overlay`, `elevation.popover`, `radius.card`, `space.inset.md`; month `type.ui.heading-sm`; weekdays `type.ui.caption` + `color.text.tertiary`; day cells `size.control.height`, `type.num.base` + `color.text.primary`; selected `color.action.selected` + `color.border.selected` (`border.thick`) + `color.text.primary`; in range `color.surface.selected`; caption `type.ui.caption` + `color.text.secondary`.
+- **Storybook**: Single, Range, WithMinMax, WithTime, Invalid, DisabledWithReason.
 - **Tests**: unit, visual, axe, keyboard grid nav.
 
 ### CMP-048 Combobox / AutoComplete
 
 - **Tier**: Molecule · **Purpose**: base for SymbolSearchInput (CMP-160) and any type-ahead selector.
-- **Props**: `value` · `onChange` · `options[]|asyncSearch(query)` · `loading?` · `placeholder?`.
-- **A11y**: WAI-ARIA Combobox pattern, `aria-activedescendant`, `aria-expanded`, results count announced via polite live region on each query update (debounced to avoid flooding).
-- **Tokens**: `color.surface.overlay`, `elevation.2`.
-- **Storybook**: Sync, AsyncLoading, NoResults.
+- **Props**: `value` · `onChange` · `options[]|asyncSearch(query)` · `loading?` · `placeholder?` · `noResultsText: string` (the host's sentence; required with `asyncSearch`) · `invalid?` · `disabled?` · `disabledReason?`.
+- **States**: default, hover, focus-visible, open, loading (busy: a "Searching…" status row, the listbox `aria-busy`), no results (availability: the host's sentence), search failed (the `danger` glyph and the host's sentence), invalid, disabled, disabled-with-reason (`docs/design/E09/E09-D09.md` §2.2 T2 through CMP-079 and CMP-040: the CMP-019 `lock` leads the value inside the well).
+- **A11y**: WAI-ARIA Combobox pattern, `aria-activedescendant`, `aria-expanded`, results count announced via polite live region on each query update (debounced to avoid flooding): once per settled query, 500 ms after the last keystroke; status rows are not options; `Esc` closes the listbox and keeps the text.
+- **Tokens**: input the CMP-007 well; listbox `color.surface.overlay`, `elevation.popover`, `radius.card`, at most 10 rows; options as CMP-009's, the matched text `type.ui.body-strong`; status rows `type.ui.body` + `color.text.secondary`. (Replaces `elevation.2`.)
+- **Storybook**: Sync, AsyncLoading, NoResults, SearchFailed, DisabledWithReason.
 - **Tests**: unit, visual, axe, keyboard + debounced-announcement test.
 
 ### CMP-049 Table (base data table)
 
 - **Tier**: Molecule · **Purpose**: base virtualized sortable table underlying PositionsGrid (CMP-107), OrdersTable, AuditLogTable, JournalTable.
-- **Props**: `columns: ColumnDef[]` · `rows: T[]` · `sort?/onSortChange` · `rowKey` · `onRowSelect?` · `virtualized?: boolean` (default true above 50 rows) · `emptyState?: ReactNode`.
-- **A11y**: semantic `<table>` with `scope` on headers even when virtualized (windowed rendering keeps ARIA table role structure via `role="rowgroup"/"row"/"cell"` with `aria-rowindex`/`aria-colindex` when native table elements aren't feasible in the virtualization window); sortable headers are buttons with `aria-sort`.
-- **Tokens**: `color.surface.raised`, `color.border.subtle`, `font.mono` (numeric columns).
-- **Storybook**: Default, Sortable, Virtualized(10k rows), Empty, Selectable.
+- **Props**: `columns: ColumnDef[]` · `rows: T[]` · `sort?/onSortChange` · `rowKey` · `onRowSelect?` (renders the select column; the table becomes a grid) · `virtualized?: boolean` (default true above 50 rows) · `emptyState?: ReactNode` · `grid?: boolean` (the APG grid pattern; default `false`) · `sortPending?: string` (the column whose requested sort waits on rows the consumer is still reading; its header is busy) · `caption: string` · `loading?: boolean` · `error?: {message, onRetry}`.
+- **Variants**: table (static cells, the APG Table pattern: no control in a body row; default), grid (interactive cells, the APG Grid pattern; implied whenever a body column is interactive — `onRowSelect`'s select column, an actions column, an inline control — and forced by `grid` for a static table).
+- **States**: populated; loading (the header row kept, CMP-015 skeleton rows, `aria-busy`); empty and filtered-empty (the header row kept, CMP-026 across every column); error (the header row kept, CMP-027 with Retry, announced politely); sorting (the `sortPending` header busy, never T2); reflow (stacked below the fit width and at 200 % zoom, one row element per record); rows: hover (`color.surface.hover`), selected (`color.action.selected` with the checked box), focused (the CMP-039 ring); a gated row action is `docs/design/E09/E09-D09.md` §2.2 T2 through CMP-079 (the CMP-019 `lock` leads a row-menu item, whose second line is the reason, or badges an inline IconButton, 2b).
+- **A11y**: semantic `<table>` with `scope` on headers even when virtualized (windowed rendering keeps ARIA table role structure via `role="rowgroup"/"row"/"cell"` with `aria-rowindex`/`aria-colindex` when native table elements aren't feasible in the virtualization window); sortable headers are buttons with `aria-sort`; with `grid`, `role="grid"` with `row`/`columnheader`/`gridcell`, one Tab stop and a roving tabindex (`05-accessibility-standard.md` §3.4 item 2), `↑`/`↓` by row including the header row, `←`/`→` by cell, `Enter` activates the focused cell's control; the header button of the `sortPending` column keeps its label and its `aria-sort`, a spinner replaces its sort glyph, it takes `aria-busy="true"` and stays focusable (with `grid`, arrow-reachable), and pressing it again changes nothing (`docs/design/E09/E09-D09.md` §9.1, loading). The header row is sticky and a focused cell (grid mode) scrolls below it (`scroll-margin-top`); table mode's Tab stops are the scroll region (focusable, named by the caption) and the header buttons, and its body rows carry no controls; an interactive body column makes the table a grid (one Tab stop, `05-accessibility-standard.md` §3.4 item 2): selection is a CMP-005 column with a mixed select-all, `aria-selected` and `Space`; `Shift+F10` opens the row menu, whose T2 items stay arrow-reachable; one polite live region for sort, filter, selection and load results.
+- **Tokens**: header `color.surface.hover` + `type.ui.label` + `color.text.primary`, a 1 px `color.border.subtle` rule; sort glyph `size.icon` + `color.text.tertiary`; rows `size.row.height`, odd `color.surface.canvas`, even `color.surface.raised`, hover `color.surface.hover`, selected `color.action.selected`; cells `space.inset.sm`, `type.ui.body` + `color.text.primary` or `color.text.secondary`, numbers `type.num.base` end-aligned (numeric columns); caption `type.ui.label` + `color.text.secondary`. (Replaces `font.mono`.)
+- **Storybook**: Default, Sortable, Virtualized(10k rows), Empty, Selectable, Grid, SortPending, Loading, Error, FilteredEmpty, Reflow.
 - **Tests**: unit, visual, axe, keyboard header-sort + row navigation (`↑/↓`), performance test (scroll 10k rows @60fps).
 
 ### CMP-050 Card
@@ -549,10 +559,11 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-054 SearchBox
 
 - **Tier**: Molecule · **Purpose**: generic filter/search input with clear button (distinct from SymbolSearchInput's richer preview).
-- **Props**: `value` · `onChange` · `placeholder?` · `onClear`.
-- **A11y**: clear button labelled "Clear search"; `role="searchbox"`.
-- **Tokens**: inherits CMP-007.
-- **Storybook**: Default, WithValue.
+- **Props**: `value` · `onChange` · `label: string` (mandatory: becomes `aria-label`; a placeholder is never the name) · `placeholder?` · `onClear` · `disabled?`.
+- **States**: default, hover, focus-visible, filled (the clear button shows), disabled.
+- **A11y**: clear button labelled "Clear search"; `role="searchbox"`. The clear button renders only with a value and returns focus to the field; `Esc` clears a non-empty query, then bubbles; the host announces the result count politely, once per settled query (as CMP-048).
+- **Tokens**: inherits CMP-007; the leading `search` glyph `size.icon` + `color.text.tertiary`; the clear button a CMP-002 ghost, flush in the well.
+- **Storybook**: Default, WithValue, Disabled.
 - **Tests**: unit, visual, axe.
 
 ### CMP-055 FilterBar
@@ -648,10 +659,11 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-065 FormSection
 
 - **Tier**: Molecule · **Purpose**: grouped set of FormFields with a heading (order ticket sections: Size, Risk, Advanced).
-- **Props**: `title` · `description?` · `collapsible?` · `children`.
-- **A11y**: `fieldset`/`legend` semantics.
-- **Tokens**: `space.formsection.*`.
-- **Storybook**: Default, Collapsible.
+- **Props**: `title` · `description?` · `collapsible?` · `headingLevel?: 2|3|4` (default 3) · `disabled?` · `disabledReason?` (`docs/design/E09/E09-D09.md` §2.2: one notice for the section) · `children`.
+- **States**: default, collapsed, errors within (a collapsed section names its count and opens on submit), disabled (`<fieldset disabled>`), disabled-with-reason (`docs/design/E09/E09-D09.md` §2.2 T2 through CMP-079's notice form: one notice, many pointers; each field's value led by the CMP-019 `lock` inside its well).
+- **A11y**: `fieldset`/`legend` semantics; the legend wraps a heading (`h{headingLevel}`); a collapsible section's toggle is a button inside the heading (APG Disclosure, `aria-expanded`); a collapsed section that holds an invalid field opens on submit; a T2 section's one notice is every gated field's `aria-describedby` target.
+- **Tokens**: heading `type.ui.heading-sm` + `color.text.primary`; description and notice `type.ui.caption` + `color.text.secondary`; `space.stack.xs` (heading to description), `space.stack.md` (between fields), `space.stack.lg` (between sections). (Replaces `space.formsection.*`.)
+- **Storybook**: Default, Collapsible, WithErrors, DisabledWithReason.
 - **Tests**: unit, visual, axe.
 
 ### CMP-066 Stepper (multi-step wizard indicator)
@@ -787,10 +799,11 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-079 RbacGate (disabled-with-reason wrapper)
 
 - **Tier**: Molecule (utility/organism-adjacent) · **Purpose**: standard wrapper implementing invariant §0.5.5 — controls the session may not use render disabled with a visible reason (inline, or echoed by a focus+hover tooltip; `docs/design/E09/E09-D09.md` §2.2).
-- **Props**: `allowed: boolean` · `reason: string` (required when `allowed` is false; a key of the vocabulary in `docs/design/E09/E09-D09.md` §3) · `children` (any interactive component).
-- **A11y**: propagates `disabledReason` to the wrapped atom's native prop (CMP-001/002/004 etc. all accept it) rather than overlaying a separate non-semantic layer.
-- **Tokens**: n/a (behavioural wrapper).
-- **Storybook**: Allowed, Denied(Permission), Denied(OwnerOnly), Denied(Account), Denied(AccountReadOnly), Denied(Env), Denied(ReadOnly), Denied(ViewAs), Denied(EnvMismatch).
+- **Props**: `allowed: boolean` · `reason: string` (required when `allowed` is false; a key of the vocabulary in `docs/design/E09/E09-D09.md` §3) · `form?: "inline"|"tooltip"|"notice"` (default `inline`; `tooltip` only for icon-only controls and toolbar segments) · `noticeId?` (required with `notice`) · `children` (any interactive component).
+- **Variants**: inline (the reason under the control), tooltip (a lock badge on the icon, the description visually hidden and echoed by CMP-016 on hover and focus), notice (one notice node that every gated control points at).
+- **A11y**: propagates `disabledReason` to the wrapped atom's native prop (CMP-001/002/004 etc. all accept it) rather than overlaying a separate non-semantic layer. T2 (`docs/design/E09/E09-D09.md` §2.2, §9): the wrapped control keeps its role and full label, takes `aria-disabled="true"` (never `disabled`) and `aria-describedby` → the reason rendered at mount (a text-like field also `readonly`); the CMP-019 `lock` glyph ("Not available") leads the label (inline; on a field, the value inside the well, `docs/design/E30/E30-D04.md` §2.5) or badges the icon (tooltip); a key re-shows the reason with one polite announcement; it emits nothing.
+- **Tokens**: n/a (behavioural wrapper; the wrapped control's T2 look binds `color.text.tertiary`, `color.text.secondary`, `color.surface.raised` and `color.border.default`).
+- **Storybook**: Allowed, Denied(Permission), Denied(OwnerOnly), Denied(Account), Denied(AccountReadOnly), Denied(Env), Denied(ReadOnly), Denied(ViewAs), Denied(EnvMismatch), FormInline, FormTooltip, FormNotice.
 - **Tests**: unit, visual, axe, RBAC-matrix interaction test (per role × action fixture).
 
 ### CMP-080 DockPanel (dockable container)
