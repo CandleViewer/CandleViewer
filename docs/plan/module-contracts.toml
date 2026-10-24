@@ -321,6 +321,7 @@ source_modules = [
     "candleviewer.book",
     "candleviewer.bars",
     "candleviewer.exchange.bybit.private_parse",
+    "candleviewer.oms.pairing",
     "candleviewer.oms.push_mapping",
     "candleviewer.orderflow",
     "candleviewer.orderbook_wiring",
