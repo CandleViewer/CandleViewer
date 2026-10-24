@@ -4,7 +4,7 @@ Replay shares the API process's event loop with order entry, the gateway and ing
 replay turn already yields after `ClockConfig.yield_slice_s` of work, so no single turn holds the
 loop long; this budget caps what all replay turns *together* take. It is plain code on the hot
 path, never a statechart (C-2.20), and it has no off value (C-4.14): the settings bound the share
-to 0.05..0.75 and the burst to 5..250 ms.
+to above 0 and up to 0.5, and the burst to 5..250 ms.
 
 **Bucket.** A token bucket in loop seconds: it refills lazily at `share` loop seconds per wall
 second, capped at `burst_s`, and every lane's work is charged against it. A lane that breathes
@@ -54,8 +54,10 @@ from candleviewer.replay.playback import MonotonicTime
 
 #: Bounds of the share and the burst; `settings.py` (M1, which may not import this module)
 #: repeats them on `CV_REPLAY_LOOP_SHARE` and `CV_REPLAY_LOOP_BURST_MS`.
-MIN_SHARE: Final = 0.05
-MAX_SHARE: Final = 0.75
+#: The share is above `SHARE_ABOVE` (exclusive: 0 would turn the budget off) and at most
+#: `MAX_SHARE`, so replay never takes more than half the loop.
+SHARE_ABOVE: Final = 0.0
+MAX_SHARE: Final = 0.5
 MIN_BURST_S: Final = 0.005
 MAX_BURST_S: Final = 0.25
 #: The most one charge adds to the debt. Real loop work between two breathes is a few ms (the
@@ -91,8 +93,10 @@ class ReplayLoopBudget:
         time: MonotonicTime,
         measure: Callable[[], float] = perf_counter,
     ) -> None:
-        if not MIN_SHARE <= share <= MAX_SHARE:  # also refuses NaN
-            raise ReplayConfigInvalid(f"the replay loop share must be {MIN_SHARE}..{MAX_SHARE}")
+        if not SHARE_ABOVE < share <= MAX_SHARE:  # also refuses NaN and inf
+            raise ReplayConfigInvalid(
+                f"the replay loop share must be above {SHARE_ABOVE} and at most {MAX_SHARE}"
+            )
         if not MIN_BURST_S <= burst_s <= MAX_BURST_S:
             raise ReplayConfigInvalid(
                 f"the replay loop burst must be {MIN_BURST_S}..{MAX_BURST_S} s"
