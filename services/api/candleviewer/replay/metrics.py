@@ -27,6 +27,7 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "replay_loop_seconds_total",
         "replay_budget_held_seconds_total",
         "replay_budget_waiters",
+        "replay_loop_share_ratio",
     }
 )
 

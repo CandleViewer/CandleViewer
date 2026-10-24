@@ -31,6 +31,17 @@ groups:
         annotations:
           summary: "Event-loop lag p99 above 100 ms"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-eventlooplaghigh"
+      # #2668 G1: replay's loop budget (CV_REPLAY_LOOP_SHARE) is exported as replay_loop_share_ratio,
+      # so the threshold follows the setting; no series (replay not wired) means no alert.
+      - alert: ReplayLoopShareHigh
+        expr: sum by (env) (rate(replay_loop_seconds_total[1m])) > 1.2 * max by (env) (replay_loop_share_ratio)
+        for: 5m
+        labels:
+          severity: ticket
+          component: runtime
+        annotations:
+          summary: "Replay takes over 1.2 times its configured share of the event loop"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-replayloopsharehigh"
       - alert: DiskHigh
         expr: disk_used_ratio > 0.8 and disk_used_ratio <= 0.95
         for: 5m

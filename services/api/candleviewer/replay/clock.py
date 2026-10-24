@@ -15,8 +15,15 @@ the source exactly once (INV-B12-e), even if the runner is cancelled again meanw
 speed change is continuous. The schedule starts once the first event is read, so a cold source's
 first read is not lateness. A sink that holds an event back past `max_lag_s` slows the clock
 (re-anchor) instead of a drop or a catch-up burst (24 Sec.13.7, INV-B12-c); the wall time lost
-gives the achieved rate (`stats()`). An event due within `min_wait_s` goes out without a wait;
-after `yield_slice_s` of work without one the clock yields to the loop (C-2.17).
+gives the achieved rate (`stats()`). An event due within `min_wait_s` goes out without a wait.
+
+**Loop budget** (#2668 G1, C-2.17). Every `yield_slice_s` the clock breathes on its session's
+`BudgetLane`, shared with the session's sources: a yield, or a hold while replay is over its
+share of the loop. It charges the lane before every other await and restarts it only after a
+deadline wait, so a delivery's or a read's own work stays charged (a suspension in them too: the
+safe direction). A hold in playback slides the schedule (`Pacer.delay`) and is booked as lost
+time: the achieved ratio falls; never backpressure (`CONSUMER_SLOW`), never a catch-up burst.
+The clock never changes the requested rate: the sessions service, owner of B12's `rate`, does.
 
 **Steps** (`24-internal-schemas.md` Sec.13.7) deliver at once while not playing: `step_events(n)`
 the next n market events, `step_ms(n)` everything in the next n ms of replay time, and
@@ -52,6 +59,7 @@ import structlog
 
 from candleviewer.observability import spawn, spawn_child
 from candleviewer.observability.metrics import Counter, Gauge, Histogram
+from candleviewer.replay.budget import FREE_LANE, LoopLane
 from candleviewer.replay.errors import ReplayClockStateError, ReplayRequestInvalid
 from candleviewer.replay.models import ReplayGap, ReplayItem
 from candleviewer.replay.pacing import MS_PER_S, US_PER_MS, Pacer, RateWindow
@@ -123,7 +131,9 @@ class ReplayClock:
         end_us: int,
         speed: float = 1.0,
         config: ClockConfig | None = None,
+        budget_lane: LoopLane | None,
     ) -> None:
+        """`budget_lane` is the session's lane (`None`: no budget, only for tests and benches)."""
         if end_us <= start_us:
             raise ValueError("the replay range must end after it starts")
         self._source, self._sink, self._obs, self._time = source, sink, observer, time
@@ -138,6 +148,7 @@ class ReplayClock:
         self._pacer: Pacer | None = None
         self._window = RateWindow(self._cfg.rate_window_s)
         self._wake = asyncio.Event()
+        self._lane = FREE_LANE if budget_lane is None else budget_lane
         self._task: asyncio.Task[StopReason] | None = None
         self._stack: AsyncExitStack | None = None
         self._group: asyncio.TaskGroup | None = None
@@ -338,7 +349,9 @@ class ReplayClock:
             closing = spawn(old.aclose(), name="replay-source-close")
             self._closers.add(closing)
             closing.add_done_callback(self._closers.discard)
+            self._lane.charge()
             await asyncio.shield(closing)
+            self._lane.start()
 
     def now_us(self) -> int:
         """Replay "now" for downstream clocks: one clock for every pane (US-RPL-005)."""
@@ -362,6 +375,7 @@ class ReplayClock:
     # -- playback ------------------------------------------------------------------------------
     async def _play(self) -> StopReason:
         error: Exception | None = None
+        self._lane.start()
         try:
             await self._peek()  # prime: a cold source's first read is not lateness
             now = self._time.now()
@@ -378,6 +392,7 @@ class ReplayClock:
                 source_failed=exc is self._failed,
             )
         finally:  # keep the position reached, even on destroy: the cursor never moves back
+            self._lane.charge()
             self._cursor = self._position(self._time.now())
             self._pacer = None
             self._starting, self._rescale = False, None  # a change left pending dies with it
@@ -392,13 +407,13 @@ class ReplayClock:
     async def _run(self) -> StopReason:
         """The playback hot path: per event, one deadline, one lag comparison and the delivery;
         everything else (re-anchoring, window figures, metrics) runs only when due."""
-        time, sink, window = self._time, self._sink, self._window
+        time, sink, window, lane = self._time, self._sink, self._window, self._lane
         min_wait, max_lag, slice_s = (
             self._cfg.min_wait_s,
             self._cfg.max_lag_s,
             self._cfg.yield_slice_s,
         )
-        sliced = time.now()  # when the clock last yielded or waited
+        sliced = time.now()  # when the clock last breathed
         while True:
             self._wake.clear()  # before every check of `_stop`, so no wake-up is lost
             if self._stop:
@@ -412,8 +427,9 @@ class ReplayClock:
                     self._carry(pacer, self._rescale, item)
                 lag = now - pacer.due(self._end_us if item is None else item.ts_us)
                 if lag < -min_wait:
+                    lane.charge()
                     await time.wait_until(now - lag, self._wake)
-                    sliced = time.now()
+                    lane.start()
                     continue
             if item is None:
                 self._cursor = self._end_us
@@ -428,6 +444,7 @@ class ReplayClock:
                     self._max_lag = lag
                 if lag > max_lag:
                     lag = self._slow(pacer, item.ts_us, now)
+            lane.charge()  # not started after: the sink's work is the clock's turn
             await sink.deliver(item)  # the event stays pending until the sink returns
             self._pending = None
             if item.ts_us > self._cursor:
@@ -443,8 +460,11 @@ class ReplayClock:
                 requested=self._speed,
             ):
                 self._window_closed()
-            if now - sliced >= slice_s:  # catching up without waits: let the loop run
-                await asyncio.sleep(0)
+            if now - sliced >= slice_s:  # let the loop run, or hold while replay is over budget
+                held = await lane.breathe(self._wake)
+                if held > 0.0 and self._pacer is not None:
+                    self._pacer.delay(held)  # the schedule waits too: no catch-up burst
+                    self._lost_s += held  # the achieved ratio shows it; never backpressure
                 sliced = time.now()
 
     @contextlib.asynccontextmanager
@@ -458,16 +478,18 @@ class ReplayClock:
         if self.playing or self._stepping:
             raise ReplayClockStateError("pause playback before stepping")
         self._stepping, self._sliced = True, self._time.now()
+        self._lane.start()
         try:
             yield
         finally:
+            self._lane.charge()
             self._stepping = False
             self._flush()
 
     async def _breathe(self) -> None:
-        """A step never waits, so it yields to the loop after `yield_slice_s` of work (C-2.17)."""
+        """A step never waits, so it breathes on the lane after `yield_slice_s` of work (C-2.17)."""
         if self._time.now() - self._sliced >= self._cfg.yield_slice_s:
-            await asyncio.sleep(0)
+            await self._lane.breathe()
             self._sliced = self._time.now()
 
     async def _step_item(
@@ -494,6 +516,7 @@ class ReplayClock:
         if item is None:
             if self._drained:
                 return None
+            self._lane.charge()  # not started after: the stream's own work (regrouping) is ours
             try:
                 item = await anext(self._source)
             except StopAsyncIteration:
@@ -508,6 +531,7 @@ class ReplayClock:
     async def _deliver(self, event: RecordedEvent) -> bool:
         """Hand `event` to the sink; `True` if it closed a bar of the active probe. It stays pending
         until the sink returns: if the sink raises, the next `play()` delivers it again."""
+        self._lane.charge()
         await self._sink.deliver(event)
         self._pending = None
         self._cursor = max(self._cursor, event.ts_us)

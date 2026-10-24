@@ -17,6 +17,12 @@ the session's replay-scoped book engines, the hook the injector feeds book event
 `build_replay_run` builds one session's `ReplayRun` (E26-T05 calls it for a session): that
 injector, a `ReplaySource` over the shared tiers for every position it opens at
 (`replay_source_factory`), paced on the event loop's clock.
+
+#2668 G1 adds the loop budget: `ReplayWiring.budget`, the one `ReplayLoopBudget` of the process
+(`CV_REPLAY_LOOP_SHARE`, `CV_REPLAY_LOOP_BURST_MS`), which `build_replay_run` requires. It gives
+each session one lane, held by the session's clock and by every source the session opens. The
+budget reports holds and never changes a session's requested rate: the sessions service, owner
+of B12's `rate`, is the seam that reads the achieved ratio and may adjust it.
 """
 
 from __future__ import annotations
@@ -34,6 +40,7 @@ from candleviewer.domain.events import DomainEvent, MarketEvent
 from candleviewer.domain.sql_names import EPOCH
 from candleviewer.exchange.base.models import BookDelta, BookSnapshot, TradeEvent
 from candleviewer.replay import (
+    BudgetLane,
     ClockConfig,
     LiveEventModels,
     LoopTime,
@@ -41,6 +48,7 @@ from candleviewer.replay import (
     ReadAheadConfig,
     ReplayEventRefused,
     ReplayInjector,
+    ReplayLoopBudget,
     ReplayRequest,
     ReplayRun,
     ReplayRunPort,
@@ -69,11 +77,13 @@ def readahead_config(settings: Settings) -> ReadAheadConfig:
 @dataclass(frozen=True, slots=True)
 class ReplayWiring:
     """The tiers a `ReplaySource` reads through, and what they hold open: one QuestDB
-    connection and the cold reader's scan pool, both released by `aclose()`."""
+    connection and the cold reader's scan pool, both released by `aclose()`. `budget` is the
+    process's one replay loop budget."""
 
     tiers: ReplayTiers
     pg: LazyPgWire
     cold: ParquetRecordedReader
+    budget: ReplayLoopBudget
 
     async def aclose(self) -> None:
         """At app stop: the cold reader refuses new scans and its queued ones fail typed (a
@@ -96,7 +106,10 @@ def build_replay_wiring(settings: Settings, gaps: RecordingGapReader | None) -> 
     )
     cold = ParquetRecordedReader(DatasetRegistry(settings.parquet_root))
     tiers = ReplayTiers(hot=QuestDbRecordedReader(pg), cold=cold, coverage=cold, gaps=gaps)
-    return ReplayWiring(tiers=tiers, pg=pg, cold=cold)
+    budget = ReplayLoopBudget(
+        settings.replay_loop_share, settings.replay_loop_burst_ms / 1_000, LoopTime()
+    )
+    return ReplayWiring(tiers=tiers, pg=pg, cold=cold, budget=budget)
 
 
 #: The live market-event models every replay re-emits (24 Sec.13.7).
@@ -199,18 +212,22 @@ def build_replay_injector(
 
 
 def replay_source_factory(
-    request: ReplayRequest, tiers: ReplayTiers, *, readahead: ReadAheadConfig | None = None
+    request: ReplayRequest,
+    tiers: ReplayTiers,
+    *,
+    lane: BudgetLane,
+    readahead: ReadAheadConfig | None = None,
 ) -> SourceFactory:
     """The `SourceFactory` of one session: a `ReplaySource` over `tiers` for `request` from a
     replay position on (its own validated request, `start` moved there; the end, streams and
-    tier stay), bounded by `readahead`. A position outside the window is refused by that
-    request (`ReplayRequestInvalid`)."""
+    tier stay), bounded by `readahead` and charging the session's `lane`. A position outside the
+    window is refused by that request (`ReplayRequestInvalid`)."""
 
     def open_source(at_us: int) -> ReplaySource:
         moved = request
         if at_us != request.start_us:
             moved = request.model_copy(update={"start": EPOCH + timedelta(microseconds=at_us)})
-        return ReplaySource(moved, tiers, config=readahead)
+        return ReplaySource(moved, tiers, config=readahead, lane=lane)
 
     return open_source
 
@@ -228,13 +245,17 @@ def build_replay_run(
     clock: ClockConfig | None = None,
     readahead: ReadAheadConfig | None = None,
     time: MonotonicTime | None = None,
+    budget: ReplayLoopBudget,
 ) -> ReplayRun:
     """One session's `ReplayRun` (E26-T05 calls it for a session; the caller holds it in the
     replay sessions' TaskGroup, `ReplayRun.serve()`): its injector over its own `ReplayBooks`,
     its sources over `tiers` (`ReplayWiring.tiers`, shared by every session), paced on the event
     loop's clock unless `time` says otherwise. `tick_sizes` is what the session pinned from the
     instrument-info cache, `loop` its `loop_enabled` and `clock` carries its gap policy. A
-    request reading a stream the replay does not re-emit is refused before any source opens."""
+    request reading a stream the replay does not re-emit is refused before any source opens.
+    `budget` (`ReplayWiring.budget`) gives the session one lane, keyed by its id, which its clock
+    and every source it opens share (#2668 G1)."""
+    lane = budget.lane(str(session_id))
     injector = build_replay_injector(
         session_id=session_id,
         request=request,
@@ -244,11 +265,12 @@ def build_replay_run(
     )
     return ReplayRun(
         request=request,
-        open_source=replay_source_factory(request, tiers, readahead=readahead),
+        open_source=replay_source_factory(request, tiers, lane=lane, readahead=readahead),
         injector=injector,
         port=port,
         time=time or LoopTime(),
         speed=speed,
         loop=loop,
         config=clock,
+        budget_lane=lane,
     )
