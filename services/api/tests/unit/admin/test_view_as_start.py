@@ -178,12 +178,17 @@ async def test_a_cleared_context_owing_its_record_gets_it_late_then_the_start_la
         {**dict(started), "ended_at": ended_at, "end_reason": why, "cleared_at": _at(6)}
     )
     record = await _session_of(rig, view_as=old)
-    result = await rig.service.start(record, _TARGET, reason=_REASON, now=_at(10))
+    result = await rig.service.start(
+        record, _TARGET, reason=_REASON, now=_at(10), ip="198.51.100.7"
+    )
     assert result.started is not None and result.started.view_as is not None
     assert result.started.view_as.context_id != old.context_id
     assert _actions(rig) == ["admin.view_as_ended", "admin.view_as_started"]
-    ended = rig.ports.calls[0]
+    ended, begun = rig.ports.calls
     assert ended["name"] == str(old.context_id) and ended["after_state"]["recorded_late"] is True
+    # The start's address is the start's own: the old context's record, flushed late inside the
+    # start's unit, names none (its row keeps no address, and this request did not end it).
+    assert (begun["actor_ip"], ended["actor_ip"]) == ("198.51.100.7", None)
 
 
 async def test_a_start_closes_the_sessions_sockets_bound_to_no_context() -> None:

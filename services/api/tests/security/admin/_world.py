@@ -36,6 +36,8 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
+from starlette.middleware import Middleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 import candleviewer.app as appmod
 from candleviewer.admin.backups.catalogue import BackupCatalogue
@@ -62,6 +64,12 @@ TOTP_STEP = timedelta(seconds=30)
 ORIGIN = matrix.WS_ORIGIN
 UNAUTHENTICATED = "unauthenticated"
 SIGNED_IN = tuple(a for a in matrix.ACTORS if a != UNAUTHENTICATED)
+#: The view-as refusal cap per viewer and hour (`view_as_refusal_budget_per_hour`, 120 by default)
+#: the world runs under. AC-ADM-22 sends every state-changing operation the router serves and
+#: expects one record each, so a router that serves more of them than the default cap would fail
+#: that case for the cap, not for a bypass. The cap itself is pinned by `test_view_as_refusals.py`;
+#: the case asserts that its sweep stays below this one.
+VIEW_AS_REFUSAL_BUDGET = 1_000
 
 
 def _actor_of(user_id: object) -> str:
@@ -142,6 +150,10 @@ class AdminWorld:
     actors: dict[str, Actor] = field(default_factory=dict)
     #: cell id -> what the cell observed, so each test of a cell reads one request.
     observed: dict[str, Any] = field(default_factory=dict)
+    #: Each request the guards let through to the router, as (method, path), in order: one a
+    #: guard answers (view-as, CSRF, read-only) leaves nothing here, and a handler runs only
+    #: after the router, as `_Gate.seen` shows in `test_view_as_gate.py`.
+    reached: list[tuple[str, str]] = field(default_factory=list)
 
     def headers(self, actor: str) -> dict[str, str]:
         if actor == UNAUTHENTICATED:  # a well-formed pair bound to no session (#2090)
@@ -216,6 +228,20 @@ def denials(permission: str) -> float:
     return float(REGISTRY.get_sample_value("authz_denied_total", labels) or 0.0)
 
 
+class _Reached:
+    """The innermost middleware, next to the router: it notes each request the guards let
+    through. It is not a per-route wrap: this FastAPI includes routers lazily, so the app's
+    routes are not the ones that dispatch."""
+
+    def __init__(self, app: ASGIApp, reached: list[tuple[str, str]]) -> None:
+        self.app, self.reached = app, reached
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            self.reached.append((scope["method"], scope["path"]))
+        await self.app(scope, receive, send)
+
+
 async def _enrol(
     world: AdminWorld,
     users: FakeUserRepository,
@@ -265,6 +291,7 @@ def open_admin_world(mp: pytest.MonkeyPatch) -> Iterator[AdminWorld]:
     roles, access = matrix.UserStore(), matrix.AccessStore()
     purge = matrix._PurgeBackend()  # records every call; never plans or runs a purge
     mp.setenv("CV_ALLOWED_ORIGINS", ORIGIN)
+    mp.setenv("CV_VIEW_AS_REFUSAL_BUDGET_PER_HOUR", str(VIEW_AS_REFUSAL_BUDGET))
     mp.setattr(appmod, "build_auth_service", lambda *_a, **_k: auth)
     mp.setattr(appmod, "build_identity_provider", lambda _s: Identity(spec))
     mp.setattr(appmod, "build_retention_manager", lambda *_a, **_k: purge)
@@ -277,6 +304,8 @@ def open_admin_world(mp: pytest.MonkeyPatch) -> Iterator[AdminWorld]:
         user_disable=matrix.user_disable_service(audit),
         auth_clock=clock,
     )
+    reached: list[tuple[str, str]] = []
+    app.user_middleware.append(Middleware(_Reached, reached=reached))  # innermost
     ctx = app.state.app_context
     ctx.audit._writer = audit  # the lazy emitters resolve the writer per call
     ctx.audit._query = matrix._AuditQuery()  # the lifespan is not started; as the matrix does
@@ -287,7 +316,7 @@ def open_admin_world(mp: pytest.MonkeyPatch) -> Iterator[AdminWorld]:
         portal = client.portal
         assert portal is not None
         portal.call(auth.start, ctx)
-        world = AdminWorld(app, client, auth, clock, audit, spec, roles, access)
+        world = AdminWorld(app, client, auth, clock, audit, spec, roles, access, reached=reached)
         pw_hash = portal.call(Hasher(pepper=_PEPPER).hash, PW)
         for actor in SIGNED_IN:
             world.actors[actor] = portal.call(_enrol, world, users, resolver, actor, pw_hash)

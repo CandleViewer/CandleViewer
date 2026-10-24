@@ -257,9 +257,12 @@ class ViewAsService:
     ) -> bool:
         """Write the `admin.view_as_ended` of `record`'s ended context, keyed by the context, with
         `recorded_late` only when `late` (the sweeper's path), then mark it recorded; `ip` is the
-        address of the request that ended it, none for a late write. True once written; False,
-        logged, when a read or the write failed or outlasted the bound, and the end stays pending.
-        It never raises for the record; an unended context is a caller error."""
+        address of the request that ended it, so a late write, which has no such request, names none
+        (`ValueError`, with nothing written). True once written; False, logged, when a read or the
+        write failed or outlasted the bound, and the end stays pending. It never raises for the
+        record; an unended context is a caller error too."""
+        if late and ip is not None:
+            raise ValueError("a late end record names no address")
         state = record.view_as
         if state is None or state.ended_at is None or state.end_reason is None:
             raise ValueError("only an ended view-as context has an end record")

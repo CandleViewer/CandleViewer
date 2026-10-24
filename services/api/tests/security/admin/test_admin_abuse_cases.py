@@ -46,7 +46,12 @@ from candleviewer.api.view_as_policy import OWN_OPERATIONS, PROTECTIVE_WRITES
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.statechart.bindings import b16_session
 from tests.contract.rbac import rbac_harness as matrix
-from tests.security.admin._world import ORIGIN, AdminWorld, open_admin_world
+from tests.security.admin._world import (
+    ORIGIN,
+    VIEW_AS_REFUSAL_BUDGET,
+    AdminWorld,
+    open_admin_world,
+)
 from tests.security.auth._stack import PW as STACK_PW
 from tests.security.auth._stack import Stack, open_stack
 from tests.security.auth.test_invite_http_abuse import _INVITE, _invite, _owner, _redeem
@@ -354,18 +359,21 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     the Owner sends every state-changing operation the app serves. Each but the viewer's own is
     refused `403 view_as_read_only` and changes nothing, and each is recorded as the contract
     says (22 "View-as session"): one `admin.view_as_refused`, outcome `denied`, naming the
-    operation's template, the viewer as actor and the viewer's session, never the Manager. The
-    routes come from the app's router, as `test_ac_adm_15` reads the audit routes, so a new write
-    route cannot escape the case. The carve-out is the contract's list of the viewer's own
-    operations, which the guard reads: a second start is the start route's own refusal, and
-    leaving is never refused. No protective write is registered yet (E39-S03, E29-T07, E34-S03),
-    so none is carved out; the day one is, this case must say what it admits."""
+    operation's template, the viewer as actor and the viewer's session, never the Manager, and none
+    gets past the guard to the router, so no handler runs. The routes come from the app's router,
+    as `test_ac_adm_15` reads the audit routes, so a new write route cannot escape the case, and
+    the world's refusal cap is above the sweep (`VIEW_AS_REFUSAL_BUDGET`), which the case asserts.
+    The carve-out is the contract's list of the viewer's own operations, which the guard reads: a
+    second start is the start route's own refusal, and leaving is never refused. No protective
+    write is registered yet (E39-S03, E29-T07, E34-S03), so none is carved out; the day one is,
+    this case must say what it admits."""
     owner, manager = admin.actors["owner"], admin.actors["manager_with_grant"]
     admin.elevate(["users", "flags"])  # the start's step-up class, and the control write's
     stamp = _flag_updated_at(admin, _UI_FLAG)
     start = {"json": {"target_user_id": str(manager.user_id), "reason": "AC-ADM-22"}}
     started = admin.send("owner", "POST", "/admin/view-as", start)
     assert started.status_code == 201, started.text
+    assert ("POST", "/admin/view-as") in admin.reached  # a request the guards pass is seen
     context = started.json()
     assert (context["target_user_id"], context["target_username"]) == (
         str(manager.user_id),
@@ -392,6 +400,7 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     carved_out = {op for op in unsafe if op in OWN_OPERATIONS}
     assert carved_out == {op for op in OWN_OPERATIONS if op[0] in _UNSAFE_METHODS}, carved_out
     swept = sorted(unsafe - carved_out)
+    assert len(swept) < VIEW_AS_REFUSAL_BUDGET  # one record each: the sweep fits the world's cap
     ids = {  # the viewed Manager's user and session, and a flag whose write can be read back
         "userId": str(manager.user_id),
         "sessionId": str(manager.session_id),
@@ -407,7 +416,7 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     }
     assert set(attempts) <= set(swept)  # so the sweep is never empty
 
-    before, mark = _held(admin), len(admin.audit.records)
+    before, mark, routed = _held(admin), len(admin.audit.records), len(admin.reached)
     counted = Stack.in_process("auth_view_as_refused_total", reason="view_as_read_only")
     answers: dict[tuple[str, str], tuple[int, Any]] = {}
     for method, template in swept:
@@ -416,6 +425,7 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
             admin.send("owner", method, path, {"json": attempts.get((method, template))})
         )
     assert {op: a for op, a in answers.items() if a != (403, "view_as_read_only")} == {}
+    assert admin.reached[routed:] == []  # none got past the guard to the router: no handler ran
     assert _held(admin) == before  # nothing changed
 
     written = admin.audit.records[mark:]

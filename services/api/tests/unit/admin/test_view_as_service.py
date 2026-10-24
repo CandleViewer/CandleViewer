@@ -348,6 +348,24 @@ async def test_late_record_writes_recorded_late_and_marks_it_recorded() -> None:
         await rig.service.write_end_record(record, late=True)  # a live context has no end yet
 
 
+async def test_a_late_end_record_names_no_address() -> None:
+    """A late write (the sweeper's) has no request of its own, so one that is given an address is
+    a caller error that writes nothing: the record never names one by mistake. The call without it
+    is the sweeper's, and writes."""
+    rig = _Rig()
+    record = await rig.viewing()
+    rig.runner.full = True  # the end's own record never starts: it stays pending
+    assert await rig.service.end(record, reason=ViewAsEndReason.ENDED, now=_at(5))
+    ended = rig.repo.sessions[str(record.id)]
+
+    with pytest.raises(ValueError, match="late"):
+        await rig.service.write_end_record(ended, late=True, ip="198.51.100.7")
+
+    assert rig.ports.calls == [] and rig.held(record).end_pending  # nothing written, still owed
+    assert await rig.service.write_end_record(ended, late=True)
+    assert [call["actor_ip"] for call in rig.ports.calls] == [None]
+
+
 async def test_an_end_that_lost_to_an_earlier_one_closes_nothing_and_records_nothing() -> None:
     rig = _Rig()
     record = await rig.viewing()  # a snapshot read before the end below

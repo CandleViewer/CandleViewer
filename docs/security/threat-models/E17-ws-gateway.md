@@ -736,8 +736,10 @@ requested as scope on the open tickets named above.
   there. Two belong to this model. The idle lock (E09-S03) does not end a socket: a session that idle-locks
   keeps its subscriptions until its access token expires, at most one access-token lifetime (12 min);
   revisit if that lifetime grows or reachability goes beyond the tailnet (E17-R-27, WS-S01). View-as sessions
-  (`23-ws-protocol.md` §9.6, #3085) are not built, so no socket can carry another user's scope; their gateway
-  half needs a row here and must keep WS-S04's identity guard (E17-R-26).
+  (`23-ws-protocol.md` §9.6, #3085 S10 and S11) are built: a viewing socket's `auth_ok` carries the viewer's own
+  `user_id` with the target's scope, and WS-S04's identity guard still holds a re-`auth` to the viewer (E17-R-26).
+  This model has no row of its own for their gateway half; the context's threats are rated in the admin model
+  (`e42-admin.md`, AD-E04 and AD-I05).
 - **Lowered by #2155:** WS-S03 and WS-D07 are Low: at most 64 sockets await auth per process, and each `auth` call
   is bounded at 6 s (§4). They were **RSK-063**'s first trigger; #3145 re-rates WG1 and RSK-063 to match.
 - No High residual: WS-D15 was the one (re-scored Medium in #3123, then Low in #3185, above). The
