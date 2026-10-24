@@ -367,9 +367,7 @@ def make_recording_writes_router(
             if intent:  # the route's retention record gets its denied twin
                 await _record(call, "retention.change", entry.symbol, entry.id, refused.rule)
             if refused.rule != "not_manual":  # the policy's own check of the change
-                rule = {"field": refused.field, "rule": refused.rule,
-                        "message": "Refused by the recorder."}  # fmt: skip
-                raise common.Problem(422, BAD, "Invalid body.", errors=[rule]) from None
+                raise _invalid(refused.rule, refused.field) from None
             await _record(call, "recorder.update", entry.symbol, entry.id, refused.rule)
             msg = "Streams and depth change only on a manually recorded symbol."
             raise common.Problem(409, ErrorCode.CONFLICT, msg) from None
