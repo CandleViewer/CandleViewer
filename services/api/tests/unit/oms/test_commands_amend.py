@@ -293,7 +293,7 @@ async def test_terms_b1_would_not_stage_are_refused_locally(
     order = await _live(rig)
     answer = await rig.port.amend(_amend(order, **terms))
     assert answer == _NO | {"error_code": OmsErrorCode.INSTRUMENT_FILTER.value}
-    assert rig.demo.calls == []
+    assert rig.demo.calls == [] and rig.audits.actions() == [("orders.amend", "terms_not_staged")]
 
 
 async def test_the_record_in_force_is_read_after_the_gate_clears() -> None:
