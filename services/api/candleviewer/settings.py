@@ -601,7 +601,10 @@ class Settings(BaseSettings):
     # `CV_REPLAY_IDLE_TTL_S` with no control call (ticket: 2 h), checked every
     # `CV_REPLAY_RECLAIM_INTERVAL_S`; per-user open-session quota and window cap use the
     # ticket's keys `CV_REPLAY_MAX_SESSIONS_PER_USER` (2) and `CV_REPLAY_MAX_WINDOW_HOURS` (24).
+    # `CV_REPLAY_MAX_LIFETIME_S` destroys a session that old whatever its activity (G6, #2673):
+    # a bound, never off (C-4.14).
     replay_idle_ttl_s: float = Field(default=7200.0, ge=60.0, le=86400.0)
+    replay_max_lifetime_s: float = Field(default=86400.0, ge=3600.0, le=604800.0)
     replay_reclaim_interval_s: float = Field(default=60.0, ge=1.0, le=3600.0)
     replay_max_sessions_per_user: int = Field(default=2, ge=1, le=16)
     replay_max_window_hours: int = Field(default=24, ge=1, le=24 * 31)

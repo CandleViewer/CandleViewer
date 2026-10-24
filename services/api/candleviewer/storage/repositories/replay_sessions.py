@@ -7,8 +7,8 @@ against `ReplaySessionRepository` and these plain frozen dataclasses;
 Owner scoping (C-12.4): every method takes the caller's `user_id` and the implementation re-checks
 it in SQL. A missing row, a malformed id and another user's row are indistinguishable (`get` ->
 None, writes -> `ReplaySessionNotFoundError`), so ids cannot be probed across users. The two
-unscoped reads are `list_idle_since` and `list_non_terminal_since`, system-only sweeps: they return
-a projection without `bookmarks`, which 21 §12 classifies P1 ("read only by `user_id` in the WHERE
+unscoped reads are `list_idle_since` and `list_reclaimable`, system-only sweeps: they return a
+projection without `bookmarks`, which 21 §12 classifies P1 ("read only by `user_id` in the WHERE
 clause").
 
 Trust boundary: `user_id` is always the authenticated principal, never client-supplied;
@@ -186,6 +186,7 @@ class IdleReplaySession:
     state: ReplayState
     paper_account_id: str | None
     updated_at: datetime
+    created_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,10 +281,12 @@ class ReplaySessionRepository(Protocol):
         expected_state: ReplayState | None = None,
         finished: bool = False,
         error_message: str | None = None,
+        activity: bool = True,
     ) -> ReplaySessionRow:
         """Move to `state`; atomic compare-and-set when `expected_state` is given.
 
-        Always bumps `updated_at`; `finished_at` / `error_message` follow `state_columns`.
+        Bumps `updated_at` unless `activity=False` (a change the client did not make, which must
+        not postpone idle reclaim); `finished_at` / `error_message` follow `state_columns`.
         `finished=True` additionally stamps `finished_at` for a state that does not imply it.
         A terminal row, or a lost compare-and-set, raises `ReplaySessionIllegalUpdateError`
         (so a second destroy raises: the B12 machine owns idempotency).
@@ -309,9 +312,9 @@ class ReplaySessionRepository(Protocol):
         ...
 
     async def update_speed(
-        self, user_id: str, session_id: str, *, speed: Decimal
+        self, user_id: str, session_id: str, *, speed: Decimal, activity: bool = True
     ) -> ReplaySessionRow:
-        """Change the multiplier (a control call, so it bumps `updated_at`)."""
+        """Change the multiplier; bumps `updated_at` unless `activity=False` (as `update_state`)."""
         ...
 
     async def touch(self, user_id: str, session_id: str, at: datetime) -> None:
@@ -333,11 +336,12 @@ class ReplaySessionRepository(Protocol):
         """
         ...
 
-    async def list_non_terminal_since(
-        self, before: datetime, limit: int
+    async def list_reclaimable(
+        self, idle_before: datetime, created_before: datetime, limit: int
     ) -> list[IdleReplaySession]:
-        """SYSTEM ONLY, not user-scoped: every non-terminal session untouched since before
-        `before`, whatever it holds. Oldest first, at most `limit` (clamped), for the reclaim."""
+        """SYSTEM ONLY, not user-scoped: every non-terminal session, whatever it holds, untouched
+        since before `idle_before` or created before `created_before` (the maximum lifetime).
+        Least recently touched first, at most `limit` (clamped), for the reclaim sweep."""
         ...
 
     async def delete(self, user_id: str, session_id: str) -> bool:
