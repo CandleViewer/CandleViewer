@@ -3,10 +3,12 @@ S9, #492), bound once #2188 puts its `RecorderWiring` on the app context.
 
 Reads are the stored rows of the wiring's env (C-2.11), each completed from the policy's O(1)
 accessors: a live chart or position adds its reason and refuses a stop, `start_refusal` heads
-`refusals`, `linger_until` (the policy's wall clock) marks a lingering row. Status entries carry
-the STORED row's streams and depth, never the policy's `()`/`None`. A row the stop soft-removed
-stays listed in the status, and readable by id, while the policy says it lingers. Rows and resyncs
-count over a rolling hour (`HourWindows`, bounded), fed by the ingestion feed through `note`.
+`refusals`, `linger_until` (the policy's wall clock) marks a lingering row. A symbol whose start
+the policy refuses and that has no row is listed in the status too (`start_refused`, no id).
+Status entries carry the STORED row's streams and depth, never the policy's `()`/`None`. A row the
+stop soft-removed stays listed in the status, and readable by id, while the policy says it lingers.
+Rows and resyncs count over a rolling hour (`HourWindows`, bounded), fed by the ingestion feed
+through `note`.
 
 Writes go through the policy, which records each ahead of its store (C-2.9), a pin, an unpin and
 a retention change included (#2188 S3c). The caller's view (`restricted`) comes from the
@@ -55,6 +57,16 @@ class RecorderRelaxRefusedError(RecorderError):
     the policy refused an unpin or a lower retention, wrote its denied record, changed nothing."""
 
 
+@dataclass(frozen=True, slots=True)
+class StartRefused:
+    """Stand-in for #2188 S3c's value of this name (swapped at the rebase): a symbol whose start
+    the policy refuses now, its latest cause and the reasons refused, top first."""
+
+    symbol: str
+    cause: RefusalCause
+    reasons: tuple[rc.RecordReason, ...]
+
+
 class RuntimePolicy(Protocol):
     """#2188 S3c's `PolicyControlSurface` as the orchestrator approved it (12:42Z), until it is on
     main: the S2b/S3b members, `set_pin` with the view and the unpin's retention, `set_retention`
@@ -97,6 +109,7 @@ class RuntimePolicy(Protocol):
     def start_refusal(self, symbol: str) -> RefusalCause | None: ...
     def chart_open(self, symbol: str) -> bool: ...
     def relax_allowed(self, symbol: str, *, restricted: bool) -> bool: ...
+    def start_refused(self) -> tuple[StartRefused, ...]: ...
 
 
 class RecorderWiring(Protocol):
@@ -251,8 +264,16 @@ class RuntimeRecordingControl:
         return None if entry is None else self._live(entry)
 
     async def status(self) -> rc.ControlStatus:
+        """The stored rows, the stopped ones still lingering, and each symbol whose start the
+        policy refuses that has no row (no id; `idle`); a symbol is listed once, a row first."""
         stored = await self._stored()
         held = stored + self._lingering({e.symbol for e in stored})
+        listed = {e.symbol for e in held}
+        held += [
+            rc.RecordedEntry("", r.symbol, r.reasons, "idle")
+            for r in self._policy.start_refused()
+            if r.symbol not in listed and r.reasons
+        ]
         entries = tuple(self._live(e) for e in sorted(held, key=lambda e: (e.symbol, e.id)))
         return rc.ControlStatus(entries, policy=self._config)
 

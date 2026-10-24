@@ -31,11 +31,13 @@ def test_the_fake_mirrors_the_policy_control_surface() -> None:
 
 
 def test_the_s3c_surface_differs_from_mains_only_in_set_pin_and_start_refused() -> None:
-    """Holds until the rebase onto #2188 S3c, which brings `set_pin`'s view and retention and the
-    `start_refused` listing to `PolicyControlSurface` (then `RuntimePolicy` is that surface and
-    this test goes)."""
-    assert set(surface_mismatches(RuntimePolicy, PolicyControlSurface)) == {
-        "set_pin", "start_refused"}  # fmt: skip
+    """Holds until the rebase onto #2188 S3c, which changes `set_pin` (the view, the unpin's
+    retention) and adds `set_retention`, `relax_allowed` and `start_refused` to
+    `PolicyControlSurface`; then `RuntimePolicy` is that surface and this test goes."""
+    assert set(surface_mismatches(RuntimePolicy, PolicyControlSurface)) == {"set_pin"}
+    added = {n for n in vars(RuntimePolicy) if not n.startswith("_")} - set(
+        vars(PolicyControlSurface))  # fmt: skip
+    assert added == {"set_retention", "relax_allowed", "start_refused"}
 
 
 class _Sink(list[tuple[str, dict[str, Any]]]):

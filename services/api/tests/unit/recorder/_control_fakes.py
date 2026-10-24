@@ -11,6 +11,7 @@ from typing import Any, Final
 
 from candleviewer.recorder import control as rc
 from candleviewer.recorder.control_runtime import RecorderRelaxRefusedError as RelaxError
+from candleviewer.recorder.control_runtime import StartRefused
 from candleviewer.recorder.errors import InvalidRecorderActorError, RecorderSymbolNotManualError
 from candleviewer.recorder.errors import RecorderInvalidUpdateError as InvalidUpdate
 from candleviewer.recorder.errors import RecorderSymbolLimitError as LimitError
@@ -171,6 +172,12 @@ class FakeRecorder:
 
     def chart_open(self, symbol: str) -> bool:
         return symbol in self.entries and "chart_open" in self.entries[symbol].reasons
+
+    def start_refused(self) -> tuple[StartRefused, ...]:
+        """S3c's listing: each refused symbol, in symbol order, with its entry's reasons."""
+        held = {s: e.reasons for s, e in self.entries.items()}
+        return tuple(StartRefused(s, c, held.get(s, ("chart_open",)))
+                     for s, c in sorted(self.refused.items()))  # fmt: skip
 
     def relax_allowed(self, symbol: str, *, restricted: bool) -> bool:
         """#2188 S3c's guard: a restricted view covers no row a hidden cause holds."""
