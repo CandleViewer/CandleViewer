@@ -67,10 +67,13 @@ from candleviewer.storage.repositories.positions import (
 from candleviewer.storage.repositories.recorded_stops import (
     SWEEP_REASON,
     UX_RS_IN_FLIGHT,
+    InForce,
     InsertWriteAhead,
     NewRecordedStop,
     RecordedStopRow,
     RecordedStopStore,
+    ResolveOutcome,
+    ResolveWriteAhead,
     SettleWriteAhead,
     StopOutcome,
     SweepScope,
@@ -523,6 +526,56 @@ class RecordedStopRepository:
                 kind=stop.kind,
             )
         return swept
+
+    async def waiting_keys(
+        self, account_id: UUID, *, now: datetime, bound_s: float | None
+    ) -> tuple[tuple[str, int], ...]:
+        """`RecordedStopStore.waiting_keys`: the startup pass's input, per account (C-2.11)."""
+        return await self._store.waiting_keys(account_id, now=now, bound_s=bound_s)
+
+    async def put_in_force(
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        *,
+        at: datetime,
+        write_ahead: ResolveWriteAhead | None = None,
+    ) -> InForce:
+        """`RecordedStopStore.put_in_force`: `StaleRecordedStop` on a lost race, and
+        `AuditNotDurable` for a hook past its bound, each with nothing written."""
+        try:
+            with self._timer.measure("recorded_stops"):
+                done = await self._store.put_in_force(
+                    account_id, rows, at=at, write_ahead=write_ahead
+                )
+        except WriteAheadTimeout:
+            raise AuditNotDurable("the stops' write-ahead audit did not land in time") from None
+        _log_stops("oms_stops_replaced", done.replaced)
+        _log_stops("oms_stops_in_force", done.in_force)
+        return done
+
+    async def resolve(
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        outcome: ResolveOutcome,
+        *,
+        at: datetime,
+        write_ahead: ResolveWriteAhead | None = None,
+    ) -> tuple[RecordedStopRow, ...]:
+        """`RecordedStopStore.resolve`; a void without its hook is refused before the store (C-2.9).
+        `AuditNotDurable` for a hook past its bound: nothing is voided or answered."""
+        if outcome != "answered" and write_ahead is None:
+            raise ValueError("a void is audited write-ahead (C-2.9): no hook was given")
+        try:
+            with self._timer.measure("recorded_stops"):
+                done = await self._store.resolve(
+                    account_id, rows, outcome, at=at, write_ahead=write_ahead
+                )
+        except WriteAheadTimeout:
+            raise AuditNotDurable("the resolve's write-ahead audit did not land in time") from None
+        _log_stops("oms_stops_resolved", done, outcome=outcome)
+        return done
 
 
 def _log_stops(name: str, rows: Sequence[RecordedStopRow], **extra: str) -> None:
