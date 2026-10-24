@@ -251,9 +251,11 @@ sign-in, or `POST /drawings/batch` with the status named) and "The Owner's rows 
 scan role cannot list them", whose `::error` lines name the drawing. "A cross-owner write" (one of
 the Manager's own probes answered 2xx), "changed" or "gone" is a cross-owner write that succeeded,
 "the Manager lists the Owner's drawing" a cross-owner read: treat each as High (DR12, DR20, DR21),
-never as a baseline entry. "The probe never reached the owner check" (a probe refused for another
-reason, such as a 422 or a 404 without `not_found`) means the check proved nothing that night: fix
-the probe or the stack, as for a failed sign-in. It files no issue either.
+never as a baseline entry; so is "past the owner check" (a probe refused only for the row's own
+version token or immutable fields, which the API checks after the owner). "The probe never reached
+the owner check" (a probe refused for another reason, such as a 422 or a 404 without `not_found`)
+means the check proved nothing that night: fix the probe or the stack, as for a failed sign-in. It
+files no issue either.
 
 ## 3. Reading the `ci-required` resolver summary
 

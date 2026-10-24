@@ -157,18 +157,8 @@ def test_a_cross_owner_write_the_api_let_through_fails_naming_it(
             (422, {"code": "validation_failed", "errors": [{"rule": "target_unavailable"}]}),
             "HTTP 422 validation_failed, not 404 not_found",  # a rule counts only in a conflict
         ),
-        (
-            "PUT",
-            (412, {"code": "version_conflict"}),
-            "HTTP 412 version_conflict, not 404 not_found",
-        ),
         ("DELETE", (404, {"detail": "Not Found"}), "HTTP 404 (no code), not 404 not_found"),
         ("DELETE", (403, None), "HTTP 403 (no code), not 404 not_found"),
-        (
-            "batch update",
-            (409, {**CONFLICT, "errors": [{"rule": "version_conflict"}]}),
-            "HTTP 409 version_conflict, not 409 target_unavailable",
-        ),
         (
             "batch delete",
             (409, {"code": "conflict", "errors": []}),
@@ -293,6 +283,36 @@ def test_the_seed_posts_the_fixture_whole_and_a_batch_that_made_other_rows_fails
     ]:
         with pytest.raises(iso.Refused, match="not every fixture row was created"):
             iso.seed(lambda *a, answer=answer: answer, URL, OWNER, fixture)
+
+
+@pytest.mark.parametrize(
+    ("probe", "answer", "said", "threat"),
+    [
+        ("PUT", (412, {"code": "version_conflict"}), "version_conflict", "DR12, DR20"),
+        (
+            "batch delete",
+            (409, {**CONFLICT, "errors": [{"rule": "version_conflict"}]}),
+            "version_conflict",
+            "DR12, DR21",
+        ),
+        (
+            "batch update",
+            (422, {"code": "validation_failed", "errors": [{"rule": "immutable_field"}]}),
+            "immutable_field",
+            "DR12, DR21",
+        ),
+    ],
+)
+def test_a_write_refused_only_on_the_rows_own_terms_got_past_the_owner_check(
+    probe: str, answer: tuple[int, Any], said: str, threat: str
+) -> None:
+    """The token and the immutable fields are checked after the owner: a probe meeting one
+    reached the Owner's row, a cross-owner write the row's own terms alone refused."""
+    (problem,) = _problems([_row()], [], {probe: answer})
+    assert problem == (
+        f"the Manager's {probe} of the Owner's drawing {ID} answered HTTP {answer[0]} {said}:"
+        f" past the owner check, a cross-owner write refused only on the row's own terms ({threat})"
+    )
 
 
 @pytest.mark.parametrize(

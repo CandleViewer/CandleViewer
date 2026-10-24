@@ -327,6 +327,9 @@ def test_the_drawings_filter_waives_only_the_documented_refusals_on_its_own_path
     assert (entry["ruleId"], entry["url"]) == (90022, ".*/drawings([/?].*)?")
     assert entry["newRisk"] == "False Positive"
     assert entry["urlRegex"] is True and entry["evidenceRegex"] is True
+    codes = "not_found|conflict|target_unavailable|version_conflict|id_unavailable"
+    codes += "|validation_failed|payload_too_large|invalid_cursor"
+    assert entry["evidence"] == f".*(?:{codes}).*"  # 22-api's refusals of the surface, no more
     evidence = re.compile(entry["evidence"])  # ZAP's filter matches the whole evidence
     assert all(evidence.fullmatch(f'"code": "{c}"') for c in ("not_found", "target_unavailable"))
     assert not evidence.fullmatch("Traceback (most recent call last)")

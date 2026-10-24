@@ -303,8 +303,8 @@ E15-T01's spec decision on #402, SR-E14-09).
 - **The documented refusals** (22-api) raise 90022 on their problem text: the foreign 404
   `not_found` (DR20), the batch 409 `conflict` with `target_unavailable`, `version_conflict` or
   `id_unavailable` (DR21), and `invalid_cursor`, `payload_too_large` and `validation_failed`. An
-  `alertFilter` marks that alert "False Positive" on `/drawings*` only when its evidence is one of
-  those codes, never the problem media type alone. Injection and disclosure rules are never
+  `alertFilter` marks that alert "False Positive" on `/drawings*` only when its evidence holds one
+  of those codes, never the problem media type alone. Injection and disclosure rules are never
   filtered. Whether 90022's evidence lands on a code is shown by the first run: the log names a
   waived alert, not a baseline entry.
 - **Not here:** a body over 64 KiB is no plan literal (`test_drawings_abuse_exhaustion.py` covers the
@@ -316,8 +316,10 @@ E15-T01's spec decision on #402, SR-E14-09).
 - **First run:** a workflow must be on the default branch to be dispatched, so the first real run, one
   `workflow_dispatch`, and its baseline triage (a comment on #549) come after merge. Then the
   ticket's regression proof: one dispatch on a scratch branch whose drawings repository drops the
-  owner filter must go red on the check (the Manager's probes answer 2xx), and a comment on #549
-  links that run before the branch is deleted. Until then the plan is proven offline:
+  owner filter from the soft delete (`_SOFT_DELETE`), or from both the read and the update (`_GET`
+  and `_UPDATE`: the router reads the row before it updates it, so the update's filter alone is
+  never reached), must go red on the check (the Manager's probes answer 2xx); its run is linked
+  in a comment on #549 before the branch is deleted. Until then the plan is proven offline:
   `python security/zap/nightly_plans.py --profile drawings --out DIR` and
   `scripts/tests/test_zap_nightly.py`.
 

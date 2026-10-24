@@ -32,7 +32,7 @@ jobs:
   # findings: the foreign 404 not_found (DR20), the batch 409 conflict with target_unavailable,
   # version_conflict or id_unavailable (DR21), and invalid_cursor, payload_too_large and
   # validation_failed. Only the alert ZAP raises purely because a 4xx came back is filtered, only
-  # on these paths and only with one of these codes as its evidence; injection rules never are.
+  # on these paths and only when its evidence holds one of these codes; injection rules never are.
   - type: alertFilter
     alertFilters:
       # reason: "Application Error Disclosure" matches the RFC 7807 text of a documented refusal;
