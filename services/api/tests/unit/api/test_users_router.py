@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
-from candleviewer.api.users import make_users_router
+from candleviewer.api.users import RolesHookFailed, make_users_router
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.errors import SessionNotFound, StepUpRequired
 from candleviewer.auth.generated_permissions import Permission
@@ -587,6 +587,26 @@ def test_put_roles_push_failure_after_the_commit_is_200_logged_and_counted() -> 
     (line,) = [e for e in logs if e["event"] == "users.update.step"]
     assert (line["log_level"], line["step"], line["outcome"]) == ("error", "roles_push", "failed")
     assert line["error"] == "RuntimeError" and line["target_user_id"] == str(TARGET)
+    assert line["part"] == "registry"
+
+
+def test_put_roles_a_failed_view_as_hook_is_logged_apart_from_the_registry() -> None:
+    """#3085 S5b: the push's view-as hook failed (`RolesHookFailed`, its error the cause) while
+    the registry push ran; the line names the hook and the cause's class."""
+
+    class _HookDown(_Notifier):
+        async def roles_changed(self, user_id: uuid.UUID) -> None:
+            self.users.append(user_id)
+            raise RolesHookFailed from TimeoutError()
+
+    store, n, failed = _Store({"viewer"}, 2), _HookDown(), _pushes("failed")
+    with capture_logs() as logs:
+        r = _client(store, _admin(), _Emitter(), n).put(
+            f"/users/{TARGET}/roles", json={"roles": ["manager"]}
+        )
+    assert r.status_code == 200 and _pushes("failed") == failed + 1
+    (line,) = [e for e in logs if e["event"] == "users.update.step"]
+    assert (line["part"], line["error"]) == ("view_as_hook", "TimeoutError")
 
 
 def test_put_roles_still_refuses_the_last_active_owner_at_the_endpoint() -> None:

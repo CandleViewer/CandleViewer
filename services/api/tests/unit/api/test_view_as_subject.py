@@ -331,7 +331,7 @@ _VIEWING = partial(bound_view_as, _stamp())
     ids=["uuid", "str", "upper-case", "braces", "urn"],
 )
 def test_the_tripwire_refuses_a_record_naming_the_viewed_target(actor: Any) -> None:
-    """Every spelling the writer would store as the target's id (I-7)."""
+    """Every spelling the writer would store as the target's id."""
     with _VIEWING(), pytest.raises(TargetNamedAsActor):
         _refuse_target_as_actor("admin.area_entered", {"actor_user_id": actor})
 

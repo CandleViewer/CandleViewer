@@ -123,8 +123,9 @@ class UnviewableTarget(StrEnum):
 def unviewable_target(status: object, roles: Collection[str]) -> UnviewableTarget | None:
     """Why the user of *status* and *roles* cannot be viewed as, `None` when an Owner may. The
     start refuses a target by it (`conflict`, then `view_as_owner_target`) and a context's
-    eligibility ends on it (`target_ineligible`, `view_as_wiring.IdentityEligibility`), so a
-    context starts only for a target that its next evaluation keeps."""
+    eligibility ends on it (`target_ineligible`, `view_as_wiring.IdentityEligibility`). The port
+    also ends a context whose target holds a role outside the system set, which the start does not
+    check: the database's `role_name` enum allows none."""
     if status not in VIEWABLE_STATUSES:
         return UnviewableTarget.STATUS
     return UnviewableTarget.OWNER if _holds_owner_role(roles) else None

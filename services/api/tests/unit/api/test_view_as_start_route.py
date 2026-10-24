@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import Any, NamedTuple
 from uuid import UUID, uuid4
 
@@ -490,6 +491,27 @@ async def test_a_challenged_start_starts_nothing_and_records_no_refusal() -> Non
     assert w.held() is None and w.refused() == [] and w.ports.calls == []
 
 
+async def test_a_starts_window_opens_when_the_gate_has_passed_not_when_the_row_was_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#4245's re-check Nit-1: the start's `now` is read after the step-up gate, so a gate that
+    took 40 s does not backdate the context: its window, in the 201 and in the session's row, opens
+    at the instant the start ran."""
+    w = World()
+    await w.sign_in()
+    opened = w.clock.now + timedelta(seconds=40)
+
+    async def slow_gate(session_id: str, action_class: str) -> None:
+        w.clock.now = opened  # the gate took its time
+
+    monkeypatch.setattr(w.auth.step_up, "require_elevation", slow_gate)
+    response = await w.start()
+    held = w.held()
+    assert response.status_code == 201 and held is not None
+    assert held.started_at == opened
+    assert response.json()["started_at"] == opened.isoformat().replace("+00:00", "Z")
+
+
 # -- failures --------------------------------------------------------------------------------------
 
 
@@ -557,6 +579,20 @@ async def test_a_target_row_outside_the_contract_answers_503_and_starts_nothing(
     w.users.rows[str(_TARGET)] = {**_user("bo"), "display_name": "B" * 81}
     assert _code(await w.start()) == (503, "store_unavailable")
     assert w.held() is None and w.repo.notices == [] and w.ports.calls == []
+
+
+async def test_a_target_row_outside_the_contract_logs_its_fields_and_never_their_values() -> None:
+    """#4245's re-check Minor-1: the row's display name is P1, so the 503's log line names the
+    failing fields and their error types, never the value pydantic's text would echo."""
+    w = World()
+    await w.sign_in()
+    name = "Bartholomew-" + "X" * 80
+    w.users.rows[str(_TARGET)] = {**_user("bo"), "display_name": name}
+    with capture_logs() as logs:
+        assert _code(await w.start()) == (503, "store_unavailable")
+    (line,) = [e for e in logs if e.get("read") == "users"]
+    assert line["fields"] == [("target_display_name", "string_too_long")]
+    assert "exc_info" not in line and "Bartholomew" not in json.dumps(logs, default=str)
 
 
 async def test_a_target_with_no_display_name_starts_with_a_null_one() -> None:

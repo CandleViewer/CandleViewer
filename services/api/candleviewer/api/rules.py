@@ -18,6 +18,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 from candleviewer.api.rule_body import read_object
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.domain.text import escape_unpaired
 from candleviewer.rules.compiler import compile_form, compile_graph
 from candleviewer.rules.compiler.common import build_rule, check_bounds, value_issues
@@ -73,12 +74,18 @@ class _Resolver(Protocol):
     def resolve(self, request: Request) -> Any: ...
 
 
-def _problem(status: int, title: str, detail: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status,
-        media_type="application/problem+json",
-        content={"type": "about:blank", "title": title, "status": status, "detail": detail},
-    )
+def _problem(status: int, title: str, detail: str, *, code: str | None = None) -> JSONResponse:
+    """An RFC 7807 problem; `code` is the contract's machine-readable code (22 `x-error-codes`),
+    for the answers that have one."""
+    content: dict[str, Any] = {
+        "type": "about:blank",
+        "title": title,
+        "status": status,
+        "detail": detail,
+    }
+    if code is not None:
+        content["code"] = code
+    return JSONResponse(status_code=status, media_type="application/problem+json", content=content)
 
 
 def make_rules_router(
@@ -127,6 +134,13 @@ def make_rules_router(
             await scope_resolver.authorize_environments(caller, rule.scope, audit_armed=False)
         except ScopeForbiddenError:
             return _problem(403, "Forbidden", ScopeForbiddenError.message)
+        except AuditUnavailable:  # the scope's record was not written (C-2.9): nothing proceeds
+            return _problem(
+                503,
+                "Service unavailable",
+                "the scope check could not be recorded",
+                code="audit_unavailable",
+            )
         return None
 
     @router.get("/rules/accounts")

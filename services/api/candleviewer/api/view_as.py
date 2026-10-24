@@ -374,19 +374,21 @@ def make_view_as_start_router(
             return await _refuse(recorder, viewer, "view_as_owner_target", target, who)
         if not auth.step_up_is_active:
             return _unwired()
-        username, now = str(user["username"]), clock()
+        username, checked_at = str(user["username"]), clock()
         try:  # the 201's target, checked before anything starts: nothing after the commit raises
             answer = api.ViewAsContext(
                 target_user_id=target,
                 target_username=username,
                 target_display_name=user.get("display_name"),
-                started_at=now,
-                expires_at=now,
+                started_at=checked_at,
+                expires_at=checked_at,
                 read_only=True,
                 state="active",
             )
-        except ValidationError as exc:
-            return _unavailable("users", exc, "The target's row could not be read.")
+        except ValidationError as exc:  # its text holds the row's values (P1): never logged
+            fields = [(".".join(map(str, e["loc"])), e["type"]) for e in exc.errors()]
+            _log().error("auth.view_as_route_failed", read="users", fields=fields)
+            return _problem(ErrorCode.STORE_UNAVAILABLE, 503, "The target's row could not be read.")
         summary = ChallengeText(f"View as user {quote_label(username)}, read-only")
         gate = await require_elevation_for(auth, str(record.id), "users", text=summary)
         if gate is not None:
@@ -395,7 +397,7 @@ def make_view_as_start_router(
         if service is None:  # the fake backend: no context can start
             return _unwired()
         try:
-            result = await service.start(record, target, reason=body.reason, now=now)
+            result = await service.start(record, target, reason=body.reason, now=clock())
         except ViewAsStartUnavailable as exc:  # no id and no reason in the line
             cause = type(exc.__cause__).__name__ if exc.__cause__ is not None else None
             _log().error("admin.view_as.start_unavailable", code=exc.code, error=cause)

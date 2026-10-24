@@ -648,8 +648,11 @@ One transaction sets the status, revokes the sessions and grants and writes `use
 then each step (sockets, sweep, B16, rule scope, rule disarm, invite) runs alone, so a `204` can hide
 a failed one: it logs the error line `users.disable.step`, and a repeat of the call re-runs the
 sockets, the sweep, the scope refresh and the disarm. The socket step ends every socket of the user
-with `bye` `user_disabled` and `4403`, one still on a session that a refresh rotated included. The
-disarm lists the user's armed rules again after its disarms, so a rule armed meanwhile is disarmed
+with `bye` `user_disabled` and `4403`, one still on a session that a refresh rotated and one on
+which the user views as another user included (the registry holds that one under its target and
+finds it by its viewer). A socket on which another user views as the disabled one ends its view
+instead, with `bye` `view_as_expired` and `4403`. The disarm lists the user's armed rules again
+after its disarms, so a rule armed meanwhile is disarmed
 too. A rule its chart refuses (evaluating, acting, pending confirmation or spent) stays armed with
 no grant and no permission to act on (O4, O5); a repeat disarms it once it is back in `armed`, which
 a rule pending confirmation or spent reaches only through its confirmation or `RESET_ONCE` (#3226).
@@ -673,9 +676,10 @@ What the cascade builds on, and what to read afterwards:
   initiated or failed; the cascade cuts that step off at 2 s. The socket's own close follows in the
   connection's writer and is not measured. `AuthRevocationLatencyHigh` raises a ticket when its p99
   over 15 minutes is above 5 s (`docs/plan/07-release-and-prr.md`, section 9). A close that fails
-  is counted and logged on either path (next bullet).
-- A close that fails (#3497, #3635). A close that raised or hit its bound (2 s each: the hub's, and
-  the registry's `send_timeout_s`) adds one to `ws_session_revocation_close_failures_total` (no
+  is counted and logged on any of its three paths (next bullet).
+- A close that fails (#3497, #3635). A close that raised or hit its bound (2 s each: the hub's
+  per-session and per-context closes, and the registry's `send_timeout_s`) adds one to
+  `ws_session_revocation_close_failures_total` (no
   label; served on the metrics listener, `127.0.0.1:9108`, with `env`), and the closes after it
   still run. The hub logs the error line
   `ws revocation close failed; revoked socket may remain open` with the `session_id`. The socket
@@ -688,8 +692,12 @@ What the cascade builds on, and what to read afterwards:
   a count here. That cut-off opens before the registry's `send_timeout_s`, so in a disable a hung
   per-user closer is that failed step and only a closer that raised is counted; the hub's closes
   normally run in its own shielded task, where its 2 s bound does end, and count, a hung close (past
-  its close-task cap a batch closes inline, and the cascade's cut ends it first). A close that
-  failed inside the hub's loop or the per-user loop leaves that step
+  its close-task cap a batch closes inline, and the cascade's cut ends it first). The hub's
+  per-context closes of a view-as context's end or start (`close_context`, #3085 S10) run inline in
+  the caller, each bounded and counted as the per-session ones are; the view-as service's own 2 s
+  bound on them (`CLOSE_TIMEOUT_S`) cuts a hung one first, which the hub sees as a cancellation and
+  does not count, and the service logs `admin.view_as.close_failed` with `TimeoutError`. A close
+  that failed inside the hub's loop or the per-user loop leaves that step
   `ok`, because each loop goes on to the next socket, so the counter and its lines are the only
   trace. The `WsRevocationCloseFailed` ticket fires on any increase
   (`docs/plan/07-release-and-prr.md`, section 9) and is held 9 h 30 m;
@@ -698,8 +706,15 @@ What the cascade builds on, and what to read afterwards:
   access token ends, 12 minutes at most, and if its closer raised the connection may also not be
   sealed, so it can keep receiving its read-only streams. REST has refused the session (or the
   disabled user) since the revocation, and orders are REST only, so nothing can be placed through
-  that socket. With the deployed gateway the closer seals the connection without waiting, so a
-  failure is not expected: treat it as a regression and file a bug with the lines below. Check:
+  that socket. After a view-as context's end the session stays live and holds the ended context.
+  The view-as guard's table (`api/view_as_guard.py`) then passes only the viewer's own operations
+  (`OWN_OPERATIONS`: leave, the session's own read, refresh and logout among them; a protective
+  write too, once its handler is mounted), and every other read or write answers `view_as_expired`
+  until the client clears the context with `DELETE /auth/session/view-as`. A socket whose
+  per-context close failed keeps the target's read-only streams until its next `auth` or the
+  context's own expiry, whichever comes first. With the deployed gateway the closer seals the
+  connection without waiting, so a failure is not expected: treat it as a regression and file a
+  bug with the lines below. Check:
 
   ```bash
   curl -s http://127.0.0.1:9108/metrics | grep '^ws_session_revocation_close_failures_total'

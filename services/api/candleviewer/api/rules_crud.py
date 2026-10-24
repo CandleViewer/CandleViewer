@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from candleviewer.api.rule_body import read_object
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.domain.text import refuse_unstorable_text
 from candleviewer.rules.errors import ScopeForbiddenError
 from candleviewer.rules.ir.models import RuleScope
@@ -98,6 +99,9 @@ def make_rules_crud_router(
             await resolver.authorize_environments(caller, scope, audit_armed=arming)
         except ScopeForbiddenError:
             return _problem(403, "forbidden", "Forbidden", ScopeForbiddenError.message)
+        except AuditUnavailable:  # the scope's record was not written (C-2.9): nothing proceeds
+            detail = "the scope check could not be recorded"
+            return _problem(503, "audit_unavailable", "Unavailable", detail)
         return None
 
     async def _gate(request: Request, perm: str) -> tuple[Actor, RulesManager] | JSONResponse:

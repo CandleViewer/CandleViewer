@@ -12,7 +12,7 @@ import asyncio
 import itertools
 import json
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -100,6 +100,7 @@ class Rig:
         tick_s: float = 0.005,
         hangs: bool = False,
         options: dict[str, Any] | None = None,
+        principals: Mapping[uuid.UUID, PrincipalSnapshot] | None = None,
         **hub: int,
     ) -> None:
         self.audit, self.hub, self.now = _Audit(), GatewayHub(**hub), 0.0
@@ -129,6 +130,8 @@ class Rig:
                 else:
                     await self._held("recheck")
             await self._held("resolve")
+            if principals is not None and uid in principals:  # a test's own principal
+                return principals[uid]
             perms = frozenset({Permission.MARKETDATA_READ})
             return PrincipalSnapshot(uid, frozenset({"viewer"}), perms)
 

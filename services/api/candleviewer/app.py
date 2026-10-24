@@ -176,7 +176,7 @@ from candleviewer.api.view_as import make_view_as_router, make_view_as_start_rou
 from candleviewer.api.view_as_guard import make_view_as_guard, view_as_unstamped_handler
 from candleviewer.api.view_as_policy import ProtectiveWrites
 from candleviewer.api.view_as_refusals import ViewAsRefusalRecorder
-from candleviewer.api.view_as_subject import TargetNamedAsActor, ViewAsUnstamped
+from candleviewer.api.view_as_subject import TargetNamedAsActor, ViewAsUnstamped, acting_user
 from candleviewer.api.workspaces import OPERATIONS, make_workspaces_router
 from candleviewer.audit_lane_wiring import lane_key_loader
 from candleviewer.auth.csrf import CsrfCodec
@@ -2530,7 +2530,7 @@ def create_app(
                 SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "rule_scope")
             ),
             resolved.environment.value,
-            audit_writer_sink(_LazyAuditEmitter(ctx.audit)),
+            audit_writer_sink(_LazyAuditEmitter(ctx.audit), acting=acting_user),
         )
     app.include_router(
         make_rules_router(

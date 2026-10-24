@@ -95,10 +95,11 @@ async def _written(_record: object) -> None:
     """A start's write-ahead hook that writes its record."""
 
 
-def start_unit(state: ViewAsState = FRESH, *, to: UUID = TARGET) -> Call:
+def start_unit(state: ViewAsState = FRESH, *, to: UUID | None = None) -> Call:
     """The start request's unit of work (#3085 S13a), its hooks writing their records; its notice
-    addressed `to` the state's target unless a scenario says otherwise."""
-    kwargs = {"state": state, "now": T0, "notice": ViewAsNotice(to, "m", None)}
+    addressed to the state's own target unless a scenario names another (`to`)."""
+    notice = ViewAsNotice(state.target_user_id if to is None else to, "m", None)
+    kwargs = {"state": state, "now": T0, "notice": notice}
     hooks = {"flush_pending_end": _written, "write_ahead": _written, "audit_timeout_s": 5.0}
     return Call("start_view_as_unit", "a", kwargs | hooks)
 

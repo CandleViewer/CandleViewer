@@ -1,10 +1,15 @@
 """#3990: every audit write an HTTP route or a socket makes names the request.
 
 An `emit`, `emit_keyed` or `enforce` call under `candleviewer/api`, `candleviewer/admin` or
-`candleviewer/ws` (a socket's rows name its upgrade's request, #3085) passes a
-`request_id=` that is not `None` and reads no header (the defect), or a `**mapping` in a file that
-says `request_id`. The values are checked at run time (`tests/security/admin/` and
-`tests/security/auth/test_audit_request_id_on_auth_paths.py`). The scan reads calls by name only:
+`candleviewer/ws` (a socket's rows name its upgrade's request, #3085), and a call of the socket's
+bounded writers that wrap one (`_emit_bounded`, `refuse_frame`), passes a `request_id=` that is
+not `None` and reads no header (the defect), or a `**mapping` in a file that says `request_id`.
+The values are checked at run time (`tests/security/admin/`,
+`tests/security/auth/test_audit_request_id_on_auth_paths.py`, and for the socket's rows
+`tests/unit/ws/test_ws_audit_trail.py`). A row held as data, as `ws/permissions.py`'s `_AuditRow`
+rows are (`ws.permission_snapshot.refused` and the revocation rows, written once every socket of a
+change has its frames), carries its `request_id` in a dict this scan does not read: only the run
+time checks those. The scan reads calls by name only:
 one through an alias (`audit = writer.emit`), `functools.partial` or `getattr` is invisible to it,
 and review is what catches those. A file whose calls cannot name the request is in `EXEMPT` with
 its reason and how many such calls it holds: an exemption cannot grow, and a spent one must go.
@@ -22,7 +27,7 @@ import pytest
 import candleviewer
 
 _ROOT = Path(candleviewer.__file__).resolve().parent
-_AUDIT_CALLS = frozenset({"emit", "emit_keyed", "enforce"})
+_AUDIT_CALLS = frozenset({"emit", "emit_keyed", "enforce", "_emit_bounded", "refuse_frame"})
 _FORWARDS = "forwards the caller's fields, which carry the id; a system write (a flush) has none"
 
 #: File (relative to the package) -> (how many of its audit calls cannot name the request, why).
@@ -114,6 +119,11 @@ def test_the_calls_that_do_not_name_the_request_are_exactly_those_exempt_files_p
         ("# request_id\nemit('a', **who)", True),  # a comment is not code
         ('"""Carries request_id."""\nemit(\'a\', **who)', True),  # nor is a docstring
         ("audit = writer.emit\naudit('a')", False),  # not seen at all, as the docstring says
+        # the socket's bounded writers wrap an `emit`, so a call of theirs is read as one (#4103 m2)
+        ("_emit_bounded(audit, 'a', actor_user_id=u)", True),
+        ("recorder.refuse_frame(viewer_user_id=u, frame_type='x')", True),
+        ("_emit_bounded(audit, 'a', request_id=authz.request_id)", False),
+        ("recorder.refuse_frame(frame_type='x', request_id=authz.request_id)", False),
     ],
 )
 def test_the_predicate_rejects_each_way_of_dropping_the_id(source: str, bare: bool) -> None:

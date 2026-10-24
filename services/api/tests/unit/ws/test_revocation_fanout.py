@@ -175,7 +175,7 @@ class _World:
     def connect(
         self, uid: uuid.UUID, topics: list[Any], send: Send | None = None
     ) -> ConnectionAuthz:
-        # Each socket its own upgrade id, so a row naming a neighbour's fails (#4103 L1).
+        # Each socket its own upgrade id, so a row naming a neighbour's fails (#3990).
         authz = ConnectionAuthz(
             self.principals[uid], self.registry.services, request_id=uuid.uuid4()
         )

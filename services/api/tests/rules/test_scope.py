@@ -284,13 +284,42 @@ async def test_audit_writer_sink_emits_registered_actions() -> None:
             validate_action(action)
             calls.append((action, kw))
 
-    r = ScopeResolver(FakeState(), audit_writer_sink(W()))
+    r = ScopeResolver(FakeState(), audit_writer_sink(W(), acting=str))
     with pytest.raises(ScopeForbiddenError):
         await r.authorize_accounts(OWNER, [C])
     assert calls[0][0] == "rules.scope_denied" and calls[0][1]["object_id"] == str(C)
 
 
-def _http(st: FakeState) -> Any:
+async def test_a_scope_denial_while_viewing_as_the_caller_names_the_viewer() -> None:
+    """#3085 (#4177 security L-1): with the app's `acting_user`, a request viewing as the caller
+    writes the viewer as the record's actor, so the emitter's tripwire never sees the target."""
+    from candleviewer.admin.wiring import audit_writer_sink
+    from candleviewer.api.view_as_subject import acting_user
+    from candleviewer.auth.view_as import ViewAsPhase, ViewAsRequestContext, bound_view_as
+
+    viewer = UUID(int=0x3085)
+    calls: list[dict[str, Any]] = []
+
+    class W:
+        async def emit(self, action: str, **kw: Any) -> None:
+            calls.append(kw)
+
+    view = ViewAsRequestContext(
+        viewer_user_id=viewer,
+        viewer_session_id=uuid.uuid4(),
+        viewer_label="ana",
+        target_user_id=OWNER,
+        context_id=uuid.uuid4(),
+        subject_user_id=OWNER,
+        phase=ViewAsPhase.LIVE,
+    )
+    r = ScopeResolver(FakeState(), audit_writer_sink(W(), acting=acting_user))
+    with bound_view_as(view), pytest.raises(ScopeForbiddenError):
+        await r.authorize_accounts(OWNER, [C])
+    assert (calls[0]["actor_user_id"], calls[0]["actor_label"]) == (str(viewer), str(viewer))
+
+
+def _http(st: FakeState, sink: Any = _noop) -> Any:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -310,7 +339,7 @@ def _http(st: FakeState) -> Any:
     app = FastAPI()
     app.include_router(
         make_rules_router(
-            default_registry, principal_resolver=R(), scope_resolver=ScopeResolver(st, _noop)
+            default_registry, principal_resolver=R(), scope_resolver=ScopeResolver(st, sink)
         )
     )
     return TestClient(app)
@@ -334,6 +363,19 @@ def test_http_403_for_crafted_foreign_or_absent_account_identical_bodies() -> No
     assert foreign.status_code == absent.status_code == 403
     assert foreign.json() == absent.json()
     assert c.post("/rules/validate", json={"ir": _ir(account_ids=[str(A)])}).status_code == 200
+
+
+def test_http_a_scope_refusal_that_cannot_be_recorded_is_503() -> None:
+    """C-2.9 (#4177 security L-1): an unwritable scope record refuses the request, never a 500. The
+    problem carries the code the CRUD routes give it (`audit_unavailable`, 22 `x-error-codes`)."""
+    from candleviewer.audit.writer import AuditUnavailable
+
+    async def unwritable(_event: str, _data: dict[str, str]) -> None:
+        raise AuditUnavailable("audit WAL unwritable")
+
+    c = _http(FakeState(), unwritable)
+    response = c.post("/rules/validate", json={"ir": _ir(account_ids=[str(C)])})
+    assert (response.status_code, response.json()["code"]) == (503, "audit_unavailable")
 
 
 def test_http_live_forbidden_without_arm_live() -> None:
