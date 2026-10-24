@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -89,20 +90,74 @@ def test_the_manifest_extends_and_a_bad_one_is_refused(tmp_path, capsys):
     )
     assert code == 1 and "'__cvDebugBus'" in err
     short = {
-        "identifier": "ab",
+        "identifier": "abc",
         "threat": "DR5",
         "requirement": "SR-E14-10",
-    }  # would match anything
+    }  # under 4 characters, it would match too much
     for bad in [
         "{",
         "[]",
         '{"handles": []}',
+        '{"handles": ["__cvEngine"]}',  # an entry that is no object: a likely hand-edit slip
         '{"handles": [{"identifier": "__cvEngine"}]}',
         json.dumps({"handles": [short]}),
+        json.dumps({"handles": [entry | {"threat": ""}]}),
+        json.dumps({"handles": [entry | {"requirement": ""}]}),
     ]:
         manifest.write_text(bad, encoding="utf-8")
         assert _run(tmp_path, capsys, CLEAN, "--manifest", str(manifest))[0] == 2
     assert guard.main(["--dist", str(tmp_path), "--manifest", str(tmp_path / "none.json")]) == 2
+
+
+def test_an_identifier_of_four_characters_is_the_shortest_accepted(tmp_path, capsys):
+    entry = {"identifier": "abcd", "threat": "DR5", "requirement": "SR-E14-10"}
+    manifest = tmp_path / "m.json"
+    manifest.write_text(json.dumps({"handles": [entry]}), encoding="utf-8")
+    assert _run(tmp_path, capsys, CLEAN, "--manifest", str(manifest))[0] == 0
+
+
+def test_each_handle_found_in_a_file_is_named_once(tmp_path, capsys):
+    both = {"assets/a.js": "window.__cvEngine.projectForTest(1)\n"}
+    code, _, err = _run(tmp_path, capsys, CLEAN | both)
+    named = [line for line in err.splitlines() if line.startswith("prod-bundle: assets/a.js:")]
+    assert code == 1 and len(named) == 2  # one per (file, identifier), not one per file
+
+
+def test_findings_are_named_in_path_order(tmp_path, capsys):
+    hits = {"z/b.js": "__cvEngine", "a/c.js": "__cvEngine"}
+    _, _, err = _run(tmp_path, capsys, CLEAN | hits)
+    paths = [line.split(":")[1].strip() for line in err.splitlines() if ".js:" in line]
+    assert paths == ["a/c.js", "z/b.js"]
+
+
+def test_a_file_that_is_not_utf_8_is_still_scanned(tmp_path, capsys):
+    (tmp_path / "dist" / "assets").mkdir(parents=True)
+    (tmp_path / "dist" / "assets" / "x.js").write_bytes(b"\xff\xfe window.__cvEngine = 1")
+    code, _, err = _run(tmp_path, capsys, CLEAN)
+    assert code == 1 and "assets/x.js:1:" in err
+
+
+def test_a_directory_named_like_a_script_is_not_read(tmp_path, capsys):
+    (tmp_path / "dist" / "chunks.js").mkdir(parents=True)
+    assert _run(tmp_path, capsys, CLEAN)[::2] == (0, "")
+
+
+def test_a_handle_in_an_htm_page_fails(tmp_path, capsys):
+    page = {"legacy.htm": "<script>window.__cvEngine = {}</script>"}
+    code, _, err = _run(tmp_path, capsys, CLEAN | page)
+    assert code == 1 and "legacy.htm:1:" in err
+
+
+def test_the_build_job_runs_the_guard_on_the_web_build_it_just_made() -> None:
+    """The step sits in `_job-js.yml`'s `build` job after the step that builds `apps/web`, and reads
+    that build's dist, not another (`apps/desktop/dist` holds `.js` files too)."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/_job-js.yml").read_text(encoding="utf-8"))
+    runs = [str(step.get("run", "")) for step in workflow["jobs"]["build"]["steps"]]
+    guard_at = next(i for i, run in enumerate(runs) if "check_prod_bundle_handles.py" in run)
+    built_at = max(i for i, run in enumerate(runs) if "--filter @candleviewer/web " in run)
+    command = "python tools/ci/check_prod_bundle_handles.py --dist apps/web/dist"
+    assert runs[guard_at].strip() == command
+    assert built_at < guard_at
 
 
 def test_the_real_manifest_registers_both_handles_for_dr5() -> None:

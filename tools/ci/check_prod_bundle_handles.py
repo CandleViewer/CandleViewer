@@ -4,9 +4,10 @@
 `__cvEngine.projectForTest` (E14-Q03) lets a test project chart coordinates to pixels. A production
 page that exposes it hands any script a way to spoof where a drawing sits: the E14 threat model's
 DR5 (`docs/security/threat-models/E14-drawings.md`). The script files (`.js`, `.mjs`, `.cjs`) and
-`.html` files of the web build must hold no identifier of
-`tools/ci/prod-bundle-forbidden-handles.json` (E14-Q03 adds its names there). Source maps are never
-read: their `sourcesContent` holds the source of a handle that is correctly gated out of the bundle.
+pages (`.html`, `.htm`) of the web build must hold no identifier of
+`tools/ci/prod-bundle-forbidden-handles.json` (E14-Q03's two names are registered; a later test-only
+handle is added there). Source maps are never read: their `sourcesContent` holds the source of a
+handle that is correctly gated out of the bundle.
 A dist with no script file fails, so a missing or half-written build never passes, whatever `.html`
 it holds. An identifier is matched as a substring: `__cvEngineDebug` counts as `__cvEngine`.
 
@@ -26,7 +27,7 @@ from pathlib import Path
 
 MANIFEST = Path(__file__).with_name("prod-bundle-forbidden-handles.json")
 SCRIPT_SUFFIXES = frozenset({".js", ".mjs", ".cjs"})
-SCAN_SUFFIXES = SCRIPT_SUFFIXES | {".html"}  # never ".map"
+SCAN_SUFFIXES = SCRIPT_SUFFIXES | {".html", ".htm"}  # never ".map"
 IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]{3,}")
 FIELDS = ("identifier", "threat", "requirement")
 

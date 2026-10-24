@@ -1,5 +1,6 @@
 """E14-X03 (#549; the E14-X02 finding on #474): the deployed app stamps `X-Content-Type-Options:
-nosniff` exactly once on every answer of every `/drawings*` route, a refusal included.
+nosniff` exactly once on the refusal each `/drawings*` route gives an unauthenticated caller, and
+`NoSniff` is the outermost layer, so a served answer carries it as well.
 
 `NoSniff` (#3990) is the outermost layer of `create_app`, and `test_response_headers.py` pins it
 on other routes. Nothing pinned it on these, and ZAP's passive rule 10021 is Low, below the gate of
