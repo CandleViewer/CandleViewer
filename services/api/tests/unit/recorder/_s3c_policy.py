@@ -1,17 +1,17 @@
 """#2188 S3c's policy members, as the orchestrator approved them (2026-10-24 12:42Z), over the real
 `RecordingPolicy` until S3c is on main (then this file goes): `relax_allowed`, `set_pin` with the
-view and the unpin's retention, and `set_retention`. A refused relax writes its denied record and
-raises before any write; each write records `retention.change` ahead of its store. `days` writes a
-row's `retention_days` (S3c's `RecordedStore.set_retention`)."""
+view and the unpin's retention, `set_retention`, and `start_refused` (13:20Z). A refused relax
+writes its denied record and raises before any write; each write records `retention.change` ahead
+of its store. `days` writes a row's `retention_days` (S3c's `RecordedStore.set_retention`)."""
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from candleviewer.recorder.control_runtime import RecorderRelaxRefusedError
+from candleviewer.recorder.control_runtime import RecorderRelaxRefusedError, StartRefused
 from candleviewer.recorder.errors import RecorderSymbolNotRecordedError
-from candleviewer.recorder.models import Actor
+from candleviewer.recorder.models import PRECEDENCE, Actor
 from candleviewer.recorder.policy import RecordingPolicy
 
 DaysWriter = Callable[[str, int | None], Awaitable[bool]]
@@ -27,6 +27,17 @@ class S3cPolicy:
     def relax_allowed(self, symbol: str, *, restricted: bool) -> bool:
         """A restricted view covers no row a hidden cause (a position) holds."""
         return not restricted or not self.policy.position_open(symbol)
+
+    def start_refused(self) -> tuple[StartRefused, ...]:
+        """Every symbol whose start is refused now, in symbol order, as `start_refusal` names it."""
+        out = []
+        for symbol, s in sorted(self.policy._syms.items()):
+            cause = self.policy.start_refusal(symbol)
+            if cause is not None and s.refused:
+                out.append(
+                    StartRefused(symbol, cause, tuple(r for r in PRECEDENCE if r in s.refused))
+                )
+        return tuple(out)
 
     async def _row(self, symbol: str) -> dict[str, Any]:
         row = await self.policy._recorded.get_by_symbol(symbol, self.policy._env)
