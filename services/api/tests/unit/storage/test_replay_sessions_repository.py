@@ -219,7 +219,8 @@ def test_naive_datetimes_are_refused_everywhere_they_could_misorder() -> None:
     for call in (
         repo.touch("u", "s", naive),
         repo.list_idle_since(naive, 1),
-        repo.list_non_terminal_since(naive, 1),
+        repo.list_reclaimable(naive, T0, 1),
+        repo.list_reclaimable(T0, naive, 1),
         repo.update_cursor("u", "s", cursor_ts=naive),
     ):
         with pytest.raises(ValueError, match="timezone-aware"):
@@ -270,7 +271,7 @@ _STATEMENTS = {
     "count_statement": mod.count_statement(_UID),
     "idle_statement": mod.idle_statement(T0, 10),
     "open_count_statement": mod.open_count_statement(_UID),
-    "open_idle_statement": mod.open_idle_statement(T0, 10),
+    "reclaim_statement": mod.reclaim_statement(T0, T0 - timedelta(days=1), 10),
     "update_statement": mod.update_statement(_UID, _SID, {"cursor_ts": T0}, S.PAUSED),
 }
 
@@ -286,15 +287,21 @@ def test_every_statement_is_owner_scoped_except_the_unscoped_sweep(name: str) ->
 
 
 def test_only_the_idle_sweeps_are_unscoped() -> None:
-    assert mod.UNSCOPED == {"idle_statement", "open_idle_statement"}
+    assert mod.UNSCOPED == {"idle_statement", "reclaim_statement"}
 
 
 def test_the_open_statements_exclude_exactly_the_terminal_state() -> None:
-    for name in ("open_count_statement", "open_idle_statement"):
+    for name in ("open_count_statement", "reclaim_statement"):
         stmt = _STATEMENTS[name]
         assert "replay_sessions.state NOT IN (" in _sql(stmt)
         assert ["destroyed"] in stmt.compile().params.values()
-    assert "bookmarks" not in _sql(_STATEMENTS["open_idle_statement"])
+    assert "bookmarks" not in _sql(_STATEMENTS["reclaim_statement"])
+
+
+def test_the_reclaim_sweep_takes_a_row_past_either_cutoff() -> None:
+    sql = _sql(_STATEMENTS["reclaim_statement"])
+    assert "(replay_sessions.updated_at < " in sql and " OR replay_sessions.created_at < " in sql
+    assert "LIMIT" in sql
 
 
 def test_live_states_are_rendered_as_literals_for_the_partial_index() -> None:
@@ -656,6 +663,14 @@ async def test_touch_and_update_speed_bump_updated_at_through_greatest() -> None
     assert rel.params(1)["speed"] == Decimal(4)
 
 
+async def test_a_change_without_client_activity_writes_no_updated_at() -> None:
+    rel = _Rel(_Result([_db_row()]), _Result([_db_row()]))
+    repo = _repo(rel)
+    await repo.update_speed(_new_id(), str(_SID), speed=Decimal(4), activity=False)
+    await repo.update_state(_new_id(), str(_SID), state=S.FINISHED, activity=False)
+    assert all("updated_at" not in _sql(stmt).split("RETURNING")[0] for stmt in rel.statements)
+
+
 async def test_list_page_fetches_one_extra_row_to_know_whether_a_next_page_exists() -> None:
     rows = [_db_row(created_at=T0 - timedelta(seconds=i)) for i in range(3)]
     rel = _Rel(_Result(rows))
@@ -681,20 +696,23 @@ async def test_list_page_rejects_a_bad_cursor_and_clamps_the_limit_before_the_da
 
 async def test_list_idle_since_clamps_the_limit_and_maps_the_projection() -> None:
     rel = _Rel(_Result([{"id": _SID, "user_id": _UID, "symbol": "BTCUSDT", "state": "playing",
-                         "paper_account_id": None, "updated_at": T0}]))  # fmt: skip
+                         "paper_account_id": None, "updated_at": T0,
+                         "created_at": T0}]))  # fmt: skip
     (idle,) = await _repo(rel).list_idle_since(T0, 10**6)
-    assert idle == IdleReplaySession(str(_SID), str(_UID), "BTCUSDT", S.PLAYING, None, T0)
+    assert idle == IdleReplaySession(str(_SID), str(_UID), "BTCUSDT", S.PLAYING, None, T0, T0)
     assert rel.params()["param_1"] == MAX_PAGE_LIMIT
 
 
-async def test_list_non_terminal_since_clamps_the_limit_and_maps_the_projection() -> None:
+async def test_list_reclaimable_clamps_the_limit_and_maps_the_projection() -> None:
+    born = T0 - timedelta(days=2)
     rel = _Rel(_Result([{"id": _SID, "user_id": _UID, "symbol": "BTCUSDT", "state": "finished",
-                         "paper_account_id": None, "updated_at": T0}]))  # fmt: skip
-    (idle,) = await _repo(rel).list_non_terminal_since(T0, 10**6)
-    assert idle == IdleReplaySession(str(_SID), str(_UID), "BTCUSDT", S.FINISHED, None, T0)
+                         "paper_account_id": None, "updated_at": T0,
+                         "created_at": born}]))  # fmt: skip
+    (idle,) = await _repo(rel).list_reclaimable(T0, born, 10**6)
+    assert idle == IdleReplaySession(str(_SID), str(_UID), "BTCUSDT", S.FINISHED, None, T0, born)
     assert rel.params()["param_1"] == MAX_PAGE_LIMIT
     with pytest.raises(ValueError, match="timezone-aware"):
-        await _repo(rel).list_non_terminal_since(datetime(2026, 10, 1), 1)
+        await _repo(rel).list_reclaimable(datetime(2026, 10, 1), born, 1)
 
 
 async def test_count_non_terminal_reports_the_count_and_never_queries_a_malformed_user() -> None:

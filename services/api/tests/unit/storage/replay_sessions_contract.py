@@ -245,7 +245,7 @@ class ReplaySessionRepositoryContract:
         assert await h.repo.count_non_terminal(user) == len(ReplayState) - 1 == 7
         assert await h.repo.count_non_terminal("not-a-uuid") == 0
 
-    async def test_list_non_terminal_since_returns_every_idle_open_session_oldest_first(
+    async def test_list_reclaimable_returns_every_idle_open_session_oldest_first(
         self, h: Harness
     ) -> None:
         old: list[ReplaySessionRow] = []
@@ -254,16 +254,29 @@ class ReplaySessionRepositoryContract:
             h.clock.advance(minutes=1)
             if state is not S.DESTROYED:
                 old.append(row)
-        before = h.clock.now
+        before, born = h.clock.now, T0 - timedelta(days=1)  # no row is past the lifetime
         await h.in_state(S.CREATED)  # exactly at the boundary: not strictly older
         h.clock.advance(hours=2)
         await h.in_state(S.FINISHED)  # recent
-        got = await h.repo.list_non_terminal_since(before, 10)
+        got = await h.repo.list_reclaimable(before, born, 10)
         assert [i.id for i in got] == [r.id for r in old]
         assert {i.state for i in got} == set(ReplayState) - {S.DESTROYED}
-        two = await h.repo.list_non_terminal_since(before, 2)
+        two = await h.repo.list_reclaimable(before, born, 2)
         assert [i.id for i in two] == [r.id for r in old[:2]]
-        assert await h.repo.list_non_terminal_since(T0 - timedelta(days=1), 10) == []
+        assert await h.repo.list_reclaimable(born, born, 10) == []
+
+    async def test_list_reclaimable_also_returns_open_sessions_created_before_the_lifetime(
+        self, h: Harness
+    ) -> None:
+        old = await h.in_state(S.PLAYING)
+        await h.in_state(S.DESTROYED)  # old, but terminal
+        h.clock.advance(hours=25)
+        await h.repo.touch(old.user_id, old.id, h.clock.now)  # active, but too old
+        await h.in_state(S.PAUSED)  # young and active
+        idle_before, born = h.clock.now - timedelta(hours=2), h.clock.now - timedelta(hours=24)
+        (got,) = await h.repo.list_reclaimable(idle_before, born, 10)
+        assert (got.id, got.created_at, got.updated_at) == (old.id, T0, h.clock.now)
+        assert await h.repo.list_reclaimable(idle_before, T0, 10) == []  # strictly older only
 
     async def test_idle_projection_carries_what_the_sweep_needs_and_no_bookmarks(
         self, h: Harness
@@ -271,8 +284,9 @@ class ReplaySessionRepositoryContract:
         row = await h.in_state(S.PAUSED, paper_trading=True, paper_account_id=h.new_account())
         (idle,) = await h.repo.list_idle_since(row.updated_at + timedelta(seconds=1), 10)
         want = IdleReplaySession(
-            row.id, row.user_id, row.symbol, S.PAUSED, row.paper_account_id, row.updated_at
-        )
+            row.id, row.user_id, row.symbol, S.PAUSED, row.paper_account_id, row.updated_at,
+            row.created_at,
+        )  # fmt: skip
         assert idle == want
         assert not hasattr(idle, "bookmarks")
 
@@ -362,6 +376,16 @@ class ReplaySessionRepositoryContract:
         sped = await h.repo.update_speed(row.user_id, row.id, speed=Decimal(4))
         assert (sped.speed, sped.updated_at) == (Decimal(4), h.clock.now)
         assert await h.repo.get(row.user_id, row.id) == sped
+
+    async def test_a_change_the_client_did_not_make_leaves_updated_at_alone(
+        self, h: Harness
+    ) -> None:
+        row = await h.in_state(S.PLAYING)
+        h.clock.advance(minutes=5)
+        sped = await h.repo.update_speed(row.user_id, row.id, speed=Decimal(2), activity=False)
+        moved = await h.repo.update_state(row.user_id, row.id, state=S.FINISHED, activity=False)
+        assert (sped.speed, moved.state, moved.finished_at) == (Decimal(2), S.FINISHED, h.clock.now)
+        assert sped.updated_at == moved.updated_at == row.updated_at
 
     async def test_touch_moves_updated_at_forward_and_never_backwards(self, h: Harness) -> None:
         row = await h.in_state(S.PAUSED)
