@@ -35,9 +35,15 @@ asks for it (its cap, its cooldown, its metric and its pages) is slice H3's.
    (`SPAN_HELD`): a request older than the venue's span (24 Sec.14.1) whose position is flat, or
    older than a demo venue's retention whatever its position, is held; while the position is
    open on its side a live miss past the span still decides, and a key whose position, open on
-   either side, shows no stop at all (`shows_no_stop`) is never held on this rule. A request
-   still listed whose rows the read only matched, all answered already, is held by its entry's
-   order (`WAITING_ENTRY`).
+   either side, shows no stop at all (`shows_no_stop`: no stop-loss, no trail and, when the
+   orders were read, no open `partial_stop_loss` or `trailing_stop` order closing it; a
+   take-profit is never a stop) is never held on this rule. The rule holds a fill case that would
+   void a side as it holds any request, and an entry the lookup missed where a miss proves
+   nothing (`unseen`). An entry partly filled and still resting is a fill. A request still
+   listed whose rows the read only matched, all answered already, is held by its entry's order
+   (`WAITING_ENTRY`); any other entry's request that leaves a row answered or kept, on a row
+   answered already or whose stored order `WAITING_ENTRY` holds (`Reading.waiting_entries`),
+   carries `ENTRY_HELD` with its outcome, as that row stays listed.
 
 Nothing here ends a row, materialises one, binds or releases an `exchange_order_id` or tells B1 a
 stop was seen or lost (INV-B1-f).
@@ -46,7 +52,7 @@ stop was seen or lost (INV-B1-f).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Final, Literal
 from uuid import UUID
@@ -88,8 +94,9 @@ type Move = Literal["in_force", "answered", "replaced", "kept", VoidReason]
 #: The row's position as the read shows it: `open` on the row's side, else `flat`.
 type PositionState = Literal["open", "flat"]
 #: An entry's order as the read shows it, the full match passed: still `resting` unfilled,
-#: `filled` (any fill), or `gone` (ended unfilled, not found, or not the row's order).
-type EntryState = Literal["resting", "filled", "gone"]
+#: `filled` (any fill, a partly filled entry still resting included), `gone` (ended unfilled, not
+#: found, or not the row's order), or `unseen` (not found where a miss proves nothing).
+type EntryState = Literal["resting", "filled", "gone", "unseen"]
 
 #: Why a request is held for reconciliation (`RequestDecision.held`, the log line's text).
 TRAIL_HELD: Final = (
@@ -101,6 +108,7 @@ SPAN_HELD: Final = (
 )
 RESTORE_HELD: Final = "a restore request is E29-T06's: held for its pass"
 ENTRY_HELD: Final = "answered rows its entry's order still holds: held for E29-T06's pass"
+_STOP_ORDERS: Final = frozenset({"partial_stop_loss", "trailing_stop"})
 
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _LEAD_US: Final = round(HISTORY_LEAD_S * 1_000_000)
@@ -126,7 +134,8 @@ class Reading:
     TP/SL orders open and in history since the oldest request (empty when not read), the key's
     rows in force, and the oldest times, in microseconds, a miss proves anything at: in the
     history span (an ended order) and in the venue's retention (any order; 0 where it never
-    expires)."""
+    expires). `orders_read` says the TP/SL orders were read; `waiting_entries` names the entries
+    whose stored order `WAITING_ENTRY` holds, so their answered rows stay listed."""
 
     position: Position | None
     entries: Mapping[UUID, EntryState]
@@ -135,20 +144,23 @@ class Reading:
     in_force: tuple[RecordedStopRow, ...] = ()
     history_from_us: int = 0
     retention_from_us: int = 0
+    orders_read: bool = False
+    waiting_entries: frozenset[UUID] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
 class RequestDecision:
     """One request's decision: each row's move, the outcome the metric counts, the position as
     the read showed it, the stop-loss rows whose void pages (an open position, H3), and why a
-    held request is held."""
+    held request is held or why rows it leaves stay listed."""
 
     request: StopRequest
     outcome: Outcome
     moves: tuple[tuple[RecordedStopRow, Move], ...]
     position_state: PositionState
     pages: tuple[UUID, ...] = ()
-    #: Why a `held_for_reconciliation` request is held, and until when: the log line's text.
+    #: Why a `held_for_reconciliation` request is held, and until when, or, with any outcome,
+    #: `ENTRY_HELD` for rows it leaves listed through their entry's order: the log line's text.
     held: str | None = None
 
 
@@ -206,14 +218,22 @@ def trail_unreadable(row: RecordedStopRow, position: Position | None) -> bool:
     )
 
 
-def shows_no_stop(position: Position | None) -> bool:
-    """A position open on either side that shows no stop at all: no stop-loss and no trail (a
-    take-profit alone protects nothing, C-2.6). A history miss never holds its key."""
-    return (
-        position is not None
-        and position.qty > 0
-        and position.stop_loss is None
-        and position.trailing_stop_distance is None
+def shows_no_stop(position: Position | None, open_orders: Sequence[Order] | None = None) -> bool:
+    """A position open on either side that shows no stop at all: no stop-loss, no trail, and, when
+    the orders were read (`open_orders` not None), no open `partial_stop_loss` or `trailing_stop`
+    order of its key closing it (the orchestrator's ruling); a take-profit protects nothing
+    (C-2.6). A history miss never holds its key."""
+    if position is None or position.qty <= 0:
+        return False
+    if position.stop_loss is not None or position.trailing_stop_distance is not None:
+        return False
+    closing = "sell" if position.side == "buy" else "buy"
+    place = (position.account_id, position.symbol, position.position_idx)
+    return not any(
+        (o.account_id, o.symbol, o.position_idx) == place
+        and o.side == closing
+        and o.order_kind in _STOP_ORDERS
+        for o in open_orders or ()
     )
 
 
@@ -284,6 +304,19 @@ def decide(requests: Sequence[StopRequest], reading: Reading) -> tuple[RequestDe
 
 
 def _decide(request: StopRequest, reading: Reading, later: frozenset[StopKind]) -> RequestDecision:
+    decision = _moves(request, reading, later)
+    if decision.held is not None or request.source != "entry_attach":
+        return decision
+    waits = request.order_id in reading.waiting_entries
+    if any(
+        move in ("answered", "kept") and (row.answered_at is not None or waits)
+        for row, move in decision.moves
+    ):  # the row stays listed through its entry's order (Fable Major, H lens)
+        return replace(decision, held=ENTRY_HELD)
+    return decision
+
+
+def _moves(request: StopRequest, reading: Reading, later: frozenset[StopKind]) -> RequestDecision:
     rows = request.rows
     state = position_state(rows[0], reading.position)
     evidence = {r.id: _evidence(r, reading, state) for r in rows}
@@ -295,7 +328,11 @@ def _decide(request: StopRequest, reading: Reading, later: frozenset[StopKind]) 
     matched = {i for i, e in evidence.items() if e == "matched"}
     entry = reading.entries.get(request.order_id) if request.order_id is not None else None
     if entry == "filled":
-        return _filled(request, state, shown, matched, later)
+        filled = _filled(request, state, shown, matched, later)
+        voids = any(move == "entry_filled_stop_absent" for _, move in filled.moves)
+        if voids and _missed(request, reading, state):  # Opus Major 1, H lens
+            return _held(request, state, SPAN_HELD)
+        return filled
     if shown:
         moves = tuple(
             (r, _later_or(r, later, "in_force" if r.id in shown else "answered")) for r in rows
@@ -309,13 +346,23 @@ def _decide(request: StopRequest, reading: Reading, later: frozenset[StopKind]) 
         return _whole(request, state, "answered", "answered")
     if entry == "resting":
         return _whole(request, state, "kept", "entry_resting")
+    if (entry == "unseen" and not _no_stop(reading)) or _missed(request, reading, state):
+        return _held(request, state, SPAN_HELD)  # a miss there could hide a match
+    return _whole(request, state, "in_flight_resolved", "in_flight_resolved")
+
+
+def _missed(request: StopRequest, reading: Reading, state: PositionState) -> bool:
+    """A miss that proves nothing, unless the position shows no stop at all: past the span while
+    flat, or past a demo venue's retention."""
     since = _us(request.created_at) - _LEAD_US
     past = (
         since < reading.history_from_us and state == "flat"
     ) or since < reading.retention_from_us
-    if past and not shows_no_stop(reading.position):
-        return _held(request, state, SPAN_HELD)  # a miss there could hide a match
-    return _whole(request, state, "in_flight_resolved", "in_flight_resolved")
+    return past and not _no_stop(reading)
+
+
+def _no_stop(reading: Reading) -> bool:
+    return shows_no_stop(reading.position, reading.open_orders if reading.orders_read else None)
 
 
 def _filled(
