@@ -2,9 +2,10 @@
 fixtures (E42-Q01, #962).
 
 An insert leaves its row in `tables`; a select answers with the rows of its table (its `where` is
-not applied); the database's name and the session's user answer their reads; every statement sent
-is kept, and `shapes` names each. It is also the relational repository whose engine connects to
-it. Conflicts and updates are Postgres's: the integration tests.
+not applied); the database's name and the session's user answer their reads; an update and the role
+switch are kept and not applied; every statement sent is kept, and `shapes` names each. Any other
+statement, a delete or an unknown text, fails the test. It is also the relational repository whose
+engine connects to it. Conflicts and updates are Postgres's: the integration tests.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import sqlalchemy as sa
 from sqlalchemy.engine import IteratorResult
@@ -20,6 +21,9 @@ from sqlalchemy.engine.result import SimpleResultMetaData
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from candleviewer.db import models as m
+
+#: The texts a seed sends that the fake answers with nothing: the role switch around OOB-WRITES.
+_SILENT: Final = frozenset({"SET ROLE cv_app", "RESET ROLE"})
 
 
 def _table(stmt: Any) -> str:
@@ -70,13 +74,16 @@ class FakeDb:
         self.statements.append(stmt)
         keys: list[str] = []
         rows: list[tuple[Any, ...]] = []
+        text = str(stmt) if isinstance(stmt, sa.TextClause) else None
         if isinstance(stmt, sa.Insert):
             self.tables.setdefault(_table(stmt), []).append(dict(stmt.compile().params))
         elif isinstance(stmt, sa.Select):
             keys = [str(c.key) for c in stmt.selected_columns]
             rows = [tuple(r.get(k) for k in keys) for r in self.tables.get(_table(stmt), [])]
-        elif isinstance(stmt, sa.TextClause) and "current_database" in str(stmt):
+        elif text == "SELECT current_database()":
             keys, rows = ["name"], [(self.database,)]
-        elif isinstance(stmt, sa.TextClause) and "session_user" in str(stmt):
+        elif text == "SELECT session_user":
             keys, rows = ["name"], [(self.login,)]
+        elif not isinstance(stmt, sa.Update) and text not in _SILENT:
+            raise AssertionError(f"the fake does not model {self.shapes[-1]!r}")
         return IteratorResult(SimpleResultMetaData(keys), iter(rows))
