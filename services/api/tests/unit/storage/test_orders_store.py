@@ -697,6 +697,16 @@ def _event_row(**over: Any) -> dict[str, Any]:
     return row | {"id": 7, "order_id": ORDER, "seq": 1, "kind": "ack", "payload": {}} | over
 
 
+_GROUP, _PROFILE = uuid.UUID(int=4), uuid.UUID(int=5)
+
+
+def _scoped_row(**over: Any) -> dict[str, Any]:
+    """`in_scope_statement`'s one row for `_order_row`'s order in the scope: the probe's `holder`
+    beside the order, its group, its leg's profile, its creator and the trade flag."""
+    judged = {"trade_group_id": _GROUP, "profile_id": _PROFILE, "created_by": USER}
+    return _order_row() | judged | {"can_trade": True, "holder": ACCOUNT} | over
+
+
 async def test_create_maps_the_returned_row_and_commits_once() -> None:
     rel = _Rel(_Result([_order_row(stop_loss=Decimal("62000"), tpsl_mode="Partial")]))
     row = await _store(rel).create(_new_order(), _event())
@@ -721,6 +731,36 @@ async def test_reads_map_rows_and_absence() -> None:
     bound = await store.get_by_exchange_order_id(ACCOUNT, "x-1")
     assert bound == OrderRow(**_order_row(exchange_order_id="x-1"))
     assert await store.get_by_exchange_order_id(ACCOUNT, "x-2") is None and rel.commits == 0
+
+
+@pytest.mark.parametrize("trade", [True, False], ids=["trade", "view-only"])
+async def test_get_in_scope_maps_a_scoped_row_to_the_order_and_what_it_is_judged_by(
+    trade: bool,
+) -> None:
+    """Rulings Q6 and Q7: the order with its group, its leg's profile, its creator and whether the
+    scope may trade its account, read in one statement and committing nothing."""
+    rel = _Rel(_Result([_scoped_row(can_trade=trade)]))
+    got = await _store(rel).get_in_scope(_GRANT, ORDER, environment="demo")
+    assert got == port.ScopedOrder(OrderRow(**_order_row()), _GROUP, _PROFILE, USER, trade)
+    assert (len(rel.statements), rel.commits) == (1, 0)
+
+
+@pytest.mark.parametrize("holder", [ACCOUNT, None], ids=["outside-the-scope", "missing"])
+async def test_get_in_scope_maps_no_scoped_row_to_the_holding_account_alone(holder: Any) -> None:
+    """Ruling Q12: for an id outside the scope every scoped column is NULL and only the probe's
+    `holder` comes back, None for an id no order holds; both answer the same 404 (SR-E29-13)."""
+    rel = _Rel(_Result([dict.fromkeys(_scoped_row()) | {"holder": holder}]))
+    got = await _store(rel).get_in_scope(_GRANT, ORDER, environment="demo")
+    assert got == port.OutOfScope(holder)
+
+
+def test_a_scope_refusal_of_the_account_set_is_no_store_failure() -> None:
+    """SR-E29-13: an account the request names outside the scope refuses the whole set, the
+    caller's scope and never an outage: no `OrderStoreError`, which the OMS reads as a store that
+    did not serve (24 Sec.8.2 S7), so no caller answers it `503` in place of its `403`."""
+    with pytest.raises(port.AccountsOutOfScope) as refused:
+        port.settle_accounts([ACCOUNT], [ACCOUNT, ORDER])
+    assert not isinstance(refused.value, port.OrderStoreError)
 
 
 @pytest.mark.parametrize("text", [None, "", "x" * 65], ids=["none", "empty", "overlong"])
@@ -844,6 +884,14 @@ _CALLS: dict[str, tuple[Callable[[mod.SqlAlchemyOrderStore], Awaitable[object]],
         [_Result([{"id": ACCOUNT}])],
     ),
     "transition": (lambda st: st.transition(_STEP), [_LOCKED, _CAS, _EVENT]),
+    "get_in_scope": (
+        lambda st: st.get_in_scope(_GRANT, ORDER, environment="demo"),
+        [_Result([_scoped_row()])],
+    ),
+    "accounts_in_scope": (
+        lambda st: st.accounts_in_scope(_GRANT, "demo", ()),
+        [_Result([{"id": ACCOUNT}])],
+    ),
 }
 
 
@@ -957,7 +1005,7 @@ async def test_any_other_database_error_keeps_only_its_sqlstate(
 @pytest.mark.parametrize(
     "read",
     ["get", "get_by_link_id", "get_by_exchange_order_id", "link_id_taken", "list_for_order",
-     "list_open", "list_unfinished", "environment_accounts"],
+     "list_open", "list_unfinished", "environment_accounts", "get_in_scope", "accounts_in_scope"],
 )  # fmt: skip
 async def test_a_failed_read_keeps_only_its_sqlstate_like_a_write(read: str) -> None:
     """One error family for the OMS (24 Sec.8.2 S7): the allocator's lookup and every other read
