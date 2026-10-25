@@ -1,0 +1,40 @@
+{
+  "P-RISK": {
+    "from": "risk_based.json",
+    "set": {
+      "profile_id": "e28f0000-0000-4000-8000-0000000000c1",
+      "account_id": "e28f0000-0000-4000-8000-0000000000d1",
+      "name": "Risk 0.5%",
+      "version": 1,
+      "risk_pct_equity": "0.005",
+      "sl_offset_value": "1200"
+    }
+  },
+  "P-QTY": {
+    "from": "fixed_qty.json",
+    "set": {
+      "profile_id": "e28f0000-0000-4000-8000-0000000000c2",
+      "account_id": "e28f0000-0000-4000-8000-0000000000d2",
+      "is_default": true
+    }
+  },
+  "P-PCT": {
+    "from": "pct_equity.json",
+    "set": {
+      "profile_id": "e28f0000-0000-4000-8000-0000000000c3",
+      "account_id": "e28f0000-0000-4000-8000-0000000000d3",
+      "version": 1,
+      "leverage": "10",
+      "max_leverage_cap": "10",
+      "max_position_pct_equity": "1"
+    }
+  },
+  "P-NOTIONAL": {
+    "from": "fixed_notional.json",
+    "set": {
+      "profile_id": "e28f0000-0000-4000-8000-0000000000c4",
+      "account_id": "e28f0000-0000-4000-8000-0000000000d4",
+      "allowed_symbols": []
+    }
+  }
+}
