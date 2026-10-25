@@ -103,6 +103,7 @@ class _Stack:
             assert ws.accepted_subprotocol == wire  # §2.2: the row runs on the wire it names
             c = h.Client(ws)
             c.open()
+            assert c.recv()["p"]["kind"] == "feature_flags"  # §15.9 (#4517): after `auth_ok`
             yield c
 
 

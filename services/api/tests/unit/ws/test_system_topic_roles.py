@@ -21,7 +21,7 @@ from fastapi.routing import APIWebSocketRoute
 
 from candleviewer.admin.flags import default_registry
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
-from candleviewer.ws.gateway import GatewayHub, make_ws_router
+from candleviewer.ws.gateway import FlagSnapshot, GatewayHub, make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.system_filter import FlagVisible
@@ -79,7 +79,10 @@ class _Rig:
     """The real router. `principals[user]` is what the registry loads for `user`, now."""
 
     def __init__(
-        self, notices: list[dict[str, Any]] | None = None, flag_visible: FlagVisible | None = None
+        self,
+        notices: list[dict[str, Any]] | None = None,
+        flag_visible: FlagVisible | None = None,
+        flag_snapshot: FlagSnapshot | None = None,
     ) -> None:
         self.hub = GatewayHub()
         self.principals: dict[uuid.UUID, PrincipalSnapshot] = {}
@@ -104,6 +107,7 @@ class _Rig:
             system_notices=None if notices is None else lambda: list(notices),
             kill_switch=lambda: STATE,
             flag_visible=flag_visible,
+            flag_snapshot=flag_snapshot,
         )
         (route,) = router.routes
         assert isinstance(route, APIWebSocketRoute)

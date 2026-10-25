@@ -181,6 +181,7 @@ def test_ws_e2e_permissions_sub_check_and_live_role_change(env: tuple[TestClient
         assert ok["t"] == "auth_ok"
         assert ok["p"]["permissions"] == ["marketdata:read", "orders:read"]
         assert ok["p"]["account_scope"] == [str(ACC)]
+        assert ws.receive_json()["p"]["kind"] == "feature_flags"  # §15.9 (#4517)
         assert _sub(ws, "audit.all")["error"]["code"] == "unknown_topic"  # §10.2
         assert _sub(ws, "positions", [ACC])["error"]["code"] == "forbidden"  # no positions:read
         assert _sub(ws, "orders")["error"]["code"] == "account_scope_denied"  # account-less
@@ -254,6 +255,7 @@ def test_ws_e2e_session_revocation_closes_socket(env: tuple[TestClient, _World])
         assert ws.receive_json()["t"] == "welcome"
         ws.send_json({"t": "auth", "id": "a", "p": {"access_token": "mgr-token"}})
         assert ws.receive_json()["t"] == "auth_ok"
+        assert ws.receive_json()["p"]["kind"] == "feature_flags"  # §15.9 (#4517)
         ws.send_json({"t": "unsub", "id": "u", "p": {"topics": ["orders"]}})
         assert ws.receive_json()["t"] == "unsub_ok"
         assert client.portal.call(hub.revoke, "sess-1") == 1  # type: ignore[union-attr]  # portal set inside ctx

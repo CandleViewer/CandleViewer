@@ -42,7 +42,7 @@ from tests.unit.ws._seq_support import ACC_A, ACC_B
 _VIEWER, _TARGET = user_of("good-1"), user_of("good-9")
 
 
-def _viewing(rig_kw: dict[str, Any] | None = None) -> Rig:
+def _viewing(rig_kw: dict[str, Any] | None = None, **options: Any) -> Rig:
     binding = ViewAsBinding(
         context_id=uuid.uuid4(), target_user_id=_TARGET, expires_at=LATER, phase=ViewAsPhase.LIVE
     )
@@ -50,7 +50,7 @@ def _viewing(rig_kw: dict[str, Any] | None = None) -> Rig:
     async def view_as(session_id: str) -> ViewAsBinding:
         return binding
 
-    return Rig(options={"view_as": view_as}, **(rig_kw or {}))
+    return Rig(options={"view_as": view_as, **options}, **(rig_kw or {}))
 
 
 async def test_auth_ok_names_the_session_with_the_targets_scope_and_registers_the_target() -> None:
@@ -77,6 +77,25 @@ async def test_a_viewing_sockets_flag_push_is_resolved_for_its_target() -> None:
         assert (await rig.auth(sock, "good-1"))["t"] == "auth_ok"
         ((user_id, roles, _push),) = rig.hub.system_sessions()
         assert (user_id, roles) == (_TARGET, frozenset({"viewer"}))
+        hang_up(sock)
+        await handler
+
+
+async def test_a_viewing_sockets_flag_snapshot_is_resolved_for_its_target_as_its_push_is() -> None:
+    """#4517 F1: the `auth_ok` snapshot is built for the same (user, roles) as the change push,
+    the target's, never the viewer whose `user_id` `auth_ok` names."""
+    asked: list[tuple[uuid.UUID, frozenset[str]]] = []
+
+    async def recorder(user_id: uuid.UUID, roles: frozenset[str]) -> dict[str, Any] | None:
+        asked.append((user_id, roles))
+        return None
+
+    rig, sock = _viewing(flag_snapshot=recorder), Sock()
+    async with asyncio.timeout(DEADLINE_S):
+        handler = await rig.open(sock)
+        assert (await rig.auth(sock, "good-1"))["t"] == "auth_ok"
+        ((user_id, roles, _push),) = rig.hub.system_sessions()
+        assert asked == [(user_id, roles)] == [(_TARGET, frozenset({"viewer"}))]
         hang_up(sock)
         await handler
 

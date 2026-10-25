@@ -274,6 +274,7 @@ class AuthenticatorContractError(RuntimeError):
 
 #: Writes the record of an `AuthRefused` once the gateway supplies the socket's source address.
 RefusalAudit = Callable[[str | None], Awaitable[None]]
+FlagSnapshot = Callable[[uuid.UUID, frozenset[str]], Awaitable[dict[str, Any] | None]]
 #: §9.6 (#3085): the view-as binding of the session an `auth` presents, `None` when it holds no
 #: context. A read it cannot make raises, and the `auth` fails: never a scope it could not check.
 #: `ViewAsService.evaluate` in production (`view_as_wiring.SessionViewAs`).
@@ -1213,6 +1214,9 @@ def make_ws_router(
     # §15.9 (E42-T03): which flag keys a Manager or Viewer may learn, built by the composition
     # root from the flag registry. Without it a flag reaches the Owner alone (fail closed).
     flag_visible: FlagVisible | None = None,
+    # §15.9 (#4517): the full flag set a principal's roles may see, as one `feature_flags` frame
+    # (`None`: nothing), sent right after `auth_ok`. Without it no snapshot is sent.
+    flag_snapshot: FlagSnapshot | None = None,
     backpressure: BackpressureConfig | None = None,
     close_flush_s: float = CLOSE_FLUSH_TIMEOUT_S,
     # §9.6 (#3085): the view-as binding an `auth` reads (`ViewAsRead`). Without it no session is
@@ -1680,6 +1684,8 @@ def make_ws_router(
             **({} if view is None else {"kill_switch": view}),  # none for a principal with no role
         )
         conn.push(_reply("auth_ok", frame.get("id"), ts=now_ms, p=payload))
+        if flag_snapshot is not None:  # §15.9: after the kill-switch view, before the notices
+            await push_flag_snapshot(conn, flag_snapshot, principal.user_id, principal.roles)
         # E27-T02: current degraded/read-only state, so a client connecting after the
         # transition still gets the blocking notice (§6 `system`, CMP-092). First auth only:
         # an in-place re-auth (token refresh) keeps the socket's existing state.
@@ -1702,6 +1708,22 @@ def make_ws_router(
             cv_ws_handshake_seconds.observe(max(0.0, conn.clock() - conn.opened_at))
             gateway_hub.mark_authenticated(conn)
             gateway_hub.enforce_cap(conn)
+
+    async def push_flag_snapshot(
+        conn: _Connection,
+        snapshot: FlagSnapshot,
+        user_id: uuid.UUID,
+        roles: frozenset[str],
+    ) -> None:
+        """Queue the principal's flag snapshot; a failed read costs the frame, never the `auth`."""
+        try:
+            async with _auth_call("flag_snapshot", auth_call_timeout_s):
+                body = await snapshot(user_id, roles)
+        except Exception:
+            _log().exception("ws flag snapshot failed", connection_id=conn.connection_id)
+            return
+        if body is not None:
+            conn.push_system(body)
 
     def pong(conn: _Connection, frame: dict[str, Any]) -> None:
         now_ms = conn.wall_ms()

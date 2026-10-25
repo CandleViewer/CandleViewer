@@ -9,6 +9,7 @@ stored `maintenance.mode` (`setFeatureFlag`) also sends every session a `notice`
 through the `SessionDirectory` port (the composition root adapts the WS hub to it), so the admin
 module never imports the WS gateway. The push is synchronous fan-out onto each session's bounded
 outbound queue, past the 1 s `system` throttle (8.1), measured by `cv_flag_push_latency_seconds`.
+`feature_flags_snapshot` is the same frame for the whole visible set, sent at `auth_ok` (#4517).
 """
 
 from __future__ import annotations
@@ -87,6 +88,18 @@ class FlagPush:
         notice = _notice(on)
         for session in tuple(self._sessions.authenticated()):
             _send(session, notice, MAINTENANCE_MODE)
+
+
+@audit_exempt("read")
+async def feature_flags_snapshot(
+    service: FlagService, user_id: UUID, roles: frozenset[str]
+) -> dict[str, Any] | None:
+    """The `system` frame a session gets at `auth_ok` (`23` 15.9): every flag its roles may see,
+    resolved for the user as `GET /admin/feature-flags` resolves it; `None` when it may see none."""
+    listed = await service.visible(user_id, roles)
+    if not listed.items:
+        return None
+    return {"kind": "feature_flags", "feature_flags": {i.spec.key: i.value for i in listed.items}}
 
 
 def _notice(on: bool) -> dict[str, Any]:

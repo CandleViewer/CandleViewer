@@ -75,7 +75,10 @@ def _hello(ws: Any) -> None:
 
 def _auth(ws: Any, token: str) -> dict[str, Any]:
     ws.send_json({"t": "auth", "id": "a", "p": {"access_token": token}})
-    return _recv(ws)
+    reply = _recv(ws)
+    if reply["t"] == "auth_ok":  # §15.9 (#4517): the flag snapshot follows the `auth_ok`
+        assert _recv(ws)["p"]["kind"] == "feature_flags"
+    return reply
 
 
 def _sub(ws: Any, *topics: Any) -> list[dict[str, Any]]:
