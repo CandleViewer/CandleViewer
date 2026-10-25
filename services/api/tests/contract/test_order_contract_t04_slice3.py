@@ -26,6 +26,7 @@ from candleviewer.oms_wiring import (
     REFERENCE_DEMAND_NEW,
     REFERENCE_DEMAND_TTL_S,
     REFERENCE_DEMAND_WINDOW_S,
+    SINK_PAGE_COOLDOWN_S,
     SWEEP_STATEMENT_TIMEOUT_MS,
     SYSTEM_ACTOR,
     OmsAudit,
@@ -553,8 +554,9 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
     stop inside the grace, from the code's own bounds; the hops named until L2 and L3; the notices'
     bound and their count (CR-S3L1A-01); the private stream the lane's port refuses (CR-S3L1B-05);
     the blocking hops' bound in series (SEC-S3L1A-03); the lane's own refusals read in place
-    (SEC-S3L1C-02); its death paged (SEC-S3L1A-02); and, the runtime on the lane since L1b, no
-    status note left in 20, 23 or 24."""
+    (SEC-S3L1C-02); its death paged (SEC-S3L1A-02); the dropped sink append, a cancelled start and
+    nothing begun once the lane stops or dies, with OM-D10 to OM-D12 (CR-S3L1C-03); and, the
+    runtime on the lane since L1b, no status note left in 20, 23 or 24."""
     rule = _between(_ARCH, "\n1. **One serving loop, and the order lane.**", "\n2. ")
     assert "the one explicit thread is the order lane's" in rule
     lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
@@ -573,6 +575,10 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         "and its refusal records, per-order cancels and amends within the service's own bounds",
         "and the exit routes' in-flight guard, claimed and released on the serving loop only",
         f"waits at most `CV_PERSIST_TIMEOUT` ({BLOCK_TIMEOUT_S:g} s) for the call to begin",
+        "a sink append not begun by then is dropped, its `machine_events` row lost (no chain check "
+        f"sees the hole), logged and paged once per {SINK_PAGE_COOLDOWN_S:g} s window",
+        "a rejected credential, which the lane's gate refuses at once until its notice has landed "
+        "there (for good, should it be lost or fail)",
         "The bound is per call: while the serving loop stalls, N such calls hold the lane's thread "
         "N times that bound in series, ahead of any other step there, the ruled interim until L2 "
         "and L4",
@@ -583,8 +589,28 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         "(`ServedStandings.refused`) on either loop: one dict read, GIL-atomic against the item "
         "the lane assigns and the one the serving loop drops once its notice lands.",
         f"within {LANE_JOIN_S:g} s (`LANE_JOIN_S`), the last of the 5 s the drain leaves",
+        f"A cancelled `start()` waits, within those {OMS_STOP_RESERVE_S:g} s, for the composition "
+        "to close what it built on the lane, then stops the lane, cancelled again meanwhile or not",
+        "Once the lane's stop or death has begun, nothing more begins there, and every call is "
+        "answered.",
         "A lane whose loop ends without `stop()` has died, logged: the runtime is `degraded` and "
         "pages it once, the first time it reads that state",
+    )
+    threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
+    rows = {r[2:8]: _words(r) for r in threat.read_text(encoding="utf-8").splitlines()}
+    assert not _missing(
+        rows["OM-D10"], "one not begun is dropped, logged and paged, and the machine runs on"
+    )
+    assert not _missing(
+        rows["OM-D11"],
+        f"an append not begun within {BLOCK_TIMEOUT_S:g} s is dropped, logged and paged (once per "
+        f"{SINK_PAGE_COOLDOWN_S:g} s window), and its machine runs on, until L2 moves the writer",
+    )
+    assert not _missing(
+        rows["OM-D12"],
+        "`OrderLane.dead` refuses every call (`LaneStopped`, a 503 `oms_not_ready`, nothing "
+        "admitted), one racing its death or stop too, unbegun",
+        "the runtime pages `oms_lane_died` once per death, on its first read of the lane's state",
     )
     assert "awaits the pipeline on the order lane" in _ROUTE
     ws = _words((OPENAPI_SPEC_PATH.parent / "23-ws-protocol.md").read_text(encoding="utf-8"))

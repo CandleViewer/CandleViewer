@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, Awaitable, Coroutine
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -316,6 +316,47 @@ async def test_a_lane_whose_loop_dies_is_marked_dead_and_answers_its_callers() -
     assert 5 * oms_lane._CLEANUP_S < oms_lane.LANE_JOIN_S
 
 
+async def test_a_lane_whose_loop_is_stopped_from_within_has_died_and_refuses_calls_at_once() -> (
+    None
+):
+    """CR-S3L1C-01: a loop stopped by anything but `OrderLane.stop()`, here by a call on the lane,
+    has died as one an error ends has: `dead`, logged once, and paged once however often the
+    runtime reads its state. A call made while its cleanup runs is refused at once, `LaneStopped`,
+    never queued there, as one made after it is, each closed unrun."""
+    held, release, calls = threading.Event(), threading.Event(), [asyncio.sleep(0) for _ in "ab"]
+
+    async def stops() -> None:
+        asyncio.get_running_loop().stop()
+        try:
+            await asyncio.Event().wait()
+        finally:  # the cleanup's cancel: the lane's thread is held while this test calls
+            held.set()
+            release.wait(BOUND_S)
+
+    lane, world = OrderLane(), World()
+    await lane.start()
+    _, thread = await lane.call(_where())
+    with capture_logs() as logs:
+        stopped = lane.call(stops())
+        await _began(held)
+        with pytest.raises(LaneStopped):
+            lane.call(calls[0])
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            async with asyncio.timeout(BOUND_S):
+                await stopped
+        await asyncio.to_thread(thread.join, BOUND_S)
+    with pytest.raises(LaneStopped):
+        lane.call(calls[1])
+    runtime, parts = world.runtime(), SimpleNamespace(lane=lane)
+    runtime._parts = cast(Any, parts)  # the runtime's reads of its lane's state, nothing composed
+    assert [runtime.state for _ in range(3)] == ["degraded"] * 3
+    await lane.stop()
+    assert lane.dead and world.pager.calls == ["oms_lane_died"]
+    assert [e["error"] for e in logs if e["event"] == "oms_lane_died"] == [None]
+    assert {inspect.getcoroutinestate(c) for c in calls} == {inspect.CORO_CLOSED}
+
+
 async def test_a_call_racing_the_lanes_death_never_begins_and_is_refused_as_stopped() -> None:
     """SEC-S3L1A-01, SEC-S3L1CD-01 (C-2.18): a call made as the lane's loop dies, past the death's
     check, never runs: the cleanup refuses it as `call` refuses one made after it (uvloop takes it
@@ -451,6 +492,7 @@ async def test_a_stop_landing_in_the_dying_lanes_cleanup_never_cuts_it_short(
         raise SystemExit
 
     monkeypatch.setattr(OrderLane, "loop_factory", staticmethod(made))
+    monkeypatch.setattr(oms_lane, "_CLEANUP_S", BOUND_S)  # no step runs out under load
     lane = OrderLane()
     await lane.start()
     _, thread = await lane.call(_where())

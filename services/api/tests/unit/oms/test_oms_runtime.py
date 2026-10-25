@@ -744,6 +744,47 @@ async def test_a_cancelled_stop_still_stops_the_lane(monkeypatch: pytest.MonkeyP
     assert world.lanes[0].stopped
 
 
+class Composing(InlineLane):
+    """A lane holding the compose, closed unrun, on a future of its own, as `OrderLane` answers a
+    call: its caller's cancel ends that wait at once. The wait for the compose's unwind there is
+    refused, the lane dead by then, or never ends."""
+
+    def __init__(self, dead: bool) -> None:
+        super().__init__()
+        self.dead = dead
+
+    def call[T](
+        self, coro: Coroutine[Any, Any, T], *, timeout_s: float | None = None
+    ) -> asyncio.Future[T]:
+        coro.close()
+        return asyncio.get_running_loop().create_future()
+
+    async def idle(self) -> None:
+        if self.dead:
+            raise LaneStopped("the order lane is not running")
+        await asyncio.Event().wait()
+
+
+@pytest.mark.parametrize("dead", [True, False], ids=["dead", "unwinding"])
+async def test_a_cancelled_start_stops_its_lane_dead_or_unwinding_and_stays_cancelled(
+    monkeypatch: pytest.MonkeyPatch, dead: bool
+) -> None:
+    """CR-S3L1C-02/-06: the start, cancelled as it awaits the compose on the lane, waits there for
+    the compose's unwind within the stop reserve less the join's share, none here. A lane dead by
+    then, or an unwind past that bound, still has the lane stopped, and the caller gets the start's
+    own cancellation, never that error."""
+    for name in ("OMS_STOP_RESERVE_S", "LANE_JOIN_S"):  # the reserve all the join's
+        monkeypatch.setattr(oms_wiring, name, 60.0)
+    lane = Composing(dead)
+    start = asyncio.ensure_future(World().runtime(lane=lambda: lane).start())
+    await settle()
+    start.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        async with asyncio.timeout(10):  # a bound on the test: the whole reserve outlasts it
+            await start
+    assert lane.stopped
+
+
 async def test_drained_returns_at_once_when_its_tasks_end_inside_the_bound() -> None:
     """CR-S3E2-08: `_drained` itself. A task that `call_soon` ends is awaited, not waited out: the
     1 s bound is nowhere near spent; a task that never ends is what remains once the bound is."""
