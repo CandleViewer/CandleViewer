@@ -17,6 +17,7 @@ key import reaches only to write the verified columns of the key its own request
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -147,6 +148,9 @@ class NewKeyRotation:
 
 
 RotationStep = Literal["validated", "cutover", "completed", "failed"]
+#: `create_account`'s write-ahead audit hook (C-2.9, #895): awaited on the inserted row in the
+#: insert's transaction, before its commit; anything it raises rolls the insert back.
+AccountWriteAhead = Callable[[ExchangeAccountRow], Awaitable[None]]
 
 
 class AccountsStoreError(Exception):
@@ -197,8 +201,9 @@ class AccountsRowCounts(Protocol):
 
 class AccountsStore(AccountsRowCounts, Protocol):
     async def create_account(
-        self, scope: OwnerScope, new: NewExchangeAccount
-    ) -> ExchangeAccountRow: ...
+        self, scope: OwnerScope, new: NewExchangeAccount, *,
+        write_ahead: AccountWriteAhead | None = None,
+    ) -> ExchangeAccountRow: ...  # fmt: skip
 
     async def get_account(
         self, scope: AccountScope, account_id: UUID

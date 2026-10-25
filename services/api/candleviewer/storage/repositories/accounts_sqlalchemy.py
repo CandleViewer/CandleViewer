@@ -39,6 +39,7 @@ from candleviewer.storage.repositories.accounts import (
     AccountsStoreRuleError,
     AccountsStoreScopeDeniedError,
     AccountsStoreStaleError,
+    AccountWriteAhead,
     ApiKeyRotationRow,
     ApiKeyRow,
     ExchangeAccountPatch,
@@ -52,6 +53,10 @@ from candleviewer.storage.repositories.accounts import (
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
     query_failure,
+)
+from candleviewer.storage.repositories.user_roles_sqlalchemy import (
+    WRITE_AHEAD_TIMEOUT_S,
+    bounded_write_ahead,
 )
 
 _ENVS = frozenset({"live", "demo", "testnet"})
@@ -501,8 +506,14 @@ def _require_owner(scope: object) -> OwnerScope:
 
 
 class SqlAlchemyAccountsStore:
-    def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
+    def __init__(
+        self,
+        relational: SqlAlchemyRelationalRepository,
+        *,
+        audit_timeout_s: float = WRITE_AHEAD_TIMEOUT_S,
+    ) -> None:
         self._relational = relational
+        self._audit_timeout_s = audit_timeout_s
 
     @staticmethod
     async def _gate(uow: Any, scope: OwnerScope) -> None:
@@ -541,8 +552,11 @@ class SqlAlchemyAccountsStore:
 
     # -- accounts ---------------------------------------------------------------------------
     async def create_account(
-        self, scope: OwnerScope, new: NewExchangeAccount
-    ) -> ExchangeAccountRow:
+        self, scope: OwnerScope, new: NewExchangeAccount, *,
+        write_ahead: AccountWriteAhead | None = None,
+    ) -> ExchangeAccountRow:  # fmt: skip
+        """`write_ahead` is awaited on the inserted row before the commit, within
+        `audit_timeout_s` (`WriteAheadTimeout`); anything it raises rolls the insert back."""
         owner = _require_owner(scope)
         if new.env not in _ENVS or new.kind not in _KINDS:
             raise ValueError("unknown env or kind")
@@ -562,6 +576,8 @@ class SqlAlchemyAccountsStore:
                 row = (await uow.session.execute(_CREATE, params)).mappings().first()
                 if row is None:
                     raise AccountsStoreRuleError("parent_unavailable")
+                if write_ahead is not None:
+                    await bounded_write_ahead(write_ahead(_account(row)), self._audit_timeout_s)
                 await uow.commit()
         except IntegrityError as exc:
             state, name = _sqlstate_and_constraint(exc)

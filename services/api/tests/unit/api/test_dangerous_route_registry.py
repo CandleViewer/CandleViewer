@@ -509,6 +509,7 @@ def test_future_unregistered_dangerous_route_is_flagged(method: str, path: str) 
         ("PUT", "/exchange-accounts/a/profiles/p", "risk_caps"),  # updateAccountProfile (#906)
         ("DELETE", "/exchange-accounts/a/profiles/p", "risk_caps"),  # deleteAccountProfile (#906)
         ("PUT", "/exchange-accounts/a/default-profile", "risk_caps"),  # setAccountDefaultProfile
+        ("POST", "/exchange-accounts", "keys"),  # createExchangeAccount (#895, SR-E27-02)
     ],
 )
 def test_contract_dangerous_routes_map_to_action_class(
@@ -522,6 +523,7 @@ def test_safe_reads_are_not_gated() -> None:
     assert dangerous_action_class("GET", "/exchange-accounts/a/keys") is None
     assert dangerous_action_class("GET", "/users/u") is None
     assert dangerous_action_class("GET", "/admin/backups/b") is None
+    assert dangerous_action_class("GET", "/exchange-accounts") is None  # listExchangeAccounts
     assert len(DANGEROUS_ROUTES) >= 7
 
 
@@ -930,12 +932,15 @@ def test_no_other_method_or_path_of_the_profile_prefix_is_path_gated(
         ("/exchange-accounts/{accountId}/default-profiles", False),
         ("/exchange-accounts/{accountId}/default", False),
         ("/exchange-accounts/default-profile", False),
+        ("/exchange-accounts", True),  # createExchangeAccount's path alone (#895, SR-E27-02)
+        ("/exchange-accounts/{accountId}", False),
     ],
 )
 def test_the_sweep_gains_the_profile_and_binding_prefixes_and_no_other_exchange_accounts_path(
     path: str, swept: bool
 ) -> None:
-    """The account's own routes (`/exchange-accounts`, `/{accountId}`) are E27's: no pin here."""
+    """The account's own routes are E27's: `/exchange-accounts` is swept (#895), `/{accountId}` is
+    left to E27-S04 (#898), which mounts its patch and delete."""
     assert bool(DANGEROUS_PATH_PATTERN.match(path)) is swept
 
 

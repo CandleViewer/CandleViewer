@@ -446,6 +446,42 @@ async def test_create_rejects_unknown_env_or_kind() -> None:
         )
 
 
+async def test_create_runs_its_write_ahead_on_the_inserted_row_before_the_commit() -> None:
+    """C-2.9 (#895): the hook sees the row the insert returned, inside the unit of work."""
+    rel, seen = _Rel(_Result(), _Result([_ea()])), list[tuple[ExchangeAccountRow, int]]()
+
+    async def ahead(row: ExchangeAccountRow) -> None:
+        seen.append((row, rel.commits))
+
+    new = NewExchangeAccount(uuid4(), "e", "demo", "main", "1", "L")
+    row = await _store(rel).create_account(_OWNER, new, write_ahead=ahead)
+    assert seen == [(row, 0)] and rel.commits == 1
+
+
+async def test_create_whose_write_ahead_fails_commits_nothing() -> None:
+    rel = _Rel(_Result(), _Result([_ea()]))
+
+    async def refused(_row: ExchangeAccountRow) -> None:
+        raise RuntimeError("the audit writer is not started")
+
+    new = NewExchangeAccount(uuid4(), "e", "demo", "main", "1", "L")
+    with pytest.raises(RuntimeError):
+        await _store(rel).create_account(_OWNER, new, write_ahead=refused)
+    assert rel.commits == 0
+
+
+async def test_create_refused_by_a_constraint_never_runs_its_write_ahead() -> None:
+    rel, seen = _Rel(_Result(), raises=_integrity("23505", "ux_ea_uid")), list[object]()
+
+    async def ahead(row: ExchangeAccountRow) -> None:
+        seen.append(row)
+
+    new = NewExchangeAccount(uuid4(), "e", "demo", "main", "1", "L")
+    with pytest.raises(AccountsStoreConflictError):
+        await _store(rel).create_account(_OWNER, new, write_ahead=ahead)
+    assert (seen, rel.commits) == ([], 0)
+
+
 class _DriverError(Exception):
     """DBAPI-shaped error carrying only what `_sqlstate_and_constraint` reads."""
 

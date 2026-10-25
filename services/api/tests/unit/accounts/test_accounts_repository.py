@@ -17,7 +17,7 @@ from candleviewer.accounts.errors import (
     AccountsError,
     AccountVersionConflictError,
 )
-from candleviewer.accounts.models import AccountKind, ExchangeEnv, KeyStatus
+from candleviewer.accounts.models import AccountKind, ExchangeAccount, ExchangeEnv, KeyStatus
 from candleviewer.accounts.repository import AccountsRepository
 from candleviewer.storage.repositories.accounts import (
     AccountKey,
@@ -110,6 +110,29 @@ async def test_account_round_trip_maps_row_to_model() -> None:
     assert made.id == row.id
     upd = await repo.update_account(_S, row.id, ExchangeAccountPatch(label="b"), if_match=_T)
     assert upd.id == row.id
+
+
+async def test_create_hands_its_write_ahead_the_account_as_the_domain_model() -> None:
+    """C-2.9 (#895): the store awaits the hook on its row; the caller sees the domain model."""
+    row, seen = _acct(), list[object]()
+    fake = _Fake(row)
+
+    async def ahead(account: object) -> None:
+        seen.append(account)
+
+    await _repo(fake).create_account(
+        _S, id=row.id, exchange="bybit", env=ExchangeEnv.DEMO, kind=AccountKind.MAIN,
+        exchange_uid="12", label="a", write_ahead=ahead,
+    )  # fmt: skip
+    assert fake.last is not None
+    await fake.last[2]["write_ahead"](row)
+    assert [a.id for a in seen if isinstance(a, ExchangeAccount)] == [row.id] and len(seen) == 1
+    no_hook = _Fake(row)
+    await _repo(no_hook).create_account(
+        _S, id=row.id, exchange="bybit", env=ExchangeEnv.DEMO, kind=AccountKind.MAIN,
+        exchange_uid="12", label="a",
+    )  # fmt: skip
+    assert no_hook.last is not None and no_hook.last[2]["write_ahead"] is None
 
 
 async def test_list_accounts_maps_items_and_passes_enum_values() -> None:
