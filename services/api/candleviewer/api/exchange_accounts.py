@@ -88,13 +88,16 @@ class AccountAuditRefused(Exception):
 class _Refused(Exception):
     """A request refused before the store: `validation_failed` with its field entries."""
 
-    def __init__(self, detail: str, *errors: tuple[str, str, str]) -> None:
+    def __init__(self, detail: str, *errors: tuple[str | None, str, str]) -> None:
         super().__init__(detail)
         self.detail, self.errors = detail, errors
 
 
 def _validation(exc: _Refused) -> JSONResponse:
-    entries = [{"field": f, "rule": r, "message": m} for f, r, m in exc.errors]
+    entries = [
+        {"rule": r, "message": m} if f is None else {"field": f, "rule": r, "message": m}
+        for f, r, m in exc.errors
+    ]
     return problem("validation_failed", exc.detail, status=422, errors=entries)
 
 
@@ -262,8 +265,7 @@ def make_exchange_accounts_router(
         try:
             page = await store.list_accounts(OwnerScope(principal.user_id), env=env, limit=500)
         except Exception as exc:  # an outage only words the message; a defect is raised
-            if not isinstance(exc, AccountsError | StorageError) and not is_storage_outage(exc):
-                raise
+            _unavailable(exc)
             return plain
         held = next((a.label for a in page.items if a.exchange_uid == body.exchange_uid), None)
         return plain if held is None else _UID_TAKEN.format(label=held)
@@ -337,9 +339,12 @@ def make_exchange_accounts_router(
                 return problem("conflict", _LABEL_TAKEN)
             return problem("conflict", "The account conflicts with a stored one.")
         except AccountRuleError as exc:
-            field = "parent_account_id" if "parent" in exc.rule else ""
-            msg = "The parent is not a live main account of this environment."
-            entry = (field, exc.rule, msg if field else "The account breaks a stored rule.")
+            entry: tuple[str | None, str, str]
+            if "parent" in exc.rule:
+                msg = "The parent is not a live main account of this environment."
+                entry = ("parent_account_id", exc.rule, msg)
+            else:
+                entry = (None, exc.rule, "The account breaks a stored rule.")
             return _validation(_Refused("The account was not registered.", entry))
         except Exception as exc:  # mapped, or raised as a defect
             return _unavailable(exc)
