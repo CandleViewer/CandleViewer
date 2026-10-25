@@ -268,6 +268,11 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
             [port] = world.venue.ports
             assert port.environment == "demo" and b01.ports_wired()
             assert runtime.submission._anchors is runtime.anchors  # SEC-S3D-02: the one service
+            exits = runtime.exits._d  # slice 4: the exits drive the pipeline's facade and port
+            assert (exits.machines, exits.commands) == (
+                runtime.submission._machines, runtime.submission._commands,
+            )  # fmt: skip
+            assert exits.environment == runtime.route.environment == "demo"
             assert world.log == ["sink.start"]
     warned = [e["port"] for e in logs if e["event"] == "oms_interim_port"]
     assert warned == [*INTERIMS, "machine_event_sink"]  # one WARNING each
@@ -323,6 +328,8 @@ async def test_a_composition_that_fails_late_closes_what_it_built_and_fails_clos
             assert world.pager.severities == ["page"]
             with pytest.raises(OmsNotReady):
                 _ = runtime.anchors
+            with pytest.raises(OmsNotReady):
+                _ = runtime.exits
 
 
 async def test_one_facade_per_process_stop_unwires_it_and_a_second_start_works() -> None:
@@ -537,7 +544,8 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
     """CR-S3E2-04: each close step is isolated and has its share of `OMS_STOP_RESERVE_S`. The
     command port fails to close and the sink's drain never ends; the trading port, which needs a
     turn of the loop, and the pool still close, and the whole stop is bounded."""
-    # the hung sink, 4th of the 6 closers (the stop gate's first, CR-S3H3B-01), costs a third of it
+    # the hung sink, 5th of the 7 closers (the exits', then the stop gate's, CR-S3H3B-01), costs
+    # a third of it
     monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 1.5)
 
     async def fails(self: OmsCommandPort) -> None:
@@ -1164,7 +1172,8 @@ async def test_the_startup_pass_never_holds_ready_and_stop_cancels_its_read() ->
         await until(lambda: port.asked and runtime.state != "starting")
         assert runtime.state == "ok"
         closers = [name for name, _ in runtime._composed().closers]
-        assert closers[:2] == ["stop_gate", "machines"]  # its reads end first (CR-S3H3B-01)
+        # the exit service's tasks end first (slice 4), then the gate's reads (CR-S3H3B-01)
+        assert closers[:3] == ["exits", "stop_gate", "machines"]
     assert port.cancelled
     assert [row.status for row in world.store._stops.values()] == ["pending"]
 

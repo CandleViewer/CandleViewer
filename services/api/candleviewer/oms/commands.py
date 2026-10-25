@@ -124,6 +124,8 @@ meets Q3's scope and `stop_ratchet` before any record or send (refusals audited 
 denied), is re-paired (both sides, a side the order lacks left out) and recorded ahead as one
 `entry_attach` insert naming the order (`sl.modified` / `tp.modified`, reason `amend`), then sent
 and settled. A held key answers `STOP_REQUEST_IN_FLIGHT`; a raise leaves the rows in flight (S1).
+An account the port cannot sign for (refused, or with no active key) answers `ACCOUNT_UNAVAILABLE`,
+audited, nothing sent (the 11:34Z ruling); a read that fails before the send, `STORE_UNAVAILABLE`.
 """
 
 from __future__ import annotations
@@ -300,9 +302,14 @@ AMEND_AUDIT_GRACE_S: Final = 1.0
 #: lands just inside it still leaves `_settle_stop` time to settle the rows (review fold 2).
 AMEND_SETTLE_RESERVE_S: Final = 0.5
 #: A read that failed before the amend's send (the 10:18Z ruling): `STORE_UNAVAILABLE` (as the
-#: cancel's) with this reason and retry.
+#: cancel's) with this reason, retried after `STORE_UNAVAILABLE_RETRY_AFTER_S`, the one wait the
+#: cancel's and the amend's share (the 11:34Z ruling).
 STORE_UNAVAILABLE_REASON: Final = "store_unavailable"
-STORE_RETRY_AFTER_S: Final = 5
+#: The amend's audit reason for `ACCOUNT_UNAVAILABLE`: the port cannot sign for the order's
+#: account before its send (refused, or with no active key). No outage, so no retry (the 11:34Z
+#: ruling, B).
+ACCOUNT_UNAVAILABLE_REASON: Final = "account_unavailable"
+_NO_ACTIVE_KEY: Final = "no_active_key"
 #: How old a create a restart resumes may be and still be re-sent where history never expires
 #: (`order_retention_days` None: live), in seconds ([LANE-26], binding). Tighten it, never raise
 #: it: a resumed send survives a restart or a dropped connection measured in seconds, and after
@@ -697,6 +704,8 @@ class OmsCommandPort:
         )
         if not all(0 < bound <= most for bound, most in bounds):  # NaN fails it too
             raise ValueError("a cancel bound is only ever tightened, inside B1's own")
+        if not amend_timeout_s > AMEND_SETTLE_RESERVE_S + AMEND_AUDIT_GRACE_S:  # #4395 Low L1
+            raise ValueError("the amend's bound leaves its venue call no time")
         self._router = router
         self._accounts = accounts
         self._orders = orders
@@ -1335,6 +1344,11 @@ class OmsCommandPort:
             account = await self._account(row, by=by)
         except _UNREAD as exc:
             return await self._unread(row.id, row.exchange_account_id, detail, exc, by=by)
+        except (AccountScopeDenied, OrderEntryRefused) as exc:  # a raise would land `unknown`
+            if isinstance(exc, OrderEntryRefused) and exc.reason != _NO_ACTIVE_KEY:
+                raise
+            reason = ACCOUNT_UNAVAILABLE_REASON
+            return await self._amend_refused(row, ACCOUNT_UNAVAILABLE, reason, detail, by=by)
         request = AmendOrderRequest(
             account=account,
             symbol=row.symbol,
@@ -1414,7 +1428,7 @@ class OmsCommandPort:
             {**detail, "failure": failure}, by=by + AMEND_AUDIT_GRACE_S,
         )  # fmt: skip
         _log().warning("oms_amend_store_unavailable", order_link_id=detail.get("order_link_id"))
-        retry = STORE_RETRY_AFTER_S
+        retry = retry_after(STORE_UNAVAILABLE_RETRY_AFTER_S)
         return {"ok": False, "error_code": STORE_UNAVAILABLE, "retry_after_s": retry}
 
     async def _amend_refused(
