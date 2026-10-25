@@ -1,8 +1,9 @@
 """The position projection's test rig (E29-T05 #848, S5b): one recording double for every port of
 `PositionProjection` (the facade's two methods, both stores, the readings, the counts and the
-pager). The tests run on `VirtualTimeLoop` (`audit_waits`), whose clock is the projection's
-monotonic one: a scripted `cost` passes fake seconds, a `hang` waits until a bound cuts it, and
-an await with no bound raises `VirtualClockDeadlock` instead of hanging. No network, no sleeps."""
+pager; S5c's recorded stops and order rows, empty unless a test scripts them). The tests run on
+`VirtualTimeLoop` (`audit_waits`), whose clock is the projection's monotonic one: a scripted
+`cost` passes fake seconds, a `hang` waits until a bound cuts it, and an await with no bound
+raises `VirtualClockDeadlock` instead of hanging. No network, no sleeps."""
 
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from candleviewer.exchange.base.models import Position
 from candleviewer.oms.ports import PositionKey, ProtectionReading
 from candleviewer.oms.positions import PositionProjection
 from candleviewer.oms.push_mapping import ForProtection, reading
+from candleviewer.storage.repositories.orders import OrderRow
 from candleviewer.storage.repositories.positions import (
     FutureDatedPositionError,
     NewPositionSnapshot,
@@ -25,10 +27,12 @@ from candleviewer.storage.repositories.positions import (
     PositionSnapshotRow,
     PositionState,
 )
+from candleviewer.storage.repositories.recorded_stops import InForce, RecordedStopRow
 
 ACCOUNT = AccountId(UUID(int=0xA))
 OTHER = AccountId(UUID(int=0xB))
 NOW_US = 1_760_000_000_000_000
+WALL = datetime(2025, 10, 9, 12, tzinfo=UTC)
 
 
 def position(**over: Any) -> Position:
@@ -70,6 +74,7 @@ class Rig:
     handed: list[tuple[PositionKey, ProtectionReading]] = field(default_factory=list)
     counts: list[str] = field(default_factory=list)
     pages: list[str] = field(default_factory=list)
+    live: tuple[RecordedStopRow, ...] = ()
     stalled: asyncio.Event = field(default_factory=asyncio.Event)
     made: PositionProjection | None = None
 
@@ -90,9 +95,10 @@ class Rig:
 
     def projection(self, **kw: Any) -> PositionProjection:
         ports = dict.fromkeys(("orders", "positions", "snapshots", "readings"), self)
-        ports |= dict.fromkeys(("counts", "pager"), self)
+        ports |= dict.fromkeys(("counts", "pager", "stops", "order_rows"), self)
         loop = asyncio.get_running_loop()
-        return PositionProjection(**(ports | {"monotonic": loop.time} | kw))
+        clocks = {"monotonic": loop.time, "now": lambda: WALL}
+        return PositionProjection(**(ports | clocks | kw))
 
     async def _hit(self, name: str) -> None:
         self.calls.append(name)
@@ -142,6 +148,24 @@ class Rig:
     async def take_reading(self, key: PositionKey, value: ProtectionReading) -> None:
         self.handed.append((key, value))
         await self._hit("take_reading")
+
+    async def live_for_key(
+        self, account_id: UUID, symbol: str, position_idx: int
+    ) -> tuple[RecordedStopRow, ...]:
+        await self._hit("live_for_key")
+        return self.live
+
+    async def put_in_force(self, account_id: UUID, rows: Any, *, in_force: Any, at: Any) -> InForce:
+        await self._hit("put_in_force")
+        return InForce(replaced=(), in_force=tuple(rows))
+
+    async def end(self, account_id: UUID, rows: Any, *, at: Any) -> tuple[RecordedStopRow, ...]:
+        await self._hit("end")
+        return tuple(rows)
+
+    async def get(self, account_id: UUID, order_id: UUID) -> OrderRow | None:
+        await self._hit("get")
+        return None
 
     def count(self, outcome: str) -> None:
         self.counts.append(outcome)
