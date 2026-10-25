@@ -371,6 +371,8 @@ def make_cancel_all_router(
                 )
                 out = JSONResponse(_result(outcome), 200)
                 kept.put(*held, StoredResponse(digest, 200, bytes(out.body), None))
+            except OmsNotReady:  # the lane stopped after the scope answered: counted, never paged
+                return refused(OmsNotReady())
             except Exception as exc:  # a defect: each cancel already sent stays with B1
                 page("orders_cancel_all_failed", error=type(exc).__name__)
                 return refused(OmsError("cancel-all's run failed"))
