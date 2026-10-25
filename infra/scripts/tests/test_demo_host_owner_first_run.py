@@ -91,6 +91,10 @@ BOOTSTRAP = [
      "--owner", EMAIL],
     [*COMPOSE, "--profile", "core", "up", "-d", "--wait", "api"],
 ]  # fmt: skip
+#: L5, F10: the command that starts api again, as a run that stopped it prints it.
+UP_API = " ".join(["docker", *BOOTSTRAP[2]])
+#: L7: the key import, which signs against the exchange, may take 120 s; every other call 60.
+IMPORT_ARGV = [*CURL_ARGV[:7], "120", *CURL_ARGV[8:]]
 #: The prompts of a full run, in order (blank: the default label, label and read-only answer).
 ANSWERS = [EMAIL, TOKEN, PASSWORD, PASSWORD, CODES[0], CODES[1], EXCHANGE_UID, "", "", "",
            API_KEY, API_SECRET, CODES[2]]  # fmt: skip
@@ -100,10 +104,10 @@ VERDICT = {
     "ip_whitelist": [EGRESS], "egress_ip": EGRESS, "warnings": [],
     "ip_whitelist_matches_egress": True, "probe_ret_code": 0, "clock_offset_ms": 12,
 }  # fmt: skip
+#: L6: no `uid`, which the Owner typed and `passed` already holds to the key's.
 VERDICT_LINES = [
-    "passed: true", f"uid: {EXCHANGE_UID}", "uta: true", "read_only: false",
-    "withdraw_enabled: false", "ip_whitelist_matches_egress: true", "warnings: -",
-    "probe_ret_code: 0", "clock_offset_ms: 12",
+    "passed: true", "uta: true", "read_only: false", "withdraw_enabled: false",
+    "ip_whitelist_matches_egress: true", "warnings: -", "probe_ret_code: 0", "clock_offset_ms: 12",
 ]  # fmt: skip
 
 
@@ -229,10 +233,12 @@ class Stage:
 
 def stage(
     tmp_path: Path, calls: dict[str, list[dict[str, Any]]], *, schemas: bool = False,
-    docker: dict[str, int] | None = None, with_docker: bool = True,
+    docker: dict[str, int] | None = None, docker_signal: dict[str, str] | None = None,
+    with_docker: bool = True,
 ) -> Stage:  # fmt: skip
     """The stubs and the scenario for one run (`with_docker=False`: no docker, nothing else on
-    PATH either, so no docker of the host's can stand in)."""
+    PATH either, so no docker of the host's can stand in). A `tmux` stub records its arguments,
+    so the script's `tmux clear-history` under $TMUX never reaches a real tmux."""
     stub, bin_dir, cwd, home, tmp = (tmp_path / d for d in ("stub", "bin", "cwd", "home", "tmp"))
     for directory in (stub, bin_dir, cwd, home, tmp):
         directory.mkdir()
@@ -242,7 +248,8 @@ def stage(
          "calls": calls.get(f"{method} {path}", [])}
         for method, path, op, session in ROUTES
     ]  # fmt: skip
-    scenario = {"routes": routes, "docker": docker or {}, "docker_print": CLI_PRINT}
+    scenario = {"routes": routes, "docker": docker or {}, "docker_print": CLI_PRINT,
+                "docker_signal": docker_signal or {}}  # fmt: skip
     (stub / "scenario.json").write_text(json.dumps(scenario), encoding="utf-8")
     # A run starts some 36 Pythons. Without `site` (-S) each starts in about two thirds of the
     # time; the stubs and the script's python3 need the standard library alone, but for the
@@ -253,6 +260,9 @@ def stage(
         tool = bin_dir / name
         tool.write_text(f"#!{sys.executable} {flags}\n" + source.read_text("utf-8"), "utf-8")
         tools.append(tool)
+    tmux = bin_dir / "tmux"
+    tmux.write_text('#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$CV_STUB_DIR/tmux.argv"\n', "utf-8")
+    tools.append(tmux)
     shim = bin_dir / "python3"  # the script's python3, recording its arguments
     shim.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$CV_STUB_DIR/python3.argv"\n'
                     f'exec "{sys.executable}" -S "$@"\n', encoding="utf-8")  # fmt: skip
@@ -281,15 +291,17 @@ def collect(staged: Stage, proc: subprocess.CompletedProcess[str]) -> Run:
 def run(
     tmp_path: Path, calls: dict[str, list[dict[str, Any]]], answers: list[str], *args: str,
     xtrace: bool = False, schemas: bool = False, docker: dict[str, int] | None = None,
-    with_docker: bool = True,
+    docker_signal: dict[str, str] | None = None, with_docker: bool = True,
 ) -> Run:  # fmt: skip
-    """One run of the script on `calls` (and `docker`'s exit statuses by subcommand); `schemas`
-    also holds each body to 22, a slower run."""
-    staged = stage(tmp_path, calls, schemas=schemas, docker=docker, with_docker=with_docker)
+    """One run of the script on `calls` (and `docker`'s exit statuses, or the signal it sends,
+    by subcommand); `schemas` also holds each body to 22, a slower run."""
+    staged = stage(tmp_path, calls, schemas=schemas, docker=docker, docker_signal=docker_signal,
+                   with_docker=with_docker)  # fmt: skip
     proc = subprocess.run(
         [BASH, *(["-x"] if xtrace else []), str(SCRIPT), *args],
         input="".join(f"{line}\n" for line in answers),
-        capture_output=True, text=True, cwd=staged.cwd, env=staged.env, timeout=120, check=False,
+        capture_output=True, encoding="utf-8", cwd=staged.cwd, env=staged.env, timeout=120,
+        check=False,
         start_new_session=True,  # no controlling terminal: /dev/tty cannot be opened
     )  # fmt: skip
     return collect(staged, proc)
@@ -319,6 +331,7 @@ class TerminalRun:
     stderr: str
     echo_off: list[bool]  # for each silent prompt: ECHO was off when its answer was typed
     unanswered: list[str]  # the prompts the run never showed
+    logs: dict[str, str]  # every file the stubs wrote, by name
 
 
 def on_a_terminal(
@@ -379,7 +392,8 @@ def on_a_terminal(
         proc.stdout.close()
         proc.stderr.close()
     text = [b.decode("utf-8", "replace") for b in (terminal, out, err)]
-    return TerminalRun(proc.returncode, *text, echo_off, [p for p, _, _ in waiting])
+    logs = {p.name: p.read_text(encoding="utf-8") for p in staged.stub.iterdir() if p.is_file()}
+    return TerminalRun(proc.returncode, *text, echo_off, [p for p, _, _ in waiting], logs)
 
 
 @pytest.fixture(scope="module")
@@ -389,8 +403,9 @@ def full(tmp_path_factory: pytest.TempPathFactory) -> Run:
 
 @pytest.fixture(scope="module")
 def on_tty(tmp_path_factory: pytest.TempPathFactory) -> TerminalRun:
-    """A full run on a terminal, answered prompt by prompt."""
-    return on_a_terminal(tmp_path_factory.mktemp("tty"), full_run(), PROMPTS)
+    """A full run on a terminal, answered prompt by prompt, inside tmux (its stub)."""
+    tmux = {"TMUX": "stub-socket,1,0", "TMUX_PANE": "%7"}
+    return on_a_terminal(tmp_path_factory.mktemp("tty"), full_run(), PROMPTS, env=tmux)
 
 
 def test_no_secret_typed_at_the_terminal_comes_back_on_it(on_tty: TerminalRun) -> None:
@@ -401,6 +416,28 @@ def test_no_secret_typed_at_the_terminal_comes_back_on_it(on_tty: TerminalRun) -
     assert on_tty.echo_off == [True] * sum(silent for _, _, silent in PROMPTS)
     assert [s for s in SECRETS if s in on_tty.terminal + on_tty.stdout + on_tty.stderr] == []
     assert EMAIL in on_tty.terminal and EXCHANGE_UID in on_tty.terminal
+
+
+#: m1: the screen, then the scrollback (ED 2, ED 3), once what was shown once is no longer needed.
+CLEAR = "\x1b[H\x1b[2J\x1b[3J"
+STILL_THERE = "still in this terminal's scrollback"
+
+
+def test_a_successful_run_clears_what_it_showed_once_from_the_terminal(on_tty: TerminalRun) -> None:
+    """m1: the token, the URI and the codes stay in a terminal's scrollback and tmux's history.
+    At the end, before the verdict, a run that succeeds clears both, once."""
+    assert on_tty.terminal.count(CLEAR) == 1
+    cleared = on_tty.terminal.index(CLEAR)
+    assert all(on_tty.terminal.rindex(shown) < cleared for shown in (CLI_PRINT, OTPAUTH, *RECOVERY))
+    assert on_tty.logs.get("tmux.argv") == "clear-history -t %7\n"
+    assert STILL_THERE not in on_tty.stderr and on_tty.stdout.splitlines() == VERDICT_LINES
+
+
+def test_the_account_id_reaches_the_terminal_alone(on_tty: TerminalRun) -> None:
+    """L6: the one value `--account-id` needs is shown on the terminal, never on stdout or
+    stderr, which a log could keep."""
+    assert ACCOUNT_ID in on_tty.terminal
+    assert ACCOUNT_ID not in on_tty.stdout + on_tty.stderr
 
 
 # --- the bootstrap: #4479's CLI in bootstrap-owner, while api is stopped ------------------------
@@ -418,6 +455,17 @@ def test_the_bootstrap_runs_in_its_service_while_api_is_stopped_then_the_invite(
     ]
 
 
+def test_the_owner_is_warned_before_the_first_thing_shown_once(full: Run) -> None:
+    """m1: before the CLI prints the token, the run names what would keep a copy of it."""
+    before = full.proc.stderr.split(CLI_PRINT)[0]
+    assert all(word in before for word in ("session recorder", "clipboard", "scrollback"))
+
+
+def test_without_a_terminal_to_clear_the_owner_is_told_to_clear_it(full: Run) -> None:
+    """m1: no terminal to clear (the test's case), so the end of the run says to."""
+    assert full.proc.returncode == 0 and STILL_THERE in full.proc.stderr
+
+
 def test_the_bootstrap_output_reaches_the_terminal_and_nothing_else(full: Run) -> None:
     """The CLI prints the token once on its TTY: the script neither captures nor copies it."""
     assert full.proc.stderr.count(CLI_PRINT) == 1 and CLI_PRINT not in full.proc.stdout
@@ -432,16 +480,34 @@ def test_the_bootstrap_output_reaches_the_terminal_and_nothing_else(full: Run) -
         ({"run": 17}, "owner_exists", 2),
         ({"run": 9}, "kek_unproven", 2),
         ({"run": 6}, "audit_unavailable", 2),
+        ({"run": 18}, "not_candidate (not a usable bootstrap email, or a user who cannot become "
+                      "the Owner)", 2),
         ({"up": 1}, "did not get healthy", 3),
     ],
-    ids=["stop", "phrase", "owner-exists", "kek", "audit", "up"],
-)
+    ids=["stop", "phrase", "owner-exists", "kek", "audit", "not-candidate", "up"],
+)  # fmt: skip
 def test_a_failed_bootstrap_step_stops_the_run(
     tmp_path: Path, docker: dict[str, int], message: str, made: int
 ) -> None:
+    """And says how to start api again, with the exact command (F10): the run stopped it."""
     stopped = run(tmp_path, full_run(), ANSWERS, docker=docker)
     assert stopped.proc.returncode == 1 and message in stopped.proc.stderr
     assert stopped.docker == BOOTSTRAP[:made] and stopped.records == []
+    assert UP_API in stopped.proc.stderr and "<the runbook's" not in stopped.proc.stderr
+    assert [secret for secret in SECRETS if secret in stopped.proc.stderr] == []
+
+
+@pytest.mark.parametrize(("name", "status"), [("INT", 130), ("TERM", 143), ("HUP", 129)])
+def test_a_signal_during_the_bootstrap_ends_the_run_saying_how_to_start_api(
+    tmp_path: Path, name: str, status: int
+) -> None:
+    """L5, F10: Ctrl-C at the CLI reaches the script and the CLI alike (the docker stub signals
+    its process group). The run ends with 128 + the signal, through its own trap, and prints the
+    command that starts the api it stopped; nothing typed reaches stderr."""
+    stopped = run(tmp_path, full_run(), ANSWERS, docker_signal={"run": name})
+    assert stopped.proc.returncode == status, stopped.proc.stderr
+    assert stopped.sequence == ["docker stop", "docker run"]
+    assert UP_API in stopped.proc.stderr
     assert [secret for secret in SECRETS if secret in stopped.proc.stderr] == []
 
 
@@ -512,7 +578,7 @@ def test_no_typed_secret_reaches_stdout_stderr_an_argument_or_a_record(full: Run
 
 
 def test_curl_gets_only_fixed_options_on_its_command_line(full: Run) -> None:
-    assert full.argv == [CURL_ARGV] * len(ORDER)
+    assert full.argv == [CURL_ARGV] * (len(ORDER) - 1) + [IMPORT_ARGV]
 
 
 def test_the_run_writes_no_file(full: Run) -> None:
@@ -588,7 +654,7 @@ def test_a_refused_step_stops_the_run(
     scenario[route] = calls
     refused = run(tmp_path, scenario, answers)
     assert refused.proc.returncode == 1
-    assert message in refused.proc.stderr
+    assert message in refused.proc.stderr and STILL_THERE in refused.proc.stderr
     assert len(refused.records) == made
     assert set(refused.routes) <= set(ORDER[: ORDER.index(route) + 1])
     assert [secret for secret in SECRETS if secret in refused.proc.stderr] == []
@@ -679,6 +745,28 @@ def test_a_yes_to_read_only_imports_a_key_declared_read_only(tmp_path: Path) -> 
     assert [r["body_ok"] for r in done.records if r["route"] == IMPORT] == [
         dict.fromkeys(scenario[IMPORT][0]["expect"], True)
     ]
+
+
+def test_a_501_names_the_servers_reason_not_an_older_build(tmp_path: Path) -> None:
+    """F12: the served route answers 501 when no principal resolver is wired, which a build
+    before #4484 is not the only cause of."""
+    scenario = full_run()
+    scenario[CREATE] = [problem(501, "not_implemented", "No principal resolver is wired.")]
+    stopped = run(tmp_path, scenario, ANSWERS)
+    assert stopped.proc.returncode == 1
+    assert "HTTP 501 not_implemented: No principal resolver is wired." in stopped.proc.stderr
+    assert "a build before #4484" not in stopped.proc.stderr
+
+
+def test_the_password_bound_counts_characters_not_bytes(tmp_path: Path) -> None:
+    """F15: under LC_ALL=C bash counts bytes; 300 two-byte characters are 300 characters, as the
+    server counts them, so they are sent as typed."""
+    wide = "\u00e9" * 300
+    scenario = full_run()
+    refusal = problem(422, "password_policy", "too_common")  # stops the run once it is sent
+    scenario[REDEEM] = [refusal | {"expect": {"password": wide}}]
+    sent = run(tmp_path, scenario, [EMAIL, TOKEN, wide, wide])
+    assert [r["body_ok"] for r in sent.records if r["route"] == REDEEM] == [{"password": True}]
 
 
 ELEVATED = {"elevated_until": "2026-10-26T04:05:00+00:00", "action_class": "keys"}
@@ -792,6 +880,7 @@ def test_skip_invite_and_account_id_start_at_the_sign_in_and_reuse_the_account(
     assert again.routes == [LOGIN, VERIFY, STEP_UP, IMPORT] and again.docker == []
     assert all(r["path_ok"] and all(r["body_ok"].values()) for r in again.records)
     assert again.proc.stdout.splitlines() == VERDICT_LINES
+    assert "scrollback" not in again.proc.stderr  # nothing was shown once: nothing to clear
 
 
 @pytest.mark.parametrize("args", [["--account-id", "not-a-uuid"], ["--bogus"], ["--account-id"]])

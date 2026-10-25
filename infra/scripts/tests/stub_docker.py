@@ -6,13 +6,16 @@ up -d --wait api`. This stub records its arguments to `docker.jsonl` and the cal
 `sequence.log`, and never reads stdin: the Owner retypes the CLI's phrase into the CLI's own TTY,
 so the script's answers are no business of docker's. It exits with the scenario's status for its
 subcommand (`docker` in `scenario.json`, 0 by default) and, for `run`, prints the scenario's
-`docker_print` line where the CLI prints the token, to show where that output goes.
+`docker_print` line where the CLI prints the token, to show where that output goes. A subcommand
+named in `docker_signal` sends that signal to its process group instead, as Ctrl-C on the
+terminal does to the script and the CLI alike, and dies of it.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -35,6 +38,11 @@ def main() -> int:
     scenario = json.loads((stub / "scenario.json").read_text(encoding="utf-8"))
     if command == "run":
         print(scenario.get("docker_print", ""), flush=True)
+    name = scenario.get("docker_signal", {}).get(command)
+    if name:
+        sig = signal.Signals[f"SIG{name}"]
+        signal.signal(sig, signal.SIG_DFL)  # Python's own SIGINT handler would not let it die
+        os.killpg(os.getpgrp(), sig)
     return int(scenario.get("docker", {}).get(command, 0))
 
 
