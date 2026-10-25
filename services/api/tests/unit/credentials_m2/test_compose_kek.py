@@ -3,9 +3,11 @@
 #3180 narrows "no `CV_KEK*` name at all" to what the control protects. The demo-host overlay
 configures a file KEK through e27-kek.md §4's settings, so a name holding `KEK` must be one of
 them, with a value that cannot hold key material; the key itself reaches cv-api only as the
-`cv_kek` file secret mounted at `CV_KEK_HANDLE`. `.env.example` names the file and the version,
-never the key, and the demo-host runbook's check value is the one the loader enrols. Every guard has
-a negative control.
+`cv_kek` file secret mounted at `CV_KEK_HANDLE`, never as a secret from the environment. The guard
+is rule 5 of infra/scripts/lint_compose.py, kept in one place (C-16.5): this module runs it over
+every compose file under infra/. `.env.example` names the file and the version, never the key, and
+the demo-host runbook's check value is the one the loader enrols. Every guard has a negative
+control.
 """
 
 from __future__ import annotations
@@ -13,7 +15,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import hmac
+import importlib
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -26,16 +30,11 @@ from candleviewer.settings import Settings
 _INFRA = Path(__file__).resolve().parents[5] / "infra"
 _RUNBOOK = _INFRA.parent / "docs" / "ops" / "runbooks" / "demo-host.md"
 _DEMO_HOST = _INFRA / "compose" / "docker-compose.demo-host.yml"
-#: e27-kek.md §4's settings a compose environment may carry, and each value's shape: a source, a
-#: compose secret's mount, a version (a number, or the operator's variable).
-_SETTINGS = {
-    "CV_KEK_SOURCE": re.compile(r"file|handle"),
-    "CV_KEK_HANDLE": re.compile(r"/run/secrets/[a-z0-9_]+"),
-    "CV_KEK_VERSION": re.compile(r"[1-9][0-9]{0,5}|\$\{CV_KEK_VERSION(?::\?[^}]*)?\}"),
-}
 _MOUNT = {"source": "cv_kek", "target": "cv_kek", "uid": "10001", "gid": "10001", "mode": 0o400}
 #: A compose secret sourced from the operator's environment, named for the KEK (M1, probe b).
 _ENV_KEK = {"cv_kek_hex": {"environment": "CV_KEK_HEX"}}
+sys.path.insert(0, str(_INFRA / "scripts"))
+_LINT = importlib.import_module("lint_compose")
 
 
 def _files() -> list[Path]:
@@ -50,15 +49,8 @@ def _env(service: dict[str, Any]) -> dict[str, str]:
 
 
 def kek_problems(doc: dict[str, Any]) -> list[str]:
-    """Each environment entry that could carry the KEK, by name (never by value)."""
-    problems: list[str] = []
-    for name, svc in (doc.get("services") or {}).items():
-        for key, value in _env(svc or {}).items():
-            shape = _SETTINGS.get(key.upper())
-            if "KEK" in key.upper() and shape is None:
-                problems.append(f"{name} exposes {key} via environment:")
-            elif shape is not None and not shape.fullmatch(value):
-                problems.append(f"{name} sets {key} to a value outside its shape")
+    """Everything that could carry the KEK, by name (never by value): the lint's rule 5."""
+    problems: list[str] = _LINT.check_no_kek_in_environment(doc)
     return problems
 
 

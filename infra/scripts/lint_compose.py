@@ -23,12 +23,19 @@ Rule 4 applies to the deploy overlay, ``docker-compose.deploy.yml``, which
 
 Rule 5 applies to every compose file (``docker-compose*.yml``):
 
-5. No ``environment:`` carries a KEK (``docs/plan/spikes/e27-kek.md`` §3, C5
-   rejected). A name holding ``KEK`` must be one of §4's settings, each with a
-   value that cannot be key material: ``CV_KEK_SOURCE`` ``file`` or ``handle``,
+5. Nothing in it carries a KEK (``docs/plan/spikes/e27-kek.md`` §3, C5
+   rejected): no ``environment:``, ``labels:``, ``build.args:`` or ``x-`` field.
+   A name holding ``KEK`` must be one of §4's settings, each with a value that
+   cannot be key material: ``CV_KEK_SOURCE`` ``file`` or ``handle``,
    ``CV_KEK_HANDLE`` a ``/run/secrets/`` path, ``CV_KEK_VERSION`` an integer or
    its own variable. No value holds a run of 32 hex digits or 43 base64
-   characters. No message repeats a value.
+   characters. A KEK reaches a service only as a file secret: no secret from
+   the environment has a name or a variable holding ``KEK``, and the secret a
+   service mounts where it reads its KEK (``CV_KEK_HANDLE`` or
+   ``CV_KEK_PREV_HANDLE``, which the file must mount, or else Settings'
+   ``/run/secrets/cv_kek``, or a source or target holding ``KEK``) is one the
+   same file declares with ``file:`` alone. No secret from the environment
+   carries the owner role's DSN. No message repeats a value.
 
 Rule 6 applies to the demo-host overlay, ``docker-compose.demo-host.yml``,
 which ``docs/ops/runbooks/demo-host.md`` applies after the base and VPS files:
@@ -61,6 +68,7 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +104,11 @@ _KEK_SETTINGS: dict[str, tuple[re.Pattern[str], str]] = {
 }
 #: A key written out: 16 bytes or more as hex, 32 bytes as base64 (43 characters, unpadded).
 _KEY_MATERIAL = re.compile(r"[0-9A-Fa-f]{32,}|[A-Za-z0-9+/_-]{43,}")
+#: Rule 5: where a service reads its KEK, `/run/secrets/<target>`: a handle's, else Settings'.
+_KEK_HANDLES = ("CV_KEK_HANDLE", "CV_KEK_PREV_HANDLE")
+_SECRETS_DIR = "/run/secrets/"
+_DEFAULT_KEK_TARGET = "cv_kek"
+_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
 #: Rule 6: what the demo-host overlay may set.
 _DEMO_TOP_LEVEL = ("services", "secrets", "volumes")
 BOOTSTRAP_OWNER = "bootstrap-owner"
@@ -139,12 +152,38 @@ def _services(compose: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return compose.get("services", {}) or {}
 
 
-def _environment(service: dict[str, Any]) -> dict[str, str]:
-    """A service's `environment:`, mapping or list form, as names to strings."""
-    raw = service.get("environment") or {}
+def _pairs(raw: Any) -> dict[str, str]:
+    """An `environment:`, `labels:` or `build.args:` block, mapping or list form, as names to
+    strings."""
+    raw = raw or {}
     if isinstance(raw, dict):
         return {str(k): "" if v is None else str(v) for k, v in raw.items()}
     return {k: v for k, _, v in (str(item).partition("=") for item in raw)}
+
+
+def _environment(service: dict[str, Any]) -> dict[str, str]:
+    """A service's `environment:`, mapping or list form, as names to strings."""
+    return _pairs(service.get("environment"))
+
+
+def _extension_pairs(node: Any, name: str) -> list[tuple[str, str]]:
+    """Every scalar under an `x-` field, named by the key above it, or by its own `NAME=`."""
+    if isinstance(node, dict):
+        return [pair for key, value in node.items() for pair in _extension_pairs(value, str(key))]
+    if isinstance(node, list):
+        return [pair for item in node for pair in _extension_pairs(item, name)]
+    if node is None:
+        return []
+    key, sep, value = str(node).partition("=")
+    return [(key, value)] if sep and _NAME.fullmatch(key) else [(name, str(node))]
+
+
+def _secret_ends(entry: Any) -> tuple[str, str]:
+    """A service's `secrets:` entry, short or long form, as (source, target in /run/secrets)."""
+    if not isinstance(entry, dict):
+        return str(entry), str(entry)
+    source = str(entry.get("source", ""))
+    return source, str(entry.get("target") or source).removeprefix(_SECRETS_DIR)
 
 
 def _mount(entry: Any) -> tuple[str, str, str]:
@@ -219,21 +258,83 @@ def check_deploy_overlay(compose: dict[str, Any]) -> list[str]:
 
 
 def check_no_kek_in_environment(compose: dict[str, Any]) -> list[str]:
-    """Rule 5: no environment carries a KEK. Messages name settings, never a value."""
+    """Rule 5: no value carries a KEK, and a KEK comes only from a file secret. Messages name
+    settings and secrets, never a value."""
+    compose = compose or {}
     errors: list[str] = []
-    for name, service in _services(compose or {}).items():
-        for key, value in _environment(service or {}).items():
-            setting = _KEK_SETTINGS.get(key.upper())
-            if "KEK" in key.upper() and setting is None:
-                allowed = ", ".join(_KEK_SETTINGS)
+    for name, service in _services(compose).items():
+        service = service or {}
+        build = service.get("build")
+        args = build.get("args") if isinstance(build, dict) else None
+        where = f"service '{name}':"
+        errors += _kek_value_problems(f"{where} environment", _environment(service).items())
+        errors += _kek_value_problems(f"{where} label", _pairs(service.get("labels")).items())
+        errors += _kek_value_problems(f"{where} build arg", _pairs(args).items())
+        for key in [key for key in service if str(key).startswith("x-")]:
+            errors += _kek_value_problems(f"{where} {key}", _extension_pairs(service[key], key))
+    for key in [key for key in compose if str(key).startswith("x-")]:
+        errors += _kek_value_problems(f"top-level {key}:", _extension_pairs(compose[key], key))
+    return errors + _kek_secret_sources(compose)
+
+
+def _kek_value_problems(where: str, pairs: Iterable[tuple[str, str]]) -> list[str]:
+    """Rule 5 over named values, by `where` and name."""
+    errors: list[str] = []
+    for key, value in pairs:
+        setting = _KEK_SETTINGS.get(key.upper())
+        if "KEK" in key.upper() and setting is None:
+            allowed = ", ".join(_KEK_SETTINGS)
+            errors.append(
+                f"{where} {key} names a KEK; only {allowed} may, and never with the key itself "
+                "(docs/plan/spikes/e27-kek.md §3)"
+            )
+        elif setting is not None and not setting[0].fullmatch(value):
+            errors.append(f"{where} {key} is not {setting[1]}")
+        if _KEY_MATERIAL.search(value):
+            errors.append(f"{where} {key} holds inline key material")
+    return errors
+
+
+def _kek_secret_sources(compose: dict[str, Any]) -> list[str]:
+    """Rule 5's secrets: a KEK from a file secret this file declares, never from the environment
+    (M1: that puts the key back in `.env`); the owner DSN never from the environment either."""
+    declared = compose.get("secrets") or {}
+    errors: list[str] = []
+    for name, secret in declared.items():
+        variable = str(secret.get("environment") or "") if isinstance(secret, dict) else ""
+        if variable and "KEK" in f"{name} {variable}".upper():
+            errors.append(
+                f"secret '{name}': comes from the environment and names a KEK; a KEK is only "
+                "ever a file secret (docs/plan/spikes/e27-kek.md §3)"
+            )
+        if variable and "OWNER_DSN" in f"{name} {variable}".upper():
+            errors.append(
+                f"secret '{name}': comes from the environment with the owner role's DSN, which "
+                "reaches migrate alone, as its CV_PG_DSN"
+            )
+    for name, service in _services(compose).items():
+        env = _environment(service or {})
+        handles = {
+            key: env[key].removeprefix(_SECRETS_DIR)
+            for key in _KEK_HANDLES
+            if env.get(key, "").startswith(_SECRETS_DIR)
+        }
+        mounts = [_secret_ends(entry) for entry in (service or {}).get("secrets") or []]
+        errors += [
+            f"service '{name}': {key} names a /run/secrets/ file this file does not mount on it "
+            "from a file secret it declares"
+            for key, target in handles.items()
+            if target not in {mounted for _, mounted in mounts}
+        ]
+        reads = {*handles.values(), _DEFAULT_KEK_TARGET}
+        for source, target in mounts:
+            secret = declared.get(source)
+            file_secret = isinstance(secret, dict) and set(secret) == {"file"}
+            if (target in reads or "KEK" in f"{source} {target}".upper()) and not file_secret:
                 errors.append(
-                    f"service '{name}': environment {key} names a KEK; only {allowed} may, and "
-                    "never with the key itself (docs/plan/spikes/e27-kek.md §3)"
+                    f"service '{name}': mounts its KEK from secret '{source}', which this file "
+                    "does not declare as a file secret (file: alone)"
                 )
-            elif setting is not None and not setting[0].fullmatch(value):
-                errors.append(f"service '{name}': environment {key} is not {setting[1]}")
-            if _KEY_MATERIAL.search(value):
-                errors.append(f"service '{name}': environment {key} holds inline key material")
     return errors
 
 
