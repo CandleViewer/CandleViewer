@@ -20,12 +20,13 @@ through as it is but a fold member's `cancel_order`, which meets its fold's `Can
   with no command record naming an actor: no B1 `CANCEL` and no `orders.cancel` of its own. A
   bound row still takes the venue's push as `REMOTE_CANCELLED` (24 Sec.8.12), with its step row
   and audit record, and reconciliation settles the rest, as for any cancel B1 did not send (24
-  Sec.8.6); the coalescer logs each order the call took that was no member
-  (`oms_cancel_all_took_non_member`). The window is at most the coverage read's bound
-  (`cancel_all.READ_TIMEOUT_S`, 2 s) before the fold opens, then the gather's (`GATHER_S`, 1 s),
-  the spacer's wait (`SPACER_WAIT_S`, 2 s) and the trading port's `critical`-lane token wait (the
-  adapter's `CRITICAL_WAIT_S`, 5 s, which also bounds its retries' pauses), plus one round trip:
-  10 s and a round trip, at its widest under rate pressure, when cancel-alls happen.
+  Sec.8.6); the coalescer logs each order the call took that was no member, one WARNING each
+  (`oms_cancel_all_took_non_member`, its `order_link_id`). The window is at most the coverage
+  read's bound (`cancel_all.READ_TIMEOUT_S`, 2 s) before the fold opens, then the gather's
+  (`GATHER_S`, 1 s), the spacer's wait (`SPACER_WAIT_S`, 2 s) and the trading port's
+  `critical`-lane token wait (the adapter's `CRITICAL_WAIT_S`, 5 s, which also bounds its
+  retries' pauses), plus one round trip: 10 s and a round trip, at its widest under rate
+  pressure, when cancel-alls happen.
 
 One event loop's, as the order lanes are. Nothing here imports the exchange adapter (C-2.2).
 """
@@ -126,15 +127,12 @@ class CancelAllCoalescer:
 
         async def call() -> Sequence[OrderAck]:
             acks = await self._inner.cancel_all(account, symbol)
-            taken = sorted(
-                ack.order_link_id for ack in acks
-                if ack.ok and ack.order_link_id and ack.order_link_id not in members
-            )  # fmt: skip
-            if taken:  # the residual (module docstring): seen here, settled by B1's own reads
-                _log().warning(
-                    "oms_cancel_all_took_non_member", symbol=symbol, count=len(taken),
-                    order_link_ids=taken,
-                )  # fmt: skip
+            folded = frozenset(members)
+            taken = {ack.order_link_id for ack in acks if ack.ok and ack.order_link_id}
+            # the residual (module docstring), seen here and settled by B1's own reads: one line
+            # per order, under the one key the redactor lets an order link id through (C-12.6)
+            for link in sorted(taken - folded):
+                _log().warning("oms_cancel_all_took_non_member", symbol=symbol, order_link_id=link)
             return acks
 
         join = CancelAllJoin(

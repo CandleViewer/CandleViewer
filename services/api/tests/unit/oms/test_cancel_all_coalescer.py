@@ -20,6 +20,7 @@ from candleviewer.domain.primitives import AccountId, Symbol
 from candleviewer.exchange.base.errors import OmsErrorCode, TransportError
 from candleviewer.exchange.base.fakes import FakeReject, FakeTradingPort
 from candleviewer.exchange.base.models import AccountRef, CancelOrderRequest, Order, OrderAck
+from candleviewer.observability.logging import _redaction_processor
 from candleviewer.oms.cancel_all_coalescer import CancelAllCoalescer
 from candleviewer.oms.cancel_all_fold import CancelAllSpacer, FoldRefused
 
@@ -256,17 +257,26 @@ async def test_an_order_meets_one_open_fold_only() -> None:
 
 
 async def test_an_order_placed_after_the_coverage_read_is_taken_and_logged() -> None:
-    """The ruled residual: the venue's call takes every plain order resting on the symbol, one
-    placed after the coverage read too; the coalescer names each such order in a WARNING."""
+    """The ruled residual: the venue's call takes every plain order resting on the symbol, those
+    placed after the coverage read too. The coalescer names each in its own WARNING, under the one
+    key the redactor lets an order link id through (CR-S4F-04): run through the real processor,
+    each id survives, where a list of them is masked whole."""
     venue = _venue("a", "b")
     port, _, _ = _port(venue)
     assert await port.coverage(_REF, _BTC, _ids("a", "b"))
-    venue.seed_order(_resting("other"), uid=_REF.uid)  # placed in the window
-    with capture_logs() as logs, port.fold(_REF, _BTC, _ids("a", "b")):
+    for name in ("other", "c"):  # placed in the window
+        venue.seed_order(_resting(name), uid=_REF.uid)
+    with (
+        capture_logs(processors=[_redaction_processor]) as logs,
+        port.fold(_REF, _BTC, _ids("a", "b")),
+    ):
         first = asyncio.create_task(port.cancel_order(_cancel("a")))
         assert (await port.cancel_order(_cancel("b"))).ok and (await first).ok
-    [taken] = [e for e in logs if e["event"] == "oms_cancel_all_took_non_member"]
-    assert (taken["count"], taken["order_link_ids"]) == (1, _ids("other"))
+    taken = [e for e in logs if e["event"] == "oms_cancel_all_took_non_member"]
+    assert [(e["symbol"], e["order_link_id"]) for e in taken] == [
+        (_BTC, link) for link in sorted(_ids("other", "c"))
+    ]
+    assert all(e["log_level"] == "warning" for e in taken)
 
 
 # --- L1 (CR-S4F-03): the call is the fold's own task -------------------------------------------
