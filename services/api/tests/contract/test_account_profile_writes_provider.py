@@ -797,6 +797,8 @@ def test_a_delete_whose_key_or_profile_id_is_no_uuid_is_an_unaudited_422(w: Writ
     example = declared["application/problem+json"]["examples"]["notAKey"]["value"]
     keyed, pathed = send(w, DELETE, key="not-a-uuid"), send(w, DELETE, profile="Swing")
     assert answered(keyed, DELETE)["errors"] == example["errors"]
+    # The path case's message is not pinned: the shared handler still quotes a character there
+    # (R1S-01's twin, owed separately).
     named = [(e["field"], e["rule"]) for e in answered(pathed, DELETE)["errors"]]
     assert named == [("path.profileId", "uuid_parsing")]
     assert (w.world.audit.records, _new(w), w.rows.hooks) == ([], [], [])
@@ -834,13 +836,28 @@ def _named(node: ast.AST) -> str:
     return ""
 
 
+def _resolves(node: ast.AST) -> bool:
+    """One node that names a profile id, a profile getter, the profile cache or a read of it."""
+    if isinstance(node, ast.ImportFrom):  # `from ...profile_cache import ...`
+        return (node.module or "").endswith("profile_cache")
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        # `cache.peek(...)`: the cache's read, on a receiver that names a cache or a profile
+        receiver = ast.unparse(node.func.value).lower()
+        if node.func.attr == "peek" and ("cache" in receiver or "profile" in receiver):
+            return True
+    name = _named(node)
+    is_getter = name.startswith("get_") and name.endswith("_profile")
+    return name in {"profile_id", "EffectiveProfiles"} or is_getter
+
+
 def _resolvers(root: Path, *packages: str) -> set[str]:
     """Each module under `packages` of `root` naming a profile id (`profile_id`, as a name, an
-    argument or a string key) or a profile getter (`get_…_profile`, defined, bound or called)."""
+    argument or a string key), a profile getter (`get_..._profile`, defined, bound or called), the
+    `EffectiveProfiles` cache, an import from `profile_cache`, or a `peek` on a cache. A tripwire
+    for these known spellings, not a proof: the vocabulary arm above is the primary guard."""
     found = set()
     for path in (path for package in packages for path in (root / package).rglob("*.py")):
-        named = map(_named, ast.walk(ast.parse(path.read_text(encoding="utf-8"))))
-        if any(n == "profile_id" or (n[:4], n[-8:]) == ("get_", "_profile") for n in named):
+        if any(map(_resolves, ast.walk(ast.parse(path.read_text(encoding="utf-8"))))):
             found.add(path.relative_to(root).as_posix())
     return found
 
@@ -857,8 +874,10 @@ def test_no_rule_or_order_module_gains_a_profile_resolver() -> None:
     ("source", "seen"),
     [("def f(p):\n    return p['profile_id']\n", True), ("x = cache.get_rule_profile\n", True),
      ("async def get_live_profile():\n    pass\n", True), ("def f(profile_id): ...\n", True),
+     ("def f(cache, a):\n    return cache.peek(a)\n", True),
+     ("from candleviewer.accounts.profile_cache import Anything\n", True),
      ("ok = 'profile_ids', get_profiles, profile\n", False)],
-    ids=["string-key", "bound-getter", "defined-getter", "argument", "near-misses"],
+    ids=["string-key", "bound-getter", "defined-getter", "argument", "peek", "import", "near-miss"],
 )  # fmt: skip
 def test_the_resolver_scan_sees_a_planted_name(tmp_path: Path, source: str, seen: bool) -> None:
     """The arm's self-test (R1C-06): a planted id or getter under `rules/` is seen; a near miss

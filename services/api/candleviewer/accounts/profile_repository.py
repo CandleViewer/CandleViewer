@@ -15,12 +15,12 @@ binding's `If-Match` as `expected_binding_version`, which it requires (#906 0d).
 reads through `get_default_binding`, whose miss is `AccountNotFoundError("account")`. The default
 is never deleted (`AccountConflictError("default_profile")`).
 
-Every write, whatever its outcome, invalidates the account in `EffectiveProfiles` before it
-returns (SR-E28-15), and `version_bumps` counts the profile rows a write bumped. A refusal by a
-named rule or constraint is logged at WARN with that name, never with a value. Each write takes a
-required `write_ahead` hook, run in the write's transaction before it commits (C-2.9) with the
-store's rows in stored units (`profile_from_row` reads them; `None` is a `TypeError` before
-anything, the cache included): E28-T02 (#906) wires the
+Every write that reaches the store, whatever its outcome, invalidates the account in
+`EffectiveProfiles` before it returns (SR-E28-15), and `version_bumps` counts the profile rows a
+write bumped. A refusal by a named rule or constraint is logged at WARN with that name, never
+with a value. Each write takes a required `write_ahead` hook, run in the write's transaction
+before it commits (C-2.9) with the store's rows in stored units (`profile_from_row` reads them;
+`None` is a `TypeError` before anything, the cache included): E28-T02 (#906) wires the
 `profile.created|updated|deleted` record through it, as a typed refusal when it fails, and maps the
 `ap_native_sl` rule (unreachable through `AccountProfile`, whose `require_native_sl` is
 `Literal[True]`) to `native_stop_mandatory` with its audit row (SR-E28-08).

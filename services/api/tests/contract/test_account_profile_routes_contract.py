@@ -50,7 +50,8 @@ _DECLARED = {
     "createAccountProfile": (f"201 {_REFUSED} {_WRITE} {_LARGE}", _KEYED, "recommended"),
     "getAccountProfile": (f"200 {_READ} 503:ServiceUnavailable", "", None),
     "updateAccountProfile": (f"200 {_STALE} {_REFUSED} {_WRITE} {_LARGE}", _TAGGED, "optional"),
-    "deleteAccountProfile": (f"204 {_STALE} 422 {_WRITE}", _TAGGED, "optional"),  # R1C-03
+    # The delete's 422 is R1C-03.
+    "deleteAccountProfile": (f"204 {_STALE} 422 {_WRITE}", _TAGGED, "optional"),
     "getAccountDefaultProfile": (f"200 {_READ} 503:ServiceUnavailable", "", None),
     "setAccountDefaultProfile": (f"200 {_STALE} 422 {_WRITE} {_LARGE}", _TAGGED, "optional"),
 }
