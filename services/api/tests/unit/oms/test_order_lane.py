@@ -1,0 +1,355 @@
+"""#913 slice 3 L1 (E29-T04, 29 CV-C13): the order lane, `oms_lane.OrderLane`, one daemon thread
+running its own event loop; and the hops back to the serving loop, `oms_lane.Serving`, this
+test's loop. No timing is asserted: each wait on the lane's thread is a bound on the test, and a
+stalled serving loop is one blocked on an event."""
+
+from __future__ import annotations
+
+import asyncio
+import concurrent.futures
+import inspect
+import threading
+from collections.abc import AsyncIterator, Awaitable
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+from structlog.testing import capture_logs
+
+from candleviewer import oms_lane
+from candleviewer.observability.metrics import Metrics
+from candleviewer.oms_lane import LaneStopped, OrderLane, Serving
+from candleviewer.statechart.gateway import Gateway, LoopAffinityError
+
+#: A bound on each test's waits for the lane's thread, never a time the test expects.
+BOUND_S = 10.0
+
+
+@pytest.fixture(autouse=True, params=["asyncio", "uvloop"])
+def lane_loop(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-S3L1A-06 (C-13.7): each test with its lanes on asyncio's loop, then on uvloop, as
+    `test_request_header_deadline_real_socket` runs its loops; skipped where uvloop is missing."""
+    if request.param == "uvloop":
+        new_loop = pytest.importorskip("uvloop").new_event_loop
+        monkeypatch.setattr(OrderLane, "loop_factory", staticmethod(new_loop))
+
+
+@asynccontextmanager
+async def running() -> AsyncIterator[OrderLane]:
+    """A started lane, stopped after the test's body, which `BOUND_S` bounds."""
+    lane = OrderLane()
+    await lane.start()
+    try:
+        async with asyncio.timeout(BOUND_S):
+            yield lane
+    finally:
+        await lane.stop()
+
+
+async def _where() -> tuple[asyncio.AbstractEventLoop, threading.Thread]:
+    return asyncio.get_running_loop(), threading.current_thread()
+
+
+async def _raises(error: Exception) -> None:
+    raise error
+
+
+async def _held(began: threading.Event, outcome: list[str], release: asyncio.Event) -> str:
+    """Lane work that waits for `release`, noting a cancellation."""
+    began.set()
+    try:
+        await release.wait()
+    except asyncio.CancelledError:
+        outcome.append("cancelled")
+        raise
+    return "kept"
+
+
+async def _set(event: asyncio.Event) -> None:
+    event.set()
+
+
+async def _began(event: threading.Event) -> None:
+    assert await asyncio.to_thread(event.wait, BOUND_S)
+
+
+async def test_the_lane_runs_its_own_loop_on_a_daemon_thread_and_stops_it_joined_and_closed() -> (
+    None
+):
+    refused, late = asyncio.sleep(0), asyncio.sleep(0)
+    with pytest.raises(LaneStopped):
+        OrderLane().call(refused)  # not started: refused, the coroutine closed
+    async with running() as lane:
+        loop, thread = await lane.call(_where())
+        assert thread is not threading.current_thread() and thread.daemon
+        assert loop is not asyncio.get_running_loop() and loop.is_running()
+        began, outcome = threading.Event(), list[str]()
+        left = lane.call(_held(began, outcome, asyncio.Event()))
+        await _began(began)
+    assert not thread.is_alive() and loop.is_closed() and outcome == ["cancelled"]  # the stop's
+    with pytest.raises(asyncio.CancelledError):
+        await left
+    with pytest.raises(LaneStopped):
+        lane.call(late)
+    assert {inspect.getcoroutinestate(c) for c in (refused, late)} == {inspect.CORO_CLOSED}
+
+
+async def test_call_answers_the_lanes_result_and_raises_its_error() -> None:
+    async with running() as lane:
+        assert await lane.call(asyncio.sleep(0, result="202")) == "202"
+        with pytest.raises(ValueError, match="refused on the lane"):
+            await lane.call(_raises(ValueError("refused on the lane")))
+
+
+async def test_a_cancelled_caller_cancels_the_lanes_task_and_a_shielded_one_leaves_it_to_end() -> (
+    None
+):
+    """24 Sec.8.4 step 12: the stop's cancel reaches the submit on the lane; the route's shield
+    keeps it running through the client's disconnect."""
+    async with running() as lane:
+        began, outcome = threading.Event(), list[str]()
+        cancelled = lane.call(_held(began, outcome, asyncio.Event()))
+        await _began(began)
+        cancelled.cancel()
+        await lane.idle()  # until the lane's task has ended
+        assert outcome == ["cancelled"]
+        began, release = threading.Event(), asyncio.Event()
+        kept = lane.call(_held(began, outcome, release))
+        handler = asyncio.ensure_future(asyncio.shield(kept))
+        await _began(began)
+        handler.cancel()  # the client went away
+        with pytest.raises(asyncio.CancelledError):
+            await handler
+        await lane.call(_set(release))
+        assert await kept == "kept" and outcome == ["cancelled"]
+
+
+async def test_a_hop_to_a_stalled_serving_loop_is_bounded_and_its_timeout_surfaces() -> None:
+    """C-2.18: this loop is blocked, so neither hop can begin here: each times out on the lane, and
+    neither runs once this loop turns again."""
+    serving = Serving(asyncio.get_running_loop(), Metrics("demo"))
+    ran, done = list[str](), threading.Event()
+
+    async def note() -> None:
+        ran.append("call")
+
+    async def hops() -> list[str]:
+        failures = []
+        try:
+            await serving.call(note(), timeout_s=0)
+        except TimeoutError:
+            failures.append("call")
+        try:
+            serving.block(lambda: ran.append("block"), timeout_s=0)
+        except TimeoutError:
+            failures.append("block")
+        done.set()
+        return failures
+
+    async with running() as lane:
+        answered = lane.call(hops())
+        assert done.wait(BOUND_S)  # this loop blocks meanwhile: the stall
+        assert await answered == ["call", "block"]
+        for _ in range(8):  # this loop turns again: neither hop runs
+            await asyncio.sleep(0)
+    assert ran == []
+
+
+def _failing(value: str) -> None:
+    raise ValueError(value)
+
+
+async def test_hops_from_the_lane_land_in_order_and_a_failing_notice_is_logged() -> None:
+    """A notice sent before a read lands before it (a rejected credential, then the gate); one that
+    raises on the serving loop is logged by its type, never raised on the lane, and one the closed
+    serving loop cannot take is logged as lost; each is counted (CR-S3L1A-01)."""
+    metrics, closed = Metrics("demo"), asyncio.new_event_loop()
+    serving = Serving(asyncio.get_running_loop(), metrics)
+
+    async def ordered() -> list[str]:
+        seen: list[str] = []
+        serving.notify(seen.append, "notified")
+        serving.notify(_failing, "a value never logged")
+        serving.block(lambda: seen.append("read"))
+        seen.append(await serving.call(asyncio.sleep(0, result="awaited")))
+        return seen
+
+    closed.close()
+    with capture_logs() as logs:
+        async with running() as lane:
+            assert await lane.call(ordered()) == ["notified", "read", "awaited"]
+        Serving(closed, metrics).notify(_failing, "a value never logged")
+    failed = [(e["call"], e["error"]) for e in logs if e["event"] == "oms_lane_notice_failed"]
+    assert failed == [("_failing", "ValueError")] and "a value never logged" not in str(logs)
+    assert [e["call"] for e in logs if e["event"] == "oms_lane_notice_lost"] == ["_failing"]
+    assert (_counted(metrics, "failed"), _counted(metrics, "lost")) == (1, 1)
+
+
+def _counted(metrics: Metrics, reason: str) -> float | None:
+    labels = {"env": "demo", "reason": reason}
+    return metrics.registry.get_sample_value("oms_lane_notices_failed_total", labels)
+
+
+async def test_a_blocking_hop_begun_within_its_bound_is_waited_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-S3L1A-06: the serving loop has begun the call when `block`'s bound runs out (the answer's
+    bounded wait starts only then), so the waiter waits it out and takes its refusal."""
+    began, waiting = threading.Event(), threading.Event()
+
+    class Watched(concurrent.futures.Future[Any]):
+        def result(self, timeout: float | None = None) -> Any:
+            if timeout is None:  # the unbounded wait on a call begun
+                waiting.set()
+            else:
+                assert began.wait(BOUND_S)
+            return super().result(timeout)
+
+    def refusal() -> str:
+        began.set()
+        assert waiting.wait(BOUND_S)
+        return "refused"
+
+    monkeypatch.setattr(
+        oms_lane, "concurrent", SimpleNamespace(futures=SimpleNamespace(Future=Watched))
+    )
+    serving = Serving(asyncio.get_running_loop(), Metrics("demo"))
+    assert await asyncio.to_thread(serving.block, refusal, timeout_s=0) == "refused"
+
+
+async def test_idle_waits_until_every_call_the_lane_began_has_ended() -> None:
+    """CR-S3L1A-06: what the stop's wait on the lane rests on (`oms_wiring._closed`)."""
+    async with running() as lane:
+        began, release = threading.Event(), asyncio.Event()
+        held = lane.call(_held(began, [], release))
+        await _began(began)
+        idle = asyncio.ensure_future(lane.idle())
+        await asyncio.sleep(0)  # its first step: its call reaches the lane before the next
+        await lane.call(asyncio.sleep(0))  # a round trip: the lane began the wait before it
+        assert not idle.done()
+        await lane.call(_set(release))
+        await idle
+        assert held.result() == "kept"
+
+
+async def test_a_wedged_lane_times_a_bounded_call_out_and_its_stop_logs_it_unjoined(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-S3L1A-02/-06: with the lane's thread blocked, a call with `timeout_s` is a `TimeoutError`
+    here and closed unrun there once the lane turns again; the stop cannot join it and logs so."""
+    monkeypatch.setattr(oms_lane, "LANE_JOIN_S", 0.0)
+    began, release, ran = threading.Event(), threading.Event(), asyncio.Event()
+
+    async def wedge() -> None:
+        began.set()
+        release.wait(BOUND_S)
+
+    lane, unrun = OrderLane(), _set(ran)
+    await lane.start()
+    _, thread = await lane.call(_where())
+    lane.call(wedge())
+    await _began(began)
+    with pytest.raises(TimeoutError):
+        await lane.call(unrun, timeout_s=0)
+    with capture_logs() as logs:
+        await lane.stop()
+    release.set()
+    await asyncio.to_thread(thread.join, BOUND_S)
+    assert [e["join_s"] for e in logs if e["event"] == "oms_lane_not_joined"] == [0.0]
+    assert not (thread.is_alive() or ran.is_set())
+    assert inspect.getcoroutinestate(unrun) == inspect.CORO_CLOSED
+
+
+async def test_a_lane_whose_loop_dies_is_marked_dead_and_answers_its_callers() -> None:
+    """CR-S3L1A-02/-03: an error out of the lane's loop (`SystemExit` from its task) is logged and
+    marks the lane dead; the call it abandoned is cancelled, so no caller waits for ever; a later
+    call is `LaneStopped`, closed unrun. Its cleanup ends inside the join's bound."""
+
+    async def exits() -> None:
+        raise SystemExit
+
+    lane, late = OrderLane(), asyncio.sleep(0)
+    await lane.start()
+    _, thread = await lane.call(_where())
+    with capture_logs() as logs:
+        with pytest.raises(asyncio.CancelledError):
+            async with asyncio.timeout(BOUND_S):
+                await lane.call(exits())
+        await asyncio.to_thread(thread.join, BOUND_S)  # its thread has ended: the lane has died
+    with pytest.raises(LaneStopped):
+        lane.call(late)
+    await lane.stop()
+    assert lane.dead and [e["error"] for e in logs if e["event"] == "oms_lane_died"] == [
+        "SystemExit"
+    ]
+    assert inspect.getcoroutinestate(late) == inspect.CORO_CLOSED
+    assert 5 * oms_lane._CLEANUP_S < oms_lane.LANE_JOIN_S
+
+
+async def test_start_refuses_a_started_lane_and_fails_closed_on_a_loop_that_never_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-S3L1A-04/-06: a started lane refuses a second start. Past `LANE_START_S` with its loop
+    not running, the lane is stopped again, its loop closed, and takes nothing; a thread that
+    cannot start leaves its loop closed."""
+    serve, loops = oms_lane._serve, list[asyncio.AbstractEventLoop]()
+
+    def mute(loop: asyncio.AbstractEventLoop, _running: threading.Event, *rest: Any) -> None:
+        loops.append(loop)  # it runs its loop and never says so
+        serve(loop, threading.Event(), *rest)
+
+    class Unstartable(threading.Thread):
+        def start(self) -> None:
+            raise RuntimeError("can't start new thread")
+
+    async with running() as lane:
+        with pytest.raises(RuntimeError, match="already started"):
+            await lane.start()
+        assert await lane.call(asyncio.sleep(0, result="kept")) == "kept"
+    monkeypatch.setattr(oms_lane, "_serve", mute)
+    monkeypatch.setattr(oms_lane, "LANE_START_S", 0.0)
+    lane, late = OrderLane(), asyncio.sleep(0)
+    with pytest.raises(LaneStopped, match="did not start"):
+        await lane.start()
+    with pytest.raises(LaneStopped):
+        lane.call(late)
+    loops.append(asyncio.new_event_loop())
+    monkeypatch.setattr(OrderLane, "loop_factory", staticmethod(lambda: loops[-1]))
+    threads = SimpleNamespace(Event=threading.Event, Lock=threading.Lock, Thread=Unstartable)
+    monkeypatch.setattr(oms_lane, "threading", threads)
+    with pytest.raises(RuntimeError, match="new thread"):
+        await OrderLane().start()
+    assert [loop.is_closed() for loop in loops] == [True, True]
+    assert inspect.getcoroutinestate(late) == inspect.CORO_CLOSED
+
+
+class Interpreter:
+    """A machine's interpreter as the gateway sends to it."""
+
+    def __init__(self) -> None:
+        self.sent: list[object] = []
+
+    def send(self, event: object, *, wait: bool) -> Awaitable[None]:
+        self.sent.append(event)
+        return asyncio.sleep(0)
+
+
+class Refusals:
+    def record_send_refused(self, reason: str) -> None:
+        raise AssertionError(reason)
+
+
+async def test_a_machine_on_the_lane_takes_a_send_there_and_refuses_one_from_this_loop() -> None:
+    """The gateway's loop affinity (CV-C14): a machine registered on the lane is that loop's."""
+    gateway, interpreter = Gateway(), Interpreter()
+
+    async def registered() -> None:
+        gateway.register("order:1", interpreter, kind="order", lane="order", metrics=Refusals())
+
+    async with running() as lane:
+        await lane.call(registered())
+        with pytest.raises(LoopAffinityError):
+            await gateway.send("order:1", "EXEC")
+        await lane.call(gateway.send("order:1", "EXEC"))
+    assert interpreter.sent == ["EXEC"]

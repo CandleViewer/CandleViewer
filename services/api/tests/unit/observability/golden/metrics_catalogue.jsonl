@@ -252,6 +252,7 @@
 ["oms_db_write_seconds", "histogram", ["table"], "planned", "E29"]
 ["oms_illegal_transitions_total", "counter", [], "planned", "E29"]
 ["oms_interim_ports", "gauge", ["port"], "planned", "E29"]
+["oms_lane_notices_failed_total", "counter", ["reason"], "planned", "E29"]
 ["oms_native_stop_backstop_total", "counter", [], "planned", "E29"]
 ["oms_rate_reject_total", "counter", [], "live", "E04"]
 ["oms_reconcile_anomaly_total", "counter", [], "planned", "E29"]
