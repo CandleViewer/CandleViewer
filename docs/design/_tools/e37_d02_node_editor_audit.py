@@ -23,12 +23,15 @@ clause of sections 0 and 2-5 pairs the trigger with an edge into the root and th
 says **no edge**; every T2 of a frame row names its key or the one notice, the P0 row carries its
 keyed reason, the P0 paragraph the lock, the armed frame ``Save`` among its T2 writes, every keyed
 reason at most 60 characters; the native stop on the CMP-149 row, the Action inspector row and
-board 07 for every ``places_orders`` action of ``catalogue.py``; the four indicator words
+board 07 for every ``places_orders`` action of ``catalogue.py``, on the first two rows each action
+paired with its own stop clause (``place_order`` with the non-emptiable field, ``sl.note`` and
+``sl.kept``; ``scale_in`` and the other four each with their read-only sentence verbatim); the
+four indicator words
 verbatim in the Word cell of their frame row and in the copy deck, and an ``Arm…`` class named
 on every frame row (the pre-PR lens's F-8 and F-1); (7) the structure counts
 (``<!-- audit:NAME=VALUE -->`` markers).
 
-``--self-test [SPEC]`` runs the text review's 15 frame-level mutations of those elements on the
+``--self-test [SPEC]`` runs the text reviews' 19 frame-level mutations of those elements on the
 spec in memory (the file is never written): each must exit 1 with exactly one new FAIL, and the
 clean spec must exit 0 before and after.
 
@@ -760,7 +763,12 @@ GRAPH_ONLY_BADGE = re.compile(r"badged `graph-only` \(glyph \+ word\)")
 # (3) No clause of the drawn sections pairs the trigger with an edge into the root (BQ-21); the
 # CMP-147 cell must say **no edge** (checked on its own, so the scan skips that row).
 TRIGGER = re.compile(r"\btrigger", re.IGNORECASE)
-EDGE_WORD = re.compile(r"\b(?:edges?|connect(?:ion|ions|ed|s)?|wired?)\b", re.IGNORECASE)
+# The fold delta's dm-4: every verb the records name for an edge, plus the arrow.
+EDGE_WORD = re.compile(
+    r"\b(?:edges?|connect(?:ion|ions|ed|ing|s)?|wir(?:e|es|ed|ing)|feed(?:s|ing)?|fed"
+    r"|link(?:s|ed|ing)?|join(?:s|ed|ing)?)\b|→|->",
+    re.IGNORECASE,
+)
 ROOT_WORD = re.compile(r"\broot\b", re.IGNORECASE)
 NEGATED = re.compile(
     r"no edge|\bnever\b|\brefused\b|\bwithout\b|can't|\bwith none\b", re.IGNORECASE
@@ -781,6 +789,15 @@ A1_SURFACES = (
 )
 A1_MECHANICS = ("non-emptiable", "read-only")
 A1_FULL_SET = ("`sl.note`", "`sl.kept`")
+# The fold delta's DM-1: on the CMP-149 and inspector rows each action is paired with its own stop
+# clause (the row split at "; "): `place_order` with the field, `scale_in` with the position's
+# read-only sentence, every other order-placing action with the server's read-only sentence.
+A1_CLAUSE = re.compile(r";\s+")
+A1_SERVER_STOP = ('"Stop: attached by the server (native SL)."',)
+A1_STOP: dict[str, tuple[str, ...]] = {
+    "place_order": ("non-emptiable", *A1_FULL_SET),
+    "scale_in": ('"Stop: the position\'s native stop, held by Bybit (exchange)."',),
+}
 FORM_STATE2 = "Graph-only construct — read-only here"  # the form's word: quoted only in C-rows
 QUOTING = ("D02-C", "memo A9", "memo C17", "`11`:3734", "`14`:1823")  # rows that may quote a source
 # #4137 (a rule action never loosens a stop, for any role) supersedes these two sentences: the gate
@@ -1335,8 +1352,18 @@ def check_frames(spec: str, st: dict[str, Any]) -> list[str]:
         if first != "| 07 ":
             want += [*(f"`{a}`" for a in order_set), *A1_FULL_SET]
         missing = [w for w in dict.fromkeys(want) if w not in row]
-        if not order_set or missing:
-            out.append(f"FAIL A1: {label} does not draw the native stop ({missing or 'no set'})")
+        unpaired: list[str] = []
+        if first != "| 07 ":
+            clauses = A1_CLAUSE.split(row)
+            for action in order_set:
+                stop = A1_STOP.get(action, A1_SERVER_STOP)
+                if not any(f"`{action}`" in c and all(s in c for s in stop) for c in clauses):
+                    unpaired.append(action)
+        if not order_set or missing or unpaired:
+            detail = f"{missing or 'no set'}" if not order_set or missing else ""
+            if unpaired:
+                detail += f"{'; ' if detail else ''}no own stop clause for {unpaired}"
+            out.append(f"FAIL A1: {label} does not draw the native stop ({detail})")
     return out
 
 
@@ -1385,8 +1412,9 @@ def check(spec_path: Path, pr_body: Path | None) -> int:
     return 1 if problems else 0
 
 
-# The text review's 15 frame-level mutations of the A2 elements (M-1), run in memory by
-# --self-test: name -> (old, new); each must raise exactly one new FAIL (exit 1).
+# The text review's 15 frame-level mutations of the A2 elements (M-1) and the fold delta's four
+# (DM-1 O03-O05, dm-4), run in memory by --self-test: name -> (old, new); each must raise exactly
+# one new FAIL (exit 1).
 MUTATIONS: tuple[tuple[str, str, str], ...] = (
     (
         "the state-3 badge off the mismatch row",
@@ -1477,7 +1505,8 @@ MUTATIONS: tuple[tuple[str, str, str], ...] = (
             '"Stop: the position\'s native stop, held by Bybit (exchange)."; '
             "`reverse_position`, "
             "`arm_chase_limit`, `start_iceberg_slice` and `start_twap` the read-only line "
-            '"Stop: attached by the server (native SL)."'
+            '"Stop: attached by the server (native SL)." (an algo only when it opens a position; '
+            'a reduce-only algo reads "reduce-only, no new stop", `E33-D02`:94)'
         ),
         "",
     ),
@@ -1489,7 +1518,8 @@ MUTATIONS: tuple[tuple[str, str, str], ...] = (
             '"Stop: the position\'s native stop, held by Bybit (exchange)."; '
             "for `reverse_position`, "
             "`arm_chase_limit`, `start_iceberg_slice` and `start_twap` the read-only "
-            '"Stop: attached by the server (native SL)." (A1)'
+            '"Stop: attached by the server (native SL)." (an algo only when it opens a position; '
+            'a reduce-only algo reads "reduce-only, no new stop", `E33-D02`:94) (A1)'
         ),
         "",
     ),
@@ -1501,6 +1531,41 @@ MUTATIONS: tuple[tuple[str, str, str], ...] = (
             "read-only text"
         ),
         "; a `place_order`",
+    ),
+    # The fold delta's DM-1 (O03-O05): one stop clause removed while every action id stays.
+    (
+        "the server sentence off the inspector row, the four ids kept",
+        (
+            "`arm_chase_limit`, `start_iceberg_slice` and `start_twap` the read-only "
+            '"Stop: attached by the server (native SL)." (an algo only when it opens a position; '
+            'a reduce-only algo reads "reduce-only, no new stop", `E33-D02`:94) (A1)'
+        ),
+        "`arm_chase_limit`, `start_iceberg_slice` and `start_twap` their order parameters (A1)",
+    ),
+    (
+        "the `scale_in` sentence off the CMP-149 row, the id kept",
+        (
+            "`scale_in` the read-only line "
+            '"Stop: the position\'s native stop, held by Bybit (exchange)."; '
+        ),
+        "`scale_in` its size line; ",
+    ),
+    (
+        "`sl.note` off the inspector row's `place_order` clause",
+        (
+            "for `place_order` the non-emptiable native stop field (`E36-D02`:162) with "
+            "`sl.note` beneath it and `sl.kept` on a clear attempt"
+        ),
+        (
+            "for `place_order` the non-emptiable native stop field (`E36-D02`:162) with "
+            "`sl.kept` on a clear attempt"
+        ),
+    ),
+    # The fold delta's dm-4: a trigger→root edge written with a verb outside the old list.
+    (
+        "a trigger→root edge with another verb in the `editing` row",
+        "| the full anatomy with S-form (§2);",
+        "| the full anatomy with S-form (§2), the trigger feeding the root condition;",
     ),
 )
 
