@@ -175,7 +175,6 @@ def _runtime(rig: Rig, pg_dsn: str, tmp_path: Path, writer: Writer) -> OmsRuntim
         ),
         read_only=ReadOnly(),
         metrics=metrics,
-        audit=writer,
         gate=SimpleNamespace(refusal=lambda _account: None),
         standings=SimpleNamespace(read_once=True, credential_rejected=lambda *_args: None),
         oms_enabled=flags[0],
@@ -183,8 +182,10 @@ def _runtime(rig: Rig, pg_dsn: str, tmp_path: Path, writer: Writer) -> OmsRuntim
         profiles=Profiles(),
         persistence=None,
         feed=SimpleNamespace(bind=lambda _b: SimpleNamespace(publish=lambda *_a, **_k: None)),
-        stores=lambda: replace(
-            pg_stores(settings, metrics), accounts=InMemoryTradingAccountReads(row)
+        stores=lambda: replace(  # the lane's own writer is the test's (#913 L2)
+            pg_stores(settings, metrics),
+            accounts=InMemoryTradingAccountReads(row),
+            audit=lambda: writer,
         ),
         now=rig.clock,
         registry=REGISTRY,

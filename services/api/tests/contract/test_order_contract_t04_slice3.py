@@ -16,17 +16,20 @@ from jsonschema.exceptions import ValidationError
 from candleviewer.accounts.verification import Refusal
 from candleviewer.api._generated import openapi_models as rest
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
+from candleviewer.audit.machine_events import MachineEventWrongLoop
+from candleviewer.audit.writer import AuditUnavailable, AuditWriterWrongLoop
 from candleviewer.exchange.bybit.key_info import refusal
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from candleviewer.oms import submit
 from candleviewer.oms.errors import OmsNotReady
 from candleviewer.oms_lane import BLOCK_TIMEOUT_S, HOP_TIMEOUT_S, LANE_JOIN_S, LANE_START_S
 from candleviewer.oms_wiring import (
+    LANE_AUDIT_STOP_S,
+    LANE_WAL_PREFIX,
     REFERENCE_DEMAND_MAX,
     REFERENCE_DEMAND_NEW,
     REFERENCE_DEMAND_TTL_S,
     REFERENCE_DEMAND_WINDOW_S,
-    SINK_PAGE_COOLDOWN_S,
     SWEEP_STATEMENT_TIMEOUT_MS,
     SYSTEM_ACTOR,
     OmsAudit,
@@ -555,12 +558,12 @@ def test_24_gives_the_demand_and_the_audit_labels_the_code_holds() -> None:
 
 def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() -> None:
     """#913 slice 3 L1 (29 CV-C13): rule 1's one explicit thread; the lane, its crossings and its
-    stop inside the grace, from the code's own bounds; the hops named until L2 and L3; the notices'
-    bound and their count (CR-S3L1A-01); the private stream the lane's port refuses (CR-S3L1B-05);
-    the blocking hops' bound in series (SEC-S3L1A-03); the lane's own refusals read in place
-    (SEC-S3L1C-02); its death paged (SEC-S3L1A-02); the dropped sink append, a cancelled start and
-    nothing begun once the lane stops or dies, with OM-D10 to OM-D12 (CR-S3L1C-03); and, the
-    runtime on the lane since L1b, no status note left in 20, 23 or 24."""
+    stop inside the grace, from the code's own bounds; the hops named until L3 and L4, L2's gone;
+    the notices' bound and their count (CR-S3L1A-01); the private stream the lane's port refuses
+    (CR-S3L1B-05); the blocking hops' bound in series (SEC-S3L1A-03); the lane's own refusals read
+    in place (SEC-S3L1C-02); its death paged (SEC-S3L1A-02); a cancelled start and nothing begun
+    once the lane stops or dies, with OM-D10 to OM-D12 (CR-S3L1C-03); and, the runtime on the lane
+    since L1b, no status note left in 20, 23 or 24."""
     rule = _between(_ARCH, "\n1. **One serving loop, and the order lane.**", "\n2. ")
     assert "the one explicit thread is the order lane's" in rule
     lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
@@ -572,8 +575,10 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         "so `ready` is set and cleared on that loop alone",
         "and the calls one thread makes begin in the order it made them:",
         f"awaited and cut at `CV_COMMAND_TIMEOUT` ({HOP_TIMEOUT_S:g} s): the profile cache and the "
-        "clock guard's resync; until L2 gives the lane its own, the audit writer",
-        "until L3 lets the lane sign and send from its own loop, every venue call",
+        "clock guard's resync; and until L3 lets the lane sign and send from its own loop, every "
+        "venue call",
+        "lane to serving loop, blocking: until L4 the order-entry gate, whose key-standing read is "
+        "not safe from another thread. The lane's thread waits",
         "the lane's port refuses `subscribe_private` (`PrivateStreamRefused`)",
         "the exit routes reach the exit service the same way (`OnLaneExits`)",
         "cancel-all reaches its own service the same way (`OnLaneCancelAll`): its scope, an "
@@ -581,13 +586,10 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         "and its refusal records, per-order cancels and amends within the service's own bounds",
         "and the exit routes' in-flight guard, claimed and released on the serving loop only",
         f"waits at most `CV_PERSIST_TIMEOUT` ({BLOCK_TIMEOUT_S:g} s) for the call to begin",
-        "a sink append not begun by then is dropped, its `machine_events` row lost (no chain check "
-        f"sees the hole), logged and paged once per {SINK_PAGE_COOLDOWN_S:g} s window",
         "a rejected credential, which the lane's gate refuses at once until its notice has landed "
         "there (for good, should it be lost or fail)",
         "The bound is per call: while the serving loop stalls, N such calls hold the lane's thread "
-        "N times that bound in series, ahead of any other step there, the ruled interim until L2 "
-        "and L4",
+        "N times that bound in series, ahead of any other step there, the ruled interim until L4",
         "These notices have no cap of their own: while the serving loop stalls they queue there at "
         "the lane's step rate, so a stall holds at most that rate times its length.",
         "is logged by its call's name and counted (`oms_lane_notices_failed_total`, §12.1)",
@@ -605,13 +607,19 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
     threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
     rows = {r[2:8]: _words(r) for r in threat.read_text(encoding="utf-8").splitlines()}
     assert not _missing(
-        rows["OM-D10"], "one not begun is dropped, logged and paged, and the machine runs on"
+        rows["OM-D10"],
+        "every venue call M2 signs (F7, `ServedPort`) still runs on the serving loop, awaited",
+        "Since L2 the lane records through its own `AuditWriter` and `machine_events` WAL sink, on "
+        "its own loop, one hash chain with the serving loop's under `pg_advisory_xact_lock`",
     )
     assert not _missing(
         rows["OM-D11"],
-        f"an append not begun within {BLOCK_TIMEOUT_S:g} s is dropped, logged and paged (once per "
-        f"{SINK_PAGE_COOLDOWN_S:g} s window), and its machine runs on, until L2 moves the writer",
+        "as a persistence bundle's `machine_events` appends did until #913's L2 gave the lane its "
+        "own sink",
+        f"A read not begun within {BLOCK_TIMEOUT_S:g} s answers `oms_not_ready`, refused, never "
+        "open",
     )
+    assert not [row for row in (rows["OM-D10"], rows["OM-D11"]) if "until L2" in row]
     assert not _missing(
         rows["OM-D12"],
         "`OrderLane.dead` refuses every call (`LaneStopped`, a 503 `oms_not_ready`, nothing "
@@ -620,7 +628,11 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
     )
     assert "awaits the pipeline on the order lane" in _ROUTE
     ws = _words((OPENAPI_SPEC_PATH.parent / "23-ws-protocol.md").read_text(encoding="utf-8"))
-    assert "until #913's L2 gives it its own writer and sink" in ws
+    assert (
+        "The lane writes its audit records and `machine_events` rows through its own writer and "
+        "sink (#913's L2), so neither waits on the serving loop" in ws
+    )
+    assert not [text for text in (lane, ws, _words(_ARCH)) if "until L2" in text]
     assert not [text for text in (lane, _ROUTE, ws) if "L1b" in text]
     plan = (OPENAPI_SPEC_PATH.parent / "29-statechart-adoption-plan.md").read_text(encoding="utf-8")
     [row] = [line for line in plan.splitlines() if line.startswith("| CV-C13 ")]
@@ -639,3 +651,25 @@ def test_20_reads_the_order_facades_versions_in_place_beside_the_in_flight_guard
         "§8.4), a single read of its order's view, which each committed step replaces whole;",
         "and the exit routes' in-flight guard, claimed and released on the serving loop only",
     )
+
+
+def test_20_gives_the_lane_its_own_writer_and_sink_on_their_own_wal_files() -> None:
+    """#913 slice 3 L2 (rulings Q12, Q13; D6): the lane's own writer and sink, their WAL files, the
+    typed refusal of a call from another loop and the stop's bound, from the code's own names; the
+    one chain the chain lock keeps."""
+    own = _between(
+        _ARCH, "**The lane's own audit writer and sink (#913 slice 3 L2;", "**Live trading"
+    )
+    assert not _missing(
+        own,
+        "Nothing the OMS records crosses to the serving loop",
+        f"The writer's is `{LANE_WAL_PREFIX}<name>` beside `CV_AUDIT_WAL_PATH`, locked",
+        "the sink's is `CV_MACHINE_EVENT_WAL_PATH` while no persistence bundle holds that file for "
+        f"the serving loop, else `{LANE_WAL_PREFIX}<name>` beside it",
+        f"(`{AuditWriterWrongLoop.__name__}`, an `{AuditUnavailable.__name__}`, so the audited "
+        f"action is refused; `{MachineEventWrongLoop.__name__}`), logged CRITICAL as a page",
+        "each insert takes the chain lock (`pg_advisory_xact_lock`) as the serving writer's does",
+        f"within its {LANE_AUDIT_STOP_S:g} s (`LANE_AUDIT_STOP_S`) stays in its WAL",
+    )
+    assert issubclass(AuditWriterWrongLoop, AuditUnavailable)
+    assert "always to the order lane's own WAL sink" in _RUNTIME

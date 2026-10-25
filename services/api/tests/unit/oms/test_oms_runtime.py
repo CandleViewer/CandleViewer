@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID
@@ -145,11 +146,12 @@ class Flag:
 
 
 class Sink(InMemoryMachineEventSink):
-    """The standalone sink the stores build; its start and stop land in the world's log."""
+    """The lane's own sink the stores build (#913 L2), at `wal`; its start and stop land in the
+    world's log."""
 
-    def __init__(self, log: list[str], fail: Exception | None = None) -> None:
+    def __init__(self, log: list[str], fail: Exception | None = None, wal: str = "") -> None:
         super().__init__()
-        self.log, self.fail = log, fail
+        self.log, self.fail, self.wal = log, fail, wal
 
     async def start(self) -> None:
         self.log.append("sink.start")
@@ -162,12 +164,20 @@ class Sink(InMemoryMachineEventSink):
 
 @dataclass
 class Writer:
-    """The audit writer: each append, by its action and reason; a keyed one stored as the writer
-    stores it, under `keyed_record_id(action, name)`, so one whose id is already stored lands
-    nothing (`ON CONFLICT (record_id) DO NOTHING`, #4587)."""
+    """The order lane's own audit writer the stores build (#913 L2): each append, by its action
+    and reason; a keyed one stored as the writer stores it, under `keyed_record_id(action, name)`,
+    so one whose id is already stored lands nothing (`ON CONFLICT (record_id) DO NOTHING`, #4587);
+    its start and stop land in `log`, the world's."""
 
     actions: list[tuple[str, str | None]] = field(default_factory=list)
     stored: set[UUID] = field(default_factory=set)
+    log: list[str] = field(default_factory=list)
+
+    async def start(self) -> None:
+        self.log.append("audit.start")
+
+    async def stop(self, grace_s: float = 5.0) -> None:
+        self.log.append("audit.stop")
 
     async def emit(self, action: str, **fields: Any) -> None:
         self.actions.append((action, fields.get("reason")))
@@ -253,9 +263,12 @@ class World:
     log: list[str] = field(default_factory=list)
     accounts: list[Any] = field(default_factory=list)
     sink_fails: Exception | None = None
+    audit_fails: Exception | None = None
     lanes: list[InlineLane] = field(default_factory=list)
+    sinks: list[Sink] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        self.writer.log = self.log
         self.health = FakeClockHealth(self.clock)
         self.health.measure()
         self.ingestion = SimpleNamespace(
@@ -268,11 +281,20 @@ class World:
         async def release() -> None:
             self.log.append("pool.release")
 
+        def audit() -> Writer:
+            if self.audit_fails is not None:
+                raise self.audit_fails
+            return self.writer
+
+        def sink(wal: str) -> Sink:
+            self.sinks.append(Sink(self.log, self.sink_fails, wal))
+            return self.sinks[-1]
+
         return OmsStores(
             orders=store, executions=store.executions, submissions=store.submissions,
             anchors=store.anchors, stops=store.stops, groups=cast(GroupStores, None),
-            accounts=InMemoryTradingAccountReads(*self.accounts), sweep=store,
-            sink=lambda: Sink(self.log, self.sink_fails), release=release,
+            accounts=InMemoryTradingAccountReads(*self.accounts), sweep=store, audit=audit,
+            sink=sink, release=release,
         )  # fmt: skip
 
     def runtime(
@@ -282,8 +304,8 @@ class World:
         feed = SimpleNamespace(bind=lambda _b: SimpleNamespace(publish=lambda *_a, **_k: None))
         built: dict[str, Any] = {
             "venue": self.venue, "ingestion": self.ingestion, "read_only": ReadOnly(),
-            "metrics": self.metrics, "audit": self.writer,
-            "gate": SimpleNamespace(refusal=lambda _account: None), "standings": self.standings,
+            "metrics": self.metrics, "gate": SimpleNamespace(refusal=lambda _account: None),
+            "standings": self.standings,
             "live_enabled": self.flags[1], "profiles": Profiles(), "persistence": bundle,
             "feed": feed, "stores": self.stores, "pager": self.pager, "now": lambda: T0,
             "monotonic": self.clock, "registry": REGISTRY, "oms_enabled": self.flags[0],
@@ -357,12 +379,12 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
             cancel_all = parts.cancel_all  # S4-E: over that exit service and the order store
             assert cancel_all._exits is parts.exits
             assert cast(object, cancel_all._reads) is parts.route.orders  # the one repository
-            assert world.log == ["sink.start"]
+            assert world.log == ["audit.start", "sink.start"]
     warned = [e["port"] for e in logs if e["event"] == "oms_interim_port"]
     assert warned == [*INTERIMS, "machine_event_sink", "risk_figures"]  # one WARNING each
     runtime_ports = (*INTERIMS, "machine_event_sink", "risk_figures")
     assert [world.gauge(name) for name in runtime_ports] == [1.0] * 7
-    assert world.log == ["sink.start", "sink.stop", "pool.release"] and port.closed
+    assert world.log == [*STARTED, "sink.stop", "audit.stop", "pool.release"] and port.closed
     assert not b01.ports_wired()
 
 
@@ -385,28 +407,36 @@ async def test_the_router_and_cancel_all_share_the_one_fold_port_before_the_serv
         assert names.index("cancel_all_folds") == names.index("machines") + 1
 
 
+#: What a composed runtime has started, in order (#913 L2): the lane's own writer, then its sink.
+STARTED = ["audit.start", "sink.start"]
+_SINK_WAL = Path(Settings().machine_event_wal_path)
+_BESIDE = str(_SINK_WAL.with_name(f"oms_lane.{_SINK_WAL.name}"))
+
+
 @pytest.mark.parametrize(
-    ("environment", "live_on", "with_bundle", "sink"),
+    ("environment", "live_on", "with_bundle", "wal"),
     [
-        ("demo", True, False, "standalone"),
-        ("testnet", True, False, "standalone"),
-        ("live", False, False, "standalone"),
-        ("live", True, True, "bundle"),
+        ("demo", True, False, str(_SINK_WAL)),
+        ("testnet", True, False, str(_SINK_WAL)),
+        ("live", False, False, str(_SINK_WAL)),
+        ("live", True, True, _BESIDE),
         ("live", True, False, None),
     ],
 )
-async def test_the_sink_is_the_bundles_else_a_standalone_one_never_on_live_with_the_setting_on(
-    environment: str, live_on: bool, with_bundle: bool, sink: str | None
+async def test_the_lane_has_its_own_sink_beside_a_bundles_and_none_on_live_with_the_setting_on(
+    environment: str, live_on: bool, with_bundle: bool, wal: str | None
 ) -> None:
-    """Rulings Q4 to Q6 (20 Sec.6.2): the bundle's sink and latch when there is one; else the WAL
-    sink it builds and owns, in demo and testnet whatever the setting says and in live while it is
-    off; a live process with it on and no bundle fails closed: no sink, no order served."""
+    """Rulings Q4 to Q6 and Q13 (20 Sec.6.2): the order lane builds and owns its `machine_events`
+    sink, in demo and testnet whatever the setting says and in live while it is off, at
+    `CV_MACHINE_EVENT_WAL_PATH`, which no serving-loop sink holds; with a bundle, whose sink holds
+    that path, beside it, taking only the bundle's latch; a live process with the setting on and
+    no bundle fails closed: no sink, no order served."""
     world = World()
     bundle = SimpleNamespace(sink=InMemoryMachineEventSink(), latch=ChainTripLatch())
     runtime = world.runtime(environment, live_on=live_on, bundle=bundle if with_bundle else None)
     with capture_logs() as logs:
         async with started(runtime):
-            if sink is None:
+            if wal is None:
                 assert failed_closed(logs) == ["NoMachineEventSink"] and not b01.ports_wired()
                 assert world.pager.calls == ["oms_runtime_failed_closed: sink"]  # CR-S3E1-02
                 assert failed_phases(logs) == ["sink"]
@@ -414,13 +444,74 @@ async def test_the_sink_is_the_bundles_else_a_standalone_one_never_on_live_with_
                 with pytest.raises(OmsNotReady):
                     _ = runtime.submission
             else:
-                assert world.log == (["sink.start"] if sink == "standalone" else [])
+                assert world.log == STARTED and [sink.wal for sink in world.sinks] == [wal]
                 assert failed_closed(logs) == [] and b01.ports_wired()
                 # S4-S-b3: the refusing stand-in on every environment until the day figures land
                 [figures] = [e for e in logs if e.get("port") == "risk_figures"]
                 assert figures["serves"] == NoDayFigures.serves
                 assert world.gauge("risk_figures") == 1.0
     assert world.gauge("machine_event_sink") == (0.0 if with_bundle else 1.0)
+
+
+@pytest.mark.parametrize("bundled", [False, True])
+async def test_the_oms_records_through_the_lanes_own_writer_and_sink_never_the_serving_loops(
+    bundled: bool,
+) -> None:
+    """#913 L2 (29 CV-C13; rulings Q12, Q13): the sweep's records and the abandon's go to the
+    writer the stores build for the lane, the facade's audit itself, never a hop to the serving
+    loop's; B1's rows to the lane's own sink, the bundle's taking none."""
+    world = World()
+    await crashed(world)
+    bundle = SimpleNamespace(sink=InMemoryMachineEventSink(), latch=ChainTripLatch())
+    for flag in world.flags:
+        flag.read()
+    async with started(world.runtime(bundle=bundle if bundled else None)) as runtime:
+        await runtime.wait_ready()
+        assert runtime._composed().audit._writer is world.writer
+    swept = ("sl.modified", "unplaced_entry_swept")
+    assert {swept, ("orders.cancel", "kill_no_cancel_unsubmitted")} <= set(world.writer.actions)
+    [sink] = world.sinks
+    assert sink.rows and bundle.sink.rows == []
+
+
+@pytest.mark.parametrize(
+    ("fails", "phase", "log"),
+    [
+        ("build", "audit", ["pool.release"]),
+        ("start", "audit_start", ["audit.stop", "pool.release"]),
+    ],
+)
+async def test_a_lane_writer_that_cannot_build_or_start_fails_the_runtime_closed(
+    fails: str, phase: str, log: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D6 (#913 L2): a writer whose WAL another writer holds is refused at its build, and one that
+    cannot start is stopped again (its lock dropped): either way the runtime fails closed, paged,
+    with the port and the pool closed, and no sink started."""
+    world = World(audit_fails=OSError("the WAL is locked") if fails == "build" else None)
+
+    async def refused(self: Writer) -> None:
+        raise OSError("the WAL is corrupt")
+
+    if fails == "start":
+        monkeypatch.setattr(Writer, "start", refused)
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            assert (failed_closed(logs), failed_phases(logs)) == (["OSError"], [phase])
+            assert world.log == log and world.venue.ports[0].closed and not b01.ports_wired()
+            assert world.pager.calls == [f"oms_runtime_failed_closed: {phase}"]
+            with pytest.raises(OmsNotReady):
+                _ = runtime.submission
+
+
+def test_the_lanes_wal_files_are_its_own_beside_the_serving_loops() -> None:
+    """D6: `oms_lane.<name>` in the serving loop's directory, never its file, however it is
+    named; the sink's only beside a bundle's."""
+    settings = Settings(audit_wal_path="/v/audit/audit.wal", machine_event_wal_path="/v/me.wal")
+    assert oms_wiring.lane_audit_wal(settings) == "/v/audit/oms_lane.audit.wal"
+    assert oms_wiring.lane_sink_wal(settings, bundled=True) == "/v/oms_lane.me.wal"
+    assert oms_wiring.lane_sink_wal(settings, bundled=False) == "/v/me.wal"
+    named = Settings(audit_wal_path="/v/oms_lane.audit.wal")
+    assert oms_wiring.lane_audit_wal(named) != named.audit_wal_path
 
 
 async def test_a_composition_that_fails_late_closes_what_it_built_and_fails_closed() -> None:
@@ -430,7 +521,8 @@ async def test_a_composition_that_fails_late_closes_what_it_built_and_fails_clos
     with capture_logs() as logs:
         async with started(world.runtime()) as runtime:
             assert failed_closed(logs) == ["RuntimeError"] and not b01.ports_wired()
-            assert world.log == ["sink.start", "pool.release"] and world.venue.ports[0].closed
+            assert world.log == [*STARTED, "audit.stop", "pool.release"]
+            assert world.venue.ports[0].closed
             assert world.pager.calls == ["oms_runtime_failed_closed: sink_start"]
             assert failed_phases(logs) == ["sink_start"]
             assert world.pager.severities == ["page"] and world.lanes[0].stopped
@@ -526,7 +618,7 @@ async def test_a_testnet_process_fails_closed_over_the_real_adapter_that_has_no_
 
 def test_the_fake_backend_composes_no_oms_runtime() -> None:
     """20 Sec.6.2: no runtime, so `placeOrder` answers `501 not_implemented` there."""
-    names = ("metrics", "audit", "gate", "standings", "oms_enabled", "live_enabled")
+    names = ("metrics", "gate", "standings", "oms_enabled", "live_enabled")
     unused = dict.fromkeys((*names, "profiles", "persistence", "feed"))
     assert build_oms_runtime(cast(Any, None), Settings(), **cast(Any, unused)) is None
 
@@ -818,9 +910,10 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
     """CR-S3E2-04: each close step is isolated and has its share of `OMS_STOP_RESERVE_S`. The
     command port fails to close and the sink's drain never ends; the trading port, which needs a
     turn of the loop, and the pool still close, and the whole stop is bounded."""
-    # 9 closers share 0.5 s (the reserve less the lane's join): the drain's cancel, the lane's wait,
-    # the exits, the stop gate (CR-S3H3B-01), the machines, the commands, then the hung sink, which
-    # costs a third of what is left, the trading port and the pool
+    # 10 closers share 0.5 s (the reserve less the lane's join): the drain's cancel, the lane's
+    # wait, the exits, the stop gate (CR-S3H3B-01), the machines, the commands, then the hung sink,
+    # which costs a quarter of what is left, the lane's audit writer (#913 L2), the trading port
+    # and the pool
     monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 1.5)
 
     async def fails(self: OmsCommandPort) -> None:
@@ -842,7 +935,8 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
             pass
     steps = [(e["step"], e["error"]) for e in logs if e["event"] == "oms_stop_step_failed"]
     assert steps == [("commands", "RuntimeError"), ("sink", "TimeoutError")]
-    assert world.venue.ports[0].closed and world.log == ["sink.start", "pool.release"]
+    assert world.venue.ports[0].closed
+    assert world.log == [*STARTED, "audit.stop", "pool.release"]
     assert not b01.ports_wired()  # the facade, first in line, closed too
 
 
