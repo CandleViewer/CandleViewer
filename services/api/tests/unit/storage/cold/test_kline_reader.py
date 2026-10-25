@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
+import dataclasses
+import math
+import random
 import shutil
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from hypothesis import example, given
+from hypothesis import strategies as st
 
 from candleviewer.api.market import MarketDataPrincipal, make_market_router
 from candleviewer.ingestion.kline_coverage import Range
@@ -48,10 +55,6 @@ def _write(
     *,
     name: str = "part-0000.parquet",
 ) -> Path:
-    paths = DatasetRegistry(root).resolve_partition(
-        StreamKind.KLINES, partition_values={"symbol": symbol, "interval": iv, "ym": ym}
-    )
-    paths.partition_dir.mkdir(parents=True, exist_ok=True)
     n = len(tss)
     table = pa.table(
         {
@@ -66,6 +69,23 @@ def _write(
             "source": ["ws"] * n,
         }
     )
+    return _write_table(root, ym, table, symbol, iv, name=name)
+
+
+def _write_table(
+    root: Path,
+    ym: str,
+    table: pa.Table,
+    symbol: str = "BTCUSDT",
+    iv: str = "60",
+    *,
+    name: str = "part-0000.parquet",
+) -> Path:
+    """One part file plus its manifest entry (`append_reconciled`), as the exporter leaves it."""
+    paths = DatasetRegistry(root).resolve_partition(
+        StreamKind.KLINES, partition_values={"symbol": symbol, "interval": iv, "ym": ym}
+    )
+    paths.partition_dir.mkdir(parents=True, exist_ok=True)
     f = paths.partition_dir / name
     pq.write_table(table, f)
     ManifestStore(paths.manifests_dir).append_reconciled(
@@ -74,7 +94,7 @@ def _write(
         ManifestEntry(
             file=f.name,
             sha256=sha256_of(f),
-            row_count=n,
+            row_count=table.num_rows,
             source_table="klines",
             export_run_id="r",
             exported_at_us=0,
@@ -589,3 +609,154 @@ def test_the_route_answers_503_for_a_month_that_lost_a_part(tmp_path: Path) -> N
 
     assert r.status_code == 503
     assert str(tmp_path) not in r.text
+
+
+# --- #2523: the row build is byte-identical to the pre-fix construction ---------------------
+
+
+def _old_num(value: object) -> str:
+    """The pre-#2523 `_num`, kept verbatim as the reference."""
+    return format(Decimal(repr(value)), "f") if isinstance(value, float) else str(value)
+
+
+@given(st.floats(allow_nan=False, allow_infinity=False))
+@example(0.0)
+@example(-0.0)
+@example(5e-324)  # smallest subnormal
+@example(-2.225073858507201e-308)  # largest negative subnormal
+@example(2.2250738585072014e-308)  # smallest normal
+@example(1e-05)  # repr switches to exponent form below 1e-4
+@example(0.0001)
+@example(1e16)  # and at or above 1e16
+@example(9999999999999998.0)
+@example(-1.5e300)
+@example(1.7976931348623157e308)
+@example(100.5)
+@example(60123.4)
+def test_num_matches_the_decimal_text_for_every_finite_float(value: float) -> None:
+    assert kr._num(value) == format(Decimal(repr(value)), "f")
+
+
+@pytest.mark.parametrize(
+    ("value", "text"), [(math.inf, "Infinity"), (-math.inf, "-Infinity"), (math.nan, "NaN")]
+)
+def test_num_non_finite_takes_the_decimal_path(value: float, text: str) -> None:
+    # `repr` would give "inf"/"nan": only the Decimal path yields the pre-#2523 text.
+    assert kr._num(value) == _old_num(value) == text
+
+
+@pytest.mark.parametrize("value", ["0", 7, True, None, Decimal("1.50")])
+def test_num_non_float_is_its_str(value: object) -> None:
+    assert kr._num(value) == _old_num(value) == str(value)
+
+
+def _old_read_rows(
+    con: duckdb.DuckDBPyConnection, files: list[str], lo: int, hi: int, max_rows: int
+) -> list[ColdKlineRow]:
+    """The pre-#2523 `_read_rows` (tz-aware `ts`, per-row dicts, Decimal `_num`)."""
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    con.execute("SET TimeZone = 'UTC'")
+    table = con.execute(
+        "SELECT * FROM read_parquet($files, hive_partitioning = false, union_by_name = true) "
+        "WHERE ts >= make_timestamptz($lo::BIGINT) AND ts < make_timestamptz($hi::BIGINT) "
+        "QUALIFY row_number() OVER (PARTITION BY ts ORDER BY ts) = 1 "
+        "ORDER BY ts DESC LIMIT $n",
+        {"files": files, "lo": lo, "hi": hi, "n": max_rows},
+    ).to_arrow_table()
+    con.close()
+    out = [
+        ColdKlineRow(
+            ts_us=(r["ts"] - epoch) // timedelta(microseconds=1),
+            open=_old_num(r.get("open", "0")),
+            high=_old_num(r.get("high", "0")),
+            low=_old_num(r.get("low", "0")),
+            close=_old_num(r.get("close", "0")),
+            volume=_old_num(r.get("volume", "0")),
+            turnover=_old_num(r.get("turnover", "0")),
+            confirmed=bool(r.get("confirmed", True)),
+            source=str(r.get("source") or "parquet"),
+        )
+        for r in table.to_pylist()
+    ]
+    out.sort(key=lambda x: x.ts_us)
+    return out
+
+
+def _seeded_value(rng: random.Random) -> float:
+    pick = rng.randrange(6)
+    if pick == 0:
+        return round(rng.uniform(1, 100_000), rng.randrange(0, 5))
+    if pick == 1:
+        return rng.uniform(0, 1e-4) * rng.choice((1.0, -1.0))  # exponent-form repr
+    if pick == 2:
+        return rng.uniform(1e16, 1e20)
+    if pick == 3:
+        return rng.choice((0.0, -0.0, 5e-324, math.inf, -math.inf, math.nan))
+    return rng.uniform(-1e6, 1e6)
+
+
+def _seeded_columns(rng: random.Random, tss: list[int], names: tuple[str, ...]) -> pa.Table:
+    cols: dict[str, Any] = {"ts": pa.array(tss, type=pa.timestamp("us", tz="UTC"))}
+    for name in names:
+        if name == "confirmed":
+            cols[name] = [rng.random() < 0.9 for _ in tss]
+        elif name == "source":
+            cols[name] = [rng.choice(("ws", "rest", "", "tape")) for _ in tss]
+        else:
+            cols[name] = [_seeded_value(rng) for _ in tss]
+    return pa.table(cols)
+
+
+def _part_files(root: Path) -> list[str]:
+    return sorted(p.as_posix() for p in root.rglob("part-*.parquet"))
+
+
+_ALL = ("open", "high", "low", "close", "volume", "turnover", "confirmed", "source")
+
+
+@pytest.mark.parametrize("seed", [2523, 7, 11])
+@pytest.mark.parametrize("max_rows", [5_100, 150])
+async def test_read_rows_are_identical_to_the_pre_2523_construction(
+    tmp_path: Path, seed: int, max_rows: int
+) -> None:
+    """Seeded window over three parts: a full-schema part with exponent forms, -0.0,
+    subnormals, inf/nan and empty sources; a part missing `turnover`/`source` (union_by_name
+    nulls); and a duplicate of part 0's first rows (dedupe before LIMIT)."""
+    rng = random.Random(seed)  # noqa: S311 - seeded, reproducible test data
+    t0 = _us(2026, 3)
+    full = _seeded_columns(rng, [t0 + i * MIN for i in range(400)], _ALL)
+    _write_table(tmp_path, "2026-03", full)
+    partial = _seeded_columns(rng, [t0 + (400 + i) * MIN for i in range(200)], _ALL[:5])
+    _write_table(tmp_path, "2026-03", partial, name="part-0001.parquet")
+    _write_table(tmp_path, "2026-03", full.slice(0, 50), name="part-0002.parquet")
+    files = _part_files(tmp_path)
+    lo, hi = t0 + 10 * MIN, t0 + 590 * MIN
+
+    def con() -> duckdb.DuckDBPyConnection:
+        return duckdb.connect(":memory:")
+
+    got = kr._read_rows(con(), files, lo, hi, max_rows)
+    want = _old_read_rows(con(), files, lo, hi, max_rows)
+
+    assert len(got) == min(580, max_rows)
+    assert [dataclasses.astuple(r) for r in got] == [dataclasses.astuple(r) for r in want]
+    assert all(type(r.ts_us) is int for r in got)
+    read = await ParquetKlineReader(DatasetRegistry(tmp_path), max_rows=max_rows)(
+        "BTCUSDT", "60", Range(lo, hi)
+    )
+    assert read == want
+
+
+async def test_read_rows_columns_no_file_carries_default_like_before(tmp_path: Path) -> None:
+    t0 = _us(2026, 3)
+    rng = random.Random(1)  # noqa: S311 - seeded, reproducible test data
+    table = _seeded_columns(rng, [t0 + i * MIN for i in range(30)], ("open",))
+    _write_table(tmp_path, "2026-03", table)
+    files = _part_files(tmp_path)
+
+    got = kr._read_rows(duckdb.connect(":memory:"), files, t0, t0 + H, 5_100)
+
+    assert got == _old_read_rows(duckdb.connect(":memory:"), files, t0, t0 + H, 5_100)
+    assert {(r.close, r.turnover, r.confirmed, r.source) for r in got} == {
+        ("0", "0", True, "parquet")
+    }
