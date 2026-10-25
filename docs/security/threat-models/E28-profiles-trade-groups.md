@@ -478,6 +478,7 @@ adaptation, C-10.1).
 - **D6** C-12.5 wins over the clamp wording: a submitted value beyond a cap is rejected with `risk_limit_breached` and
   audited. The sizer's own policy clamp stays, recorded in the explanation and shown in the preview, so it is never
   silent. SR-052's "clamped or rejected", E28-S05's "clamps and proceeds" and E28-X03 case 3 align to this.
+  Refined: the rejection is the whole request's, never per leg (ADR-0040 (proposed, #4461) Decision 1).
 - **D7** The bound (default) profile is each account's ceiling; alternates, templates, overrides, defaults and rules
   only narrow it.
 - **D8 (open, Owner)** Group definitions are Owner-only until the Owner decides otherwise, before E28-T05 merges.
