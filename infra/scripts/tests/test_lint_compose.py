@@ -433,6 +433,30 @@ def test_rule_5_keeps_migrates_cv_pg_dsn_from_the_owner_dsn(dsn: str) -> None:
     assert lint_compose.check_no_kek_in_environment(compose) == []
 
 
+def test_rule_5_messages_word_for_word() -> None:
+    """CodeQL #2303: each message names a setting, a secret, a config or a service, never a
+    value. Pinned whole, so where the lint reads its names from may change, never what it says."""
+    compose = {
+        "secrets": {"db": {"environment": "CV_PG_OWNER_DSN"}},
+        "configs": {"master": {"environment": "CV_MASTER"}, "seed": {"content": HEX_64}},
+        "services": {
+            "api": {"env_file": "demo.env", "configs": [AT_THE_HANDLE]},
+            "x": {"env_file": ".env", "environment": {"DSN": OWNER_DSN}},
+        },
+    }
+    assert lint_compose.check_no_kek_in_environment(compose) == [
+        "secret 'db': carries the owner role's DSN, which reaches migrate alone, as its CV_PG_DSN",
+        "config 'seed': content holds inline key material",
+        ("service 'api': mounts its KEK from config 'master', which this file does not declare "
+         "as a file config (file: alone)"),
+        ("service 'api': takes an env_file; api, migrate and bootstrap-owner take each setting by "
+         "name, in environment:, where rule 5 reads it"),
+        ("service 'x': takes the operator's .env as its env_file, and with it CV_PG_OWNER_DSN and "
+         "every secret it holds"),
+        "service 'x': environment DSN takes CV_PG_OWNER_DSN; only migrate's CV_PG_DSN may",
+    ]  # fmt: skip
+
+
 # --- rule 6: the demo-host overlay ---------------------------------------------------------------
 
 #: The names the demo host's infra/compose/.env was provisioned with (#3180, 2026-10-25).
@@ -676,6 +700,43 @@ def test_main_without_arguments_reads_every_compose_file_for_a_kek(
     assert "docker-compose.extra.yml: service 'api': environment CV_KEK_VALUE names a KEK" in (
         capsys.readouterr().err
     )
+
+
+def test_main_prints_each_overlay_secret_message_word_for_word(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CodeQL #2303's line: what `lint_compose.py <overlay>` prints, rule 6 then rule 5, for an
+    overlay whose secrets are wrong in each way the two rules read. Names, never a value."""
+    doc = _demo_host("secrets.cv_kek_hex", {"environment": "CV_KEK_HEX"})
+    doc["secrets"]["cv_audit_lane_key"] = {"file": "${CV_AUDIT_LANE_MAC_SOURCE:-/dev/null}"}
+    api, boot = doc["services"]["api"], doc["services"]["bootstrap-owner"]
+    api["secrets"] = [KEK_MOUNT | {"mode": 0o444}, {"source": "cv_kek_hex", "target": "cv_kek"}]
+    boot["secrets"] = [LANE_MOUNT]
+    path = tmp_path / "docker-compose.demo-host.yml"
+    path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    assert lint_compose.main([str(path)]) == 1
+    assert capsys.readouterr().err.splitlines() == [
+        f"lint_compose: docker-compose.demo-host.yml: {line}" for line in (
+            ("secret 'cv_kek_hex': the demo-host overlay declares only cv_kek and "
+             "cv_audit_lane_key, each a file secret"),
+            ("secret 'cv_audit_lane_key' is not file: ${CV_AUDIT_LANE_MAC_SOURCE:?...} (the host "
+             "file the operator's env file names, with no default, so an unset name fails "
+             "loudly)"),
+            ("service 'api': does not mount cv_kek once at /run/secrets/cv_kek, uid and gid "
+             "10001, mode 0400"),
+            ("service 'api': mounts a secret that is not cv_kek or the base file's lane key as "
+             "the base file mounts it, or two at one target"),
+            ("service 'bootstrap-owner': mounts a secret that is not cv_kek as the api mounts it, "
+             "or none: the CLI reads the KEK alone (no lane key)"),
+            ("secret 'cv_kek_hex': is named for a KEK, or reads a KEK variable, and is not a file "
+             "secret (file: alone); a KEK only ever comes from a host file "
+             "(docs/plan/spikes/e27-kek.md §3)"),
+            ("service 'api': mounts its KEK from secret 'cv_kek_hex', which this file does not "
+             "declare as a file secret (file: alone)"),
+            ("service 'bootstrap-owner': CV_KEK_HANDLE names a /run/secrets/ file this file does "
+             "not mount on it from a file secret or config it declares"),
+        )
+    ]  # fmt: skip
 
 
 def test_the_image_seeds_the_data_volume_for_its_runtime_user() -> None:
