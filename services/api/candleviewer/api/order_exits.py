@@ -38,14 +38,14 @@ A refusal the route makes from step 5 on is recorded through `OrderExits.deny`, 
 (`body`, `arm`, `key`, `replay`, `guard`), before it is answered (C-2.9), else `503
 audit_unavailable`; the service records its own (steps 4, 10 and 11). An `oms_not_ready` met
 after step 3, the runtime's stop begun or the order lane stopped or not answering within its bound
-(20 Sec.6.2) at step 4's scope read, step 9's run or step 11's exit, is step 3's answer
-(`not_ready`): counted, never audited or paged, and never logged as a refusal that escaped the
-exit service (`oms_exit_refusal_escaped`). Any other fault the exit service raises at step 4, or
-in step 11's task once the client left too, is `exit_fault`'s answer: every such `500` pages, one
-page for the fault's class (the orchestrator's ruling of 2026-10-25 02:50Z (2)). Every refusal is
-counted in `oms_exit_refused_total{operation,code}` as it is answered (ruling Q14), the unaudited
-ones and the faults included. No log line or problem carries the key, the fingerprint or the token
-(C-12.6).
+(20 Sec.6.2) at step 4's scope read, at a refusal's record from step 5 on, in that refusal's place,
+at step 9's run or at step 11's exit, is step 3's answer (`not_ready`): counted, never audited or
+paged, and never logged as a refusal that escaped the exit service (`oms_exit_refusal_escaped`).
+Any other fault the exit service raises at step 4, or in step 11's task once the client left too,
+is `exit_fault`'s answer: every such `500` pages, one page for the fault's class (the
+orchestrator's ruling of 2026-10-25 02:50Z (2)). Every refusal is counted in
+`oms_exit_refused_total{operation,code}` as it is answered (ruling Q14), the unaudited ones and the
+faults included. No log line or problem carries the key, the fingerprint or the token (C-12.6).
 """
 
 from __future__ import annotations
@@ -288,10 +288,16 @@ def make_order_exits_router(
         step: ExitStep, refusal: ExitOutcome,
     ) -> Response:  # fmt: skip
         """A refusal of steps 5 to 9, recorded through the exit service with its step before it is
-        answered (C-2.9): its problem, else `503 audit_unavailable`."""
-        outcome = await exits.deny(
-            row, operation, refusal, actor=caller.actor, request_id=caller.request_id, step=step
-        )
+        answered (C-2.9): its problem, else `503 audit_unavailable`. A record whose hop finds the
+        order lane stopped (`OmsNotReady`, 20 Sec.6.2) is `not_ready`'s answer in the refusal's
+        place, counted under `operation`, as at steps 4, 9 and 11: no record reaches that lane."""
+        try:
+            outcome = await exits.deny(
+                row, operation, refusal, actor=caller.actor, request_id=caller.request_id,
+                step=step,
+            )  # fmt: skip
+        except OmsNotReady:  # the lane stopped after step 4: unaudited, unpaged (24 Sec.8.4)
+            return not_ready(operation)
         return refused(operation, outcome)
 
     async def admit(
