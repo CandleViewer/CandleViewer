@@ -7,8 +7,8 @@ resolves it (same loader, same alias resolution, same set layering, checked agai
 (imported, not re-implemented); ΔE76, L* and the deuteranopia, protanopia and tritanopia
 projections are those of `docs/research/_tools/cvd_simulate.py`. It measures every pair the hi-fi
 spec (`docs/design/E42/E42-D04.md` §15) binds for SCR-135, SCR-136, SCR-145 and SCR-148, the
-follow-up pairs its verdicts point at (the high-contrast link aim, CG-24; the merged CMP-044
-Confirm) and its colour-vision pairs, then regenerates the numbers of §15's two tables (its
+follow-up pairs its verdicts point at (the high-contrast link aim, CG-24; D02 D3's confirm look,
+which the merged CMP-044 Confirm replaces) and its colour-vision pairs, then regenerates the numbers of §15's two tables (its
 Verdict column is hand-written; section D names each row's role) and the numbers §15 cites.
 
 Usage: python3 -I docs/design/_tools/e42_d04_admin_audit.py
@@ -459,11 +459,18 @@ PAIRS: list[Pair] = [
         "surface.overlay",
         "non-text",
     ),
-    # --- the danger confirm (§11; D02 D3's adopted look) ---
+    # --- the danger confirm (§11): CMP-044's merged Confirm, a CMP-001 `danger` (R-2, #4414) ---
     P(
-        "confirm.border",
-        "the danger confirm's `danger.strong` border vs the dialog",
-        "status.danger.strong",
+        "confirm.text",
+        "the merged CMP-044 Confirm: `text.on-action` on `danger.default`",
+        "text.on-action",
+        "status.danger.default",
+        "text",
+    ),
+    P(
+        "confirm.fill",
+        "the merged CMP-044 Confirm's `danger.default` fill vs the dialog",
+        "status.danger.default",
         "surface.overlay",
         "non-text",
     ),
@@ -527,11 +534,11 @@ PAIRS: list[Pair] = [
 ]
 
 # Follow-up pairs that no frame binds: the surfaces a link or a glyph could reach next (CG-24's
-# high-contrast link aim), the merged CMP-044 Confirm (#4414) beside D02 D3's look that §15
-# measures, and CMP-095's chip, which SCR-145 does not draw. Reported against the role's bar,
-# never gated. The CMP-044 pair is `15`'s merged text (origin/main 43d1145e6): Tokens "Confirm a
-# CMP-001 `danger` (`color.status.danger.default`, `color.text.on-action`)" on CMP-043's card
-# `color.surface.overlay`; D04 composes no CMP-138 (the 2026-10-25 R-1/R-2 rulings).
+# high-contrast link aim), D02 D3's confirm look, which the merged CMP-044 Confirm (#4414) replaces
+# in §15's gated matrix under the 2026-10-25 R-2 ruling (`15`'s Tokens "Confirm a CMP-001 `danger`
+# (`color.status.danger.default`, `color.text.on-action`)" on CMP-043's card
+# `color.surface.overlay`), and CMP-095's chip, which SCR-145 does not draw. Reported against the
+# role's bar, never gated. D04 composes no CMP-138 (R-1).
 FOLLOW_UPS: list[Pair] = [
     P("fu.link.raised", "a link on raised", "text.link", "surface.raised", "text"),
     P(
@@ -543,16 +550,9 @@ FOLLOW_UPS: list[Pair] = [
     ),
     P("fu.link.hover", "a link on a hovered row", "text.link", "surface.hover", "text"),
     P(
-        "fu.cmp044.text",
-        "merged CMP-044 Confirm: `text.on-action` on `danger.default`",
-        "text.on-action",
-        "status.danger.default",
-        "text",
-    ),
-    P(
-        "fu.cmp044.edge",
-        "merged CMP-044 Confirm fill vs the dialog",
-        "status.danger.default",
+        "fu.d02.confirm.border",
+        "D02 D3's confirm: its `danger.strong` border vs the dialog (§20's C-row)",
+        "status.danger.strong",
         "surface.overlay",
         "non-text",
     ),
@@ -765,8 +765,9 @@ CONTRAST_TABLE: list[TableRow] = [
         ["focus.raised", "focus.hover", "focus.selected", "focus.overlay"],
     ),
     R(
-        "confirm: text on `danger.subtle` · its border vs overlay",
-        ["incident.text", "confirm.border"],
+        "confirm (CMP-044's merged CMP-001 `danger`, R-2): `text.on-action` on "
+        "`danger.default` · the fill vs overlay",
+        ["confirm.text", "confirm.fill"],
     ),
     R(
         "T2 (§12.1): label and `lock` `text.tertiary` on raised · reason `text.secondary` on "
