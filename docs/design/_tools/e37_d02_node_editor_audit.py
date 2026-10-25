@@ -28,10 +28,11 @@ paired with its own stop clause (``place_order`` with the non-emptiable field, `
 ``sl.kept``; ``scale_in`` and the other four each with their read-only sentence verbatim); the
 four indicator words
 verbatim in the Word cell of their frame row and in the copy deck, and an ``Arm…`` class named
-on every frame row (the pre-PR lens's F-8 and F-1); (7) the structure counts
+on every frame row (the pre-PR lens's F-8 and F-1); S-graph's pinned wiring, every gate
+reaching the action through one root (the text approval's b-1); (7) the structure counts
 (``<!-- audit:NAME=VALUE -->`` markers).
 
-``--self-test [SPEC]`` runs the text reviews' 19 frame-level mutations of those elements on the
+``--self-test [SPEC]`` runs the text reviews' 20 frame-level mutations of those elements on the
 spec in memory (the file is never written): each must exit 1 with exactly one new FAIL, and the
 clean spec must exit 0 before and after.
 
@@ -715,6 +716,11 @@ GATES: dict[str, str] = {
     "A1: the native stop on every order-placing action node": (
         "every action node that places an order shows its native stop on the node card and in the "
         "inspector, as the merged texts have it"
+    ),
+    # The text approval's b-1: the second gate must reach the action, or S-graph is an orphan.
+    "S-graph: one root, no gate without an action": (
+        "the shared condition feeds `all of` input 1 and `any of` input 1, `any of` feeds `all of` "
+        "input 2 and `all of` feeds the action's `when` input"
     ),
 }
 RECOVERY = (
@@ -1566,6 +1572,12 @@ MUTATIONS: tuple[tuple[str, str, str], ...] = (
         "a trigger→root edge with another verb in the `editing` row",
         "| the full anatomy with S-form (§2);",
         "| the full anatomy with S-form (§2), the trigger feeding the root condition;",
+    ),
+    # The text approval's b-1: S-graph's second gate wired to nothing (the r2 script's orphan).
+    (
+        "S-graph's `any of` left without a path to the action",
+        "`any of` feeds `all of` input 2 and `all of` feeds the action's `when` input",
+        "`all of` feeds the action's `when` input",
     ),
 )
 
