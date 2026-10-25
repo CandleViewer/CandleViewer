@@ -84,13 +84,14 @@ class SaveTimeFigures:
 def _symbol(symbol: str, snap: CatalogueSnapshot | None, tickers: Tickers | None) -> SymbolFigures:
     instrument = None if snap is None else snap.get(symbol)
     tiers = None if snap is None else snap.risk_limit_tiers(symbol)
-    lowest = sorted(tiers, key=lambda t: t.risk_limit_value)[0] if tiers else None
+    lowest = min(tiers, key=lambda t: t.risk_limit_value) if tiers else None
     mmr = None if lowest is None else lowest.maintenance_margin_rate
     return SymbolFigures(instrument, _market(symbol, tickers), mmr)
 
 
 def _market(symbol: str, tickers: Tickers | None) -> SizingMarket:
-    """`ReferencePricesBinding._price`, kept as mid or last (the warning's `estimated` differs)."""
+    """`ReferencePricesBinding._price`, kept as mid or last (the warning's `estimated` differs);
+    unlike it, a last price at or below 0 gives none, as `SizingMarket` refuses it."""
     ticker = None if tickers is None or tickers.is_stale(symbol) else tickers.latest(symbol)
     if ticker is None:
         return SizingMarket()
