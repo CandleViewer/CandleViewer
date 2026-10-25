@@ -522,7 +522,7 @@ class FakeTradingPort:
                 ("trailing_stop_distance", req.trailing_distance),
             )
             if value is not None
-        }
+        } | {"updated_at": self._now_us()}
         self._positions = [
             p.model_copy(update=changes) if _position_key(p) == key else p for p in self._positions
         ]

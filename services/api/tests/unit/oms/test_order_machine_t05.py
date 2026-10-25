@@ -12,11 +12,20 @@ from typing import Any
 
 import pytest
 
-from candleviewer.oms.errors import OrderBufferFull, OrderStepUnknown, ReconcileAnomaly
+from candleviewer.domain.primitives import AccountId
+from candleviewer.oms.errors import (
+    IllegalTransition,
+    OrderBufferFull,
+    OrderStepUnknown,
+    ReconcileAnomaly,
+)
 from candleviewer.oms.order_machine import MAX_HELD, _Held
+from candleviewer.oms.ports import PositionKey
 from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.storage.repositories.orders import NewOrder
 from tests.unit.oms.order_rig import (
     ACCOUNT,
+    OTHER,
     READ_BACK,
     Rig,
     build_rig,
@@ -199,3 +208,97 @@ async def test_a_store_failure_re_hold_keeps_the_unbound_flag(
     with pytest.raises(OrderStepUnknown):
         await rig.facade._release(machine, held)
     assert [(h.refused, h.unbound) for h in machine.held] == [(1, True)]
+
+
+# --- The positions path's surface (E29-T05 S5a; 24 Sec.8.12 "Protection readings") --------------
+
+_LOST = {"updated_time": 200, "stop_loss": None, "size": "0.4"}
+_KEY = PositionKey(AccountId(ACCOUNT), "BTCUSDT", 0)
+_ETH = PositionKey(AccountId(ACCOUNT), "ETHUSDT", 0)
+
+
+async def _protected(rig: Rig, order: NewOrder) -> None:
+    """The order sent and part-filled: its stop attached, `sl_present`."""
+    await rig.submitted(order)
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, f"f{order.id.int}", "0.4"))
+    await rig.quiet()
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
+
+
+async def test_protecting_lists_an_order_by_its_account_symbol_and_position_idx_only(
+    rig: Rig,
+) -> None:
+    mine, hedge = order_of(1), order_of(2, position_idx=2)
+    other_symbol = order_of(3, symbol="ETHUSDT")
+    for order in (mine, hedge, other_symbol):
+        await _protected(rig, order)
+    assert rig.facade.protecting(_KEY) == (mine.id,)
+    assert rig.facade.protecting(PositionKey(AccountId(ACCOUNT), "BTCUSDT", 2)) == (hedge.id,)
+    assert rig.facade.protecting(_ETH) == (other_symbol.id,)
+    assert rig.facade.protecting(PositionKey(AccountId(OTHER), "BTCUSDT", 0)) == ()
+
+
+async def test_protecting_leaves_out_an_order_whose_protection_is_not_required(rig: Rig) -> None:
+    order = await rig.submitted()
+    assert rig.facade.state(order.id) == ("submitted", "not_required")
+    assert rig.facade.protecting(_KEY) == ()
+
+
+async def test_a_hydrated_order_keeps_its_position_idx(rig: Rig) -> None:
+    order = order_of(position_idx=2)
+    await _protected(rig, order)
+    again = await rig.restart()
+    try:
+        await again.facade.hydrate(ACCOUNT, order.id, environment="demo")
+        await again.quiet()
+        assert again.facade.protecting(PositionKey(AccountId(ACCOUNT), "BTCUSDT", 2)) == (order.id,)
+        assert again.facade.protecting(_KEY) == ()
+    finally:
+        await again.facade.stop()
+
+
+async def test_push_protection_records_the_reading_on_the_live_machine(rig: Rig) -> None:
+    """C-2.6: a lost stop reaches the order's own machine, which leaves `sl_present`."""
+    order = order_of()
+    await _protected(rig, order)
+    assert await rig.facade.push_protection(ACCOUNT, order.id, "SL_LOST", _LOST) is True
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_missing")
+
+
+async def test_push_protection_for_no_machine_answers_false_and_records_nothing(
+    rig: Rig,
+) -> None:
+    order = order_of()
+    assert await rig.facade.push_protection(ACCOUNT, order.id, "SL_LOST", _LOST) is False
+    assert rig.notices.got == [] and rig.audit.records == []
+
+
+async def test_push_protection_for_an_unprotected_order_answers_false(rig: Rig) -> None:
+    order = await rig.submitted()
+    assert await rig.facade.push_protection(ACCOUNT, order.id, "SL_LOST", _LOST) is False
+    assert rig.facade.state(order.id) == ("submitted", "not_required")
+
+
+@pytest.mark.parametrize("event", ["SL_DEADLINE", "EXEC", "nope"])
+async def test_push_protection_refuses_any_other_event_before_a_read(rig: Rig, event: str) -> None:
+    order = order_of()
+    await _protected(rig, order)
+    with pytest.raises(IllegalTransition):
+        await rig.facade.push_protection(ACCOUNT, order.id, event, _LOST)
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
+
+
+async def test_a_reading_pushed_during_a_resync_is_taken_by_the_successor(rig: Rig) -> None:
+    order = order_of()
+    await _protected(rig, order)
+    old = rig.facade._orders[order.id]
+    async with rig.facade._holding(old):
+        waiting = asyncio.create_task(
+            rig.facade.push_protection(ACCOUNT, order.id, "SL_LOST", _LOST)
+        )
+        for _ in range(8):
+            await asyncio.sleep(0)
+        await rig.facade._resync(old)
+    assert await asyncio.wait_for(waiting, 5) is True
+    assert rig.facade._orders[order.id] is not old
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_missing")

@@ -704,7 +704,8 @@ async def test_a_late_release_audit_is_not_durable() -> None:
             ACCOUNT, STOP.id, SUCCESSOR, "x-1", at=T0, write_ahead=_released
         )
     assert late.hooks == [_released] and logs == []
-    assert err.value.__cause__ is None and not isinstance(err.value, TimeoutError)
+    assert err.value.__cause__ is None and err.value.__suppress_context__ is True
+    assert not isinstance(err.value, TimeoutError)
 
 
 async def test_a_release_with_no_audit_reaches_no_store() -> None:
