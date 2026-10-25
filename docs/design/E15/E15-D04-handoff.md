@@ -131,7 +131,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] Canvas / WebGL-adjacent: the dock never remounts a GL context; the ghost is never a canvas (spec §16).
 - [x] Motion-safe / motion-reduce pair specified for every transition (Table 4; durations E15-D14's).
 - [x] Hit targets ≥24 px in compact and comfortable; no essential exception.
-- [ ] Accessibility role sign-off — the owner's `approved` comment, pending; E15-D15's screen-reader pass of the target model (OQ-S).
+- [ ] Accessibility role sign-off — the owner's `approved` comment, pending; E15-D15's screen-reader pass of the target model (OQ-S) and of the MoveModeBar's hidden visible lines (spec D04-D-8's gap: the instruction and `Esc: cancel` out of the accessibility tree, AN-1 naming no key).
 - [x] Confirm-gate variant stated: none — no SCR-021 operation is destructive without Undo (Close is undone from the toast and the menu, E15-D02 A-22); a drop never writes.
 - [x] Every heuristic / estimated value is chip-tagged — none on SCR-021.
 - [x] Demo / Live context unambiguous: the env badge on every order-capable header, tray tab and compact summary line; a maximised panel keeps the TopBar and its own header's badge (spec §7).
