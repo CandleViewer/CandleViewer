@@ -1550,6 +1550,12 @@ _DECIMAL: Final = r"^-?[0-9]{1,20}(\.[0-9]{1,18})?$"  # the guards re-check with
 _TEXT: Final = {"type": "string", "minLength": 1, "maxLength": MAX_TEXT}
 _MONEY_TEXT: Final = {"type": "string", "pattern": _DECIMAL}
 _MONEY_OR_NULL: Final = {"type": ["string", "null"], "pattern": _DECIMAL}
+#: A row id as `str(UUID)` writes it: a recorded stop's that a `MATERIALISED` binds (24 Sec.8.3
+#: rule 7), named in the step's records beside the exchange order id it binds (C-2.9).
+_UUID: Final = {
+    "type": "string",
+    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+}
 #: Exchange times since the epoch, up to the last instant a `datetime` holds (OM-T04): an order
 #: push's or a reading's `updated_time` in ms, an execution's `ts_exec` and `ts_ingest` in µs, so
 #: the step writer's conversion never overflows; an execution's `seq` is a bigint.
@@ -1625,7 +1631,9 @@ SCHEMAS: Final[dict[str, dict[str, Any]]] = {
     "FAULT": _closed(reason=_TEXT, exec_id=_TEXT),
     "FIRST_FILL": _closed(),
     "KILL": _REASON,
-    "MATERIALISED": _closed(order=_ORDER, pass_id=_TEXT, source=_MATERIALISED_BY),
+    "MATERIALISED": _closed(
+        order=_ORDER, pass_id=_TEXT, source=_MATERIALISED_BY, recorded_stop_id=_UUID
+    ),
     "MISMATCH": _closed(exchange_order_id=_TEXT, pass_id=_TEXT),
     "OPERATOR_RESOLVED": _closed(decided_by=_TEXT, reason=_TEXT),
     "RECON_FOUND_CANCELLED": _FOUND,

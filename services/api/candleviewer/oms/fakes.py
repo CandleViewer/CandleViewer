@@ -387,11 +387,20 @@ class InMemoryOrderStore:
         lost connection cut off (`orders.py`), which a retry then meets."""
         self._fault = (error, committed)
 
-    async def create(self, order: port.NewOrder, first_event: NewEvent) -> Row:
+    async def create(
+        self,
+        order: port.NewOrder,
+        first_event: NewEvent,
+        *,
+        binds: port.RecordedStopBind | None = None,
+    ) -> Row:
         await self._turn()
         port.require_exchange_record(first_event)
+        if binds is not None:
+            port.require_bindable(order, binds)
         row, event = self._new_order(order, first_event)
-        self._commit_rows(row, event)
+        bound = () if binds is None else (self._first_bind(order, binds),)
+        self._commit_rows(row, event, *bound)
         return row
 
     async def transition(self, step: port.OrderTransition) -> Step:
@@ -651,6 +660,27 @@ class InMemoryOrderStore:
         if order.parent_order_id is not None and order.parent_order_id not in self._orders:
             raise port.OrderConstraintError("orders_parent_order_id_fkey")  # at the statement end
         return row, event
+
+    def _first_bind(self, order: port.NewOrder, binds: port.RecordedStopBind) -> RecordedStopRow:
+        """The record's first bind after its order's insert, uncommitted
+        (`orders_sqlalchemy.first_bind_statement`), or `RecordedStopNotBindable`: the account's
+        record of the order's key and side, live, unbound and never released, while no row of the
+        account holds the order's id."""
+        stop = self._stops.get(binds.record_id)
+        key = (order.exchange_account_id, order.symbol, order.position_idx, binds.kind)
+        holds = (order.exchange_account_id, order.exchange_order_id)
+        if (
+            stop is None
+            or (stop.exchange_account_id, stop.symbol, stop.position_idx, stop.kind) != key
+            or stop.status not in LIVE_STOP_STATUSES
+            or stop.exchange_order_id is not None
+            or stop.released_at is not None
+            or any(
+                (r.exchange_account_id, r.exchange_order_id) == holds for r in self._stops.values()
+            )
+        ):
+            raise RecordedStopNotBindable
+        return replace(stop, exchange_order_id=order.exchange_order_id)
 
     def _entry_stops(self, step: port.OrderTransition, order: Row) -> list[RecordedStopRow]:
         """The step's settle of its entry's pending attach rows, after its update and a fill's

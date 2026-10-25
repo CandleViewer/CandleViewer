@@ -82,6 +82,7 @@ from candleviewer.storage.repositories.orders import (
     OrderEventRow,
     OrderRow,
     OrderStoreError,
+    RecordedStopBind,
     StaleOrderState,
 )
 from candleviewer.storage.repositories.submissions import FirstPersist
@@ -683,19 +684,28 @@ class OrderMachines:
         return await self._first(order, environment, "DISCOVERED", payload)
 
     async def materialise(
-        self, order: NewOrder, *, environment: str, pass_id: str | None = None
+        self,
+        order: NewOrder,
+        *,
+        environment: str,
+        pass_id: str | None = None,
+        binds: RecordedStopBind | None = None,
     ) -> str:
         """The TP/SL order of a stop the OMS recorded has appeared, matched by E29-T05's private
         stream or E29-T06's reconciler (24 Sec.8.3 rule 7, Sec.8.8 rule 6): build its machine and
         record `MATERIALISED`, which writes its `submitted` row bound to the order's exchange id
-        and sends nothing. With a *pass_id* reconciliation materialised it, which its first row
-        records as its source. Its fills apply as a live order's do; it is reduce-only, so they
-        start no stop (INV-B1-o); and a KILL never cancels it (C-2.6)."""
+        and sends nothing. With *binds*, the matched record binds that id in the same transaction
+        (`OrderStore.create`), and the step's records name it (`recorded_stop_id`) beside the id.
+        With a *pass_id* reconciliation materialised it, which its first row records as its
+        source. Its fills apply as a live order's do; it is reduce-only, so they start no stop
+        (INV-B1-o); and a KILL never cancels it (C-2.6)."""
         fields = _order_fields(order) | {"exchange_order_id": order.exchange_order_id}
         payload: dict[str, Any] = {"order": fields}
         if pass_id is not None:
             payload |= {"pass_id": pass_id, "source": "reconcile"}
-        return await self._first(order, environment, "MATERIALISED", payload)
+        if binds is not None:
+            payload["recorded_stop_id"] = str(binds.record_id)
+        return await self._first(order, environment, "MATERIALISED", payload, binds=binds)
 
     async def hydrate(self, account_id: UUID, order_id: UUID, *, environment: str) -> str:
         """After a restart (A7), the order's machine from its `order_events` (24 Sec.8.2
@@ -1041,6 +1051,7 @@ class OrderMachines:
         payload: Mapping[str, Any],
         *,
         first: FirstPersist | None = None,
+        binds: RecordedStopBind | None = None,
     ) -> str:
         """Build the order's machine and send its first event. A machine whose first step was
         refused is dropped again, so a refused order leaves nothing behind (S7); one whose first
@@ -1053,7 +1064,7 @@ class OrderMachines:
             event,
             position_idx=order.position_idx,
         )
-        self._ports.steps.expect(order, first=first)
+        self._ports.steps.expect(order, first=first, binds=binds)
         try:
             async with self._holding(o):
                 try:
