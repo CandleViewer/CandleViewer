@@ -113,13 +113,13 @@ async def test_a_kek_rotation_refusal_is_stored_as_denied_at_warning() -> None:
 @pytest.mark.parametrize(
     "action", ["security.kek_loaded", "security.kek_enrolled", "security.kek_rows_stranded"]
 )
-def test_a_kek_boot_record_is_stored_without_its_kek_version(action: str) -> None:
-    """Pins today's behaviour (#3577): the redactor drops every field named `*kek*`, so a boot
-    record keeps its environment and count but not the KEK version. Change this test when the
-    redactor keeps `kek_version`."""
+def test_a_kek_boot_record_keeps_its_kek_version(action: str) -> None:
+    """#4535 (was #3577's pin): the redactor keeps `kek_version`, a reviewed metadata name holding
+    a version number, so a boot record says which KEK it is about; its environment and count stay
+    as they were."""
     fields = {"env": "demo", "kek_version": "2", "stranded": "1"}
     stored = secrets_audit_row("demo")(action, fields)["after_state"]
-    assert stored == {**fields, "kek_version": REDACTION_MARKER}
+    assert stored == fields
 
 
 #: #889 (ADR-0039 decision 7): a signing key's record, which names its `key_id`.

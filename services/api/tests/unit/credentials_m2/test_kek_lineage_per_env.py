@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from cryptography.exceptions import InvalidTag
 
+from candleviewer.audit.redact import redact
 from candleviewer.observability.health import HealthStatus
 from candleviewer.secrets import _envelope as env
 from candleviewer.secrets.errors import CredentialUnavailable
@@ -266,3 +267,14 @@ async def test_legacy_v1_wrap_fails_closed_in_the_boot_trial_unwrap() -> None:
     del store.kcvs[("demo", 1)]  # rows at version 1 and no KCV: the trial unwrap decides
     svc, _ = await _start(store, "demo", _Src(KEK_V1, 1))  # the right KEK
     assert svc.health().detail == "kek_mismatch" and await _lineages(store) == []
+
+
+async def test_the_enrolment_record_keeps_its_kek_version_after_redaction() -> None:
+    """#4535: the audit writer redacts `after_state`; the enrolled version must survive it."""
+    store = InMemoryCredentialStore()
+    await _start(store, "demo", _Src(KEK_V1, 1))
+    action, fields = store.kcv_audit[-1]
+    after_state = redact(fields)
+    assert action == "security.kek_enrolled" and after_state is not None
+    assert after_state["kek_version"] == "1"
+    assert after_state["kcv"] == kek(KEK_V1, 1).kcv().hex()
