@@ -91,6 +91,7 @@ FOREIGN = uuid.UUID("00000000-0000-4000-8000-00000000000b")  # an account nobody
 #: E27-X03 (#902): an account id no store and no grant knows, beside A and B (`account_scope`).
 ABSENT = uuid.UUID("00000000-0000-4000-8000-00000000000c")
 SCOPE_KEY_ID = "00000000-0000-4000-8000-0000000000dd"  # the `{keyId}` of the account-scope cells
+SCOPE_PROFILE_ID = "00000000-0000-4000-8000-0000000000de"  # and their `{profileId}`
 #: The three roles of the `account_scope` cells; its viewer holds a grant on A (`_Resolver.extra`).
 SCOPE_ACTOR = {"owner": "owner", "manager": "manager_with_grant", "viewer": "viewer"}
 _USER_IDS = {a: uuid.uuid5(uuid.NAMESPACE_URL, f"cv-rbac-matrix/{a}") for a in ACTORS[:4]}
@@ -850,18 +851,24 @@ def record_cell(group: str, key: str, actor: str, outcome: str, started: float) 
     CELLS[f"{key}|{actor}"] = outcome
 
 
+def grant_viewer_a(world: World) -> None:
+    """The `account_scope` viewer holds a grant on A (the matrix's viewer column), for this test
+    only: the fixture clears `_Resolver.extra`. Called for a viewer cell, never otherwise."""
+    world.resolver.extra["viewer"] = (GRANTED,)
+
+
 def scope_request(
     world: World, key: str, req: dict[str, Any], role: str, account: uuid.UUID
 ) -> Any:
     """One `account_scope` cell (E27-X03, #902): `key` as `role` on `account`, with the row's
-    `request` (body, headers). The viewer is granted A for the cell, as the matrix says."""
-    world.resolver.extra["viewer"] = (GRANTED,)
+    `request` (body, headers). A viewer cell needs `grant_viewer_a(world)` first."""
     method, path = key.split(" ", 1)
     assert "{positionId}" not in path, f"{key}: seed a position per situation before executing it"
     body = req.get("json")
+    ids = {"accountId": str(account), "keyId": SCOPE_KEY_ID, "profileId": SCOPE_PROFILE_ID}
     return world.client.request(
         method,
-        fill_path(path, {"accountId": str(account), "keyId": SCOPE_KEY_ID}),
+        fill_path(path, ids),
         json=body if body is not None else ({} if method in ("POST", "PUT", "PATCH") else None),
         headers={**bearer(SCOPE_ACTOR[role]), **req.get("headers", {})},
     )
