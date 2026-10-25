@@ -46,6 +46,11 @@ from candleviewer.oms.errors import (
 from candleviewer.oms.fakes import InMemorySubmissionStore
 from candleviewer.oms.ports import RequestRecord, SubmitActor
 from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.statechart.gateway import (
+    GatewayDegradedError,
+    GatewayError,
+    GatewayOverloadedError,
+)
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import (
@@ -558,7 +563,8 @@ async def test_every_fault_the_exit_service_raises_is_a_500_paged_once(
     """The orchestrator's ruling of 2026-10-25 02:50Z (2): a fault the exit service raises, which
     no outcome answers, is the redacted `500 internal_error` (22 `InternalError`), paged once by
     its class alone, never its text: a row that pages with its own page and no other, any other
-    fault through the shared renderer's (`exit_fault`); counted once (ruling Q14)."""
+    fault through the shared renderer's (`exit_fault`); counted once (ruling Q14). Its failure is
+    recorded beside the cancel's intent, by its class (SEC-S4D2A-03)."""
     world, machines, row, _ = await scripted_world()
     machines.refuse = error
     answer = await delete(world, row.id)
@@ -567,6 +573,33 @@ async def test_every_fault_the_exit_service_raises_is_a_500_paged_once(
     assert (answer.status_code, body["code"], set(body)) == (500, "internal_error", _REDACTED)
     assert world.pages == [page] and world.refused("internal_error") == 1
     assert str(error) not in answer.text and machines.sent == []
+    assert world.actions() == [(_DENIED, "user"), (_DENIED, type(error).__name__)]
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    [GatewayOverloadedError("order:x", "order"), GatewayDegradedError("order:x", "order")],
+    ids=["inbox-full", "degraded"],
+)
+async def test_a_cancel_the_gateway_refuses_is_503_with_retry_after_recorded_and_unpaged(
+    refusal: GatewayError,
+) -> None:
+    """SEC-S4D2A-01 (the Fable lens at 38bfb62e): backpressure at the order's gateway, its inbox
+    full or its admission refused, is no fault: `503 oms_not_ready` with its `Retry-After`, the
+    refusal recorded beside the intent (C-2.9) and counted once (ruling Q14), no exit page (the
+    gateway pages its own, C-2.18) and nothing sent."""
+    world, machines, row, _ = await scripted_world()
+    machines.refuse = refusal
+    answer = await delete(world, row.id)
+    body, retry = answer.json(), OMS_NOT_READY_RETRY_AFTER_S
+    _PROBLEM.validate(body)
+    assert (answer.status_code, body["code"], body.get("retry_after_seconds")) == (
+        503, "oms_not_ready", retry,
+    )  # fmt: skip
+    assert answer.headers["retry-after"] == str(retry)
+    assert (world.pages, machines.sent) == ([], [])
+    assert world.actions() == [(_DENIED, "user"), (_DENIED, "oms_not_ready")]
+    assert (world.refused("oms_not_ready"), world.refused("internal_error")) == (1, 0)
 
 
 async def test_a_second_fault_of_a_class_pages_the_same_page_again() -> None:

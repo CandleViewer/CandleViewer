@@ -37,6 +37,7 @@ from candleviewer.oms.exits import ExitCaller, ExitDeps, ExitOutcome, InFlightGu
 from candleviewer.oms.ports import InterimStopResolver, RequestRecord, SubmitActor
 from candleviewer.oms.validator import Validator
 from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.statechart.gateway import GatewayDegradedError, GatewayOverloadedError
 from candleviewer.statechart.persistence import DegradedLatchError
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
@@ -613,16 +614,19 @@ async def test_a_cancel_whose_intent_cannot_be_recorded_is_503_and_sends_nothing
         (IllegalTransition("held", "CANCEL"), 409, "conflict"),
         (OrderNotLoaded("no machine in this process holds the order"), 409, "conflict"),
         (DegradedLatchError("latched"), 409, "conflict"),
+        (GatewayOverloadedError("order:x", "order"), 503, "oms_not_ready"),
+        (GatewayDegradedError("order:x", "order"), 503, "oms_not_ready"),
     ],
-    ids=["version", "step-refused", "illegal", "not-loaded", "latched"],
+    ids=["version", "step-refused", "illegal", "not-loaded", "latched", "inbox-full", "degraded"],
 )
 async def test_a_command_the_facade_did_not_take_is_refused_and_its_watch_forgotten(
     error: BaseException, status: int, code: str
 ) -> None:
     """`_taken_not`: a stale version, which no client's `If-Match` named (409 `conflict`, never
     412: SEC-S4C2B-01), a step the store refused (503, the shared retry), a state the order no
-    longer takes it in, an order not loaded or a latched machine (409, CV-C63): nothing sent, the
-    watch forgotten (it answers None), the refusal recorded beside the intent."""
+    longer takes it in, an order not loaded or a latched machine (409, CV-C63), or the gateway's
+    backpressure, its inbox full or its admission refused (503 `oms_not_ready`, SEC-S4D2A-01):
+    nothing sent, the watch forgotten (it answers None), the refusal recorded beside the intent."""
     exits, machines, row, port = await scripted("submitted")
     machines.refuse = error
     got = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
@@ -647,15 +651,65 @@ async def test_a_step_whose_outcome_is_not_known_answers_the_order_as_it_stands(
 
 async def test_an_unlisted_raise_forgets_the_watch_and_is_raised_and_logged_once() -> None:
     """A defect at the facade: the watch forgotten, the raise the caller's, the exit's task
-    logged failed once as it ends (`_ended`); only the intent was recorded."""
+    logged failed once as it ends (`_ended`); beside the intent, its failure recorded by the
+    raise's class (SEC-S4D2A-03)."""
     exits, machines, row, port = await scripted("submitted")
     machines.refuse = RuntimeError("a defect")
     with capture_logs() as logs, pytest.raises(RuntimeError, match="a defect"):
         await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
     assert machines.sent == [] and await forgotten(machines) and exits._running == set()
-    assert written(port) == [("success", "user")]
+    assert written(port) == [("success", "user"), ("failure", "RuntimeError")]
     failed = [(log["event"], log["failure"]) for log in logs if log["log_level"] == "error"]
     assert failed == [("oms_exit_task_failed", "RuntimeError")]
+
+
+async def test_a_raise_after_the_intent_records_its_failure_by_class_then_goes_on() -> None:
+    """SEC-S4D2A-03 (the Fable lens at 38bfb62e): a raise once the intent was written leaves no
+    `success` alone (C-2.9). Here B1 took the cancel and its settle raised: the failure is recorded
+    beside the intent, best effort, `orders.cancel` with outcome `failure` and the raise's class
+    as its reason, never its text, an error naming the principal and the request; then the raise
+    goes on as it was."""
+    text = "a defect naming order 0a000000-0000-4000-8000-000000000003"
+    exits, machines, row, port = await scripted("submitted", RuntimeError(text))
+    with pytest.raises(RuntimeError) as raised:
+        await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=REQUEST)
+    assert str(raised.value) == text and machines.sent == ["CANCEL"]
+    records = [record for record, _ in port.audits.written if isinstance(record, RequestRecord)]
+    [intent, failed] = records
+    assert (intent.outcome, intent.reason) == ("success", "user")
+    assert (failed.action, failed.outcome, failed.reason, failed.severity) == (
+        "orders.cancel", "failure", "RuntimeError", "error",
+    )  # fmt: skip
+    assert (failed.actor, failed.request_id, failed.object_id) == (actor(), REQUEST, row.id)
+    assert failed.detail == {"operation": "cancel", "code": None, "state": None}
+    assert text not in repr(failed)
+
+
+_UNRECORDED = "oms_exit_unrecorded"
+
+
+async def test_a_failure_that_cannot_be_recorded_never_masks_the_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-S4D2A-03: the failure's record is best effort. One that does not land is logged
+    (`oms_exit_unrecorded`), and the raise goes on as it was, never replaced by the record's."""
+    exits, machines, row, port = await scripted("submitted")
+    machines.refuse = ValueError("a defect")
+    refuse_after(port.audits, 1, monkeypatch)
+    with capture_logs() as logs, pytest.raises(ValueError, match="a defect"):
+        await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert written(port) == [("success", "user")] and exits._running == set()
+    lost = [(line["action"], line["failure"]) for line in logs if line["event"] == _UNRECORDED]
+    assert lost == [("orders.cancel", "RuntimeError")]
+
+
+async def test_a_cancellation_after_the_intent_is_no_failure_and_records_none() -> None:
+    """SEC-S4D2A-03: a cancellation is no fault: it goes on, nothing recorded beside the intent."""
+    exits, machines, row, port = await scripted("submitted")
+    machines.refuse = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert written(port) == [("success", "user")] and exits._running == set()
 
 
 async def test_a_stored_row_that_cannot_be_read_is_503_and_nothing_is_sent() -> None:

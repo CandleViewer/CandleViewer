@@ -1,31 +1,39 @@
 """The exit service's amend (E29-T04 slice 4, `oms.exits`; 22 `amendOrder`; rulings Q3 to Q5 and
 Q10, the S4-A decisions D1 and D3, SEC-S4C2B-01, the orchestrator's ruling of 2026-10-25 00:27Z
-(1) and the code lens's CR-S4D2A-01 and -09): over the real B1 facade, the real command port and
-the fake venue (`submit_rig`), the rig's limit buy entry resting `submitted` (0.010 at 60000, its
-stop 58000 and its take-profit 64000, Full mode, unfilled)."""
+(1), the code lens's CR-S4D2A-01 and -09, and the Fable lens's SEC-S4D2A-01 and -03): over the
+real B1 facade, the real command port and the fake venue (`submit_rig`), the rig's limit buy entry
+resting `submitted` (0.010 at 60000, its stop 58000 and its take-profit 64000, Full mode,
+unfilled)."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+import json
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import fields
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
+from fastapi.responses import Response
 
 from candleviewer.api.order_etag import NO_VERSION
+from candleviewer.api.order_exits_common import exit_fault, exit_response, run_claimed
 from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.exchange.base.fakes import FakeReject
 from candleviewer.oms.errors import (
+    OMS_NOT_READY_RETRY_AFTER_S,
     AccountScopeDenied,
     IllegalTransition,
     TradingDisabled,
     VersionConflict,
 )
-from candleviewer.oms.exits import AmendTerms, ExitCaller, risk_increasing
+from candleviewer.oms.exits import AmendTerms, ExitCaller, ExitOutcome, OrderExits, risk_increasing
 from candleviewer.oms.ports import RequestRecord, StopOffset
 from candleviewer.risk.models import RiskDecision, RiskRefusal
+from candleviewer.statechart.gateway import GatewayDegradedError, GatewayOverloadedError
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import OrderRow, ScopedOrder
@@ -810,3 +818,104 @@ async def test_an_amend_scoped_before_a_step_is_judged_on_the_row_the_step_left(
     assert tuple(e.rule for e in got.errors) == rules
     assert len(amends(rig)) == sent and len(rig.store._stops) == stops
     assert requests(rig, "orders.amend")[before:] == [("denied", code)]
+
+
+# --- SEC-S4D2A-01 and -03: the gateway's backpressure, and a raise once the intent was written --
+
+
+class _Pages:
+    """A recording pager: each page's summary, in order."""
+
+    def __init__(self) -> None:
+        self.pages: list[str] = []
+
+    def raise_alert(self, severity: str, summary: str, *, machine_kind: str) -> None:
+        self.pages.append(summary)
+
+
+def refused_at_the_gateway(
+    rig: SubmitRig,
+    refusal: type[GatewayOverloadedError | GatewayDegradedError],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The order's gateway (`statechart.gateway`) refuses each `AMEND` as `refusal`, its inbox
+    full or its admission refused, so nothing reaches the machine; any other event goes on."""
+    gateway = rig.machines._gateway
+    send = gateway.send
+
+    async def refusing(key: str, event: Any, *, wait: bool = False) -> Any:
+        if isinstance(event, Mapping) and event.get("type") == "AMEND":
+            raise refusal(key, "order")
+        return await send(key, event, wait=wait)
+
+    monkeypatch.setattr(gateway, "send", refusing)
+
+
+async def routed(
+    exits: OrderExits, found: ScopedOrder, terms: AmendTerms, pager: _Pages
+) -> Response:
+    """The amend as the exit routes run it (`api.order_exits_common`): claimed and run as the
+    runtime's task (`run_claimed`), its outcome rendered by `exit_response`, and a fault it raises
+    by `exit_fault`, paging on `pager`."""
+
+    async def amend() -> Response:
+        outcome = await exits.amend(found, terms, caller=CALLER, expected_seq=None)
+        return exit_response(outcome, found, "demo")
+
+    async def unclaimed(_outcome: ExitOutcome) -> Response:
+        raise AssertionError("the key is this request's own")
+
+    runtime = SimpleNamespace(exits=exits, run=asyncio.ensure_future)
+    return await run_claimed(
+        runtime, OWNER, "amend", uuid4(), amend, refused=unclaimed,
+        faulted=lambda error: exit_fault(error, pager=pager)[1],
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "refusal", [GatewayOverloadedError, GatewayDegradedError], ids=["inbox-full", "degraded"]
+)
+async def test_an_amend_the_gateway_refuses_is_503_with_retry_after_recorded_and_unpaged(
+    rig: SubmitRig,
+    refusal: type[GatewayOverloadedError | GatewayDegradedError],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-S4D2A-01 (the Fable lens at 38bfb62e): the order's gateway refusing the `AMEND` for
+    backpressure is no fault. Run as the exit routes run it, the answer is `503 oms_not_ready`
+    with its `Retry-After`, the refusal recorded beside the intent (C-2.9), no exit page (the
+    gateway pages its own, C-2.18) and nothing sent, the order live on its terms."""
+    found, exits, pager = await scoped(rig), exits_of(rig), _Pages()
+    stops = len(rig.store._stops)
+    refused_at_the_gateway(rig, refusal, monkeypatch)
+    answer = await routed(exits, found, AmendTerms(price=D("60100")), pager)
+    body, retry = json.loads(bytes(answer.body)), OMS_NOT_READY_RETRY_AFTER_S
+    assert (answer.status_code, body["code"], body.get("retry_after_seconds")) == (
+        503, "oms_not_ready", retry,
+    )  # fmt: skip
+    assert answer.headers["retry-after"] == str(retry) and pager.pages == []
+    assert requests(rig, "orders.amend") == [("success", "user"), ("denied", "oms_not_ready")]
+    assert amends(rig) == [] and len(rig.store._stops) == stops
+    assert rig.machines.state(found.order.id) == ("submitted", "not_required")
+
+
+async def test_an_amend_that_raises_after_its_intent_records_its_failure_then_goes_on(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SEC-S4D2A-03 (the Fable lens at 38bfb62e): a raise once the amend's intent was written
+    leaves no `success` alone (C-2.9): `orders.amend` with outcome `failure` and the raise's class
+    as its reason, an error naming the principal and the request, is recorded beside it, best
+    effort; then the raise goes on as it was, nothing sent."""
+    found, exits = await scoped(rig), exits_of(rig)
+
+    async def faulty(*_args: Any, **_kwargs: Any) -> str:
+        raise RuntimeError("a defect at the facade")
+
+    monkeypatch.setattr(rig.machines, "command", faulty)
+    with pytest.raises(RuntimeError, match="a defect at the facade"):
+        await exits.amend(found, AmendTerms(price=D("60100")), caller=TRACED, expected_seq=None)
+    assert requests(rig, "orders.amend") == [("success", "user"), ("failure", "RuntimeError")]
+    failed = rig.records("orders.amend")[-1]
+    assert isinstance(failed, RequestRecord)
+    assert (failed.severity, failed.actor, failed.request_id) == ("error", TRACED.actor, REQUEST)
+    assert failed.detail == {"operation": "amend", "code": None, "state": None}
+    assert amends(rig) == []

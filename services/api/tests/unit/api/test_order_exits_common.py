@@ -2,8 +2,9 @@
 orchestrator's ruling of 2026-10-24 19:43Z): `exit_caller`, `run_claimed`'s in-flight guard around
 the exit's run (24 Sec.8.4 steps 9 and 11) on the real `InFlightGuard`, the runtime a fake that
 tracks the run as `OmsRuntime.run` does, and `exit_fault`, the shared renderer's answer to a fault,
-each exit `500` paged (the ruling of 2026-10-25 02:50Z (2)). Nothing sleeps: an exit is held open
-on an event."""
+each exit `500` paged (the ruling of 2026-10-25 02:50Z (2)), with the Fable lens's SEC-S4D2A-02
+and -04 (a refusal raised past the exit service, logged; a fault's answer that raises, the last
+resort's `500`). Nothing sleeps: an exit is held open on an event."""
 
 from __future__ import annotations
 
@@ -30,10 +31,13 @@ from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.observability.context import bind_context
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.errors import (
+    OmsError,
     OmsNotReady,
     OrderHistoryRefused,
     OrderMachinesFull,
+    OrderNotFound,
     StoreUnavailable,
+    problem_for,
 )
 from candleviewer.oms.exits import ExitOutcome, InFlightGuard
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
@@ -350,6 +354,36 @@ def test_a_refusal_raised_as_an_error_is_its_rows_problem_and_pages_nothing() ->
     assert json.loads(bytes(answer.body))["code"] == "store_unavailable"
 
 
+@pytest.mark.parametrize(
+    ("error", "escaped"),
+    [
+        (StoreUnavailable(), True),
+        (OrderNotFound(), True),
+        (OrderMachinesFull(_TEXT), False),
+        (OrderHistoryRefused(_TEXT), False),
+        (RuntimeError(_TEXT), False),
+    ],
+    ids=["a-503-row", "a-4xx-row", "a-row-that-pages", "no-row", "no-oms-error"],
+)
+def test_a_refusal_raised_past_the_exit_service_is_logged_by_its_class_alone(
+    error: Exception, escaped: bool
+) -> None:
+    """SEC-S4D2A-02 (the Fable lens at 38bfb62e): the exit service answers each refusal as an
+    outcome it records, so an `OmsError` whose row is a 4xx or a 503, raised past it, is its row's
+    problem, unaudited and unpaged: it is logged, `oms_exit_refusal_escaped`, a warning naming its
+    class alone (never its text or its traceback), so it is told apart from a refusal the service
+    recorded. A fault whose `500` pages, by its row or by `exit_fault`, is no escaped refusal."""
+    with capture_logs() as logs:
+        _, answer = common.exit_fault(error, pager=_Pager())
+    lines = [line for line in logs if line["event"] == "oms_exit_refusal_escaped"]
+    if not escaped:
+        assert answer.status_code == 500 and lines == []
+        return
+    assert isinstance(error, OmsError) and answer.status_code == problem_for(error).status
+    named = {"event": "oms_exit_refusal_escaped", "failure": type(error).__name__}
+    assert lines == [named | {"log_level": "warning"}]
+
+
 def test_a_second_fault_of_a_class_pages_the_same_page_for_the_pager_to_fold() -> None:
     """One page for the class: a fault's page is the key and its class alone, the same for every
     fault of the class whatever its text, so the pager's alerting folds a repeat into the page it
@@ -375,3 +409,28 @@ def test_a_fault_is_logged_with_its_traceback_and_a_failing_pager_never_the_answ
     assert [(line["summary"], line["failure"]) for line in failed] == [
         (f"{common.EXIT_FAULT_PAGE}:RuntimeError", "RuntimeError"),
     ]
+
+
+async def test_a_faults_answer_that_raises_is_the_last_resorts_500_paged_by_class() -> None:
+    """SEC-S4D2A-04 (the Fable lens at 38bfb62e): `faulted`, the route's answer to a fault, that
+    raises too leaves no task unanswered: the answer is the redacted `500` all the same (22
+    `InternalError`), in the exit's task, logged CRITICAL by the two classes alone and marked as a
+    page (`cv_page`, the log pager's mark), so this `500` pages too; the claim is released as the
+    task ends."""
+    oms = _Runtime()
+
+    async def exit_() -> Response:
+        raise RuntimeError(_TEXT)
+
+    def broken(error: Exception) -> Response:
+        raise KeyError(_TEXT)
+
+    with capture_logs() as logs:
+        got = await run_claimed(oms, USER, "cancel", KEY, exit_, refused=_never, faulted=broken)
+    [task] = oms.tasks
+    assert (got.status_code, json.loads(bytes(got.body))) == (500, _FAULT_BODY)
+    assert task.done() and task.result() is got and not _held(oms)
+    assert [line for line in logs if line["log_level"] == "critical"] == [{
+        "event": "oms_exit_fault_answer_failed", "fault": "RuntimeError", "failure": "KeyError",
+        "cv_page": True, "log_level": "critical",
+    }]  # fmt: skip
