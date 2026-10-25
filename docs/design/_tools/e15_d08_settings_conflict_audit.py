@@ -17,8 +17,10 @@ boards and their reconciliation with the frame rows, the PER-FRAME gates over ev
 the row's Class cell, which must agree), the entry-point matrix, the reason and upstream strings,
 the copy keys, the cites (a moved line is a WARN; a fragment gone or ambiguous is a FAIL; a cite
 missing from CITED_TABLE is a FAIL), the `14` pointer lines, private paths and hosts, closing
-keywords, dangling rule and catalogue ids, and every `**Placeholder (§n):**` paragraph still in the
-spec (a FAIL, so a skeleton never passes); (6) the counts. `--json` is the only source of every
+keywords, dangling rule and catalogue ids, every `**Placeholder (§n):**` paragraph still in the
+spec (a FAIL, so a skeleton never passes), and the written sections: §5's one T2 paragraph and its
+not-T2 list, §7's tables equal to sections 1 and 3, §8's templates and consequence lines, §11's
+G-rows and §12's sign-off items; (6) the counts. `--json` is the only source of every
 number in the spec; `--check` re-derives every `<!-- audit:KEY=VALUE -->` marker (markers are
 checked on every run); `--self-test` applies each named mutation of `mutations()` to an in-memory
 copy of the spec and passes only when each adds exactly one new FAIL naming its gate, the per-frame
@@ -185,8 +187,10 @@ BINDINGS = (
     "color.status.danger.strong",
     "color.status.warning.strong",
     "color.focus.ring",
+    "palette.black",
     "opacity.disabled",
     "opacity.scrim",
+    "border.hairline",
     "border.thick",
     "border.focus",
     "radius.dialog",
@@ -197,9 +201,12 @@ BINDINGS = (
     "space.stack.xs",
     "space.stack.md",
     "space.stack.lg",
+    "space.inset.xs",
     "space.inset.sm",
     "space.inset.md",
+    "space.inset.lg",
     "space.field.gap",
+    "size.icon",
     "size.control.height",
     "size.control.compact",
     "size.control.comfortable",
@@ -233,35 +240,70 @@ CITED_TABLE = """
 04 | 1180 | Save/load own layouts, templates, drawings, hotkeys
 05 | 85 | **Reserved, non-remappable keys**
 05 | 96 | **Focus is never silently stolen**
+05 | 97 | matching "cancel is always safe"
 05 | 130 | **User-adjustable contrast**
+05 | 131 | 7. **Text resize (WCAG 1.4.4, AA)**
 05 | 148 | reserved for discrete, low-frequency, high-importance events only
+05 | 150 | **Region hygiene**
 11 | 2758 | #### US-LAY-002 — Saved workspaces
 11 | 2865 | containing no secrets and no account bindings
 11 | 5101 | #### US-SET-003 — Destructive-action confirm policy
+14 | 233 | Escape does **not** dismiss
 14 | 514 | `Ctrl+S` save; `Ctrl+Shift+S` save as
+14 | 515 | unsaved changes (`*` on the tab, prompt on navigation)
+14 | 516 | save conflict → "This workspace changed elsewhere. [Keep mine] [Load theirs]"
 14 | 610 | ### SCR-025 — Workspace settings modal
+14 | 612 | default account scope, density (compact/cosy/comfortable), theme override
 14 | 614 | the last workspace cannot be deleted ("You need at least one workspace.")
+14 | 615 | **Stories:** US-WS-020.
+14 | 616 | grouped fieldsets for defaults (symbol, interval, environment binding)
+14 | 618 | CMP-001 Button, CMP-004 Toggle, CMP-019 Icon (`lock`), CMP-040 FormField
+14 | 619 | - **Stories:** US-LAY-002, US-LAY-003.
 14 | 621 | [ ] 'this workspace is pinned to LIVE' warning drawn
 14 | 659 | ### SCR-029 — Unsaved-changes / layout-conflict dialog
 14 | 661 | the conflict variant adds a side-by-side summary of differences
+14 | 662 | CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog, CMP-079 RbacGate.
+14 | 664 | the three choices are explicit buttons with verbs
 14 | 665 | within 300 ms of the conflicting write being detected
+14 | 666 | `layout.conflict_detected`, `layout.conflict_resolved` with `{choice}` (analytics)
 14 | 668 | [ ] Esc maps to Cancel, never to Discard
 15 | 48 | ### CMP-001 Button
+15 | 79 | ### CMP-004 Toggle (Switch)
+15 | 83 | only the track dims; the label and the knob stay at full opacity
+15 | 85 | `color.action.primary.default` (on track), `color.text.tertiary` (off track)
+15 | 225 | ### CMP-019 Icon
+15 | 243 | ### CMP-021 Link
+15 | 301 | ### CMP-027 ErrorState / InlineError
+15 | 304 | an error summary's "Can't submit — 2 problems"
+15 | 306 | an error summary keeps `role="alert"` and its host moves focus to its heading
+15 | 419 | ### CMP-039 FocusRing
 15 | 433 | ### CMP-040 FormField
+15 | 436 | `help?` · `error?` · `disabledReason?`
+15 | 441 | Default, WithError, WithHelp, Required, Optional, Inline, ReadOnly, DisabledWithReason.
 15 | 463 | ### CMP-043 Dialog (Modal)
 15 | 466 | at most 420 / 560 / 960 px wide
 15 | 468 | an `alertdialog` focuses Cancel
 15 | 473 | ### CMP-044 ConfirmDialog
 15 | 476 | `confirmDelayMs?` (default 400
+15 | 477 | typed (Confirm natively disabled until the summary has loaded
+15 | 479 | Confirm a CMP-001 `danger` (`color.status.danger.default`, `color.text.on-action`)
+15 | 483 | ### CMP-045 Toast / Notification
 15 | 671 | ### CMP-065 FormSection
+15 | 674 | (`docs/design/E09/E09-D09.md` §2.2: one notice for the section)
+15 | 678 | Default, Collapsible, WithErrors, DisabledWithReason.
 15 | 811 | ### CMP-079 RbacGate
+15 | 2514 | ### CMP-212 ToastHost
+16 | 109 | Two supported density modes, selectable globally
 16 | 111 | Default surfaces
 16 | 114 | **Comfortable** (default for admin/onboarding/settings)
 16 | 125 | Density changes spacing-token resolution only
+16 | 136 | light is generated by re-pointing the same alias tokens
 16 | 137 | Theme selection persists per-user (not per-workspace)
+16 | 138 | so a switch is a CSS custom-property swap with no remount
 21 | 4849 | **`viewer` holds no write permission.**
 22 | 658 | - code: version_conflict
 22 | 8507 | `limit_reached` (32 live workspaces)
+22 | 8555 | `ETag`: the workspace token versions its metadata only
 22 | 8570 | operationId: updateWorkspace
 22 | 8587 | `412 version_conflict` (stale or unparseable `If-Match`, nothing
 22 | 8616 | operationId: deleteWorkspace
@@ -269,10 +311,13 @@ CITED_TABLE = """
 22 | 8707 | `limit_reached` (32 live layouts)
 22 | 8821 | operationId: updateLayout
 22 | 8830 | `If-Match`, the no-op rule and `412 version_conflict` work as on `updateWorkspace`
+22 | 12658 | operationId: exportWorkspace
 22 | 19576 | WorkspaceIconToken:
 22 | 19585 | WorkspaceInput:
 22 | 19595 | `name` is at most 40 characters as sent (rule
 22 | 19647 | Concurrency token (also the `ETag`) for the workspace metadata only
+22 | 19854 | Panes have no id of their own
+22 | 19960 | of the whole layout aggregate, panes included
 22 | 20390 | density: { type: string, enum: [compact, comfortable, spacious] }
 22 | 20431 | default_environment: { $ref:
 23 | 818 | ### 6.2 Private topics
@@ -283,6 +328,9 @@ D01 | 231 | SCR-025's "autosave toggle" stays as an opt-in, off by
 D01 | 385 | `Ctrl+S` saves the active layout (`updateLayout`); workspace name and tab order
 D01 | 398 | `22` `updateLayout`; the E15 epic's Technical notes; E15-S03 save semantics
 D01 | 421 | the save model, AM-3 (owner; E15-D08, S03, X01)
+D01 | 431 | a layout lock and a version history
+D02 | 84 | layout events are analytics, never audit
+D02 | 110 | the rail lists all; CMP-073 searches them
 D02 | 125 | **The environment is structural:**
 D02 | 127 | **Saving:** `Ctrl+S` → `updateLayout`
 D02 | 128 | **A preset replaces the working copy and writes nothing:**
@@ -290,19 +338,41 @@ D02 | 129 | **SCR-029's verbs and focus:**
 D02 | 130 | **A restored copy never looks saved:**
 D02 | 147 | **SCR-025 draws only stored fields:**
 D02 | 148 | **Import always creates a new workspace,**
+D02 | 267 | surplus panes leave `panes[]` (Undo returns them)
+D02 | 280 | Undo layout change, Revert to saved…, Workspace settings…, Export…
+D02 | 290 | Couldn't save — the workspace store is unavailable.
+D02 | 308 | **Reorder** by drag, or by Move up and Move down
+D02 | 323 | Undo reverts the last layout change only (one step)
+D02 | 408 | **The gallery** (CMP-043 dialog
+D02 | 410 | Delete layout Wide chart? It can't be restored.
+D02 | 413 | Apply on a clean working copy replaces it at once
 D02 | 417 | ### 5.7 SCR-029 Unsaved-changes and conflict dialog
 D02 | 433 | Save layout writes Layout 1 (`updateLayout`) and then applies the preset
 D02 | 439 | Saved now (14:05:12)
 D02 | 449 | Keep mine writes with the fresh token
 D02 | 498 | ### 5.10 SCR-025 Workspace settings
 D02 | 502 | unique per user, case-insensitive; "That name is already in use."
+D02 | 503 | - **Saving layouts:**
+D02 | 504 | **Share:** [Export…]
 D02 | 505 | - **Delete:** [Delete workspace…] opens CMP-044's typed variant
+D02 | 507 | Footer: [Save] [Cancel]. `Esc` or Cancel with edits asks
+D02 | 511 | **Export preview** (from SCR-025
 D02 | 565 | name clash; Delete workspace… T2 on the last one
 D02 | 569 | unsaved, revert, conflict variants at both widths; conflict reached from a preset
 D02 | 574 | a third racing write refreshes the table with
+D02 | 583 | Workspace, always; while Save is T2 it sends nothing
 D02 | 632 | - **Zoom and text size** (`05` §5 item 7)
 D02 | 635 | ### 8.1 Gated controls: T2, disabled with a visible reason
+D02 | 639 | **Legs, in the server's order**
 D02 | 640 | - **Client state is T1.**
+D02 | 641 | is this surface's rendering
+D02 | 642 | **One notice, many pointers** (E09-D09 §2.2): while viewing as
+D02 | 643 | **Keys** (E09-D09 §9.3): `Enter` or `Space` on a T2 control
+D02 | 645 | **Availability, not T2:**
+D02 | 653 | Discard changes, Load theirs and Cancel stay T1
+D02 | 658 | SCR-025's fields, autosave switch, [Save] and [Delete workspace…]
+D02 | 670 | "This workspace has the most layouts it can hold."
+D02 | 675 | E15; the words are `22`'s `last_workspace` copy
 D02 | 730 | **SCR-025:** [board 17; spec D-29; open OQ-N]
 D02 | 738 | **SCR-029:** [board 13] the unsaved and the cross-session conflict variants
 D02 | 765 | two buttons; the unsaved variant needs three verbs and the conflict variant four
@@ -310,6 +380,7 @@ D02 | 816 | `14` SCR-020 States; E15-S03 save semantics
 D02 | 817 | `14` SCR-020 Validation
 D02 | 818 | `14` SCR-020 Sign-off; SCR-025 Type
 D02 | 825 | `14` SCR-029 Performance
+D02 | 828 | | A-15 |
 D02 | 843 | **G-10** SCR-025's unstored fields
 D02 | 853 | A preset over a dirty layout goes through SCR-029 (ticket AC3)
 D02 | 864 | SCR-025's unstored fields (description, default symbol and interval
@@ -319,20 +390,46 @@ D09 | 36 | | Step | Question
 D09 | 49 | - **T2 Disabled with a visible reason (D4).**
 D09 | 85 | Every T2 reason is one of these seven keys
 D09 | 114 | `workspaces:write` → "save workspaces"
+D09 | 128 | The `permission_change` frame replaces
+D09 | 142 | `permission_change`, no focused or armed control affected
 D09 | 224 | ### 9.1 `aria-disabled` versus `disabled`, and focusability
 D09 | 238 | ### 9.3 Keys on a T2 control
 D09 | 263 | "Read-only — {rbac sentence, first letter lower-cased}"
+D09 | 264 | | `glyph.name`
 E16D03 | 49 | typed confirmation and its value
+E16D03 | 364 | | D03-A4 |
 FL | 29 | ## F-LAY-2 — Switch workspace with unsaved changes
 FL | 54 | This flow replaces `14` SCR-020's "prompt on navigation"
 FL | 56 | ## F-LAY-3 — Apply a preset over a dirty layout
 FL | 85 | §3.8.1 keeps no history, so Undo is the client's
 FL | 171 | `exportWorkspace` is specified but not yet served
 README | 46 | - **Penpot reference** to the ticket's page
+S3 | 80 | 21. **The field box**
+S3 | 103 | 23. **Validation, never T2**
+S3 | 113 | On submit the host's error summary
+S3 | 120 | 24. **T2 in a form**
+S3 | 153 | 25. **What is not T2**
+S3 | 182 | 28. **Resize, zoom and reflow**
+S4 | 106 | 31. **The scrim and the inert page**
 S4 | 119 | 32. **Focus contract for overlays**
+S4 | 140 | 33. **Where feedback speaks**
+S4 | 173 | 36. **Containers never gate; their nested controls do**
+S4 | 194 | 37. **What is not T2 here**
+S4 | 202 | 38. **Forced colours**
+S4 | 209 | 39. **Resize, zoom and reflow**
 S4 | 365 | **CMP-043 and CMP-044 in E15-D02 (kept, E15-D02 following).**
+S4 | 734 | **H22 — `Esc`, the NoEscClose story and the scrim.**
+S4 | 749 | **H23 — What the scrim makes inert.**
+S4 | 756 | **H24 — The confirm: its look, the typed rule
+S4 | 848 | **H32 — Where a confirm opens, and its Tab order.**
+S4 | 881 | **H34 — A toast raised by a modal's own action.**
 S4 | 904 | **H36 — A dialog with unsaved changes.**
+S4 | 1642 | block gap `space.stack.md`; at most 420 / 560 / 960 px wide
 S4 | 1645 | `Cancel` (`secondary`) first, the primary or danger action last
+S4 | 1707 | SCR-072's "partial failure with retry"
+S4 | 1720 | what the confirm does, the dialog's description: SCR-072's
+S4 | 1722 | CMP-040 + CMP-007; its label names the token
+S4 | 1760 | a Confirm gated mid-dialog speaks once, assertively
 """
 # The fixture (spec header): the names and the summary cases. The saved time and the conflicting
 # re-read's time are parsed from E15-D02 (`D02:433`, `D02:439`); the rest is this spec's own.
@@ -344,6 +441,7 @@ FIXTURE: dict[str, Any] = {
     "layouts": 2,
     "target": "alex",
     "renamed": "Scalping 2",
+    "renamed_elsewhere": "Scalping EU",
     "refreshed_time": "14:07:30",
     "list_cap": 3,
     "ac3": {
@@ -506,6 +604,8 @@ E9 | no | deleting a workspace | SCR-025/delete-confirm
 E10 | no | `Ctrl+S` answered `412` | SCR-029/conflict
 E11 | no | autosave answered `412` | SCR-029/conflict-queued
 E12 | no | closing SCR-025 with edits | SCR-025/discard-prompt
+E13 | no | switching layouts in a workspace | none
+E14 | no | deleting a layout with unsaved changes | E15-D02 Delete layout confirm
 """
 # key | string | the doc that holds it verbatim, in quotes (E09-D09 §3.1, E15-D02 §8.1).
 REASONS_TABLE = """
@@ -585,6 +685,13 @@ CELL_TOLERANCE = 0.0051
 CONTRAST_ROW_RE = (
     r"^\| (\d+) +\| `([a-z0-9.-]+)` on `([a-z0-9.-]+)` +\| ([a-z-]+) +\| ([\d.]+) +\| ([\d.]+) +\|"
     r" ([\d.]+) +\| ([^|]+?) +\| (registered|PROPOSED) +\|"
+)
+# §7's greyscale rows (`| `token` | dark | light | hc |`) and colour-vision rows
+# (`` `a` vs `b` | the four deltaE76 values | verdict |``): each value is the tool's section 3.
+GREY_ROW_RE = r"^\| `([a-z0-9.-]+)` +\| (\d+) +\| (\d+) +\| (\d+) +\|"
+CVD_ROW_RE = (
+    r"`([a-z0-9.-]+)` vs `([a-z0-9.-]+)` +\| ([\d.]+) · ([\d.]+) · ([\d.]+) · ([\d.]+) +\|"
+    r" ([^|\n]+?) +\|"
 )
 # Jargon and bare acknowledgements the copy deck (§8) never shows a user (its String column).
 BANNED_COPY = (
@@ -1055,6 +1162,10 @@ def content_gates(
             bad.append(f"difference summary differs from the rendered fixture in {name}")
         if overflow and f'"{overflow}"' not in line:
             bad.append(f"overflow line missing in {name}")
+    if kind == "settings-conflict" and any(
+        f'"{FIXTURE[k]}"' not in line for k in ("renamed", "renamed_elsewhere")
+    ):
+        bad.append(f"settings conflict {name} lacks its two values of the name")
     if kind in ("conflict", "settings-conflict"):
         full = frame_time(params, facts)
         heads = ['"Yours (not saved)"', f'"Saved now ({full})"']
@@ -1321,6 +1432,16 @@ def section_gates(spec: str, ctx: Ctx) -> list[str]:
                 bad.append(f"§7 measured cell differs: {r['fg']} on {r['bg']} ({r['role']})")
             if m[8].strip() != r["verdict"] or m[9] != r["pairs"]:
                 bad.append(f"§7 verdict or pairs.mjs column differs: {r['fg']} on {r['bg']}")
+        greys = {g[1]: g for g in re.finditer(GREY_ROW_RE, s7, MULTI)}
+        for tok, vals in ctx.measured["grey"].items():
+            g = greys.get(tok)
+            if g is None or [int(g[2]), int(g[3]), int(g[4])] != [vals[th] for th in THEMES]:
+                bad.append(f"§7 greyscale row differs or is missing: {tok}")
+        cvds = {(c[1], c[2]): c for c in re.finditer(CVD_ROW_RE, s7, MULTI)}
+        for r in ctx.measured["cvd"]:
+            c = cvds.get((r["a"], r["b"]))
+            if c is None or [float(c[i]) for i in range(3, 7)] != r["dE76"] or c[7] != r["verdict"]:
+                bad.append(f"§7 colour-vision row differs or is missing: {r['a']} vs {r['b']}")
     s8 = live(spec, 8)
     if s8:
         strings = re.findall(r'^\| `[^`]+` +\|[^|\n]*\| ("[^|\n]*")', s8, MULTI)
@@ -1438,9 +1559,20 @@ def numbers_of(spec: str, ctx: Ctx, extra: dict[str, Any]) -> dict[str, Any]:
     ):
         numbers[k] = m[k]
     numbers["composite"] = m["composite"]
+    # The redlines §2.2 quotes in px (or as an opacity): every bound spacing, radius, border and
+    # opacity token, resolved in dark (density re-points the control height only, `16:125`).
+    numbers["redline"] = {
+        tok: resolve(ctx.themes["dark"], tok)
+        for tok in BINDINGS
+        if tok.split(".")[0] in ("space", "radius", "border", "opacity")
+    }
     numbers["missing_tokens"] = len(ctx.missing)
     numbers["reconciled"] = len(rows(RECONCILE_TABLE))
     numbers["checklist_items"] = len(checklist_items(ctx.t))
+    numbers["deck_rows"] = len(deck_ids(spec) or ())
+    numbers["rows"] = {
+        kind: len(set(re.findall(rf"^\| (D08-{kind}\d+) +\|", spec, MULTI))) for kind in "ACDGQ"
+    }
     return numbers
 
 
@@ -1502,6 +1634,16 @@ def frame_sub(frame: str, old: str, new: str) -> Callable[[str], str]:
 
 def frame_re(frame: str, pattern: str, repl: str) -> Callable[[str], str]:
     return row_fn(rf"^\| `{re.escape(frame)}` +\|.*$", lambda ln: re.sub(pattern, repl, ln))
+
+
+def sec_fn(n: int, fn: Callable[[str], str]) -> Callable[[str], str]:
+    """Apply `fn` to section n's text only (unchanged when the section is gone)."""
+
+    def apply(s: str) -> str:
+        text = section(s, n, n + 1)
+        return s.replace(text, fn(text), 1) if text else s
+
+    return apply
 
 
 def mutations() -> list[tuple[str, Callable[[str], str], str]]:
@@ -1737,6 +1879,84 @@ def mutations() -> list[tuple[str, Callable[[str], str], str]]:
             ),
             "SCR-029/leg-lost: its not-drawn cell and §0's not-drawn line disagree",
         ),
+        (
+            "X21-settings-names",
+            frame_sub("SCR-025/settings-conflict", 'saved now "Scalping EU"', "saved now theirs"),
+            "lacks its two values of the name",
+        ),
+        (
+            "X22-deck-key",
+            sec_fn(
+                8,
+                lambda t: re.sub(
+                    r"^\| `e15\.conflict\.queued_status`",
+                    "| `e15.conflict.queued_line`",
+                    t,
+                    count=1,
+                    flags=MULTI,
+                ),
+            ),
+            "copy key not in the deck (§8) in SCR-029/conflict-queued: e15.conflict.queued_status",
+        ),
+        (
+            "X23-not-t2-list",
+            sec_fn(5, lambda t: t.replace("**Not T2", "**Also not T2", 1)),
+            "§5 lacks the one T2 paragraph or its not-T2 list",
+        ),
+        (
+            "X24-g-row",
+            sec_fn(11, lambda t: re.sub(r"^\| D08-G2 ", "| D08-G9 ", t, count=1, flags=MULTI)),
+            "§11 lacks the G-row D08-G2",
+        ),
+        (
+            "X25-sign-off-item",
+            sec_fn(
+                12,
+                lambda t: t.replace("no default destructive button", "no destructive default", 1),
+            ),
+            "§12 lacks the sign-off item 'no default destructive button'",
+        ),
+        (
+            "X26-contrast-cell",
+            sec_fn(
+                7,
+                lambda t: re.sub(
+                    r"(^\| 1 +\| `color\.text\.primary` on `color\.surface\.overlay`"
+                    r" +\| hc-text +\| )13\.27",
+                    r"\g<1>13.37",
+                    t,
+                    count=1,
+                    flags=MULTI,
+                ),
+            ),
+            "§7 measured cell differs: color.text.primary on color.surface.overlay (hc-text)",
+        ),
+        (
+            "X28-grey-cell",
+            sec_fn(
+                7,
+                lambda t: re.sub(
+                    r"(^\| `color\.status\.danger\.default` +\| )101",
+                    r"\g<1>102",
+                    t,
+                    count=1,
+                    flags=MULTI,
+                ),
+            ),
+            "§7 greyscale row differs or is missing: color.status.danger.default",
+        ),
+        (
+            "X29-cvd-cell",
+            sec_fn(
+                7, lambda t: t.replace("14.7 · 12.5 · 14.0 · 5.5", "14.7 · 12.5 · 14.0 · 5.6", 1)
+            ),
+            "§7 colour-vision row differs or is missing: color.status.danger.strong vs",
+        ),
+        (
+            "X27-template",
+            sec_fn(8, lambda t: t.replace('"and {n} more differences."', '"and {n} more."', 1)),
+            "§8 lacks the template e15.diff.overflow in both forms",
+        ),
     ]
 
 
@@ -1816,8 +2036,9 @@ def report(ctx: Ctx, numbers: dict[str, Any], bad: list[str]) -> list[str]:
         "first, planned insets never controls, never T2, never dimmed, Cancel first and "
         "focused, Esc → Cancel, the exits never gated, CMP-043 alertdialog, the weights, the "
         "typed field, the consequence lines, the 412, the summaries); the entry-point matrix; "
-        "reasons and upstream strings; the cites; the `14` pointer lines; no private path, no "
-        "closing keyword, no dangling id; no placeholder"
+        "reasons and upstream strings; the cites; the `14` pointer lines; §5's T2 paragraph, §7's "
+        "matrix, greyscale and CVD rows, §8's deck, §11's G-rows and §12's items; no private path, "
+        "no closing keyword, no dangling id; no placeholder"
     )
     out.append("\n## 5. Gates: " + (ok if not bad else "\n".join("FAIL " + b for b in bad)))
     out += [f"WARN cited line drifted: {w}" for w in CITE_WARN]
