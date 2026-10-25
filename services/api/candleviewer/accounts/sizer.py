@@ -31,7 +31,7 @@ MinimumKind = Literal["min_order_qty", "min_notional", "min_leg_notional"]
 Minimum = tuple[MinimumKind, Decimal]
 Outcome = Literal["ok", "skip", "fail"]
 #: Where step 2's reference price came from (Sec.9.3 step 2).
-RefSource = Literal["limit", "marketable_limit_mid", "mid", "last"]
+RefSource = Literal["limit", "marketable_limit_worst_fill", "mid", "last"]
 #: Sec.9.3.2's caps, each named by its field (the daily room by the tighter of its two).
 CapName = Literal[
     "max_leverage_cap",
@@ -131,13 +131,14 @@ class SizingExplanation:
     """What the sizer computed, in step order, for the ticket and the preview (a contract, not a
     debug aid). `basis / per_unit` is the mode's raw quantity (`per_unit` `None` for `fixed_qty`);
     `clamps` every cap judged, `binding` the last one that lowered the quantity; `risk_usdt` is 1R
-    (`distance * qty`) and `risk_with_fees_usdt` adds both taker fees; `initial_margin` is at
-    the larger of the limit's and `ref`'s notionals; `atr` the reading the stop or the take-profit
-    used; `minimum`
-    the one a leg missed; `rules` the rules that fired, in order. A gate skip carries none."""
+    (`distance * qty`) and `risk_with_fees_usdt` adds both taker fees; `initial_margin` is at the
+    larger notional (mid's for a marketable sell, else `ref`'s); `mid_price` the mid seen; `atr`
+    the reading the stop or the take-profit used; `minimum` the one a leg missed; `rules` the
+    rules that fired, in order. A gate skip carries none."""
 
     ref_price: Decimal | None = None
     ref_source: RefSource | None = None
+    mid_price: Decimal | None = None
     limit_price: Decimal | None = None
     stop: ResolvedStop | None = None
     atr: AtrReading | None = None
@@ -180,8 +181,8 @@ class LegSizing(SizingExplanation):
 
     def render(self) -> str:
         """22 `ResolvedLegParams.sizing_explanation`: `<mode>: <basis> / <per unit> = <raw>
-        capped by <cap> -> <qty>`, then the stop, notional, risk and margin (`at <limit>` when a
-        marketable buy's limit, not `ref`, prices it); every figure carries its unit."""
+        capped by <cap> -> <qty>`, then the stop, notional, risk and margin (`at <mid>` when a
+        marketable sell's mid, not `ref`, prices it); every figure carries its unit."""
         base, usdt, parts = self.base_coin, self.settle_coin, []
         basis, raw, qty, delta = self.basis, self.raw_qty, self.qty, self.rounding_delta
         if basis is not None and raw is not None and qty is not None and delta is not None:
@@ -207,11 +208,11 @@ class LegSizing(SizingExplanation):
             ("risk with fees", self.risk_with_fees_usdt),
         )
         parts += [f"{name} {_shown(value)} {usdt}" for name, value in figures if value is not None]
-        if self.initial_margin is not None:
+        if self.initial_margin is not None and self.ref_price is not None:
             margin = f"initial margin {_shown(self.initial_margin)} {usdt}"
-            ref, limit = self.ref_price or Decimal(0), self.limit_price or Decimal(0)
-            if limit > ref:  # the margin's price, when not `ref`
-                margin += f" at {_shown(limit)} {usdt}"
+            px = _priced_at(self.ref_source, self.ref_price, self.mid_price)
+            if px != self.ref_price:  # the margin's price, when not `ref`
+                margin += f" at {_shown(px)} {usdt}"
             parts.append(margin)
         if self.reason is not None:
             parts.append(f"{'skipped' if self.outcome == 'skip' else 'failed'}: {self.reason}")
@@ -228,6 +229,14 @@ def _shown(value: Decimal) -> str:
     cut = value.quantize(_SHOWN, context=_FLOOR)
     shown = (value if cut == value else cut).normalize(_FLOOR)
     return format(_EXACT.add(shown, Decimal(0)), "f")  # never "-0" (0 - 0 rounding down)
+
+
+def _priced_at(source: RefSource | None, ref: Decimal, mid: Decimal | None) -> Decimal:
+    """The price the caps and the margin are judged at: the larger notional, which is mid for a
+    marketable sell (its anchor, the limit, is below mid) and the anchor otherwise."""
+    if source == "marketable_limit_worst_fill" and mid is not None:
+        return max(ref, mid)
+    return ref
 
 
 def _positive(value: Decimal) -> Decimal:
@@ -340,17 +349,20 @@ def _caps(
 
 
 def _reference(intent: SizingIntent, m: SizingMarket) -> tuple[Decimal, RefSource] | None:
-    """Step 2: a marketable limit (a buy at or above mid, a sell at or below) sizes at its
-    expected fill, mid; any other limit, or one with no mid, at its price; a market order at mid,
-    else last."""
+    """Step 2, the anchor: a marketable limit (a buy at or above mid, a sell at or below) sizes at
+    its worst-case fill, the higher of mid and its price for a buy and the lower for a sell (its
+    price); any other limit, or one with no mid, at its price; a market order at mid, else last."""
     if intent.price is None:
         if m.mid is not None:
             return m.mid, "mid"
         return None if m.last_price is None else (m.last_price, "last")
     if m.mid is None:
         return intent.price, "limit"
-    marketable = m.mid <= intent.price if intent.side == "buy" else m.mid >= intent.price
-    return (m.mid, "marketable_limit_mid") if marketable else (intent.price, "limit")
+    if intent.side == "buy" and m.mid <= intent.price:
+        return max(m.mid, intent.price), "marketable_limit_worst_fill"
+    if intent.side != "buy" and m.mid >= intent.price:
+        return min(m.mid, intent.price), "marketable_limit_worst_fill"
+    return intent.price, "limit"
 
 
 def _missed(qty: Qty, notional: Decimal, p: AccountProfile, inst: Instrument) -> Minimum | None:
@@ -391,19 +403,26 @@ def resolve_tps(
     inst: Instrument,
     atr: AtrReading | None,
 ) -> tuple[TakeProfit, ...]:
-    """Sec.9.3.3 from `ref` (BQ-17): a ladder rung at `ref +/- r * distance` takes
-    `floor(qty * qty_pct)` and the last rung the rest of `floor(qty * sum)`, so a rung that floors
-    under `min_order_qty` (one no reduce-only order can carry) is folded into the last; with no
-    ladder, one take-profit of the whole quantity at `tp_offset_*`. Prices round toward entry,
-    and a price not beyond entry, or not above 0, is dropped."""
-    buy, step = side == "buy", inst.qty_step
+    """Sec.9.3.3 from `ref`, the anchor (a marketable limit's worst-case fill, BQ-17): a ladder
+    rung at `ref +/- r * distance` takes `floor(qty * qty_pct)` and the last rung the rest of
+    `floor(qty * sum)`. No rung is left under `min_order_qty` (one no
+    reduce-only order can carry): a non-final one is folded into the last, and a last one into
+    the previous kept rung, or dropped when there is none. With no ladder, one take-profit of the
+    whole quantity at `tp_offset_*`. Prices round toward entry, and a price not beyond `ref`, or
+    not above 0, is dropped."""
+    buy, step, least = side == "buy", inst.qty_step, inst.min_order_qty
     rungs: list[tuple[Decimal, Decimal]] = []  # (offset from ref, qty)
     with localcontext(_FLOOR):
         if p.tp_ladder:
             sizes = [_to_grid(qty * rung.qty_pct, step, ROUND_FLOOR) for rung in p.tp_ladder[:-1]]
-            sizes = [size if size >= inst.min_order_qty else Decimal(0) for size in sizes]
+            sizes = [size if size >= least else Decimal(0) for size in sizes]
             whole = _to_grid(qty * sum(rung.qty_pct for rung in p.tp_ladder), step, ROUND_FLOOR)
             sizes.append(whole - sum(sizes))
+            if sizes[-1] < least:  # the last, too: into the previous kept rung, else dropped
+                kept = [i for i, size in enumerate(sizes[:-1]) if size > 0]
+                if kept:
+                    sizes[kept[-1]] += sizes[-1]
+                sizes[-1] = Decimal(0)
             rungs = [(r.r * stop.distance, n) for r, n in zip(p.tp_ladder, sizes, strict=True)]
         elif (offset := _tp_offset(p, ref, stop, inst, atr)) is not None:
             rungs = [(offset, qty)]
@@ -443,6 +462,7 @@ def size_leg(
         "ok",
         ref_price=ref,
         ref_source=source,
+        mid_price=metrics.mid,
         limit_price=intent.price,
         stop=stop,
         atr=metrics.atr if unit == "atr" and not stop.fallback else None,
@@ -458,10 +478,10 @@ def size_leg(
     if profile.leverage > inst.max_leverage:
         return replace(seen, outcome="fail", reason=FailReason.LEVERAGE_UNAVAILABLE)
     # Every notional, leverage and margin cap is judged at the larger notional (a marketable
-    # limit's own price above mid for a buy; mid above it for a sell). The leg passes the
-    # comparator's R1/R2/R6 when its `ResolvedLeg.ref_price` is this `ref` (mid for a marketable
-    # limit), not the limit: R2 measures the stop distance from `ref_price` (24 Sec.9.3.5).
-    px = ref if intent.price is None else max(ref, intent.price)
+    # buy's anchor, its limit; mid above a marketable sell's). The leg passes the comparator's
+    # R1/R2/R6 when its `ResolvedLeg.ref_price` is this `ref`, the anchor (a marketable limit's
+    # worst-case fill): R2 measures the stop distance from `ref_price` (24 Sec.9.3.5).
+    px = _priced_at(source, ref, metrics.mid)
     with localcontext(_FLOOR):
         sized = _raw_qty(profile, wallet, ref, stop)  # 4 and 5
         caps = _caps(profile, wallet, inst, stop, px, ref=ref, market=intent.price is None)
@@ -508,9 +528,11 @@ def size_leg(
     # product, `available_margin * MARGIN_SHARE`, in the default context.
     if margin > _FLOOR.multiply(wallet.available_margin, MARGIN_SHARE):
         return replace(leg, outcome="fail", reason=FailReason.INSUFFICIENT_MARGIN)
-    tps = resolve_tps(intent.side, profile, ref, stop, qty, inst, metrics.atr)  # 9
+    tps = resolve_tps(intent.side, profile, ref, stop, qty, inst, metrics.atr)  # 9, from the anchor
+    if not tps:
+        return leg
     tp_rule = "tp_ladder" if profile.tp_ladder else f"tp_{profile.tp_offset_unit}"
     tp_atr = not profile.tp_ladder and profile.tp_offset_unit == "atr"  # the explanation's reading
     if tp_atr and _atr_value(profile, metrics.atr) is not None:
         leg = replace(leg, atr=metrics.atr)
-    return replace(leg, tps=tps, rules=leg.rules + ((tp_rule,) if tps else ()))
+    return replace(leg, tps=tps, rules=(*leg.rules, tp_rule))

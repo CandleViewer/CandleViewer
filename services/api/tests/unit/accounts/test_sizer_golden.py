@@ -69,6 +69,13 @@ def test_size_leg_golden_vector_matches_to_the_last_decimal(v: dict[str, Any]) -
 
 
 @pytest.mark.parametrize("v", _OWN, ids=[v["id"] for v in _OWN])
+def test_tickets_ok_vector_records_its_take_profits(v: dict[str, Any]) -> None:
+    # So none passes vacuously; QA's file is frozen and is not held to this.
+    if v["expected"]["outcome"] == "ok":
+        assert "tp_prices" in v.get("ladder", v.get("also", {}))
+
+
+@pytest.mark.parametrize("v", _OWN, ids=[v["id"] for v in _OWN])
 def test_render_every_figure_carries_a_unit_on_the_tickets_vectors(v: dict[str, Any]) -> None:
     assert_every_figure_has_a_unit(run(v).render())
 

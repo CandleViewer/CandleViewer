@@ -111,10 +111,10 @@ def test_size_leg_market_order_takes_mid_then_last_else_fails(
 @pytest.mark.parametrize(
     ("side", "limit", "mid", "ref", "source"),
     [
-        ("buy", "64100", D(64000), "64000", "marketable_limit_mid"),  # a buy at or above mid
-        ("sell", "63900", D(64000), "64000", "marketable_limit_mid"),  # a sell at or below mid
-        ("buy", "64000", D(64000), "64000", "marketable_limit_mid"),  # a buy at mid
-        ("sell", "64000", D(64000), "64000", "marketable_limit_mid"),  # a sell at mid
+        ("buy", "64100", D(64000), "64100", "marketable_limit_worst_fill"),  # above mid: limit
+        ("sell", "63900", D(64000), "63900", "marketable_limit_worst_fill"),  # below mid: limit
+        ("buy", "64000", D(64000), "64000", "marketable_limit_worst_fill"),  # a buy at mid
+        ("sell", "64000", D(64000), "64000", "marketable_limit_worst_fill"),  # a sell at mid
         ("buy", "63900", D(64000), "63900", "limit"),  # rests below mid
         ("buy", "64100", None, "64100", "limit"),  # no mid: the limit
     ],
@@ -127,12 +127,13 @@ def test_size_leg_market_order_takes_mid_then_last_else_fails(
         "no-mid",
     ],
 )
-def test_size_leg_marketable_limit_sizes_and_stops_at_mid(
+def test_size_leg_marketable_limit_sizes_and_stops_at_the_worst_case_fill(
     side: str, limit: str, mid: Any, ref: str, source: str
 ) -> None:
     got = sized(profile("P-RISK"), market=sz.SizingMarket(mid=mid), side=side, price=limit)
     stop = D(ref) - D(120) if side == "buy" else D(ref) + D(120)  # 1200 ticks of 0.1
     assert (got.ref_price, got.ref_source, got.limit_price) == (D(ref), source, D(limit))
+    assert got.mid_price == mid  # the explanation keeps both the mid and the limit
     assert got.stop is not None
     assert got.stop.price == stop
 

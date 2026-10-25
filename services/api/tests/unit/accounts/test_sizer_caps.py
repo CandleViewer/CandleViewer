@@ -140,7 +140,7 @@ def test_size_leg_marketable_limit_judges_caps_at_the_larger_notional(
         assert notional_cap.limit == D(26650) / D(px)
     assert got.qty is not None
     assert got.initial_margin == got.qty * D(px) / 5
-    assert (f" at {limit} USDT" in got.render()) == (px != "64000")  # the margin's price
+    assert (f" at {px} USDT" in got.render()) == (px != limit)  # a sell's margin is at mid
 
 
 def test_size_leg_insufficient_margin_reports_the_margin_it_needed() -> None:
@@ -174,6 +174,13 @@ def test_explanation_records_the_atr_reading_a_take_profit_used() -> None:
     p = profile("P-QTY", sl_offset_unit="ticks", sl_offset_value="600", tp_offset_unit="atr")
     got = sized(p, market=sz.SizingMarket(atr=_ATR))
     assert (got.atr, got.tps) == (_ATR, (sz.TakeProfit(D(64800), D("0.01")),))  # 2 x 400
+
+
+def test_explanation_records_no_atr_reading_for_a_take_profit_that_was_dropped() -> None:
+    p = profile("P-QTY", sl_offset_unit="ticks", sl_offset_value="600", tp_offset_unit="atr")
+    p = p.model_copy(update={"tp_offset_value": D("0.0001")})  # 0.04 floors back onto entry
+    got = sized(p, market=sz.SizingMarket(atr=_ATR))
+    assert (got.outcome, got.atr, got.tps, got.rules[-1]) == ("ok", None, (), "fixed_qty")
 
 
 _RENDERED: Final = {
@@ -226,6 +233,38 @@ def test_resolve_tps_folds_a_rung_under_the_minimum_lot_into_the_last() -> None:
     stop, p = sz.ResolvedStop(D(63880), D(120), False), profile("P-RISK")  # 1R and 2R, half each
     got = sz.resolve_tps("buy", p, D(64000), stop, D("0.0018"), fine, None)
     assert got == (sz.TakeProfit(D(64240), D("0.0018")),)  # 0.0009 cannot be placed reduce-only
+
+
+def test_resolve_tps_folds_a_last_rung_under_the_minimum_lot_into_the_previous() -> None:
+    fine = instrument("BTCUSDT").model_copy(update={"qty_step": D("0.0001")})  # min lot 0.001
+    ladder = [{"qty_pct": "0.9", "r": "1"}, {"qty_pct": "0.1", "r": "2"}]
+    stop, p = sz.ResolvedStop(D(63880), D(120), False), profile("P-RISK", tp_ladder=ladder)
+    got = sz.resolve_tps("buy", p, D(64000), stop, D("0.0018"), fine, None)
+    assert got == (sz.TakeProfit(D(64120), D("0.0018")),)  # 0.0016 + 0.0002, never a 0.0002
+
+
+def test_resolve_tps_drops_a_last_rung_under_the_minimum_lot_with_none_kept_before() -> None:
+    fine = instrument("BTCUSDT").model_copy(update={"qty_step": D("0.0001")})  # min lot 0.001
+    stop, p = sz.ResolvedStop(D(63880), D(120), False), profile("P-RISK")  # 1R and 2R, half each
+    assert sz.resolve_tps("buy", p, D(64000), stop, D("0.0005"), fine, None) == ()
+
+
+@pytest.mark.parametrize(
+    ("side", "limit", "prices"),
+    [("buy", "64100", ("64220", "64340")), ("sell", "63900", ("63780", "63660"))],
+    ids=["marketable-buy", "marketable-sell"],
+)
+def test_size_leg_marketable_limit_anchors_take_profits_at_the_limit(
+    side: str, limit: str, prices: tuple[str, str]
+) -> None:
+    got = sized(profile("P-RISK"), market=sz.SizingMarket(mid=D(64000)), side=side, price=limit)
+    stop = D(limit) - D(120) if side == "buy" else D(limit) + D(120)  # 1R from the limit too
+    assert (got.outcome, got.ref_source, got.stop) == (
+        "ok",
+        "marketable_limit_worst_fill",
+        sz.ResolvedStop(stop, D(120), False),
+    )
+    assert tuple(tp.price for tp in got.tps) == tuple(D(x) for x in prices)  # 1R, 2R past the limit
 
 
 def test_resolve_tps_unknown_offset_unit_is_a_programming_error() -> None:
@@ -316,6 +355,7 @@ def _cent(value: Decimal) -> Decimal:
     notional_cap=_scaled(2, 9),
     mid=st.none() | _money(1_000, 200_000, 1),
     market=st.booleans(),
+    fine=st.none() | st.integers(1, 99),  # a 0.0001 lot and a two-rung ladder of this share
 )
 def test_size_leg_ok_passes_the_comparator_and_never_exceeds_a_cap(
     handle: str,
@@ -330,8 +370,14 @@ def test_size_leg_ok_passes_the_comparator_and_never_exceeds_a_cap(
     notional_cap: Decimal,
     mid: Decimal | None,
     market: bool,
+    fine: int | None,
 ) -> None:
-    p = profile(handle, **_HANDLES[handle], max_position_notional=notional_cap)
+    inst, changes = instrument("BTCUSDT"), dict[str, Any](_HANDLES[handle])
+    if fine is not None:  # qty_step under min_order_qty, so a rung can floor under the minimum
+        inst = inst.model_copy(update={"qty_step": D("0.0001")})
+        share = D(fine) / 100
+        changes["tp_ladder"] = [{"qty_pct": share, "r": "1"}, {"qty_pct": 1 - share, "r": "2"}]
+    p = profile(handle, **changes, max_position_notional=notional_cap)
     lev_cap = p.max_leverage_cap
     assert lev_cap is not None
     p = p.model_copy(update={"leverage": min(D(leverage), lev_cap)})
@@ -344,13 +390,14 @@ def test_size_leg_ok_passes_the_comparator_and_never_exceeds_a_cap(
     )
     w = w.model_copy(update={"available_margin": equity * margin_share} | counts)
     prices = sz.SizingMarket(mid=mid, last_price=ref, atr=_ATR)
-    got = sized(p, w, prices, side=side, price=None if market else str(ref))
-    inst = instrument("BTCUSDT")
+    got = sized(p, w, prices, inst, side=side, price=None if market else str(ref))
     event(f"{'market' if market else 'limit'} {got.outcome} {got.reason}")
     event(f"binding {got.binding and got.binding.cap}")
     assert all(c.limit >= 0 for c in got.clamps)  # an overspent room is recorded as 0
     if got.qty is not None and got.ref_price is not None:  # never above a cap, restated plainly
-        px = got.ref_price if got.limit_price is None else max(got.ref_price, got.limit_price)
+        px = got.ref_price  # the anchor, or mid above a marketable sell's anchor
+        if got.ref_source == "marketable_limit_worst_fill" and got.mid_price is not None:
+            px = max(got.ref_price, got.mid_price)
         assert got.qty * px <= notional_cap
         assert got.qty <= inst.max_order_qty
         assert not market or got.qty <= inst.max_mkt_order_qty
@@ -368,8 +415,11 @@ def test_size_leg_ok_passes_the_comparator_and_never_exceeds_a_cap(
     broken = [] if not isinstance(verdict, Refused) else verdict.violations
     assert [v for v in broken if v.rule in {"R1", "R2", "R5", "R6", "R7"}] == []
     assert sum(tp.qty for tp in got.tps) <= got.qty
+    assert all(tp.qty >= inst.min_order_qty for tp in got.tps)  # no rung under the minimum
     for tp in got.tps:  # each rung on the comparator's take-profit row
         rung = leg.model_copy(update={"take_profit_price": tp.price})
+        # The rung is its own baseline: the sizer is the bound profile's leg, so only the
+        # wrong-side and off-grid checks can fire (never `further_than_bound`).
         verdict = judge_leg(p, rung, baseline=rung, instrument=inst, figures=w)
         broken = [] if not isinstance(verdict, Refused) else verdict.violations
         assert [v for v in broken if v.field == "tp_offset_value"] == []
