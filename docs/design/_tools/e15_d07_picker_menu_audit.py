@@ -28,14 +28,18 @@ ticket's spec, hand-off and the working-tree `14` (its two pointer lines). It:
    T1 and never gated; the destructive group last after a rule; the browser footnote with its
    PROPOSED sentence; `F11` and every unshipped chord PROPOSED; no sync colour; clipped 0 on
    every overflow frame; the picker's term, headings, category names and the reason in the name;
-   every row on its §0 board. Round 1 (issuecomment-6395880131) adds, each read row by row:
-   view-as first in the register's view frames and the leg orders of §8.1, §3.1 and §4.4
-   (G-VIEWAS); the row's REGISTERED reason (§8.1 / §8.2) inside the accessible name of the
-   register's picker frames and §4.4 (G-REASON-NAME); Pop out in no cell of a browser frame and
-   absent in §5.5 (G-ABSENCE); no lock, T2, "Not available" or `aria-disabled` on a new key or a
-   sentence-form item in §4.4, §5.5, §8.2, §5.9, §1.6 and the hand-off's Table N (G-NOLOCK); the
-   owner mark on the departure rows themselves (G-OWNER, OWNER_ROWS). Plus the spec-wide gates
-   of the ruling (confirm rule, key model and announcements, C-4, the new keys' A-rows, the
+   every row on its §0 board. Round 1 (issuecomment-6395880131) adds, each read row by row: view-as
+   first in the register's view frames, the leg orders of §8.1, §3.1 and §4.4, §1.4's statement and
+   D-13 (G-VIEWAS); the row's REGISTERED reason (§8.1 / §8.2) inside the accessible name of the
+   register's picker frames and §4.4 (G-REASON-NAME); Pop out in any spelling (Pop-outs, popout,
+   Float, Floating) in no cell of a browser frame, absent in §5.5 with no lock word in its row, and
+   in D-10 (G-ABSENCE); no lock word (padlock, locked), T2 (T2s, T-2, tier 2), "not available" /
+   "unavailable" or aria-disabled in any clause of a row, bullet, paragraph or heading naming a new
+   key (bare or backticked) or a sentence-form item in §4.4, §5.5, §5.9, §1.6 and the hand-off's
+   Table N, and of a §8.2 row (G-NOLOCK; text normalised first, a double negation counts as a
+   claim, a clause stating T2 itself is lawful only in an unkeyed T2-capable row); the owner
+   mark on the departure rows themselves (G-OWNER, OWNER_ROWS). Plus the spec-wide gates of the
+   ruling (confirm rule, key model and announcements, C-4, the new keys' A-rows, the
    inventory, the growth rule and its text in `14` SCR-024 (G-TAX14), no `aria-disabled` on a
    sentence-form row (G-SENTENCE-ARIA), §5.5's exits, §5.8's and §5.1's PROPOSED marks, §5.6's
    viewports, §8.1's forms, the pins (E15-D02, D03, D04, D06 at their merges), the ruling cite in
@@ -44,7 +48,8 @@ ticket's spec, hand-off and the working-tree `14` (its two pointer lines). It:
    the PENDING `color.sync.*`); no hex; no raw px outside a quote or a code span.
 5. **--selftest** applies every §6.3 mutation M-n and one mutation per further ruled sentence R-n
    in memory to the filled spec; each must add exactly one FAIL, from the gate it names (a few
-   gate-class mutations, marked, need only include it), and the text is restored byte-identical.
+   gate-class mutations, marked, need only include it), and the text is restored byte-identical
+   (sha256 of the in-memory baseline and of the spec, hand-off and `14` re-read from disk).
 
 Geometry model (the spec's §10 tokens; `(heuristic)` where an estimate): text widths use Inter's
 per-character em upper bounds of the E15-D03 tool (SAFE ≥ 0.57 em, +4 % headroom), the mono Kbd
@@ -74,6 +79,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import hashlib
 import json
 import math
 import re
@@ -322,7 +328,7 @@ def table_rows(block: str) -> list[list[str]]:
     rows = [
         split_row(ln)
         for ln in block.splitlines()
-        if ln.startswith("|") and not re.match(r"^\|\s*-{3}", ln)
+        if re.match(r"^ {0,3}\|", ln) and not re.match(r"^\s*\|\s*-{3}", ln)
     ]
     return rows[1:] if rows else []
 
@@ -1319,7 +1325,7 @@ def menu_order_gates(frames: list[Frame], groups: list[list[Item]]) -> list[str]
         browser = f.state in BROWSER_STATES
         if rest == (brow if browser else desk):
             continue
-        if not (browser and "Pop out" in rest):  # G-ABSENCE reads every cell of the row
+        if not (browser and pop_out(rest)):  # G-ABSENCE reads every cell of the row
             bad.append(f"[G-ORDER] {f.tag}: the Order differs from §5.1's fixed set (D-9)")
     return bad
 
@@ -1561,8 +1567,18 @@ def frame_key(f: Frame) -> str | None:
     return None
 
 
+LEG_ORDER = (
+    "legs are checked in the server's order — **view-as first** (`rbac.view_as`), then permission "
+    "(`rbac.permission` / `rbac.owner_only`), then a known state"
+)
+PERMISSION_FIRST = re.compile(
+    r"permission\W*(?:\([^)]*\)\s*)?(?:is\s+)?(?:checked\s+)?first|then view-as", re.IGNORECASE
+)
+
+
 def viewas_gates(spec: str, frames: list[Frame]) -> list[str]:
-    """G-VIEWAS: view-as is the first leg in every gated row and leg-order table (§1.4)."""
+    """G-VIEWAS: view-as is the first leg in every gated row and leg-order table, in §1.4's own
+    statement and in D-13 (§1.4)."""
     bad: list[str] = []
     for f in frames:
         want = PICKER_VIEW_STATES.get(f.state)
@@ -1596,6 +1612,13 @@ def viewas_gates(spec: str, frames: list[Frame]) -> list[str]:
         first = want != "rbac.view_as" or "(checked first)" in r[1]
         if keys != {want} or not first:
             bad.append(f"[G-VIEWAS] §4.4 `{m[1] if m else '?'}`: Form {r[1]!r}, not `{want}`")
+    s14 = section(spec, "1.4 The T2 rule")
+    if LEG_ORDER not in s14 or PERMISSION_FIRST.search(s14):
+        bad.append("[G-VIEWAS] §1.4: legs view-as first, then permission, then a known state")
+    d13 = row_starting(section(spec, "2. Decisions"), "D-13")
+    said = d13[1] if d13 and len(d13) > 1 else ""
+    if "view-as first" not in said or PERMISSION_FIRST.search(said):
+        bad.append("[G-VIEWAS] D-13: the Save inset's gate is view-as first (§1.4; RULED BQ-12)")
     return bad
 
 
@@ -1665,76 +1688,197 @@ def reason_name_gates(spec: str, frames: list[Frame]) -> list[str]:
     return bad
 
 
+# Every text G-NOLOCK and G-ABSENCE read is normalised first (`norm_text`): markdown `**`, `*`
+# and backticks dropped, even inside a word ("**lo**cked"); the hyphens and dashes U+2010–2015
+# and "-" read as a space ("Not-available", "T-2", "Pop-outs"); whitespace, no-break spaces
+# included, collapsed; lowercased. The patterns below are written for that form.
+_DASHES = re.compile(r"[\u2010-\u2015-]")
+_MARKUP = re.compile(r"[*`]")
+
+
+def norm_text(text: str) -> str:
+    return " ".join(_DASHES.sub(" ", _MARKUP.sub("", text)).split()).lower()
+
+
+_LOCK_TERM = r"(?:\w*lock\w*|t ?2s?|tier ?2|aria ?disabled|ariadisabled|unavailable)"
+_NEG_WORD = r"(?:\b(?:no|never|not|nor|without)\b|distinct from)"
+_NEG_TERM = rf"(?:{_LOCK_TERM}(?: glyph)?|cmp ?079)"
+# A negation covers its own term only. The chain goes on past "," / "and" / "or" only when the
+# chained term is itself negated ("no lock, no T2", "no lock nor T2"): "not T2 and locked" and
+# "no lock or Locked" leave the second term live.
 NEG = re.compile(
-    r"(?:\b(?:no|never|not|nor|without)\b|\*\*not\*\*|distinct from)\s+"
-    r"(?:(?:a|an|the|any|carries|only|by)\s+)*"
-    r"(?:`?aria-disabled`?|lock(?: glyph)?|T2|CMP-079)"
-    r"(?:\s*(?:,|or|and|nor)\s+(?:the\s+)?(?:`?aria-disabled`?|lock(?: glyph)?|T2|CMP-079))*"
-    r"(?: lock| at all)?"
+    rf"{_NEG_WORD}\s+(?:(?:a|an|the|any|carries|by)\s+)*{_NEG_TERM}\b"
+    rf"(?:\s*(?:,\s*)?(?:nor|(?:,|or|and)\s+{_NEG_WORD})\s+(?:the\s+)?{_NEG_TERM}\b)*"
+    r"(?: lock| at all)?",
 )
-LOCKISH = re.compile(r"\bT2\b|\block\b|aria-disabled|Not available")
+# A double negation, or "only" / "just" after a negation, asserts its term: "never without a
+# lock", "never not locked", "not only locked" are lock claims. The phrase is dropped before NEG
+# runs, so the term after it stays live.
+DOUBLE_NEG = re.compile(r"\b(?:never|not) without\b|\bnever not\b|\bnot (?:only|just)\b")
+# The one baseline sentence where "not only" scopes a lock away from the sentence form (§1.6:
+# the form is distinct from T2 "not only by the lock glyph"); it is removed whole, exactly.
+DISTINCT_BASELINE = "distinct from t2 for every user, not only by the lock glyph"
+# every spelling of the lock claim: T2 (T2s, T-2, tier 2), any word holding "lock" (padlock,
+# Locked), aria-disabled (aria disabled, ariaDisabled), "not available" and "unavailable"
+LOCKISH = re.compile(
+    r"\w*lock\w*|\bt ?2s?\b|\btier ?2\b|\baria ?disabled\b|\bariadisabled\b"
+    r"|\bunavailable\b|\bnot available\b"
+)
 CLAUSE = re.compile(r";\s|,\s|\s·\s|\s—\s|\.\s")
+# every spelling of the item a browser build never offers (A-3: Float = Pop out)
+POP_OUT = re.compile(r"\bpop ?outs?\b|\bpopout\w*|\bfloat\w*")
 
 
 def lockish(text: str) -> bool:
     """A lock, T2 or `aria-disabled` claim left once every negated mention is removed."""
-    return LOCKISH.search(NEG.sub("", text)) is not None
+    t = norm_text(text).replace(DISTINCT_BASELINE, " ")
+    return LOCKISH.search(NEG.sub(" ", DOUBLE_NEG.sub(" ", t))) is not None
+
+
+def pop_out(text: str) -> bool:
+    return POP_OUT.search(norm_text(text)) is not None
+
+
+# The exact clauses that state the T2 form itself, naming no sentence item (hand-off Table N's
+# entry and item rows, §5.9's States and A11y), normalised by `norm_text`. Only these are lawful,
+# and only in a unit whose own item is a T2-capable one (`T2_HOSTS`); any other T2 or lock clause
+# there fails, so "locked as T2" or "and locked (T2)" cannot ride the exemption onto a sentence
+# item, and a row whose own item is the sentence item cannot borrow it.
+T2_SCOPED = frozenset(
+    norm_text(c).rstrip(".;,")
+    for c in (
+        '[lock "Not available" when T2] + name + [reason]',
+        '`aria-disabled="true"` only when T2',
+        "its label (lock first when T2)",
+        'T2 items `aria-disabled="true"`',
+        "T2 item",
+    )
+)
+# the units whose own item may be T2: Table N's "entry" and "item" rows, §5.9's States and A11y
+T2_HOSTS = frozenset({"entry", "item", "states:", "a11y:"})
+
+
+def t2_scoped(clause: str) -> bool:
+    """One of the baseline clauses that state the T2 form itself (`T2_SCOPED`), exactly."""
+    return norm_text(clause).rstrip(".;,") in T2_SCOPED
+
+
+_KEY_RES = tuple(re.compile(rf"(?<![\w.]){re.escape(k)}(?![\w])") for k in sorted(SENTENCE_KEYS))
+
+
+def names_key(text: str) -> bool:
+    """The text names a new key or the D03 key, backticked or bare."""
+    t = norm_text(text)
+    return any(r.search(t) for r in _KEY_RES)
+
+
+def section_units(block: str, skip: tuple[int, ...]) -> list[tuple[str, list[str]]]:
+    """Every unit G-NOLOCK reads in a section: each table row (leading spaces allowed), each
+    bullet and each prose paragraph, the heading included. A unit is (its own item, its cells)."""
+    units: list[tuple[str, list[str]]] = []
+    para: list[str] = []
+
+    def flush() -> None:
+        if para:
+            units.append(("", [" ".join(para)]))
+            para.clear()
+
+    for ln in block.split("\n"):
+        s = ln.strip()
+        if re.match(r"^ {0,3}\|", ln):
+            flush()
+            if not re.match(r"^\|\s*:?-{3}", s):
+                cells = split_row(s)
+                units.append(
+                    (norm_text(cells[0]), [c for i, c in enumerate(cells) if i not in skip])
+                )
+        elif re.match(r"^ {0,3}(?:[-*+]|\d+\.) ", ln):
+            flush()
+            m = re.match(r"^(?:[-*+]|\d+\.)\s+\*\*([^*]+)\*\*", s)
+            units.append((norm_text(m[1]) if m else "", [s]))
+        elif s.startswith("#"):
+            flush()
+            units.append(("", [s]))
+        elif s:
+            para.append(s)
+        else:
+            flush()
+    flush()
+    return units
 
 
 def nolock_gates(spec: str, hand: str) -> list[str]:
     """G-NOLOCK (condition 1): no lock, T2, "Not available" or `aria-disabled` on a new key or a
-    sentence-form item, read in every row of every table that names one (§4.4, §5.5, §8.2,
-    hand-off Table N) and in §1.6's and §5.9's own statements."""
+    sentence-form item, read in every row, bullet, paragraph and heading of §4.4, §5.5, §5.9 and
+    hand-off Table N, in every row of §8.2, and in §1.6 whole."""
     bad: list[str] = []
-    tables = (
-        ("spec", "4.4 Disabled entries", spec, ()),
-        ("spec", "5.5 Static predicates", spec, ()),
-        ("spec", "8.2 Sentence-form rows", spec, (6,)),  # Attributes: G-SENTENCE-ARIA's
-        ("hand-off", "Table N", hand, ()),
+    sections = (
+        ("spec", "4.4 Disabled entries", spec, (), True),
+        ("spec", "5.5 Static predicates", spec, (), True),
+        ("spec", "5.9 CMP-216", spec, (), True),
+        ("spec", "8.2 Sentence-form rows", spec, (6,), False),  # Attributes: G-SENTENCE-ARIA's
+        ("hand-off", "Table N", hand, (), True),
     )
-    for name, head, text, skip in tables:
-        for r in table_rows(section(text, head)):
-            keyed = any(f"`{k}`" in c for c in r for k in SENTENCE_KEYS)
-            for i, cell in enumerate(r):
-                if i in skip:
-                    continue
-                for clause in CLAUSE.split(cell):
-                    if (keyed or "sentence" in clause.lower()) and lockish(clause):
-                        bad.append(
-                            f"[G-NOLOCK] {name} {head.split(' ')[0]} {r[0][:30]!r}: "
-                            f"{clause[:50]!r} on a sentence-form row (condition 1)"
-                        )
-                        break
-                else:
-                    continue
-                break
+    for name, head, text, skip, whole in sections:
+        for host, cells in section_units(section(text, head), skip):
+            if not whole and len(cells) == 1:
+                continue  # §8.2: its table rows only
+            keyed = any(names_key(c) for c in cells)
+            if not (keyed or any("sentence" in norm_text(c) for c in cells)):
+                continue  # a unit naming neither a new key nor a sentence-form item
+            exempt = not keyed and host in T2_HOSTS
+            hit = next(
+                (
+                    clause
+                    for cell in cells
+                    for clause in CLAUSE.split(cell)
+                    if lockish(clause) and not (exempt and t2_scoped(clause))
+                ),
+                None,
+            )
+            if hit is not None:
+                bad.append(
+                    f"[G-NOLOCK] {name} {head.split(' ')[0]} {cells[0][:30]!r}: "
+                    f"{hit[:50]!r} on a sentence-form unit (condition 1)"
+                )
     s16 = section(spec, "1.6 The state-sentence form")
     needs = ("with **no lock glyph**", "It is **not** `aria-disabled`")
-    prose = [ln for ln in s16.split("\n")[1:] if ln.strip()]
+    prose = [ln for ln in s16.split("\n") if ln.strip()]  # the heading included
     claims = [x for ln in prose for x in re.split(r"(?<=[.:])\s+(?=[A-Z*(])", ln) if lockish(x)]
     if any(n not in s16 for n in needs) or claims:
         bad.append("[G-NOLOCK] §1.6: the sentence form must state no lock and no `aria-disabled`")
     a11y = next(
         (ln for ln in section(spec, "5.9 CMP-216").split("\n") if ln.startswith("- **A11y:**")), ""
     )
-    said = [c for c in CLAUSE.split(a11y) if "sentence" in c]
-    if not said or any(lockish(c) for c in said):
+    said = [c for c in CLAUSE.split(a11y) if "sentence" in c and "no `aria-disabled`" in c]
+    flagged = any(b.startswith("[G-NOLOCK] spec 5.9 '- **A11y:**") for b in bad)
+    if not said and not flagged:  # one FAIL per line: a lock clause there is already reported
         bad.append("[G-NOLOCK] §5.9 A11y: sentence items are plain, no `aria-disabled` (§1.6)")
     return bad
 
 
 def absence_gates(spec: str, frames: list[Frame]) -> list[str]:
-    """G-ABSENCE (condition 2): Pop out in no cell of a browser frame and absent in §5.5."""
+    """G-ABSENCE (condition 2): Pop out, in any spelling (`POP_OUT`), in no cell of a browser
+    frame; absent in §5.5, with no lock or T2 word in any cell of its row; D-10 states the
+    absence, never a lock."""
     bad: list[str] = []
     for f in frames:
         if f.surface != "SCR-028" or f.state not in BROWSER_STATES:
             continue
-        cols = [c for c, v in zip(REG_COLS[1:], f.cells[1:], strict=False) if "Pop out" in v]
+        cols = [c for c, v in zip(REG_COLS, f.cells, strict=False) if pop_out(v)]
         if cols:
             bad.append(f"[G-ABSENCE] {f.tag}: Pop out drawn in the browser ({', '.join(cols)})")
     row = row_starting(section(spec, "5.5 Static predicates"), "Pop out")
-    if row is None or row[2:4] != ["absent, with the footnote (§1.6 absence)", "the footnote"]:
+    if (
+        row is None
+        or row[2:4] != ["absent, with the footnote (§1.6 absence)", "the footnote"]
+        or any(lockish(c) for c in row)
+    ):
         bad.append("[G-ABSENCE] §5.5 Pop out: absent with the footnote; no lock, no key")
+    d10 = row_starting(section(spec, "2. Decisions"), "D-10")
+    said = d10[1] if d10 and len(d10) > 1 else ""
+    if "Pop out is **absent**, never disabled" not in said or lockish(said):
+        bad.append("[G-ABSENCE] D-10: Pop out is absent in the browser, never T2 or a lock")
     return bad
 
 
@@ -2694,6 +2838,232 @@ MUTATIONS: tuple[Mutation, ...] = (
         line_sub("| Essential exceptions", "; owner approval pending (#2701)", ""),
         target="hand",
     ),
+    Mutation(
+        "M-48",
+        'no lock on a new key: "locked" in §4.4\'s flag-off Visible cell (condition 1)',
+        "G-NOLOCK",
+        line_sub("| Liquidity map, illustrative", " — no lock", " — locked"),
+    ),
+    Mutation(
+        "M-49",
+        'no lock on a sentence item: "locked" in §5.5\'s Settings… Treatment (condition 1)',
+        "G-NOLOCK",
+        cell_where("5.5 Static predicates", "Settings…", 2, lambda c: c + ", locked"),
+    ),
+    Mutation(
+        "M-50",
+        'no lock on a sentence item: "locked" in §5.9\'s A11y (condition 1)',
+        "G-NOLOCK",
+        line_sub(
+            "- **A11y:** CMP-041 Menu Button",
+            "sentence items plain `menuitem`s",
+            "sentence items locked `menuitem`s",
+        ),
+    ),
+    Mutation(
+        "M-51",
+        'no lock on the sentence form: "The item is locked." in §1.6 (condition 1)',
+        "G-NOLOCK",
+        line_sub(
+            "An item or entry whose reason",
+            "Activation does nothing:",
+            "The item is locked. Activation does nothing:",
+        ),
+    ),
+    Mutation(
+        "M-52",
+        'no lock on a sentence item: "locked" in the hand-off\'s Table N (condition 1)',
+        "G-NOLOCK",
+        line_sub("| item ", "a sentence item is plain", "a sentence item is locked"),
+        target="hand",
+    ),
+    Mutation(
+        "M-53",
+        'no lock on a new key: "Lock" (capital) in §4.4\'s flag-off Visible cell (condition 1)',
+        "G-NOLOCK",
+        line_sub("| Liquidity map, illustrative", "| name · chip", "| Lock · name · chip"),
+    ),
+    Mutation(
+        "M-54",
+        'no lock name on a new key: a lowercase "not available" in §4.4\'s flag-off name',
+        "G-NOLOCK",
+        line_sub(
+            "| Liquidity map, illustrative",
+            '"Liquidity map, Not',
+            '"not available, Liquidity map, Not',
+        ),
+    ),
+    Mutation(
+        "M-55",
+        'no `aria-disabled` on a sentence item: §5.9\'s "both" clause (condition 1)',
+        "G-NOLOCK",
+        line_sub(
+            "- **A11y:** CMP-041 Menu Button",
+            "both arrow-reachable",
+            'both `aria-disabled="true"` and arrow-reachable',
+        ),
+    ),
+    Mutation(
+        "M-56",
+        'absence stays absence: "pop out" (lowercase) in a browser frame\'s cell (condition 2)',
+        "G-ABSENCE",
+        reg("SCR-028/browser" + R1280, "Sentence", lambda c: f'pop out: "{SHIPPED_FOOTNOTE}"'),
+    ),
+    Mutation(
+        "M-57",
+        'absence stays absence: "Pop-out" in a browser frame\'s cell (condition 2)',
+        "G-ABSENCE",
+        reg(
+            "SCR-028/browser · 1280 · light", "Sentence", lambda c: f'Pop-out: "{SHIPPED_FOOTNOTE}"'
+        ),
+    ),
+    Mutation(
+        "M-58",
+        'absence stays absence: "popout" in a browser frame\'s cell (condition 2)',
+        "G-ABSENCE",
+        reg("SCR-028/clamped-200" + R1280, "Sentence", lambda c: f'popout: "{SHIPPED_FOOTNOTE}"'),
+    ),
+    Mutation(
+        "M-59",
+        "absence stays absence: \"Float\" (A-3's name) in a browser frame's cell (condition 2)",
+        "G-ABSENCE",
+        reg("SCR-028/browser" + R1280, "Sentence", lambda c: f'Float: "{SHIPPED_FOOTNOTE}"'),
+    ),
+    Mutation(
+        "M-60",
+        'absence stays absence: "float" (lowercase) in a browser frame\'s cell (condition 2)',
+        "G-ABSENCE",
+        reg("SCR-028/browser · 1280 · light", "Sentence", lambda c: f'float: "{SHIPPED_FOOTNOTE}"'),
+    ),
+    Mutation(
+        "M-61",
+        "view-as first: §1.4's leg order reversed (permission first)",
+        "G-VIEWAS",
+        line_sub(
+            "Per E09-D09 §2.2 and RULED A1",
+            "**view-as first** (`rbac.view_as`), then permission (`rbac.permission` / "
+            "`rbac.owner_only`)",
+            "**permission first** (`rbac.permission` / `rbac.owner_only`), then view-as "
+            "(`rbac.view_as`)",
+        ),
+    ),
+    Mutation(
+        "M-62",
+        'view-as first: D-13\'s Save inset written "permission first" (RULED BQ-12)',
+        "G-VIEWAS",
+        line_sub("| D-13 ", "view-as first", "permission first"),
+    ),
+    Mutation(
+        "M-63",
+        'absence stays absence: D-10 written "Pop out is T2, drawn with the lock" (condition 2)',
+        "G-ABSENCE",
+        line_sub(
+            "| D-10 ",
+            "Pop out is **absent**, never disabled",
+            "Pop out is **T2**, drawn with the lock",
+        ),
+    ),
+    Mutation(
+        "M-64",
+        'a negation covers its own term only: "not T2 and locked" in §4.4\'s flag-off Visible cell',
+        "G-NOLOCK",
+        line_sub("| Liquidity map, illustrative", " — no lock", " — not T2 and locked"),
+    ),
+    Mutation(
+        "M-65",
+        'a negation covers its own term only: "no lock or Locked" in §4.4\'s flag-off Visible cell',
+        "G-NOLOCK",
+        line_sub("| Liquidity map, illustrative", " — no lock", " — no lock or Locked"),
+    ),
+    Mutation(
+        "M-66",
+        'a negation covers its own term only: "without aria-disabled and Lock" in §4.4\'s '
+        "flag-off Visible cell",
+        "G-NOLOCK",
+        line_sub(
+            "| Liquidity map, illustrative", " — no lock", " — without aria-disabled and Lock"
+        ),
+    ),
+    Mutation(
+        "M-67",
+        'a negation covers its own term only: ", not T2 and locked" on §5.5\'s Settings… Treatment',
+        "G-NOLOCK",
+        cell_where("5.5 Static predicates", "Settings…", 2, lambda c: c + ", not T2 and locked"),
+    ),
+    Mutation(
+        "M-68",
+        'a negation covers its own term only: "no `aria-disabled` and locked" in §5.9\'s A11y',
+        "G-NOLOCK",
+        line_sub(
+            "- **A11y:** CMP-041 Menu Button",
+            "with no `aria-disabled`",
+            "with no `aria-disabled` and locked",
+        ),
+    ),
+    Mutation(
+        "M-69",
+        'a negation covers its own term only: "**not** `aria-disabled` and locked" in §1.6',
+        "G-NOLOCK",
+        line_sub(
+            "An item or entry whose reason",
+            "It is **not** `aria-disabled`",
+            "It is **not** `aria-disabled` and locked",
+        ),
+    ),
+    Mutation(
+        "M-70",
+        'a negation covers its own term only: "not T2 and locked" in the hand-off\'s Table N',
+        "G-NOLOCK",
+        line_sub("| item ", "a sentence item is plain", "a sentence item is not T2 and locked"),
+        target="hand",
+    ),
+    Mutation(
+        "M-71",
+        'only the baseline T2 clauses are exempt: "locked as T2" in the hand-off\'s Table N',
+        "G-NOLOCK",
+        line_sub("| item ", "a sentence item is plain", "a sentence item is plain, locked as T2"),
+        target="hand",
+    ),
+    Mutation(
+        "M-72",
+        'only the baseline T2 clauses are exempt: "and locked (T2)" in §5.9\'s A11y',
+        "G-NOLOCK",
+        line_sub(
+            "- **A11y:** CMP-041 Menu Button",
+            "both arrow-reachable",
+            "both arrow-reachable and locked (T2)",
+        ),
+    ),
+    Mutation(
+        "M-73",
+        'every text is normalised first (markdown, dashes, spaces, case): "— **lo**cked" in §4.4\'s '
+        "flag-off Visible cell",
+        "G-NOLOCK",
+        line_sub("| Liquidity map, illustrative", " — no lock", " — **lo**cked"),
+    ),
+    Mutation(
+        "M-74",
+        'every spelling of the lock claim: "— padlock first" in §4.4\'s flag-off Visible cell',
+        "G-NOLOCK",
+        line_sub("| Liquidity map, illustrative", " — no lock", " — padlock first"),
+    ),
+    Mutation(
+        "M-75",
+        'a double negation asserts its term: "— never without a lock" in §4.4\'s flag-off Visible cell',
+        "G-NOLOCK",
+        line_sub("| Liquidity map, illustrative", " — no lock", " — never without a lock"),
+    ),
+    Mutation(
+        "M-76",
+        "every row, bullet, paragraph and heading is read: a §5.5 prose sentence locking "
+        "`layout.panel.no_settings`",
+        "G-NOLOCK",
+        line_sub(
+            "The sentence lengths are",
+            "The sentence lengths are",
+            "Settings… with `layout.panel.no_settings` is locked. The sentence lengths are",
+        ),
+    ),
     # ---- the ruling's other sentences (rulings.md), one mutation each
     Mutation(
         "R-1",
@@ -2984,7 +3354,19 @@ def drifting_fetch(rev: str, rel: str) -> str | None:
     return text
 
 
-def selftest(spec: str, hand: str, p14: str) -> tuple[bool, list[str]]:
+def digest_texts(*texts: str) -> list[str]:
+    return [hashlib.sha256(t.encode("utf-8")).hexdigest() for t in texts]
+
+
+def digest(paths: tuple[Path, ...]) -> list[str]:
+    """The sha256 of each file's bytes as read from disk now (the restore check's evidence)."""
+    return [hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else "" for p in paths]
+
+
+def selftest(
+    spec: str, hand: str, p14: str, paths: tuple[Path, ...] = ()
+) -> tuple[bool, list[str]]:
+    on_disk = digest(paths)
     comp = compute(spec)
     filled, _ = fill(spec, comp[0])
     hand_f, _ = fill(hand, comp[0])
@@ -2993,6 +3375,7 @@ def selftest(spec: str, hand: str, p14: str) -> tuple[bool, list[str]]:
     lines = [f"baseline (filled in memory): {len(base_fails)} FAIL, {len(base_warns)} WARN"]
     lines += [f"  baseline FAIL {x[:150]}" for x in base_fails]
     ok = not base_fails
+    pristine = digest_texts(filled, hand_f, p14)
     for mu in MUTATIONS:
         texts = {"spec": filled, "hand": hand_f, "p14": p14}
         before = dict(texts)
@@ -3017,7 +3400,8 @@ def selftest(spec: str, hand: str, p14: str) -> tuple[bool, list[str]]:
         new = [x for x in got if x not in base_fails + base_warns]
         named = [x for x in new if x.startswith(f"[{mu.gate}]")]
         hit = bool(named) and (len(new) == 1 or not mu.exact or drift)
-        restored = filled == before["spec"] and hand_f == before["hand"]
+        # real bytes: the in-memory baseline re-hashed and every file re-read from disk
+        restored = digest_texts(filled, hand_f, p14) == pristine and digest(paths) == on_disk
         ok = ok and hit and restored
         first = (named or new or ["nothing new"])[0][:110]
         lines.append(
@@ -3044,7 +3428,7 @@ def main(argv: list[str]) -> int:
     p14 = read(PLAN14)
     keys = handoff_keys(hand)
     if args.selftest:
-        ok, lines = selftest(spec, hand, p14)
+        ok, lines = selftest(spec, hand, p14, (spec_path, hand_path, PLAN14))
         print("\n".join(lines))
         print(f"--selftest: {'ok' if ok else 'FAIL'} — {len(MUTATIONS)} mutations in memory")
         return 0 if ok else 1

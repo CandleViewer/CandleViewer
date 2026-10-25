@@ -57,16 +57,16 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with the reason (`16` §11
 
 ## Table N — Names and roles
 
-| Element        | Role                              | Name                                                                                                                      | Description              |
-| -------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| picker         | `dialog` (`aria-modal`)           | "Add panel" (`h2`)                                                                                                        | —                        |
-| category group | `group`                           | its `h3` ("Order flow")                                                                                                   | —                        |
-| entry          | `option`                          | [lock "Not available"] + name + [reason]; `aria-disabled="true"` only when T2, a sentence-form entry is plain (spec §1.6) | description + chip words |
-| filter         | `radiogroup`                      | "Category"                                                                                                                | —                        |
-| ⋮              | `button` (`aria-haspopup="menu"`) | "Panel options"                                                                                                           | —                        |
-| menu           | `menu`                            | "Panel options, {region name}"                                                                                            | the footnote (browser)   |
-| item           | `menuitem` / `menuitemradio`      | its label (lock first when T2); `aria-disabled="true"` only when T2, a sentence item is plain (spec §1.6)                 | its reason or sentence   |
-| separator      | `separator`                       | —                                                                                                                         | —                        |
+| Element        | Role                              | Name                                                                                                                              | Description              |
+| -------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| picker         | `dialog` (`aria-modal`)           | "Add panel" (`h2`)                                                                                                                | —                        |
+| category group | `group`                           | its `h3` ("Order flow")                                                                                                           | —                        |
+| entry          | `option`                          | [lock "Not available" when T2] + name + [reason]; `aria-disabled="true"` only when T2, a sentence-form entry is plain (spec §1.6) | description + chip words |
+| filter         | `radiogroup`                      | "Category"                                                                                                                        | —                        |
+| ⋮              | `button` (`aria-haspopup="menu"`) | "Panel options"                                                                                                                   | —                        |
+| menu           | `menu`                            | "Panel options, {region name}"                                                                                                    | the footnote (browser)   |
+| item           | `menuitem` / `menuitemradio`      | its label (lock first when T2); `aria-disabled="true"` only when T2, a sentence item is plain (spec §1.6)                         | its reason or sentence   |
+| separator      | `separator`                       | —                                                                                                                                 | —                        |
 
 ## Table R — Redlines (compact · comfortable; spec §10)
 
