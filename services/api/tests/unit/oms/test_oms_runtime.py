@@ -41,7 +41,7 @@ from candleviewer.oms.errors import (
     OrderEntryRefused,
     StoreUnavailable,
 )
-from candleviewer.oms.exits import ExitCaller, OrderExits
+from candleviewer.oms.exits import ExitCaller, ExitOutcome, OrderExits
 from candleviewer.oms.fakes import FakeClockHealth, InMemoryOrderStore, InMemorySubmissionStore
 from candleviewer.oms.order_machine import OrderMachines
 from candleviewer.oms.ports import PositionKey, SubmitActor
@@ -670,6 +670,36 @@ async def test_on_a_stopped_or_unanswering_lane_the_exit_service_is_not_ready() 
             with pytest.raises(written):
                 await exits.amend(nothing, nothing, caller=nothing, expected_seq=None)
             assert lane.bounds == [HOP_TIMEOUT_S, HOP_TIMEOUT_S, None, None, None]
+
+
+async def test_the_lanes_deny_carries_an_exit_routes_step_to_the_exit_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """24 Sec.8.4 and 15.5: an exit route records each refusal it makes through `deny`, naming its
+    step (the cancel's `key`, `replay` and `guard`, as `placeOrder`'s records do) and, where it has
+    one, its reason, so the lane's hop carries the row, the operation, the refusal and every named
+    argument to the exit service unchanged, unbounded as a refusal's record is."""
+    lane = Recording()
+    async with started(World().runtime(lane=lambda: lane)) as runtime:
+        refusal = ExitOutcome(kind="refused", status=409, code="conflict")
+        seen = list[tuple[tuple[Any, ...], dict[str, Any]]]()
+
+        async def deny(*args: Any, **kwargs: Any) -> ExitOutcome:
+            seen.append((args, kwargs))
+            return refusal
+
+        monkeypatch.setattr(runtime._composed().exits, "deny", deny)
+        lane.hops.clear()
+        row, actor, request_id = cast(Any, object()), cast(Any, object()), UUID(int=9)
+        got = await runtime.exits.deny(
+            row, "amend", refusal, actor=actor, request_id=request_id, step="class",
+            reason="reclassified",
+        )  # fmt: skip
+        assert got is refusal
+        named = {"actor": actor, "request_id": request_id, "step": "class"}
+        named["reason"] = "reclassified"
+        assert seen == [((row, "amend", refusal), named)]
+        assert [bound for _, bound in lane.hops] == [None]
 
 
 async def test_the_exit_routes_in_flight_guard_is_read_in_place_and_theirs_alone() -> None:
