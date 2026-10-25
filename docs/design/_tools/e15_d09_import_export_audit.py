@@ -1246,16 +1246,18 @@ T2_RESTATE_RE = (
     r"(?i)\block(?: glyph)? leads?\b|\bleading the label\b|\bsecond line\b|\bnative role\b"
     r"|\bin the tab order\b|\baria-disabled\b|\bdisabled with a visible reason\b"
 )
-# A focus claim (S20): the control a focus statement names.
+# A focus claim's known controls (S20): the names a focus statement may land on.
 FOCUS_CONTROLS = (
     r"Cancel|Choose another file|Choose file…|Close|Import as new workspace|Import anyway|Try again"
     r"|Download file|Copy report|the title|the heading|the message|×"
 )
-FOCUS_CLAIM_RE = (
-    rf"(?i)\bfocus(?:es|ed)?\s+(?:\w+\s+){{0,3}}?(?:on|to|onto)\s+(?P<a>{FOCUS_CONTROLS})"
-    rf"|(?P<b>{FOCUS_CONTROLS})\s*,?\s+(?:the\s+\w+,\s+)?(?:is\s+)?"
-    rf"(?:focused|takes focus|gets focus"
-    rf"|has focus|holds focus)\b|\btab\s+(?:starts|begins)\s+(?:on|at)\s+(?P<c>{FOCUS_CONTROLS})"
+# Any focus claim, its target read whatever it names (fold 5, default-deny): a target that is not
+# one of FOCUS_CONTROLS ("focus moves to Import", "Retry takes focus") is its own unknown name.
+FOCUS_ANY_RE = (
+    r"(?i)\bfocus(?:es|ed)?\s+(?:\w+\s+){0,3}?(?:on|to|onto)\s+(?P<a>[^\s.,;:()]+)"
+    r"|(?P<b>[^\s,;:()]+)\s*,?\s+(?:the\s+\w+,\s+)?(?:is\s+)?"
+    r"(?:focused|takes focus|gets focus|has focus|holds focus)\b"
+    r"|\btab\s+(?:starts|begins)\s+(?:on|at)\s+(?P<c>[^\s.,;:()]+)"
 )
 REJECTION_CTX_RE = (
     r"(?i)\breject(?:ion|ions|ed)\b|\brefusals?\b|\brefused-\w+|\brejected-\w+"
@@ -3219,9 +3221,74 @@ def legs_problem(text: str) -> bool:
     return order_problem(text, LEG_WORDS, ("view_as", "permission", "limit"), 2, True)
 
 
-def focus_problem(text: str, line: str, forced: bool, own_focus: str | None = None) -> str | None:
+def focus_claims(body: str) -> list[tuple[str, int]]:
+    """Every focus claim of `body`, default-deny: (the control it names, lower case, or the
+    unknown name it lands on instead, its offset). A known control is read whole ("Choose another
+    file", "the title"); any other Title-case or quoted name ("Import", "the Retry button") is an
+    unknown control and returned as its word. Lower-case targets name no control (the opener,
+    "the menu's button", a pronoun) and frame names in backticks are not targets."""
+    known_head = re.compile(rf"(?i)(?:{FOCUS_CONTROLS})(?![\w…])")
+    known_tail = re.compile(rf"(?i)(?<![\w…])(?:{FOCUS_CONTROLS})$")
+    found: list[tuple[str, int]] = []
+    for m in re.finditer(FOCUS_ANY_RE, body):
+        if m.group("b") is not None:
+            k = known_tail.search(body[: m.end("b")])
+            if k:
+                found.append((k.group(0).lower(), m.start()))
+            else:
+                # "the Retry button is focused": a control noun reads the name before it.
+                before = (
+                    body[: m.start("b")].split()[-1:]
+                    if m.group("b").lower() in ("button", "control")
+                    else []
+                )
+                name = focus_named(m.group("b")) or "".join(focus_named(w) for w in before)
+                if name:
+                    found.append((name, m.start()))
+            continue
+        at = m.start("a") if m.group("a") is not None else m.start("c")
+        words = list(re.finditer(r"\S+", body[at:]))[:3]
+        if words and words[0].group(0).lower() in ("the", "a", "an", "its", "their"):
+            words = words[1:]
+        else:
+            words = words[:1]
+        for w in [None] + words:
+            pos = at if w is None else at + w.start()
+            pos += 1 if body[pos : pos + 1] in '"“[' else 0
+            k = known_head.match(body, pos)
+            if k:
+                found.append((k.group(0).lower(), m.start()))
+                break
+            if w is not None and focus_named(w.group(0)):
+                found.append((focus_named(w.group(0)), m.start()))
+                break
+    return found
+
+
+def focus_text(text: str) -> str:
+    """A clause as the focus claims read it: plain() but with quoted copy kept, so a quoted
+    control name ('focus moves to "Retry"') is still a target."""
+    text = re.sub(MARKER_RE, " ", text)
+    for pattern in EXIT_BLANK:
+        text = re.sub(pattern, lambda m: " " * len(m.group(0)), text)
+    return text.replace("`", "")
+
+
+def focus_named(word: str) -> str:
+    """A focus target's word as an unknown control's name ("Import", "[Retry]", '"Import"'), or
+    "" for a word that names none (lower case, a pronoun, a frame name)."""
+    w = word.strip("`\"“”'[]()*.,;:")
+    if not w or not w[0].isupper() or re.match(r"SCR-\d", w):
+        return ""
+    return w.lower()
+
+
+def focus_problem(
+    text: str, line: str, forced: bool, own_focus: str | None = None, frame: str | None = None
+) -> str | None:
     """S20: on a rejection or a refusal, a focus claim names Choose another file, unless its
-    clause names the frame whose focus the control is (a frame's own focus is its row's clause)."""
+    clause names the frame whose focus the control is (a frame's own focus is its row's clause,
+    or a pair §7 allows it: FOCUS_PAIRS). Any other target, a name the tool never knew, fails."""
     ctx = (
         forced
         or re.search(REJECTION_CTX_RE, plain(text))
@@ -3229,23 +3296,23 @@ def focus_problem(text: str, line: str, forced: bool, own_focus: str | None = No
     )
     if not ctx:
         return None
-    body = plain(text)
     frames = set(re.findall(FRAME_NAME_RE, line))
     own = own_focus
     if own is None and len(frames) == 1:
-        name = frames.pop()
-        if name in KIND:
-            own = FOCUS.get(name, FOCUS.get(KIND[name][0], ""))
-    for m in re.finditer(FOCUS_CLAIM_RE, body):
-        control = (m.group("a") or m.group("b") or m.group("c")).lower()
+        frame = frames.pop()
+        if frame in KIND:
+            own = FOCUS.get(frame, FOCUS.get(KIND[frame][0], ""))
+    allowed = {c.lower() for c in FOCUS_PAIRS.get(frame or "", ())}
+    ftext = focus_text(text)
+    for control, at in focus_claims(ftext):
         if own is not None:
-            if control != own.lower():
+            if control != own.lower() and control not in allowed:
                 return control
             continue
         if control == "choose another file":
             continue
         rule = FOCUS_EXCEPT.get(control)
-        if rule and re.search(rule, clause_of(body, m.start())):
+        if rule and re.search(rule, clause_of(ftext, at)):
             continue
         return control
     return None
@@ -4173,8 +4240,7 @@ def unit_gate(text: str, ctx: dict[str, Any], facts: dict[str, Any]) -> str | No
             return fail("export-import", f"{where}: {found} on an export frame: {text[:60]!r}")
         rest = plain(ctx.get("line", "").replace(text, " ")).lower()
         allowed = FOCUS_PAIRS.get(ctx.get("name", ""))
-        for m in re.finditer(FOCUS_CLAIM_RE, body):
-            control = m.group("a") or m.group("b") or m.group("c")
+        for control, _ in focus_claims(focus_text(text)):
             if allowed is not None and control.lower() not in {c.lower() for c in allowed}:
                 return fail("export-focus", f"{where}: focus on {control!r}, not a pair §7 allows")
             if not re.search(r"(?<!\w)" + re.escape(control.lower()) + r"(?!\w)", rest):
@@ -4339,7 +4405,7 @@ def unit_gate_2(
         if hits(T2_RESTATE_RE, body):
             return fail("t2-once", f"{where}: T2 restated outside §6 (A1): {text[:60]!r}")
     forced = ctx.get("kind") in NOTHING_KINDS | {"unconfirmed"}
-    control = focus_problem(text, line, forced, ctx.get("focus"))
+    control = focus_problem(text, line, forced, ctx.get("focus"), ctx.get("name"))
     if control:
         return fail("rejection-focus", f"{where}: focus on {control!r} on a refusal: {text[:60]!r}")
     number = number_problem(text, facts)
@@ -6375,6 +6441,7 @@ def mutations() -> list[Mutation]:
         + fold2_mutations()
         + fold3_mutations()
         + fold4_mutations()
+        + fold5_mutations()
     )
 
 
@@ -7732,6 +7799,43 @@ def fold4_mutations() -> list[Mutation]:
         ("C2-pair-gone", sub(focus_pairs_line() + "\n", ""), "[focus-pairs]"),
     ]
     return [(n, fn, e, None) for n, fn, e in status + keep + footer + focus]
+
+
+def fold5_mutations() -> list[Mutation]:
+    """The fold 5 check, default-deny focus (S20): a focus claim on a control the tool never
+    knew ("Import", "Retry") fails on refused-limit's row, on D09-D28, on the other refusals and
+    on an export frame. The lens's three words, then two variants each (case, quoted, a control
+    noun, the "takes focus" form)."""
+    rl, rs, rv, ru, ef = (
+        "SCR-026/refused-limit",
+        "SCR-026/refused-server",
+        "SCR-026/rejected-version-newer",
+        "SCR-026/refused-unconfirmed",
+        "SCR-025/export-failed",
+    )
+    d28 = "and focus lands on Cancel, because another file"
+    rf, xf = "[rejection-focus]", "[export-focus]"
+
+    def d28_add(words: str) -> Callable[[str], str]:
+        return sub(d28, d28.replace("Cancel,", f"Cancel {words},"))
+
+    focus = [
+        ("F5-limit-moves", cell_add(rl, 2, "and focus moves to Import"), rf),
+        ("F5-limit-lands", cell_add(rl, 2, "and focus lands on Import"), rf),
+        ("F5-limit-retry", cell_add(rl, 2, "and focus lands on Retry"), rf),
+        ("F5-limit-case", cell_add(rl, 2, "AND FOCUS MOVES TO IMPORT"), rf),
+        ("F5-limit-quoted", cell_add(rl, 1, 'and focus moves to "Retry"'), rf),
+        ("F5-d28-moves", d28_add("and focus moves to Import"), rf),
+        ("F5-d28-lands", d28_add("and focus lands on Import"), rf),
+        ("F5-d28-retry", d28_add("and focus lands on Retry"), rf),
+        ("F5-d28-noun", d28_add("and the Retry button is focused"), rf),
+        ("F5-server", cell_add(rs, 2, "and Import takes focus"), rf),
+        ("F5-rejection", cell_add(rv, 2, "and focus lands on the Retry button"), rf),
+        ("F5-unconfirmed", cell_add(ru, 2, "and focus moves to [Retry]"), rf),
+        ("F5-export", cell_add(ef, 2, "and focus moves to Retry"), xf),
+        ("F5-export-case", cell_add(ef, 2, "AND RETRY TAKES FOCUS"), xf),
+    ]
+    return [(n, fn, e, None) for n, fn, e in focus]
 
 
 def context_mutations() -> list[CtxMutation]:
