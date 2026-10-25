@@ -43,6 +43,9 @@ Status values: `decided` (binding now), `proposed` (decision deadline stated ins
 | [ADR-0037](ADR-0037-journal-first-audit-lane.md)                  | Journal-first audit lane for auth and risk-reducing records (EX-07 exit, #3009)                                               | **accepted** (ratified 2026-10-20 by main-orchestrator under the owner's delegation, #2701) |
 | [ADR-0038](ADR-0038-desktop-backend-connection.md)                | Desktop shell to backend: address, `app://` allowed origin, CORS and the CSRF token path (#3519)                              | **accepted (interim)** (D1–D6 decided 2026-10-20; D2 waits for #3949; D7 deferred)          |
 | [ADR-0039](ADR-0039-audit-export-signing-key.md)                  | Audit export signing key: Ed25519 custody in M2, the injected signer, verification and rotation (#889)                        | **accepted (interim)** (main-orchestrator 2026-10-21, D1 on #889; owner ratifies on #2701)  |
+| [ADR-0040][adr-0040]                                              | Per-trade profile overrides and profile-change propagation to open tickets (E28-K01; ticket said ADR-0016, taken)             | **proposed** (owner and Architect sign-off on #2701)                                        |
+
+[adr-0040]: ADR-0040-per-trade-overrides-and-profile-propagation.md
 
 ## Writing a new ADR
 
