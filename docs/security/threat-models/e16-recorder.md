@@ -80,6 +80,7 @@ New requirements are named `E16-FR-nn` and are raised as findings against the ow
 | R-T3 | C4 | Parquet partition silently rewritten after export; manifest regenerated from stale checksum | A2 | L | M | Low | Partitions immutable, atomic rename, manifest written after rename, read refuses mtime after manifest (E07 S14, SR-094) | Low | weekly scrub failure |
 | R-T4 | C2 | Spilled WAL file edited between spill and replay | A1 | L | M | Low | WAL directory 0700, owned by the backend user, per-record CRC, replay rejects corrupt frames and records a gap | Low | `recorder_wal_corrupt_frames_total` |
 | R-T5 | C1 | Auto-record state flipped to "explicit" to dodge retention pressure | A1 | L | M | Low | `source` column set only by the policy service; DTOs `extra="forbid"` | Low | audit |
+| R-T6 | C1, C2 | Cross-env session access: one env's process (demo, testnet) closes, gap-marks or counts another env's open recording session in the shared database, e.g. crash recovery closing a live session as `process_restart` (C-2.11) | A4 | M | H | High | Every session read and write on the recorder's path joins `recorded_symbols` and binds its env (E16-F01 S3d); `SessionConfig.env`, `WriterConfig.env` and `SessionManager`'s config are required, with no env default anywhere on the path; the composition builds the policy, session and writer envs from `settings.environment` and a wiring test proves they agree (S4b) | Low | audit `recorder.stop` carries its env; `recorder_gap_seconds_total` |
 
 ### 4.3 Repudiation
 

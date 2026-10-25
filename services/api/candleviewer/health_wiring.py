@@ -452,3 +452,21 @@ def register_public_ws_probe(
         return ProbeResult(ComponentState.DEGRADED, phase)
 
     registry.register(CallableProbe("bybit_public_ws", probe, timeout=1.0))
+
+
+def register_recorder_probe(registry: HealthRegistry, health: Callable[[], HealthReport]) -> None:
+    """#2188: `recorder` over `RecorderRuntime.health()`, read on the event loop (the registry's
+    task), so a report is never half-updated. DEGRADED when the runtime says so: its startup
+    failing past the bound, a WAL volume refusal, the warm-up gate closed longer than N, or its
+    task ended. `detail` is not passed on: it names the env, error classes and attempt counts, and
+    a state change becomes a `system_events` message that more than the Owner reads."""
+
+    async def probe() -> ProbeResult:
+        report = health()
+        if report.status is HealthStatus.STOPPED:
+            return ProbeResult(ComponentState.NOT_DEPLOYED, "recorder stopped")
+        if report.status is HealthStatus.DEGRADED:
+            return ProbeResult(ComponentState.DEGRADED, "recorder degraded")
+        return ProbeResult(ComponentState.HEALTHY)
+
+    registry.register(CallableProbe("recorder", probe, timeout=1.0))

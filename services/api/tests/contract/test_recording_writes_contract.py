@@ -52,6 +52,9 @@ def world() -> Iterator[World]:
         fake.put("BTCUSDT")
         fake.put("XRPUSDT", "manual", "chart_open", refusals=("chart_open",))
         w.app.state.recording_control = w.app.state.recording_writer = fake
+        # The fake stands in for a recorder whose startup has completed: no lifespan runs here,
+        # so the runtime's readiness (#2188 S4b, SEC-4) is bound with the fake, as it is ready.
+        w.app.state.recording_ready = lambda: True
         yield w
     finally:
         mp.undo()

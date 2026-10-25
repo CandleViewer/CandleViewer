@@ -75,8 +75,16 @@ class RecorderRuntime:
         sleep: Callable[[float], Awaitable[None]],
         rng: Callable[[], float],
         bounds: RuntimeBounds,
+        on_ready: Callable[[], Awaitable[None]] | None = None,
+        heal: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
-        """`clock` is monotonic seconds, `rng` a uniform draw in [0, 1) (the backoff's jitter)."""
+        """`clock` is monotonic seconds, `rng` a uniform draw in [0, 1) (the backoff's jitter).
+        `on_ready` runs once, after the startup and before `startup_complete` turns true: it opens
+        what a restored chart never published (S3a finding 1). It is isolated: a raise is logged and
+        health degrades. `heal` is a tick step after the policy's: it reopens what a failed fan-out
+        left without a session (SEC-B1), bounded like every step."""
+        self._on_ready, self._heal = on_ready, heal
+        self._on_ready_error: type[Exception] | None = None
         self._policy, self._sessions, self._writer = policy, sessions, writer
         self._restore_b11, self._seed, self._env = restore_b11, seed, env
         self._start_us, self._bounds = process_start_us, bounds
@@ -163,6 +171,7 @@ class RecorderRuntime:
         ended. A positions source that is not deployed is shown with its env, not degraded: it is
         the accepted risk until E29-T06 provides one."""
         task, b, err, failed = self._task, self._bounds, self._last_error, self._attempts
+        ready_err = self._on_ready_error
         if task is None:
             return HealthReport(module=MODULE, status=HealthStatus.STOPPED)
         state = "pending" if not failed else "degraded" if failed >= b.max_attempts else "retrying"
@@ -173,10 +182,12 @@ class RecorderRuntime:
             f"attempts={failed} last_error={err.__name__}" if err else "",
             f"positions_source=not_deployed env={self._env}" if no_source else "",
             f"gate_closed_over={b.gate_closed_alert_s:g}s" if overdue else "",
+            f"on_ready_failed error={ready_err.__name__}" if ready_err else "",
             "task_ended" if task.done() else "",
         ]
         stuck = err is not None and (state == "degraded" or err is RecorderWalVolumeError)
-        status = HealthStatus.DEGRADED if stuck or overdue or task.done() else HealthStatus.OK
+        bad = stuck or overdue or task.done() or ready_err is not None
+        status = HealthStatus.DEGRADED if bad else HealthStatus.OK
         return HealthReport(module=MODULE, status=status, detail=" ".join(f for f in facts if f))
 
     async def _run(self) -> None:
@@ -219,6 +230,13 @@ class RecorderRuntime:
                 gate_closed_s=int(self._clock() - self._t0),
             )
             return False
+        if self._on_ready is not None:
+            try:
+                async with asyncio.timeout(b.startup_timeout_s):
+                    await self._on_ready()
+            except Exception as exc:  # the startup is over (the gate is open): it is not retried
+                self._on_ready_error = type(exc)
+                logger().error("recorder_on_ready_failed", error=type(exc).__name__)
         self._done, self._last_error, self._source_deployed = True, None, positions is not None
         logger().info("recorder_startup_done", env=self._env, failed_attempts=self._attempts)
         return True
@@ -228,6 +246,8 @@ class RecorderRuntime:
             ("policy", self._policy.tick),
             ("sessions", lambda: self._sessions.poll_writer(self._writer)),
         )
+        if self._heal is not None:
+            steps = (*steps, ("heal", self._heal))
         for step, call in steps:  # each isolated: a failing one never skips the other
             try:
                 async with asyncio.timeout(self._bounds.tick_timeout_s):

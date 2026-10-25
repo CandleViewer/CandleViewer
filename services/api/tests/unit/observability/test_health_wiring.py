@@ -141,8 +141,8 @@ def test_each_production_writer_is_built_with_the_audit_serializer(
 def test_every_system_event_writer_create_app_builds_redacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The auth service's, the health registry's and the audit verify route's chain-break writer
-    # (#2468).
+    # The auth service's, the health registry's, the audit verify route's chain-break writer
+    # (#2468) and the recorder's system events (#2188 S4b).
     built: list[PgSystemEventWriter] = []
     real = app_module.PgSystemEventWriter
 
@@ -152,7 +152,7 @@ def test_every_system_event_writer_create_app_builds_redacts(
 
     monkeypatch.setattr(app_module, "PgSystemEventWriter", _spy)
     create_app(_real_settings())
-    assert len(built) == 3
+    assert len(built) == 4
     for writer in built:
         assert writer._redact_details({"api_key": "k"}) == {"api_key": REDACTION_MARKER}
 

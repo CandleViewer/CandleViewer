@@ -50,6 +50,7 @@ from candleviewer.exchange.bybit.public_ws import (
     PublicSocket,
     frame_route,
     public_socket_factory,
+    stream_for_topic,
     topic_kind,
 )
 from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
@@ -160,6 +161,8 @@ class ExchangeBybitService:
 
     #: E08-T04: venue topic -> neutral stream kind, for ingestion's watchdog.
     topic_kind = staticmethod(topic_kind)
+    #: #2188 S4b: venue topic -> (symbol, neutral streams), for the recorder's sessions.
+    stream_for_topic = staticmethod(stream_for_topic)
     #: #1916: raw frame -> (topic, kind, symbol) for per-topic dispatch lanes.
     frame_route = staticmethod(frame_route)
     #: E08-S03: ticker topic naming + frame parser, injected into ingestion.
