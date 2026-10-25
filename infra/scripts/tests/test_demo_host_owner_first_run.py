@@ -538,6 +538,18 @@ def test_a_signal_during_the_bootstrap_ends_the_run_saying_how_to_start_api(
     assert [secret for secret in SECRETS if secret in stopped.proc.stderr] == []
 
 
+def test_the_restart_line_ends_once_api_is_healthy_again(full: Run, tmp_path: Path) -> None:
+    """D-4: once `up --wait` returns, api is healthy again, so no later exit says it may be
+    stopped: neither a run that succeeds nor one refused at the next step."""
+    scenario = full_run()
+    scenario[GET_INVITE] = [REFUSED_INVITE]
+    refused = run(tmp_path, scenario, ANSWERS[:2])
+    assert (full.proc.returncode, refused.proc.returncode) == (0, 1)
+    for done in (full, refused):
+        assert done.docker == BOOTSTRAP  # api was stopped, then started again
+        assert "api may be stopped" not in done.proc.stderr and UP_API not in done.proc.stderr
+
+
 def test_a_malformed_email_stops_before_any_call(tmp_path: Path) -> None:
     stopped = run(tmp_path, full_run(), ["owner"])
     assert stopped.proc.returncode == 1 and "an email whose part before @" in stopped.proc.stderr
