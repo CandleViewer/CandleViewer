@@ -1854,7 +1854,10 @@ def create_app(
     # so CSRF, the idle lock and the enrolment check come first. It reads the view-as service
     # (`None` on the fake backend) and the refusal recorder per request; both are set below, so a
     # missing one fails loudly. The protective writes' handlers register on
-    # `app.state.protective_writes` as they are mounted.
+    # `app.state.protective_writes` as they are mounted. For a live protective write it also
+    # checks the target's permission with `permissions` (the contract's `x-rbac`), `identity` (the
+    # target's reads) and `denials` (the `rbac.denied` record of a refusal): without the first two
+    # such a write is a 503, and `permissions` given without `denials` is not built.
     protective_writes = ProtectiveWrites(declared_operations(spec))
     app.state.protective_writes = protective_writes
     app.middleware("http")(

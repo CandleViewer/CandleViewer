@@ -12,9 +12,9 @@ A write the guard passed as the viewer in a live context, a protective one, also
 target's roles, permissions and trade grants (`TradingPrincipal.target`), read the same way: 22
 admits it only when both the viewer's own RBAC and the target's `x-rbac` allow it. The view-as
 guard checks the target's permission; the route takes its account scope from `scope_for_target`,
-which meets the target's trade grants (the orchestrator's rulings of 2026-10-24 22:50Z and
-23:10Z). A target who can no longer act (missing, not `active`, a role outside the system set)
-allows nothing; in the hold there is no target, the write running in the viewer's own scope.
+which meets the target's trade grants. A target who can no longer act (missing, not `active`, a
+role outside the system set) allows nothing; in the hold there is no target, the write running in
+the viewer's own scope.
 
 It fails closed: no session (no bearer, a refused token, a user unknown or not `active`, a role
 outside the system set) is `None`, the route's 401; a store that does not answer within

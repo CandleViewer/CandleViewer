@@ -60,7 +60,7 @@ class ProtectiveWrites:
     step-up (#3223 item 4, option a). A request with any non-protective component is refused
     `view_as_read_only`, or `view_as_expired` in a hold, before any effect, binds no key and
     writes its refusal record (`ViewAsRefusalRecorder.refuse_operation`); a cancel has none, as
-    every cancel is a risk-reducing exit (C-2.6; the orchestrator's ruling of 2026-10-24 22:50Z).
+    every cancel is a risk-reducing exit (C-2.6; 22 "View-as session", Protective writes).
     The write runs as the viewer and is admitted only when both the viewer's own RBAC and the
     target's allow it; in the hold it runs in the viewer's own scope.
 
