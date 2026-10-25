@@ -235,10 +235,6 @@ from candleviewer.exchange.base.instruments import InstrumentsFetcher
 from candleviewer.exchange.base.models import TickerEvent, TradeEvent
 from candleviewer.exchange.base.service import ExchangeBaseService
 
-# Composition root: injects the adapter's topic vocabulary into the recorder's sessions (C-2.2).
-# nosemgrep: cv-adapter-isolation reason=B5-b owner=@CandleViewer/security review=2026-12-31
-from candleviewer.exchange.bybit.public_ws import stream_for_topic
-
 # Composition root: wires the one concrete exchange adapter (C-2.2).
 # nosemgrep: cv-adapter-isolation reason=B5-b owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.service import ExchangeBybitService
@@ -2645,7 +2641,7 @@ def create_app(
             resolved, recorder_config, recorded=repo, sessions=repo, counters=repo,
             rows=SqlAlchemyRecordingReads(_kb_pg), audit=_LazyAuditEmitter(ctx.audit),
             bus=ctx.bus.bus, budget=app.state.disk_budget, invalidate=coverage_service.invalidate,
-            topics=stream_for_topic, sinks=questdb_sinks(resolved),
+            topics=ctx.exchange_bybit.stream_for_topic, sinks=questdb_sinks(resolved),
             events=PgSystemEventWriter(health_pg, redact_details=system_event_redactor()),
         )  # fmt: skip
         runtime = recorder.runtime
