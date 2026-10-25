@@ -16,7 +16,10 @@ Standalone, offline, stdlib only; it executes no repo code. It reads the token J
    budget from the primitive tokens and E15-D02 §3's rows (parsed from its text; the allowance,
    ceiling, share, canvas and cells are gated equal to the parent's stated figures; the header
    widths are measured inside the frame from tokens, reported beside the parent's, and each
-   minimum + 2 × the frame is gated to fit its column on every §6.2 frame that names one); contrast with the WCAG 2.x formula over the token JSON per theme
+   minimum + 2 × the frame is gated to fit its column on every §6.2 frame that names one, the
+   comfortable frames with the comfortable minimums: their `size.icon.md` grip and
+   `size.control.comfortable` buttons; the step each such frame draws is a value too); contrast
+   with the WCAG 2.x formula over the token JSON per theme
    (`lo` = against the darkest, `hi` = against the lightest background of the row's set); CVD as
    CIELAB ΔE76 after the Machado, Oliveira & Fernandes (2009) severity-1.0 sRGB matrices (the
    deuteranopia matrix is `cvd_sim.py`'s); counts parsed from the spec's own §0 / §6.1 / §8.1 /
@@ -424,7 +427,7 @@ FIT_FRAMES: dict[tuple[str, str, str], str] = {
 }
 DENSE_REFIT = {("1280", "compact")}  # ruling (3): the drawn dense frame at the default density
 STEPS: dict[str, tuple[int, ...]] = {  # the §3.6 steps each kind has (0 = full row)
-    "chart": (0, 1, 3, 4, 5),
+    "chart": (0, 1, 3, 4, 5, 6),  # step 6: the letter-only badge (ruling (2), #319)
     "dom": (0, 1, 2, 3, 4, 5, 6),
     "tape": (0, 1, 3, 5, 6),
     "positions": (0, 1, 5),
@@ -510,11 +513,12 @@ def font_weight(tokens: dict[str, object], style: str) -> int:
     return px(tokens, str(v.get("fontWeight", "")).strip("{}"))
 
 
-def header_elements(t: dict[str, object]) -> dict[str, list[Element]]:
-    """Each kind's header elements at their token widths (§4.2.1), with the §3.6 step changes."""
+def header_elements(t: dict[str, object], density: str) -> dict[str, list[Element]]:
+    """Each kind's header elements at their token widths (§4.2.1), with the §3.6 step changes;
+    ⋮, × and the icon buttons at the density's own `size.control` (§10, ruling (1), #319)."""
     s1, s2 = px(t, "space.1"), px(t, "space.2")
     ctl, icon_sm, icon_md = (
-        px(t, "size.control.compact"),
+        px(t, f"size.control.{density}"),
         px(t, "size.icon.sm"),
         px(t, "size.icon.md"),
     )
@@ -550,7 +554,8 @@ def header_elements(t: dict[str, object]) -> dict[str, list[Element]]:
             ("symbol", picker(HDR_SYMBOL), {}),
             ("interval", picker(HDR_INTERVAL), {}),
             *chart_tools,
-            ("sync badge", sync("symbol, crosshair, drawings"), {3: sync("3")}),
+            # step 6 shows the letter only, as the DOM's (§4.2.3; ruling (2), #319)
+            ("sync badge", sync("symbol, crosshair, drawings"), {3: sync("3"), 6: sync(None)}),
             ("arm state", arm_full, {4: arm_short}),
             close,
         ],
@@ -696,12 +701,16 @@ def budget(
     v["BUDGET:tab.reason.limit"] = f"{r_limit} px"
     # the header's width at each collapse step (§3.6), measured from tokens (ruling (1), #319);
     # the parent's figures are reported beside them (extra .parent / .delta), never gated equal
-    els = header_elements(t)
-    handle = px(t, "size.icon.sm") + s1
+    # comfortable: its own size.icon.md grip, its size.control buttons, space.3 gaps (§10)
+    els = {d: header_elements(t, d) for d in DENSITIES}
+    grip = {"compact": px(t, "size.icon.sm"), "comfortable": px(t, "size.icon.md")}
     mins: dict[str, dict[str, int]] = {d: {} for d in DENSITIES}
+    step_w: dict[str, dict[str, dict[int, int]]] = {d: {} for d in DENSITIES}
     for kind, steps in STEPS.items():
         for d, gap in (("compact", s2), ("comfortable", s3)):
-            widths = {st: header_width(els[kind], st, inset, handle, gap) for st in steps}
+            handle = grip[d] + s1
+            widths = {st: header_width(els[d][kind], st, inset, handle, gap) for st in steps}
+            step_w[d][kind] = widths
             for st, w in widths.items():
                 name = "full" if st == 0 else f"s{st}"
                 key = f"hdr.{kind}.{name}"
@@ -713,7 +722,7 @@ def budget(
             if d == "compact":
                 v[f"BUDGET:hdr.{kind}.min"] = str(mins[d][kind])
             else:
-                extra[f"hdr.{kind}.min.comfortable"] = mins[d][kind]
+                v[f"BUDGET:hdr.{kind}.min.comfortable"] = str(mins[d][kind])
     for kind, step, pkey in PARENT_HEADER:
         got, want = int(v[f"BUDGET:hdr.{kind}.{step}"]), int(f[pkey])
         extra[f"hdr.{kind}.{step}.parent"] = want
@@ -721,6 +730,8 @@ def budget(
     v["BUDGET:hdr.dom.min.parent"] = str(int(f["dom.min"]))
     v["BUDGET:hdr.dom.min.framed"] = str(mins["compact"]["dom"] + 2 * frame_focused)
     extra["hdr.chart.min.framed"] = mins["compact"]["chart"] + 2 * frame_focused
+    for kind in STEPS:
+        extra[f"hdr.{kind}.min.comfortable.framed"] = mins["comfortable"][kind] + 2 * frame_focused
     for vp, (vw, vh) in VIEWPORTS.items():
         cw = vw - int(f["navrail"]) - int(f["rightrail"])
         ch = vh - topbar - statusbar
@@ -776,6 +787,12 @@ def budget(
                 if (layout, vp, d) not in FIT_FRAMES:
                     continue
                 for kind, col in colmap.items():
+                    # the step the frame draws: the first whose width fits inside the frame (§3.6)
+                    inside = col - 2 * frame_focused
+                    shown = [st for st, w in step_w[d][kind].items() if w <= inside]
+                    v[f"BUDGET:step.{layout}.{vp}.{d}.{kind}"] = (
+                        str(shown[0]) if shown else "compact view"
+                    )
                     got = mins[d][kind] + 2 * frame_focused
                     extra[f"fit.{layout}.{vp}.{d}.{kind}"] = f"{got} ≤ {col}"
                     if got > col:
@@ -1083,19 +1100,19 @@ def fit_gates(spec: str) -> list[str]:
     for (layout, vp, d), label in FIT_FRAMES.items():
         if f"| {label}" not in register:
             bad.append(f"fit: {label} is not a §6.2 frame row")
-        if d != "compact":
-            continue  # the comfortable minimums are reported (--json), gated inside budget()
+        suffix = "" if d == "compact" else f".{d}"  # comfortable: its own minimums (§3.6)
         cols = anchored_ints(spec, f"BUDGET:{layout}.split.{vp}.{d}")
         if not cols:
             bad.append(f"fit: the {layout}.split.{vp}.{d} anchor is missing")
             continue
         for kind, col in zip(("chart", "dom", "tape"), cols, strict=False):
-            mn = anchored_ints(spec, f"BUDGET:hdr.{kind}.min")
+            mn = anchored_ints(spec, f"BUDGET:hdr.{kind}.min{suffix}")
             if not mn:
-                bad.append(f"fit: the hdr.{kind}.min anchor is missing")
+                bad.append(f"fit: the hdr.{kind}.min{suffix} anchor is missing")
             elif mn[0] + 2 * frame[0] > col:
                 bad.append(
-                    f"fit: hdr.{kind}.min {mn[0]} + 2 × {frame[0]} px > the {kind} column {col} px "
+                    f"fit: hdr.{kind}.min{suffix} {mn[0]} + 2 × {frame[0]} px > the {kind} column "
+                    f"{col} px "
                     f"of {label}"
                 )
     rows = table_rows(section(spec, "4.2.3 The collapse strip"))
@@ -1104,6 +1121,15 @@ def fit_gates(spec: str) -> list[str]:
         bad.append("§4.2.3 step 6: the sync badge must show its letter only (ruling (2))")
     if not step6 or '"Sync group A"' not in " ".join(step6[0]):
         bad.append('§4.2.3 step 6: the badge\'s accessible name "Sync group A" is not stated')
+    # ruling (2), #319: the chart has its own step 6, distinct from its step 5
+    chart = {r[0]: r for r in rows if r and r[0].startswith("chart ")}
+    c5, c6 = chart.get("chart 5"), chart.get("chart 6 = minimum")
+    if not c5 or not c6 or c5[1] == c6[1]:
+        bad.append("§4.2.3 step 6: the chart's step 5 and step 6 rows must both exist and differ")
+    if not c6 or "· A · ARMED" not in c6[1] or "· A · 3" in c6[1] or "drawings" in c6[1]:
+        bad.append("§4.2.3 step 6: the chart's sync badge must show its letter only (ruling (2))")
+    if not c6 or '"Sync group A"' not in " ".join(c6):
+        bad.append('§4.2.3 step 6: the chart badge\'s accessible name "Sync group A" is not stated')
     return bad
 
 
@@ -1160,8 +1186,10 @@ def frame_gates(spec: str) -> list[str]:
             bad.append(f"{tag}: the cost cell lacks the 'ms · fps' pair twice (M-6)")
     # §4.2.3: ⋮ present at every step and in every header text
     strip = table_rows(section(spec, "4.2.3 The collapse strip"))
-    if len(strip) < 8:
-        bad.append(f"§4.2.3: {len(strip)} step rows (expected 0–6 and the compact view)")
+    if len(strip) < 14:
+        bad.append(
+            f"§4.2.3: {len(strip)} step rows (expected DOM 0–6, the compact view, chart 0–6)"
+        )
     for row in strip:
         if len(row) < 4 or row[3] != "present" or "⋮" not in row[1]:
             bad.append(f"§4.2.3 step {row[0]}: ⋮ missing from the row or its column (M-5)")
@@ -1429,6 +1457,7 @@ def audit(
 
 # every computed value is anchored in the spec, except these (the hand-off's or reported only)
 SPEC_EXEMPT: set[str] = {
+    "BUDGET:hdr.chart.s6",
     "BUDGET:hdr.dom.s6",
     "BUDGET:hdr.tape.s6",
 }  # §3.6 shows step 6 as the minimum column
@@ -1484,13 +1513,35 @@ def dom_min_over_column(text: str) -> str:
     return re.sub(r"\d+(<!--=BUDGET:hdr\.dom\.min-->)", rf"{over}\1", text)
 
 
+def comfortable_min_over_column(text: str) -> str:
+    """hdr.dom.min.comfortable written 1 px over the comfortable 1280 DOM column less the frame."""
+    cols = anchored_ints(text, "BUDGET:scalping.split.1280.comfortable")
+    frame = anchored_ints(text, "BUDGET:focus.frame-px")
+    if not cols or not frame:
+        return text
+    over = cols[1] - 2 * frame[0] + 1
+    return re.sub(r"\d+(<!--=BUDGET:hdr\.dom\.min\.comfortable-->)", rf"{over}\1", text)
+
+
 MUTATIONS: tuple[tuple[str, str, Callable[[str], str], str], ...] = (
     # (gate class, name, mutation, expected outcome)
     ("fit", "a header minimum written 1 px over its column", dom_min_over_column, "FAIL"),
     (
         "fit",
+        "a comfortable minimum written 1 px over its column",
+        comfortable_min_over_column,
+        "FAIL",
+    ),
+    (
+        "fit",
         "step 6's sync badge restored to full",
         line_sub("| 6 = minimum", "· A · LIVE", "· A · 1 · LIVE"),
+        "FAIL",
+    ),
+    (
+        "fit",
+        "the chart's step 6 drawn with the full sync badge",
+        line_sub("| chart 6 = minimum", "· A · ARMED", "· A · symbol, crosshair, drawings · ARMED"),
         "FAIL",
     ),
     ("1 cites", "a line cite past the file's end", re_sub(r"`D02`:173\b", "`D02`:99999"), "FAIL"),
