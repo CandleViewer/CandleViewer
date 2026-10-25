@@ -300,6 +300,16 @@ def test_a_parent_of_another_environment_or_kind_is_422(served: Served) -> None:
     ]
 
 
+def test_a_stored_rule_without_a_parent_is_422_with_no_field_entry(served: Served) -> None:
+    world, store = served
+    store.fails = AccountsStoreRuleError("ea_uid_fmt")
+    resp = create(world, MAIN)
+    (entry,) = answer(resp, "post")["errors"]
+    assert (resp.status_code, entry) == (
+        422, {"rule": "ea_uid_fmt", "message": "The account breaks a stored rule."},
+    )  # fmt: skip
+
+
 def test_a_record_not_written_is_503_and_nothing_is_stored(
     served: Served, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -316,7 +326,7 @@ def test_a_record_not_written_is_503_and_nothing_is_stored(
     assert set(store.rows) == before
 
 
-def test_an_idempotent_replay_returns_the_first_answer_and_a_reuse_is_409(served: Served) -> None:
+def test_an_idempotent_replay_with_the_same_key_returns_the_first_answer(served: Served) -> None:
     world, store = served
     key = str(uuid.uuid4())
     body = MAIN | {"exchange_uid": "99990002", "label": "Once"}
@@ -325,9 +335,20 @@ def test_an_idempotent_replay_returns_the_first_answer_and_a_reuse_is_409(served
     assert (first.status_code, again.status_code, again.json()) == (201, 201, first.json())
     assert again.headers["idempotency-replayed"] == "true"
     assert [kind for kind, _ in store.seen] == ["create"]
+
+
+def test_an_idempotency_key_reused_with_another_body_is_409(served: Served) -> None:
+    world, _ = served
+    key = str(uuid.uuid4())
+    body = MAIN | {"exchange_uid": "99990002", "label": "Once"}
+    assert create(world, body, key=key).status_code == 201
     reused = create(world, body | {"label": "Other"}, key=key)
     assert (reused.status_code, answer(reused, "post")["code"]) == (409, "idempotency_key_reuse")
-    bad = create(world, body, key="not-a-uuid")
+
+
+def test_a_non_uuid_idempotency_key_is_422_naming_the_header(served: Served) -> None:
+    world, _ = served
+    bad = create(world, MAIN | {"exchange_uid": "99990002", "label": "Once"}, key="not-a-uuid")
     assert (bad.status_code, answer(bad, "post")["errors"][0]["field"]) == (422, "Idempotency-Key")
 
 

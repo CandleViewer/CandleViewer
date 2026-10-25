@@ -5,7 +5,9 @@ step-up on `createExchangeAccount` before its handler runs (SR-E27-02)."""
 
 from __future__ import annotations
 
+import base64
 import dataclasses
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -35,6 +37,7 @@ from candleviewer.storage.repositories.accounts import (
     AccountsPage,
     AccountsStoreConflictError,
     AccountsStoreRuleError,
+    AccountsStoreScopeDeniedError,
     AccountWriteAhead,
     NewExchangeAccount,
 )
@@ -153,6 +156,15 @@ def test_each_refusal_of_the_store_maps_to_its_problem(
     assert audit.records == []
 
 
+def test_a_gate_refusal_whose_record_fails_is_still_403_and_logged() -> None:
+    store, audit = _Store(), _Audit(fails=AuditError("down"))
+    store.fails = AccountsStoreScopeDeniedError()
+    with capture_logs() as logs:
+        resp = _client(store, audit).post("/exchange-accounts", json=BODY)
+    assert (resp.status_code, resp.json()["code"]) == (403, "forbidden")
+    assert [log["event"] for log in logs] == ["account_denial_unaudited"]
+
+
 def test_a_defect_in_the_store_is_a_500_not_an_outage() -> None:
     store = _Store()
     store.fails = TypeError("a defect")
@@ -170,6 +182,13 @@ def test_a_uid_conflict_whose_holder_cannot_be_read_still_answers_409() -> None:
     store.list_fails = None  # read, but no account holds the UID any more (a race)
     resp = _client(store, _Audit()).post("/exchange-accounts", json=BODY)
     assert resp.json()["detail"] == "This UID is already registered."
+
+
+def test_a_defect_while_reading_the_uid_holder_is_a_500_not_a_plain_conflict() -> None:
+    store = _Store()
+    store.fails = AccountsStoreConflictError("ux_ea_uid")
+    store.list_fails = TypeError("a defect")
+    assert _client(store, _Audit()).post("/exchange-accounts", json=BODY).status_code == 500
 
 
 def test_a_list_store_outage_is_503_logged_by_class() -> None:
@@ -191,6 +210,8 @@ def test_the_cursor_is_bound_to_its_caller_filters_and_hour() -> None:
     assert decode_cursor(cursor, uuid.uuid4(), ["demo", None], issued) is None
     assert decode_cursor(cursor, owner, [None, None], issued) is None
     assert decode_cursor("x" * 513, owner, ["demo", None], issued) is None
+    odd = base64.urlsafe_b64encode(json.dumps(["not", "a", "dict"]).encode()).decode()
+    assert decode_cursor(odd, owner, ["demo", None], issued) is None
     naive = encode_cursor(owner, [], AccountKey(NOW.replace(tzinfo=None), at.id), issued)
     assert decode_cursor(naive, owner, [], issued) is None
 
