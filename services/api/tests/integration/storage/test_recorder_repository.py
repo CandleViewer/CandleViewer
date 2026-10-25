@@ -16,13 +16,14 @@ from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import psycopg
 import pytest
 from psycopg.rows import dict_row
 from testcontainers.postgres import PostgresContainer
 
-from candleviewer.recorder.sessions import SessionManager, to_us
+from candleviewer.recorder.sessions import DEFAULT_STREAMS, SessionManager, to_us
 from candleviewer.storage.errors import StorageConstraintViolated
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import STREAM_BY_DB_KIND, RecordedGap
@@ -595,3 +596,47 @@ async def test_the_gap_insert_and_the_counters_reach_only_their_own_envs_session
     rows = "SELECT id::text, messages_received FROM recording_sessions ORDER BY started_at"
     assert conn.execute(rows).fetchall() == [(sids["live"], 3), (sids["demo"], 3)]
     assert await write("testnet") == [False, False]  # no session of its own: neither write lands
+
+
+# --- #2188 S4b0: a gap row is written once (the table is append-only) ----------------------------
+
+
+async def test_a_gap_already_written_is_not_written_again(repo: Repo, conn: Conn) -> None:
+    """A retried crash recovery (S4a's runtime retries a failed startup) asks for the same
+    windows again; `recording_gaps` refuses DELETE, so a repeat could never be removed."""
+    t0 = datetime(2026, 9, 1, tzinfo=UTC)
+    sid = await repo.open_session_at(
+        recorded_symbol_id=await repo.upsert_auto("BTCUSDT", "chart_open", _CHART, "live"),
+        symbol="BTCUSDT", streams=["trades"], orderbook_depth=200,
+        ws_endpoint="wss://example.invalid", started_at=t0,
+    )  # fmt: skip
+
+    async def gap(start: datetime) -> int | None:
+        return await repo.record_gap(
+            session_id=sid, symbol="BTCUSDT", stream="trades", gap_start=start,
+            gap_end=t0 + timedelta(minutes=5), cause="process_restart",
+        )  # fmt: skip
+
+    first = await gap(t0)
+    assert first is not None
+    assert await gap(t0) is None  # the same session, stream, cause and start
+    assert await gap(t0 + timedelta(minutes=1)) is not None  # another window still lands
+    count = "SELECT count(*) FROM recording_gaps WHERE recording_session_id = %s"
+    assert conn.execute(count, (sid,)).fetchone() == (2,)
+
+
+async def test_a_recovery_retried_after_a_cut_writes_one_gap_per_stream(
+    repo: Repo, conn: Conn
+) -> None:
+    """The cut lands between the gap rows and the close, so the retry finds the session open."""
+    t0 = to_us(datetime(2026, 9, 1, tzinfo=UTC))
+    killed = SessionManager(repo, now_us=lambda: t0, audit=FakeAudit(), config=LIVE)
+    await killed.on_set_changed(_added())
+    start = t0 + 60_000_000
+    fresh = SessionManager(repo, now_us=lambda: start, audit=FakeAudit(), config=LIVE)
+    with patch.object(repo, "close_session_at", side_effect=OSError("cut")):
+        with pytest.raises(OSError):
+            await fresh.recover_on_startup(start)
+    assert await fresh.recover_on_startup(start) == 1
+    per_stream = "SELECT stream::text, count(*) FROM recording_gaps GROUP BY stream"
+    assert dict(conn.execute(per_stream).fetchall()) == dict.fromkeys(DEFAULT_STREAMS, 1)

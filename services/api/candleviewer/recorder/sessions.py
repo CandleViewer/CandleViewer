@@ -118,7 +118,9 @@ class SessionStore(Protocol):
         gap_start: datetime,
         gap_end: datetime,
         cause: str,
-    ) -> int: ...
+    ) -> int | None:
+        """None when this session, stream, cause and start are already written."""
+        ...
 
     async def list_live_sessions(self, env: str) -> list[dict[str, Any]]: ...
 
@@ -256,6 +258,8 @@ class SessionManager:
                 cause=cause,
             )
         )
+        if gap_id is None:
+            return None  # already written: a retried recovery counts it once
         recorder_gaps_total.labels(cause=cause).inc()
         recorder_gap_seconds_total.labels(symbol=symbol).inc((hi - lo) / 1e6)
         logger().warning(

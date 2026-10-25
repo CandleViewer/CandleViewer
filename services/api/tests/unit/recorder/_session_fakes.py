@@ -98,9 +98,14 @@ class MemRecorderStore:
         gap_start: datetime,
         gap_end: datetime,
         cause: str,
-    ) -> int:
+    ) -> int | None:
         assert gap_end > gap_start, "rg_window CHECK"
         assert session_id in self.sessions
+        key = (session_id, stream, cause, gap_start)
+        if any(
+            (g["session_id"], g["stream"], g["cause"], g["gap_start"]) == key for g in self.gaps
+        ):
+            return None  # as `_RECORD_GAP`: a window is written once
         gid = len(self.gaps) + 1
         self.gaps.append(
             {
