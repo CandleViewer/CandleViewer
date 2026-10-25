@@ -1,12 +1,15 @@
 """`ProfilesRepository` (E28-T01 #905): rows to `AccountProfile`, store errors to the accounts
-domain errors, one not-found for every miss, and the cache invalidated by every write."""
+domain errors, one not-found for every miss, the cache invalidated by every write, and each
+committed write announced (#906 D3a)."""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import inspect
 import json
-from datetime import UTC, datetime
+from contextlib import nullcontext
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -15,6 +18,7 @@ from uuid import UUID, uuid4
 import pytest
 import structlog
 
+from candleviewer.accounts import profile_repository
 from candleviewer.accounts.errors import (
     AccountConflictError,
     AccountNotFoundError,
@@ -24,6 +28,7 @@ from candleviewer.accounts.errors import (
     AccountVersionConflictError,
     ProfileUnavailableError,
 )
+from candleviewer.accounts.profile_changes import ProfilesChanged
 from candleviewer.accounts.profile_repository import (
     DefaultBinding,
     ProfilesRepository,
@@ -531,3 +536,182 @@ async def test_without_a_cache_or_metric_the_repository_still_works() -> None:
     assert (
         await repo.update_profile(_OWNER, _P.account_id, _P.profile_id, _P, expected_version=None)
     ).profile.version == 4
+
+
+# --- #906 D3a: a committed write publishes its account's change (24 Sec.9.2) -----------------
+
+_LATER = _T + timedelta(seconds=5)  # a write's `updated_at`, after the row's `created_at`
+_KINDS = {"create": "created", "update": "updated", "delete": "deleted"}
+
+
+class _Bell:
+    """A `ProfileChanges` port: it hears each event, in the order shared with the store and the
+    cache, then raises `fails` or, with `hangs`, waits until it is cancelled."""
+
+    def __init__(self, events: list[str], fails: Exception | None = None, hangs: bool = False):
+        self.events, self.fails, self.hangs = events, fails, hangs
+        self.heard: list[ProfilesChanged] = []
+        self.entered = asyncio.Event()
+
+    async def changed(self, event: ProfilesChanged) -> None:
+        self.events.append("rang")
+        self.heard.append(event)
+        self.entered.set()
+        if self.hangs:
+            await asyncio.Event().wait()
+        if self.fails is not None:
+            raise self.fails
+
+
+def _belled(answer: object, **bell: Any) -> tuple[ProfilesRepository, _Bell, list[str]]:
+    events: list[str] = []
+    ring, store, cache = _Bell(events, **bell), _Store(answer, events), _Cache(events)
+    repo = ProfilesRepository(store, cache=cache, changes=ring)  # type: ignore[arg-type]  # fakes
+    return repo, ring, events
+
+
+def _written(version: int, profile: AccountProfile = _P, **values: Any) -> AccountProfileRow:
+    return dataclasses.replace(_row(profile, version=version, **values), updated_at=_LATER)
+
+
+def _change(kind: str, *rows: AccountProfileRow, binding: int | None = None) -> ProfilesChanged:
+    """`ts_event` is `_LATER`, the written row's `updated_at`, never the clock's."""
+    named = tuple({"profile_id": r.id, "version": r.version} for r in rows)
+    return ProfilesChanged.model_validate(
+        {"exchange_account_id": _P.account_id, "change": kind, "profiles": named,
+         "binding_version": binding, "ts_event": _CREATED + 5_000_000}
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize("readable", [True, False], ids=["read-back", "unreadable"])
+@pytest.mark.parametrize(("write", "version"), [("create", 1), ("update", 4), ("delete", 4)])
+async def test_each_committed_write_rings_once_with_its_rows_new_versions(
+    write: str, version: int, readable: bool
+) -> None:
+    """The kind, the row's id and version (the database's, never the `If-Match` sent) and its
+    `updated_at`, once the store returned and the account was invalidated, and whether or not the
+    row reads back: the write committed."""
+    row = _written(version, **({} if readable else _BAD))
+    repo, bell, events = _belled(row)
+    with nullcontext() if readable else pytest.raises(ProfileUnavailableError):
+        await _write(repo, write)
+    assert bell.heard == [_change(_KINDS[write], row)]
+    assert events == ["store returned", "invalidated", "rang"]
+
+
+_OLD = _profile(profile_id=str(uuid4()), name="Old")
+
+
+@pytest.mark.parametrize(
+    ("previous", "readable"),
+    [(_row(_OLD, version=6), True), (None, True), (_row(_OLD, version=6, **_BAD), False)],
+    ids=["replaced", "first-default", "unreadable"],
+)
+async def test_a_move_rings_both_rows_demoted_first_with_the_bindings_new_version(
+    previous: AccountProfileRow | None, readable: bool
+) -> None:
+    """One event per move: the demoted default, then the new one, each at its new version, the
+    binding's version after the move (never the one sent) and the new default's `updated_at`."""
+    new = _written(4, is_default=True)
+    move = DefaultMove(profile=new, previous=previous, written=True, version=8)
+    repo, bell, events = _belled(move)
+    with nullcontext() if readable else pytest.raises(ProfileUnavailableError):
+        await repo.set_default_profile(
+            _OWNER, _P.account_id, _P.profile_id, expected_binding_version=7
+        )
+    named = (new,) if previous is None else (previous, new)
+    assert bell.heard == [_change("default_moved", *named, binding=8)]
+    assert events == ["store returned", "invalidated", "rang"]
+
+
+@pytest.mark.parametrize(
+    ("write", "answer", "raised"),
+    [
+        *[(w, AccountProfileStoreStaleError(), AccountVersionConflictError) for w in _WRITES],
+        ("create", AccountProfileStoreConflictError("ux_ap_name"), AccountConflictError),
+        ("update", AccountProfileStoreRuleError("ap_trading_caps"), AccountRuleError),
+        ("delete", AccountProfileStoreScopeDeniedError(), AccountScopeDeniedError),
+        ("update", StorageTierUnavailable("pg"), StorageTierUnavailable),
+        ("delete", None, AccountNotFoundError),
+        ("create", None, AccountNotFoundError),
+        ("update", None, AccountNotFoundError),
+        ("set_default", dataclasses.replace(_MOVE, written=False), None),
+        ("mismatch", _row(), AccountNotFoundError),
+    ],
+    ids=[
+        *(f"stale-{w}" for w in _WRITES),
+        *("conflict", "rule", "denied", "outage", "miss-delete", "miss-create", "miss-update"),
+        *("no-op-move", "path-mismatch"),
+    ],
+)
+async def test_a_write_that_changes_nothing_or_is_refused_rings_nothing(
+    write: str, answer: object, raised: type[Exception] | None
+) -> None:
+    repo, bell, events = _belled(answer)
+    with structlog.testing.capture_logs() as logs:
+        with nullcontext() if raised is None else pytest.raises(raised):
+            if write == "mismatch":  # a body naming another account reaches no store
+                await repo.create_profile(_OWNER, uuid4(), _P)
+            else:
+                await _write(repo, write)
+    assert bell.heard == [] and "rang" not in events
+    assert "profile.change_unannounced" not in [log["event"] for log in logs]  # nor tried
+
+
+@pytest.mark.parametrize("fault", ["fails", "hangs"])
+@pytest.mark.parametrize("write", list(_WRITES))
+async def test_a_doorbell_that_fails_or_hangs_never_fails_the_write(
+    write: str, fault: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The write has committed: a doorbell that raises, or outlasts `ANNOUNCE_TIMEOUT_S` (forced
+    to 0, no sleep), is logged once by the account, the change and the error class, never a value,
+    and the write answers as it would have."""
+    answer = _WRITES[write][1]
+    expected = await _write(_repo(answer)[0], write)
+    monkeypatch.setattr(profile_repository, "ANNOUNCE_TIMEOUT_S", 0)
+    fails = RuntimeError(f"bus down near {_P.name}")  # a message the log line must not carry
+    repo, _, _ = _belled(answer, **({"fails": fails} if fault == "fails" else {"hangs": True}))
+    writing = asyncio.ensure_future(_write(repo, write))
+    try:
+        with structlog.testing.capture_logs() as logs:
+            done, _ = await asyncio.wait({writing}, timeout=5)  # bounds the test; times nothing
+        assert writing in done, "the write waited on its doorbell"
+        assert writing.result() == expected
+    finally:
+        writing.cancel()
+    error = "RuntimeError" if fault == "fails" else "TimeoutError"
+    assert logs == [
+        {"event": "profile.change_unannounced", "account_id": str(_P.account_id),
+         "change": _KINDS.get(write, "default_moved"), "error": error, "log_level": "warning"}
+    ]  # fmt: skip
+
+
+async def test_an_event_that_cannot_be_built_never_fails_the_write() -> None:
+    """The write has committed: an event the model refuses (a binding version of 0) is logged by
+    its class and never raised, as a port's failure is."""
+    repo, bell, _ = _belled(dataclasses.replace(_MOVE, version=0))
+    with structlog.testing.capture_logs() as logs:
+        moved = await _write(repo, "set_default")
+    assert (bell.heard, getattr(moved, "version", None)) == ([], 0)
+    assert [(log["event"], log["error"]) for log in logs] == [
+        ("profile.change_unannounced", "ValidationError")
+    ]
+
+
+async def test_a_cancelled_write_is_not_swallowed_by_its_doorbell() -> None:
+    """`CancelledError` is not an `Exception`: a write cancelled while it rings stays cancelled."""
+    repo, bell, _ = _belled(_row(version=4), hangs=True)
+    writing = asyncio.ensure_future(_write(repo, "update"))
+    await asyncio.wait_for(bell.entered.wait(), 5)  # bounds the test; times nothing
+    writing.cancel()
+    done, _ = await asyncio.wait({writing}, timeout=5)  # bounds the test; times nothing
+    assert writing in done and writing.cancelled()
+
+
+@pytest.mark.parametrize("write", list(_WRITES))
+async def test_without_a_port_a_write_rings_nothing(write: str) -> None:
+    """No port (the fake backend's facade, a test's): the write answers and logs nothing."""
+    repo, _, _, _ = _repo(_WRITES[write][1])
+    with structlog.testing.capture_logs() as logs:
+        await _write(repo, write)
+    assert logs == []

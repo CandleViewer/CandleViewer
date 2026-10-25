@@ -1,9 +1,10 @@
 """#906 slice D1a (E28-T02): the composition-root wiring of the account profiles.
 
 `wire_profiles` builds the process's one profile store, the order path's effective-profile cache
-over it and the domain facade over both, with the two E28-T01 counters on the process registry.
-The fake backend has no store. The store's methods are patched at class level, so nothing connects:
-the engine behind it is built lazily and never opened. No network.
+over it and the domain facade over both, with the two E28-T01 counters on the process registry,
+and binds the facade's doorbell over the process's bus (D3a). The fake backend has no store. The
+store's methods are patched at class level, so nothing connects: the engine behind it is built
+lazily and never opened. No network.
 """
 
 from __future__ import annotations
@@ -15,9 +16,11 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from candleviewer.accounts.profile_changes import ProfilesChanged, ProfileVersion
+from candleviewer.bus import Bus, QueuePolicy, Topic
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import register_r0
-from candleviewer.profiles_wiring import DISPOSE_S, ProfilesWiring, wire_profiles
+from candleviewer.profiles_wiring import DISPOSE_S, BusProfileChanges, ProfilesWiring, wire_profiles
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.account_profiles_sqlalchemy import (
     SqlAlchemyAccountProfileStore,
@@ -128,3 +131,81 @@ async def test_a_pool_that_never_closes_is_left_at_the_bound() -> None:
         assert isinstance(closing.exception(), TimeoutError)
     finally:
         closing.cancel()
+
+
+def _change(account: UUID) -> ProfilesChanged:
+    one = (ProfileVersion(profile_id=_PROFILE, version=4),)
+    return ProfilesChanged(
+        exchange_account_id=account, change="updated", profiles=one, ts_event=1_792_486_805_000_000
+    )
+
+
+async def test_the_bus_doorbell_publishes_on_its_accounts_topic() -> None:
+    """#906 D3a: the account's id where a market topic carries its symbol (20 Sec.3), so a consumer
+    holds one account's topic or the pattern over all of them."""
+    bus, other = Bus(), uuid4()
+    mine = bus.subscribe("mine", f"demo.profiles.{_ACCOUNT}.changed", QueuePolicy.NEVER_DROP)
+    every = bus.subscribe("every", "demo.profiles.*.changed", QueuePolicy.NEVER_DROP)
+    doorbell, event = BusProfileChanges(bus, "demo"), _change(_ACCOUNT)
+    await doorbell.changed(event)
+    await doorbell.changed(_change(other))
+    assert doorbell.topic(_ACCOUNT).key == f"demo.profiles.{_ACCOUNT}.changed"
+    assert mine.get_nowait() is event and mine.qsize() == 0
+    assert [every.get_nowait().exchange_account_id for _ in range(2)] == [_ACCOUNT, other]
+
+
+class _CountingBus:
+    """Counts the publishes in flight; each waits until `release` is set."""
+
+    def __init__(self) -> None:
+        self.in_flight = self.most = 0
+        self.keys: list[str] = []
+        self.entered, self.release = asyncio.Event(), asyncio.Event()
+
+    async def publish(self, topic: Topic, event: object) -> None:
+        self.in_flight += 1
+        self.most = max(self.most, self.in_flight)
+        self.entered.set()
+        await self.release.wait()
+        self.keys.append(topic.key)
+        self.in_flight -= 1
+
+
+async def test_the_bus_doorbell_is_its_topics_one_producer() -> None:
+    """The bus orders a topic only for a single producer: concurrent writes publish one at a time,
+    in the order they rang."""
+    bus, accounts = _CountingBus(), [uuid4() for _ in range(3)]
+    doorbell = BusProfileChanges(cast(Bus, bus), "demo")
+    ringing = [asyncio.ensure_future(doorbell.changed(_change(a))) for a in accounts]
+    await asyncio.wait_for(bus.entered.wait(), 5)  # the first publishes; the others wait
+    bus.release.set()
+    await asyncio.gather(*ringing)
+    assert bus.most == 1
+    assert bus.keys == [f"demo.profiles.{a}.changed" for a in accounts]
+
+
+async def test_wire_profiles_hands_the_facade_the_doorbell_of_the_process_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A committed write through the wired facade rings on the bus it was handed, under the
+    process's environment; without a bus there is no doorbell, and the fake backend wires none."""
+    row = _row(version=4)
+
+    async def update(self: Any, *args: Any, **kwargs: Any) -> Any:
+        return row
+
+    monkeypatch.setattr(SqlAlchemyAccountProfileStore, "update_profile", update)
+    bus = Bus()
+    heard = bus.subscribe("heard", "testnet.profiles.*.changed", QueuePolicy.NEVER_DROP)
+    real = Settings(environment=Environment.TESTNET, storage_backend="real")
+    wired = wire_profiles(real, _metrics(), bus)
+    assert wired is not None
+    owner = OwnerScope(uuid4())
+    await wired.repository.update_profile(owner, _ACCOUNT, _PROFILE, _P, expected_version=3)
+    event = heard.get_nowait()
+    assert (event.exchange_account_id, event.change) == (_ACCOUNT, "updated")
+    assert event.profiles == (ProfileVersion(profile_id=_PROFILE, version=4),)
+    unrung = wire_profiles(real, _metrics())
+    assert unrung is not None and unrung.repository._changes is None
+    fake = Settings(environment=Environment.TESTNET, storage_backend="fake")
+    assert wire_profiles(fake, _metrics(), bus) is None
