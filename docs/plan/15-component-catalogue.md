@@ -1866,7 +1866,7 @@ interface WatchlistRowData {
 
 - **Tier**: Molecule (trading) · **Purpose**: saved watchlist groups (e.g. "Majors", "My Setups") as tabs above the watchlist table.
 - **Props**: `groups: {id,name}[]` · `activeId` · `onSwitch` · `onCreate` · `onRename` · `onDelete` · `counts` · `onDuplicate` · `onManage`.
-- **A11y**: the CMP-042 Tabs pattern with manual activation (arrows move focus; `Enter`/`Space` switch, because a switch changes subscriptions, `23` L1182); each tab named with its count ("Majors, 12 symbols"); a tab menu on `Shift+F10` (Rename, Duplicate, Delete…, Manage watchlists…); overflow into "More lists". Without `workspaces:write`, or while viewing as, the tab menu's Rename, Duplicate and Delete… and the "+" (`onCreate`) are T2 in CMP-079 RbacGate (E08-D07 §6.6), with a CMP-019 `lock` glyph.
+- **A11y**: the CMP-042 Tabs pattern with manual activation (arrows move focus; `Enter`/`Space` switch, because a switch changes subscriptions, `23` L1190); each tab named with its count ("Majors, 12 symbols"); a tab menu on `Shift+F10` (Rename, Duplicate, Delete…, Manage watchlists…); overflow into "More lists". Without `workspaces:write`, or while viewing as, the tab menu's Rename, Duplicate and Delete… and the "+" (`onCreate`) are T2 in CMP-079 RbacGate (E08-D07 §6.6), with a CMP-019 `lock` glyph.
 - **Tokens**: inherits CMP-042 Tabs.
 - **Storybook**: Default, CreateNew, Overflow, TabMenu, ReadOnly.
 - **Tests**: unit, visual, axe.
