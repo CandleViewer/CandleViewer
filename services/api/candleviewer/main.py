@@ -121,7 +121,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     feature_flags = scrub_task = audit_verify = disk_budget = rule_prune = funding_task = None
     bars_runtime = kline_refresh = audit_flush = overrides = health_registry = None
     account_health = ws_runtime = lost_jobs = view_as_flush = view_as_sweeper = None
-    audit_exports = oms_runtime = None
+    audit_exports = oms_runtime = profile_notices = None
     alert_tasks: list[Any] = []
     metrics_runtime: MetricsRuntime | None = None
     try:
@@ -230,6 +230,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             facade.add_process_collectors()
             metrics_runtime = MetricsRuntime(facade, ctx.settings.metrics_bind)
             metrics_runtime.start()
+        profile_notices = getattr(app.state, "profile_notices", None)
+        if profile_notices is not None:  # #906 D3e: holds the profile writes' bus pattern
+            profile_notices.start()
         ws_runtime = getattr(app.state, "ws_runtime", None)
         if ws_runtime is not None:
             ws_runtime.start()
@@ -318,6 +321,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await teardown.run("view_as_refusal_flush", view_as_flush.stop)
             if account_health is not None:  # its hook calls drain before `stop_all` stops modules
                 await teardown.run("account_health", account_health.stop)
+            if profile_notices is not None:  # #906 D3e: off the bus before `stop_all` drains it
+                await teardown.run("profile_notices", profile_notices.stop)
             profiles = getattr(app.state, "profiles", None)
             if profiles is not None:  # #906 D1a: the cache's loads, then its pool
                 await teardown.run("profiles", profiles.dispose)

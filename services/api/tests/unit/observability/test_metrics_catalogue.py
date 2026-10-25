@@ -20,6 +20,7 @@ from candleviewer.observability.metrics_catalogue import (
     CATALOGUE,
     FANOUT_BUCKETS,
     LOOP_LAG_BUCKETS,
+    PROFILE_PROPAGATION_BUCKETS,
     live_specs,
     register_r0,
     registered_specs,
@@ -194,6 +195,7 @@ def test_catalogue_rows_are_documented_in_architecture_12_1() -> None:
 def test_histogram_buckets_bracket_documented_budgets() -> None:
     assert 0.05 in LOOP_LAG_BUCKETS and 0.1 in LOOP_LAG_BUCKETS
     assert 0.02 in FANOUT_BUCKETS
+    assert 2.0 in PROFILE_PROPAGATION_BUCKETS and 5.0 in PROFILE_PROPAGATION_BUCKETS  # SCR-130
 
 
 def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> None:
@@ -251,7 +253,8 @@ def test_account_row_gauges_are_live_and_bounded_by_their_enums() -> None:
 
 def test_profile_series_are_live_and_bounded_by_their_closed_sets() -> None:
     """#906 D1a: E28-T01's three entries are live. Per trading state and per cache result, never
-    per account or profile (SR-125, PF-I07); the version bumps carry no label at all."""
+    per account or profile (SR-125, PF-I07); the version bumps carry no label at all, nor do D3e's
+    propagation histogram and failed-notice counter (`env` only, never an account)."""
     from candleviewer.accounts.service import _PROFILE_STATES
 
     specs = {
@@ -263,6 +266,8 @@ def test_profile_series_are_live_and_bounded_by_their_closed_sets() -> None:
         "cv_profile_rows": ("gauge", ("state",), len(_PROFILE_STATES), "live", "E28"),
         "cv_profile_version_bumps_total": ("counter", (), 1, "live", "E28"),
         "cv_profile_cache_lookups_total": ("counter", ("result",), 2, "live", "E28"),
+        "cv_profile_propagation_seconds": ("histogram", (), 1, "live", "E28"),
+        "cv_profile_notices_failed_total": ("counter", (), 1, "live", "E28"),
     }
 
 

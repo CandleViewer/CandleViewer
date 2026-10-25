@@ -12,6 +12,7 @@ from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -685,6 +686,23 @@ async def test_a_doorbell_that_fails_or_hangs_never_fails_the_write(
         {"event": "profile.change_unannounced", "account_id": str(_P.account_id),
          "change": _KINDS.get(write, "default_moved"), "error": error, "log_level": "warning"}
     ]  # fmt: skip
+
+
+async def test_an_announcement_waits_announce_timeout_s(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D3a's combined re-check, R2-03 (folded in D3e): `_ring` is bounded by the constant, never
+    by a literal of its own. The constant is set apart from its 0.5 s and the bound `_ring` is
+    given is recorded, so nothing is timed."""
+    bounds: list[float] = []
+
+    def timeout(delay: float) -> Any:
+        bounds.append(delay)
+        return asyncio.timeout(delay)
+
+    monkeypatch.setattr(profile_repository, "ANNOUNCE_TIMEOUT_S", 0.25)
+    monkeypatch.setattr(profile_repository, "asyncio", SimpleNamespace(timeout=timeout))
+    repo, bell, _ = _belled(_WRITES["update"][1])
+    await _write(repo, "update")
+    assert (bounds, len(bell.heard)) == ([0.25], 1)
 
 
 async def test_an_event_that_cannot_be_built_never_fails_the_write() -> None:

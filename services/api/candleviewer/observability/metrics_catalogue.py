@@ -170,6 +170,9 @@ KEY_VERIFICATION_BUCKETS: Final = (0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 12.0)
 #: Revoke-to-close latency (#3415): an edge at SR-029's 5 s line, so a p99 above it is decided
 #: exactly (a quantile interpolates inside its bucket), and one at 10 s above it.
 REVOCATION_CLOSE_BUCKETS: Final = (0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0)
+#: A profile write's `ts_event` to its `profiles.changed` hand-off (#906 D3e): an edge at SCR-130's
+#: 2 s end-to-end line, so a quantile above it is decided exactly, and one at 5 s above it.
+PROFILE_PROPAGATION_BUCKETS: Final = (0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0)
 #: Statechart transition latency.
 TRANSITION_BUCKETS: Final = (
     0.00005,
@@ -701,6 +704,33 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _P,
         "E28",
         max_series=42,
+    ),
+    # #906 D3e: the bridge from `ProfilesChanged` to the sockets (`profile_notices_wiring`).
+    _s(
+        "cv_profile_propagation_seconds",
+        "histogram",
+        "seconds",
+        (),
+        "ProfilesChanged ts_event (the write's transaction time, at or before its commit, so it "
+        "reads long by that transaction) to the hand-off of its profiles.changed account_notice, "
+        "once per change offered to a socket (ADR-0040).",
+        "dashboard only (SCR-130's 2 s end to end is E28-S01's test)",
+        _L,
+        "E28",
+        buckets=PROFILE_PROPAGATION_BUCKETS,
+        max_series=1,
+    ),
+    _s(
+        "cv_profile_notices_failed_total",
+        "counter",
+        "notices",
+        (),
+        "Profile changes whose profiles.changed notice could not be offered (the offer raised); "
+        "each is logged as profile.notice_failed with the account and the error class.",
+        "dashboard only (a change no socket heard; E28-S01's backstops re-read)",
+        _L,
+        "E28",
+        max_series=1,
     ),
     # --- Wallet snapshot cache (E27-T04, #837 Option B); the sizing decisions it takes -----
     _s(
