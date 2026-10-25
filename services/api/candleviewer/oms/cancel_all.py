@@ -358,16 +358,22 @@ class CancelAll:
         self, account: UUID, request: CancelAllRequest
     ) -> tuple[Folds, AccountRef] | None:
         """The fold port with the account as the venue knows it, for an unrestricted request;
-        else, or when the account cannot be read in time, None: per-order cancels."""
+        else, or when the account cannot be read in time, None: per-order cancels. A read that
+        answers another account's ref is a defect, as the command port's would be (SR-E27-21):
+        nothing is read or sent with it, and the account stays on per-order cancels."""
         if self._folds is None or not unrestricted(request):
             return None
         folds, accounts = self._folds
         try:
             async with asyncio.timeout(self._read_timeout_s):
-                return folds, await accounts.trading_account(AccountId(account))
+                ref = await accounts.trading_account(AccountId(account))
         except Exception as exc:  # no venue account read: the per-order path, its own refusals
             _log().warning("oms_cancel_all_fold_account_unread", failure=type(exc).__name__)
             return None
+        if ref.account_id != account:  # no identifier logged: the mismatch is the signal
+            _log().warning("oms_cancel_all_fold_account_mismatch")
+            return None
+        return folds, ref
 
     async def _covered(
         self, port: tuple[Folds, AccountRef], symbol: str, group: Sequence[OrderRow]
