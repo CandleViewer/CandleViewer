@@ -4,8 +4,8 @@ rules:
     severity: ERROR
     message: >-
       Raw SQL built via string interpolation/formatting risks injection.
-      Use parameterised queries (SQLAlchemy `text()` with bound params, or
-      the ORM query builder) — never f-strings, `%`-formatting, `.format()`
+      Use parameterised queries (SQLAlchemy `text()` or `sa.text()` with bound params, or
+      the ORM query builder) — never f-strings, `%`-formatting, `.format()`, `.replace()`
       or string concatenation to build SQL (CONSTITUTION.md §12,
       docs/plan/04-security-program.md).
     metadata:
@@ -16,9 +16,46 @@ rules:
           - pattern: $CONN.execute("..." % ...)
           - pattern: $CONN.execute("...".format(...))
           - pattern: $CONN.execute("..." + ... )
+          # `text(...)`: the bare name, and `sqlalchemy.text` resolved through the imports
+          # (renamed ones too). A by-name `$SA.text(...)` flagged a non-SQL helper imported as
+          # `_text` on `main`. `<... ...>` looks through the argument: a
+          # `.replace(...).replace(...)` chain. Not here, on purpose: `text("..." + ...)` and an
+          # f-string split over literals; they would flag three test statements that build
+          # `"EXPLAIN ..." + <shipped statement>`. `storage/**` has both arms.
           - pattern: text(f"...")
           - pattern: text("..." % ...)
           - pattern: text("...".format(...))
+          - pattern: text(<... "...".replace(...) ...>)
+          - pattern: sqlalchemy.text(f"...")
+          - pattern: sqlalchemy.text("..." % ...)
+          - pattern: sqlalchemy.text("...".format(...))
+          - pattern: sqlalchemy.text(<... "...".replace(...) ...>)
+          # `sa.sql.text`, `sa.sql.expression.text` and renamed imports of them have no call site
+          # on `main`: any of these forms, and any `.replace`, is flagged anywhere in the
+          # argument.
+          - patterns:
+              - pattern-either:
+                  - pattern: sqlalchemy.sql.text($ARG)
+                  - pattern: sqlalchemy.sql.expression.text($ARG)
+              - metavariable-pattern:
+                  metavariable: $ARG
+                  pattern-either:
+                    - pattern: f"..."
+                    - pattern: '"..." % ...'
+                    - pattern: '"...".format(...)'
+                    - pattern: $X.replace(...)
+          # A helper's `template.replace("@C@", frag)`: flagged unless every replacement is a
+          # literal or an unannotated module constant, as in the reviewed `_sql(template)`
+          # helpers (Semgrep's constant propagation skips a `Final` constant).
+          - patterns:
+              - pattern-either:
+                  - pattern: text(<... $X.replace($A, $B, ...) ...>)
+                  - pattern: sqlalchemy.text(<... $X.replace($A, $B, ...) ...>)
+              - metavariable-pattern:
+                  metavariable: $B
+                  patterns:
+                    - pattern: $Y
+                    - pattern-not: '"..."'
     paths:
       exclude:
         # Design and planning tooling under docs/ reads files, never a database; a helper named
