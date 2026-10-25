@@ -4,11 +4,11 @@
 state is the ticket's top threat (KV-T12), and `rest_ok` on a down account makes it degraded, which
 the order-entry gate admits. The runtime's feed reaches the private-WS consumer as
 `ctx.accounts.account_health`. Nothing else of `candleviewer` may name an evidence call or read that
-property, bar the three below: the composition root's `account_health_wiring` (the feed hands each
+property, bar the four below: the composition root's `account_health_wiring` (the feed hands each
 call to the runtime, which hands it to the monitor and the cache), the wallet reconciler (a REST
-success is evidence, `rest_ok`) and `app.py`, which attaches the feed to the accounts service. The
-private-WS consumer (E29-T05, #848) adds itself to `ALLOWED` in the PR that builds it, so a reader
-of the feed is a reviewed edit.
+success is evidence, `rest_ok`), `app.py`, which attaches the feed to the accounts service, and the
+private-WS consumer (E29-T05, #848), which feeds heartbeat, dropped and wallet evidence and reads
+nothing else. Any other reader of the feed is a reviewed edit to `ALLOWED`.
 
 A module names one when an attribute of that name appears, call or not: a reference kept in a
 variable feeds as well as a call.
@@ -28,6 +28,7 @@ ALLOWED: dict[str, frozenset[str]] = {
     "account_health_wiring.py": EVIDENCE,
     "accounts/wallet.py": frozenset({"rest_ok"}),
     "app.py": frozenset({FEED}),
+    "oms/stream_consumer.py": frozenset({"ws_heartbeat", "ws_dropped", "wallet_pushed"}),
 }
 
 
