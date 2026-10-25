@@ -281,6 +281,14 @@ def _tighter(*values: Any) -> Any:
     return min(known) if known else None
 
 
+def _budget(p: AccountProfile, equity: Decimal | None) -> Decimal:
+    """A `risk_based` profile's per-trade budget in USDT; an admitted leg had it known."""
+    if p.risk_fixed_amount is not None:
+        return p.risk_fixed_amount
+    assert equity is not None and p.risk_pct_equity is not None
+    return p.risk_pct_equity * equity
+
+
 def _assert_within_caps(case: dict[str, Any], result: Admitted) -> None:
     """The independent check: every cap restated from B and A alone."""
     b: AccountProfile = case["bound"]
@@ -323,11 +331,7 @@ def _assert_within_caps(case: dict[str, Any], result: Admitted) -> None:
     assert daily is not None
     assert risk <= daily - f.realised_loss_today - f.committed_risk
     if b.sizing_mode == "risk_based":
-        budget = b.risk_fixed_amount
-        if budget is None:
-            assert f.equity is not None and b.risk_pct_equity is not None
-            budget = b.risk_pct_equity * f.equity
-        assert risk <= budget
+        assert risk <= _budget(b, f.equity)
     # R3: the stop inside the isolated-margin liquidation estimate
     assert f.maintenance_margin_rate is not None
     move = leg.ref_price * (1 / leg.leverage - f.maintenance_margin_rate)
@@ -354,13 +358,9 @@ def _assert_within_caps(case: dict[str, Any], result: Admitted) -> None:
             if wanted is None:
                 assert asked.risk_per_trade_pct is not None and f.equity is not None
                 wanted = asked.risk_per_trade_pct * f.equity
-            assert wanted <= budget
+            assert wanted <= _budget(b, f.equity)
         elif asked is None and a is not None and a.sizing_mode == "risk_based":
-            alt_budget = a.risk_fixed_amount
-            if alt_budget is None:
-                assert f.equity is not None and a.risk_pct_equity is not None
-                alt_budget = a.risk_pct_equity * f.equity
-            assert alt_budget <= budget
+            assert _budget(a, f.equity) <= _budget(b, f.equity)
     # R5: minimums met on the grids, never rounded up, never past the request or the instrument
     assert leg.qty % LOT == 0 and leg.stop_price % TICK == 0
     assert BTCUSDT.min_order_qty <= leg.qty <= BTCUSDT.max_order_qty

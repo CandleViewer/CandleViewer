@@ -20,6 +20,13 @@ An alternate `overrides.profile_id` that is not one of the leg's account's live 
 caller's `404 not_found`, decided before any leg is sized (ADR-0040, SR-E28-03); this module only
 holds the typed contract: handed a profile or a leg of another account, it raises
 `ProfileNotFound`, whose message never says which.
+
+It judges position-opening legs (the trade group's entries). Only `Admitted.leg` may be sent: the
+caller's own `leg` lacks rule 8's stop size.
+
+Precondition for the route (E28-T05 #909): R5 bounds the quantity by the instrument's
+`max_order_qty` (a limit order's); a market leg is also bounded by `max_mkt_order_qty`, which
+needs the order type this module is not given, so #909 checks it before sending.
 """
 
 from __future__ import annotations
@@ -28,7 +35,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import ROUND_CEILING, ROUND_FLOOR, Context, Decimal, localcontext
 from types import MappingProxyType
-from typing import Annotated, Any, ClassVar, Final, Literal
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Final, Literal, TypedDict, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -45,6 +52,9 @@ from candleviewer.accounts.profiles import (
 )
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Environment, Side, Symbol
+
+if TYPE_CHECKING:  # C-3.3: accounts may not import audit at run time, only name its types
+    from candleviewer.audit.models import AuditOutcome, ExchangeEnv, Severity
 
 OverrideClass = Literal["never", "narrow_only"]
 _N: Final[OverrideClass] = "never"
@@ -262,12 +272,20 @@ class AccountFigures(BaseModel):
     account included (ADR-0040 rule 2: one ledger, nothing counted twice). The netting is a
     money-semantics decision on the owner's sign-off list (#2701). `realised_loss_today` is the
     day's realised loss as a positive figure. The `*_after` counts include this leg, as the guard
-    counts them. `maintenance_margin_rate` is the symbol's risk-limit tier rate (OPEN-2)."""
+    counts them.
+
+    `available_margin` is net of the margin this request's other legs on the account take, on the
+    same ledger as `committed_risk` (two legs each fundable alone may not be fundable together);
+    a deficit is a negative figure, accepted and refused under R6 (fail closed), never a
+    validation error. `maintenance_margin_rate` is the symbol's risk-limit tier rate for the
+    position's notional after this leg is filled, not before (OPEN-2, OPEN-3). `taker_fee_rate`
+    is the account's real fee tier, which the route passes; `0` is a real zero-fee tier, never a
+    placeholder for an unknown rate (that is `None`)."""
 
     model_config = _FROZEN
 
     equity: NonNegative | None
-    available_margin: NonNegative | None
+    available_margin: Decimal | None
     committed_risk: NonNegative | None
     realised_loss_today: NonNegative | None
     open_positions_after: Count | None
@@ -278,8 +296,11 @@ class AccountFigures(BaseModel):
 
 
 class ResolvedLeg(BaseModel):
-    """A leg as it would be sent: _L_ (from _B_ with _A_ and the request) or _L_B_ (_B_ alone),
-    on the quantized values (quantity floored to the lot, the stop rounded away from entry)."""
+    """A position-opening leg as it would be sent: _L_ (from _B_ with _A_ and the request) or
+    _L_B_ (_B_ alone), on the quantized values (quantity floored to the lot, the stop rounded away
+    from entry). In hedge mode `position_idx` is keyed on `side` (1 buy, 2 sell), which holds for
+    an opening leg only; a closing (`reduce_only`) leg of a hedge position is not judged here.
+    `stop_qty` is `None` or the full `qty` (rule 8); any other size is refused, never rewritten."""
 
     model_config = _FROZEN
 
@@ -303,9 +324,18 @@ class ResolvedLeg(BaseModel):
 
 
 class Violation(BaseModel):
-    """One `errors[]` entry: the table field, the rule, why, and the figures (an unknown input
-    names the input and carries none). A rule-2 entry also carries the net headroom and the
-    committed risk."""
+    """One violated row: the table field, the rule, why, and the figures (an unknown input names
+    the input and carries none). A rule-2 entry also carries the net headroom and the committed
+    risk.
+
+    Not the contract's `errors[]` item, whose members mean other things (22-api-openapi.yaml
+    `Problem.errors`): there `field` names the request member, here `field` is the
+    `AccountProfile` row whose cap or class the leg breaks (`max_leverage_cap` is a cap, not a
+    member a client sends), and `rule` is ADR-0040's rule id. The route (E28-T05 #909, E34-S01
+    #999) maps one entry per offending leg: `errors[].field` = that leg's request path
+    (`legs[<i>]`), `errors[].rule` = this `field`, `errors[].limit` = this `limit`; `rule`,
+    `reason` and `requested` stay in the audit row (`refusal_record`). The final shape is the
+    contract's (C-6.1)."""
 
     model_config = _FROZEN
 
@@ -401,9 +431,12 @@ class _Case:
 
 
 def _identity(c: _Case) -> list[Violation]:
-    """Rows 1 to 6, 18 and 19: who sized the leg, whether it may trade, and the account-wide
-    modes, which no request moves."""
+    """Rows 1 to 6, 18, 19 and 20: who sized the leg, whether it may trade, the account-wide
+    modes, which no request moves, and the native stop's size (rule 8). The hedge-mode index is
+    keyed on the side: the leg opens a position (`ResolvedLeg`)."""
     found = []
+    if not c.bound.is_default or (c.alternate is not None and c.alternate.is_default):
+        found.append(_v("is_default", "never", "inconsistent"))  # _B_ is the account's default
     if c.leg.profile_id not in {p.profile_id for p in c.profiles}:
         found.append(_v("profile_id", "never", "changed"))
     for flag in ("enabled", "trading_enabled"):
@@ -415,6 +448,9 @@ def _identity(c: _Case) -> list[Violation]:
     idx = 0 if c.bound.position_mode == "one_way" else hedge_idx
     if c.leg.position_mode != c.bound.position_mode or c.leg.position_idx != idx:
         found.append(_v("position_mode", "never", "changed"))
+    if c.leg.stop_qty not in (None, c.leg.qty):
+        found.append(_v("require_native_sl", "never", "inconsistent", limit=c.leg.qty,
+                        requested=c.leg.stop_qty))  # fmt: skip
     return found
 
 
@@ -558,11 +594,13 @@ def _r3_leverage(c: _Case) -> list[Violation]:
 
 
 def _consistent(c: _Case) -> bool:
-    """_L_B_ is _B_'s leg for the same ticket: same symbol, side and `ref`, its stop on the loss
-    side. Anything else fails closed (rule 4 and the take-profit row cannot be judged)."""
+    """_L_B_ is _B_'s leg for the same ticket: sized by _B_ on _B_'s account (never an
+    alternate's leg), same symbol, side and `ref`, its stop on the loss side. Anything else fails
+    closed (rule 4 and the take-profit row cannot be judged)."""
     b = c.baseline
+    own = (b.profile_id, b.account_id) == (c.bound.profile_id, c.bound.account_id)
     same = (b.symbol, b.side, b.ref_price) == (c.leg.symbol, c.leg.side, c.leg.ref_price)
-    return same and (b.stop_price < b.ref_price if c.long else b.stop_price > b.ref_price)
+    return own and same and (b.stop_price < b.ref_price if c.long else b.stop_price > b.ref_price)
 
 
 def _r4_stop(c: _Case) -> list[Violation]:
@@ -604,7 +642,8 @@ def _take_profit(c: _Case) -> list[Violation]:
 def _r5_minimums(c: _Case) -> list[Violation]:
     """R5 (rows 10, 11, 15, 16): the quantity on the lot grid (floored), at or above the
     instrument's minimums and _B_'s `min_leg_notional`, and never above a requested quantity or
-    notional: a minimum is never rounded up."""
+    notional: a minimum is never rounded up. Neither the leg's nor a requested quantity may pass
+    the instrument's `max_order_qty` (OPEN-5); `max_mkt_order_qty` is the route's (docstring)."""
     inst, qty = c.instrument, c.leg.qty
     found = []
     if not _on_grid(qty, inst.qty_step):
@@ -616,7 +655,13 @@ def _r5_minimums(c: _Case) -> list[Violation]:
     if c.notional < floor:
         found.append(_v("min_leg_notional", "R5", "below_minimum", limit=floor,
                         requested=c.notional))  # fmt: skip
+    if qty > inst.max_order_qty:
+        found.append(_v("fixed_qty", "R5", "above_limit", limit=inst.max_order_qty,
+                        requested=qty))  # fmt: skip
     asked = c.sizing
+    if asked is not None and asked.qty is not None and asked.qty > inst.max_order_qty:
+        found.append(_v("fixed_qty", "R5", "above_limit", limit=inst.max_order_qty,
+                        requested=asked.qty))  # fmt: skip
     if asked is not None and asked.qty is not None and qty > asked.qty:
         found.append(_v("fixed_qty", "R5", "rounded_up", limit=asked.qty, requested=qty))
     if asked is not None and asked.notional_usd is not None and c.notional > asked.notional_usd:
@@ -627,7 +672,7 @@ def _r5_minimums(c: _Case) -> list[Violation]:
 
 def _r6_margin(c: _Case) -> list[Violation]:
     """R6: the initial margin (rounded up) within 0.98 of the available margin; a failure, never a
-    shrink (24 Sec.9.3 step 8)."""
+    shrink (24 Sec.9.3 step 8). A negative available margin leaves no room: refused."""
     available = c.figures.available_margin
     if available is None:
         return [_unknown("leverage", "R6", "available_margin")]
@@ -720,7 +765,8 @@ def judge_leg(
     tightened by `alternate` (_A_) and the `requested` layers (`defaults`, then the leg's
     `overrides`), beside `baseline` (_L_B_); otherwise refuse it whole, naming every violation.
 
-    Raises `ProfileNotFound` for a leg or an alternate of another account (`404 not_found`)."""
+    Only `Admitted.leg` may be sent, never `leg` itself. Raises `ProfileNotFound` for a leg or an
+    alternate of another account (`404 not_found`)."""
     if leg.account_id != bound.account_id or (
         alternate is not None and alternate.account_id != bound.account_id
     ):
@@ -747,13 +793,37 @@ Role = Literal["owner", "manager", "viewer"]
 
 @dataclass(frozen=True, slots=True)
 class RefusalActor:
-    """Who sent the refused request; `request_id` is the request's trace id."""
+    """Who sent the refused request; `request_id` is the request's correlation id, the UUID of
+    its `urn:cv:req:{uuid}` (the audit row's `request_id`)."""
 
     user_id: UUID
     role: Role
     env: Environment
-    request_id: str | None = None
+    request_id: UUID | None = None
     ip: str | None = None
+
+
+class RefusalEmitKwargs(TypedDict):
+    """`AuditWriter.emit`'s and `build`'s keyword arguments for the row (all but `action`), typed
+    as they declare them, so `emit(action, **kwargs)` type-checks at the route."""
+
+    actor_label: str
+    actor_user_id: UUID
+    actor_ip: str | None
+    object_kind: str
+    object_id: str
+    outcome: AuditOutcome
+    severity: Severity
+    reason: str
+    after_state: dict[str, Any]
+    request_id: UUID | None
+    env: ExchangeEnv
+
+
+#: The audit enums' values (`StrEnum`, so equal to these strings); `build()` validates them into
+#: its own members. Typed as the enums: C-3.3 lets accounts name them only for the type checker.
+_DENIED: Final = cast("AuditOutcome", "denied")
+_WARNING: Final = cast("Severity", "warning")
 
 
 @dataclass(frozen=True, slots=True)
@@ -767,28 +837,28 @@ class OverrideRefusalRecord:
     actor_ip: str | None
     object_kind: str
     object_id: str
-    outcome: str
-    severity: str
+    outcome: AuditOutcome
+    severity: Severity
     reason: str
     after_state: Mapping[str, Any]
-    request_id: str | None
+    request_id: UUID | None
     env: Environment
 
-    def emit_kwargs(self) -> dict[str, Any]:
+    def emit_kwargs(self) -> RefusalEmitKwargs:
         """`AuditWriter.emit`'s keyword arguments (all but `action`)."""
-        return {
-            "actor_label": self.actor_label,
-            "actor_user_id": self.actor_user_id,
-            "actor_ip": self.actor_ip,
-            "object_kind": self.object_kind,
-            "object_id": self.object_id,
-            "outcome": self.outcome,
-            "severity": self.severity,
-            "reason": self.reason,
-            "after_state": dict(self.after_state),
-            "request_id": self.request_id,
-            "env": self.env,
-        }
+        return RefusalEmitKwargs(
+            actor_label=self.actor_label,
+            actor_user_id=self.actor_user_id,
+            actor_ip=self.actor_ip,
+            object_kind=self.object_kind,
+            object_id=self.object_id,
+            outcome=self.outcome,
+            severity=self.severity,
+            reason=self.reason,
+            after_state=dict(self.after_state),
+            request_id=self.request_id,
+            env=cast("ExchangeEnv", self.env),  # the same three values (domain `Environment`)
+        )
 
 
 def _text(value: Decimal) -> str:
@@ -825,8 +895,8 @@ def refusal_record(
         actor_ip=actor.ip,
         object_kind="exchange_account",
         object_id=str(bound.account_id),
-        outcome="denied",
-        severity="warning",
+        outcome=_DENIED,
+        severity=_WARNING,
         reason=_PROBLEM,
         after_state={
             "exchange_account_id": str(bound.account_id),
