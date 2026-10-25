@@ -79,6 +79,15 @@ it (BQ-16 is the scope):
    with none of its words is read by 7b / 7c only. ``--repin-security`` prints the table from the
    current text for a reviewer; the table is committed at the end of this file. 7b and 7c stay as
    additional gates.
+7e. The confirm-look clauses, pinned default-deny (r12): a clause of the spec or the hand-off that
+   pairs "confirm" (confirm, Confirm, [Confirm], the confirm button) with a gated look word
+   (disabled, dimmed, greyed / grayed (out), inactive, inert, locked, held, unavailable), in either
+   order and in any case, is a confirm-look clause (CONFIRM_LOOK), and every one must equal, in
+   document order, its entry of CONFIRM_LOOK_PINS (section, row and column or "prose", exact
+   text). New, changed, moved or duplicated confirm-look text, and a pinned clause gone, FAIL
+   ``confirm-look`` with its line, so a confirm drawn dimmed or disabled in a paragraph that does
+   not name the load fails too; ``k4.loading`` and ``k9.exit`` stay. ``--repin-confirm-look`` prints
+   the table for a reviewer; ``--check`` never re-pins.
 8. Cites and scans: ``KEY:line`` cites resolve to an existing line (FAIL past the end of the
    file); a cite followed by a quoted fragment WARNs when its line moved and FAILs when the
    fragment is gone or ambiguous (e35_d03's semantics); E27-D02's ``scan()`` (no secret-shaped
@@ -100,10 +109,14 @@ the specific gates; 7d's pin refuses them too wherever they edit pinned text. Th
 each round-3 lens form twice (in a clause with no security word, and inside a pinned clause),
 section 8's and 10.1's view-as leg cut and two hand-off placements, each one distinct FAIL
 (``sec-pin``), and ten phrasings drawn (seeded) from a verb x object grid, each placed in a table
-row and in a prose sentence and each refused by the pin.
+row and in a prose sentence and each refused by the pin. Then 7e's: the five confirm forms as a
+sentence of their own in lower, Title and UPPER case, in section 2.4's "Documented, not forked"
+paragraph and in section 7's keyboard paragraph (neither names the load), and a pinned confirm-look
+paragraph moved and duplicated, each one distinct FAIL (``confirm-look``; the security pin's
+``sec-pin`` beside it where the edit moves security text).
 
 Usage: python3 -I -B docs/design/_tools/e27_d03_hifi_audit.py [--json] [--check] [--self-test]
-       [--repin-security]
+       [--repin-security] [--repin-confirm-look]
 Exit 1 on any gated FAIL (a plain run and ``--check``); ``--check`` also re-derives the markers;
 WARNs never fail. UTF-8 stdout.
 """
@@ -2283,6 +2296,16 @@ BEARING = re.compile(
     r"|\btokens?\b|\bpasswords?\b|\bbalances?\b|\bshown\s+in\s+full\b",
     re.IGNORECASE,
 )
+# --- 7e. the confirm-look clauses, pinned default-deny (r12) ------------------------------------
+# "confirm" (any case, bracketed or as "the confirm button") and a gated look word in one clause,
+# either order: the post-load confirm's legitimate description (section 10.3, D03-C11, D03-C16)
+# is pinned verbatim, and any other such clause fails wherever it stands
+CONFIRM_LOOK_ADJ = (
+    r"(?:disabled|dimmed|gr[ea]yed(?:[- ]out)?|inactive|inert|locked|held|unavailable)"
+)
+CONFIRM_LOOK = re.compile(
+    rf"\bconfirm\b.*\b{CONFIRM_LOOK_ADJ}\b|\b{CONFIRM_LOOK_ADJ}\b.*\bconfirm\b", re.IGNORECASE
+)
 LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+\.)\s")
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 PIN_SEP = " ‖ "
@@ -2356,18 +2379,18 @@ def text_clauses(name: str, text: str) -> list[Clause]:
     return out
 
 
-def bearing_clauses(name: str, text: str) -> list[Clause]:
-    return [c for c in text_clauses(name, text) if BEARING.search(c[2])]
+def bearing_clauses(name: str, text: str, select: re.Pattern[str] = BEARING) -> list[Clause]:
+    return [c for c in text_clauses(name, text) if select.search(c[2])]
 
 
-def render_pins(spec: str, handoff: str) -> str:
+def render_pins(spec: str, handoff: str, select: re.Pattern[str] = BEARING) -> str:
     """The pinned table as ``--repin-security`` prints it for review and SEC_PIN_TXT holds it: a
     ``§ doc ‖ section`` line per section, an ``@ where`` line per clause, its text wrapped (at
     spaces only, so the joined lines are the clause again) on lines indented two spaces."""
     lines: list[str] = []
     for name, text in (("spec", spec), ("hand-off", handoff)):
         last = ""
-        for section, where, clause, _num in bearing_clauses(name, text):
+        for section, where, clause, _num in bearing_clauses(name, text, select):
             if section != last:
                 lines.append(f"§ {name}{PIN_SEP}{section}")
                 last = section
@@ -2403,13 +2426,24 @@ def clip(text: str, width: int = 72) -> str:
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
-def pin_gate(spec: str, handoff: str, out: Out) -> None:
-    """§7d: every security-bearing clause equals its pinned entry, in order; a clause that is new,
-    changed, moved or duplicated, and a pinned clause that is gone, each FAIL ``sec-pin``."""
-    pinned = pin_rows(SEC_PIN_TXT)
+def pin_gate(
+    spec: str,
+    handoff: str,
+    out: Out,
+    table: str = "",
+    select: re.Pattern[str] = BEARING,
+    code: str = "sec-pin",
+    kind: str = "security-bearing",
+) -> None:
+    """§7d / §7e: every selected clause (security-bearing, or confirm-look) equals its pinned entry,
+    in order; a clause that is new, changed, moved or duplicated, and a pinned clause that is gone,
+    each FAIL ``code`` (``sec-pin`` against SEC_PIN_TXT, ``confirm-look`` against
+    CONFIRM_LOOK_PINS)."""
+    pinned = pin_rows(table or SEC_PIN_TXT)
+    count = code.replace("-", "_").replace("sec_pin", "sec") + "_pins"
     for name, text in (("spec", spec), ("hand-off", handoff)):
         want = [(s, w, t) for d, s, w, t in pinned if d == name]
-        now = bearing_clauses(name, text)
+        now = bearing_clauses(name, text, select)
         have = [(s, w, t) for s, w, t, _n in now]
         match = SequenceMatcher(None, want, have, autojunk=False)
         for tag, i1, i2, j1, j2 in match.get_opcodes():
@@ -2420,24 +2454,32 @@ def pin_gate(spec: str, handoff: str, out: Out) -> None:
                 now[j1 : j1 + pairs], want[i1 : i1 + pairs], strict=True
             ):
                 out.fail(
-                    "sec-pin",
-                    f"[sec-pin] {name} line {num}, {s} · {w}: a pinned security-bearing clause "
+                    code,
+                    f"[{code}] {name} line {num}, {s} · {w}: a pinned {kind} clause "
                     f"changed: {clip(was)!r} is now {clip(t)!r}",
                 )
             for s, w, t, num in now[j1 + pairs : j2]:
                 out.fail(
-                    "sec-pin",
-                    f"[sec-pin] {name} line {num}, {s} · {w}: a security-bearing clause the "
+                    code,
+                    f"[{code}] {name} line {num}, {s} · {w}: a {kind} clause the "
                     f"pin does not hold (new, moved or duplicated): {clip(t)!r}",
                 )
             for s, w, t in want[i1 + pairs : i2]:
                 out.fail(
-                    "sec-pin",
-                    f"[sec-pin] {name}, {s} · {w}: a pinned security-bearing clause is gone "
+                    code,
+                    f"[{code}] {name}, {s} · {w}: a pinned {kind} clause is gone "
                     f"(changed, moved or deleted): {clip(t)!r}",
                 )
-        out.n[f"sec_pins_{'spec' if name == 'spec' else 'handoff'}"] = len(want)
-    out.n["sec_pins"] = len(pinned)
+        out.n[f"{count}_{'spec' if name == 'spec' else 'handoff'}"] = len(want)
+    out.n[count] = len(pinned)
+
+
+PIN_CODES = ("sec-pin", "confirm-look")
+
+
+def confirm_look_gate(spec: str, handoff: str, out: Out) -> None:
+    """§7e: the confirm-look clauses against CONFIRM_LOOK_PINS (``confirm-look``)."""
+    pin_gate(spec, handoff, out, CONFIRM_LOOK_PINS, CONFIRM_LOOK, "confirm-look", "confirm-look")
 
 
 # --- 8. cites and scans --------------------------------------------------------------------------
@@ -2683,6 +2725,7 @@ def gates(
     doc_gate(spec, base["handoff"], sec, out)
     if pin:
         pin_gate(spec, base["handoff"], out)
+        confirm_look_gate(spec, base["handoff"], out)
     cite_gate(spec, out)
     misc_gate(spec, sec, base, out)
     bq_gate(sec, out)
@@ -2691,6 +2734,7 @@ def gates(
             "mutations": len(MUTATIONS),
             "k_mutations": len(K_MUTATIONS) + len(HAND_MUTATIONS),
             "pin_mutations": len(PIN_FORMS) * 2 + len(PIN_FIXED) + 2 * (GRID_DRAWS + FUND_DRAWS),
+            "confirm_look_mutations": len(LOOK_MUTATIONS),
         }
     )
     if check_markers:
@@ -4281,13 +4325,14 @@ HAND_MUTATIONS: tuple[tuple[str, str, str, str, str], ...] = (
 
 
 def k_verdict(new: list[tuple[str, str]], code: str) -> tuple[bool, str]:
-    """A K mutation's own gate: exactly one FAIL besides the pin, of its own code; the pin's
-    ``sec-pin`` FAILs beside it (the edit touched pinned text) are counted, not printed."""
-    own = [(c, m) for c, m in new if c != "sec-pin"]
+    """A K mutation's own gate: exactly one FAIL besides the pins, of its own code; the pins'
+    ``sec-pin`` and ``confirm-look`` FAILs beside it (the edit touched pinned text, or drew a
+    confirm look) are counted, not printed."""
+    own = [(c, m) for c, m in new if c not in PIN_CODES]
     pins = len(new) - len(own)
     hit = len(own) == 1 and own[0][0] == code
     got = "; ".join(f"{c}: {m}" for c, m in own) or "none"
-    return hit, got + (f" (and the pin: {pins} sec-pin)" if pins else "")
+    return hit, got + (f" (and the pins: {pins} sec-pin / confirm-look)" if pins else "")
 
 
 def k_selftest(spec: str, base: dict[str, Any]) -> tuple[bool, list[str]]:
@@ -4454,8 +4499,8 @@ def pin_targets(spec: str, sec: dict[str, str]) -> dict[str, list[Clause]]:
     for clause in text_clauses("spec", spec):
         section, where, text, num = clause
         row = where.startswith("row ")
-        if PIN_SKIP.match(section) or len(text.split()) < 4:
-            continue
+        if PIN_SKIP.match(section) or len(text.split()) < 4 or CONFIRM_LOOK.search(text):
+            continue  # a confirm-look clause edited would trip §7e's pin as well
         if OFF_DRAWN.search(lines[num - 1] if row else text):
             continue  # a withdrawal word placed here would tie its OFF (k3.off) as well
         if row and lines[num - 1].strip() not in frames:
@@ -4544,6 +4589,97 @@ def pin_selftest(spec: str, base: dict[str, Any]) -> tuple[bool, list[str]]:
     return ok, lines
 
 
+# r12: §7e's own mutations - the five confirm forms as a sentence of their own, in lower, Title and
+# UPPER case, in two prose paragraphs that do not name the load (so ``k4.loading`` stays quiet and
+# only the pin refuses them), and a pinned confirm-look paragraph moved to another section and
+# duplicated in place
+S24_LOOK = "Documented, not forked"
+S7_LOOK = "**Keyboard and focus (every dialog).** "
+LOOK_PARA = "**E30-D02's dimmed validity look**"
+
+
+def paragraph(spec: str, start: str) -> tuple[int, int] | None:
+    """The paragraph (up to its blank line) whose first line starts with ``start``, once."""
+    at = spec.find("\n" + start)
+    if at < 0 or spec.count("\n" + start) != 1:
+        return None
+    end = spec.find("\n\n", at + 1)
+    return (at + 1, end + 1) if end > 0 else None
+
+
+def look_moved(spec: str) -> str | None:
+    """Section 9's pinned confirm-look paragraph cut and put before section 7's keyboard one."""
+    span = paragraph(spec, LOOK_PARA)
+    if span is None or spec.count("\n" + S7_LOOK) != 1:
+        return None
+    para = spec[span[0] : span[1]]
+    cut = spec[: span[0]] + spec[span[1] + 1 :]
+    return cut.replace("\n" + S7_LOOK, "\n" + para + "\n" + S7_LOOK, 1)
+
+
+def look_duplicated(spec: str) -> str | None:
+    """Section 9's pinned confirm-look paragraph written twice, the copy right after it."""
+    span = paragraph(spec, LOOK_PARA)
+    if span is None:
+        return None
+    para = spec[span[0] : span[1]]
+    return spec[: span[1]] + "\n" + para + spec[span[1] :]
+
+
+def look_mutations() -> tuple[tuple[str, str, Mutation], ...]:
+    out: list[tuple[str, str, Mutation]] = []
+    for i, form in enumerate(BARE_CONFIRM, 1):
+        for case, fn in CASES:
+            sent = fn(form) + "."
+            out += [
+                (
+                    f"L{i}a{case[0]}",
+                    f'"{sent}" ({case}) in section 2.4\'s "{S24_LOOK}" paragraph',
+                    sec_sub("2.4", S24_LOOK, f"{sent} {S24_LOOK}"),
+                ),
+                (
+                    f"L{i}b{case[0]}",
+                    f'"{sent}" ({case}) in section 7\'s keyboard paragraph',
+                    sec_sub("7", S7_LOOK, f"{S7_LOOK}{sent} "),
+                ),
+            ]
+    return (
+        *out,
+        ("LM", "a pinned confirm-look paragraph moved (section 9 to section 7)", look_moved),
+        ("LD", "a pinned confirm-look paragraph duplicated (section 9)", look_duplicated),
+    )
+
+
+LOOK_MUTATIONS = look_mutations()
+
+
+def look_selftest(spec: str, base: dict[str, Any]) -> tuple[bool, list[str]]:
+    """§7e's mutations on the spec on disk: rc 1 with exactly one distinct FAIL besides the
+    security pin, ``confirm-look`` (``sec-pin`` beside it where the edit moves security text)."""
+    before = gates(spec, base)
+    if before.fails:
+        return False, [
+            f"look list: the spec on disk has {len(before.fails)} FAIL; nothing to mutate"
+        ]
+    ok, lines = True, []
+    for k, name, fn in LOOK_MUTATIONS:
+        mutated = fn(spec)
+        if not mutated or mutated == spec:
+            ok = False
+            lines.append(f"{k} {name}: n/a (the spec lacks its target)")
+            continue
+        new = sorted(set(gates(mutated, base).fails) - set(before.fails))
+        codes = sorted({c for c, _m in new} - {"sec-pin"})
+        hit = codes == ["confirm-look"]
+        ok = ok and hit
+        first = next((m for c, m in new if c == "confirm-look"), "none")
+        lines.append(
+            f"{k} {name}: rc {1 if new else 0}, {'ok' if hit else 'WRONG'} — "
+            f"{', '.join(sorted({c for c, _m in new})) or 'none'} ({len(new)} FAIL) — {first}"
+        )
+    return ok, lines
+
+
 def run_mutation(fn: Callable[..., str | None], spec: str, base: dict[str, Any]) -> str | None:
     return fn(spec, base) if fn in (line_drop, t2_uncited) else fn(spec)
 
@@ -4551,7 +4687,7 @@ def run_mutation(fn: Callable[..., str | None], spec: str, base: dict[str, Any])
 def refused(got: Out, before: Out, kind: str, code: str) -> bool:
     """A FAIL mutation raises its code; a WARN mutation raises its WARN and no FAIL but the pin's
     (§7d refuses a moved cite inside pinned text as well, which on the spec is the point)."""
-    new_fails = {c for c, _m in set(got.fails) - set(before.fails)} - {"sec-pin"}
+    new_fails = {c for c, _m in set(got.fails) - set(before.fails)} - set(PIN_CODES)
     new_warns = {c for c, _m in set(got.warns) - set(before.warns)}
     return code in new_fails if kind == "FAIL" else code in new_warns and not new_fails
 
@@ -4595,13 +4731,15 @@ def selftest(base: dict[str, Any], spec: str) -> tuple[bool, list[str]]:
     lines += k_lines
     p_ok, p_lines = pin_selftest(spec, base)
     lines += p_lines
+    l_ok, l_lines = look_selftest(spec, base)
+    lines += l_lines
     restored = gates(spec, base, check_markers=True)
     same = read(SPEC) == spec
     lines.append(
         f"restore: rc {1 if restored.fails else 0}, the spec on disk "
         f"{'byte-identical' if same else 'CHANGED'} (sha256 {sha256(spec)[:12]})"
     )
-    ok = ok and k_ok and p_ok and same and not restored.fails
+    ok = ok and k_ok and p_ok and l_ok and same and not restored.fails
     where = (
         "the fixture and the spec on disk" if clean else "the fixture (the spec on disk has FAILs)"
     )
@@ -4611,7 +4749,8 @@ def selftest(base: dict[str, Any], spec: str) -> tuple[bool, list[str]]:
         f"{len(K_MUTATIONS)} K mutations on the spec and {len(HAND_MUTATIONS)} on the hand-off, "
         "each one FAIL of its own; "
         f"{len(PIN_FORMS) * 2 + len(PIN_FIXED)} pin mutations, each one distinct FAIL (sec-pin), "
-        f"and {2 * (GRID_DRAWS + FUND_DRAWS)} drawn phrasings, each refused by the pin"
+        f"and {2 * (GRID_DRAWS + FUND_DRAWS)} drawn phrasings, each refused by the pin; "
+        f"{len(LOOK_MUTATIONS)} confirm-look mutations, each one distinct FAIL (confirm-look)"
     )
     return ok, [mask_vendor(x) for x in lines]
 
@@ -4629,6 +4768,7 @@ SECTION_CODES = (
         ("k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "k11", "k12", "k13"),
     ),
     ("7d. The security text pinned default-deny (sec-pin)", ("sec-pin",)),
+    ("7e. The confirm-look clauses pinned default-deny (confirm-look)", ("confirm-look",)),
     (
         "8. Cites and scans",
         ("cite", "scan", "ids", "forbidden", "closing", "placeholder", "handoff", "pin"),
@@ -4731,6 +4871,9 @@ def main(argv: list[str]) -> int:
     base, spec = load_base(), read(SPEC)
     if "--repin-security" in argv:
         print(render_pins(spec, base["handoff"]))
+        return 0
+    if "--repin-confirm-look" in argv:
+        print(render_pins(spec, base["handoff"], CONFIRM_LOOK))
         return 0
     if "--selftest" in argv or "--self-test" in argv:
         ok, lines = selftest(base, spec)
@@ -9431,6 +9574,326 @@ SEC_PIN_TXT = r"""
   non-text UI/chart elements meet >=3:1, per the token contrast matrix (spec §9: 57 gated
 @ code
   Given a T2 control (Rotate key… while the KEK is unavailable, the leave-positions radio
+"""
+
+
+# --- the pinned confirm-look text (§7e): ``--repin-confirm-look`` prints it; a reviewer reads it --
+CONFIRM_LOOK_PINS = r"""
+§ spec ‖ E27-D03 — Accounts and key vault hi-fi and desig
+@ prose
+  **Revision:** r11 — r10's re-check folded (§16 items 10 and 11): a frame row, a §2.4 row and a
+  prose paragraph that name the load are read whole for the confirm, each sentence up to where it
+  moves past the load; the exit check reads a bare Esc and Cancel in any case, and also reads
+  §2.4's cells and the spec's prose; r10 — the default-deny pin's re-check folded (§16 items 10,
+  11 and 13): `k4.loading` and `k9.exit` read the gated words (disabled, dimmed, greyed or grayed
+  out, inactive, inert, locked, held, hidden, unavailable, unusable, suppressed, no effect) on
+  either side of the confirm or the exit, the appositive ", visible but inactive" included, and a
+  token, a password, a balance and "shown in full" make a clause security-bearing; r9 — the
+  orchestrator's text round 3 folded as a default-deny pin (§16 item 13): every clause of this
+  spec and the hand-off that names a key, a secret, a credential, a fund or money word, a reveal
+  or mask word, plain or clear text or CMP-034, CMP-175 or CMP-201, and every statement of the
+  view-as leg, equals one entry of the audit tool's pinned table, so security text that is new,
+  changed, moved or duplicated fails `sec-pin` until a reviewer reads it there; the word list
+  decides which clauses are pinned, and the table what a pinned clause may say; r8 — the
+  orchestrator's text round 3 folded into the audit tool (§16 items 10–12): every line is read for
+  a bare id, a show, view, copy or toggle of a key or a secret, a visibility toggle, a bracketed
+  control that is not the egress IP's copy and a fund right in the modal form ("can withdraw"),
+  with no key named on the line; a table row's withdrawal word ties an OFF in any of its cells to
+  its time; a view-as frame's class says "view-as leg first"; r7 — the orchestrator's text round 2
+  folded into the audit tool (§16 item 12): K1, K2, K3, the dated OFF and the reveal words read
+  every clause of every line of this spec and the hand-off, case-insensitive, with no section
+  list, and a hit passes only inside a pinned, counted allow-list of exact phrases; a gated frame
+  that E27-D02's inventory or its class names as a view-as frame leads with `rbac.view_as`; r5 —
+  the orchestrator's text round 1 folded into the audit tool (§16): K1–K3 read every clause of
+  every frame row and the secret-field rows outside the frames (§2.3, §4.1, §5) for a bare id and
+  a show, copy or toggle control, a withdrawal control, and a withdrawal "OFF" without its time;
+  no `lock` on a frame that is not gated; a view-as row of §10.2 leads with its view-as leg; the
+  confirm never drawn while the summary loads; an exit gated after a comma; E42-D03's boards PR
+  never pinned or quoted; the environment gate reads every frame that names one; and the check
+  list's fresh-pass "OFF ✓" dated (D03-C15); r4 — re-pinned at its PR base `e8bca4bb7` (every
+  moved `file:line` re-mapped and re-read), and Appendix A's CMP-028 and CMP-044 rows re-based on
+  #4414's rewrite of those entries (D03-C16; CMP-015's skeleton token, D03-C12, resolved
+  upstream); r3 — the audit tool's gates read each frame row (the standing rule A2's K1–K15, §16),
+  each with its own `--self-test` mutation, and the rows that named an element only by reference
+  now carry it (§16); r2 — the security and design lens round 1 folded: every withdrawal "OFF"
+  dated (D03-C15), the drawer's critical state a badge, the check list's warnings on the triangle
+  (HD17), the Enable… dialog, the held step-up request's unanswered re-send, the link on the
+  drawer measured, and the audit tool's mirror mutation and OFF gate; r1 — the full text on r0's
+  skeleton and audit tool: §1–§17, Appendix A's copy-ready A-rows and the handoff file
+  `docs/design/E27/E27-D03-handoff.md`; the boards and their exports follow in the boards PR.
+§ spec ‖ The questions (BQ-1…BQ-16) and the defaults buil
+@ row BQ-11 ‖ Default built
+  consume E42-D03's unlanded rung props (`E42-D03:902-904`) by name, PROPOSED with a "contract
+  pending" stamp until they land (the ruling), and add only: the consequence-summary loading
+  state, with no confirm rendered, Cancel only, "Reading what sub_002 holds…" and "Still reading…"
+  after 1 s (`D02:723-729`); the title's environment suffix (`D02:262-270`); the typed token, the
+  account label or the server's `target` (`D02:266-267`); `Enter` in the typed field never
+  confirms (D22); the ask line before the press, stamped "not yet served — G-8, #895 / #898" for
+  disable and delete; the audit marker last (CMP-093, `E42-D03:691`); two radios, none checked,
+  the stop-loss radio gated on `accounts.stop_missing` (D10); validity is E42-D03's model, the
+  confirm `aria-disabled` and focusable with its hint in the validity look (D02 only allows native
+  `disabled`, `D02:1027-1039`); every A-row reads "if E42-D03's boards PR lands its Appendix A
+  first, re-read and re-base" (GATE R6); OQ-9 and OQ-10 stay the owner's (#2701), drawn at their
+  PROPOSED defaults
+§ spec ‖ 0. The boards (PENDING; ten under the lever-4 ca
+@ row 07 ‖ Frames (E27-D02 §7)
+  `SCR-127 / stage 1: create the new key at Bybit`; `SCR-127 / stage 2: paste and confirm`;
+  `SCR-127 / stage 3: verifying, elapsed time per stage`; `SCR-127 / stage 3 refused: nothing
+  changed, the old key still active`; `SCR-127 / stage 3 no verdict: nothing changed`; `SCR-127 /
+  stage 4: switched, the 900 s overlap`; `SCR-127 / stage 5: old key revoked here, delete it at
+  Bybit`; `SCR-127 / not yet served: drain read, rollback, early revoke, failed`; `SCR-127 / KEK
+  unavailable: Rotate is T2`
+§ spec ‖ 1.2 The hi-fi decisions (HD1…HD17)
+@ row HD8 ‖ Alternative (why not)
+  (a) native `disabled` (E27-D02's allowance): two validity models on one ladder; (b) a 2 px
+  confirm border: the 2 px border belongs to the critical mark and the blocking notice; (c) Cancel
+  first in the DOM: the DOM would not follow the footer's visual order
+§ spec ‖ 2.4 The extensions — CMP-028, CMP-035, CMP-044,
+@ row CMP-044 ConfirmDialog (Molecule): typed ‖ Current (`15`)
+  `variant` (standard, typed, hold) · `typedConfirmValue?` · `role?` · `restatement?` ·
+  `confirmDelayMs?` · `autoCancelMs?` · `busy?` (`15:476`); the typed Confirm natively disabled
+  until the summary loads and the field matches (`15:477`); Cancel first, the hold variant's
+  keyboard path and `Enter` in the typed field never confirming (`15:478`); the destructive
+  Confirm a solid CMP-001 `danger` (`15:479`); its purpose says "delete API key" (`15:475`)
+@ row CMP-044 ConfirmDialog (Molecule): typed ‖ Gap
+  no consequence-loading state (no confirm may render until the summary loads, `14:2576`); no
+  environment in the title; no rung, choice, ask line or marker until E42-D03's props land; a key
+  is revoked here and never deleted at Bybit (`22:2847-2851`); the solid `danger` confirm's label
+  is under the 7.0 hc-text bar (§9 `c175-solid-danger`), and a natively disabled confirm is not
+  E42-D03's validity form (D03-C11, D03-C16)
+@ row CMP-044 ConfirmDialog (Molecule): typed ‖ Proposed: props · a11y ·
+  E42-D03's `rung`, `blastRadius`, `choices`, `stepUpState` and `auditCodes` consumed by name,
+  PROPOSED, contract pending (`E42-D03:902`); its `acknowledge`, the `positions_unknown` tick, is
+  never rendered on an E27 dialog: revoke, disable and delete take no acknowledge parameter
+  (`22:14561-14564`), and the dead and fixable remedies are frame 56's resend and Close · +
+  `consequenceState?` (loading or ready) · `environment?` · a11y: the confirm absent while
+  loading, E42-D03's validity form (`E42-D03:542`) in place of the native `disabled` · tokens: the
+  destructive confirm on `color.status.danger.subtle` with a 1 px `border.hairline`
+  `color.status.danger.strong` border in place of the solid fill, the title `type.ui.heading-md`
+  (D03-C16) · + ConsequencesLoading, ConsequencesLoadingSlow, EnvironmentSuffix,
+  TypedLabelEnterNeverConfirms, ConfirmValidityHint, TwoChoicesNoneSelected, GatedChoice,
+  ExchangeError
+§ spec ‖ 2.6 The cross-screen pattern frames (E27-D02 fra
+@ row 4 ‖ Hi-fi (dark; light by to
+  four gated controls in E09-D09's T2 form — a menu item ("Rotate key…" under
+  `keys.kek_unavailable`), a button ("Verify and save"), a radio ("Leave positions and orders
+  open" under `accounts.stop_missing`) and a checklist step (`rbac.owner_only`) — each with the
+  `lock` leading its full label, `aria-disabled="true"` and its reason as the 2a second line,
+  inside CMP-079 RbacGate; beside them an unmet rung confirm in E42-D03's validity form (no lock,
+  no key) and the rejected dimmed look, drawn only as a struck-through specimen (§9 `t2-dimmed`);
+  the ten PROPOSED E27 keys of §12.2 listed with their strings
+§ spec ‖ 4.3 The hi-fi rows (frames 18–32)
+@ row 30 ‖ Hi-fi: layout and redlin
+  SCR-006 over frame 19, consumed from E09-D06 and never redrawn: the board draws frame 19 under a
+  flat 60 % scrim (`opacity.scrim`, no blur) with SCR-006's footprint labelled "SCR-006 code-only,
+  E09-D06" (`D06:16-17`, `D06:27-28`): `role="alertdialog"`, password and code fields (`D06:47`),
+  focus on the password field; its title "Confirm it's you" and its description the server's
+  `action_summary` verbatim, here in `22:14996`'s form for demo-1, "Import API key for account
+  'demo-1' (demo, UID 9000001)" (`22:15977-16002`); the press is held unchanged and re-sent once
+  on success (`22:11910-11919`; `D06:40`); a cancel, the expiry, the third failure, the idle lock
+  (SCR-005) or the absolute session expiry drops it, with "Not saved — nothing was sent." and both
+  secret fields cleared (KV-I10; `22:11915-11916`); a re-send that gets no answer (a network error
+  or a timeout) may have stored the key, so the card never says "Not saved" and never sends again:
+  it shows `e27.shared.resend_unconfirmed`, reads the key list back (`listApiKeys`) and shows what
+  it finds — the key listed, frame 21's result with both fields cleared; not listed, nothing was
+  stored and the fields stay for a new Verify and save (`22:11915-11919`); inside the 5-minute
+  `keys` grace no dialog opens and the ask line reads "Still trusted for key changes · 02:14"
+  (`22:11921-11924`)
+§ spec ‖ 5. SCR-127 — Key rotation (board 07)
+@ row 34 ‖ Hi-fi (dark; light by to
+  Stepper: 1 done, 2 current. `h2` "Paste the new key". Before the fields, the consequences of the
+  press: RA-1's lead, "Open orders stay open. Both keys work for 15 minutes while requests
+  drain.", and "Then the old key ...e5f6 is revoked here. There is no undo: to go back, rotate
+  again." (PROPOSED: OQ-10's line, `D02:577`, moved before the confirm so the rung states what it
+  cannot undo first). The two write-only fields, the ask line, the marker; footer [Cancel] [Back]
+  [Verify and switch] — the destructive confirm, rung 1, enabled at once; an empty field shows its
+  inline error on the press (`D02:1033-1035`). Without a live grace the press opens SCR-006 over
+  the wizard (T1; E09-D06's chassis, consumed and never redrawn; password and code; its
+  description the server's `action_summary` verbatim, which names sub_002 with LIVE and UID
+  1234569, `22:11857-11863`); the held request is re-sent once on success; Cancel, expiry, a third
+  failure, the idle lock (SCR-005) or the absolute session expiry reads "Not saved — nothing was
+  sent." and clears both fields (`D02:530-531`; `22:11915-11916`); a re-send that gets no answer
+  may have rotated the key, so the wizard never says "Not saved" and never sends again: it shows
+  `e27.shared.resend_unconfirmed`, reads the key list back (`listApiKeys`) and shows what it finds
+  — the old key `rotating`, the switch happened (stage 4), or still `active`, nothing changed
+  (stage 2) (`22:11915-11919`). Board 07 draws stage 2 and, inset, SCR-006 over it. Focus: the
+  `h2`; Tab New API key → New API secret → Cancel → Back → Verify and switch.
+§ spec ‖ 7. SCR-129 — Disable, delete and the revoke dial
+@ row Footer ‖ Content and copy
+  [Cancel] first and initially focused, then the confirm. The confirm is absent from the DOM until
+  the summary has loaded; never auto-focused; it ignores `event.repeat`; while a choice or the
+  typed label is unmet it is `aria-disabled`, focusable and in the validity look with its hint (no
+  lock, no CMP-079, never T2), and `Enter` or `Space` on it moves focus to the first unmet input
+@ row 49 ‖ Hi-fi (dark; light by to
+  Opened from "Revoke key…" on sub_002's row while ...d9e0 is also active: title "Revoke key
+  ...e5f6 on sub_002 · LIVE"; the consequence, "It stops working here at once; sub_002 keeps
+  trading on ...d9e0. It still works at Bybit until you delete it in Bybit's dashboard." — CP-4's
+  two clauses together, as H6 asks (`MEMO:194`); no choices, because another active key remains
+  and the account keeps trading (`22:2854-2860`); no typed label (rung 1); the ask line (served)
+  and the marker; [Cancel] [Revoke key ...e5f6 here], the confirm rendered and enabled at once.
+  Without a live grace the press opens SCR-006 (T1), the request held and re-sent once
+  (`22:11851-11863`); a re-send that gets no answer may have revoked the key, so the dialog never
+  says it was not sent and never sends again: it shows `e27.shared.resend_unconfirmed`, reads the
+  key list back (`listApiKeys`) and shows frame 52's outcome on a `revoked` key, or the key still
+  active (`22:11915-11919`). Focus: Cancel; `Esc` cancels; focus returns to "Actions for sub_002 ·
+  LIVE".
+@ row 51 ‖ Hi-fi (dark; light by to
+  As frame 50, but the summary shows BTCUSDT long 0.250 with `native_stop_present: false`: its
+  line leads with the octagon, "BTCUSDT long 0.250 — no stop-loss", and the list adds "BTCUSDT
+  long 0.250 has no stop-loss; once the key is gone nothing could add one. Add its stop first, or
+  choose Flatten first." "Leave positions and orders open" keeps its place, its role and its full
+  label, T2 per §10.1: the `lock` leads it, `aria-disabled="true"`, its second line "Refused while
+  a position has no stop-loss." (`accounts.stop_missing`, 2a; carried by CMP-044's
+  `choices[].disabledReason`, CMP-079 once the key is registered, E42-D03:903); an arrow onto it
+  focuses it without checking it, `Space` re-shows the reason with one polite announcement, and it
+  emits nothing; "Flatten first — …" stays available, and the T2 choice can never enable the
+  confirm. A `409 open_exposure` after a stale read shows the same refusal at the point of action
+  (T4; `22:14505-14509`; #2903). The disable dialog's choice takes the same T2 (`D02:761-762`).
+@ row 61 ‖ Hi-fi (dark; light by to
+  Disabled: sub_002's SCR-125 row reads "Disabled at 14:12 UTC — doesn't trade here." with
+  [Enable…] in the place of "Disable…" (an outcome, never T2; #960 Q13; `D02:750-751`), at full
+  text contrast and never dimmed (BQ-7; C-10, `D02:1205`). [Enable…] opens a rung-1 CMP-044 dialog
+  that is not destructive: "Enable sub_002 · LIVE", its one consequence "Its rules stay disarmed
+  until you arm them by hand.", the ask line as a target state stamped "not yet served — G-8, #895
+  / #898", the marker "Recorded in the audit log" with no code (`24:4854` names `account.disabled`
+  and no enable), then [Cancel] [Enable sub_002], the confirm a CMP-001 primary; it sends
+  `updateExchangeAccount` with `enabled: true` (`accounts:write`; `22:2592-2631`), and whether
+  that write records `accounts.enable_trading` (`ACT:135`) is D03-Q4. Deleted: the row leaves the
+  list, and a notice under the `h1` reads "sub_002 · LIVE deleted — history kept. Its keys still
+  work at Bybit until you delete them there." (polite once; `D02:752-753`, `D02:270`). Focus after
+  a disable returns to the row's Actions button; after a delete, whose opener is gone, it moves to
+  the notice (`tabindex="-1"`; PROPOSED).
+@ row 61 ‖ Copy keys
+  `e27.scr125.outcome.disabled` · `e27.scr125.menu.enable` · `e27.scr129.enable.title` ·
+  `e27.scr129.enable.rules` · `e27.shared.ask` · `e27.scr129.marker` · `e27.scr129.enable.confirm`
+  · `e27.shared.cancel` · `e27.shell.notice.deleted`
+§ spec ‖ 9. Contrast, greyscale and colour vision — the m
+@ prose
+  **E30-D02's dimmed validity look** (composite; reported, never gated): the label of an unmet
+  primary confirm at `opacity.disabled` 0.45 <!-- audit:numbers.opacity_disabled=0.45 --> over its
+  own dimmed fill on a dialog measures dark 3.30 <!-- audit:composite.dark=3.30 -->, light 1.46
+  <!-- audit:composite.light=1.46 --> and high contrast 1.72 <!--
+  audit:composite.high-contrast=1.72 -->.
+@ prose
+  That is why no E27 frame draws it: CMP-044's unmet confirm takes E42-D03's validity form instead
+  (§2.4, §10.3; BQ-11) — its fill `color.surface.raised` with a `color.border.default` hairline
+  and its label `color.text.tertiary`, the `t2-label` pair — and its hint sentence in full-opacity
+  `color.text.secondary` carries the meaning; the T2 binding never dims (`t2-dimmed`, rejected).
+§ spec ‖ 10.3 What is NOT T2
+@ prose
+  - **The validity look** — form validity, E42-D03's form for a rung confirm (`E42-D03:542`,
+  `E42-D03:566-567`), adopted for CMP-044 by BQ-11 in place of E30-D02's dimmed look
+  (`E30-D02:128`): a rung-3 confirm before the summary has loaded is not rendered at all (Cancel
+  only); after it, until the typed label matches and, where there are two, a radio is chosen, the
+  confirm stays focusable with `aria-disabled`, its danger fill dropped to `color.surface.raised`
+  with a `color.border.default` hairline, its label `color.text.tertiary` and its hint in
+  full-opacity `color.text.secondary` under it — no lock, no CMP-079, no key (layer
+  `validity-reason`); empty key fields show an inline error on press (CMP-040).
+§ spec ‖ 14. A, C, G and H rows, deviations and questions
+@ row D03-C11 ‖ Row
+  **The unmet rung confirm.** E27-D02 allows a native `disabled` confirm (`D02:1033-1034`);
+  E42-D03 keeps it focusable in its validity form (`E42-D03:542`). **Decision:** E42-D03's
+  validity form, so one ladder has one model (HD8; §10.3).
+@ row D03-C16 ‖ Row
+  **#4414's CMP-028, CMP-043 and CMP-044 lines** (E05-D02 slice 4, merged after E27-D02's base).
+  (1) CMP-044's Tokens bind the destructive Confirm as a solid CMP-001 `danger`, whose label is
+  under the 7.0 hc-text bar (§9 `c175-solid-danger`; the BQ-6 rider in §2.1); (2) its typed state
+  keeps the Confirm natively `disabled`, where D03-C11 takes E42-D03's focusable validity form;
+  (3) CMP-043's title is `type.ui.heading-sm`, where §2.4 binds `type.ui.heading-md`; (4) CMP-028
+  gained `placement`, `live` and `edge`, and `live="off"` is half of `blocking`. **Decision:**
+  Appendix A is re-based on #4414's text and changes only these four points: E27's destructive
+  confirm on `color.status.danger.subtle` with its `color.status.danger.strong` hairline, the
+  validity form, `type.ui.heading-md`, and `blocking` defined as `live="off"`, never dismissible
+  and an `id`; every other #4414 addition is kept as written. The boards PR re-reads this row
+  before it draws the confirm or the notice.
+§ spec ‖ 16. Traceability and the audit tool's checks
+@ prose
+  K1: no control that shows or copies key material — a `[Show]`, a Show toggle, a `[Copy]` or a
+  copy control whose nearest cue is a key or a secret field rather than the egress IP — no key id
+  but `...` plus 4, no bare id (eight or more letters and digits, both present) and no
+  plaintext-like value (a 16+ character run with two digits or short mixed-case segments, or a key
+  value with a digit or an inner capital); K2: no reveal prop or state (item 12); K3: no
+  withdrawal or transfer right drawn as allowed or as a toggle, switch or checkbox, and every
+  withdrawal "OFF" a frame draws carries "verified" and its time in the same string or item
+  (`k3.off`); K4 and K5: each destructive confirm (frames 5, 34, 49–51, 54–56, 58 and 59: 10 <!--
+  audit:numbers.frames_destructive=10 --> in all) names its consequence key and the ask line
+  `e27.shared.ask` in its Copy keys, both in §12, and its Hi-fi cell draws them — the
+  consequence's §12 string with its placeholders filled, the ask line and, where its keys list
+  `e27.scr129.typed`, the typed label (a row opening "As frame N" or "Frame N's dialog" inherits
+  them from frame N); §7's confirms table states both, and no other frame draws a destructive
+  confirm, and while the summary loads no frame, §2.4 cell or prose paragraph draws the confirm
+  rendered, drawn, shown, visible or present, or with a gated word — disabled, `aria-disabled`,
+  dimmed, greyed or grayed (out), inactive, inert, locked, held, hidden, unavailable, unusable,
+  suppressed, no effect — before it ("a disabled confirm", "a greyed-out confirm") or after it
+  anywhere in its sentence, across a semicolon, a dash, a cell and a parenthesis, so "it" carries
+  the subject ("the confirm, visible but inactive"); a frame row, a §2.4 row or a prose paragraph
+  (§16 and the revision line aside) that names the load is read whole, so a bare "A disabled
+  confirm." on frame 53 fails, each sentence up to where it moves past the load ("after it", "once
+  the summary has loaded", "when the summary arrives": the ready dialog's validity look, §10.3)
+  (`k4.loading`); K6 to K8: each of the 20 <!-- audit:numbers.frames_t2=20 --> gated frames names
+  the `lock` and CMP-079 RbacGate (§10.1's components) and a reason key a §10 or §12 table gives,
+  `rbac.view_as` first wherever it appears and never put after another leg in the row's prose, no
+  frame that is not gated draws a `lock` or CMP-079, a frame E27-D02's inventory or its name calls
+  a view-as frame says "view-as leg first" in its class, and every §10.2 control the view-as
+  session reaches as T2 `rbac.view_as` (its "Who sees what" row) lists the view-as leg first
+  (`t2.viewas`); K9: no exit (Cancel, Close, Back, Esc with or without backticks) drawn gated, in
+  a frame, a §2.4 cell, a prose paragraph (§16 and the revision line aside) or in §10.2, by the
+  same gated words — after the exit in a parenthetical such as "(disabled)", after a verb, after a
+  comma or a two-word appositive (", visible but inactive"), or carried by "it" or "which" later
+  in the sentence, and before it ("a disabled [Cancel]", "an inactive CANCEL", "an unavailable
+  Esc"; Cancel and Esc in any case there, Close and Back in Title or UPPER case or in brackets);
+  K10: gate 2's word and glyph per state (`ac2.*`); K11: frame 46's steps, their keys and their
+  deck strings in C-12.12's order (freeze, delete at Bybit, revoke, rotate the KEK, replace); K12:
+  each of the 19 <!-- audit:numbers.frames_env=19 --> frames that names an environment, whose
+  title or heading names an account, or that draws an "Attention:" strip string, keeps its badge —
+  derived from the rows, not a fixed list; K13: the number before every marker is the marker's
+  value, and every two-decimal contrast or ΔE76 value carries a marker; K14 and K15: gate 4's
+  `inv.missing` and `inv.board`; and E42-D03's boards PR, in flight, is named by its branch only —
+  a sha or a quote beside it fails (`pin.inflight`).
+@ prose
+  **The self-test** (`--self-test`; `--selftest` too): a passing spec built in memory from the
+  base files refuses 37 <!-- audit:numbers.mutations=37 --> mutations, each by its own code, and a
+  spec on disk with no FAIL meets every one that applies to it; then the standing rule's list, one
+  mutation per K-item and a second (or more) where a K-item reads more than one element or form,
+  three for the in-flight pin, and item 12's record forms of the text round 2 — each in the
+  section the round named and again in another, in lower and title case, an allowed phrase copied
+  to a new place, Appendix A's States cell, frame 69's view-as leg cut from its prose or swapped
+  for the role leg, and three on the hand-off; and round 3's forms — "view the full key" and
+  "toggle visibility" on §6's Key cell, §8's owner key row, §4.1's block H, §2.5's CMP-034 row and
+  frame 36 (lower, title and upper case), "can withdraw" on §6's Rights row, §8's owner key row,
+  §4.4's block D and frame 36, a bare id, `[Show]` and `[Copy]` on §4.4's block D result row and
+  in §4's and §8's prose, a deck string cut to "off ✓" and "Off ✓" and §2.1's verified row cut to
+  "off ✓", frame 69's class naming the role leg, and three on the hand-off's CMP-033 row (a bare
+  32-hex id, "Can Withdraw", "view the full key"); and the re-check's gated words — "a disabled
+  confirm", "a dimmed confirm", "the confirm, visible but inactive", "a greyed-out confirm" and
+  each gated word before and after the confirm, on frame 53 and in §2.4's `consequenceState`, and
+  "a disabled [Cancel]", "[Cancel], visible but inactive" and each gated word before and after the
+  exit, on frame 53 and frame 11; and its ten forms as a sentence of their own, in lower, Title
+  and UPPER case — the confirm's on frame 53, in §2.4's `consequenceState` and in §7's prose, the
+  exit's ("a disabled [Cancel]", "an inactive Cancel", "an unavailable Esc", "Close (locked)",
+  "the [Close], hidden", "a disabled cancel", "a dimmed [Back]") on frame 53, in §2.4's
+  `consequenceState` and in §2.4's prose — 338 <!-- audit:numbers.k_mutations=338 --> in all, each
+  run in memory on this spec (or the hand-off) as a plain run: rc 1 with exactly one distinct
+  FAIL, its own code, among the gates of items 1–12 (item 13's pin refuses it too wherever it
+  edits pinned text); then item 13's 94 <!-- audit:numbers.pin_mutations=94 --> pin mutations;
+  restored, `--check` exits 0 and the spec on disk is byte-identical (its sha256 compared).
+§ spec ‖ Appendix A. The `15` and `14` edits, old → new
+@ row CMP-044 · States (`15:477`) ‖ Old (verbatim)
+  `… typed (Confirm natively disabled until the summary has loaded and the field matches exactly:
+  form validity, not a gate);`
+@ row CMP-044 · States (`15:477`) ‖ New
+  ``… typed (Confirm absent from the DOM until the summary has loaded, then `aria-disabled` and
+  focusable until the field matches exactly, E42-D03's validity form: form validity, not a gate;
+  D03-C11, D03-C16);``
+@ row CMP-044 · A11y (`15:478`) ‖ New
+  ``… a gated Confirm keeps focus and announces once. The dialog is described by its first
+  consequence; while the consequences load the confirm is absent from the DOM; until the label
+  matches, or a choice is made, the confirm is `aria-disabled`, focusable and without a lock —
+  form validity, not a gated control — its fill `color.surface.raised` with a
+  `color.border.default` hairline and its label `color.text.tertiary`, described by the hint for
+  the first unmet input, and `Enter` or `Space` on it moves focus there; a gated choice keeps
+  `role="radio"`, `aria-disabled`, the CMP-019 `lock` glyph leading its label and its reason as
+  its second line, inside CMP-079 RbacGate.``
 """
 
 
