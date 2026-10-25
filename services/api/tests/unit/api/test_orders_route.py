@@ -26,6 +26,7 @@ from structlog.testing import capture_logs
 from candleviewer.accounts.errors import AccountNotFoundError
 from candleviewer.accounts.trade_groups import ScopedTradeGroup, TradeGroupWithLegs
 from candleviewer.api.idempotency import IdempotencyCache, request_fingerprint
+from candleviewer.api.order_etag import order_etag
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.api.orders import MAX_ORDER_BODY_BYTES, make_orders_router
 from candleviewer.auth.generated_permissions import Permission
@@ -207,6 +208,16 @@ class ArmChecks:
 
 
 @dataclass
+class Versions:
+    """B1's facade's `version()`: `held`'s, none for an order in a resync window or final."""
+
+    held: dict[UUID, int] = field(default_factory=dict)
+
+    def version(self, order_id: UUID) -> int | None:
+        return self.held.get(order_id)
+
+
+@dataclass
 class Reads:
     """`oms_wiring.OrderRoute`."""
 
@@ -215,6 +226,7 @@ class Reads:
     switches: Switches = field(default_factory=Switches)
     orders: Orders = field(default_factory=Orders)
     groups: Groups = field(default_factory=Groups)
+    versions: Versions = field(default_factory=Versions)
 
 
 @dataclass
@@ -756,6 +768,40 @@ async def test_a_first_202_is_its_written_rows_and_its_repeat_the_24h_record() -
     assert repeat.content == first.content
     assert (len(world.oms.submission.submitted), len(world.oms.anchors.calls)) == (1, 1)
     assert world.audit.actions() == []  # a replay is the stored answer, not a refusal
+
+
+async def test_a_first_202_carries_its_orders_etag_and_its_repeat_the_stored_one() -> None:
+    """Ruling Q5 (22 `placeOrder`): `If-Match` takes the order's `ETag` from an answer about it, the
+    first `202` and both its replays; the 24 h record keeps it."""
+    world = World()
+    written = world.oms.submission.outcome.written
+    assert written is not None
+    world.oms.route.versions.held[written.order.id] = 3
+    first = await post(world)
+    assert first.headers["etag"] == order_etag(written.order.id, 3)
+    world.oms.route.versions.held[written.order.id] = 4  # the repeat is the stored answer
+    repeat = await post(world)
+    assert (repeat.headers["idempotency-replayed"], repeat.headers["etag"]) == (
+        "true", first.headers["etag"]
+    )  # fmt: skip
+
+
+async def test_a_first_202_carries_no_etag_while_no_version_is_known() -> None:
+    """No answer carries one during a resync window (24 Sec.8.4), nor does its replay."""
+    world = World()
+    first, repeat = await post(world), await post(world)
+    assert (first.status_code, repeat.status_code) == (202, 202)
+    assert "etag" not in first.headers and "etag" not in repeat.headers
+
+
+async def test_an_anchors_replay_carries_the_etag_of_its_order_as_it_stands() -> None:
+    world, first = World(), first_entry()
+    row, found = read_entry(first)
+    world.oms.route.orders.rows[row.id], world.oms.route.groups.found = row, found
+    world.oms.route.versions.held[row.id] = 9
+    _replay(world, replay_of(first))
+    answer = await post(world, "manager")
+    assert (answer.status_code, answer.headers["etag"]) == (202, order_etag(row.id, 9))
 
 
 async def test_the_24h_record_answers_another_body_under_its_key_409() -> None:

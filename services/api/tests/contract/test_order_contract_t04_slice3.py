@@ -621,3 +621,17 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
     plan = (OPENAPI_SPEC_PATH.parent / "29-statechart-adoption-plan.md").read_text(encoding="utf-8")
     [row] = [line for line in plan.splitlines() if line.startswith("| CV-C13 ")]
     assert "STANDS" in row and "F lane table, `OrderLane`, nightly bench" in row
+
+
+def test_20_reads_the_order_facades_versions_in_place_beside_the_in_flight_guard() -> None:
+    """#913 slice 4 (S4-D2b) on the lane, the orchestrator's Q8 ruling: a `202`'s `ETag` reads B1's
+    facade's `version()` from the serving loop, never through the lane, so 20 names it among the
+    reads in place, beside the exit routes' in-flight guard."""
+    lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
+    [read] = [part for part in lane.split(" - ") if part.startswith("read in place:")]
+    assert not _missing(
+        read,
+        "the order facade's `version()`, which a `202`'s `ETag` names (`OrderRoute.versions`, 24 "
+        "§8.4), a single read of its order's view, which each committed step replaces whole;",
+        "and the exit routes' in-flight guard, claimed and released on the serving loop only",
+    )
