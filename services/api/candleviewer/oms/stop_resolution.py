@@ -72,11 +72,12 @@ cap, its cooldown, its metric and its pages) is slice H3's.
    hook its `position_state` (a fill void's, and a paged unseen entry's, the 06:38Z ruling); the
    caller is told of each decision whose voids committed as they commit (`committed`), so its page
    outlives a later write's failure. Each put compares the key's rows in force with the read's
-   view of them (`in_force_for_key`, read after the venue read, and read too for a restore-only
-   key, which has no venue read), as the read's own earlier puts left it (SEC-S2D-03): a row an
-   end or another writer moved since loses the put, nothing written, so no put commits over an end
-   that took a row of the read's rows in force out of force (a key with nothing in force at the read
-   still passes, and the next position read ends it). A write that fails or loses its
+   view of them (`in_force_for_key`, read before the venue read, so an end that commits inside
+   that read comes after the view (SEC-S2DC-01), and read too for a restore-only key, which has
+   no venue read), as the read's own earlier puts left it (SEC-S2D-03): a row an end or another
+   writer moved since loses the put, nothing written, so no put commits over an end that took a
+   row of the read's rows in force out of force (a key with nothing in force at the read still
+   passes, and the next position read ends it). A write that fails or loses its
    compare-and-set raises; the key is read again on the next request (the gate logs a lost
    compare-and-set as a `stale_read`).
 
@@ -820,6 +821,13 @@ class StopResolver:
         requests = group_requests(key, listed)
         if not requests:
             return ()
+        # before the venue read, whose first call is the position read: the one view the
+        # decision takes and each put compares (SEC-S2D-03), so a put loses to an end that took a
+        # row of it out of force inside the venue read (SEC-S2DC-01); a restore-only key's read
+        # too, never an empty one in its place
+        stored = await self._bounded(
+            self._store.in_force_for_key(key.account_id, key.symbol, key.position_idx)
+        )
         live = [r for r in requests if r.source != "restore"]
         reading = Reading(None, {})
         if live:
@@ -827,11 +835,6 @@ class StopResolver:
             if read is None:
                 return None
             reading = read
-        # after the venue read: the view each put compares (SEC-S2D-03), a restore-only key's
-        # read too, never an empty one in its place
-        stored = await self._bounded(
-            self._store.in_force_for_key(key.account_id, key.symbol, key.position_idx)
-        )
         reading = replace(reading, in_force=tuple(stored))
         decisions = decide(requests, reading)
         await self._write(key, decisions, reading.in_force, committed)
