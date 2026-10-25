@@ -267,13 +267,17 @@ def test_a_leg_only_narrows_its_bound_profile_and_a_widening_request_is_refused_
         "The leg's account's bound profile, its default profile (`is_default`), is the ceiling "
         "(E28 threat model D7)",
         "only narrow it, field by field, judged on the resulting leg after the sizer and its "
-        "clamps run again: quantity, notional, leverage, margin and risk at the stop may not "
-        "exceed the bound profile's caps and risk budget, and the stop may not move further from "
-        "entry (ADR-0040 (proposed, #4461) Decision 1)",
+        "clamps run again",
+        "may not exceed the bound profile's caps and risk budget",
+        "the stop may not lie further from entry than the bound profile's own resolved stop for "
+        "that leg",
         "never clamped and never a partial group (C-12.5, D6)",
         "It is audited, before any leg is sent, whatever `atomicity` says",
         "whatever `atomicity` says; it is never a per-leg failure",
-        "only submitted values that widen the bound profile refuse the whole request",
+        "A leg whose values the profile alone produced and that an account-state cap then "
+        "rejects",
+        "fails alone when it is sent",
+        "a request value that breaks the comparator is refused whole",
         "an alternate profile never relaxes one",
         "The sizer's own policy clamp is no refusal; `sizing_explanation` names it",
         "decided at validation, after the account-scope check and before any leg is sized, with "
@@ -328,20 +332,15 @@ def test_a_widening_refusal_is_declared_on_the_submit_and_the_preview_with_its_l
     `errors[]` entry per offending leg naming the field, the requested value and the limit."""
     create = _words(_OPS["createTradeGroup"]["description"])
     assert "may not rise" not in create  # the ceiling is the bound profile's caps and budget
-    entry = (
-        "one `errors[]` entry per offending leg: its `field` (the leg's member, such as "
-        "`legs[1].overrides.leverage`), the cap it breaks as `rule`, the cap's value as `limit` "
-        "and the requested value in `message`"
-    )
-    assert entry in create
+    assert "the requested value in `message`" in create
     registered = _CODES["risk_limit_breached"]
     assert registered["title"].endswith(
         "would be exceeded, by the account's state or by a submitted value"
     )
     forbidden = _SPEC["components"]["responses"]["Forbidden"]
     assert (
-        "On `createTradeGroup` and `previewTradeGroup` it may be `code: risk_limit_breached`"
-        in _words(forbidden["description"])
+        "On `createTradeGroup`, `previewTradeGroup` and `amendTradeGroup` it may be "
+        "`code: risk_limit_breached`" in _words(forbidden["description"])
     )
     example = forbidden["content"]["application/problem+json"]["examples"]["tradeGroupWidening"]
     value = example["value"]
@@ -357,24 +356,23 @@ def test_a_widening_refusal_is_declared_on_the_submit_and_the_preview_with_its_l
     assert item["limit"] in item["message"] and "25" in item["message"]  # requested 25x
     problem = Draft202012Validator(deref(_SPEC, _SCHEMAS["Problem"]))
     assert list(problem.iter_errors(value)) == []
-    for operation in ("createTradeGroup", "previewTradeGroup"):
+    for operation in ("createTradeGroup", "previewTradeGroup", "amendTradeGroup"):
         assert _OPS[operation]["responses"]["403"] == _ref("responses", "Forbidden")
 
 
 def test_a_leg_s_first_native_stop_covers_its_full_quantity_at_admission() -> None:
-    """#2635, ADR-0040 (proposed, #4461) R rule 8 (C-2.6; PF-T20): the leg has no stop-size
+    """#2635, ADR-0040 (proposed, #4461) rule 8 (C-2.6; PF-T20): the leg has no stop-size
     member, so under `Partial` the server sizes the first stop to the whole leg."""
     create = _words(_OPS["createTradeGroup"]["description"])
     for phrase in (
-        "At admission the leg's first native stop covers the leg's full quantity under either "
-        "`tpsl_mode`: a leg has no stop-size member, so under `Partial` the server sets that "
-        "stop's size to the leg's full quantity (C-2.6; ADR-0040 (proposed, #4461) rule 8)",
-        "After admission only the owner's `sl_loosen` step-up on `setPositionTpSl` (`sl_size`) "
-        "makes it smaller",
-        "a full-quantity stop that cannot be placed under `Partial` is a post-entry failure that "
-        "starts the leg's unwind (E34-S03), never a refusal",
+        "first native stop covers the leg's full quantity under either `tpsl_mode`",
+        "under `Partial` the server sets that stop's size to the leg's full quantity",
+        "only the owner's `sl_loosen` step-up on `setPositionTpSl` (`sl_size`) may make its cover "
+        "smaller than the position it protects (24-internal-schemas.md section 8.8 rule 5)",
+        "is a post-entry failure that starts the leg's unwind (E34-S03), never a refusal",
     ):
         assert phrase in create, phrase
+    assert "makes it smaller" not in create  # reduce-only fills and closes shrink it too
     overrides = _SCHEMAS["TradeGroupLegInput"]["properties"]["overrides"]["properties"]
     assert not [name for name in overrides if "size" in name and name != "sizing"]
 
