@@ -592,7 +592,10 @@ def test_the_admitted_stop_covers_the_full_quantity(mode: str, stop_qty: str | N
 def test_a_caller_stop_size_other_than_the_quantity_is_refused(stop_qty: str) -> None:
     """Rule 8 is never a silent rewrite: a stop sized short of (or past) the leg is refused."""
     resulting = leg(tpsl_mode="Partial", stop_qty=D(stop_qty))
-    assert refused(judge(resulting)) == [("require_native_sl", "never", "inconsistent")]
+    result = judge(resulting)
+    assert refused(result) == [("require_native_sl", "never", "inconsistent")]
+    (violation,) = violations(result)
+    assert (violation.limit, violation.requested) == (D("0.1"), D(stop_qty))
 
 
 # --- inputs the comparator cannot know: unknown is refused, never zero room or no limit ---------

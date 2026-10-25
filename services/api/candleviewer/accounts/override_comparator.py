@@ -24,7 +24,7 @@ holds the typed contract: handed a profile or a leg of another account, it raise
 It judges position-opening legs (the trade group's entries). Only `Admitted.leg` may be sent: the
 caller's own `leg` lacks rule 8's stop size.
 
-Precondition for the route (E28-T05 #909): R5 bounds the quantity by the instrument's
+Precondition for the route (E28-T05 #909): R7 bounds the quantity by the instrument's
 `max_order_qty` (a limit order's); a market leg is also bounded by `max_mkt_order_qty`, which
 needs the order type this module is not given, so #909 checks it before sending.
 """
@@ -278,7 +278,7 @@ class AccountFigures(BaseModel):
     same ledger as `committed_risk` (two legs each fundable alone may not be fundable together);
     a deficit is a negative figure, accepted and refused under R6 (fail closed), never a
     validation error. `maintenance_margin_rate` is the symbol's risk-limit tier rate for the
-    position's notional after this leg is filled, not before (OPEN-2, OPEN-3). `taker_fee_rate`
+    position's notional after this leg is filled, not before (OPEN-3). `taker_fee_rate`
     is the account's real fee tier, which the route passes; `0` is a real zero-fee tier, never a
     placeholder for an unknown rate (that is `None`)."""
 
@@ -499,7 +499,9 @@ def _budget(p: AccountProfile, equity: Decimal | None) -> tuple[str, Decimal | N
 def _r2_risk(c: _Case) -> list[Violation]:
     """R2: the risk at the stop, both taker fees included (24 Sec.9.3 step 5), within the net
     daily-loss headroom (the effective daily caps less the realised loss and the committed risk),
-    capped by _B_'s per-trade budget when _B_ sizes `risk_based`."""
+    capped by _B_'s per-trade budget when _B_ sizes `risk_based`. The entry fee is priced at
+    `ref`, the exit fee at the further of `ref` and the stop (OPEN-4, ruled 2026-10-25): a short's
+    exit at its stop costs more than at entry."""
     f = c.figures
     if f.taker_fee_rate is None:
         return [_unknown("max_daily_loss", "R2", "taker_fee_rate")]
@@ -527,7 +529,8 @@ def _r2_risk(c: _Case) -> list[Violation]:
             return [_unknown(budget_field, "R2", "equity")]
         if budget < headroom:
             field, ceiling = budget_field, budget
-    risk = c.leg.qty * c.distance + c.notional * 2 * f.taker_fee_rate
+    exit_price = max(c.leg.ref_price, c.leg.stop_price)
+    risk = c.leg.qty * (c.distance + (c.leg.ref_price + exit_price) * f.taker_fee_rate)
     if risk <= ceiling:
         return []
     return [_v(field, "R2", "above_limit", limit=ceiling, requested=risk, net_headroom=headroom,
@@ -568,10 +571,13 @@ def _requested_budget(c: _Case) -> list[Violation]:
 
 
 def _r3_leverage(c: _Case) -> list[Violation]:
-    """R3: leverage within the effective cap and the instrument's maximum, and the stop between
-    entry and the isolated-margin liquidation estimate at that leverage (RSK-085; OPEN-2): the
-    price moves `ref * (1 / leverage - mmr)` before liquidation. `1 / leverage` rounds down, so the
-    estimate errs towards entry."""
+    """R3: leverage within the effective cap and the instrument's maximum, and the stop strictly
+    between entry and the isolated-margin liquidation estimate at that leverage (RSK-085): the
+    price moves `ref * (1 / leverage - mmr)` before liquidation, less both taker fees on the
+    notional at the stop, `2 * fee * stop` (OPEN-3), and a stop at the estimate races the
+    liquidation, so equality is refused (OPEN-2; both ruled 2026-10-25). `mmr` is the risk-limit
+    cache's tier rate for the notional after this leg; an unknown tier or fee rate fails closed.
+    `1 / leverage` rounds down, so the estimate errs towards entry."""
     found = []
     cap = c.money_cap("max_leverage_cap")
     if cap is None:
@@ -582,11 +588,13 @@ def _r3_leverage(c: _Case) -> list[Violation]:
     if c.leg.leverage > c.instrument.max_leverage:
         found.append(_v("leverage", "R3", "above_limit", limit=c.instrument.max_leverage,
                         requested=c.leg.leverage))  # fmt: skip
-    mmr = c.figures.maintenance_margin_rate
-    if mmr is None:
-        return [*found, _unknown("leverage", "R3", "maintenance_margin_rate")]
+    mmr, fee = c.figures.maintenance_margin_rate, c.figures.taker_fee_rate
+    if mmr is None or fee is None:
+        inputs = (("maintenance_margin_rate", mmr), ("taker_fee_rate", fee))
+        return [*found, *(_unknown("leverage", "R3", name) for name, v in inputs if v is None)]
     room = c.leg.ref_price * (_FLOOR.divide(Decimal(1), c.leg.leverage) - mmr)
-    if c.distance > room:
+    room -= 2 * fee * c.leg.stop_price
+    if c.distance >= room:
         liquidation = c.leg.ref_price - room if c.long else c.leg.ref_price + room
         found.append(_v("leverage", "R3", "outside_liquidation", limit=liquidation,
                         requested=c.leg.stop_price))  # fmt: skip
@@ -642,8 +650,7 @@ def _take_profit(c: _Case) -> list[Violation]:
 def _r5_minimums(c: _Case) -> list[Violation]:
     """R5 (rows 10, 11, 15, 16): the quantity on the lot grid (floored), at or above the
     instrument's minimums and _B_'s `min_leg_notional`, and never above a requested quantity or
-    notional: a minimum is never rounded up. Neither the leg's nor a requested quantity may pass
-    the instrument's `max_order_qty` (OPEN-5); `max_mkt_order_qty` is the route's (docstring)."""
+    notional: a minimum is never rounded up. The instrument's maximum is R7's."""
     inst, qty = c.instrument, c.leg.qty
     found = []
     if not _on_grid(qty, inst.qty_step):
@@ -655,13 +662,7 @@ def _r5_minimums(c: _Case) -> list[Violation]:
     if c.notional < floor:
         found.append(_v("min_leg_notional", "R5", "below_minimum", limit=floor,
                         requested=c.notional))  # fmt: skip
-    if qty > inst.max_order_qty:
-        found.append(_v("fixed_qty", "R5", "above_limit", limit=inst.max_order_qty,
-                        requested=qty))  # fmt: skip
     asked = c.sizing
-    if asked is not None and asked.qty is not None and asked.qty > inst.max_order_qty:
-        found.append(_v("fixed_qty", "R5", "above_limit", limit=inst.max_order_qty,
-                        requested=asked.qty))  # fmt: skip
     if asked is not None and asked.qty is not None and qty > asked.qty:
         found.append(_v("fixed_qty", "R5", "rounded_up", limit=asked.qty, requested=qty))
     if asked is not None and asked.notional_usd is not None and c.notional > asked.notional_usd:
@@ -691,8 +692,16 @@ _COUNTS: Final = (
 
 
 def _r7_caps(c: _Case) -> list[Violation]:
-    """R7 (rows 33, 34, 36, 42): every other cap the guard reads, at the effective value."""
+    """R7 (rows 33, 34, 36, 42): every other cap the guard reads, at the effective value, and the
+    exchange's: neither the leg's nor a requested quantity passes the instrument's
+    `max_order_qty`, whatever the route clamps upstream (OPEN-5, ruled 2026-10-25);
+    `max_mkt_order_qty` is the route's (module docstring)."""
     found = []
+    limit = c.instrument.max_order_qty
+    asked = None if c.sizing is None else c.sizing.qty
+    for qty in (c.leg.qty, asked):
+        if qty is not None and qty > limit:
+            found.append(_v("fixed_qty", "R7", "above_limit", limit=limit, requested=qty))
     for figure, field in _COUNTS:
         count: int | None = getattr(c.figures, figure)
         cap = c.count_cap(field)
