@@ -23,7 +23,12 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.accounts.verification import VerificationInconclusive, VerificationPolicy, verify
-from candleviewer.exchange.base.errors import ExchangeError, UnknownStateError
+from candleviewer.exchange.base.errors import (
+    AmbiguousResultError,
+    ExchangeError,
+    UnknownStateError,
+)
+from candleviewer.exchange.base.models import RateLane
 from candleviewer.exchange.bybit.config import ALLOWED_REST_HOSTS, EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.key_info import (
     KEY_INFO_PATH,
@@ -31,6 +36,7 @@ from candleviewer.exchange.bybit.key_info import (
     ApiKeyFacts,
     parse_key_info,
 )
+from candleviewer.exchange.bybit.key_verify import VERIFY_CLASS, VERIFY_LANE
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.exchange.bybit.signer import BybitSigner
 from candleviewer.net.read_only_gate import ReadOnlyGate
@@ -402,17 +408,24 @@ def _client(transport: FixtureTransport, origin: str, key: str, secret: str) -> 
 
 
 @pytest.mark.parametrize(
-    "call",
+    ("call", "raised"),
     [
-        {"method": "GET", "path": PROBE_PATH, "params": {"accountType": "UNIFIED"}},
-        {"method": "POST", "path": "/v5/order/create", "body": ORDER_BODY},
+        (
+            {"method": "GET", "path": PROBE_PATH, "params": {"accountType": "UNIFIED"}},
+            UnknownStateError,
+        ),
+        # A create that left with no usable retCode is ambiguous, never resent (24 §8.6).
+        ({"method": "POST", "path": "/v5/order/create", "body": ORDER_BODY}, AmbiguousResultError),
     ],
 )
-async def test_the_rest_clients_signature_verifies(rig: Rig, call: dict[str, Any]) -> None:
+async def test_the_rest_clients_signature_verifies(
+    rig: Rig, call: dict[str, Any], raised: type[ExchangeError]
+) -> None:
     endpoint = EndpointClass.ORDER if call["method"] == "POST" else EndpointClass.ACCOUNT
+    lane: RateLane = "entry" if call["method"] == "POST" else "poll"
     async with _client(rig.transport, DEMO, _key("compliant"), _secret("compliant")) as client:
-        with pytest.raises(UnknownStateError):
-            await client.signed_request(**call, endpoint_class=endpoint)
+        with pytest.raises(raised):
+            await client.signed_request(**call, endpoint_class=endpoint, lane=lane)
     [line] = rig.lines()
     assert _of(line, "outcome", "verified", "status") == ("unstubbed", True, 404)
 
@@ -429,7 +442,11 @@ async def test_refusal_is_inconclusive_through_the_rest_client(
 
     async def key_info() -> ApiKeyFacts:
         try:
-            return parse_key_info(await client.signed_request("GET", KEY_INFO_PATH))
+            return parse_key_info(
+                await client.signed_request(
+                    "GET", KEY_INFO_PATH, endpoint_class=VERIFY_CLASS, lane=VERIFY_LANE
+                )
+            )
         except ExchangeError as error:
             _judge(error)
 
@@ -438,7 +455,7 @@ async def test_refusal_is_inconclusive_through_the_rest_client(
 
     policy = VerificationPolicy(egress_ip=EGRESS_IP)
     async with client:
-        with pytest.raises(VerificationInconclusive, match="TransportError"):
+        with pytest.raises(VerificationInconclusive, match=r"^transport_error$"):
             await verify(
                 _account("90000001"),
                 read_only=False,
