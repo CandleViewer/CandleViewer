@@ -131,10 +131,11 @@ class SizingExplanation:
     """What the sizer computed, in step order, for the ticket and the preview (a contract, not a
     debug aid). `basis / per_unit` is the mode's raw quantity (`per_unit` `None` for `fixed_qty`);
     `clamps` every cap judged, `binding` the last one that lowered the quantity; `risk_usdt` is 1R
-    (`distance * qty`) and `risk_with_fees_usdt` adds both taker fees; `initial_margin` is at the
-    larger notional (mid's for a marketable sell, else `ref`'s); `mid_price` the mid seen; `atr`
-    the reading the stop or the take-profit used; `minimum` the one a leg missed; `rules` the
-    rules that fired, in order. A gate skip carries none."""
+    (`distance * qty`) and `risk_with_fees_usdt` adds both taker fees; `notional` is at `ref`
+    (the anchor), while the caps and `initial_margin` use `px`, the larger notional (mid's for a
+    marketable sell, else `ref`'s); `mid_price` the mid seen; `atr` the reading the stop or the
+    take-profit used; `minimum` the one a leg missed; `rules` the rules that fired, in order. A
+    gate skip carries none."""
 
     ref_price: Decimal | None = None
     ref_source: RefSource | None = None
@@ -471,9 +472,12 @@ def size_leg(
         base_coin=inst.base_coin,
         settle_coin=inst.settle_coin,
     )
-    # Both, per step 3: a stop at or below 0 is no order, and a zero distance would divide by zero
-    # in risk_based (a sub-1e-100 short offset rounds back onto entry).
-    if stop.price <= 0 or stop.distance <= 0:
+    # Per step 3: a stop at or below 0 is no order, and a zero distance would divide by zero in
+    # risk_based (a sub-1e-100 short offset rounds back onto entry). A stop not on the loss side of
+    # a known mid (a marketable limit more than one stop distance through it) is no placeable SL.
+    mid = metrics.mid
+    through = mid is not None and (stop.price >= mid if intent.side == "buy" else stop.price <= mid)
+    if stop.price <= 0 or stop.distance <= 0 or through:
         return replace(seen, outcome="fail", reason=FailReason.INVALID_STOP_DISTANCE)
     if profile.leverage > inst.max_leverage:
         return replace(seen, outcome="fail", reason=FailReason.LEVERAGE_UNAVAILABLE)

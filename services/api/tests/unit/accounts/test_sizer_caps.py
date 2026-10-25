@@ -267,6 +267,27 @@ def test_size_leg_marketable_limit_anchors_take_profits_at_the_limit(
     assert tuple(tp.price for tp in got.tps) == tuple(D(x) for x in prices)  # 1R, 2R past the limit
 
 
+@pytest.mark.parametrize(
+    ("side", "limit", "outcome"),
+    [
+        ("buy", "64130", "fail"),  # stop 64010, above mid
+        ("buy", "64120", "fail"),  # stop 64000, at mid
+        ("buy", "64119.9", "ok"),  # stop 63999.9, just under mid
+        ("sell", "63870", "fail"),  # stop 63990, below mid
+        ("sell", "63880", "fail"),  # stop 64000, at mid
+        ("sell", "63880.1", "ok"),  # stop 64000.1, just over mid
+    ],
+    ids=["buy-past", "buy-at-mid", "buy-inside", "sell-past", "sell-at-mid", "sell-inside"],
+)
+def test_size_leg_stop_on_the_wrong_side_of_mid_fails_invalid_stop_distance(
+    side: str, limit: str, outcome: str
+) -> None:
+    got = sized(profile("P-RISK"), market=sz.SizingMarket(mid=D(64000)), side=side, price=limit)
+    assert got.outcome == outcome
+    assert got.reason == (sz.FailReason.INVALID_STOP_DISTANCE if outcome == "fail" else None)
+    assert got.stop is not None and got.stop.distance == D(120)  # 1R from the limit either way
+
+
 def test_resolve_tps_unknown_offset_unit_is_a_programming_error() -> None:
     p = profile("P-QTY").model_copy(update={"tp_offset_unit": "pips"})  # forged past validation
     stop = sz.ResolvedStop(D(63880), D(120), False)
