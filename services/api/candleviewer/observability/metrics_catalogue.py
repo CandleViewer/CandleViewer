@@ -3708,6 +3708,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "authz_denied_by_route_total",
+        "counter",
+        "requests",
+        ("permission", "route", "role"),
+        "Denied requests, once each, by first denial's permission, route template and role (#902).",
+        "AuthzDeniedSpike (on authz_denied_total) triage: which route and role",
+        _L,
+        "E27",
+        max_series=400,  # permissions x route templates x 4 roles; past it a new series is dropped
+    ),
+    _s(
         "credential_verification_failures_total",
         "counter",
         "failures",

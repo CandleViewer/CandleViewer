@@ -25,7 +25,7 @@ from enum import StrEnum
 from typing import Any, Final, Protocol
 
 from candleviewer.auth.generated_permissions import Permission, Scope
-from candleviewer.auth.metrics import authz_denied_total, normalise_permission
+from candleviewer.auth.metrics import count_authz_denial
 from candleviewer.auth.models import UserStatus
 from candleviewer.auth.view_as import current_view_as
 from candleviewer.storage.repositories.accounts import AccountScope, GrantScope, OwnerScope
@@ -296,7 +296,7 @@ async def enforce(
     if isinstance(decision, Allow):
         return
     # SR-125: counted before the audit write, so a denial is never lost to an audit failure.
-    authz_denied_total.labels(permission=normalise_permission(decision.permission)).inc()
+    count_authz_denial(decision.permission, principal.roles)
     if emitter is not None:
         actor = _actor_of(principal)
         await emitter.emit(

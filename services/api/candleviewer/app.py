@@ -291,6 +291,8 @@ from candleviewer.net import (
 )
 from candleviewer.net.system_topic import client_notice
 from candleviewer.observability.audit_query_metrics import export_audit_query_metrics
+from candleviewer.observability.authz_denials import METRIC_NAME as AUTHZ_DENIALS_METRIC
+from candleviewer.observability.authz_denials import AuthzDenialMiddleware
 from candleviewer.observability.correlation import CorrelationMiddleware
 from candleviewer.observability.health_metrics import bind_health_metrics
 from candleviewer.observability.health_probes import HealthRegistry
@@ -3038,6 +3040,7 @@ def create_app(
     # #2421: outermost (added last), outside the Correlation -> MeshOnly -> Csrf guard trio, which
     # must stay adjacent and in that order. Times every request, mesh/CSRF refusals included; it
     # neither reads nor needs the correlation id.
+    app.add_middleware(AuthzDenialMiddleware, counter=metrics_facade.get(AUTHZ_DENIALS_METRIC))
     app.add_middleware(HttpDurationMiddleware, histogram=metrics_facade.get(HTTP_DURATION_METRIC))
     # E09-T03 / #1648: a served route without an RBAC declaration fails the build.
     assert_app_routes_declared(app, spec)

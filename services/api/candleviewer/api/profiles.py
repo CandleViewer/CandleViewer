@@ -37,7 +37,7 @@ from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission, Scope
-from candleviewer.auth.metrics import authz_denied_total, normalise_permission
+from candleviewer.auth.metrics import count_authz_denial
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, account_scope, enforce
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.storage.errors import StorageError, StorageQueryFailed
@@ -116,7 +116,7 @@ async def not_owner(
     through (SR-051), with `enforce`'s fields and its reason's shape, naming the account. Counted
     before the record, as `enforce` counts (SR-125): a record that cannot be written is logged by
     the ids and its error class (C-12.6), and the refusal stands."""
-    authz_denied_total.labels(permission=normalise_permission(permission)).inc()
+    count_authz_denial(permission, principal.roles)
     actor = principal.user_id
     try:
         await OnAccount(audit, account_id).emit(

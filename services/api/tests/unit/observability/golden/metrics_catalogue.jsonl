@@ -22,6 +22,7 @@
 ["auth_totp_clock_skew_total", "counter", ["kind"], "live", "E09"]
 ["auth_view_as_pending_end_rows", "gauge", [], "live", "E42"]
 ["auth_view_as_refused_total", "counter", ["reason"], "live", "E42"]
+["authz_denied_by_route_total", "counter", ["permission", "route", "role"], "live", "E27"]
 ["authz_denied_total", "counter", ["permission"], "live", "E09"]
 ["bar_build_latency_seconds", "histogram", ["kind"], "live", "E12"]
 ["bar_builder_cold_start_seconds", "histogram", [], "live", "E12"]

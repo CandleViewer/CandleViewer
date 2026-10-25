@@ -82,7 +82,7 @@ from candleviewer.api.view_as_subject import ViewAsUnstamped as ViewAsUnstamped
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.errors import AuthError, SessionReadOnly
 from candleviewer.auth.generated_permissions import Permission
-from candleviewer.auth.metrics import authz_denied_total, normalise_permission
+from candleviewer.auth.metrics import count_authz_denial
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.scopes import Deny, PrincipalSnapshot, decide
 from candleviewer.auth.view_as import (
@@ -291,8 +291,8 @@ async def _target_refusal(
     if denied is None:
         return None
     # SR-125: counted before its record, as `enforce` counts, so a lost record never hides it
-    authz_denied_total.labels(permission=normalise_permission(denied.permission)).inc()
     method, template = operation
+    count_authz_denial(denied.permission, ("owner",), route=template)  # the viewer, pre-routing
     try:
         async with asyncio.timeout(TARGET_READ_TIMEOUT_S):
             await denials.emit(

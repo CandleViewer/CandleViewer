@@ -16,6 +16,8 @@ from collections.abc import Iterable
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.models import MfaMethodKind
+from candleviewer.auth.view_as import current_view_as
+from candleviewer.observability.authz_denials import note_authz_denial
 from candleviewer.observability.metrics import (
     CollectorRegistry,
     Counter,
@@ -326,6 +328,13 @@ def normalise_permission(permission: str) -> str:
     """Clamp a permission code to the generated vocabulary (else `other`), so the
     `authz_denied_total` label set stays closed whatever a caller passes."""
     return str(permission) if permission in _KNOWN_PERMISSIONS else "other"
+
+
+def count_authz_denial(permission: str, roles: Iterable[str], *, route: str | None = None) -> None:
+    """SR-125 at each denial site; the role is the actor's (live view-as: the viewer, an Owner)."""
+    authz_denied_total.labels(permission=(label := normalise_permission(permission))).inc()
+    as_viewer = (view_as := current_view_as()) is not None and view_as.is_viewing_as_target
+    note_authz_denial(label, "owner" if as_viewer else normalise_role(roles), route=route)
 
 
 # Bind every value now: the series then exist from process start, so the `absent()` guard
