@@ -19,14 +19,17 @@ on every history-start heading and on no gap frame, every `rbac.*` sentence with
 no data, every cause within 80 characters, the banned words, the retention cause distinct from the
 never-recorded cause, every gap frame's cause the deck's sentence for its reason, the unknown-reason
 fallback, no private path or host, every cited id and line still valid, no closing keyword); (6) the
-per-frame gates over every state table (section 12 of the spec lists them); (7) the counts the spec,
-the boards and the PR body quote. `--json` feeds the check-nums script; `--check` re-derives the spec's
-`<!-- audit:key=N -->` markers; `--self-test` applies the 39 numbered mutations of spec section 12 in
-memory, one at a time, and passes only when each makes `--check` fail with its own message (rc 1), no
-two share a message, and the unmutated spec passes; `--mutate N` prints one mutation's gate output and
-exits as `--check` would on the mutated spec: 1 when the targeted FAIL fires (the gate caught it), 2 when
-the mutation slips through or fails for another reason (a defect in the gate) — never 0. Every other
-mode exits 1 on a gated FAIL.
+gates, read table by table and cell by cell (spec section 12, rules R-1 to R-18): each frame's family
+from one map, every gap frame's own cause, the 90-day boundary clause by clause, the absence legs and
+the exits on every frame and in sections 1.3 / 1.4 / 10, the band label under the band, the repeated
+fixture numbers, section 15 row by row, the PENDING siblings by name only; (7) the counts the spec, the
+boards and the PR body quote. `--json` feeds the check-nums script; `--check` re-derives the spec's
+`<!-- audit:key=N -->` markers and checks the number printed before each; `--self-test` applies the
+numbered mutations below in memory, one at a time, and passes only when each makes `--check` fail with
+ONE FAIL, its own expected message (rc 1), no two share a message, the unmutated spec passes and the
+spec file is byte-identical afterwards; `--mutate N` prints one mutation's gate output and exits rc 1
+when the targeted FAIL is the only FAIL (the gate caught it), rc 2 when the mutation slips through or
+fails elsewhere (a defect in the gate) — never 0. Every other mode exits 1 on a gated FAIL.
 
 Usage: python3 -I docs/design/_tools/e16_d05_empty_states_audit.py [--json] [--check] [--self-test]
   [--mutate N] [--extra F]
@@ -35,6 +38,7 @@ Usage: python3 -I docs/design/_tools/e16_d05_empty_states_audit.py [--json] [--c
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import re
 import sys
@@ -99,31 +103,130 @@ EXITS = (
     "`Go to the nearest recorded data`",
     "the first bar ends the state",
 )
-# The gap family (spec section 2, BQ-16 RULED): every prefix. A gap frame never carries the shared cause;
-# the 1b stem ("recording began then") never sits on one; the 1a stem ("has not begun yet") sits only on
-# the never-recorded frames, which include the auto-record refusals (recording has not begun there).
-GAP_FAMILY = re.compile(r"gap-|no-trades|refused|role-restricted|in-situ|^GAP/|scr-038-partial")
-STEM_1A_NEVER = re.compile(r"gap-|no-trades|role-restricted|^GAP/|scr-038-partial")
+# The two families apart (BQ-16 RULED; the text lens round 1's M-1): every frame of every state table has exactly one
+# family, read from this map, never from its name. The shared cause and the 1b stem sit on `start` frames only; the 1a
+# stem ("has not begun yet") also on `refused` frames, where recording has not begun. `gap` frames show data missing
+# from the record; `partial` frames show partial coverage; `restricted` frames make no claim about recording.
+FAMILY = {
+    "SCR-047/never-recorded-owner": "start",
+    "SCR-047/before-start": "start",
+    "SCR-047/gap-ws-disconnect": "gap",
+    "SCR-047/gap-retention-purge": "gap",
+    "SCR-047/no-trades-in-window": "gap",
+    "SCR-047/not-trading": "other",
+    "SCR-047/never-recorded-view-as": "start",
+    "SCR-047/never-recorded-sentence": "start",
+    "SCR-047/autorecord-on": "start",
+    "SCR-047/autorecord-refused-cap": "refused",
+    "SCR-047/autorecord-refused-disk": "refused",
+    "SCR-047/role-restricted": "restricted",
+    "SCR-047/in-situ": "refused",
+    "SCR-151/recording-not-started": "start",
+    "SCR-151/classes": "start",
+    "SCR-151/view-as": "start",
+    "SCR-151/sentence-form": "start",
+    "SCR-151/role-restricted": "restricted",
+    "CHIP/partial-days": "partial",
+    "CHIP/partial-with-gaps": "gap",
+    "CHIP/tooltip": "gap",
+    "CHIP/200-zoom": "partial",
+    "SURF/chart-strip-line": "partial",
+    "GAP/band-wide": "gap",
+    "GAP/band-medium": "gap",
+    "GAP/band-tight": "gap",
+    "GAP/seam-non-time": "gap",
+    "GAP/backfilled-kline": "gap",
+    "GAP/forced-colors": "gap",
+    "GAP/tooltip": "gap",
+    "GAP/legend": "gap",
+    "GAP/causes": "gap",
+    "GAP/table-row": "gap",
+    "GAP/cursor-announce": "gap",
+    "SURF/scr-038-partial": "gap",
+    "SURF/scr-038-no-history": "start",
+    "SURF/journal-backfill": "start",
+    "SURF/composite-lookback": "partial",
+    "SURF/scr-103-coverage": "gap",
+    "SURF/replay-absence": "other",
+    "SURF/redlines": "other",
+}
 STEM_1B_TAIL = "recording began then"
 STEM_1A_TAIL = "recording has not begun yet"
-# Every gap-family frame's cause cell carries the deck's sentence for its reason (BQ-10; E16-D02 :340).
-GAP_CAUSE_KEY = {
-    "SCR-047/gap-ws-disconnect": "empty.gap.ws_disconnect",
-    "SCR-047/gap-retention-purge": "empty.gap.retention_purge",
-    "SCR-047/no-trades-in-window": "empty.gap.no_trades",
-    "SCR-047/autorecord-refused-cap": "empty.refused.symbol_cap",
-    "SCR-047/autorecord-refused-disk": "empty.refused.disk_pressure",
-    "SCR-047/in-situ": "empty.refused.symbol_cap",
-    "SCR-047/role-restricted": "empty.status.restricted",
-    "SCR-151/role-restricted": "empty.status.restricted",
+# The absence legs (BQ-8 RULED; the lens's M-4): every cell of these rows is read for a lock or a control.
+LEGS = (
+    "SCR-047/never-recorded-view-as",
+    "SCR-047/never-recorded-sentence",
+    "SCR-047/role-restricted",
+    "SCR-151/view-as",
+    "SCR-151/sentence-form",
+    "SCR-151/role-restricted",
+)
+# Every gap-family frame's cause, read from its own cell (BQ-10 RULED; the lens's M-2): (column, kind, key). `deck` = the
+# deck's sentence for the key (`22` reason or refusal); `short` = the section 2 short form for the reason; `all` = the
+# eight sentences of the strip. Gap frames with no cause carrier name why in GAP_NO_CAUSE.
+GAP_CAUSE: dict[str, tuple[int, str, str]] = {
+    "SCR-047/gap-ws-disconnect": (3, "deck", "empty.gap.ws_disconnect"),
+    "SCR-047/gap-retention-purge": (3, "deck", "empty.gap.retention_purge"),
+    "SCR-047/no-trades-in-window": (3, "deck", "empty.gap.no_trades"),
+    "SCR-047/autorecord-refused-cap": (3, "deck", "empty.refused.symbol_cap"),
+    "SCR-047/autorecord-refused-disk": (3, "deck", "empty.refused.disk_pressure"),
+    "SCR-047/in-situ": (3, "deck", "empty.refused.symbol_cap"),
+    "SCR-047/role-restricted": (3, "deck", "empty.status.restricted"),
+    "SCR-151/role-restricted": (3, "deck", "empty.status.restricted"),
+    "CHIP/partial-with-gaps": (2, "short", "ws_disconnect"),
+    "CHIP/tooltip": (2, "short", "ws_disconnect"),
+    "GAP/band-tight": (3, "short", "ws_disconnect"),
+    "GAP/backfilled-kline": (3, "short", "ws_disconnect"),
+    "GAP/forced-colors": (3, "short", "ws_disconnect"),
+    "GAP/tooltip": (2, "deck", "empty.gap.ws_disconnect"),
+    "GAP/causes": (2, "all", ""),
+    "GAP/table-row": (2, "short", "ws_disconnect"),
+    "SURF/scr-103-coverage": (3, "short", "ws_disconnect"),
 }
-# A band frame's label cell names a VISIBLE text carrier (AC 2: "identifiable and labelled" at every zoom):
-# the in-band label, the time-axis tag or the seam's tag — never the tooltip or the cursor alone.
+GAP_NO_CAUSE = {
+    "GAP/band-wide": "the axis tag carries the range; the tooltip the cause",
+    "GAP/band-medium": "the axis tag carries the range; the tooltip the cause",
+    "GAP/seam-non-time": "the seam's tag carries the range; the tooltip the cause",
+    "GAP/legend": "one row per pane, never per gap",
+    "GAP/cursor-announce": "the readout names the range; the tooltip the cause",
+    "SURF/scr-038-partial": "the note counts the ranges; the table alternative lists the causes",
+}
+# A band frame's label cell names a VISIBLE text carrier (AC 2: "identifiable and labelled" at every zoom): the label
+# under the band, the time-axis tag or the seam's tag — never the tooltip or the cursor alone.
 VISIBLE_CARRIERS = ("`gap.band.label`", "`gap.axis.tag`", "`gap.seam.label`")
-IN_BAND_LABEL = re.compile(
-    r'in-band (?:"|label\b)'
-)  # a drawn in-band label, never "no in-band room"
+# The band label never covers data (the lens's M-6): it sits under the band, E11-D02 :140's maintenance-label position.
+UNDER_BAND = "under the band"
+OVER_DATA = re.compile(r"\bplate\b|over the bars|\bruns? past\b|\bin-band\b", re.IGNORECASE)
 NINETY_DAY = "unknown — never shown as a gap and never as covered"
+# The 90-day boundary drawn as a gap or as covered (BQ-14 RULED; the lens's M-3), read clause by clause on every table.
+WINDOW = re.compile(r"\b90[- ]day|\b90 days\b|route's window|beyond the report", re.IGNORECASE)
+DRAWN_AS = re.compile(
+    r"\b(?:drawn|shown|hatched|counted|treated|rendered|filled|marked|painted)\s+as\s+(?:a\s+)?"
+    r"(?:recording\s+)?(gap|covered|recorded)\b",
+    re.IGNORECASE,
+)
+# Locks, controls and gates (A1, A3 RULED; the lens's M-4 / M-5); negated phrases are stripped before the search.
+LOCKISH = r"\b(?:pad)?lock(?:ed|s)?\b|aria-disabled|(?<![\w.-])disabled\b|\bdimm(?:ed|ing)\b|\bgr[ae]yed\b"
+CONTROL = r"\bbuttons?\b|CMP-001|`Record this symbol`"
+OWNER_GATE = r"\b[Oo]wner[- ]only\b|\bonly (?:for )?the [Oo]wner\b"
+LOCK_RE = re.compile(LOCKISH, re.IGNORECASE)
+LEG_RE = re.compile(f"{LOCKISH}|{CONTROL}", re.IGNORECASE)
+GATE_RE = re.compile(f"{LOCKISH}|{OWNER_GATE}", re.IGNORECASE)
+EXIT_NAME = re.compile(
+    r"`(?:Esc|Close|Dismiss|Go to latest|Go to recorded history|Switch symbol|Open symbol info|"
+    r"Switch to time bars|Go to the nearest recorded data|Learn more|Show coverage)`"
+)
+NEG = re.compile(r"\b(?:never|no|not|without)\b[^;,.()·|]*", re.IGNORECASE)
+NEVER = re.compile(r"\bnever\b[^;,.()·|]*", re.IGNORECASE)
+CLAUSE = re.compile(r";|·|\|")
+# The view-as leg first in every line that names both legs (E09-D09 §2.1 step 3; the lens's m-1).
+VIEW_AS_PAIRS = (
+    (r"never-recorded-view-as", r"never-recorded-sentence"),
+    (r"SCR-151/view-as|`/view-as`", r"SCR-151/sentence-form|`/sentence-form`"),
+    (r"rbac\.view_as", r"rbac\.owner_only"),
+)
+# The PENDING siblings (A4 RULED; the lens's m-5): by name only — never a pinned sha, a line or quoted text.
+PENDING = r"#4463|E16-D06|E16-D07"
 KEY_CHORD = re.compile(r"\b(?:Ctrl|Alt|Cmd)\+[A-Za-z0-9]+")
 DIMMING = ("opacity.disabled", "color.text.disabled")
 # The three-zoom thresholds and scales (spec section 3; D05-D6). px per minute; the AC 2 gap in minutes.
@@ -147,7 +250,7 @@ link words on a panel | color.text.link | color.surface.raised | text
 chip words on the info fill | color.text.primary | color.status.info.subtle | text
 chip glyph on the info fill | color.status.info.strong | color.status.info.subtle | non-text
 band edges and the seam on the canvas (color.chart.boundary) | color.text.tertiary | color.surface.canvas | non-text
-in-band label and the axis tag on the canvas | color.text.tertiary | color.surface.canvas | text
+band label under the band and the axis tag on the canvas | color.text.tertiary | color.surface.canvas | text
 tooltip title on the overlay | color.text.primary | color.surface.overlay | text
 tooltip lines on the overlay | color.text.secondary | color.surface.overlay | text
 live glyph on the pane | color.data-confidence.live.indicator | color.surface.canvas | non-text
@@ -694,6 +797,7 @@ def fixture(facts: dict[str, Any]) -> dict[str, Any]:
         "ac2_human": humanise(ac2_min * 60),
         "retention_days": retention_days,
         "retention_report_date": ret_report.isoformat(),
+        "report_horizon": (gen.date() - dt.timedelta(days=retention_days)).isoformat(),
         "trim_date": trim,
         "purge_from_date": start.date().isoformat(),
         "retention_purged_days": purged_days,
@@ -708,6 +812,84 @@ def deck_rows(spec: str) -> list[tuple[str, str, str]]:
         m = re.match(r"^\| `([^`]+)` +\| (.*?) +\| (.*?) +\|", ln)
         if m:
             out.append((m.group(1), m.group(2), m.group(3)))
+    return out
+
+
+def strip_md(s: str) -> str:
+    return re.sub(r"[`*]", "", s).strip("| ").strip()
+
+
+def line_sections(spec: str) -> list[str]:
+    """The section label of every line: `1.3` under a `###` heading, `4` under a `##` heading, else the header's."""
+    out, sec = [], "header"
+    for ln in spec.split("\n"):
+        m = re.match(r"^##(#?) (?:(\d+(?:\.\d+)?)\.? |(\S+))", ln)
+        if m:
+            sec = m.group(2) or {"Acceptance-criteria": "AC trace", "The": "BQ"}.get(
+                m.group(3), "header"
+            )
+        out.append(sec)
+    return out
+
+
+def table_rows(spec: str) -> list[tuple[str, str, list[str], str]]:
+    """Every table row of the spec: (section, where, cells, line); separator rows skipped."""
+    out = []
+    for sec, ln in zip(line_sections(spec), spec.split("\n")):
+        if ln.startswith("| ") and not re.match(r"^\| -", ln):
+            c = cells(ln)
+            out.append((sec, f"section {sec}: {strip_md(c[0])[:32]}", c, ln))
+    return out
+
+
+def short_forms(spec: str) -> dict[str, str]:
+    """Section 2's cause table: the short form (band label, chip sentence) of every `22` reason."""
+    out = {}
+    for ln in section(spec, 2, 3).splitlines():
+        m = re.match(r"^\|[^|]*\| `empty\.gap\.([a-z_]+)` +\|[^|]*\| \"([^\"]+)\" +\|", ln)
+        if m:
+            out[m.group(1)] = m.group(2)
+    return out
+
+
+def boundary_gate(where: str, text: str) -> list[str]:
+    """BQ-14: a clause that draws the days beyond the route's 90-day window as a gap or as covered."""
+    for clause in re.split(r";|·|\||\. ", text):
+        m = DRAWN_AS.search(clause)
+        near = WINDOW.search(clause) or (
+            re.search(r"\b(?:beyond|older|outside|before)\b", clause) and WINDOW.search(text)
+        )
+        if m and near and not re.search(r"\b(?:never|unknown|not)\b", clause, re.IGNORECASE):
+            kind = "a gap" if m.group(1).lower() == "gap" else "covered"
+            return [f"coverage beyond the route's 90-day window drawn as {kind} [{where}]"]
+    return []
+
+
+def fixture_gate(where: str, text: str, fx: dict[str, Any]) -> list[str]:
+    """Every fixture number a row repeats equals the tool's (the lens's m-3): the chip, the ranges' durations, the
+    recording start, the trim date and the retention days."""
+    out = []
+    for a, b in re.findall(r"Partial: (\d+) of (\d+)", text):
+        if (int(a), int(b)) != (fx["chip_n"], fx["chip_m"]):
+            out.append(f"fixture number differs from the tool [{where}: Partial: {a} of {b}]")
+    pairs = {
+        (fx["gap_from"], fx["gap_to"]): fx["gap_human"],
+        (fx["gap_from"], fx["ac2_to"]): fx["ac2_human"],
+    }
+    for a, b, dur in re.findall(
+        r"(\d{2}:\d{2}) ?(?:→|–) ?(\d{2}:\d{2}) UTC · (\d+ (?:h|min|s)(?: \d+ (?:min|s))?)", text
+    ):
+        if pairs.get((a, b)) != dur:
+            out.append(f"gap duration differs from the tool [{where}: {a}–{b} {dur}]")
+    for ts in re.findall(r"History starts (\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC)", text):
+        if ts != fx["recording_started"]:
+            out.append(f"fixture number differs from the tool [{where}: {ts}]")
+    for d in re.findall(r"\bbefore (\d{4}-\d{2}-\d{2})\b", text):
+        if d != fx["trim_date"]:
+            out.append(f"fixture number differs from the tool [{where}: before {d}]")
+    for a, b in re.findall(r"\((\d+) days\)|\b(\d+)-day policy", text):
+        if int(a or b) != fx["retention_days"]:
+            out.append(f"fixture number differs from the tool [{where}: {a or b} days]")
     return out
 
 
@@ -765,17 +947,20 @@ def gates(
         if facts["stem_14"] != "MISSING"
         else "recording began then"
     )
-    # (6) the per-frame gates
+    # (6) the per-frame gates, table by table: every gate reads the cells of every frame row of every state table
     frames = frame_rows(spec)
     names = [n for n, _, _ in frames]
     for n in sorted({n for n in names if names.count(n) > 1}):
         bad.append(f"frame row repeated: {n}")
+    for n in names:
+        if n not in FAMILY:
+            bad.append(f"frame without a family [{n}]")
     scr047 = [(n, c) for n, c, s in frames if n.startswith("SCR-047/")]
     for n, c in scr047:
         if len(c) < 8:
             bad.append(f"frame {n}: the SCR-047 row has {len(c)} cells, 8 expected")
             continue
-        heading, cause, ctrl, exit_, live, cls = c[2], c[3], c[4], c[5], c[6], c[7]
+        heading, cause, exit_, live = c[2], c[3], c[5], c[6]
         if not heading:
             bad.append(f"frame {n}: heading missing")
         elif (
@@ -783,37 +968,13 @@ def gates(
             and "{symbol}" not in heading
             and not re.search(r"History starts \d{4}-", heading)
         ):
-            bad.append(
-                f"frame {n}: heading names no symbol (E11-D04 :347)"
-            )  # the 1b stem is `14` :83's text
-        if "History starts" in heading and not any(tail in heading for tail in STEM_TAILS):
-            bad.append(f"stem text differs from 14 §0.5 rule 3 [{n}]")
-        if (
-            "History starts" in heading
-            and "recording began then" in heading
-            and f"— {stem_tail}." not in heading
+            bad.append(f"frame {n}: heading names no symbol (E11-D04 :347)")
+        if ("History starts" in heading and not any(tail in heading for tail in STEM_TAILS)) or (
+            STEM_1B_TAIL in heading and f"— {stem_tail}." not in heading
         ):
             bad.append(f"stem text differs from 14 §0.5 rule 3 [{n}]")
-        if n == "SCR-047/gap-retention-purge":
-            if "retention policy (" not in cause:
-                bad.append("retention frame: cause sentence missing")
-            if RECORDED_ONLY in cause:
-                bad.append("retention cause identical to never-recorded cause")
-            if "`minus`" not in ctrl:
-                bad.append("retention frame: distinct glyph missing")
-            if "`Retention policy`" not in ctrl or "Owner" not in ctrl:
-                bad.append("retention frame: Owner-only Retention policy link missing")
-        elif not cause:
+        if not cause:
             bad.append(f"frame {n}: cause missing")
-        if re.search(r"\block\b", ctrl, re.IGNORECASE) or re.search(
-            r"\block\b", cls, re.IGNORECASE
-        ):
-            bad.append(f"lock drawn on an absence frame [{n}]")
-        if "sentence form" in cls:
-            if "`Record this symbol`" in ctrl or re.search(r"\bbutton\b|CMP-001", ctrl):
-                bad.append(f"sentence form carries a button [{n}]")
-            if cls.startswith("T2") and not re.search(r"`rbac\.[a-z_]+`", cause):
-                bad.append(f"sentence form names no rbac key [{n}]")
         if not any(e in exit_ for e in EXITS):
             bad.append(f"exit missing on {n}")
         if "not-trading" in n and LIVE_NOW in live:
@@ -822,11 +983,13 @@ def gates(
             bad.append(f"live sentence without its condition [{n}]")
         if n == "SCR-047/in-situ" and not any(w in " ".join(c) for w in REC_CHIP):
             bad.append("recorder-status chip missing from the in-situ frame")
-        if (
-            n in ("SCR-047/never-recorded-owner", "SCR-047/before-start")
-            and RECORDED_ONLY not in cause
-        ):
+        if FAMILY.get(n) == "start" and STEM_1A_TAIL in heading and RECORDED_ONLY not in cause:
             bad.append(f"history-start frame without the shared cause [{n}]")
+        if n == "SCR-047/gap-retention-purge":
+            if "`minus`" not in c[4]:
+                bad.append("retention frame: distinct glyph missing")
+            if "`Retention policy`" not in c[4] or "Owner" not in c[4]:
+                bad.append("retention frame: Owner-only Retention policy link missing")
     b02 = {
         n: c
         for n, c in scr047
@@ -837,20 +1000,12 @@ def gates(
         cs = [c[3] for c in b02.values()]
         if len(set(hs)) != 3 or len(set(cs)) != 3:
             bad.append("the three reasons are not distinct in heading and cause (AC 1)")
-    scr151 = [(n, c) for n, c, s in frames if n.startswith("SCR-151/")]
-    for n, c in scr151:
+    for n, c in [(n, c) for n, c, s in frames if n.startswith("SCR-151/")]:
         if len(c) < 7:
             bad.append(f"frame {n}: the SCR-151 row has {len(c)} cells, 7 expected")
             continue
-        heading, cause, ctrl, ts, cls = c[2], c[3], c[4], c[5], c[6]
-        if re.search(r"\block\b", ctrl, re.IGNORECASE):
-            bad.append(f"lock drawn on an absence frame [{n}]")
-        if "sentence form" in cls and (
-            "`Record this symbol`" in ctrl or re.search(r"\bbutton\b|CMP-001", ctrl)
-        ):
-            bad.append(f"sentence form carries a button [{n}]")
         if n == "SCR-151/recording-not-started" and not re.search(
-            r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC", ts
+            r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC", c[5]
         ):
             bad.append("recording-start timestamp missing")
         if n == "SCR-151/classes":
@@ -861,10 +1016,12 @@ def gates(
             ):
                 if phrase not in c[1]:
                     bad.append(f"fewer than three SCR-151 classes [{phrase} missing]")
-        if "History starts" in heading and not any(tail in heading for tail in STEM_TAILS):
+        if "History starts" in c[2] and not any(tail in c[2] for tail in STEM_TAILS):
             bad.append(f"stem text differs from 14 §0.5 rule 3 [{n}]")
-    for n, c, _ in frames:
+    short = short_forms(spec)
+    for n, c, sec in frames:
         joined = " ".join(c)
+        fam = FAMILY.get(n, "")
         if any(d in joined for d in DIMMING):
             bad.append(
                 f"dimming on a sentence form [{n}]"
@@ -873,45 +1030,80 @@ def gates(
             )
         if KEY_CHORD.search(joined) and "PROPOSED" not in joined:
             bad.append(f"key binding drawn as shipped without PROPOSED [{n}]")
-        # the two families apart on EVERY frame table (BQ-16 RULED; the lens's F-1): the shared cause and the
-        # 1b stem never on a gap-family frame; the 1a stem never on a gap, no-trades, restricted or band frame
-        if GAP_FAMILY.search(n):
-            if "Nothing is missing" in joined:
-                bad.append(f"stem family cause on a gap frame [{n}]")
-            if STEM_1B_TAIL in joined or (STEM_1A_NEVER.search(n) and STEM_1A_TAIL in joined):
-                bad.append(f"stem heading on a gap frame [{n}]")
-        if not n.startswith(("SCR-047/", "SCR-151/")) and re.search(
-            r"\block\b", joined, re.IGNORECASE
+        # BQ-16: the shared cause and the stems only where the family allows them
+        if fam and fam != "start" and "Nothing is missing" in joined:
+            bad.append(f"stem family cause on a non-start frame [{n}]")
+        if fam and (
+            (fam != "start" and STEM_1B_TAIL in joined)
+            or (fam not in ("start", "refused") and STEM_1A_TAIL in joined)
         ):
-            bad.append(f"lock drawn on a state frame [{n}]")
-        if (
-            "older than" in joined
-            and "gap" in joined
-            and "unknown" not in joined
-            and "never" not in joined
-        ):
-            bad.append(f"coverage older than the route's window drawn as a gap [{n}]")
-    # every gap-family frame's cause is the deck's sentence for its reason (BQ-10; the lens's F-1)
-    by_name = {n: c for n, c, _ in frames}
-    for n, key in GAP_CAUSE_KEY.items():
-        if n not in by_name or key not in strings:
-            continue
-        cause = by_name[n][3]
-        wanted = re.findall(r'"([^"]+)"', strings[key])
-        if "restricted" in n and "Not recording" in cause:
-            bad.append(f"role-restricted frame reads 'Not recording' (E16-D02 :340) [{n}]")
-        elif not any(w in cause for w in wanted):
-            bad.append(f"gap frame cause is not the deck's sentence [{n}: {key}]")
+            bad.append(f"stem heading on a non-start frame [{n}]")
+        # A3: an exit or a link is never gated (the SCR-047 Exit column whole; any other cell clause by clause)
+        cells_ = list(c[1:])
+        gated: str | None = None
+        for i, cell in enumerate(cells_):
+            whole = n.startswith("SCR-047/") and i == 4
+            parts = [cell] if whole else CLAUSE.split(cell)
+            kept = []
+            for part in parts:
+                if whole or EXIT_NAME.search(part):
+                    m = GATE_RE.search(NEG.sub(" ", part))
+                    if m:
+                        gated = gated or m.group(0)
+                        continue
+                kept.append(part)
+            cells_[i] = " ; ".join(kept)
+        if gated:
+            bad.append(f"exit gated [{n}: {gated}]")
+        rest = NEG.sub(" ", " | ".join(cells_))
+        # A1 / BQ-8: an absence leg carries no lock and no control; no state frame carries a lock
+        if n in LEGS:
+            m = LEG_RE.search(rest)
+            if m:
+                bad.append(f"absence leg drawn as a lock or a control [{n}: {m.group(0)}]")
+        else:
+            m = LOCK_RE.search(rest)
+            if m:
+                bad.append(f"lock drawn on a state frame [{n}: {m.group(0)}]")
+        # BQ-8: a role-restricted frame never reads "Not recording", in any cell
+        if fam == "restricted":
+            for i, cell in enumerate(c[1:], 1):
+                if "Not recording" in NEVER.sub(" ", cell):
+                    bad.append(f"role-restricted frame reads 'Not recording' [{n}: cell {i}]")
+        # BQ-10: every gap-family frame carries its own reason's cause, in its own cell
+        if fam == "gap" and n not in GAP_CAUSE and n not in GAP_NO_CAUSE:
+            bad.append(f"gap frame with no cause rule [{n}]")
+        if n in GAP_CAUSE and not (fam == "restricted" and "Not recording" in joined):
+            col, kind, key = GAP_CAUSE[n]
+            cell = c[col] if col < len(c) else ""
+            if not cell or RECORDED_ONLY in cell:
+                pass  # an empty cell or the shared cause is reported by its own gate
+            elif kind == "deck" and key in strings:
+                if not any(w in cell for w in re.findall(r'"([^"]+)"', strings[key])):
+                    bad.append(f"gap frame cause is not the deck's sentence [{n}: {key}]")
+            elif kind == "short" and short.get(key) and short[key] not in cell:
+                bad.append(f"gap label lacks the short cause [{n}: {key}]")
+            elif kind == "all":
+                for reason in facts["gap_reasons_22"]:
+                    sents = re.findall(r'"([^"]+)"', strings.get(f"empty.gap.{reason}", ""))
+                    if reason != "never_recorded" and sents and sents[-1] not in cell:
+                        bad.append(f"cause strip lacks the sentence for {reason}")
+        bad += boundary_gate(n, joined)
+        bad += fixture_gate(n, joined, fx)
     if NINETY_DAY not in section(spec, 3, 4):
         bad.append("the 90-day sentence is missing from section 3 (BQ-14 RULED)")
-    chips = [(n, c) for n, c, s in frames if n.startswith("CHIP/")]
-    for n, c in chips:
+    for n, c in [(n, c) for n, c, s in frames if n.startswith("CHIP/")]:
         if "Partial:" not in " ".join(c):
             bad.append(f"partial chip text missing [{n}]")
     gapz = [(n, c) for n, c, s in frames if n.startswith("GAP/") and s == 7]
-    bands = [n for n, _ in gapz if n.startswith("GAP/band-")]
-    if len(bands) < 3:
-        bad.append("fewer than three zoom-level frames")
+    rates = {
+        lvl: ZOOM[f"{lvl}_px_per_min"] for lvl in ("wide", "medium", "tight")
+    }  # the three zoom levels
+    for lvl, rate in rates.items():
+        if not any(
+            c[1].startswith(f"{rate:g} px / min") for n, c in gapz if n.startswith("GAP/band-")
+        ):
+            bad.append(f"fewer than three zoom-level frames [{rate:g} px / min missing]")
     for n, c in gapz:
         geometry, label = c[2], c[3]
         if not any(r in geometry for r in REGISTRY_IDS):
@@ -920,10 +1112,33 @@ def gates(
             bad.append(f"gap band without edges [{n}]")
         if not label:
             bad.append(f"gap band without a text label [{n}]")
-        elif not any(v in label for v in VISIBLE_CARRIERS) and not IN_BAND_LABEL.search(label):
+        elif not any(v in label for v in VISIBLE_CARRIERS):
             bad.append(f"gap band without a visible text carrier [{n}]")
+        if "`gap.band.label`" in label or n in ("GAP/forced-colors", "GAP/backfilled-kline"):
+            m = OVER_DATA.search(NEG.sub(" ", label))
+            if m:
+                bad.append(f"band label covers data [{n}: {m.group(0)}]")
+            elif UNDER_BAND not in label:
+                bad.append(f"band label not under the band [{n}]")
         if n == "GAP/backfilled-kline" and "band stays" not in geometry:
             bad.append("backfilled gap drawn as covered")
+        z = re.match(r"([\d.]+) px / min: (?:the (\d+)-minute gap is )?(\d+) px", c[1])
+        if z:
+            lvl = next((k for k, v in rates.items() if float(z.group(1)) == v), "")
+            want_px = fx["zoom"].get(f"{lvl}_px")
+            if want_px is None or int(z.group(3)) != want_px:
+                bad.append(f"band width differs from the tool [{n}: {z.group(3)} px]")
+            if z.group(2) and int(z.group(2)) != fx["gap_ac2_min"]:
+                bad.append(f"the AC 2 gap's minutes differ from the tool [{n}]")
+        for thr in re.findall(r"(\d+) px (?:threshold|rule)", c[1]):
+            if int(thr) not in (ZOOM["seam_px"], ZOOM["label_px"]):
+                bad.append(f"zoom threshold differs from the tool [{n}: {thr} px]")
+    s7 = section(spec, 7, 8)
+    for d6 in re.findall(r"\*\*D05-D6\*\*[^*]*", section(spec, 13, 14)):
+        if UNDER_BAND not in d6 or OVER_DATA.search(NEG.sub(" ", d6)):
+            bad.append("D05-D6 lets the band label cover data")
+    if UNDER_BAND not in s7:
+        bad.append("section 7 does not put the band label under the band")
     gapt = {n: c for n, c, s in frames if n.startswith("GAP/") and s == 8}
     if "GAP/tooltip" in gapt:
         content = gapt["GAP/tooltip"][2].lower()
@@ -937,7 +1152,7 @@ def gates(
             bad.append("unknown gap reason has no fallback")
     else:
         bad.append("GAP/causes row missing")
-    # section 1.3: the view-as row first, the loading row a status
+    # section 1.3: the view-as row first, the two T2 rows the sentence form, the loading row a status
     s1 = section(spec, 1, 2)
     cls_rows = [
         cells(ln)
@@ -946,7 +1161,7 @@ def gates(
     ]
     t2_rows = [c for c in cls_rows if "T2" in c[1]]
     if not t2_rows or "viewing as" not in t2_rows[0][0]:
-        bad.append("view-as leg not first")
+        bad.append("view-as leg not first in section 1.3")
     if len(t2_rows) != 2 or not all("sentence form" in c[1] for c in t2_rows):
         bad.append("section 1.3: the two T2 rows are not both the sentence form")
     loading = [c for c in cls_rows if "CMP-029" in c[0]]
@@ -954,7 +1169,6 @@ def gates(
         bad.append("spinner or skeleton classed as an empty state")
     if "No spinner path" not in s1 and "no spinner path" not in s1:
         bad.append("section 1.3: the no-spinner rule is not stated")
-    # the view-as leg first in EVERY table that holds both legs (E09-D09 §2.1 step 3; the lens's F-2)
     pos = {n: i for i, (n, _, _) in enumerate(frames)}
     for sec, va, oo in (
         (4, "SCR-047/never-recorded-view-as", "SCR-047/never-recorded-sentence"),
@@ -969,6 +1183,56 @@ def gates(
     ]
     if not roles or "viewing as" not in roles[0][0]:
         bad.append("section 1.4: the viewing-as row is not first")
+    # the other tables, row by row: the legs and the restricted rows of 1.3 / 1.4 / 1.5, the exits of 1.3 / 1.4 / 10,
+    # the 90-day boundary and the fixture's numbers on every row, the view-as order on every line
+    for tsec, where, tc, tln in table_rows(spec):
+        if re.match(FRAME_RE, tln) or re.match(r"^\| R-\d+ ", tln):
+            continue
+        joined = " | ".join(tc)
+        if tsec in ("1.3", "1.4", "10") and EXIT_NAME.search(joined):
+            m = GATE_RE.search(NEG.sub(" ", joined))
+            if m:
+                bad.append(f"exit gated [{where}: {m.group(0)}]")
+        leg = (tsec == "1.4" and tc[0].startswith(("Manager", "Viewer", "any role"))) or (
+            tsec == "1.3" and len(tc) > 1 and "T2" in tc[1]
+        )
+        if leg:
+            body = " | ".join(tc[1:]) if tc[0].startswith("`") else joined
+            m = LEG_RE.search(NEG.sub(" ", body))
+            if m:
+                bad.append(f"absence leg drawn as a lock or a control [{where}: {m.group(0)}]")
+        if (
+            tsec in ("1.3", "1.4", "1.5")
+            and "role_restricted" in tc[0]
+            and "Not recording" in NEVER.sub(" ", joined)
+        ):
+            bad.append(f"role-restricted row reads 'Not recording' [{where}]")
+        bad += boundary_gate(where, joined)
+        bad += fixture_gate(where, joined, fx)
+    s0_rows = {
+        i
+        for i, line_ in enumerate(spec.split("\n"))
+        if re.match(r"^\| \d\d +\| `E16-D05 / ", line_)
+    }
+    for i, (lsec, line_) in enumerate(zip(line_sections(spec), spec.split("\n"))):
+        if i in s0_rows or re.match(r"^\| R-\d+ ", line_):
+            continue
+        for va, oo in VIEW_AS_PAIRS:
+            va_m, oo_m = re.search(va, line_), re.search(oo, line_)
+            if va_m and oo_m and oo_m.start() < va_m.start():
+                bad.append(f"view-as leg not first [section {lsec}: {strip_md(line_)[:36]}]")
+                break
+    # A4: the PENDING siblings by name only — never a pinned sha, a cited line or quoted text
+    for m in re.finditer(rf"({PENDING})([^.;\n]{{0,80}})", spec):
+        if re.search(r"\b[0-9a-f]{7,40}\b", m.group(2)):
+            bad.append(f"sha pinned on a PENDING sibling [{m.group(1)}]")
+        elif re.search(r'^\s*:\d+|^[^"]{0,24}"[^"]{8,}"', m.group(2)):
+            bad.append(f"PENDING sibling cited as text [{m.group(1)}]")
+    # every marker's visible number equals its marker (the lens's m-3: a changed number with a kept marker)
+    for shown, key, val in re.findall(r"(\S+) <!-- audit:([a-z0-9_.-]+)=([^ ]+) -->", spec):
+        tail = re.search(r"[\d:.,-]+$", shown.rstrip("),;:*"))
+        if (tail.group(0) if tail else shown).replace(",", "") != val.replace(",", ""):
+            bad.append(f"marker text differs from its value [{key}: {shown} vs {val}]")
     # section 0 reconciles with the state tables
     s0 = section(spec, 0, 1)
     listed: dict[str, list[str]] = {}
@@ -1074,7 +1338,7 @@ def gates(
     return bad
 
 
-# ---- the 39 mutations of spec section 12 (in memory; each must produce its own FAIL) -------------
+# ---- the mutations of spec section 12 (in memory; each must produce its own FAIL and no other) -----
 def _row_edit(spec: str, frame: str, col: int, fn: Callable[[str], str]) -> str:
     out = []
     done = False
@@ -1122,26 +1386,85 @@ def _class_edit(spec: str, row_start: str, old: str, new: str) -> str:
     return "\n".join(out)
 
 
-MUTATIONS: list[tuple[str, Callable[[str], str], str]] = [
+def _first(spec: str, old: str, new: str) -> str:
+    if old not in spec:
+        raise SystemExit(f"mutation target not found: {old[:60]}")
+    return spec.replace(old, new, 1)
+
+
+def _line_edit(spec: str, line_start: str, old: str, new: str) -> str:
+    """Replace `old` by `new` (every occurrence) in the first line that starts with `line_start`."""
+    lines = spec.split("\n")
+    i = next((i for i, ln in enumerate(lines) if ln.startswith(line_start)), None)
+    if i is None or old not in lines[i]:
+        raise SystemExit(f"mutation target not found: {line_start[:40]} / {old[:40]}")
+    lines[i] = lines[i].replace(old, new)
+    return "\n".join(lines)
+
+
+def _counts(spec: str, **marks: tuple[int, int]) -> str:
+    """Rewrite count markers (visible number and marker together): key=(old, new)."""
+    for key, (a, b) in marks.items():
+        spec = _first(spec, f"{a} <!-- audit:{key}={a} -->", f"{b} <!-- audit:{key}={b} -->")
+    return spec
+
+
+def _add(cell: str, text: str) -> str:
+    return f"{cell} {text}"
+
+
+def _with(n: str, col: int, text: str) -> Callable[[str], str]:
+    """Append `text` to one cell of a frame row."""
+    return lambda s: _row_edit(s, n, col, lambda c: _add(c, text))
+
+
+def _clause(n: str, col: int, text: str) -> Callable[[str], str]:
+    """Append `text` to one cell of a frame row as its own clause."""
+    return lambda s: _row_edit(s, n, col, lambda c: f"{c}; {text}")
+
+
+def _cause(n: str, text: str) -> Callable[[str], str]:
+    """Replace a frame row's cause cell."""
+    return lambda s: _row_edit(s, n, 3, lambda c: text)
+
+
+def _drop(n: str, marks: dict[str, tuple[int, int]]) -> Callable[[str], str]:
+    """Delete a frame row and update the count markers with it."""
+    return lambda s: _counts(_row_delete(s, n), **marks)
+
+
+SHARED = f'"{RECORDED_ONLY}"'
+STEM_1B = '"History starts 2026-09-01 00:00 UTC — recording began then."'
+STEM_1A = '"History starts when you record BTCUSDT — recording has not begun yet."'
+WS = '"Recording was interrupted (connection to the exchange lost)."'
+NEW_ROW = "| `SURF/new-panel` | a new panel | CMP-026 in the panel body | the deck | status |"
+# (description, mutation, the expected FAIL — the mutation's ONLY FAIL —, the text lens round 1's ids it reproduces)
+Mutation = tuple[str, Callable[[str], str], str, tuple[str, ...]]
+MUTATIONS: list[Mutation] = [
+    # 1-27: the writer's list
     (
         "SCR-047/never-recorded-owner: the heading cell emptied",
         lambda s: _row_edit(s, "SCR-047/never-recorded-owner", 2, lambda c: ""),
         "frame SCR-047/never-recorded-owner: heading missing",
+        (),
     ),
     (
         "SCR-047/gap-retention-purge: the cause cell emptied",
         lambda s: _row_edit(s, "SCR-047/gap-retention-purge", 3, lambda c: ""),
-        "retention frame: cause sentence missing",
+        "frame SCR-047/gap-retention-purge: cause missing",
+        ("B2",),
     ),
     (
         "SCR-047/gap-retention-purge: the cause replaced by empty.cause.recorded_only",
-        lambda s: _row_edit(s, "SCR-047/gap-retention-purge", 3, lambda c: f'"{RECORDED_ONLY}"'),
-        "retention cause identical to never-recorded cause",
+        lambda s: _row_edit(s, "SCR-047/gap-retention-purge", 3, lambda c: SHARED),
+        "stem family cause on a non-start frame [SCR-047/gap-retention-purge]",
+        ("A2",),
     ),
     (
         "SCR-047/never-recorded-sentence: ' lock' appended to the control cell",
         lambda s: _row_edit(s, "SCR-047/never-recorded-sentence", 4, lambda c: c + " lock"),
-        "lock drawn on an absence frame",
+        "absence leg drawn as a lock or a control [SCR-047/never-recorded-sentence: lock]",
+        ("D1",),
     ),
     (
         "SCR-047/never-recorded-sentence: a Record this symbol button added",
@@ -1151,7 +1474,8 @@ MUTATIONS: list[tuple[str, Callable[[str], str], str]] = [
             4,
             lambda c: c + " · `Record this symbol` button (CMP-001)",
         ),
-        "sentence form carries a button",
+        "absence leg drawn as a lock or a control [SCR-047/never-recorded-sentence: `Record this symbol`]",
+        ("D2",),
     ),
     (
         "section 1.3: the view-as row moved below the owner-only row",
@@ -1160,12 +1484,14 @@ MUTATIONS: list[tuple[str, Callable[[str], str], str]] = [
             "| `Record this symbol` while viewing as",
             "| `Record this symbol` for a session without",
         ),
-        "view-as leg not first",
+        "view-as leg not first in section 1.3",
+        ("E1",),
     ),
     (
         "SCR-047/not-trading: 'Live data is streaming now.' added",
         lambda s: _row_edit(s, "SCR-047/not-trading", 6, lambda c: f'"{LIVE_NOW}" where true'),
-        "live sentence on a frame where it is not true",
+        "live sentence on a frame where it is not true [SCR-047/not-trading]",
+        (),
     ),
     (
         "SCR-047/before-start: the exit Go to recorded history removed",
@@ -1173,41 +1499,49 @@ MUTATIONS: list[tuple[str, Callable[[str], str], str]] = [
             s, "SCR-047/before-start", 5, lambda c: c.replace("`Go to recorded history`", "")
         ),
         "exit missing on SCR-047/before-start",
+        ("G7",),
     ),
     (
         "SCR-151/recording-not-started: the timestamp removed",
         lambda s: _row_edit(s, "SCR-151/recording-not-started", 5, lambda c: "—"),
         "recording-start timestamp missing",
+        (),
     ),
     (
         "CHIP/partial-days: 'Partial:' removed",
         lambda s: _row_edit(s, "CHIP/partial-days", 2, lambda c: c.replace("Partial:", "")),
-        "partial chip text missing",
+        "partial chip text missing [CHIP/partial-days]",
+        (),
     ),
     (
-        "<!-- audit:chip_n=13 --> changed to 12",
-        lambda s: s.replace("<!-- audit:chip_n=13 -->", "<!-- audit:chip_n=12 -->"),
+        "the chip_n marker changed to 12 (number and marker)",
+        lambda s: _counts(s, chip_n=(13, 12)),
         "marker audit:chip_n=12 vs tool 13",
+        ("H1",),
     ),
     (
         "GAP/band-tight: the label cell emptied",
         lambda s: _row_edit(s, "GAP/band-tight", 3, lambda c: ""),
-        "gap band without a text label",
+        "gap band without a text label [GAP/band-tight]",
+        (),
     ),
     (
         "GAP/band-medium: 'dashed edges' removed",
         lambda s: _row_edit(s, "GAP/band-medium", 2, lambda c: c.replace("dashed edges", "edges")),
-        "gap band without edges",
+        "gap band without edges [GAP/band-medium]",
+        (),
     ),
     (
         "GAP/tooltip: 'duration' removed",
         lambda s: _row_edit(s, "GAP/tooltip", 2, lambda c: re.sub(r"(?i)duration", "", c)),
         "gap tooltip missing field: duration",
+        (),
     ),
     (
         "GAP/tooltip: 'cause' removed",
-        lambda s: _row_edit(s, "GAP/tooltip", 2, lambda c: re.sub(r"(?i)cause", "", c)),
+        lambda s: _row_edit(s, "GAP/tooltip", 2, lambda c: re.sub(r"(?i)\bcause\b", "", c)),
         "gap tooltip missing field: cause",
+        (),
     ),
     (
         "GAP/backfilled-kline: 'band stays' -> 'band removed'",
@@ -1215,16 +1549,19 @@ MUTATIONS: list[tuple[str, Callable[[str], str], str]] = [
             s, "GAP/backfilled-kline", 2, lambda c: c.replace("band stays", "band removed")
         ),
         "backfilled gap drawn as covered",
+        (),
     ),
     (
-        "GAP/band-wide: the row deleted",
-        lambda s: _row_delete(s, "GAP/band-wide"),
-        "fewer than three zoom-level frames",
+        "GAP/band-wide: its zoom level (0.5 px / min) removed",
+        lambda s: _row_edit(s, "GAP/band-wide", 1, lambda c: c.replace("0.5 px / min: ", "")),
+        "fewer than three zoom-level frames [0.5 px / min missing]",
+        (),
     ),
     (
         "a Ctrl+R chord added to the CTA cell without PROPOSED",
         lambda s: _row_edit(s, "SCR-047/never-recorded-owner", 4, lambda c: c + " · `Ctrl+R`"),
-        "key binding drawn as shipped without PROPOSED",
+        "key binding drawn as shipped without PROPOSED [SCR-047/never-recorded-owner]",
+        (),
     ),
     (
         "SCR-047/in-situ: the REC chip text removed",
@@ -1232,38 +1569,45 @@ MUTATIONS: list[tuple[str, Callable[[str], str], str]] = [
             s, "SCR-047/in-situ", 1, lambda c: c.replace("Not recording · limit reached", "")
         ),
         "recorder-status chip missing from the in-situ frame",
+        (),
     ),
     (
-        "<!-- audit:frames_scr047=13 --> decremented",
-        lambda s: s.replace("<!-- audit:frames_scr047=13 -->", "<!-- audit:frames_scr047=12 -->"),
+        "the frames_scr047 marker decremented (number and marker)",
+        lambda s: _counts(s, frames_scr047=(13, 12)),
         "marker audit:frames_scr047=12 vs tool 13",
+        ("H2",),
     ),
     (
         "the rbac.owner_only string replaced by E11-D04 :798's draft",
         lambda s: _deck_edit(s, "rbac.owner_only", OWNER_ONLY, DRAFT_798),
         "T2 reason names data or exceeds 60 chars",
+        (),
     ),
     (
         "GAP/causes: the fallback 'Recording gap.' removed",
         lambda s: _row_edit(s, "GAP/causes", 2, lambda c: c.replace('"Recording gap."', '""')),
         "unknown gap reason has no fallback",
+        (),
     ),
     (
         "SCR-151/sentence-form: opacity.disabled added to its controls cell",
         lambda s: _row_edit(s, "SCR-151/sentence-form", 4, lambda c: c + " `opacity.disabled`"),
-        "dimming on a sentence form",
+        "dimming on a sentence form [SCR-151/sentence-form]",
+        (),
     ),
     (
         "section 1.3: the loading row's class 'status' -> 'empty'",
         lambda s: _class_edit(s, "| the pane while", "**status (loading)**", "**empty (loading)**"),
         "spinner or skeleton classed as an empty state",
+        (),
     ),
     (
         "GAP/band-tight: pattern.hatch.gap removed",
         lambda s: _row_edit(
             s, "GAP/band-tight", 2, lambda c: c.replace("`pattern.hatch.gap`", "the hatch")
         ),
-        "gap band not bound to a registry pattern",
+        "gap band not bound to a registry pattern [GAP/band-tight]",
+        (),
     ),
     (
         "SCR-151/classes: 'nothing matches the filter' removed",
@@ -1273,7 +1617,8 @@ MUTATIONS: list[tuple[str, Callable[[str], str], str]] = [
             1,
             lambda c: c.replace("nothing matches the filter", "a filtered list"),
         ),
-        "fewer than three SCR-151 classes",
+        "fewer than three SCR-151 classes [nothing matches the filter missing]",
+        (),
     ),
     (
         "SCR-047/before-start: the stem altered to 'recording started then'",
@@ -1283,48 +1628,52 @@ MUTATIONS: list[tuple[str, Callable[[str], str], str]] = [
             2,
             lambda c: c.replace("recording began then", "recording started then"),
         ),
-        "stem text differs from 14 §0.5 rule 3",
+        "stem text differs from 14 §0.5 rule 3 [SCR-047/before-start]",
+        (),
     ),
+    # 28: the BQ-16 family gate
     (
         "SCR-047/gap-ws-disconnect: the stem family's sentence added to its cause",
-        lambda s: _row_edit(s, "SCR-047/gap-ws-disconnect", 3, lambda c: c + f' "{RECORDED_ONLY}"'),
-        "stem family cause on a gap frame",
+        lambda s: _row_edit(s, "SCR-047/gap-ws-disconnect", 3, lambda c: _add(c, SHARED)),
+        "stem family cause on a non-start frame [SCR-047/gap-ws-disconnect]",
+        ("A1",),
     ),
     # 29-39: the pre-PR design-review lens round 1 (F-1, F-2, F-3)
     (
         "SCR-047/gap-ws-disconnect: the 1b stem put in its heading",
-        lambda s: _row_edit(
-            s,
-            "SCR-047/gap-ws-disconnect",
-            2,
-            lambda c: '"History starts 2026-09-01 00:00 UTC — recording began then."',
-        ),
-        "stem heading on a gap frame [SCR-047/gap-ws-disconnect]",
+        lambda s: _row_edit(s, "SCR-047/gap-ws-disconnect", 2, lambda c: STEM_1B),
+        "stem heading on a non-start frame [SCR-047/gap-ws-disconnect]",
+        (),
     ),
     (
         "GAP/band-tight: the stem family's sentence added to its label cell",
-        lambda s: _row_edit(s, "GAP/band-tight", 3, lambda c: c + f' "{RECORDED_ONLY}"'),
-        "stem family cause on a gap frame [GAP/band-tight]",
+        lambda s: _row_edit(s, "GAP/band-tight", 3, lambda c: _add(c, SHARED)),
+        "stem family cause on a non-start frame [GAP/band-tight]",
+        ("A9",),
     ),
     (
         "SCR-047/gap-ws-disconnect: the cause replaced by 'Something happened.'",
         lambda s: _row_edit(s, "SCR-047/gap-ws-disconnect", 3, lambda c: '"Something happened."'),
-        "gap frame cause is not the deck's sentence",
+        "gap frame cause is not the deck's sentence [SCR-047/gap-ws-disconnect: empty.gap.ws_disconnect]",
+        ("B1",),
     ),
     (
         "section 3: the 90-day sentence reworded to 'shown as a gap'",
         lambda s: s.replace(NINETY_DAY, "shown as a gap"),
         "the 90-day sentence is missing from section 3",
+        ("C5",),
     ),
     (
-        "CHIP/partial-days: ' lock' appended to the look cell",
-        lambda s: _row_edit(s, "CHIP/partial-days", 3, lambda c: c + " lock"),
-        "lock drawn on a state frame",
+        "CHIP/partial-days: a lock glyph added to its look cell",
+        lambda s: _row_edit(s, "CHIP/partial-days", 3, lambda c: c + " · glyph `lock`"),
+        "lock drawn on a state frame [CHIP/partial-days: lock]",
+        (),
     ),
     (
         "SCR-047/role-restricted: the cause replaced by 'Not recording'",
         lambda s: _row_edit(s, "SCR-047/role-restricted", 3, lambda c: '"Not recording"'),
-        "role-restricted frame reads 'Not recording'",
+        "role-restricted frame reads 'Not recording' [SCR-047/role-restricted: cell 3]",
+        ("F1",),
     ),
     (
         "section 4: the view-as row moved below the owner-only row",
@@ -1332,16 +1681,19 @@ MUTATIONS: list[tuple[str, Callable[[str], str], str]] = [
             s, "| `SCR-047/never-recorded-view-as`", "| `SCR-047/never-recorded-sentence`"
         ),
         "view-as leg not first in section 4",
+        ("E3",),
     ),
     (
         "section 5: the view-as row moved below the owner-only row",
         lambda s: _swap_rows(s, "| `SCR-151/view-as`", "| `SCR-151/sentence-form`"),
         "view-as leg not first in section 5",
+        ("E4",),
     ),
     (
         "section 1.4: the viewing-as row moved below the Owner row",
         lambda s: _swap_rows(s, "| any role, viewing as", "| Owner "),
         "section 1.4: the viewing-as row is not first",
+        ("E2",),
     ),
     (
         "section 0 board 03: the view-as frame listed after the owner-only frame",
@@ -1352,13 +1704,553 @@ MUTATIONS: list[tuple[str, Callable[[str], str], str]] = [
             "`SCR-047/never-recorded-sentence`, `SCR-047/never-recorded-view-as`",
         ),
         "view-as leg not first in section 0 [board 03]",
+        (),
     ),
     (
         "GAP/band-wide: the axis tag removed from its label cell",
         lambda s: _row_edit(
             s, "GAP/band-wide", 3, lambda c: c.replace("`gap.axis.tag`", "the tag")
         ),
-        "gap band without a visible text carrier",
+        "gap band without a visible text carrier [GAP/band-wide]",
+        (),
+    ),
+    # 40-107: the text lens round 1 (its frame-level ids A1-J3) and one mutation per rebuilt gate's sentence
+    # M-1: the family read from the map, on every table
+    *[
+        (
+            f"{n}: the stem family's sentence added to cell {col}",
+            _with(n, col, SHARED),
+            f"stem family cause on a non-start frame [{n}]",
+            (lens,),
+        )
+        for n, col, lens in (
+            ("SCR-047/autorecord-refused-cap", 3, "A3"),
+            ("SCR-047/in-situ", 3, "A4"),
+            ("SCR-047/no-trades-in-window", 3, "A5"),
+            ("CHIP/partial-with-gaps", 2, "A6"),
+            ("CHIP/tooltip", 2, "A7"),
+            ("SURF/scr-103-coverage", 3, "A8"),
+            ("GAP/table-row", 2, "A10"),
+            ("SURF/scr-038-partial", 3, "A11"),
+        )
+    ],
+    (
+        "CHIP/partial-with-gaps: the 1b stem added to its text",
+        lambda s: _row_edit(s, "CHIP/partial-with-gaps", 2, lambda c: _add(c, STEM_1B)),
+        "stem heading on a non-start frame [CHIP/partial-with-gaps]",
+        ("A12",),
+    ),
+    (
+        "GAP/tooltip: the 1a stem added to its content",
+        lambda s: _row_edit(s, "GAP/tooltip", 2, lambda c: _add(c, STEM_1A)),
+        "stem heading on a non-start frame [GAP/tooltip]",
+        ("A13",),
+    ),
+    (
+        "CHIP/partial-days (the partial family): the stem family's sentence added to its look cell",
+        lambda s: _row_edit(s, "CHIP/partial-days", 3, lambda c: _add(c, SHARED)),
+        "stem family cause on a non-start frame [CHIP/partial-days]",
+        (),
+    ),
+    (
+        "section 9: a new frame row with no family (listed on board 07, the counts updated)",
+        lambda s: _counts(
+            _first(
+                _first(
+                    s,
+                    "`SURF/replay-absence` (CMP-172 named, not drawn)",
+                    "`SURF/replay-absence` (CMP-172 named, not drawn), `SURF/new-panel`",
+                ),
+                "\n\nSCR-045's band rows",
+                f"\n{NEW_ROW}\n\nSCR-045's band rows",
+            ),
+            frames_total=(41, 42),
+            frames_surf=(8, 9),
+            **{"board_frames.07": (6, 7)},
+        ),
+        "frame without a family [SURF/new-panel]",
+        (),
+    ),
+    # M-2: every gap frame's own cause, in its own cell
+    (
+        "SCR-047/no-trades-in-window: the cause replaced",
+        lambda s: _row_edit(s, "SCR-047/no-trades-in-window", 3, lambda c: '"Nothing traded."'),
+        "gap frame cause is not the deck's sentence [SCR-047/no-trades-in-window: empty.gap.no_trades]",
+        ("B3",),
+    ),
+    (
+        "GAP/tooltip: the quoted cause sentence removed (the word 'cause' kept)",
+        lambda s: _row_edit(s, "GAP/tooltip", 2, lambda c: c.replace(WS, "")),
+        "gap frame cause is not the deck's sentence [GAP/tooltip: empty.gap.ws_disconnect]",
+        ("B4",),
+    ),
+    (
+        "GAP/band-tight: ': connection lost' dropped from gap.band.label",
+        lambda s: _row_edit(s, "GAP/band-tight", 3, lambda c: c.replace(": connection lost", "")),
+        "gap label lacks the short cause [GAP/band-tight: ws_disconnect]",
+        ("B5",),
+    ),
+    *[
+        (
+            f"{n}: the cause replaced",
+            _cause(n, '"Recording is unavailable."'),
+            f"gap frame cause is not the deck's sentence [{n}: {key}]",
+            (lens,),
+        )
+        for n, key, lens in (
+            ("SCR-047/autorecord-refused-cap", "empty.refused.symbol_cap", "B6"),
+            ("SCR-047/autorecord-refused-disk", "empty.refused.disk_pressure", "B7"),
+        )
+    ],
+    (
+        "GAP/causes: the seq_jump sentence removed",
+        lambda s: _row_edit(
+            s,
+            "GAP/causes",
+            2,
+            lambda c: c.replace('"Recording lost order-book updates (sequence gap)." · ', ""),
+        ),
+        "cause strip lacks the sentence for seq_jump",
+        ("B8",),
+    ),
+    (
+        "SCR-047/in-situ: the cause replaced",
+        lambda s: _row_edit(s, "SCR-047/in-situ", 3, lambda c: '"Recording is unavailable."'),
+        "gap frame cause is not the deck's sentence [SCR-047/in-situ: empty.refused.symbol_cap]",
+        ("B9",),
+    ),
+    (
+        "CHIP/partial-with-gaps: the short cause removed from the missing sentence",
+        lambda s: _row_edit(
+            s,
+            "CHIP/partial-with-gaps",
+            2,
+            lambda c: c.replace("(connection lost)", "(see coverage)"),
+        ),
+        "gap label lacks the short cause [CHIP/partial-with-gaps: ws_disconnect]",
+        (),
+    ),
+    (
+        "SURF/scr-103-coverage: the short cause removed from the gap row",
+        lambda s: _row_edit(
+            s, "SURF/scr-103-coverage", 3, lambda c: c.replace(" · connection lost", "")
+        ),
+        "gap label lacks the short cause [SURF/scr-103-coverage: ws_disconnect]",
+        (),
+    ),
+    (
+        "GAP/backfilled-kline: ': connection lost' dropped from gap.band.label",
+        lambda s: _row_edit(
+            s, "GAP/backfilled-kline", 3, lambda c: c.replace(": connection lost", "")
+        ),
+        "gap label lacks the short cause [GAP/backfilled-kline: ws_disconnect]",
+        (),
+    ),
+    (
+        "SCR-151/role-restricted: the cause replaced",
+        lambda s: _row_edit(s, "SCR-151/role-restricted", 3, lambda c: '"Status unknown."'),
+        "gap frame cause is not the deck's sentence [SCR-151/role-restricted: empty.status.restricted]",
+        (),
+    ),
+    (
+        "SCR-047/gap-retention-purge: the glyph minus -> calendar",
+        lambda s: _row_edit(
+            s, "SCR-047/gap-retention-purge", 4, lambda c: c.replace("`minus`", "`calendar`")
+        ),
+        "retention frame: distinct glyph missing",
+        (),
+    ),
+    (
+        "SCR-047/gap-retention-purge: the Retention policy link removed",
+        lambda s: _row_edit(
+            s,
+            "SCR-047/gap-retention-purge",
+            4,
+            lambda c: c.replace("`Retention policy`", "`Policy`"),
+        ),
+        "retention frame: Owner-only Retention policy link missing",
+        (),
+    ),
+    # M-3: the 90-day boundary never drawn as a gap or as covered, clause by clause on every table
+    *[
+        (
+            f"{n}: '{text}' added to cell {col}",
+            _clause(n, col, text),
+            f"coverage beyond the route's 90-day window drawn as {kind} [{n}]",
+            (lens,),
+        )
+        for n, col, text, kind, lens in (
+            (
+                "SURF/composite-lookback",
+                2,
+                "coverage older than 90 days drawn as a gap",
+                "a gap",
+                "C1",
+            ),
+            (
+                "SURF/scr-103-coverage",
+                2,
+                "the days before the 90-day window drawn as a recording gap",
+                "a gap",
+                "C2",
+            ),
+            (
+                "SURF/composite-lookback",
+                2,
+                "coverage beyond the 90-day window drawn as covered",
+                "covered",
+                "C3",
+            ),
+            (
+                "CHIP/partial-days",
+                1,
+                "the days beyond the route's 90-day window counted as recorded",
+                "covered",
+                "C4",
+            ),
+            (
+                "SURF/scr-038-partial",
+                2,
+                "coverage older than 90 days drawn as a gap",
+                "a gap",
+                "C6",
+            ),
+            (
+                "SURF/chart-strip-line",
+                3,
+                "the lookback beyond 90 days hatched as a gap",
+                "a gap",
+                "C7",
+            ),
+        )
+    ],
+    (
+        "section 13 D05-CG1: 'unknown, never drawn as a gap or as covered' -> 'drawn as a gap'",
+        lambda s: _line_edit(
+            s,
+            "| D05-CG1",
+            "coverage beyond is unknown, never drawn as a gap or as covered",
+            "coverage beyond is drawn as a gap",
+        ),
+        "coverage beyond the route's 90-day window drawn as a gap [section 13: D05-CG1]",
+        (),
+    ),
+    (
+        "section 1.5 partial coverage row: 'days beyond the 90-day window drawn as covered' added",
+        lambda s: _line_edit(
+            s,
+            "| partial coverage of the requested window",
+            "(E12-D02 :272–273)",
+            "(E12-D02 :272–273); days beyond the 90-day window drawn as covered",
+        ),
+        "coverage beyond the route's 90-day window drawn as covered [section 1.5: partial coverage of the requeste]",
+        (),
+    ),
+    # M-4: every cell of every absence leg (frames, 1.3, 1.4): no lock, no control, no dimming, no aria-disabled
+    *[
+        (
+            f"{n}: '{text}' added to cell {col}",
+            _with(n, col, text),
+            f"absence leg drawn as a lock or a control [{n}: {word}]",
+            (lens,),
+        )
+        for n, col, text, word, lens in (
+            (
+                "SCR-047/never-recorded-sentence",
+                4,
+                '`aria-disabled="true"`',
+                "aria-disabled",
+                "D3",
+            ),
+            ("SCR-151/sentence-form", 4, '`aria-disabled="true"`', "aria-disabled", "D4"),
+            ("SCR-047/never-recorded-view-as", 4, "(locked)", "locked", "D5"),
+            (
+                "SCR-047/never-recorded-sentence",
+                3,
+                "· a dimmed `Record this symbol` button",
+                "dimmed",
+                "D7",
+            ),
+            ("SCR-151/view-as", 4, "(locked)", "locked", "D8"),
+        )
+    ],
+    (
+        "section 1.4 Manager row: a disabled Record this symbol button with a lock glyph",
+        lambda s: _line_edit(
+            s,
+            "| Manager ",
+            "the sentence form `rbac.owner_only` in place of the CTA",
+            "a disabled `Record this symbol` button with a lock glyph",
+        ),
+        "absence leg drawn as a lock or a control [section 1.4: Manager: disabled]",
+        ("D6",),
+    ),
+    (
+        "section 1.3 owner-only row: 'never a button, never a lock, never dimmed' -> 'a dimmed button'",
+        lambda s: _line_edit(
+            s,
+            "| `Record this symbol` for a session without",
+            "never a button, never a lock, never dimmed",
+            "a dimmed button",
+        ),
+        "absence leg drawn as a lock or a control [section 1.3: Record this symbol for a session: dimmed]",
+        (),
+    ),
+    # m-1: the view-as leg first on every line that names both legs
+    (
+        "the AC trace: the sentence-form frame listed before the view-as frame",
+        lambda s: _first(
+            s,
+            "`SCR-047/never-recorded-view-as`, `/never-recorded-sentence`",
+            "`SCR-047/never-recorded-sentence`, `/never-recorded-view-as`",
+        ),
+        "view-as leg not first [section AC trace: ",
+        (),
+    ),
+    # BQ-8: a role-restricted frame or row never reads "Not recording", in any cell
+    (
+        "SCR-151/role-restricted: the cause replaced by 'Not recording'",
+        lambda s: _row_edit(s, "SCR-151/role-restricted", 3, lambda c: '"Not recording"'),
+        "role-restricted frame reads 'Not recording' [SCR-151/role-restricted: cell 3]",
+        ("F2",),
+    ),
+    (
+        "SCR-047/role-restricted: 'Not recording' in the heading",
+        lambda s: _row_edit(
+            s,
+            "SCR-047/role-restricted",
+            2,
+            lambda c: '"Not recording BTCUSDT 1m in this window."',
+        ),
+        "role-restricted frame reads 'Not recording' [SCR-047/role-restricted: cell 2]",
+        ("F3",),
+    ),
+    (
+        "section 1.4 role_restricted row: 'Not recording' as the cause",
+        lambda s: _line_edit(
+            s,
+            "| any role, `role_restricted`",
+            '"Recording status restricted" as the cause',
+            '"Not recording" as the cause',
+        ),
+        "role-restricted row reads 'Not recording' [section 1.4: any role, role_restricted]",
+        ("F4",),
+    ),
+    (
+        "SCR-151/role-restricted: 'Not recording' in the heading",
+        lambda s: _row_edit(
+            s,
+            "SCR-151/role-restricted",
+            2,
+            lambda c: '"Not recording: no history for BTCUSDT here."',
+        ),
+        "role-restricted frame reads 'Not recording' [SCR-151/role-restricted: cell 2]",
+        ("F5",),
+    ),
+    # M-5: an exit or a link is never gated, on any frame, in 1.3, 1.4 or 10
+    (
+        "SCR-047/gap-ws-disconnect: Go to latest aria-disabled for a Viewer",
+        lambda s: _row_edit(
+            s,
+            "SCR-047/gap-ws-disconnect",
+            5,
+            lambda c: c.replace(
+                "`Go to latest`", '`Go to latest` `aria-disabled="true"` for a Viewer'
+            ),
+        ),
+        "exit gated [SCR-047/gap-ws-disconnect: aria-disabled]",
+        ("G1",),
+    ),
+    (
+        "SCR-047/no-trades-in-window: Go to latest locked while viewing as",
+        lambda s: _row_edit(
+            s,
+            "SCR-047/no-trades-in-window",
+            5,
+            lambda c: c.replace("`Go to latest`", "`Go to latest`, locked while viewing as"),
+        ),
+        "exit gated [SCR-047/no-trades-in-window: locked]",
+        ("G2",),
+    ),
+    (
+        "CHIP/tooltip: Esc disabled while viewing as",
+        lambda s: _row_edit(
+            s,
+            "CHIP/tooltip",
+            4,
+            lambda c: c.replace("`Esc` closes", "`Esc` disabled while viewing as"),
+        ),
+        "exit gated [CHIP/tooltip: disabled]",
+        ("G3",),
+    ),
+    (
+        "GAP/tooltip: Esc for the Owner only",
+        lambda s: _row_edit(
+            s,
+            "GAP/tooltip",
+            4,
+            lambda c: c.replace("`Esc` closes", "`Esc` closes for the Owner only"),
+        ),
+        "exit gated [GAP/tooltip: Owner only]",
+        ("G4",),
+    ),
+    (
+        "section 1.3 exits row: 'enabled for every role' -> 'aria-disabled for others'",
+        lambda s: _line_edit(
+            s,
+            "| `Go to latest`, `Go to recorded history`",
+            "**enabled for every role**",
+            "**`aria-disabled` for others**",
+        ),
+        "exit gated [section 1.3: Go to latest, Go to recorded his: aria-disabled]",
+        ("G5",),
+    ),
+    (
+        "section 10 Esc row: 'a lock for Viewers'",
+        lambda s: _line_edit(
+            s,
+            "| `Esc` ",
+            "closes the echo; nothing else changes",
+            "closes the echo; a lock for Viewers",
+        ),
+        "exit gated [section 10: Esc: lock]",
+        ("G6",),
+    ),
+    (
+        "SCR-047/gap-retention-purge: a lock glyph in the exit cell",
+        lambda s: _row_edit(s, "SCR-047/gap-retention-purge", 5, lambda c: c + " · glyph `lock`"),
+        "exit gated [SCR-047/gap-retention-purge: lock]",
+        ("G8",),
+    ),
+    (
+        "SURF/scr-038-partial: Show coverage for the Owner only",
+        lambda s: _row_edit(
+            s,
+            "SURF/scr-038-partial",
+            3,
+            lambda c: c.replace("`Show coverage`", "`Show coverage` (Owner only)"),
+        ),
+        "exit gated [SURF/scr-038-partial: Owner only]",
+        (),
+    ),
+    (
+        "SCR-151/sentence-form: Learn more locked for Viewers",
+        lambda s: _row_edit(
+            s,
+            "SCR-151/sentence-form",
+            4,
+            lambda c: c.replace(
+                "`Learn more` (CMP-021)", "`Learn more` (CMP-021, locked for Viewers)"
+            ),
+        ),
+        "exit gated [SCR-151/sentence-form: locked]",
+        (),
+    ),
+    # m-3: the repeated numbers, from the tool
+    (
+        "the zoom.tight_px marker changed to 95 (number and marker)",
+        lambda s: _counts(s, **{"zoom.tight_px": (96, 95)}),
+        "marker audit:zoom.tight_px=95 vs tool 96",
+        ("H3",),
+    ),
+    (
+        "section 3: '13 whole days' -> '12 whole days' with the marker kept",
+        lambda s: _first(
+            s,
+            "the 13 <!-- audit:fixture.retention_purged_days=13 --> whole days",
+            "the 12 <!-- audit:fixture.retention_purged_days=13 --> whole days",
+        ),
+        "marker text differs from its value [fixture.retention_purged_days: 12 vs 13]",
+        ("H4",),
+    ),
+    (
+        "section 15: the band label row's dark ratio 5.96 -> 5.69",
+        lambda s: _line_edit(s, "| band label under the band", "5.96", "5.69"),
+        "section 15 matrix row differs from the tool [band label under the band and the axis t: dark 5.69 vs 5.96]",
+        ("H5",),
+    ),
+    (
+        "GAP/tooltip: '12 min' -> '13 min'",
+        lambda s: _row_edit(
+            s, "GAP/tooltip", 2, lambda c: c.replace("UTC · 12 min", "UTC · 13 min")
+        ),
+        "gap duration differs from the tool [GAP/tooltip: 02:11–02:23 13 min]",
+        ("H6",),
+    ),
+    (
+        "CHIP/200-zoom: '13 of 14' -> '12 of 14'",
+        lambda s: _row_edit(s, "CHIP/200-zoom", 2, lambda c: c.replace("13 of 14", "12 of 14")),
+        "fixture number differs from the tool [CHIP/200-zoom: Partial: 12 of 14]",
+        ("H7",),
+    ),
+    (
+        "GAP/band-tight: '96 px wide' -> '90 px wide'",
+        lambda s: _row_edit(
+            s, "GAP/band-tight", 1, lambda c: c.replace("96 px wide", "90 px wide")
+        ),
+        "band width differs from the tool [GAP/band-tight: 90 px]",
+        ("H8",),
+    ),
+    # m-5: the PENDING siblings by name only
+    (
+        "section Start: a sha pinned on #4463",
+        lambda s: _first(s, "PR #4463 is PENDING", "PR #4463 (head `0a1b2c3d`) is PENDING"),
+        "sha pinned on a PENDING sibling [#4463]",
+        ("I1",),
+    ),
+    (
+        "section Start: E16-D06 quoted at a line",
+        lambda s: _first(
+            s,
+            "E16-D06 (the set's a11y review and hand-off)",
+            'E16-D06 :12 "the set\'s a11y review and hand-off"',
+        ),
+        "PENDING sibling cited as text [E16-D06]",
+        ("I2",),
+    ),
+    # the frame inventory: a frame row removed, the counts updated with it
+    *[
+        (
+            f"{n}: the row deleted, the counts updated",
+            _drop(n, marks),
+            f"section 0 draws a frame the state tables lack: {n}",
+            (lens,),
+        )
+        for n, marks, lens in (
+            ("SCR-047/not-trading", {"frames_total": (41, 40), "frames_scr047": (13, 12)}, "J1"),
+            ("CHIP/200-zoom", {"frames_total": (41, 40), "frames_chip": (4, 3)}, "J2"),
+            ("SURF/replay-absence", {"frames_total": (41, 40), "frames_surf": (8, 7)}, "J3"),
+        )
+    ],
+    # M-6: the band label never covers data — under the band (E11-D02 :140)
+    (
+        "GAP/band-tight: the label put on a plate",
+        lambda s: _row_edit(
+            s,
+            "GAP/band-tight",
+            3,
+            lambda c: c.replace("no backing", "on a 2 px `color.surface.canvas` plate"),
+        ),
+        "band label covers data [GAP/band-tight: plate]",
+        (),
+    ),
+    (
+        "GAP/band-tight: 'under the band' -> 'inside the band'",
+        lambda s: _row_edit(
+            s, "GAP/band-tight", 3, lambda c: c.replace("under the band", "inside the band")
+        ),
+        "band label not under the band [GAP/band-tight]",
+        (),
+    ),
+    (
+        "section 13 D05-D6: the label over the bars",
+        lambda s: _first(
+            s,
+            "sits under the band, anchored at its left edge — E11-D02 :140's maintenance-label position",
+            "sits on a plate over the bars",
+        ),
+        "D05-D6 lets the band label cover data",
+        (),
     ),
 ]
 
@@ -1444,6 +2336,7 @@ def numbers_of(
         "checklist_items": count(r"^\| 14:(?:1089|2924) ", spec),
         "flows": count(r"^\| F\d ", spec),
         "mutations": len(MUTATIONS),
+        "lens_mutations": len({i for m in MUTATIONS for i in m[3]}),
         "deck_rows": len(deck),
         "deck_new": by_source.get("new", 0),
         "deck_by_source": by_source,
@@ -1464,7 +2357,39 @@ def numbers_of(
         "chip_m": fx["chip_m"],
     }
     n.update({k: count(rf"^\| D05-{p}\d+ ", spec) for k, p in ROW_IDS})
+    # the ratios the prose repeats (sections 7 and 15): the band's edges and the rejected disabled text, on the canvas
+    for key, fg, role in (
+        ("boundary", "color.text.tertiary", "non-text"),
+        ("disabled", "color.text.disabled", "rejected-text"),
+    ):
+        row = next(r for r in matrix if r["fg"] == fg and r["role"] == role)
+        n.setdefault("ratios", {})[key] = {
+            ("hc" if th == "high-contrast" else th): round(cast(float, row[th]), 2)
+            for th in ("dark", "light", "high-contrast")
+        }
     return n, matrix, missing, fails
+
+
+def matrix_gate(spec: str, matrix: list[dict[str, object]]) -> list[str]:
+    """Section 15 row by row against the tool's matrix (the lens's m-3: a typed ratio is never trusted)."""
+    rows_ = [cells(ln) for ln in section(spec, 15, 16).splitlines() if re.match(r"^\| [^-]", ln)][
+        1:
+    ]
+    out = []
+    if len(rows_) != len(matrix):
+        out.append(f"section 15 matrix has {len(rows_)} rows, the tool {len(matrix)}")
+    cols = ("element", "fg", "bg", "role", "dark", "light", "hc", "verdict", "pairs.mjs")
+    for c, r in zip(rows_, matrix):
+        want = [str(r[k]) for k in ("element", "fg", "bg", "role")]
+        want += [show(cast(float, r[k])) for k in ("dark", "light", "high-contrast")]
+        want += [str(r["verdict"]), str(r["pairs"])]
+        for col, have, w in zip(cols, [strip_md(x) for x in c], want):
+            if have != w:
+                out.append(
+                    f"section 15 matrix row differs from the tool [{want[0][:40]}: {col} {have} vs {w}]"
+                )
+                break
+    return out
 
 
 def run(
@@ -1480,6 +2405,7 @@ def run(
     bad = gates([SPEC, *extra], spec, facts, fx, t)
     numbers, matrix, missing, fails = numbers_of(spec, facts, fx, themes, registered)
     numbers["facts"] = {k: v for k, v in facts.items() if k not in ("intervals", "gaps")}
+    bad += matrix_gate(spec, matrix)
     if check:
         flat = flatten(numbers)
         for key, val in re.findall(r"<!-- audit:([a-z0-9_.-]+)=([^ ]+) -->", spec):
@@ -1500,33 +2426,41 @@ def self_test(
     themes: dict[str, dict[str, object]],
     registered: set[tuple[str, str]],
 ) -> int:
+    """Each mutation must make `--check` fail with ONE FAIL — its own, the expected message — and no two mutations
+    may share a message; the unmutated spec passes and the spec file is byte-identical afterwards.
+    """
+    before = hashlib.sha256(SPEC.read_bytes()).hexdigest()
     base_bad, _, _, _, base_fails = run(spec, t, themes, registered, [], True)
     out = []
     ok = not base_bad and not base_fails
     out.append("unmutated spec: " + ("PASS" if ok else "FAIL — " + "; ".join(base_bad[:5])))
     signatures: dict[int, str] = {}
-    for i, (desc, fn, needle) in enumerate(MUTATIONS, 1):
+    lens: set[str] = set()
+    for i, (desc, fn, needle, ids) in enumerate(MUTATIONS, 1):
         bad, _, _, _, _ = run(fn(spec), t, themes, registered, [], True)
-        hits = [b for b in bad if b.startswith(needle)]
-        if not bad:
-            ok = False
-            out.append(f"mutation {i:2d} PASSED THE GATES (defect): {desc}")
-        elif not hits:
+        tag = f" [{' '.join(ids)}]" if ids else ""
+        if len(bad) == 1 and bad[0].startswith(needle):
+            signatures[i] = bad[0]
+            lens.update(ids)
+            out.append(f"mutation {i:3d}{tag} FAIL as expected, its only FAIL: {bad[0]}")
+        else:
             ok = False
             out.append(
-                f"mutation {i:2d} failed for another reason (defect): {desc} — {bad[0][:80]}"
+                f"mutation {i:3d}{tag} DEFECT ({len(bad)} FAIL): {desc} — " + " | ".join(bad)[:240]
             )
-        else:
-            signatures[i] = hits[0]
-            out.append(f"mutation {i:2d} FAIL as expected: {hits[0]}")
     sigs = list(signatures.values())
     dup = sorted({s for s in sigs if sigs.count(s) > 1})
     if dup:
         ok = False
         out.append("duplicate FAIL messages: " + " | ".join(dup))
+    same = hashlib.sha256(SPEC.read_bytes()).hexdigest() == before
+    ok = ok and same
     out.append(
-        f"self-test: {len(MUTATIONS)} mutations, {len(set(sigs))} distinct FAIL messages, the unmutated spec "
+        f"self-test: {len(MUTATIONS)} mutations ({len(lens)} text-lens ids), {len(set(sigs))} distinct FAIL "
+        "messages, each its mutation's only FAIL; the unmutated spec "
         + ("passes" if not base_bad else "FAILS")
+        + "; the spec file "
+        + ("byte-identical" if same else "CHANGED")
         + " — "
         + ("OK" if ok else "DEFECT")
     )
@@ -1546,7 +2480,7 @@ def main(argv: list[str]) -> int:
     mode = None
     if "--mutate" in argv:
         mode = int(argv[argv.index("--mutate") + 1])
-        desc, fn, needle = MUTATIONS[mode - 1]
+        desc, fn, needle, _ = MUTATIONS[mode - 1]
         spec = fn(spec)
     bad, numbers, matrix, missing, fails = run(
         spec, t, themes, registered, extra, "--check" in argv or mode is not None
@@ -1594,11 +2528,16 @@ def main(argv: list[str]) -> int:
         )
     )
     ok = (
-        "OK — every SCR-047 row names the symbol, a cause and an exit; the retention cause, glyph and link distinct; "
-        "no lock, no button, no dimming on any absence frame; the view-as row first in every table; the rbac reasons within 60 chars naming no data; "
-        "the stem families apart on every table; every gap frame's cause the deck's; every band frame bound to the registry with dashed edges and a visible label; the backfilled band stays; "
-        "three zoom frames; the tooltip's four fields; the fallback present; every chip row Partial:; the in-situ chip; no shipped chord; "
-        "the loading row a status; the 90-day sentence kept; the retention fixture after the start; no closing keyword; no private path; every cited text exists"
+        "OK — every SCR-047 row names the symbol, a cause and an exit; every frame has one family and the stem families sit apart; "
+        "every gap frame carries its own reason's cause in its own cell; the retention glyph and link distinct; "
+        "no lock, control, aria-disabled or dimming in any cell of an absence leg (frames, 1.3, 1.4); no lock on any state frame; "
+        "no exit or link gated on any frame or in 1.3 / 1.4 / 10; no role-restricted cell reads 'Not recording'; "
+        "the view-as leg first in every table and on every line; the rbac reasons within 60 chars naming no data; "
+        "the 90-day boundary never drawn as a gap or as covered; every band frame bound to the registry with dashed edges and a visible label; "
+        "the band label under the band, never over the bars; the backfilled band stays; a frame per zoom level at the tool's width; "
+        "the tooltip's four fields; the eight causes on the strip; every chip row Partial:; every repeated fixture number and section 15 the tool's; "
+        "every marker's printed number its own; the in-situ chip; no shipped chord; the loading row a status; the PENDING siblings by name only; "
+        "no closing keyword; no private path; every cited text exists"
     )
     out.append(
         "\n## 5-6. Copy and frame gates: "
@@ -1613,18 +2552,18 @@ def main(argv: list[str]) -> int:
         + json.dumps({k: v for k, v in numbers.items() if k != "facts"}, ensure_ascii=False)
     )
     if mode is not None:
-        desc, fn, needle = MUTATIONS[mode - 1]
-        hits = [b for b in bad if b.startswith(needle)]
+        desc, fn, needle, _ = MUTATIONS[mode - 1]
+        hit = len(bad) == 1 and bad[0].startswith(needle)
         out.append(
-            f"\n## mutation {mode} ({desc}): {len(hits)} targeted FAIL of {len(bad)} — "
+            f"\n## mutation {mode} ({desc}): {len(bad)} FAIL — "
             + (
-                "as expected (rc 1: the gate caught it)"
-                if hits
-                else "UNEXPECTED (rc 2: the mutation slipped through)"
+                "as expected, the targeted FAIL only (rc 1: the gate caught it)"
+                if hit
+                else "UNEXPECTED (rc 2: the mutation slipped through or failed elsewhere)"
             )
         )
         print("\n".join(out))
-        return 1 if hits else 2
+        return 1 if hit else 2
     print("\n".join(out))
     return 1 if fails or bad else 0
 
