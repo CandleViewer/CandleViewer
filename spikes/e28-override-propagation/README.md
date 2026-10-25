@@ -53,3 +53,7 @@ prints `decision_table_check`, which compares ADR-0040's classification with the
 `results.json` holds every sample (milliseconds), the summary (nearest-rank p50, p95, p99, max), the environment
 and a scope check: a change on an account outside the Manager's grants must produce no frame, and its `GET` must
 answer `404`.
+
+One `rest_poll_1s` sample has a negative `trigger_ms` (−1.096 ms). `Client.poll` stamps the trigger when it starts the
+`GET`, not when the answer is sent (the field's comment says otherwise): that `GET` left just before the commit and
+the server read the new version after it. It is the poll model's clock read order and changes no quoted number.
