@@ -27,10 +27,12 @@ and no switches (steps 5, 6 and 10): it is never gated (C-2.6).
 9. the in-flight guard and 11. the exit service's step (`cancel_admitted`, `amend`), through
    `run_claimed`: it runs as the runtime's tracked task, shielded from the client's disconnect.
    That task renders the answer (`exit_response`) and keeps a `202` in the 24 h record, and the
-   guard's claim is released when it ends. An amend's `If-Match` (`api.order_etag.expected_seq`)
-   is the service's to compare; its `202` carries the order's new `ETag` where B1 gave a version,
-   and the service's own refusals (step 10's flag and switches, step 11's, D2a's re-check of the
-   class included) are answered as it gives them, never decided again.
+   guard's claim is released when it ends. An amend's `If-Match` (`api.order_etag.expected_seq`;
+   every `If-Match` field sent, read as one list, RFC 9110 Sec.5.3) is the service's to compare;
+   its `202` carries the order's `ETag`, at the version B1's step gave, else (an `unknown` amend)
+   at the facade's version as it stands, none for a final order; and the service's own refusals
+   (step 10's flag and switches, step 11's, D2a's re-check of the class included) are answered
+   as it gives them, never decided again.
 
 A refusal the route makes from step 5 on is recorded through `OrderExits.deny`, naming its step
 (`body`, `arm`, `key`, `replay`, `guard`), before it is answered (C-2.9), else `503
@@ -44,10 +46,9 @@ the fingerprint or the token (C-12.6).
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import uuid
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Annotated, Any, Final, Protocol
@@ -78,6 +79,7 @@ from candleviewer.api.order_admission import (
 )
 from candleviewer.api.order_etag import expected_seq, order_etag
 from candleviewer.api.order_exits_common import (
+    ExitRuntime,
     exit_caller,
     exit_fault,
     exit_problem,
@@ -155,15 +157,22 @@ class _Exits(Protocol):
     ) -> ExitOutcome: ...  # fmt: skip
 
 
+class _Versions(Protocol):
+    def version(self, order_id: uuid.UUID) -> int | None: ...
+
+
 class _RouteReads(Protocol):
     @property
     def environment(self) -> Environment: ...
     @property
     def arm_records(self) -> ArmRecords: ...
+    @property
+    def versions(self) -> _Versions: ...
 
 
-class ExitRoutesRuntime(Protocol):
-    """`oms_wiring.OmsRuntime` as the exit routes read it (20 Sec.6.2)."""
+class ExitRoutesRuntime(ExitRuntime, Protocol):
+    """`oms_wiring.OmsRuntime` as the exit routes read it (20 Sec.6.2): `ExitRuntime`'s `run`,
+    with the runtime's state, the whole exit service and the route's reads."""
 
     @property
     def state(self) -> str: ...
@@ -171,7 +180,6 @@ class ExitRoutesRuntime(Protocol):
     def exits(self) -> _Exits: ...
     @property
     def route(self) -> _RouteReads: ...
-    def run(self, coro: Coroutine[Any, Any, Response]) -> asyncio.Task[Response]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,7 +229,7 @@ def _terms(raw: bytes) -> AmendTerms:
         unread = FieldError("body", "object", "Send a JSON object of the terms to amend.")
         raise OrderInvalid(errors=(unread,))
     try:
-        asked = api.AmendOrderRequest.model_validate(body)
+        asked = api.AmendOrderRequest.model_validate(body, strict=True)  # as `placeOrder` reads
     except ValidationError as exc:
         raise OrderInvalid(errors=tuple(field_errors(exc))) from None
     named = asked.model_fields_set
@@ -350,16 +358,20 @@ def make_order_exits_router(
 
     async def amended(
         exits: _Exits, scoped: ScopedOrder, terms: AmendTerms, caller: ExitCaller,
-        expected: int | None, held: tuple[str, str], digest: str, env: Environment,
+        expected: int | None, held: tuple[str, str], digest: str, reads: _RouteReads,
     ) -> Response:  # fmt: skip
-        """An amend's step 11 task: the exit service's amend, rendered with the order's new `ETag`
-        where B1 gave a version, and a `202` kept for 24 h with it (24 Sec.8.4); a fault it raises
-        is `faulted`'s answer, in this task (`run_claimed`)."""
+        """An amend's step 11 task: the exit service's amend, rendered with the order's `ETag`, and
+        a `202` kept for 24 h with it (24 Sec.8.4). The tag names the version B1's step gave, else
+        the facade's version as it stands, which an `unknown` amend's order has and a final one
+        has not (22 `OrderETag`); a fault it raises is `faulted`'s answer, in this task
+        (`run_claimed`)."""
         outcome = await exits.amend(scoped, terms, caller=caller, expected_seq=expected)
-        out = exit_response(outcome, scoped, env)
+        out = exit_response(outcome, scoped, reads.environment)
         if outcome.kind == "refused":  # recorded by the service before it was answered
             return counted(_AMEND, outcome.code or "internal_error", out)
-        tag = None if outcome.version is None else order_etag(scoped.order.id, outcome.version)
+        seq = outcome.version
+        seq = reads.versions.version(scoped.order.id) if seq is None else seq
+        tag = None if seq is None else order_etag(scoped.order.id, seq)
         if tag is not None:
             out.headers["ETag"] = tag
         kept.put(*held, StoredResponse(digest, 202, bytes(out.body), tag))
@@ -432,11 +444,11 @@ def make_order_exits_router(
             return await audit_refusal(_AMEND, exits, row, caller, step, _refusal(exc))
         if cached is not None:
             return cached
-        expected = expected_seq(request.headers.get("if-match"), row.id)
+        named = ", ".join(request.headers.getlist("if-match")) or None  # every field, one list
+        expected = expected_seq(named, row.id)
         guard = functools.partial(audit_refusal, _AMEND, exits, row, caller, "guard")
-        env = got.reads.environment
         amend = functools.partial(
-            amended, exits, scoped, terms, caller, expected, held, digest, env
+            amended, exits, scoped, terms, caller, expected, held, digest, got.reads
         )
         try:  # steps 9 and 11
             return await run_claimed(

@@ -27,11 +27,10 @@ writes (`addRecordedSymbol`, `pinRecordedSymbol`): 112, frozen 107. #913 slice 3
 `getAccountProfile`: 109, frozen 104. #492 S8 serves the update and the stop
 (`updateRecordedSymbol`, `removeRecordedSymbol`): 107, frozen 102. #913 slice 4 (S4-D1) serves the
 frozen `cancelOrder`: 106, frozen 101, and S4-E the frozen `cancelAllOrders`: 105, frozen 100.
-S4-D2b serves the frozen `amendOrder`: 104, frozen 99. Keep both caps tight: a contract
-PR that adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, measured against
-current ``main`` with CI re-run there (two parallel raises merge cleanly yet both under-count); a
-PR that serves a frozen operation lowers ``FROZEN_BASELINE`` and ``PENDING_BASELINE`` by the same
-amount.
+S4-D2b serves the frozen `amendOrder`: 104, frozen 99. Keep both caps tight: a contract PR that
+adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, measured against current
+``main`` with CI re-run there (two parallel raises merge cleanly yet both under-count); a PR that
+serves a frozen operation lowers ``FROZEN_BASELINE`` and ``PENDING_BASELINE`` by the same amount.
 """
 
 from __future__ import annotations

@@ -1266,6 +1266,13 @@ class GroupRead(Protocol):
     async def get(self, scope: AccountScope, group_id: GroupId) -> ScopedTradeGroup: ...
 
 
+class OrderVersions(Protocol):
+    """`OrderRoute.versions`: a `202`'s one read of B1's facade, an order's version (ruling Q5),
+    never a command."""
+
+    def version(self, order_id: UUID) -> int | None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class OrderRoute:
     """What `POST /orders` reads of the composed OMS beside the pipeline and its anchors (24
@@ -1275,7 +1282,7 @@ class OrderRoute:
     never the system facade (C-12.4). The account, order and group reads are typed as the one read
     each step uses. The exit routes (E29-T04 slice 4) read the arm records too, and the process's
     `environment`, which every order `OrderExits.scope` answers is of. `versions` is B1's facade,
-    whose `version()` a `202`'s `ETag` names (ruling Q5)."""
+    typed as the one read a `202`'s `ETag` makes of it, `version()` (ruling Q5)."""
 
     accounts: AccountExistence
     arm_records: ArmRecords
@@ -1283,7 +1290,7 @@ class OrderRoute:
     orders: OrderRead
     groups: GroupRead
     environment: Environment
-    versions: OrderMachines
+    versions: OrderVersions
 
 
 @dataclass(frozen=True, slots=True)

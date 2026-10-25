@@ -2370,7 +2370,8 @@ def create_app(
     # principal source and runtime. The order routers mount in this order (the orchestrator's ruling
     # of 2026-10-24 19:43Z): placeOrder's above, then cancel-all's own router (S4-E's
     # `api/order_cancel_all.py`, included between the two), then this one; pinned by
-    # `test_order_exits_route.py::test_the_order_routers_mount_in_their_ruled_order`.
+    # `test_order_exits_route.py::test_the_order_routers_mount_in_their_ruled_order`. It serves
+    # `PATCH /orders/{orderId}` too, `amendOrder` (S4-D2b), on the same steps.
     app.include_router(
         make_order_exits_router(
             order_principals,

@@ -539,11 +539,10 @@ class OrderExits:
         """`outcome`, a refusal, recorded before it is answered (C-2.9): `orders.amend` or
         `orders.cancel` denied with its code, the order-entry gate's `account.disabled_by_policy`
         with its reason (`outcome.reason`, the gate's alone); else `503 audit_unavailable` in its
-        place, nothing sent. The route's own refusals of an order (its in-flight guard's, the arm
-        token's) take it too, `step` naming the 24 Sec.8.4 step that refused (`key`, `replay`,
-        `guard`) as `placeOrder`'s records do, and so does `amend`'s refusal at step 11's class
-        re-check (`class`), `reason` naming its cause in the detail beside the code
-        (`RECLASSIFIED`)."""
+        place, nothing sent. The route's own refusals of an order take it too, `step` naming the
+        24 Sec.8.4 step that refused (an amend's `body` and `arm`, then `key`, `replay`, `guard`)
+        as `placeOrder`'s records do, and so does `amend`'s refusal at step 11's class re-check
+        (`class`), `reason` naming its cause in the detail beside the code (`RECLASSIFIED`)."""
         action = DISABLED_BY_POLICY if outcome.reason is not None else _ACTIONS[operation]
         detail = {"operation": operation, "code": outcome.code, "order_link_id": row.order_link_id}
         if step is not None:

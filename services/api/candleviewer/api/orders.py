@@ -227,7 +227,9 @@ def _parsed(raw: bytes) -> tuple[dict[str, object], AccountId] | None:
 
 def _etag(reads: _RouteReads, order_id: uuid.UUID) -> dict[str, str]:
     """The order's `ETag` header (ruling Q5), or none: B1's facade has no version for an order in
-    a resync window or a final one."""
+    a resync window or a final one. It is read once the step a `202` renders returned, so it names
+    the order as it stands, which may be a step past those rows; an `If-Match` naming it is
+    compared under the order's lock."""
     seq = reads.versions.version(order_id)
     return {} if seq is None else {"ETag": order_etag(order_id, seq)}
 
