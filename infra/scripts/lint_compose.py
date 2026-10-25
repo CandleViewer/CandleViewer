@@ -44,24 +44,31 @@ which ``docs/ops/runbooks/demo-host.md`` applies after the base and VPS files:
    ``environment``, ``secrets``, ``volumes``, ``ulimits``, ``ports``; migrate:
    ``environment``) and the top-level ``secrets`` and ``volumes``; a port is
    bound to ``127.0.0.1`` (rule 1). Every environment value is the operator's
-   variable (``${NAME:?...}``, or ``${NAME:-}``), never a value committed here,
-   except ``CV_KEK_SOURCE=file``, ``CV_KEK_HANDLE=/run/secrets/cv_kek`` and the
-   bootstrap's ``CV_AUDIT_WAL_PATH``. The ``cv_kek`` secret is
-   ``file: ${CV_KEK_FILE:?...}`` with no default, mounted on api as ``cv_kek``
-   (uid and gid 10001, mode 0400). ``ulimits.core`` is 0. ``/data`` is one
-   named volume this file declares, never a bind mount. ``migrate``'s
-   ``CV_PG_DSN`` is ``${CV_PG_OWNER_DSN:?...}``, and no other service takes
+   own variable for that name, ``${NAME:?...}`` (migrate's ``CV_PG_DSN`` reads
+   ``CV_PG_OWNER_DSN``), never a value committed here; only
+   ``CV_ALLOWED_ORIGINS`` may be ``${CV_ALLOWED_ORIGINS:-}``. The committed
+   values are ``CV_KEK_SOURCE=file``, ``CV_KEK_HANDLE=/run/secrets/cv_kek`` and
+   the bootstrap's ``CV_AUDIT_WAL_PATH``, cv-api's. The top-level secrets are
+   ``cv_kek`` and ``cv_audit_lane_key`` alone, ``file: ${CV_KEK_FILE:?...}``
+   and ``file: ${CV_AUDIT_LANE_MAC_SOURCE:?...}``, with no default; api mounts
+   ``cv_kek`` once (uid and gid 10001, mode 0400), and at most the base file's
+   lane key besides, as the base file mounts it. ``ulimits.core`` is 0.
+   ``/data`` is ``cv-api-data``, the one volume this file declares, with no
+   option, never a bind mount. ``migrate``'s ``CV_PG_DSN`` is
+   ``${CV_PG_OWNER_DSN:?...}``, and no other service takes
    ``CV_PG_OWNER_DSN``. ``bootstrap-owner``, the one-shot #4479's CLI runs in
    (DC-4479-02: it prints the Owner's invite token once, which a logging driver
    would keep), has ``logging: {driver: none}``, the profile
    ``bootstrap-owner`` alone (``up`` never starts it), no port, the CLI as its
    entrypoint, the api's image built from this checkout, a read-only root, no
-   core dumps, the audit volume alone, and secrets that are the api's alone,
-   ``cv_kek`` among them.
+   core dumps, ``cv-audit-data`` alone at cv-api's audit directory, ``cv_kek``
+   alone as the api mounts it, and exactly the environment the CLI reads:
+   ``CV_ENVIRONMENT``, ``CV_PG_DSN``, the KEK trio and ``CV_AUDIT_WAL_PATH``.
 
 Run as a script (``python infra/scripts/lint_compose.py``, which checks the base
-file, both overlays and rule 5 over every compose file) or imported by
-``infra/scripts/tests/test_lint_compose.py``.
+file, both overlays and rule 5 over every compose file; ``python
+infra/scripts/lint_compose.py <file>`` applies an overlay's own rule when the file
+has its name) or imported by ``infra/scripts/tests/test_lint_compose.py``.
 """
 
 from __future__ import annotations
@@ -122,25 +129,40 @@ _DEMO_SERVICE_KEYS = {
 }  # fmt: skip
 KEK_HANDLE = "/run/secrets/cv_kek"
 DATA_DIR = "/data"
+DATA_VOLUME = "cv-api-data"
 AUDIT_DIR = "/var/lib/candleviewer/audit"  # the base file's audit volume, and CV_AUDIT_WAL_PATH's
+AUDIT_VOLUME = "cv-audit-data"
+AUDIT_WAL = f"{AUDIT_DIR}/audit.wal"  # the base file's api's CV_AUDIT_WAL_PATH
 _RUNTIME_ID = "10001"  # infra/images/Dockerfile.api's USER
 _KEK_FIXED = {"CV_KEK_SOURCE": "file", "CV_KEK_HANDLE": KEK_HANDLE}
 #: The only values the overlay commits, by service; every other one is the operator's variable.
 _DEMO_FIXED = {
     "api": _KEK_FIXED,
-    BOOTSTRAP_OWNER: _KEK_FIXED | {"CV_AUDIT_WAL_PATH": f"{AUDIT_DIR}/audit.wal"},
+    BOOTSTRAP_OWNER: _KEK_FIXED | {"CV_AUDIT_WAL_PATH": AUDIT_WAL},
 }
+#: The ruling (LANE-51, b): what #4479's CLI reads, and nothing else.
+_BOOTSTRAP_ENV = frozenset(
+    "CV_ENVIRONMENT CV_PG_DSN CV_KEK_SOURCE CV_KEK_HANDLE CV_KEK_VERSION CV_AUDIT_WAL_PATH".split()
+)
 #: #4479's CLI, and the api's image as the base file builds it.
 _BOOTSTRAP_CLI = ["python", "-m", "candleviewer.bootstrap_owner"]
 _API_BUILD = {"context": "../..", "dockerfile": "infra/images/Dockerfile.api"}
-#: `${NAME:?...}` (compose refuses to run while it is unset or empty) or `${NAME:-}`.
-_OPERATOR_VALUE = re.compile(r"\$\{[A-Z][A-Z0-9_]*(?::\?[^}]*|:-)\}")
-_KEK_FILE = re.compile(r"\$\{CV_KEK_FILE:\?[^}]*\}")
+#: A name reads its own variable; migrate's CV_PG_DSN reads the owner role's.
+_SOURCES = {("migrate", "CV_PG_DSN"): "CV_PG_OWNER_DSN"}
+#: The one name that may default to empty: no browser origin (fail closed).
+_MAY_BE_EMPTY = frozenset({"CV_ALLOWED_ORIGINS"})
 _OWNER_DSN = re.compile(r"\$\{CV_PG_OWNER_DSN:\?[^}]*\}")
+#: The overlay's secrets, each the host file its variable names, with no default.
+_DEMO_SECRETS = {"cv_kek": "CV_KEK_FILE", "cv_audit_lane_key": "CV_AUDIT_LANE_MAC_SOURCE"}
 #: The api's secret mounts: this file's `cv_kek` and the base file's audit lane key.
 _API_MOUNTS: dict[str, dict[str, object]] = {
     name: {"source": name, "target": name, "uid": _RUNTIME_ID, "gid": _RUNTIME_ID, "mode": 0o400}
-    for name in ("cv_kek", "cv_audit_lane_key")
+    for name in _DEMO_SECRETS
+}
+#: `lint_compose.py <file>`: an overlay's own rule, by its file name (N1).
+_RULES_BY_NAME = {
+    "docker-compose.deploy.yml": {"deploy_overlay": True},
+    "docker-compose.demo-host.yml": {"demo_host_overlay": True},
 }
 
 
@@ -359,17 +381,9 @@ def check_demo_host_overlay(compose: dict[str, Any]) -> list[str]:
             f"service '{name}': {key} is not set by the demo-host overlay"
             for key in sorted(set(service or {}) - allowed)
         ]
-        for key, value in _environment(service or {}).items():
-            fixed = _DEMO_FIXED.get(name, {}).get(key)
-            if value != fixed and not _OPERATOR_VALUE.fullmatch(value):
-                errors.append(
-                    f"service '{name}': environment {key} is committed here, not taken from "
-                    "the operator's env file (${NAME:?...} or ${NAME:-})"
-                )
+        errors += _environment_problems(name, _environment(service or {}))
     errors += check_port_bindings(compose)
     api = services.get("api") or {}
-    if _environment(api).get("CV_KEK_HANDLE") != KEK_HANDLE:
-        errors.append(f"service 'api': CV_KEK_HANDLE is not {KEK_HANDLE}, the cv_kek mount")
     errors += _kek_secret_problems(compose, api)
     core = (api.get("ulimits") or {}).get("core")
     if core != 0 and core != {"soft": 0, "hard": 0}:
@@ -386,6 +400,27 @@ def check_demo_host_overlay(compose: dict[str, Any]) -> list[str]:
     return errors + _owner_dsn_problems(services)
 
 
+def _environment_problems(name: str, env: dict[str, str]) -> list[str]:
+    """The committed values as they are, and every other one the operator's own variable."""
+    fixed = _DEMO_FIXED.get(name, {})
+    errors: list[str] = []
+    for key, value in fixed.items():
+        if env.get(key) != value:
+            what = "cv-api's " if key == "CV_AUDIT_WAL_PATH" else ""
+            errors.append(f"service '{name}': {key} is not {what}{value}")
+    for key, value in env.items():
+        source = _SOURCES.get((name, key), key)
+        required = re.fullmatch(rf"\$\{{{re.escape(source)}:\?[^}}]*\}}", value)
+        empty = key in _MAY_BE_EMPTY and value == f"${{{key}:-}}"
+        if key not in fixed and not (required or empty):
+            maybe = f" or ${{{key}:-}}" if key in _MAY_BE_EMPTY else ""
+            errors.append(
+                f"service '{name}': environment {key} is committed here, not taken from the "
+                f"operator's env file as ${{{source}:?...}}{maybe}"
+            )
+    return errors
+
+
 def _secret_mount(entry: Any) -> dict[str, object]:
     """A `secrets:` entry in the api's long form; a bare name keeps compose's defaults."""
     if not isinstance(entry, dict):
@@ -395,7 +430,7 @@ def _secret_mount(entry: Any) -> dict[str, object]:
 
 
 def _bootstrap_owner_problems(service: dict[str, Any]) -> list[str]:
-    """The one-shot #4479's CLI runs in (DC-4479-02)."""
+    """The one-shot #4479's CLI runs in (DC-4479-02), with what the CLI reads and nothing else."""
     name = f"service '{BOOTSTRAP_OWNER}'"
     errors: list[str] = []
     if service.get("logging") != {"driver": "none"}:
@@ -409,13 +444,17 @@ def _bootstrap_owner_problems(service: dict[str, Any]) -> list[str]:
         errors.append(f"{name}: entrypoint is not {' '.join(_BOOTSTRAP_CLI)}")
     if service.get("build") != _API_BUILD or service.get("pull_policy") != "build":
         errors.append(f"{name}: does not build the api's image from this checkout")
-    mounts = [_secret_mount(entry) for entry in service.get("secrets") or []]
-    sources = [mount["source"] for mount in mounts]
-    foreign = [m for m in mounts if _API_MOUNTS.get(str(m["source"])) != m]
-    if foreign or "cv_kek" not in sources or len(set(sources)) != len(sources):
+    if [_secret_mount(entry) for entry in service.get("secrets") or []] != [_API_MOUNTS["cv_kek"]]:
         errors.append(
-            f"{name}: mounts a secret that is not one of the api's, or not as the api does, "
-            "or lacks cv_kek"
+            f"{name}: mounts a secret that is not cv_kek as the api mounts it, or none: the CLI "
+            "reads the KEK alone (no lane key)"
+        )
+    names = set(_environment(service))
+    if names != _BOOTSTRAP_ENV:
+        errors.append(
+            f"{name}: environment is not exactly what the CLI reads (it adds "
+            f"{sorted(names - _BOOTSTRAP_ENV)} and lacks {sorted(_BOOTSTRAP_ENV - names)}): no "
+            "lane key, egress address or auth key"
         )
     if service.get("read_only") is not True:
         errors.append(f"{name}: read_only is not true")
@@ -423,47 +462,63 @@ def _bootstrap_owner_problems(service: dict[str, Any]) -> list[str]:
     if core != 0 and core != {"soft": 0, "hard": 0}:
         errors.append(f"{name}: ulimits.core is {core!r}, not 0 (SR-009: it loads the KEK)")
     volumes = [_mount(entry) for entry in service.get("volumes") or []]
-    if [(kind, target) for kind, _, target in volumes] != [("volume", AUDIT_DIR)]:
+    if volumes != [("volume", AUDIT_VOLUME, AUDIT_DIR)]:
         errors.append(
-            f"{name}: does not mount the audit volume alone at {AUDIT_DIR} (its journal and "
-            "the run lock it shares with cv-api), or mounts a bind"
+            f"{name}: does not mount the audit volume alone, {AUDIT_VOLUME} at {AUDIT_DIR} (its "
+            "journal and the run lock it shares with cv-api), or mounts a bind"
         )
     return errors
 
 
 def _kek_secret_problems(compose: dict[str, Any], api: dict[str, Any]) -> list[str]:
-    """`cv_kek` is the host file CV_KEK_FILE names (no default), mounted once on api."""
-    errors: list[str] = []
-    secret = (compose.get("secrets") or {}).get("cv_kek")
-    source = secret.get("file") if isinstance(secret, dict) and set(secret) == {"file"} else None
-    if not isinstance(source, str) or not _KEK_FILE.fullmatch(source):
-        errors.append(
-            "secret 'cv_kek' is not file: ${CV_KEK_FILE:?...} (the host file the operator's "
-            "env file names, with no default, so an unset name fails loudly)"
-        )
+    """The overlay's two file secrets, and api's mounts: `cv_kek` once, at most the lane key."""
+    declared = compose.get("secrets") or {}
+    errors = [
+        f"secret '{extra}': the demo-host overlay declares only cv_kek and cv_audit_lane_key, "
+        "each a file secret"
+        for extra in sorted(set(declared) - set(_DEMO_SECRETS))
+    ]
+    for name, variable in _DEMO_SECRETS.items():
+        secret = declared.get(name)
+        source = str(secret["file"]) if isinstance(secret, dict) and set(secret) == {"file"} else ""
+        if not re.fullmatch(rf"\$\{{{variable}:\?[^}}]*\}}", source):
+            errors.append(
+                f"secret '{name}' is not file: ${{{variable}:?...}} (the host file the "
+                "operator's env file names, with no default, so an unset name fails loudly)"
+            )
     mounts = [_secret_mount(entry) for entry in api.get("secrets") or []]
     if [m for m in mounts if m["source"] == "cv_kek"] != [_API_MOUNTS["cv_kek"]]:
         errors.append(
             f"service 'api': does not mount cv_kek once at {KEK_HANDLE}, uid and gid "
             f"{_RUNTIME_ID}, mode 0400"
         )
+    targets = [mount["target"] for mount in mounts]
+    foreign = [m for m in mounts if _API_MOUNTS.get(str(m["source"])) != m]
+    if foreign or len(set(targets)) < len(targets):
+        errors.append(
+            "service 'api': mounts a secret that is not cv_kek or the base file's lane key as "
+            "the base file mounts it, or two at one target"
+        )
     return errors
 
 
 def _data_volume_problems(compose: dict[str, Any], api: dict[str, Any]) -> list[str]:
-    """api mounts one thing here: /data, a named volume this file declares."""
-    mounts = [_mount(entry) for entry in api.get("volumes") or []]
+    """api mounts one thing here, /data: cv-api-data, the one volume this file declares (L3)."""
+    errors: list[str] = []
     declared = compose.get("volumes") or {}
-    shape = [(kind, target) for kind, _, target in mounts]
-    if shape == [("volume", DATA_DIR)] and mounts[0][1] in declared:
-        return []
-    targets = [target for _, _, target in mounts]
-    return [
-        (
-            f"service 'api': mounts {targets}, not {DATA_DIR} alone as a named volume this file "
-            "declares (never a bind mount)"
+    if set(declared) != {DATA_VOLUME} or declared[DATA_VOLUME] not in (None, {}):
+        errors.append(
+            f"top-level volumes: declares {sorted(declared)}, not {DATA_VOLUME} alone with no "
+            "option (a driver, driver_opts or external makes it a host bind or another volume)"
         )
-    ]
+    mounts = [_mount(entry) for entry in api.get("volumes") or []]
+    if mounts != [("volume", DATA_VOLUME, DATA_DIR)]:
+        targets = [target for _, _, target in mounts]
+        errors.append(
+            f"service 'api': mounts {targets}, not {DATA_DIR} alone as {DATA_VOLUME}, the named "
+            "volume this file declares (never a bind mount)"
+        )
+    return errors
 
 
 def _owner_dsn_problems(services: dict[str, dict[str, Any]]) -> list[str]:
@@ -496,11 +551,12 @@ def lint(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Lint `argv[0]` with rules 1-3 and 5; with no argument, the base file and both overlays,
-    and rule 5 over every other compose file."""
+    """Lint `argv[0]` with rules 1-3 and 5, or with an overlay's own rule and 5 when it has the
+    overlay's file name (N1); with no argument, the base file and both overlays, and rule 5 over
+    every other compose file."""
     files: list[tuple[Path, dict[str, bool]]] = [(BASE_FILE, {})]
     if argv:
-        files = [(Path(argv[0]), {})]
+        files = [(Path(argv[0]), _RULES_BY_NAME.get(Path(argv[0]).name, {}))]
     else:
         files += [(DEPLOY_OVERLAY, {"deploy_overlay": True})]
         files += [(DEMO_HOST_OVERLAY, {"demo_host_overlay": True})]

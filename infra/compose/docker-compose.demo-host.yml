@@ -76,9 +76,10 @@ services:
   # good). So the CLI runs here, with no logging driver, and never as `run ... api`: a one-shot
   # under its own profile, which `up` never starts, run from a terminal while cv-api is stopped:
   # `--profile bootstrap-owner run --rm --no-deps bootstrap-owner --owner <email>` (demo-host.md
-  # step 6). It has cv-api's settings for what the CLI reads: the environment, the database role
-  # (CV_PG_DSN: the CLI's probe refuses while another session of that role is connected), the KEK
-  # and the audit volume, where its journal and the run lock it shares with cv-api live. Built from
+  # step 6). It has cv-api's settings for what the CLI reads, and nothing else (no lane key, egress
+  # address or auth key): the environment, the database role (CV_PG_DSN: the CLI's probe refuses
+  # while another session of that role is connected), the KEK, and cv-api's CV_AUDIT_WAL_PATH on
+  # the audit volume, where its journal and the run lock it shares with cv-api live. Built from
   # this checkout on every run, as migrate is.
   bootstrap-owner:
     build:
@@ -104,11 +105,6 @@ services:
     secrets:
       - source: cv_kek
         target: cv_kek
-        uid: "10001"
-        gid: "10001"
-        mode: 0400
-      - source: cv_audit_lane_key
-        target: cv_audit_lane_key
         uid: "10001"
         gid: "10001"
         mode: 0400
