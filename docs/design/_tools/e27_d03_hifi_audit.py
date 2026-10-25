@@ -586,6 +586,11 @@ WITHDRAW_ON = re.compile(
     r"(?:on|allowed|enabled|permitted|yes|true)\b",
     re.IGNORECASE,
 )
+# K3 (r3o): a fund right in the modal form ("can withdraw", "may transfer", "is able to withdraw")
+WITHDRAW_MODAL = re.compile(
+    r"\b(?:can|may|could|might|will|able +to)\s+(?:also\s+|still\s+)?(?:withdraw|transfer)\w*",
+    re.IGNORECASE,
+)
 WITHDRAW_GRANT = re.compile(
     r"\b(?:allows?|allowed|enables?|enabled|permits?|permitted|grants?|granted)\s+"
     r"(?:the\s+|a\s+|its\s+)?(?:withdraw\w*|transfer\w*|fund[- ]moving)",
@@ -1314,12 +1319,16 @@ STRIP_DRAWN = re.compile(r"\"Attention:")
 COMPROMISE = "SCR-128 / mark as compromised: the ordered card"
 STEPS = ("Freeze", "Delete", "Revoke", "Rotate", "Replace")
 STEP_RE = re.compile(r'(?:: |· )([1-9]) "([A-Z][a-z]+)')
-# K1: a control that shows or copies key material, or a key id longer than `...` plus 4
+# K1: a control that shows or copies key material, or a key id longer than `...` plus 4; r3o adds
+# the view / toggle / expose verbs and a visibility toggle in either order
 SHOW_MATERIAL = re.compile(
-    r"\[(?:Show|Hide|Reveal|Unmask)\b[^\]]*\]|\[Copy\b[^\]]*\b(?:key|secret)\b[^\]]*\]"
-    r"|\.\.\.[A-Za-z0-9]{4} *\[Copy\]|\b(?:show|reveal|copy|unmask|display)(?:s|ed|ing)? +"
-    r"(?:the +)?(?:full +|whole +|plaintext +)?(?:API +)?(?:key|secret)s?\b"
-    r"(?! (?:id|list|row|step))"
+    r"\[(?:Show|Hide|Reveal|Unmask|View)\b[^\]]*\]|\[Copy\b[^\]]*\b(?:key|secret)\b[^\]]*\]"
+    r"|\.\.\.[A-Za-z0-9]{4} *\[Copy\]"
+    r"|\b(?:show|reveal|copy|unmask|display|view|toggle|expose)(?:s|ed|ing|d)? +"
+    r"(?:the +|its +|a +)?(?:full +|whole +|plaintext +|raw +|complete +|entire +)?(?:API +)?"
+    r"(?:key|secret)s?\b(?! (?:id|list|row|step|vault|screen|page))"
+    r"|\btoggl(?:e|es|ed|ing) +(?:the +|its +)?(?:[\w']+ +){0,2}?visibility\b"
+    r"|\bvisibility +(?:toggle|switch|control|button)s?\b"
     r"|icon/eye|\bplaintext +(?:key|secret)",
     re.IGNORECASE,
 )
@@ -1462,12 +1471,17 @@ def copies_a_field(clause: str, m: re.Match[str], field_row: bool) -> bool:
     return field_row
 
 
-def off_spans(raw: str, negate: bool = True) -> list[tuple[int, int]]:
-    """K3: a withdrawal OFF (any case) without its verified time in its own string or item."""
+def off_spans(raw: str, negate: bool = True, row_wide: bool = False) -> list[tuple[int, int]]:
+    """K3: a withdrawal OFF (any case) without its verified time in its own string or item. With
+    ``row_wide`` (§7c's table rows) a withdrawal or transfer word anywhere on the row ties the OFF
+    to it, so a deck string cut to "off ✓" is read with its Where cell ("sign-off" is not one)."""
     spans: list[tuple[int, int]] = []
+    row_names = row_wide and WITHDRAW_NEAR.search(raw) is not None
     at = 0
     for cell in raw.split("|"):
         for m in OFF_DRAWN.finditer(cell):
+            if row_wide and cell[max(0, m.start() - 5) : m.start()].lower() == "sign-":
+                continue
             if negate and NEG_BEFORE.search(cell[max(0, m.start() - 30) : m.start()]):
                 continue
             if cell.count('"', 0, m.start()) % 2:  # inside a quoted string: that string
@@ -1479,7 +1493,8 @@ def off_spans(raw: str, negate: bool = True) -> list[tuple[int, int]]:
                 stop = re.search(r"[;|]|\.\s", cell[m.end() :])
                 seg = cell[m.start() : m.end() + (stop.start() if stop else len(cell))]
                 lead = cell[max(0, m.start() - 60) : m.start()]
-            if WITHDRAW_NEAR.search(lead + seg) and not VERIFIED_AT.search(seg):
+            near = row_names or WITHDRAW_NEAR.search(lead + seg) is not None
+            if near and not VERIFIED_AT.search(seg):
                 spans.append((at + m.start(), at + m.end()))
         at += len(cell) + 1
     return spans
@@ -1697,11 +1712,18 @@ def frame_gate(spec: str, sec: dict[str, str], base: dict[str, Any], out: Out) -
                 )
             named = f"{inv_names.get(n, '')} | {r['name']} | {r['cls']}"
             heads = [LEG_KEY.findall(r[c])[:1] for c in ("hifi", "keys")]
+            by_name = VIEWAS_NAMED.search(f"{inv_names.get(n, '')} | {r['name']}") is not None
             if VIEWAS_NAMED.search(named) and any(h != ["rbac.view_as"] for h in heads):
                 out.fail(
                     "k8.viewas",
                     f"{where} is a view-as frame (E27-D02 §7 or its class): its Hi-fi and Copy "
                     f"keys cells do not both lead with `rbac.view_as`: {heads}",
+                )
+            elif by_name and "view-as leg first" not in r["cls"]:
+                out.fail(
+                    "k8.viewas",
+                    f"{where} is a view-as frame (E27-D02 §7): its class does not say "
+                    f"'view-as leg first': {r['cls']!r}",
                 )
             elif "rbac.view_as" in legs and legs[0] != "rbac.view_as":
                 out.fail("k8.viewas", f"{where}: the view-as leg comes after {legs[0]}")
@@ -1927,12 +1949,9 @@ SECURITY_ALLOWED: tuple[tuple[str, str, int], ...] = (
     ("spec", 'every withdrawal "OFF" a', 1),
     ("spec", "in its Copy keys, both in", 1),
     ("spec", "round 2; `reveal`, `k1.masked`, `k2.field`,", 1),
-    ("spec", "or a reveal is named,", 1),
-    ("spec", "list: a reveal word or", 1),
     ("spec", 'form of "reveal" or "unmask",', 1),
     ("spec", '"reveal" or "unmask",', 1),
     ("spec", "withdrawal OFF, in any", 1),
-    ("spec", "for the reveal words and", 1),
     ("spec", "state) with withdrawal-off always visually", 1),
     ("spec", "alone, and withdrawal-off always confirmed", 1),
     ("spec", "`- **A11y**: withdrawal-off state is", 1),
@@ -1964,6 +1983,50 @@ SECURITY_ALLOWED: tuple[tuple[str, str, int], ...] = (
     ("spec", "**Storybook**: Default, Revealed, CapsLockOn, WithError,", 1),
     ("spec", "axe, interaction (reveal toggle, paste", 2),
     ("spec", "· **Purpose**: copy-to-clipboard affordance (API", 1),
+    # r3o
+    ("spec", "`false` reads OFF); none", 1),
+    ("spec", "line, never OFF; cleared", 1),
+    ("spec", "never OFF without", 1),
+    ("spec", "never OFF (D4)", 1),
+    ("spec", 'line: "Refused: this key can withdraw or transfer, and nothing', 1),
+    ("spec", "never OFF (AD-3)", 1),
+    ("spec", 'where "off" appears', 1),
+    ("spec", "`aggregate`, never OFF · frame", 1),
+    ("spec", '| "Refused: this key can withdraw or transfer, and nothing', 1),
+    ("spec", "stored key can withdraw or transfer:", 1),
+    ("spec", "state (“off” only", 1),
+    ("spec", "(dash), never OFF · §2.1", 1),
+    ("spec", "that can withdraw is", 1),
+    ("spec", 'undated "OFF".** D02\'s', 1),
+    ("spec", "says OFF without", 1),
+    ("spec", 'N1: "OFF" without', 1),
+    ("spec", '| "OFF" lives', 1),
+    ("spec", "never OFF (served", 1),
+    ("spec", "a `[Show]`, a", 1),
+    ("spec", "(its `verified-off`, `verified-on`,", 1),
+    ("spec", "never renders OFF; the", 1),
+    ("spec", "an OFF in", 1),
+    ("spec", 'form ("can withdraw"), with', 1),
+    ("spec", "a secret, a visibility toggle, a bracketed", 1),
+    ("spec", "view, copy or", 1),
+    ("spec", '— "view the full key" and', 1),
+    ("spec", '"toggle visibility" on', 1),
+    ("spec", 'case), "can withdraw" on', 1),
+    ("spec", "id, `[Show]` and", 1),
+    ("spec", "and `[Copy]` on", 1),
+    ("spec", "hand-off's CMP-033 row", 1),
+    ("spec", 'id, "Can Withdraw", "view', 1),
+    ("spec", '"view the full key")', 1),
+    ("spec", "reveal word or", 1),
+    ("spec", "a secret, a visibility toggle, a show", 1),
+    ("spec", "or hide control,", 1),
+    ("spec", "display, copy, toggle", 1),
+    ("spec", "bracketed `[Show]`, `[View]`", 1),
+    ("spec", 'form ("can withdraw", "may', 1),
+    ("spec", 'withdraw", "may transfer",', 1),
+    ("spec", "able to withdraw", 1),
+    ("spec", "the OFF to", 1),
+    ("spec", "the reveal words,", 1),
     ("hand-off", "`docs/design/_tools/e27_d03_hifi_audit.py`'s (spec §9).", 1),
     ("hand-off", "colours; no reveal, timer or", 1),
     ("hand-off", "timer or copy state exists", 1),
@@ -1974,32 +2037,75 @@ SECURITY_ALLOWED: tuple[tuple[str, str, int], ...] = (
 )
 
 
+# §7c: the egress IP cue (its placeholder too) and a bracketed control on any line
+IP_CUE = re.compile(IP_WORD.pattern + r"|\{egress_ip\}", re.IGNORECASE)
+BRACKET_CONTROL = re.compile(r"\[(?:Copy|Show|Hide|Reveal|Unmask|View)\b[^\]]*\]", re.IGNORECASE)
+
+
+def git_sha_or_name(clause: str, m: re.Match[str]) -> bool:
+    """A bare-id-shaped run that is a backticked git sha (9 or 40 characters) or a CamelCase story name
+    (a capitalised word of four or more letters); only an uncued clause may carry one."""
+    run = m[0]
+    ticked = clause[m.start() - 1 : m.start()] == "`" and clause[m.end() : m.end() + 1] == "`"
+    if ticked and re.fullmatch(r"[0-9a-f]{9}|[0-9a-f]{40}", run):
+        return True
+    return re.search(r"[A-Z][a-z]{3,}", run) is not None
+
+
+def ip_copy(line: str, at: int) -> bool:
+    """A bracketed control whose nearest cue before it on the line (else after it) is the egress
+    IP: CMP-033's copy, the one copy control a key screen draws (D6, KV-I11)."""
+    ip = [x.end() for x in IP_CUE.finditer(line[:at])]
+    cue = [x.end() for x in FIELD_NAMED.finditer(line[:at])]
+    if ip or cue:
+        return max(ip, default=-1) > max(cue, default=-1)
+    ip_a, cue_a = IP_CUE.search(line[at:]), FIELD_NAMED.search(line[at:])
+    return ip_a is not None and (cue_a is None or ip_a.start() < cue_a.start())
+
+
 def line_hits(
     line: str, frame_row: bool, field_heading: bool = False
 ) -> list[tuple[int, int, str]]:
-    """Every security hit on one line: (start, end, code). A frame row is read for the reveal
-    words and the dated OFF only; a row whose first cell, or whose heading, names a key or a secret
-    field reads every clause as that field's (K1 / K2)."""
+    """Every security hit on one line: (start, end, code). A frame row is read here for the reveal
+    words, the dated OFF and the modal fund right (the frame gate reads the rest). Every other line
+    is read clause by clause for all five, with no cue: a bare id, a show / view / copy / toggle of
+    a key or a secret, a bracketed control (unless it is the egress IP's copy) and a fund right. A
+    clause that names a key or a secret field (or a row whose first cell or heading does) is also
+    read for the long run, a toggle and a bare Copy, and its git-sha-shaped runs count as ids."""
     hits = [(m.start(), m.end(), "reveal") for m in DOC_REVEAL.finditer(line)]
-    hits += [(x, y, "k3.off") for x, y in off_spans(line, negate=False)]
+    row = line.lstrip().startswith("|")
+    hits += [(x, y, "k3.off") for x, y in off_spans(line, negate=False, row_wide=row)]
+    hits += [(m.start(), m.end(), "k3.withdraw") for m in WITHDRAW_MODAL.finditer(line)]
     if frame_row:
         return hits
-    first = cells(line)[0] if line.lstrip().startswith("|") else ""
+    first = cells(line)[0] if row else ""
     field_row = field_heading or FIELD_NAMED.search(first) is not None
     for a, b in clause_spans(line):
         clause = line[a:b]
-        if field_row or FIELD_NAMED.search(clause):
-            ids = [(m.start(), m.end()) for m in BARE_ID.finditer(clause)]
-            ids += [
-                (m.start(), m.end())
-                for m in MASK_TAIL.finditer(clause)
-                if m[1] or not (re.fullmatch(r"[A-Za-z0-9]{4}", m[2]) or m[2] == "{last4}")
-            ]
+        cued = field_row or FIELD_NAMED.search(clause) is not None
+        ids = [
+            (m.start(), m.end())
+            for m in BARE_ID.finditer(clause)
+            if cued or not git_sha_or_name(clause, m)
+        ]
+        ids += [
+            (m.start(), m.end())
+            for m in MASK_TAIL.finditer(clause)
+            if m[1] or not (re.fullmatch(r"[A-Za-z0-9]{4}", m[2]) or m[2] == "{last4}")
+        ]
+        if cued:
             ids += [(m.start(), m.end()) for m in LONG_RUN.finditer(clause) if plaintext_like(m[0])]
-            hits += [(a + x, a + y, "k1.masked") for x, y in ids]
-            shown = [(m.start(), m.end()) for m in SHOW_MATERIAL.finditer(clause)]
+        hits += [(a + x, a + y, "k1.masked") for x, y in ids]
+        shown = [(m.start(), m.end()) for m in SHOW_MATERIAL.finditer(clause)]
+        shown += [
+            (m.start(), m.end())
+            for m in BRACKET_CONTROL.finditer(clause)
+            if not ip_copy(line, a + m.start())
+        ]
+        shown += [(m.start(), m.end()) for m in SHOW_CONTROL.finditer(clause)]
+        if cued:
             shown += control_spans(clause, field_row, negate=False)
-            hits += [(a + x, a + y, "k2.field") for x, y in shown]
+        hits += [(a + x, a + y, "k2.field") for x, y in shown]
         rights = [
             m for p in (WITHDRAW_ON, WITHDRAW_GRANT, WITHDRAW_CONTROL) for m in p.finditer(clause)
         ]
@@ -2482,7 +2588,7 @@ def fixture(base: dict[str, Any]) -> str:
             row(num, f"`E27-D03 / {num} {slug}`", cell, "x", theme, "x", export, "PENDING")
         )
     hifi = [
-        row(n, f"`{f['name']}`", T2_EXACT if f["t2"] else "status", *fixture_frame(n, f))
+        row(n, f"`{f['name']}`", fixture_class(f), *fixture_frame(n, f))
         + f" {board_of.get(n, NOT_DRAWN)} |"
         for n, f in sorted(inv.items())
     ]
@@ -2909,6 +3015,22 @@ def viewas_swapped(spec: str) -> str | None:
     )
 
 
+def fixture_class(f: dict[str, Any]) -> str:
+    """A fixture frame's class: T2's cite, and on a view-as frame its leg first (K8, r3o)."""
+    if not f["t2"]:
+        return "status"
+    return f"{T2_EXACT} (view-as leg first)" if VIEWAS_NAMED.search(f["name"]) else T2_EXACT
+
+
+def viewas_class_swapped(spec: str) -> str | None:
+    """G7 (r3o): frame 69's class cell names the role leg; its prose and keys keep the view-as."""
+    m = re.search(r"^\| 69 +\|[^|]*\|( *T2 per §10\.1 \(view-as leg first\) *)\|", spec, MULTI)
+    if not m:
+        return None
+    cell = " T2 per §10.1 (role leg)".ljust(len(m[1]))
+    return spec[: m.start(1)] + cell + spec[m.end(1) :]
+
+
 def is_expiring(variant: str, _cls: str) -> bool:
     return variant.startswith("expiring")
 
@@ -2941,6 +3063,14 @@ CONSEQUENCE_49 = (
 # The standing rule's list (main-orchestrator, 2026-10-25 00:32Z): (K, the mutation, the one FAIL
 # code it must raise, the in-memory edit of the spec on disk). Each runs as a plain run (rc 1), so a
 # count marker it moves (``--check``) is not a second FAIL; K13 is the marker-number gate itself.
+MASK_CELL = "the masked id `...{last4}` and nothing more"
+OWNER_LINE = '"API key {key_id_masked} ·'
+FIELD_H = 'as G; label "API secret"'
+RIGHTS_6 = '"Trade · Withdrawal OFF ✓ · verified 14:02 UTC"'
+RESULT_D = "a row the server fills after a pass, with the check list"
+FOOTER_36 = "Footer [Cancel] [Back to paste]"
+PROSE_4 = 'One "Verify and save" verifies'
+PROSE_8 = "opened by every role on a granted account"
 K_MUTATIONS: tuple[tuple[str, str, str, Mutation], ...] = (
     (
         "K1",
@@ -3449,6 +3579,125 @@ K_MUTATIONS: tuple[tuple[str, str, str, Mutation], ...] = (
         frame_sub(69, "both mode controls T2 `rbac.view_as`, each", "both mode controls T2, each"),
     ),
     ("G7b", "frame 69 view-as leg swapped for the role leg", "k8.viewas", viewas_swapped),
+    # r3o (the orchestrator's text round 3): view / toggle / visibility, the modal fund right, the
+    # uncued line (block D's result row, prose, the hand-off), a deck string cut to "off ✓", and
+    # frame 69's class
+    (
+        "V1",
+        "view the full key, §6 Key cell",
+        "k2.field",
+        sec_sub("6", MASK_CELL, "the masked id `...{last4}`; view the full key"),
+    ),
+    (
+        "V1b",
+        "View The Full Key, §8 owner key row",
+        "k2.field",
+        sec_sub("8", OWNER_LINE, '"API key {key_id_masked} · View The Full Key ·'),
+    ),
+    (
+        "V1c",
+        "[VIEW THE FULL KEY], frame 36",
+        "k1.masked",
+        frame_sub(36, FOOTER_36, f"{FOOTER_36} [VIEW THE FULL KEY]"),
+    ),
+    (
+        "V1d",
+        "view the full key, §2.5 CMP-034 row",
+        "k2.field",
+        sec_sub("2.5", "text only, `...{last4}`", "text only, `...{last4}`, view the full key"),
+    ),
+    (
+        "V2",
+        "toggle visibility, §4.1 block H",
+        "k2.field",
+        sec_sub("4.1", FIELD_H, 'as G with toggle visibility; label "API secret"'),
+    ),
+    (
+        "V2b",
+        "Toggle Visibility, §6 Key cell",
+        "k2.field",
+        sec_sub("6", MASK_CELL, "the masked id `...{last4}`; Toggle Visibility"),
+    ),
+    (
+        "V2c",
+        "toggle visibility, §8 owner key row",
+        "k2.field",
+        sec_sub("8", OWNER_LINE, '"API key {key_id_masked} · toggle visibility ·'),
+    ),
+    (
+        "M1",
+        "can withdraw, §6 Rights row",
+        "k3.withdraw",
+        sec_sub("6", RIGHTS_6, '"Trade · can withdraw · Withdrawal OFF ✓ · verified 14:02 UTC"'),
+    ),
+    (
+        "M1b",
+        "Can Withdraw, §8 owner key row",
+        "k3.withdraw",
+        sec_sub("8", OWNER_LINE, '"API key {key_id_masked} · Can Withdraw ·'),
+    ),
+    (
+        "M1c",
+        "CAN TRANSFER, frame 36",
+        "k3.withdraw",
+        frame_sub(36, FOOTER_36, f"CAN TRANSFER. {FOOTER_36}"),
+    ),
+    (
+        "M1d",
+        "may withdraw, §4.4 block D result row",
+        "k3.withdraw",
+        sec_sub("4.4", RESULT_D, f"{RESULT_D}; the key may withdraw"),
+    ),
+    (
+        "B1",
+        "bare 12-hex id, §4.4 block D result row",
+        "k1.masked",
+        sec_sub("4.4", RESULT_D, f"{RESULT_D} for {HEX_12}"),
+    ),
+    (
+        "B1b",
+        "bare 12-character id, §4 prose",
+        "k1.masked",
+        sec_sub("4", PROSE_4, f"Key {BARE_12}. {PROSE_4}"),
+    ),
+    (
+        "B2",
+        "[Show] in §4.4 block D result row",
+        "k2.field",
+        sec_sub("4.4", RESULT_D, f"{RESULT_D} [Show]"),
+    ),
+    (
+        "B2b",
+        "[show] in §8 prose",
+        "k2.field",
+        sec_sub("8", PROSE_8, PROSE_8.replace("opened", "opened [show]")),
+    ),
+    (
+        "B3",
+        "[Copy] in §4.4 block D result row",
+        "k2.field",
+        sec_sub("4.4", RESULT_D, f"{RESULT_D} [Copy]"),
+    ),
+    ("B3b", "[copy] in §4 prose", "k2.field", sec_sub("4", PROSE_4, f"[copy]. {PROSE_4}")),
+    (
+        "D1",
+        "deck e27.checks.withdrawal.passed cut to off ✓",
+        "k3.off",
+        sec_sub("12.1", '"OFF ✓ · verified {hh:mm} UTC"', '"off ✓"'),
+    ),
+    (
+        "D1b",
+        "deck e27.checks.withdrawal.passed cut to Off ✓",
+        "k3.off",
+        sec_sub("12.1", '"OFF ✓ · verified {hh:mm} UTC"', '"Off ✓"'),
+    ),
+    (
+        "D2",
+        "§2.1 verified row cut to off ✓",
+        "k3.off",
+        sec_sub("2.1", '"Withdrawal OFF ✓ · verified {hh:mm} UTC"', '"off ✓"'),
+    ),
+    ("G7c", "frame 69's class names the role leg", "k8.viewas", viewas_class_swapped),
     (
         "K15",
         "an undrawn frame not named 'not drawn'",
@@ -3479,6 +3728,7 @@ K_MUTATIONS: tuple[tuple[str, str, str, Mutation], ...] = (
 )
 
 
+HAND_ROW = "the egress IP as the key screens' only copy"
 # r2o: the whole-document gate reads the hand-off too; each of these edits the hand-off in memory
 HAND_MUTATIONS: tuple[tuple[str, str, str, str, str], ...] = (
     (
@@ -3501,6 +3751,22 @@ HAND_MUTATIONS: tuple[tuple[str, str, str, str, str], ...] = (
         "k3.withdraw",
         "no reveal, timer or copy exists",
         "Withdrawal: on",
+    ),
+    # r3o: the hand-off's CMP-033 row (a table row that names no key in its first cell)
+    (
+        "H4",
+        "hand-off row: a bare 32-hex id",
+        "k1.masked",
+        HAND_ROW,
+        f"{HAND_ROW}, beside {HEX_40[:32]}",
+    ),
+    ("H5", "hand-off row: Can Withdraw", "k3.withdraw", HAND_ROW, f"{HAND_ROW}; Can Withdraw"),
+    (
+        "H6",
+        "hand-off row: view the full key",
+        "k2.field",
+        HAND_ROW,
+        f"{HAND_ROW}; view the full key",
     ),
 )
 
