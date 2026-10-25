@@ -409,8 +409,15 @@ def test_an_owner_viewing_a_manager_may_touch_only_the_targets_trade_grants() ->
     assert scope_for_target(_OWNER, _MANAGER) == GrantScope(TARGET, trades)
 
 
-def test_a_manager_viewer_and_a_manager_target_meet_in_both_their_grants() -> None:
-    viewer = _person(USER, "manager", (SHARED, True, True, False), (VIEWER_ONLY, True, True, False))
+def test_a_manager_viewer_and_a_manager_target_meet_in_both_their_trade_grants() -> None:
+    """The viewer's half is its trade grants too: what the viewer may only view adds nothing,
+    even where the target may trade it."""
+    viewer = _person(
+        USER, "manager",
+        (SHARED, True, True, False),  # both may trade it
+        (VIEWER_ONLY, True, True, False),  # the viewer's alone
+        (TARGET_TRADE, True, False, False),  # the viewer may only view what the target trades
+    )  # fmt: skip
     assert scope_for_target(viewer, _MANAGER) == GrantScope(TARGET, frozenset({SHARED}))
 
 

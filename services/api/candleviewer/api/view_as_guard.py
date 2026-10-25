@@ -26,9 +26,10 @@ operation's `x-rbac` names (`rbac_permissions`, read from the contract at build;
 write naming none fails the build). One that does not, or a target who can no longer act
 (missing, not `active`, a role outside the system set), is `403 forbidden`, counted in
 `authz_denied_total` and audited `rbac.denied` with the viewer and the viewer's session as the
-actor and the target as the object: a 403 even when that record cannot be written, as
-`enforce`'s. A target read that fails, or a guard built with nothing to read it, is `503
-store_unavailable`. The handler checks the account half (`scope_for_target`). In the hold the
+actor and the target as the object, naming the refused operation: a 403 even when that record
+cannot be written, as `enforce`'s. A target read that fails or passes `TARGET_READ_TIMEOUT_S`,
+or a guard built with nothing to read it, is `503 store_unavailable`. The handler checks the
+account half (`scope_for_target`). In the hold the
 write runs in the viewer's own scope, and no target is read (the orchestrator's ruling of
 2026-10-24 23:10Z). A live context is evaluated as a request's would be
 (`ViewAsService.evaluate`): one whose viewer or target is no longer eligible ends there, and the
@@ -48,6 +49,7 @@ backend), the request passes untouched.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from datetime import datetime
 from typing import Any, Final, Protocol
@@ -101,6 +103,10 @@ _DETAILS: Final[dict[str, str]] = {
 
 CallNext = Callable[[Request], Awaitable[Response]]
 
+#: Bounds the target's identity read, and its denial's record, as the trading principal bounds its
+#: reads (`PRINCIPAL_READ_TIMEOUT_S`): a stalled store holds no protective write.
+TARGET_READ_TIMEOUT_S: Final = 2.0
+
 
 class ViewAsViews(Protocol):
     """`ViewAsService`'s part the guard uses (`admin/view_as.py`)."""
@@ -126,6 +132,7 @@ class _Denials(Protocol):
         outcome: Any = ...,
         severity: Any = ...,
         reason: str | None = None,
+        after_state: dict[str, Any] | None = None,
         request_id: Any = None,
     ) -> None: ...
 
@@ -174,10 +181,13 @@ def make_view_as_guard(
     (`create_app` builds them after the middleware stack); *operations* are the contract's
     declared operations, which name a refused one (`match_operation`, never the raw path); *clock*
     is the auth clock. *permissions* (`rbac_permissions`), *identity* and *denials* check a live
-    protective write's target: without the first two, every such write is `503`."""
+    protective write's target: without the first two, every such write is `503`; with them, a guard
+    without *denials* would refuse unaudited, so it is not built."""
     declared = frozenset(operations)
     if not OWN_OPERATIONS <= declared:
         raise ValueError(f"undeclared own operations: {sorted(OWN_OPERATIONS - declared)}")
+    if permissions is not None and denials is None:
+        raise ValueError("a guard that checks targets records their denials")
     required = dict(permissions or {})
     if permissions is not None and (
         bare := sorted(id_ for id_, (op, _) in PROTECTIVE_WRITES.items() if not required.get(op))
@@ -231,7 +241,7 @@ def make_view_as_guard(
         if as_viewer or reads:
             if as_viewer and not own and binding.phase is ViewAsPhase.LIVE:
                 ip, needs = source_ip(request.scope), required.get(operation, frozenset())
-                refused = await _target_refusal(identity, denials, context, needs, ip)
+                refused = await _target_refusal(identity, denials, context, operation, needs, ip)
                 if refused is not None:
                     return refused
             request.scope.setdefault("state", {})[STATE_KEY] = context
@@ -253,6 +263,7 @@ async def _target_refusal(
     identity: _Identity | None,
     denials: _Denials | None,
     context: ViewAsRequestContext,
+    operation: tuple[str, str],
     needs: frozenset[Permission],
     ip: str | None,
 ) -> Response | None:
@@ -261,10 +272,11 @@ async def _target_refusal(
     if identity is None or not needs:  # nothing to check the target with: never a pass
         return _unavailable("target", LookupError("no target read"))
     try:
-        target = await identity_snapshot(identity, context.target_user_id)
+        async with asyncio.timeout(TARGET_READ_TIMEOUT_S):
+            target = await identity_snapshot(identity, context.target_user_id)
     except LookupError:  # no such user any more: it allows nothing
         target = None
-    except Exception as exc:
+    except Exception as exc:  # the bound passed, or the store failed
         return _unavailable("target", exc)
     missing = sorted(needs - (frozenset() if target is None else target.permissions))
     if not missing:
@@ -273,15 +285,18 @@ async def _target_refusal(
     reason = f"{DenyReason.MISSING_PERMISSION.value}:{permission.value}:{Scope.NONE.value}"
     authz_denied_total.labels(permission=normalise_permission(permission)).inc()  # SR-125: first
     if denials is not None:
+        method, template = operation
         try:
-            await denials.emit(
-                "rbac.denied", actor_label=context.viewer_label,
-                actor_user_id=context.viewer_user_id, actor_ip=ip,
-                session_id=context.viewer_session_id, object_kind="user",
-                object_id=str(context.target_user_id), outcome="denied", severity="warning",
-                reason=reason, request_id=current_request_uuid(),
-            )  # fmt: skip
-        except Exception as exc:  # the 403 stands, as `enforce`'s
+            async with asyncio.timeout(TARGET_READ_TIMEOUT_S):
+                await denials.emit(
+                    "rbac.denied", actor_label=context.viewer_label,
+                    actor_user_id=context.viewer_user_id, actor_ip=ip,
+                    session_id=context.viewer_session_id, object_kind="user",
+                    object_id=str(context.target_user_id), outcome="denied", severity="warning",
+                    reason=reason, after_state={"method": method, "path": template},
+                    request_id=current_request_uuid(),
+                )  # fmt: skip
+        except Exception as exc:  # the 403 stands, as `enforce`'s, bounded or failed
             _log().warning("auth.view_as_target_denial_unaudited", error=type(exc).__name__)
     return _problem(ErrorCode.FORBIDDEN, 403)
 

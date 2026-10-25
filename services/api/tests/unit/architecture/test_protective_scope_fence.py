@@ -9,14 +9,17 @@ a module-level constant) and never calls `scope_for_target` fails here, so no ro
 target's grants. Registering in the route's own module is what this enforces: a registration in
 `app.py`, which scopes nothing, fails too.
 
-Limits: these are AST checks, so a name built at run time is not caught, as in
-`test_view_as_mint_callers.py`. No protective route is mounted on `main` yet; the positive
-controls below prove the scan finds one.
+Limits: these are AST checks, so a name built at run time, a bound-method alias of `register` or
+an imported constant is not caught, as in `test_view_as_mint_callers.py`, and a call of
+`scope_for_target` is not proven to be the scope the route's reads take: each protective route's
+own tests are that guarantee. No protective route is mounted on `main` yet; the positive controls
+below prove the scan finds one.
 """
 
 from __future__ import annotations
 
 import ast
+import warnings
 from pathlib import Path
 
 import pytest
@@ -48,12 +51,15 @@ def _constants(tree: ast.Module) -> dict[str, str]:
 
 
 def _registered(tree: ast.Module) -> set[str]:
-    """The protective writes the module registers: `<x>.register(<operationId>)`."""
+    """The protective writes the module registers: `<x>.register(<operationId>)`, positionally
+    or as `operation_id=`."""
     constants, found = _constants(tree), set[str]()
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and _name(node.func) == "register" and node.args):
+        if not (isinstance(node, ast.Call) and _name(node.func) == "register"):
             continue
-        arg = node.args[0]
+        named = [k.value for k in node.keywords if k.arg == "operation_id"]
+        if not (arg := node.args[0] if node.args else next(iter(named), None)):
+            continue
         value = arg.value if isinstance(arg, ast.Constant) else None
         if isinstance(arg, ast.Name):
             value = constants.get(arg.id)
@@ -67,7 +73,9 @@ def _scopes(tree: ast.Module) -> bool:
 
 
 def _offenders(sources: dict[str, str]) -> list[str]:
-    trees = {name: ast.parse(source) for name, source in sources.items()}
+    with warnings.catch_warnings():  # an immutable migration's escape sequences (C-5.4)
+        warnings.simplefilter("ignore", SyntaxWarning)
+        trees = {name: ast.parse(source) for name, source in sources.items()}
     return sorted(name for name, tree in trees.items() if _registered(tree) and not _scopes(tree))
 
 
@@ -77,6 +85,7 @@ def _offenders(sources: dict[str, str]) -> list[str]:
         ('app.state.protective_writes.register("cancelOrder")', True),
         ('_OP: Final = "cancelAllOrders"\nprotective.register(_OP)', True),
         ('_OP = "amendOrder"\nprotective.register(_OP)', True),
+        ('protective.register(operation_id="cancelOrder")', True),
         ('protective.register("cancelOrder")\nscope = scope_for_target(viewer, target)', False),
         ('protective.register("cancelOrder")\nscope = principals.scope_for_target(v, t)', False),
         ('atexit.register("placeOrder")', False),  # not a protective write

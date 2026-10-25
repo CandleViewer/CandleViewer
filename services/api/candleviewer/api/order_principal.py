@@ -66,21 +66,29 @@ class TradingPrincipal:
 
 def scope_for_target(viewer: PrincipalSnapshot, target: PrincipalSnapshot | None) -> AccountScope:
     """The accounts a write may touch, as the account readers take them: the viewer's own
-    (`account_scope`) and, for a protective write in a live view-as context, only those the target
-    may trade as well (`TradingPrincipal.target`; module docstring). A scope the target narrows
-    carries the target's id, so the readers' SQL re-checks the target's live grants (SR-051); the
-    actor stays the viewer. A listed account outside it refuses the request whole, and an empty
-    list means all of it, as for any scope. An Owner target narrows nothing."""
+    (`account_scope`) and, for a protective write in a live view-as context, only those both the
+    viewer and the target may trade (`TradingPrincipal.target`; module docstring). An Owner viewer
+    may trade every account; an Owner target narrows nothing. A listed account outside the scope
+    refuses the request whole, and an empty list means all of it, as for any scope.
+
+    A scope the target narrows carries the target's id, so the readers' SQL re-checks the target's
+    live grants (SR-051), not the viewer's live owner role: `GrantScope` holds one id. The viewer
+    is re-read for each request all the same (`identity_snapshot`), and stays the actor."""
     own = account_scope(viewer)
     if target is None or target.is_owner:
         return own
-    trades = frozenset(
-        g.exchange_account_id for g in target.account_grants
+    trades = _trades(target)
+    if isinstance(own, GrantScope):
+        trades &= _trades(viewer)
+    return GrantScope(target.user_id, trades)
+
+
+def _trades(principal: PrincipalSnapshot) -> frozenset[uuid.UUID]:
+    """The accounts `principal`'s grants let it trade: `can_view` and `can_trade`, not frozen."""
+    return frozenset(
+        g.exchange_account_id for g in principal.account_grants
         if g.can_view and g.can_trade and not g.frozen
     )  # fmt: skip
-    if isinstance(own, GrantScope):
-        trades &= own.account_ids
-    return GrantScope(target.user_id, trades)
 
 
 class SessionTradingPrincipalResolver:

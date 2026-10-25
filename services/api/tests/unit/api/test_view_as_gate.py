@@ -6,9 +6,10 @@ are fake. The contract-wide sweep is `tests/security/auth/test_view_as_http.py`.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from functools import cache
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import httpx
@@ -17,6 +18,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from httpx import ASGITransport, AsyncClient
 
+from candleviewer.api import view_as_guard
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.deny_by_default import declared_operations, rbac_permissions
 from candleviewer.api.view_as_guard import STATE_KEY, make_view_as_guard
@@ -81,17 +83,20 @@ class _StepUp:
 
 class _Identity:
     """The identity store's reads of the target: an active Manager holding `held`; `row` and
-    `missing` make it one who cannot act, `fails` one whose read fails."""
+    `missing` make it one who cannot act, `fails` one whose read fails, `hangs` one that never
+    answers."""
 
     def __init__(self) -> None:
         self.held = frozenset(p.value for p in Permission)
         self.row: dict[str, Any] = {"roles": ["manager"], "status": "active"}
-        self.missing = False
+        self.missing = self.hangs = False
         self.fails: Exception | None = None
         self.asked: list[str] = []
 
     async def user(self, user_id: str) -> dict[str, Any]:
         self.asked.append(user_id)
+        if self.hangs:
+            await asyncio.Event().wait()
         if self.fails is not None:
             raise self.fails
         if self.missing:
@@ -556,8 +561,16 @@ async def test_every_other_write_is_still_refused_with_the_cancels_registered(
     assert _code(response) == (403, "view_as_read_only") and gate.seen == []
 
 
+def _guard(gate: _Gate, **targets: Any) -> Any:
+    """`gate`'s guard built again with only *targets* of its target-check arguments."""
+    return make_view_as_guard(
+        cast(Any, gate.auth), views=lambda: gate.service, refusals=lambda: gate.refusals,
+        protective=gate.protective, operations=_declared(), clock=gate.rig.clock, **targets,
+    )  # fmt: skip
+
+
 def _denials(permission: Permission) -> float:
-    return authz_denied_total.labels(permission=permission.value)._value.get()
+    return float(authz_denied_total.labels(permission=permission.value)._value.get())
 
 
 #: What each protective write's `x-rbac` names (22), as the guard reads it from the contract.
@@ -600,6 +613,7 @@ async def test_a_live_protective_write_the_target_may_not_make_is_forbidden(
     assert (kw["object_kind"], kw["object_id"]) == ("user", str(_TARGET))
     assert (kw["outcome"], kw["severity"]) == ("denied", "warning")
     assert kw["reason"] == f"missing_permission:{_PERMISSION[operation_id].value}:none"
+    assert kw["after_state"] == {"method": method, "path": template}  # which write was refused
 
 
 async def test_a_live_protective_write_the_target_may_make_passes_as_the_viewer() -> None:
@@ -677,12 +691,7 @@ async def test_a_guard_with_no_target_read_refuses_every_live_protective_write()
     async def route(path: str) -> JSONResponse:
         return JSONResponse({"ok": True})
 
-    app.middleware("http")(
-        make_view_as_guard(
-            gate.auth, views=lambda: gate.service, refusals=lambda: gate.refusals,
-            protective=gate.protective, operations=_declared(), clock=gate.rig.clock,
-        )
-    )  # fmt: skip
+    app.middleware("http")(_guard(gate))
     gate.protective.register("cancelOrder")
     headers = {"Authorization": f"Bearer {record.id}"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -695,8 +704,39 @@ def test_a_protective_write_with_no_x_rbac_permission_fails_the_build() -> None:
     del permissions[PROTECTIVE_WRITES["cancelOrder"][0]]
     gate = _Gate()
     with pytest.raises(ValueError, match="cancelOrder"):
-        make_view_as_guard(
-            gate.auth, views=lambda: gate.service, refusals=lambda: gate.refusals,
-            protective=gate.protective, operations=_declared(), clock=gate.rig.clock,
-            permissions=permissions, identity=gate.identity, denials=gate.writer,
-        )  # fmt: skip
+        _guard(gate, permissions=permissions, identity=gate.identity, denials=gate.writer)
+
+
+async def test_a_target_read_that_hangs_is_the_stores_unavailability_once_its_bound_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stalled identity store holds no protective write past `TARGET_READ_TIMEOUT_S`."""
+    monkeypatch.setattr(view_as_guard, "TARGET_READ_TIMEOUT_S", 0.01)
+    gate = _Gate()
+    record = await gate.rig.viewing()
+    gate.identity.hangs = True
+    gate.protective.register("cancelOrder")
+    async with asyncio.timeout(5):  # without a bound this fails here, never hangs the suite
+        response = await gate.call("DELETE", "/orders/x", record)
+    assert _code(response) == (503, "store_unavailable") and gate.seen == []
+
+
+async def test_a_denial_whose_record_hangs_is_still_forbidden_once_its_bound_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(view_as_guard, "TARGET_READ_TIMEOUT_S", 0.01)
+    gate = _Gate()
+    record = await gate.rig.viewing()
+    gate.identity.held = frozenset()
+    gate.protective.register("cancelOrder")
+    gate.writer.mode = "hang"
+    async with asyncio.timeout(5):
+        response = await gate.call("DELETE", "/orders/x", record)
+    assert _code(response) == (403, "forbidden") and gate.seen == []
+
+
+def test_a_guard_that_checks_targets_records_their_denials() -> None:
+    """With the target checks but no denial records, a refusal would go unaudited: not built."""
+    gate = _Gate()
+    with pytest.raises(ValueError, match="records their denials"):
+        _guard(gate, permissions=rbac_permissions(_spec()), identity=gate.identity)
