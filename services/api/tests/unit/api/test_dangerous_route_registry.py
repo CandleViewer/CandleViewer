@@ -78,6 +78,11 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     ("POST", "/orders"): (
         "placeOrder: no step-up (04 rows 10, 11); live needs the arm token (SR-043)"
     ),
+    # 04 §7.2.2 rows 12 and 13: cancelling an order takes no step-up, and no arm token either, as a
+    # cancel is never gated (C-2.6; 22 `cancelOrder`).
+    ("DELETE", "/orders/{orderId}"): (
+        "cancelOrder: no step-up (04 rows 12, 13); a cancel is never gated (C-2.6)"
+    ),
     # #3085 (D1): ending one's own view-as only lowers capability, so it never needs a step-up.
     ("DELETE", "/auth/session/view-as"): "endViewAs: the contract says no step-up",
     # `rules:write` is seeded `dangerous`, so the sweep flags each rule write. 04 §7.2.2 rows 22,

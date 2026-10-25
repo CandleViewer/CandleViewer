@@ -110,8 +110,8 @@ __all__ = [
     "NOT_GRANTED", "NOT_ORDER_CREATOR",
     "SETTLE_TIMEOUT_S", "TRANSITION_TIMEOUT_S", "VIEW_ONLY", "AmendTerms", "CancelReason",
     "ExitCaller", "ExitCommands", "ExitDeps", "ExitMachines", "ExitOperation", "ExitOrders",
-    "ExitOutcome", "InFlightGuard", "LiveStops", "OrderExits", "OutcomeKind", "UnknownReason",
-    "risk_increasing",
+    "ExitOutcome", "ExitStep", "InFlightGuard", "LiveStops", "OrderExits", "OutcomeKind",
+    "UnknownReason", "risk_increasing",
 ]  # fmt: skip
 
 #: What an exit's answer is (the 12:30Z ruling): taken, its outcome not known, or refused.
@@ -123,6 +123,9 @@ type UnknownReason = Literal["already_terminal", "transport", "timeout"]
 type CancelReason = Literal["user", "cancel_all"]
 #: The exits the in-flight guard keys (ruling Q11) and the audit names.
 type ExitOperation = Literal["amend", "cancel", "cancel_all"]
+#: The step of an exit route's own refusal that its `deny` record names (24 Sec.8.4, the exit
+#: routes): the `Idempotency-Key` (7), the 24 h record (8) or the in-flight guard (9).
+type ExitStep = Literal["key", "replay", "guard"]
 
 #: How long a cancel waits for a step in flight to settle before it is sent (D9).
 TRANSITION_TIMEOUT_S: Final = CV_COMMAND_TIMEOUT
@@ -498,13 +501,17 @@ class OrderExits:
         *,
         actor: SubmitActor,
         request_id: UUID | None,
+        step: ExitStep | None = None,
     ) -> ExitOutcome:
         """`outcome`, a refusal, recorded before it is answered (C-2.9): `orders.amend` or
         `orders.cancel` denied with its code, the order-entry gate's `account.disabled_by_policy`
         with its reason; else `503 audit_unavailable` in its place, nothing sent. The route's own
-        refusals of an order (its in-flight guard's, the arm token's) take it too."""
+        refusals of an order (its in-flight guard's, the arm token's) take it too, `step` naming
+        the 24 Sec.8.4 step that refused (`key`, `replay`, `guard`) as `placeOrder`'s records do."""
         action = DISABLED_BY_POLICY if outcome.reason is not None else _ACTIONS[operation]
         detail = {"operation": operation, "code": outcome.code, "order_link_id": row.order_link_id}
+        if step is not None:
+            detail["step"] = step
         severity: Literal["warning", "error"] = "error" if outcome.status >= 500 else "warning"
         reason = outcome.reason or outcome.code or ""
         written = await self._recorded(

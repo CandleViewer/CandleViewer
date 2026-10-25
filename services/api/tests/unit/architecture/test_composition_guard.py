@@ -25,7 +25,8 @@ and `PUT`: 115, frozen 110; and `getRecordingStatus` (#492 S5): 114, frozen 109;
 writes (`addRecordedSymbol`, `pinRecordedSymbol`): 112, frozen 107. #913 slice 3F serves the frozen
 `placeOrder`: 111, frozen 106. #906 D1c serves two more, `listAccountProfiles` and
 `getAccountProfile`: 109, frozen 104. #492 S8 serves the update and the stop
-(`updateRecordedSymbol`, `removeRecordedSymbol`): 107, frozen 102. Keep both caps tight: a contract
+(`updateRecordedSymbol`, `removeRecordedSymbol`): 107, frozen 102. #913 slice 4 (S4-D1) serves the
+frozen `cancelOrder`: 106, frozen 101. Keep both caps tight: a contract
 PR that adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, measured against
 current ``main`` with CI re-run there (two parallel raises merge cleanly yet both under-count); a
 PR that serves a frozen operation lowers ``FROZEN_BASELINE`` and ``PENDING_BASELINE`` by the same
@@ -57,8 +58,8 @@ from candleviewer.statechart.registry import Registry
 PKG = Path(bindings_pkg.__file__).resolve().parents[2]
 API_DIR = PKG / "api"
 MAIN_TREE = ast.parse((PKG / "main.py").read_text(encoding="utf-8"))
-PENDING_BASELINE = 107
-FROZEN_BASELINE = 102
+PENDING_BASELINE = 106
+FROZEN_BASELINE = 101
 BASELINE_TICKET = "E49-K01-F4-baseline"
 REAL_TICKET = re.compile(r"^#\d+$|^E\d\d-[A-Z]\d\d$")
 ALLOW: dict[str, dict[str, dict[str, str]]] = json.loads(

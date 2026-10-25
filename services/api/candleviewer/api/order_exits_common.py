@@ -1,0 +1,138 @@
+"""The exit routes' shared steps (E29-T04 #913 slice 4; 24-internal-schemas.md Sec.8.4 "The exit
+routes").
+
+`DELETE` / `PATCH /orders/{orderId}` (`api/order_exits.py`) and `POST /orders/cancel-all`
+(`api/order_cancel_all.py`) each take these from here, so neither writes them again (the
+orchestrator's ruling of 2026-10-24 19:43Z):
+
+- `exit_caller`: who asks, as the exit service takes it (`oms.exits.ExitCaller`): the accounts the
+  principal reaches, its records' actor and the request's correlation id;
+- `exit_refusals`: `oms_exit_refused_total{operation,code}` (20 Sec.12.1, ruling Q14), the one
+  counter every exit refusal is counted in, the unaudited `501` and `oms_not_ready` included;
+- `run_claimed`: step 9's in-flight guard around step 11's run. The principal's key is claimed for
+  the operation, or the guard's refusal (`409 idempotency_in_flight`, `429 rate_limited`, each
+  with `Retry-After: 1`) goes to the caller's `refused`, which records it before it is answered
+  (C-2.9). A claimed exit runs as the runtime's tracked task, shielded from the client's
+  disconnect, and the claim is released when that task ends, never when the request does;
+- `exit_problem` and `exit_response`: an exit's answer as the exit service's `ExitOutcome` gives
+  it, a refusal's 22 problem or the `202` with the order as the exit left it.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import uuid
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
+from typing import Any, Final, Protocol, cast
+
+from fastapi import Request
+from fastapi.responses import JSONResponse, Response
+
+from candleviewer.api.order_acceptance import order_body
+from candleviewer.api.order_admission import submit_actor
+from candleviewer.api.order_principal import TradingPrincipal
+from candleviewer.auth.scopes import account_scope
+from candleviewer.domain.primitives import Environment
+from candleviewer.observability.context import current_request_uuid
+from candleviewer.observability.metrics import BoundedMetric, Metrics
+from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.oms.exits import ExitCaller, ExitOperation, ExitOutcome, InFlightGuard
+from candleviewer.storage.repositories.orders import ORDER_STATE_OF, ScopedOrder
+from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
+
+__all__ = [
+    "EXIT_REFUSED_METRIC", "ExitRuntime", "exit_caller", "exit_problem", "exit_refusals",
+    "exit_response", "run_claimed",
+]  # fmt: skip
+
+EXIT_REFUSED_METRIC: Final = "oms_exit_refused_total"
+_STORED: Final = cast(Mapping[str, str], ORDER_STATE_OF)
+_MEDIA: Final = "application/problem+json"
+
+
+class _Exits(Protocol):
+    @property
+    def guard(self) -> InFlightGuard: ...
+
+
+class ExitRuntime(Protocol):
+    """`oms_wiring.OmsRuntime` as the exit routes run an exit on it."""
+
+    @property
+    def exits(self) -> _Exits: ...
+
+    def run(self, coro: Coroutine[Any, Any, Response]) -> asyncio.Task[Response]: ...
+
+
+def exit_refusals(metrics: Metrics) -> BoundedMetric:
+    """`oms_exit_refused_total`, labelled `operation` then `code`, as the catalogue declares it:
+    every exit router takes the same counter (a repeated, identical registration returns it)."""
+    spec = next(spec for spec in CATALOGUE if spec.name == EXIT_REFUSED_METRIC)
+    return metrics.counter(spec.name, spec.help, spec.labels, max_series=spec.max_series)
+
+
+def exit_caller(principal: TradingPrincipal, request: Request) -> ExitCaller:
+    """The exit service's caller: the principal's accounts (`auth.scopes.account_scope`), its
+    records' actor (`submit_actor`) and the request's correlation id."""
+    return ExitCaller(
+        scope=account_scope(principal.snapshot),
+        actor=submit_actor(principal, request),
+        request_id=current_request_uuid(),
+    )
+
+
+async def run_claimed(
+    oms: ExitRuntime,
+    user_id: uuid.UUID,
+    operation: ExitOperation,
+    key: uuid.UUID,
+    make: Callable[[], Coroutine[Any, Any, Response]],
+    *,
+    refused: Callable[[ExitOutcome], Awaitable[Response]],
+) -> Response:
+    """The exit `make()` builds, under the in-flight guard's claim of the principal's `key` for
+    `operation` (module docstring): a refusal is `refused(outcome)`'s answer, nothing run; a
+    runtime that refuses the run (`OmsNotReady`, its stop begun) releases the claim and raises."""
+    claimed = oms.exits.guard.claim(user_id, operation, key)
+    if isinstance(claimed, ExitOutcome):
+        return await refused(claimed)
+    release = claimed
+    try:
+        task = oms.run(make())  # a refused run closes the coroutine itself
+    except BaseException:
+        release()
+        raise
+    task.add_done_callback(lambda _done: release())
+    return await asyncio.shield(task)
+
+
+def exit_problem(outcome: ExitOutcome) -> JSONResponse:
+    """A refused exit's 22 problem, in `api.order_problems`' shape: its code's title, the
+    service's own `detail` and `errors[]`, `retry_after_seconds` with `Retry-After` where the
+    outcome holds one, the order-entry gate's `reason`, and a venue refusal's `exchange.ret_code`
+    alone, never its text (SR-E29-09)."""
+    code, ret = outcome.code or "internal_error", outcome.exchange_ret_code
+    errors = [{"field": e.field, "rule": e.rule, "message": e.message} for e in outcome.errors]
+    members: dict[str, object] = {
+        "type": f"https://candleviewer.local/errors/{code}",
+        "title": ERROR_META[ErrorCode(code)].title, "status": outcome.status, "code": code,
+        "detail": outcome.detail, "errors": errors or None,
+        "retry_after_seconds": outcome.retry_after_s, "reason": outcome.reason,
+        "exchange": None if ret is None else {"ret_code": ret},
+    }  # fmt: skip
+    body = {name: value for name, value in members.items() if value is not None}
+    retry = outcome.retry_after_s
+    headers = {} if retry is None else {"Retry-After": str(retry)}
+    return JSONResponse(body, outcome.status, headers, media_type=_MEDIA)
+
+
+def exit_response(outcome: ExitOutcome, scoped: ScopedOrder, env: Environment) -> Response:
+    """22 `cancelOrder`'s answer to an admitted exit: a refusal's problem (`exit_problem`), else
+    `202` with the order (`order_body`) as the exit left it, `unknown` too: its row read again, in
+    the state B1's step settled, in its trade group and environment."""
+    if outcome.kind == "refused":
+        return exit_problem(outcome)
+    row = scoped.order if outcome.row is None else outcome.row
+    chart = outcome.lifecycle_state or row.lifecycle_state
+    state = row.state if chart is None else _STORED.get(chart, row.state)
+    return JSONResponse(order_body(row, scoped.trade_group_id, env, state, chart), 202)
