@@ -6,7 +6,8 @@ and on the in-memory stores in `test_submission_fake.py`, so the fakes the OMS's
 take only what Postgres takes, by the names Postgres gives (C-13.3). The races, the rollbacks and
 the share-locked re-check are real here; `test_order_submission_pg.py` keeps the cases only a
 database can stage (lock waits, the sweep over every account). The pairing reads' contract
-(`store_reads_contract.py`, E29-T05) runs here too, beside it.
+(`store_reads_contract.py`, E29-T05) runs here too, beside it, with the exit routes' scoped reads
+(E29-T04 slice 4) over real grants, owner roles and accounts of two environments.
 """
 
 from __future__ import annotations
@@ -94,14 +95,14 @@ def _user(dsn: str) -> uuid.UUID:
     return uid
 
 
-def _account(dsn: str) -> tuple[uuid.UUID, uuid.UUID]:
-    """A demo account and its bootstrap profile (`trg_ea_default_profile`, version 1)."""
+def _account(dsn: str, env: str = "demo") -> tuple[uuid.UUID, uuid.UUID]:
+    """An account of `env` and its bootstrap profile (`trg_ea_default_profile`, version 1)."""
     account = uuid.uuid4()
     _sql(
         dsn,
         "INSERT INTO exchange_accounts (id, exchange, env, kind, exchange_uid, label) "
-        "VALUES (%s, 'bybit', 'demo', 'main', %s, %s)",
-        account, str(account.int % 10**15), f"acct {account.hex[:8]}",
+        "VALUES (%s, 'bybit', %s, 'main', %s, %s)",
+        account, env, str(account.int % 10**15), f"acct {account.hex[:8]}",
     )  # fmt: skip
     [(profile,)] = _sql(
         dsn,
@@ -109,6 +110,21 @@ def _account(dsn: str) -> tuple[uuid.UUID, uuid.UUID]:
         account,
     )
     return account, uuid.UUID(str(profile))
+
+
+def _grant(dsn: str, user: uuid.UUID, account: uuid.UUID, trade: bool, frozen: bool) -> None:
+    """A viewing grant, trading for `trade`, frozen with its time (`uaa_frozen_consistency`)."""
+    _sql(
+        dsn,
+        "INSERT INTO user_account_access (user_id, exchange_account_id, can_view, can_trade, "
+        "frozen, frozen_at) VALUES (%s, %s, true, %s, %s, CASE WHEN %s THEN now() END)",
+        user, account, trade, frozen, frozen,
+    )  # fmt: skip
+
+
+def _owner(dsn: str, user: uuid.UUID) -> None:
+    sql = "INSERT INTO user_roles (user_id, role_id) SELECT %s, id FROM roles WHERE name = 'owner'"
+    _sql(dsn, sql, user)
 
 
 def _refuse(dsn: str, account: uuid.UUID, reason: SubmissionRefusal) -> None:
@@ -189,6 +205,9 @@ async def h(pg_dsn: str) -> AsyncIterator[Harness]:
             bind_stop=lambda record_id, xid: _bind_stop(pg_dsn, record_id, xid),
             twin_stop=lambda record_id, twin_id: _twin_stop(pg_dsn, record_id, twin_id),
             tick=lambda: None,
+            grant=lambda user, account, trade, frozen: _grant(pg_dsn, user, account, trade, frozen),
+            owner=lambda user: _owner(pg_dsn, user),
+            elsewhere=lambda: _account(pg_dsn, "live"),
         )
     finally:
         await rel.dispose()

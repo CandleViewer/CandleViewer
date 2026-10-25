@@ -118,7 +118,10 @@ class Harness:
     `bind_stop` an exchange order id no store binds yet, as `trg_rs_guard` admits the one bind;
     `twin_stop` a row of a stop's request values and age (`created_at`) under another id, which one
     request per transaction never writes; `tick` makes the next row younger, as Postgres's `now()`
-    does and the fake's standing clock does not."""
+    does and the fake's standing clock does not.
+    The exit routes' scope (E29-T04 slice 4): `grant` gives a user a viewing grant on an account,
+    trading when `trade`, frozen when `frozen`; `owner` a live owner role; `elsewhere` a live
+    account, of another environment than `new_account`'s."""
 
     submissions: SubmissionStore
     anchors: IdempotencyAnchorStore
@@ -134,6 +137,9 @@ class Harness:
     bind_stop: Callable[[UUID, str], None]
     twin_stop: Callable[[UUID, UUID], None]
     tick: Callable[[], None]
+    grant: Callable[[UUID, UUID, bool, bool], None]
+    owner: Callable[[UUID], None]
+    elsewhere: Callable[[], tuple[UUID, UUID]]
 
 
 def link() -> str:

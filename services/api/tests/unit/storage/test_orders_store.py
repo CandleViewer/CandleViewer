@@ -37,6 +37,7 @@ from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailab
 from candleviewer.storage.repositories import executions_sqlalchemy as ex
 from candleviewer.storage.repositories import orders as port
 from candleviewer.storage.repositories import orders_sqlalchemy as mod
+from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
 from candleviewer.storage.repositories.exchange_payload import MAX_CODE_CHARS, OVERSIZE, REDACTED
 from candleviewer.storage.repositories.orders import (
     EVENT_FIELDS,
@@ -57,7 +58,8 @@ from candleviewer.storage.repositories.orders import (
 from tests.unit.oms.write_ahead_contract import event, fill, step
 
 T0 = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
-ACCOUNT, ORDER = uuid.UUID(int=1), uuid.UUID(int=2)
+ACCOUNT, ORDER, USER = uuid.UUID(int=1), uuid.UUID(int=2), uuid.UUID(int=3)
+_GRANT = GrantScope(USER, frozenset({ACCOUNT}))
 LINK = "cvl-0TLr6mSAQFGvyfsJ0nLDCh-d0hb-00en"  # the #845 Gherkin id
 _MAC = "9f" * 32  # synthetic 64-hex shape, digits and letters
 _KEY = "DUMMYKEY_" + "Q3w9" * 5  # synthetic, built at run time (SR-145)
@@ -304,7 +306,11 @@ _STATEMENTS: dict[str, Any] = {
     "lock_entry_stops_statement": mod.lock_entry_stops_statement(ACCOUNT, ORDER),
     "environment_accounts_statement": mod.environment_accounts_statement("demo"),
     "list_unfinished_statement": mod.list_unfinished_statement([ACCOUNT], 4097),
+    "in_scope_statement": mod.in_scope_statement(_GRANT, ORDER, "demo"),
+    "accounts_in_scope_statement": mod.accounts_in_scope_statement(_GRANT, "demo", [ACCOUNT]),
 }
+#: The exit routes' reads (E29-T04 slice 4), scoped by the principal: the grant bound to its user.
+_BY_PRINCIPAL = {"in_scope_statement", "accounts_in_scope_statement"}
 
 
 def test_the_statement_set_is_pinned() -> None:
@@ -320,7 +326,30 @@ def test_every_statement_but_create_and_the_id_check_is_account_scoped(name: str
     scoped = "orders.exchange_account_id = $" in sql or (
         name in entry_stops and "recorded_stops.exchange_account_id = $" in sql
     )
+    scoped |= name in _BY_PRINCIPAL and "uaa.user_id = CAST($" in sql
     assert scoped is (name not in mod.UNSCOPED)
+
+
+def test_the_exit_reads_hold_the_owner_or_the_grant_predicate_in_sql() -> None:
+    """E29-T04 slice 4 (C-12.4): `scope_clause`, once: a live account of the environment, then a
+    live owner role, or a grant among the snapshot's ids whose live row lets it view, unfrozen,
+    and trade for the trade flag; the anchor read only for an order with no group (`coalesce`).
+    The order's account is an `EXISTS` over its own `exchange_accounts` row, never a join of the
+    table (its surface fence), and the grant SR-051's text (the grant fence, UL-F2)."""
+    live = "exchange_accounts.deleted_at IS NULL AND exchange_accounts.env = $"
+    row = "FROM exchange_accounts \nWHERE exchange_accounts.id = orders.exchange_account_id AND "
+    owner = _sql(mod.in_scope_statement(OwnerScope(USER), ORDER, "demo"))
+    assert live in owner and "user_account_access" not in owner and owner.count(row) == 2
+    assert "WHERE user_roles.user_id = $" in owner and "roles.name = $" in owner
+    grant = _sql(_STATEMENTS["in_scope_statement"])
+    assert live in grant and "exchange_accounts.id IN ($" in grant and "user_roles" not in grant
+    assert grant.count(row) == 2 and "JOIN exchange_accounts" not in grant
+    assert grant.count("uaa.can_view AND NOT uaa.frozen") == 2
+    assert grant.count("uaa.can_trade") == 1  # the `can_trade` column alone
+    assert "coalesce(trade_groups.created_by, (SELECT idempotency_anchors.created_by" in grant
+    assert grant.endswith(") AS scoped ON true")
+    nothing = _sql(mod.accounts_in_scope_statement(GrantScope(USER, frozenset()), "demo", ()))
+    assert nothing.endswith("WHERE false ORDER BY exchange_accounts.id")
 
 
 def test_only_the_insert_the_id_check_and_the_hydration_read_are_unscoped() -> None:
@@ -674,6 +703,16 @@ def _event_row(**over: Any) -> dict[str, Any]:
     return row | {"id": 7, "order_id": ORDER, "seq": 1, "kind": "ack", "payload": {}} | over
 
 
+_GROUP, _PROFILE = uuid.UUID(int=4), uuid.UUID(int=5)
+
+
+def _scoped_row(**over: Any) -> dict[str, Any]:
+    """`in_scope_statement`'s one row for `_order_row`'s order in the scope: the probe's `holder`
+    beside the order, its group, its leg's profile, its creator and the trade flag."""
+    judged = {"trade_group_id": _GROUP, "profile_id": _PROFILE, "created_by": USER}
+    return _order_row() | judged | {"can_trade": True, "holder": ACCOUNT} | over
+
+
 async def test_create_maps_the_returned_row_and_commits_once() -> None:
     rel = _Rel(_Result([_order_row(stop_loss=Decimal("62000"), tpsl_mode="Partial")]))
     row = await _store(rel).create(_new_order(), _event())
@@ -698,6 +737,36 @@ async def test_reads_map_rows_and_absence() -> None:
     bound = await store.get_by_exchange_order_id(ACCOUNT, "x-1")
     assert bound == OrderRow(**_order_row(exchange_order_id="x-1"))
     assert await store.get_by_exchange_order_id(ACCOUNT, "x-2") is None and rel.commits == 0
+
+
+@pytest.mark.parametrize("trade", [True, False], ids=["trade", "view-only"])
+async def test_get_in_scope_maps_a_scoped_row_to_the_order_and_what_it_is_judged_by(
+    trade: bool,
+) -> None:
+    """Rulings Q6 and Q7: the order with its group, its leg's profile, its creator and whether the
+    scope may trade its account, read in one statement and committing nothing."""
+    rel = _Rel(_Result([_scoped_row(can_trade=trade)]))
+    got = await _store(rel).get_in_scope(_GRANT, ORDER, environment="demo")
+    assert got == port.ScopedOrder(OrderRow(**_order_row()), _GROUP, _PROFILE, USER, trade)
+    assert (len(rel.statements), rel.commits) == (1, 0)
+
+
+@pytest.mark.parametrize("holder", [ACCOUNT, None], ids=["outside-the-scope", "missing"])
+async def test_get_in_scope_maps_no_scoped_row_to_the_holding_account_alone(holder: Any) -> None:
+    """Ruling Q12: for an id outside the scope every scoped column is NULL and only the probe's
+    `holder` comes back, None for an id no order holds; both answer the same 404 (SR-E29-13)."""
+    rel = _Rel(_Result([dict.fromkeys(_scoped_row()) | {"holder": holder}]))
+    got = await _store(rel).get_in_scope(_GRANT, ORDER, environment="demo")
+    assert got == port.OutOfScope(holder)
+
+
+def test_a_scope_refusal_of_the_account_set_is_no_store_failure() -> None:
+    """SR-E29-13: an account the request names outside the scope refuses the whole set, the
+    caller's scope and never an outage: no `OrderStoreError`, which the OMS reads as a store that
+    did not serve (24 Sec.8.2 S7), so no caller answers it `503` in place of its `403`."""
+    with pytest.raises(port.AccountsOutOfScope) as refused:
+        port.settle_accounts([ACCOUNT], [ACCOUNT, ORDER])
+    assert not isinstance(refused.value, port.OrderStoreError)
 
 
 @pytest.mark.parametrize("text", [None, "", "x" * 65], ids=["none", "empty", "overlong"])
@@ -821,6 +890,14 @@ _CALLS: dict[str, tuple[Callable[[mod.SqlAlchemyOrderStore], Awaitable[object]],
         [_Result([{"id": ACCOUNT}])],
     ),
     "transition": (lambda st: st.transition(_STEP), [_LOCKED, _CAS, _EVENT]),
+    "get_in_scope": (
+        lambda st: st.get_in_scope(_GRANT, ORDER, environment="demo"),
+        [_Result([_scoped_row()])],
+    ),
+    "accounts_in_scope": (
+        lambda st: st.accounts_in_scope(_GRANT, "demo", ()),
+        [_Result([{"id": ACCOUNT}])],
+    ),
 }
 
 
@@ -934,7 +1011,7 @@ async def test_any_other_database_error_keeps_only_its_sqlstate(
 @pytest.mark.parametrize(
     "read",
     ["get", "get_by_link_id", "get_by_exchange_order_id", "link_id_taken", "list_for_order",
-     "list_open", "list_unfinished", "environment_accounts"],
+     "list_open", "list_unfinished", "environment_accounts", "get_in_scope", "accounts_in_scope"],
 )  # fmt: skip
 async def test_a_failed_read_keeps_only_its_sqlstate_like_a_write(read: str) -> None:
     """One error family for the OMS (24 Sec.8.2 S7): the allocator's lookup and every other read

@@ -20,7 +20,7 @@ client's key, the request's fingerprint or a price (21 Sec.12, C-12.6).
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from time import perf_counter
@@ -30,8 +30,10 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.domain.primitives import Environment
 from candleviewer.observability.metrics import BoundedMetric
 from candleviewer.storage.errors import WriteAheadTimeout
+from candleviewer.storage.repositories.accounts import AccountScope
 from candleviewer.storage.repositories.executions import (
     ExecutionRow,
     ExecutionStore,
@@ -46,6 +48,7 @@ from candleviewer.storage.repositories.idempotency_anchors import (
 from candleviewer.storage.repositories.orders import (
     MAX_EVENT_PAGE,
     UX_ORDERS_LINK,
+    AccountsOutOfScope,
     CommittedStep,
     NewOrder,
     NewOrderEvent,
@@ -55,6 +58,8 @@ from candleviewer.storage.repositories.orders import (
     OrderRow,
     OrderStore,
     OrderTransition,
+    OutOfScope,
+    ScopedOrder,
 )
 from candleviewer.storage.repositories.positions import (
     NewPositionSnapshot,
@@ -98,6 +103,7 @@ from candleviewer.storage.repositories.trade_groups import (
 )
 
 from .errors import (
+    AccountScopeDenied,
     AnchorTaken,
     AuditNotDurable,
     DuplicateOrderLinkId,
@@ -200,6 +206,22 @@ class OrderRepository:
         self, account_id: UUID, *, symbol: str | None = None
     ) -> tuple[OrderRow, ...]:
         return await self._store.list_open(account_id, symbol=symbol)
+
+    async def get_in_scope(
+        self, scope: AccountScope, order_id: UUID, *, environment: Environment
+    ) -> ScopedOrder | OutOfScope:
+        """The exit routes' read (E29-T04 slice 4), the principal's scope held in SQL (C-12.4)."""
+        return await self._store.get_in_scope(scope, order_id, environment=environment)
+
+    async def accounts_in_scope(
+        self, scope: AccountScope, environment: Environment, requested: Collection[UUID]
+    ) -> tuple[UUID, ...]:
+        """Cancel-all's accounts (`OrderStore.accounts_in_scope`): `AccountScopeDenied` when one
+        requested is outside the scope, for the whole request (SR-E29-13)."""
+        try:
+            return await self._store.accounts_in_scope(scope, environment, requested)
+        except AccountsOutOfScope:
+            raise AccountScopeDenied from None
 
     async def exists(self, order_link_id: str) -> bool:
         """`OrderLinkLookup` (#846 rulings B1, Q1): any row of any account, in any state. A
