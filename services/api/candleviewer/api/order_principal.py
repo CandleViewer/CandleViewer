@@ -10,10 +10,11 @@ refuses `placeOrder` from a session viewing as another user (#4177), and this do
 a context its request carries no stamp for is `StoreUnavailable`, never the session's own scope.
 A write the guard passed as the viewer in a live context, a protective one, also carries the
 target's roles, permissions and trade grants (`TradingPrincipal.target`), read the same way: 22
-admits it only when both the viewer's own RBAC and the target's `x-rbac` allow it, and the route
-makes that second check. A target who can no longer act (missing, not `active`, a role outside the
-system set) allows nothing; in the hold there is no target, the write running in the viewer's own
-scope (the orchestrator's ruling of 2026-10-24 22:50Z).
+admits it only when both the viewer's own RBAC and the target's `x-rbac` allow it. The view-as
+guard checks the target's permission; the route takes its account scope from `scope_for_target`,
+which meets the target's trade grants (the orchestrator's rulings of 2026-10-24 22:50Z and
+23:10Z). A target who can no longer act (missing, not `active`, a role outside the system set)
+allows nothing; in the hold there is no target, the write running in the viewer's own scope.
 
 It fails closed: no session (no bearer, a refused token, a user unknown or not `active`, a role
 outside the system set) is `None`, the route's 401; a store that does not answer within
@@ -37,9 +38,10 @@ from fastapi import Request
 from candleviewer.api.audit_principal import _Identity, _Sessions, identity_snapshot
 from candleviewer.api.view_as_subject import view_as_stamp, view_as_subject
 from candleviewer.auth.errors import AuthError, AuthServiceUnavailable
-from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot, account_scope
 from candleviewer.auth.view_as import ViewAsPhase
 from candleviewer.oms.errors import StoreUnavailable
+from candleviewer.storage.repositories.accounts import AccountScope, GrantScope
 
 #: Bounds the session, identity and grant reads together, so a stalled store holds no request.
 PRINCIPAL_READ_TIMEOUT_S: Final = 2.0
@@ -60,6 +62,25 @@ class TradingPrincipal:
     session_id: uuid.UUID
     snapshot: PrincipalSnapshot
     target: PrincipalSnapshot | None = None
+
+
+def scope_for_target(viewer: PrincipalSnapshot, target: PrincipalSnapshot | None) -> AccountScope:
+    """The accounts a write may touch, as the account readers take them: the viewer's own
+    (`account_scope`) and, for a protective write in a live view-as context, only those the target
+    may trade as well (`TradingPrincipal.target`; module docstring). A scope the target narrows
+    carries the target's id, so the readers' SQL re-checks the target's live grants (SR-051); the
+    actor stays the viewer. A listed account outside it refuses the request whole, and an empty
+    list means all of it, as for any scope. An Owner target narrows nothing."""
+    own = account_scope(viewer)
+    if target is None or target.is_owner:
+        return own
+    trades = frozenset(
+        g.exchange_account_id for g in target.account_grants
+        if g.can_view and g.can_trade and not g.frozen
+    )  # fmt: skip
+    if isinstance(own, GrantScope):
+        trades &= own.account_ids
+    return GrantScope(target.user_id, trades)
 
 
 class SessionTradingPrincipalResolver:

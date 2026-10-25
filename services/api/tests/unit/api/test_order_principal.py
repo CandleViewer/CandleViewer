@@ -397,19 +397,21 @@ def test_with_no_target_the_scope_is_the_viewers_own() -> None:
     """Outside a live view-as context nothing changes: `account_scope` as the routes take it."""
     viewer = _person(USER, "manager", (SHARED, True, True, False), (FROZEN, True, True, True))
     assert scope_for_target(_OWNER, None) == account_scope(_OWNER) == OwnerScope(USER)
-    assert scope_for_target(viewer, None) == account_scope(viewer) == GrantScope(USER, {SHARED})
+    own = GrantScope(USER, frozenset({SHARED}))  # the frozen grant is outside it
+    assert scope_for_target(viewer, None) == account_scope(viewer) == own
 
 
 def test_an_owner_viewing_a_manager_may_touch_only_the_targets_trade_grants() -> None:
     """22: admitted only when the target's `x-rbac` allows it too. The scope carries the target's
     id, so the sanctioned readers' SQL re-checks the target's live grants (SR-051); the actor stays
     the viewer, as `submit_actor` names it. A view-only or frozen grant is no trade grant."""
-    assert scope_for_target(_OWNER, _MANAGER) == GrantScope(TARGET, {TARGET_TRADE, SHARED})
+    trades = frozenset({TARGET_TRADE, SHARED})
+    assert scope_for_target(_OWNER, _MANAGER) == GrantScope(TARGET, trades)
 
 
 def test_a_manager_viewer_and_a_manager_target_meet_in_both_their_grants() -> None:
     viewer = _person(USER, "manager", (SHARED, True, True, False), (VIEWER_ONLY, True, True, False))
-    assert scope_for_target(viewer, _MANAGER) == GrantScope(TARGET, {SHARED})
+    assert scope_for_target(viewer, _MANAGER) == GrantScope(TARGET, frozenset({SHARED}))
 
 
 def test_a_target_who_allows_nothing_scopes_nothing() -> None:
