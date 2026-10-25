@@ -8,6 +8,7 @@ import asyncio
 import inspect
 import threading
 from collections.abc import Callable, Sequence
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from structlog.testing import capture_logs
 
 from candleviewer import oms_wiring
 from candleviewer.accounts.verification import Refusal
+from candleviewer.audit.machine_events import APPEND_FAILURE_COOLDOWN_S
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.exchange.base.models import AccountRef, Position
 from candleviewer.exchange.base.ports import TradingPort
@@ -33,6 +35,7 @@ from candleviewer.oms_wiring import (
     ServedSink,
     ServedStandings,
 )
+from candleviewer.statechart.plugins.audit import CvAuditPlugin
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.test_oms_runtime import Port
 from tests.unit.oms.test_order_lane import BOUND_S, running
@@ -40,6 +43,13 @@ from tests.unit.oms.test_order_lane import BOUND_S, running
 OTHER = UUID(int=2)
 #: What the serving loop's side of each bridge was called for, and on which thread.
 Calls = list[tuple[str, threading.Thread]]
+#: The sink bridge's page for an append the serving loop did not begin: its class alone.
+DROPPED = {
+    "event": "oms_sink_append_dropped",
+    "cv_page": True,
+    "error": "TimeoutError",
+    "log_level": "critical",
+}
 
 
 class Spy:
@@ -70,7 +80,7 @@ async def test_a_stalled_serving_loop_leaves_the_gate_not_ready_and_the_sink_unr
     runs once this loop turns again."""
     calls, done, serving = Calls(), threading.Event(), _serving()
     spy: Any = Spy(calls)
-    gate, sink = ServedGate(spy, serving), ServedSink(spy, serving)
+    gate, sink = ServedGate(spy, serving, ServedStandings(spy, serving)), ServedSink(spy, serving)
 
     async def hops() -> list[str]:
         failed = []
@@ -95,12 +105,87 @@ async def test_a_stalled_serving_loop_leaves_the_gate_not_ready_and_the_sink_unr
     assert unanswered == [str(cr.ACCOUNT)] and calls == []
 
 
+async def test_an_unbegun_append_pages_once_in_its_window_and_still_reaches_the_plugin() -> None:
+    """SEC-S3L1CE-01 (24 Sec.17.6, M19): a write-ahead row the stalled serving loop does not begin
+    within 1 s never runs, a hole no chain check sees. The bridge pages it, by its class alone and
+    once in its window, and still raises it to the audit plugin, which counts each; the plugin's
+    hook contains it, so the machine's step runs on, as it will until L2."""
+    calls, done, serving = Calls(), threading.Event(), _serving()
+    spy: Any = Spy(calls)
+    plugin = CvAuditPlugin(
+        machine_kind="order",
+        entity_id=str(OTHER),
+        env="demo",
+        sink=ServedSink(spy, serving, monotonic=lambda: 0.0),  # both appends in one window
+        write_ahead=True,
+    )
+
+    async def steps() -> None:
+        try:
+            for _ in range(2):  # two steps, each with its write-ahead row
+                plugin.on_event_received(None, SimpleNamespace(type="SUBMIT", data={"qty": "1"}))
+                plugin.on_action_execute(None, "send_create")  # contained: never raises
+        finally:
+            done.set()
+
+    with capture_logs() as logs:
+        async with running() as lane:
+            answered = lane.call(steps())
+            assert done.wait(BOUND_S)  # this loop blocks meanwhile: the stall
+            await answered
+            await lane.call(asyncio.sleep(0))  # this loop has turned meanwhile
+    assert [e for e in logs if e.get("cv_page")] == [DROPPED]
+    failed = [e["error"] for e in logs if e["event"] == "statechart_audit_sink_failed"]
+    assert failed == ["TimeoutError"] * 2
+    assert (plugin.sink_failures, plugin.hook_errors, calls) == (2, 2, [])
+
+
+def test_the_drop_pages_each_windows_first_and_a_begun_refusal_is_the_sinks_to_page() -> None:
+    """SEC-S3L1CE-01: the bridge pages the first unbegun append of each window, M19's own
+    (`APPEND_FAILURE_COOLDOWN_S`, in which the sink pages its own failed appends), on the injected
+    clock. A refusal the serving loop's sink answered is raised as it is and paged by the sink
+    (`audit/machine_events.py`), never here."""
+
+    class Hop:
+        """The serving loop's blocking hop, begun or not as the test sets it, never waiting."""
+
+        begun = False
+
+        def block(self, fn: Callable[[], None]) -> None:
+            if not self.begun:
+                raise TimeoutError
+            fn()
+
+    class Refusing:
+        def append(self, row: Any) -> None:
+            raise ValueError("the sink refused the row")
+
+    now, hop = [0.0], Hop()
+    served: Any = hop
+    row: Any = SimpleNamespace()  # never read: the refusing sink raises at once
+    sink = ServedSink(Refusing(), served, monotonic=lambda: now[0])
+    window = APPEND_FAILURE_COOLDOWN_S
+    with capture_logs() as logs:
+        for at, begun, error in (
+            (0.0, False, TimeoutError),
+            (window - 0.001, False, TimeoutError),
+            (window - 0.001, True, ValueError),
+            (window, False, TimeoutError),
+        ):
+            now[0], hop.begun = at, begun
+            with pytest.raises(error):
+                sink.append(row)
+    assert [e for e in logs if e.get("cv_page")] == [DROPPED, DROPPED]
+    assert oms_wiring.SINK_PAGE_COOLDOWN_S == window
+
+
 async def test_a_rejected_credentials_notice_lands_before_a_later_gate_read_from_the_lane() -> None:
     """C-2.21: the notice is never awaited, yet it reaches the key standing before any gate read the
     lane makes after it."""
     calls, serving = Calls(), _serving()
     spy: Any = Spy(calls)
-    standings, gate = ServedStandings(spy, serving), ServedGate(spy, serving)
+    standings = ServedStandings(spy, serving)
+    gate = ServedGate(spy, serving, standings)
 
     async def rejected() -> OrderEntryRefusal | None:
         standings.credential_rejected(cr.ACCOUNT, Refusal.UNKNOWN_KEY)
@@ -110,6 +195,56 @@ async def test_a_rejected_credentials_notice_lands_before_a_later_gate_read_from
         assert await lane.call(rejected()) is None
     here = threading.current_thread()
     assert calls == [("credential_rejected", here), ("refusal", here)]
+
+
+async def test_a_rejected_credential_is_refused_on_the_lane_before_its_notice_lands() -> None:
+    """CR-S3L1B-04 (C-2.21): while this loop stalls, the lane's gate refuses at once an account it
+    told of a rejected credential, without this loop; once the notice lands, the lane's own refusal
+    ends and the key standing's answers."""
+    calls, done, serving = Calls(), threading.Event(), _serving()
+    spy: Any = Spy(calls)
+    standings = ServedStandings(spy, serving)
+    gate = ServedGate(spy, serving, standings)
+
+    async def rejected() -> OrderEntryRefusal | None:
+        try:
+            standings.credential_rejected(cr.ACCOUNT, Refusal.UNKNOWN_KEY)
+            return gate.refusal(cr.ACCOUNT)
+        finally:
+            done.set()
+
+    async with running() as lane:
+        answered = lane.call(rejected())
+        assert done.wait(BOUND_S)  # the stall: the notice cannot land meanwhile
+        refused = await answered
+        assert refused is not None and refused.reason == "no_active_key"
+        await lane.call(asyncio.sleep(0))  # this loop has turned: the notice has landed
+    assert not standings.refused(cr.ACCOUNT) and [name for name, _ in calls] == [
+        "credential_rejected"
+    ]
+
+
+async def test_a_landed_rejection_is_dropped_never_a_later_one_and_a_failed_one_stays() -> None:
+    """SEC-S3L1C-03: the lane's own refusal is the gate's `NO_ACTIVE_KEY`; a rejection whose notice
+    has landed is dropped, never a later one of its account still on its way; one whose notice
+    fails there stays refused for good."""
+    loop, seen = asyncio.new_event_loop(), list[bool]()  # a serving loop that turns only below
+
+    class Standing:
+        def credential_rejected(self, account_id: UUID, refusal: Refusal) -> None:
+            seen.append(standings.refused(cr.ACCOUNT))
+            if account_id == OTHER:
+                raise RuntimeError("the key standing failed")
+
+    standing: Any = Standing()
+    serving = Serving(loop, Metrics("demo"))
+    standings = ServedStandings(standing, serving)
+    for account in (cr.ACCOUNT, cr.ACCOUNT, OTHER):
+        standings.credential_rejected(account, Refusal.UNKNOWN_KEY)
+    await asyncio.to_thread(loop.run_until_complete, asyncio.sleep(0))  # the notices land
+    loop.close()
+    assert seen == [True, True, False] and list(standings._sent) == [OTHER]
+    assert ServedGate(standing, serving, standings).refusal(OTHER) is oms_wiring.NO_ACTIVE_KEY
 
 
 async def test_the_port_awaits_each_venue_call_on_the_serving_loop_and_refuses_a_private_stream(
