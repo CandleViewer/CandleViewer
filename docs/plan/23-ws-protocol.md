@@ -4346,13 +4346,18 @@ and is left out for a connection whose principal holds no role (the field is opt
 machine code from an **open** set; current values are `oms.account_resyncing` (the account's private
 stream was lost and its orders and positions are being re-read, E29-T05), `oms.account_desync`
 (reconciliation found a difference and is correcting it, E29-T06), `oms.account_stale`
-(reconciliation has failed for 2 minutes and order entry for the account is refused, E29-T06) and
-`oms.account_synced` (the account is reconciled and live again). A frame reports the state of each
-account it names, so a client keeps the latest `reason` per account id, which `oms.account_synced`
-clears, and keys on the code, never on `severity`. `message` is one role-neutral sentence per
-`reason`: it names no account (no label, id or exchange uid) and counts none. An account's state
-reaches a Manager or Viewer in an `account_notice` and in no other field: no `health` value,
-`components[]` item, `exchange` word, `private_ws` word or `degraded_topics` entry is derived from it.
+(reconciliation has failed for 2 minutes and order entry for the account is refused, E29-T06),
+`oms.account_synced` (the account is reconciled and live again) and `profiles.changed` (a trading
+profile of the account, or its default binding, was written, E28-T02). An `oms.` frame reports the
+state of each account it names, so a client keeps the latest `oms.` `reason` per account id, which
+`oms.account_synced` clears, and keys on the code, never on `severity`. A `profiles.changed` frame,
+sent with `severity: "info"`, is an event and reports no state: it neither sets nor clears an
+account's `oms.` state, and a client re-reads the account's profiles through its own grants
+(`GET /exchange-accounts/{accountId}/profiles`) and keeps nothing for the frame itself. `message`
+is one role-neutral sentence per `reason`: it names no account (no label, id or exchange uid) and
+counts none. An account's state reaches a Manager or Viewer in an `account_notice` and in no other
+field: no `health` value, `components[]` item, `exchange` word, `private_ws` word or
+`degraded_topics` entry is derived from it.
 
 The Owner receives an `account_notice` whole. A Manager or Viewer receives it with
 `exchange_account_ids` cut to the accounts its `account_scope` lists (§4.3), and only when one
@@ -4589,6 +4594,16 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 **Contract change, 2026-10-19 (#415).** `account_scope` in `auth_ok` and `permission_change`, and the accounts of a kill-switch view (§15.9), list the grants that currently permit access, so a frozen grant is no longer listed (§4.3, §9.5). Before, each listed every view grant, a frozen one too. This changes meaning (C-6.3) before the protocol freeze (#572), within `cv.v1`: no frame shape changes, a `sub` naming a frozen account was already refused, and no shipped client reads the list for a decision (`apps/web` validates `account_scope`'s shape, keeps the kill-switch list in state, and reads neither to decide). This is an orchestrator contract decision (2026-10-19); the owner may override it.
 
 **Contract change, 2026-10-20 (#3864).** `system` gains `kind: "account_notice"` and an optional top-level `exchange_account_ids`, and `system.kind` becomes an open enum (§15.9, §16.5; SR-E29-10). This is additive (C-6.3): no shipped client validates `kind` (`apps/web` reads it as a string) and no producer sends either yet (E29-T05 is the first). This is an orchestrator contract decision (2026-10-20); the owner may override it.
+
+**Contract change, 2026-10-25 (#906).** `account_notice` gains the `reason` `profiles.changed`
+(§15.9): a trading profile of an account, or its default binding, was written. It is an event, not
+a state, so it leaves an account's `oms.` state as it was, and a client re-reads the account's
+profiles through its own grants. E28-K01's spike (#968) chose it to carry a profile change to open
+tickets inside the frozen topic list; its producer is #906's bridge from the bus event
+`ProfilesChanged` (24 §9.2), and E28-S01 (#971) consumes it. This is additive (C-6.3): `reason` is
+an open set, the frame's fields and its cut to the connection's grants are unchanged, and no
+shipped client keeps a state per `reason` yet. This is the orchestrator's contract decision
+(2026-10-25, from #968's spike); the owner may override it.
 
 ### 16.2 Limits summary
 
