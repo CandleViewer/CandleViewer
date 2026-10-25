@@ -1,11 +1,12 @@
 """D6 (#913 slice 3 L2, the order lane's own audit writer and machine-event sink): `AuditWriter`
 and `MachineEventWalSink` each serve one event loop, the one they were built on (built outside
-one, their first checked call's), and refuse a call from any other loop, or from a thread that
-runs none, with a typed error before anything is read or written (C-2.9, fail closed), the first
-refusal of each 5 s window paged (CR-S3L2-08). An exclusive writer locks `<wal>.lock` before it
-opens its WAL and holds the lock to the end of its stop, its last WAL op included (CR-S3L2-05), so
-no second writer ever reads or cuts that file. No timing is asserted: a call from another loop is
-one made on a loop of its own in a worker thread, and each wait is a bound on the test."""
+one, the one their `start()` runs on, which alone binds them, SEC-S3L2-07), and refuse a call from
+any other loop, or from a thread that runs none, with a typed error before anything is read or
+written (C-2.9, fail closed), the first refusal of each 5 s window paged (CR-S3L2-08). An
+exclusive writer locks `<wal>.lock` before it opens its WAL and holds the lock to the end of its
+stop, its last WAL op included (CR-S3L2-05), so no second writer ever reads or cuts that file. No
+timing is asserted: a call from another loop is one made on a loop of its own in a worker thread,
+and each wait is a bound on the test."""
 
 from __future__ import annotations
 
@@ -86,12 +87,19 @@ async def test_a_writer_refuses_every_call_from_another_loop_before_it_touches_a
     await writer.stop(1)
 
 
-async def test_a_writer_built_outside_a_loop_serves_the_loop_of_its_first_checked_call(
+async def test_a_writer_built_outside_a_loop_serves_the_loop_its_start_runs_on(
     tmp_path: Path,
 ) -> None:
+    """SEC-S3L2-07 (the Fable lens at 864fa082): a writer built outside a loop is bound by its
+    `start()` alone. Before that, a call from any loop is refused and binds nothing, so a first
+    caller on another loop never takes the writer; the loop that starts it serves it after."""
     repo = FakeAuditRepository()
     writer = await asyncio.to_thread(AuditWriter, repo, str(tmp_path / "audit.wal"))
-    await writer.start()  # the first checked call: this loop is the writer's from now on
+    with pytest.raises(AuditWriterWrongLoop):  # a first caller elsewhere: refused, nothing bound
+        await _elsewhere(lambda: writer.emit("auth.logout", actor_label="system:test"))
+    with pytest.raises(AuditWriterWrongLoop):  # and this loop too, until its start
+        await writer.emit("auth.logout", actor_label="system:test")
+    await writer.start()  # binds this loop
     with pytest.raises(AuditWriterWrongLoop):
         await _elsewhere(lambda: writer.emit("auth.logout", actor_label="system:test"))
     await writer.emit("auth.logout", actor_label="system:test")
@@ -202,6 +210,33 @@ async def test_a_sink_refuses_every_call_from_another_loop_or_from_none_and_writ
     sink.append(_row(4))  # its own loop still serves it, and it is still running
     await sink.stop()
     assert [row["entity_id"] for row in store.rows] == ["order-0", "order-4"]
+
+
+async def test_a_sink_built_outside_a_loop_serves_the_loop_its_start_runs_on(
+    tmp_path: Path,
+) -> None:
+    """SEC-S3L2-07: the sink as the writer, the persistence bundle's case (`main.py` builds the app
+    at import, outside any loop): before its `start()` every call is refused, from another loop,
+    from this one or from a thread that runs none, and binds nothing; then the loop that started it
+    serves it, and another is refused."""
+    store = Store()
+    sink = await asyncio.to_thread(MachineEventWalSink, store, tmp_path / "machine_events.wal")
+    with pytest.raises(MachineEventWrongLoop):  # a first caller elsewhere: refused, nothing bound
+        await _elsewhere(functools.partial(_head, sink, _row(0)))
+    with pytest.raises(MachineEventWrongLoop):
+        sink.head(_row(0))
+    with pytest.raises(MachineEventWrongLoop):
+        sink.append(_row(0))
+    with pytest.raises(MachineEventWrongLoop):
+        await sink.seed(_row(0))
+    with pytest.raises(MachineEventWrongLoop):
+        await asyncio.to_thread(sink.append, _row(0))
+    await sink.start()  # binds this loop
+    sink.append(_row(0))
+    with pytest.raises(MachineEventWrongLoop):
+        await _elsewhere(functools.partial(_append, sink, _row(1)))
+    await sink.stop()
+    assert [row["entity_id"] for row in store.rows] == ["order-0"]
 
 
 async def test_a_writer_pages_the_first_wrong_loop_refusal_of_each_window_on_its_clock(
