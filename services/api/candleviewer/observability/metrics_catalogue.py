@@ -2638,10 +2638,10 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "requests",
         ("operation", "code"),
-        "Exit requests the OMS did not accept (24 Sec.8.4, the exit routes; E29-T04 slice 4 "
-        "ruling Q14), by operation (amend, cancel, cancel_all) and problem code: each refusal "
-        "counted as it is answered, the unaudited 501 and oms_not_ready included, and each 429 or "
-        "502 the venue's answer gave.",
+        "Exit requests refused (24 Sec.8.4, the exit routes; E29-T04 slice 4 ruling Q14), by "
+        "operation (amend, cancel, cancel_all) and problem code: every problem an exit route "
+        "answers, counted once as it is answered under the code it carries, from step 1 on, the "
+        "unaudited ones included, and each 429 or 502 the venue's answer gave.",
         "dashboard",
         _P,
         "E29",
