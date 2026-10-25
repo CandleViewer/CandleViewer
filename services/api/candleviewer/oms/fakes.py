@@ -66,6 +66,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     check_in_force,
     check_request,
     check_resolve,
+    in_force_as_read,
     request_cutoff,
 )
 from candleviewer.storage.repositories.submissions import (
@@ -977,7 +978,8 @@ class InMemoryRecordedStopStore:
     hook (C-2.9), as the SQL store refuses it; every read and update inside the account but the
     startup sweep over every account. A write's write-ahead hook is awaited, bounded, before its
     commit. `put_in_force`, `resolve` and `end` compare-and-set on `(status, answered_at)` as
-    read."""
+    read, and `put_in_force` on the key's rows in force as the caller's read saw them too
+    (SEC-S2D-03)."""
 
     def __init__(
         self, db: InMemoryOrderStore, *, audit_timeout_s: float = STOP_AUDIT_TIMEOUT_S
@@ -1160,6 +1162,7 @@ class InMemoryRecordedStopStore:
         account_id: UUID,
         rows: Sequence[RecordedStopRow],
         *,
+        in_force: Sequence[RecordedStopRow],
         at: datetime,
         write_ahead: InForceWriteAhead | None = None,
     ) -> InForce:
@@ -1169,6 +1172,13 @@ class InMemoryRecordedStopStore:
         held = self._as_read(account_id, rows)
         born = {r.kind: r.created_at for r in held}
         key, ids = (account_id, rows[0].symbol, rows[0].position_idx), {r.id for r in rows}
+        now_in_force = (
+            (r.id, r.kind)
+            for r in self._db._stops.values()
+            if (r.exchange_account_id, r.symbol, r.position_idx, r.status) == (*key, "in_force")
+        )
+        if not in_force_as_read(now_in_force, in_force):  # SEC-S2D-03, as the SQL store compares
+            raise StaleRecordedStop
         replaced = tuple(
             replace(r, status="replaced", answered_at=r.answered_at or at, closed_at=at)
             for r in sorted(self._db._stops.values(), key=lambda r: r.id)

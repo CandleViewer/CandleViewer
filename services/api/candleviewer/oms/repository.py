@@ -613,14 +613,17 @@ class RecordedStopRepository:
         account_id: UUID,
         rows: Sequence[RecordedStopRow],
         *,
+        in_force: Sequence[RecordedStopRow],
         at: datetime,
         write_ahead: InForceWriteAhead | None = None,
     ) -> InForce:
-        """`RecordedStopStore.put_in_force`; `AuditNotDurable` for a hook past its bound."""
+        """`RecordedStopStore.put_in_force`, compare-and-set on `rows` and on the key's rows in
+        force as the caller's read saw them (`in_force`, SEC-S2D-03): `StaleRecordedStop` passes
+        through, nothing written; `AuditNotDurable` for a hook past its bound."""
         try:
             with self._timer.measure("recorded_stops"):
                 done = await self._store.put_in_force(
-                    account_id, rows, at=at, write_ahead=write_ahead
+                    account_id, rows, in_force=in_force, at=at, write_ahead=write_ahead
                 )
         except WriteAheadTimeout:
             raise AuditNotDurable("the stops' write-ahead audit did not land in time") from None

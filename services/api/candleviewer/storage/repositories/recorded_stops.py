@@ -28,7 +28,7 @@ numeric(38,18)), and no error names a value: the prices and sizes are class P1 (
 from __future__ import annotations
 
 import math
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -59,7 +59,7 @@ __all__ = [
     "SettleWriteAhead",
     "StaleRecordedStop", "StopEnd", "StopKind", "StopOutcome", "StopSource", "StopStatus",
     "SweepScope", "SweepWriteAhead", "SweptStop", "check_end", "check_in_force", "check_request",
-    "check_resolve", "request_cutoff",
+    "check_resolve", "in_force_as_read", "request_cutoff",
 ]  # fmt: skip
 
 StopKind = Literal["stop_loss", "take_profit"]
@@ -354,6 +354,13 @@ def check_in_force(account_id: UUID, rows: Sequence[RecordedStopRow]) -> None:
         raise ValueError("the rows put in force are the account's, of one key")
 
 
+def in_force_as_read(held: Iterable[tuple[UUID, str]], in_force: Sequence[RecordedStopRow]) -> bool:
+    """SEC-S2D-03: whether the key's rows in force, as its lock holds them (`held`, by id and
+    kind), are the ones the caller's read saw (`in_force`), each once: none ended, replaced or
+    put in force since that read. Both stores compare so, before they write anything."""
+    return sorted(held) == sorted((row.id, row.kind) for row in in_force)
+
+
 def check_resolve(
     rows: Sequence[RecordedStopRow],
     outcome: ResolveOutcome,
@@ -397,7 +404,8 @@ def check_end(account_id: UUID, rows: Sequence[RecordedStopRow], at: datetime) -
 
 class StaleRecordedStop(OrderStoreError):
     """A settle met a row that is not in flight any more (another writer answered it first) or not
-    in the account: nothing was written. Names no value."""
+    in the account; or a complete read's write met its rows (SEC-BND-02), or the key's rows in
+    force (SEC-S2D-03), other than as it read them: nothing was written. Names no value."""
 
     def __init__(self) -> None:
         super().__init__("a recorded stop is no longer in flight: nothing was written")
@@ -546,13 +554,18 @@ class RecordedStopStore(Protocol):
         account_id: UUID,
         rows: Sequence[RecordedStopRow],
         *,
+        in_force: Sequence[RecordedStopRow],
         at: datetime,
         write_ahead: InForceWriteAhead | None = None,
     ) -> InForce:
         """A read showed `rows`' stops (21 Sec.3.3.11): one transaction locks the key's live rows in
-        id order, compare-and-sets `rows` (`StaleRecordedStop`), marks `replaced` first the row in
-        force and older answered rows of each kind, then puts `rows` in force, `answered_at` kept
-        or stamped `at`. `check_in_force` first; the hook is awaited bounded before the commit."""
+        id order and compare-and-sets `rows` and, SEC-S2D-03, the key's rows in force as that read
+        saw them (`in_force`, `in_force_as_read`): a row ended, replaced or put in force since the
+        read is `StaleRecordedStop`, nothing written, so an end and a put never both commit on a
+        key the end showed flat. It then marks `replaced` first the row in force and older answered
+        rows of each kind, then puts `rows` in force, `answered_at` kept or stamped `at`.
+        `check_in_force` first; the hook is awaited bounded before the commit. `in_force` is
+        required: the read is the caller's, and an empty one stands for a key read with none."""
         ...
 
     async def resolve(
