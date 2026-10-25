@@ -24,9 +24,12 @@ no switches (steps 5, 6 and 10): it is never gated (C-2.6).
 
 A refusal the route makes from step 7 on is recorded through `OrderExits.deny`, naming its step
 (`key`, `replay`, `guard`), before it is answered (C-2.9), else `503 audit_unavailable`; the
-service records its own (steps 4 and 11). Every refusal is counted in
-`oms_exit_refused_total{operation="cancel",code}` as it is answered (ruling Q14), the unaudited
-ones included. No log line or problem carries the key or the fingerprint (C-12.6).
+service records its own (steps 4 and 11). A fault the exit service raises at step 4, or in step
+11's task once the client left too, is `exit_fault`'s answer: every such `500` pages, one page
+for the fault's class (the orchestrator's ruling of 2026-10-25 02:50Z (2)). Every refusal is
+counted in `oms_exit_refused_total{operation="cancel",code}` as it is answered (ruling Q14), the
+unaudited ones and the faults included. No log line or problem carries the key or the
+fingerprint (C-12.6).
 """
 
 from __future__ import annotations
@@ -56,6 +59,7 @@ from candleviewer.api.order_admission import (
 )
 from candleviewer.api.order_exits_common import (
     exit_caller,
+    exit_fault,
     exit_problem,
     exit_refusals,
     exit_response,
@@ -70,7 +74,6 @@ from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.errors import (
     FieldError,
     IdempotencyKeyReuse,
-    OmsError,
     OmsNotReady,
     OrderInvalid,
     OrderRefused,
@@ -185,6 +188,11 @@ def make_order_exits_router(
     def refused(outcome: ExitOutcome) -> Response:
         return counted(outcome.code or "internal_error", exit_problem(outcome))
 
+    def faulted(error: Exception) -> Response:
+        """A fault the exit service raised that no outcome answers (`exit_fault`): each `500`
+        paged, and counted under its code as it is answered (ruling Q14)."""
+        return counted(*exit_fault(error, pager=paging))
+
     def not_ready() -> Response:
         """Step 3's answer, and a stop begun after it: counted, never audited (24 Sec.8.4)."""
         return counted("oms_not_ready", order_problem(OmsNotReady(), pager=paging))
@@ -204,13 +212,11 @@ def make_order_exits_router(
         digest: str, env: Environment,
     ) -> Response:  # fmt: skip
         """Step 11's task: the exit service's cancel, rendered, and a `202` kept for 24 h, so a
-        request cancelled midway still keeps it (24 Sec.8.4)."""
-        try:
-            outcome = await exits.cancel_admitted(
-                scoped.order, actor=caller.actor, reason="user", request_id=caller.request_id
-            )
-        except OmsError as exc:  # a fault the service did not answer: its row's problem, paged
-            return counted(problem_for(exc).code, order_problem(exc, pager=paging))
+        request cancelled midway still keeps it (24 Sec.8.4); a fault it raises is `faulted`'s
+        answer, in this task (`run_claimed`)."""
+        outcome = await exits.cancel_admitted(
+            scoped.order, actor=caller.actor, reason="user", request_id=caller.request_id
+        )
         out = exit_response(outcome, scoped, env)
         if outcome.kind == "refused":  # recorded by the service before it was answered
             return counted(outcome.code or "internal_error", out)
@@ -258,7 +264,10 @@ def make_order_exits_router(
             exits, env = oms.exits, oms.route.environment
         except OmsNotReady:  # the runtime began its stop meanwhile
             return not_ready()
-        scoped = await exits.scope(caller, order_id)  # step 4
+        try:  # step 4
+            scoped = await exits.scope(caller, order_id)
+        except Exception as exc:  # a fault the service did not answer: the paged `500`
+            return faulted(exc)
         if isinstance(scoped, ExitOutcome):  # recorded by the service, rulings Q6, Q7, Q12
             return refused(scoped)
         try:  # step 7
@@ -276,7 +285,9 @@ def make_order_exits_router(
         guard = functools.partial(audit_refusal, exits, scoped.order, caller, "guard")
         cancel = functools.partial(answer, exits, scoped, caller, held, digest, env)
         try:  # steps 9 and 11
-            return await run_claimed(oms, snapshot.user_id, _CANCEL, key, cancel, refused=guard)
+            return await run_claimed(
+                oms, snapshot.user_id, _CANCEL, key, cancel, refused=guard, faulted=faulted
+            )
         except OmsNotReady:  # the runtime began its stop before it took the cancel
             return not_ready()
 
