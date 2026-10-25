@@ -15,7 +15,8 @@ read at `origin/main` `43d1145e6`, where the six contracts above are still the t
 `b7154f951`). CMP-173's base is E42-D03's Appendix A text (merged as `58660d32f`), which reaches `15` with E42-D03's
 boards PR (#886); until then `15`'s CMP-173 is the pre-D03 entry. **Merged contracts read, per the orchestrator's
 2026-10-25 rulings for E42-D03:** CMP-044 is the entry #4414 merged (a natively disabled typed Confirm, `role?`), never
-E42-D03's Appendix A rows; D04 composes no CMP-138.
+E42-D03's Appendix A rows; D04 composes no CMP-138. The `origin/main` pin and every `D04:n` are refreshed at the
+boards base once #886 lands (the REPIN step), when CMP-173's "Old" becomes E42-D03's text.
 
 ## Handoff checklist — CMP-173 AuditRow (E42-D04, #887)
 

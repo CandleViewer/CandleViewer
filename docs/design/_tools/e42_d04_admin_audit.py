@@ -64,6 +64,7 @@ contrast_check = _load(ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
 cvd = _load(ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py", "cvd_simulate")
 
 THEMES = ("dark", "light", "high-contrast")
+DASH = "\u2013"  # en dash for Markdown ranges (an escape keeps RUF001 quiet)
 GATED = ("text", "non-text")
 BAR: dict[str, float | None] = {
     "text": 4.5,
@@ -526,9 +527,11 @@ PAIRS: list[Pair] = [
 ]
 
 # Follow-up pairs that no frame binds: the surfaces a link or a glyph could reach next (CG-24's
-# high-contrast link aim), the merged CMP-044 Confirm (#4414; Tokens: a CMP-001 `danger`) beside
-# D02 D3's look that §15 measures, and CMP-095's chip, which SCR-145 does not draw. Reported
-# against the role's bar, never gated.
+# high-contrast link aim), the merged CMP-044 Confirm (#4414) beside D02 D3's look that §15
+# measures, and CMP-095's chip, which SCR-145 does not draw. Reported against the role's bar,
+# never gated. The CMP-044 pair is `15`'s merged text (origin/main 43d1145e6): Tokens "Confirm a
+# CMP-001 `danger` (`color.status.danger.default`, `color.text.on-action`)" on CMP-043's card
+# `color.surface.overlay`; D04 composes no CMP-138 (the 2026-10-25 R-1/R-2 rulings).
 FOLLOW_UPS: list[Pair] = [
     P("fu.link.raised", "a link on raised", "text.link", "surface.raised", "text"),
     P(
@@ -911,7 +914,8 @@ def cited(vals: dict[str, list[float]]) -> list[list[str]]:
         [
             "§15 T2 row",
             "`text.disabled` · `opacity.disabled` on app, raised, selected, overlay (ranges)",
-            f"{min(disabled):.2f}–{max(disabled):.2f} · {min(faded):.2f}–{max(faded):.2f}",
+            f"{min(disabled):.2f}{DASH}{max(disabled):.2f} · "
+            f"{min(faded):.2f}{DASH}{max(faded):.2f}",
         ],
         [
             "§15, CG-24",
