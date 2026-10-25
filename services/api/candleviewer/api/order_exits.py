@@ -34,16 +34,15 @@ from __future__ import annotations
 import asyncio
 import functools
 import uuid
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Annotated, Any, Final, Protocol, cast
+from typing import Annotated, Any, Final, Protocol
 
 import structlog
 from fastapi import APIRouter, Path, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 
 from candleviewer.api.idempotency import IdempotencyCache, StoredResponse, request_fingerprint
-from candleviewer.api.order_acceptance import order_body
 from candleviewer.api.order_admission import (
     ORDERS_PERMISSION,
     AuditEmitter,
@@ -55,7 +54,13 @@ from candleviewer.api.order_admission import (
     replay_key,
     resolve_principal,
 )
-from candleviewer.api.order_exits_common import exit_caller, exit_refusals, run_claimed
+from candleviewer.api.order_exits_common import (
+    exit_caller,
+    exit_problem,
+    exit_refusals,
+    exit_response,
+    run_claimed,
+)
 from candleviewer.api.order_problems import order_problem
 from candleviewer.api.refusal_session import SessionsLike
 from candleviewer.audit.errors import AuditError
@@ -77,20 +82,18 @@ from candleviewer.oms.exits import (
     ExitCaller,
     ExitOperation,
     ExitOutcome,
+    ExitStep,
     InFlightGuard,
 )
 from candleviewer.oms.ports import SubmitActor
 from candleviewer.statechart.plugins import LogPager, Pager
-from candleviewer.storage.repositories.orders import ORDER_STATE_OF, OrderRow, ScopedOrder
-from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
+from candleviewer.storage.repositories.orders import OrderRow, ScopedOrder
 
-__all__ = ["CancelRuntime", "exit_problem", "exit_response", "make_order_exits_router"]
+__all__ = ["CancelRuntime", "make_order_exits_router"]
 
 #: The 24 h record's operation (22's operationId) and the exit the guard and the counter name.
 _OPERATION: Final = "cancelOrder"
 _CANCEL: Final[ExitOperation] = "cancel"
-_STORED: Final = cast(Mapping[str, str], ORDER_STATE_OF)
-_MEDIA: Final = "application/problem+json"
 
 
 def _log() -> Any:
@@ -108,7 +111,7 @@ class _CancelExits(Protocol):
 
     async def deny(
         self, row: OrderRow, operation: ExitOperation, outcome: ExitOutcome, *,
-        actor: SubmitActor, request_id: uuid.UUID | None, step: str | None = None,
+        actor: SubmitActor, request_id: uuid.UUID | None, step: ExitStep | None = None,
     ) -> ExitOutcome: ...  # fmt: skip
 
     async def cancel_admitted(
@@ -159,38 +162,6 @@ def _refusal(error: OrderRefused) -> ExitOutcome:
     )  # fmt: skip
 
 
-def exit_problem(outcome: ExitOutcome) -> JSONResponse:
-    """A refused exit's 22 problem, in `api.order_problems`' shape: its code's title, the
-    service's own `detail` and `errors[]`, `retry_after_seconds` with `Retry-After` where the
-    outcome holds one, the order-entry gate's `reason`, and a venue refusal's `exchange.ret_code`
-    alone, never its text (SR-E29-09)."""
-    code, ret = outcome.code or "internal_error", outcome.exchange_ret_code
-    errors = [{"field": e.field, "rule": e.rule, "message": e.message} for e in outcome.errors]
-    members: dict[str, object] = {
-        "type": f"https://candleviewer.local/errors/{code}",
-        "title": ERROR_META[ErrorCode(code)].title, "status": outcome.status, "code": code,
-        "detail": outcome.detail, "errors": errors or None,
-        "retry_after_seconds": outcome.retry_after_s, "reason": outcome.reason,
-        "exchange": None if ret is None else {"ret_code": ret},
-    }  # fmt: skip
-    body = {name: value for name, value in members.items() if value is not None}
-    retry = outcome.retry_after_s
-    headers = {} if retry is None else {"Retry-After": str(retry)}
-    return JSONResponse(body, outcome.status, headers, media_type=_MEDIA)
-
-
-def exit_response(outcome: ExitOutcome, scoped: ScopedOrder, env: Environment) -> Response:
-    """22 `cancelOrder`'s answer to an admitted exit: a refusal's problem (`exit_problem`), else
-    `202` with the order (`order_body`) as the exit left it, `unknown` too: its row read again, in
-    the state B1's step settled, in its trade group and environment."""
-    if outcome.kind == "refused":
-        return exit_problem(outcome)
-    row = scoped.order if outcome.row is None else outcome.row
-    chart = outcome.lifecycle_state or row.lifecycle_state
-    state = row.state if chart is None else _STORED.get(chart, row.state)
-    return JSONResponse(order_body(row, scoped.trade_group_id, env, state, chart), 202)
-
-
 def make_order_exits_router(
     principals: OrderPrincipals | None, runtime: Callable[[], CancelRuntime | None], *,
     audit: AuditEmitter, metrics: Metrics, auth: SessionsLike | None = None,
@@ -219,7 +190,7 @@ def make_order_exits_router(
         return counted("oms_not_ready", order_problem(OmsNotReady(), pager=paging))
 
     async def audit_refusal(
-        exits: _CancelExits, row: OrderRow, caller: ExitCaller, step: str, refusal: ExitOutcome
+        exits: _CancelExits, row: OrderRow, caller: ExitCaller, step: ExitStep, refusal: ExitOutcome
     ) -> Response:
         """A refusal of step 7, 8 or 9, recorded through the exit service with its step before it
         is answered (C-2.9): its problem, else `503 audit_unavailable`."""
