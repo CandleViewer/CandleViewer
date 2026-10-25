@@ -27,9 +27,11 @@ write naming none fails the build). One that does not, or a target who can no lo
 (missing, not `active`, a role outside the system set), is `403 forbidden`, counted in
 `authz_denied_total` before its record, as `enforce` counts, and audited `rbac.denied` with the
 viewer and the viewer's session as the actor and the target as the object, naming the refused
-operation: a 403 even when that record cannot be written, as at the key store's owner gate
-(`api/exchange_keys.py`), with a warning log. A target read that fails or passes
-`TARGET_READ_TIMEOUT_S`, or a guard built with nothing to read it, is `503 store_unavailable`.
+operation: a 403 even when the writer cannot write that record (its own failure, a writer not
+started, or the write past its bound), as at the key store's owner gate (`api/exchange_keys.py`),
+with a warning log; any other failure of the write is a defect and propagates. A target read that
+fails or passes `TARGET_READ_TIMEOUT_S`, or a guard built with nothing to read it, is `503
+store_unavailable`.
 The handler checks the account half (`scope_for_target`). In the hold the write runs in the
 viewer's own scope, and no target is read (22 "View-as session", Protective writes). A live
 context is evaluated as a request's would be
@@ -183,8 +185,8 @@ def make_view_as_guard(
     (`create_app` builds them after the middleware stack); *operations* are the contract's
     declared operations, which name a refused one (`match_operation`, never the raw path); *clock*
     is the auth clock. *permissions* (`rbac_permissions`), *identity* and *denials* check a live
-    protective write's target: without the first two, every such write is `503`; with them, a guard
-    without *denials* would refuse unaudited, so it is not built."""
+    protective write's target: without the first two, every such write is `503`; and a guard given
+    *permissions* but no *denials* would refuse unaudited, so it is not built."""
     declared = frozenset(operations)
     if not OWN_OPERATIONS <= declared:
         raise ValueError(f"undeclared own operations: {sorted(OWN_OPERATIONS - declared)}")

@@ -1087,8 +1087,8 @@ Not counted:
 Read it on the metrics listener, for example
 `curl -s http://127.0.0.1:9108/metrics | grep '^authz_denied_total'` (every permission is listed at 0
 from process start). The `AuthzDeniedSpike` rule fires above 20 denials in 10 minutes
-(`sum by (permission) (increase(authz_denied_total[10m]))` shows which permission). Today a spike on
-`admin:read` comes from the admin-area guard, one on `users:write` or `keys:manage` from `enforce`, one on `keys:read` from `enforce` or the key store's owner gate, one on `orders:write` from `enforce` (the order route) or the view-as guard, and one on `positions:write` or `killswitch:write` from the view-as guard (its audit row has a user, the target, as its object); use the
+(`sum by (permission) (increase(authz_denied_total[10m]))` shows which permission). A spike on
+`admin:read` comes from the admin-area guard, one on `users:write` or `keys:manage` from `enforce`, one on `keys:read` from `enforce` or the key store's owner gate, one on `orders:write` from `enforce` (the order route) or the view-as guard, and one on `positions:write` or `killswitch:write` from the view-as guard (its audit row has a user, the target, as its object; the guard counts only once a protective write's handler is registered); use the
 matching query in step 1.
 
 **`auth_stepup_failures_total`** (no labels) counts each failed step-up verification: wrong password,
