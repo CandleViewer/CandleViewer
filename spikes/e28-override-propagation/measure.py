@@ -56,6 +56,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import QueuePolicy, Topic
+from candleviewer.observability.context import spawn
 from candleviewer.storage.repositories.account_profiles import AccountProfileRow
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
 from candleviewer.ws.system_filter import system_view
@@ -345,7 +346,7 @@ class Backend:
             await socket.accept()
             conn = Conn(socket, MANAGER, self.transport, self.window_ms)
             self.conns.append(conn)
-            writer = asyncio.create_task(self._writer(conn))
+            writer = spawn(self._writer(conn), name="e28k01-ws-writer")
             try:
                 while True:
                     await socket.receive_text()
@@ -432,7 +433,7 @@ class Backend:
 
     async def _main(self) -> None:
         self.loop = asyncio.get_running_loop()
-        bridge = asyncio.create_task(self._bridge())
+        bridge = spawn(self._bridge(), name="e28k01-bridge")
         config = uvicorn.Config(
             self.app,
             host="127.0.0.1",
@@ -448,7 +449,7 @@ class Backend:
         sock.bind(("127.0.0.1", 0))  # loopback only, an ephemeral port
         sock.listen(64)  # connections wait in the backlog until uvicorn accepts them
         self.port = sock.getsockname()[1]
-        serving = asyncio.create_task(self.server.serve(sockets=[sock]))
+        serving = spawn(self.server.serve(sockets=[sock]), name="e28k01-serve")
         self.ready.set()
         await serving
         bridge.cancel()
@@ -546,8 +547,8 @@ class Client:
             websockets.connect(f"ws://{base}/ws") as ws,
         ):
             self.http = http
-            receiver = asyncio.create_task(self.receive(ws))
-            poller = asyncio.create_task(self.poll()) if self.poll_ms else None
+            receiver = spawn(self.receive(ws), name="e28k01-receive")
+            poller = spawn(self.poll(), name="e28k01-poll") if self.poll_ms else None
             for i in range(iterations):
                 await asyncio.sleep(phase(seed, i) * phase_max)  # a fixed phase vs the windows
                 nxt = self.held + 1

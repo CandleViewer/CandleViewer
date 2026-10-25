@@ -57,3 +57,11 @@ answer `404`.
 One `rest_poll_1s` sample has a negative `trigger_ms` (−1.096 ms). `Client.poll` stamps the trigger when it starts the
 `GET`, not when the answer is sent (the field's comment says otherwise): that `GET` left just before the commit and
 the server read the new version after it. It is the poll model's clock read order and changes no quoted number.
+
+**Task ownership (after the samples).** The five background tasks (the WebSocket writer, the bridge, the server, the
+receiver and the poller) now start through `candleviewer.observability.spawn`, the repo's owned-task helper (the Semgrep
+rule `cv-bare-create-task`), instead of a bare `asyncio.create_task`. `results.json` was recorded before that change.
+`spawn` creates the same task under a copied context, so the timing path is unchanged. A re-run after the change (200
+iterations, seed 968, 5 legs, 25 Oct 01:4xZ, not committed) gave `system_notice` p50 3.8 / p95 5.6 / max 15.6 ms and
+`trade_groups_100ms` p50 53.9 / p95 98.7 / max 104.9 ms. That is the same shape on a busier host, and both are far
+inside 2 s.
