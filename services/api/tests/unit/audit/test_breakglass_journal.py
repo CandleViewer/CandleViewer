@@ -14,6 +14,11 @@ import pytest
 from audit_fakes import FakeAuditRepository
 
 from candleviewer.audit.journal import (
+    ACTOR,
+    BOOTSTRAP_ACTOR,
+    BOOTSTRAP_OWNER_ACTIONS,
+    BREAK_GLASS_ACTIONS,
+    HOST_JOURNAL_ACTIONS,
     HostFsUnavailable,
     RunLockHeld,
     anchored_journal_dir,
@@ -27,6 +32,12 @@ from candleviewer.audit.writer import AuditWriter
 from candleviewer.settings import Settings
 
 _ATTEMPT, _REFUSED = "auth.break_glass_attempt", "auth.break_glass_refused"
+#: The bootstrap-Owner CLI's records (#4479), journaled the same way.
+_BOOTSTRAP = (
+    "auth.bootstrap_owner_attempt",
+    "auth.bootstrap_owner_refused",
+    "auth.bootstrap_owner_invited",
+)
 #: What the CLI journals while Postgres is down: refusals of its own.
 _CLI = {"actor_label": "system:breakglass", "outcome": "denied", "event_ts": "2026-10-15T12:00:00Z"}
 
@@ -35,12 +46,13 @@ def _ctx(wal: Path) -> Any:
     return SimpleNamespace(settings=Settings(audit_wal_path=str(wal)))
 
 
-def _journal(path: Path, *actions: str) -> list[str]:
-    """Journal records as the CLI does while Postgres is down; returns their `record_id`s."""
+def _journal(path: Path, *actions: str, actor: str = "system:breakglass") -> list[str]:
+    """Journal records as a CLI does while Postgres is down; returns their `record_id`s."""
     ids = [str(uuid.uuid4()) for _ in actions]
     journal = AuditWal(path)
     for record_id, action in zip(ids, actions, strict=True):
-        journal.append({"record_id": record_id, "action": action, "severity": "critical"} | _CLI)
+        record = {"record_id": record_id, "action": action, "severity": "critical"} | _CLI
+        journal.append(record | {"actor_label": actor})
     return ids
 
 
@@ -176,3 +188,44 @@ async def test_fold_in_refused_append_keeps_the_journal(
     await svc.writer.flush(5)
     await svc.stop(1)
     assert [row["record_id"] for row in repo.rows] == ids
+
+
+def test_host_journal_admits_the_two_clis_records_only() -> None:
+    """#4479: the bootstrap CLI's records join break-glass's, which are unchanged; cv-api's own
+    `users.owner_bootstrapped` (B) is neither CLI's."""
+    assert BREAK_GLASS_ACTIONS == {_ATTEMPT, _REFUSED, "auth.break_glass_reset"}
+    assert BOOTSTRAP_OWNER_ACTIONS == set(_BOOTSTRAP)
+    assert HOST_JOURNAL_ACTIONS == BREAK_GLASS_ACTIONS | BOOTSTRAP_OWNER_ACTIONS
+    assert "users.owner_bootstrapped" not in HOST_JOURNAL_ACTIONS
+    assert (ACTOR, BOOTSTRAP_ACTOR) == ("system:breakglass", "system:bootstrap")
+
+
+async def test_fold_in_admits_the_bootstrap_records(
+    tmp_path: Path, repo: FakeAuditRepository
+) -> None:
+    wal = tmp_path / "a.wal"
+    journal = journal_dir(str(wal)) / "journal.wal"
+    ids = _journal(journal, *_BOOTSTRAP, actor=BOOTSTRAP_ACTOR)
+    svc = AuditService(repo)
+    await svc.start(_ctx(wal))
+    await svc.writer.flush(5)
+    await svc.stop(1)
+    landed = [(row["record_id"], row["action"], row["actor_label"]) for row in repo.rows]
+    assert landed == [(i, a, BOOTSTRAP_ACTOR) for i, a in zip(ids, _BOOTSTRAP, strict=True)]
+    assert journal.read_bytes() == b""  # folded and compacted
+
+
+async def test_fold_in_refuses_cv_apis_bootstrap_record_as_foreign(
+    tmp_path: Path, repo: FakeAuditRepository
+) -> None:
+    wal = tmp_path / "a.wal"
+    journal = journal_dir(str(wal)) / "journal.wal"
+    _journal(journal, _BOOTSTRAP[0], "users.owner_bootstrapped", actor=BOOTSTRAP_ACTOR)
+    evidence = journal.read_bytes()
+    svc = AuditService(repo)
+    await svc.start(_ctx(wal))
+    await svc.writer.flush(5)
+    await svc.stop(1)
+    [event] = repo.rows  # the critical event only: nothing is folded in
+    assert (event["action"], event["reason"]) == (_REFUSED, "journal_unusable")
+    assert journal.read_bytes() == evidence

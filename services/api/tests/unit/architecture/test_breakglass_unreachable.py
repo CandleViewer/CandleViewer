@@ -8,7 +8,11 @@ own: it runs on the host, with the KEK, while cv-api is stopped. Nothing cv-api 
 - neither the API (`candleviewer.api`), the WS gateway (`candleviewer.ws`), the composition root
   (`app`, `main`) nor the server entry point (`server`) imports one of its modules, directly or
   through any chain (read with grimp, the graph `lint-imports` checks; function-level and
-  `TYPE_CHECKING` imports included), or holds one's dotted name for `importlib` to load.
+  `TYPE_CHECKING` imports included, and the `__init__` of each package a chain enters), or holds
+  one's dotted name for `importlib` to load.
+
+The bootstrap-Owner mint (#4479) shares that boundary: its service and store are dark too, so
+cv-api never holds a writer that can mint an Owner invite (C2 adds its entry point and flow).
 
 A route or topic that must be named for break-glass is a Sec.3.6.1 review first, then a change here.
 """
@@ -28,12 +32,15 @@ from candleviewer.api.contract_conformance import load_contract_subset, load_ope
 from candleviewer.app import create_app
 from candleviewer.ws.topics import TOPIC_REGISTRY
 
-#: The CLI's modules: its entry point, flow, port composition and Postgres side.
+#: The CLI's modules: its entry point, flow, port composition and Postgres side; and the
+#: bootstrap-Owner mint's service and store (#4479 C1).
 DARK = (
     "candleviewer.breakglass",
     "candleviewer.admin.breakglass",
     "candleviewer.admin.breakglass_wiring",
     "candleviewer.storage.repositories.break_glass_cli_sqlalchemy",
+    "candleviewer.auth.bootstrap_owner",
+    "candleviewer.storage.repositories.bootstrap_owner_sqlalchemy",
 )
 #: What cv-api serves and boots from.
 SERVED = (
@@ -101,3 +108,25 @@ def test_unreachable_from_api_ws_imports(graph: grimp.ImportGraph) -> None:
     sources += [_PKG / f"{name}.py" for name in ("app", "main", "server")]
     named = [str(path) for path in sources if any(d in path.read_text("utf-8") for d in DARK)]
     assert named == []
+
+
+def _runs_with(graph: grimp.ImportGraph, todo: list[str]) -> set[str]:
+    """Every module that runs when `todo`'s are imported: what they import, transitively, and the
+    `__init__` of each package above one, which runs first (an edge grimp does not draw)."""
+    seen: set[str] = set()
+    while todo:
+        module = todo.pop()
+        if module not in seen:
+            seen.add(module)
+            todo += graph.find_modules_directly_imported_by(module)
+            todo += [module.rsplit(".", n)[0] for n in range(1, module.count(".") + 1)]
+    return seen
+
+
+def test_unreachable_through_a_package_init(graph: grimp.ImportGraph) -> None:
+    """An import in a package's `__init__` (`from candleviewer.auth import bootstrap_owner`) runs
+    with every module under it, yet draws no chain above: nothing imports the bare package."""
+    served = [module for name in SERVED for module in (name, *graph.find_descendants(name))]
+    reached = _runs_with(graph, served)
+    assert "candleviewer.auth" in reached  # the walk climbs to the packages
+    assert sorted(reached.intersection(DARK)) == []

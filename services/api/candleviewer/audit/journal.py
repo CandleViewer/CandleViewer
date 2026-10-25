@@ -4,6 +4,7 @@ The offline CLI journals its records in `<dir of CV_AUDIT_WAL_PATH>/breakglass/j
 and flushes them to `audit_log` before it exits; what is left (Postgres was down) cv-api folds
 in at boot. `instance.lock` keeps the two apart: cv-api holds it shared from `AuditService.start`
 to `stop`, the CLI exclusively, and the CLI refuses an unanchored path (`anchored_journal_dir`).
+The bootstrap-Owner CLI (#4479) shares the journal and the lock, under its own actor and actions.
 """
 
 from __future__ import annotations
@@ -25,9 +26,18 @@ from candleviewer.audit.wal import AuditWal
 if TYPE_CHECKING:
     from candleviewer.audit.writer import AuditWriter
 
-#: The CLI's records (#2119 decision R3); nothing else may come in through the journal.
+#: The break-glass CLI's records (#2119 decision R3).
 BREAK_GLASS_ACTIONS = frozenset(a for a in AUDIT_ACTIONS if a.startswith("auth.break_glass_"))
+#: The bootstrap-Owner CLI's records (#4479).
+BOOTSTRAP_OWNER_ACTIONS = frozenset(
+    a for a in AUDIT_ACTIONS if a.startswith("auth.bootstrap_owner_")
+)
+#: What the fold-in admits: the two CLIs' records and nothing else (R3); cv-api's own
+#: `users.owner_bootstrapped` never comes in through the journal.
+HOST_JOURNAL_ACTIONS = BREAK_GLASS_ACTIONS | BOOTSTRAP_OWNER_ACTIONS
 ACTOR = "system:breakglass"
+#: Every bootstrap record's `actor_label`: no user acts.
+BOOTSTRAP_ACTOR = "system:bootstrap"
 JOURNAL_FILE = "journal.wal"
 LOCK_FILE = "instance.lock"
 
@@ -121,7 +131,7 @@ def _read_pending(path: Path) -> tuple[AuditWal, list[tuple[int, dict[str, Any]]
     journal = AuditWal(path)
     pending = list(journal.replay())
     for _end, record in pending:
-        if AuditEmission.model_validate(record).action not in BREAK_GLASS_ACTIONS:
+        if AuditEmission.model_validate(record).action not in HOST_JOURNAL_ACTIONS:
             raise ValueError("the break-glass journal holds a foreign record")
     return journal, pending
 

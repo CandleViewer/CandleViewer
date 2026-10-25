@@ -274,3 +274,13 @@ class BreakGlassRefused(AuthError):
     def __init__(self, reason: str) -> None:
         super().__init__(f"break-glass reset refused: {reason}")
         self.reason = reason
+
+
+class BootstrapOwnerRefused(AuthError):
+    """The offline bootstrap-Owner mint (#4479, SR-023) refused and wrote nothing. `reason` is a
+    `BootstrapRefusal` value from `candleviewer.auth.bootstrap_owner`; it names no email, token or
+    hash."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"bootstrap owner mint refused: {reason}")
+        self.reason = reason
