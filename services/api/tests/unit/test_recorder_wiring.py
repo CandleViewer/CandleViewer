@@ -231,7 +231,7 @@ async def test_a_sessions_failure_in_the_fan_out_still_records_and_publishes_the
     assert [s["streams"] for s in rig.sess.sessions.values()] == [["trades", "tickers"]]
 
 
-async def test_the_heal_of_one_symbol_failing_starves_no_other_and_a_cancel_passes(
+async def test_the_heal_of_one_symbol_failing_starves_no_other(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     rig.sess.fail = True
