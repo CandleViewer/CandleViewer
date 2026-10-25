@@ -37,7 +37,14 @@ from candleviewer.oms.exits import ExitCaller, ExitDeps, ExitOutcome, InFlightGu
 from candleviewer.oms.ports import InterimStopResolver, RequestRecord, SubmitActor
 from candleviewer.oms.validator import Validator
 from candleviewer.statechart.bindings import b01_order as b01
-from candleviewer.statechart.gateway import GatewayDegradedError, GatewayOverloadedError
+from candleviewer.statechart.gateway import (
+    GatewayDegradedError,
+    GatewayError,
+    GatewayOverloadedError,
+    LoopAffinityError,
+    SystemEventRefusedError,
+    UnknownMachineError,
+)
 from candleviewer.statechart.persistence import DegradedLatchError
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
@@ -635,6 +642,29 @@ async def test_a_command_the_facade_did_not_take_is_refused_and_its_watch_forgot
     assert written(port) == [("success", "user"), ("denied", code)]
 
 
+#: The gateway's refusals that are no backpressure (`statechart.gateway`): programming faults,
+#: which `_taken_not` never answers (SEC-S4D2AX-01). The route's cases take them too.
+GATEWAY_FAULTS = (UnknownMachineError, LoopAffinityError, SystemEventRefusedError)
+
+
+@pytest.mark.parametrize("fault", GATEWAY_FAULTS)
+async def test_a_gateway_refusal_that_is_no_backpressure_is_raised_never_taken_not(
+    fault: type[GatewayError],
+) -> None:
+    """SEC-S4D2AX-01 (the Fable delta at 896c1ebe): `_taken_not` answers the gateway's backpressure
+    alone, the two rows above. Any other `GatewayError` (an unknown machine, a send off its loop,
+    a system event) is a programming fault, which it never takes: raised as it was, for
+    `exit_fault`'s paged `500`, the watch forgotten, its one `failure` recorded beside the intent
+    by its class alone, never `denied`, and nothing sent."""
+    exits, machines, row, port = await scripted("submitted")
+    error = fault("a defect naming the machine 'order:x'")
+    machines.refuse = error
+    with pytest.raises(fault) as raised:
+        await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert raised.value is error and machines.sent == [] and await forgotten(machines)
+    assert written(port) == [("success", "user"), ("failure", fault.__name__)]
+
+
 async def test_a_step_whose_outcome_is_not_known_answers_the_order_as_it_stands() -> None:
     """`OrderStepUnknown`: B1 rebuilt the order from its events, so the cancel is never re-sent
     and answers the state the order stands in, `unknown`, `timeout`."""
@@ -650,9 +680,10 @@ async def test_a_step_whose_outcome_is_not_known_answers_the_order_as_it_stands(
 
 
 async def test_an_unlisted_raise_forgets_the_watch_and_is_raised_and_logged_once() -> None:
-    """A defect at the facade: the watch forgotten, the raise the caller's, the exit's task
-    logged failed once as it ends (`_ended`); beside the intent, its failure recorded by the
-    raise's class (SEC-S4D2A-03)."""
+    """A defect at the facade: the watch forgotten, the raise the caller's, logged by its class
+    before its failure's record (`oms_exit_fault`, SEC-S4D2AX-02) and the exit's task logged
+    failed once as it ends (`_ended`); beside the intent, its failure recorded by the raise's
+    class (SEC-S4D2A-03)."""
     exits, machines, row, port = await scripted("submitted")
     machines.refuse = RuntimeError("a defect")
     with capture_logs() as logs, pytest.raises(RuntimeError, match="a defect"):
@@ -660,7 +691,7 @@ async def test_an_unlisted_raise_forgets_the_watch_and_is_raised_and_logged_once
     assert machines.sent == [] and await forgotten(machines) and exits._running == set()
     assert written(port) == [("success", "user"), ("failure", "RuntimeError")]
     failed = [(log["event"], log["failure"]) for log in logs if log["log_level"] == "error"]
-    assert failed == [("oms_exit_task_failed", "RuntimeError")]
+    assert failed == [("oms_exit_fault", "RuntimeError"), ("oms_exit_task_failed", "RuntimeError")]
 
 
 async def test_a_raise_after_the_intent_records_its_failure_by_class_then_goes_on() -> None:
@@ -709,6 +740,38 @@ async def test_a_cancellation_after_the_intent_is_no_failure_and_records_none() 
     machines.refuse = asyncio.CancelledError()
     with pytest.raises(asyncio.CancelledError):
         await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert written(port) == [("success", "user")] and exits._running == set()
+
+
+async def test_a_cancellation_landing_in_the_failures_record_leaves_the_fault_logged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-S4D2AX-02 (the Fable delta at 896c1ebe): a fault is logged by its class alone, never
+    its text (`oms_exit_fault`), before its `failure` is written, so a cancellation that lands in
+    that best-effort write, `aclose` at shutdown here, and replaces the fault never loses its
+    class. The cancellation goes on, never swallowed, and nothing is recorded beside the intent."""
+    text = "a defect naming order 0a000000-0000-4000-8000-000000000003"
+    exits, machines, row, port = await scripted("submitted")
+    machines.refuse = RuntimeError(text)
+    entered, write = asyncio.Event(), port.audits.write
+
+    async def held(record: cr.AnyRecord) -> None:
+        if port.audits.written:  # the intent landed: the failure's record waits for the shutdown
+            entered.set()
+            await asyncio.Event().wait()
+        await write(record)
+
+    monkeypatch.setattr(port.audits, "write", held)
+    with capture_logs() as logs:
+        task = asyncio.ensure_future(
+            exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+        )
+        await entered.wait()
+        await exits.aclose()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    failed = [(log["event"], log.get("failure")) for log in logs if log["log_level"] == "error"]
+    assert failed == [("oms_exit_fault", "RuntimeError")] and text not in repr(logs)
     assert written(port) == [("success", "user")] and exits._running == set()
 
 

@@ -602,6 +602,29 @@ async def test_a_cancel_the_gateway_refuses_is_503_with_retry_after_recorded_and
     assert (world.refused("oms_not_ready"), world.refused("internal_error")) == (1, 0)
 
 
+@pytest.mark.parametrize("fault", tx.GATEWAY_FAULTS)
+async def test_a_gateway_refusal_that_is_no_backpressure_is_a_paged_500_with_its_failure(
+    fault: type[GatewayError],
+) -> None:
+    """SEC-S4D2AX-01 (the Fable delta at 896c1ebe): only the gateway's backpressure, above, is
+    `503 oms_not_ready`. Any other `GatewayError` (an unknown machine, a send off its loop, a
+    system event) is a programming fault: the redacted `500 internal_error`, paged once by its
+    class (`exit_fault`) and counted once, its one `failure` recorded beside the intent by its
+    class alone, never `denied`, and nothing sent."""
+    world, machines, row, _ = await scripted_world()
+    error = fault("a defect naming the machine 'order:x'")
+    machines.refuse = error
+    answer = await delete(world, row.id)
+    body, name = answer.json(), fault.__name__
+    _PROBLEM.validate(body)
+    assert (answer.status_code, body["code"], set(body)) == (500, "internal_error", _REDACTED)
+    assert (world.pages, machines.sent) == ([f"{_UNEXPECTED}:{name}"], [])
+    assert (world.refused("internal_error"), world.refused("oms_not_ready")) == (1, 0)
+    records = [r for r, _ in world.audits.written[world.since :] if isinstance(r, RequestRecord)]
+    assert [(r.outcome, r.reason) for r in records] == [("success", "user"), ("failure", name)]
+    assert str(error) not in answer.text + repr(records)
+
+
 async def test_a_second_fault_of_a_class_pages_the_same_page_again() -> None:
     """One page for the class: a second fault of the class, whatever its text, pages the same page,
     which the pager's alerting folds into the one it holds (`LogPager` keeps none itself); each
