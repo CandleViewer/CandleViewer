@@ -6,6 +6,7 @@ debounced `_touch` on the signing path (21-database-schema.md §3.2.2, #2580).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from uuid import UUID
 
@@ -35,12 +36,28 @@ from candleviewer.storage.repositories.accounts import (
     AccountsStoreRuleError,
     AccountsStoreScopeDeniedError,
     AccountsStoreStaleError,
+    AccountWriteAhead,
     ExchangeAccountPatch,
+    ExchangeAccountRow,
     NewExchangeAccount,
     NewKeyRotation,
     OwnerScope,
     RotationStep,
 )
+
+
+def _as_rows(
+    hook: Callable[[ExchangeAccount], Awaitable[None]] | None,
+) -> AccountWriteAhead | None:
+    """The store's hook over the stored row, handing `hook` the domain model."""
+    if hook is None:
+        return None
+    given = hook
+
+    async def ahead(row: ExchangeAccountRow) -> None:
+        await given(ExchangeAccount.model_validate(row, from_attributes=True))
+
+    return ahead
 
 
 class AccountsRepository:
@@ -78,12 +95,15 @@ class AccountsRepository:
         exchange_uid: str,
         label: str,
         parent_account_id: UUID | None = None,
+        write_ahead: Callable[[ExchangeAccount], Awaitable[None]] | None = None,
     ) -> ExchangeAccount:
+        """`write_ahead` (C-2.9): awaited on the inserted account in the insert's transaction,
+        before its commit; anything it raises rolls the insert back and is raised as it is."""
         new = NewExchangeAccount(
             id, exchange, env.value, kind.value, exchange_uid, label, parent_account_id
         )
         try:
-            row = await self._store.create_account(scope, new)
+            row = await self._store.create_account(scope, new, write_ahead=_as_rows(write_ahead))
         except AccountsStoreError as exc:
             raise self._map(exc) from None
         return ExchangeAccount.model_validate(row, from_attributes=True)

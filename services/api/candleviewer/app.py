@@ -38,6 +38,7 @@ from candleviewer.account_health_wiring import wire_account_health
 from candleviewer.accounts.key_age import KeyRotationPolicy
 from candleviewer.accounts.repository import AccountsRepository
 from candleviewer.accounts.service import AccountsService
+from candleviewer.accounts.status import AccountStatusReader
 from candleviewer.admin.account_access import AccountAccessService
 from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.flags import default_registry
@@ -130,6 +131,7 @@ from candleviewer.api.enrolment_guard import (
     sessionless_operations,
 )
 from candleviewer.api.error_redaction import install_error_redaction
+from candleviewer.api.exchange_accounts import make_exchange_accounts_router
 from candleviewer.api.exchange_keys import make_exchange_keys_router
 from candleviewer.api.feature_flags import make_feature_flags_routers
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
@@ -2246,6 +2248,19 @@ def create_app(
     )
     app.state.account_health = account_health
     ctx.accounts.attach_account_health(account_health.feed)
+    # #895 (E27-S01): `listExchangeAccounts` and `createExchangeAccount` over the M13 store built
+    # above (real backend only), in the caller's grants (the profiles' resolver), each account with
+    # the monitor's and the wallet cache's status.
+    app.include_router(
+        make_exchange_accounts_router(
+            None if accounts_counts is None else AccountsRepository(accounts_counts),
+            _LazyAuditEmitter(ctx.audit),
+            profiles_resolver,
+            environment=resolved.environment.value,
+            statuses=AccountStatusReader(account_health, account_health.wallets),
+            auth=ctx.auth,  # a refusal names the caller's session (#4174)
+        )
+    )
     # #837 W3: the one order-entry gate every submit path consults, the maintenance check first and
     # then the account check (key standing and health; the wallet only feeds its sizing flag),
     # synchronous and never flag-gated (C-2.21, C-4.14). The flag runtime holds no gate until this
