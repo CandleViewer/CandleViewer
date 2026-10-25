@@ -31,9 +31,11 @@ from tests._corpus import rest
 _FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "profiles"
 D = Decimal
 
-#: B: the fixture with three open positions allowed (one is too few to test the bound's edge).
+#: B: the fixture as the account's default (B is the default profile, ADR-0040 D7), with three
+#: open positions allowed (one is too few to test the bound's edge).
 BOUND_VALUES: Final[dict[str, Any]] = {
     **json.loads((_FIXTURES / "fixed_qty.json").read_text(encoding="utf-8")),
+    "is_default": True,
     "fixed_qty": "0.1",
     "max_open_positions": 3,
 }
@@ -48,7 +50,7 @@ def profile(**changes: Any) -> AccountProfile:
 
 def alternate(**changes: Any) -> AccountProfile:
     """An alternate of B's account, identical to B but its identity, with `changes`."""
-    return profile(profile_id=ALTERNATE_ID, name="Alt", is_default=False, **changes)
+    return profile(**{"profile_id": ALTERNATE_ID, "name": "Alt", "is_default": False, **changes})
 
 
 def _btcusdt() -> Instrument:

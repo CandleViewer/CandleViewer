@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from candleviewer.accounts.override_comparator import (
     FLOOR_FIELDS,
     OVERRIDE_CLASS,
+    AccountFigures,
     LegOverrides,
     ProfileNotFound,
     Violation,
@@ -22,9 +23,11 @@ from candleviewer.accounts.override_comparator import (
 )
 from candleviewer.accounts.profiles import AccountProfile
 from tests.unit.accounts._override_world import (
+    ALTERNATE_ID,
     BASELINE,
     BOUND,
     BTCUSDT,
+    FIGURES,
     OTHER_ACCOUNT,
     admitted,
     alternate,
@@ -146,6 +149,18 @@ def test_a_leg_sized_by_neither_profile_is_refused() -> None:
 def test_a_disabled_alternate_is_refused(field: str) -> None:
     disabled = alternate(**{field: False})
     assert refused(judge(alternate=disabled)) == [(field, "never", "profile_disabled")]
+
+
+def test_a_bound_profile_that_is_not_the_account_default_is_refused() -> None:
+    assert refused(judge(bound=profile(is_default=False))) == [
+        ("is_default", "never", "inconsistent")
+    ]
+
+
+def test_an_alternate_that_is_the_account_default_is_refused() -> None:
+    assert refused(judge(alternate=alternate(is_default=True))) == [
+        ("is_default", "never", "inconsistent")
+    ]
 
 
 def test_a_bound_profile_that_cannot_trade_is_refused() -> None:
@@ -359,6 +374,26 @@ def test_a_stop_off_the_tick_grid_is_refused() -> None:
     ]
 
 
+def test_a_baseline_sized_by_another_profile_fails_closed() -> None:
+    """M1: the alternate's own leg, its stop further out, is no measure of B's stop distance."""
+    further = leg(stop_price=D("61000.0"))
+    assert refused(
+        judge(
+            further,
+            baseline=leg(profile_id=ALTERNATE_ID, stop_price=D("60000.0")),
+            alternate=alternate(),
+        )
+    ) == [("sl_offset_value", "R4", "inconsistent")]
+    assert refused(judge(further, alternate=alternate())) == [
+        ("sl_offset_value", "R4", "further_than_bound")
+    ]
+
+
+def test_a_baseline_of_another_account_fails_closed() -> None:
+    other = leg(account_id=OTHER_ACCOUNT)
+    assert refused(judge(baseline=other)) == [("sl_offset_value", "R4", "inconsistent")]
+
+
 def test_a_baseline_at_another_reference_price_fails_closed() -> None:
     result = judge(baseline=leg(ref_price=D("64000"), stop_price=D("63360.0")))
     assert refused(result) == [("sl_offset_value", "R4", "inconsistent")]
@@ -405,6 +440,17 @@ def test_margin_boundary(qty: str, ok: bool) -> None:
         admitted(result)
     else:
         assert refused(result) == [("leverage", "R6", "above_limit")]
+
+
+@pytest.mark.parametrize("available", ["-0.01", "-1000"])
+def test_a_negative_available_margin_fails_closed_not_as_a_validation_error(
+    available: str,
+) -> None:
+    """A margin deficit is a figure the route reads, validated as such: no room, refused."""
+    negative = AccountFigures.model_validate(
+        {**FIGURES.model_dump(), "available_margin": available}
+    )
+    assert refused(judge(figures=negative)) == [("leverage", "R6", "above_limit")]
 
 
 # --- R7: every other cap the guard reads, and the order defaults ---------------------------------
@@ -497,10 +543,19 @@ def test_an_instrument_for_another_symbol_fails_closed() -> None:
 # --- R8: the first native stop covers the full quantity ------------------------------------------
 
 
-@pytest.mark.parametrize(("mode", "stop_qty"), [("Partial", "0.05"), ("Full", None)])
+@pytest.mark.parametrize(
+    ("mode", "stop_qty"), [("Partial", None), ("Full", None), ("Partial", "0.1")]
+)
 def test_the_admitted_stop_covers_the_full_quantity(mode: str, stop_qty: str | None) -> None:
     resulting = leg(tpsl_mode=mode, stop_qty=None if stop_qty is None else D(stop_qty))
     assert admitted(judge(resulting)).leg.stop_qty == D("0.1")
+
+
+@pytest.mark.parametrize("stop_qty", ["0.05", "0.099", "0.2"])
+def test_a_caller_stop_size_other_than_the_quantity_is_refused(stop_qty: str) -> None:
+    """Rule 8 is never a silent rewrite: a stop sized short of (or past) the leg is refused."""
+    resulting = leg(tpsl_mode="Partial", stop_qty=D(stop_qty))
+    assert refused(judge(resulting)) == [("require_native_sl", "never", "inconsistent")]
 
 
 # --- inputs the comparator cannot know: unknown is refused, never zero room or no limit ---------
@@ -813,3 +868,41 @@ def test_a_requested_pct_budget_with_unknown_equity_names_the_input() -> None:
         figures=figures(equity=None),
     )
     assert ("risk_pct_equity", "equity") in {(v.field, v.input) for v in violations(result)}
+
+
+# --- OPEN-5: the instrument's maximum order quantity ----------------------------------------------
+
+_ROOMY: dict[str, Any] = {
+    "max_position_notional": "1000000000",
+    "max_position_pct_equity": None,
+    "max_daily_loss": "1000000000",
+}
+
+
+@pytest.mark.parametrize(("qty", "ok"), [("100", True), ("100.001", False)])
+def test_a_leg_above_the_instrument_maximum_quantity_is_refused(qty: str, ok: bool) -> None:
+    assert BTCUSDT.max_order_qty == D("100")
+    result = judge(
+        leg(qty=D(qty)),
+        bound=profile(**_ROOMY),
+        figures=figures(available_margin=D("1000000000")),
+    )
+    if ok:
+        admitted(result)
+        return
+    assert refused(result) == [("fixed_qty", "R5", "above_limit")]
+    (violation,) = violations(result)
+    assert (violation.limit, violation.requested) == (BTCUSDT.max_order_qty, D(qty))
+
+
+@pytest.mark.parametrize(("qty", "ok"), [("100", True), ("100.001", False)])
+def test_a_requested_quantity_above_the_instrument_maximum_is_refused(qty: str, ok: bool) -> None:
+    """The sizer may clamp the leg, but a request for more than the exchange takes is refused."""
+    layer = LegOverrides.model_validate({"sizing": {"mode": "fixed_qty", "qty": qty}})
+    result = judge(requested=(layer,))
+    if ok:
+        admitted(result)
+        return
+    assert refused(result) == [("fixed_qty", "R5", "above_limit")]
+    (violation,) = violations(result)
+    assert (violation.limit, violation.requested) == (BTCUSDT.max_order_qty, D(qty))

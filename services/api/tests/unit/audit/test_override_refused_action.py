@@ -11,15 +11,20 @@ from __future__ import annotations
 import inspect
 import json
 from decimal import Decimal
+from pathlib import Path
 from uuid import UUID
+
+from audit_fakes import FakeAuditRepository, FakeClock
 
 from candleviewer.accounts.override_comparator import (
     OVERRIDE_REFUSED_ACTION,
     RefusalActor,
+    RefusalEmitKwargs,
     refusal_record,
     refused_fields,
 )
 from candleviewer.audit.actions import AUDIT_ACTIONS, validate_action
+from candleviewer.audit.models import AuditOutcome, ExchangeEnv, Severity
 from candleviewer.audit.writer import AuditWriter
 from tests.unit.accounts._override_world import (
     ALTERNATE_ID,
@@ -35,7 +40,7 @@ _ACTOR = RefusalActor(
     user_id=UUID("00000000-0000-7000-8000-0000000000a7"),
     role="manager",
     env="demo",
-    request_id="req-2635",
+    request_id=UUID("00000000-0000-7000-8000-000000002635"),
     ip="127.0.0.1",
 )
 
@@ -64,7 +69,7 @@ def test_the_row_carries_actor_role_account_and_every_violation() -> None:
     assert (kwargs["severity"], kwargs["reason"], kwargs["request_id"], kwargs["env"]) == (
         "warning",
         "risk_limit_breached",
-        "req-2635",
+        _ACTOR.request_id,
         "demo",
     )
     after = kwargs["after_state"]
@@ -122,3 +127,23 @@ def test_a_figure_is_written_with_every_digit() -> None:
     (entry,) = record.emit_kwargs()["after_state"]["violations"]
     assert entry["net_headroom"] == "71.051099999999999999999999999"
     assert entry["committed_risk"] == "0.000000000000000000000000001"
+
+
+def test_the_row_is_built_by_the_audit_writer_with_its_own_types(
+    repo: FakeAuditRepository, clock: FakeClock, tmp_path: Path
+) -> None:
+    """The keyword arguments type-check against `AuditWriter.build` (mypy --strict) and build a
+    record: the request id is the request's UUID, the enums are the audit's own."""
+    writer = AuditWriter(repo, str(tmp_path / "audit.wal"), clock=clock)
+    result = judge(leg(qty=Decimal("0.4")))
+    record = refusal_record(violations(result), actor=_ACTOR, bound=BOUND, leg_index=0)
+    kwargs: RefusalEmitKwargs = record.emit_kwargs()
+    emission = writer.build(record.action, **kwargs)
+    assert emission.action == OVERRIDE_REFUSED_ACTION
+    assert emission.outcome is AuditOutcome.DENIED
+    assert emission.severity is Severity.WARNING
+    assert emission.env is ExchangeEnv.DEMO
+    assert emission.request_id == _ACTOR.request_id
+    assert emission.actor_user_id == _ACTOR.user_id
+    assert emission.after_state is not None
+    assert emission.after_state["violations"][0]["field"] == "max_position_notional"

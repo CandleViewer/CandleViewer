@@ -30,12 +30,15 @@ from tests.unit.accounts._override_world import (
     BASELINE_VALUES,
     BOUND_VALUES,
     BTCUSDT,
+    OTHER_ACCOUNT,
 )
 
 D = Decimal
 REF = D("64010")
 TICK, LOT = BTCUSDT.tick_size, BTCUSDT.qty_step
 _RANK = {"FOK": 0, "IOC": 0, "GTC": 1, "PostOnly": 1}
+#: A profile of B's account that is neither B nor A.
+FOREIGN_ID = "0b5f6d0e-28a1-4c1e-9e01-0000000000ee"
 
 
 def _money(low: int, high: int, places: int = 2) -> st.SearchStrategy[Decimal]:
@@ -69,7 +72,8 @@ _ANY_TIF = st.sampled_from(sorted(_RANK))
 
 
 @st.composite
-def _profiles(draw: st.DrawFn, /, **identity: Any) -> AccountProfile:
+def _profiles(draw: st.DrawFn, /, *, default: bool, **identity: Any) -> AccountProfile:
+    """B (`default`) or an alternate; its default flag is sometimes the wrong one."""
     cap = draw(_mostly(_money(5, 100), _money(1, 100)))
     sizing: dict[str, Any] = draw(
         st.sampled_from(
@@ -84,6 +88,7 @@ def _profiles(draw: st.DrawFn, /, **identity: Any) -> AccountProfile:
         {
             **BOUND_VALUES,
             **identity,
+            "is_default": draw(_mostly(st.just(default), st.booleans())),
             **sizing,
             **draw(_SYMBOLS),
             "denied_symbols": draw(
@@ -130,6 +135,22 @@ _LAYER = st.builds(
                     _money(1, 5_000),
                     _money(1, 100_000),
                 ),
+                st.builds(
+                    lambda n, m: (
+                        {"mode": "fixed_notional", "notional_usd": str(n)}
+                        | ({} if m is None else {"max_notional_usd": str(m)})
+                    ),
+                    _money(1, 50_000),
+                    st.none() | _money(1, 100_000),
+                ),
+                st.builds(
+                    lambda p: {"mode": "risk_based", "risk_per_trade_pct": str(p)},
+                    _FRACTION,
+                ),
+                st.builds(
+                    lambda q: {"mode": "fixed_qty", "qty": str(q)},
+                    st.sampled_from([D("100"), D("100.001")]),  # the instrument's maximum
+                ),
             ),
             "leverage": _money(1, 100).map(str),
             "time_in_force": _ANY_TIF,
@@ -141,13 +162,20 @@ _LAYER = st.builds(
 
 @st.composite
 def _legs(
-    draw: st.DrawFn, /, bound: AccountProfile, alternate: AccountProfile | None
+    draw: st.DrawFn,
+    /,
+    bound: AccountProfile,
+    alternate: AccountProfile | None,
+    hint: int | None,
 ) -> ResolvedLeg:
     """Adversarial: any size, leverage, stop, take-profit and order default a resolver could hand
-    over, mostly plausible and on the grids, sometimes hostile or off them."""
+    over, mostly plausible and on the grids, sometimes hostile or off them. `hint` is the lot
+    count the request's sizing asks for: the resolver often sizes to it, or one lot past it."""
     side = draw(st.sampled_from(["buy", "sell"]))
     sign = 1 if side == "buy" else -1
     lots = draw(_mostly(st.integers(1, 100), st.integers(1, 2_000_000)))
+    if hint is not None and draw(st.booleans()):
+        lots = max(1, hint + draw(st.sampled_from([-1, 0, 0, 1])))
     stop_ticks = draw(_mostly(st.integers(1, 600), st.integers(-50, 20_000)))
     tp_ticks = draw(_mostly(st.integers(1, 2_000), st.none() | st.integers(-50, 40_000)))
     ids = [bound.profile_id, *([alternate.profile_id] if alternate else [])]
@@ -159,7 +187,7 @@ def _legs(
             "qty": lots * LOT + draw(_mostly(st.just(D(0)), st.just(D("0.0001")))),
             "leverage": draw(_mostly(_money(1, 5), _money(1, 100))),
             "stop_price": REF - sign * stop_ticks * TICK,
-            "stop_qty": draw(st.none() | _money(0, 1, 3).map(lambda q: q or LOT)),
+            "stop_qty": draw(_mostly(st.none(), _money(0, 1, 3).map(lambda q: q or LOT))),
             "tpsl_mode": draw(st.sampled_from(["Full", "Partial"])),
             "take_profit_price": None if tp_ticks is None else REF + sign * tp_ticks * TICK,
             "time_in_force": draw(_mostly(st.sampled_from(["FOK", "IOC"]), _ANY_TIF)),
@@ -192,19 +220,45 @@ _FIGURES = st.builds(
 )
 
 
+def _hint(requested: tuple[LegOverrides, ...]) -> int | None:
+    """The lot count the last sizing layer asks for, if it names a size."""
+    sizing = [layer.sizing for layer in requested if layer.sizing is not None]
+    if not sizing:
+        return None
+    if sizing[-1].qty is not None:
+        return int(sizing[-1].qty / LOT)
+    if sizing[-1].notional_usd is not None:
+        return int(sizing[-1].notional_usd / REF / LOT)
+    return None
+
+
 @st.composite
 def _cases(draw: st.DrawFn, /) -> dict[str, Any]:
-    bound = draw(_profiles())
+    bound = draw(_profiles(default=True))
     alternate = draw(
-        _mostly(st.none(), _profiles(profile_id=ALTERNATE_ID, name="Alt", is_default=False))
-        | st.none()
+        st.integers(0, 3).flatmap(
+            lambda pick: (
+                _profiles(default=False, profile_id=ALTERNATE_ID, name="Alt")
+                if pick == 0
+                else st.none()
+            )
+        )
     )
-    resulting = draw(_legs(bound, alternate))
+    requested = tuple(draw(_mostly(st.just([]), st.lists(_LAYER, max_size=2))))
+    if not requested and draw(st.integers(0, 3)) == 0:
+        requested = (draw(_LAYER),)
+    resulting = draw(_legs(bound, alternate, _hint(requested)))
     sign = 1 if resulting.side == "buy" else -1
     other = "sell" if resulting.side == "buy" else "buy"
     baseline = ResolvedLeg.model_validate(
         {
             **BASELINE_VALUES,
+            "profile_id": draw(
+                _mostly(st.just(bound.profile_id), st.sampled_from([ALTERNATE_ID, FOREIGN_ID]))
+            ),
+            "account_id": draw(
+                _mostly(st.just(BASELINE_VALUES["account_id"]), st.just(OTHER_ACCOUNT))
+            ),
             "side": draw(_mostly(st.just(resulting.side), st.just(other))),
             "ref_price": draw(_mostly(st.just(REF), st.just(REF + TICK))),
             "stop_price": REF
@@ -218,7 +272,7 @@ def _cases(draw: st.DrawFn, /) -> dict[str, Any]:
         "leg": resulting,
         "baseline": baseline,
         "figures": draw(_FIGURES),
-        "requested": tuple(draw(_mostly(st.just([]), st.lists(_LAYER, max_size=2)))),
+        "requested": requested,
     }
 
 
@@ -238,6 +292,9 @@ def _assert_within_caps(case: dict[str, Any], result: Admitted) -> None:
     notional = leg.qty * leg.ref_price
     distance = abs(leg.ref_price - leg.stop_price)
     assert leg == case["leg"].model_copy(update={"stop_qty": leg.qty})  # never clamped (R8 apart)
+    assert case["leg"].stop_qty in (None, leg.qty)  # R8 never overwrites a caller's stop size
+    assert b.is_default and (a is None or not a.is_default)  # B is the account's default
+    assert (base.profile_id, base.account_id) == (b.profile_id, b.account_id)  # L_B is B's
     assert all(p.enabled and p.trading_enabled for p in profiles)
     assert all(SymbolScope.of(p).allows(BTCUSDT) for p in profiles)
     assert leg.margin_mode == b.margin_mode and leg.position_idx == 0
@@ -281,10 +338,37 @@ def _assert_within_caps(case: dict[str, Any], result: Admitted) -> None:
     )
     assert loss_side and base.side == leg.side
     assert distance <= abs(base.ref_price - base.stop_price)
-    # R5: minimums met on the grids, never rounded up
+    # rows 26 and 27: the take-profit on the profit side, no further than B's, never removed
+    tp, base_tp = leg.take_profit_price, base.take_profit_price
+    assert tp is not None or base_tp is None
+    if tp is not None:
+        assert (tp > leg.ref_price) if leg.side == "buy" else (tp < leg.ref_price)
+        assert tp % TICK == 0
+        assert base_tp is None or abs(tp - leg.ref_price) <= abs(base_tp - base.ref_price)
+    # rows 13 and 14: no requested or alternate per-trade budget above B's
+    sizing = [layer.sizing for layer in case["requested"] if layer.sizing is not None]
+    asked = sizing[-1] if sizing else None
+    if b.sizing_mode == "risk_based":
+        if asked is not None and asked.mode == "risk_based":
+            wanted = asked.risk_per_trade_usd
+            if wanted is None:
+                assert asked.risk_per_trade_pct is not None and f.equity is not None
+                wanted = asked.risk_per_trade_pct * f.equity
+            assert wanted <= budget
+        elif asked is None and a is not None and a.sizing_mode == "risk_based":
+            alt_budget = a.risk_fixed_amount
+            if alt_budget is None:
+                assert f.equity is not None and a.risk_pct_equity is not None
+                alt_budget = a.risk_pct_equity * f.equity
+            assert alt_budget <= budget
+    # R5: minimums met on the grids, never rounded up, never past the request or the instrument
     assert leg.qty % LOT == 0 and leg.stop_price % TICK == 0
-    assert leg.qty >= BTCUSDT.min_order_qty
+    assert BTCUSDT.min_order_qty <= leg.qty <= BTCUSDT.max_order_qty
     assert notional >= max(BTCUSDT.min_notional, b.min_leg_notional)
+    if asked is not None:
+        assert asked.qty is None or leg.qty <= asked.qty <= BTCUSDT.max_order_qty
+        assert asked.notional_usd is None or notional <= asked.notional_usd
+        assert asked.max_notional_usd is None or notional <= asked.max_notional_usd
     # R6: margin fundable
     assert f.available_margin is not None
     assert notional / leg.leverage <= f.available_margin * D("0.98")
