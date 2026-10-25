@@ -433,7 +433,7 @@ class OrderExits:
         detail = {"operation": operation, "code": outcome.code, "order_link_id": row.order_link_id}
         severity: Literal["warning", "error"] = "error" if outcome.status >= 500 else "warning"
         reason = outcome.reason or outcome.code or ""
-        written = await self._record(
+        written = await self._recorded(
             row, action, "denied", reason, detail, actor, request_id, severity=severity
         )
         if written:
@@ -478,13 +478,13 @@ class OrderExits:
             refusal = state if isinstance(state, ExitOutcome) else _CONFLICT
             return await self.deny(row, operation, refusal, actor=actor, request_id=request_id)
         detail = {"operation": operation, "state": state, "order_link_id": row.order_link_id}
-        if not await self._record(
+        if not await self._recorded(
             row, "orders.cancel", "success", reason, detail, actor, request_id
         ):
             return _problem(503, "audit_unavailable", "The cancel could not be recorded.")
         if self._closed:  # `aclose` ran while the intent was written: nothing starts
             return await self.deny(row, operation, _CLOSED, actor=actor, request_id=request_id)
-        send = self._send(row, operation, "CANCEL", {}, actor=actor, request_id=request_id)
+        send = self._dispatch(row, operation, "CANCEL", {}, actor=actor, request_id=request_id)
         return await self._shielded(send, operation)
 
     async def _lifecycle(self, row: OrderRow) -> str | ExitOutcome:
@@ -517,7 +517,7 @@ class OrderExits:
         if not task.cancelled() and (error := task.exception()) is not None:
             _log().error("oms_exit_task_failed", failure=type(error).__name__)
 
-    async def _send(
+    async def _dispatch(
         self,
         row: OrderRow,
         operation: ExitOperation,
@@ -651,7 +651,7 @@ class OrderExits:
         reason = reason or outcome.unknown_reason or outcome.code or ""
         kind = _kind(operation)
         detail = {"operation": kind, "code": outcome.code, "state": outcome.lifecycle_state}
-        await self._record(row, _ACTIONS[kind], result, reason, detail, actor, request_id)
+        await self._recorded(row, _ACTIONS[kind], result, reason, detail, actor, request_id)
         return outcome
 
     # --- the rest --------------------------------------------------------------------------------
@@ -664,7 +664,7 @@ class OrderExits:
         async with asyncio.timeout(self._waits[2]):
             return await call
 
-    async def _record(
+    async def _recorded(
         self,
         row: OrderRow,
         action: str,
