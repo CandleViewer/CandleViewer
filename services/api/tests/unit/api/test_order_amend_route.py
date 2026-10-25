@@ -723,7 +723,8 @@ async def test_only_a_live_risk_increasing_amend_needs_the_arm_token(
     rig: SubmitRig, body: dict[str, str], env: Environment, token: str | None, status: int
 ) -> None:
     """Step 6 (24 Sec.8.4, 22 `amendOrder`), judged on step 4's read: a cut never needs it
-    (C-2.6); a raise on a demo account neither."""
+    (C-2.6); a raise on a demo account neither. A `202` names the order's environment, the
+    route's read of it (22 `Order`), a live account's `live`."""
     world, row = await amendable(rig)
     arms = routed(world, env)
     if token is None:
@@ -735,6 +736,7 @@ async def test_only_a_live_risk_increasing_amend_needs_the_arm_token(
         assert answer.json()["code"] == "session_not_armed" and amends(rig) == []
         assert world.steps() == ["arm"]
         return
+    assert answer.json()["environment"] == env
     gated = body is not _CUT
     assert len(arms.shown) == int(gated)  # asked only for a risk-increasing amend
     if token is not None:
