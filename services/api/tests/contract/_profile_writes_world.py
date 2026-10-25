@@ -161,6 +161,7 @@ class Writes:
     rules: Rules
     replays: IdempotencyCache
     minted: list[uuid.UUID]
+    writes: ProfileWrites  # its `warnings` port is set by the one test of it (E28-T03)
 
     def reset(self) -> None:
         self.rows.reset()
@@ -191,4 +192,4 @@ def build(mp: pytest.MonkeyPatch) -> Writes:
         new_id=lambda: minted.pop() if minted else uuid.uuid4(),
     )  # fmt: skip
     world.app.include_router(router)  # until D2-m mounts it (ruling B12)
-    return Writes(world, rows, limits, clock, invalidated, rules, replays, minted)
+    return Writes(world, rows, limits, clock, invalidated, rules, replays, minted, writes)

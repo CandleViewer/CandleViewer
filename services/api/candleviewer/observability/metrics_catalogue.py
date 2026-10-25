@@ -757,7 +757,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "dashboard only",
         _P,
         "E28",
-        max_series=11,
+        max_series=12,
     ),
     _s(
         "cv_sizer_clamped_total",

@@ -120,6 +120,7 @@ class FailReason(StrEnum):
     CAP_BREACHED = "cap_breached"
     FIGURE_UNKNOWN = "figure_unknown"
     LEVERAGE_UNAVAILABLE = "leverage_unavailable"
+    STOP_BEYOND_LIQUIDATION = "stop_beyond_liquidation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,7 +158,8 @@ class SizingExplanation:
     marketable sell, else `ref`'s); `mid_price` the mid seen; `atr` the reading the stop or the
     take-profit used, with its provenance; an `atr` stop's `atr_source` (`kernel`, or `fallback`
     when no kernel reading served) and `atr_multiple` (SR-E28-13); `minimum` the one a leg
-    missed; `rules` the rules that fired, in order. A gate skip carries none."""
+    missed; `liquidation_price` the estimate the stop was judged against (SR-E28-26); `rules`
+    the rules that fired, in order. A gate skip carries none."""
 
     ref_price: Decimal | None = None
     ref_source: RefSource | None = None
@@ -179,6 +181,7 @@ class SizingExplanation:
     risk_usdt: Decimal | None = None
     risk_with_fees_usdt: Decimal | None = None
     initial_margin: Decimal | None = None
+    liquidation_price: Decimal | None = None
     minimum: Minimum | None = None
     rules: tuple[str, ...] = ()
     base_coin: str = ""
@@ -305,6 +308,30 @@ def resolve_stop(
         else:  # a programming error: `Side` is validated at every boundary
             raise ValueError(f"no stop resolves for side {side!r}")
         return ResolvedStop(price=price, distance=abs(ref - price), fallback=fallback)
+
+
+def liquidation_estimate(side: Side, entry: Decimal, leverage: Decimal, mmr: Decimal) -> Decimal:
+    """24 Sec.9.3.6 (SR-E28-26, F-15): the one liquidation estimate, of an isolated position at
+    `leverage` with maintenance margin rate `mmr`, fees and funding ignored: a long's
+    `entry * (1 - 1/leverage + mmr)`, a short's `entry * (1 + 1/leverage - mmr)`. For cross margin
+    it is the conservative bound (nearer entry than the real one). Every step rounds toward entry
+    at 100 digits, so a stop is never judged inside a liquidation it is not inside."""
+    if leverage <= 0:  # a programming error: `AccountProfile` refuses it
+        raise ValueError("no liquidation estimate at a leverage at or below 0")
+    inverse = _FLOOR.divide(Decimal(1), leverage)  # the smaller move: nearer entry
+    if side == "buy":
+        with localcontext(_CEILING):
+            return entry * (1 - inverse + mmr)
+    if side == "sell":
+        with localcontext(_FLOOR):
+            return entry * (1 + inverse - mmr)
+    raise ValueError(f"no liquidation estimate for side {side!r}")
+
+
+def beyond_liquidation(side: Side, stop: Decimal, liquidation: Decimal) -> bool:
+    """Whether a stop is not strictly inside the estimate: at it, the stop races the
+    liquidation (the comparator's R3 refuses equality too)."""
+    return stop <= liquidation if side == "buy" else stop >= liquidation
 
 
 def _fee_per_unit(ref: Decimal, stop: ResolvedStop, taker: Decimal | None) -> Decimal | None:
@@ -560,6 +587,14 @@ def size_leg(
     # product, `available_margin * MARGIN_SHARE`, in the default context.
     if margin > _FLOOR.multiply(wallet.available_margin, MARGIN_SHARE):
         return replace(leg, outcome="fail", reason=FailReason.INSUFFICIENT_MARGIN)
+    # 8c. SR-E28-26: the native stop must fire before the estimated liquidation (PF-D06, the 2 %
+    # fallback included); an unknown rate fails closed, as the comparator's R3 does.
+    if (mmr := wallet.maintenance_margin_rate) is None:
+        return replace(leg, outcome="fail", reason=FailReason.FIGURE_UNKNOWN)
+    liquidation = liquidation_estimate(intent.side, ref, profile.leverage, mmr)
+    leg = replace(leg, liquidation_price=liquidation)
+    if beyond_liquidation(intent.side, stop.price, liquidation):
+        return replace(leg, outcome="fail", reason=FailReason.STOP_BEYOND_LIQUIDATION)
     tps = resolve_tps(intent.side, profile, ref, stop, qty, inst, metrics.atr)  # 9, from the anchor
     if not tps:
         return leg

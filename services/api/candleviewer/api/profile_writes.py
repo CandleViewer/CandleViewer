@@ -55,6 +55,7 @@ from candleviewer.accounts.profile_repository import (
 from candleviewer.accounts.profile_validator import (
     InstrumentLimitsPort,
     InstrumentLimitsUnavailable,
+    SizingWarningsPort,
     check_exchange_limits,
 )
 from candleviewer.accounts.profiles import to_us
@@ -104,13 +105,15 @@ def _log() -> Any:
 
 @dataclass(frozen=True, slots=True)
 class ProfileWrites:
-    """The stores: the reads' facade (one cache, SR-E28-15), and this environment's (C-2.11)."""
+    """The stores: the reads' facade (one cache, SR-E28-15), and this environment's (C-2.11);
+    `warnings`, the account's market and wallet for the sizing warnings (E28-T03), or none."""
 
     profiles: ProfilesRepository
     accounts: AccountReads
     limits: InstrumentLimitsPort
     rules: ArmedRules
     environment: Environment
+    warnings: SizingWarningsPort | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,7 +273,7 @@ def make_profile_writes_router(
             )  # fmt: skip
             second = await check_exchange_limits(
                 profile, environment=got.writes.environment, instruments=got.writes.limits,
-                stored=None,
+                stored=None, warnings=got.writes.warnings,
             )  # fmt: skip
             if second.errors:
                 raise edge.refused(second.errors, limits=True)
@@ -319,7 +322,7 @@ def make_profile_writes_router(
             )  # fmt: skip
             second = await check_exchange_limits(
                 profile, environment=got.writes.environment, instruments=got.writes.limits,
-                stored=stored,  # Q4: a write that only narrows reads no listing
+                stored=stored, warnings=got.writes.warnings,  # Q4: a narrowing reads no listing
             )  # fmt: skip
             if second.errors:
                 raise edge.refused(second.errors, limits=True)

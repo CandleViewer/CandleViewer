@@ -60,6 +60,7 @@ def instrument(symbol: str) -> Instrument:
 def wallet(equity: str | None = "10000", taker: str | None = "0", **known: Any) -> AccountFigures:
     known = {"equity": equity, "available_margin": equity, "taker_fee_rate": taker} | known
     known = {"realised_loss_today": "0", "committed_risk": "0"} | known
+    known = {"maintenance_margin_rate": "0.005"} | known  # BTCUSDT's risk-limit tier 1
     return AccountFigures.model_validate(dict.fromkeys(AccountFigures.model_fields) | known)
 
 
@@ -316,7 +317,11 @@ def test_has_float_descends_into_the_minimum() -> None:
     assert _has_float(sz.LegSizing("skip", sz.SkipReason.BELOW_MIN_NOTIONAL, minimum=minimum))
 
 
-_RED: Final = {sz.FailReason.CAP_BREACHED, sz.FailReason.INSUFFICIENT_MARGIN}
+_RED: Final = {
+    sz.FailReason.CAP_BREACHED,
+    sz.FailReason.INSUFFICIENT_MARGIN,
+    sz.FailReason.STOP_BEYOND_LIQUIDATION,
+}
 _UNITS: Final = {
     "ticks": st.integers(min_value=1, max_value=10_000).map(D),  # at most 5000 below a 10 000 ref
     "percent": st.decimals(min_value=D("0.0001"), max_value=D("0.2"), places=6),
