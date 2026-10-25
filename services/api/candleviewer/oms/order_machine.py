@@ -11,6 +11,8 @@ Statecharts record; this synchronous code enforces (C-2.21), before any send:
   one the order took, or one its state has no arm for while no request is in flight, is ignored.
   A push that outruns the order waits in a bounded reorder buffer, released in `(ts_exec, seq)`
   order: an `EXEC` before the bind (SR-E29-03) and an exchange end before its fills (INV-B1-k).
+  Any other order push for an unbound row waits for the bind too, and is taken only if it names
+  the bound exchange order id, else it is an S6 anomaly that changes nothing (E29-T05).
   A release the store refuses for the push's own data leaves the buffer, a fill answered as a
   hostile one; one a store failure refuses waits for a later turn, `MAX_RELEASES` times at most.
 * **S6.** A push for a final order raises `ReconcileAnomaly`, audited ahead as
@@ -486,6 +488,7 @@ class _Held:
     event: str
     push: dict[str, Any]
     refused: int = 0
+    unbound: bool = False  # held for the bind: its exchange order id is checked on release
 
 
 @dataclass(eq=False, slots=True)
@@ -1304,6 +1307,9 @@ class OrderMachines:
         if final:
             await self._anomaly(o.order_id, o.account_id, o.lifecycle, event, push)
             return True
+        if o.view.get("exchange_order_id") is None and o.lifecycle not in ("held", "untracked"):
+            self._hold(o, event, push, unbound=True)  # the bind says whose it is (SR-E29-03)
+            return False
         stamp = push.get("updated_time")
         stale = type(stamp) is int and stamp < o.last_update_ms
         unlisted = event not in self.legality.handled.get(o.lifecycle, frozenset())
@@ -1330,27 +1336,38 @@ class OrderMachines:
             return {**push, "updated_time": lead}
         return push
 
-    def _hold(self, o: _Order, event: str, push: dict[str, Any], refused: int = 0) -> None:
+    def _hold(
+        self,
+        o: _Order,
+        event: str,
+        push: dict[str, Any],
+        refused: int = 0,
+        unbound: bool = False,
+    ) -> None:
         if len(o.held) >= MAX_HELD:
             raise OrderBufferFull(f"the order holds {MAX_HELD} pushes")
         if event == "EXEC":
             key = (_int(push.get("ts_exec")), _int(push.get("seq")))
         else:
             key = (_int(push.get("updated_time")) * 1_000, 0)
-        o.held.append(_Held(key, event, push, refused))
+        o.held.append(_Held(key, event, push, refused, unbound))
         o.held.sort(key=lambda held: held.key)
 
     def _due(self, o: _Order) -> _Held | None:
         """The first held push, in `(ts_exec, seq)` order, that the order can take now: a fill
-        once the order is bound (or held, untracked or final), an end once it holds the fills it
-        reports (or is final)."""
+        once the order is bound (or held, untracked or final), any other push likewise, an end
+        also once it holds the fills it reports."""
         final = o.lifecycle in self.legality.finals
         unowned = o.lifecycle in ("held", "untracked")
         bound = o.view.get("exchange_order_id") is not None
         for index, held in enumerate(o.held):
-            fill = held.event == "EXEC" and (bound or unowned)
-            end = held.event in _ENDS and not _outruns(held.push, o.view.get("filled_qty"))
-            if final or fill or end:
+            ready = bound or unowned
+            fill = held.event == "EXEC" and ready
+            ends = held.event in _ENDS
+            order_push = held.event != "EXEC" and ready
+            if order_push and ends:
+                order_push = not _outruns(held.push, o.view.get("filled_qty"))
+            if final or fill or order_push:
                 del o.held[index]
                 return held
         return None
@@ -1409,6 +1426,11 @@ class OrderMachines:
         as delivered, and stops this one, `MAX_RELEASES` times at most: the last drops it, paged,
         for reconciliation to apply again (24 Sec.8.5 step 2), so no push holds the order's
         turns."""
+        bound_id = o.view.get("exchange_order_id")
+        if held.unbound and bound_id is not None and held.push.get("exchange_order_id") != bound_id:
+            # it was held for the bind and names another order: not ours, so it changes nothing
+            await self._anomaly(o.order_id, o.account_id, o.lifecycle, held.event, held.push)
+            return
         try:
             await self._take(o, held.event, held.push)
         except (OrderStepRefused, OrderStepUnknown) as exc:
@@ -1422,7 +1444,7 @@ class OrderMachines:
             elif data or held.refused + 1 >= MAX_RELEASES:
                 self._page("oms_held_push_dropped", o, trigger=held.event, error=exc.failure)
             else:
-                self._hold(o, held.event, held.push, held.refused + 1)
+                self._hold(o, held.event, held.push, held.refused + 1, held.unbound)
                 raise
 
     async def _act(self, o: _Order, notice: dict[str, Any]) -> None:
