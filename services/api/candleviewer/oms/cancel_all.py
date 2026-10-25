@@ -50,6 +50,7 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.observability import spawn_child
 from candleviewer.oms.exits import CancelReason, ExitOutcome
 from candleviewer.oms.ports import SubmitActor
 from candleviewer.oms.recovery import FINALS
@@ -281,7 +282,7 @@ class CancelAll:
         try:
             async with asyncio.timeout(self._deadline_s), asyncio.TaskGroup() as group:
                 for account in run.tallies:
-                    group.create_task(self._work(run, account))
+                    spawn_child(group, self._work(run, account), name="oms-cancel-all-account")
         except TimeoutError:
             cut = sum(not tally.finished for tally in run.tallies.values())
             _log().warning("oms_cancel_all_deadline", accounts_cut=cut)
