@@ -17,6 +17,11 @@ to a word the code chose cannot carry a credential: it says only which word.
 Every other value under that key (another string, a dict, a list, None, a
 number) is still replaced, and every other key is untouched by the table.
 
+A second reviewed exception (#4535): `_METADATA_VERSION_NAMES` names a
+secret-fragment key that holds metadata, not material: `kek_version` says which
+KEK enrolled, loaded or re-wrapped. Its value is kept only when it is a version
+number of at most `_VERSION_MAX_DIGITS` digits; anything else is still replaced.
+
 The field-name registry below is deliberately name-based (not type-based):
 every column comment in `0001_identity_rbac_sessions_mfa.py` marked `SECRET`
 or `PII` names the exact field this list mirrors 1:1
@@ -133,7 +138,11 @@ _ENUM_PASS_THROUGH: Mapping[str, frozenset[str]] = MappingProxyType(
 #: it is a version number (a positive int, or its decimal string). Any other value under the
 #: name is still replaced. Adding an entry is a security-reviewed edit (C-10.2).
 _METADATA_VERSION_NAMES: frozenset[str] = frozenset({"kekversion"})
-_VERSION_RE = re.compile(r"[1-9][0-9]{0,8}")
+#: One limit for both shapes: a decimal string of at most this many digits, or an int below
+#: 10**_VERSION_MAX_DIGITS (under 30 bits, so no key or check value fits).
+_VERSION_MAX_DIGITS = 9
+_VERSION_RE = re.compile(rf"[1-9][0-9]{{0,{_VERSION_MAX_DIGITS - 1}}}")
+_VERSION_INT_LIMIT: int = int("1" + "0" * _VERSION_MAX_DIGITS)
 
 #: snake_case suffixes (after camelCase/kebab-case are folded to snake_case)
 #: that mark a field as SECRET: `secret_key`, `webhookSecret`, `csrf-token`.
@@ -187,7 +196,8 @@ def redact(state: dict[str, Any] | None) -> dict[str, Any] | None:
 
     Never mutates the input. SECRET-classified fields (by name, see
     `_SECRET_FIELD_FRAGMENTS`) become `REDACTION_MARKER`, unless the value is
-    one of the key's fixed words in `_ENUM_PASS_THROUGH`; PII-classified
+    one of the key's fixed words in `_ENUM_PASS_THROUGH` or a version number under a
+    `_METADATA_VERSION_NAMES` key; PII-classified
     fields become a SHA-256 digest of their `repr`; everything else is walked
     recursively (nested dicts/lists) so a SECRET value nested under an
     unclassified parent key is still caught.
@@ -220,7 +230,7 @@ def _is_version_metadata(key: str, value: Any) -> bool:
     if _normalise(key) not in _METADATA_VERSION_NAMES:
         return False
     if type(value) is int:
-        return 0 < value < 10**9
+        return 0 < value < _VERSION_INT_LIMIT
     return type(value) is str and _VERSION_RE.fullmatch(value) is not None
 
 
