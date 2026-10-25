@@ -103,9 +103,11 @@ class MemRecorderStore:
         assert session_id in self.sessions
         key = (session_id, stream, cause, gap_start)
         if any(
-            (g["session_id"], g["stream"], g["cause"], g["gap_start"]) == key for g in self.gaps
+            (g["session_id"], g["stream"], g["cause"], g["gap_start"]) == key
+            and g["gap_end"] >= gap_end
+            for g in self.gaps
         ):
-            return None  # as `_RECORD_GAP`: a window is written once
+            return None  # as `_RECORD_GAP`: a window a row already covers is not written again
         gid = len(self.gaps) + 1
         self.gaps.append(
             {

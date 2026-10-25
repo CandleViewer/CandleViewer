@@ -611,18 +611,21 @@ async def test_a_gap_already_written_is_not_written_again(repo: Repo, conn: Conn
         ws_endpoint="wss://example.invalid", started_at=t0,
     )  # fmt: skip
 
-    async def gap(start: datetime) -> int | None:
+    async def gap(start: datetime, minutes: int = 5, cause: str = "process_restart") -> int | None:
         return await repo.record_gap(
             session_id=sid, symbol="BTCUSDT", stream="trades", gap_start=start,
-            gap_end=t0 + timedelta(minutes=5), cause="process_restart",
+            gap_end=t0 + timedelta(minutes=minutes), cause=cause,
         )  # fmt: skip
 
     first = await gap(t0)
     assert first is not None
     assert await gap(t0) is None  # the same session, stream, cause and start
-    assert await gap(t0 + timedelta(minutes=1)) is not None  # another window still lands
+    assert await gap(t0, minutes=4) is None  # a row already covers it
+    assert await gap(t0, minutes=7) is not None  # a longer window with that start still lands
+    assert await gap(t0 + timedelta(minutes=1)) is not None  # another start lands
+    assert await gap(t0, cause="ws_disconnect") is not None  # another cause with that start lands
     count = "SELECT count(*) FROM recording_gaps WHERE recording_session_id = %s"
-    assert conn.execute(count, (sid,)).fetchone() == (2,)
+    assert conn.execute(count, (sid,)).fetchone() == (4,)
 
 
 async def test_a_recovery_retried_after_a_cut_writes_one_gap_per_stream(
