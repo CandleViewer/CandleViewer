@@ -53,7 +53,8 @@ it (BQ-16 is the scope):
    states both, and no other frame draws a destructive confirm; K6-K8 each gated frame names the
    ``lock`` and a known reason key, ``rbac.view_as`` first; K9 no exit drawn gated (a frame or
    section 10.2); K10 is gate 2 (``ac2.*``); K11 the compromise card's steps, keys and deck
-   strings in C-12.12's order; K12 each ENV_FRAMES row keeps its environment badge; K13 the
+   strings in C-12.12's order; K12 each row naming an environment, an account title or an
+   "Attention:" strip string keeps its environment badge; K13 the
    number before a marker is its value and every two-decimal value has a marker; K14 / K15 are
    gate 4 (``inv.missing``, ``inv.board``).
 8. Cites and scans: ``KEY:line`` cites resolve to an existing line (FAIL past the end of the
@@ -1332,7 +1333,13 @@ CONFIRM_BUTTON = re.compile(
 )
 # K12: an environment badge (CMP-075, a "· LIVE" title, a group head); every frame whose row names
 # one, or whose title or heading names an account, keeps it (not a fixed list)
-ENV_RE = re.compile(r"CMP-075|· (?:LIVE|DEMO)\b|\b(?:LIVE|DEMO) \(\d+\)|env-(?:live|demo)")
+ENV_RE = re.compile(
+    r"CMP-075|· (?:LIVE|DEMO)\b|\b(?:LIVE|DEMO) \(\d+\)|env-(?:live|demo)|\b(?:LIVE|DEMO) pill\b"
+    r"|Attention: (?:LIVE|DEMO)\b"
+)
+# K12: a frame that draws an attention-strip string ("Attention: ...") draws its environment (the
+# item's LIVE pill, or the environment after "Attention:"): an environment frame by that string alone
+STRIP_DRAWN = re.compile(r"\"Attention:")
 # K11: the compromise card's five steps in C-12.12's order (D9; `CON:824-825`)
 COMPROMISE = "SCR-128 / mark as compromised: the ordered card"
 STEPS = ("Freeze", "Delete", "Revoke", "Rotate", "Replace")
@@ -1402,8 +1409,14 @@ IP_WORD = re.compile(
     r"|CMP-033|\bIP\b",
     re.IGNORECASE,
 )
-SECRET_ROW = re.compile(r"\b(?:API key|API secret|[Kk]ey|[Ss]ecret) fields?\b")
-SECRET_ROW_SECTIONS = ("4.1", "4.4", "5")
+SECRET_ROW = re.compile(
+    r"\b(?:API key|API secret|[Kk]ey|[Ss]ecret)(?: and (?:key|secret))? (?:fields?|entry)\b"
+    r"|\b[Kk]ey ids?\b"
+)
+SECRET_ROW_SECTIONS = ("2.5", "4.1", "4.4", "5")
+# K1: the sections whose tables draw a key or a secret field outside the frame rows; every cell of
+# every row is read for a bare id or a key id longer than `...` plus 4
+ID_SECTIONS = ("2.3", "2.5", "4.1", "4.4", "5")
 # K3: a withdrawal or transfer right drawn as a control (a toggle, a switch, a checkbox)
 WITHDRAW_CONTROL = re.compile(
     r"\b(?:withdraw\w*|transfer\w*|fund[- ]moving)(?:\s+(?:and|or)\s+transfer\w*)?"
@@ -1798,7 +1811,9 @@ def frame_gate(spec: str, sec: dict[str, str], base: dict[str, Any], out: Out) -
                 + "; ".join(problems),
             )
     env_frames = {
-        n for n, r in rows.items() if ENV_RE.search(r["raw"]) or ACCOUNT_TITLE.search(r["raw"])
+        n
+        for n, r in rows.items()
+        if ENV_RE.search(r["raw"]) or ACCOUNT_TITLE.search(r["raw"]) or STRIP_DRAWN.search(r["raw"])
     }
     for n in sorted(env_frames):
         r = rows[n]
@@ -1808,6 +1823,19 @@ def frame_gate(spec: str, sec: dict[str, str], base: dict[str, Any], out: Out) -
         bad = [h[0] for h in SHOW_KEY.finditer(text)] + field_controls(text, secret_row=True)
         if bad:
             out.fail("k2.field", f"{where}: a show, copy or toggle control on the field: {bad[:3]}")
+    for key in ID_SECTIONS:
+        for _head, body in tables(sec.get(key, "")):
+            for raw, tr in body:
+                ids = [m[0] for m in BARE_ID.finditer(raw)] + [
+                    k[0]
+                    for k in KEY_ID.finditer(raw)
+                    if k[1] or not (re.fullmatch(r"[A-Za-z0-9]{4}", k[2]) or k[2] == "{last4}")
+                ]
+                if ids:
+                    out.fail(
+                        "k1.masked",
+                        f"§{key} {(tr[0] if tr else '')[:40]!r}: more than the masked id: {ids[:3]}",
+                    )
     for head, body in tables(sec.get("2.4", "")):
         idx = [i for i, h in enumerate(head) if not re.match(r"current\b", h, re.IGNORECASE)]
         for _raw, tr in body:
@@ -2792,6 +2820,18 @@ K_MUTATIONS: tuple[tuple[str, str, str, Mutation], ...] = (
         first_sub(r"no toggle in the DOM", "a [Copy] button in the DOM", "2.3"),
     ),
     (
+        "K2f",
+        "§2.5's secret-entry home gains [Show]",
+        "k2.field",
+        first_sub(r"no toggle, autocomplete off", "a [Show] button, autocomplete off", "2.5"),
+    ),
+    (
+        "K1k",
+        "a §4.1 table cell shows a bare 12-character id",
+        "k1.masked",
+        first_sub(r'\(label "API key";', f'(label "API key {BARE_12}";', "4.1"),
+    ),
+    (
         "K3",
         "a withdrawal right drawn as allowed",
         "k3.withdraw",
@@ -2979,6 +3019,12 @@ K_MUTATIONS: tuple[tuple[str, str, str, Mutation], ...] = (
         "a titled frame loses its environment badge",
         "k12.env",
         frame_sub(54, "Disable sub_002 · LIVE", "Disable sub_002", every=True),
+    ),
+    (
+        "K12c",
+        "the strip frame loses every LIVE",
+        "k12.env",
+        frame_sub(13, "Attention: LIVE — ", "Attention: ", every=True),
     ),
     (
         "K13",
