@@ -400,3 +400,26 @@ above. Two of its guards keep real money out of reach and come before anything i
   the exchange, and the withdrawal check would pass.
 - **Demo hosts only (C-2.11).** It serves the demo hosts alone and refuses and logs any live or
   testnet request.
+
+### Switching a key, seeding overlays and the fixture clock (#2893 S10)
+
+Both are files in `CV_ACCOUNT_FIXTURE_DIR`, beside the request log, so they survive a restart
+(`services/api/cvdev/account_fixture/control.py`):
+
+- **Fixture clock** (`clock`): signed decimal seconds added to real UTC, in #2086's offset-file
+  format. It moves the stub's scenario and exchange time and the log's `ts` only; it never moves
+  auth time (`CV_TEST_CLOCK` stays refused with the fixture on) and the stub never judges a
+  request's signing timestamp or receive window.
+- **Key files** (`keys/<key id>.json`: `scenario`, `overlays`, `started`). A key answers as the
+  scenario its id names from its first signed call. A switch names another key scenario (by
+  default the stored scenario's `switch_to`, as `stored_key_rejected`) and restarts scenario time
+  at the switch, so `ws_blip_20s` switched in once the key is stored (TC-411) starts its window
+  then. The key keeps its id, account and secret: the signature is still checked against the
+  scenario the key id names. Each switch is one `switch` line in the request log.
+- **The E27-Q02 seeding path for the overlays:** switch the key to its own scenario with the
+  overlays named, for example `compliant` with `open_position_btcusdt_5x_sl` (TC-126, TC-410).
+  Only that key sees them. Fills and private-WS pushes that change this state are #3007.
+
+Tests call `FixtureClock.set`/`advance` and `KeyStates.switch` in process; a stack gets a command
+line for them with the fixture compose override (#2893 S14). A harness may also write either file
+itself, to a temporary file renamed into place; a key file off the rules refuses the key's calls.

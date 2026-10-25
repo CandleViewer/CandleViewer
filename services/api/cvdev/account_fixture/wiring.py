@@ -11,6 +11,7 @@ package's one entry point. Nothing here imports `candleviewer.secrets`.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Final, NoReturn
@@ -21,6 +22,9 @@ from candleviewer.account_fixture_wiring import AccountFixture, AccountFixtureRe
 from candleviewer.settings import Settings
 from cvdev.account_fixture import boot
 
+#: The process's one key-id guard latch (S7 lens MINOR-1): every fixture transport, and S12's
+#: socket, is built with it. Set by the first trip of any; only a restart clears it (FX-D01).
+LATCH: Final = threading.Event()
 #: Why every request is refused for now.
 REFUSAL: Final = "the account fixture transport answers nothing until its guards land (#2893)"
 

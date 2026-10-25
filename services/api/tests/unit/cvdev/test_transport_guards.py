@@ -15,6 +15,7 @@ import json
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from threading import Event
 from typing import Any, Final, NoReturn
 from uuid import UUID
 
@@ -39,6 +40,7 @@ from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.secrets import CredentialBorrower, RequestSignature, Secret
 from candleviewer.secrets.signing import check_message
 from candleviewer.settings import Environment
+from cvdev.account_fixture.control import KeyStates
 from cvdev.account_fixture.guards import (
     DEMO_REST_HOST,
     FUND_PATH_PREFIX,
@@ -125,6 +127,13 @@ class Rig:
     gate: ReadOnlyGate
     log: RequestLog
     log_dir: Path
+    keys: KeyStates
+    #: The process's one guard latch (S7 lens MINOR-1), which every transport here shares.
+    latch: Event
+
+    def build(self, kind: type[FixtureTransport] = FixtureTransport, pack: Pack = PACK) -> Any:
+        """Another transport in the same process."""
+        return _build(self.log, self.gate, self.keys, self.latch, kind, pack)
 
     def lines(self) -> list[dict[str, Any]]:
         return [json.loads(line) for line in (self.log_dir / FILE_NAME).read_text().splitlines()]
@@ -136,14 +145,25 @@ class Rig:
         return str(refused.value), events
 
 
+def _build(
+    log: RequestLog,
+    gate: ReadOnlyGate,
+    keys: KeyStates,
+    latch: Event,
+    kind: type[FixtureTransport] = FixtureTransport,
+    pack: Pack = PACK,
+) -> Any:
+    return kind(pack, log=log, gate=gate, clock=lambda: NOW, default=STACK, keys=keys, latch=latch)
+
+
 @pytest.fixture
 def rig(tmp_path: Path) -> Iterator[Rig]:
     with RequestLog(
         tmp_path, process_env=Environment.DEMO, clock=lambda: NOW, pack_key_ids=KEY_IDS
     ) as log:
-        gate = ReadOnlyGate()
-        transport = FixtureTransport(PACK, log=log, gate=gate, clock=lambda: NOW, default=STACK)
-        yield Rig(transport, gate, log, tmp_path)
+        gate, latch = ReadOnlyGate(), Event()
+        keys = KeyStates(tmp_path, PACK, log=log, clock=lambda: NOW)
+        yield Rig(_build(log, gate, keys, latch), gate, log, tmp_path, keys, latch)
 
 
 class _Seam(FixtureTransport):
@@ -235,7 +255,7 @@ async def test_a_trip_refuses_through_every_transport_in_the_process(
     """Whatever latch the gate holds already, which the trip keeps (ADR-0036 decision 4)."""
     if held:
         rig.gate.latch(reason_code=held, reason_text="kek")
-    seam = _Seam(PACK, log=rig.log, gate=rig.gate, clock=lambda: NOW, default=STACK)
+    seam = rig.build(_Seam)
     other = replace(rig, transport=seam)
 
     async def body() -> AsyncIterator[bytes]:
@@ -343,7 +363,7 @@ async def test_serve_is_handed_the_verified_body_of_a_one_shot_stream(rig: Rig) 
     async def once() -> AsyncIterator[bytes]:  # httpx raises StreamConsumed on a second read
         yield order
 
-    seam = _Seam(PACK, log=rig.log, gate=rig.gate, clock=lambda: NOW, default=STACK)
+    seam = rig.build(_Seam)
     request = httpx.Request("POST", ORDER, headers=_get(payload=order).headers, content=once())
     assert (await seam.handle_async_request(request)).status_code == 200
     assert seam.body == order
@@ -352,9 +372,7 @@ async def test_serve_is_handed_the_verified_body_of_a_one_shot_stream(rig: Rig) 
 
 def test_a_pack_without_fixture_keys_is_refused(rig: Rig, tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="no fixture key id"):
-        FixtureTransport(
-            Pack(tmp_path / "empty"), log=rig.log, gate=rig.gate, clock=lambda: NOW, default=STACK
-        )
+        rig.build(pack=Pack(tmp_path / "empty"))
 
 
 @pytest.mark.parametrize(

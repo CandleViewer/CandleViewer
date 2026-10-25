@@ -1,4 +1,5 @@
-"""#2893 S7, S9: the account fixture REST transport, its guards and the pack it serves (ADR-0036).
+"""#2893 S7, S9, S10: the account fixture REST transport, its guards and the pack it serves
+(ADR-0036).
 
 `FixtureTransport` is the `httpx` transport of a fixture stack's account REST clients
 (`BybitRestClient(transport=...)`); S10 and S14 wire it in. Every request meets `guards` first:
@@ -9,30 +10,35 @@
   refusal logs a line per attempt, and the caller gets no verdict (SR-E27-18).
 - A signed request whose key is not a pack key id latches the transport, whichever guard refuses
   it first, and the injected read-only gate with `account_fixture_guard` unless the gate holds a
-  latch already, which is kept. The latch is process-wide: once one trips, or the gate holds this
-  latch, every transport refuses every request, even one already being read or served. Recovery:
-  revoke the key, then restart (FX-D01).
+  latch already, which is kept. The latch is process-wide: every transport (and S12's socket) is
+  built with the process's one guard latch, `wiring.LATCH` (S7 lens MINOR-1), so once one trips,
+  or the gate holds this latch, every transport refuses every request, even one already being
+  read or served. Recovery: revoke the key, then restart (FX-D01).
 - A signature mismatch, or a body past `MAX_BODY_BYTES` that is never read whole, answers the
   pack's `_base/error_10004.json`.
 - An unsigned request off the public market allow-list (`guards.is_public_path`) is refused as
   `refused_key` with the refusals, before any body is read: never answered, never latched.
-- What passes every guard is served (decisions 6 and 7): a signed call as the scenario its key is
-  stored under, an unsigned one as the stack default (`CV_ACCOUNT_FIXTURE`).
-  The reply follows the pack's lookup rule at the scenario's time and on the injected clock. A
-  call nothing answers gets HTTP 404 with no exchange return code, which the client raises as
-  `UnknownStateError`: not success, not retried, never a verdict on the key. So does a call signed
-  over a body that is not a JSON object, which no `when` can read.
+- What passes every guard is served (decisions 6 and 7): a signed call as its key's file says
+  (`control.KeyStates`): the scenario the key is stored under, from its first signed call, until
+  a switch names another, with overlays seeded, from the switch. An unsigned call answers as the
+  stack default (`CV_ACCOUNT_FIXTURE`), from boot. A key file off the rules refuses the call as
+  `key_state_invalid`, never answered. The reply follows the pack's lookup rule at the scenario's
+  time and on the injected clock. A call nothing answers gets HTTP 404 with no exchange return
+  code, which the client raises as `UnknownStateError`: not success, not retried, never a verdict
+  on the key. So does a call signed over a body that is not a JSON object, which no `when` can read.
 
 Each answer and refusal is one line of S6's `RequestLog`, which keeps its own rules (no signature,
 no secret, no character of a non-fixture key), and each refusal or mismatch one structlog event
 whose level is its severity: critical for the P0 refusals (test plan section 0.1), error for a
 refusal without one, warning for a mismatch. A line the log cannot write never lets a refusal
 through, and withholds an answer. Built at boot, as the constructor reads the whole pack; a request
-reads no file. Nothing here imports `candleviewer.secrets` or `candleviewer.audit`.
+reads no pack file but a switch's first, and its key's file, both off the event loop. Nothing here
+imports `candleviewer.secrets` or `candleviewer.audit`.
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import re
@@ -48,6 +54,7 @@ import httpx
 import structlog
 
 from cvdev.account_fixture import guards
+from cvdev.account_fixture.control import KeyStateError, KeyStates
 from cvdev.account_fixture.guards import Admission
 from cvdev.account_fixture.pack import (
     Pack,
@@ -101,8 +108,6 @@ _REASON_TEXT: Final = (
     "The account fixture transport refused a request signed with a key that is not a fixture key. "
     "Revoke that key, then restart."
 )
-#: Set by the first trip of any transport; only a restart clears it (ADR-0036 decision 4).
-_TRIPPED: Final = threading.Event()
 
 
 def logger() -> Any:
@@ -137,8 +142,9 @@ class FixtureTransport(httpx.AsyncBaseTransport):
     """The guards, then the pack (module docstring). `latched` reads true once a non-fixture key
     trips any transport in the process, whatever latch the gate holds, or the gate holds this one.
 
-    `clock` is the stub's: tz-aware, and S10's fixture clock on a stack. `default` is
-    `CV_ACCOUNT_FIXTURE`, a key scenario of `pack`."""
+    `clock` is the stub's: tz-aware, and the fixture clock (`control.FixtureClock`) on a stack.
+    `default` is `CV_ACCOUNT_FIXTURE`, a key scenario of `pack`. `keys` holds each key's scenario
+    on that clock; `latch` is the process's one guard latch (`wiring.LATCH`)."""
 
     def __init__(
         self,
@@ -148,8 +154,11 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         gate: ReadOnlyLatch,
         clock: Callable[[], datetime],
         default: str,
+        keys: KeyStates,
+        latch: threading.Event,
     ) -> None:
         self._pack, self._log, self._gate, self._clock = pack, log, gate, clock
+        self._keys, self._latch = keys, latch
         self._key_ids = fixture_key_ids(pack)
         if not self._key_ids:
             raise ValueError("the account pack names no fixture key id")
@@ -159,13 +168,17 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         self._scenarios = {name: load(pack, name, now=self._booted) for name in names}
         if default not in self._scenarios:
             raise ValueError("CV_ACCOUNT_FIXTURE must name a key scenario of the account pack")
-        self._default, self._first_seen = default, dict[str, datetime]()
+        self._default = default
+        #: Each scenario a key answers as, by (scenario, account, overlays), loaded once.
+        self._loaded: dict[tuple[str, str, tuple[str, ...]], Scenario] = {
+            (name, scenario.account_uid, ()): scenario for name, scenario in self._scenarios.items()
+        }
         warm(pack)
 
     @property
     def latched(self) -> bool:
         """True once a key trips any transport in the process, or its gate (ADR-0036 decision 4)."""
-        return _TRIPPED.is_set() or self._gate.latched_reason_code == guards.GUARD_REASON_CODE
+        return self._latch.is_set() or self._gate.latched_reason_code == guards.GUARD_REASON_CODE
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         seen = guards.admit(request, self._key_ids)
@@ -197,7 +210,13 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         answers is unstubbed."""
         call = f"{request.method} {request.url.path}"
         now = self._clock()
-        scenario, started = self._selection(seen.key_id, now)
+        try:
+            scenario, started = await self._selection(seen.key_id, now)
+        except KeyStateError:
+            logger().error(
+                "exchange.account_fixture_key_state_invalid", **self._fields(request, seen)
+            )
+            raise httpx.ConnectError(_message("key_state_invalid"), request=request) from None
         sent: dict[str, object] | None = None
         at_ms = max(0, (now - started) // _MS)  # before its start, a scenario answers as at it
         overlays = tuple(str(overlay["scenario"]) for overlay in scenario.overlays)
@@ -218,14 +237,24 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         unconfirmed, order = reply.code_unconfirmed, _order(call, sent)
         return Answer(response, "served", scenario.name, ret_code, unconfirmed, overlays, order)
 
-    def _selection(self, key_id: str | None, now: datetime) -> tuple[Scenario, datetime]:
-        """The scenario a call answers as, and its start: the one its key is stored under, from
-        the first call the key signs; for an unsigned call the stack default, from boot. S10's
-        switch and anchor files override both per key (ADR-0036 decisions 5 and 6)."""
+    async def _selection(self, key_id: str | None, now: datetime) -> tuple[Scenario, datetime]:
+        """The scenario a call answers as, and its start (ADR-0036 decisions 5 to 7): for a signed
+        call its key file's (`_keyed`); for an unsigned call the stack default, from boot."""
         if key_id is None:
             return self._scenarios[self._default], self._booted
-        started = self._first_seen.setdefault(key_id, now)
-        return self._scenarios[guards.stored_under(key_id)], started
+        return await asyncio.to_thread(self._keyed, key_id, now)
+
+    def _keyed(self, key_id: str, now: datetime) -> tuple[Scenario, datetime]:
+        """The key's file, anchored at `now` on its first call: its scenario with its overlays,
+        on the account its stored-under scenario names. Blocking: off the event loop."""
+        state = self._keys.anchor(key_id, now)
+        uid = self._scenarios[guards.stored_under(key_id)].account_uid
+        named = (state.scenario, uid, state.overlays)
+        if named not in self._loaded:
+            self._loaded[named] = load(
+                self._pack, state.scenario, now=self._booted, account_uid=uid, overlays=named[2]
+            )
+        return self._loaded[named], state.started
 
     def _mismatch(self, request: httpx.Request, seen: Admission) -> Answer:
         logger().warning(
@@ -237,7 +266,7 @@ class FixtureTransport(httpx.AsyncBaseTransport):
     def _trip(self) -> None:
         """Latch every transport in the process, then the gate unless it holds a latch already,
         which is kept (as the key self-check keeps a more specific one)."""
-        _TRIPPED.set()
+        self._latch.set()
         if self._gate.latched_reason_code is None:
             self._gate.latch(reason_code=guards.GUARD_REASON_CODE, reason_text=_REASON_TEXT)
 
