@@ -173,6 +173,8 @@ REVOCATION_CLOSE_BUCKETS: Final = (0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10
 #: A profile write's `ts_event` to its `profiles.changed` hand-off (#906 D3e): an edge at SCR-130's
 #: 2 s end-to-end line, so a quantile above it is decided exactly, and one at 5 s above it.
 PROFILE_PROPAGATION_BUCKETS: Final = (0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0)
+#: One leg's sizing (E28-T03): edges around the 1 ms p95 per-leg budget (06-performance #4).
+SIZER_BUCKETS: Final = (5e-5, 1e-4, 2.5e-4, 5e-4, 1e-3, 2.5e-3, 5e-3, 0.01)
 #: Statechart transition latency.
 TRANSITION_BUCKETS: Final = (
     0.00005,
@@ -729,6 +731,53 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "each is logged as profile.notice_failed with the account and the error class.",
         "dashboard only (a change no socket heard; E28-S01's backstops re-read)",
         _L,
+        "E28",
+        max_series=1,
+    ),
+    # --- Leg sizer (E28-T03 #907; planned until E28-T05 #909 / E34-S01 #999 wire it) -----------
+    # `accounts.sizer_metrics.SizerMetrics` records them from a `LegSizing`; `size_leg` stays pure.
+    _s(
+        "cv_sizer_duration_seconds",
+        "histogram",
+        "seconds",
+        (),
+        "One leg's size_leg call, whatever its outcome (budget: p95 <= 1 ms per leg).",
+        "dashboard only (06-performance budget #4, fan-out sub-clause)",
+        _P,
+        "E28",
+        buckets=SIZER_BUCKETS,
+        max_series=1,
+    ),
+    _s(
+        "cv_sizer_outcomes_total",
+        "counter",
+        "legs",
+        ("outcome", "reason"),
+        "Legs sized, by outcome (ok, skip, fail) and its closed reason (none for ok).",
+        "dashboard only",
+        _P,
+        "E28",
+        max_series=11,
+    ),
+    _s(
+        "cv_sizer_clamped_total",
+        "counter",
+        "clamps",
+        ("cap",),
+        "Caps of 24 section 9.3.2 that lowered a leg's quantity, one per cap that fired.",
+        "dashboard only",
+        _P,
+        "E28",
+        max_series=7,
+    ),
+    _s(
+        "cv_sizer_stop_fallback_total",
+        "counter",
+        "legs",
+        (),
+        "Legs whose ATR stop fell back to fallback_sl_offset_pct (no warm reading of the period).",
+        "dashboard only (a persistent rate = the ATR feed is not reaching the sizer)",
+        _P,
         "E28",
         max_series=1,
     ),
