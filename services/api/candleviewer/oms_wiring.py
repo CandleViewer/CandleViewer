@@ -942,16 +942,42 @@ class ServedGate:
             raise OmsNotReady from None
 
 
+#: The window of the page for an append the serving loop did not begin (`ServedSink`), in seconds:
+#: M19's `APPEND_FAILURE_COOLDOWN_S`, in which the sink pages its own failed appends
+#: (`audit/machine_events.py`). This root reaches M19 only through M21's re-exports (C-3.3), so
+#: the bridge test pins the two equal.
+SINK_PAGE_COOLDOWN_S: Final = 5.0
+
+
 class ServedSink:
     """A persistence bundle's `machine_events` sink, which runs on the serving loop, as B1 appends
     to it from the lane until L2 gives the lane its own: each append waits for that loop's answer,
-    so a refusal is never lost (`audit/machine_events.py`)."""
+    so a refusal is never lost (`audit/machine_events.py`). One the serving loop has not begun
+    within `BLOCK_TIMEOUT_S` never runs: its row is lost, a hole no chain check sees, so the first
+    of each `SINK_PAGE_COOLDOWN_S` window pages, by its class alone, and each still raises to the
+    audit plugin, which counts it while its machine runs on (SEC-S3L1CE-01, 24 Sec.17.6)."""
 
-    def __init__(self, sink: MachineEventSink, serving: Serving) -> None:
-        self._sink, self._serving = sink, serving
+    def __init__(
+        self,
+        sink: MachineEventSink,
+        serving: Serving,
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._sink, self._serving, self._monotonic = sink, serving, monotonic
+        #: When an unbegun append last paged, on `monotonic`: the lane's thread's alone, as the
+        #: serving loop's own appends never wait.
+        self._paged_at: float | None = None
 
     def append(self, row: MachineEventRow) -> None:
-        self._serving.block(lambda: self._sink.append(row))
+        try:
+            self._serving.block(lambda: self._sink.append(row))
+        except TimeoutError as exc:  # not begun, so never run: the row is lost
+            now, paged = self._monotonic(), self._paged_at
+            if paged is None or now - paged >= SINK_PAGE_COOLDOWN_S:
+                self._paged_at = now
+                _log().critical("oms_sink_append_dropped", cv_page=True, error=type(exc).__name__)
+            raise
 
 
 class ServedStandings:
@@ -1857,7 +1883,9 @@ class OmsRuntime:
             )
             owned = stores.sink() if bundle is None else None
             sink: MachineEventSink = (
-                ServedSink(bundle.sink, serving) if bundle is not None else cast(OwnedSink, owned)
+                ServedSink(bundle.sink, serving, monotonic=self._monotonic)
+                if bundle is not None
+                else cast(OwnedSink, owned)
             )
             states = OrderStateFeed(self._feed, max_orders=self._max)
             feed = CompositePublisher(ServedFeed(states, serving))
