@@ -19,7 +19,9 @@ An exit is written ahead (`orders.amend`, `orders.cancel`, with the request's re
 cancelled before that sends nothing; from its command on it is a task of its own, which a
 cancelled caller leaves with B1, never re-sent or undone, and whose answer waits for B1's step,
 at most `SETTLE_TIMEOUT_S`: `accepted` carries the settled state, `unknown` the order left with
-B1 (`already_terminal`, `transport`, `timeout`), `refused` the 22 problem.
+B1 (`already_terminal`, `transport`, `timeout`), `refused` the 22 problem, the gateway's
+backpressure included (`503 oms_not_ready`, SEC-S4D2A-01). A fault that task raises is recorded
+beside the intent, `failure` by its class, before it goes on (SEC-S4D2A-03).
 """
 
 from __future__ import annotations
@@ -44,6 +46,7 @@ from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.observability import spawn
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT
+from candleviewer.statechart.gateway import GatewayError
 from candleviewer.statechart.persistence import DegradedLatchError
 from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.accounts import AccountScope, GrantScope
@@ -178,7 +181,10 @@ _TPSL_RULES: Final = frozenset({
 #: A TP/SL side named by an `Offset`, for Q3's check before it is resolved: not a clear.
 _NAMED: Final = Decimal(1)
 _UNREAD: Final = (TimeoutError, StorageError, OrderStoreError)
-_NOT_TAKEN: Final = (IllegalTransition, DegradedLatchError, OrderNotLoaded, OrderStepRefused)
+#: What the facade, or its gateway, did not take, nothing sent: `_taken_not` answers each.
+_NOT_TAKEN: Final = (
+    IllegalTransition, DegradedLatchError, OrderNotLoaded, OrderStepRefused, GatewayError,
+)  # fmt: skip
 
 
 def _log() -> Any:
@@ -653,10 +659,43 @@ class OrderExits:
         if_match: bool = False,
         terms: Mapping[str, Decimal] | None = None,
     ) -> ExitOutcome:
+        """The command and B1's settle (`_commanded`), its outcome recorded beside its intent
+        (`_outcome`). A fault it raises, never a cancellation, is recorded there too before it goes
+        on, best effort (C-2.9; SEC-S4D2A-03): `failure`, an error, the fault's class its reason,
+        never its text, so no intent stands alone; a record that does not land is logged
+        (`_write`), and the fault is raised as it was."""
+        try:
+            outcome = await self._commanded(
+                row, operation, event, payload, actor=actor, request_id=request_id,
+                expected_seq=expected_seq, if_match=if_match, terms=terms,
+            )  # fmt: skip
+        except Exception as exc:
+            kind = _kind(operation)
+            detail = {"operation": kind, "code": None, "state": None}
+            await self._recorded(
+                row, _ACTIONS[kind], "failure", type(exc).__name__, detail, actor, request_id,
+                severity="error",
+            )  # fmt: skip
+            raise
+        return await self._outcome(row, operation, outcome, actor, request_id)
+
+    async def _commanded(
+        self,
+        row: OrderRow,
+        operation: ExitOperation,
+        event: CommandEvent,
+        payload: Mapping[str, str],
+        *,
+        actor: SubmitActor,
+        request_id: UUID | None,
+        expected_seq: int | None = None,
+        if_match: bool = False,
+        terms: Mapping[str, Decimal] | None = None,
+    ) -> ExitOutcome:
         """The command through the exit watch (the principal its `actor`), then B1's settle, at
-        most `SETTLE_TIMEOUT_S`; its outcome recorded beside its intent (`_outcome`). `if_match`
-        says that `expected_seq` is the client's own `If-Match`, not the version the exit read,
-        which decides what a version the facade finds moved on answers (`_taken_not`)."""
+        most `SETTLE_TIMEOUT_S`: the exit's outcome, which `_dispatch` records. `if_match` says
+        that `expected_seq` is the client's own `If-Match`, not the version the exit read, which
+        decides what a version the facade finds moved on answers (`_taken_not`)."""
         kind = _kind(operation)
         account, pending = row.exchange_account_id, f"{kind}_pending"
         watch = self._d.commands.expect_exit(row.id, kind, request_id=request_id, actor=actor)
@@ -673,8 +712,7 @@ class OrderExits:
                 raise
             state = await self._moved(row, kind, exc)
             if state is None:
-                refusal = _taken_not(kind, exc, if_match=if_match)
-                return await self._outcome(row, operation, refusal, actor, request_id)
+                return _taken_not(kind, exc, if_match=if_match)
         if state == pending:
             try:
                 state = await self._d.machines.settled(
@@ -685,8 +723,7 @@ class OrderExits:
         answer = await watch.answer() if watch.answered else None
         held = self._d.machines.state(row.id)
         state = state if state is not None else (None if held is None else held[0])
-        outcome = await self._result(row, kind, state, answer, watch.answered, terms)
-        return await self._outcome(row, operation, outcome, actor, request_id)
+        return await self._result(row, kind, state, answer, watch.answered, terms)
 
     async def _moved(self, row: OrderRow, kind: ExitKind, error: BaseException) -> str | None:
         """A cancel the order moved under at the facade (`IllegalTransition`) answers as the order
@@ -1084,12 +1121,16 @@ def _taken_not(kind: ExitKind, error: BaseException, *, if_match: bool) -> ExitO
     """A command the facade did not take, nothing sent: a version that moved on, `412` for the
     client's own `If-Match`, else the version the exit was admitted at, a step the order took
     meanwhile, `409 conflict` with `Retry-After: 1`, never `412` (SEC-S4C2B-01); a state that
-    moved under it (an amend's 422, a cancel's 409), a latched machine (409, CV-C63), or a step
-    the store refused (503)."""
+    moved under it (an amend's 422, a cancel's 409), a latched machine (409, CV-C63), a step
+    the store refused (503), or a send the order's gateway refused for backpressure, its inbox
+    full or its admission refused: no fault, so `503 oms_not_ready` with its `Retry-After`, and
+    no exit page, as the gateway pages its own (C-2.18; SEC-S4D2A-01)."""
     if isinstance(error, VersionConflict):
         return _refused(error) if if_match else _MOVED
     if isinstance(error, OrderStepRefused):
         return _store()
+    if isinstance(error, GatewayError):
+        return _refused(OmsNotReady())
     if kind == "amend" and not isinstance(error, DegradedLatchError):
         return _refused(OrderNotAmendable())
     return _CONFLICT

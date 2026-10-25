@@ -15,7 +15,9 @@ orchestrator's ruling of 2026-10-24 19:43Z):
   (C-2.9). A claimed exit runs as the runtime's tracked task, shielded from the client's
   disconnect, and the claim is released when that task ends, never when the request does. A
   fault the exit raises is the caller's `faulted` answer, given in that task, so a fault is
-  answered, paged and counted even once its client left;
+  answered, paged and counted even once its client left; a `faulted` that raises too is the
+  last resort's redacted `500`, logged CRITICAL by the two classes alone and marked as a page
+  (`cv_page`, the log pager's mark), never an unanswered task (SEC-S4D2A-04);
 - `exit_problem` and `exit_response`: an exit's answer as the exit service's `ExitOutcome` gives
   it, a refusal's 22 problem or the `202` with the order as the exit left it;
 - `exit_fault`: the answer to a fault no outcome answers (the orchestrator's ruling of 2026-10-25
@@ -24,7 +26,10 @@ orchestrator's ruling of 2026-10-24 19:43Z):
   is no `OmsError`, renders the redacted `500 internal_error` and pages the exit routes' one page
   for its class, `EXIT_FAULT_PAGE` and the class's name, never the fault's text. The page is the
   same for every fault of a class, so the pager's alerting folds the repeats of a class into the
-  one it holds; `LogPager` keeps none itself, each fault its `cv_page` line.
+  one it holds; `LogPager` keeps none itself, each fault its `cv_page` line. An `OmsError` whose
+  row is a 4xx or a 503 escaped the exit service, which records every refusal it answers: its
+  row's problem, unaudited and unpaged, logged `oms_exit_refusal_escaped` by its class alone so
+  it is told apart from a recorded refusal (SEC-S4D2A-02).
 """
 
 from __future__ import annotations
@@ -135,11 +140,19 @@ async def _fault_answered(
     make: Callable[[], Coroutine[Any, Any, Response]], faulted: Callable[[Exception], Response]
 ) -> Response:
     """The claimed exit, built here so a run the runtime refused leaves nothing unawaited: its
-    answer, or `faulted`'s for a fault it raises; a cancellation goes on."""
+    answer, or `faulted`'s for a fault it raises; a cancellation goes on. A `faulted` that raises
+    too is the last resort's redacted `500` (module docstring)."""
     try:
         return await make()
     except Exception as exc:  # a fault no outcome answered: the route's answer, in this task
-        return faulted(exc)
+        try:
+            return faulted(exc)
+        except Exception as failed:  # the last resort: its 500, paged by the classes alone
+            _log().critical(
+                "oms_exit_fault_answer_failed", fault=type(exc).__name__,
+                failure=type(failed).__name__, cv_page=True,
+            )  # fmt: skip
+            return exit_problem(_FAULT)
 
 
 def exit_problem(outcome: ExitOutcome) -> JSONResponse:
@@ -165,12 +178,15 @@ def exit_problem(outcome: ExitOutcome) -> JSONResponse:
 def exit_fault(error: Exception, *, pager: Pager) -> tuple[str, JSONResponse]:
     """A fault an exit route met that no outcome answers, as the code it is counted under and its
     22 problem (module docstring): an `OmsError` whose row is no `500`, or pages, is its row's
-    problem (`order_problem`, its row's own page on `pager`); any other is the redacted `500
+    problem (`order_problem`, its row's own page on `pager`), one whose row does not page logged
+    `oms_exit_refusal_escaped` by its class (SEC-S4D2A-02); any other is the redacted `500
     internal_error`, logged by its class with its traceback (the redaction filter renders it, as
     the app's own `500` handler does) and paged on `pager`, `EXIT_FAULT_PAGE` and its class's name;
     a pager that raises is logged, never the answer."""
     problem = problem_for(error) if isinstance(error, OmsError) else INTERNAL_ERROR
     if isinstance(error, OmsError) and (problem.pages or problem.status != INTERNAL_ERROR.status):
+        if not problem.pages:  # a refusal past the exit service, which records its own: unaudited
+            _log().warning("oms_exit_refusal_escaped", failure=type(error).__name__)
         return problem.code, order_problem(error, pager=pager)
     failure = type(error).__name__
     _log().error(EXIT_FAULT_PAGE, failure=failure, exc_info=error)
