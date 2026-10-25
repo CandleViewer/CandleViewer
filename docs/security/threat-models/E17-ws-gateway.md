@@ -800,3 +800,4 @@ requested as scope on the open tickets named above.
 | 2026-10-20 | author (agent; PR for #3635)                      | §8: revocation close failures name the real metric and the ticket (#3497, #3635); no rating or count changes                                 |
 | 2026-10-20 | author (agent; PR for #415 review record)         | WS-D11..D14 proposed Low, configured (#3890) (§1.1, §3.5, §3.7, §4, §10); §1, §5, §6, §9, AC-06/24/25 as built; review residuals (§10)       |
 | 2026-10-20 | author (agent; PR for #415 review record)         | WS-R01, WS-R02: the session a socket's rows name after an in-place re-auth (23 §9.5); no rating or count changes                             |
+| 2026-10-25 | author (agent; PR for #848 contract)              | WS-I05 as built (#3958): an `account_notice` is cut per socket to its `account_scope`, or not sent (§3.4); no rating changes                 |
