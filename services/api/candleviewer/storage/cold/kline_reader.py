@@ -13,6 +13,7 @@ DuckDB instance per reader, each on its own `cursor()` (#2523): no per-read conn
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -21,8 +22,9 @@ from typing import Any
 
 import duckdb
 import pyarrow as pa
+import structlog
 
-from candleviewer.observability import spawn
+from candleviewer.observability.context import thread_future
 from candleviewer.storage.cold.layout import ColdPaths, DatasetRegistry
 from candleviewer.storage.cold.manifest import ManifestStore
 from candleviewer.storage.cold.observability import LoggingSystemEventSink, SystemEventSink
@@ -158,11 +160,16 @@ class ParquetKlineReader:
         db.users += 1
         return db, cur
 
-    def _release(self, db: _SharedDuckDB, task: asyncio.Task[list[ColdKlineRow]]) -> None:
-        """Done-callback of a read's worker task (event loop thread). Any failure other than
-        our own timeout's interrupt retires the instance, so a poisoned one is never reused."""
+    def _release(self, db: _SharedDuckDB, fut: asyncio.Future[list[ColdKlineRow]]) -> None:
+        """Done-callback of a read's worker future (event loop thread). It runs only once the
+        worker thread has returned: `thread_future` is a plain executor future that nothing but
+        this reader could cancel, and it never does. So a caller cancelled mid-read, or the
+        loop tearing down (which cancels Tasks, never this future), leaves the read counted
+        until its worker is out of DuckDB, and a retired instance is never closed under it.
+        Any failure other than our own timeout's interrupt retires the instance, so a poisoned
+        one is never reused."""
         db.users -= 1
-        exc = None if task.cancelled() else task.exception()
+        exc = fut.exception()
         if exc is not None and not isinstance(exc.__cause__, duckdb.InterruptException):
             self._retire(db)
         elif db.retired and db.users == 0:
@@ -216,17 +223,23 @@ class ParquetKlineReader:
         # N4: take this read's cursor BEFORE the worker thread starts so `interrupt()` can never
         # be a no-op; it interrupts this cursor only (#2523). The worker closes the cursor.
         db, cur = self._cursor()
-        task = spawn(
-            asyncio.to_thread(_read_rows, cur, files, lo, hi, self._max_rows),
-            name="cold-kline-read",
-        )
-        task.add_done_callback(lambda t: self._release(db, t))
+        # Not `spawn(to_thread(...))`: cancelling that Task would cancel the executor future
+        # while the thread still runs, and `_release` would drop the count early (see there).
+        fut = thread_future(_read_rows, cur, files, lo, hi, self._max_rows)
+        fut.add_done_callback(lambda f: self._release(db, f))
         try:
             async with asyncio.timeout(self._timeout_s):
-                return await asyncio.shield(task)
+                return await asyncio.shield(fut)
         except TimeoutError as exc:
-            cur.interrupt()
+            # The worker may close its cursor just as the deadline fires; `interrupt()` on a
+            # closed cursor raises ConnectionException, and the caller still gets the typed
+            # timeout (503), never that raw error.
+            with contextlib.suppress(duckdb.ConnectionException):
+                cur.interrupt()
             raise ColdKlineReadTimeout(f"cold kline read exceeded {self._timeout_s}s") from exc
+        finally:
+            if not fut.done():  # timed out or cancelled: nobody awaits the worker's outcome
+                fut.add_done_callback(_log_late_failure)
 
 
 @dataclass(slots=True, eq=False)
@@ -237,6 +250,19 @@ class _SharedDuckDB:
     con: duckdb.DuckDBPyConnection
     users: int = 0  # reads holding a cursor (event loop thread only)
     retired: bool = False
+
+
+def _log_late_failure(fut: asyncio.Future[list[ColdKlineRow]]) -> None:
+    """Debug trace of a worker that failed after its caller stopped waiting (timeout or
+    cancel); `_release` consumes the exception. Type names only: no paths, no values."""
+    exc = fut.exception()
+    if exc is not None:
+        # Resolved per call: a module-level logger pins a stale processor chain (#2008).
+        structlog.get_logger(__name__).debug(
+            "cold_kline_read_late_failure",
+            error=type(exc).__name__,
+            cause=type(exc.__cause__).__name__,  # "NoneType" when it has no cause
+        )
 
 
 def _stamps(files: list[Path]) -> dict[Path, tuple[int, int]]:

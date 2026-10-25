@@ -22,10 +22,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from hypothesis import example, given
 from hypothesis import strategies as st
+from structlog.testing import capture_logs
 
 from candleviewer.api.market import MarketDataPrincipal, make_market_router
 from candleviewer.ingestion.kline_coverage import Range
 from candleviewer.ingestion.kline_read import KlineReadService
+from candleviewer.observability.context import thread_future
 from candleviewer.storage.cold import kline_reader as kr
 from candleviewer.storage.cold.kline_reader import (
     ColdKlineReadTimeout,
@@ -554,24 +556,82 @@ async def test_concurrent_real_reads_bounded_on_the_shared_instance(
     assert reader._db.users == 0
 
 
+def _worker_futures(monkeypatch: pytest.MonkeyPatch) -> list[asyncio.Future[Any]]:
+    """Every worker future the reader starts, through the `kr.thread_future` seam."""
+    futs: list[asyncio.Future[Any]] = []
+    real = thread_future
+
+    def spy(*a: Any) -> asyncio.Future[Any]:
+        fut: asyncio.Future[Any] = real(*a)
+        futs.append(fut)
+        return fut
+
+    monkeypatch.setattr(kr, "thread_future", spy)
+    return futs
+
+
+def _timeouts(monkeypatch: pytest.MonkeyPatch) -> list[asyncio.Timeout]:
+    """Every `asyncio.timeout` the reader enters, so a test can fire one when it chooses."""
+    made: list[asyncio.Timeout] = []
+
+    class _Asyncio:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(asyncio, name)
+
+        def timeout(self, delay: float | None) -> asyncio.Timeout:
+            t = asyncio.timeout(delay)
+            made.append(t)
+            return t
+
+    monkeypatch.setattr(kr, "asyncio", _Asyncio())  # `kr`'s name only, not the module
+    return made
+
+
 async def test_timeout_interrupts_only_its_own_cursor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Read A is inside DuckDB (held by a UDF gate) while read B times out on the same shared
-    instance: B's query is interrupted, A's finishes with its rows, the instance stays."""
+    instance: B's query is interrupted, A's finishes with its rows, the instance stays.
+
+    B's deadline fires only once a UDF inside B's query has run, and that UDF holds B's query
+    until the interrupt has reached B's cursor: an interrupt landing before a query starts is
+    dropped by DuckDB, so neither may race B's thread start."""
     t0 = _us(2026, 3)
     _write(tmp_path, "2026-03", [t0])
     made = _connects(monkeypatch)
+    deadlines = _timeouts(monkeypatch)
     real_read = kr._read_rows
     loop = asyncio.get_running_loop()
     a_inside = asyncio.Event()
     a_go = threading.Event()
+    b_inside = asyncio.Event()
+    b_started = threading.Event()
+    interrupted = threading.Event()
     b_done = threading.Event()
     outcome: dict[str, str] = {}
+
+    class _Cur:
+        def __init__(self, inner: duckdb.DuckDBPyConnection) -> None:
+            self.inner = inner
+
+        def interrupt(self) -> None:
+            self.inner.interrupt()
+            interrupted.set()
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.inner, name)
 
     def gate(x: int) -> int:
         loop.call_soon_threadsafe(a_inside.set)
         a_go.wait(10)
+        return x
+
+    def b_running(x: int) -> int:
+        if not b_started.is_set():
+            b_started.set()
+            loop.call_soon_threadsafe(b_inside.set)
+        if not interrupted.wait(5):
+            raise RuntimeError("no interrupt reached read B's cursor")
         return x
 
     def fake(cur: duckdb.DuckDBPyConnection, files: list[str], lo: int, *a: Any) -> Any:
@@ -580,11 +640,17 @@ async def test_timeout_interrupts_only_its_own_cursor(
             outcome["a"] = str(cur.execute("SELECT cv_gate_2523(1)").fetchall())
             return real_read(cur, files, lo, *a)
         try:  # read B: runs until its own timeout interrupts it
-            cur.execute("SELECT count(*) FROM range(10000000000) t(i) WHERE i % 7 = 3").fetchall()
+            cur.create_function("cv_b_running_2523", b_running, [BIGINT], BIGINT)
+            cur.execute(
+                "SELECT count(*) FROM range(10000000000) t(i) WHERE cv_b_running_2523(i) % 7 = 3"
+            ).fetchall()
             outcome["b"] = "completed"
         except duckdb.InterruptException as exc:
             outcome["b"] = "interrupted"
             raise kr.ColdKlineReadError("interrupted") from exc
+        except duckdb.Error:
+            outcome["b"] = "failed"
+            raise
         finally:
             cur.close()
             b_done.set()
@@ -592,13 +658,23 @@ async def test_timeout_interrupts_only_its_own_cursor(
 
     monkeypatch.setattr(kr, "_read_rows", fake)
     reader = ParquetKlineReader(DatasetRegistry(tmp_path), timeout_s=30)
+    real_cursor = reader._cursor
+
+    def wrapped() -> tuple[Any, duckdb.DuckDBPyConnection]:
+        db, cur = real_cursor()
+        return db, cast(duckdb.DuckDBPyConnection, _Cur(cur))  # duck-typed spy
+
+    monkeypatch.setattr(reader, "_cursor", wrapped)
     read_a = asyncio.create_task(reader("BTCUSDT", "60", Range(t0, t0 + H)))
     await a_inside.wait()
-    reader._timeout_s = 0.25  # read B only: A's deadline was taken at its own start
     try:
+        read_b = asyncio.create_task(reader("BTCUSDT", "60", Range(t0 + 1, t0 + H)))
+        await b_inside.wait()  # B's query is running inside DuckDB
+        assert len(deadlines) == 2
+        deadlines[1].reschedule(loop.time())  # fire B's deadline now; A's stays at 30 s
         with pytest.raises(ColdKlineReadTimeout):
-            await reader("BTCUSDT", "60", Range(t0 + 1, t0 + H))
-        assert await asyncio.to_thread(b_done.wait, 30)
+            await read_b
+        assert await asyncio.to_thread(b_done.wait, 10)
     finally:
         a_go.set()
     rows = await read_a
@@ -607,6 +683,126 @@ async def test_timeout_interrupts_only_its_own_cursor(
     assert len(made) == 1  # an interrupt is not a broken instance: nothing retired
     assert reader._db is not None
     assert reader._db.users == 0
+
+
+async def test_cancelled_read_keeps_its_instance_until_the_worker_returns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cancelled caller (or loop teardown) leaves its worker thread inside DuckDB: the read
+    stays counted, so retiring the instance cannot close it under that worker."""
+    t0 = _us(2026, 3)
+    _write(tmp_path, "2026-03", [t0])
+    made = _connects(monkeypatch)
+    futs = _worker_futures(monkeypatch)
+    real_read = kr._read_rows
+    loop = asyncio.get_running_loop()
+    inside = asyncio.Event()
+    go = threading.Event()
+
+    def gate(x: int) -> int:
+        loop.call_soon_threadsafe(inside.set)
+        go.wait(10)
+        return x
+
+    def held(cur: duckdb.DuckDBPyConnection, *a: Any) -> list[ColdKlineRow]:
+        cur.create_function("cv_hold_2523", gate, [BIGINT], BIGINT)
+        cur.execute("SELECT cv_hold_2523(1)").fetchall()
+        return real_read(cur, *a)
+
+    monkeypatch.setattr(kr, "_read_rows", held)
+    reader = ParquetKlineReader(DatasetRegistry(tmp_path))
+    read = asyncio.create_task(reader("BTCUSDT", "60", Range(t0, t0 + H)))
+    try:
+        await inside.wait()
+        read.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await read
+        db = reader._db
+        assert db is not None
+        assert db.users == 1  # the worker is still inside DuckDB
+        reader.close()  # retire it under the live worker
+        assert made[0].execute("SELECT 1").fetchall() == [(1,)]
+    finally:
+        go.set()
+    await asyncio.wait(futs)  # `_release` was registered first, so it has run
+    assert [r.ts_us for r in futs[0].result()] == [t0]  # the worker finished its read intact
+    assert db.users == 0
+    with pytest.raises(duckdb.ConnectionException):  # closed once its last read returned
+        made[0].execute("SELECT 1")
+
+
+async def test_timeout_racing_the_worker_closing_its_cursor_is_still_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`interrupt()` on a cursor the worker just closed raises ConnectionException; the
+    caller still gets the typed timeout."""
+    t0 = _us(2026, 3)
+    _write(tmp_path, "2026-03", [t0])
+    release = threading.Event()
+
+    class _Cur:
+        def __init__(self, inner: duckdb.DuckDBPyConnection) -> None:
+            self.inner = inner
+
+        def interrupt(self) -> None:
+            self.inner.close()  # the worker closed it just as the deadline fired
+            self.inner.interrupt()  # raises duckdb.ConnectionException
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.inner, name)
+
+    def waits(cur: object, *a: object) -> list[object]:
+        release.wait(10)
+        return []
+
+    monkeypatch.setattr(kr, "_read_rows", waits)
+    reader = ParquetKlineReader(DatasetRegistry(tmp_path), timeout_s=0.05)
+    real_cursor = reader._cursor
+
+    def wrapped() -> tuple[Any, duckdb.DuckDBPyConnection]:
+        db, cur = real_cursor()
+        return db, cast(duckdb.DuckDBPyConnection, _Cur(cur))  # duck-typed spy
+
+    monkeypatch.setattr(reader, "_cursor", wrapped)
+    try:
+        with pytest.raises(ColdKlineReadTimeout):
+            await reader("BTCUSDT", "60", Range(t0, t0 + H))
+    finally:
+        release.set()
+
+
+async def test_a_timed_out_reads_late_failure_is_logged_at_debug(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    t0 = _us(2026, 3)
+    _write(tmp_path, "2026-03", [t0])
+    futs = _worker_futures(monkeypatch)
+    release = threading.Event()
+
+    def fails_late(cur: duckdb.DuckDBPyConnection, *a: object) -> list[object]:
+        release.wait(10)
+        cur.close()
+        raise kr.ColdKlineReadError("interrupted") from duckdb.InterruptException("stop")
+
+    monkeypatch.setattr(kr, "_read_rows", fails_late)
+    reader = ParquetKlineReader(DatasetRegistry(tmp_path), timeout_s=0.05)
+    with capture_logs() as logs:
+        try:
+            with pytest.raises(ColdKlineReadTimeout):
+                await reader("BTCUSDT", "60", Range(t0, t0 + H))
+        finally:
+            release.set()
+        await asyncio.wait(futs)
+    late = [e for e in logs if e["event"] == "cold_kline_read_late_failure"]
+    assert late == [
+        {
+            "event": "cold_kline_read_late_failure",
+            "log_level": "debug",
+            "error": "ColdKlineReadError",
+            "cause": "InterruptException",
+        }
+    ]
+    assert reader._db is not None  # our own interrupt's failure retires nothing
 
 
 async def test_broken_shared_instance_is_replaced(
