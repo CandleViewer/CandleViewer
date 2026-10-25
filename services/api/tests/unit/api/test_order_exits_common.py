@@ -8,9 +8,9 @@ resort's `500`). Nothing sleeps: an exit is held open on an event."""
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
-import re
 import uuid
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
@@ -277,20 +277,54 @@ def test_exit_refusals_keeps_the_catalogues_66_series_then_breaches() -> None:
     assert (counter.series_count, counter.breached) == (66, True)
 
 
+def _reaches_a_claim(tree: ast.AST) -> bool:
+    """Any `.claim` attribute, or a `getattr` naming `"guard"` or `"claim"`: so an alias of the
+    guard (a private attribute, a renamed local, `getattr`) reaches it as plainly as `.claim(`."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "claim":
+            return True
+        if (
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr" and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant) and node.args[1].value in ("guard", "claim")
+        ):  # fmt: skip
+            return True
+    return False
+
+
+@pytest.mark.parametrize(
+    ("source", "reaches"),
+    [
+        ("oms.exits.guard.claim(user, 'cancel', key)", True),
+        ("self._exits.guard.claim(user, 'cancel', key)", True),
+        ("in_flight = service.guard\nin_flight.claim(user, 'cancel', key)", True),
+        ("held = getattr(runtime.exits, 'guard')", True),
+        ("await run_claimed(oms, user, 'cancel', key, make, refused=refused)", False),
+        ("scoped = await exits.scope(caller, order_id)", False),
+    ],
+    ids=["direct", "private", "renamed_local", "getattr", "run_claimed", "scope"],
+)
+def test_the_fence_finds_the_guard_however_it_is_named(source: str, reaches: bool) -> None:
+    """D1b's delta, Minor 1: the three aliases a text match missed are found."""
+    assert _reaches_a_claim(ast.parse(source)) is reaches
+
+
 def test_run_claimed_is_the_in_flight_guards_one_claimer() -> None:
     """SEC-S4C2A-01: a claim has no deadline, so the guard's 1,024 / 64 bounds hold only while
     every claim is released at its exit's end, which `run_claimed` does on every path (the tests
-    above). No other module reaches the guard; a new caller is reviewed here first. The order
-    lane's `OnLaneExits.guard` (`oms_wiring.py`) forwards the guard to `run_claimed` in place, on
-    the serving loop, and never claims or releases it."""
+    above). No other module reaches the guard (`_reaches_a_claim`, read from each module's tree);
+    the alert job store's own `claim` is the one other `.claim`. The order lane's
+    `OnLaneExits.guard` (`oms_wiring.py`) forwards the guard to `run_claimed` in place, on the
+    serving loop, and never claims or releases it. A new caller is reviewed here first."""
     pkg = Path(candleviewer.__file__).resolve().parent
-    reach = re.compile(r"\.guard\.claim\(|\bexits\.guard\b")
+    modules = sorted(pkg.rglob("*.py"))
+    assert len(modules) > 500  # the whole package was read, not an emptied scan
     users = {
         p.relative_to(pkg).as_posix()
-        for p in pkg.rglob("*.py")
-        if reach.search(p.read_text(encoding="utf-8"))
+        for p in modules
+        if _reaches_a_claim(ast.parse(p.read_text(encoding="utf-8"), filename=str(p)))
     }
-    assert users == {"api/order_exits_common.py", "oms_wiring.py"}
+    assert users == {"api/order_exits_common.py", "alerts/dispatcher.py"}
 
 
 class _Pager:
