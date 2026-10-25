@@ -6,7 +6,9 @@ upstream fetcher."""
 
 from __future__ import annotations
 
+import dataclasses
 import time
+from decimal import Decimal
 
 import pytest
 from fastapi import FastAPI, Request
@@ -14,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer.api.instruments import InstrumentsPrincipal, make_instruments_router
 from candleviewer.domain.events import Instrument
+from candleviewer.exchange.base.models import RiskLimitTier
 from candleviewer.exchange.bybit.instruments import parse_instrument
 from candleviewer.ingestion.instruments import CatalogueSnapshot
 
@@ -66,6 +69,10 @@ class FakeReader:
             return self._extra
         return None
 
+    async def ensure_risk_limits(self, symbol: str) -> tuple[RiskLimitTier, ...] | None:
+        snap = self._snap
+        return snap.risk_limit_tiers(symbol) if snap is not None else None
+
 
 class Resolver:
     def __init__(self, principal: InstrumentsPrincipal | None) -> None:
@@ -110,6 +117,39 @@ def test_list_reports_stale_since_when_refresh_failing() -> None:
     body = _client(FakeReader(_snap(stale_since_us=_NOW))).get("/instruments").json()
     assert body["meta"]["stale_since"].endswith("Z")
     assert len(body["items"]) == 2  # previous catalogue keeps serving
+
+
+def test_detail_serves_known_tiers_in_22s_names_and_unknown_as_empty() -> None:
+    tier = RiskLimitTier(
+        tier_id=7,
+        risk_limit_value=Decimal("300000"),
+        maintenance_margin_rate=Decimal("0.0033"),
+        initial_margin_rate=Decimal("0.0066"),
+        max_leverage=Decimal("150.00"),
+    )
+    snap = dataclasses.replace(_snap(), risk_limits={"BTCUSDT": (tier,)})
+    client = _client(FakeReader(snap))
+    assert client.get("/instruments/BTCUSDT").json()["risk_limit_tiers"] == [
+        {"tier": 7, "risk_limit_value": "300000", "initial_margin": "0.0066",
+         "maintenance_margin": "0.0033", "max_leverage": "150.00"}
+    ]  # fmt: skip
+    assert client.get("/instruments/ETHUSDT").json()["risk_limit_tiers"] == []
+
+
+def test_detail_serves_exponent_form_tier_decimals_in_fixed_point() -> None:
+    tier = RiskLimitTier(
+        tier_id=1,
+        risk_limit_value=Decimal("3E+5"),
+        maintenance_margin_rate=Decimal("3.3E-3"),
+        initial_margin_rate=Decimal("6.6E-3"),
+        max_leverage=Decimal("1.5E+2"),
+    )
+    snap = dataclasses.replace(_snap(), risk_limits={"BTCUSDT": (tier,)})
+    body = _client(FakeReader(snap)).get("/instruments/BTCUSDT").json()
+    assert body["risk_limit_tiers"] == [
+        {"tier": 1, "risk_limit_value": "300000", "initial_margin": "0.0066",
+         "maintenance_margin": "0.0033", "max_leverage": "150"}
+    ]  # fmt: skip
 
 
 def test_delisted_detail_reports_delisted() -> None:

@@ -12,6 +12,16 @@ model its caller constructed. REST router
 wiring and the Postgres-backed repository implementation are kept in
 `candleviewer.storage`/`candleviewer.api`; this module has no I/O of its own,
 so it is unit-testable without a DB or network (C-13.2).
+
+S-RL (#913): the snapshot also carries the risk-limit tiers of the symbols asked for so far,
+beside the instruments and swapped with them. They are held in memory only, never persisted
+(no migration; `0004_instruments` leaves them out), so after a restart a symbol has no tiers
+until its first fetch: a reader gets `None`, never an empty or stale ladder, and fails closed
+(the sizer's `figure_unknown`).
+
+"Tier 1" (the default when there is no position tier) means the LOWEST tier by
+`risk_limit_value`: the first after sorting, with `isLowestRisk` as a cross-check. It never means
+`tier == 1`, because the venue ids are not positions (ETHUSDT's ids run 11-45).
 """
 
 from __future__ import annotations
@@ -22,6 +32,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from candleviewer.domain.events import Instrument, InstrumentUpdatedEvent
+from candleviewer.exchange.base.models import RiskLimitTier
 
 #: Fields compared between consecutive `metadata_version`s to build
 #: `InstrumentUpdatedEvent.changed_fields` (ticket "Tick size changes"
@@ -112,9 +123,15 @@ class CatalogueSnapshot:
     by_symbol: Mapping[str, Instrument]
     fetched_at_us: int
     stale_since_us: int | None = None
+    #: S-RL (#913): each fetched symbol's tiers, ascending; a symbol not fetched is absent.
+    risk_limits: Mapping[str, tuple[RiskLimitTier, ...]] = field(default_factory=dict)
 
     def get(self, symbol: str) -> Instrument | None:
         return self.by_symbol.get(symbol)
+
+    def risk_limit_tiers(self, symbol: str) -> tuple[RiskLimitTier, ...] | None:
+        """`symbol`'s tiers, or `None` while they are unknown (never fetched since boot)."""
+        return self.risk_limits.get(symbol)
 
     def listing(self, *, include_delisted: bool = False) -> Sequence[Instrument]:
         """Symbols for the search-facing listing (ticket "Delisted symbol"
@@ -166,6 +183,7 @@ class InstrumentCatalogueCache:
             by_symbol=self._snapshot.by_symbol,
             fetched_at_us=self._snapshot.fetched_at_us,
             stale_since_us=stale_since_us,
+            risk_limits=self._snapshot.risk_limits,
         )
 
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Final, Literal, get_args
@@ -99,7 +99,7 @@ class FakeExchange:
         liquidations: Sequence[LiquidationEvent] = (),
         open_interest: Sequence[OpenInterestEvent] = (),
         funding: Sequence[FundingEvent] = (),
-        risk_limits: Sequence[RiskLimitTier] = (),
+        risk_limits: Mapping[str, Sequence[RiskLimitTier]] | None = None,
         server_time: TsUs = 0,
     ) -> None:
         self._instruments = {i.symbol: i for i in instruments}
@@ -110,7 +110,7 @@ class FakeExchange:
         self._liquidations = list(liquidations)
         self._open_interest = list(open_interest)
         self._funding = list(funding)
-        self._risk_limits = list(risk_limits)
+        self._risk_limits = {k: tuple(v) for k, v in (risk_limits or {}).items()}
         self._server_time = server_time
 
     async def instruments(self) -> Sequence[Instrument]:
@@ -193,7 +193,8 @@ class FakeExchange:
         return [e for e in self._funding if e.symbol == symbol and start <= e.ts_event <= end]
 
     async def fetch_risk_limits(self, symbol: Symbol) -> Sequence[RiskLimitTier]:
-        return list(self._risk_limits)
+        """S-RL (#913): the seeded ladder of `symbol` only, as the venue answers one symbol."""
+        return list(self._risk_limits.get(symbol, ()))
 
     async def server_time_us(self) -> TsUs:
         return self._server_time

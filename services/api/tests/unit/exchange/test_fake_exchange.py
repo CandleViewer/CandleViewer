@@ -177,10 +177,11 @@ async def test_fake_exchange_fetch_funding_history_filters_by_symbol_and_range()
     assert list(result) == [funding]
 
 
-async def test_fake_exchange_fetch_risk_limits_returns_seeded_tiers() -> None:
+async def test_fake_exchange_fetch_risk_limits_returns_the_symbols_seeded_tiers() -> None:
     tier = _risk_limit_tier()
-    fake = FakeExchange(risk_limits=[tier])
+    fake = FakeExchange(risk_limits={"BTCUSDT": [tier]})
     assert await fake.fetch_risk_limits("BTCUSDT") == [tier]
+    assert await fake.fetch_risk_limits("ETHUSDT") == []
 
 
 def _book_snapshot(symbol: str, *, depth: int) -> BookSnapshot:

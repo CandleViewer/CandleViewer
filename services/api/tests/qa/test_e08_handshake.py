@@ -67,6 +67,7 @@ from candleviewer.exchange.base.models import (
     KlineEvent,
     LiquidationEvent,
     OpenInterestEvent,
+    RiskLimitTier,
     TickerEvent,
     TradeEvent,
 )
@@ -521,6 +522,9 @@ class _Reader:
 
     async def ensure_symbol(self, symbol: str) -> Instrument | None:
         return self._snapshot.get(symbol)
+
+    async def ensure_risk_limits(self, symbol: str) -> tuple[RiskLimitTier, ...] | None:
+        return self._snapshot.risk_limit_tiers(symbol)
 
 
 class _Viewer:

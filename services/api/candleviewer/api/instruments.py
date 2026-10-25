@@ -15,6 +15,11 @@ session -> 401, missing permission -> 403.
 
 Neutral -> wire mapping: domain status `trading` -> contract `Trading` etc.;
 `delisted` is derived (`status` not in {Trading, PreLaunch}) per the schema.
+
+S-RL (#913): the detail route serves `risk_limit_tiers` from the snapshot (`ensure_risk_limits`:
+fetched on first demand, bounded by the scheduler's deadline, then refreshed with the
+catalogue), renamed to 22's `tier`/`initial_margin`/`maintenance_margin`; tiers that are not
+known (a failed or late fetch, or the restart window) are served as `[]`, never guessed.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
 from candleviewer.domain.events import Instrument
+from candleviewer.exchange.base.models import RiskLimitTier
 from candleviewer.ingestion.instruments import CatalogueSnapshot, utc_now_us
 from candleviewer.ingestion.instruments_refresh import InstrumentRefreshPendingError
 
@@ -82,6 +88,8 @@ class CatalogueReader(Protocol):
 
     async def ensure_symbol(self, symbol: str) -> Instrument | None: ...
 
+    async def ensure_risk_limits(self, symbol: str) -> tuple[RiskLimitTier, ...] | None: ...
+
 
 def _problem(status_code: int, title: str, detail: str) -> JSONResponse:
     return JSONResponse(
@@ -95,6 +103,19 @@ def _iso(us: int | None) -> str | None:
     if us is None:
         return None
     return datetime.fromtimestamp(us / 1_000_000, tz=UTC).isoformat().replace("+00:00", "Z")
+
+
+def serialize_risk_limit_tier(t: RiskLimitTier) -> dict[str, object]:
+    """22's `InstrumentDetail.risk_limit_tiers[]` item (decimals as strings, C6). Fixed-point
+    `format(d, "f")`, never `str(d)`, which can answer exponent form (`1E+2`) outside 22's
+    Decimal pattern."""
+    return {
+        "tier": t.tier_id,
+        "risk_limit_value": format(t.risk_limit_value, "f"),
+        "initial_margin": format(t.initial_margin_rate, "f"),
+        "maintenance_margin": format(t.maintenance_margin_rate, "f"),
+        "max_leverage": format(t.max_leverage, "f"),
+    }
 
 
 def serialize_instrument(i: Instrument) -> dict[str, object]:
@@ -239,10 +260,11 @@ def make_instruments_router(
             return _problem(503, "Service unavailable", "instrument catalogue not loaded yet")
         if instrument is None:
             return _problem(404, "Not found", f"unknown instrument {symbol}")
+        tiers = await reader.ensure_risk_limits(symbol)
         body = serialize_instrument(instrument)
         body.update(
             {
-                "risk_limit_tiers": [],
+                "risk_limit_tiers": [serialize_risk_limit_tier(t) for t in tiers or ()],
                 "recorded": False,
                 "recording_started_at": None,
                 "stale_since": _iso(snap.stale_since_us),
@@ -259,4 +281,5 @@ __all__ = [
     "PrincipalResolver",
     "make_instruments_router",
     "serialize_instrument",
+    "serialize_risk_limit_tier",
 ]
