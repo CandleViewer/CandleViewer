@@ -35,7 +35,6 @@ from typing import Any, Final, Literal, Protocol, cast
 import sqlalchemy as sa
 import structlog
 
-from candleviewer.observability.metrics import Counter
 from candleviewer.recorder.retention import (
     ColdPartition,
     HotDay,
@@ -46,6 +45,7 @@ from candleviewer.recorder.retention import (
 from candleviewer.recorder.retention_defaults import STREAM_DEFAULTS, canonical_stream
 from candleviewer.recorder.rolloff import AuditEmitter
 from candleviewer.replay.merge import ANCHOR_LOOKBACK_US
+from candleviewer.replay.metrics import replay_retention_guard_errors_total
 from candleviewer.settings import Settings
 from candleviewer.storage.cold.compactor import Compactor, IdleGuard
 from candleviewer.storage.cold.layout import DatasetRegistry, stream_dir_name
@@ -106,11 +106,6 @@ _REPLAYED_DIRS: Final = {
 }
 _ALL_DIRS: Final = frozenset(stream_dir_name(k) for k in StreamKind)
 
-replay_retention_guard_errors_total = Counter(
-    "replay_retention_guard_errors_total",
-    "Replay retention guard reads that failed; the partition was kept this pass.",
-    ["where"],
-)
 for _site in GUARD_SITES:
     replay_retention_guard_errors_total.labels(where=_site)
 
