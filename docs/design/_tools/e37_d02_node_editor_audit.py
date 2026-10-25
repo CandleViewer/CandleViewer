@@ -15,12 +15,22 @@ strings of ``form.py``, the ``Rules``-context keymap rows with their chords; (5)
 the four indicator words on SCR-081 and SCR-082 agree for 1 / 3 / 4 and differ only for 2, the
 form's state-2 string and "node-only" appear only in rows that quote their source, the two
 recovery sentences are present verbatim, the two loosening sentences #4137 supersedes are absent,
-no local path or host, and - with ``--pr-body`` - no closing keyword; (6) the per-frame gates of
-the orchestrator's ruling (the state-3 and state-2 badges, no trigger edge, the T2 anatomy on
-every gated write with every keyed reason at most 60 characters, the native stop field on every
-position-opening action node), the four indicator words verbatim in the Word cell of their frame
-row and in the copy deck, and an ``Arm…`` class named on every frame row (the pre-PR lens's F-8
-and F-1); (7) the structure counts (``<!-- audit:NAME=VALUE -->`` markers).
+no local path or host, and - with ``--pr-body`` - no closing keyword; (6) the A2 gates of the
+orchestrator's ruling, each as a ruling sentence AND anchored to the frame rows that draw it: both
+mismatch rows draw the ``mismatch`` badge (glyph + word), the danger outline, the selection and
+the node-list row selected and focused; both graph-only frames draw the ``graph-only`` badge; no
+clause of sections 0 and 2-5 pairs the trigger with an edge into the root and the CMP-147 cell
+says **no edge**; every T2 of a frame row names its key or the one notice, the P0 row carries its
+keyed reason, the P0 paragraph the lock, the armed frame ``Save`` among its T2 writes, every keyed
+reason at most 60 characters; the native stop on the CMP-149 row, the Action inspector row and
+board 07 for every ``places_orders`` action of ``catalogue.py``; the four indicator words
+verbatim in the Word cell of their frame row and in the copy deck, and an ``Arm…`` class named
+on every frame row (the pre-PR lens's F-8 and F-1); (7) the structure counts
+(``<!-- audit:NAME=VALUE -->`` markers).
+
+``--self-test [SPEC]`` runs the text review's 15 frame-level mutations of those elements on the
+spec in memory (the file is never written): each must exit 1 with exactly one new FAIL, and the
+clean spec must exit 0 before and after.
 
 ``--json`` prints one object (the board script's NUM / TERMS and check-nums consume it).
 ``--check <spec> [--pr-body FILE]`` re-derives every marker, runs every gate and the cite check:
@@ -30,6 +40,7 @@ than once FAIL (exit 1). Every ``C-x.y`` cited must exist verbatim in CONSTITUTI
 
 Usage: python3 -I docs/design/_tools/e37_d02_node_editor_audit.py [--json]
        python3 -I docs/design/_tools/e37_d02_node_editor_audit.py --check SPEC [--pr-body FILE]
+       python3 -I docs/design/_tools/e37_d02_node_editor_audit.py --self-test [SPEC]
 """
 
 from __future__ import annotations
@@ -86,6 +97,7 @@ FILES: dict[str, Path] = {
     "E09-D09": ROOT / "docs/design/E09/E09-D09.md",
     "E30-D02": ROOT / "docs/design/E30/E30-D02.md",
     "E25-D01": ROOT / "docs/design/E25/E25-D01.md",
+    "E33-D02": ROOT / "docs/design/E33/E33-D02.md",
     "E36-D02": ROOT / "docs/design/E36/E36-D02.md",
     "E36-D03": ROOT / "docs/design/E36/E36-D03.md",
     "E36-D04": ROOT / "docs/design/E36/E36-D04.md",
@@ -95,6 +107,7 @@ FILES: dict[str, Path] = {
     "form.py": RULES / "ir/form.py",
     "graph.py": RULES / "compiler/graph.py",
     "catalogue.py": RULES / "vocabulary/catalogue.py",
+    "validator.py": RULES / "validator.py",
     "model.ts": GRAPH_PKG / "src/model.ts",
     "ports.ts": GRAPH_PKG / "src/ports.ts",
     "errors.ts": GRAPH_PKG / "src/errors.ts",
@@ -152,6 +165,7 @@ CITES: dict[tuple[str, int], str] = {
     ): "SCR-081 and SCR-082 additionally require the form↔graph round-trip equivalence test",
     ("15", 69): "### CMP-003 SegmentedControl",
     ("15", 197): "### CMP-016 Tooltip",
+    ("15", 206): "### CMP-017 Popover",
     ("15", 224): "### CMP-019 Icon",
     ("15", 288): "### CMP-026 EmptyState",
     ("15", 307): "### CMP-028 Callout",
@@ -371,6 +385,7 @@ CITES: dict[tuple[str, int], str] = {
         334,
     ): '**"Hollow, dashed or hatched = estimated or absent, never a side or direction."**',
     ("E36-D02", 42): "## 0. The planned boards",
+    ("E36-D02", 66): "the `place_order` native stop field is non-emptiable",
     ("E36-D02", 79): "| The lane agreements",
     ("E36-D02", 101): "## 3. The state inventory",
     ("E36-D02", 105): "| **02-1 draft** (S1)",
@@ -382,6 +397,8 @@ CITES: dict[tuple[str, int], str] = {
         114,
     ): "**Viewing as (E09-D09 §2.1 step 3a) — a treatment of every frame, not a seventh state:**",
     ("E36-D02", 116): "## 4. The round-trip indicator contract",
+    ("E36-D02", 158): "**The action picker:**",
+    ("E36-D02", 162): '| `place_order` "Place order"',
     ("E36-D02", 118): "**Props (names PROPOSED, mapped to the audit event):**",
     ("E36-D02", 122): '"This rule is fully editable in both the form and the graph editor."',
     ("E36-D02", 123): 'Open in the graph editor to change this." — the lead-in',
@@ -485,7 +502,14 @@ CITES: dict[tuple[str, int], str] = {
     ("graph.py", 10): "exactly one ``when`` edge from the single root condition",
     ("graph.py", 12): "Well-formedness (cycles, multiple sinks, orphans, dangling ports)",
     ("graph.py", 14): "form-subset detector flags as graph-only",
+    ("catalogue.py", 42): "places_orders: bool = False",
     ("catalogue.py", 63): "RETIRED_ACTIONS = frozenset",
+    ("catalogue.py", 65): 'ActionSpec("place_order", "Place order"',
+    ("catalogue.py", 70): 'ActionSpec("scale_in", "Scale in"',
+    ("catalogue.py", 73): 'ActionSpec("reverse_position", "Reverse position"',
+    ("catalogue.py", 80): 'ActionSpec("arm_chase_limit", "Arm chase limit"',
+    ("validator.py", 202): '"native_stop_violation"',
+    ("E33-D02", 94): "| C-2.6 + C-4.14 on every algo child",
     ("catalogue.py", 66): "only_tighten=false is refused",
     ("model.ts", 3): "export type GraphNodeType",
     ("model.ts", 14): "export interface GraphEdge",
@@ -657,10 +681,12 @@ BINDINGS = (
     "color.accent.subtle",
     "radius.full",
 )
-# The per-frame gates of the orchestrator's ruling: each sentence must stand in the spec verbatim.
+# The ruling sentences of the orchestrator's A2 gates: each must stand in the spec verbatim. They
+# alone do not prove a frame draws the element (a sentence survives the element's removal from the
+# frame row that draws it), so check_frames() anchors each gate to those rows as well.
 GATES: dict[str, str] = {
-    "state-3 badge on exactly the diverging nodes": (
-        "State 3 marks exactly the diverging node(s) named by `round_trip.diff[].path` with the "
+    "state-3 badge on the diverging nodes only": (
+        "State 3 marks only the diverging node(s) named by `round_trip.diff[].path` with the "
         "`mismatch` badge (glyph + word) plus the danger outline, selects it and focuses its "
         "node-list row."
     ),
@@ -683,9 +709,9 @@ GATES: dict[str, str] = {
         'the view-as leg (`rbac.view_as` "Read-only while viewing as {user}.") is the first '
         "leg on **every** write control"
     ),
-    "A1: the native stop field on every position-opening action node": (
-        "every action node that opens or adds to a position (`place_order`, `scale_in`) shows "
-        "its native stop as a **required field** on the node card and in the inspector"
+    "A1: the native stop on every order-placing action node": (
+        "every action node that places an order shows its native stop on the node card and in the "
+        "inspector, as the merged texts have it"
     ),
 }
 RECOVERY = (
@@ -710,8 +736,51 @@ WORD_FRAMES = (
 # validity look, the armed frame's `Disarm`, or an enabled `Arm…` that names the satisfied new-rule
 # gate (`24` §11.7).
 ARM_CLASS = re.compile(
-    r"`Arm…` (?:T2 `rule\.[a-z_.]+`|V \"|→ `Disarm`|T1 — the new-rule gate satisfied \(`24`:3483\))"
+    r"`Arm…` (?:T2 `rule\.[a-z_.]+`|T2 → the banner|V \"|replaced by `Disarm`"
+    r"|T1 — the new-rule gate satisfied \(`24`:3483\))"
 )
+# M-1 of the text review: the A2 gates anchored to the frame rows that draw them.
+# (1) Both mismatch rows draw every element of the state-3 drawing (BQ-8): label -> the row text.
+MISMATCH_ROWS = ("round-trip-mismatch", "round-trip-mismatch-dialog")
+MISMATCH_ELEMENTS = (
+    ("the `mismatch` badge (glyph + word)", re.compile(r"badged `mismatch` \(glyph \+ word\)")),
+    (
+        "the danger outline on the diverging node",
+        re.compile(r"the diverging node outlined `color\.status\.danger\.default`"),
+    ),
+    ("the node selected on the canvas", re.compile(r"\*\*selected\*\*;")),
+    (
+        "the node-list row selected and focused",
+        re.compile(r"node-list row \*\*selected and focused"),
+    ),
+)
+# (2) Both graph-only frames draw the state-2 badge.
+GRAPH_ONLY_ROWS = ("editing-graph-only", "round-trip-graph-only")
+GRAPH_ONLY_BADGE = re.compile(r"badged `graph-only` \(glyph \+ word\)")
+# (3) No clause of the drawn sections pairs the trigger with an edge into the root (BQ-21); the
+# CMP-147 cell must say **no edge** (checked on its own, so the scan skips that row).
+TRIGGER = re.compile(r"\btrigger", re.IGNORECASE)
+EDGE_WORD = re.compile(r"\b(?:edges?|connect(?:ion|ions|ed|s)?|wired?)\b", re.IGNORECASE)
+ROOT_WORD = re.compile(r"\broot\b", re.IGNORECASE)
+NEGATED = re.compile(
+    r"no edge|\bnever\b|\brefused\b|\bwithout\b|can't|\bwith none\b", re.IGNORECASE
+)
+CLAUSE = re.compile(r"(?<=[.;])\s+| \| ")
+# (4) Every T2 in a frame row names its key or points at the one notice / banner; the P0 row
+# carries its keyed reason verbatim; the P0 paragraph carries the lock; the armed frame keeps
+# `Save` in its T2 list (the pre-PR lens's F-3).
+T2_BARE = re.compile(r"(?<!never )(?<!not )\bT2\b(?! `(?:rbac|rule)\.| → the (?:notice|banner))")
+P0_PARAGRAPH = "**The mismatch frame — the P0 Gherkin"
+P0_LOCK = "T2 with the lock, the full labels"
+ARMED_T2_LIST = re.compile(r"every write \(([^)]*)\) T2 → the notice")
+# (5) A1 on each surface that draws an order-placing action: the row's first cell -> the section.
+A1_SURFACES = (
+    ("the CMP-149 action-node row", "| CMP-149 ActionNode", "## 5. ", "## 6. "),
+    ("the Action inspector row", "| CMP-153 Action ", "## 9. ", "## 10. "),
+    ("board 07's row", "| 07 ", "## 0. ", "## 1. "),
+)
+A1_MECHANICS = ("non-emptiable", "read-only")
+A1_FULL_SET = ("`sl.note`", "`sl.kept`")
 FORM_STATE2 = "Graph-only construct — read-only here"  # the form's word: quoted only in C-rows
 QUOTING = ("D02-C", "memo A9", "memo C17", "`11`:3734", "`14`:1823")  # rows that may quote a source
 # #4137 (a rule action never loosens a stop, for any role) supersedes these two sentences: the gate
@@ -858,6 +927,17 @@ def bindings() -> dict[str, Any]:
 # ------------------------------------------------------------------ shipped vocabulary ------------
 def form_reasons() -> list[str]:
     return re.findall(r'out\.append\(f"[^"]*?: ([^"]+)"\)', read(FILES["form.py"]))
+
+
+def order_actions() -> list[str]:
+    """Every ``places_orders`` action of the shipped catalogue: A1's set (``catalogue.py`` :42)."""
+    out: list[str] = []
+    for row in lines_of(FILES["catalogue.py"]):
+        name = re.match(r'\s+ActionSpec\("([a-z_]+)"', row)
+        flag = re.search(r"\), (?:_OW|\((?:[A-Z_]+,)?\)), (True|False),", row)
+        if name and flag and flag.group(1) == "True":
+            out.append(name.group(1))
+    return out
 
 
 def rule_graph() -> dict[str, Any]:
@@ -1197,6 +1277,69 @@ def check_strings(spec: str, st: dict[str, Any]) -> list[str]:
     return out
 
 
+def frame_row(body: str, frame: str) -> str:
+    return next((r for r in body.split("\n") if r.startswith(f"| `SCR-082 / {frame}`")), "")
+
+
+def check_frames(spec: str, st: dict[str, Any]) -> list[str]:
+    """The A2 gates anchored to the frame rows that draw them (one FAIL per element per row)."""
+    out: list[str] = []
+    s3 = section(spec, "## 3. ", "## 4. ")
+    s4 = section(spec, "## 4. ", "## 5. ")
+    frames = s3 + s4
+    for frame in MISMATCH_ROWS:
+        row = frame_row(s4, frame)
+        for label, pattern in MISMATCH_ELEMENTS:
+            if not pattern.search(row):
+                out.append(f"FAIL frame `SCR-082 / {frame}` does not draw {label}")
+    for frame in GRAPH_ONLY_ROWS:
+        if not GRAPH_ONLY_BADGE.search(frame_row(frames, frame)):
+            out.append(f"FAIL frame `SCR-082 / {frame}` does not draw the `graph-only` badge")
+    drawn = "\n".join((section(spec, "## 0. ", "## 1. "), section(spec, "## 2. ", "## 6. "))).split(
+        "\n"
+    )
+    for row in drawn:
+        if row.startswith("| CMP-147"):
+            cells = row.split(" | ")
+            if len(cells) < 2 or "**no edge**" not in cells[1]:
+                out.append("FAIL the CMP-147 default cell does not draw **no edge**")
+            continue
+        for clause in CLAUSE.split(row):
+            if (
+                TRIGGER.search(clause)
+                and EDGE_WORD.search(clause)
+                and ROOT_WORD.search(clause)
+                and not NEGATED.search(clause)
+            ):
+                out.append(f"FAIL a trigger→root edge is drawn: {clause.strip()[:90]!r}")
+    for row in frames.split("\n"):
+        if row.startswith("| `SCR-082 / ") and T2_BARE.search(row):
+            out.append(f"FAIL frame row {row.split('`')[1]} has a T2 without its key or notice")
+    reasons = dict(st["reason_rows"])
+    p0_row = frame_row(s4, "round-trip-mismatch")
+    if "`rule.save.mismatch`" not in p0_row or reasons.get("rule.save.mismatch", "?") not in p0_row:
+        out.append("FAIL frame `SCR-082 / round-trip-mismatch` lacks the keyed reason verbatim")
+    p0 = next((r for r in s4.split("\n") if r.startswith(P0_PARAGRAPH)), "")
+    if P0_LOCK not in p0:
+        out.append("FAIL the P0 paragraph does not put the lock on `Save` and `Arm…`")
+    armed = ARMED_T2_LIST.search(frame_row(s3, "read-only-armed"))
+    if not armed or "`Save`" not in armed.group(1):
+        out.append(
+            "FAIL frame `SCR-082 / read-only-armed` does not list `Save` among its T2 writes"
+        )
+    order_set = order_actions()
+    for label, first, start, end in A1_SURFACES:
+        body = section(spec, start, end)
+        row = next((r for r in body.split("\n") if r.startswith(first)), "")
+        want = [*A1_MECHANICS, "`place_order`"]
+        if first != "| 07 ":
+            want += [*(f"`{a}`" for a in order_set), *A1_FULL_SET]
+        missing = [w for w in dict.fromkeys(want) if w not in row]
+        if not order_set or missing:
+            out.append(f"FAIL A1: {label} does not draw the native stop ({missing or 'no set'})")
+    return out
+
+
 def check_hygiene(text: str, label: str) -> list[str]:
     return [
         f"FAIL {label}: forbidden pattern /{p}/ present"
@@ -1205,16 +1348,21 @@ def check_hygiene(text: str, label: str) -> list[str]:
     ]
 
 
-def check(spec_path: Path, pr_body: Path | None) -> int:
-    spec = read(spec_path)
+def evaluate(spec: str) -> tuple[list[str], list[str], int, int, dict[str, Any]]:
+    """Every spec gate on the text in memory: (problems, drift warnings, checked, unregistered)."""
     d = derived(spec)
     st = d["structure"]
     problems = check_markers(spec, d["markers"]) + check_rules(spec)
-    problems += check_strings(spec, st) + check_hygiene(spec, "spec")
+    problems += check_strings(spec, st) + check_frames(spec, st) + check_hygiene(spec, "spec")
     if not st["pending"]:
         problems.append("FAIL section 0 does not read PENDING")
     fails, warns, checked, unregistered = check_cites(spec)
-    problems += fails
+    return problems + fails, warns, checked, unregistered, d
+
+
+def check(spec_path: Path, pr_body: Path | None) -> int:
+    spec = read(spec_path)
+    problems, warns, checked, unregistered, d = evaluate(spec)
     if pr_body is not None:
         body = read(pr_body)
         if CLOSING.search(body):
@@ -1235,6 +1383,161 @@ def check(spec_path: Path, pr_body: Path | None) -> int:
         f"registered, {mx['proposed']} PROPOSED; {d['bindings']['missing_count']} MISSING tokens"
     )
     return 1 if problems else 0
+
+
+# The text review's 15 frame-level mutations of the A2 elements (M-1), run in memory by
+# --self-test: name -> (old, new); each must raise exactly one new FAIL (exit 1).
+MUTATIONS: tuple[tuple[str, str, str], ...] = (
+    (
+        "the state-3 badge off the mismatch row",
+        (
+            "the diverging node outlined `color.status.danger.default` at `border.thick`, badged "
+            "`mismatch` (glyph + word), **selected**; its node-list row **selected and focused** "
+            "(`14`:1863)"
+        ),
+        (
+            "the diverging node outlined `color.status.danger.default` at `border.thick`, "
+            "**selected**; its node-list row **selected and focused** (`14`:1863)"
+        ),
+    ),
+    (
+        "the mismatch row drawn hue-only",
+        (
+            "badged `mismatch` (glyph + word), **selected**; its node-list row **selected and "
+            "focused** (`14`:1863)"
+        ),
+        (
+            "tinted `color.status.danger.subtle`, **selected**; its node-list row **selected and "
+            "focused** (`14`:1863)"
+        ),
+    ),
+    (
+        "every node outlined, not the diverging one",
+        "| the diverging node outlined `color.status.danger.default` at `border.thick`, badged",
+        "| every node outlined `color.status.danger.default` at `border.thick`, badged",
+    ),
+    (
+        "the node-list row no longer selected and focused",
+        "its node-list row **selected and focused** (`14`:1863)",
+        "its node-list row (`14`:1863)",
+    ),
+    (
+        "the state-2 badge off `editing-graph-only`",
+        "S-graph: one condition node badged `graph-only` (glyph + word) feeding",
+        "S-graph: one condition node feeding",
+    ),
+    (
+        "the state-2 badge off `round-trip-graph-only`",
+        "| every graph-only node badged `graph-only` (glyph + word) from creation;",
+        "| every graph-only node from creation;",
+    ),
+    (
+        "a trigger→root edge in section 2's S-form paragraph",
+        "One edge: the condition's boolean output to the action's `when` input",
+        (
+            "Two edges: the trigger's output to the root condition, and the condition's boolean "
+            "output to the action's `when` input"
+        ),
+    ),
+    (
+        "a trigger→root edge in the CMP-147 default cell",
+        "one output port (`trigger`), **no edge** (§2)",
+        "one output port (`trigger`), one edge to the root condition (§2)",
+    ),
+    (
+        "a trigger→root edge in the `editing` row",
+        "| the full anatomy with S-form (§2);",
+        "| the full anatomy with S-form (§2) and the trigger's edge to the root condition;",
+    ),
+    (
+        "the lock dropped from the P0 paragraph's `Save` and `Arm…`",
+        "T2 with the lock, the full labels",
+        "T2 with the full labels",
+    ),
+    (
+        "the keyed reason dropped from the mismatch row",
+        (
+            '**`Save` and `Arm…` T2 `rule.save.mismatch`** "Saving is blocked until the '
+            'mismatch is resolved." (`E36-D02`:289)'
+        ),
+        "**`Save` and `Arm…` T2 `rule.save.mismatch`** (`E36-D02`:289)",
+    ),
+    (
+        "`Save` dropped from `read-only-armed`'s T2 list",
+        '"+ Add node", `Save`, each row menu\'s Connect / Rename / Delete) T2 → the notice',
+        '"+ Add node", each row menu\'s Connect / Rename / Delete) T2 → the notice',
+    ),
+    (
+        "the stop off the CMP-149 row",
+        (
+            "; every order-placing action shows its native stop on the card and in the "
+            "inspector (A1 RULED, §1 row 14): `place_order` the non-emptiable native stop "
+            "field (`E36-D02`:162) with `sl.note` beneath it and `sl.kept` on a clear attempt; "
+            "`scale_in` the read-only line "
+            '"Stop: the position\'s native stop, held by Bybit (exchange)."; '
+            "`reverse_position`, "
+            "`arm_chase_limit`, `start_iceberg_slice` and `start_twap` the read-only line "
+            '"Stop: attached by the server (native SL)."'
+        ),
+        "",
+    ),
+    (
+        "the stop off the Action inspector row",
+        (
+            "; for `place_order` the non-emptiable native stop field (`E36-D02`:162) with "
+            "`sl.note` beneath it and `sl.kept` on a clear attempt; for `scale_in` the read-only "
+            '"Stop: the position\'s native stop, held by Bybit (exchange)."; '
+            "for `reverse_position`, "
+            "`arm_chase_limit`, `start_iceberg_slice` and `start_twap` the read-only "
+            '"Stop: attached by the server (native SL)." (A1)'
+        ),
+        "",
+    ),
+    (
+        "the stop off board 07",
+        (
+            "; a `place_order` with its non-emptiable native stop field, `sl.note` beneath it "
+            "and `sl.kept` on a clear attempt; a `scale_in` with the position's native stop as "
+            "read-only text"
+        ),
+        "; a `place_order`",
+    ),
+)
+
+
+def self_test(spec_path: Path) -> int:
+    """Run MUTATIONS on the spec in memory: each one exit 1 with one new FAIL; then exit 0."""
+    spec = read(spec_path)
+    before = spec_path.read_bytes() if spec_path.exists() else b""
+    base, _, _, _, _ = evaluate(spec)
+    ok = not base
+    print(f"clean spec: rc {1 if base else 0} ({len(base)} problem(s))")
+    for p in base:
+        print(f"  {p}")
+    for no, (name, old, new) in enumerate(MUTATIONS, start=1):
+        if spec.count(old) < 1:
+            ok = False
+            print(f"mutation {no:02d} {name}: DOES NOT APPLY (the text to mutate is gone)")
+            continue
+        got, _, _, _, _ = evaluate(spec.replace(old, new, 1))
+        fresh = [p for p in got if p not in base]
+        rc = 1 if got else 0
+        caught = rc == 1 and len(fresh) == 1
+        ok = ok and caught
+        print(
+            f"mutation {no:02d} {name}: rc {rc}, {len(fresh)} new FAIL"
+            f"{'' if caught else ' - NOT CAUGHT EXACTLY ONCE'}"
+        )
+        for p in fresh:
+            print(f"  {p}")
+    restored, _, _, _, _ = evaluate(spec)
+    same = (spec_path.read_bytes() if spec_path.exists() else b"") == before
+    ok = ok and not restored and same
+    print(
+        f"restore: rc {1 if restored else 0}; spec file byte-identical: {same}; "
+        f"--self-test: {'ok' if ok else 'FAIL'} - {len(MUTATIONS)} mutations in memory"
+    )
+    return 0 if ok else 1
 
 
 # ------------------------------------------------------------------ report ------------------------
@@ -1284,7 +1587,8 @@ def report(d: dict[str, Any]) -> str:
 
 
 USAGE = (
-    "usage: e37_d02_node_editor_audit.py [--json] | --check SPEC [--pr-body FILE]\n"
+    "usage: e37_d02_node_editor_audit.py [--json] | --check SPEC [--pr-body FILE] "
+    "| --self-test [SPEC]\n"
     "  --check needs the spec path (and takes the PR body path after --pr-body)"
 )
 
@@ -1293,6 +1597,9 @@ def main(argv: list[str]) -> int:
     # The report holds non-ASCII text ("✓", "—"): write UTF-8 whatever the console code page is.
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(encoding="utf-8")
+    if "--self-test" in argv:
+        i = argv.index("--self-test")
+        return self_test(Path(argv[i + 1]) if i + 1 < len(argv) else SPEC)
     if "--check" in argv:
         if argv.index("--check") + 1 >= len(argv) or (
             "--pr-body" in argv and argv.index("--pr-body") + 1 >= len(argv)
