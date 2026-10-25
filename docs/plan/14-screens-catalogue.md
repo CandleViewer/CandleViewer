@@ -593,6 +593,7 @@ Drag preview                Drop zones
 - **Stories:** US-LAY-003, US-LAY-004.
 - **Analytics/audit:** `sync.group_created`, `sync.group_changed`, `sync.axis_toggled`, `sync.panel_joined_group`, `sync.panel_left_group` (analytics).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.8 (Penpot page `E15-D02`, boards 14–15; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
+- **Hi-fi (E15-D06):** [E15-D06.md](../design/E15/E15-D06.md) (E15-D06; SCR-023 in colour: the sync badge per density and the narrow case, the 440 px popover and its 200 % modal, the conflict and drawings disclosures, the account axis as a plain unavailable row with the environment notice, the per-panel scale link on the axis and as the proposed SCR-043 item, the refusal with percent offered, the retention and disarm storyboard, the synced crosshair over footprint, the measured matrix; heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] all sync axes drawn as independent toggles (symbol / interval / crosshair / time range / drawings / indicator set) [ ] group colour tag is paired with a letter [ ] conflicting-sync warning drawn ('Chart 3 has a different interval - crosshair sync will align by timestamp') [ ] leaving a group does not reset the panel's own settings
 
 ### SCR-024 — Panel picker ("Add panel")
