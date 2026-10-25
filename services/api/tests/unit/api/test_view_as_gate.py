@@ -696,6 +696,25 @@ async def test_a_target_denial_whose_record_cannot_be_written_is_still_forbidden
     ]
 
 
+async def test_a_failure_of_the_denials_write_that_is_not_the_audits_is_not_swallowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only what the audit writer raises (`AuditError`, not started, the bound) leaves the 403
+    standing, as at the key store's owner gate: a defect in the write surfaces as one, never as
+    the refusal that would hide it."""
+    gate = _Gate()
+    record = await gate.rig.viewing()
+    gate.identity.held = frozenset()
+    gate.protective.register("cancelOrder")
+
+    async def defect(action: str, **kw: Any) -> None:
+        raise ValueError("a defect in the write")
+
+    monkeypatch.setattr(gate.writer, "emit", defect)
+    with pytest.raises(ValueError, match="a defect in the write"):
+        await gate.call("DELETE", "/orders/x", record)
+
+
 @pytest.mark.parametrize(
     ("with_permissions", "with_identity"),
     [(False, True), (True, False), (False, False)],
