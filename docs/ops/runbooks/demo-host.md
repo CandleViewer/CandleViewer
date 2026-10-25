@@ -36,8 +36,9 @@ compose refuses every command while a required one is empty:
   empty volume on its first mount, as it does for the audit volume.
 - **Core dumps** are off (`ulimits: core: 0`); cv-api also sets `RLIMIT_CORE=0` and
   `PR_SET_DUMPABLE=0` itself before it loads the KEK.
-- `infra/scripts/lint_compose.py` checks the overlay: `api` and `migrate` only, every value from the
-  env file, the KEK a file secret and never a value, `/data` a named volume.
+- `infra/scripts/lint_compose.py` checks the overlay: `api`, `migrate` and `bootstrap-owner`
+  only, every value from the env file, the KEK a file secret and never a value, `/data` a named
+  volume, and no log of the bootstrap's output (step 6).
 
 ## The host (provisioned 2026-10-25)
 
@@ -50,7 +51,7 @@ compose refuses every command while a required one is empty:
   KEK copy waits for collection in root's home.
 - `infra/compose/.env` (0600) holds every name `.env.example` lists.
 
-The pinned sha must hold #4479 (`candleviewer.bootstrap_owner`, step 6) and #895
+The pinned sha must hold #4479 (`candleviewer.bootstrap_owner`, step 6) and #4484
 (`POST /exchange-accounts`, step 7). Every command below runs as root from the checkout's root,
 with this prefix set once per shell:
 
@@ -147,7 +148,8 @@ $COMPOSE --profile core --profile migrate run --rm migrate
 Expected: exit 0 and a `storage_migrate_done` line; a second run applies nothing and exits 0. Any
 other exit is in `storage-migrate.md` ("Exit status"): do not start the api on it. On this host the
 owner DSN lives in `.env`, as provisioned, where `storage-migrate.md` gives it to the one command as
-a prefix: the overlay requires it for every command, and `lint_compose.py` keeps it off `api`.
+a prefix: the overlay requires it for every command, and `lint_compose.py` keeps it off `api` and
+`bootstrap-owner`.
 
 ## 4. Start: `up --wait`
 
@@ -184,19 +186,29 @@ encrypted copy: decrypt it to a pipe and give `/dev/stdin` as the path), never t
 different value is a wrong KEK: stop and follow `kek-custody.md` (`kek_mismatch`); a KCV can be
 enrolled again only while no `api_keys` row exists at that version.
 
-## 6. Bootstrap the Owner (#4479)
+## 6. Bootstrap the Owner (#4479): the `bootstrap-owner` service
 
-With the api stopped, run #4479's command as a one-off container of `api`, as the break-glass CLI
-runs (`docs/ops/runbooks/auth-rbac.md` §3, step 3), from a terminal (no `-T`, no pipe):
+#4479's CLI, `python -m candleviewer.bootstrap_owner --owner <email>`, mints one invite that makes
+that email the Owner and prints its token once, on its terminal. A container's output also goes to
+Docker's logging driver, which would keep that print: `json-file` and `local` until the container
+is removed, `journald`, `syslog` and remote drivers for good (DC-4479-02, #4479's design critique).
+So the overlay runs the CLI in its own service, `bootstrap-owner`: `logging: driver: none`, a
+profile that `up` never starts, and cv-api's settings for what the CLI reads (the environment,
+cv-api's database role, the KEK and the audit volume, where its journal and the run lock it shares
+with cv-api live). Never run it as `$COMPOSE run ... api`, whose logging driver keeps the print.
+
+The first-run script (step 7) does this step for you. By hand, from a terminal (no `-T`, no pipe,
+no `| tee`), never with `--live` on this host:
 
 ```bash
 $COMPOSE stop api
-$COMPOSE run --rm --no-deps --entrypoint python api -m candleviewer.bootstrap_owner
+$COMPOSE --profile bootstrap-owner run --rm --no-deps bootstrap-owner --owner <owner email>
 $COMPOSE --profile core up -d --wait api
 ```
 
-It prints the Owner's invite token once: keep it for step 7 only, and nowhere else. Its options,
-output and refusals are #4479's, in the runbook section that ships with it.
+Retype the phrase it shows. It prints the token once: take it straight to step 7, over nothing that
+keeps a copy. Its options, exit statuses and refusals are #4479's (its runbook section ships with
+it); 17 means an Owner is active already, and a new run supersedes an invite not yet redeemed.
 
 ## 7. Account and key import: the first-run script
 
@@ -204,15 +216,18 @@ output and refusals are #4479's, in the runbook section that ships with it.
 infra/scripts/demo_host_owner_first_run.sh
 ```
 
-It calls `127.0.0.1:8000` only, reads every secret silently and writes nothing to disk. Have ready:
-the invite token (step 6), the authenticator app, the Bybit demo account's UID, and its API key and
-secret. Create the key at Bybit demo, on a unified trading account, with only `ContractTrade`
-`Order` and `Position` (and `Derivatives` `DerivativesTrade`), no withdrawal or transfer right, and
-the host's egress address (`CV_EGRESS_IP`) as its only whitelisted IP (`createApiKey` in
-`22-api-openapi.yaml`). In order, it
+Run it from a terminal. It starts with step 6: it asks for the Owner's email, stops api, runs
+`bootstrap-owner` on your terminal (retype the phrase; copy the token it prints), starts api, waits
+until it is healthy and asks you to paste the token, which it reads silently. From then on it calls
+`127.0.0.1:8000` only, reads every secret silently and writes nothing to disk. Have ready the
+authenticator app, the Bybit demo account's UID, and its API key and secret. Create the key at
+Bybit demo, on a unified trading account, with only `ContractTrade` `Order` and `Position` (and
+`Derivatives` `DerivativesTrade`), no withdrawal or transfer right, and the host's egress address
+(`CV_EGRESS_IP`) as its only whitelisted IP (`createApiKey` in `22-api-openapi.yaml`). In order, it
 redeems the invite (a new password; the otpauth URI is shown once, for the authenticator; the
-recovery codes are shown once: seal them, SR-023), signs in, registers the demo account, steps up
-for `keys` and imports the key. Each code it asks for is a new one from the authenticator.
+recovery codes are shown once: seal them, SR-023), signs in with the email, steps up for `keys`
+(registering the account needs it too), registers the demo account and imports the key. Each code
+it asks for is a new one from the authenticator.
 
 It prints only the verification verdict fields and exits 0 with `passed: true`. A refused step
 stops it with a message and exit 1. Once the invite is redeemed, run it again with `--skip-invite`;
