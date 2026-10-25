@@ -294,9 +294,10 @@ def make_cancel_all_router(
         count(code)
         return answer()
 
-    async def refusal(
+    async def audit_refusal(
         accounts: ScopedAccounts, caller: ExitCaller, step: ExitStep, error: OmsError
     ) -> Response:
+        """A refusal of steps 7 and 8, its problem the error's row, recorded as `recorded` says."""
         answer = functools.partial(order_problem, error, pager=paging)
         return await recorded(accounts, caller, step, problem_for(error).code, answer)
 
@@ -354,7 +355,7 @@ def make_cancel_all_router(
             held = replay_key(snapshot.user_id, _OPERATION, key)
             cached = replay_cached(kept, held, digest)
         except OmsError as exc:
-            return await refusal(accounts, caller, step, exc)
+            return await audit_refusal(accounts, caller, step, exc)
         if cached is not None:
             return cached
 
