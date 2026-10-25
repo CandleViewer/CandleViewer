@@ -3390,6 +3390,16 @@
         }
       }
     },
+    "/exchange-accounts/{accountId}/consequences": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
     "/exchange-accounts/{accountId}/default-profile": {
       "get": {
         "x-rbac": {

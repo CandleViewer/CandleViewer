@@ -550,6 +550,13 @@ operations:
     state: not_mounted
     reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
+  GET /exchange-accounts/{accountId}/consequences:
+    permissions: ['accounts:write']
+    scope: granted_accounts
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml by E27-S04 (#898) B1; its exposure slice mounts it
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /exchange-accounts/{accountId}/default-profile:
     permissions: ['accounts:read']
     scope: granted_accounts
@@ -1761,6 +1768,12 @@ account_scope:
       E27-S04 (#898) gates it in its handler (HANDLER_GATED_ROUTES) with the no-grace class
       `accounts`, bound to the one request (fingerprint, `open_exposure` included): a class a
       rotation's `keys` step-up can never satisfy (F-11, SR-E27-02)
+    cells:
+      owner: {granted: admitted, foreign: admitted, absent: admitted}
+      manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+      viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+  GET /exchange-accounts/{accountId}/consequences:
+    step_up: null
     cells:
       owner: {granted: admitted, foreign: admitted, absent: admitted}
       manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}

@@ -86,6 +86,10 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
+    "GET /exchange-accounts/{accountId}/consequences": {
+      "reason": "contract-first operation (E27-S04 B1, the consequence read SCR-129 fetches first); its exposure slice serves it",
+      "ticket": "#898"
+    },
     "GET /exchange-accounts/{accountId}/default-profile": {
       "reason": "contract-first operation (#906 slice 0d-1, the default binding); the router slice D2 serves it",
       "ticket": "#906"

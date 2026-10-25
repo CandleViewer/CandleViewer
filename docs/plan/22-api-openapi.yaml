@@ -2602,7 +2602,10 @@ paths:
       description: |
         Changing `position_mode` or `margin_mode` proxies to Bybit
         (`POST /v5/position/switch-mode`, `switch-isolated`, `account/set-margin-mode`) and
-        fails with `conflict` when the account holds open positions or active orders.
+        fails with `conflict` when the account holds open positions or active orders. That proxy
+        is E27-S05's: until it lands, a body that carries `position_mode` or `margin_mode` is
+        refused with `422 validation_failed` (rule `mode_change_unavailable`) before the step-up
+        gate, and nothing changes.
 
         **Disable** (`enabled: false`, SCR-129): when the account holds open positions, working
         orders or running emulated algos, the request must carry an `open_exposure` choice
@@ -2610,6 +2613,15 @@ paths:
         and nothing changes. The choices, the `leave_positions` stop-loss refusal, unknown
         exposure and a failed read are defined once, at `components.parameters.OpenExposure`.
         The choice applies only to disabling, never to a mode change.
+
+        **Step-up (SR-E27-02).** `accounts` is a no-grace step-up class: each disable
+        (`enabled: false`, whatever `open_exposure` says) spends a fresh code, and without one
+        the route answers `403 step_up_required` with `action_class` set to `accounts`. The
+        handler gates it after RBAC, account scope, validation and the `404`, and the grant binds
+        the method, the raw target with its query and the validated body (`authStepUp`). A
+        label-only patch, and `enabled: true`, are not step-up gated. The disable is audited as
+        `account.disabled`, written ahead (C-2.9), naming the `challenge_id` of the grant it
+        spent; a refusal after the gate leaves the grant spent.
       x-rbac: { permissions: [accounts:write], scope: granted_accounts }
       x-idempotency: optional
       parameters:
@@ -2633,6 +2645,27 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/OpenExposureConflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "422":
+          description: >
+            The body or `open_exposure` fails its schema (`validation_failed`), or the body
+            carries `position_mode` or `margin_mode` before E27-S05 serves a mode change (rule
+            `mode_change_unavailable`). Decided before the step-up gate: nothing changes.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                modeChangeUnavailable:
+                  value:
+                    type: "https://candleviewer.local/errors/validation_failed"
+                    title: "Request body or parameters failed schema validation"
+                    status: 422
+                    detail: "Position and margin mode changes are not served yet: E27-S05 adds them."
+                    instance: "urn:cv:req:0193f2bd-4c11-7c3e-9a11-2f8e4b1c9f01"
+                    code: validation_failed
+                    errors:
+                      - field: body.margin_mode
+                        rule: mode_change_unavailable
+                        message: "A mode change is E27-S05's; nothing changed."
         "502": { $ref: "#/components/responses/ExchangeError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
@@ -2654,6 +2687,14 @@ paths:
         (`updateExchangeAccount` with `enabled: false`, a new request with a new `Idempotency-Key`
         that must carry `open_exposure=leave_positions`) or a key is to be fixed first, and
         `components.parameters.OpenExposure` defines both, and what a failed read is answered with.
+
+        **Step-up (SR-E27-02).** `accounts` is a no-grace step-up class: each delete spends a
+        fresh code, and without one the route answers `403 step_up_required` with `action_class`
+        set to `accounts`. The handler gates it after RBAC, validation and the `404`, and the
+        grant binds the method and the raw target with its `open_exposure` query (`authStepUp`),
+        so a `keys` grant never admits it. The delete is audited as `account.deleted`, written
+        ahead (C-2.9), naming the `challenge_id` of the grant it spent; a refusal after the gate
+        leaves the grant spent.
       x-rbac: { permissions: [accounts:write], scope: none }
       x-idempotency: optional
       parameters:
@@ -2672,6 +2713,49 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/OpenExposureConflict" }
+        "422":
+          description: >
+            `open_exposure` is not `flatten_first` (`leave_positions` included) and fails its
+            schema (`validation_failed`). Decided before the step-up gate: nothing changes.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "502": { $ref: "#/components/responses/ExchangeError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /exchange-accounts/{accountId}/consequences:
+    parameters: [{ $ref: "#/components/parameters/AccountId" }]
+    get:
+      tags: [exchange-accounts]
+      operationId: getAccountConsequences
+      summary: Read what revoking, disabling or deleting an account would affect
+      description: |
+        The up-front read of `AccountConsequenceSummary` that SCR-129 renders before its confirm
+        control (SR-E27-07): one server-side aggregate, so no partial picture is shown. It has
+        no side effects: it changes nothing, writes no audit record and spends nothing. It holds
+        the permission and scope of the disable it precedes (`updateExchangeAccount`); the Owner
+        holds both. A foreign account and an absent one get the same `404 not_found`, byte for
+        byte, so the answer is no existence oracle. The exposure is read as
+        `components.parameters.OpenExposure` defines it: an exposure that cannot be read is
+        `409 exposure_unknown` with its `remedy`, and a failed read is answered as that
+        definition says.
+      x-rbac: { permissions: [accounts:write], scope: granted_accounts }
+      responses:
+        "200":
+          description: The consequence summary.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountConsequenceSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >
+            `exposure_unknown` only, with its `remedy` and no `consequences`: the exposure cannot
+            be read (`components.parameters.OpenExposure`). A read never answers `open_exposure`.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/OpenExposureProblem" }
         "502": { $ref: "#/components/responses/ExchangeError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -2854,8 +2938,12 @@ paths:
         endpoints need a transfer or withdrawal right (vendor reference, to be confirmed on demo
         by E27-S04), which the key gate refuses (C-2.8), so a compliant key cannot delete itself
         there: the key stays valid at the exchange until the Owner deletes it in the Bybit
-        dashboard (SR-E27-06). Revoking the last active trade key drops the account to
-        `key_status: missing` and halts its private streams.
+        dashboard (SR-E27-06). Revoking the account's last signable key (no other `active` or
+        `rotating` key remains) drops it to `key_status: missing`, halts its private streams and
+        ends each of its `orders`, `positions` and `wallet` subscriptions with a `revoked` frame,
+        reason `key_revoked` (`23-ws-protocol.md` §9.5). The trigger is signable, not active,
+        because a `rotating` key still signs and streams, so the account is not keyless while one
+        remains.
 
         When no other `active` key remains and the account holds open positions, working orders
         or running emulated algos, the request must carry an `open_exposure` choice (SR-E27-07).
@@ -2864,6 +2952,14 @@ paths:
         failed read are defined once, at `components.parameters.OpenExposure`. Every signable
         key of the account counts in that definition, a `rotating` key too: while a `rotating`
         key is usable the account is not dead, whatever the key being revoked answers.
+
+        **Step-up (SR-E27-02).** A revoke needs a live `keys` step-up. With
+        `open_exposure=flatten_first`, which moves money, it needs the no-grace `accounts` class
+        instead: each such revoke spends a fresh code, and without one the route answers
+        `403 step_up_required` with `action_class` set to `accounts`. The handler gates both
+        classes after RBAC, validation and the `404`, so a caller without `keys:manage` gets
+        `403 forbidden`, never a challenge, and the `accounts` grant binds the method and the raw
+        target with its query (`authStepUp`).
       x-rbac: { permissions: [keys:manage], scope: none }
       x-idempotency: optional
       parameters:
@@ -2876,6 +2972,13 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/OpenExposureConflict" }
+        "422":
+          description: >
+            `open_exposure` is neither choice and fails its schema (`validation_failed`). Decided
+            before the step-up gate: nothing is revoked.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "502": { $ref: "#/components/responses/ExchangeError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -11952,10 +12055,10 @@ paths:
 
         Grants a **5-minute** server-side grace for `action_class` on the current session
         (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the
-        earlier 15). `live_enablement`, `killswitch`, `backups` and `sl_loosen` are no-grace: the
-        response is `single_use: true` and no window is opened. Three consecutive invalid codes
-        downgrade the session to read-only for 5 minutes (`403 session_read_only` on every
-        write). Endpoints that require elevation return `403` with `code: step_up_required`
+        earlier 15). `live_enablement`, `killswitch`, `backups`, `sl_loosen` and `accounts` are
+        no-grace: the response is `single_use: true` and no window is opened. Three consecutive
+        invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on
+        every write). Endpoints that require elevation return `403` with `code: step_up_required`
         until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`,
         `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
 
@@ -11991,9 +12094,9 @@ paths:
                 challenge_id:
                   description: >
                     The `challenge_id` of the `403 step_up_required` being answered (#2304).
-                    Required for a no-grace class (`live_enablement`, `killswitch`, `backups` or
-                    `sl_loosen`, named by the live challenge or by `action_class`): omitting it is
-                    `400 validation_failed` with
+                    Required for a no-grace class (`live_enablement`, `killswitch`, `backups`,
+                    `sl_loosen` or `accounts`, named by the live challenge or by `action_class`):
+                    omitting it is `400 validation_failed` with
                     `errors: [{field: challenge_id, rule: challenge_required}]`. Optional for a
                     grace class: without it the server uses the session's live challenge. This
                     grace-class optionality is transitional and ends with #2725 (the web client
@@ -12018,7 +12121,11 @@ paths:
                     `deleteBackup`), one fresh code per action. `sl_loosen` gates the owner's
                     loosening of a position's stop (`setPositionTpSl`, 24-internal-schemas.md
                     section 8.8 rule 5), one fresh code per loosening; declared ahead of the
-                    service (C-6.1), which E29-T07 extends.
+                    service (C-6.1), which E29-T07 extends. `accounts` gates disabling or deleting
+                    an exchange account (`updateExchangeAccount` with `enabled: false`,
+                    `deleteExchangeAccount`) and a revoke's `flatten_first` branch
+                    (`revokeApiKey`), one fresh code per action; declared ahead of the service
+                    (C-6.1), which E27-S04 (#898) lands.
                   type: string
                   enum:
                     [
@@ -12032,6 +12139,7 @@ paths:
                       audit,
                       backups,
                       sl_loosen,
+                      accounts,
                     ]
       responses:
         "200":
@@ -16850,10 +16958,9 @@ components:
       description: >
         What revoking an account's last active key, disabling the account or deleting it would
         affect (SR-E27-07, SCR-129), read in one server-side query so no partial picture is
-        shown. Confidential: served only under the operation's own permission and scope. This
-        contract serves it only in the `409 open_exposure` answer. SCR-129 fetches it before the
-        dialog renders, which needs a side-effect-free read: E27-S04 (#898) adds that operation
-        in its own interface-first PR (C-6.1) before it mounts these routes.
+        shown. Confidential: served only under the operation's own permission and scope. It is
+        served in the `409 open_exposure` answer and by `getAccountConsequences`, the
+        side-effect-free read SCR-129 fetches before the dialog renders (E27-S04, #898).
       required:
         [
           exchange_account_id,
@@ -16914,6 +17021,7 @@ components:
         The `409` problem of the revoke, disable and delete operations. `consequences` is present
         exactly when `code` is `open_exposure`, and `remedy` exactly when `code` is
         `exposure_unknown`, which carries no `consequences` because the exposure cannot be read.
+        The consequence read (`getAccountConsequences`) answers it only as `exposure_unknown`.
       allOf:
         - $ref: "#/components/schemas/Problem"
         - type: object

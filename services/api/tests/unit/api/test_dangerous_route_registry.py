@@ -228,12 +228,21 @@ def _text(op: dict[str, Any]) -> str:
     return f"{op.get('summary', '')}\n{op.get('description', '')}"
 
 
+#: Backticked words that name a field, not a step-up class: `getMe`'s `accounts` list shares
+#: its name with the `accounts` class (E27-S04, #898).
+_FIELD_NOT_CLASS: dict[str, frozenset[str]] = {"getMe": frozenset({"accounts"})}
+#: Contract first (C-6.1): a class an operation's text names before its route slice registers
+#: it. E27-S04's revoke slice (#898) adds revoke's `accounts` row for `flatten_first`.
+_DOCUMENTED_AHEAD: dict[str, frozenset[str]] = {"revokeApiKey": frozenset({"accounts"})}
+
+
 def _documented_classes(op: dict[str, Any]) -> frozenset[str]:
     """The step-up classes an operation's contract text names, when that text names a step-up."""
     text = _text(op)
     if not _STEP_UP_TEXT.search(text):
         return frozenset()
-    return frozenset(c for c in _contract_classes() if f"`{c}`" in text)
+    named = frozenset(c for c in _contract_classes() if f"`{c}`" in text)
+    return named - _FIELD_NOT_CLASS.get(op.get("operationId", ""), frozenset())
 
 
 @functools.cache
@@ -372,9 +381,12 @@ def test_registered_classes_are_the_documented_classes() -> None:
         for key, op in _contract_operations().items()
         if (registered := _registered_classes(*key))
         and (documented := _documented_or_pinned_classes(op))
-        and registered != documented
+        and registered != documented - _DOCUMENTED_AHEAD.get(op["operationId"], frozenset())
     }
     assert drift == {}
+    for operation_id, ahead in _DOCUMENTED_AHEAD.items():  # a landed class leaves the list
+        key, op = _operation(operation_id)
+        assert ahead <= _documented_classes(op) and not ahead & _registered_classes(*key)
 
 
 def test_allow_listed_operations_name_no_step_up_class() -> None:

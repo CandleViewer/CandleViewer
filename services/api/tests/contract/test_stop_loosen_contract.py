@@ -187,16 +187,18 @@ def test_the_owners_step_up_is_the_no_grace_sl_loosen_class() -> None:
     contract declares `sl_loosen` ahead of the service (C-6.1)."""
     assert "sl_loosen" in _step_up_classes() and "risk_caps" in _step_up_classes()
     step_up = _OPS["authStepUp"]
-    assert "`live_enablement`, `killswitch`, `backups` and `sl_loosen` are no-grace" in _words(
-        step_up["description"]
+    assert (
+        "`live_enablement`, `killswitch`, `backups`, `sl_loosen` and `accounts` are no-grace"
+        in _words(step_up["description"])
     )
     body = step_up["requestBody"]["content"]["application/json"]["schema"]
     klass = _words(body["properties"]["action_class"]["description"])
     assert (
         "`sl_loosen` gates the owner's loosening of a position's stop (`setPositionTpSl`" in klass
     )
-    assert "`live_enablement`/`killswitch`/`backups`/`sl_loosen`: none, fresh code each time" in (
-        _INTERNAL_DOC
+    assert (
+        "`live_enablement`/`killswitch`/`backups`/`sl_loosen`/`accounts`: none, fresh code each "
+        "time" in _INTERNAL_DOC
     )
     assert "the owner's loosening of a position's stop (`sl_loosen`, §8.8 rule 5)" in _INTERNAL_DOC
     for text in (_rule_5(), _words(_OPS["setPositionTpSl"]["description"])):

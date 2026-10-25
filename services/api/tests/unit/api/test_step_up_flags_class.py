@@ -28,8 +28,9 @@ def _description(path: str, method: str) -> str:
 
 
 #: No-grace classes the contract declares before the service accepts them (C-6.1, contract
-#: first): `sl_loosen`, the owner's stop loosening (#4137), which E29-T07 lands.
-_NO_GRACE_AHEAD: frozenset[str] = frozenset({"sl_loosen"})
+#: first): `sl_loosen`, the owner's stop loosening (#4137), which E29-T07 lands; `accounts`, an
+#: account's disable or delete (E27-S04, #898), which that ticket's route slices land.
+_NO_GRACE_AHEAD: frozenset[str] = frozenset({"sl_loosen", "accounts"})
 
 
 def test_grace_placement_follows_the_contract_text() -> None:

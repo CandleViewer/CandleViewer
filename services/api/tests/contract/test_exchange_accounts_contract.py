@@ -46,6 +46,7 @@ _ACCOUNT = "/exchange-accounts/{accountId}"
 _KEYS = f"{_ACCOUNT}/keys"
 _KEY = f"{_KEYS}/{{keyId}}"
 #: Revoke, disable and delete: the three actions SR-E27-07 gates on open exposure.
+_CONSEQUENCES = f"{_ACCOUNT}/consequences"
 _EXPOSURE_OPS = [(_KEY, "delete"), (_ACCOUNT, "patch"), (_ACCOUNT, "delete")]
 _CHOICES = ("leave_positions", "flatten_first")
 _REMEDIES = ("leave_positions", "fix_key")
@@ -833,12 +834,12 @@ def test_the_dead_path_audits_why_the_stop_loss_refusal_was_lifted() -> None:
     # Each name is its own registry's spelling, and the registries do not spell the revoke alike:
     # `api_key.revoke` is in `audit/actions.py` (AUDIT_ACTIONS); `account.disabled` is in the
     # closed vocabulary of 24-internal-schemas.md §15.5, and E27-S04 registers it with the route.
-    # §15.5 spells the revoke `apikey.revoked` and the threat model's ticket column
-    # `account.key_revoked`: E27-S04 reconciles the three (see the Follow-ups of the PR for
-    # #2417), and this change edits no registry. The spelling `accounts.disable` is in none.
+    # E27-S04 (#898) reconciled §15.5 with the registry: it spells the revoke `api_key.revoke`
+    # (the threat model's ticket column says `account.key_revoked`). `accounts.disable` is in none.
     doc = _INTERNAL_SCHEMAS.read_text(encoding="utf-8")
     vocabulary = doc[doc.index("### 15.5 Audited action vocabulary") : doc.index("## 16.")]
-    assert "`account.disabled`" in vocabulary
+    assert "`account.disabled`" in vocabulary and "`account.deleted`" in vocabulary
+    assert "`api_key.revoke`" in vocabulary and "apikey.revoked" not in doc
     assert "api_key.revoke" in AUDIT_ACTIONS
     # E27-S04 (#898) registers `account.disabled` with its route and flips this line.
     assert "account.disabled" not in AUDIT_ACTIONS
@@ -1220,7 +1221,7 @@ def test_the_contract_prose_says_exchange_refusal_code_and_never_the_wire_name_r
     assert [text for text in prose if "retCode" in text] == []
 
 
-def test_exposure_unknown_is_answered_only_by_revoke_disable_and_delete() -> None:
+def test_exposure_unknown_is_answered_only_by_revoke_disable_delete_and_the_read() -> None:
     conflict = _conflict()
     for operation in _operation_ids():
         assert f"`{operation}`" in conflict
@@ -1233,24 +1234,35 @@ def test_exposure_unknown_is_answered_only_by_revoke_disable_and_delete() -> Non
         operation.get("description", "")
         for path, item in _PATHS.items()
         for method, operation in item.items()
-        if method != "parameters" and (path, method) not in _EXPOSURE_OPS
+        if method != "parameters" and (path, method) not in [*_EXPOSURE_OPS, (_CONSEQUENCES, "get")]
     ]
     assert len(others) >= 8
     assert [text for text in others if "exposure_unknown" in text] == []
+    # The consequence read (E27-S04, #898) cannot read an unknown exposure either; it answers
+    # only `exposure_unknown`, never `open_exposure`.
+    read = _op(_CONSEQUENCES, "get")["responses"]["409"]
+    assert "`exposure_unknown` only" in _fold(read["description"])
+    problem = read["content"]["application/problem+json"]["schema"]
+    assert problem == {"$ref": "#/components/schemas/OpenExposureProblem"}
 
 
-def test_consequence_summary_names_the_ticket_that_adds_its_up_front_read() -> None:
-    # SCR-129 renders the summary before the dialog's confirm control; only the 409 carries it.
+def test_consequence_summary_is_served_by_the_409_and_by_its_up_front_read() -> None:
+    # SCR-129 renders the summary before the dialog's confirm control (E27-S04, #898, C-6.1).
     ref = "#/components/schemas/AccountConsequenceSummary"
     holders = {name for name, schema in _SCHEMAS.items() if ref in json.dumps(schema, default=str)}
     assert holders == {"OpenExposureProblem"}
-    assert ref not in json.dumps(_SPEC["paths"], default=str)
+    read = _op(_CONSEQUENCES, "get")
+    assert read["operationId"] == "getAccountConsequences"
+    ok = read["responses"]["200"]["content"]["application/json"]["schema"]
+    assert ok == {"$ref": ref}
+    # Ruling 2 on #898: the disable's permission and scope, and no existence oracle.
+    assert read["x-rbac"] == {"permissions": ["accounts:write"], "scope": "granted_accounts"}
+    assert read["x-rbac"] == _op(_ACCOUNT, "patch")["x-rbac"]
+    text = _text(_CONSEQUENCES, "get")
+    assert "It has no side effects" in text
+    assert "A foreign account and an absent one get the same `404 not_found`, byte for byte" in text
     summary = _fold(_SCHEMAS["AccountConsequenceSummary"]["description"])
-    assert "only in the `409 open_exposure` answer" in summary
-    assert (
-        "SCR-129 fetches it before the dialog renders, which needs a side-effect-free read: "
-        "E27-S04 (#898) adds that operation in its own interface-first PR (C-6.1)"
-    ) in summary
+    assert "served in the `409 open_exposure` answer and by `getAccountConsequences`" in summary
 
 
 def test_consequence_summary_lists_positions_orders_algos_users_and_rules() -> None:
