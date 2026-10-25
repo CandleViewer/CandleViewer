@@ -3,7 +3,15 @@
     python tools/fixtures/capture_fixture.py --topic publicTrade.BTCUSDT --frames 500 \
         --out packages/fixtures/bybit/<date>/ws/clean_publicTrade_BTCUSDT.jsonl
 
-Public stream only (no credentials are ever read: private fixtures are E29).
+S-RL (#913): `--rest-path` records ONE public market REST reply instead (`GET` on
+`api.bybit.com`, a `/v5/market/` path only, query params from `--param k=v`):
+
+    python tools/fixtures/capture_fixture.py --rest-path /v5/market/risk-limit \
+        --param category=linear --param symbol=BTCUSDT \
+        --out packages/fixtures/bybit/<date>/rest/risk_limit_BTCUSDT.json
+
+There is no auth path in either mode: no header, key or signature is ever built or sent.
+Public data only (no credentials are ever read: private fixtures are E29).
 Every frame is passed through `redact()` and re-checked with `find_leaks()`
 before it is written; a frame that still leaks aborts the capture. Output is
 newline-delimited raw frames plus a `<out>.manifest.json` entry in the corpus
@@ -16,7 +24,7 @@ import argparse
 import asyncio
 import json
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,6 +39,11 @@ from tools.fixtures.redact import find_leaks, redact
 PUBLIC_URL = "wss://stream.bybit.com/v5/public/linear"
 HOST = "stream.bybit.com"
 DEFAULT_SIZE_CAP = 512_000
+#: Mainnet public REST (public market data has no demo feed of its own, C-2.11).
+PUBLIC_REST_URL = "https://api.bybit.com"
+REST_HOST = "api.bybit.com"
+#: The only path prefix the REST mode will call: public market data, never a private route.
+PUBLIC_REST_PREFIX = "/v5/market/"
 
 
 class Socket(Protocol):
@@ -40,6 +53,8 @@ class Socket(Protocol):
 
 
 Connector = Callable[[str], Awaitable[Socket]]
+#: `(url, params) -> (http_status, body text)`. Takes no headers, so no auth can be sent.
+Getter = Callable[[str, Mapping[str, str]], Awaitable[tuple[int, str]]]
 
 
 class CaptureError(RuntimeError):
@@ -124,7 +139,58 @@ def _write(out: Path, lines: list[str], entry: dict[str, Any]) -> None:
     )
 
 
-async def _ws_connect(url: str) -> Socket:  # pragma: no cover - real network, manual only
+async def capture_rest(
+    path: str,
+    params: Mapping[str, str],
+    out: Path,
+    *,
+    get: Getter,
+    notable_event: str = "recorded reply",
+    size_cap: int = DEFAULT_SIZE_CAP,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> CaptureResult:
+    """GET one public market reply, redact and leak-check it, write file + manifest entry."""
+    if not path.startswith(PUBLIC_REST_PREFIX) or "?" in path or ".." in path:
+        raise CaptureError(f"only public {PUBLIC_REST_PREFIX}* paths may be recorded: {path!r}")
+    status, body = await get(PUBLIC_REST_URL + path, dict(params))
+    try:
+        json.loads(body)
+    except ValueError as exc:
+        raise CaptureError(f"HTTP {status}: the reply is not JSON") from exc
+    clean = redact(body.strip())  # the body as received, never re-serialised
+    leaks = find_leaks(clean)
+    if leaks:
+        raise CaptureError(f"reply still matches secret patterns after redaction: {leaks}")
+    size = len(clean.encode()) + 1
+    if size > size_cap:
+        raise CaptureError(f"reply exceeds the {size_cap}-byte cap; narrow --param")
+    entry: dict[str, Any] = {
+        "path": f"rest/{out.name}",
+        "symbol": params.get("symbol", "*"),
+        "stream": f"GET {path}",
+        "host": REST_HOST,
+        "capture_date": now().date().isoformat(),
+        "source": "capture_fixture.py --rest-path",
+        "notable_event": notable_event,
+        "http_status": status,
+        "size_cap_bytes": size_cap,
+    }
+    await asyncio.to_thread(_write, out, [clean], entry)
+    return CaptureResult(frames=1, bytes_written=size, manifest=entry)
+
+
+async def _http_get(url: str, params: Mapping[str, str]) -> tuple[int, str]:  # pragma: no cover
+    """Real network, manual only: a bare public GET, no headers."""
+    import httpx
+
+    async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+        resp = await client.get(url, params=dict(params))
+        return resp.status_code, resp.text
+
+
+async def _ws_connect(
+    url: str,
+) -> Socket:  # pragma: no cover - real network, manual only
     from websockets.asyncio.client import connect as ws_connect
 
     conn = await ws_connect(url, open_timeout=10, ping_interval=20)
@@ -143,17 +209,32 @@ async def _ws_connect(url: str) -> Socket:  # pragma: no cover - real network, m
     return _S()
 
 
-def main(argv: list[str] | None = None, *, connect: Connector = _ws_connect) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    connect: Connector = _ws_connect,
+    get: Getter = _http_get,
+) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
-    p.add_argument("--topic", required=True)
+    mode = p.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--topic")
+    mode.add_argument("--rest-path")
+    p.add_argument("--param", action="append", default=[], help="k=v query param (REST mode)")
     p.add_argument("--frames", type=int, default=500)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--event", default="clean window")
     p.add_argument("--size-cap", type=int, default=DEFAULT_SIZE_CAP)
     ns = p.parse_args(argv)
     try:
-        res = asyncio.run(capture(ns.topic, ns.out, max_frames=ns.frames, connect=connect,
-                                  notable_event=ns.event, size_cap=ns.size_cap))  # fmt: skip
+        if ns.rest_path:
+            params = {k: v for k, _, v in (kv.partition("=") for kv in ns.param)}
+            job = capture_rest(
+                ns.rest_path, params, ns.out, get=get, notable_event=ns.event, size_cap=ns.size_cap
+            )
+            res = asyncio.run(job)
+        else:
+            res = asyncio.run(capture(ns.topic, ns.out, max_frames=ns.frames, connect=connect,
+                                      notable_event=ns.event, size_cap=ns.size_cap))  # fmt: skip
     except CaptureError as exc:
         print(f"capture aborted: {exc}", file=sys.stderr)
         return 1

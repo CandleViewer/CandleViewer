@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -137,6 +138,57 @@ def test_capture_cli_main_uses_injected_transport(
     )
     assert (ok, bad) == (0, 1)
     assert "capture aborted" in capsys.readouterr().err
+
+
+_RL_REPLY = (
+    '{"retCode":0,"retMsg":"OK","result":{"category":"linear","list":[{"id":1,'
+    f'"symbol":"BTCUSDT","sign":"{_FAKE_SIG}"}}],"nextPageCursor":""}},"time":1700000000000}}'
+)
+
+
+async def test_capture_rest_records_one_redacted_public_reply(tmp_path: Path) -> None:
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    async def get(url: str, params: Mapping[str, str]) -> tuple[int, str]:
+        calls.append((url, dict(params)))
+        return 200, _RL_REPLY + "\n"
+
+    out = tmp_path / "rest" / "risk_limit_BTCUSDT.json"
+    res = await capture_fixture.capture_rest(
+        "/v5/market/risk-limit", {"category": "linear", "symbol": "BTCUSDT"}, out, get=get,
+        now=lambda: datetime(2026, 10, 25, tzinfo=UTC),
+    )  # fmt: skip
+    assert calls == [("https://api.bybit.com/v5/market/risk-limit",
+                      {"category": "linear", "symbol": "BTCUSDT"})]  # fmt: skip
+    text = out.read_text(encoding="utf-8")
+    assert res.frames == 1 and _FAKE_SIG not in text and '"sign":"REDACTED"' in text
+    manifest = json.loads((tmp_path / "rest" / f"{out.name}.manifest.json").read_text("utf-8"))
+    assert manifest["stream"] == "GET /v5/market/risk-limit" and manifest["symbol"] == "BTCUSDT"
+    assert manifest["host"] == "api.bybit.com" and manifest["capture_date"] == "2026-10-25"
+    for bad in (
+        "/v5/position/list",
+        "/v5/market/../account/info",
+    ):  # never a private route
+        with pytest.raises(capture_fixture.CaptureError, match="public"):
+            await capture_fixture.capture_rest(bad, {}, out, get=get)
+    with pytest.raises(capture_fixture.CaptureError, match="cap"):
+        await capture_fixture.capture_rest("/v5/market/risk-limit", {}, out, get=get, size_cap=10)
+
+
+def test_capture_cli_rest_mode_uses_injected_getter(tmp_path: Path) -> None:
+    async def get(url: str, params: Mapping[str, str]) -> tuple[int, str]:
+        return 200, _RL_REPLY
+
+    out = tmp_path / "r.json"
+    argv = [
+        "--rest-path",
+        "/v5/market/risk-limit",
+        "--param",
+        "symbol=BTCUSDT",
+        "--out",
+        str(out),
+    ]
+    assert capture_fixture.main(argv, get=get) == 0 and out.exists()
 
 
 def _sample(tmp_path: Path, frames: list[dict[str, object]]) -> Path:
