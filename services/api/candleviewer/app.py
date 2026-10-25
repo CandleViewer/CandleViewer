@@ -2218,7 +2218,8 @@ def create_app(
     )
     # #906 D1a (E28-T02): the profile store, the order path's effective-profile cache over it and
     # the facade over both, with the T01 counters (real backend only). The lifespan disposes of it.
-    profiles = wire_profiles(resolved, metrics_facade)
+    # D3a: the facade announces each committed write on the process's bus (24 Sec.9.2).
+    profiles = wire_profiles(resolved, metrics_facade, ctx.bus.bus)
     app.state.profiles = profiles
     # #906 D1c: `listAccountProfiles` and `getAccountProfile`, inside the caller's grants: the
     # session resolver loads them (a test may inject its own), and each read resolves its account

@@ -267,3 +267,16 @@ async def test_create_app_wires_the_accounts_row_gauges_to_the_scraped_registry(
     assert sample("cv_profile_rows", {"env": "demo", "state": "trading_enabled"}) == 0
     assert app.state.profiles is None
     assert envs == ["demo"] * 3
+
+
+def test_create_app_hands_the_profile_wiring_the_process_bus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#906 D3a: a committed profile write is announced on the process's one bus."""
+    import candleviewer.app as appmod
+
+    handed: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(appmod, "wire_profiles", lambda *args: handed.append(args))
+    app = create_app(_fake_settings())
+    (args,) = handed
+    assert args[2] is app.state.app_context.bus.bus

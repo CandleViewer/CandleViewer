@@ -28,10 +28,17 @@ The REST reads, `read_profiles` and `read_profile` (#906 D1b), and the writes `c
 `update_profile` (D2-3) answer a profile with its row's `created_at` (`StoredProfile`); a stored
 row the store or the model cannot read is `ProfileUnavailableError`, logged by its error class
 alone, as the order path's cache fails closed (SR-E28-24), from every write too, once committed.
+
+A write the store committed is announced through the optional `changes` port (`ProfilesChanged`,
+24 Sec.9.2, #906 D3a), once the cache is invalidated and before its row is read back: its rows'
+ids and new versions, never a value. A refusal, a write that raised and a move that wrote nothing
+announce nothing, and an announcement that fails or outlasts `ANNOUNCE_TIMEOUT_S` is logged and
+never fails the write, which has committed.
 """
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID
@@ -46,6 +53,11 @@ from candleviewer.accounts.errors import (
     AccountsError,
     AccountVersionConflictError,
     ProfileUnavailableError,
+)
+from candleviewer.accounts.profile_changes import (
+    ANNOUNCE_TIMEOUT_S,
+    ProfilesChanged,
+    ProfileVersion,
 )
 from candleviewer.accounts.profiles import (
     AccountProfile,
@@ -68,6 +80,7 @@ from candleviewer.storage.repositories.accounts import AccountScope, OwnerScope
 
 if TYPE_CHECKING:
     from candleviewer.accounts.profile_cache import EffectiveProfiles
+    from candleviewer.accounts.profile_changes import ChangeKind, ProfileChanges
     from candleviewer.observability.metrics import BoundedMetric
 
 
@@ -147,12 +160,14 @@ class ProfilesRepository:
         *,
         cache: EffectiveProfiles | None,
         version_bumps: BoundedMetric | None = None,
+        changes: ProfileChanges | None = None,
     ) -> None:
         """`cache` is required: a root that passes `None` opts out of SR-E28-15's invalidation
-        knowingly, never by forgetting it."""
+        knowingly, never by forgetting it. `changes` hears each committed write."""
         self._store = store
         self._cache = cache
         self._bumps = None if version_bumps is None else version_bumps.child()
+        self._changes = changes
 
     @staticmethod
     def _map(exc: AccountProfileStoreError) -> AccountsError:
@@ -176,6 +191,35 @@ class ProfilesRepository:
     def _invalidate(self, account_id: UUID) -> None:
         if self._cache is not None:
             self._cache.invalidate(account_id)
+
+    async def _ring(
+        self,
+        account_id: UUID,
+        change: ChangeKind,
+        rows: tuple[AccountProfileRow, ...],
+        binding_version: int | None = None,
+    ) -> None:
+        """Announce a committed write: the store's rows, their ids and versions, and the last one's
+        `updated_at`. A cancellation propagates; anything else is logged with its class alone."""
+        if self._changes is None:
+            return
+        try:
+            event = ProfilesChanged(
+                exchange_account_id=account_id,
+                change=change,
+                profiles=tuple(ProfileVersion(profile_id=r.id, version=r.version) for r in rows),
+                binding_version=binding_version,
+                ts_event=to_us(rows[-1].updated_at),
+            )
+            async with asyncio.timeout(ANNOUNCE_TIMEOUT_S):
+                await self._changes.changed(event)
+        except Exception as exc:  # committed already: a lost announcement never fails the write
+            _log().warning(
+                "profile.change_unannounced",
+                account_id=str(account_id),
+                change=change,
+                error=type(exc).__name__,  # never a value
+            )
 
     async def read_profiles(
         self, scope: AccountScope, account_id: UUID
@@ -253,6 +297,8 @@ class ProfilesRepository:
             raise self._map(exc) from None
         finally:
             self._invalidate(account_id)
+        if row is not None:  # committed: announced whether or not the row reads back
+            await self._ring(account_id, "created", (row,))
         return _read_back(account_id, row)
 
     async def update_profile(
@@ -284,8 +330,9 @@ class ProfilesRepository:
             raise self._map(exc) from None
         finally:
             self._invalidate(account_id)
-        if row is not None:  # committed: counted whether or not the row reads back
+        if row is not None:  # committed: counted and announced whether or not the row reads back
             self._written(1)
+            await self._ring(account_id, "updated", (row,))
         return _read_back(account_id, row)
 
     async def set_default_profile(
@@ -313,8 +360,10 @@ class ProfilesRepository:
             self._invalidate(account_id)
         if move is None:
             raise AccountNotFoundError("profile")
-        if move.written:  # committed: counted whether or not its rows read back
+        if move.written:  # committed: counted and announced whether or not its rows read back
             self._written(1 + (move.previous is not None))
+            rows = (move.profile,) if move.previous is None else (move.previous, move.profile)
+            await self._ring(account_id, "default_moved", rows, move.version)
         try:
             previous = None if move.previous is None else profile_from_row(move.previous)
             profile = profile_from_row(move.profile)
@@ -345,8 +394,9 @@ class ProfilesRepository:
             raise self._map(exc) from None
         finally:
             self._invalidate(account_id)
-        if row is not None:  # committed: counted whether or not the row reads back
+        if row is not None:  # committed: counted and announced whether or not the row reads back
             self._written(1)
+            await self._ring(account_id, "deleted", (row,))
         return _read_back(account_id, row).profile
 
     async def get_revision(
