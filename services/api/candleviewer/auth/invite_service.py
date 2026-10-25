@@ -15,7 +15,10 @@ unusable rather than half-open:
    and moves the password hash across.
 
 The role is always `viewer` (#2109); a legacy stored non-viewer role is downgraded at
-redemption. Callers cannot pass one. The raw
+redemption. Callers cannot pass one. The one exception is the offline bootstrap invite
+(#4479, ADR-0010 amendment): it keeps `owner` exactly once, while no Owner is active, in
+one transaction with its write-ahead `users.owner_bootstrapped` record; a stale one is
+rejected `revoked`. The raw
 token is never logged, stored, or put in an exception message. Unknown /
 expired / redeemed / revoked tokens raise `InviteRejected` (distinct `reason`
 for audit only) so the edge can render one uniform error.
@@ -41,8 +44,14 @@ from candleviewer.auth.errors import (
     UserDisabled,
 )
 from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, Hasher
-from candleviewer.auth.invite_repository import InviteAudit, InviteRepository
+from candleviewer.auth.invite_repository import (
+    BOOTSTRAP_ROLE,
+    BootstrapAudit,
+    InviteAudit,
+    InviteRepository,
+)
 from candleviewer.auth.metrics import (
+    auth_owner_bootstrap_events,
     users_invites_created_total,
     users_invites_pending,
     users_invites_redeemed_total,
@@ -92,6 +101,11 @@ InviteTamperReason = Literal["role_tamper", "identity_tamper"]
 def _is_viewer_role(role: str) -> bool:
     """True only for the one role an invite may grant (#2109)."""
     return role == InviteRole.VIEWER.value
+
+
+def _is_bootstrap_role(role: str) -> bool:
+    """True for the one stored invite role the bootstrap activation may keep (#4479)."""
+    return role == BOOTSTRAP_ROLE
 
 
 def _utc_now() -> datetime:
@@ -239,9 +253,12 @@ class InviteService:
     async def inspect(self, token: str, *, source_ip: str) -> InviteView:
         """`GET /invites/{token}`: validates without consuming."""
         record = await self._find_open_or_reject(token, source_ip)
+        role = InviteRole.VIEWER.value  # what redemption grants every other invite (#2109)
+        if _is_bootstrap_role(record.role) and await self._repo.offers_bootstrap_owner(record.id):
+            role = BOOTSTRAP_ROLE
         return InviteView(
             display_name=record.display_name or record.username,
-            role=record.role,
+            role=role,
             expires_at=record.expires_at,
         )
 
@@ -277,9 +294,11 @@ class InviteService:
         code: str,
         source_ip: str,
         audit_downgrade: DowngradeAudit,
+        audit_bootstrap: BootstrapAudit | None = None,
     ) -> tuple[InviteRecord, tuple[str, ...]]:
         """Verify the first TOTP code and activate the account. Returns the
-        invite (role) and the one-time recovery codes."""
+        invite (role) and the one-time recovery codes. An `owner` invite first tries the
+        bootstrap activation, written ahead by `audit_bootstrap` (#4479)."""
         record = await self._repo.find_by_token_hash(hash_token(token))
         now = self._clock()
         if record is None:
@@ -304,6 +323,26 @@ class InviteService:
             raise self._reject("redeemed", source_ip) from exc
         pending_hash = record.pending_password_hash
         stored_role = record.role
+        if _is_bootstrap_role(stored_role):  # only the offline bootstrap invite keeps it (#4479)
+            if audit_bootstrap is None:  # never an unrecorded Owner grant (C-2.9): fail closed
+                raise InviteRejected("enrollment_invalid")
+            kept = await self._repo.activate_bootstrap_owner(
+                record.id,
+                record.user_id,
+                password_hash=pending_hash,
+                algo_params=DEFAULT_ARGON2_PARAMS,
+                now=now,
+                audit=audit_bootstrap,
+            )
+            if kept == "not_invited":
+                raise self._reject("redeemed", source_ip)
+            if kept == "owner_exists":  # a stale bootstrap invite: nothing activated (ruling 4)
+                raise self._reject("revoked", source_ip)
+            if kept == "activated":
+                users_invites_redeemed_total.inc()  # no pending dec: cv-api never counted it
+                auth_owner_bootstrap_events.inc()
+                return record, recovery_codes
+            # "not_bootstrap": a legacy owner invite takes the #2109 block below, unchanged
         if not _is_viewer_role(stored_role):
             # Legacy invite minted before #2109: never grant more than viewer.
             # Audit first (C-2.9, write-ahead): if the audit write fails, nothing changes.

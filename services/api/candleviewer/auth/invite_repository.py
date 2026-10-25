@@ -4,7 +4,9 @@ Same composition-root pattern as `UserRepository`/`MfaRepository`: M18 never
 imports a storage driver (ADR-0003); the Postgres implementation lives in M10.
 Every state change is a single conditional statement so concurrent
 redemptions cannot both win. The owner actions (create, reissue, revoke) take a
-write-ahead audit hook (C-2.9, #2510).
+write-ahead audit hook (C-2.9, #2510). The offline bootstrap invite (#4479) is the one
+invite that keeps `owner`: `activate_bootstrap_owner` grants it exactly once, while no
+Owner is active, with its own write-ahead record.
 """
 
 from __future__ import annotations
@@ -12,13 +14,20 @@ from __future__ import annotations
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Protocol
+from typing import Literal, Protocol
 
 from candleviewer.auth.models import InviteRecord
 
 #: Write-ahead audit of an owner invite action, `(user_id, role)`: awaited before the first
 #: write (inside the transaction, if any); what it raises refuses it with nothing persisted.
 InviteAudit = Callable[[uuid.UUID, str], Awaitable[None]]
+#: The one invite role kept at redemption, and only on the bootstrap invite (#4479).
+BOOTSTRAP_ROLE = "owner"
+#: `activate_bootstrap_owner`'s answers; every one but `activated` changed nothing.
+BootstrapActivation = Literal["activated", "owner_exists", "not_bootstrap", "not_invited"]
+#: Write-ahead audit of the Owner grant, `(invite_id, user_id)`: awaited inside the
+#: activation's transaction before its commit; what it raises rolls the grant back.
+BootstrapAudit = Callable[[uuid.UUID, uuid.UUID], Awaitable[None]]
 
 
 class InviteRepository(Protocol):
@@ -62,6 +71,25 @@ class InviteRepository(Protocol):
     ) -> bool:
         """`status invited -> active` and set the real password, only while
         the user is still `invited`; returns whether this call did it."""
+        ...
+
+    async def activate_bootstrap_owner(
+        self,
+        invite_id: uuid.UUID,
+        user_id: uuid.UUID,
+        *,
+        password_hash: str,
+        algo_params: dict[str, int],
+        now: datetime,
+        audit: BootstrapAudit,
+    ) -> BootstrapActivation:
+        """One transaction under the bootstrap lock: a consumed, unrevoked, marked invite of an
+        `invited` user, while no Owner is active, gets the `owner` grant, the activation, the
+        critical `system_events` row and `audit`, then commits. Anything else rolls back."""
+        ...
+
+    async def offers_bootstrap_owner(self, invite_id: uuid.UUID) -> bool:
+        """Read only: the invite is marked as bootstrap and no Owner is active."""
         ...
 
     async def downgrade_to_viewer(self, user_id: uuid.UUID) -> None:

@@ -40,6 +40,11 @@ class FakeRepo:
     def __init__(self) -> None:
         self.rows: dict[str, InviteRecord] = {}
         self.emails: set[str] = set()
+        #: #4479: the bootstrap-marked invite ids, the active Owners, and the store's lock.
+        self.marked: set[uuid.UUID] = set()
+        self.owners = 0
+        self.bootstrap_calls = 0
+        self.lock = asyncio.Lock()
 
     async def create_user_with_invite(self, **kw: Any) -> bool:
         if kw["email"] in self.emails:
@@ -82,6 +87,28 @@ class FakeRepo:
                 self.rows[h] = r.model_copy(update={"user_status": UserStatus.ACTIVE})
                 return True
         return False
+
+    async def activate_bootstrap_owner(
+        self, invite_id: uuid.UUID, user_id: uuid.UUID, *, audit: Any, **_kw: Any
+    ) -> str:
+        """The SQL store's order under its lock: row, marker, Owner count, record, grant."""
+        self.bootstrap_calls += 1
+        async with self.lock:
+            hits = [h for h, r in self.rows.items() if r.id == invite_id]
+            if not hits or self.rows[hits[0]].user_status is not UserStatus.INVITED:
+                return "not_invited"
+            if invite_id not in self.marked:
+                return "not_bootstrap"
+            if self.owners:
+                return "owner_exists"
+            await audit(invite_id, user_id)  # write-ahead: a raise changes nothing
+            self.owners += 1
+            update = {"user_status": UserStatus.ACTIVE}
+            self.rows[hits[0]] = self.rows[hits[0]].model_copy(update=update)
+            return "activated"
+
+    async def offers_bootstrap_owner(self, invite_id: uuid.UUID) -> bool:
+        return invite_id in self.marked and not self.owners
 
     async def downgrade_to_viewer(self, user_id: uuid.UUID) -> None:
         for h, r in list(self.rows.items()):
@@ -466,3 +493,139 @@ async def test_legacy_downgrade_without_hook_fails_closed() -> None:
             audit_downgrade=None,  # type: ignore[arg-type]  # proves runtime fail-closed
         )
     assert repo.rows[h].role == "manager"
+
+
+# -- #4479: the offline bootstrap invite keeps `owner` exactly once ---------------------------
+
+
+async def _bootstrap_audit(invite_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    """Accepting write-ahead hook of the Owner grant."""
+
+
+async def _owner_invite(
+    svc: InviteService, repo: FakeRepo, *, marked: bool = True, email: str = "ann@example.com"
+) -> str:
+    """An `owner` invite, consumed with a password; marked as bootstrap unless `marked` is off."""
+    inv = await svc.create(_req(email=email), invited_by=uuid.uuid4(), audit=ok_audit)
+    h = hash_token(inv.token)
+    repo.rows[h] = repo.rows[h].model_copy(update={"role": "owner"})  # planted, as C1 mints it
+    if marked:
+        repo.marked.add(repo.rows[h].id)
+    await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
+    return inv.token
+
+
+async def _confirm(svc: InviteService, token: str, **hooks: Any) -> tuple[InviteRecord, Any]:
+    hooks.setdefault("audit_downgrade", _noop_audit)
+    hooks.setdefault("audit_bootstrap", _bootstrap_audit)
+    return await svc.complete_redemption(
+        token, method_id="m", code="123456", source_ip="1.1.1.1", **hooks
+    )
+
+
+async def test_bootstrap_invite_keeps_owner_without_a_downgrade_record() -> None:
+    from candleviewer.auth import metrics as m
+
+    svc, repo, _ = _make()
+    token = await _owner_invite(svc, repo)
+    downgrades: list[str] = []
+
+    async def downgrade(rec: Any, stored_role: str) -> None:
+        downgrades.append(stored_role)
+
+    before = _sample(m.auth_owner_bootstrap_events)
+    rec, codes = await _confirm(svc, token, audit_downgrade=downgrade)
+    assert (rec.role, rec.downgraded_from, codes, downgrades) == (
+        "owner",
+        None,
+        ("rc-1", "rc-2"),
+        [],
+    )
+    assert repo.owners == 1 and repo.rows[hash_token(token)].user_status is UserStatus.ACTIVE
+    assert _sample(m.auth_owner_bootstrap_events) == before + 1
+
+
+@pytest.mark.parametrize(
+    ("marked", "store", "reason"),
+    [
+        (True, "owner_exists", "revoked"),  # stale: another Owner first (ruling 4), no #2109 path
+        (True, "not_invited", "redeemed"),  # a second confirm lost the row lock
+    ],
+)
+async def test_bootstrap_activation_refusals_reject_and_activate_nothing(
+    marked: bool, store: str, reason: str
+) -> None:
+    svc, repo, _ = _make()
+    token = await _owner_invite(svc, repo, marked=marked)
+
+    async def answer(*_a: Any, **_kw: Any) -> str:
+        return store
+
+    repo.activate_bootstrap_owner = answer  # type: ignore[method-assign]  # the store's answer
+    with pytest.raises(InviteRejected) as e:
+        await _confirm(svc, token)
+    row = repo.rows[hash_token(token)]
+    assert (e.value.reason, row.role, row.user_status) == (reason, "owner", UserStatus.INVITED)
+
+
+async def test_owner_invite_without_the_marker_is_downgraded_as_before() -> None:
+    svc, repo, _ = _make()
+    token = await _owner_invite(svc, repo, marked=False)
+    repo.owners = 1
+    rec, _ = await _confirm(svc, token)
+    assert (rec.role, rec.downgraded_from, repo.owners) == ("viewer", "owner", 1)
+
+
+@pytest.mark.parametrize("role", ["viewer", "manager"])
+async def test_only_owner_invites_reach_the_bootstrap_activation(role: str) -> None:
+    svc, repo, _ = _make()
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
+    h = hash_token(inv.token)
+    repo.rows[h] = repo.rows[h].model_copy(update={"role": role})
+    repo.marked.add(repo.rows[h].id)  # even a marked row of another role is never kept
+    await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
+    rec, _ = await _confirm(svc, inv.token)
+    assert (rec.role, repo.bootstrap_calls, repo.owners) == ("viewer", 0, 0)
+
+
+async def test_two_concurrent_bootstrap_redemptions_make_one_owner() -> None:
+    """Wiring through the fake store's lock (the Postgres race is the integration suite's)."""
+    svc, repo, _ = _make()
+    tokens = [await _owner_invite(svc, repo, email=f"o{i}@example.com") for i in range(2)]
+    got = await asyncio.gather(*(_confirm(svc, t) for t in tokens), return_exceptions=True)
+    reasons = sorted(r.reason if isinstance(r, InviteRejected) else r[0].role for r in got)
+    assert (reasons, repo.owners) == (["owner", "revoked"], 1)
+
+
+async def test_bootstrap_without_its_record_hook_fails_closed() -> None:
+    svc, repo, _ = _make()
+    token = await _owner_invite(svc, repo)
+    with pytest.raises(InviteRejected):
+        await _confirm(svc, token, audit_bootstrap=None)
+    assert (repo.bootstrap_calls, repo.owners) == (0, 0)
+
+
+async def test_refused_bootstrap_record_activates_nothing() -> None:
+    svc, repo, _ = _make()
+    token = await _owner_invite(svc, repo)
+
+    async def refused(invite_id: uuid.UUID, user_id: uuid.UUID) -> None:
+        raise AuditUnavailable("wal full")
+
+    with pytest.raises(AuditUnavailable):
+        await _confirm(svc, token, audit_bootstrap=refused)
+    assert repo.owners == 0
+    assert repo.rows[hash_token(token)].user_status is UserStatus.INVITED
+
+
+async def test_inspect_offers_owner_only_for_an_open_bootstrap_invite() -> None:
+    svc, repo, _ = _make()
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
+    h = hash_token(inv.token)
+    assert (await svc.inspect(inv.token, source_ip="1.1.1.1")).role == "viewer"
+    repo.rows[h] = repo.rows[h].model_copy(update={"role": "owner"})
+    assert (await svc.inspect(inv.token, source_ip="1.1.1.1")).role == "viewer"  # legacy
+    repo.marked.add(repo.rows[h].id)
+    assert (await svc.inspect(inv.token, source_ip="1.1.1.1")).role == "owner"
+    repo.owners = 1
+    assert (await svc.inspect(inv.token, source_ip="1.1.1.1")).role == "viewer"

@@ -8,6 +8,9 @@ bindings; E27/E39 grant them). The raw token never reaches this layer.
 Owner actions (create, reissue, revoke) await the caller's write-ahead audit hook
 in their transaction, after staging and before commit (C-2.9, #2510), bounded as
 in `user_roles_sqlalchemy`: a raise or a `WriteAheadTimeout` rolls every row back.
+`activate_bootstrap_owner` (#4479) is the one path that grants `owner` at redemption: READ
+COMMITTED, the bootstrap lock, the marked invite locked, no active Owner, then the grant, the
+activation, the critical `auth`/`owner_bootstrapped` event and its write-ahead record, one commit.
 """
 
 from __future__ import annotations
@@ -16,11 +19,14 @@ import json
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
+from candleviewer.storage.repositories.incident_grouping import incident_occurrence
+from candleviewer.storage.repositories.incidents_sqlalchemy import record_occurrence
+from candleviewer.storage.repositories.owner_floor_sqlalchemy import COUNT_OWNERS
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -31,6 +37,59 @@ from candleviewer.storage.repositories.user_roles_sqlalchemy import (
 
 #: Write-ahead audit of an owner invite action, `(user_id, role)`; raises to refuse it.
 AuditHook = Callable[[uuid.UUID, str], Awaitable[None]]
+#: Write-ahead audit of the bootstrap Owner grant, `(invite_id, user_id)`; raises to refuse it.
+BootstrapHook = Callable[[uuid.UUID, uuid.UUID], Awaitable[None]]
+#: `auth.invite_repository.BootstrapActivation`, typed here: `storage` may not import `auth`.
+BootstrapAnswer = Literal["activated", "owner_exists", "not_bootstrap", "not_invited"]
+
+#: The offline bootstrap invite (#4479): an `owner` invite whose inviter is its own user. No API
+#: path writes it: `create` draws a fresh user id, `reissue` names the acting Owner.
+BOOTSTRAP_MARKER = "(i.role = CAST('owner' AS role_name) AND i.invited_by = i.user_id)"
+#: Serialises every bootstrap mint and activation (taken first, released at commit).
+BOOTSTRAP_LOCK = sa.text("SELECT pg_advisory_xact_lock(hashtext('cv_bootstrap_owner'))")
+#: First: under REPEATABLE READ the lock statement would fix a snapshot that misses a
+#: concurrent activation's commit (DC-12).
+_READ_COMMITTED = sa.text("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+_BOOTSTRAP_EVENT = "owner_bootstrapped"  # `system_events.kind`, component `auth`
+_BOOTSTRAP_MESSAGE = (
+    "Bootstrap Owner activated from the offline invite (#4479); review it until that Owner signs in"
+)
+_BOOTSTRAP_INCIDENT = incident_occurrence(
+    component="auth", kind=_BOOTSTRAP_EVENT, severity="critical", message=_BOOTSTRAP_MESSAGE
+)
+_INSERT_BOOTSTRAP_EVENT = sa.text(
+    "INSERT INTO system_events (component, kind, severity, message, details, event_ts) "
+    "VALUES ('auth', 'owner_bootstrapped', 'critical', :message, CAST(:details AS jsonb), :now)"
+)
+#: The bootstrap event of the user a signed-in session (MFA satisfied) is minted for: `:id` the
+#: user's id, `:key` the same id as text (one bind per type: asyncpg deduces one type per bind).
+RESOLVE_BOOTSTRAP_EVENT = sa.text(
+    "UPDATE system_events SET resolved_at = :now, resolved_by = CAST(:id AS uuid) "
+    "WHERE component = 'auth' AND kind = 'owner_bootstrapped' AND resolved_at IS NULL "
+    "AND details ->> 'user_id' = :key"
+)
+_GRANT_OWNER = sa.text(
+    "INSERT INTO user_roles (user_id, role_id) SELECT CAST(:id AS uuid), r.id FROM roles r "
+    "WHERE r.name = 'owner' ON CONFLICT (user_id, role_id) DO NOTHING"
+)
+
+
+def bootstrap_row_sql(marker: str) -> sa.TextClause:
+    """The invite and its user under `FOR UPDATE`, judged by `marker` (a static fragment)."""
+    return sa.text(
+        "SELECT @M@ AS bootstrap, (i.consumed_at IS NOT NULL AND i.revoked_at IS NULL) AS usable, "
+        "u.status::text AS status FROM user_invites i JOIN users u ON u.id = i.user_id "
+        "AND u.deleted_at IS NULL WHERE i.id = CAST(:iid AS uuid) "
+        "AND i.user_id = CAST(:id AS uuid) FOR UPDATE OF i, u".replace("@M@", marker)
+    )
+
+
+_BOOTSTRAP_ROW = bootstrap_row_sql(BOOTSTRAP_MARKER)
+_IS_MARKED = sa.text(
+    "SELECT @M@ FROM user_invites i WHERE i.id = CAST(:iid AS uuid)".replace(
+        "@M@", BOOTSTRAP_MARKER
+    )
+)
 
 _COLS = (
     "i.id::text AS id, i.user_id::text AS user_id, i.role::text AS role, "
@@ -224,6 +283,59 @@ class SqlAlchemyInviteRepository:
                 await uow.session.execute(_CLEAR_PENDING, {"id": str(user_id)})
             await uow.commit()
         return bool(won)
+
+    async def activate_bootstrap_owner(
+        self,
+        invite_id: uuid.UUID,
+        user_id: uuid.UUID,
+        *,
+        password_hash: str,
+        algo_params: dict[str, int],
+        now: datetime,
+        audit: BootstrapHook,
+    ) -> BootstrapAnswer:
+        """`activated` after one commit; else rolled back: `not_invited` (no such consumed,
+        unrevoked invite of an `invited` user), `not_bootstrap`, `owner_exists`."""
+        ids = {"iid": str(invite_id), "id": str(user_id)}
+        async with self._relational.unit_of_work() as uow:
+            run = uow.session.execute
+            await run(_READ_COMMITTED)
+            await run(BOOTSTRAP_LOCK)
+            row = (await run(_BOOTSTRAP_ROW, ids)).first()
+            verdict: BootstrapAnswer | None = None
+            if row is None or not row.usable or row.status != "invited":
+                verdict = "not_invited"
+            elif not row.bootstrap:
+                verdict = "not_bootstrap"
+            elif int((await run(COUNT_OWNERS)).scalar_one()) > 0:  # a new statement: READ COMMITTED
+                verdict = "owner_exists"
+            if verdict is not None:
+                await uow.rollback()
+                return verdict
+            await run(_GRANT_OWNER, {"id": ids["id"]})
+            activated = await run(
+                _ACTIVATE,
+                {"id": ids["id"], "ph": password_hash, "ap": json.dumps(algo_params), "now": now},
+            )
+            if not activated.all():
+                await uow.rollback()
+                return "not_invited"
+            await run(_CLEAR_PENDING, {"id": ids["id"]})
+            details = json.dumps({"invite_id": ids["iid"], "user_id": ids["id"]}, sort_keys=True)
+            await run(
+                _INSERT_BOOTSTRAP_EVENT,
+                {"message": _BOOTSTRAP_MESSAGE, "details": details, "now": now},
+            )
+            await record_occurrence(uow.session, _BOOTSTRAP_INCIDENT, seen_at=now)
+            await bounded_write_ahead(audit(invite_id, user_id), self._audit_timeout_s)
+            await uow.commit()
+        return "activated"
+
+    async def offers_bootstrap_owner(self, invite_id: uuid.UUID) -> bool:
+        async with self._relational.unit_of_work() as uow:
+            run = uow.session.execute
+            marked = bool((await run(_IS_MARKED, {"iid": str(invite_id)})).scalar())
+            return marked and int((await run(COUNT_OWNERS)).scalar_one()) == 0
 
     async def downgrade_to_viewer(self, user_id: uuid.UUID) -> None:
         async with self._relational.unit_of_work() as uow:

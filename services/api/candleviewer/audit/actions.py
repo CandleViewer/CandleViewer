@@ -110,6 +110,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # Emitted by api/invites.py; unregistered, the real writer refused them (500, no row).
         "users.invite_refused",
         "users.invite_role_downgraded",
+        # #4479 (ruling 7, SR-023): the offline bootstrap invite's Owner grant, CRITICAL, written
+        # ahead inside the activation's transaction by api/invites.py (refused: no grant).
+        "users.owner_bootstrapped",
         "users.disable",
         # E42-T09 (#2649, #965 R5): `PATCH /users/{userId}` re-enabled a disabled user (nothing
         # restored, R6), and changed the display name or the MFA flag; both written ahead.

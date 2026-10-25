@@ -3511,6 +3511,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_owner_bootstrap_events",
+        "gauge",
+        "events",
+        (),
+        "Bootstrap Owner grants committed by this process (users.owner_bootstrapped records).",
+        "none yet (#4479 C2); any value above 0 is the first Owner's grant",
+        _L,
+        "E09",
+        exported=True,
+    ),
+    _s(
         "auth_view_as_pending_end_rows",
         "gauge",
         "rows",

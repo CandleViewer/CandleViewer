@@ -252,6 +252,8 @@ erDiagram
 
 One row per issued invitation. `token_hash` (sha256 hex of a 256-bit token, unique) is the only stored form of the token; `pending_password_hash` is a SECRET (Argon2id) parked after redemption step 1 and cleared on activation; `consumed_at`/`revoked_at` make the token single-use; `expires_at` = created + 72 h. `users.status` flips `invited` -> `active` only after the first TOTP code verifies.
 
+**The bootstrap invite (#4479, ADR-0010 amendment 2026-10-25).** An `owner` invite whose `invited_by` is its own `user_id` is the offline bootstrap invite (`BOOTSTRAP_MARKER`). No API path writes it: `POST /users` draws a fresh user id and names the acting Owner, and a reissue names the acting Owner too; only the offline mint (#4479 C1) writes it, and a NULL `invited_by` is not the marker. It is the one invite whose `owner` role survives redemption, and only while no Owner is active: the activation runs as one READ COMMITTED transaction under `pg_advisory_xact_lock(hashtext('cv_bootstrap_owner'))`, locks the invite and its user `FOR UPDATE`, re-counts the active Owners, then inserts the `owner` grant, activates the user, clears `pending_password_hash`, writes the critical `auth`/`owner_bootstrapped` `system_events` row (§3.10.2) and its incident, and awaits the CRITICAL `users.owner_bootstrapped` audit record before the commit; a refused record rolls all of it back. Redeemed after another Owner became active, a marked invite is rejected as `revoked` and nothing is activated. Every other invite keeps the #2109 downgrade to `viewer`.
+
 ### 2.2 Trading core
 
 ```mermaid
@@ -3648,6 +3650,12 @@ The offline break-glass Owner reset (E09-S11, SR-023) writes `component='auth'`,
 `kind='break_glass_used'`, `severity='critical'`, unresolved, in the same transaction that revokes
 the Owner's MFA methods and sessions (`revoked_reason='break_glass'`). The same transaction also
 upserts the event's incident (§3.10.2a).
+
+The bootstrap Owner's activation (#4479, §2.1 `user_invites`) writes `component='auth'`,
+`kind='owner_bootstrapped'`, `severity='critical'`, unresolved, with `details`
+`{invite_id, user_id}` (ids only), in the activation's transaction, and upserts its incident
+(§3.10.2a). The first session minted for that user with MFA satisfied resolves it in the insert's
+own transaction (`resolved_at`, `resolved_by` = the user), keyed on `details ->> 'user_id'`.
 
 The account health runtime (E27-T04, #837) writes `exchange`/`dms_hook_owed`/`warning` (no
 incident, §3.10.2a), unresolved, with `exchange_account_id`, before an episode's first

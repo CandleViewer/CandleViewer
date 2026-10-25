@@ -19,7 +19,8 @@ the context a record carries (a refresh carries it to the successor row), and th
 the start's unit of work, which locks the row first (`start_view_as_unit`). The
 insert also writes the step-up strikes and read-only window a refresh carries from the
 claim's row (#4051): a new row, from a revoked source row whose step-up columns no writer
-can change (`_STEP_UP_SQL` needs `revoked_at IS NULL`).
+can change (`_STEP_UP_SQL` needs `revoked_at IS NULL`). A signed-in insert (MFA satisfied)
+resolves its user's critical `auth`/`owner_bootstrapped` event in the same transaction (#4479).
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from typing import Any
 
 import sqlalchemy as sa
 
+from candleviewer.storage.repositories.invites_sqlalchemy import RESOLVE_BOOTSTRAP_EVENT
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
     constraint_of,
@@ -367,6 +369,12 @@ class SqlAlchemySessionRepository:
             user = (await uow.session.execute(_LOCK_USER_SQL, {"id": str(session.user_id)})).first()
             if user is None or user._mapping["status"] == "disabled":
                 return None  # rolled back: the lock goes, nothing was written
+            if session.mfa_satisfied_at is not None:  # #4479: the bootstrapped Owner signed in
+                now = session.issued_at
+                await uow.session.execute(
+                    RESOLVE_BOOTSTRAP_EVENT,
+                    {"id": str(session.user_id), "key": str(session.user_id), "now": now},
+                )
             await uow.session.execute(
                 _INSERT_SQL,
                 {
