@@ -4353,11 +4353,12 @@ state of each account it names, so a client keeps the latest `oms.` `reason` per
 `oms.account_synced` clears, and keys on the code, never on `severity`. A `profiles.changed` frame,
 sent with `severity: "info"`, is an event and reports no state: it neither sets nor clears an
 account's `oms.` state, and a client re-reads the account's profiles through its own grants
-(`GET /exchange-accounts/{accountId}/profiles`) and keeps nothing for the frame itself. `message`
-is one role-neutral sentence per `reason`: it names no account (no label, id or exchange uid) and
-counts none. An account's state reaches a Manager or Viewer in an `account_notice` and in no other
-field: no `health` value, `components[]` item, `exchange` word, `private_ws` word or
-`degraded_topics` entry is derived from it.
+(`GET /exchange-accounts/{accountId}/profiles`) and keeps nothing for the frame itself. A `reason`
+of any other family is an event too, kept for nothing, until this section names its family as
+state, as it does `oms.`. `message` is one role-neutral sentence per `reason`: it names no
+account (no label, id or exchange uid) and counts none. An account's state reaches a Manager or
+Viewer in an `account_notice` and in no other field: no `health` value, `components[]` item,
+`exchange` word, `private_ws` word or `degraded_topics` entry is derived from it.
 
 The Owner receives an `account_notice` whole. A Manager or Viewer receives it with
 `exchange_account_ids` cut to the accounts its `account_scope` lists (§4.3), and only when one
@@ -4599,8 +4600,9 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 (§15.9): a trading profile of an account, or its default binding, was written. It is an event, not
 a state, so it leaves an account's `oms.` state as it was, and a client re-reads the account's
 profiles through its own grants. E28-K01's spike (#968) chose it to carry a profile change to open
-tickets inside the frozen topic list; its producer is #906's bridge from the bus event
-`ProfilesChanged` (24 §9.2), and E28-S01 (#971) consumes it. This is additive (C-6.3): `reason` is
+tickets inside the frozen topic list; its producer is #906's bridge from the internal bus event
+`ProfilesChanged`, which #906's slice D3a adds to 24 §9.2 (account and profile ids and versions,
+never a value or an actor), and E28-S01 (#971) consumes it. This is additive (C-6.3): `reason` is
 an open set, the frame's fields and its cut to the connection's grants are unchanged, and no
 shipped client keeps a state per `reason` yet. This is the orchestrator's contract decision
 (2026-10-25, from #968's spike); the owner may override it.
