@@ -83,23 +83,33 @@ computed in the same request, from the same wallet, instrument and reference pri
 **The ceiling is the bound profile's caps and budget, not the leg it would size by itself** (coordinator ruling,
 2026-10-25, on #968). A request may raise size up to the bound profile's caps and is refused above them; it never
 gets more than the caps and the risk budget allow. The _effective caps_ are _B_'s, tightened by _A_ (rows 29 to 39
-and 42). The _risk ceiling_ is _B_'s per-trade budget when _B_ sizes `risk_based` (`risk_fixed_amount`, or
-`risk_pct_equity` times equity). Otherwise it is the **net daily-loss headroom**: the remaining headroom under the
+and 42). The _risk ceiling_, for every _B_, is the **net daily-loss headroom**: the remaining headroom under the
 effective `max_daily_loss` and `max_daily_loss_pct` (the sizer's daily-loss clamp, 24 §9.3.2) minus the account's
-committed risk, the risk at the stop of its open positions and of its working position-opening orders. A leg's risk at
-the stop is reserved against that headroom at admission, in the same transaction as the leg insert (the SR-E28-15
-transaction), and released when the order is cancelled, when its stop fills (the realised loss then counts in the
-headroom itself) or when the position closes otherwise. So concurrent legs and tickets on one account together never
-risk more than `max_daily_loss`, where each judged alone against the full headroom could. The preview shows the net
-figure. The netting is a money-semantics decision and is on the owner's sign-off list (Owner sign-off items).
+committed risk. When _B_ sizes `risk_based`, its per-trade budget (`risk_fixed_amount`, or `risk_pct_equity` times
+equity) is a further per-leg cap: the ceiling is the lesser of that budget and the net headroom.
+
+**Committed risk is one ledger of reservations.** The account's committed risk is the sum of its live reservations, and
+nothing is counted twice. A reservation is the leg's risk at the stop, made for every admitted leg at admission, in the
+same transaction as the leg insert (the SR-E28-15 transaction). When the order fills, the same reservation covers the
+position; no second one is made. It is reduced pro rata as quantity leaves the order or the position (a partial fill
+then a cancel, a partial close, a take-profit ladder fill), and released when the order is cancelled or the position
+closes otherwise. When the stop fills, the release and the count of the realised loss in the headroom are one step, so
+the loss is neither counted twice nor missing between them. Reduce-only and take-profit ladder orders add nothing to
+the committed risk. On an amend of a leg's quantity or stop, that leg's own reservation is left out while R judges it
+again (`amendTradeGroup`, yaml:6548-6550), and the new reservation replaces it on admission. So concurrent legs and
+tickets on one account together never risk more than `max_daily_loss`, where each judged alone against the full
+headroom could. The preview shows the net figure. When the committed risk cannot be established (a position or
+working order whose stop is unknown, or an account whose positions and orders are not reconciled), the net headroom is
+zero: rule 2 fails every leg (fail closed), and the preview and the refusal name the reason. The netting is a
+money-semantics decision and is on the owner's sign-off list (Owner sign-off items).
 
 **The resulting-leg comparator R (SR-E28-04).** A leg is admitted only if every one of these holds for _L_:
 
 1. its notional is within the effective position caps (`max_position_notional`, `max_position_pct_equity`) as the
    sizer's clamps compute them (24 §9.3.2);
 2. its risk at the stop (quantity times the resolved stop distance, entry and exit fees included as 24 §9.3 step 5)
-   is within the risk ceiling (for a non-`risk_based` _B_, the net daily-loss headroom, with the request's other legs
-   on the same account counted as committed);
+   is within the risk ceiling (the net daily-loss headroom, capped by the per-trade budget for a `risk_based` _B_;
+   the request's other legs on the same account count as committed);
 3. its leverage is within the effective `max_leverage_cap`, and its resolved stop lies between the entry and the
    estimated liquidation price at that leverage (RSK-085). The estimate is an isolated-margin figure from the
    symbol's risk-limit tier and its maintenance margin rate, whatever `margin_mode` says; when the tier or its rate is
@@ -112,9 +122,12 @@ figure. The netting is a money-semantics decision and is on the owner's sign-off
 6. its initial margin is within the available margin times 0.98 (24 §9.3 step 8), a failure and never a shrink;
 7. every other cap the guard reads (open positions, concurrent orders, order rate, daily loss) and the symbol rows
    hold;
-8. its native stop covers _L_'s full quantity under either `tpsl_mode`: `Partial` never reduces the stop's size, and a
-   stop that cannot be placed for the full quantity fails the leg, never a smaller stop (C-2.6; E34-S03's invariant
-   that no position is left without a native SL; PF-T20).
+8. at admission, the leg's first native stop covers _L_'s full quantity under either `tpsl_mode`: the leg request has
+   no stop-size member, and under `Partial` the server sets the stop's size to the leg's full quantity itself (C-2.6;
+   PF-T20). After admission the only path to a smaller stop is 24 §8.8 rule 5, the owner-only `sl_loosen` step-up on
+   a `SetTpSlRequest` `sl_size` (yaml:6847-6858, yaml:18861). A stop that cannot be placed for the full quantity
+   under `Partial` is a post-entry failure: it starts E34-S03's unwind (no position is left without a native SL,
+   C-2.6), never a refusal.
 
 Equality is admitted. Comparisons are `Decimal`, in the domain's units (fractions, not the REST percent; 24 §9.2
 "REST projection"), on quantized values only: quantity floored to the lot step, the stop rounded away from entry.
@@ -123,7 +136,8 @@ Equality is admitted. Comparisons are `Decimal`, in the domain's units (fraction
 never silently clamped to the limit, as the sizer's margin check fails a leg rather than shrinking it (24 §9.3 step
 8; C-12.5; E28 threat model D6). The refusal is the whole request's, before any leg is sent, whatever `atomicity` says:
 `403 risk_limit_breached`, the problem code `22-api-openapi.yaml` already registers (yaml:588), with one `errors[]`
-entry per offending leg naming the field, the requested value and the limit (yaml:6297-6301). It is audited before
+entry per offending leg naming the field, the requested value and the limit (yaml:6297-6301); a rule-2 entry also
+carries the net headroom and the committed risk. It is audited before
 the answer, as the refused-widening row the threat model lists beside `tradegroup.row_overridden{field, from, to}`
 (§8; E28-S05 registers its action name), with `cv_override_refused_total{field}`. Only the profile's own sizing, with
 no request value, is clamped and explained (`sizing_explanation`, yaml:6308-6309). The "clamp" reading of a widening
@@ -404,10 +418,10 @@ Feature: A profile changes under an open ticket (ADR-0040 Decision 4; E28-S05, E
 ### Observability
 
 `cv_profile_propagation_seconds`, a histogram, is observed by the gateway bridge (#906's late slice) when it hands a
-socket its `profiles.changed` frame, from the commit time `ProfilesChanged` carries (#906 should add it to the event) to that
-hand-off; labels `env` only, never an account id. The client's half (the re-fetch and the preview) is the existing
-HTTP latency series of the two routes; the end-to-end 2 s is asserted by E28-S01's (#971) end-to-end test. A refused
-stale submit counts in `cv_override_refused_total{field="profile_version"}` beside the threat model's
+socket its `profiles.changed` frame, from the commit time `ProfilesChanged` carries (#906 should add it to the event)
+to that hand-off; labels `env` only, never an account id. The client's half (the re-fetch and the preview) is the
+existing HTTP latency series of the two routes; the end-to-end 2 s is asserted by E28-S01's (#971) end-to-end test. A
+refused stale submit counts in `cv_override_refused_total{field="profile_version"}` beside the threat model's
 `cv_override_refused_total{field}` (§8 of the model).
 
 ### Accessibility constraint for the designer (E28-D03, SCR-061)
@@ -472,9 +486,11 @@ button's accessible name states why it is disabled. This record designs no contr
 The status stays `proposed` until the owner and the Architect sign off, on #2701, on:
 
 1. the decision table and the comparator R (Decision 1);
-2. the net risk ceiling for a non-`risk_based` _B_: the remaining daily-loss headroom minus the committed risk of open
-   positions and working position-opening orders, reserved at admission in the leg-insert transaction, released on
-   cancel, stop fill or close, and shown in the preview (Decision 1; a money-semantics decision);
+2. the net risk ceiling for every _B_: the remaining daily-loss headroom minus the committed risk (one ledger of
+   reservations, made for every admitted leg in the leg-insert transaction, covering the position once filled,
+   reduced pro rata, released on cancel, stop fill or close, and shown in the preview); for a `risk_based` _B_ the
+   ceiling is the lesser of its per-trade budget and that net headroom; when the committed risk cannot be
+   established, the net headroom is zero and every leg fails (fail closed) (Decision 1; a money-semantics decision);
 3. OPEN-1's ruling (size up to the caps) and OPEN-2's fail-closed isolated-margin liquidation estimate behind row 17.
 
 ## Validation
