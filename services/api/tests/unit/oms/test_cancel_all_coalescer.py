@@ -535,6 +535,29 @@ async def test_a_call_every_member_left_runs_on_owned_until_aclose_ends_it() -> 
     assert _methods(venue) == ["cancel_all"]  # cut short at teardown, never re-sent
 
 
+async def test_a_slot_wait_that_fails_abandons_the_fold_and_its_failure_is_logged() -> None:
+    """A defect in the wait for the slot, before anything left: nothing was sent, so the fold is
+    abandoned and each member sends its own cancel, never left waiting; the call task's failure
+    is logged as the coalescer owns it."""
+    venue, clock, gather = _venue("a", "b"), _Clock(), _Sleeps()
+
+    async def broken(seconds: float) -> None:
+        raise RuntimeError("the spacer's sleep broke")
+
+    spacer = CancelAllSpacer(monotonic=clock, sleep=broken)
+    assert await spacer.turn(_REF.uid, deadline=clock.now + 5)  # the next slot is 101: it waits
+    port = CancelAllCoalescer(venue, spacer=spacer, monotonic=clock, sleep=gather.sleep)
+    async with asyncio.timeout(5):
+        with capture_logs() as logs, port.fold(_REF, _BTC, _ids("a", "b")) as join:
+            first = asyncio.create_task(port.cancel_order(_cancel("a")))
+            await _settle()
+            assert (await port.cancel_order(_cancel("b"))).ok and (await first).ok
+            await _settle()
+    assert join.abandoned == "slot" and _methods(venue) == ["cancel_order", "cancel_order"]
+    [failed] = [e for e in logs if e["event"] == "oms_cancel_all_task_failed"]
+    assert (failed["task"], failed["failure"]) == ("oms-cancel-all-call", "RuntimeError")
+
+
 # --- CR-S4F-12: a KILL's cancel never waits on a fold --------------------------------------------
 
 

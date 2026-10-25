@@ -199,7 +199,12 @@ class CancelAllJoin:
 
     async def _send(self) -> None:
         """The join's own task, once every member has arrived (class docstring)."""
-        if not await self._slot():
+        try:
+            slot = await self._slot()
+        except Exception:  # a defect before anything left: nothing was sent, each its own cancel
+            self._abandon("slot")
+            raise
+        if not slot:
             self._abandon("slot")
             return
         self._left = True
