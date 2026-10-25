@@ -33,11 +33,13 @@ from candleviewer.accounts.override_comparator import AccountFigures
 from candleviewer.accounts.profile_input import ProfileFieldError
 from candleviewer.accounts.profiles import AccountProfile, SymbolScope, is_trading_usdt_perpetual
 from candleviewer.accounts.sizer import (
+    LIQUIDATION_BUFFER_FRACTION,
     FailReason,
     LegSizing,
     SizingIntent,
     SizingMarket,
     beyond_liquidation,
+    liquidation_edge,
     liquidation_estimate,
     resolve_stop,
     size_leg,
@@ -411,19 +413,25 @@ def _below_minimum(symbol: str, leg: LegSizing, *, estimated: bool) -> ProfileWa
 def _beyond(
     p: AccountProfile, inst: Instrument, ref: Decimal, market: SizingMarket, mmr: Decimal
 ) -> ProfileWarning | None:
-    """The first side whose stop is not inside the liquidation estimate, on the tick toward
-    entry; `None` when both are inside."""
+    """The first side whose stop is not inside the liquidation estimate by the buffer (the leg
+    refusal's `beyond_liquidation`); the estimate shown on the tick toward entry, the edge on the
+    tick away from it. `None` when both are inside."""
     for side in _SIDES:
         stop = resolve_stop(side, p, ref, inst, market.atr)
         liquidation = liquidation_estimate(side, ref, p.leverage, mmr)
-        if beyond_liquidation(side, stop.price, liquidation):
-            toward = ROUND_CEILING if side == "buy" else ROUND_FLOOR
-            shown = (liquidation / inst.tick_size).to_integral_value(toward) * inst.tick_size
+        tick = inst.tick_size
+        if beyond_liquidation(side, stop.price, liquidation, entry=ref, tick=tick):
+            buy = side == "buy"
+            toward, away = (ROUND_CEILING, ROUND_FLOOR) if buy else (ROUND_FLOOR, ROUND_CEILING)
+            shown = (liquidation / tick).to_integral_value(toward) * tick
+            edge = liquidation_edge(side, ref, liquidation, tick)
+            edge = (edge / tick).to_integral_value(away) * tick
+            share = _plain(LIQUIDATION_BUFFER_FRACTION * 100)
             message = (
-                f"{inst.symbol}: a {'long' if side == 'buy' else 'short'}'s stop at "
+                f"{inst.symbol}: a {'long' if buy else 'short'}'s stop at "
                 f"{_plain(stop.price):f} USDT is not inside the estimated liquidation price "
-                f"{_plain(shown):f} "
-                f"USDT at {_plain(p.leverage):f}x."
+                f"{_plain(shown):f} USDT at {_plain(p.leverage):f}x by the {share:f} % buffer: "
+                f"it must be {'above' if buy else 'below'} {_plain(edge):f} USDT."
             )
             return ProfileWarning("stop_beyond_liquidation", message, "stop_loss", inst.symbol,
                                   True)  # fmt: skip

@@ -79,13 +79,25 @@ def test_stop_beyond_liquidation_warns_always_estimated() -> None:
     (found,), dropped = warned(p, save())
     message = (
         "BTCUSDT: a long's stop at 62720 USDT is not inside the estimated liquidation price"
-        " 63040 USDT at 50x."
+        " 63040 USDT at 50x by the 10 % buffer: it must be above 63136 USDT."
     )
     assert (found.code, found.symbol, found.field, found.estimated, found.message) == (
         "stop_beyond_liquidation", "BTCUSDT", "stop_loss", True, message,
     )  # fmt: skip
     assert dropped == ()
     assert found.to_dict()["estimated"] is True
+
+
+@pytest.mark.parametrize(
+    ("ticks", "warns"), [("8640", True), ("8639", False)], ids=["at-the-edge", "a-tick-inside"]
+)
+def test_stop_beyond_liquidation_warns_at_the_buffer_edge(ticks: str, warns: bool) -> None:
+    """SR-E28-26's buffer, as the leg refusal judges it: at 50x the long's edge is 63136 and the
+    short's 64864, 8640 ticks of 0.1 from 64000 each."""
+    p = profile("P-QTY", sl_offset_unit="ticks", sl_offset_value=ticks, leverage="50",
+                max_leverage_cap="50")  # fmt: skip
+    found, dropped = warned(p, save())
+    assert [w.code for w in found] == ["stop_beyond_liquidation"] * warns and dropped == ()
 
 
 def test_a_profile_inside_every_limit_warns_nothing() -> None:
