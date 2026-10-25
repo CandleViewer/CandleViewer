@@ -354,6 +354,8 @@ async def test_an_accepted_outcome_not_terminal_breaks_s4cs_contract_and_is_not_
             AccountError("exchange_rate_limited", True),
         ),
         (_refused("exchange_error", 110017, 502), AccountError("exchange_error", False, 110017)),
+        # D2a's backpressure, a closing exit service: transient (the 2026-10-25 06:56Z ruling)
+        (_refused("oms_not_ready", status=503), AccountError("oms_not_ready", True)),
         # refusals 22's cancel-all text does not list: the code as `cancelOrder` answers it
         (_refused("risk_limit_breached", status=403), AccountError("risk_limit_breached", False)),
         (_refused("stop_request_in_flight"), AccountError("stop_request_in_flight", False)),

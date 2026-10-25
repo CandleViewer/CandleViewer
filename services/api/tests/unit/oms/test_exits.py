@@ -26,6 +26,7 @@ from candleviewer.oms import exits as ex
 from candleviewer.oms.errors import (
     AccountScopeDenied,
     IllegalTransition,
+    OmsNotReady,
     OrderEntryRefused,
     OrderNotLoaded,
     OrderStepRefused,
@@ -902,6 +903,15 @@ def test_the_command_ports_refusals_map_as_24_sec_8_4_says(
     got = ex._answered(kind, {"ok": False} | answer)
     assert (got.kind, got.status, got.code, got.retry_after_s) == ("refused", status, code, retry)
     assert got.retryable is retryable
+
+
+def test_a_not_ready_refusal_is_retryable_for_cancel_all() -> None:
+    """The orchestrator's ruling of 2026-10-25 06:56Z (2): `503 oms_not_ready` (D2a's gateway
+    backpressure, an exit service closing at shutdown) is transient, so cancel-all reports it
+    `retryable`; the 12:30Z ruling stands for the other codes."""
+    got = ex._refused(OmsNotReady())
+    assert (got.kind, got.status, got.code) == ("refused", 503, "oms_not_ready")
+    assert got.retryable is True
 
 
 def test_the_in_flight_guard_holds_one_exit_per_principal_operation_and_key() -> None:
