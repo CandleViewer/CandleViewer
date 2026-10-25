@@ -713,3 +713,19 @@ def test_indicator_preset_metrics_are_bounded_and_never_per_user() -> None:
         "indicator_presets_total": ("gauge", ("builtin",), 2, "planned", "E13"),
         "indicator_preset_denied_total": ("counter", ("reason",), 2, "planned", "E13"),
     }
+
+
+def test_override_refused_counter_is_planned_and_bounded_by_the_decision_table() -> None:
+    """#2635 (F-01; ADR-0040 (proposed, #4461) Decision 1): one count per refused field, its label
+    a field of the override table, never an account, a profile or a value (SR-125). Planned until
+    E28-T05 (#909) and E34-S01 (#999) wire the comparator into a route."""
+    from candleviewer.accounts.override_comparator import OVERRIDE_CLASS
+
+    (spec,) = [s for s in CATALOGUE if s.name == "cv_override_refused_total"]
+    assert (spec.kind, spec.labels, spec.status, spec.owner_epic) == (
+        "counter",
+        ("field",),
+        "planned",
+        "E28",
+    )
+    assert spec.max_series == len(OVERRIDE_CLASS) == 42
