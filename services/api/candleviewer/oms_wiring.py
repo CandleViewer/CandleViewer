@@ -58,6 +58,7 @@ from candleviewer.oms.errors import (
     TradingDisabled,
 )
 from candleviewer.oms.exits import (
+    AmendTerms,
     CancelReason,
     ExitCaller,
     ExitDeps,
@@ -1282,8 +1283,8 @@ class OnLaneGroups:
 class OnLaneExits:
     """`OmsRuntime.exits` from the serving loop (20 Sec.6.2, CV-C13; E29-T04 slice 4): the exit
     service's scope and account reads, each awaited on the order lane within `HOP_TIMEOUT_S`, and
-    its refusal records and per-order cancels, which wait out the service's own bounds, as the
-    submit does. The service, its store and B1's facade run on the lane. `guard`, the routes'
+    its refusal records, per-order cancels and amends, which wait out the service's own bounds, as
+    the submit does. The service, its store and B1's facade run on the lane. `guard`, the routes'
     in-flight guard, is read in place: only the serving loop's `run_claimed` claims and releases
     it, and the service never touches it after building it."""
 
@@ -1320,6 +1321,17 @@ class OnLaneExits:
             row, actor=actor, reason=reason, request_id=request_id
         )
         return await _on_lane(self.parts, cancel, None)
+
+    async def amend(
+        self,
+        scoped: ScopedOrder,
+        terms: AmendTerms,
+        *,
+        caller: ExitCaller,
+        expected_seq: int | None,
+    ) -> ExitOutcome:
+        amend = self.parts.exits.amend(scoped, terms, caller=caller, expected_seq=expected_seq)
+        return await _on_lane(self.parts, amend, None)
 
 
 async def _on_lane[T](
@@ -1845,11 +1857,13 @@ class OmsRuntime:
                 closers.insert(3, ("ticker_demand", lambda: serving.call(demand.close())))
             instruments = InstrumentsBinding(ingestion.instruments)
             validator = Validator(read_only_gate=self._read_only)
+            # the profile cache is the serving loop's: the pipeline and the exits share one bridge
+            profiles = ServedProfiles(self.profiles, serving)
             deps = SubmissionDeps(
                 accounts=accounts,
                 instruments=instruments,
                 prices=ReferencePricesBinding(tickers, demand=asked),
-                profiles=ServedProfiles(self.profiles, serving),
+                profiles=profiles,
                 switches=switches,
                 gate=gate,
                 audit=audit,
@@ -1869,7 +1883,7 @@ class OmsRuntime:
             route = OrderRoute(accounts, ports.arm_records, switches, orders, reader, env)
             exits = OrderExits(ExitDeps(
                 machines=machines, commands=commands, orders=orders, stops=stops, audit=audit,
-                instruments=instruments, profiles=self.profiles,
+                instruments=instruments, profiles=profiles,
                 stop_resolver=ports.stop_resolver, risk_gate=ports.risk_gate, validator=validator,
                 switches=switches, oms_enabled=self._oms_enabled, environment=env,
             ))  # fmt: skip
