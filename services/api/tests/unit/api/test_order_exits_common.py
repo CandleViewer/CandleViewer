@@ -283,9 +283,12 @@ def _guard_reaches(tree: ast.AST) -> list[str]:
     its receiver; every `getattr`, `setattr` or `delattr` naming `"guard"` or `"claim"`; and every
     `.guard` rebound or deleted, which would void the guard's bounds without a claim. So an alias
     (a private attribute, a renamed local, `getattr`) is found as plainly as `.claim(`. Its limits:
-    a name built at run time (`getattr(g, name)`, `"cl" + "aim"`), `builtins.getattr`, the
+    a name built at run time (`getattr(g, name)`, `"cl" + "aim"`), `builtins.getattr` and
+    `builtins.setattr`, `object.__setattr__` and `object.__delattr__`, a write to `__dict__`, the
     `operator` getters, `vars()` and `__getattribute__`, a `match` class pattern and `eval` are not
-    seen, and a reach routed through a module already allowed below counts as that module's."""
+    seen; nor is a change to a guard's private state (`guard._max = …`, `guard._held.clear()`),
+    which voids its bounds without a claim or a rebind (ruff selects no `SLF` to catch it); and a
+    reach routed through a module already allowed below counts as that module's."""
     found: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr == "claim":
@@ -344,23 +347,24 @@ def test_run_claimed_is_the_in_flight_guards_one_claimer() -> None:
     above). No other module claims the guard or rebinds it (`_guard_reaches`, read from each
     module's tree), each place pinned by its receiver: the alert job store's own `claim` (an
     outbox lease; `alerts` may not import `oms`), the exit service building its guard, and the
-    rate limiter's unrelated `guard`. The order lane's `OnLaneExits.guard` (`oms_wiring.py`)
+    rate limiter's unrelated `guard`. Each reach is counted, so a second one through a pinned
+    receiver fails as a new receiver does. The order lane's `OnLaneExits.guard` (`oms_wiring.py`)
     forwards the guard to `run_claimed` in place, on the serving loop, and never claims or
     releases it, so it is no reach. A new caller is reviewed here first."""
     pkg = Path(candleviewer.__file__).resolve().parent
     modules = sorted(pkg.rglob("*.py"))
     assert len(modules) > 500  # the whole package was read, not an emptied scan
-    reaches = {
+    reaches = sorted(
         (p.relative_to(pkg).as_posix(), reach)
         for p in modules
         for reach in _guard_reaches(_parsed(p))
-    }
-    assert reaches == {
+    )
+    assert reaches == sorted([
         ("api/order_exits_common.py", "claim:oms.exits.guard"),
         ("alerts/dispatcher.py", "claim:self._store"),
         ("oms/exits.py", "rebind:self"),
         ("exchange/bybit/rate_limit.py", "rebind:self"),
-    }
+    ])  # fmt: skip
 
 
 class _Pager:
