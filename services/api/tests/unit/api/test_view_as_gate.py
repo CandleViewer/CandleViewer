@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Callable, Mapping
 from functools import cache
+from types import EllipsisType
 from typing import Any, cast
 from uuid import UUID
 
@@ -17,16 +19,18 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from httpx import ASGITransport, AsyncClient
+from prometheus_client import REGISTRY
+from structlog.testing import capture_logs
 
 from candleviewer.api import view_as_guard
-from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.contract_conformance import load_contract_subset, load_openapi_spec
 from candleviewer.api.deny_by_default import declared_operations, rbac_permissions
 from candleviewer.api.view_as_guard import STATE_KEY, make_view_as_guard
 from candleviewer.api.view_as_policy import OWN_OPERATIONS, PROTECTIVE_WRITES, ProtectiveWrites
 from candleviewer.api.view_as_refusals import VIEW_AS_REFUSED, ViewAsRefusalRecorder
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.errors import AuthError, SessionReadOnly
 from candleviewer.auth.generated_permissions import Permission
-from candleviewer.auth.metrics import authz_denied_total
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.view_as import ViewAsEndReason, ViewAsPhase, current_view_as
 from tests.unit.admin.test_view_as_service import _TARGET, _VIEWER, _at, _Rig
@@ -114,9 +118,17 @@ class _Auth:
 
 
 class _Gate:
-    """The guard in front of catch-all routes; `seen` holds (method, path, stamp, contextvar)."""
+    """The guard in front of catch-all routes; `seen` holds (method, path, stamp, contextvar).
+    *permissions* and *identity* are the guard's target-check arguments: by default the contract's
+    and this gate's own `identity`; `None` builds the guard without it."""
 
-    def __init__(self, *, inner: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        inner: list[str] | None = None,
+        permissions: Mapping[tuple[str, str], frozenset[Permission]] | EllipsisType | None = ...,
+        identity: _Identity | EllipsisType | None = ...,
+    ) -> None:
         self.rig = _Rig()
         self.auth = _Auth(self.rig)
         self.writer = _Writer(_Clock())
@@ -143,15 +155,10 @@ class _Gate:
                 return await call_next(request)
 
         app.middleware("http")(
-            make_view_as_guard(
-                self.auth,
-                views=lambda: self.service,
-                refusals=lambda: self.refusals,
-                protective=self.protective,
-                operations=_declared(),
-                clock=self.rig.clock,
-                permissions=rbac_permissions(_spec()),
-                identity=self.identity,
+            _guard(
+                self,
+                permissions=rbac_permissions(_spec()) if permissions is ... else permissions,
+                identity=self.identity if identity is ... else identity,
                 denials=self.writer,
             )
         )
@@ -171,7 +178,10 @@ class _Gate:
 
 
 def _code(response: httpx.Response) -> tuple[int, str]:
-    return response.status_code, response.json()["code"]
+    """A refusal's status and problem `code`; a request that passed says so, not `KeyError`."""
+    body = response.json()
+    assert "code" in body, f"not a refusal: {response.status_code} {body}"
+    return response.status_code, body["code"]
 
 
 async def test_live_write_refused_one_record() -> None:
@@ -326,8 +336,9 @@ def test_the_protective_writes_are_the_contracts_operations() -> None:
 
 @pytest.mark.parametrize("operation_id", sorted(PROTECTIVE_WRITES))
 async def test_protective_ops_fail_closed_until_registered(operation_id: str) -> None:
-    """A protective write is refused as any write until its handler registers (the tripwire);
-    then it passes to the handler, as the viewer, live and held."""
+    """A protective write, a cancel included, is refused as any write until its handler registers
+    (the tripwire); then it passes to the handler, as the viewer, live and held, with the target
+    on the stamp for the handler's own account check."""
     gate = _Gate()
     record = await gate.rig.viewing()
     (method, template), _ = PROTECTIVE_WRITES[operation_id]
@@ -337,9 +348,9 @@ async def test_protective_ops_fail_closed_until_registered(operation_id: str) ->
     assert (await gate.call(method, _path(template), record)).status_code == 200
     gate.rig.clock.now = _at(31)
     assert (await gate.call(method, _path(template), record)).status_code == 200
-    assert [(s.subject_user_id, s.phase) for _, _, s, _ in gate.seen] == [
-        (_VIEWER, ViewAsPhase.LIVE),
-        (_VIEWER, ViewAsPhase.HELD),
+    assert [(s.subject_user_id, s.target_user_id, s.phase) for _, _, s, _ in gate.seen] == [
+        (_VIEWER, _TARGET, ViewAsPhase.LIVE),
+        (_VIEWER, _TARGET, ViewAsPhase.HELD),
     ]
 
 
@@ -518,31 +529,12 @@ async def test_the_read_only_check_skips_exempt_paths_and_safe_methods() -> None
     assert gate.auth.step_up.asked == 0
 
 
-#: The cancels, protective in whole (C-2.6; 22's View-as section: the carve-out's writes pass
-#: neither the read-only rule nor the hold; the orchestrator's ruling of 2026-10-24 22:50Z).
+#: The cancels, protective in whole (C-2.6; 22's View-as session: the carve-out's writes pass
+#: neither the read-only rule nor the hold).
 _CANCELS = {
     "cancelOrder": ("DELETE", "/orders/x"),
     "cancelAllOrders": ("POST", "/orders/cancel-all"),
 }
-
-
-@pytest.mark.parametrize("operation_id", sorted(_CANCELS))
-async def test_a_viewing_owners_cancel_passes_as_the_viewer_once_its_handler_registers(
-    operation_id: str,
-) -> None:
-    """A cancel is a protective write: once its handler registers, it passes to it as the viewer,
-    with the target named for the handler's own RBAC check, live and held."""
-    gate = _Gate()
-    record = await gate.rig.viewing()
-    method, path = _CANCELS[operation_id]
-    gate.protective.register(operation_id)
-    assert (await gate.call(method, path, record)).status_code == 200
-    gate.rig.clock.now = _at(31)
-    assert (await gate.call(method, path, record)).status_code == 200
-    assert [(s.subject_user_id, s.target_user_id, s.phase) for _, _, s, _ in gate.seen] == [
-        (_VIEWER, _TARGET, ViewAsPhase.LIVE),
-        (_VIEWER, _TARGET, ViewAsPhase.HELD),
-    ]
 
 
 @pytest.mark.parametrize(
@@ -562,7 +554,8 @@ async def test_every_other_write_is_still_refused_with_the_cancels_registered(
 
 
 def _guard(gate: _Gate, **targets: Any) -> Any:
-    """`gate`'s guard built again with only *targets* of its target-check arguments."""
+    """`gate`'s guard, built with *targets* as its target-check arguments (`permissions`,
+    `identity`, `denials`). The one place the fake `_Auth` meets `make_view_as_guard`'s port."""
     return make_view_as_guard(
         cast(Any, gate.auth), views=lambda: gate.service, refusals=lambda: gate.refusals,
         protective=gate.protective, operations=_declared(), clock=gate.rig.clock, **targets,
@@ -570,7 +563,8 @@ def _guard(gate: _Gate, **targets: Any) -> Any:
 
 
 def _denials(permission: Permission) -> float:
-    return float(authz_denied_total.labels(permission=permission.value)._value.get())
+    """`authz_denied_total{permission}` as the scrape reads it (SR-125)."""
+    return REGISTRY.get_sample_value("authz_denied_total", {"permission": permission.value}) or 0.0
 
 
 #: What each protective write's `x-rbac` names (22), as the guard reads it from the contract.
@@ -584,8 +578,12 @@ _PERMISSION = {
 }
 
 
-def test_the_guard_reads_each_protective_writes_permission_from_the_contract() -> None:
-    permissions = rbac_permissions(_spec())
+@pytest.mark.parametrize("source", [_spec, load_contract_subset], ids=["22", "packaged-subset"])
+def test_the_guard_reads_each_protective_writes_permission_from_the_contract(
+    source: Callable[[], dict[str, Any]],
+) -> None:
+    """From 22 and from the packaged subset `create_app` reads: each maps all six."""
+    permissions = rbac_permissions(source())
     assert {i: permissions[operation] for i, (operation, _) in PROTECTIVE_WRITES.items()} == {
         i: {permission} for i, permission in _PERMISSION.items()
     }
@@ -597,8 +595,8 @@ async def test_a_live_protective_write_the_target_may_not_make_is_forbidden(
 ) -> None:
     """22: a protective write is admitted only when the target's `x-rbac` allows it too. The guard
     checks that half for every registered protective write, so no handler can forget it: `403
-    forbidden` before the handler, counted, and one `rbac.denied` naming the viewer and the
-    viewer's session as the actor and the target as the object (22's audit rule)."""
+    forbidden` before the handler, counted, and one `rbac.denied` naming the viewer, the viewer's
+    session and address as the actor and the target as the object (22's audit rule)."""
     gate = _Gate()
     record = await gate.rig.viewing()
     gate.identity.held = frozenset(p.value for p in Permission) - {_PERMISSION[operation_id].value}
@@ -608,8 +606,10 @@ async def test_a_live_protective_write_the_target_may_not_make_is_forbidden(
     response = await gate.call(method, _path(template), record)
     assert _code(response) == (403, "forbidden") and gate.seen == [] and gate.refused() == []
     assert _denials(_PERMISSION[operation_id]) == before + 1
-    ((kw),) = gate.denied()
+    (kw,) = gate.denied()
     assert (kw["actor_user_id"], kw["session_id"]) == (_VIEWER, record.id)
+    # who and where: the viewer's name and address, never the target's
+    assert (kw["actor_label"], kw["actor_ip"]) == ("ana", "127.0.0.1")
     assert (kw["object_kind"], kw["object_id"]) == ("user", str(_TARGET))
     assert (kw["outcome"], kw["severity"]) == ("denied", "warning")
     assert kw["reason"] == f"missing_permission:{_PERMISSION[operation_id].value}:none"
@@ -667,36 +667,55 @@ async def test_a_target_read_that_fails_is_the_stores_unavailability() -> None:
     assert gate.denied() == []
 
 
-async def test_a_target_denial_whose_record_cannot_be_written_is_still_forbidden() -> None:
-    """As `enforce`'s: the 403 stands, counted, when its `rbac.denied` cannot be written."""
+@pytest.mark.parametrize(
+    "raised",
+    [RuntimeError("audit writer not started"), AuditUnavailable("audit down"), TimeoutError()],
+    ids=["not-started", "unavailable", "timed-out"],
+)
+async def test_a_target_denial_whose_record_cannot_be_written_is_still_forbidden(
+    raised: Exception, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As `enforce`'s: the 403 stands, counted, when its `rbac.denied` cannot be written, and the
+    warning log is the one trace of it (C-12.6: the error's class, no detail)."""
     gate = _Gate()
     record = await gate.rig.viewing()
     gate.identity.held = frozenset()
     gate.protective.register("cancelOrder")
-    gate.writer.mode = "fail"
+
+    async def refuse(action: str, **kw: Any) -> None:
+        raise raised
+
+    monkeypatch.setattr(gate.writer, "emit", refuse)
     before = _denials(Permission.ORDERS_WRITE)
-    response = await gate.call("DELETE", "/orders/x", record)
+    with capture_logs() as logs:
+        response = await gate.call("DELETE", "/orders/x", record)
     assert _code(response) == (403, "forbidden") and gate.seen == []
     assert _denials(Permission.ORDERS_WRITE) == before + 1
+    assert [(e["event"], e["error"]) for e in logs] == [
+        ("auth.view_as_target_denial_unaudited", type(raised).__name__)
+    ]
 
 
-async def test_a_guard_with_no_target_read_refuses_every_live_protective_write() -> None:
-    """Built without the contract's permissions or the identity reads, the guard cannot check the
-    target: a live protective write is `503 store_unavailable`, never a pass."""
-    gate = _Gate()
+@pytest.mark.parametrize(
+    ("with_permissions", "with_identity"),
+    [(False, True), (True, False), (False, False)],
+    ids=["no-permissions", "no-identity", "neither"],
+)
+async def test_a_guard_with_no_target_read_refuses_every_live_protective_write(
+    with_permissions: bool, with_identity: bool
+) -> None:
+    """Built without the contract's permissions, the identity reads or both, the guard cannot
+    check the target: a live protective write is `503 store_unavailable`, never a pass. Each
+    alone is enough: with an identity but no permissions to name, a target lacks nothing, which
+    must not read as allowed."""
+    gate = _Gate(
+        permissions=rbac_permissions(_spec()) if with_permissions else None,
+        identity=_Identity() if with_identity else None,
+    )
     record = await gate.rig.viewing()
-    app = FastAPI()
-
-    @app.api_route("/{path:path}", methods=_METHODS)
-    async def route(path: str) -> JSONResponse:
-        return JSONResponse({"ok": True})
-
-    app.middleware("http")(_guard(gate))
     gate.protective.register("cancelOrder")
-    headers = {"Authorization": f"Bearer {record.id}"}
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.delete("/orders/x", headers=headers)
-    assert _code(response) == (503, "store_unavailable")
+    response = await gate.call("DELETE", "/orders/x", record)
+    assert _code(response) == (503, "store_unavailable") and gate.seen == []
 
 
 def test_a_protective_write_with_no_x_rbac_permission_fails_the_build() -> None:

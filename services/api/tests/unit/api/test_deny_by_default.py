@@ -85,3 +85,22 @@ def test_rbac_permissions_refuses_a_code_outside_the_vocabulary() -> None:
     spec = {"paths": {"/x": {"post": {"x-rbac": {"permissions": ["not:a_code"]}}}}}
     with pytest.raises(ValueError, match="not:a_code"):
         rbac_permissions(spec)
+
+
+def test_rbac_permissions_reads_only_the_operations_of_a_path_item() -> None:
+    """What 22 may hold beside an operation: an extension of `paths`, a path item's own keys, an
+    extension object under no method and a method with no operation object (an empty `post:`),
+    none of which is one (as `declared_operations` reads)."""
+    spec = {
+        "paths": {
+            "x-note": "an extension of `paths`, not a path item",
+            "/x": {
+                "summary": "a path item's text",
+                "parameters": [{"name": "id", "in": "path"}],
+                "x-ext": {"x-rbac": {"permissions": ["orders:write"]}},
+                "post": None,
+                "get": {"x-rbac": {"permissions": ["orders:read"]}},
+            },
+        }
+    }
+    assert rbac_permissions(spec) == {("GET", "/x"): frozenset({Permission.ORDERS_READ})}

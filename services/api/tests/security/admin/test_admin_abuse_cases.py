@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import uuid
 from collections.abc import Iterator
 from typing import Any, cast
 
@@ -365,8 +366,9 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     the world's refusal cap is above the sweep (`VIEW_AS_REFUSAL_BUDGET`), which the case asserts.
     The carve-out is the contract's list of the viewer's own operations, which the guard reads: a
     second start is the start route's own refusal, and leaving is never refused. No protective
-    write is registered yet (E39-S03, E29-T07, E34-S03), so none is carved out; the day one is,
-    this case must say what it admits."""
+    write is registered yet (E39-S03, E29-T07, E34-S03 and E29-T04's cancels), so none is carved
+    out; the day one is, this case must say what it admits. The guard's own check of a registered
+    one's target, through this same wiring, is the case after it."""
     owner, manager = admin.actors["owner"], admin.actors["manager_with_grant"]
     admin.elevate(["users", "flags"])  # the start's step-up class, and the control write's
     stamp = _flag_updated_at(admin, _UI_FLAG)
@@ -460,3 +462,32 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     accepted = _flag_put(admin, _UI_FLAG, {"value": False, "reason": "AC-ADM-22"})
     assert accepted.status_code == 200, accepted.text  # the same write, once the view has ended
     assert _flag_value(admin, _UI_FLAG) is False
+
+
+def test_a_viewing_owners_cancel_the_target_may_not_make_is_forbidden_through_the_real_wiring(
+    admin: AdminWorld,
+) -> None:
+    """#3085, #913: `create_app`'s own wiring of the view-as guard's `permissions=`, `identity=`
+    and `denials=`, which the unit tests (`test_view_as_gate.py`) build by hand. An Owner viewing
+    a Viewer, who holds no `orders:write`, sends a cancel whose handler has registered (none is
+    mounted yet, so the case registers it as its route will): `403 forbidden` before any handler,
+    counted, and one `rbac.denied` naming the Owner, the Owner's session and address as the
+    actor and the Viewer as the object, and the refused operation (22 "View-as session")."""
+    admin.elevate(["users"])  # the start's step-up class
+    owner, viewer = admin.actors["owner"], admin.actors["viewer"]
+    start = {"json": {"target_user_id": str(viewer.user_id), "reason": "cancel check"}}
+    started = admin.send("owner", "POST", "/admin/view-as", start)
+    assert started.status_code == 201, started.text
+    admin.app.state.protective_writes.register("cancelOrder")
+    counted = Stack.in_process("authz_denied_total", permission="orders:write")
+    routed = len(admin.reached)
+    answer = admin.send("owner", "DELETE", f"/orders/{uuid.uuid4()}", {})
+    assert _coded(answer) == (403, "forbidden"), answer.text  # not 503: both reads are wired
+    assert admin.reached[routed:] == []  # the guard answered: no handler ran
+    assert Stack.in_process("authz_denied_total", permission="orders:write") - counted == 1
+    (denied,) = _records(admin, "rbac.denied", "owner")  # one, and written: `denials=` is wired
+    assert (denied["actor_label"], denied["actor_ip"]) == ("owner", "127.0.0.1")
+    assert str(denied["session_id"]) == str(owner.session_id)
+    assert (denied["object_kind"], denied["object_id"]) == ("user", str(viewer.user_id))
+    assert denied["reason"] == "missing_permission:orders:write:none"
+    assert denied["after_state"] == {"method": "DELETE", "path": "/orders/{orderId}"}

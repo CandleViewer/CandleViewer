@@ -259,8 +259,7 @@ def test_place_order_is_neither_an_own_operation_nor_a_protective_write() -> Non
 
 
 # --- A protective write in a live view-as context carries the target's RBAC: 22's View-as session
-# --- admits it "only when both the viewer's own RBAC and the target's `x-rbac` allow it" (the
-# --- orchestrator's ruling of 2026-10-24 22:50Z).
+# --- admits it "only when both the viewer's own RBAC and the target's `x-rbac` allow it".
 
 #: The target's one trade grant and one view-only grant.
 TARGET_TRADE, TARGET_VIEW = uuid.UUID(int=10), uuid.UUID(int=11)
@@ -349,6 +348,17 @@ async def test_a_session_with_no_context_carries_no_target() -> None:
     assert principal is not None and principal.target is None
 
 
+async def test_a_live_read_stamp_of_a_context_since_cleared_carries_no_target() -> None:
+    """The viewer left between the guard's stamp and the resolver's read of the session: the
+    session's own subject is the viewer's, the stamp's the target's, so no target rides on the
+    viewer's principal, and none is read."""
+    users = _Users()
+    resolver = _resolver(_Sessions(view_as=_cleared()), users, _UserGrants())
+    principal = await resolver.resolve(_request(stamp=_as(subject=TARGET)))
+    assert principal is not None and principal.snapshot.user_id == USER
+    assert principal.target is None and str(TARGET) not in users.asked
+
+
 @pytest.mark.parametrize(
     "users",
     [
@@ -426,6 +436,20 @@ def test_a_target_who_allows_nothing_scopes_nothing() -> None:
     which reads nothing (fail closed), never "all"."""
     nobody = PrincipalSnapshot(TARGET, frozenset(), frozenset())
     assert scope_for_target(_OWNER, nobody) == GrantScope(TARGET, frozenset())
+
+
+def test_a_grant_that_trades_but_cannot_view_is_no_trade_grant_on_either_side() -> None:
+    """The readers' SQL needs `can_view` with `can_trade`, as `account_scope` does for a view:
+    `can_trade` alone adds nothing, whether it is the target's grant or the viewer's."""
+    blind = uuid.UUID(int=14)
+    trades, no_view = (SHARED, True, True, False), (blind, False, True, False)
+    assert scope_for_target(_OWNER, _person(TARGET, "manager", trades, no_view)) == GrantScope(
+        TARGET, frozenset({SHARED})
+    )
+    sees_both = _person(TARGET, "manager", trades, (blind, True, True, False))
+    assert scope_for_target(_person(USER, "manager", trades, no_view), sees_both) == GrantScope(
+        TARGET, frozenset({SHARED})
+    )
 
 
 def test_an_owner_target_narrows_nothing() -> None:
