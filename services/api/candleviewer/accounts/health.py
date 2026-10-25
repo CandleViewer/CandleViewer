@@ -361,7 +361,11 @@ class AccountHealthMonitor:
         return [acc.dms_owed for acc in self._accounts.values() if acc.dms_owed is not None]
 
     def current(self, account_id: UUID) -> HealthState | None:
-        """The state the evidence supports now, without side effects; `None` if untracked."""
+        """The state the evidence supports now, without side effects; `None` if untracked. The
+        order-entry gate reads it from the order lane too (#913 slice 3 L4): one `dict.get` and the
+        account's evidence attributes, each one the evidence calls replace whole on this loop; the
+        timestamps only move forward, and a heartbeat stores its time before `ws_live`, so a read
+        that overlaps one of these writes admits only where the state before or after it does."""
         acc = self._accounts.get(account_id)
         return None if acc is None else self._derive(acc, self._clock.monotonic())[0]
 

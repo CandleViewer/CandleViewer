@@ -904,9 +904,11 @@ class OrderStateFeed:
 # (`ServedClock`), the read-only gate and the governor's headroom (each under its own lock,
 # #4370), the persistence bundle's chain-trip latch (a dict the serving loop's restores write an
 # item at a time), its own refusals of rejected credentials, which the route's gate reads on the
-# serving loop too (`ServedStandings.refused`, one dict read), the metrics and the pager. Its audit
-# writer and `machine_events` sink are its own, built on its loop (#913 L2, `OmsStores`): neither
-# crosses.
+# serving loop too (`ServedStandings.refused`, one dict read), the order-entry gate since L4
+# (`ServedGate`: the maintenance boolean, the key standing's one snapshot and the self-check's
+# results a key at a time, the account health's dict read and evidence, 20 Sec.6.2), the metrics and
+# the pager. Its audit writer and `machine_events` sink are its own, built on its loop (#913 L2,
+# `OmsStores`): neither crosses.
 
 
 class PrivateStreamRefused(RuntimeError):
@@ -971,31 +973,29 @@ class ServedProfiles:
 
 
 class ServedGate:
-    """The order-entry gate as the lane asks it (C-2.21). Its account check reads the key standing,
-    whose read also drops a rejection a later pass cleared, so it is not safe from another thread:
-    the lane's thread waits for the serving loop's answer (`Serving.block`), and a gate that does
-    not begin to answer within `BLOCK_TIMEOUT_S` is `OmsNotReady`, nothing sent. An account whose
-    rejected credential the lane notified (`ServedStandings`) is refused at once, before the notice
-    lands, so no later read has to wait for it (CR-S3L1B-04)."""
+    """The order-entry gate as the lane asks it (C-2.21), read in place with no hop to the serving
+    loop (#913 L4): each of its reads takes one source at one instant, safe from another thread (20
+    Sec.6.2), so a write is in force for every read that begins after it returns. A read that
+    overlaps writes to two sources may combine two instants, so the gate is read twice and admits
+    only when both reads do: a refusing write that lands inside the first is in force for the
+    second. An account whose rejected credential the lane notified (`ServedStandings`) is refused
+    first and at once, as the key standing holds it only once the notice lands (CR-S3L1B-04)."""
 
-    def __init__(self, gate: OrderEntryCheck, serving: Serving, standings: ServedStandings) -> None:
-        self._gate, self._serving, self._standings = gate, serving, standings
+    def __init__(self, gate: OrderEntryCheck, standings: ServedStandings) -> None:
+        self._gate, self._standings = gate, standings
 
     def refusal(self, account_id: UUID) -> OrderEntryRefusal | None:
         if self._standings.refused(account_id):
             return NO_ACTIVE_KEY
-        try:
-            return self._serving.block(lambda: self._gate.refusal(account_id))
-        except TimeoutError:
-            _log().error("oms_gate_unanswered", account_id=str(account_id))
-            raise OmsNotReady from None
+        first = self._gate.refusal(account_id)
+        return first if first is not None else self._gate.refusal(account_id)
 
 
 class ServedStandings:
-    """The key standing, which is for one loop (`accounts/key_standing.py`), told of a rejected
-    credential from the lane: notified to the serving loop, never awaited, and refused on the lane
-    at once (`refused`) until the notice has landed there (C-2.21). A notice lost or failed there
-    leaves the account refused in this process."""
+    """The key standing, which only the serving loop writes (`accounts/key_standing.py`), told of a
+    rejected credential from the lane: notified to the serving loop, never awaited, and refused on
+    the lane at once (`refused`) until the notice has landed there (C-2.21). A notice lost or
+    failed there leaves the account refused in this process."""
 
     def __init__(self, standings: KeyStandingReactions, serving: Serving) -> None:
         self._standings, self._serving = standings, serving
@@ -1013,7 +1013,8 @@ class ServedStandings:
 
     def _land(self, account_id: UUID, refusal: Refusal, sent: object) -> None:
         self._standings.credential_rejected(account_id, refusal)
-        with self._guard:  # the key standing refuses it from now on
+        # the key standing holds it first, so a lane read that misses it here finds it there (L4)
+        with self._guard:
             if self._sent.get(account_id) is sent:
                 del self._sent[account_id]
 
@@ -2284,7 +2285,7 @@ class OmsRuntime:
             live_enabled=settings.trading_live_enabled,
             live_flag=self._live_enabled,
             kill_switch=InterimKillSwitch(),
-            gate=ServedGate(self._gate, serving, standings),
+            gate=ServedGate(self._gate, standings),
             fenced=fenced,
         )
         switches.announce(metrics=metrics)

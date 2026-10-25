@@ -50,7 +50,8 @@ LANE_JOIN_S: Final = 1.0
 #: own bounds are inside, so the hop never cuts one short (`oms_wiring.ServedPort`).
 HOP_TIMEOUT_S: Final = CV_COMMAND_TIMEOUT
 #: The bound on a blocking hop, B1's write-ahead bound: how long the lane's thread waits for the
-#: serving loop to begin a synchronous call (the order-entry gate, a bundle's sink append).
+#: serving loop to begin a synchronous call (none since #913's L2 gave the lane its own sink and L4
+#: read the order-entry gate in place).
 BLOCK_TIMEOUT_S: Final = CV_PERSIST_TIMEOUT
 #: Each step of the lane thread's own cleanup once its loop has stopped: its five end inside
 #: `LANE_JOIN_S`, so a cleanup that runs long ends before the join gives up.

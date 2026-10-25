@@ -25,14 +25,26 @@ answers from memory only, synchronously and with no I/O (C-2.21):
   knew never clears it. Passes are dated on the wall clock: a check already in flight when the
   rejection arrives, dated after it by a wall-clock step back, can clear it once, until the next
   signed call meets the refusal again (the residual accepted under Option A). Health evidence
-  never reaches it, nor is a rejection health evidence (KV-T12). One fact per listed account, so
-  what is held is bounded by the read (C-2.18); one for an unlisted account is logged and dropped
-  (it is refused).
+  never reaches it, nor is a rejection health evidence (KV-T12). A standing read answers a
+  rejection a later pass has cleared as cleared, and keeps it: the next tracking read drops it, so
+  should the pass leave the evidence first, the rejection is in force again (it refuses longer,
+  never less). One fact per listed account, so what is held is bounded by the read (C-2.18); one
+  for an unlisted account is logged and dropped (it is refused).
 
 Codes only, never exchange text, a key id or a permission list. The durable section 8.6 reaction
 (the key marked `invalid`, the account disarmed) is the submit pipeline's (#913); a restart forgets
 the fact, and the boot self-check judges the key afresh. A call reads the account's own keys only.
-Meant for one event loop.
+
+Read from the order lane; written on the serving loop (#913 slice 3 L4, 20-architecture.md 6.2).
+`observe` and `credential_rejected` run on the serving loop only (the tracking loop, the
+reconciler, the lane's notices), and each publishes anew the one snapshot a read answers from
+(`_State`: the accounts the last good read listed, their rejections and that read's age),
+by a single assignment, never changing one in place. `standing()` writes nothing and takes that
+reference once, so a read on another thread meets a write whole or not at all, and every read that
+begins after a write returns sees it (an attribute read is GIL-atomic). It reads the self-check's
+results once a call too, a key at a time with one `dict.get` each, never iterating them: the job
+replaces the mapping at each pass's key-list read and stores each key's result in it, on the
+serving loop.
 """
 
 from __future__ import annotations
@@ -72,7 +84,8 @@ def logger() -> Any:
 
 class SelfCheckResults(Protocol):
     """What the standing reads of the stored-key self-check (`selfcheck.KeySelfCheck`): each key's
-    standing result, by key id. Read at each call: the job replaces the mapping on every pass."""
+    standing result, by key id. Read once a call, a key at a time and never iterated: the job
+    replaces the mapping at each pass and stores each key's result in it (module docstring)."""
 
     @property
     def results(self) -> Mapping[UUID, KeyCheck]: ...
@@ -112,6 +125,18 @@ class _Rejection:
     seen: frozenset[tuple[UUID, datetime]]
 
 
+@dataclass(frozen=True, slots=True)
+class _State:
+    """What a read answers from, published anew by each write and never changed in place (module
+    docstring): each account the last good read listed, the rejections held for them (one a later
+    pass has cleared until the next read drops it), and when that read was taken on the monotonic
+    clock."""
+
+    accounts: Mapping[UUID, _Account]
+    rejections: Mapping[UUID, _Rejection]
+    read_at: float
+
+
 class KeyStandings:
     """Over the self-check `selfcheck` (`None` on the fake backend: stored passes only), its window
     `interval_s`, the age bound `stale_after_s` of the last good read, and `clock`: the wall time
@@ -126,14 +151,16 @@ class KeyStandings:
         clock: Clock,
     ) -> None:
         self._selfcheck, self._interval_s, self._clock = selfcheck, interval_s, clock
-        self._stale_after_s, self._read_at = stale_after_s, float("-inf")
-        self._accounts: dict[UUID, _Account] = {}
-        self._rejections: dict[UUID, _Rejection] = {}
+        self._stale_after_s = stale_after_s
+        #: Published anew by `observe` and `credential_rejected`, never changed in place.
+        self._state = _State({}, {}, float("-inf"))
 
     def observe(self, rows: Iterable[SelfCheckTargetRow]) -> None:
         """Take one usable-key read of the environment whole, reduced at once to each account's
-        keys (id, stored pass, error code) and armed flag, keeping no row. An account it does not
-        list has no standing and loses its rejection; a failed read never gets here."""
+        keys (id, stored pass, error code) and armed flag, keeping no row, and publish it with the
+        rejections still in force: an account it does not list has no standing and loses its
+        rejection, and a rejection a later pass has cleared, as this read and the self-check's
+        result judge it, is dropped here, never by a read. A failed read never gets here."""
         keys: dict[UUID, list[_Key]] = {}
         armed: dict[UUID, bool] = {}
         for row in rows:
@@ -141,25 +168,32 @@ class KeyStandings:
             stored = _Key(row.key_id, row.verified_at, row.last_error_code)
             keys.setdefault(account.id, []).append(stored)
             armed[account.id] = account.is_enabled and account.trading_enabled
-        self._accounts = {a: _Account(armed[a], tuple(listed)) for a, listed in keys.items()}
-        self._rejections = {a: r for a, r in self._rejections.items() if a in self._accounts}
-        self._read_at = self._clock.monotonic()
+        accounts = {a: _Account(armed[a], tuple(listed)) for a, listed in keys.items()}
+        results = self._results()
+        rejections = {
+            a: r
+            for a, r in self._state.rejections.items()
+            if a in accounts and _held(r, _judge(accounts[a], results)) is not None
+        }
+        self._state = _State(accounts, rejections, self._clock.monotonic())
 
     @property
     def read_once(self) -> bool:
         """Whether a good tracking read has been taken: the OMS startup waits for the first (#913,
         20-architecture.md 6.2 step 1), so a create a restart resumes is not refused for want of
         it."""
-        return self._read_at != float("-inf")
+        return self._state.read_at != float("-inf")
 
     def standing(self, account_id: UUID) -> KeyStanding | None:
         """The account's standing now; `None` if the last good read did not list it or is older
-        than `stale_after_s`. A rejection that a later pass has cleared is dropped here."""
-        account = self._accounts.get(account_id)
-        if account is None or self._clock.monotonic() - self._read_at > self._stale_after_s:
+        than `stale_after_s`. It writes nothing: a rejection a later pass has cleared is answered
+        cleared and kept for the next tracking read to drop (module docstring)."""
+        state = self._state
+        account = state.accounts.get(account_id)
+        if account is None or self._clock.monotonic() - state.read_at > self._stale_after_s:
             return None
-        keys = self._judge(account)
-        rejection = self._held(account_id, keys)
+        keys = _judge(account, self._results())
+        rejection = _held(state.rejections.get(account_id), keys)
         now, interval_s = self._clock.now(), self._interval_s
         active = any(
             not key.failed and is_fresh(key.last_pass_at, now=now, interval_s=interval_s)
@@ -179,21 +213,24 @@ class KeyStandings:
         """Hold the section 8.6 reaction to `refusal` for the account, at once and before it is
         logged, so a logging fault never withholds it (C-2.21). A second rejection adds its
         reaction to a first still in force, and the fact then needs a pass after both. A first
-        that a later pass has cleared adds nothing once a standing read has dropped it, or while
-        that pass is still in evidence (the job's result, or the stored pass of the last read). If
-        the pass leaves the evidence before any standing read, the first is in force again and
-        merges: the 403 reason can differ, and both refuse."""
-        account = self._accounts.get(account_id)
+        that a later pass has cleared adds nothing once the next tracking read has dropped it, or
+        while that pass is still in evidence (the job's result, or the stored pass of the last
+        read). If the pass leaves the evidence before the next tracking read, the first is in force
+        again and merges: the 403 reason can differ, and both refuse."""
+        state = self._state
+        account = state.accounts.get(account_id)
         if account is not None:
-            keys = self._judge(account)
-            prior = self._held(account_id, keys)
+            keys = _judge(account, self._results())
+            prior = _held(state.rejections.get(account_id), keys)
             disabled = REACTIONS.get(refusal)
-            self._rejections[account_id] = _Rejection(
+            rejection = _Rejection(
                 no_key=disabled is None or (prior is not None and prior.no_key),
                 disabled=disabled or (None if prior is None else prior.disabled),
                 at=self._clock.now(),
                 seen=frozenset((key.key_id, key.last_pass_at) for key in keys),
             )
+            rejections = {**state.rejections, account_id: rejection}
+            self._state = _State(state.accounts, rejections, state.read_at)
         logger().error(
             "account.credential_rejected",
             account_id=str(account_id),
@@ -201,31 +238,34 @@ class KeyStandings:
             listed=account is not None,
         )
 
-    def _held(self, account_id: UUID, keys: Iterable[_Judged]) -> _Rejection | None:
-        """The account's rejection while it is in force; one that a later pass in `keys` clears is
-        dropped. `keys` is the evidence now: a pass no longer in it clears nothing."""
-        rejection = self._rejections.get(account_id)
-        if rejection is not None and _passed_since(rejection, keys):
-            del self._rejections[account_id]
-            return None
-        return rejection
+    def _results(self) -> Mapping[UUID, KeyCheck]:
+        """The self-check's results, taken once a call; none without a job (the fake backend)."""
+        return {} if self._selfcheck is None else self._selfcheck.results
 
-    def _judge(self, account: _Account) -> list[_Judged]:
-        """Each of the account's keys as the self-check judges it: its result when the job holds
-        one, otherwise the stored pass and error code (decision 3 on #836)."""
-        results: Mapping[UUID, KeyCheck] = {}
-        if self._selfcheck is not None:
-            results = self._selfcheck.results
-        judged = []
-        for key in account.keys:
-            check = results.get(key.key_id)
-            if check is None:
-                failed = key.error_code in STANDING_FAILURE_CODES
-                judged.append(_Judged(key.key_id, failed, key.error_code, key.verified_at))
-            else:
-                failed = check.outcome == "failed"
-                judged.append(_Judged(key.key_id, failed, check.code, check.last_pass_at))
-        return judged
+
+def _judge(account: _Account, results: Mapping[UUID, KeyCheck]) -> list[_Judged]:
+    """Each of the account's keys as the self-check judges it: its result in `results` when the job
+    holds one, otherwise the stored pass and error code (decision 3 on #836). One `dict.get` a key:
+    the mapping is never iterated."""
+    judged = []
+    for key in account.keys:
+        check = results.get(key.key_id)
+        if check is None:
+            failed = key.error_code in STANDING_FAILURE_CODES
+            judged.append(_Judged(key.key_id, failed, key.error_code, key.verified_at))
+        else:
+            failed = check.outcome == "failed"
+            judged.append(_Judged(key.key_id, failed, check.code, check.last_pass_at))
+    return judged
+
+
+def _held(rejection: _Rejection | None, keys: Iterable[_Judged]) -> _Rejection | None:
+    """The rejection while it is in force: `None` once a later pass in `keys` clears it, never
+    dropped here (`observe` drops it). `keys` is the evidence now: a pass no longer in it clears
+    nothing."""
+    if rejection is not None and _passed_since(rejection, keys):
+        return None
+    return rejection
 
 
 def _passed_since(rejection: _Rejection, keys: Iterable[_Judged]) -> bool:
