@@ -2,18 +2,23 @@
 read from 22 (`amendOrder`, `cancelOrder`, `cancelAllOrders`, `placeOrder`'s `ETag`, `OrderId`),
 24 (8.4's exit routes, 8.7, 8.8 rule 6, 15.5, 19), 21 (3.3.11, 10.7) and 20 (12.1), never from a
 copy: the orchestrator's slice-4 rulings of 2026-10-24 (issuecomment-6381292953, Q1 to Q12, Q14),
-and S4-D2a's (SEC-S4C2B-01; the rulings of 20:58Z and 21:47Z).
+and S4-D2a's (SEC-S4C2B-01; the rulings of 20:58Z and 21:47Z, and of 2026-10-25 00:27Z, 00:36Z,
+01:11Z and 01:24Z).
 """
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
 import pytest
 
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
+from candleviewer.api.order_problems import order_problem
 from candleviewer.audit.actions import AUDIT_ACTIONS
+from candleviewer.observability.correlation import CORRELATION_HEADER
+from candleviewer.oms.errors import OmsError
 from candleviewer.oms.exits import ALREADY_FINAL
 from candleviewer.oms.recovery import FINALS
 from candleviewer.oms_wiring import ORDER_ALERTS
@@ -797,13 +802,40 @@ def test_sec_s4c2b_01_judges_an_amend_on_the_order_as_it_stands_and_sends_its_ve
     )
 
 
+def test_a_step_11_class_refusal_is_audited_naming_its_step_and_its_reason() -> None:
+    """The orchestrator's ruling of 2026-10-25 00:27Z (1): an amend the order as it stands makes
+    risk-increasing where step 4's read did not is refused before the send, `409 conflict` with
+    `Retry-After: 1` without `If-Match` and `412` with it, and the refusal is audited
+    (`orders.amend`, the step and the reason named) and counted; the client sends the amend again
+    and is judged afresh."""
+    assert not _missing(
+        _AMEND,
+        "The refusal of an amend that the order as it stands makes risk-increasing, where the "
+        "route's first read did not, is audited (`orders.amend`, denied, the step and the reason "
+        "named: `class` and `reclassified`), and the client sends the amend again, judged afresh "
+        "(the orchestrator's ruling of 2026-10-25 00:27Z (1))",
+    )
+    assert not _missing(
+        _EXITS,
+        "is refused before the send alike: `412` with `If-Match`, `409 conflict` with "
+        "`Retry-After: 1` without; the refusal is audited (`orders.amend`, denied with its code, "
+        "the step and the reason named in its detail: `class`, the class re-check, and "
+        "`reclassified`, the class changed since step 4) and counted, and the client sends the "
+        "amend again, judged afresh (the orchestrator's ruling of 2026-10-25 00:27Z (1))",
+        "Every refusal, the unaudited ones too, is counted in "
+        "`oms_exit_refused_total{operation,code}`",
+    )
+
+
 def test_the_exit_routes_declare_every_answer_their_routes_give() -> None:
     """The orchestrator's ruling of 2026-10-24 21:47Z (1) and vw3's gap of 22:11Z: `cancelOrder`
     declares the `500` its route answers for a fault the exit service raises, as `amendOrder`,
-    whose route renders the same service, both through one shared `InternalError`, the registry's
-    `internal_error`; `cancelAllOrders` declares its in-flight guard's `429`; and each declares
-    step 1's `401` (no principal), the shared `Unauthorized`, as the orchestrator's security look
-    on S4-D1b found it undeclared. Each of the three declares these statuses and no other."""
+    whose route renders the same service, and `cancelAllOrders` (the ruling of 2026-10-25 00:27Z
+    (3)), all through one shared `InternalError`, the registry's `internal_error`, which says what
+    the shared renderer gives (00:36Z): no `instance`, the correlation id on `X-Correlation-Id`;
+    `cancelAllOrders` declares its in-flight guard's `429`; and each declares step 1's `401` (no
+    principal), the shared `Unauthorized`, as the orchestrator's security look on S4-D1b found it
+    undeclared. Each of the three declares these statuses and no other."""
     declared = {
         name: set(_OPS[name]["responses"])
         for name in ("amendOrder", "cancelOrder", "cancelAllOrders")
@@ -816,11 +848,11 @@ def test_the_exit_routes_declare_every_answer_their_routes_give() -> None:
         "cancelOrder": {
             *("202", "400", "401", "403", "404", "409", "429", "500", "501", "502", "503"),
         },
-        "cancelAllOrders": {"200", "400", "401", "403", "409", "429", "501", "503"},
+        "cancelAllOrders": {"200", "400", "401", "403", "409", "429", "500", "501", "503"},
     }
     for name in declared:
         assert _answers(name)["401"] == "Unauthorized", name
-    assert _answers("amendOrder")["500"] == _answers("cancelOrder")["500"] == "InternalError"
+    assert {_answers(name)["500"] for name in declared} == {"InternalError"}
     assert _answers("cancelAllOrders")["429"] == "RateLimited"
     fault = _COMPONENTS["responses"]["InternalError"]
     assert list(fault["content"]) == ["application/problem+json"]
@@ -833,14 +865,18 @@ def test_the_exit_routes_declare_every_answer_their_routes_give() -> None:
         "internal_error", 500, entry["title"],
     )  # fmt: skip
     assert example["type"] == "https://candleviewer.local/errors/internal_error"
-    assert example["instance"].startswith("urn:cv:req:")
+    rendered = order_problem(OmsError("a fault no row names"))  # the shared renderer's 500
+    assert json.loads(bytes(rendered.body)) == example and "instance" not in example
+    described = _words(fault["description"])
     assert not _missing(
-        _words(fault["description"]),
+        described,
         "`internal_error`, retryable (the error-code registry)",
-        "its `instance` carries the request's correlation id",
-        "On the exit routes (`amendOrder`, `cancelOrder`) it is a fault the exit service raised, "
-        "which also pages the operator",
+        "The problem names no internals and carries no `instance`, which no order route sets: the "
+        f"request's correlation id rides the `{CORRELATION_HEADER}` response header",
+        "On the exit routes (`amendOrder`, `cancelOrder`, `cancelAllOrders`) it is a fault the "
+        "exit service raised, which also pages the operator",
     )
+    assert "`instance` carries" not in described
     assert (
         "`429 rate_limited` with `Retry-After: 1` when the in-flight guard holds all its keys, or "
         "all the caller's share of them, nothing sent (24-internal-schemas.md section 8.4 step 9)"
@@ -879,3 +915,36 @@ def test_an_id_routes_malformed_id_and_step_2s_permission_sit_where_the_route_an
         "account_scope_denied` there) or, on `cancelAllOrders`, with the accounts its body lists;",
     )
     assert "`orders:write` with `requires_trade`" not in _EXITS
+
+
+def test_a_protective_cancel_under_view_as_runs_as_the_viewer_in_the_targets_scope() -> None:
+    """vw3's view-as look on S4-D2a, LOW-4 (the orchestrator's rulings of 2026-10-25 01:11Z (3)
+    and 01:24Z): 22's protective writes name the cancels, protective whole through the C-2.6
+    carve-out under `Forbidden`, where a cancel needs no `ArmToken`: a protective cancel runs as
+    the viewer, with both the viewer's RBAC and the target's `x-rbac`, and in the hold in the
+    viewer's own scope. 24's step 4 reads the target's trade grants as the viewer may act on them,
+    never the viewer's own, and in the hold the viewer's own scope."""
+    protective = _INFO.split("**Protective writes (C-2.6).**", 1)[1].split("* **Scope.**", 1)[0]
+    assert not _missing(
+        protective,
+        "Among the writes the carve-out names are the cancels, `cancelOrder` and "
+        "`cancelAllOrders`, protective whole (`ArmToken` lists the carve-out's full set: a cancel "
+        "is never refused for want of the arm token, so the cancel routes do not declare it)",
+        "both pass to their handlers, and a protective cancel runs as the viewer, admitted only "
+        "when both the viewer's own RBAC and the target's `x-rbac` allow it, and in the hold in "
+        "the viewer's own scope",
+    )
+    arm = _words(_COMPONENTS["parameters"]["ArmToken"]["description"])
+    assert "cancels, `closePosition`, `closeAllPositions`" in arm  # the full set it lists
+    assert "so the cancel and close routes do not declare it" in arm
+    for name in ("cancelOrder", "cancelAllOrders"):
+        refs = [param.get("$ref", "") for param in _OPS[name]["parameters"]]
+        assert not [ref for ref in refs if ref.endswith("/ArmToken")], name
+    assert not _missing(
+        _EXITS,
+        'Under view-as (`22-api-openapi.yaml` "View-as session", its protective writes) the '
+        "scope is the target's trade grants as the viewer may act on them (the view-as guard's "
+        "`scope_for_target`), never the viewer's own grants, as a protective write is admitted "
+        "only when both the viewer's own RBAC and the target's `x-rbac` allow it; in the hold it "
+        "is the viewer's own scope",
+    )

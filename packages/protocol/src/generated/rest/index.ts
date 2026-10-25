@@ -3993,7 +3993,11 @@ export interface paths {
      *     again, or with `412` when the amend's `If-Match` names a version the step left behind
      *     (below), and so is an amend that this read makes risk-increasing when the route's first
      *     read of the order, on which it judged the arm token, did not (SEC-S4C2B-01). Every other
-     *     amend meets none of them (the C-2.6 carve-out under `Forbidden`; ruling Q10).
+     *     amend meets none of them (the C-2.6 carve-out under `Forbidden`; ruling Q10). The refusal
+     *     of an amend that the order as it stands makes risk-increasing, where the route's first read
+     *     did not, is audited (`orders.amend`, denied, the step and the reason named: `class` and
+     *     `reclassified`), and the client sends the amend again, judged afresh (the orchestrator's
+     *     ruling of 2026-10-25 00:27Z (1)).
      *
      *     `If-Match` takes the order's `ETag` from an answer about it (`placeOrder`'s `202` or this
      *     route's). The `ETag` is opaque and changes with every step the order takes, each
@@ -11133,7 +11137,7 @@ export interface components {
           components["schemas"]["Problem"] | components["schemas"]["TradingDisabledProblem"];
       };
     };
-    /** @description `internal_error`, retryable (the error-code registry): a fault the server raised and did not answer otherwise. The problem names no internals; its `instance` carries the request's correlation id, which finds the fault in the logs. On the exit routes (`amendOrder`, `cancelOrder`) it is a fault the exit service raised, which also pages the operator, as `placeOrder`'s `500` does (#913 slice 4, the orchestrator's ruling of 2026-10-24 21:47Z). */
+    /** @description `internal_error`, retryable (the error-code registry): a fault the server raised and did not answer otherwise. The problem names no internals and carries no `instance`, which no order route sets: the request's correlation id rides the `X-Correlation-Id` response header, which finds the fault in the logs. On the exit routes (`amendOrder`, `cancelOrder`, `cancelAllOrders`) it is a fault the exit service raised, which also pages the operator, as `placeOrder`'s `500` does (#913 slice 4, the orchestrator's rulings of 2026-10-24 21:47Z and of 2026-10-25 00:27Z (3) and 00:36Z). */
     InternalError: {
       headers: {
         [name: string]: unknown;
@@ -17649,6 +17653,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       409: components["responses"]["OrderExitConflict"];
       429: components["responses"]["RateLimited"];
+      500: components["responses"]["InternalError"];
       501: components["responses"]["NotImplemented"];
       503: components["responses"]["ServiceUnavailable"];
     };
