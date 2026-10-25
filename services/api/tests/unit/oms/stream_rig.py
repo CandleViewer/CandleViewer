@@ -19,6 +19,7 @@ from candleviewer.storage.repositories.orders import OrderRow
 from tests.unit.exchange.bybit._private import linear_order, push, row
 from tests.unit.exchange.bybit._trading import ACCOUNT_A, NOW_US, account, link
 
+GUARD_S = 2.0  # real seconds: the only wall clock, and only ever a failing test's
 XID = "9aac161b-8ed6-450d-9cab-c5cc67c21784"
 
 
@@ -52,6 +53,7 @@ class Rig:
     pages: list[str] = field(default_factory=list)
     taken: list[ToRecordedStop] = field(default_factory=list)
     opened: list[tuple[str, str]] = field(default_factory=list)
+    stalled: asyncio.Event = field(default_factory=asyncio.Event)  # set once a port hangs
     _shared: StreamPushes | None = None
 
     def streams(self, **kw: Any) -> StreamPushes:
@@ -64,13 +66,13 @@ class Rig:
         assert isinstance(r, ForPairing)
         if kw or self._shared is None:
             self._shared = self.streams(**kw)  # one per rig: its paged-order set lives on it
-        await self._shared.handle(ACCOUNT_A, ev, r)
+        async with asyncio.timeout(GUARD_S):  # a bound the code lacks fails the test, never hangs
+            await self._shared.handle(ACCOUNT_A, ev, r)
 
     async def _hit(self, name: str) -> Any:
         self.calls.append(name)
         self.now += self.cost
-        if name in self.hang:
-            await asyncio.Event().wait()
+        await self._stall(name)
         if name in self.raises:
             raise self.raises[name]
         return self.answers.get(name)
@@ -93,6 +95,7 @@ class Rig:
     async def push(self, account_id: UUID, order_id: UUID, event: str, payload: Any) -> None:
         self.calls.append("push")
         self.pushed.append((order_id, event, dict(payload)))
+        await self._stall("push")
         if self.push_errors:
             raise self.push_errors.pop(0)
 
@@ -103,6 +106,7 @@ class Rig:
 
     async def exchange_placed(self, account_id: UUID, *, finding: str, key: str) -> None:
         self.calls.append("exchange_placed")
+        await self._hit_raise("lockout")
 
     async def hand_over_execution(
         self, account_id: UUID, execution: Execution, *, empty_read: bool = False
@@ -113,12 +117,19 @@ class Rig:
     async def take(self, account_id: UUID, decision: ToRecordedStop, *rest: Any) -> None:
         self.calls.append("take")
         self.taken.append(decision)
+        await self._stall("take")
         if "take" in self.raises:
             if "on_take" in self.answers:
                 self.answers["on_take"]()
             raise self.raises["take"]
 
+    async def _stall(self, name: str) -> None:
+        if name in self.hang:
+            self.stalled.set()
+            await asyncio.Event().wait()
+
     async def _hit_raise(self, name: str) -> None:
+        await self._stall(name)
         if name in self.raises:
             raise self.raises[name]
 

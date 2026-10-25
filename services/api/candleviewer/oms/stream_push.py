@@ -248,12 +248,24 @@ class StreamPushes:
                 again = Undecided(empty_read=False) if isinstance(r.push, Execution) else None
             else:
                 again = await self._decide(ctx, deadline)
-                if isinstance(again, NoIntent) and found:  # a record of this order is OMS intent
-                    again = ToRecordedStop(d.record, d.order)
+                if isinstance(again, NoIntent) and self._records_of(ctx, d, found):
+                    again = ToRecordedStop(d.record, d.order)  # a record of this order is intent
             await self._dispatch(ctx, again, deadline, retry=False)
         except Exception as exc:
             _log().error("stream_recorded_stop_failed", kind=type(exc).__name__, **self._ids(ctx))
             self._counts.count("stop_unbindable")
+
+    @staticmethod
+    def _records_of(ctx: _Ctx, d: ToRecordedStop, found: object) -> tuple[RecordedStopRow, ...]:
+        """The records the re-read answered that are this account's, bound to this order: a store
+        defect's answer for another is not OMS intent, so the lockout stands (C-12.4)."""
+        xid = d.order.exchange_order_id
+        rows = found if isinstance(found, tuple) else ()
+        return tuple(
+            r
+            for r in rows
+            if r.exchange_account_id == ctx.account_id and r.exchange_order_id == xid
+        )
 
     async def _open(self, ctx: _Ctx, finding: Finding, key: str, *, placed: bool) -> None:
         """The lockout (or, for an exchange-placed push, its audit and page): first, bounded."""
@@ -332,10 +344,13 @@ class StreamPushes:
         except TimeoutError:  # a cancel landed mid-step: not delivered again
             _log().error("stream_push_timeout", **self._ids(ctx))
             return "unknown"
+        except Exception as exc:  # anything else: the outcome is unknown, never redelivered
+            _log().error("stream_push_failed", kind=type(exc).__name__, **self._ids(ctx))
+            return "unknown"
         return ok
 
-    async def _bounded[T](self, call: Awaitable[T], seconds: float = PORT_TIMEOUT_S) -> T:
-        async with asyncio.timeout(seconds):
+    async def _bounded[T](self, call: Awaitable[T], seconds: float | None = None) -> T:
+        async with asyncio.timeout(PORT_TIMEOUT_S if seconds is None else seconds):
             return await call
 
     def _page(self, summary: str) -> None:
