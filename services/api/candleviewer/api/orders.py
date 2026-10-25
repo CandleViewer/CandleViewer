@@ -23,15 +23,14 @@ Every refusal from step 4 on is counted, then audited before it is answered: `or
 outcome `denied` and its code, the gate's `account.disabled_by_policy`; one whose record cannot be
 written is 503 `audit_unavailable` and binds no key (C-2.9). A replay is the stored answer, not a
 refusal. No log line, exception or problem carries a member of the rows the first persist wrote
-(SEC-S3D-01), the key or the fingerprint (C-12.6).
+(SEC-S3D-01), the key or the fingerprint (C-12.6). The admission the order routes share (the
+principal, step 2's refusal, the body's cap, the key, the 24 h record) is `api/order_admission.py`.
 """
 
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
-import re
 import uuid
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
@@ -47,17 +46,31 @@ from candleviewer.accounts.errors import AccountsError
 from candleviewer.accounts.selfcheck import DISABLED_BY_POLICY
 from candleviewer.accounts.trade_groups import ScopedTradeGroup
 from candleviewer.api._generated import openapi_models as api
-from candleviewer.api.csrf import source_ip
 from candleviewer.api.idempotency import IdempotencyCache, StoredResponse, request_fingerprint
 from candleviewer.api.order_acceptance import first_acceptance, replayed_acceptance
-from candleviewer.api.order_principal import TradingPrincipal
+from candleviewer.api.order_admission import (
+    MAX_ORDER_BODY_BYTES,
+    ORDERS_PERMISSION,
+    AuditEmitter,
+    OnAccount,
+    OrderPrincipals,
+    field_errors,
+    idempotency_key,
+    parse_json_object,
+    problem,
+    rbac_refusal,
+    read_capped,
+    replay_cached,
+    replay_key,
+    resolve_principal,
+    submit_actor,
+)
 from candleviewer.api.order_problems import order_problem, outcome_problem
-from candleviewer.api.refusal_session import SessionsLike, refusal_session
+from candleviewer.api.refusal_session import SessionsLike
 from candleviewer.audit.errors import AuditError
-from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.generated_permissions import Scope
 from candleviewer.auth.metrics import authz_denied_total, normalise_permission
 from candleviewer.auth.scopes import (
-    Deny,
     DenyReason,
     ForbiddenError,
     PrincipalSnapshot,
@@ -69,13 +82,11 @@ from candleviewer.domain.primitives import AccountId, Environment, GroupId
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
-from candleviewer.observability.redaction import redact_text
 from candleviewer.oms.errors import (
     PROBLEMS,
     AccountScopeDenied,
     AuditNotDurable,
     FieldError,
-    IdempotencyKeyReuse,
     OmsError,
     OmsNotReady,
     OrderEntryRefused,
@@ -110,18 +121,11 @@ from candleviewer.statechart.plugins import LogPager, Pager
 from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.accounts import AccountScope
 from candleviewer.storage.repositories.orders import OrderRow, OrderStoreError
-from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 __all__ = ["MAX_ORDER_BODY_BYTES", "OrderPrincipals", "OrderRuntime", "make_orders_router"]
 
-#: The body's ceiling, held before it is parsed (C-2.18): 16 KiB, as `api/feature_flags.py` and the
-#: indicator presets bound theirs. 22's largest request, a 280-character `note` escaped as
-#: surrogate pairs (3,360 bytes) beside every other member, fits with room for indentation, which
-#: the workspaces' 4 KiB would not leave.
-MAX_ORDER_BODY_BYTES: Final = 16 * 1024
-_LENGTH: Final = re.compile(r"[0-9]{1,19}")  # a usable `Content-Length`, as `api/rule_body.py`
 _OPERATION: Final = "placeOrder"
-_PERMISSION: Final = Permission.ORDERS_WRITE
+_PERMISSION: Final = ORDERS_PERMISSION
 #: `rbac.denied`'s reason for an account outside the grants, as `enforce` writes it (step 4).
 _NOT_GRANTED: Final = (
     f"{DenyReason.ACCOUNT_NOT_GRANTED.value}:{_PERMISSION.value}:{Scope.GRANTED_ACCOUNTS.value}"
@@ -133,16 +137,6 @@ _UNREAD_ROWS: Final = (TimeoutError, StorageError, OrderStoreError, AccountsErro
 def _log() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
-
-
-class OrderPrincipals(Protocol):
-    """`SessionTradingPrincipalResolver`, or a test seam's `SnapshotResolver`."""
-
-    def resolve(self, request: Request) -> object: ...
-
-
-class _Emitter(Protocol):
-    async def emit(self, action: str, **fields: Any) -> None: ...
 
 
 class _Existence(Protocol):
@@ -207,60 +201,13 @@ class _Caller:
     request_id: uuid.UUID | None
 
 
-@dataclass(frozen=True, slots=True)
-class _OnAccount:
-    """`enforce` names no object: the route's `rbac.denied` names the body's account (C-2.9)."""
-
-    audit: _Emitter
-    account_id: AccountId
-
-    async def emit(self, action: str, **fields: Any) -> None:
-        named = {"object_kind": "exchange_account", "object_id": str(self.account_id)}
-        await self.audit.emit(action, **fields | named)
-
-
-def _problem(status: int, code: str, detail: str, **extra: object) -> JSONResponse:
-    """A problem no `PROBLEMS` row names: 401, the RBAC 403 `forbidden`, 501."""
-    body = {"type": f"https://candleviewer.local/errors/{code}", "status": status, "code": code}
-    body |= {"title": ERROR_META[ErrorCode(code)].title, "detail": detail, **extra}
-    return JSONResponse(body, status, media_type="application/problem+json")
-
-
-def _denied(decision: object) -> JSONResponse:
-    """Step 2's 403: `forbidden` without the permission, else `account_scope_denied`."""
-    if isinstance(decision, Deny) and decision.reason is DenyReason.MISSING_PERMISSION:
-        need = [_PERMISSION.value]
-        return _problem(403, "forbidden", "Requires orders:write.", required_permissions=need)
-    return order_problem(AccountScopeDenied())
-
-
-def _refuse_constant(name: str) -> object:
-    raise ValueError(f"{name} is not a JSON number")
-
-
-async def _read_capped(request: Request) -> bytes | None:
-    """The raw body, or None past `MAX_ORDER_BODY_BYTES`, before it is held whole: a declared
-    `Content-Length` over the cap is refused unread, and a stream at its first chunk past the cap
-    (as `api/users.py` reads its own)."""
-    declared = request.headers.get("content-length", "")
-    if _LENGTH.fullmatch(declared) and int(declared) > MAX_ORDER_BODY_BYTES:
-        return None
-    raw = bytearray()
-    async for chunk in request.stream():
-        raw += chunk
-        if len(raw) > MAX_ORDER_BODY_BYTES:
-            return None
-    return bytes(raw)
-
-
 def _parsed(raw: bytes) -> tuple[dict[str, object], AccountId] | None:
     """The body, parsed once, and the account it names; None when either cannot be read (DC-S3A2-01:
     steps 2, 9 and 11 read this one parse, so a repeated key cannot split them)."""
-    try:
-        body = json.loads(raw, parse_constant=_refuse_constant)
-    except (ValueError, RecursionError):
+    body = parse_json_object(raw)
+    if body is None:
         return None
-    value = body.get("exchange_account_id") if isinstance(body, dict) else None
+    value = body.get("exchange_account_id")
     if not isinstance(value, str):
         return None
     try:
@@ -276,26 +223,6 @@ def _arm_token(request: Request) -> ArmToken | None:
     return ArmToken(presented)
 
 
-def _key(request: Request) -> uuid.UUID:
-    """Step 6: the `Idempotency-Key`, a UUID, else 400."""
-    try:
-        return uuid.UUID(request.headers.get("idempotency-key", ""))
-    except ValueError:
-        message = "Send an Idempotency-Key (UUID)."
-        raise OrderInvalid(errors=(FieldError("Idempotency-Key", "uuid", message),)) from None
-
-
-def _cached(replays: IdempotencyCache, held: tuple[str, str], digest: str) -> Response | None:
-    """Step 7: the 24 h record's `2xx` for this fingerprint, else none; another is a reuse."""
-    hit = replays.get(*held)
-    if hit is None:
-        return None
-    if hit.digest != digest:
-        raise IdempotencyKeyReuse
-    headers = {"Idempotency-Replayed": "true"}
-    return Response(hit.body, hit.status, headers, media_type="application/json")
-
-
 def _decimal(value: str | None) -> Decimal | None:
     return None if value is None else Decimal(value)
 
@@ -304,21 +231,13 @@ def _offset(offset: api.Offset | None) -> StopOffset | None:
     return None if offset is None else StopOffset(offset.unit, Decimal(offset.value))
 
 
-def _field_errors(exc: ValidationError) -> list[FieldError]:
-    """Each rule that failed, its message through the redaction rules, as the API's 422 is."""
-    return [
-        FieldError(".".join(str(p) for p in e["loc"]) or "body", e["type"], redact_text(e["msg"]))
-        for e in exc.errors(include_url=False, include_input=False, include_context=False)
-    ]
-
-
 def _order_request(body: dict[str, object], account_id: AccountId) -> OrderRequest:
     """Step 11: `PlaceOrderRequest` read strictly, JSON types only (`"true"` is no boolean), then a
     `limit` without `price` and an emulated algo are refused; the account is step 2's."""
     try:
         read = api.PlaceOrderRequest.model_validate_json(json.dumps(body), strict=True)
     except ValidationError as exc:
-        raise OrderInvalid(errors=_field_errors(exc)) from None
+        raise OrderInvalid(errors=field_errors(exc)) from None
     errors: list[FieldError] = []
     if read.order_type == "limit" and read.price is None:
         errors.append(FieldError("price", "required", "A limit order needs a price."))
@@ -342,21 +261,9 @@ def _order_request(body: dict[str, object], account_id: AccountId) -> OrderReque
     )  # fmt: skip
 
 
-async def _caller_of(
-    principals: OrderPrincipals, request: Request, auth: SessionsLike | None
-) -> TradingPrincipal | None:
-    """Step 1's principal; a test seam's bare snapshot acts in the session its bearer names."""
-    got = principals.resolve(request)
-    found = await got if inspect.isawaitable(got) else got
-    if isinstance(found, PrincipalSnapshot):
-        session = await refusal_session(auth, request)
-        return None if session is None else TradingPrincipal(session, found)
-    return found if isinstance(found, TradingPrincipal) else None
-
-
 def make_orders_router(
     principals: OrderPrincipals | None, runtime: Callable[[], OrderRuntime | None], *,
-    audit: _Emitter, records: SubmitAudit, oms_enabled: Callable[[], bool], metrics: Metrics,
+    audit: AuditEmitter, records: SubmitAudit, oms_enabled: Callable[[], bool], metrics: Metrics,
     auth: SessionsLike | None = None, replays: IdempotencyCache | None = None,
     pager: Pager | None = None,
 ) -> APIRouter:  # fmt: skip
@@ -385,13 +292,13 @@ def make_orders_router(
         error: OmsError, caller: _Caller, step: str, env: str | None
     ) -> Response:
         """A refusal from step 4 on: counted and recorded before it is answered (C-2.9)."""
-        problem = problem_for(error)
+        refusal = problem_for(error)
         gate = error.reason if isinstance(error, OrderEntryRefused) else None
         record = RequestRecord(
             DISABLED_BY_POLICY if gate else SUBMIT_ACTION, caller.account_id, "exchange_account",
-            caller.account_id, "denied", "error" if problem.status >= 500 else "warning",
-            gate or problem.code, caller.actor,
-            {"step": step, "code": problem.code, "environment": env}, caller.request_id,
+            caller.account_id, "denied", "error" if refusal.status >= 500 else "warning",
+            gate or refusal.code, caller.actor,
+            {"step": step, "code": refusal.code, "environment": env}, caller.request_id,
         )  # fmt: skip
         try:
             async with asyncio.timeout(STORE_TIMEOUT_S):
@@ -399,9 +306,9 @@ def make_orders_router(
         except Exception as exc:  # no refusal is answered unrecorded; the key stays unbound
             rejected.labels(PROBLEMS[AuditNotDurable].code).inc()
             failure = type(exc).__name__
-            _log().error("orders_refusal_unrecorded", code=problem.code, step=step, error=failure)
+            _log().error("orders_refusal_unrecorded", code=refusal.code, step=step, error=failure)
             return order_problem(AuditNotDurable("the refusal's record did not land"))
-        rejected.labels(problem.code).inc()
+        rejected.labels(refusal.code).inc()
         return order_problem(error, pager=paging)
 
     async def scope_denied(caller: _Caller) -> Response:
@@ -410,7 +317,7 @@ def make_orders_router(
         authz_denied_total.labels(permission=normalise_permission(_PERMISSION)).inc()
         user, actor = caller.principal.user_id, caller.actor
         try:
-            await _OnAccount(audit, caller.account_id).emit(
+            await OnAccount(audit, caller.account_id).emit(
                 "rbac.denied", actor_label=str(user), actor_user_id=user, actor_ip=actor.ip,
                 session_id=actor.session_id, outcome="denied",
                 severity="warning", reason=_NOT_GRANTED, request_id=caller.request_id,
@@ -474,21 +381,21 @@ def make_orders_router(
             rejected.labels(problem_for(unwritten).code).inc()  # `internal_error`, 20 Sec.12.1
             return order_problem(unwritten)
         out = JSONResponse(first_acceptance(outcome, env), 202)
-        held = (str(caller.principal.user_id), f"{_OPERATION}:{context.client_ref}")
+        held = replay_key(caller.principal.user_id, _OPERATION, context.client_ref)
         kept.put(*held, StoredResponse(context.request_sha256, 202, bytes(out.body), None))
         return out
 
     @router.post("/orders", status_code=202)
     async def place_order(request: Request) -> Response:
         if principals is None:
-            return _problem(501, "not_implemented", "No principal source is composed.")
+            return problem(501, "not_implemented", "No principal source is composed.")
         try:
-            principal = await _caller_of(principals, request, auth)
+            principal = await resolve_principal(principals, request, auth)
         except StoreUnavailable as exc:
             return order_problem(exc)
         if principal is None:
-            return _problem(401, "unauthenticated", "No verified session for this request.")
-        raw = await _read_capped(request)
+            return problem(401, "unauthenticated", "No verified session for this request.")
+        raw = await read_capped(request)
         if raw is None:  # refused before it is parsed: unaudited, as an unreadable body is
             message = f"Send a body of at most {MAX_ORDER_BODY_BYTES} bytes."
             too_large = FieldError("body", "body_too_large", message)
@@ -499,27 +406,26 @@ def make_orders_router(
             unread = FieldError("exchange_account_id", "required", message)
             return order_problem(OrderInvalid(errors=(unread,)))
         body, account_id = parsed
-        snapshot, ip = principal.snapshot, source_ip(request.scope)
-        request_id, role = current_request_uuid(), ",".join(sorted(snapshot.roles))
-        actor = SubmitActor(snapshot.user_id, role, principal.session_id, ip)
+        snapshot, actor = principal.snapshot, submit_actor(principal, request)
+        request_id, ip = current_request_uuid(), actor.ip
         caller = _Caller(snapshot, actor, account_id, request_id)
         try:  # step 2
             await enforce(
                 snapshot, _PERMISSION, scope=Scope.GRANTED_ACCOUNTS, exchange_account_id=account_id,
-                requires_trade=True, emitter=_OnAccount(audit, account_id), actor_ip=ip,
+                requires_trade=True, emitter=OnAccount(audit, account_id), actor_ip=ip,
                 session_id=principal.session_id, request_id=request_id,
             )  # fmt: skip
         except ForbiddenError as exc:
-            return _denied(exc.deny)
+            return rbac_refusal(exc.deny)
         except (AuditError, RuntimeError) as exc:  # counted by `enforce`; its 403 stands
             _log().warning("orders_denial_unaudited", step="rbac", error=type(exc).__name__)
-            return _denied(decide(
+            return rbac_refusal(decide(
                 snapshot, _PERMISSION, scope=Scope.GRANTED_ACCOUNTS,
                 exchange_account_id=account_id, requires_trade=True,
             ))  # fmt: skip
         oms = runtime()  # step 3: its `state` alone decides (SEC-S3E2-01)
         if oms is None:
-            return _problem(501, "not_implemented", "No OMS is composed on this backend.")
+            return problem(501, "not_implemented", "No OMS is composed on this backend.")
         if oms.state != "ok":
             return not_ready()
         try:
@@ -539,9 +445,9 @@ def make_orders_router(
             if armed == FAILED:
                 raise SessionNotArmed
             step = "key"
-            key, digest = _key(request), request_fingerprint("POST", "/orders", raw)
+            key, digest = idempotency_key(request), request_fingerprint("POST", "/orders", raw)
             step = "replay"
-            cached = _cached(kept, (str(snapshot.user_id), f"{_OPERATION}:{key}"), digest)
+            cached = replay_cached(kept, replay_key(snapshot.user_id, _OPERATION, key), digest)
             if cached is not None:
                 return cached
             found = await anchors.lookup(snapshot.user_id, key, digest)
