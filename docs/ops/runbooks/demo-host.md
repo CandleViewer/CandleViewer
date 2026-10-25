@@ -102,18 +102,19 @@ Check owners, modes and sizes without reading a value:
 
 ```bash
 stat -c '%n %u:%g %a %s' /etc/candleviewer/demo /etc/candleviewer/demo/kek-demo-v1.bin /etc/candleviewer/demo/audit-lane.key
-stat -c '%n %U %a' infra/compose/.env
+test "$(stat -c '%U %a' infra/compose/.env)" = 'root 600' && echo '.env ok' || echo '.env is not root 600'
 comm -13 <(grep -oE '^[A-Z][A-Z0-9_]*=' infra/compose/.env | sort -u) <(grep -oE '^[A-Z][A-Z0-9_]*=' infra/compose/.env.example | sort -u)
 $COMPOSE --profile core --profile migrate config --quiet
 ```
 
 Expected: the directory `0:0 700`; `kek-demo-v1.bin` `10001:10001 400 32` (exactly 32 raw bytes);
-`audit-lane.key` `10001:10001 400` and 64 bytes (65 with a final line feed: 64 hex digits); `.env`
-`root 600` (owned by root, mode 600); `comm` prints nothing (no name of `.env.example` is missing,
-and it prints names only, never values); `config --quiet` prints nothing and exits 0. A missing
-required name is compose's `required variable ... is missing a value`. Fix a mode or an owner in
-place with `chown` and `chmod` (`10001:10001` and `0400` for the secret files, `root` and `0600`
-for `.env`): never open, copy or print a secret file.
+`audit-lane.key` `10001:10001 400` and 64 bytes (65 with a final line feed: 64 hex digits);
+`.env ok` (owned by root, mode 600: a provisioned `.env` may be the operator's, so fix it as
+below); `comm` prints nothing (no name of `.env.example` is missing, and it prints names only, never
+values); `config --quiet` prints nothing and exits 0. A missing required name is compose's
+`required variable ... is missing a value`. Fix a mode or an owner in place with `chown` and
+`chmod` (`10001:10001` and `0400` for the secret files, `root` and `0600` for `.env`): never open,
+copy or print a secret file.
 
 ## 3. The schema: `migrate`
 
@@ -154,6 +155,35 @@ owner DSN lives in `.env`, as provisioned, where `storage-migrate.md` gives it t
 a prefix: the overlay requires it for every command, and `lint_compose.py` keeps it off `api` and
 `bootstrap-owner`.
 
+## 3a. The recording volumes (SR-096)
+
+The recorder records only when the recording root `/data/parquet` and its WAL `/data/recorder-wal`
+are each their own filesystem, apart from the audit volume and the state the backend needs (SR-096).
+Docker's named volumes on one disk share one device, so on such a host the api logs
+`recording_volume_shared` and `recorder_startup_failed` (`RecorderWalVolumeError`) at boot and
+refuses to record; trading still starts. Before the api's first start, give each an ext4 filesystem
+of its own. On a one-disk host, use a sparse loop image for each, mounted inside the data volume:
+
+```bash
+$COMPOSE --profile core create api
+VOL=$(docker volume inspect -f '{{ .Mountpoint }}' cv-demo_cv-api-data)
+for spec in parquet:20G recorder-wal:4G; do
+  name=${spec%%:*} img=/var/lib/cv-demo-${spec%%:*}.img
+  if [ -e "$img" ]; then echo "$img exists: skipped"; continue; fi
+  truncate -s "${spec##*:}" "$img" && mkfs.ext4 -q "$img" && mkdir -p "$VOL/$name"
+  echo "$img $VOL/$name ext4 loop,nofail 0 2" >> /etc/fstab
+  mount "$VOL/$name" && rmdir "$VOL/$name/lost+found"
+  chown 10001:10001 "$VOL/$name" && chmod 0700 "$VOL/$name"
+done
+chown 10001:10001 "$VOL" && chmod 0700 "$VOL"
+findmnt -no SOURCE,TARGET "$VOL/parquet" "$VOL/recorder-wal"; stat -c '%n %u:%g %a' "$VOL" "$VOL"/*/
+```
+
+Expected: a loop device at each of the two paths, and the volume and both paths `10001:10001 700`.
+An image that exists is skipped, never formatted again, so a second run is safe. `nofail` lets the
+host boot without them; the api then refuses to record until they are mounted again. A host with a
+disk or partition to spare mounts that instead, with the same owner and mode.
+
 ## 4. Start: `up --wait`
 
 ```bash
@@ -167,7 +197,9 @@ demo) and no `secrets.kek_unavailable`. If it does not get healthy, read
 `kek_unavailable`, a KEK that is missing or not 32 bytes; `StorageTierUnavailable` naming
 `storage_cold`, a `/data/parquet` that is not there (a volume first mounted by an image without it:
 `$COMPOSE down`, `docker volume rm cv-demo_cv-api-data` while it is still empty, then start again);
-a healthcheck refused with `403`, a `CV_MESH_CIDRS_CSV` without `172.28.0.0/24`.
+a healthcheck refused with `403`, a `CV_MESH_CIDRS_CSV` without `172.28.0.0/24`. A healthy api
+with `recording_volume_shared` or `recorder_startup_failed` in its log is step 3a undone (its
+`error` field may read `[redacted:key-shape]`): check `findmnt`, then `$COMPOSE restart api`.
 
 ## 5. The KCV check: `security.kek_enrolled`
 
@@ -188,6 +220,10 @@ Expected: the same 16 hex digits three times. Run the last line over the offline
 encrypted copy: decrypt it to a pipe and give `/dev/stdin` as the path), never to a file. A
 different value is a wrong KEK: stop and follow `kek-custody.md` (`kek_mismatch`); a KCV can be
 enrolled again only while no `api_keys` row exists at that version.
+
+An image built before `a4859525` (#4538, the fix for #4535) stored that row's `kek_version` as
+`<redacted:secret>`, and audit rows are never rewritten. So on a KEK enrolled by such an image, the
+first query returns no row: drop its `kek_version` condition, and expect exactly one row for `demo`.
 
 ## 6. Bootstrap the Owner (#4479): the `bootstrap-owner` service
 
