@@ -11,9 +11,13 @@ formula is re-implemented here. Nine sections, each row labelled with its source
    width rule (per glyph class, an upper bound on Inter's advance in em), so the widths of "symbol, crosshair,
    drawings", "symbol", the count "3", "No sync" and the letter-plus-glyph minimum are printed, never typed;
    E15-D02 section 3's text-only minimums (36 / 75 / 205 / 34 px, quoted) beside them with the delta.
-2. Popover geometry (D-3, D-4): the 440 px popover's row stack per density, its height, the 1280x800 canvas it
-   must fit (E15-D02 section 3: 1168x672) and the 200 % zoom viewport (640x400 CSS px) where it becomes a modal
-   with stacked columns, a sticky footer and a scrolling body; the in-app text scale at 125 % and 150 %.
+2. Popover geometry (D-3, D-4): the 440 px popover's row stack per density from the label fit
+   of every switch (the label at 13 px and its consequence line at 11 px measured against the
+   column or full-width box with the pill-label rule; a label never wraps, a consequence line
+   may and the row grows), its height, the 1280x800 canvas it must fit (E15-D02 section 3:
+   1168x672) and the 200 % zoom viewport (640x400 CSS px) where it becomes a modal with one
+   column, a sticky footer and a scrolling body; the in-app text scale at 125 % and 150 %,
+   measured the same way (the rule is the measurement, not the zoom level).
 3. The measured matrix: every fg / bg pair the spec's section 12 lists x dark / light / high-contrast,
    resolved exactly as ``verify_tokens.py`` layers the themes (``themes.json``), measured with
    ``contrast_check.contrast_ratio()``, each with its Rec. 601 greyscale twin; thresholds 4.5:1 text (7:1 in
@@ -36,7 +40,10 @@ formula is re-implemented here. Nine sections, each row labelled with its source
    not a reset" verbatim; "storage pending" on every un-stored switch; the events table complete; a lock
    glyph only on the three T2 frames (the scale link in no group, its light twin, Save under view-as); the
    account row, the refusal and the conflict notice never T2; the disarm on every symbol-switch frame; the
-   conflict grammar on every conflict frame; the badge density pair; exits never gated.
+   conflict grammar on every conflict frame; the badge density pair; exits never gated; a DOM or
+   ticket in a symbol-sharing group never without its provenance; an armed state never drawn
+   surviving a sync symbol change (the disarm or the held alternative beside it); section 5.1
+   quotes the computed heights.
 9. The counts (``--json``) the boards and the PR quote.
 
 Usage: python3 -I docs/design/_tools/e15_d06_sync_audit.py [--json] [--check] [--table] [--self-test]
@@ -144,17 +151,18 @@ BADGE_LABELS = {
     "none": "No sync",  # AD-6 / D-24: an unsynced market panel
 }
 
-# ---- popover geometry (spec D-3, D-4), rows per density: (name, compact px, comfortable px) ----
+# ---- popover geometry (spec D-3, D-4). The fixed rows per density (name, compact px,
+# comfortable px); the switch rows are COMPUTED from the label fit below (the pre-PR lens round
+# 1, F-3: a switch label or its consequence line is measured against its box with the pill-label
+# rule, never assumed to fit). ----
 POPOVER_W = 440  # E15-D02 D-25: 440 px wide at both widths
 POPOVER_PAD = 16  # space.inset.md
-POPOVER_ROWS: tuple[tuple[str, int, int], ...] = (
+POPOVER_FIXED_TOP: tuple[tuple[str, int, int], ...] = (
     ("title row: This panel · Group radio", 24, 32),
     ("gap", 8, 12),
     ("heading: Group A shares", 16, 20),
-    ("switch row 1 (Symbol | Crosshair): switch + consequence line", 44, 54),
-    ("switch row 2 (Interval | Time range)", 44, 54),
-    ("switch row 3 (Drawings, same symbol only)", 44, 54),
-    ("account row (unavailable, full width) + note", 44, 54),
+)
+POPOVER_FIXED_BOTTOM: tuple[tuple[str, int, int], ...] = (
     ("gap", 8, 8),
     ("members line: Panels in group A", 16, 20),
     ("conflict notice (two caption lines)", 36, 40),
@@ -162,13 +170,36 @@ POPOVER_ROWS: tuple[tuple[str, int, int], ...] = (
     ("heading: Price scale, per panel", 16, 20),
     ("scale select rows (x2)", 56, 72),
 )
+# A switch row = the CMP-004 track row + the consequence line(s) + a gap. The label is
+# `type.ui.body` (13 px, `font.size.base`), the consequence line `type.ui.caption` (11 px,
+# `font.size.xs`); the caption's line box is 16 px (11 x 1.38 rounded up) in compact and 18 in
+# comfortable (2 px of leading). The track row (24 / 32, `size.control.height`), the gap and the
+# padding are spacing tokens and do not scale with the in-app text scale; the text sizes and the
+# line boxes do.
+SWITCH_H = {"compact": 24, "comfortable": 32}
+SWITCH_TEXT = {"label": 13, "consequence": 11}
+CAPTION_LINE = {"compact": 16, "comfortable": 18}
+SWITCH_ROW_GAP = 4
+SWITCH_TRACK_W = 36  # the 28 px track + the 8 px gap before the label
+# (label, consequence line as drawn on the AD-4 default frame, placement). "column" switches
+# pair up in the two columns; "full" switches take the full inner width — Drawings (same symbol
+# only) and the account row, whose labels (219 / 186 px at 13 px) never fit a 160 px column box
+# (D-4).
+SWITCHES: tuple[tuple[str, str, str], ...] = (
+    ("Symbol", "2 panels will follow this panel's symbol.", "column"),
+    ("Crosshair", "Crosshair aligns by timestamp on 2 panels.", "column"),
+    ("Interval", "Each panel keeps its own interval.", "column"),
+    ("Time range", "Pan and zoom move 2 panels together.", "column"),
+    ("Drawings (same symbol only)", "Only panels on BTCUSDT share drawings (1 of 2).", "full"),
+    ("Account and trade group", "Can't sync yet; a layout never stores an account.", "full"),
+)
 CANVAS_1280 = (1168, 672)  # E15-D02 section 3: the canvas at 1280x800
 CANVAS_1920 = (1808, 952)
 ZOOM200 = (640, 400)  # 1280x800 at 200 %: the CSS viewport
 MODAL_MARGIN = 16  # px kept around a popover before it becomes a modal
 MODAL_HEADER = 32
 MODAL_FOOTER = 40
-SWITCH_ROWS_STACKED = 6  # five switches + the account row in one column at 200 %
+TEXT_SCALES = (125, 150)  # the in-app text scale steps the spec measures
 
 # ---- fixture prices (E15-D02 section 0: BTCUSDT 64,011.0; ETHUSDT 2,412.5; SOLUSDT 142.30) ----
 PRICES = {"BTCUSDT": 64011.0, "ETHUSDT": 2412.5, "SOLUSDT": 142.30}
@@ -517,7 +548,7 @@ def pill_em(label: str) -> float:
     return em
 
 
-def label_w(label: str, size: int) -> int:
+def label_w(label: str, size: float) -> int:
     """The shared pill-label rule: never narrower than the flat 0.62 em estimate."""
     flat = math.ceil(len(label) * size * 0.62)
     return max(flat, math.ceil(pill_em(label) * size))
@@ -579,15 +610,118 @@ def badge_report() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- 2. popover geometry ------------------------
-def popover_report() -> dict[str, Any]:
-    out: dict[str, Any] = {"width": POPOVER_W, "pad": POPOVER_PAD, "rows": []}
-    hc = hf = 2 * POPOVER_PAD
-    for name, c, f in POPOVER_ROWS:
-        out["rows"].append({"row": name, "compact": c, "comfortable": f})
-        hc += c
-        hf += f
+Switches = tuple[tuple[str, str, str], ...]
+
+
+def popover_layout(
+    dens: str,
+    scale: int = 100,
+    width: int = POPOVER_W,
+    columns: int = 2,
+    switches: Switches = SWITCHES,
+) -> dict[str, Any]:
+    """The row stack at a density, an in-app text scale (%), a width and a column count.
+
+    Every switch row is sized from the fit of its label and its consequence line in their boxes
+    (the pill-label rule); a label that needs more than one line is a FAIL the gate reports; a
+    consequence line may wrap and the row grows with it. One column (the 200 % modal) gives
+    every switch the full width.
+    """
+    k = scale / 100
+    label_px, cons_px = SWITCH_TEXT["label"] * k, SWITCH_TEXT["consequence"] * k
+    inner = width - 2 * POPOVER_PAD
+    col_w = (inner - POPOVER_PAD) // 2 if columns == 2 else inner
+    boxes = {"column": col_w - SWITCH_TRACK_W, "full": inner - SWITCH_TRACK_W}
+    line_h = math.ceil(CAPTION_LINE[dens] * k)
+    fits: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    # the row's top is the track row, or the label's own line box (+ 6 px) once a scaled label
+    # outgrows it
+    top = max(SWITCH_H[dens], math.ceil(label_px * 1.38) + 6)
+
+    def push(items: list[dict[str, Any]]) -> None:
+        lines = max(it["cons_lines"] for it in items)
+        rows.append(
+            {
+                "row": "switch row: " + " | ".join(it["label"] for it in items),
+                "px": top + lines * line_h + SWITCH_ROW_GAP,
+                "lines": lines,
+                "top": top,
+            }
+        )
+
+    for label, cons, place in switches:
+        kind = place if columns == 2 else "full"
+        box = boxes[kind]
+        lw, cw = label_w(label, label_px), label_w(cons, cons_px)
+        it = {
+            "label": label,
+            "place": kind,
+            "box": box,
+            "label_w": lw,
+            "label_lines": max(1, math.ceil(lw / box)),
+            "cons_w": cw,
+            "cons_lines": max(1, math.ceil(cw / box)),
+        }
+        fits.append(it)
+        if kind == "column":
+            pending.append(it)
+            if len(pending) == 2:
+                push(pending)
+                pending = []
+        else:
+            if pending:
+                push(pending)
+                pending = []
+            push([it])
+    if pending:
+        push(pending)
+
+    def fixed(rows_: tuple[tuple[str, int, int], ...]) -> list[dict[str, Any]]:
+        return [
+            {"row": n, "px": math.ceil((c if dens == "compact" else f) * k)} for n, c, f in rows_
+        ]
+
+    fixed_top, fixed_bottom = fixed(POPOVER_FIXED_TOP), fixed(POPOVER_FIXED_BOTTOM)
+    all_rows = fixed_top + rows + fixed_bottom
+    height = 2 * POPOVER_PAD + sum(int(r["px"]) for r in all_rows)
+    # the modal body: everything under the title row (which the 32 px modal header replaces) and
+    # its gap
+    body = 2 * POPOVER_PAD + sum(int(r["px"]) for r in all_rows[2:])
+    return {
+        "density": dens,
+        "scale": scale,
+        "width": width,
+        "columns": columns,
+        "column_w": col_w,
+        "boxes": boxes,
+        "fits": fits,
+        "rows": all_rows,
+        "switch_rows": rows,
+        "height": height,
+        "body": body,
+        "label_overflows": [f for f in fits if f["label_lines"] > 1],
+    }
+
+
+def popover_report(switches: Switches = SWITCHES) -> dict[str, Any]:
+    out: dict[str, Any] = {"width": POPOVER_W, "pad": POPOVER_PAD, "rows": [], "layouts": {}}
+    lay = {d: popover_layout(d, switches=switches) for d in ("compact", "comfortable")}
+    for r_c, r_f in zip(lay["compact"]["rows"], lay["comfortable"]["rows"], strict=True):
+        out["rows"].append({"row": r_c["row"], "compact": r_c["px"], "comfortable": r_f["px"]})
+    hc, hf = lay["compact"]["height"], lay["comfortable"]["height"]
     out["height"] = {"compact": hc, "comfortable": hf}
-    out["column_w"] = (POPOVER_W - 2 * POPOVER_PAD - POPOVER_PAD) // 2
+    out["column_w"] = lay["compact"]["column_w"]
+    out["boxes"] = lay["compact"]["boxes"]
+    out["switch_rows"] = {
+        d: {
+            "column": next(r["px"] for r in lay[d]["switch_rows"] if "|" in r["row"]),
+            "full": next(r["px"] for r in lay[d]["switch_rows"] if "|" not in r["row"]),
+        }
+        for d in lay
+    }
+    out["fits"] = {d: lay[d]["fits"] for d in lay}
     out["fits_1280"] = {
         "compact": hc + 2 * MODAL_MARGIN <= CANVAS_1280[1],
         "comfortable": hf + 2 * MODAL_MARGIN <= CANVAS_1280[1],
@@ -596,35 +730,43 @@ def popover_report() -> dict[str, Any]:
         "compact": hc + 2 * MODAL_MARGIN <= CANVAS_1920[1],
         "comfortable": hf + 2 * MODAL_MARGIN <= CANVAS_1920[1],
     }
-    # 200 %: the CSS viewport is 640x400; the popover (440 + 2 x 16 margin) fits the width but not the height ->
-    # modal filling the viewport; the two switch columns stack to one, the footer is one sticky row, the body scrolls.
-    stacked_extra = {
-        "compact": (SWITCH_ROWS_STACKED - 4) * 44,
-        "comfortable": (SWITCH_ROWS_STACKED - 4) * 54,
-    }
+    # 200 %: the CSS viewport is 640x400; the popover (440 + 2 x 16 margin) fits the width but not
+    # the height -> a modal filling the viewport; one column (every switch full width, every line
+    # single), a sticky footer, the body scrolls.
+    modal = {d: popover_layout(d, 100, ZOOM200[0], 1, switches=switches) for d in lay}
+    visible = ZOOM200[1] - MODAL_HEADER - MODAL_FOOTER
     out["zoom200"] = {
         "viewport": list(ZOOM200),
         "modal": hc + 2 * MODAL_MARGIN > ZOOM200[1] or POPOVER_W + 2 * MODAL_MARGIN > ZOOM200[0],
-        "body_h": {
-            "compact": hc + stacked_extra["compact"],
-            "comfortable": hf + stacked_extra["comfortable"],
-        },
-        "visible_body": ZOOM200[1] - MODAL_HEADER - MODAL_FOOTER,
-        "scrolls": {
-            "compact": hc + stacked_extra["compact"] > ZOOM200[1] - MODAL_HEADER - MODAL_FOOTER,
-            "comfortable": True,
-        },
+        "body_h": {d: modal[d]["body"] for d in modal},
+        "visible_body": visible,
+        "scrolls": {d: modal[d]["body"] > visible for d in modal},
         "header": MODAL_HEADER,
         "footer": MODAL_FOOTER,
+        "switch_row": modal["compact"]["switch_rows"][0]["px"],
     }
-    # the in-app text scale: 125 % and 150 % keep the popover (height scales with the text rows)
-    for pct in (125, 150):
-        h = math.ceil(hc * pct / 100)
+    # the in-app text scale: the boxes stay, the text grows, the lines wrap more; a popover while it
+    # fits the 1280x800 canvas
+    for pct in TEXT_SCALES:
+        at = popover_layout("compact", pct, switches=switches)
+        h = at["height"]
         out[f"text_scale_{pct}"] = {
             "compact_h": h,
             "fits_1280": h + 2 * MODAL_MARGIN <= CANVAS_1280[1],
             "popover": h + 2 * MODAL_MARGIN <= CANVAS_1280[1],
+            "max_cons_lines": max(int(f["cons_lines"]) for f in at["fits"]),
+            "label_overflows": [f["label"] for f in at["label_overflows"]],
         }
+    out["label_overflows"] = {
+        f"{d} {pct} %": [
+            f["label"] for f in popover_layout(d, pct, switches=switches)["label_overflows"]
+        ]
+        for d in lay
+        for pct in (100, *TEXT_SCALES)
+    }
+    out["label_overflows"]["modal 200 %"] = [
+        f["label"] for f in modal["compact"]["label_overflows"]
+    ]
     return out
 
 
@@ -734,21 +876,21 @@ def matrix_table(m: dict[str, Any]) -> str:
     for r in m["rows"]:
         by.setdefault(r["element"], {})[r["theme"]] = r
     for element, ths in by.items():
-        d, l, h = ths["dark"], ths["light"], ths["high-contrast"]
+        d, lt, h = ths["dark"], ths["light"], ths["high-contrast"]
         gate = (
             (
                 "reported"
                 + (
                     ""
                     if d["bar"] is None
-                    else (" — PASS" if all(x["pass"] for x in (d, l, h)) else " — below the bar")
+                    else (" — PASS" if all(x["pass"] for x in (d, lt, h)) else " — below the bar")
                 )
             )
             if d["gate"] == "report" or d["bar"] is None
-            else ("PASS" if all(x["pass"] for x in (d, l, h)) else "FAIL")
+            else ("PASS" if all(x["pass"] for x in (d, lt, h)) else "FAIL")
         )
         lines.append(
-            f"| {element}: `{d['fg']}` on `{d['bg']}` | {d['role']} | {_cell(d)} | {_cell(l)} | {_cell(h)} | {gate} |"
+            f"| {element}: `{d['fg']}` on `{d['bg']}` | {d['role']} | {_cell(d)} | {_cell(lt)} | {_cell(h)} | {gate} |"
         )
     lines.append("")
     lines.append(
@@ -759,18 +901,18 @@ def matrix_table(m: dict[str, Any]) -> str:
     for r in m["remote"]:
         byr.setdefault(r["bg"], {})[r["theme"]] = r
     for bg, ths in byr.items():
-        d, l, h = ths["dark"], ths["light"], ths["high-contrast"]
-        tt = f"{fmt(d['best_of_two_tone'])} / {fmt(l['best_of_two_tone'])} / {fmt(h['best_of_two_tone'])}; {fmt(d['dash_vs_halo'])} / {fmt(l['dash_vs_halo'])} / {fmt(h['dash_vs_halo'])}"
+        d, lt, h = ths["dark"], ths["light"], ths["high-contrast"]
+        tt = f"{fmt(d['best_of_two_tone'])} / {fmt(lt['best_of_two_tone'])} / {fmt(h['best_of_two_tone'])}; {fmt(d['dash_vs_halo'])} / {fmt(lt['dash_vs_halo'])} / {fmt(h['dash_vs_halo'])}"
         gate = (
             "PASS"
-            if d["gate"] == "gated" and all(x["pass"] for x in (d, l, h))
+            if d["gate"] == "gated" and all(x["pass"] for x in (d, lt, h))
             else (
                 "reported; two-tone "
-                + ("PASS" if all(x["two_tone_pass"] for x in (d, l, h)) else "FAIL")
+                + ("PASS" if all(x["two_tone_pass"] for x in (d, lt, h)) else "FAIL")
             )
         )
         lines.append(
-            f"| `{bg}` | {fmt(d['ratio'])} | {fmt(l['ratio'])} | {fmt(h['ratio'])} | {tt} | {gate} |"
+            f"| `{bg}` | {fmt(d['ratio'])} | {fmt(lt['ratio'])} | {fmt(h['ratio'])} | {tt} | {gate} |"
         )
     return "\n".join(lines)
 
@@ -850,9 +992,26 @@ def inventory_rows(spec: str) -> list[list[str]]:
     return [r for r in rows_of(section(spec, "### 3.2 ", "## 4. ")) if r and r[0].startswith("`")]
 
 
-def gates(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[str]:
+def gates(
+    spec: str, handoff: str, tool: str, bindings: set[str], switches: Switches = SWITCHES
+) -> list[str]:
     """Each returned string is a failed gate. The order and wording are stable (the self-test keys on them)."""
     fails: list[str] = []
+    # the popover's label fit (F-3): no switch label needs a second line in its box at either
+    # density, at the in-app text scales or in the 200 % modal; section 5.1 and the popover-1920 row
+    # quote the computed heights
+    pop = popover_report(switches)
+    for where, labels in pop["label_overflows"].items():
+        for label in labels:
+            fails.append(
+                f"fit: the switch label '{label}' needs a second line in its box ({where})"
+            )
+    hc, hf = pop["height"]["compact"], pop["height"]["comfortable"]
+    anatomy = section(spec, "### 5.1 ", "### 5.2 ")
+    if not re.search(rf"\b{hc} px compact / {hf} comfortable\b", anatomy):
+        fails.append(f"popover: section 5.1 does not quote the computed heights {hc} / {hf}")
+    if not re.search(rf"^\| `SCR-023/popover-1920` .*\b{hc} px", spec, MULTI):
+        fails.append("popover: the popover-1920 row does not quote the computed compact height")
     for name, text in (("spec", spec), ("handoff", handoff), ("tool", tool)):
         if any(p.search(text) for p in FORBIDDEN):
             fails.append(f"hygiene: {name} matches a forbidden pattern")
@@ -942,6 +1101,26 @@ def gates(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[str]:
             )
         if "symbol-switch" in name and "disarm" not in " ".join(r).lower():
             fails.append("disarm: a symbol-switch frame row does not draw the disarm")
+        text = " ".join(r)
+        # F-2: a DOM or ticket in a symbol-sharing group shows where its symbol came from
+        # (E15-D02 D-26)
+        if (
+            len(r) > 2
+            and re.search(r"(?<!, )\b(?:DOMs?|tickets?)\b", r[2])
+            and re.search(r"\b(?:tile [ABC]|group [ABC]|in [ABC]\b|[ABC] · symbol)", r[2])
+            and not re.search(r"provenance|symbol set by sync group|via [ABC]\b|held: armed", text)
+        ):
+            fails.append(
+                f"provenance: frame {name} shows a DOM or ticket in a group without its provenance"
+            )
+        # F-5 / BQ-16: no frame keeps an ARMED state after a symbol change made by sync — armed
+        # appears only beside the disarm it leads to, or as the held alternative that keeps its own
+        # symbol
+        if re.search(r"(?<!dis)\barmed\b", text, re.IGNORECASE) and not (
+            re.search(r"disarm", text, re.IGNORECASE)
+            or re.search(r"held: armed \((?:BTC|ETH|SOL)USDT|held", text)
+        ):
+            fails.append(f"armed: frame {name} names an armed state without the disarm or the hold")
     # the badge density pair (section 4)
     badge = section(spec, "## 4. ", "## 5. ")
     if not (
@@ -953,12 +1132,12 @@ def gates(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[str]:
     if "unsync is not a reset" not in spec:
         fails.append("retention: 'unsync is not a reset' is not stated verbatim")
     # storage pending on every un-stored switch and on percent
-    switches = section(spec, "### 5.2 ", "### 5.3 ")
+    switch_sec = section(spec, "### 5.2 ", "### 5.3 ")
     for ax in ("Interval", "Time range"):
-        row = re.search(r"^\| " + ax + r" .*$", switches, MULTI)
+        row = re.search(r"^\| " + ax + r" .*$", switch_sec, MULTI)
         if not row or "storage pending" not in row.group(0):
             fails.append(f"storage: the {ax} switch row lacks 'storage pending'")
-    acct = re.search(r"^\| Account .*$", switches, MULTI)
+    acct = re.search(r"^\| Account .*$", switch_sec, MULTI)
     if (
         not acct
         or "aria-disabled" not in acct.group(0)
@@ -1084,18 +1263,86 @@ def set_cell(line: str, idx: int, value: str) -> str:
 
 
 def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[str]:
-    """Mutate the spec (or the hand-off) in memory; every mutation must trip its gate (A2: mutation-tested gates)."""
+    """Mutate the spec, the hand-off or the switch table in memory; every mutation trips a gate."""
     problems: list[str] = []
     base = gates(spec, handoff, tool, bindings)
     if base:
         return ["self-test needs a passing baseline; gates failing: " + "; ".join(base)]
 
-    def expect(name: str, mutated: str, needle: str, hand: str = handoff) -> None:
-        got = gates(mutated, hand, tool, bindings)
+    def expect(
+        name: str, mutated: str, needle: str, hand: str = handoff, switches: Switches = SWITCHES
+    ) -> None:
+        got = gates(mutated, hand, tool, bindings, switches)
         if not any(needle in g for g in got):
             problems.append(f"self-test: mutation '{name}' did not trip its gate ({needle})")
 
     inv = ("### 3.2 ", "## 4. ")
+    # the fit gate: put Drawings (same symbol only) back into a 160 px column box
+    expect(
+        "place the Drawings switch in a column",
+        spec,
+        "fit: the switch label",
+        switches=tuple(
+            (lb, cs, "column" if lb.startswith("Drawings") else pl) for lb, cs, pl in SWITCHES
+        ),
+    )
+    hc = popover_report()["height"]["compact"]
+    expect(
+        "mis-quote the popover height in 5.1",
+        in_section(
+            spec,
+            "### 5.1 ",
+            "### 5.2 ",
+            lambda t: t.replace(f"{hc} px compact", f"{hc + 1} px compact"),
+        ),
+        "popover: section 5.1",
+    )
+    expect(
+        "mis-quote the popover height on the popover-1920 row",
+        in_section(
+            spec,
+            *inv,
+            lambda t: edit_row(
+                t,
+                r"^\| `SCR-023/popover-1920` .*$",
+                lambda ln: ln.replace(f"{hc} px", f"{hc + 1} px"),
+            ),
+        ),
+        "popover-1920 row",
+    )
+    expect(
+        "drop the provenance from the environment frame",
+        in_section(
+            spec,
+            *inv,
+            lambda t: edit_row(
+                t,
+                r"^\| `SCR-023/account-env-refused` .*$",
+                lambda ln: ln.replace(
+                    'each with its provenance line "BTCUSDT · symbol set by sync group A"', ""
+                ),
+            ),
+        ),
+        "provenance: frame SCR-023/account-env-refused",
+    )
+    expect(
+        "keep the held DOM armed and following",
+        in_section(
+            spec,
+            *inv,
+            lambda t: edit_row(
+                t,
+                r"^\| `SCR-023/symbol-switch-hold` .*$",
+                lambda ln: ln.replace(
+                    "held: armed (group A is on ETHUSDT)",
+                    "armed and following group A onto ETHUSDT",
+                )
+                .replace("which disarms and follows", "which keeps it armed")
+                .replace("disarm", "follow"),
+            ),
+        ),
+        "armed: frame SCR-023/symbol-switch-hold",
+    )
     expect("add a local path", spec + "\n/ho" + "me/someone/x.md\n", "hygiene: spec")
     expect(
         "add a design-tool host to the hand-off",
@@ -1386,6 +1633,7 @@ def main(argv: list[str] | None = None) -> int:
         st = self_test(spec, handoff, tool, bindings)
         fails.extend(st)
     cb, cf = badge["densities"]["compact"], badge["densities"]["comfortable"]
+    at125 = popover_layout("compact", 125)
     markers: dict[str, Any] = {
         "popover_w": POPOVER_W,
         "popover_h_compact": pop["height"]["compact"],
@@ -1395,6 +1643,22 @@ def main(argv: list[str] | None = None) -> int:
         "zoom200_h": ZOOM200[1],
         "zoom200_body_h_compact": pop["zoom200"]["body_h"]["compact"],
         "zoom200_visible_body": pop["zoom200"]["visible_body"],
+        "zoom200_switch_row": pop["zoom200"]["switch_row"],
+        "switch_row_column_compact": pop["switch_rows"]["compact"]["column"],
+        "switch_row_full_compact": pop["switch_rows"]["compact"]["full"],
+        "switch_row_column_comfortable": pop["switch_rows"]["comfortable"]["column"],
+        "switch_row_full_comfortable": pop["switch_rows"]["comfortable"]["full"],
+        "switch_box_column": pop["boxes"]["column"],
+        "switch_box_full": pop["boxes"]["full"],
+        "switch_label_px": SWITCH_TEXT["label"],
+        "switch_consequence_px": SWITCH_TEXT["consequence"],
+        "label_w_drawings": label_w("Drawings (same symbol only)", SWITCH_TEXT["label"]),
+        "label_w_account": label_w("Account and trade group", SWITCH_TEXT["label"]),
+        "text_scale_125_max_lines": pop["text_scale_125"]["max_cons_lines"],
+        "text_scale_125_row_symbol_crosshair": at125["switch_rows"][0]["px"],
+        "text_scale_125_row_other": at125["switch_rows"][1]["px"],
+        "text_scale_125_row_top": at125["switch_rows"][0]["top"],
+        "text_scale_150_max_lines": pop["text_scale_150"]["max_cons_lines"],
         "modal_header": MODAL_HEADER,
         "modal_footer": MODAL_FOOTER,
         "text_scale_125_h": pop["text_scale_125"]["compact_h"],
@@ -1502,6 +1766,14 @@ def main(argv: list[str] | None = None) -> int:
             f"  200 %: viewport {z['viewport']} -> modal {z['modal']}; stacked body {z['body_h']} vs visible {z['visible_body']} (header {z['header']}, footer {z['footer']}) -> scrolls {z['scrolls']}"
         )
         p(f"  text scale 125 %: {pop['text_scale_125']}; 150 %: {pop['text_scale_150']}")
+        for d, fits in pop["fits"].items():
+            for ft in fits:
+                p(
+                    f"  fit {d:12s} {ft['place']:6s} box {ft['box']:3d}: label '{ft['label']}' "
+                    f"{ft['label_w']} px ({ft['label_lines']} line), consequence {ft['cons_w']} px "
+                    f"({ft['cons_lines']} line(s))"
+                )
+        p(f"  switch rows: {pop['switch_rows']}; label overflows: {pop['label_overflows']}")
         p(
             "3. MEASURED MATRIX (resolved as verify_tokens layers themes; contrast_check.contrast_ratio)"
         )
