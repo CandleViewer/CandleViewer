@@ -192,6 +192,115 @@ def test_no_compose_environment_may_carry_a_kek(key: str, value: str, why: str, 
     assert value not in errors[0]  # a message names the setting, never its value
 
 
+@pytest.mark.parametrize(
+    ("value", "flagged"),
+    [("0" * 32, True), ("g" * 43, True), ("0" * 31, False), ("g" * 42, False)],
+    ids=["hex-32", "base64-43", "hex-31", "base64-42"],
+)
+def test_rule_5_reads_key_material_from_32_hex_digits_or_43_base64_characters(
+    value: str, flagged: bool
+) -> None:
+    """16 bytes written as hex, or 32 as unpadded base64; one character fewer is no key."""
+    compose = {"services": {"x": {"environment": {"CV_SEED": value}}}}
+    assert bool(lint_compose.check_no_kek_in_environment(compose)) is flagged
+
+
+def test_lint_applies_rule_5_to_the_file_it_reads(tmp_path: Path) -> None:
+    base = tmp_path / "docker-compose.yml"
+    base.write_text(
+        "services:\n  api:\n    healthcheck: {test: [CMD, 'true']}\n"
+        "    environment:\n      CV_KEK_VALUE: x\n",
+        encoding="utf-8",
+    )
+    assert any("environment CV_KEK_VALUE names a KEK" in error for error in lint(base))
+
+
+#: A secret from the environment, mounted where cv-api reads its KEK (the M1 probes).
+ENV_KEK = {"cv_kek_hex": {"environment": "CV_KEK_HEX"}}
+NEUTRAL = {"master": {"environment": "CV_MASTER"}}  # a name and a variable that hold no KEK
+FILE_KEK = {"cv_kek": {"file": "${CV_KEK_FILE:?x}"}}
+KEK_ENV = {"CV_KEK_SOURCE": "file", "CV_KEK_HANDLE": "/run/secrets/master", "CV_KEK_VERSION": "1"}
+
+
+def _with_secrets(declared: dict[str, Any], service: dict[str, Any]) -> dict[str, Any]:
+    return {"secrets": declared, "services": {"api": service}}
+
+
+@pytest.mark.parametrize(
+    ("compose", "why"),
+    [
+        (_with_secrets(ENV_KEK, {"secrets": ["cv_kek_hex"]}), "secret 'cv_kek_hex'"),
+        (_with_secrets({"master": {"environment": "CV_KEK_HEX"}}, {}), "secret 'master'"),
+        (_with_secrets({"cv_kek": {"environment": "CV_MASTER"}}, {}), "secret 'cv_kek'"),
+        (_with_secrets(NEUTRAL, {"environment": KEK_ENV, "secrets": ["master"]}),
+         "mounts its KEK from secret 'master'"),
+        (_with_secrets(NEUTRAL, {"secrets": [{"source": "master", "target": "cv_kek"}]}),
+         "mounts its KEK from secret 'master'"),
+        (_with_secrets({"old": {"environment": "CV_OLD"}},
+                       {"environment": {"CV_KEK_PREV_HANDLE": "/run/secrets/old"},
+                        "secrets": ["old"]}), "mounts its KEK from secret 'old'"),
+        (_with_secrets(FILE_KEK, {"environment": {"CV_KEK_HANDLE": "/run/secrets/elsewhere"}}),
+         "CV_KEK_HANDLE names a /run/secrets/ file this file does not mount"),
+        (_with_secrets({"cv_owner_dsn": {"environment": "CV_PG_OWNER_DSN"}},
+                       {"secrets": ["cv_owner_dsn"]}), "the owner role's DSN"),
+        (_with_secrets({"db": {"environment": "CV_PG_OWNER_DSN"}}, {}), "the owner role's DSN"),
+    ],
+    ids=["kek-secret-mounted", "kek-variable", "kek-name", "handle-from-environment",
+         "default-handle-from-environment", "previous-handle-from-environment",
+         "handle-not-mounted", "owner-dsn-secret", "owner-dsn-variable"],
+)  # fmt: skip
+def test_rule_5_takes_a_kek_from_a_file_secret_only(compose: dict[str, Any], why: str) -> None:
+    """e27-kek.md §3: a secret from the environment puts the key back in `.env` (M1). The secret
+    behind a KEK handle is a file this file declares; the owner DSN never comes as a secret. No
+    message repeats a handle or a mount target, which are values."""
+    errors = lint_compose.check_no_kek_in_environment(compose)
+    assert any(why in error for error in errors), errors
+    assert not any("elsewhere" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "compose",
+    [
+        {"secrets": {"alert_deadman_url": {"environment": "CV_ALERT_DEADMAN_URL"}},
+         "services": {"alertmanager": {"secrets": ["alert_deadman_url"]}}},
+        _with_secrets(FILE_KEK, {"environment": {**KEK_ENV, "CV_KEK_HANDLE": "/run/secrets/cv_kek"},
+                                 "secrets": ["cv_kek"]}),
+    ],
+    ids=["base-webhook-secret", "file-kek-at-its-handle"],
+)  # fmt: skip
+def test_rule_5_keeps_a_secret_from_the_environment_that_holds_no_kek(
+    compose: dict[str, Any],
+) -> None:
+    assert lint_compose.check_no_kek_in_environment(compose) == []
+
+
+HEX_64 = "0" * 64
+
+
+@pytest.mark.parametrize(
+    ("compose", "why"),
+    [
+        ({"services": {"x": {"labels": {"cv.kek": "x"}}}}, "label cv.kek names a KEK"),
+        ({"services": {"x": {"labels": [f"seed={HEX_64}"]}}}, "label seed holds inline key"),
+        ({"services": {"x": {"build": {"context": ".", "args": {"KEK_HEX": "x"}}}}},
+         "build arg KEK_HEX names a KEK"),
+        ({"services": {"x": {"build": {"context": ".", "args": [f"SEED={HEX_64}"]}}}},
+         "build arg SEED holds inline key"),
+        ({"x-defaults": {"environment": {"CV_KEK_VALUE": "x"}}}, "CV_KEK_VALUE names a KEK"),
+        ({"x-seed": HEX_64}, "x-seed holds inline key"),
+        ({"services": {"x": {"x-env": [f"CV_KEK={HEX_64}"]}}}, "CV_KEK names a KEK"),
+    ],
+    ids=["label-name", "label-material", "build-arg-name", "build-arg-material",
+         "extension-name", "extension-material", "service-extension"],
+)  # fmt: skip
+def test_rule_5_reads_labels_build_args_and_extensions_too(
+    compose: dict[str, Any], why: str
+) -> None:
+    errors = lint_compose.check_no_kek_in_environment(compose)
+    assert any(why in error for error in errors), errors
+    assert not any(HEX_64 in error for error in errors)
+
+
 # --- rule 6: the demo-host overlay ---------------------------------------------------------------
 
 #: The names the demo host's infra/compose/.env was provisioned with (#3180, 2026-10-25).

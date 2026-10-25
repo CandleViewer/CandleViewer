@@ -34,6 +34,8 @@ _SETTINGS = {
     "CV_KEK_VERSION": re.compile(r"[1-9][0-9]{0,5}|\$\{CV_KEK_VERSION(?::\?[^}]*)?\}"),
 }
 _MOUNT = {"source": "cv_kek", "target": "cv_kek", "uid": "10001", "gid": "10001", "mode": 0o400}
+#: A compose secret sourced from the operator's environment, named for the KEK (M1, probe b).
+_ENV_KEK = {"cv_kek_hex": {"environment": "CV_KEK_HEX"}}
 
 
 def _files() -> list[Path]:
@@ -78,12 +80,14 @@ def test_no_kek_in_compose_environment() -> None:
         ("cv_kek_b64", "${CV_KEK_B64:?x}"),
         ("KEK_HEX", "${KEK_HEX:?x}"),
         ("CV_KEK_HANDLE", "a" * 64),
+        ("CV_KEK_HANDLE", "/run/secrets/" + "a" * 64),
         ("CV_KEK_HANDLE", "/var/lib/candleviewer/cv_kek"),
         ("CV_KEK_SOURCE", "${CV_KEK_SOURCE:?x}"),
         ("CV_KEK_VERSION", "${CV_KEK_VALUE:?x}"),
     ],
     ids=["value-name", "bare-name", "lowercase", "other-prefix", "handle-is-key-material",
-         "handle-outside-secrets", "source-from-env", "version-names-the-key"],
+         "handle-of-key-material", "handle-outside-secrets", "source-from-env",
+         "version-names-the-key"],
 )  # fmt: skip
 @pytest.mark.parametrize("form", ["mapping", "list"])
 def test_negative_control_the_environment_guard_catches(key: str, value: str, form: str) -> None:
@@ -92,7 +96,31 @@ def test_negative_control_the_environment_guard_catches(key: str, value: str, fo
     doc["services"]["api"]["environment"] = (
         env if form == "mapping" else [f"{k}={v}" for k, v in env.items()]
     )
-    assert len(kek_problems(doc)) == 1
+    problems = kek_problems(doc)
+    assert problems != [] and not any(value in problem for problem in problems)
+
+
+@pytest.mark.parametrize(
+    ("declared", "mount", "environment"),
+    [
+        (_ENV_KEK, "cv_kek_hex", {}),
+        (_ENV_KEK, {"source": "cv_kek_hex", "target": "cv_kek"}, {}),
+        ({"master": {"environment": "CV_MASTER"}}, "master",
+         {"CV_KEK_HANDLE": "/run/secrets/master"}),
+    ],
+    ids=["kek-named-secret", "onto-the-handle", "neutral-secret-at-the-handle"],
+)  # fmt: skip
+def test_negative_control_the_guard_catches_a_kek_secret_from_the_environment(
+    declared: dict[str, Any], mount: object, environment: dict[str, str]
+) -> None:
+    """M1: a compose secret sourced from the environment holds the KEK in `.env` as surely as
+    `environment:` does, whether its name says so or it is mounted where the KEK is read."""
+    doc = copy.deepcopy(yaml.safe_load(_DEMO_HOST.read_text(encoding="utf-8")))
+    doc["secrets"] |= declared
+    api = doc["services"]["api"]
+    api["secrets"] = [*api["secrets"], mount]
+    api["environment"] = {**_env(api), **environment}
+    assert kek_problems(doc) != []
 
 
 def test_the_demo_host_overlay_hands_the_kek_over_as_a_file_secret_at_the_handle() -> None:
