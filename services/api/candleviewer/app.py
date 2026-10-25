@@ -314,6 +314,7 @@ from candleviewer.orderflow.indicators.engine import IndicatorEngine, StoredHist
 from candleviewer.orderflow.indicators.metrics import export_indicator_metrics
 from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
+from candleviewer.profile_notices_wiring import ProfileNotices
 from candleviewer.profiles_wiring import wire_profiles
 from candleviewer.recorder.control import RecordingControl, StoredRecordingControl
 from candleviewer.recorder.control_runtime import RecorderWiring, RuntimeRecordingControl
@@ -2246,6 +2247,14 @@ def create_app(
     # D3a: the facade announces each committed write on the process's bus (24 Sec.9.2).
     profiles = wire_profiles(resolved, metrics_facade, ctx.bus.bus)
     app.state.profiles = profiles
+    # D3e: each committed write tells its account's sockets (`profiles.changed`, 23 Sec.15.9),
+    # through the hub's `broadcast_system`; the lifespan starts it and stops it before the bus
+    # drains. None where no store publishes (the fake backend).
+    app.state.profile_notices = (
+        None
+        if profiles is None
+        else ProfileNotices(ctx.bus.bus, resolved.environment.value, ws_hub, metrics_facade)
+    )
     # #906 D1c: `listAccountProfiles` and `getAccountProfile`, inside the caller's grants: the
     # session resolver loads them (a test may inject its own), and each read resolves its account
     # first through the M13 store built above for `ctx.accounts`' row gauges (real backend only).

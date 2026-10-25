@@ -251,7 +251,8 @@ def test_account_row_gauges_are_live_and_bounded_by_their_enums() -> None:
 
 def test_profile_series_are_live_and_bounded_by_their_closed_sets() -> None:
     """#906 D1a: E28-T01's three entries are live. Per trading state and per cache result, never
-    per account or profile (SR-125, PF-I07); the version bumps carry no label at all."""
+    per account or profile (SR-125, PF-I07); the version bumps carry no label at all, nor do D3e's
+    propagation histogram and failed-notice counter (`env` only, never an account)."""
     from candleviewer.accounts.service import _PROFILE_STATES
 
     specs = {
@@ -263,6 +264,8 @@ def test_profile_series_are_live_and_bounded_by_their_closed_sets() -> None:
         "cv_profile_rows": ("gauge", ("state",), len(_PROFILE_STATES), "live", "E28"),
         "cv_profile_version_bumps_total": ("counter", (), 1, "live", "E28"),
         "cv_profile_cache_lookups_total": ("counter", ("result",), 2, "live", "E28"),
+        "cv_profile_propagation_seconds": ("histogram", (), 1, "live", "E28"),
+        "cv_profile_notices_failed_total": ("counter", (), 1, "live", "E28"),
     }
 
 
