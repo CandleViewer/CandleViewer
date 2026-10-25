@@ -38,6 +38,7 @@ from candleviewer.oms import exits as ex
 from candleviewer.oms.errors import (
     OMS_NOT_READY_RETRY_AFTER_S,
     OmsNotReady,
+    OrderHistoryRefused,
     OrderMachinesFull,
     StoreUnavailable,
     TradingDisabled,
@@ -535,13 +536,91 @@ async def test_a_client_that_leaves_does_not_stop_the_cancel_nor_free_its_key_ea
     assert machines.sent == ["CANCEL"]
 
 
-async def test_a_fault_the_exit_service_raises_is_its_rows_problem_and_pages() -> None:
+#: The redacted `500`'s members (22 `InternalError`): its code and title only.
+_REDACTED = {"type", "title", "status", "code"}
+_UNEXPECTED = "oms_exit_unexpected_failure"
+#: Faults the exit service raises and no outcome answers, and the one page each is: a row that
+#: pages (`oms.errors.PROBLEMS`) its own, any other the exit routes' (`exit_fault`).
+_FAULTS = [
+    (OrderMachinesFull("1024 order machines are live"), "oms_order_fault:OrderMachinesFull"),
+    (OrderHistoryRefused("the order's events do not rebuild its row (OM-T03)"),
+     f"{_UNEXPECTED}:OrderHistoryRefused"),
+    (RuntimeError("a defect at the facade"), f"{_UNEXPECTED}:RuntimeError"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("error", "page"), _FAULTS, ids=["a-row-that-pages", "no-row", "no-oms-error"]
+)
+async def test_every_fault_the_exit_service_raises_is_a_500_paged_once(
+    error: Exception, page: str
+) -> None:
+    """The orchestrator's ruling of 2026-10-25 02:50Z (2): a fault the exit service raises, which
+    no outcome answers, is the redacted `500 internal_error` (22 `InternalError`), paged once by
+    its class alone, never its text: a row that pages with its own page and no other, any other
+    fault through the shared renderer's (`exit_fault`); counted once (ruling Q14)."""
     world, machines, row, _ = await scripted_world()
-    machines.refuse = OrderMachinesFull()
+    machines.refuse = error
+    answer = await delete(world, row.id)
+    body = answer.json()
+    _PROBLEM.validate(body)
+    assert (answer.status_code, body["code"], set(body)) == (500, "internal_error", _REDACTED)
+    assert world.pages == [page] and world.refused("internal_error") == 1
+    assert str(error) not in answer.text and machines.sent == []
+
+
+async def test_a_second_fault_of_a_class_pages_the_same_page_again() -> None:
+    """One page for the class: a second fault of the class, whatever its text, pages the same page,
+    which the pager's alerting folds into the one it holds (`LogPager` keeps none itself); each
+    `500` is counted."""
+    world, machines, row, _ = await scripted_world()
+    machines.refuse = RuntimeError("one defect")
+    first = await delete(world, row.id)
+    machines.refuse = RuntimeError("another defect")
+    again = await delete(world, row.id, key=uuid4())
+    assert (first.status_code, again.status_code) == (500, 500)
+    assert world.pages == [f"{_UNEXPECTED}:RuntimeError"] * 2
+    assert world.refused("internal_error") == 2
+
+
+async def test_a_fault_once_the_client_left_is_still_answered_and_paged_in_its_task() -> None:
+    """Step 11 runs shielded, as the runtime's task: a fault B1's settle raises once the client
+    left is answered and paged in that task, with no request awaiting it, and counted."""
+    world, machines, row, _ = await scripted_world("submitted", RuntimeError("a defect"))
+    machines.gate = asyncio.Event()
+    headers = {"authorization": "Bearer owner", "idempotency-key": str(KEY)}
+    async with AsyncClient(transport=ASGITransport(app=world.app()), base_url="http://t") as c:
+        sent = asyncio.create_task(c.delete(f"/orders/{row.id}", headers=headers))
+        entered = asyncio.ensure_future(machines.entered.wait())
+        done, _ = await asyncio.wait({sent, entered}, return_when=asyncio.FIRST_COMPLETED)
+        entered.cancel()
+        assert done == {entered}  # commanded, B1's settle held, the request still waiting
+        sent.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await sent
+    machines.gate.set()
+    (task,) = world.oms.tasks
+    answer = await task
+    assert answer.status_code == 500 and machines.sent == ["CANCEL"]
+    assert world.pages == [f"{_UNEXPECTED}:RuntimeError"]
+    assert world.refused("internal_error") == 1
+
+
+async def test_a_fault_of_step_4s_scoped_read_is_a_500_paged_nothing_recorded_or_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Step 4: a fault the exit service's scoped read raises, no outage (that is `503
+    store_unavailable`, unrecorded), is the paged `500`, counted, nothing recorded or sent."""
+    world, machines, row, port = await scripted_world()
+
+    async def faulty(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("a defect in the scoped read")
+
+    monkeypatch.setattr(port.orders, "get_in_scope", faulty)
     answer = await delete(world, row.id)
     assert (answer.status_code, answer.json()["code"]) == (500, "internal_error")
-    assert world.pages == ["oms_order_fault:OrderMachinesFull"]
-    assert world.refused("internal_error") == 1
+    assert world.pages == [f"{_UNEXPECTED}:RuntimeError"]
+    assert (world.refused("internal_error"), world.actions(), machines.sent) == (1, [], [])
 
 
 # --- over the real B1 facade, command port and fake venue -----------------------------------------

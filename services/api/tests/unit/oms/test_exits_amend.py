@@ -1,8 +1,8 @@
 """The exit service's amend (E29-T04 slice 4, `oms.exits`; 22 `amendOrder`; rulings Q3 to Q5 and
-Q10, the S4-A decisions D1 and D3, SEC-S4C2B-01 and the orchestrator's ruling of 2026-10-25 00:27Z
-(1)): over the real B1 facade, the real command port and the fake venue (`submit_rig`), the rig's
-limit buy entry resting `submitted` (0.010 at 60000, its stop 58000 and its take-profit 64000,
-Full mode, unfilled)."""
+Q10, the S4-A decisions D1 and D3, SEC-S4C2B-01, the orchestrator's ruling of 2026-10-25 00:27Z
+(1) and the code lens's CR-S4D2A-01 and -09): over the real B1 facade, the real command port and
+the fake venue (`submit_rig`), the rig's limit buy entry resting `submitted` (0.010 at 60000, its
+stop 58000 and its take-profit 64000, Full mode, unfilled)."""
 
 from __future__ import annotations
 
@@ -593,35 +593,79 @@ async def test_a_step_between_the_re_read_and_the_send_refuses_the_send_under_th
     assert isinstance(moved, RequestRecord) and not {"step", "reason"} & set(moved.detail)
 
 
-async def test_an_amend_without_if_match_sends_the_version_it_read_and_with_it_the_tag(
-    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Q5 as amended: the `AMEND` carries `If-Match`'s version, else the version read before the
-    row was read again, never none; a tag other than the version read is `412`, nothing sent."""
-    found, exits = await scoped(rig), exits_of(rig)
+def spied(rig: SubmitRig, monkeypatch: pytest.MonkeyPatch) -> list[int | None]:
+    """The version each `AMEND` the facade is commanded carries (`expected_seq`), in order."""
     carried: list[int | None] = []
     command = rig.machines.command
 
-    async def spied(*args: Any, **kwargs: Any) -> str:
+    async def spy(*args: Any, **kwargs: Any) -> str:
         carried.append(kwargs.get("expected_seq"))
         return await command(*args, **kwargs)
 
-    monkeypatch.setattr(rig.machines, "command", spied)
-    seen = rig.machines.version(found.order.id)
+    monkeypatch.setattr(rig.machines, "command", spy)
+    return carried
+
+
+async def test_an_amend_without_if_match_sends_the_version_it_read(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Q5 as amended: with no `If-Match` the `AMEND` carries the version read before the row was
+    read again, never none."""
+    found, exits = await scoped(rig), exits_of(rig)
+    carried, seen = spied(rig, monkeypatch), rig.machines.version(found.order.id)
     got = await exits.amend(found, AmendTerms(price=D("60100")), caller=CALLER, expected_seq=None)
     assert got.kind == "accepted" and seen is not None and carried == [seen]
-    tag = got.version
-    assert tag is not None and tag > seen
+
+
+async def test_an_amend_with_if_match_sends_its_tags_version(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Q5: an `If-Match` that names the version read is the version the `AMEND` carries, and the
+    answer's version is the step's, past it."""
+    found, exits = await scoped(rig), exits_of(rig)
+    carried, tag = spied(rig, monkeypatch), rig.machines.version(found.order.id)
+    got = await exits.amend(found, AmendTerms(price=D("60100")), caller=CALLER, expected_seq=tag)
+    assert got.kind == "accepted" and tag is not None and carried == [tag]
+    assert got.version is not None and got.version > tag
+
+
+async def stale_tag(rig: SubmitRig) -> tuple[ScopedOrder, int]:
+    """The rig's entry once an amend moved its version on, as the scope reads it then, and the tag
+    of the version before that amend, which the order has left."""
+    found, exits = await scoped(rig), exits_of(rig)
+    tag = rig.machines.version(found.order.id)
+    moved = await exits.amend(found, AmendTerms(price=D("60100")), caller=CALLER, expected_seq=None)
+    assert tag is not None and moved.kind == "accepted"
     again = await exits.scope(CALLER, found.order.id)
     assert isinstance(again, ScopedOrder)
-    moved = await exits.amend(again, AmendTerms(price=D("60200")), caller=CALLER, expected_seq=tag)
-    assert moved.kind == "accepted" and carried == [seen, tag]
-    old = await exits.amend(again, AmendTerms(price=D("60300")), caller=CALLER, expected_seq=tag)
-    assert (old.status, old.code, carried) == (412, "version_conflict", [seen, tag])
-    assert len(amends(rig)) == 2
-    moved = rig.records("orders.amend")[-1]  # a stale tag, no class re-check: as it was
-    assert isinstance(moved, RequestRecord) and moved.outcome == "denied"
-    assert not {"step", "reason"} & set(moved.detail)
+    return again, tag
+
+
+async def test_a_tag_other_than_the_version_read_is_412_and_nothing_is_commanded(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Q5: an `If-Match` naming a version the order has left is `412`, before anything is
+    commanded or sent."""
+    again, tag = await stale_tag(rig)
+    carried, sent = spied(rig, monkeypatch), len(amends(rig))
+    terms = AmendTerms(price=D("60200"))
+    got = await exits_of(rig).amend(again, terms, caller=CALLER, expected_seq=tag)
+    assert (got.kind, got.status, got.code) == ("refused", 412, "version_conflict")
+    assert carried == [] and len(amends(rig)) == sent
+
+
+async def test_a_stale_tags_refusal_is_recorded_naming_no_step_and_no_reason(
+    rig: SubmitRig,
+) -> None:
+    """A stale `If-Match` is no class re-check: its record, `orders.amend` denied with its code,
+    names neither a step nor a reason in its detail (the ruling of 2026-10-25 00:27Z (1))."""
+    again, tag = await stale_tag(rig)
+    terms = AmendTerms(price=D("60200"))
+    await exits_of(rig).amend(again, terms, caller=CALLER, expected_seq=tag)
+    stale = rig.records("orders.amend")[-1]
+    assert isinstance(stale, RequestRecord)
+    assert (stale.outcome, stale.reason) == ("denied", "version_conflict")
+    assert not {"step", "reason"} & set(stale.detail)
 
 
 class _Rereads:
@@ -662,3 +706,107 @@ async def test_a_re_read_that_fails_or_finds_no_row_refuses_the_amend_nothing_se
     assert amends(rig) == []
     assert requests(rig, "orders.amend") == [("denied", code)]
     assert rig.machines.state(found.order.id) == ("submitted", "not_required")
+
+
+# --- CR-S4D2A-01: the order of the reads, and the row the amend is judged on ---------------------
+
+
+class _SettlesFirst:
+    """The exits' order reads, whose first `get`, the amend's own re-read, reads the row, then lets
+    a step of the order settle (`settle`) before it answers that row: the order steps once the
+    amend read its version, and the row it is judged on is no fresher than that version."""
+
+    def __init__(self, inner: Any, settle: Callable[[], Awaitable[None]]) -> None:
+        self._inner, self._settle, self._first = inner, settle, True
+
+    async def get_in_scope(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._inner.get_in_scope(*args, **kwargs)
+
+    async def accounts_in_scope(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._inner.accounts_in_scope(*args, **kwargs)
+
+    async def get(self, account_id: Any, order_id: Any) -> OrderRow | None:
+        row: OrderRow | None = await self._inner.get(account_id, order_id)
+        if self._first:
+            self._first = False
+            await self._settle()
+        return row
+
+
+async def test_a_step_settling_as_the_row_is_read_again_refuses_the_send_under_the_lock(
+    rig: SubmitRig,
+) -> None:
+    """CR-S4D2A-01 (i): the version is read before the row is read again, so an amend of the order
+    that settles in between leaves the row this amend is judged on as old as the version it is
+    sent at, which the facade refuses under the order's lock: `409 conflict` with `Retry-After:
+    1`, nothing sent but the step's own amend. Were the version read after the row, it would be
+    the step's, and an amend judged on the row before the step would be sent."""
+    found = await scoped(rig)
+    first = exits_of(rig)  # the step: another amend of the order, over the rig's own reads
+
+    async def settle() -> None:
+        moved = await first.amend(
+            found, AmendTerms(price=D("60100")), caller=CALLER, expected_seq=None
+        )
+        assert moved.kind == "accepted"
+
+    exits = exits_of(rig, orders=_SettlesFirst(rig.port.orders, settle))
+    got = await exits.amend(found, AmendTerms(qty=D("0.009")), caller=CALLER, expected_seq=None)
+    assert (got.kind, got.status, got.code, got.retry_after_s) == ("refused", 409, "conflict", 1)
+    assert [(sent.price, sent.qty) for sent in amends(rig)] == [(D("60100"), None)]
+    assert requests(rig, "orders.amend") == [
+        ("success", "user"), ("success", "submitted"), ("success", "user"), ("denied", "conflict"),
+    ]  # fmt: skip
+
+
+async def _filled_since(rig: SubmitRig, found: ScopedOrder) -> None:
+    """A real `EXEC` of `_FILL` on the order once its scope was read."""
+    rig.port.demo.seed_position(cr.position(qty=_FILL))  # so the stop's attach reads it back
+    await rig.machines.push(cr.ACCOUNT, found.order.id, "EXEC", _fill(found.order))
+    await rig.quiet()
+
+
+async def _tightened_since(rig: SubmitRig, found: ScopedOrder) -> None:
+    """An amend that tightened the order's stop, 58000 to 59000, once its scope was read."""
+    terms = AmendTerms(sides={"stop_loss": StopOffset("price", D("59000"))})
+    moved = await exits_of(rig).amend(found, terms, caller=CALLER, expected_seq=None)
+    assert moved.kind == "accepted"
+    await rig.quiet()
+
+
+#: A stop under the one the step left (59000), so looser, but over the scope's (58000).
+_BETWEEN = {"stop_loss": StopOffset("price", D("58500"))}
+
+
+@pytest.mark.parametrize(
+    ("since", "terms", "status", "code", "rules"),
+    [(_filled_since, AmendTerms(qty=D(_FILL)), 400, "validation_failed",
+      ("qty_not_above_filled",)),
+     (_filled_since, AmendTerms(sides={"stop_loss": _TICKS}), 400, "validation_failed",
+      ("tpsl_after_fill",)),
+     (_tightened_since, AmendTerms(sides=_BETWEEN), 403, "risk_limit_breached", ())],
+    ids=["qty-at-the-fill", "a-tpsl-side-after-the-fill", "a-stop-looser-than-the-steps"],
+)  # fmt: skip
+async def test_an_amend_scoped_before_a_step_is_judged_on_the_row_the_step_left(
+    rig: SubmitRig,
+    since: Callable[[SubmitRig, ScopedOrder], Awaitable[None]],
+    terms: AmendTerms,
+    status: int,
+    code: str,
+    rules: tuple[str, ...],
+) -> None:
+    """CR-S4D2A-01 (ii): the scope read the order before a step, a real fill or a tightened stop,
+    and the amend is judged on its row read again, the step in it, never on the scope's read:
+    a quantity at the filled one, or a TP/SL side after a fill, is `400` (22 `amendOrder`), and a
+    stop looser than the step's, though tighter than the scope's, `403 risk_limit_breached` (the
+    ratchet, ruling Q4); each recorded denied with no intent recorded, and nothing sent. Judged on
+    the scope's read, the body or the ratchet would pass it on to the send."""
+    found = await scoped(rig)
+    await since(rig, found)
+    sent, stops = len(amends(rig)), len(rig.store._stops)
+    before = len(requests(rig, "orders.amend"))
+    got = await exits_of(rig).amend(found, terms, caller=CALLER, expected_seq=None)
+    assert (got.kind, got.status, got.code) == ("refused", status, code)
+    assert tuple(e.rule for e in got.errors) == rules
+    assert len(amends(rig)) == sent and len(rig.store._stops) == stops
+    assert requests(rig, "orders.amend")[before:] == [("denied", code)]
