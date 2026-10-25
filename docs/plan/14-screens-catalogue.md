@@ -543,6 +543,7 @@ Drag preview                Drop zones
 - **Stories:** US-LAY-001, US-LAY-005, US-LAY-008.
 - **Analytics/audit:** `layout.panel_added`, `layout.panel_removed`, `layout.panel_moved`, `layout.split_created`, `layout.panel_floated`, `layout.maximised`, `layout.saved`, `layout.reset` (analytics only - layout is user preference, not a security-relevant state change).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.3–§5.5 (Penpot page `E15-D02`, boards 09–10; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
+- **Design (wireframe → hi-fi):** [E15-D04.md](../design/E15/E15-D04.md) §3–§12 (E15-D04; PROPOSED, owner approval pending: the zone geometry, the drop preview, the refusals, the keyboard move mode, the splitters, the compact view, maximise / minimise / Pop out and undo; Penpot page `E15-D04 Dock system`, boards pending).
 - **Design sign-off acceptance checklist:** [ ] drop-zone affordances for all five zones (N/S/E/W/centre-tabify; float is the panel menu's "Pop out" command, not a zone) [ ] invalid-drop feedback [ ] keyboard move mode drawn with its own visible instructions [ ] minimum panel size and the 'panel too small - showing compact view' state [ ] drag preview does not obscure the drop target
 
 ### SCR-022 — Layout preset gallery
