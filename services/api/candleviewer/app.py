@@ -3037,10 +3037,11 @@ def create_app(
     # E04-T02: outermost of the guards (added last of the trio) so every request - even a mesh
     # rejection - gets a correlation id and the X-Correlation-Id response header.
     app.add_middleware(CorrelationMiddleware)
+    # #902: counts each denied request by route and role; inside HttpDuration, outside the trio.
+    app.add_middleware(AuthzDenialMiddleware, counter=metrics_facade.get(AUTHZ_DENIALS_METRIC))
     # #2421: outermost (added last), outside the Correlation -> MeshOnly -> Csrf guard trio, which
     # must stay adjacent and in that order. Times every request, mesh/CSRF refusals included; it
     # neither reads nor needs the correlation id.
-    app.add_middleware(AuthzDenialMiddleware, counter=metrics_facade.get(AUTHZ_DENIALS_METRIC))
     app.add_middleware(HttpDurationMiddleware, histogram=metrics_facade.get(HTTP_DURATION_METRIC))
     # E09-T03 / #1648: a served route without an RBAC declaration fails the build.
     assert_app_routes_declared(app, spec)

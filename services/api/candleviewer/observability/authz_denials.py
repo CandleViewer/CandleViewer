@@ -1,7 +1,8 @@
 """`authz_denied_by_route_total{permission, route, role}` (#902, SR-125): each denied HTTP request
 once, by its first denial's labels and the route template a pre-routing guard named or
-`http_duration.route_template` (`unmatched`); a WebSocket denial at once under `ws`; nothing
-outside a request. Past `max_series` a new series is dropped. Nothing is pre-bound."""
+`http_duration.route_template` (`unmatched`); a WebSocket denial at once under `ws` (reserved:
+no WS path counts yet); nothing outside a request. Past `max_series` a new series is dropped.
+Nothing is pre-bound."""
 
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ def note_authz_denial(permission: str, role: str, *, route: str | None = None) -
     """Mark the running request or connection denied (labels already clamped by the caller)."""
     if isinstance(cell := _CURRENT.get(), BoundedMetric):
         cell.labels(permission, "ws", role).inc()
-    elif cell is not None and not cell:  # the first denial names the request
+    elif cell is not None and not cell:  # first denial only: it names the request
         cell.append((permission, role, route))
 
 

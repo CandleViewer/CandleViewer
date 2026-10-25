@@ -3716,7 +3716,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "AuthzDeniedSpike (on authz_denied_total) triage: which route and role",
         _L,
         "E27",
-        max_series=400,  # permissions x route templates x 4 roles; past it a new series is dropped
+        max_series=1000,  # ~1 permission per route template x 4 roles + unmatched/ws; past it a
+        # series is dropped (`metric_cardinality_breach_total` counts it)
     ),
     _s(
         "credential_verification_failures_total",

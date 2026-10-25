@@ -12,7 +12,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from candleviewer.accounts.key_import import Importer
+from candleviewer.api.exchange_accounts import _not_owner as accounts_not_owner
+from candleviewer.api.exchange_keys import _not_owner as keys_not_owner
+from candleviewer.api.profiles import not_owner as profiles_not_owner
 from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.metrics import count_authz_denial
 from candleviewer.auth.scopes import AccountGrant, ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.auth.view_as import ViewAsPhase, ViewAsRequestContext, bound_view_as
 from candleviewer.observability.authz_denials import METRIC_NAME, AuthzDenialMiddleware
@@ -24,7 +29,9 @@ MANAGER, OWNER = frozenset({"manager", "viewer"}), frozenset({"owner"})
 AUDIT_DOWN = SimpleNamespace(emit=AsyncMock(side_effect=RuntimeError("audit store down")))
 
 
-async def _run(scope: dict[str, Any], *principals: frozenset[str], cap: int = 400) -> Metrics:
+async def _run(
+    scope: dict[str, Any], *principals: frozenset[str], cap: int = 1000, fail: bool = False
+) -> Metrics:
     """One request or connection: `enforce(orders:write)` once per principal; owner is allowed."""
     m = Metrics("demo")
     counter = m.counter(METRIC_NAME, "t", ("permission", "route", "role"), max_series=cap)
@@ -35,8 +42,11 @@ async def _run(scope: dict[str, Any], *principals: frozenset[str], cap: int = 40
             with contextlib.suppress(ForbiddenError, RuntimeError):  # every audit write fails
                 await enforce(PrincipalSnapshot(uuid.uuid4(), roles, perms),
                               Permission.ORDERS_WRITE, emitter=AUDIT_DOWN)  # fmt: skip
+        if fail:
+            raise KeyError("downstream")
 
-    await AuthzDenialMiddleware(app, counter=counter)(scope, None, None)
+    with contextlib.suppress(KeyError):  # `fail`: the app raises after the denial
+        await AuthzDenialMiddleware(app, counter=counter)(scope, None, None)
     return m
 
 
@@ -61,6 +71,48 @@ async def test_unmatched_ws_role_clamping_and_view_as() -> None:
         phase=ViewAsPhase.LIVE,
     )):  # fmt: skip
         assert _get(await _run(ROUTED, MANAGER), TEMPLATE, "owner") == 1.0
+
+
+async def test_a_downstream_exception_is_still_counted_and_lifespan_passes_through() -> None:
+    assert _get(await _run(ROUTED, MANAGER, fail=True), TEMPLATE, "manager") == 1.0
+    assert _get(await _run({"type": "lifespan"}, MANAGER), TEMPLATE, "manager") == 0.0
+
+
+_SITES = ("admin", "orders", "view_as", "accounts", "keys", "profiles")
+
+
+@pytest.mark.parametrize("site", _SITES)
+async def test_every_denial_site_counts_the_actors_role_and_route(site: str) -> None:
+    """The real refusal helpers for accounts, keys and profiles; the rest (a closure, a
+    dependency, a 40-line guard) through `count_authz_denial` with the arguments the site passes."""
+    req: Any = SimpleNamespace(scope={"type": "http"})
+    uid, perm = uuid.uuid4(), Permission.KEYS_READ
+    snap = PrincipalSnapshot(uid, MANAGER, frozenset())
+    audit: Any = AUDIT_DOWN
+    calls: dict[str, Any] = {
+        "admin": lambda: count_authz_denial(perm, ()),  # the admin principal has no roles
+        "orders": lambda: count_authz_denial(perm, snap.roles),
+        "view_as": lambda: count_authz_denial(perm, ("owner",), route="/v1/x"),
+        "accounts": lambda: accounts_not_owner(audit, snap, perm, Scope.GRANTED_ACCOUNTS, req),
+        "keys": lambda: keys_not_owner(audit, Importer(uid, ",".join(sorted(MANAGER))), uid),
+        "profiles": lambda: profiles_not_owner(
+            audit, snap, uid, permission=perm, ip=None, request_id=None
+        ),
+    }
+    route, role = {"admin": (TEMPLATE, "other"), "view_as": ("/v1/x", "owner")}.get(
+        site, (TEMPLATE, "manager")
+    )
+    m = Metrics("demo")
+    counter = m.counter(METRIC_NAME, "t", ("permission", "route", "role"), max_series=1000)
+
+    async def app(*_: Any) -> None:
+        result = calls[site]()
+        if result is not None:
+            await result
+
+    await AuthzDenialMiddleware(app, counter=counter)(ROUTED, None, None)
+    labels = {"env": "demo", "permission": "keys:read", "route": route, "role": role}
+    assert m.registry.get_sample_value(METRIC_NAME, labels) == 1.0
 
 
 async def test_past_the_cap_the_increment_is_dropped_without_error() -> None:

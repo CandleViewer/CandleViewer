@@ -201,7 +201,7 @@ async def _not_owner(audit: _Emitter, actor: Importer, account_id: uuid.UUID) ->
     through (SR-051), with `enforce`'s fields and its reason's shape, naming the account.
     Counted before the record, as `enforce` counts (SR-125), so a lost record never hides it: a
     refusal whose record fails is still a 403, logged by actor, account and error class (C-12.6)."""
-    count_authz_denial(Permission.KEYS_READ, (actor.role,))
+    count_authz_denial(Permission.KEYS_READ, actor.role.split(","))
     try:
         await _OnAccount(audit, account_id).emit(
             "rbac.denied", actor_label=str(actor.user_id), actor_user_id=actor.user_id,
