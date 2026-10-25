@@ -43,15 +43,18 @@ Two default-deny pins back the lists (the delta check of the lens round 1): ever
 prose sentence and every sentence of every table cell is a unit, and a unit that names the trust
 copy or security-bearing text (included, excluded, sharing, credentials, API keys, an account,
 untrusted, markup, Markdown, HTML, a link, raw, echo, re-check, partial, kept, keeps, uploaded,
-logged, cached; SEC_BEARING_RE, any case) must equal its entry of SEC_PIN_TXT, and a heading or a
-unit that names a ruling or a settled state (RULED, applied, agreed, settled, final, confirmed,
-accepted, adopted, decided, in force, approved, signed off; STATUS_BEARING_RE) its entry of
-STATUS_PIN_TXT, each entry its section, its place (heading, prose, or row and column) and its exact
-text, in document order. A unit that is new, changed, moved or duplicated, and a pinned unit that
-is gone, FAIL `sec-pin` or `status-pin` with its place: the word list decides which units are
-pinned, the table what they may say. A pin is the backstop, reported when every other gate passes,
-so one fault reads as one FAIL. `--repin-security` and `--repin-status` print a table from the
-current text for a reviewer to read and commit; `--check` never re-pins.
+logged, cached; SEC_BEARING_RE, any case) must equal its entry of SEC_PIN_TXT. The status pin is
+default-deny on the unit (fold 4): every heading, every unit that carries a decision or a row
+status in any word and any case (PROPOSED, RULED, pending, owner approval, applied, merged,
+settled, done, closed, landed, final, agreed, approved, accepted, adopted and their forms;
+STATUS_BEARING_RE), and every unit of §10, §11, §12 and the BQ table, whole (STATUS_WHOLE_RE), must
+equal its entry of STATUS_PIN_TXT, each entry its section, its place (heading, prose, or row and
+column) and its exact text, in document order. A unit that is new, changed, moved or duplicated,
+and a pinned unit that is gone (its status word deleted or swapped for a word the list lacks), FAIL
+`sec-pin` or `status-pin` with its own place: the word list only widens what is pinned, the table
+decides what a unit may say. A pin is the backstop, reported when every other gate passes, so one
+fault reads as one FAIL. `--repin-security` and `--repin-status` print a table from the current
+text for a reviewer to read and commit; `--check` never re-pins.
 
 `--json` is the only source of every number in the spec: every `<!-- audit:KEY=VALUE -->` marker
 is re-derived on every run, the number printed beside it must equal it, a malformed marker is a
@@ -72,9 +75,9 @@ Usage: python3 -I -B docs/design/_tools/e15_d09_import_export_audit.py [--json] 
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import importlib.util
-import itertools
 import json
 import re
 import sys
@@ -831,6 +834,16 @@ FOCUS = {
     "unconfirmed": "Close",
     "report": 'the heading "Import report" (`tabindex="-1"`)',
 }
+# The focus pairs S20 allows beside a frame's own focus (fold 4), §7's one line rendered from them:
+# Cancel is a drawn footer control and a real focus target on these five frames (refused-limit's
+# own focus, the preparing line's, where Try again returns it). Any other focus claim fails there.
+FOCUS_PAIRS = {
+    "SCR-026/refused-limit": ("Cancel",),
+    "SCR-025/export-preparing": ("Cancel", "the title"),
+    "SCR-025/export-preview": ("the title", "Cancel"),
+    "SCR-025/export-failed": ("Try again", "Cancel"),
+    "SCR-025/export-cancelled": ("Download file", "Cancel"),
+}
 ESC = {
     "menu": "Close (the menu, focus back on its button)",
     "dialog": "Cancel",
@@ -1072,6 +1085,13 @@ CREATE_RE = (
     r"(?:exists?|appears?|opens?)\b|\bdraft workspace\b|\btemporary workspace\b"
     r"|\bin the background\b"
 )
+# Keep forms a refused file is the only subject of, gated in every section with or without a refusal
+# word near them (fold 4): the layouts that passed, what passed, staying or left in your workspaces.
+KEEP_ALWAYS_RE = (
+    r"(?i)\bthe (?:layouts?|panels?|panes?|parts?) that passed\b|\bwhat passed\b"
+    r"|\bbefore the check failed\b"
+    r"|\b(?:stays?|remains?|(?:is|are|was|were) left)\s+(?:\w+\s+){0,2}?in your workspaces?\b"
+)
 KEEP_RE = (
     r"(?i)\b(?:is|are|was|were|has been|have been|stays?|remains?|gets?|got|being)\s+"
     + NOT_NEG
@@ -1080,9 +1100,13 @@ KEEP_RE = (
     + r"|\bkeeps?\s+(?:the\s+|its\s+|a\s+)?(?:valid\s+|parsed\s+|checked\s+|passed\s+)?(?:layouts?"
     r"|panels?|panes?|parts?|document|rest|draft)\b|\bretain\w*|\bpartial(?:ly)?\b"
     r"|\bthe valid (?:parts?|layouts?"
-    r"|panels?|panes?)\b|\bbrought in\b|\bstays? in your workspaces\b|\bcontinues?\s+with\b"
-    r"|\bbefore the check failed\b|\bthe layouts that passed\b|\bwhat passed\b"
+    r"|panels?|panes?)\b|\bbrought in\b|\bcontinues?\s+with\b"
     r"|\bkept in (?:the browser's storage|local storage|a cache|the cache)\b"
+    # The keep forms with no keep verb (fold 4): what stays, remains or is left.
+    r"|\b(?:layouts?|panels?|panes?|parts?|tabs?|workspaces?|rest)\s+(?:that\s+\w+\s+)?"
+    r"(?:stay|stays|remain|remains|(?:is|are|was|were) left)\b(?!\s+(?:unchanged|as|empty)\b)"
+    + "|"
+    + KEEP_ALWAYS_RE.removeprefix("(?i)")
 )
 # A temporal clause around a create or keep word states when, never that it happened early.
 TEMPORAL_RE = r"(?i)\b(?:when|whenever|once|after|until|as soon as)\b"
@@ -1239,7 +1263,15 @@ REJECTION_CTX_RE = (
 )
 # The keep scope (S11) reads every form of the verbs too: "the server refuses the file", "a refused
 # file", "it rejects" are refusals whose keep claims count, wherever the sentence stands.
-REFUSED_RE = REJECTION_CTX_RE + r"|\brefus(?:e|es|ed|ing)\b|\breject(?:s|ing)?\b"
+REFUSED_RE = (
+    REJECTION_CTX_RE
+    + r"|\brefus(?:e|es|ed|ing)\b|\breject(?:s|ing)?\b"
+    # Its synonyms (fold 4): a file that fails, is turned down, declined or not accepted.
+    + r"|\bfail(?:s|ed|ing)?\b|\bturn(?:s|ed)? down\b|\bturned\s+\w+\s+down\b"
+    + r"|\bdeclin(?:e|es|ed|ing)\b|\bnot accepted\b|\b(?:isn|aren|wasn|weren)['’]t accepted\b"
+)
+# "Not accepted" names a refusal: its "not" governs "accepted" only, never the keep claim after it.
+NOT_ACCEPTED_RE = r"(?i)\b(?:not|isn['’]t|aren['’]t|wasn['’]t|weren['’]t)(?=\s+accepted\b)"
 # Where another control may take focus on a refusal: the clause names its frame.
 FOCUS_EXCEPT = {
     "cancel": r"(?i)\blimit\b|\bbudget\b|\bconfirm\b|\bexport",
@@ -4097,6 +4129,12 @@ EXPORT_IMPORT_OK = ("rules for the import (§3.4)", "an import limit", "the impo
 # §6's rows and bullets read what is drawn where: an import verb said to stand in a footer, to stay,
 # remain or sit is a presence claim §6 never makes (the verb is drawn on its frames, §3 to §5).
 PRESENCE_RE = r"(?i)\bfooters?\b|\bstay(?:s|ed)?\b|\bremain(?:s|ed)?\b|\bsits?\b|\bis offered\b"
+# Everywhere else in the prose (fold 4): an Import verb said to stay, remain, sit or be offered in a
+# footer, whatever stands before it (a negator's reach or a ` · ` separator), is the same claim.
+STAY_RE = (
+    r"(?i)\b(?:stay(?:s|ed)?|remain(?:s|ed)?|sits?|(?:is|are|be|being) (?:still )?offered)\b"
+    r"(?:\s+\w+){0,3}?\s+(?:in|on) (?:the|its|a) (?:dialog's )?footer\b"
+)
 
 
 def unit_gate(text: str, ctx: dict[str, Any], facts: dict[str, Any]) -> str | None:
@@ -4134,18 +4172,20 @@ def unit_gate(text: str, ctx: dict[str, Any], facts: dict[str, Any]) -> str | No
         if found:
             return fail("export-import", f"{where}: {found} on an export frame: {text[:60]!r}")
         rest = plain(ctx.get("line", "").replace(text, " ")).lower()
+        allowed = FOCUS_PAIRS.get(ctx.get("name", ""))
         for m in re.finditer(FOCUS_CLAIM_RE, body):
             control = m.group("a") or m.group("b") or m.group("c")
+            if allowed is not None and control.lower() not in {c.lower() for c in allowed}:
+                return fail("export-focus", f"{where}: focus on {control!r}, not a pair §7 allows")
             if not re.search(r"(?<!\w)" + re.escape(control.lower()) + r"(?!\w)", rest):
                 return fail(
                     "export-focus", f"{where}: focus on {control!r}, a control it never draws"
                 )
-    if prose and sub in ("6", "6.1"):
+    if prose:
+        presence = PRESENCE_RE if sub in ("6", "6.1") else STAY_RE
         for m in re.finditer(IMPORT_VERB_RE, body):
-            if not negated(body, m.start()) and re.search(PRESENCE_RE, own_clause(body, m.start())):
-                return fail(
-                    "import-verb", f"{where}: §6 draws an Import verb in place: {text[:60]!r}"
-                )
+            if not negated(body, m.start()) and re.search(presence, own_clause(body, m.start())):
+                return fail("import-verb", f"{where}: an Import verb drawn in place: {text[:60]!r}")
     refusal = (
         (kind in NOTHING_KINDS | {"unconfirmed"} or bool(re.search(REJECTION_CTX_RE, body)))
         if not prose
@@ -4203,7 +4243,7 @@ def unit_gate(text: str, ctx: dict[str, Any], facts: dict[str, Any]) -> str | No
         if not prose
         else refusal or sub in REFUSAL_SUBS or bool(re.search(REFUSED_RE, body))
     )
-    if kept and claims(KEEP_RE, work):
+    if (kept and claims(KEEP_RE, work)) or claims(KEEP_ALWAYS_RE, work):
         return fail("partial", f"{where}: something of a refused file is kept: {text[:60]!r}")
     return unit_gate_2(text, body, ctx, facts, prose)
 
@@ -4229,8 +4269,9 @@ def claims(pattern: str, text: str, post: bool = False) -> bool:
     passes" or "once the file is chosen" names a moment before the send, so it exempts nothing.
     A keep claim stands unless a temporal word leads it and no refusal leads it: "when it is
     imported" says when, "when the server refuses the file, the layouts are kept" keeps them."""
+    unneg = re.sub(NOT_ACCEPTED_RE, lambda m: "_" * len(m.group(0)), text)
     for m in re.finditer(pattern, text):
-        if negated(text, m.start()):
+        if negated(unneg, m.start()):
             continue
         a, b = clause_bounds(text, m.start(), NEG_SPLIT_RE)
         if post:
@@ -4390,6 +4431,7 @@ def frame_gate(
         return found
     ctx: dict[str, Any] = {
         "where": f"frame {name}",
+        "name": name,
         "kind": kind,
         "line": producer + " ; " + shows,
         "known": known,
@@ -5100,6 +5142,25 @@ def pinned_gates(spec: str) -> list[str]:
     return bad
 
 
+def focus_pairs_line() -> str:
+    """§7's line of the allowed focus pairs, rendered from FOCUS_PAIRS."""
+    pairs = "; ".join(f"`{name}` on {' or '.join(c)}" for name, c in FOCUS_PAIRS.items())
+    return (
+        "**The focus pairs, stated once (S20).** On these five frames focus lands only on the "
+        f"controls named here, the frame's own first: {pairs}. A focus claim on any other control "
+        "of these frames fails."
+    )
+
+
+def focus_pairs_gates(spec: str) -> list[str]:
+    """§7 carries the focus pairs' line byte for byte, once (S20's allowed pairs)."""
+    line = focus_pairs_line()
+    n = section(spec, 7, 8).split("\n").count(line)
+    if n != 1:
+        return [fail("focus-pairs", f"§7 carries the focus pairs' line {n} times, once pinned")]
+    return []
+
+
 def keyboard_gates(spec: str) -> list[str]:
     """§7's keyboard model: every row's frames, initial focus and Tab order are the tool's (the
     focus a rejection lands on, the drop zone never a stop: S19, S20)."""
@@ -5417,10 +5478,17 @@ SEC_BEARING_RE = (
     r"|\bmarkdown\b|\blink(?:s|ed|ing)?\b|\bhtml\b|\braw\b|\becho\w*|\bre-?check\w*|\bpartial\w*"
     r"|\bkept\b|\bkeeps?\b|\buploaded\b|\blogged\b|\bcached\b"
 )
+# Default-deny (fold 4): a unit that carries a decision or a row status in any word, any case, is
+# pinned whole; the word list only widens the pin, the pin decides what a unit may say. A unit whose
+# status word is deleted or swapped for a word the list lacks drops out, so its pin reads "gone".
 STATUS_BEARING_RE = (
-    r"\bRULED\b|(?i:\b(?:applied|agreed|settled|final|finali[sz]ed|confirmed|accepted|adopted"
-    r"|decided|in force|approved|signed off)\b)"
+    r"(?i)\bpropos\w*|\brul(?:ed|ing|ings)\b|\bpending\b|\bowner approval\b|\bappl(?:ied|ies)\b"
+    r"|\bmerg(?:e|ed|es)\b|\bsettled\b|\bdone\b|\bclosed\b|\blanded\b|\bfinal\w*|\bagreed\b"
+    r"|\bapprov\w*|\baccept\w*|\badopt\w*|\bconfirmed\b|\bdecided\b|\bin force\b|\bsigned off\b"
 )
+# Sections pinned whole for the status pin, every unit of them (§10's and §11's A-rows, §12's rows
+# and hand-offs, the BQ table and its lines), whatever words they use.
+STATUS_WHOLE_RE = r"§1[012](?:\.\d+)?|The questions \(BQ-"
 PIN_SEP = " ‖ "
 PIN_WIDTH = 90
 Unit = tuple[str, str, str]
@@ -5452,19 +5520,23 @@ def pin_units(spec: str) -> list[Unit]:
     return out
 
 
-def pin_selected(spec: str, select: str, headings: bool) -> list[Unit]:
+def pin_selected(spec: str, select: str, headings: bool, whole: str = "") -> list[Unit]:
     return [
-        u for u in pin_units(spec) if re.search(select, u[2]) or (headings and u[1] == "heading")
+        u
+        for u in pin_units(spec)
+        if re.search(select, u[2])
+        or (headings and u[1] == "heading")
+        or (whole and re.match(whole, u[0]))
     ]
 
 
-def render_pins(spec: str, select: str, headings: bool = False) -> str:
+def render_pins(spec: str, select: str, headings: bool = False, whole: str = "") -> str:
     """The pinned table as `--repin-security` / `--repin-status` print it: a `§ section` line per
     section, an `@ place` line per unit, its text wrapped at spaces on lines indented two spaces
     (joined with one space, the lines are the unit again)."""
     lines: list[str] = []
     last = ""
-    for section, where, text in pin_selected(spec, select, headings):
+    for section, where, text in pin_selected(spec, select, headings, whole):
         if section != last:
             lines.append(f"§ {section}")
             last = section
@@ -5496,20 +5568,24 @@ def pin_rows(table: str) -> list[Unit]:
     return rows
 
 
-def pin_gate(spec: str, select: str, table: str, headings: bool) -> str | None:
+def pin_gate(spec: str, select: str, table: str, headings: bool, whole: str = "") -> str | None:
     """Every selected unit equals its pinned entry, in order: the first unit that is new,
-    changed, moved or duplicated, or a pinned unit gone, named with its place."""
-    have, want = pin_selected(spec, select, headings), pin_rows(table)
-    for got, pin in itertools.zip_longest(have, want):
-        if got == pin:
+    changed, moved or duplicated, or a pinned unit gone, named with its own place."""
+    have, want = pin_selected(spec, select, headings, whole), pin_rows(table)
+    for op, i1, _i2, j1, j2 in difflib.SequenceMatcher(
+        None, want, have, autojunk=False
+    ).get_opcodes():
+        if op == "equal":
             continue
-        if got is None and pin is not None:
+        places = {u[:2] for u in have[j1:j2]}
+        if op == "delete" or (op == "replace" and want[i1][:2] not in places):
+            pin = want[i1]
             return f"{pin[0]}{PIN_SEP}{pin[1]}: a pinned unit is gone: {pin[2][:60]!r}"
-        if got is not None:
-            return (
-                f"{got[0]}{PIN_SEP}{got[1]}: new, changed, moved or duplicated, not the pinned "
-                f"text: {got[2][:60]!r}"
-            )
+        got = have[j1]
+        return (
+            f"{got[0]}{PIN_SEP}{got[1]}: new, changed, moved or duplicated, not the pinned "
+            f"text: {got[2][:60]!r}"
+        )
     return None
 
 
@@ -5518,7 +5594,7 @@ def pins_gates(spec: str) -> list[str]:
     found = pin_gate(spec, SEC_BEARING_RE, SEC_PIN_TXT, False)
     if found:
         return [fail("sec-pin", f"security text (SEC_PIN_TXT): {found}")]
-    found = pin_gate(spec, STATUS_BEARING_RE, STATUS_PIN_TXT, True)
+    found = pin_gate(spec, STATUS_BEARING_RE, STATUS_PIN_TXT, True, STATUS_WHOLE_RE)
     if found:
         return [fail("status-pin", f"a ruling or a settled state (STATUS_PIN_TXT): {found}")]
     return []
@@ -5538,7 +5614,7 @@ def gates(spec: str, ctx: Ctx) -> tuple[list[str], dict[str, Any]]:
         if found:
             bad.append(found)
     bad += bc + line_gates(spec, ctx.facts, known) + text_gates(spec, ctx.t, ctx.facts)
-    bad += reconcile_gates() + pinned_gates(spec) + keyboard_gates(spec)
+    bad += reconcile_gates() + pinned_gates(spec) + keyboard_gates(spec) + focus_pairs_gates(spec)
     bad += section_gates(spec, ctx) + contract_gates(ctx.facts)
     bad += [fail("token-missing", f"token MISSING: {tok}") for tok in ctx.missing]
     bad += [
@@ -6298,6 +6374,7 @@ def mutations() -> list[Mutation]:
         + fold_mutations(share)
         + fold2_mutations()
         + fold3_mutations()
+        + fold4_mutations()
     )
 
 
@@ -7545,6 +7622,118 @@ def fold3_mutations() -> list[Mutation]:
     ]
 
 
+def prose_add(head: str, words: str) -> Callable[[str], str]:
+    """Append `words` to the first prose line under the heading that starts with `head`."""
+
+    def apply(s: str) -> str:
+        lines = s.split("\n")
+        at = next((i for i, ln in enumerate(lines) if ln.startswith(head)), None)
+        if at is None:
+            return s
+        for i in range(at + 1, len(lines)):
+            if lines[i] and not lines[i].startswith(("#", "|", "-", "<")):
+                lines[i] = lines[i].rstrip() + " " + words
+                return "\n".join(lines)
+        return s
+
+    return apply
+
+
+def fold4_mutations() -> list[Mutation]:
+    """The delta check of fold r3, one mutation per finding form: the lens's words, then two
+    variants each. P: a status word deleted or swapped for a word the list lacks (the default-deny
+    status pin); K: a refusal synonym or a keep form with no keep verb (S11); F: an Import verb said
+    to stay in a footer in §3.5, §4.4 and §4.5 (S5); C: a focus claim beside §7's pairs (S20)."""
+    copy_ready = "Copy-ready for the catalogue's owner, PROPOSED"
+    hand_off = "Each row is a PROPOSED hand-off"
+    s35, s44, s45 = "### 3.5 ", "### 4.4 ", "### 4.5 "
+    rl, eg, ev, ef, ec = (
+        "SCR-026/refused-limit",
+        "SCR-025/export-preparing",
+        "SCR-025/export-preview",
+        "SCR-025/export-failed",
+        "SCR-025/export-cancelled",
+    )
+    pairs = "`SCR-025/export-preparing` on Cancel or the title"
+    pin, part, verb = "[status-pin]", "[partial]", "[import-verb]"
+    status = [
+        ("P1-delete-11", sub(copy_ready, copy_ready[:-10]), pin),
+        ("P1-merged-11", sub(copy_ready, copy_ready[:-8] + "merged"), pin),
+        ("P1-delete-12", sub(hand_off, "Each row is a hand-off"), pin),
+        ("P1-merged-12", sub(hand_off, "Each row is a merged hand-off"), pin),
+        ("P1-done-12", sub(hand_off, "Each row is a done hand-off"), pin),
+        ("P1-closed-12", sub(hand_off, "Each row is a closed hand-off"), pin),
+        ("P1-pending-12", sub(hand_off, "Each row is a pending hand-off"), pin),
+        ("P1-landed-12", sub(hand_off, "Each row is a landed hand-off"), pin),
+        (
+            "P1-delete-prose",
+            sub(
+                "**The check before the preview (PROPOSED).**",
+                "**The check before the preview.**",
+            ),
+            pin,
+        ),
+        ("P1-swap-case", sub("(PROPOSED; no event fires", "(Official; no event fires"), pin),
+    ]
+    keep = [
+        (
+            "K1-fails",
+            prose_add(s35, "Whenever it fails, the layouts that passed stay in your workspaces."),
+            part,
+        ),
+        ("K1-bare", prose_add(s44, "The layouts that passed stay in your workspaces."), part),
+        (
+            "K1-turned-down",
+            prose_add(s45, "When the file is turned down, the valid layouts are kept."),
+            part,
+        ),
+        (
+            "K1-declined",
+            prose_add(
+                "## 7. ", "When the file is declined, the layouts remain in your workspaces."
+            ),
+            part,
+        ),
+        (
+            "K1-left-case",
+            prose_add("### 1.2 ", "IF THE CHECK FAILED, THE PANES ARE LEFT IN YOUR WORKSPACES."),
+            part,
+        ),
+        (
+            "K1-not-accepted",
+            prose_add("### 3.3 ", "Once the file is not accepted, the valid layouts remain."),
+            part,
+        ),
+    ]
+    footer = [
+        ("F1-35", prose_add(s35, "Import anyway stays in the footer."), verb),
+        ("F1-44", prose_add(s44, "Import anyway stays in the footer."), verb),
+        ("F1-45", prose_add(s45, "Import anyway stays in the footer."), verb),
+        (
+            "F1-separator",
+            prose_add(s44, "Nothing is announced · and Import anyway stays in the footer."),
+            verb,
+        ),
+        (
+            "F1-remains",
+            prose_add(s35, "Nothing moves, and Import as new workspace remains in the footer."),
+            verb,
+        ),
+        ("F1-offered-case", prose_add(s45, "IMPORT ANYWAY IS STILL OFFERED IN THE FOOTER."), verb),
+    ]
+    focus = [
+        ("C1-limit", cell_add(rl, 2, "and focus lands on Try again"), "[rejection-focus]"),
+        ("C1-preparing", cell_add(eg, 2, "and focus lands on Download file"), "[export-focus]"),
+        ("C1-failed", cell_add(ef, 2, "and focus lands on the title"), "[export-focus]"),
+        ("C1-cancelled", cell_add(ec, 2, "and focus lands on Try again"), "[export-focus]"),
+        ("C1-preview-case", cell_add(ev, 2, "AND FOCUS MOVES TO CLOSE"), "[export-focus]"),
+        ("C1-producer", cell_add(ef, 1, "and Download file takes focus"), "[export-focus]"),
+        ("C2-pair-changed", sub(pairs, pairs.replace("the title", "Close")), "[focus-pairs]"),
+        ("C2-pair-gone", sub(focus_pairs_line() + "\n", ""), "[focus-pairs]"),
+    ]
+    return [(n, fn, e, None) for n, fn, e in status + keep + footer + focus]
+
+
 def context_mutations() -> list[CtxMutation]:
     """Edits of an in-memory copy of a plan text that a gate must catch (a cite gone or doubled,
     a reason drifted, upstream copy gone, a contract fact changed, a pointer line moved)."""
@@ -7733,7 +7922,7 @@ def main(argv: list[str]) -> int:
         print(render_pins(spec, SEC_BEARING_RE))
         return 0
     if "--repin-status" in argv:
-        print(render_pins(spec, STATUS_BEARING_RE, True))
+        print(render_pins(spec, STATUS_BEARING_RE, True, STATUS_WHOLE_RE))
         return 0
     ctx = Ctx()
     bad, numbers_ = gates(spec, ctx)
@@ -8768,9 +8957,47 @@ STATUS_PIN_TXT = r"""
 @ prose
   every decision PROPOSED unless RULED (6396085915)
 @ prose
+  boards PENDING (§0: 10 <!-- audit:boards=10 --> boards, 2 <!-- audit:light_twins=2 --> of
+  them light twins, inside the cap of ≤ 10 boards with light twins ≤ 1/3
+@ prose
   **Owner approval pending (#2701)** (agent-delivery adaptations, owner decision
   2026-09-25): the owner's `approved` comment or the merge stands in for the ticket's CDO
   and Security-engineer sign-offs (§13).
+@ prose
+  **Method:** a desk spec over the merged E15-D01, E15-D02, E15-D03 and E15-D06 text and
+  boards, E05-D02 slice 4 and E09-D09
+@ prose
+  **Penpot page:** `E15-D09 Workspace import and export` · id pending (the boards PR pins it
+@ prose
+  **Start.** `blocked_by` E15-D02 (#248): Done
+@ prose
+  text merged in #4192 at `1044c4f602eff6ae1a2cf42201ab398f6c4234d1`, boards in #4408 at
+  `7be6eac6a705cf24ba534ce4f7d31349a1e29932`
+@ prose
+  its input E15-D01 merged in #4079 at `ed8a22246263ace73f39e4434e6d5f57b1a857bd`.
+@ prose
+  Merged siblings, cited as merged text: E15-D03 (#4478 at
+  `c4989493461ec6b6d22b9254633452a6362b750e`) and E15-D06 (#4470 at
+  `6e2c1211fc5f4675457d57011a346642f92710c5`)
+@ prose
+  E15-D04 (#4454 at `c73aec08246f06d28c70e8b959c658bc1a0c4d09`), the dock system, is pinned
+  because the ruling names it, and nothing of it is reused or cited here
+@ prose
+  E15-D08 (#4503, Export… in SCR-025's Share section) is PENDING: named only, never pinned
+  and never cited by line
+@ prose
+  Merged upstream: E15-D01 (`D01:39`)
+@ prose
+  PROPOSED, D09-G5)
+@ prose
+  The caps on a string from the file: names 40 <!-- audit:contract.name_max=40 -->
+  (`22:19638`), symbols 20 <!-- audit:contract.symbol_max=20 --> (`22:19864`), panel kinds
+  32 <!-- audit:contract.kind_max=32 --> (PROPOSED: `PaneKind` has no length bound,
+  `22:19778`, so the setting keys' cap of `22:19848` stands in
+@ prose
+  D09-G5), drawing labels 120 <!-- audit:contract.label_max=120 --> (`21:3300`), keys 64
+  <!-- audit:design.key_cap=64 --> and file names 40 <!-- audit:design.file_cap=40 -->
+  (PROPOSED).
 @ prose
   the spec is this file, beside its E15 siblings (`14:635`), with its gate tool (BQ-1
   RULED).
@@ -8784,89 +9011,524 @@ STATUS_PIN_TXT = r"""
 § Acceptance-criteria trace (#363)
 @ heading
   Acceptance-criteria trace (#363)
+@ prose
+  Status: **done** = specified here · **heuristic-only** = by the adaptation · **routed** =
+  its owner named (a drawing's owner is the boards PR, §0) · **text pending** = its section
+  is still a placeholder (the tool fails this word once no placeholder is left).
+@ row AC-1 · col 3
+  `SCR-025/export-preview`, `SCR-025/export-done` (§2.1)
 @ row AC-1 · col 3
   the Excluded sentence byte for byte (BQ-2 RULED)
+@ row AC-1 · col 4
+  done
 @ row AC-2 · col 2
   "A newer-version file is refused, not partially applied": both versions named, no option
   that applies part of the file
 @ row AC-2 · col 3
   BQ-4 and BQ-11 RULED
+@ row AC-2 · col 4
+  done
+@ row AC-3 · col 4
+  done
 @ row AC-4 · col 3
   §4.2 rows 3–4 (BQ-3 RULED: dropped and listed)
+@ row AC-4 · col 4
+  done
+@ row AC-5 · col 4
+  done
+@ row AC-6 · col 4
+  done
 @ row DL-1 · col 3
   BQ-7 RULED)
+@ row DL-1 · col 4
+  done
+@ row DL-2 · col 4
+  done
+@ row DL-3 · col 3
+  `SCR-025/export-preview`, `SCR-025/export-done`
+@ row DL-3 · col 4
+  done
+@ row DL-4 · col 3
+  `SCR-025/export-done`
 @ row DL-4 · col 3
   BQ-8 RULED
+@ row DL-4 · col 4
+  done
+@ row DL-5 · col 3
+  `SCR-025/export-done`
+@ row DL-5 · col 4
+  done
+@ row DL-6 · col 4
+  done
+@ row DL-7 · col 4
+  done
+@ row DL-8 · col 4
+  done
+@ row DL-9 · col 4
+  done
+@ row DL-10 · col 4
+  done
+@ row DL-11 · col 4
+  done
 @ row DL-12 · col 3
   BQ-2 RULED, owner approval pending (#2701)
+@ row DL-12 · col 4
+  done
+@ row DL-13 · col 4
+  done
+@ row DL-14 · col 4
+  done
+@ row DL-15 · col 4
+  done
+@ row DL-16 · col 4
+  done
+@ row DL-17 · col 4
+  done
+@ row DL-18 · col 4
+  done
+@ row DL-19 · col 4
+  done
+@ row DL-20 · col 4
+  done
+@ row DL-21 · col 4
+  done
+@ row DoD-3 · col 4
+  done
+@ row DoD-4 · col 4
+  done
 @ row DoD-6 · col 2
   The copy signed off on the trust claims
 @ row DoD-6 · col 3
   the owner's `approved` (#2701)
+@ row DoD-7 · col 4
+  done
+@ row DoD-8 · col 4
+  done
+@ row DoD-9 · col 2
+  The spec merged
 @ row DoD-9 · col 2
   CMP-067's Storybook list agreed
+@ row DoD-10 · col 4
+  done
 § The questions (BQ-1…BQ-16) — RULED by th
 @ heading
   The questions (BQ-1…BQ-16) — RULED by the orchestrator (2026-10-25, 6396085915, on the BQ
   comment 6396029607)
+@ row # · col 1
+  #
+@ row # · col 2
+  Question
+@ row # · col 3
+  Built here (the ruled outcome)
+@ row # · col 4
+  Status
+@ row BQ-1 · col 1
+  BQ-1
+@ row BQ-1 · col 2
+  the deliverable path, the branch, the Penpot page, the `14` / `15` edit set, the PR
+@ row BQ-1 · col 3
+  this file, `docs/design/E15/E15-D09.md`, and its tool `e15_d09_import_export_audit.py`
+@ row BQ-1 · col 3
+  the ticket's spec path and branch are the first two deviations
+@ row BQ-1 · col 3
+  the Penpot page `E15-D09 Workspace import and export`
+@ row BQ-1 · col 3
+  two content-only `14` pointer lines, after SCR-025's checklist (`14:624`) and SCR-026's
+  (`14:636`), and PROPOSED A-rows for `14:628–629` and `14:636` (§11)
+@ row BQ-1 · col 3
+  no `15` edit
+@ row BQ-1 · col 3
+  A-rows only (§10)
+@ row BQ-1 · col 3
+  the PR says `Refs #363` and `Partial:`, never a closing keyword
 @ row BQ-1 · col 4
   RULED (6396085915)
+@ row BQ-2 · col 1
+  BQ-2
+@ row BQ-2 · col 2
+  the trust claims, word for word
+@ row BQ-2 · col 3
+  the Excluded list, first-class and drawn as a list, in AC 1's words: "Never included:
+  credentials — API keys or tokens; accounts, trade-group and user ids; environment binding
+  (DEMO or LIVE); alert and rule bindings; P&L, positions or orders."
+@ row BQ-2 · col 3
+  a C-row to `D02:511`, an extension and not a contradiction
+@ row BQ-2 · col 3
+  the Included list names only what `WorkspaceBundle` holds (`22:21209–21230`)
+@ row BQ-2 · col 3
+  the import's trust note is `D02:513` verbatim: "A workspace file never carries credentials
+  or account bindings. Importing creates a new workspace and changes nothing else."
+@ row BQ-2 · col 3
+  the sharing claim in `22:12679`'s description is never written anywhere (its G-row names
+  it without repeating it)
+@ row BQ-2 · col 3
+  the tool gates both sentences byte for byte on every frame that shows them
+@ row BQ-2 · col 3
+  owner approval pending (#2701)
 @ row BQ-2 · col 4
   RULED (6396085915)
+@ row BQ-2 · col 4
+  owner approval pending (#2701)
+@ row BQ-3 · col 1
+  BQ-3
+@ row BQ-3 · col 2
+  account-scoped elements on import
+@ row BQ-3 · col 3
+  dropped and listed, never remapped, and no account the importer cannot see is ever named
+  in the preview, the report or a reason: its row reads "workspaces never carry account
+  bindings" (§4.2 row 3)
+@ row BQ-3 · col 3
+  the word "Remap" is kept for the one true remap, the Positions pane that shows your own
+  accounts (§4.2 row 4)
+@ row BQ-3 · col 3
+  `14:628–629` and the checklist item of `14:636` get PROPOSED A-rows (§11)
+@ row BQ-3 · col 3
+  E15-S07 receives D09-G1…G8, G13 and G14 by hand-off row (§12)
 @ row BQ-3 · col 4
   RULED (6396085915)
+@ row BQ-3 · col 4
+  owner approval pending (#2701)
+@ row BQ-4 · col 1
+  BQ-4
+@ row BQ-4 · col 2
+  the version rule
+@ row BQ-4 · col 3
+  a newer file refused with both versions and the constructive second sentence, no Import
+  verb (`SCR-026/rejected-version-newer`)
+@ row BQ-4 · col 3
+  an older compatible file migrated forward with "Migrated from format version 1 to 2."
+  (E15-S07's rule, `SCR-026/preview-migrated`)
+@ row BQ-4 · col 3
+  an older unsupported file refused with both versions (`SCR-026/rejected-version-older`,
+  the ticket's `version-older`)
+@ row BQ-4 · col 3
+  the comparison on `schema_version`, never an app version
 @ row BQ-4 · col 4
   RULED (6396085915)
+@ row BQ-4 · col 4
+  owner approval pending (#2701)
+@ row BQ-5 · col 1
+  BQ-5
+@ row BQ-5 · col 2
+  size, shape and the refused parse
+@ row BQ-5 · col 3
+  the five check steps in order, size → parse depth / node count → schema → version →
+  per-pane registry → preview
+@ row BQ-5 · col 3
+  nothing is created before Import as new workspace and nothing kept after a refusal
+@ row BQ-5 · col 3
+  the limits in copy rendered from the tool's facts (the Fixture paragraph), the node count
+  PROPOSED with D09-G5
+@ row BQ-5 · col 3
+  every refusal says "Nothing was imported."
 @ row BQ-5 · col 4
   RULED (6396085915)
+@ row BQ-6 · col 1
+  BQ-6
+@ row BQ-6 · col 2
+  the panel budget on a valid file
 @ row BQ-6 · col 3
   per layout, for the layout that opens: caught in the preview as the caption's last
   sentence and a warning line (`SCR-026/preview-over-budget`), then applied through
   US-LAY-001's CMP-044 confirm re-verbed "Import anyway", its Cancel focused
   (`SCR-026/budget-confirm`)
+@ row BQ-6 · col 3
+  a confirm, not a refusal, whose cancel fires `budget-exceeded`
 @ row BQ-6 · col 4
   RULED (6396085915)
+@ row BQ-7 · col 1
+  BQ-7
+@ row BQ-7 · col 2
+  the export surface and Export…'s availability
+@ row BQ-7 · col 3
+  Export… in three places
+@ row BQ-7 · col 3
+  SCR-025's Share section (E15-D08, PENDING by name), the tab's `[⋯]` (`D03:384`) and the
+  rail's workspace menu (`D02:511`)
+@ row BQ-7 · col 3
+  and one CMP-043 `md` dialog with the Included and Excluded lists built from the fetched
+  bundle
+@ row BQ-7 · col 3
+  Export… is a read (`22:12676`), never gated (a read): T1 for every session, view-as
+  included
+@ row BQ-7 · col 3
+  on the viewer's unsaved default it is an availability state (`D03:583`)
 @ row BQ-7 · col 4
   RULED (6396085915)
+@ row BQ-8 · col 1
+  BQ-8
+@ row BQ-8 · col 2
+  the file name and the completion
+@ row BQ-8 · col 3
+  `<slug>.cv-workspace-v<schema_version>.json`, the slug the workspace name lower-cased,
+  ASCII-folded, every other character a `-`, capped like a name (D09-G14)
+@ row BQ-8 · col 3
+  the fixture `scalping.cv-workspace-v1.json`
+@ row BQ-8 · col 3
+  a drawn completion step naming the saved file (`SCR-025/export-done`)
+@ row BQ-8 · col 3
+  a dismissed save sheet keeps the preview (`SCR-025/export-cancelled`)
 @ row BQ-8 · col 4
   RULED (6396085915)
+@ row BQ-9 · col 1
+  BQ-9
+@ row BQ-9 · col 2
+  the import dialog
+@ row BQ-9 · col 3
+  CMP-043 `lg` with its steps in one chrome
+@ row BQ-9 · col 3
+  choose, validating, preview, the send, the report
+@ row BQ-9 · col 3
+  Choose file… a real button fronting the labelled native input
+@ row BQ-9 · col 3
+  the drop zone not a Tab stop
+@ row BQ-9 · col 3
+  a name clash disambiguated by the server (`D02:516`)
+@ row BQ-9 · col 3
+  Cancel, `Esc` and × before the send close the dialog with nothing imported
 @ row BQ-9 · col 4
   RULED (6396085915)
+@ row BQ-10 · col 1
+  BQ-10
+@ row BQ-10 · col 2
+  the preview table
+@ row BQ-10 · col 3
+  CMP-049 table mode, the caption first with the counts
+@ row BQ-10 · col 3
+  the columns Item · Type · Action · Reason
+@ row BQ-10 · col 3
+  drops and remaps first, additions after
+@ row BQ-10 · col 3
+  exactly three Action words, each a word with a decorative glyph
+@ row BQ-10 · col 3
+  the unknown kinds by stored name with the ticket's reason
+@ row BQ-10 · col 3
+  strings from the file as text, capped (the Fixture paragraph
+@ row BQ-10 · col 3
+  the symbol cap is the fourth deviation)
 @ row BQ-10 · col 4
   RULED (6396085915)
+@ row BQ-11 · col 1
+  BQ-11
+@ row BQ-11 · col 2
+  the rejection frames
+@ row BQ-11 · col 3
+  six CMP-027 `inline` frames, `live="polite"`, the dialog kept open with Choose another
+  file focused beside its Cancel
+@ row BQ-11 · col 3
+  no Import verb on any of them (AC 2: omitted, never T2-locked)
+@ row BQ-11 · col 3
+  each names its problem and its limit and says "Nothing was imported."
+@ row BQ-11 · col 3
+  each fires one `layout.import_rejected{reason}`
 @ row BQ-11 · col 4
   RULED (6396085915)
+@ row BQ-12 · col 1
+  BQ-12
+@ row BQ-12 · col 2
+  the post-import report
 @ row BQ-12 · col 3
   the dialog's final step, a `role="region"` named "Import report" with the table
   re-rendered (§4.3) and Copy report (CMP-033)
+@ row BQ-12 · col 3
+  it stays until Close and is never a toast
 @ row BQ-12 · col 4
   RULED (6396085915)
+@ row BQ-13 · col 1
+  BQ-13
+@ row BQ-13 · col 2
+  the keyboard path and the tree
+@ row BQ-13 · col 3
+  Choose file… is a real `<button>` whose `Enter` or `Space` opens the OS picker
+@ row BQ-13 · col 3
+  the drop zone only adds to the input
+@ row BQ-13 · col 3
+  the table is one Tab stop read with its headers
+@ row BQ-13 · col 3
+  each announcement polite and once (§7)
 @ row BQ-13 · col 4
   RULED (6396085915)
+@ row BQ-14 · col 1
+  BQ-14
+@ row BQ-14 · col 2
+  T2 per role, view-as first
+@ row BQ-14 · col 3
+  Import… is a write (`22:8521`): its legs in the server's order, view-as first
+  (`rbac.view_as`), then the permission (`rbac.permission`), then the state
+  (`workspace.limit.count`), keys as merged E15-D02 (`D02:655`) and E15-D03 (`D03:564`)
+  carry them
+@ row BQ-14 · col 3
+  Export… is never gated
+@ row BQ-14 · col 3
+  a rejected file never T2-locks Import because the verb is absent
+@ row BQ-14 · col 3
+  an absence is never a lock and validity is never a lock
+@ row BQ-14 · col 3
+  T2 is stated once (§6)
 @ row BQ-14 · col 4
   RULED (6396085915)
+@ row BQ-15 · col 1
+  BQ-15
+@ row BQ-15 · col 2
+  the boards under the cap
+@ row BQ-15 · col 3
+  ten boards with at most three light twins
+@ row BQ-15 · col 3
+  two here (§0)
+@ row BQ-15 · col 3
+  every other frame not drawn, the text binding, drawn on request
 @ row BQ-15 · col 4
   RULED (6396085915)
+@ row BQ-16 · col 1
+  BQ-16
+@ row BQ-16 · col 2
+  the gate tool, the mutation list and the G-rows
+@ row BQ-16 · col 3
+  the tool in E15-D08's form with D09's own row ids: per-frame gates over every row of every
+  table and the prose, case-insensitive vocabulary lists, whole clauses
+@ row BQ-16 · col 3
+  S1–S20 each a `--self-test` mutation
+@ row BQ-16 · col 3
+  the G-rows D09-G1…G14 to `22`'s owner (`22` first, C-6.1)
 @ row BQ-16 · col 4
   RULED (6396085915)
+@ row Condition 1 · col 1
+  Condition 1
+@ row Condition 1 · col 2
+  security
+@ row Condition 1 · col 2
+  every string from the file is untrusted
+@ row Condition 1 · col 3
+  every string from the file is untrusted: text only, never markup and never a link, capped
+  with the cap stated, the malformed reason naming the key in mono, truncated
+@ row Condition 1 · col 3
+  the report echoes no raw file content beyond those capped names
+@ row Condition 1 · col 3
+  the client's parse is a courtesy
+@ row Condition 1 · col 3
+  the server re-checks size, depth, nodes, schema and version (E15-S07) and
+  `SCR-026/validating` says so
+@ row Condition 1 · col 3
+  a refused parse is never a partial import
+@ row Condition 1 · col 3
+  nothing is created before Import as new workspace and nothing kept after a refusal
 @ row Condition 1 · col 4
   RULED (6396085915)
+@ row Condition 1 · col 4
+  binding on every frame
+@ row Condition 2 · col 1
+  Condition 2
+@ row Condition 2 · col 2
+  A1
+@ row Condition 2 · col 2
+  the T2 rule
+@ row Condition 2 · col 3
+  Import… is a write, its legs in the server's order, view-as first (`rbac.view_as`), then
+  `rbac.permission`, then `workspace.limit.count`
+@ row Condition 2 · col 3
+  Export… is never gated
+@ row Condition 2 · col 3
+  a rejected file never T2-locks Import
+@ row Condition 2 · col 3
+  an absence is never a lock
+@ row Condition 2 · col 3
+  validity is never a lock
 @ row Condition 2 · col 4
   RULED (6396085915)
+@ row Condition 2 · col 4
+  binding on every frame
+@ row Condition 3 · col 1
+  Condition 3
+@ row Condition 3 · col 2
+  A2
+@ row Condition 3 · col 2
+  the gates
+@ row Condition 3 · col 3
+  the tool reads every frame table row by row, every other table and the prose, with
+  case-insensitive vocabulary lists (the gated-exit words, the environment words, the
+  sharing claim, the markup and link words) against whole clauses, never first words
+@ row Condition 3 · col 3
+  one `--self-test` mutation per ruled sentence and per frame element, S1–S20 the minimum
 @ row Condition 3 · col 4
   RULED (6396085915)
+@ row Condition 3 · col 4
+  binding from the first commit
+@ row Condition 4 · col 1
+  Condition 4
+@ row Condition 4 · col 2
+  A3 / A4
+@ row Condition 4 · col 2
+  the exits and honesty
+@ row Condition 4 · col 3
+  Cancel, Esc, ×, Close and Choose another file are never gated on any frame, view-as and
+  the Viewer's included
+@ row Condition 4 · col 3
+  merged texts at their merge shas
+@ row Condition 4 · col 3
+  every departure a PROPOSED A, C or G-row
 @ row Condition 4 · col 3
   "RULED" cites 6396085915
+@ row Condition 4 · col 3
+  no lane is an authority
 @ row Condition 4 · col 4
   RULED (6396085915)
+@ row Condition 4 · col 4
+  binding on every frame
+@ prose
+  **Standing (binding on every section).** **A1** T2 is E09-D09's, stated once in §6:
+  Import… is a write and its legs run view-as first
+@ prose
+  Export… is a read and never gated
+@ prose
+  a rejection, a refusal, an absence and form validity are never a lock.
+@ prose
+  **A2** every gate reads whole clauses with case-insensitive vocabulary lists, and every
+  ruled sentence and frame element has its mutation.
+@ prose
+  **A3** the exits are never gated
+@ prose
+  Cancel, `Esc`, ×, Close and Choose another file, on every frame and for every session,
+  view-as and the Viewer's included.
+@ prose
+  **A4** honesty: merged texts at their merge shas, E15-D08 by name only, every departure a
+  PROPOSED A, C or G-row, and nothing measured, signed or drawn is claimed before it is.
 @ prose
   16 <!-- audit:bq_rows=16 --> questions and 4 <!-- audit:conditions=4 --> conditions RULED.
 § §0
 @ heading
   0. Boards (PENDING — the boards PR draws them)
 @ prose
+  The boards are drawn from this text in a second PR on the Penpot page `E15-D09 Workspace
+  import and export` (id pending), named `E15-D09 / NN slug`, their frames named as in
+  §2–§5, exported at 1:1 through `docs/design/_tools/penpot_export.py` to
+  `docs/design/E15/img/`, with greyscale and deuteranopia renders through
+  `docs/design/_tools/cvd_sim.py` for boards 03, 04 and 06 (the Add, Drop and Remap glyphs
+  and the rejection colour).
+@ prose
   Dark and comfortable unless the row says otherwise: ten boards, two of them light twins
   (BQ-15 RULED).
+@ row 01 · col 3
+  `SCR-025/export-preview`, `SCR-025/export-done`
+@ row 01 · col 6
+  pending
+@ row 02 · col 6
+  pending
+@ row 03 · col 6
+  pending
+@ row 04 · col 6
+  pending
+@ row 05 · col 6
+  pending
+@ row 06 · col 6
+  pending
+@ row 07 · col 6
+  pending
+@ row 08 · col 6
+  pending
+@ row 09 · col 6
+  pending
+@ row 10 · col 6
+  pending
 @ prose
   drawn on request** (BQ-15 RULED): `SCR-025/export-preparing`, `SCR-025/export-failed`,
   `SCR-025/export-cancelled`, `SCR-025/export-reflow-200`, `SCR-026/drag-over`,
@@ -8880,6 +9542,11 @@ STATUS_PIN_TXT = r"""
   Cited and never re-decided: each input below fixes something in this spec, and §2–§16 cite
   it rather than restate it. §1.2 states the trust boundary once and every frame of §2–§5
   applies it
+@ prose
+  §1.4 lists the decisions this spec takes on top of its inputs, each PROPOSED unless a
+  ruling is named
+@ prose
+  the ruled answers are the questions table's (6396085915).
 § §1.1
 @ heading
   1.1 Locked inputs (cited, never re-decided)
@@ -8891,25 +9558,49 @@ STATUS_PIN_TXT = r"""
   the Drop rows (BQ-3 RULED)
 @ row US-LAY-007: the export carries no secret · col 3
   the version refusals (BQ-4 RULED)
+@ row E15-D03, merged in #4478 at the base: th · col 1
+  E15-D03, merged in #4478 at the base: the T2 rule stated once
 @ row D-15 and US-LAY-001's cost confirm: belo · col 3
   the budget line and the stacked confirm re-verbed Import anyway (BQ-6 RULED, §4.4)
 @ row `22`: `exportWorkspace` is a read (`work · col 3
   Export… never gated (BQ-7 RULED)
+@ row E05-D02 slice 4: H22, `Esc`, the scrim a · col 1
+  E05-D02 slice 4: H22, `Esc`, the scrim and the outcome surface after a view is closed
+@ row E05-D02 slice 4: H22, `Esc`, the scrim a · col 3
+  the exits and the toasts after a closed view (§3.5, §7)
+@ row E15-S07: the check order (size, the pars · col 3
+  the limits, PROPOSED for `22` (D09-G5)
 @ row E15-D06 D-9: a layout never stores an ac · col 3
   the account setting's Drop row (BQ-3 RULED, §4.4)
+@ row The ticket: the six acceptance criteria, · col 1
+  The ticket: the six acceptance criteria, the six rejection reasons, the 2 MB file checked
+  within 500 ms in a worker, the security and accessibility notes
 § §1.2
 @ heading
   1.2 The trust boundary, stated once
+@ prose
+  Each of the ticket's four hazards has one rule here, and every frame of §2–§5 applies it.
 @ row Exfiltration: the file leaves the machin · col 3
   `SCR-025/export-preview`, `SCR-025/export-done` (BQ-2 RULED
+@ row Exfiltration: the file leaves the machin · col 3
+  owner approval pending (#2701))
 @ row Injection through content: every string  · col 2
   the same rule holds in the applied workspace, whose names the server sanitises again
   (`22:19626`)
+@ prose
+  **The server re-checks (Condition 1).** No guard in the browser replaces the server's own
+  validation: the server re-checks size, depth, nodes, schema and version when the file is
+  imported (E15-S07), refuses unknown fields on its write paths, fail closed, while the
+  client ignores them (C-6.3
 @ prose
   BQ-5 RULED).** No workspace, layout or pane exists before Import as new workspace is
   pressed on a preview
 @ prose
   **What the user is told (BQ-2 RULED
+@ prose
+  owner approval pending (#2701)).** Two sentences carry the trust claims, each gated byte
+  for byte wherever it shows: the Excluded list on the export and the trust note on the
+  import (§9 holds both).
 § §1.3
 @ heading
   1.3 The state inventory, reconciled (binding; the tool gates every row)
@@ -8917,9 +9608,27 @@ STATUS_PIN_TXT = r"""
   a failure after the send has no partial frame, because the import is never partial
   (D09-G1), and its frame is the server's refusal, or, when no answer came, the frame that
   says the import could not be confirmed.
+@ row 5 · col 3
+  `SCR-025/export-done`
+@ row 25 · col 2
+  import: done, the report
 § §1.4
 @ heading
   1.4 Decisions of this spec (PROPOSED unless RULED)
+@ prose
+  Each row is stated in full where it applies
+@ prose
+  a ruled question is the questions table's and is never repeated here.
+@ row D09-D2 · col 2
+  before the preview the client reads the fetched bundle with the import's own check: data
+  the lists cannot show, or a setting the import would drop as account-scoped, fails the
+  export closed
+@ row D09-D18 · col 2
+  when the view was closed during the send, a persistent `success` toast with View report,
+  or a persistent `danger` toast with Review, carries the outcome, and an unanswered send a
+  persistent `warning` toast with Review (D09-D33)
+@ row D09-D33 · col 2
+  after the view closed, a `warning` toast writes its words, never `e15.import.nothing`
 § §2
 @ heading
   2. Export: entry points, the preview dialog, the file and its completion
@@ -8929,36 +9638,127 @@ STATUS_PIN_TXT = r"""
   (`15:466`), which calls `exportWorkspace` once, counts the Included list from the bundle
   it gets and saves that same bundle, so what the owner checks is what the file holds
   (`D02:511`
+@ prose
+  The trust copy is BQ-2's ruled text, owner approval pending (#2701), and the sharing claim
+  in `exportWorkspace`'s description is written nowhere in this spec (D09-G11).
+@ prose
+  A decision that names no ruling is PROPOSED.
 § §2.1
 @ heading
   2.1 Frames (binding; the tool gates every row)
+@ row `SCR-025/export-entry` · col 2
+  Export… opened from SCR-025's Share section (E15-D08, PENDING by name), the tab's `[⋯]`
+  (`D03:384`) or the rail's workspace menu (`D02:511`), on a stored workspace
+@ row `SCR-025/export-entry` · col 3
+  Components: a CMP-041 item of `kind` action in the tab's `[⋯]` and in the rail's workspace
+  menu, with no glyph and no shortcut · in SCR-025's Share section a CMP-001 `secondary`
+  button, which E15-D08 draws (PENDING, by name)
+@ row `SCR-025/export-unavailable` · col 3
+  Components: the same CMP-041 item with its second line, which its `aria-describedby` names
+  · no glyph · in SCR-025, the same CMP-001 `secondary` button with the line under it
+  (E15-D08, PENDING)
+@ row `SCR-025/export-preparing` · col 3
+  Timing: the line shows only after the 150 ms show-delay BQ-9 rules for the import (§3.4),
+  PROPOSED here for the export (D09-D9), so a quick answer goes straight to the preview ·
+  Cancel ends the read and nothing is exported
+@ row `SCR-025/export-preview` · col 3
+  Components: CMP-043 `md` · two CMP-036 KeyValueRows in one `dl`, each with its lead-in as
+  the term and its list as the value, a `ul` with one `li` per clause that keeps the
+  clause's own punctuation · the caveat a plain line · CMP-001 `secondary` and `primary` ·
+  CMP-028 `info` for unsaved changes and `warning` for an import limit, each only when it
+  applies, `live="off"` (§2.3)
+@ row `SCR-025/export-failed` · col 3
+  Variants, PROPOSED, the same frame with its own sentence: a `403` or `404` from the read,
+  "Couldn't prepare the file: this workspace can no longer be read. Nothing was exported." ·
+  a bundle holding what the preview can't show (§2.3), "Couldn't prepare the file: it holds
+  something this preview can't show. Nothing was exported." · a write that failed (§2.4),
+  "Couldn't save the file. Nothing was exported."
+@ row `SCR-025/export-done` · col 1
+  `SCR-025/export-done`
+@ row `SCR-025/export-done` · col 3
+  done: CMP-028 `success` "Exported Scalping as scalping.cv-workspace-v1.json."
+@ row `SCR-025/export-done` · col 5
+  `e15.export.title` · `e15.export.close` · `e15.export.done` · `e15.export.excluded` ·
+  `e15.export.close_button`
+@ row `SCR-025/export-cancelled` · col 2
+  the OS save sheet closed without saving (`FL:146`)
+@ row `SCR-025/export-cancelled` · col 3
+  the save sheet closed unsaved, the preview stays as it was and no event fires
 § §2.2
 @ heading
   2.2 Entry points and the dialog
 @ prose
   **Three places, one dialog (BQ-7 RULED).** Export… sits wherever a workspace is managed,
   and each place opens the same dialog on the workspace it belongs to:
+@ row SCR-025's Share section · col 5
+  E15-D08, PENDING by name
+@ prose
+  SCR-025's Share section is E15-D02 §5.10's, its hi-fi E15-D08's (PENDING)
 @ prose
   this spec adds no shortcut and no palette command, and the three places are the ones BQ-7
   RULED names.
+@ row Footer · col 3
+  the done step's footer is Close alone
 § §2.3
 @ heading
   2.3 The Included and Excluded lists: anatomy and redlines
 @ prose
   **What the two lists say (BQ-2 RULED
+@ prose
+  owner approval pending (#2701)).** The Included list is counted from the fetched bundle,
+  so it names only what `WorkspaceBundle` holds (`22:21209–21230`): no density, which no
+  workspace stores (the third deviation).
+@ prose
+  **The check before the preview (PROPOSED).** The preview can vouch only for what it lists,
+  so before it draws the lists the client reads the fetched bundle with the import's own
+  check (§3's five steps, in the same worker as the import's, `14:633`), and the export
+  never saves what the preview cannot show:
+@ prose
+  and because the file is the bytes as fetched (§2.4), the client declines to save a bundle
+  that carries one, or a pane setting the import would drop as account-scoped (§4.2's third
+  row): `SCR-025/export-failed` with "Couldn't prepare the file: it holds something this
+  preview can't show. Nothing was exported." `WorkspaceBundle` and `ChartTemplateInput` are
+  not closed today (D09-G4)
+@ prose
+  **Unsaved changes (PROPOSED).** `exportWorkspace` reads the store, so a layout's unsaved
+  working copy and SCR-025's unsaved edits are not in the file.
+@ prose
+  **Anatomy and redlines (comfortable / compact).** The body of the preview, the done step
+  and the failed step
+@ row Completion line (the done step) · col 1
+  Completion line (the done step)
 § §2.4
 @ heading
   2.4 The file name and the completion
 @ prose
   **The name (BQ-8 RULED
 @ prose
+  The slug, PROPOSED in full:
+@ prose
+  They are written whole or not at all (to a temporary file, then renamed), so a failed
+  write leaves no partial file and turns the dialog to `SCR-025/export-failed` with
+  "Couldn't save the file. Nothing was exported." (PROPOSED), whose Try again opens the
+  sheet again.
+@ prose
+  A sheet closed unsaved returns to the preview as it was, `SCR-025/export-cancelled`:
+  nothing saved and no event (`FL:146`).
+@ prose
+  the hand-off is the only answer the page gets there, so it counts as the save (PROPOSED
+@ prose
   **The completion step (BQ-8 RULED).** When the write ends, the body changes in place
   (`SCR-025/export-done`): a CMP-028 `success` line, "Exported Scalping as
   scalping.cv-workspace-v1.json.", the file name in `type.num.sm` and selectable, then the
   Excluded list, unchanged, so the owner sees what the file leaves out as they send it on.
+@ prose
+  The press of Download file alone never fires it, nor does a sheet closed unsaved or a
+  failure.
 § §2.5
 @ heading
   2.5 Per frame: what changes, the components and the focus
+@ row cancelled (`SCR-025/export-cancelled`) · col 2
+  the save sheet closed unsaved
+@ row done (`SCR-025/export-done`) · col 1
+  done (`SCR-025/export-done`)
 § §3
 @ heading
   3. The import flow: entry, the dialog, choosing a file, validating, applying
@@ -8971,9 +9771,16 @@ STATUS_PIN_TXT = r"""
   (BQ-2 RULED).
 @ prose
   BQ-5 RULED).
+@ prose
+  §3.2 to §3.5 give each one its anatomy, redlines, tokens and focus, and a decision that
+  names no ruling is PROPOSED.
 § §3.1
 @ heading
   3.1 Frames (binding; the tool gates every row)
+@ row `SCR-026/pick` · col 3
+  a real `<button>` (CMP-001 `secondary`) fronting the labelled native `<input type="file">`
+  (CMP-067, `accept=".json,application/json"`, `multiple` false), whose `Enter` or `Space`
+  opens the OS picker
 § §3.2
 @ heading
   3.2 The entries and the dialog's one chrome
@@ -8982,7 +9789,20 @@ STATUS_PIN_TXT = r"""
   workspace… and Open workspace… (`D03:365`), and of the rail's workspace menu, where no
   merged text places it yet (BQ-9 RULED
 @ prose
+  no operation takes a bundle yet, `22:21226`), so §6's legs gate it, view-as first, with
+  the keys merged E15-D02 and E15-D03 carry (`D02:655`
+@ prose
   **One chrome, five steps (BQ-9 RULED).** The body changes with the step
+@ row preview · col 2
+  the migration or the budget line when one applies
+@ row preview · col 2
+  the clash line when one applies
+@ row Card · col 3
+  its top edge stays where it opened while the body grows, so the title and the zone never
+  move under the pointer (PROPOSED)
+@ row Trust note · col 3
+  the dialog's `aria-describedby`, so a screen reader hears it as focus enters the dialog
+  (PROPOSED)
 @ prose
   **Focus and keys in the dialog (BQ-13 RULED
 § §3.3
@@ -8991,12 +9811,40 @@ STATUS_PIN_TXT = r"""
 @ prose
   **Choose file… (BQ-13 RULED
 @ prose
+  It fronts CMP-067's native `<input type="file">` (`15:690–696`), which carries
+  `accept=".json,application/json"` and `multiple` false: the input is `hidden`, so it is
+  out of the Tab order and out of the accessibility tree, the button's click opens it, and
+  it stays labelled by the button (`aria-labelledby`), so the one control a keyboard or
+  screen-reader user meets is the button and browse mode finds no second Choose file…
+  (PROPOSED anatomy
+@ prose
+  The OS picker filters by `accept`
+@ prose
   **The drop zone (BQ-9 RULED
+@ prose
+  Dropping two or more files reads none of them and changes nothing: the zone returns to
+  rest and its drag-over words, "Drop one .json file", are announced once, politely
+  (PROPOSED
+@ row The zone · col 2
+  CMP-067's drop target, a box with no role (PROPOSED: the label, the hint and the states
+  are A-rows to CMP-067, §10)
+@ row File line · col 2
+  the chosen file's name, once a file is picked or dropped (PROPOSED)
+@ row Drag-over · col 4
+  accept: edge `color.border.selected` on `color.surface.hover`
 § §3.4
 @ heading
   3.4 The five check steps, the validating state and the server's re-check
 @ prose
   **The order (BQ-5 RULED
+@ row 1 · col 3
+  a picked file's type is checked too, because `accept` only filters what the OS picker
+  offers
+@ row 1 · col 4
+  2 <!-- audit:contract.size_mb=2 --> MB, E15-S07's default (`BL:1136`), PROPOSED for `22`
+  (D09-G5)
+@ row 2 · col 4
+  10,000 <!-- audit:contract.nodes=10000 --> values (`BL:1136`), PROPOSED (D09-G5)
 @ row 4 · col 3
   the file's `schema_version` (`22:21215`) against the format version this app reads (BQ-4
   RULED): newer is refused
@@ -9006,23 +9854,72 @@ STATUS_PIN_TXT = r"""
   scalping.json… step 3 of 5" (`e15.import.checking`: `D02:515`'s words with the step
   added), the file's name capped at 40 <!-- audit:design.file_cap=40 --> characters as text.
 @ prose
+  A show-delay of 150 ms (BQ-9's default, ruled as proposed) keeps a file that validates
+  within the 500 <!-- audit:contract.parse_ms=500 --> ms of `14:633` from flashing the bar
+@ prose
+  That departs from `D02:515`, which names them, and is a PROPOSED C-row (D09-C13).
+@ prose
   **What is spoken (BQ-13 RULED
+@ prose
+  The worker reads the file as plain data and builds the preview only from the fields
+  `WorkspaceBundle` names, so an unknown key, `__proto__` and `constructor` included, is
+  never read into the app: the client ignores it, as C-6.3 asks of every client, and the
+  server refuses it on its write path, fail closed (C-6.3
 § §3.5
 @ heading
   3.5 The send, the creating state and every frame of §3.1
 @ prose
   **The send (BQ-9 RULED
 @ prose
+  done in the client as `createWorkspace` and then `createLayout` per layout, the import
+  would not be atomic, `FL:171`, which is why no frame here shows a partial state).
+@ prose
+  CMP-001's buy and sell keep their label the same way, PROPOSED for this primary so the
+  effect stays named while it runs).
+@ prose
+  After CMP-001's slow-path delay, "Still importing…" shows under the footer, end-aligned in
+  `type.ui.caption` + `color.text.secondary`, and is spoken once, politely (PROPOSED copy,
+  `e15.import.slow`).
+@ prose
+  **When the view was closed during the send (PROPOSED
+@ prose
+  H22's outcome surface, `S4:734`).** The new workspace still opens in a tab, and a
+  persistent CMP-045 `success` toast writes the report's success line
+  (`e15.import.report.done`) once into CMP-212's polite region, with the action View report
+  (`e15.import.report.view`), which reopens SCR-026 at its report (§4.5)
+@ prose
+  A refusal that arrives after the view closed raises a persistent CMP-045 `danger` toast,
+  "Nothing was imported." (`e15.import.nothing`), with the action Review
+  (`e15.import.review`), which reopens SCR-026 at the refusal's frame (§5.1).
+@ prose
+  A send left unanswered after the view closed raises a persistent CMP-045 `warning` toast
+  with `SCR-026/refused-unconfirmed`'s words, "We couldn't confirm the import. Check your
+  workspaces before importing again." (`e15.import.refused.unconfirmed`), and the action
+  Review, which reopens SCR-026 at that frame
+@ prose
   No toast is the report: the report is the dialog's region (BQ-12 RULED).
+@ row drag-over · col 2
+  the zone's accept state (§3.3)
 § §4
 @ heading
   4. The preview table and the report
 § §4.1
 @ heading
   4.1 Frames (binding; the tool gates every row)
+@ row `SCR-026/preview` · col 3
+  Add (`check`), Drop (`x-circle`, PROPOSED), Remap (`merge`, PROPOSED)
+@ row `SCR-026/preview-migrated` · col 3
+  Add (`check`), Drop (`x-circle`, PROPOSED), Remap (`merge`, PROPOSED)
+@ row `SCR-026/preview-over-budget` · col 3
+  Add (`check`), Drop (`x-circle`, PROPOSED), Remap (`merge`, PROPOSED)
 @ row `SCR-026/report` · col 3
   region: the dialog's final step, `role="region"` named "Import report", its heading
   `tabindex="-1"` focused on arrival, every line selectable
+@ row `SCR-026/report` · col 3
+  Add (`check`), Drop (`x-circle`, PROPOSED), Remap (`merge`, PROPOSED)
+@ row `SCR-026/report` · col 5
+  `e15.import.report.heading` · `e15.import.report.done` · `e15.import.report.caption` ·
+  `e15.import.report.copy` · `e15.import.report.copied` · `e15.import.report.close`
 § §4.2
 @ heading
   4.2 The preview table (fixture `scalping.json`; binding)
@@ -9035,24 +9932,58 @@ STATUS_PIN_TXT = r"""
 @ prose
   **The table (BQ-10 RULED
 @ prose
+  a file holds at most 32 <!-- audit:contract.layouts_max=32 --> layouts of 16 <!--
+  audit:contract.panes_max=16 --> panes each (PROPOSED: CMP-049's `virtualized` off here).
+@ prose
   **The Action column (BQ-10 RULED
 @ prose
+  DoD-4).** Exactly three words, each after a decorative CMP-019 glyph in its own cell
+  (`aria-hidden`, `15:225`): Add (`check`), Drop (`x-circle`, the PROPOSED glyph `15:307`
+  registers) and Remap (`merge`, PROPOSED).
+@ prose
   **Account-scoped elements (BQ-3 RULED
+@ prose
+  `14:628–629`'s "remap to the user's default account" gets a PROPOSED A-row (§11).
+@ prose
+  Each value is direction-isolated (`<bdi>`), and each control or bidirectional-formatting
+  character in it (the set `22:19626–19631` makes the server strip from a name), and each
+  character of the `Default_Ignorable_Code_Point` property, which would be invisible (§5.5),
+  shows as a visible "�" instead of acting or hiding, so no file string can reorder the row
+  around it or hide part of itself (PROPOSED).
+@ prose
+  **Striping, the header and the rows (PROPOSED A-row to CMP-049, §10).** Inside a dialog
+  the table sits on `color.surface.overlay`, where CMP-049's panel stripes (odd
+  `color.surface.canvas`, `15:524–531`) would read as holes, so the odd rows take
+  `color.surface.overlay` and the even rows `color.surface.raised`.
 @ prose
   **The panel budget (BQ-6 RULED
 @ prose
   BQ-6 RULED
+@ prose
+  The three `layout.cost.import.*` strings are PROPOSED, an A-row to E15-D03's deck
+  (D09-A20).
+@ prose
+  Import anyway is a CMP-001 `primary` and not `danger`, because nothing is destroyed and
+  the stutter it accepts ends when panels close
 @ prose
   Cancel and `Esc` return to the preview with focus on Import as new workspace and fire
   `layout.import_rejected{reason: budget-exceeded}` once: the ticket's sixth reason counts a
   user who declined the stutter, not a refused file (BQ-6 RULED).
 @ prose
   **The migration line (BQ-4 RULED
+@ prose
+  The table then lists what the migrated file creates, and the report of a migrated import
+  carries the same line above its table (PROPOSED
 § §4.5
 @ heading
   4.5 The report and Copy report
 @ prose
   **The report (BQ-12 RULED
+@ prose
+  Inside the region, in order: the CMP-028 `success` line "Imported Scalping (2): 7 panels,
+  2 layouts, 3 items dropped, 1 remapped." (`e15.import.report.done`, `D02:520`'s line with
+  this fixture's counts and the remap count added), spoken once, politely, and naming the
+  name the server gave
 @ prose
   then the same CMP-049 table re-rendered with what was applied, dropped and remapped, row
   for row as §4.3, its caption "Report — 7 panels and 2 layouts added · 3 dropped · 1
@@ -9061,7 +9992,24 @@ STATUS_PIN_TXT = r"""
   **It persists (BQ-12 RULED).** The report stays until Close: no timer, never a toast
   (CMP-045) and never `role="status"`
 @ prose
+  Once closed, the report is gone from the app, and after a closed view it goes when its
+  toast is dismissed (§3.5)
+@ prose
   BQ-12 RULED
+@ prose
+  its labelled form is a PROPOSED A-row, §10).
+@ prose
+  No copied line starts with a value from the file, so a spreadsheet the text is pasted into
+  never reads one as a formula, and a control character from the file arrives as the "�" the
+  table shows, never as a tab or a line break (PROPOSED).
+@ prose
+  If the browser refuses the clipboard, "Couldn't copy the report." is spoken once,
+  politely, and the region stays selectable for a copy by hand (PROPOSED copy,
+  `e15.import.report.copy_failed`).
+@ prose
+  **Copy this section adds (PROPOSED).** Four strings that no frame row keys, each one
+  sentence or one verb, are rows of the deck (§9): `e15.import.slow`,
+  `e15.import.report.view`, `e15.import.review` and `e15.import.report.copy_failed`.
 § §5
 @ heading
   5. Rejections and refusals
@@ -9073,6 +10021,14 @@ STATUS_PIN_TXT = r"""
 § §5.1
 @ heading
   5.1 Frames (binding; the tool gates every row)
+@ row `SCR-026/rejected-wrong-type` · col 3
+  type: a picked file is filtered by `accept`
+@ row `SCR-026/refused-server` · col 3
+  message: "Nothing was imported." · "The server didn't accept this file:
+  `layouts[0].panes[3].pane_config` isn't valid."
+@ row `SCR-026/refused-server` · col 3
+  variants: "The workspace store didn't answer. Choose the file again in a moment." · "The
+  server didn't accept this file: it is larger than the server takes."
 § §5.2
 @ heading
   5.2 The rejection frames' anatomy
@@ -9080,11 +10036,16 @@ STATUS_PIN_TXT = r"""
   the event fires once per rejection, its reason the ticket's word (BQ-11 RULED
 @ row nested too deeply · col 6
   `malformed` (BQ-5 RULED)
+@ row too many values · col 4
+  the limit, at most 10,000 <!-- audit:contract.nodes=10000 --> values, PROPOSED (D09-G5)
 @ row the send's answer never came · col 4
   that the import could not be confirmed
 § §5.3
 @ heading
   5.3 The version rule (BQ-4 RULED, owner approval pending (#2701))
+@ prose
+  The contract types it as a string with no order (`22:21215`), so this spec reads it as a
+  whole number written in decimal and compares it as a number, PROPOSED
 @ prose
   "format version" names what is compared, and the ticket's "This layout was exported by v2
   and can't be imported into v1." (`14:629`) is replaced by the ruled words (BQ-4 RULED
@@ -9096,6 +10057,14 @@ STATUS_PIN_TXT = r"""
   refused before it is read (BQ-5 RULED
 @ row 2 parse · col 3
   the server's own rule for a workspace body (`22:19626`), reused (BQ-5 RULED)
+@ row 2 parse · col 2
+  at most 10,000 <!-- audit:contract.nodes=10000 --> values, PROPOSED
+@ row 3 schema · col 3
+  the bundle and `ChartTemplateInput` are not closed yet (D09-G4)
+@ prose
+  a known key whose value is the wrong kind takes the same frame with the PROPOSED
+  `e15.import.rejected.invalid`, "This isn't a workspace file: `{key}` isn't valid. Nothing
+  was imported.", the frame's variant (§9).
 @ prose
   **The budget is a confirm, not a refusal** (BQ-6 RULED).
 § §5.5
@@ -9104,14 +10073,49 @@ STATUS_PIN_TXT = r"""
 @ prose
   **Condition 1, applied to a refusal** (RULED, binding on every frame).
 @ prose
+  PROPOSED for a key and a file name, which no contract cleans, and a file's extension is
+  read after this cleaning (§3.4).
+@ prose
+  **Capped.** A key is shown at most 64 <!-- audit:design.key_cap=64 --> characters, a file
+  name at most 40 <!-- audit:design.file_cap=40 -->, counted after cleaning, an ellipsis (…)
+  past the cap (the Fixture's display caps, PROPOSED).
+@ prose
+  No contract bounds either string, so the cap also holds in the accessible name, which
+  carries the same shortened text with the word "(shortened)" after it, PROPOSED: nothing
+  past a cap is ever rendered, announced, copied or logged.
+@ prose
   **Nothing kept.** When a refusal shows, the worker's text and document and the file's
   handle are dropped: nothing reaches the workspace store, the browser's storage, a cache or
   a log, and Choose another file starts from nothing (BQ-5 RULED).
+@ prose
+  A refusal that arrives after the view closed holds only its capped message, and only while
+  its toast stands (§3.5).
+@ prose
+  `422 validation_failed` when the server's own re-check refuses what the browser passed
+  (`22:19626`): "Nothing was imported." then "The server didn't accept this file: `{key}`
+  isn't valid.", the key the first field path of the problem's `errors[]`, cleaned and
+  capped as above
+@ prose
+  takes the same frame with the PROPOSED `e15.import.refused.store`, "The workspace store
+  didn't answer. Choose the file again in a moment.", in place of the key's sentence:
+  nothing of the file was kept, so the way on is to choose it again (§9
+@ prose
+  A `413`, a file larger than the server takes (`22:8530`), takes the same frame with the
+  PROPOSED `e15.import.refused.size`, "The server didn't accept this file: it is larger than
+  the server takes.", the oversized refusal's words at the send, the number the server's
+  (D09-G5).
+@ prose
+  it says "We couldn't confirm the import. Check your workspaces before importing again."
+  (PROPOSED, `e15.import.refused.unconfirmed`).
 § §6
 @ heading
   6. T2 — stated once
 @ prose
   BQ-14 RULED
+@ prose
+  These are the keys merged E15-D02 gives "+" › Import… (`D02:639`
+@ prose
+  `D02:655`) and merged E15-D03 renders as its R-5 (`D03:564`
 § §6.1
 @ heading
   6.1 The gated set, per session
@@ -9122,13 +10126,98 @@ STATUS_PIN_TXT = r"""
 § §7
 @ heading
   7. Exits, keyboard, focus and live regions
+@ row `SCR-025/export-preview`, `SCR-025/expor · col 2
+  Download file once the save sheet has closed unsaved
+@ row `SCR-025/export-done` · col 1
+  `SCR-025/export-done`
+@ row `SCR-026/report` · col 6
+  PROPOSED, since the opener's menu belongs to the old tab)
+@ row `SCR-026/cancelled` · col 2
+  —: the dialog has closed
+@ prose
+  a screen reader's table commands read each cell with its column header, and each Item cell
+  is its row's header (`scope="row"`, PROPOSED: CMP-049 leaves row headers to the host), so
+  a row reads as its item, its type, its action and its reason.
+@ row the export file is saved · col 2
+  `SCR-025/export-done`
+@ row the export file is saved · col 4
+  `e15.export.done`
+@ row the import succeeds · col 4
+  `e15.import.report.done`
+@ row the import succeeds after the view was c · col 1
+  the import succeeds after the view was closed
 @ row the import succeeds after the view was c · col 3
   polite, once, through CMP-212's region: a persistent CMP-045 `success` toast with the
   success line and the action View report, which reopens the report as the dialog's final
   step (PROPOSED
+@ row the import succeeds after the view was c · col 4
+  `e15.import.report.done` · `e15.import.report.view`
+@ row a refusal arrives after the view was clo · col 1
+  a refusal arrives after the view was closed
+@ row a refusal arrives after the view was clo · col 3
+  polite, once, through CMP-212's region (`politeness="polite"`, as a refusal at the send
+  speaks here, D09-C12): a persistent CMP-045 `danger` toast, "Nothing was imported.", with
+  the action Review, which reopens SCR-026 at the refusal's frame (PROPOSED
+@ row a send left unanswered after the view wa · col 1
+  a send left unanswered after the view was closed
+@ row a send left unanswered after the view wa · col 3
+  PROPOSED
+@ row a refusal at the send · col 3
+  PROPOSED departure from slice 4's conventions 33, which speaks a refusal at its point of
+  action assertively (`S4:140`): the refused verb leaves the footer and focus moves with it,
+  so an interruption would only cut that reading short (D09-C12)
+@ row the check runs, `SCR-026/validating` · col 2
+  `progressbar` · named by "Checking scalping.json…" · its value the share of the five steps
+  done, its text "Checking scalping.json… step 3 of 5"
 § §8
 @ heading
   8. Tokens, contrast, greyscale and CVD
+@ row Action column · col 2
+  its decorative CMP-019 glyph at `size.icon` (16 <!-- audit:redline.size.icon=16 --> px):
+  Add `check` in `color.status.success.strong`, Drop `x-circle` (`danger` until registered,
+  `15:307`) in `color.status.danger.strong`, Remap `merge` (PROPOSED by E11-D02's icon batch
+@ prose
+  26 <!-- audit:pairs_rows=26 --> gated pairs, 0 <!-- audit:pairs_fail=0 --> FAIL: 14 <!--
+  audit:pairs_registered=14 --> registered in `tools/contrast/pairs.mjs` and 12 <!--
+  audit:pairs_proposed=12 --> PROPOSED (D09-A10).
+@ row 4 · col 8
+  PROPOSED
+@ row 6 · col 8
+  PROPOSED
+@ row 9 · col 8
+  PROPOSED
+@ row 10 · col 8
+  PROPOSED
+@ row 11 · col 8
+  PROPOSED
+@ row 13 · col 8
+  PROPOSED
+@ row 16 · col 8
+  PROPOSED
+@ row 17 · col 8
+  PROPOSED
+@ row 19 · col 8
+  PROPOSED
+@ row 22 · col 8
+  PROPOSED
+@ row 23 · col 8
+  PROPOSED
+@ row 24 · col 8
+  PROPOSED
+@ row 27 · col 8
+  PROPOSED
+@ row 28 · col 8
+  PROPOSED
+@ row 29 · col 8
+  PROPOSED
+@ prose
+  **Why twelve are PROPOSED.** Rows 4, 6, 9, 10, 11, 13, 16, 17, 19, 22, 27 and 28 are pairs
+  `tools/contrast/pairs.mjs` does not hold: the header fill, the Add glyph on both rows, the
+  Drop and Remap glyphs on even rows, the trust note's edge, the success line's words and
+  edge, the `secondary` label, the drag-over edge and the progress bar's fill on its track
+  and on the card.
+@ prose
+  a check, a circled cross, a merge
 @ prose
   and never a row's colour (BQ-10 RULED
 § §9
@@ -9137,14 +10226,48 @@ STATUS_PIN_TXT = r"""
 @ prose
   on the export the base name the save sheet returned, suggested as
   `<slug>.cv-workspace-v<schema_version>.json` (BQ-8 RULED
+@ prose
+  **Status:** upstream = verbatim from merged text, cited · adapted = upstream words
+  changed, cited, with why · ruled = the copy a BQ ruled (6396085915) · registered = a key
+  or a component's own word, already registered · new · PROPOSED = this spec's, the owner's
+  to approve (#2701).
+@ row `e15.export.unsaved` · col 4
+  new · PROPOSED (§2.3
 @ row `e15.export.included` · col 4
   only what `WorkspaceBundle` holds (BQ-2 RULED
+@ row `e15.export.excluded` · col 2
+  the Excluded list, first-class, one item per clause (`SCR-025/export-preview`,
+  `SCR-025/export-done`)
+@ row `e15.export.excluded` · col 4
+  ruled · BQ-2 (6396085915), owner approval pending (#2701)
+@ row `e15.export.caveat` · col 4
+  ruled · BQ-2 (6396085915)
+@ row `e15.export.over_limit` · col 4
+  new · PROPOSED (§2.3
+@ row `e15.export.failed_gone` · col 4
+  new · PROPOSED (§2.1
+@ row `e15.export.failed_unlisted` · col 4
+  new · PROPOSED (§2.3
+@ row `e15.export.save_failed` · col 4
+  new · PROPOSED (§2.4
+@ row `e15.export.done` · col 1
+  `e15.export.done`
+@ row `e15.export.done` · col 2
+  the completion line, CMP-028 `success`, the file name in mono (`SCR-025/export-done`)
 @ row `e15.export.done` · col 4
   new · PROPOSED (BQ-8 RULED: the drawn completion)
 @ row `e15.import.title` · col 4
   new · PROPOSED (BQ-9 RULED)
 @ row `e15.import.trust` · col 4
   upstream · `D02:513`, verbatim (BQ-2 RULED
+@ row `e15.import.trust` · col 4
+  owner approval pending (#2701))
+@ row `e15.import.help` · col 4
+  new · PROPOSED
+@ row `e15.import.drop_active` · col 4
+  new · PROPOSED
+@ row `e15.import.drop_rejected` · col 4
+  new · PROPOSED
 @ row `e15.import.caption` · col 4
   new · PROPOSED (BQ-10 RULED)
 @ row `e15.import.col.item` · col 4
@@ -9159,62 +10282,621 @@ STATUS_PIN_TXT = r"""
   the ticket's three words (BQ-10 RULED)
 @ row `e15.import.action.drop` · col 4
   the ticket's three words (BQ-10 RULED)
+@ row `e15.import.action.remap` · col 2
+  the Action word after the `merge` glyph, kept for the one true remap (§4.2 row 4)
 @ row `e15.import.action.remap` · col 4
   the ticket's three words (BQ-3, BQ-10 RULED)
 @ row `e15.import.reason.account` · col 4
   upstream · `D02:516` (BQ-3 RULED)
 @ row `e15.import.reason.remap` · col 4
   new · PROPOSED (BQ-3 RULED)
+@ row `e15.import.slow` · col 4
+  new · PROPOSED (CMP-001's slow path, `15:48`
+@ row `e15.import.migrated` · col 4
+  ruled · BQ-4 (6396085915), E15-S07's rule (`BL:1136`)
 @ row `e15.import.caption_budget` · col 4
   new · PROPOSED (BQ-6 RULED)
 @ row `e15.import.budget` · col 4
   new · PROPOSED (BQ-6 RULED)
+@ row `layout.cost.import.confirm` · col 4
+  ruled · BQ-6 (6396085915), re-verbed from `D03:631`
 @ row `e15.import.report.heading` · col 4
   new · PROPOSED (BQ-12 RULED)
+@ row `e15.import.report.done` · col 1
+  `e15.import.report.done`
+@ row `e15.import.report.done` · col 2
+  the toast's line after a closed view (§7)
 @ row `e15.import.report.caption` · col 4
   new · PROPOSED (BQ-12 RULED)
 @ row `e15.import.report.copy` · col 4
   new · PROPOSED (BQ-12 RULED)
+@ row `e15.import.report.copy_failed` · col 4
+  new · PROPOSED (§4.5
+@ row `e15.import.report.view` · col 2
+  the action of the persistent CMP-045 `success` toast after the view was closed mid-send
+@ row `e15.import.report.view` · col 4
+  new · PROPOSED (H22's outcome surface, `S4:734`
+@ row `e15.import.review` · col 2
+  the action of the persistent CMP-045 `danger` toast when a refusal arrives after the view
+  was closed mid-send
+@ row `e15.import.review` · col 4
+  new · PROPOSED (H22's outcome surface, `S4:734`
 @ row `e15.import.rejected.version_newer` · col 4
   adapted · `D02:517` and `14:629`: "format version" names what is compared, the
   constructive sentence added (BQ-4 RULED
+@ row `e15.import.rejected.version_newer` · col 4
+  owner approval pending (#2701))
 @ row `e15.import.rejected.version_older` · col 4
   new · PROPOSED (BQ-4 RULED
+@ row `e15.import.rejected.version_older` · col 4
+  owner approval pending (#2701))
+@ row `e15.import.rejected.parse` · col 4
+  new · PROPOSED
+@ row `e15.import.rejected.panes` · col 4
+  new · PROPOSED
+@ row `e15.import.rejected.layouts` · col 4
+  new · PROPOSED
+@ row `e15.import.rejected.presets` · col 4
+  new · PROPOSED
+@ row `e15.import.rejected.invalid` · col 4
+  new · PROPOSED (D09-D31)
+@ row `e15.import.rejected.wrong_type` · col 4
+  new · PROPOSED
+@ row `e15.import.rejected.depth` · col 4
+  new · PROPOSED
+@ row `e15.import.rejected.nodes` · col 4
+  new · PROPOSED
+@ row `e15.import.rejected.nodes` · col 4
+  the limit PROPOSED (D09-G5)
+@ row `e15.import.refused.server` · col 3
+  "The server didn't accept this file: `{key}` isn't valid." · fixture "The server didn't
+  accept this file: `layouts[0].panes[3].pane_config` isn't valid."
+@ row `e15.import.refused.server` · col 4
+  new · PROPOSED
+@ row `e15.import.refused.store` · col 4
+  new · PROPOSED (D09-D31)
+@ row `e15.import.refused.size` · col 3
+  "The server didn't accept this file: it is larger than the server takes."
+@ row `e15.import.refused.size` · col 4
+  new · PROPOSED (D09-D31
+@ row `e15.import.refused.unconfirmed` · col 4
+  new · PROPOSED (D09-D33
+@ row `e15.import.shortened` · col 4
+  new · PROPOSED (D09-D27)
+@ row `workspace.limit.count` · col 4
+  E15's PROPOSED state key · `D02:674`
 § §10
 @ heading
   10. Design-system A-rows (`15`, PROPOSED)
 @ prose
   This PR edits no `15` entry (BQ-1 RULED).
+@ prose
+  Each row is copy-ready for the catalogue's owner: the old text is verbatim at the base, a
+  fragment of the line named and unique in it, and the new text replaces exactly that
+  fragment, the rest of the line unchanged.
+@ prose
+  Text inside a double-backtick span is the catalogue's own source, its single backticks
+  included
+@ prose
+  in the tables `\|` stands for `|`.
+@ prose
+  The ids run D09-A1 to D09-A11 here and go on in §11
+@ prose
+  §12's hand-offs name each row's owner.
+@ row Id · col 1
+  Id
+@ row Id · col 2
+  `15` entry · field (line)
+@ row Id · col 3
+  Old (verbatim)
+@ row Id · col 4
+  New (PROPOSED)
+@ row Id · col 5
+  Basis
+@ row D09-A1 · col 1
+  D09-A1
+@ row D09-A1 · col 2
+  CMP-067 · Purpose (`15:692`)
+@ row D09-A1 · col 2
+  Props (`15:693`)
+@ row D09-A1 · col 3
+  `**Purpose**: CSV/JSON import (journal import, rule import/export).` · ``- **Props**:
+  `accept` · `onFiles` · `multiple?`.``
+@ row D09-A1 · col 4
+  `**Purpose**: CSV/JSON import (journal import, rule import/export, workspace import).` ·
+  ``- **Props**: `accept` · `onFiles` · `multiple?` · `label` (the visible text of the real
+  `<button>` that fronts the native input, kept `hidden` and opened by the button's click,
+  e.g.
+@ row D09-A1 · col 4
+  "Choose file…"
+@ row D09-A1 · col 4
+  the input is labelled by it) · `dropHint?` (the drop zone's words, the button's
+  `aria-describedby`, e.g.
+@ row D09-A1 · col 4
+  "or drop a workspace file here") · `help?` (the line under it, in the same
+  `aria-describedby` after the drop words) · `maxBytes?` (a picked or dropped file over it
+  is refused from its size before a byte of it is read
+@ row D09-A1 · col 4
+  the host shows its error) · `error?` (the host's message node, first in the button's
+  `aria-describedby`
+@ row D09-A1 · col 4
+  the input stays live).``
+@ row D09-A1 · col 5
+  SCR-026's picker and drop zone (`SCR-026/pick`
 @ row D09-A1 · col 5
   BQ-9, BQ-13 RULED
+@ row D09-A1 · col 5
+  `D02:513`)
+@ row D09-A1 · col 5
+  the drop target described the same way on SCR-089 (`E36D03:339`)
+@ row D09-A1 · col 5
+  `14:632`
+@ row D09-A2 · col 1
+  D09-A2
+@ row D09-A2 · col 2
+  CMP-067 · A11y (`15:694`)
+@ row D09-A2 · col 3
+  ``- **A11y**: native `<input type=file>` under the hood (drag-and-drop is additive, never
+  the only path), fully keyboard-operable via the native file picker.``
+@ row D09-A2 · col 4
+  ``- **A11y**: native `<input type=file>` under the hood (drag-and-drop is additive, never
+  the only path), fully keyboard-operable via the native file picker: a real `<button>`
+  showing its `label` opens it on `Enter` or `Space`, and a chosen file returns focus to
+  that button
+@ row D09-A2 · col 4
+  the drop zone has no role, no name and no Tab stop of its own, and a drop only adds to the
+  input
+@ row D09-A2 · col 4
+  a drop of more files than `multiple` allows, or of a type outside `accept`, is refused in
+  words ("Drop one .json file"), never by colour alone
+@ row D09-A2 · col 4
+  a drop that carries no file, or lands outside the zone, is ignored: nothing is read or
+  fetched and no address is followed
+@ row D09-A2 · col 4
+  the host's error is first in the button's `aria-describedby` and announced once,
+  politely.``
+@ row D09-A2 · col 5
+  `05:35`
+@ row D09-A2 · col 5
+  `05:101`
+@ row D09-A2 · col 5
+  `14:632`
+@ row D09-A2 · col 5
+  `SCR-026/drag-over-rejected`
 @ row D09-A2 · col 5
   BQ-13 RULED
+@ row D09-A3 · col 1
+  D09-A3
+@ row D09-A3 · col 2
+  CMP-067 · Tokens (`15:695`)
+@ row D09-A3 · col 3
+  ``- **Tokens**: `color.border.dashed`.``
+@ row D09-A3 · col 4
+  ``- **Tokens**: the zone's edge `color.border.default` at `border.hairline`, solid,
+  `radius.card`, padding `space.inset.xl`, its words `type.ui.body` + `color.text.secondary`
+@ row D09-A3 · col 4
+  drag-over: the edge `color.border.selected` and the fill `color.surface.hover`, the words
+  changed
+@ row D09-A3 · col 4
+  the button a CMP-001 `secondary`.
+@ row D09-A3 · col 4
+  (Replaces `color.border.dashed`, which is not a shipped token
+@ row D09-A3 · col 4
+  a dashed edge is kept for estimated and absent data.)``
+@ row D09-A3 · col 5
+  the re-bind E36-D03 reported for the same entry (`E36D03:272`)
+@ row D09-A3 · col 5
+  §8 rows 22 and 24
+@ row D09-A4 · col 1
+  D09-A4
+@ row D09-A4 · col 2
+  CMP-067 · Storybook (`15:696`)
+@ row D09-A4 · col 2
+  Tests (`15:697`)
+@ row D09-A4 · col 3
+  `- **Storybook**: Default, DragOver, Error.` · `- **Tests**: unit, visual, axe,
+  keyboard-only file selection test.`
+@ row D09-A4 · col 4
+  `- **Storybook**: Default, Focused, WithHelp, DragOver, DragOverRejected, Validating,
+  Error, DisabledWithReason, Reflow200.` · ``- **Tests**: unit, visual, axe, keyboard-only
+  file selection test, the drop zone never in the Tab order, a drop refused by type or by
+  count in words, a file over `maxBytes` refused before it is read.``
 @ row D09-A4 · col 5
   the ticket's DoD, CMP-067's Storybook list agreed with FE (`BL:266`
+@ row D09-A4 · col 5
+  the owner's agreement stands in, #2701)
+@ row D09-A4 · col 5
+  DL-14
+@ row D09-A4 · col 5
+  DisabledWithReason is a host's T2 on the button, which SCR-026 never needs (§6)
+@ row D09-A5 · col 1
+  D09-A5
+@ row D09-A5 · col 2
+  CMP-049 · Tokens (`15:531`)
+@ row D09-A5 · col 3
+  `` odd `color.surface.canvas`, even `color.surface.raised` ``
+@ row D09-A5 · col 4
+  `` odd `color.surface.canvas` (inside a dialog, the dialog's own `color.surface.overlay`),
+  even `color.surface.raised` ``
+@ row D09-A5 · col 5
+  the preview and the report sit on the dialog's surface (§4
+@ row D09-A5 · col 5
+  §8 rows 1, 3 and 21)
+@ row D09-A6 · col 1
+  D09-A6
+@ row D09-A6 · col 2
+  CMP-027 · A11y (`15:306`)
+@ row D09-A6 · col 3
+  `` `live` overrides it: `polite` for an in-panel load failure, ``
+@ row D09-A6 · col 4
+  `` `live` overrides it: `polite` for an in-panel load failure or for a file refused inside
+  a dialog, its input above it still live and the refused verb absent (SCR-026's
+  rejections), ``
+@ row D09-A6 · col 5
+  §5.2
+@ row D09-A6 · col 5
+  slice 4's H37 (`S4:919`)
 @ row D09-A6 · col 5
   BQ-11 RULED
+@ row D09-A7 · col 1
+  D09-A7
+@ row D09-A7 · col 2
+  CMP-028 · A11y (`15:317`)
+@ row D09-A7 · col 3
+  `` `live` overrides the default (`off` renders no live role, for a banner whose
+  announcement another region makes)
+@ row D09-A7 · col 3
+  ``
+@ row D09-A7 · col 4
+  `` `live` overrides the default (`off` renders no live role, for a banner whose
+  announcement another region makes
+@ row D09-A7 · col 4
+  a standing statement read in place and never announced, such as an import's trust note, is
+  `live="off"` with `role="note"`, its one line `type.ui.body` + `color.text.primary`)
+@ row D09-A7 · col 4
+  ``
+@ row D09-A7 · col 5
+  SCR-026's trust note (`D02:513`
 @ row D09-A7 · col 5
   BQ-2 RULED)
+@ row D09-A7 · col 5
+  E36-D03's privacy note in the same form (`E36D03:153–155`)
+@ row D09-A7 · col 5
+  §8 row 12
+@ row D09-A8 · col 1
+  D09-A8
+@ row D09-A8 · col 2
+  CMP-033 · Props (`15:364`)
+@ row D09-A8 · col 2
+  Storybook (`15:368`)
+@ row D09-A8 · col 3
+  ``- **Props**: `value: string` · `label` (a11y name) · `onCopied?`.`` · `- **Storybook**:
+  Default, CopiedState.`
+@ row D09-A8 · col 4
+  ``- **Props**: `value: string` · `label` (a11y name) · `onCopied?` · `display?: "icon"\
+@ row D09-A8 · col 5
+  "button"` (default `icon`; `button` shows the label as a CMP-001 `secondary`, for a
+  dialog's footer such as SCR-026's Copy report; the copy and its "Copied" announcement are
+  unchanged).`` · `- **Storybook**: Default, CopiedState, AsButton.`
 @ row D09-A8 · col 6
   `SCR-026/report`'s footer (BQ-12 RULED)
+@ row D09-A8 · col 6
+  CMP-033's announcement (`15:366`)
+@ row D09-A9 · col 1
+  D09-A9
+@ row D09-A9 · col 2
+  CMP-044 · Tokens (`15:479`)
+@ row D09-A9 · col 3
+  ``Confirm a CMP-001 `danger` (`color.status.danger.default`, `color.text.on-action`),``
+@ row D09-A9 · col 4
+  ``Confirm a CMP-001 `danger` (`color.status.danger.default`, `color.text.on-action`), or a
+  CMP-001 `primary` for a measured-cost confirm, which destroys nothing (US-LAY-001's Add
+  panel anyway, SCR-026's Import anyway),``
 @ row D09-A9 · col 5
   `SCR-026/budget-confirm` (BQ-6 RULED)
+@ row D09-A9 · col 5
+  E15-D03's cost confirm (`D03:629–631`)
+@ row D09-A9 · col 5
+  E15-D08's PENDING row on the same clause composes with it if that row merges
+@ row D09-A10 · col 1
+  D09-A10
+@ row D09-A10 · col 2
+  `tools/contrast/pairs.mjs` and `tools/contrast/encodings.json` (their owner
+@ row D09-A10 · col 2
+  not `15`)
+@ row D09-A10 · col 3
+  —
+@ row D09-A10 · col 4
+  register the twelve PROPOSED gated pairs of §8
+@ row D09-A10 · col 4
+  rows 4, 6, 9, 10, 11, 13, 16, 17, 19, 22, 27 and 28
+@ row D09-A10 · col 4
+  and add the preview's and the report's Add / Drop / Remap encoding, its non-colour channel
+  the word and the glyph's shape
+@ row D09-A10 · col 5
+  `16:456`
+@ row D09-A10 · col 5
+  §8
+@ row D09-A10 · col 5
+  a design PR never edits `tools/`
+@ row D09-A11 · col 1
+  D09-A11
+@ row D09-A11 · col 2
+  CMP-036 · Tokens (`15:395`)
+@ row D09-A11 · col 3
+  ``- **Tokens**: `space.row.*`, `font.size.body/label`.``
+@ row D09-A11 · col 4
+  ``- **Tokens**: `space.row.height.comfortable` or `space.row.height.compact` by density
+@ row D09-A11 · col 4
+  the label `type.ui.label` + `color.text.secondary`, the value `type.ui.body` +
+  `color.text.primary`.
+@ row D09-A11 · col 4
+  (Replaces the wildcard `space.row.*` and `font.size.body/label`, which name no shipped
+  token.)``
+@ row D09-A11 · col 5
+  the export's Included and Excluded lists (`SCR-025/export-preview`)
+@ row D09-A11 · col 5
+  the semantic sets in `packages/ui/tokens`
+@ prose
+  **No A-row, and why.** CMP-001 Button: its `loading` keeps the label with `aria-busy`, and
+  its T2 is E09-D09's (`15:48–57`).
+@ prose
+  CMP-019 Icon: `x-circle` is already PROPOSED for E05-T06 (`15:307`) and `merge` by E11's
+  icon batch, and this spec adds no glyph.
+@ prose
+  CMP-023 Progress Bar: determinate, `valueText`, never a live region, as catalogued
+  (`15:262–270`).
+@ prose
+  CMP-043 Dialog: `lg` and `md` fit (`15:466`), and its focus, `Esc` and scrim rules hold as
+  catalogued (`15:468`).
+@ prose
+  CMP-045 Toast: the report is never a toast
+@ prose
+  the one toast here, after a closed view, is persistent because it carries an action, as
+  catalogued (`15:483–490`).
+@ prose
+  CMP-068 CopyableCodeBlock: unused, because no frame shows the file's text and Condition 1
+  forbids echoing it.
+@ prose
+  CMP-079 RbacGate: T2 as catalogued (`15:811–819`).
+@ prose
+  CMP-234 ValidationPanel: unused, because its entries anchor to rule rows and nodes
+  (`15:2738–2742`) while a refusal here names one key in one message and the report is a
+  table
+@ prose
+  E15-S07 names it for the report (`BL:1136`), a C-row (D09-C10).
 § §11
 @ heading
   11. `14` A-rows and the pointer lines
 @ prose
   **Applied by this PR, content only (BQ-1 RULED).** Two pointer lines, each right after its
   screen's sign-off checklist
+@ prose
+  after SCR-025's (`14:624`) and after SCR-026's (`14:636`)
+@ prose
+  each starting `- **Design (hi-fi):** [E15-D09.md](../design/E15/E15-D09.md)`: SCR-025's
+  points at §2, the export
+@ prose
+  SCR-026's at §3 to §5, the import.
+@ prose
+  The tool checks on every run that each sits in the run of pointer lines right after its
+  checklist, so a later E15-D08 pointer may sit beside ours.
+@ prose
+  Nothing else in `14` is edited: both checklists stay verbatim, and §13 maps every item,
+  the version-mismatch item to its refusal frame.
+@ prose
+  **Copy-ready for the catalogue's owner, PROPOSED** (old text verbatim at the base, a whole
+  line or a fragment of it as named
+@ prose
+  a fragment in double quotes is the catalogue's own words
+@ prose
+  in the tables `\|` stands for `|`).
+@ prose
+  Where E15-D02 already proposed the same line's change
+@ prose
+  its A-10 on SCR-026's Type, Validation and checklist (`D02:823`), pending
+@ prose
+  the row below is the one text that does both, so the owner applies one, not two.
+@ row Id · col 1
+  Id
+@ row Id · col 2
+  `14` entry · field (line)
+@ row Id · col 3
+  Old (verbatim)
+@ row Id · col 4
+  New (PROPOSED)
+@ row Id · col 5
+  Basis
+@ row D09-A12 · col 1
+  D09-A12
+@ row D09-A12 · col 2
+  SCR-026 · Type (`14:628`), a fragment
+@ row D09-A12 · col 3
+  "(panels added, symbols referenced, accounts remapped)"
+@ row D09-A12 · col 4
+  "(Choose file… or a drop; five checks in a worker; then a table of what is added, dropped
+  and remapped — unknown panel kinds and account-scoped settings dropped and listed, never
+  remapped — before Import as new workspace creates a new workspace)"
 @ row D09-A12 · col 5
   BQ-3, BQ-5 and BQ-9 RULED
+@ row D09-A12 · col 5
+  it does E15-D02's A-10 for this line (`D02:823`)
+@ row D09-A12 · col 5
+  `11:2868`
+@ row D09-A13 · col 1
+  D09-A13
+@ row D09-A13 · col 2
+  SCR-026 · Validation (`14:629`), two fragments
+@ row D09-A13 · col 3
+  "This layout was exported by v2 and can't be imported into v1." · "inaccessible account
+  references remap to the user's default account"
+@ row D09-A13 · col 4
+  "This file was exported by format version 2 and can't be imported into format version 1.
+  Nothing was imported. Export it again from a version 1 app, or update this app." ·
+  "account-scoped settings are dropped and listed, never remapped, and no account the
+  importer cannot see is named; an older format version this app still reads is migrated
+  forward and said so"
 @ row D09-A13 · col 5
   BQ-3 and BQ-4 RULED, owner approval pending (#2701)
+@ row D09-A13 · col 5
+  `11:2868`
+@ row D09-A13 · col 5
+  `11:2871`
+@ row D09-A13 · col 5
+  it does E15-D02's A-10 for this line (`D02:823`)
+@ row D09-A14 · col 1
+  D09-A14
+@ row D09-A14 · col 2
+  SCR-026 · Components (`14:630`), the whole line
+@ row D09-A14 · col 3
+  `- **Components:** CMP-001 Button, CMP-027 ErrorState / InlineError, CMP-043 Dialog,
+  CMP-044 ConfirmDialog, CMP-067 FileDrop / Import control.`
+@ row D09-A14 · col 4
+  ``- **Components:** CMP-001 Button, CMP-019 Icon (`lock`, `check`, `x-circle`, `merge`),
+  CMP-023 Progress Bar, CMP-027 ErrorState / InlineError, CMP-028 Callout / Banner, CMP-033
+  CopyButton, CMP-043 Dialog, CMP-044 ConfirmDialog, CMP-049 Table, CMP-067 FileDrop /
+  Import control, CMP-079 RbacGate.``
+@ row D09-A14 · col 5
+  the frames of §3 to §5
+@ row D09-A14 · col 5
+  an entry that shows a T2 control lists CMP-019's `lock` and CMP-079 (E15-D02 §8.1,
+  `D02:635–674`
+@ row D09-A14 · col 5
+  §6)
+@ row D09-A15 · col 1
+  D09-A15
+@ row D09-A15 · col 2
+  SCR-026 · A11y (`14:632`), the whole line
+@ row D09-A15 · col 3
+  `- **A11y:** File input has a visible label and an accessible drop zone with a keyboard
+  alternative; the import diff is a table, not a canvas; validation errors are listed as
+  text with the offending key named.`
+@ row D09-A15 · col 4
+  `- **A11y:** File input has a visible label (Choose file…, a real button) and a drop zone
+  with a keyboard alternative, the drop zone never a Tab stop; the import diff is a table,
+  not a canvas, its caption stating the counts first and its Action a word with a decorative
+  glyph; validation errors are listed as text with the offending key named, announced
+  politely, the input staying live; the report is a persistent region with Copy report;
+  every string from the file is shown as text, capped.`
+@ row D09-A15 · col 5
+  the ticket's Accessibility notes (`BL:266`)
 @ row D09-A15 · col 5
   BQ-9, BQ-10, BQ-12 and BQ-13 RULED
+@ row D09-A15 · col 5
+  §5, §7
+@ row D09-A16 · col 1
+  D09-A16
+@ row D09-A16 · col 2
+  SCR-026 · Analytics/audit (`14:634`), the whole line
+@ row D09-A16 · col 3
+  ``- **Analytics/audit:** `layout.imported`, `layout.import_rejected` with `{reason}`
+  (analytics).``
+@ row D09-A16 · col 4
+  ``- **Analytics:** `layout.imported` `{panelCount, droppedCount, remappedCount,
+  schemaVersion}`, `layout.import_rejected` `{reason: version-newer \
+@ row D09-A16 · col 5
+  version-older \
+@ row D09-A16 · col 6
+  malformed \
+@ row D09-A16 · col 7
+  oversized \
+@ row D09-A16 · col 8
+  wrong-type \
+@ row D09-A16 · col 9
+  budget-exceeded}` (analytics, never audit; no property carries anything from the file).``
+@ row D09-A16 · col 10
+  the ticket's Observability (`BL:266`)
+@ row D09-A16 · col 10
+  D09-G13 maps E15-S07's `size \
+@ row D09-A16 · col 11
+  parse \
+@ row D09-A16 · col 12
+  schema \
+@ row D09-A16 · col 13
+  version \
+@ row D09-A16 · col 14
+  semantic` (`BL:1136`); §5.5
+@ row D09-A17 · col 1
+  D09-A17
+@ row D09-A17 · col 2
+  SCR-026 · checklist (`14:636`), a fragment
+@ row D09-A17 · col 3
+  "version-mismatch state ('exported from a newer version - 2 panels will be dropped')"
+@ row D09-A17 · col 4
+  "version-mismatch state (a newer format version refused with both versions and a way on,
+  nothing imported, no partial apply; an older one this app still reads migrated and said
+  so) [ ] account-scoped elements dropped and listed in the preview and the report, naming
+  no account the importer cannot see"
 @ row D09-A17 · col 5
   BQ-3 and BQ-4 RULED, owner approval pending (#2701)
+@ row D09-A17 · col 5
+  `11:2871`
+@ row D09-A17 · col 5
+  E15-D02 drew the refusal, not the checklist's words (`D02:732`), and its A-10 asked for
+  this item (`D02:823`)
+@ row D09-A18 · col 1
+  D09-A18
+@ row D09-A18 · col 2
+  SCR-025 · Type (`14:615`), a fragment
+@ row D09-A18 · col 3
+  "export as template"
+@ row D09-A18 · col 4
+  "Export… (a workspace file, E15-D09 §2)"
+@ row D09-A18 · col 5
+  `exportWorkspace` exports a workspace file, never a template (`22:12676`)
 @ row D09-A18 · col 5
   BQ-7 RULED
+@ row D09-A18 · col 5
+  E15-D08's PENDING row rewrites the whole line and composes with this one if it merges
+@ row D09-A19 · col 1
+  D09-A19
+@ row D09-A19 · col 2
+  SCR-089 · a new line after its checklist (`14:1993`)
+@ row D09-A19 · col 3
+  —
+@ row D09-A19 · col 4
+  `- **Reuse (E15-D09):** [E15-D09.md](../design/E15/E15-D09.md) §3 to §7: a file that
+  crosses the trust boundary is chosen through a real button fronting the labelled native
+  input, the drop zone never a Tab stop; it is checked in a fixed order and the server
+  checks it again, as the dialog says; a preview table shows drops and remaps first; a
+  refusal names its key in mono, capped, and offers no import verb; the report is a
+  persistent region with Copy report; every string from the file is shown as text, capped.`
+@ row D09-A19 · col 5
+  the ticket's reuse note (DL-21
+@ row D09-A19 · col 5
+  DoD-10)
+@ row D09-A19 · col 5
+  E36-D03 already draws SCR-089's drop zone and pre-check table (`E36D03:153–155`), so this
+  line points and never redraws
+@ prose
+  **The reuse note for SCR-089** (DL-21
+@ prose
+  DoD-10
+@ prose
+  the ticket's Out of scope).
+@ prose
+  SCR-089, rule import and export (`14:1984`), is a sibling surface that E36-D03 already
+  draws, with CMP-067's native input first and its drop target described by its words
+  (`E36D03:153–155`
+@ prose
+  `E36D03:339`), so D09-A19 points at this spec and changes nothing drawn there.
+@ prose
+  Five things carry over as they stand: the real button with its visible label in front of
+  the native input
+@ prose
+  the drop zone that only adds to it and is never a Tab stop
+@ prose
+  the checks in a fixed, cheapest-first order, with the server's own check stated on the
+  checking step
+@ prose
+  the refusal that names its key in mono, capped, and never offers to bring in part of a
+  file
+@ prose
+  every string from the file shown as text only, cleaned and capped (§5.5).
+@ prose
+  Two do not: SCR-089 accepts or skips each rule on its own (`14:1993`) where a workspace is
+  whole or nothing, and a rule bundle's version and account references follow E36's
+  contract, not `WorkspaceBundle`'s.
 § §12
 @ heading
   12. A, C and G rows, and the hand-offs
@@ -9225,74 +10907,780 @@ STATUS_PIN_TXT = r"""
 @ prose
   E15-S07 receives D09-G1 to D09-G8, D09-G13 and D09-G14 by the hand-off row below (BQ-3
   RULED).
+@ prose
+  **G
+@ prose
+  gaps their owners close.**
+@ row Id · col 1
+  Id
+@ row Id · col 2
+  Gap
+@ row Id · col 3
+  What closes it
+@ row Id · col 4
+  Owner
+@ row D09-G1 · col 1
+  D09-G1
+@ row D09-G1 · col 2
+  **The atomic import.** No operation takes a bundle: `exportWorkspace`'s description names
+  `POST /workspaces` with `from_bundle` (`22:12681`), a field no input schema has, and `22`
+  says so (`22:21226`)
+@ row D09-G1 · col 2
+  `createWorkspace` refuses a body over 4 KiB (`22:8530`) while a file may be 2 MB
+@ row D09-G1 · col 2
+  and an import built in the client from `createWorkspace` and then `createLayout` for each
+  layout is not atomic (`FL:171`), the partial import the ticket forbids (`11:2871`)
+@ row D09-G1 · col 3
+  one operation, contract first, that takes the checked bundle and creates the workspace
+  with all its layouts, chart templates, drawings and indicator presets in one transaction,
+  or creates nothing
+@ row D09-G1 · col 3
+  it re-runs every check of §3.4 on the server, admits a 2 MB body, returns the name it gave
+  and the items it dropped, and refuses with the problem types of D09-G7
+@ row D09-G1 · col 3
+  it takes an `Idempotency-Key`, as `createWorkspace` does (`22:8531`), so a send repeated
+  after a lost answer never imports twice (`SCR-026/refused-unconfirmed`)
+@ row D09-G1 · col 3
+  the import is built on it and never before it (§3.5, §5.5)
+@ row D09-G1 · col 4
+  `22`'s owner, contract first (C-6.1)
+@ row D09-G1 · col 4
+  E15-S07 builds on it
+@ row D09-G2 · col 1
+  D09-G2
+@ row D09-G2 · col 2
+  `schema_version` is a free string (`22:21215`): no current value, no order, no oldest
+  version still read, no outcome for a value that is absent or malformed
+@ row D09-G2 · col 2
+  E15-S07 names `schemaVersion` and `appVersion` in another shape (`BL:1136`)
+@ row D09-G2 · col 3
+  the format (PROPOSED: a whole number written in decimal, §5.3), the current value 1, the
+  order, the oldest version still read, the outcome for an absent or malformed value (a
+  schema failure that names the key) and one casing
+@ row D09-G2 · col 3
+  the characters a file name may carry for it (§2.4)
+@ row D09-G2 · col 3
+  and one shape per readable version, so the schema step reads a file against its own
+  version's shape and never shadows the version outcome (§3.4)
+@ row D09-G2 · col 4
+  `22`'s owner
+@ row D09-G2 · col 4
+  E15-S07
+@ row D09-G3 · col 1
+  D09-G3
+@ row D09-G3 · col 2
+  Account-scoped elements: no bundle schema has an account field and `PaneConfig` forbids
+  account ids (`22:19838`), so a strict server refuses a file that carries one whole (C-6.3
+@ row D09-G3 · col 2
+  SR-040, `04:853`), while the story wants it dropped with a clear report (`11:2868`)
+@ row D09-G3 · col 2
+  `14:629`'s "the user's default account" names nothing a workspace has
+@ row D09-G3 · col 3
+  the contract's rule: the server drops an account-scoped setting at export and again at
+  import and names it in its answer (E15-S07, `BL:1136`), or it refuses the whole file, in
+  which case the preview's Drop row is a prediction and the outcome is
+  `SCR-026/refused-server`
+@ row D09-G3 · col 3
+  no default account for a workspace
+@ row D09-G3 · col 4
+  `22`'s owner
+@ row D09-G3 · col 4
+  E15-S07
+@ row D09-G4 · col 1
+  D09-G4
+@ row D09-G4 · col 2
+  `WorkspaceBundle` and `ChartTemplateInput` are not closed, and a template's `config` is
+  open (`22:21209–21230`), against C-6.3 and SR-040 (`04:853`)
+@ row D09-G4 · col 3
+  `additionalProperties: false` on both and a closed `config`
+@ row D09-G4 · col 3
+  the export's check (§2.3) and the import's schema step then read closed schemas
+@ row D09-G4 · col 4
+  `22`'s owner
+@ row D09-G5 · col 1
+  D09-G5
+@ row D09-G5 · col 2
+  The limits the contract does not carry: the file's size (2 MB, E15-S07's default,
+  `BL:1136`), the count of values (10,000, PROPOSED), the `layouts` array (32 a workspace in
+  the store, `22:8725`, none in the bundle), the `drawings` and `chart_templates` arrays,
+  and a pane kind's length (32 here, PROPOSED from the setting keys' pattern of `22:19848`,
+  since `PaneKind` has none, `22:19778`)
+@ row D09-G5 · col 2
+  and the two directions disagree: an export carries every live preset, 500 a user and never
+  truncated, while an import takes 200 (`22:21229–21230`), and an export's size has no cap
+  while an import's is 2 MB
+@ row D09-G5 · col 3
+  the caps in `22`, the same numbers in both directions, or an export that warns when its
+  file would be refused (§2.3's warning line meanwhile)
+@ row D09-G5 · col 4
+  `22`'s owner
+@ row D09-G5 · col 4
+  E15-S07
+@ row D09-G6 · col 1
+  D09-G6
+@ row D09-G6 · col 2
+  References inside the bundle point at the exporter's ids: a drawing's `layout_id`
+  (`22:20197`), a pane's `chart_template_id` (`22:19873`) and its `indicator_preset_ids`
+  (`22:19879`), each refused today on a create
+@ row D09-G6 · col 3
+  a rule that the server makes new ids for everything it imports and re-points each
+  reference, never honouring the exporter's (E15-X01, `BL:721`), and drops a reference it
+  cannot resolve, with its report
+@ row D09-G6 · col 4
+  `22`'s owner
+@ row D09-G6 · col 4
+  E15-S07
+@ row D09-G7 · col 1
+  D09-G7
+@ row D09-G7 · col 2
+  No problem type names a newer or an older format version, a wrong file type, or a store
+  that does not answer at the import: today the workspace routes refuse with
+  `validation_failed` and `limit_reached` (`22:19626`
+@ row D09-G7 · col 2
+  `22:8525`), so these refusals are the client's
+@ row D09-G7 · col 2
+  the budget is a confirm and needs none
+@ row D09-G7 · col 3
+  a problem type, or an `errors[]` rule, for each, so the server's refusal at the send maps
+  to §9's keys and never shows its own words (`15:306`)
+@ row D09-G7 · col 4
+  `22`'s owner
+@ row D09-G7 · col 4
+  E15-S07
+@ row D09-G8 · col 1
+  D09-G8
+@ row D09-G8 · col 2
+  E15-S07 wants the file to carry its own report of what the export dropped (`BL:1136`)
+@ row D09-G8 · col 2
+  `WorkspaceBundle` has no field for it (`22:21209–21230`)
+@ row D09-G8 · col 3
+  a report field in the bundle that the preview's Drop rows read, or the import's answer
+  naming what the server dropped
+@ row D09-G8 · col 4
+  `22`'s owner
+@ row D09-G8 · col 4
+  E15-S07
+@ row D09-G9 · col 1
+  D09-G9
+@ row D09-G9 · col 2
+  The ticket cites a workspace document in `24-internal-schemas.md` (`BL:266`), and `24` has
+  none
+@ row D09-G9 · col 3
+  the document in `24`, or the ticket's reference corrected to `22`'s `WorkspaceBundle`
+@ row D09-G9 · col 4
+  `24`'s owner
+@ row D09-G9 · col 4
+  the owner
+@ row D09-G10 · col 1
+  D09-G10
+@ row D09-G10 · col 2
+  `workspace.exported` sits on SCR-025's Audit line (`14:618`), while E15-D01's locked list
+  keeps layout events analytics, never audit (`D02:84`), and E15-X01 asks that the export be
+  audited (`BL:721`)
+@ row D09-G10 · col 2
+  an export performed while viewing as another user, T1 by BQ-7, is the case the audit
+  question is about
+@ row D09-G10 · col 3
+  one class for the event
+@ row D09-G10 · col 3
+  this spec draws it as analytics with counts only (§2.4)
+@ row D09-G10 · col 4
+  the owner
+@ row D09-G10 · col 4
+  E15-X01
+@ row D09-G10 · col 4
+  `14`'s owner
+@ row D09-G11 · col 1
+  D09-G11
+@ row D09-G11 · col 2
+  The data class and the sharing claim: `exportWorkspace`'s description makes the sharing
+  claim (`22:12679`), while `21:5069` classes the pane columns P0 and E15-X01 classes the
+  file user-confidential (`BL:721`)
+@ row D09-G11 · col 3
+  `22`'s description drops the sharing claim and names the class
 @ row D09-G11 · col 3
   this spec writes the caveat instead (BQ-2 RULED)
+@ row D09-G11 · col 4
+  `22`'s owner
+@ row D09-G11 · col 4
+  the owner (#2701) for the class
+@ row D09-G12 · col 1
+  D09-G12
+@ row D09-G12 · col 2
+  No E15 STRIDE model exists (C-12.1), so no `SR-E15-nn` can be cited
+@ row D09-G12 · col 2
+  E15-X01 is its ticket (`BL:700`)
+@ row D09-G12 · col 3
+  E15-X01's model
+@ row D09-G12 · col 3
+  until it lands, the review of the trust copy cites `04`'s SR-040, SR-097 and SR-127
+@ row D09-G12 · col 4
+  E15-X01
+@ row D09-G12 · col 4
+  the security program's owner
+@ row D09-G13 · col 1
+  D09-G13
+@ row D09-G13 · col 2
+  Two lists of reasons: the ticket's six (`version-newer`, `version-older`, `malformed`,
+  `oversized`, `wrong-type`, `budget-exceeded`) against E15-D02's and E15-S07's five
+  (`size`, `parse`, `schema`, `version`, `semantic`
+@ row D09-G13 · col 2
+  `FL:170`
+@ row D09-G13 · col 2
+  `D02:522`)
+@ row D09-G13 · col 2
+  and two sets of event fields, `panelCount` and the rest against `{panes, dropped,
+  migratedFrom}` (`BL:1136`)
+@ row D09-G13 · col 3
+  BQ-11's alias table in E15-S07's Observability: `version-newer` and `version-older` are
+  `version`
+@ row D09-G13 · col 3
+  `malformed` is `parse` or `schema`, the depth and the count of values `parse`
+@ row D09-G13 · col 3
+  `oversized` is `size`
+@ row D09-G13 · col 3
+  `wrong-type` is `parse`
+@ row D09-G13 · col 3
+  `budget-exceeded` is `semantic`
+@ row D09-G13 · col 3
+  one name per field
+@ row D09-G13 · col 4
+  E15-S07
+@ row D09-G14 · col 1
+  D09-G14
 @ row D09-G14 · col 2
   The file-name slug rule: whoever names the file applies it (BQ-8 RULED the pattern)
+@ row D09-G14 · col 3
+  §2.4's rule, in the client or in E15-S07's export
+@ row D09-G14 · col 4
+  E15-S07
+@ row D09-G15 · col 1
+  D09-G15
+@ row D09-G15 · col 2
+  An export carries the caller's whole live preset library, at most 500 and never truncated
+  (`22:21224–21226`), not only the presets this workspace's panes use, while the Included
+  list's "3 indicator presets" reads as the workspace's own
+@ row D09-G15 · col 3
+  the owner (#2701) chooses: the Included list says "all 3 of your indicator presets", or
+  the bundle carries only the presets the panes reference (`22`'s owner)
+@ row D09-G15 · col 4
+  the owner (#2701)
+@ row D09-G15 · col 4
+  `22`'s owner
+@ prose
+  **C
+@ prose
+  contradictions, each with its owner.**
+@ row Id · col 1
+  Id
+@ row Id · col 2
+  Contradiction
+@ row Id · col 3
+  Owner
+@ row D09-C1 · col 1
+  D09-C1
+@ row D09-C1 · col 2
+  the ticket's deliverable path `docs/design/specs/e15-workspace-import-export.md`
+  (`BL:266`) against this file beside its E15 siblings (`14:635`
+@ row D09-C1 · col 2
+  the first deviation
 @ row D09-C1 · col 2
   BQ-1 RULED)
+@ row D09-C1 · col 3
+  the owner
+@ row D09-C2 · col 1
+  D09-C2
+@ row D09-C2 · col 2
+  the ticket's branch `design/e15-workspace-import-export-hifi` against
+  `design/e15-d09-hifi` (C-4.4
+@ row D09-C2 · col 2
+  the second deviation
 @ row D09-C2 · col 2
   BQ-1 RULED)
+@ row D09-C2 · col 3
+  the owner
+@ row D09-C3 · col 1
+  D09-C3
+@ row D09-C3 · col 2
+  the ticket's Included list names densities, which `WorkspaceBundle` does not hold
+  (`22:21209–21230`
+@ row D09-C3 · col 2
+  `D02:507`) (the third deviation
 @ row D09-C3 · col 2
   BQ-2 RULED)
+@ row D09-C3 · col 3
+  the owner
+@ row D09-C4 · col 1
+  D09-C4
 @ row D09-C4 · col 2
   BQ-10 RULED a symbol cap of 16 from the pattern's `{2,16}`
+@ row D09-C4 · col 2
+  a symbol is at most 20 characters with its `USDT` (`22:19864`), so the cap here is 20 (the
+  fourth deviation
+@ row D09-C4 · col 2
+  D09-Q1)
+@ row D09-C4 · col 3
+  the orchestrator
+@ row D09-C5 · col 1
+  D09-C5
+@ row D09-C5 · col 2
+  E15-D02's sentence "Never included: API keys or tokens, account or trade-group ids, user
+  ids, P&L figures, positions or orders." (`D02:511`) is extended by BQ-2's to name
+  credentials, accounts, the environment binding and the alert and rule bindings (AC 1): an
+  extension, not a contradiction, and E15-D02's sentence is never shown on a frame
+@ row D09-C5 · col 3
+  E15-D02, at its next revision
+@ row D09-C6 · col 1
+  D09-C6
+@ row D09-C6 · col 2
+  `D02:516`'s reason "not known to this version" against AC 3's "not available in this
+  version" (`BL:266`)
+@ row D09-C6 · col 3
+  E15-D02, at its next revision
+@ row D09-C7 · col 1
+  D09-C7
+@ row D09-C7 · col 2
+  `14:636`'s item "version-mismatch state ('exported from a newer version - 2 panels will be
+  dropped')" against US-LAY-007's refusal (`11:2871`) and AC 2: drawn as the refusal (§13),
+  and D09-A17 rewrites the item
+@ row D09-C7 · col 3
+  `14`'s owner
+@ row D09-C8 · col 1
+  D09-C8
 @ row D09-C8 · col 2
   `14:628`'s "accounts remapped", `14:629`'s "inaccessible account references remap to the
   user's default account" and AC 4's "remapped to the importer's default" against
   US-LAY-007's drop (`11:2868`) and BQ-3 RULED
+@ row D09-C8 · col 2
+  D09-A12 and D09-A13 rewrite both lines
+@ row D09-C8 · col 3
+  `14`'s owner
+@ row D09-C8 · col 3
+  the owner (#2701)
+@ row D09-C9 · col 1
+  D09-C9
+@ row D09-C9 · col 2
+  the ticket's risk "R13 Sharing abuse" (its `risk` field, `BL:242–259`), which E15-X01
+  carries too (`BL:700`), against the register's R13, "Team & knowledge" (`32:47`)
+@ row D09-C9 · col 3
+  the plan's owner
+@ row D09-C10 · col 1
+  D09-C10
+@ row D09-C10 · col 2
+  CMP-234 ValidationPanel, which the ticket and E15-S07 name for the report (`BL:1136`),
+  anchors its entries to rule rows and nodes (`15:2738–2742`)
 @ row D09-C10 · col 2
   the report here is a region with a table (BQ-12 RULED)
+@ row D09-C10 · col 3
+  E15-S07's owner
+@ row D09-C10 · col 3
+  the design system's owner
+@ row D09-C11 · col 1
+  D09-C11
+@ row D09-C11 · col 2
+  `04:1180` marks a Viewer ✔(own) on saving layouts against `04:1139`, where a Viewer holds
+  no `workspaces:write`, and E15-D01's locked list (`D02:84`)
+@ row D09-C11 · col 2
+  this spec draws the Viewer's Import… in T2, and the server enforces either way (C-12.4)
+@ row D09-C11 · col 3
+  `04`'s owner
+@ row D09-C12 · col 1
+  D09-C12
+@ row D09-C12 · col 2
+  a refusal at the send speaks politely here (§7), against slice 4's conventions 33, which
+  speaks a refusal at its point of action assertively (`S4:140`)
+@ row D09-C12 · col 3
+  E05-D02's owner
+@ row D09-C13 · col 1
+  D09-C13
+@ row D09-C13 · col 2
+  `D02:515` names the check's steps in its line (size, format, schema, version, panels)
+@ row D09-C13 · col 2
+  the value text here counts them instead, because "schema" and "registry" are not a
+  trader's words (§3.4)
+@ row D09-C13 · col 3
+  E15-D02, at its next revision
+@ row D09-C14 · col 1
+  D09-C14
 @ row D09-C14 · col 2
   the ticket's `version-older` as a rejection reason (`BL:266`) against E15-S07's older file
   migrated forward (`BL:1136`): reconciled by BQ-4 RULED, where `version-older` names only a
   file older than the oldest version this app still reads
+@ row D09-C14 · col 3
+  E15-S07, whose Observability gains `version-older`
+@ row D09-C15 · col 1
+  D09-C15
+@ row D09-C15 · col 2
+  the ruled BQ drafts' copy, refined here and PROPOSED: BQ-11's older refusal ended "Open it
+  in a version 1 app and export it again.", which a file older than every format version 1
+  app reads cannot follow, so it reads "Update the app that exported it, then export it
+  again."
+@ row D09-C15 · col 2
+  BQ-5's panes sentence named the layout, a string from the file, so it names the count
+  alone
+@ row D09-C15 · col 2
+  BQ-6's budget sentence said 16.7 ms where C-14.2's budget is 16 ms
+@ row D09-C15 · col 2
+  BQ-10's caption and BQ-12's success line counted 2 dropped where the tool's fixture drops
+  3
+@ row D09-C15 · col 3
+  the orchestrator (6396085915)
+@ row D09-C16 · col 1
+  D09-C16
+@ row D09-C16 · col 2
+  SCR-025's "export as template" (`14:615`) against `exportWorkspace`, which exports a
+  workspace file (`22:12676`)
+@ row D09-C16 · col 2
+  D09-A18
+@ row D09-C16 · col 3
+  `14`'s owner
+@ row D09-C17 · col 1
+  D09-C17
 @ row D09-C17 · col 2
   the ticket's 30-panel file (`BL:266`), meant for the budget's confirm, holds more panes
   than the 16 a layout holds (`D02:133`), so it is the panes variant of
   `SCR-026/rejected-malformed`, never the budget (BQ-5 and BQ-6 RULED)
+@ row D09-C17 · col 3
+  the owner
+@ row D09-C18 · col 1
+  D09-C18
+@ row D09-C18 · col 2
+  the ticket's Scope lists intervals among what the export preview enumerates (`BL:266`),
+  against E15-D02's Included sentence (`D02:511`), in which a panel's interval is one of
+  "each panel's settings": the sentence is kept as E15-D02 wrote it (the fifth deviation
 @ row D09-C18 · col 2
   BQ-2 RULED: the Included list names only what the bundle holds)
+@ row D09-C18 · col 3
+  the owner
+@ row D09-C19 · col 1
+  D09-C19
+@ row D09-C19 · col 2
+  BQ-13's draft, ruled as proposed, named a target of at least 44 px comfortable and 24
+  compact
+@ row D09-C19 · col 2
+  the design system's controls are `size.control.height`, 32 px comfortable and 24 px
+  compact, and `05:100`'s floor is 24 px (`size.target.min`), which every target here meets
+  (§3.2)
+@ row D09-C19 · col 3
+  the orchestrator (6396085915)
+@ prose
+  **A
+@ prose
+  amendments to other specs.** D09-A1 to D09-A11 are §10's (`15` and `tools/contrast/`) and
+  D09-A12 to D09-A19 are §11's (`14`)
+@ prose
+  the three below go to E15 specs: D09-A20 to merged E15-D03, D09-A21 to E15-D08 (PENDING)
+  and D09-A22 to merged E15-D03 and to E15-D05, which has not merged, so a row to an
+  unmerged spec carries its words and no old text.
+@ row Id · col 1
+  Id
+@ row Id · col 2
+  Amendment
+@ row Id · col 3
+  Owner
+@ row D09-A20 · col 1
+  D09-A20
 @ row D09-A20 · col 2
   E15-D03's deck gains the import's three cost strings, adapted from `layout.cost.title`,
   `.body` and `.confirm` (`D03:629–631`): `layout.cost.import.title` "Open {layout} with
   {panels}?", `layout.cost.import.body`, its measured and estimated sentence with the
   import's clause (§9), and `layout.cost.import.confirm` "Import anyway" (BQ-6 RULED)
+@ row D09-A20 · col 3
+  E15-D03, at its next revision
+@ row D09-A21 · col 1
+  D09-A21
+@ row D09-A21 · col 2
+  SCR-025's Share section: its Export… opens this spec's export dialog (§2.2), and its help
+  line names what the file leaves out in BQ-2's classes, or points at the Excluded list, and
+  never makes the sharing claim
+@ row D09-A21 · col 3
+  E15-D08 (PENDING, by name)
+@ row D09-A22 · col 1
+  D09-A22
+@ row D09-A22 · col 2
+  Import… as an item of the rail's workspace menu (SCR-011), beside Export…, opening the
+  same empty dialog (§3.2
 @ row D09-A22 · col 2
   BQ-9 RULED): E15-D03's R-5 (`D03:564`) gains the rail's row, and the rail's menu gains the
   item
+@ row D09-A22 · col 3
+  E15-D03, at its next revision
+@ row D09-A22 · col 3
+  E15-D05, the rail's owner (not merged, by name)
+@ prose
+  **Q
+@ prose
+  open questions
+@ prose
+  the default built is named.**
+@ row Id · col 1
+  Id
+@ row Id · col 2
+  Question
+@ row Id · col 3
+  Built now
+@ row Id · col 4
+  Owner
+@ row D09-Q1 · col 1
+  D09-Q1
+@ row D09-Q1 · col 2
+  the symbol cap: BQ-10's 16, or the contract's 20 (`22:19864`)?
+@ row D09-Q1 · col 3
+  20, the contract's (the fourth deviation)
+@ row D09-Q1 · col 4
+  the orchestrator
+@ row D09-Q2 · col 1
+  D09-Q2
+@ row D09-Q2 · col 2
+  where a browser has no save picker, does the download hand-off count as the save, for the
+  completion step and for `workspace.exported`?
+@ row D09-Q2 · col 3
+  yes: the hand-off is the only answer the page gets (§2.4)
+@ row D09-Q2 · col 4
+  the owner
+@ row D09-Q2 · col 4
+  E15-S07
+@ row D09-Q3 · col 1
+  D09-Q3
+@ row D09-Q3 · col 2
+  CMP-036 for the export's lists: an A-row for a list value and a stacked layout, or another
+  list atom?
+@ row D09-Q3 · col 3
+  two CMP-036 rows in one `dl`, each value a `ul` (§2.3)
+@ row D09-Q3 · col 3
+  D09-A11 re-binds its tokens (`15:395`)
+@ row D09-Q3 · col 4
+  the design system's owner
+@ row D09-Q4 · col 1
+  D09-Q4
+@ row D09-Q4 · col 2
+  the desktop shell's save: does its renderer reach a save picker, or does it need a save
+  bridge that returns the base name only?
+@ row D09-Q4 · col 3
+  the platform's save sheet, the page learning the base name only (§2.4)
+@ row D09-Q4 · col 4
+  the desktop shell's owner
+@ row D09-Q5 · col 1
+  D09-Q5
 @ row D09-Q5 · col 2
   the schema step reads `schema_version` from the envelope ahead of its shape rules, so a
   newer or an older file meets its version refusal and never a shape failure: confirmed?
+@ row D09-Q5 · col 3
+  yes (§3.4, step 3
+@ row D09-Q5 · col 3
+  §5.3)
+@ row D09-Q5 · col 4
+  the orchestrator
+@ row D09-Q6 · col 1
+  D09-Q6
+@ row D09-Q6 · col 2
+  the trust note's "Importing creates a new workspace and changes nothing else." stands
+  beside Add rows for indicator presets, chart templates and drawings, which join the
+  importer's own libraries (`22:21229–21232`, counted against the 500-preset cap): is the
+  sentence kept word for word?
 @ row D09-Q6 · col 3
   the ruled sentence, verbatim (BQ-2 RULED)
+@ row D09-Q6 · col 4
+  the owner (#2701)
+@ row D09-Q7 · col 1
+  D09-Q7
+@ row D09-Q7 · col 2
+  the newer refusal's ruled way on, "Export it again from a version 1 app, or update this
+  app.", prints the format number as an app's version
+@ row D09-Q7 · col 2
+  the alternative "Export it again from an app that writes format version 1, or update this
+  app." names what is compared
 @ row D09-Q7 · col 3
   the ruled sentence (BQ-4 RULED)
+@ row D09-Q7 · col 4
+  the owner (#2701)
+@ prose
+  **Hand-offs.** E15-D03 and E15-D06 are merged (`c4989493`, `6e2c1211`), and E15-D04
+  (`c73aec08`) is pinned with nothing taken from it
+@ prose
+  E15-D08 (#4503) is PENDING and named only.
+@ prose
+  Each row is a PROPOSED hand-off for its owner to take or refuse.
+@ row To · col 1
+  To
+@ row To · col 2
+  Takes from this spec
+@ row To · col 3
+  State
+@ row E15-S07 (the import and export story) · col 1
+  E15-S07 (the import and export story)
 @ row E15-S07 (the import and export story) · col 2
   D09-G1 to D09-G8, D09-G13 and D09-G14 (BQ-3 RULED)
+@ row E15-S07 (the import and export story) · col 2
+  D09-C10, D09-C14
+@ row E15-S07 (the import and export story) · col 2
+  the five steps and their limits (§3.4, §5.4)
+@ row E15-S07 (the import and export story) · col 2
+  the alias table (D09-G13)
+@ row E15-S07 (the import and export story) · col 3
+  —
+@ row `22`'s owner · col 1
+  `22`'s owner
+@ row `22`'s owner · col 2
+  D09-G1, the atomic import with its `Idempotency-Key`, contract first (C-6.1), with D09-G2
+  to D09-G8, D09-G11 and D09-G15
+@ row `22`'s owner · col 3
+  —
+@ row E15-D08 (SCR-025 settings) · col 1
+  E15-D08 (SCR-025 settings)
 @ row E15-D08 (SCR-025 settings) · col 2
   Export… in its Share section opening §2's dialog (BQ-7 RULED)
+@ row E15-D08 (SCR-025 settings) · col 2
+  D09-A21
+@ row E15-D08 (SCR-025 settings) · col 2
+  if E15-D08 changes the entry, §2.2 follows it
+@ row E15-D08 (SCR-025 settings) · col 3
+  PENDING, by name
+@ row E15-D03 (SCR-020 chrome) · col 1
+  E15-D03 (SCR-020 chrome)
+@ row E15-D03 (SCR-020 chrome) · col 2
+  D09-A20, D09-A22
+@ row E15-D03 (SCR-020 chrome) · col 2
+  Import… in "+" and Export… in `[⋯]` keep their keys (§6)
+@ row E15-D03 (SCR-020 chrome) · col 3
+  merged
+@ row E15-D05 (SCR-011 rail) · col 1
+  E15-D05 (SCR-011 rail)
+@ row E15-D05 (SCR-011 rail) · col 2
+  D09-A22: Import… in the rail's workspace menu
+@ row E15-D05 (SCR-011 rail) · col 3
+  not merged, by name
+@ row E15-X01 (STRIDE) · col 1
+  E15-X01 (STRIDE)
+@ row E15-X01 (STRIDE) · col 2
+  D09-G10 with the export under view-as, D09-G11, D09-G12
+@ row E15-X01 (STRIDE) · col 2
+  the four hazards of §1.2 as its starting list
+@ row E15-X01 (STRIDE) · col 3
+  —
+@ row E15-D14, E15-D15, E15-D16 · col 1
+  E15-D14, E15-D15, E15-D16
+@ row E15-D14, E15-D15, E15-D16 · col 2
+  the motion of both dialogs (out of scope here)
+@ row E15-D14, E15-D15, E15-D16 · col 2
+  §7's keyboard model and desk pass for the screen-reader script
+@ row E15-D14, E15-D15, E15-D16 · col 2
+  the frames, the deck and the G-rows for the hand-off pack
+@ row E15-D14, E15-D15, E15-D16 · col 3
+  after this spec
+@ row SCR-089's owner (E35, E36) · col 1
+  SCR-089's owner (E35, E36)
+@ row SCR-089's owner (E35, E36) · col 2
+  the reuse note (D09-A19, §11)
+@ row SCR-089's owner (E35, E36) · col 3
+  —
+@ row the design system; `14`'s owner; `24`'s  · col 1
+  the design system
+@ row the design system; `14`'s owner; `24`'s  · col 1
+  `14`'s owner
+@ row the design system; `14`'s owner; `24`'s  · col 1
+  `24`'s owner
+@ row the design system; `14`'s owner; `24`'s  · col 1
+  `04`'s owner
+@ row the design system; `14`'s owner; `24`'s  · col 2
+  D09-A1 to D09-A11, D09-Q3
+@ row the design system; `14`'s owner; `24`'s  · col 2
+  D09-A12 to D09-A19
+@ row the design system; `14`'s owner; `24`'s  · col 2
+  D09-G9
+@ row the design system; `14`'s owner; `24`'s  · col 2
+  D09-C11
+@ row the design system; `14`'s owner; `24`'s  · col 3
+  —
+@ row the desktop shell's owner · col 1
+  the desktop shell's owner
+@ row the desktop shell's owner · col 2
+  D09-Q4
+@ row the desktop shell's owner · col 3
+  —
+@ row the orchestrator; the owner (#2701) · col 1
+  the orchestrator
+@ row the orchestrator; the owner (#2701) · col 1
+  the owner (#2701)
+@ row the orchestrator; the owner (#2701) · col 2
+  D09-Q1, D09-Q5, D09-C4, D09-C15, D09-C19
+@ row the orchestrator; the owner (#2701) · col 2
+  the owner-level questions BQ-2, BQ-3 and BQ-4, with D09-Q6, D09-Q7 and D09-G15 for the
+  owner
+@ row the orchestrator; the owner (#2701) · col 2
+  the walkthrough (§14)
+@ row the orchestrator; the owner (#2701) · col 3
+  owner approval pending
 § §13
 @ heading
   13. Sign-off checklists, item by item
+@ row file-picker and drag-drop paths · col 3
+  boards PENDING
 @ row version-mismatch state ('exported from a · col 2
   `SCR-026/rejected-version-newer` (boards 04 and 09): both versions and a way on, nothing
   imported and nothing applied in part
+@ row version-mismatch state ('exported from a · col 3
+  the item's words amended (D09-A17, PROPOSED)
+@ row preview of what will be imported before  · col 3
+  boards PENDING
+@ row rejection state for malformed or oversiz · col 3
+  boards PENDING
+@ row import never carries credentials or acco · col 2
+  the Excluded list on `SCR-025/export-preview` and `SCR-025/export-done` (boards 01 and 10)
+@ row import never carries credentials or acco · col 3
+  the copy's owner approval pending (#2701)
+@ prose
+  **SCR-025 (`14:624`)** is E15-D08's surface (PENDING, by name): of its four items this
+  spec draws only Export… in the Share section, part of the first item's sharing (§2), and
+  the export dialog it opens
 § §14
 @ heading
   14. Heuristic evaluation and the owner walkthrough
+@ row user control and freedom · col 3
+  the toasts after a closed view carry the outcome (D09-D18)
+@ row recognise, diagnose and recover from err · col 3
+  a refusal that arrives after the view closed needs the toast's Review to recover (D09-D18)
+@ prose
+  posted on #363 at merge, the boards PR drawing what each names):
 § §15
 @ heading
   15. Traceability
+@ prose
+  Every ticket item, from the trace at the top, to the section that answers it, the frames
+  that show it and the boards that will draw them (PENDING, §0).
+@ row AC-1 the included and the excluded lists · col 3
+  `SCR-025/export-preview`, `SCR-025/export-done`
 @ row AC-2 a newer file refused, never applied · col 1
   AC-2 a newer file refused, never applied in part
+@ row DL-4, DL-5 the file name with its format · col 3
+  `SCR-025/export-done`, `SCR-025/export-cancelled`
+@ row DL-20 the annotated events · col 3
+  `SCR-025/export-done`, `SCR-026/report`, the six rejections, `SCR-026/budget-confirm`
 @ row DoD-6 the copy signed off on the trust c · col 1
   DoD-6 the copy signed off on the trust claims
+@ row DoD-6 the copy signed off on the trust c · col 3
+  — (owner approval pending (#2701))
+@ row DoD-9 the spec merged; CMP-067's Storybo · col 1
+  DoD-9 the spec merged
 @ row DoD-9 the spec merged; CMP-067's Storybo · col 1
   CMP-067's Storybook list agreed
 § §16
 @ heading
   16. Summary
+@ prose
+  - **Ruled:** 16 <!-- audit:bq_rows=16 --> questions and 4 <!-- audit:conditions=4 -->
+  conditions (6396085915)
+@ prose
+  the trust copy, the account rule and the version rule are the owner's, approval pending
+  (#2701).
+@ prose
+  - **Rows:** 15 <!-- audit:rows.G=15 --> G, 19 <!-- audit:rows.C=19 --> C, 22 <!--
+  audit:rows.A=22 --> A, 7 <!-- audit:rows.Q=7 --> Q and 35 <!-- audit:rows.D=35 -->
+  decisions, every one PROPOSED to a named owner.
+@ prose
+  E15-D08 stays PENDING by name
+@ prose
+  the walkthrough of §14 is posted on #363 at merge.
 """
 
 
