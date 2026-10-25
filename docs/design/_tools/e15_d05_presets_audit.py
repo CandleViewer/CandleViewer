@@ -12,11 +12,14 @@ deficiency matrices and dE76), so no formula is re-implemented here. Sections, e
    card height from the longest contents line measured with the shared pill-label width rule), the Your layouts
    section's visible rows (the listbox keeps a card row and a half), whether the listbox scrolls, the fit inside the
    1280x800 canvas (E15-D02 section 3: 1168x672), the 200 % zoom viewport (640x400 CSS px, the modal between the
-   80 px TopBar and the 48 px StatusBar less 16 px a side) and the 125 / 150 % in-app text scales.
+   80 px TopBar and the 48 px StatusBar less 16 px a side, where the body is the one scroll container and a card
+   is a row: the thumbnail beside its text) and the 125 / 150 % in-app text scales; a gate asserts that a whole
+   card fits its scroll viewport at every step.
 2. Thumbnails: the eleven inventory entries (E15-D01 section 2.2's order without 3+1), each with a geometry signature
-   and a glyph set; the smallest cell and whether a 12 px glyph and the kind word fit; the C(11,2) pairs with the
-   feature that tells each pair apart (geometry first, then glyphs + label); the glyph names the thumbnails need,
-   none of which the repo's registry (not shipped; E05-T06) can confirm, so each is a request, never drawn as shipped.
+   and a glyph set; the smallest cell and whether a 12 px glyph and the kind word (font.size.2xs) fit; the C(11,2)
+   pairs with the feature that tells each pair apart (geometry first, then glyphs + label); each accessible name
+   carries its geometry's arrangement words; the glyph names the thumbnails need, none of which the repo's registry
+   (not shipped; E05-T06) can confirm, so each is a request, never drawn as shipped.
 3. The layout menu (CMP-217): row heights per density, the menu width from its widest label and chip, its height
    for 4 / 9 / 12 / 32 saved layouts against the canvas below the tab strip at both widths, and the first layout
    count at which it scrolls.
@@ -39,10 +42,14 @@ deficiency matrices and dE76), so no formula is re-implemented here. Sections, e
    section 0 = the state inventory = the hand-off's count; ``15`` refused in ``--files``; the ``14`` write-back
    lines present and the SCR-022 sketch and Data line unchanged.
 10. Frame-keyed gates (the A2 list): every element is required on the state-inventory rows that draw it, by frame
-    id, never on a ruling sentence: the spine word per surface; no key chip on a preset card; the dirty marker in the
-    row name on every dirty frame; no prompt on the dirty switch; the footer carriers on every gallery frame; the one
-    T2's anatomy on every T2 frame and the T2 form on no other row; every exit T1 and never paired with a gate;
-    every chord outside the keymap marked PROPOSED; the inventory's order, counts, cut preset and card notes.
+    id, never on a ruling sentence, and read clause by clause rather than by one keyword: the spine word per
+    surface (a saved-layout frame names the saved layout); no key chip on a preset card; the dirty marker in the
+    row name on every dirty frame; no prompt on the dirty switch; the footer carriers on every gallery frame; the
+    one T2's anatomy on every T2 frame and the T2 form on no other row; no CTA, button or bracketed action in the
+    sentence form; no lock token in an availability clause; no one-click delete in any wording; every exit T1 and
+    never paired with a gate (one gate for the exit class); every "N px" or count a frame draws is a value the
+    tool prints; every chord outside the keymap marked PROPOSED; the inventory's order, counts, cut preset and
+    card notes.
 11. Numbers: the ``audit:`` block at the end of the spec equals ``--json``'s markers; every W x H and two-decimal
     ratio in the spec and the hand-off is one the tool derives; the section 13 table rows equal the tool's.
 
@@ -59,6 +66,7 @@ URL literal anywhere in this file.
 from __future__ import annotations
 
 import argparse
+import copy
 import functools
 import importlib.util
 import itertools
@@ -266,7 +274,13 @@ CARD_GUTTER = 16  # space.4 between cards (the grid gap)
 THUMB_ASPECT = 0.6  # PROPOSED: thumbnail height / width
 THUMB_GAP = 2  # between thumbnail cells
 GLYPH_PX = 12  # size.icon.sm (`15` CMP-019)
-THUMB_WORD_PX = 9  # PROPOSED: the kind word inside a thumbnail cell
+
+
+def thumb_word_px() -> int:
+    """The kind word inside a thumbnail cell: font.size.2xs, the smallest token (pre-PR lens round 1 F-9)."""
+    return tokens_px()["font_2xs"]
+
+
 YL_LISTBOX_PEEK = "size.row.compact"  # PROPOSED: the listbox keeps one full card row and a row-height peek of the next
 LH_TIGHT, LH_NORMAL = 1.2, 1.4  # font.lineheight.tight / .normal (resolved below where bound)
 
@@ -292,6 +306,7 @@ def tokens_px() -> dict[str, int]:
         "icon_md": num_tok("size.icon.md"),
         "font_base": num_tok("font.size.base"),
         "font_xs": num_tok("font.size.xs"),
+        "font_2xs": num_tok("font.size.2xs"),
         "font_sm": num_tok("font.size.sm"),
         "font_md": num_tok("font.size.md"),
     }
@@ -309,7 +324,7 @@ INVENTORY: tuple[Preset, ...] = (
         "panels": 3,
         "sig": "1+2",
         "cells": ["chart", "dom", "tape"],
-        "name": "Scalping: chart, DOM ladder and tape, three panels; the order ticket opens as a drawer",
+        "name": "Scalping: one large chart beside the DOM ladder and tape, stacked, three panels; the order ticket opens as a drawer",
         "alt": "Scalping: chart, DOM ladder, tape",
         "line": "Chart, DOM and tape for one instrument.",
         "l1": "Scalping",
@@ -322,7 +337,7 @@ INVENTORY: tuple[Preset, ...] = (
         "panels": 4,
         "sig": "2x2",
         "cells": ["footprint", "cvd", "profile", "chart"],
-        "name": "Order-flow: footprint chart, CVD, profile and chart, four panels",
+        "name": "Order-flow: two by two — footprint chart, CVD, profile and chart, four panels",
         "alt": "Order-flow: footprint chart, CVD, volume profile, chart",
         "line": "Footprint, CVD and profile around one chart.",
         "l1": "Order-flow",
@@ -361,7 +376,7 @@ INVENTORY: tuple[Preset, ...] = (
         "panels": 4,
         "sig": "1+3",
         "cells": ["chart"] * 4,
-        "name": "One plus three: one large chart and three small ones, four panels",
+        "name": "One plus three: one large chart beside three small ones, stacked, four panels",
         "alt": "One plus three: chart, chart, chart, chart",
         "line": "",
         "l1": "1+3",
@@ -493,6 +508,18 @@ SIG_WORDS = {
     "cols3": "three columns",
     "1+2": "one large cell and two stacked",
 }
+# The words an accessible name must carry for its geometry (ticket Sc. 1: the arrangement AND the composition
+# from text alone; pre-PR lens round 1 F-1): any one alternative per signature, matched case-insensitively.
+ARRANGEMENT_WORDS: dict[str, tuple[str, ...]] = {
+    "1x1": ("one chart",),
+    "2x1": ("side by side", "beside"),
+    "1x2": ("stacked",),
+    "2x2": ("two by two",),
+    "1+3": ("one large chart beside three",),
+    "3x3": ("three by three",),
+    "cols3": ("three charts side by side", "three columns"),
+    "1+2": ("one large chart beside",),
+}
 
 
 def served_presets() -> dict[str, dict[str, Any]]:
@@ -549,19 +576,20 @@ def inventory_report(card_thumb: dict[str, tuple[int, int]]) -> dict[str, Any]:
             "name_forbidden": [
                 w for w in FORBIDDEN_NAME_WORDS if re.search(rf"\b{w}\b", p["name"], re.IGNORECASE)
             ],
+            "name_arrangement": any(w in p["name"].lower() for w in ARRANGEMENT_WORDS[p["sig"]]),
             "cells": {},
         }
+        word_px = thumb_word_px()
         for where, (tw, th) in card_thumb.items():
             cells = cells_of(p["sig"], tw, th)
             mw, mh = min(c[0] for c in cells), min(c[1] for c in cells)
             words = [CELL_WORD[c] for c in p["cells"]]
-            widest = max(label_w(w, THUMB_WORD_PX) for w in words)
+            widest = max(label_w(w, word_px) for w in words)
             row["cells"][where] = {
                 "min_w": mw,
                 "min_h": mh,
                 "glyph_fits": mw >= GLYPH_PX + 4 and mh >= GLYPH_PX + 4,
-                "word_fits": widest <= mw - 6
-                and mh >= GLYPH_PX + line_h(THUMB_WORD_PX, LH_TIGHT) + 4,
+                "word_fits": widest <= mw - 6 and mh >= GLYPH_PX + line_h(word_px, LH_TIGHT) + 4,
                 "widest_word_px": widest,
             }
         rows.append(row)
@@ -651,9 +679,18 @@ def gallery_layout(
     cols = max(1, (inner_w + gutter) // (MIN_CARD_W + gutter))
     card_w = (inner_w - gutter * (cols - 1)) // cols
     card_pad = t["inset_md"]
-    thumb_w = card_w - 2 * card_pad
+    if zoom200:
+        # pre-PR lens round 1 F-2: at 200 % no card can be whole inside a nested listbox, so the body is the one
+        # scroll container and a card is a ROW — the thumbnail at the left (the width the three-column grid
+        # would give it: 160 CSS px, the size section 2 measures the words at), the name, contents and count
+        # beside it; one column, so every card is as tall as its thumbnail and fits the scroll viewport.
+        cols = 1
+        card_w = inner_w
+        thumb_w = (inner_w - 2 * gutter) // 3 - 2 * card_pad
+    else:
+        thumb_w = card_w - 2 * card_pad
     thumb_h = round(thumb_w * THUMB_ASPECT)
-    text_w = thumb_w
+    text_w = card_w - 2 * card_pad - thumb_w - t["inset_md"] if zoom200 else thumb_w
     served = served_presets()
     card_lines = []
     for p in INVENTORY:
@@ -664,17 +701,11 @@ def gallery_layout(
         )
         card_lines.append(n)
     contents_lines = max(card_lines)
-    card_h = (
-        card_pad
-        + thumb_h
-        + t["inset_sm"]
-        + body_lh
-        + t["inset_xs"]
-        + contents_lines * cap_lh
-        + 2
-        + cap_lh
-        + card_pad
-    )
+    text_h = body_lh + t["inset_xs"] + contents_lines * cap_lh + 2 + cap_lh
+    if zoom200:
+        card_h = card_pad + max(thumb_h, text_h) + card_pad
+    else:
+        card_h = card_pad + thumb_h + t["inset_sm"] + text_h + card_pad
     card_rows = math.ceil(len(INVENTORY) / cols)
     listbox_full = card_rows * card_h + (card_rows - 1) * gutter
     body = H - header - footer - 2 * pad - sentences_block
@@ -685,12 +716,18 @@ def gallery_layout(
     if zoom200:
         yl_rows_visible = 0  # the section collapses into a disclosure row
         yl_h = ctrl
+        # the scroll viewport: everything between the header and the sticky footer scrolls as one
+        scroll = H - header - footer
+        listbox_visible = (
+            listbox_full  # the listbox lays out at its full height inside the scrolling body
+        )
     else:
         yl_max = body - listbox_min - t["inset_md"]
         yl_rows_visible = max(1, (yl_max - yl_heading + yl_gap) // (yl_row + yl_gap))
         yl_h = yl_heading + yl_rows_visible * yl_row + (yl_rows_visible - 1) * yl_gap
-    listbox_visible = body - yl_h - t["inset_md"]
-    rows_visible = listbox_visible / (card_h + gutter)
+        listbox_visible = body - yl_h - t["inset_md"]
+        scroll = listbox_visible  # the nested listbox is the card's scroll viewport
+    rows_visible = scroll / (card_h + gutter)
     sentence_w = label_w(FOOTER_SENTENCE, cap_px)
     warning_w = label_w(FOOTER_WARNING, cap_px)
     picker_w = label_w("(no key) ▾", t["font_sm"] * k) + 2 * t["inset_sm"]
@@ -720,6 +757,8 @@ def gallery_layout(
         "contents_lines": contents_lines,
         "listbox_full": listbox_full,
         "listbox_visible": listbox_visible,
+        "scroll": scroll,
+        "card_fits_scroll": card_h <= scroll,
         "listbox_scrolls": listbox_full > listbox_visible,
         "card_rows_visible": math.floor(rows_visible * 10) / 10,
         "yl_rows_visible": yl_rows_visible,
@@ -755,6 +794,20 @@ def gallery_report() -> dict[str, Any]:
     z["between_bars"] = ZOOM200[1] - TOPBAR_H - STATUSBAR_H
     out["zoom200"] = z
     return out
+
+
+def fit_gates(g: dict[str, Any]) -> list[str]:
+    """Every layout step keeps a whole card inside its scroll viewport (pre-PR lens round 1 F-2)."""
+    fails: list[str] = []
+    steps = dict(g["layouts"])
+    steps["zoom200"] = g["zoom200"]
+    for step, lay in steps.items():
+        if lay["card_h"] > lay["scroll"]:
+            fails.append(
+                f"zoom: a card ({lay['card_h']} px) is taller than its scroll viewport "
+                f"({lay['scroll']} px) at {step}"
+            )
+    return fails
 
 
 # ---------------------------------------------------------------- 3. the layout menu (CMP-217) ---------------
@@ -951,11 +1004,25 @@ PAIRS: tuple[tuple[str, str, str, str, bool], ...] = (
         True,
     ),
     (
-        "open ring: `color.border.strong` on `color.surface.raised`",
-        "color.border.strong",
+        "current row label on its fill (E10-D03 §5.2): `color.text.primary` on `color.surface.selected`",
+        "color.text.primary",
+        "color.surface.selected",
+        "text",
+        True,
+    ),
+    (
+        "current-row bar on its fill (E10-D03 §5.2): `color.border.selected` on `color.surface.selected`",
+        "color.border.selected",
+        "color.surface.selected",
+        "non-text",
+        True,
+    ),
+    (
+        "open ring glyph (E10-D03 §5.2): `color.text.secondary` on `color.surface.raised`",
+        "color.text.secondary",
         "color.surface.raised",
         "non-text",
-        False,
+        True,
     ),
     (
         "inline error glyph (CMP-027; its message is `color.text.primary`): `color.status.danger.strong` on `color.surface.overlay`",
@@ -1370,7 +1437,32 @@ EXIT_GATED = re.compile(
 )
 EXIT_NEAR_GATE = re.compile(
     r"(?:×|`Esc`|Cancel|Close|Discard changes|Browse presets…|Apply|Keep current symbols|\bOpen\b|Back)[^;.|]{0,40}?"
-    r"\b(?:locked|lock glyph|`lock`|aria-disabled|disabled|blocked|(?<!never )gated|T2)\b"
+    r"\b(?:locked|lock glyph|`lock`|lock|padlock|aria-disabled|disabled|blocked|(?<!never )gated|T2|CMP-079"
+    r"|rbac\.[a-z_]+|disabledReason)\b"
+)
+# the lock tokens an availability clause or a sentence-form row must not carry un-negated (per clause, any wording)
+LOCK_TOKEN = re.compile(
+    r"lock glyph|`lock`|\block\b|\bpadlock\b|CMP-079|disabledReason|rbac\.[a-z_]+|\bT2\b"
+)
+CTA_TOKEN = re.compile(r"\[(?:Save as new layout…|Save)[^\]]*\]|\bbutton\b|\bCTA\b")
+ONE_CLICK = re.compile(
+    r"one-click|deletes? (?:at once|immediately|straight away)|without (?:a |the )?(?:typed )?confirm|no confirm"
+)
+UNIT_NUM = re.compile(
+    r"(?<![\d.×+:])(\d+(?:,\d{3})?) (px|rows|columns|card skeletons|workspaces|layouts|cards)\b"
+)
+STROKE_PX = ("1", "2", "3")  # hairline, ring and bar strokes: token widths, not layout numbers
+SAVED_LAYOUT_FRAMES = (  # gallery frames that act on a saved layout, not on an arrangement (lens round 1 F-10)
+    "SCR-022/your-layouts-empty",
+    "SCR-022/your-layouts-twelve",
+    "SCR-022/your-layouts-viewer",
+    "SCR-022/your-layouts-view-as",
+    "SCR-022/key-picker",
+    "SCR-022/rename-clash",
+    "SCR-022/delete-layout-confirm",
+    "SCR-022/save-as-dialog",
+    "SCR-022/save-as-invalid",
+    "SCR-022/save-as-limit",
 )
 CHORD = re.compile(
     r"(?:Ctrl|Alt|Shift|Meta|Cmd)\+[A-Za-z0-9←→↑↓\\]+(?:\+[A-Za-z0-9←→↑↓\\]+)*(?:\.\.\d)?"
@@ -1495,7 +1587,8 @@ def frame_needs(nums: dict[str, Any]) -> dict[str, tuple[tuple[str, str], ...]]:
     needs["SCR-022/gallery-zoom200"] += (
         ("the one sticky row", "one sticky row"),
         ("the disclosure", "disclosure"),
-        ("the scrolling listbox", "scrolls"),
+        ("the one scroll container", "one scroll container"),
+        ("the row cards", "row card"),
     )
     needs["SCR-022/gallery-text-125"] += (("the text scale", "125 %"),)
     needs["SCR-022/light-gallery"] += (("semantic-light", "semantic-light"),)
@@ -1512,7 +1605,7 @@ def frame_needs(nums: dict[str, Any]) -> dict[str, tuple[tuple[str, str], ...]]:
         ("200 %", "200 %"),
     )
     needs["SCR-022/your-layouts-empty"] = (
-        ("the create instruction", "Ctrl+Shift+S"),
+        ("the create instruction", "Save the current arrangement as a new layout (Ctrl+Shift+S)"),
         ("the empty sentence", "Layout 1 is this workspace's only layout"),
     )
     needs["SCR-022/your-layouts-twelve"] = (
@@ -1571,7 +1664,8 @@ def frame_needs(nums: dict[str, Any]) -> dict[str, tuple[tuple[str, str], ...]]:
     needs["SCR-011/expanded"] = (
         ('`aria-current="page"`', '`aria-current="page"`'),
         ("the 3 px bar", "3 px"),
-        ("the stronger weight", "stronger weight"),
+        ("the current row's weight", "`font.weight.medium`"),
+        ("the current row's fill", "`color.surface.selected`"),
         ('"default" as text', '"default" as text'),
     )
     needs["SCR-011/collapsed"] = (
@@ -1655,15 +1749,21 @@ def frame_gates(spec: str, bindings: set[str], nums: dict[str, Any]) -> list[str
     by = {r[0].strip("`"): r for r in inv}
     needs = frame_needs(nums)
     labels = [p["label"] for p in INVENTORY]
+    allowed_nums = {
+        str(int(v))
+        for v in nums.values()
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and float(v).is_integer()
+    } | set(STROKE_PX)
     for name, r in by.items():
         text = " | ".join(r)
         prefix = name.split("/")[0]
         if len(r) < 7:
             fails.append(f"inventory: frame {name} has fewer than seven cells")
             continue
-        # A2: the spine word per surface, in the Spine cell
-        if SPINE_WORD.get(prefix, "") not in r[4]:
-            fails.append(f"spine: frame {name} does not name its noun ({SPINE_WORD.get(prefix)})")
+        # A2: the spine word per surface, in the Spine cell (a saved-layout frame names the saved layout)
+        noun = "saved layout" if name in SAVED_LAYOUT_FRAMES else SPINE_WORD.get(prefix, "")
+        if noun not in r[4]:
+            fails.append(f"spine: frame {name} does not name its noun ({noun})")
         if prefix == "SCR-022" and re.search(
             r"(?:Rename|Delete|Duplicate) workspace|Set as default|Move up", text
         ):
@@ -1687,6 +1787,13 @@ def frame_gates(spec: str, bindings: set[str], nums: dict[str, Any]) -> list[str
                 fails.append(f"carrier: frame {name} lacks {label}")
             elif seen == "negated" and label not in ("no prompt",):
                 fails.append(f"carrier: frame {name} negates {label}")
+        # A2: every "N px" / count in the drawn state is a value the tool prints (lens round 1 F-5)
+        for m in UNIT_NUM.finditer(r[2]):
+            if m.group(1).replace(",", "") not in allowed_nums:
+                fails.append(
+                    f"number: frame {name} draws {m.group(1)} {m.group(2)}, not a value the tool derives"
+                )
+                break
         # the Presets listbox: inventory order, the cut preset
         if name == "SCR-022/presets-listbox":
             pos = [text.find(lb) for lb in labels]
@@ -1706,10 +1813,18 @@ def frame_gates(spec: str, bindings: set[str], nums: dict[str, Any]) -> list[str
                 fails.append(
                     "order: the menu frame does not list saved layouts, then the saves, then Browse presets… (AD-2)"
                 )
-        if name == "SCR-011/context-menu" and (
-            re.search(r"\bDelete\b(?!…)(?! layout)", text) or present(text, "one-click") == "yes"
-        ):
-            fails.append("delete: the context menu frame offers a one-click workspace delete")
+        if name == "SCR-011/context-menu":
+            bare = re.search(r"\bDelete\b(?!…)(?! layout)", text)
+            quick = ONE_CLICK.search(text)
+            hit_tok = None
+            if bare:
+                hit_tok = bare.group(0)
+            elif quick and not NEGATED.search(text[max(0, quick.start() - 24) : quick.start()]):
+                hit_tok = quick.group(0)
+            if hit_tok:
+                fails.append(
+                    f"delete: the context menu frame offers a one-click workspace delete ('{hit_tok}')"
+                )
         if name == "SCR-011/switch-dirty" and (
             present(text, "SCR-029") == "yes" or present(text, "prompt") != "negated"
         ):
@@ -1724,12 +1839,21 @@ def frame_gates(spec: str, bindings: set[str], nums: dict[str, Any]) -> list[str
         ):
             fails.append(f"route: frame {name} does not focus Cancel")
         if "availability" in text:
-            for m in re.finditer(r"availability look", text):
-                ends = [j for j in (text.find(c, m.end()) for c in ";|") if j >= 0]
-                seg = text[m.start() : min(ends) if ends else len(text)]
-                if present(seg, "`lock`") == "yes" or present(seg, "lock glyph") == "yes":
+            # every clause that names an availability state is read on its own, in any wording
+            for clause in re.split(r"[;|]", text):
+                if "availability" not in clause:
+                    continue
+                hit_tok = next(
+                    (
+                        m.group(0)
+                        for m in LOCK_TOKEN.finditer(clause)
+                        if not NEGATED.search(clause[max(0, m.start() - 24) : m.start()])
+                    ),
+                    None,
+                )
+                if hit_tok:
                     fails.append(
-                        f"availability: frame {name} draws a lock on an availability state"
+                        f"availability: frame {name} draws a lock on an availability state ('{hit_tok}')"
                     )
                     break
         # A1: the T2 anatomy on every T2 frame, the T2 form on no other frame
@@ -1752,12 +1876,20 @@ def frame_gates(spec: str, bindings: set[str], nums: dict[str, Any]) -> list[str
                 iv, ip = text.find("rbac.view_as"), text.find("rbac.permission")
                 if ip >= 0 and ip < iv:
                     fails.append(f"view-as: frame {name} does not put the view-as leg first")
-            if (
-                name in SENTENCE_FRAMES
-                and re.search(r"\[(?:Save as new layout…|Save)[^\]]*\]|\bbutton\b(?! is)", text)
-                and present(text, "button") == "yes"
-            ):
-                fails.append(f"t2-anatomy: frame {name} draws a button in the sentence form")
+            if name in SENTENCE_FRAMES:
+                # any CTA, button or bracketed action, in any wording, breaks the sentence form
+                hit_tok = next(
+                    (
+                        m.group(0)
+                        for m in CTA_TOKEN.finditer(text)
+                        if not NEGATED.search(text[max(0, m.start() - 24) : m.start()])
+                    ),
+                    None,
+                )
+                if hit_tok:
+                    fails.append(
+                        f"t2-anatomy: frame {name} draws a CTA in the sentence form ('{hit_tok}')"
+                    )
         else:
             if present(r[3], "T2") == "yes":
                 fails.append(f"t2-frames: frame {name} is classed T2 outside the T2 frames")
@@ -1789,10 +1921,11 @@ def frame_gates(spec: str, bindings: set[str], nums: dict[str, Any]) -> list[str
                     fails.append(f"exits: frame {name} does not draw its exit {needle}")
         if name in EDITING_FRAMES and "reverts" not in exits:
             fails.append(f"exits: frame {name} does not say what `Esc` reverts")
-        if "T1" not in exits:
-            fails.append(f"exits: frame {name} does not class its exits T1")
+        # one gate for the exit class: a gated exit, else a class other than T1 (lens round 1 F-5)
         if EXIT_GATED.search(exits):
             fails.append(f"exits: frame {name} gates an exit in its Exits cell")
+        elif "T1" not in exits:
+            fails.append(f"exits: frame {name} does not class its exits T1")
         hit = EXIT_NEAR_GATE.search(r[2] + " | " + r[5])
         if hit:
             fails.append(f"exits: frame {name} gates an exit ('{hit.group(0)}')")
@@ -1818,8 +1951,13 @@ def frame_gates(spec: str, bindings: set[str], nums: dict[str, Any]) -> list[str
             fails.append(f"inventory: {label} does not say what opens instead (AD-3)")
         name_cell = r[6]
         bad = [w for w in FORBIDDEN_NAME_WORDS if re.search(rf"\b{w}\b", name_cell, re.IGNORECASE)]
+        words = ARRANGEMENT_WORDS[p["sig"]]
         if bad:
             fails.append(f"inventory: {label}'s accessible name uses a forbidden word ({bad[0]})")
+        elif not any(w in name_cell.lower() for w in words):
+            fails.append(
+                f"inventory: {label}'s accessible name lacks its arrangement words ({' / '.join(words)})"
+            )
         elif p["name"] not in name_cell:
             fails.append(f"inventory: {label}'s accessible name differs from the tool's")
         want_id = served[p["served"]]["id"] if p["served"] else "PROPOSED"
@@ -1992,8 +2130,9 @@ def build_markers(spec: str, handoff: str) -> dict[str, Any]:
         "zoom200_thumb_w": z["thumb_w"],
         "zoom200_thumb_h": z["thumb_h"],
         "zoom200_footer": z["footer"],
-        "zoom200_body": z["body"],
-        "zoom200_listbox_visible": z["listbox_visible"],
+        "zoom200_scroll": z["scroll"],
+        "zoom200_listbox_full": z["listbox_full"],
+        "zoom200_contents_lines": z["contents_lines"],
         "text125_card_h": t125["card_h"],
         "text125_contents_lines": t125["contents_lines"],
         "text125_listbox_visible": t125["listbox_visible"],
@@ -2012,7 +2151,7 @@ def build_markers(spec: str, handoff: str) -> dict[str, Any]:
         "pairs_by_glyphs": inv["pairs_by_glyphs"],
         "glyph_requests": inv["glyph_request_count"],
         "glyph_px": GLYPH_PX,
-        "thumb_word_px": THUMB_WORD_PX,
+        "thumb_word_px": thumb_word_px(),
         "thumb_gap": THUMB_GAP,
         "min_cell_w_1280": min(r["cells"]["1280"]["min_w"] for r in inv["rows"]),
         "min_cell_h_1280": min(r["cells"]["1280"]["min_h"] for r in inv["rows"]),
@@ -2090,7 +2229,6 @@ BOUND = (
     "color.surface.hover",
     "color.surface.selected",
     "color.border.default",
-    "color.border.strong",
     "color.border.selected",
     "color.text.primary",
     "color.text.secondary",
@@ -2122,6 +2260,8 @@ BOUND = (
     "type.ui.heading-sm",
     "type.ui.label",
     "color.text.inverse",
+    "font.size.2xs",
+    "font.weight.medium",
 )
 
 
@@ -2166,7 +2306,12 @@ CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         ("listbox_visible_1920_compact", "listbox_visible_1280_compact"),
     ),
     ("zoom modal", rf"a {_N}×{_N} modal between the bars", ("zoom200_modal_w", "zoom200_modal_h")),
-    ("zoom listbox", rf"{_N} px of listbox at 200 %", ("zoom200_listbox_visible",)),
+    (
+        "zoom scroll",
+        rf"the {_N} px between the header and the sticky footer scroll as one",
+        ("zoom200_scroll",),
+    ),
+    ("zoom row card", rf"a card is a {_N} px row", ("zoom200_card_h",)),
     ("menu width", rf"the menu is {_N} px wide", ("menu_w",)),
     ("menu twelve", rf"twelve layouts stand {_N} px tall in compact", ("menu_h_compact_12",)),
     (
@@ -2352,6 +2497,7 @@ def gates(
     mk = build_markers(spec, handoff)
     fails += frame_gates(spec, bindings, mk)
     fails += number_gates(spec, handoff)
+    fails += fit_gates(_gallery())
     km = keymap_rows()
     if km["ctrl_shift_s_reserved"]:
         fails.append("keys: Ctrl+Shift+S has an entry in reserved-keys.json")
@@ -2402,9 +2548,9 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
     ("M11", "carrier: frame SCR-022/your-layouts-twelve lacks 9 keyed",
      (("frame:SCR-022/your-layouts-twelve", "9 keyed", "8 keyed"),)),
     ("M12", "carrier: frame SCR-022/your-layouts-empty lacks the create instruction",
-     (("frame:SCR-022/your-layouts-empty", "(Ctrl+Shift+S) ", ""), ("frame:SCR-022/your-layouts-empty", "[Save as new layout… `Ctrl+Shift+S`]", "[Save as new layout…]"),)),
-    ("M13", "t2-anatomy: frame SCR-022/your-layouts-viewer draws a button in the sentence form",
-     (("frame:SCR-022/your-layouts-viewer", "the CTA omitted (no button)", "with the CTA [Save as new layout…] button"),)),
+     (("frame:SCR-022/your-layouts-empty", " Save the current arrangement as a new layout (Ctrl+Shift+S) to switch between layouts with Ctrl+1..9.", ""),)),
+    ("M13", "t2-anatomy: frame SCR-022/your-layouts-viewer draws a CTA in the sentence form ('button')",
+     (("frame:SCR-022/your-layouts-viewer", "with no CTA and no button", "with no CTA and a button"),)),
     ("M14", "t2-anatomy: frame SCR-022/your-layouts-view-as lacks the lock glyph",
      (("frame:SCR-022/your-layouts-view-as", "the `lock` glyph leads the full label", "the full label"),)),
     ("M15", "route: frame SCR-022/apply-dirty does not focus Cancel",
@@ -2425,7 +2571,7 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
      (("frame:CMP-217/menu-default", "320 px wide): ✓ Layout 1", "320 px wide): Browse presets… · ✓ Layout 1"),)),
     ("M23", "t2-anatomy: frame CMP-217/menu-saves-t2 uses the `disabled` attribute",
      (("frame:CMP-217/menu-saves-t2", "the `lock` glyph leads it, `aria-disabled`, CMP-079", "the `lock` glyph leads it, the `disabled` attribute, CMP-079"),)),
-    ("M24", "availability: frame CMP-217/menu-viewer draws a lock on an availability state",
+    ("M24", "availability: frame CMP-217/menu-viewer draws a lock on an availability state ('`lock`')",
      (("frame:CMP-217/menu-viewer", "no lock, no CMP-079 (E15-D02 :645)", "a `lock` glyph, no CMP-079 (E15-D02 :645)"),)),
     ("M25", "carrier: frame SCR-011/expanded lacks `aria-current=\"page\"`",
      (("frame:SCR-011/expanded", ", `aria-current=\"page\"`", ""),)),
@@ -2433,12 +2579,12 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
      (("frame:SCR-011/dirty", "\"Scalping, unsaved changes\" as the accessible name", "\"Scalping\" as the accessible name"),)),
     ("M27", "spine: frame SCR-011/expanded shows layout keys in the switcher",
      (("frame:SCR-011/expanded", "no row carries a layout key", "each row carries its `Ctrl+1` key"),)),
-    ("M28", "delete: the context menu frame offers a one-click workspace delete",
+    ("M28", "delete: the context menu frame offers a one-click workspace delete ('Delete')",
      (("frame:SCR-011/context-menu", "Export…, Delete… (the last group", "Export…, Delete (the last group"),)),
     ("M29", "t2-anatomy: frame SCR-011/last-workspace lacks the limit key",
      (("frame:SCR-011/last-workspace", "`disabledReason` → `workspace.limit.last` ", "`disabledReason` → a free sentence "),)),
     ("M30", "carrier: frame SCR-011/search lacks above 20",
-     (("frame:SCR-011/search", "above 20 workspaces", "above 25 workspaces"),)),
+     (("frame:SCR-011/search", "above 20 workspaces", "above 24 workspaces"),)),
     ("M31", "carrier: frame SCR-011/rename-inplace lacks `Esc` reverts",
      (("frame:SCR-011/rename-inplace", "`Enter` saves via `updateWorkspace`, `Esc` reverts; a name", "`Enter` saves via `updateWorkspace`; a name"),)),
     ("M32", "carrier: frame SCR-011/empty lacks the failed-create explanation",
@@ -2472,7 +2618,7 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
     ("M46", "inventory: Swing's id is not the served uuid or PROPOSED",
      (("inv:Swing", "| PROPOSED (G-1)                         | Swing ", "| `15000000-0000-4000-8000-000000000207` | Swing "),)),
     ("M47", "inventory: 1×1's accessible name differs from the tool's",
-     (("inv:1×1", "One by one: one chart, one panel", "One by one: a chart, one panel"),)),
+     (("inv:1×1", "One by one: one chart, one panel", "One by one: one chart, a panel"),)),
     ("M48", "frames: section 0 names 47 frames, the state inventory 48; they differ",
      (("line:| 03  ", ", `SCR-022/thumbnails-smallest`", ""),)),
     ("M49", "events: workspace.switched is missing from the observability table",
@@ -2492,13 +2638,34 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
     ("M56", "carrier: frame SCR-022/apply-clean lacks the announcement",
      (("frame:SCR-022/apply-clean", "\"Layout changed to Order-flow, 4 panels.\"", "\"Layout changed to Order-flow, four panels.\""), ("frame:SCR-022/apply-clean", "\"Layout changed to Order-flow, 4 panels.\"", "\"Layout changed to Order-flow, four panels.\""),)),
     ("M57", "carrier: frame CMP-217/menu-twelve lacks the first scrolling count",
-     (("frame:CMP-217/menu-twelve", "from 22 layouts at compact", "from 21 layouts at compact"),)),
+     (("frame:CMP-217/menu-twelve", "from 22 layouts at compact", "from 24 layouts at compact"),)),
     ("M58", "t2-anatomy: frame SCR-011/menu-view-as lacks the banner node",
      (("frame:SCR-011/menu-view-as", "the banner's `rbac.view_as` node", "the `rbac.view_as` node"),)),
     ("M59", "t2-anatomy: frame SCR-022/apply-dirty-viewer lacks CMP-079",
      (("frame:SCR-022/apply-dirty-viewer", "`aria-disabled`, CMP-079 and the reason", "`aria-disabled` and the reason"),)),
     ("M60", "t2-anatomy: frame SCR-011/limit lacks the full label",
      (("frame:SCR-011/limit", "the `lock` glyph, the full label, `aria-disabled`, `disabledReason` → `workspace.limit.count`", "the `lock` glyph, `aria-disabled`, `disabledReason` → `workspace.limit.count`"),)),
+    # the pre-PR design-review lens round 1 (F-1, F-2, F-5, F-10): independent wordings the keyword gates missed
+    ("M61", "inventory: Scalping's accessible name lacks its arrangement words",
+     (("inv:Scalping", "Scalping: one large chart beside the DOM ladder and tape, stacked,", "Scalping: the chart, the DOM ladder and tape, stacked,"),)),
+    ("M62", "carrier: frame SCR-022/gallery-zoom200 lacks the one scroll container",
+     (("frame:SCR-022/gallery-zoom200", "the body is the one scroll container", "the body scrolls"),)),
+    ("M63", "t2-anatomy: frame SCR-022/your-layouts-viewer draws a CTA in the sentence form ('CTA')",
+     (("frame:SCR-022/your-layouts-viewer", "with no CTA and no button", "with the CTA [Save as new layout…], no button"),)),
+    ("M64", "exits: frame SCR-022/apply-dirty-viewer gates an exit ('Discard changes takes the lock')",
+     (("frame:SCR-022/apply-dirty-viewer", "Discard changes stays T1 and applies", "Discard changes takes the lock and applies"),)),
+    ("M65", "availability: frame CMP-217/menu-viewer draws a lock on an availability state ('lock glyph')",
+     (("frame:CMP-217/menu-viewer", "Revert to saved… in the availability look", "Revert to saved… with the lock glyph in the availability look"),)),
+    ("M66", "delete: the context menu frame offers a one-click workspace delete ('deletes at once')",
+     (("frame:SCR-011/context-menu", "Delete… opens SCR-025's typed confirm — never one-click", "Delete… deletes at once — never one-click"),)),
+    ("M67", "number: frame SCR-022/gallery-1280 draws 163 px",
+     (("frame:SCR-022/gallery-1280", "161 px cards", "163 px cards"),)),
+    ("M68", "number: frame CMP-217/menu-twelve draws 420 px",
+     (("frame:CMP-217/menu-twelve", "410 px tall", "420 px tall"),)),
+    ("M69", "exits: frame CMP-217/menu-view-as gates an exit in its Exits cell",
+     (("frame:CMP-217/menu-view-as", "| `Esc` closes the menu; T1 ", "| `Esc` closes the menu; T2 while viewing as "),)),
+    ("M70", "spine: frame SCR-022/key-picker does not name its noun (saved layout)",
+     (("frame:SCR-022/key-picker", "| manages a saved layout ", "| picks an arrangement "),)),
 )
 # fmt: on
 
@@ -2646,6 +2813,16 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str], catalogue:
     expects = [e for _m, e, _ed in MUTATIONS]
     if len(set(expects)) != len(expects):
         problems.append("self-test: two mutations share a FAIL message")
+    # the fit gate is computed, not read from the spec: probe it with a card one pixel taller than its viewport
+    probe = copy.deepcopy(_gallery())
+    probe["zoom200"]["card_h"] = probe["zoom200"]["scroll"] + 1
+    got_fit = fit_gates(probe)
+    SELF_TEST_RUNS["inline"] += 1
+    SELF_TEST_RUNS["one_fail"] += len(got_fit) == 1 and "zoom: a card" in got_fit[0]
+    if len(got_fit) != 1 or "zoom: a card" not in got_fit[0]:
+        problems.append(
+            "self-test: a card taller than its scroll viewport did not trip the fit gate once"
+        )
     for mid, want, edits in MUTATIONS:
         try:
             s2, h2 = apply_mutation(spec, handoff, edits)
@@ -2752,7 +2929,7 @@ def main(argv: list[str] | None = None) -> int:
             f"  1280: body {l12['body']} cols {l12['cols']} card {l12['card_w']}x{l12['card_h']} thumb {l12['thumb_w']}x{l12['thumb_h']} listbox {l12['listbox_full']} visible {l12['listbox_visible']} ({l12['card_rows_visible']} rows) Your layouts rows {l12['yl_rows_visible']}"
         )
         p(
-            f"  200 %: modal {z['width']}x{z['height']} between bars {z['between_bars']}; cols {z['cols']} card {z['card_w']}x{z['card_h']}; footer {z['footer']} one row; listbox visible {z['listbox_visible']}"
+            f"  200 %: modal {z['width']}x{z['height']} between bars {z['between_bars']}; cols {z['cols']} card {z['card_w']}x{z['card_h']} (a row); footer {z['footer']} one row; scroll viewport {z['scroll']}, the listbox {z['listbox_full']} inside it"
         )
         p(
             f"  footer sentence {l19['sentence_w']} px, warning {l19['warning_w']} px (one line: {l19['sentence_one_line']} / {l19['warning_one_line']}); empty sentence {l12['empty_lines']} lines at 1280"
