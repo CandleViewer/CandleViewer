@@ -353,8 +353,9 @@ async def test_a_retried_recovery_audits_a_stale_session_once(
     again when its close keeps failing after its audit: the append-only record is written once.
     An audit that failed is still retried (never an unaudited close)."""
     store, audit = MemRecorderStore(), FakeAudit()
-    await SessionManager(store, now_us=UsClock(T0), audit=FakeAudit()).on_set_changed(_added())
-    fresh = SessionManager(store, now_us=UsClock(T0 + 9), audit=audit)
+    dead = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit(), config=LIVE)
+    await dead.on_set_changed(_added())
+    fresh = SessionManager(store, now_us=UsClock(T0 + 9), audit=audit, config=LIVE)
     emit = AsyncMock(side_effect=[OSError("audit down"), DEFAULT], wraps=audit.emit)
     close = AsyncMock(
         side_effect=[OSError("pg down")] * 2 + [DEFAULT], wraps=store.close_session_at
