@@ -19,7 +19,7 @@ import math
 import re
 import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
@@ -57,7 +57,15 @@ from candleviewer.oms.errors import (
     StoreUnavailable,
     TradingDisabled,
 )
-from candleviewer.oms.exits import ExitDeps, OrderExits
+from candleviewer.oms.exits import (
+    CancelReason,
+    ExitCaller,
+    ExitDeps,
+    ExitOperation,
+    ExitOutcome,
+    InFlightGuard,
+    OrderExits,
+)
 from candleviewer.oms.idempotency import AnchorService, Lookup, Replay
 from candleviewer.oms.order_link_allocator import OrderLinkIdAllocator
 from candleviewer.oms.order_machine import (
@@ -132,6 +140,7 @@ from candleviewer.storage.repositories.orders import (
     OrderRow,
     OrderStore,
     OrderStoreError,
+    ScopedOrder,
     UnfinishedOrders,
 )
 from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
@@ -1269,6 +1278,50 @@ class OnLaneGroups:
         return await _on_lane(self.parts, self.parts.route.groups.get(scope, group_id))
 
 
+@dataclass(frozen=True, slots=True)
+class OnLaneExits:
+    """`OmsRuntime.exits` from the serving loop (20 Sec.6.2, CV-C13; E29-T04 slice 4): the exit
+    service's scope and account reads, each awaited on the order lane within `HOP_TIMEOUT_S`, and
+    its refusal records and per-order cancels, which wait out the service's own bounds, as the
+    submit does. The service, its store and B1's facade run on the lane. `guard`, the routes'
+    in-flight guard, is read in place: only the serving loop's `run_claimed` claims and releases
+    it, and the service never touches it after building it."""
+
+    parts: _Parts
+
+    @property
+    def guard(self) -> InFlightGuard:
+        return self.parts.exits.guard
+
+    async def scope(self, caller: ExitCaller, order_id: UUID) -> ScopedOrder | ExitOutcome:
+        return await _on_lane(self.parts, self.parts.exits.scope(caller, order_id))
+
+    async def accounts_in_scope(
+        self, scope: AccountScope, requested: Collection[UUID]
+    ) -> tuple[UUID, ...]:
+        return await _on_lane(self.parts, self.parts.exits.accounts_in_scope(scope, requested))
+
+    async def deny(
+        self,
+        row: OrderRow,
+        operation: ExitOperation,
+        outcome: ExitOutcome,
+        *,
+        actor: SubmitActor,
+        request_id: UUID | None,
+    ) -> ExitOutcome:
+        record = self.parts.exits.deny(row, operation, outcome, actor=actor, request_id=request_id)
+        return await _on_lane(self.parts, record, None)
+
+    async def cancel_admitted(
+        self, row: OrderRow, *, actor: SubmitActor, reason: CancelReason, request_id: UUID | None
+    ) -> ExitOutcome:
+        cancel = self.parts.exits.cancel_admitted(
+            row, actor=actor, reason=reason, request_id=request_id
+        )
+        return await _on_lane(self.parts, cancel, None)
+
+
 async def _on_lane[T](
     parts: _Parts, coro: Coroutine[Any, Any, T], timeout_s: float | None = HOP_TIMEOUT_S
 ) -> T:
@@ -1459,10 +1512,11 @@ class OmsRuntime:
         )
 
     @property
-    def exits(self) -> OrderExits:
+    def exits(self) -> OnLaneExits:
         """The exit service the exit routes and cancel-all drive (E29-T04 slice 4), over the
-        pipeline's facade, command port and checks; `OmsNotReady` before it is composed."""
-        return self._composed().exits
+        pipeline's facade, command port and checks, each call awaited on the order lane
+        (`OnLaneExits`); `OmsNotReady` before it is composed."""
+        return OnLaneExits(self._composed())
 
     def _composed(self) -> _Parts:
         if self._parts is None:
