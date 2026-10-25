@@ -377,6 +377,22 @@ snapshot and are re-evaluated on every grant change (E17). The rule covers every
 `PATCH /positions/{positionId}/leverage`, where the account is resolved from the position on the server. E27-X03
 proves it with granted, foreign and non-existent accounts for every role.
 
+**Evidence (E27-X03, #902; KV-E01, KV-E02, KV-I12, KV-I13, SR-E27-02).** The `account_scope` section of
+`services/api/tests/contract/rbac/matrix.yaml` (one matrix, one runner, beside the E09 rows) holds the expected
+outcome of every 22 operation tagged `exchange-accounts`, of the leverage route and of the `wallet` and `positions`
+topics, for the Owner, a Manager granted account A and a Viewer granted A, on A, on a foreign account and on an
+account that does not exist. `test_route_matrix.py` runs every cell of a served route against the real app with a
+real session, fails when a tagged operation has no row, checks that a non-Owner's foreign and absent cells are the
+same, that only the Owner holds `keys:*` and `accounts:write` in the contract and the seed, and that the runner
+fails a flipped cell. `test_scope_and_ws.py` compares the foreign and absent answers byte for byte (status, body,
+headers but `x-correlation-id` and `date`), asserts one `rbac.denied` record per refusal naming the account, bounds
+the timing difference loosely (within 10x, no constant-time claim), checks each row's step-up class against
+`DANGEROUS_ROUTES` and that a served gated route refuses without a step-up and with a step-up of any other class,
+and runs the topic cells, the narrowing to A and the absence of a foreign account's deltas on a real gateway
+connection. Rows of routes not yet served are `not_mounted` and become executable when their ticket mounts them.
+The gaps are `xfail(strict=True)`: `PATCH` and `DELETE /exchange-accounts/{accountId}` have no step-up class yet,
+and a rotation's step-up must not admit a deletion (E27-S04, #898). The profile routes are E28-X03's (#976).
+
 ### 4.3 What the M2 boundary does and does not buy
 
 C-3.2 is enforced inside one Python process, by closures, a subclass guard, an import contract and an AST guard

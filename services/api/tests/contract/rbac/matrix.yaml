@@ -1710,6 +1710,109 @@ operations:
     public: false
     state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+# Account scope (E27-X03, #902; E27 threat model KV-E01, KV-I12, KV-I13, SR-E27-02): every 22
+# operation tagged `exchange-accounts`, `PUT /positions/{positionId}/leverage` and the account-
+# scoped topics, per role (owner; manager = manager_with_grant; viewer, granted A for these cells)
+# x account: granted = A, foreign = B (exists, not granted), absent = an id nothing knows; WS also
+# mixed = [A, B]. The row's `state` is its `operations` row's. A cell is `<status> <problem code>`
+# as the CI app answers it (its fake backend has no accounts store: an admitted call is `503
+# store_unavailable`); a not_mounted row may hold `admitted` (anything but 401 and 403) or `refused`
+# (403 or 404, the mounting ticket decides), never an executed one. WS: `sub_ok <effective
+# accounts>` or the refusal code. A non-owner's foreign and absent cells are equal (no existence
+# oracle; the runner also compares bodies and headers). `step_up`: the `DANGEROUS_ROUTES` class,
+# `required` (gated, class not decided) or null; `step_up_pending` / `pending` (`role.situation`):
+# a known gap, xfail(strict=True) naming its ticket. `delegated`: another ticket's matrix owns it.
+account_scope:
+  GET /exchange-accounts:
+    step_up: null
+    cells: {owner: 503 store_unavailable, manager: 503 store_unavailable, viewer: 503 store_unavailable}
+  POST /exchange-accounts:
+    step_up: keys
+    request:
+      json: {exchange: bybit, environment: demo, kind: main, label: Main, exchange_uid: '10234567'}
+    cells: {owner: 503 store_unavailable, manager: 403 forbidden, viewer: 403 forbidden}
+  GET /exchange-accounts/{accountId}:
+    step_up: null
+    cells:
+      owner: {granted: admitted, foreign: admitted, absent: admitted}
+      manager: {granted: admitted, foreign: 403 forbidden, absent: 403 forbidden}
+      viewer: {granted: admitted, foreign: 403 forbidden, absent: 403 forbidden}
+  PATCH /exchange-accounts/{accountId}:
+    step_up: required
+    step_up_pending: E27-S04 (#898) registers it when it mounts the route (SR-E27-02, F-11)
+    cells:
+      owner: {granted: admitted, foreign: admitted, absent: admitted}
+      manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+      viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+  DELETE /exchange-accounts/{accountId}:
+    step_up: required
+    step_up_pending: E27-S04 (#898) registers it when it mounts the route (SR-E27-02, F-11)
+    cells:
+      owner: {granted: admitted, foreign: admitted, absent: admitted}
+      manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+      viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+  GET /exchange-accounts/{accountId}/default-profile: {delegated: E28-X03 (#976)}
+  PUT /exchange-accounts/{accountId}/default-profile: {delegated: E28-X03 (#976)}
+  GET /exchange-accounts/{accountId}/fee-rate:
+    step_up: null
+    cells:
+      owner: {granted: admitted, foreign: admitted, absent: admitted}
+      manager: {granted: admitted, foreign: 403 forbidden, absent: 403 forbidden}
+      viewer: {granted: admitted, foreign: 403 forbidden, absent: 403 forbidden}
+  GET /exchange-accounts/{accountId}/keys:
+    step_up: null
+    cells:
+      owner: {granted: admitted, foreign: admitted, absent: admitted}
+      manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+      viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+  POST /exchange-accounts/{accountId}/keys:
+    step_up: keys
+    request:
+      json: {api_key: kkkkkkkkkkkkkkkkkk, api_secret: ssssssssssssssssssssssssssssssssssss}
+      headers: {Idempotency-Key: 00000000-0000-4000-8000-0000000000e1}
+    cells:
+      owner: {granted: 503 store_unavailable, foreign: 503 store_unavailable, absent: 503 store_unavailable}
+      manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+      viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+  DELETE /exchange-accounts/{accountId}/keys/{keyId}:
+    step_up: keys
+    cells:
+      owner: {granted: admitted, foreign: admitted, absent: admitted}
+      manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+      viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+  POST /exchange-accounts/{accountId}/keys/{keyId}/rotate:
+    step_up: keys
+    cells:
+      owner: {granted: admitted, foreign: admitted, absent: admitted}
+      manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+      viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+  POST /exchange-accounts/{accountId}/keys/{keyId}/test:
+    step_up: null
+    cells:
+      owner: {granted: 503 store_unavailable, foreign: 503 store_unavailable, absent: 503 store_unavailable}
+      manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+      viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+  GET /exchange-accounts/{accountId}/profiles: {delegated: E28-X03 (#976)}
+  POST /exchange-accounts/{accountId}/profiles: {delegated: E28-X03 (#976)}
+  GET /exchange-accounts/{accountId}/profiles/{profileId}: {delegated: E28-X03 (#976)}
+  PUT /exchange-accounts/{accountId}/profiles/{profileId}: {delegated: E28-X03 (#976)}
+  DELETE /exchange-accounts/{accountId}/profiles/{profileId}: {delegated: E28-X03 (#976)}
+  PUT /positions/{positionId}/leverage:  # the situation is the account of the position (4.2)
+    step_up: null
+    cells:
+      owner: {granted: admitted, foreign: admitted, absent: admitted}
+      manager: {granted: admitted, foreign: refused, absent: refused}
+      viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
+  WS wallet:
+    cells:
+      owner: {granted: sub_ok granted, foreign: sub_ok foreign, absent: sub_ok absent, mixed: sub_ok granted+foreign}
+      manager: {granted: sub_ok granted, foreign: account_scope_denied, absent: account_scope_denied, mixed: sub_ok granted}
+      viewer: {granted: sub_ok granted, foreign: account_scope_denied, absent: account_scope_denied, mixed: sub_ok granted}
+  WS positions:
+    cells:
+      owner: {granted: sub_ok granted, foreign: sub_ok foreign, absent: sub_ok absent, mixed: sub_ok granted+foreign}
+      manager: {granted: sub_ok granted, foreign: account_scope_denied, absent: account_scope_denied, mixed: sub_ok granted}
+      viewer: {granted: sub_ok granted, foreign: account_scope_denied, absent: account_scope_denied, mixed: sub_ok granted}
 # WS topic families (23-ws-protocol.md §6.3). sub_ok = subscription accepted; 401 = frame before
 # `auth`; account_scope_denied / 403 as in §5.2. `system` is implicit (no check). unknown_topic =
 # a family the contract lists before anything serves it (§6.1). `opts`: what a row's sample sends.

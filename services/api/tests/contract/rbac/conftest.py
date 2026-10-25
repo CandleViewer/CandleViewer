@@ -56,8 +56,9 @@ def world(_world_module: World) -> World:
     w.audit.records.clear()
     w.purge_backend.calls.clear()
     w.access.calls.clear()
-    w.step_up.elevated = True
+    w.step_up.elevated, w.step_up.classes = True, None
     w.resolver.revoked.clear()
+    w.resolver.extra.clear()
     for actor_uid in list(w.users.roles):
         w.users.roles[actor_uid] = w.users.initial_roles[actor_uid]
     return w
