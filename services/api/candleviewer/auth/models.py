@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Self
+from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -373,6 +373,12 @@ class RefreshOutcome(BaseModel):
     previous_session_id: uuid.UUID
 
 
+#: `InviteCreateRequest.username` and `.email`, the rules `POST /users` enforces; the bootstrap
+#: mint (#4479) reads its Owner's identity under them (`auth.bootstrap_owner.bootstrap_identity`).
+Username = Annotated[str, Field(min_length=3, max_length=32, pattern=r"^[a-zA-Z0-9._-]+$")]
+Email = Annotated[str, Field(min_length=3, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")]
+
+
 class InviteRole(StrEnum):
     """Roles an invite may carry: `viewer` only (owner decision #1778 AC, #2109).
     `owner` and `manager` are never granted by invitation; the owner promotes
@@ -387,8 +393,8 @@ class InviteCreateRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    username: str = Field(min_length=3, max_length=32, pattern=r"^[a-zA-Z0-9._-]+$")
-    email: str = Field(min_length=3, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    username: Username
+    email: Email
     display_name: str | None = Field(default=None, max_length=80)
     roles: tuple[InviteRole, ...] = Field(min_length=1, max_length=1)
     mfa_required: bool = True

@@ -1,12 +1,14 @@
 """`SqlAlchemyBreakGlassDatabase`: the offline break-glass CLI's whole Postgres side (E09-S11
-#2119 slice 5, decision R2c).
+#2119 slice 5, decision R2c); `SqlAlchemyBootstrapOwnerDatabase`, the bootstrap-Owner CLI's (#4479).
 
 One pool serves the CLI's stores (`audit_log`, `kek_versions` and the one-transaction reset
 store) and the cv-api probe. Every session of the pool carries this run's `application_name`,
 from the startup packet (so an idle one has it too) and again per transaction
 (`unit_of_work()`), so `others_connected` tells the CLI's own sessions from any other session of
-the database role: cv-api's pool, another run, a `psql`. Only the entry point
-`candleviewer.breakglass` constructs it, and nothing cv-api serves imports this module (S8).
+the database role: cv-api's pool, another run, a `psql`. Only the entry points
+`candleviewer.breakglass` and `candleviewer.bootstrap_owner` (#4479 C2) construct them, and nothing
+cv-api serves imports this module (S8). Each CLI holds only its own writer (DC-4479-17): the
+bootstrap run the Owner-invite mint (`bootstrap_owners`) instead of the reset store (`owners`).
 `kcv` has no audit row builder, so it cannot enrol a KEK (decision O1). No I/O until a store is
 used.
 """
@@ -20,6 +22,9 @@ from typing import Any
 import sqlalchemy as sa
 
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
+from candleviewer.storage.repositories.bootstrap_owner_sqlalchemy import (
+    SqlAlchemyBootstrapOwnerRepository,
+)
 from candleviewer.storage.repositories.break_glass_sqlalchemy import (
     SqlAlchemyBreakGlassRepository,
 )
@@ -40,18 +45,18 @@ _PING = sa.text("SELECT 1")
 PING_TIMEOUT_S = 5.0
 
 
-class SqlAlchemyBreakGlassDatabase:
-    """The stores of one CLI run on one pool named for the run (`application_name`)."""
+class _CliDatabase:
+    """What every CLI run shares: its pool, named for the run, the journal's stores and the
+    cv-api probe. `cli` is the name's prefix."""
 
-    def __init__(self, dsn: str) -> None:
-        suffix = f"breakglass:{os.urandom(4).hex()}"
+    def __init__(self, dsn: str, cli: str) -> None:
+        suffix = f"{cli}:{os.urandom(4).hex()}"
         #: What every session of the pool reports; `unit_of_work()` sets it per transaction too.
         self.application_name = f"candleviewer:{suffix}"
         self._relational = SqlAlchemyRelationalRepository(dsn, suffix)
         sa.event.listen(self._relational.engine.sync_engine, "do_connect", self._name_session)
         self.audit_log = SqlAlchemyAuditRepository(self._relational)
         self.kcv = SqlAlchemyCredentialStore(self._relational)
-        self.owners = SqlAlchemyBreakGlassRepository(self._relational)
 
     def _name_session(
         self, _dialect: Any, _record: Any, _cargs: Any, cparams: dict[str, Any]
@@ -78,3 +83,19 @@ class SqlAlchemyBreakGlassDatabase:
 
     async def dispose(self) -> None:
         await self._relational.dispose()
+
+
+class SqlAlchemyBreakGlassDatabase(_CliDatabase):
+    """The stores of one CLI run on one pool named for the run (`application_name`)."""
+
+    def __init__(self, dsn: str) -> None:
+        super().__init__(dsn, "breakglass")
+        self.owners = SqlAlchemyBreakGlassRepository(self._relational)
+
+
+class SqlAlchemyBootstrapOwnerDatabase(_CliDatabase):
+    """A bootstrap-Owner run's stores: the mint, and no reset store (DC-4479-17)."""
+
+    def __init__(self, dsn: str) -> None:
+        super().__init__(dsn, "bootstrap")
+        self.bootstrap_owners = SqlAlchemyBootstrapOwnerRepository(self._relational)

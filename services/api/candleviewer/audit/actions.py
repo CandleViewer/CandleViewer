@@ -89,6 +89,11 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.break_glass_attempt",
         "auth.break_glass_refused",
         "auth.break_glass_reset",
+        # #4479 (SR-023): the offline bootstrap-Owner CLI's intent, refusal and invite records,
+        # every one CRITICAL (actor `system:bootstrap`), journaled and folded in as break-glass's.
+        "auth.bootstrap_owner_attempt",
+        "auth.bootstrap_owner_refused",
+        "auth.bootstrap_owner_invited",
         "auth.password_change",
         "ws.subscribe.denied",
         # SR-186 (#2174): the private-topic subscriptions one WS `sub` frame made, one record.
