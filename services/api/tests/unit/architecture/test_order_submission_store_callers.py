@@ -41,6 +41,12 @@ database's clock through `RecordedStopRepository`, and runs the complete read: a
 admitted request's (`submit.py`) or the stored order's (`commands.py`), an account the startup
 sweep's, of the process's environment (C-2.11), resolved through the command port's
 `TradingAccounts` before any venue read, and no route reaches it.
+`oms/exits.py` (slice 4, S4-C) is not listed, as it names none of this surface: it reads one
+key's recorded stops in force for an amend's ratchet (ruling Q4) through its own one-method
+`LiveStops` protocol (`live_for_key`), which `oms_wiring.py` fills with `RecordedStopRepository`,
+so the type check holds it to that read and it records, settles and sweeps nothing. The key is the
+one of an order its own `scope` read in the caller's `AccountScope` (C-12.4, SR-E29-13), and no
+route reaches it before that admission.
 """
 
 from __future__ import annotations

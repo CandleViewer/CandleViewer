@@ -753,6 +753,26 @@ def test_check_order_holds_any_effect_but_reduce_to_the_entry_checks(effect: str
     assert refused.value.detail == "No profile allows this order."
 
 
+# --- an amend's terms (`check_terms`, E29-T04 slice 4) -------------------------------------------
+
+
+def test_check_terms_holds_an_amend_to_no_gate_and_no_profile() -> None:
+    """22 `amendOrder`: the instrument's limits alone. The read-only gate and the profile are a
+    risk-increasing amend's (`check_order`), so a tripped gate and no profile refuse nothing here:
+    an exit is never gated (C-2.6)."""
+    validator = Validator(read_only_gate=_Gate(is_read_only=True))
+    validator.check_terms(_order(), instrument=_instrument())
+
+
+def test_check_terms_refuses_the_tick_and_the_lot_and_lists_both() -> None:
+    """As `check_order` judges them: every violated filter listed, the tick answering first."""
+    validator = Validator(read_only_gate=_Gate())
+    with pytest.raises(TickSizeViolation) as refused:
+        order = _order(price=Decimal("63100.05"), qty=Decimal("0.2505"))
+        validator.check_terms(order, instrument=_instrument())
+    assert _rules(refused.value) == [("price", "tick_size"), ("qty", "qty_step")]
+
+
 # --- the environment match (C-2.11) --------------------------------------------------------------
 
 

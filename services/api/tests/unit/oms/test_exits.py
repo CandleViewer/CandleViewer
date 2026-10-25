@@ -1,7 +1,7 @@
 """The exit service's scope and cancel (E29-T04 slice 4, `oms.exits`; 24 Sec.8.4 "The exit
 routes"): over the real B1 facade, the real command port and the fake venue (`submit_rig`), and,
 for the waits and a cancelled caller, over a scripted facade whose bounds the test reads, never
-the wall clock."""
+the wall clock. The amend's admission is `test_exits_amend.py`'s."""
 
 from __future__ import annotations
 
@@ -34,7 +34,8 @@ from candleviewer.oms.errors import (
     VersionConflict,
 )
 from candleviewer.oms.exits import ExitCaller, ExitDeps, ExitOutcome, InFlightGuard, OrderExits
-from candleviewer.oms.ports import RequestRecord, SubmitActor
+from candleviewer.oms.ports import InterimStopResolver, RequestRecord, SubmitActor
+from candleviewer.oms.validator import Validator
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.persistence import DegradedLatchError
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -64,7 +65,10 @@ def actor(user: UUID = sr.USER) -> SubmitActor:
 def exits_of(rig: SubmitRig, **over: Any) -> OrderExits:
     deps = ExitDeps(
         machines=rig.machines, commands=rig.port.port, orders=rig.port.orders,
-        audit=rig.port.audits, environment="demo",
+        stops=rig.port.stops, audit=rig.port.audits, instruments=rig.instruments,
+        profiles=rig.profiles, stop_resolver=InterimStopResolver(), risk_gate=rig.risk,
+        validator=Validator(read_only_gate=rig.read_only), switches=rig.port.switches,
+        oms_enabled=lambda: True, environment="demo",
     )  # fmt: skip
     return OrderExits(replace(deps, **over))
 
@@ -209,10 +213,34 @@ async def test_cancel_admitted_sends_one_cancel_and_answers_once_b1_settled_it(
 
 
 async def test_a_final_order_is_answered_as_it_stands_and_nothing_is_sent(rig: SubmitRig) -> None:
+    """C-2.9 (the orchestrator's ruling of 2026-10-24 21:47Z (2)): the user's cancel is the action
+    even when nothing is sent, so it is recorded ahead of its `202`, `orders.cancel` with the
+    reason `already_final` (the `audit_outcome` enum has no `noop`: its outcome is `success`)."""
     row, exits = await placed(rig), exits_of(rig)
     await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
-    again = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    again = await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=REQUEST)
     assert (again.kind, again.lifecycle_state) == ("accepted", "cancelled")
+    assert [c.method for c in rig.port.demo.calls].count("cancel_order") == 1
+    assert requests(rig, "orders.cancel") == [
+        ("success", "user"), ("success", "cancelled"), ("success", "already_final"),
+    ]  # fmt: skip
+    noop = [r for r in rig.records("orders.cancel") if isinstance(r, RequestRecord)][-1]
+    assert noop.request_id == REQUEST
+    assert {k: noop.detail[k] for k in ("operation", "state")} == {
+        "operation": "cancel", "state": "cancelled",
+    }  # fmt: skip
+
+
+async def test_a_final_orders_cancel_that_cannot_be_recorded_is_503_audit_unavailable(
+    rig: SubmitRig,
+) -> None:
+    """C-2.9: no order action is answered unrecorded, a cancel that finds nothing to send included;
+    nothing is sent either way."""
+    row, exits = await placed(rig), exits_of(rig)
+    await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    rig.port.audits.refuse = RuntimeError("the audit WAL refused the record")
+    got = await exits.cancel_admitted(row, actor=actor(), reason="cancel_all", request_id=None)
+    assert (got.kind, got.status, got.code) == ("refused", 503, "audit_unavailable")
     assert [c.method for c in rig.port.demo.calls].count("cancel_order") == 1
 
 
@@ -399,8 +427,11 @@ async def scripted(
     watches = Watches()
     machines = Scripted(held, list(settles), watches, answer)
     deps = ExitDeps(
-        machines=machines, commands=watches, orders=port.orders, audit=port.audits,
-        environment="demo",
+        machines=machines, commands=watches, orders=port.orders, stops=port.stops,
+        audit=port.audits, instruments=sr.Instruments(), profiles=sr.Profiles(),
+        stop_resolver=InterimStopResolver(), risk_gate=sr.Risk(None),
+        validator=Validator(read_only_gate=sr.ReadOnly()), switches=port.switches,
+        oms_enabled=lambda: True, environment="demo",
     )  # fmt: skip
     return OrderExits(replace(deps, **over)), machines, row, port
 
