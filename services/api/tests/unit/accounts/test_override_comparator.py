@@ -376,6 +376,22 @@ def test_the_liquidation_estimate_keeps_both_taker_fees_at_the_stop(
     assert D("63372.2279") < violation.limit < D("63372.2280")  # 64010 - 637.7720...
 
 
+def test_a_liquidation_limit_past_the_entry_is_reported_at_the_entry() -> None:
+    """When the fee buffer exceeds the room (100x at a 1 % rate leaves none), the leg is refused and
+    the reported liquidation never lands on the profit side of the entry: it is the entry itself."""
+    wide = profile(max_leverage_cap="100")
+    rate = figures(maintenance_margin_rate=D("0.01"))
+    result = judge(leg(leverage=D("100")), bound=wide, figures=rate)
+    assert refused(result) == [("leverage", "R3", "outside_liquidation")]
+    (violation,) = violations(result)
+    assert violation.limit == D("64010")
+    short = dict(side="sell", stop_price=D("64650.1"), take_profit_price=D("62729.8"))
+    result = judge(leg(**short, leverage=D("100")), baseline=leg(**short), bound=wide, figures=rate)
+    assert refused(result) == [("leverage", "R3", "outside_liquidation")]
+    (violation,) = violations(result)
+    assert violation.limit == D("64010")
+
+
 def test_leverage_above_the_instrument_maximum_is_refused() -> None:
     wide = profile(max_leverage_cap="100")
     instrument = BTCUSDT.model_copy(update={"max_leverage": D("25")})
