@@ -206,11 +206,19 @@ async def _no_write_ahead(hook: Awaitable[Any], timeout_s: float) -> None:
     hook.close()  # type: ignore[attr-defined]  # the mutant: the record's coroutine never runs
 
 
+#: `store._BOOTSTRAP_ROW` with its marker replaced by `true`: the mutant that must be killed.
+_ROW_MARKER_TRUE = sa.text(
+    "SELECT true AS bootstrap, (i.consumed_at IS NOT NULL AND i.revoked_at IS NULL) AS usable, "
+    "u.status::text AS status FROM user_invites i JOIN users u ON u.id = i.user_id "
+    "AND u.deleted_at IS NULL WHERE i.id = CAST(:iid AS uuid) "
+    "AND i.user_id = CAST(:id AS uuid) FOR NO KEY UPDATE OF i, u"
+)
+
 _MUTANTS: dict[str, tuple[str, Any, str]] = {
     "count_owners_zero": ("COUNT_OWNERS", sa.text("SELECT 0"), "lock"),
     "no_bootstrap_lock": ("BOOTSTRAP_LOCK", sa.text("SELECT 1"), "lock"),
     "no_read_committed": ("_READ_COMMITTED", sa.text("SELECT 1"), "lock"),
-    "marker_true": ("_BOOTSTRAP_ROW", store._bootstrap_row_sql("true"), "marker"),
+    "marker_true": ("_BOOTSTRAP_ROW", _ROW_MARKER_TRUE, "marker"),
     "no_write_ahead": ("bounded_write_ahead", _no_write_ahead, "write_ahead"),
 }
 
@@ -337,6 +345,11 @@ async def test_bootstrap_offer_reads_open_stale_and_unmarked(template: str) -> N
     assert (before, after) == (["open", "unmarked"], "stale")
 
 
-def test_the_row_splice_takes_only_the_known_markers() -> None:
-    with pytest.raises(ValueError, match="marker"):
-        store._bootstrap_row_sql("i.role IS NOT NULL")
+def test_both_bootstrap_statements_carry_the_marker_verbatim() -> None:
+    """The statements are whole literals (no splicing); this keeps them in step with the marker,
+    and the mutant row with `store._BOOTSTRAP_ROW` but for the marker."""
+    for statement in (store._BOOTSTRAP_ROW, store._IS_MARKED):
+        assert store.BOOTSTRAP_MARKER in str(statement)
+    assert str(_ROW_MARKER_TRUE).replace(
+        "true AS bootstrap", f"{store.BOOTSTRAP_MARKER} AS bootstrap"
+    ) == str(store._BOOTSTRAP_ROW)

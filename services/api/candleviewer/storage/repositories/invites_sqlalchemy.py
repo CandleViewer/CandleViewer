@@ -77,31 +77,22 @@ _GRANT_OWNER = sa.text(
 )
 
 
-#: The only fragments `_bootstrap_row_sql` splices: the marker, and `true` (the Postgres suite's
-#: marker mutant, which must be killed).
-_ROW_MARKERS = frozenset({BOOTSTRAP_MARKER, "true"})
-
-
-def _bootstrap_row_sql(marker: str) -> sa.TextClause:
-    """The invite and its user locked `FOR NO KEY UPDATE`, judged by `marker`. The user row is
-    where every activation and delete of that user queues; the invite row is locked too because
-    `_DOWNGRADE_INVITES` rewrites `i.role` without the user's lock, and the marker must hold to
-    the commit. NO KEY: a child row's FK check (`FOR KEY SHARE`) does not wait on it."""
-    if marker not in _ROW_MARKERS:
-        raise ValueError("not a bootstrap marker fragment")
-    return sa.text(
-        "SELECT @M@ AS bootstrap, (i.consumed_at IS NOT NULL AND i.revoked_at IS NULL) AS usable, "
-        "u.status::text AS status FROM user_invites i JOIN users u ON u.id = i.user_id "
-        "AND u.deleted_at IS NULL WHERE i.id = CAST(:iid AS uuid) "
-        "AND i.user_id = CAST(:id AS uuid) FOR NO KEY UPDATE OF i, u".replace("@M@", marker)
-    )
-
-
-_BOOTSTRAP_ROW = _bootstrap_row_sql(BOOTSTRAP_MARKER)
+#: The invite and its user locked `FOR NO KEY UPDATE`, judged by `BOOTSTRAP_MARKER` (written out
+#: in full: statements are whole literals, never spliced). The user row is where every activation
+#: and delete of that user queues; the invite row is locked too because `_DOWNGRADE_INVITES`
+#: rewrites `i.role` without the user's lock, and the marker must hold to the commit. NO KEY: a
+#: child row's FK check (`FOR KEY SHARE`) does not wait on it. A unit test pins that both
+#: statements below carry `BOOTSTRAP_MARKER` verbatim.
+_BOOTSTRAP_ROW = sa.text(
+    "SELECT (i.role = CAST('owner' AS role_name) AND i.invited_by = i.user_id) AS bootstrap, "
+    "(i.consumed_at IS NOT NULL AND i.revoked_at IS NULL) AS usable, "
+    "u.status::text AS status FROM user_invites i JOIN users u ON u.id = i.user_id "
+    "AND u.deleted_at IS NULL WHERE i.id = CAST(:iid AS uuid) "
+    "AND i.user_id = CAST(:id AS uuid) FOR NO KEY UPDATE OF i, u"
+)
 _IS_MARKED = sa.text(
-    "SELECT @M@ FROM user_invites i WHERE i.id = CAST(:iid AS uuid)".replace(
-        "@M@", BOOTSTRAP_MARKER
-    )
+    "SELECT (i.role = CAST('owner' AS role_name) AND i.invited_by = i.user_id) "
+    "FROM user_invites i WHERE i.id = CAST(:iid AS uuid)"
 )
 
 _COLS = (
