@@ -126,6 +126,28 @@
       "size_cap_bytes": 4000
     },
     {
+      "path": "rest/risk_limit_BTCUSDT.json",
+      "symbol": "BTCUSDT",
+      "stream": "GET /v5/market/risk-limit",
+      "host": "api.bybit.com",
+      "capture_date": "2026-10-25",
+      "source": "capture_fixture.py --rest-path (redacted)",
+      "notable_event": "recorded: one page of 35 linear tiers, empty nextPageCursor",
+      "http_status": 200,
+      "size_cap_bytes": 16000
+    },
+    {
+      "path": "rest/risk_limit_ETHUSDT.json",
+      "symbol": "ETHUSDT",
+      "stream": "GET /v5/market/risk-limit",
+      "host": "api.bybit.com",
+      "capture_date": "2026-10-25",
+      "source": "capture_fixture.py --rest-path (redacted)",
+      "notable_event": "recorded: one page of 35 linear tiers, empty nextPageCursor",
+      "http_status": 200,
+      "size_cap_bytes": 16000
+    },
+    {
       "path": "rest/server_time.json",
       "symbol": "*",
       "stream": "GET /v5/market/time",

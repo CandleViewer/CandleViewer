@@ -1,0 +1,3 @@
+# Sidecars written by tools/fixtures/capture_fixture.py (<out>.manifest.json): their entry is
+# transcribed into build_corpus.py, which writes manifest.json. A sidecar is never committed.
+*.manifest.json

@@ -1731,6 +1731,116 @@
    "required": true
   }
  },
+ "rest.risk": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.category": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "result.list[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "result.list[].id": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.list[].initialMargin": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].isLowestRisk": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "result.list[].maintenanceMargin": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].maxLeverage": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].mmDeduction": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].riskLimitValue": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.list[].symbol": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "result.nextPageCursor": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retExtInfo": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "time": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  }
+ },
  "rest.server": {
   "": {
    "types": [

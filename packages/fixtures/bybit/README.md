@@ -34,6 +34,7 @@ own `capture_date` (the `recorded_*` files below).
 | Errors 10018 / 10002 / 5xx                            | `rest/error_10018.json`, `rest/error_10002.json`, `rest/error_503.json`      |
 | Delisted symbol + changed tick size                   | `rest/instruments_before.json` -> `rest/instruments_after.json`              |
 | Live feed fields (#3447): `RPI`, `seq`, newer tickers | `ws/recorded_publicTrade_BTCUSDT.jsonl`, `ws/recorded_tickers_BTCUSDT.jsonl` |
+| Risk-limit tiers (#913): one recorded page each       | `rest/risk_limit_BTCUSDT.json`, `rest/risk_limit_ETHUSDT.json`               |
 | Order path (#2877): trade replies, reads, two errors  | `rest/trading-*.json` (docs-transcribed, below)                              |
 | Private stream (#3963): replies and topic pushes      | `ws/private-*.jsonl` (docs-transcribed, below)                               |
 
@@ -63,6 +64,19 @@ from a contract test.
 
 The total cap is 2.5 MB. Per-file caps are in the manifest. Captures larger than 1.5 MB must
 go through Git LFS.
+
+### Recorded risk-limit replies (S-RL, #913)
+
+Two `GET /v5/market/risk-limit` replies, recorded once with
+`capture_fixture.py --rest-path` from Bybit's public `api.bybit.com` endpoint, with no key and
+no signing. Each is one page, `category=linear`, one symbol. The tool redacted and leak-checked
+the body as received; the public reply holds no credential or account field, so nothing was
+replaced. The corpus manifest and the drift check cover both; the adapter contract test that reads them follows in the next change.
+
+Each line: file; source; date; symbol; env; redaction.
+
+- `risk_limit_BTCUSDT.json`: source: recorded, `capture_fixture.py --rest-path /v5/market/risk-limit`; 2026-10-25 18:45Z; symbol BTCUSDT (35 tiers); env live public endpoint, no key; redaction: `redact()` / `find_leaks()` clean, no credential fields.
+- `risk_limit_ETHUSDT.json`: source: recorded, `capture_fixture.py --rest-path /v5/market/risk-limit`; 2026-10-25 18:45Z; symbol ETHUSDT (35 tiers); env live public endpoint, no key; redaction: `redact()` / `find_leaks()` clean, no credential fields.
 
 ### Docs-transcribed order-path shapes (#2877, ruling R2)
 
