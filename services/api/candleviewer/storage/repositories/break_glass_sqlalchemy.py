@@ -1,9 +1,9 @@
 """`SqlAlchemyBreakGlassRepository`: Postgres side of the
 `candleviewer.auth.break_glass.BreakGlassResetStore` port (E09-S11 #2119, decision R4).
 `SqlAlchemyBreakGlassEvents` is the read-only side of
-`candleviewer.auth.break_glass_notice.BreakGlassEvents` (slice 6, decision O4; two counts, one
-statement each): cv-api constructs only that one, so the running server holds no object that
-can reset.
+`candleviewer.auth.break_glass_notice.BreakGlassEvents` (slice 6, decision O4; three counts since
+#4479 C2, one statement each): cv-api constructs only that one, so the running server holds no
+object that can reset.
 
 Every other repository call commits its own unit of work, so chaining
 `revoke_method`, `revoke_all_for_user` and an event write could leave a half
@@ -69,6 +69,11 @@ _UNRESOLVED = sa.text(
 #: One `auth.break_glass_attempt` row per CLI run (its write-ahead first record), whatever the
 #: run's outcome. `audit_log` is append-only, so the count only rises. Served by `ix_audit_action`.
 _ATTEMPTS = sa.text("SELECT count(*) FROM audit_log WHERE action = 'auth.break_glass_attempt'")
+#: One CRITICAL `users.owner_bootstrapped` row per bootstrap Owner grant (#4479), written ahead in
+#: the grant's own transaction; append-only, so the count only rises. Served by `ix_audit_action`.
+_OWNER_BOOTSTRAPS = sa.text(
+    "SELECT count(*) FROM audit_log WHERE action = 'users.owner_bootstrapped'"
+)
 #: The active Owner a typed identifier names, as login resolves one (username or email, both
 #: `citext`), under the predicate `_LOCK_OWNER` checks again under `FOR UPDATE`. Two rows (a
 #: username that is another user's email) name no one.
@@ -160,3 +165,8 @@ class SqlAlchemyBreakGlassEvents:
         """How many CLI runs `audit_log` has a record of: its `auth.break_glass_attempt` rows."""
         async with self._relational.unit_of_work() as uow:
             return int((await uow.session.execute(_ATTEMPTS)).scalar_one())
+
+    async def owner_bootstrap_count(self) -> int:
+        """How many bootstrap Owner grants `audit_log` has a record of (#4479 C2)."""
+        async with self._relational.unit_of_work() as uow:
+            return int((await uow.session.execute(_OWNER_BOOTSTRAPS)).scalar_one())

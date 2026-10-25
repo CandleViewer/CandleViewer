@@ -30,6 +30,7 @@ from candleviewer.admin.breakglass_wiring import BreakGlassStores, build_break_g
 from candleviewer.observability.logging import configure_logging
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.break_glass_cli_sqlalchemy import (
+    SqlAlchemyBootstrapOwnerDatabase,
     SqlAlchemyBreakGlassDatabase,
 )
 
@@ -137,7 +138,9 @@ async def run(
             await _dispose(database)
 
 
-async def _dispose(database: SqlAlchemyBreakGlassDatabase) -> None:
+async def _dispose(
+    database: SqlAlchemyBreakGlassDatabase | SqlAlchemyBootstrapOwnerDatabase,  # #4479 C2
+) -> None:
     try:
         async with asyncio.timeout(DISPOSE_TIMEOUT_S):
             await database.dispose()

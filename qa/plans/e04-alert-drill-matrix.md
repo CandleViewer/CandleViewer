@@ -54,6 +54,7 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | NetBindingUnsafe | page | 0m | `docs/plan/07-release-and-prr.md#alert-netbindingunsafe` | synthetic | | | | | | pending |
 | AuthBreakGlassUsed | page | 0m | `docs/plan/07-release-and-prr.md#alert-authbreakglassused` | synthetic | | | | | | pending |
 | AuthBreakGlassAttempted | page | 0m | `docs/plan/07-release-and-prr.md#alert-authbreakglassattempted` | synthetic | | | | | | pending |
+| AuthOwnerBootstrapped | page | 0m | `docs/plan/07-release-and-prr.md#alert-authownerbootstrapped` | synthetic | | | | | | pending |
 | AuthBreakGlassStateReadFailing | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-authbreakglassstatereadfailing` | synthetic | | | | | | pending |
 | AuthAuditOutcomeLost | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-authauditoutcomelost` | synthetic | | | | | | pending |
 | AuthAuditOutcomesLostBurst | page | 0m | `docs/plan/07-release-and-prr.md#alert-authauditoutcomelost` | synthetic | | | | | | pending |

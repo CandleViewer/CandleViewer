@@ -62,6 +62,9 @@ class _Events:
             raise self.attempts
         return self.attempts
 
+    async def owner_bootstrap_count(self) -> int:
+        return 0  # the third read has its own tests: test_owner_bootstraps_metric.py
+
 
 @pytest.fixture(autouse=True)
 def _clean_gauges() -> None:
@@ -153,6 +156,9 @@ async def test_a_read_that_times_out_is_counted() -> None:
             return 1
 
         async def break_glass_attempt_count(self) -> int:
+            return 0
+
+        async def owner_bootstrap_count(self) -> int:
             return 0
 
     before = _failures()

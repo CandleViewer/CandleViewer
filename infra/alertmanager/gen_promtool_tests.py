@@ -129,6 +129,14 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         "20m",
         {"env": "live"},
     ),
+    # #4479 C2: no grant on record (0), then the redemption's (1), read as the attempts page reads.
+    "AuthOwnerBootstrapped": (
+        'auth_owner_bootstraps{env="live"}',
+        "0+0x10 1+0x10",
+        "0+0x20",
+        "20m",
+        {"env": "live"},
+    ),
     # #2914 (04 section 8.3 rule 2): one lost outcome record tickets, more than 5 in 15 minutes
     # pages. 4 is the near-miss: exactly 5 could page under Prometheus 3 (`increase` extrapolates
     # differently over its left-open ranges).
@@ -519,7 +527,17 @@ EXTRA: dict[str, list[tuple[str, str, bool]]] = {
         ("2+0x10 _x20 3+0x40", "55m", False),  # 15m on: the window has moved past the rise
         ("_x30 3+0x20", "35m", False),  # no sample from before the run to compare with
     ],
-    # #2496 review: a Postgres restart of two minutes is four failed statements, far under 10.
+    # #4479 C2: a rise pages as the attempts page does, and so does a first sample above 0, which
+    # the attempts page sees no rise in (no sample from before it); each ends 15m after the first
+    # scrape that shows the count. A bootstrapped database seen through an outage stays silent.
+    "AuthOwnerBootstrapped": [
+        ("_x30 1+0x20", "35m", True),  # Prometheus first scrapes cv-api after the redemption
+        ("_x30 1+0x40", "50m", False),  # 15m on: the first sample is now in the older window
+        ("0+0x10 1+0x40", "40m", False),  # 15m after the rise
+        ("1+0x10 _x30 1+0x10", "45m", False),  # cv-api down half an hour on a bootstrapped db
+    ],
+    # #2496 review: a Postgres restart of two minutes is six failed statements (three a minute
+    # since #4479 C2), under 10.
     # #3215: the threshold from both sides, 9 failures in the window (silent) and 10 (fires). Each
     # is a step up from a flat 0, so the 15m `increase` is the step itself and nothing is
     # extrapolated, whether or not Prometheus counts the window's first sample.

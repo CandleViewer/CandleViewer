@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript, and was corrected 2026-10-23 from its cold run (#2494, E09-X04) and from the reviews of #4254 and #300; the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051; §4, §10 and the known gaps were updated 2026-10-21 for #3009 (the lane's exit, ADR-0037 Amendment 1); §4's backstop paragraph names the two classifying middleware since 2026-10-22 (#3085 S7); §1, §10 and the known gaps were updated 2026-10-22 for #2914's PR C (the login routes' rows on the lane, ADR-0037 Amendment 2). Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript, and was corrected 2026-10-23 from its cold run (#2494, E09-X04) and from the reviews of #4254 and #300; the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051; §4, §10 and the known gaps were updated 2026-10-21 for #3009 (the lane's exit, ADR-0037 Amendment 1); §4's backstop paragraph names the two classifying middleware since 2026-10-22 (#3085 S7); §1, §10 and the known gaps were updated 2026-10-22 for #2914's PR C (the login routes' rows on the lane, ADR-0037 Amendment 2); §4's bootstrap paragraph became the runnable "Bootstrap the first Owner" procedure on 2026-10-25 for #4479 (C2), checked against C2's code and against #3180's compose lines as their author gave them that day (they land with #3180), and its known-gaps row was dropped. Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -890,14 +890,174 @@ it (login refuses `disabled` only):
   but unused: its old token is refused as expired before `require_active` runs, and any later use
   of the row revokes it.
 
-**The bootstrap Owner (O5, #3246).** The permission readers and the owner floor count only `active`
-users. The first Owner that `0002_rbac_seed` creates (`docs/plan/21-database-schema.md` §10.2) is
-seeded `invited`, so it holds no permission and is no Owner for the floor until it is `active`, and
-nothing in the app makes it `active`: only redeeming an invite does, and the seed creates none (nor
-does any password match its seeded placeholder hash). **BLOCKED — not implemented**: there is no
-supported way to activate it (#2710). Do not edit `users` by hand: escalate to the repository owner,
-as §3 says, and record it. On testnet, `services/api/scripts/seed_fixture_user.py` seeds an `active`
-Owner and audits it.
+<a id="bootstrap-the-first-owner"></a>
+
+**Bootstrap the first Owner (O5, #4479).** A database with no active Owner (a fresh one) gets its
+first Owner from the offline CLI `python -m candleviewer.bootstrap_owner --owner <email> [--live]`,
+built on break-glass's host gate (§3): it mints one single-use Owner invite, and the Owner redeems
+it in the app. The `0002_rbac_seed` variables can never produce an Owner
+(`docs/plan/21-database-schema.md` §10.2): never set `CV_BOOTSTRAP_OWNER_EMAIL` or
+`CV_BOOTSTRAP_OWNER_CONFIRM`. An active Owner who is locked out uses §1 or §3 instead; once an
+Owner is active the CLI only refuses (17). On testnet, `services/api/scripts/seed_fixture_user.py`
+seeds an `active` Owner and audits it. Proven on Postgres by the CLI on a pty and the redemption in
+process (#4479 C2's e2e); not yet run on a host.
+
+**What a run does.** It opens the host journal under the run lock that cv-api and break-glass
+share, writes `auth.bootstrap_owner_attempt` into it, then checks, in this order: `--live` against
+`CV_ENVIRONMENT`, the KEK, that no other session of cv-api's database role is connected, that no
+Owner is active and the email is a candidate, the terminal, the retyped phrase
+`bootstrap <email> on <environment> <6 hex digits>`, and no other session again. Then one
+transaction, under the bootstrap advisory lock and only while no Owner is active, creates (or
+reuses) the `invited` user with no role, revokes that user's invites and every bootstrap invite
+that are open or half-redeemed (a password step taken, its TOTP not yet confirmed), and inserts
+one marked `owner` invite, valid 4 h, storing only the sha256 of its token. The closing record is
+`auth.bootstrap_owner_invited` or `auth.bootstrap_owner_refused` with its reason; every record is
+critical, with actor `system:bootstrap`, the run's id as `request_id` and a label of the email,
+never the email itself. Only once `auth.bootstrap_owner_invited` has landed does the CLI print the
+token, once, to the terminal. It never asks for a password or a TOTP code and grants nothing: cv-api
+grants `owner` at the redemption, with the CRITICAL `users.owner_bootstrapped` record written ahead
+in that transaction. Records Postgres could not take wait in the journal for cv-api's next boot, as
+in §3.
+
+**Exit status.** The reason in the refusal record is the status name in lower case. 10, 14 and 15
+are not used, so a number means the same in both CLIs.
+
+| Status                                                             | Meaning                                                                                                                                                                                                                             |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 `invited`                                                        | The invite exists and its token was printed once; the last line says whether every record is in `audit_log` or waiting in the journal.                                                                                              |
+| 1 `step_failed`                                                    | A check broke (an error, or no answer within 60 s); nothing was minted.                                                                                                                                                             |
+| 2                                                                  | Usage or settings error (`--owner` missing, invalid settings): nothing ran and nothing is recorded. A malformed email is not a 2: it is recorded, then refused 18, and never echoed.                                                |
+| 3 `mint_failed`                                                    | The mint failed and rolled back, unless the link broke at COMMIT (`outcome` `rolled_back_or_unknown`), recorded as `auth.bootstrap_owner_invited` `failure`. Run again: a new run revokes any invite this one minted.               |
+| 4 `host_fs_unavailable`                                            | `CV_AUDIT_WAL_PATH` is relative, holds `..` or a symlink, or the journal is unusable.                                                                                                                                               |
+| 5 `api_running`                                                    | Before the target check or again before the mint: cv-api or another CLI run (break-glass or bootstrap) holds the run lock, or another session of cv-api's database role is connected, an open `psql` session of that role included. |
+| 6 `audit_unavailable`                                              | A record could not be written. If it was `auth.bootstrap_owner_invited`, the invite exists but its token is withheld: run again, which revokes it.                                                                                  |
+| 7 `live_flag_required`, 8 `live_flag_mismatch`                     | `--live` is missing in `live`, or given outside it.                                                                                                                                                                                 |
+| 9 `kek_unproven`                                                   | No KEK, a wrong or retired one, or one no cv-api boot has enrolled for this environment on this database.                                                                                                                           |
+| 11 `no_tty`, 12 `confirmation_mismatch`, 13 `confirmation_timeout` | No terminal; the phrase was not retyped exactly; it was not retyped within 5 minutes.                                                                                                                                               |
+| 16 `operator_cancelled`                                            | Ctrl-C before the mint began.                                                                                                                                                                                                       |
+| 17 `owner_exists`                                                  | An Owner is active, at the target check or inside the mint: the bootstrap is done.                                                                                                                                                  |
+| 18 `not_candidate`                                                 | The email is malformed (the part before `@`: 3 to 32 letters, digits, `.`, `_` or `-`; after it, a dot), that part is another user's username, or the email's user exists and is not an `invited` user with no other role.          |
+| 130                                                                | A second Ctrl-C: the outcome is unknown. Read the run's `auth.bootstrap_owner_*` rows in `audit_log`; a new run revokes any invite this one minted.                                                                                 |
+
+**Preconditions.** Those of §3 but its KEK custody (below), without the recovery-code key (the CLI
+needs none) and without a recovery code in `live`; and:
+
+- cv-api has booted once with this KEK on this database, which enrols its check value; otherwise
+  the run exits 9.
+- No Owner is active, and you know the new Owner's email.
+- The stack runs the `bootstrap-owner` service (#3180's demo-host overlay): its own compose
+  profile, so `up` never starts it, with `logging: {driver: none}`, so no log driver keeps the
+  token's print. Never run the CLI as `$COMPOSE run … api`: `api`'s logging driver keeps the print.
+- Its KEK: the service passes `CV_KEK_SOURCE=file` (the `cv_kek` secret) and no `CV_KEK_ACK_PATH`,
+  so only a `file` or credential-handle KEK works with it, never §3's FIFO. `live` refuses a `file`
+  KEK, so the demo host's service runs demo only and never takes `--live`; a live deployment needs
+  a service definition of its own, with its KEK as `CV_KEK_SOURCE=handle` (the launcher FIFO plus
+  its ack path, or a systemd credential).
+- A terminal: run the command from one, with no `-T`, no pipe and no `| tee` (over ssh, `ssh -t`).
+- A channel to the Owner that keeps no copy of what passes through it, and the Owner ready to
+  redeem within minutes in the app (R-009, web or desktop).
+
+**Procedure (compose).** On the demo host (#3180; `infra/compose/docker-compose.demo-host.yml`
+lands with it), `$COMPOSE` is set once as below; another stack uses its own `-p` and `-f`, as in §3:
+
+```bash
+COMPOSE="docker compose -p cv-demo -f infra/compose/docker-compose.yml -f infra/compose/docker-compose.vps.yml -f infra/compose/docker-compose.demo-host.yml"
+```
+
+1. Record the run in its ticket before you start: who, when, which Owner (by name, never the
+   address: every record of the run carries only its label) and who has the host. Never the
+   token. Warn the on-call: the redemption pages (`AuthOwnerBootstrapped`, below).
+2. Stop cv-api, and check with `$COMPOSE ps -a api` that it is `Exited`:
+
+   ```bash
+   $COMPOSE stop api
+   ```
+
+3. Run the CLI and retype the phrase it shows. Only a live deployment's own service takes `--live`,
+   after the email (Preconditions).
+
+   ```bash
+   $COMPOSE --profile bootstrap-owner run --rm --no-deps bootstrap-owner --owner <owner email>
+   ```
+
+4. Exit 0 prints the token once. First note the run's id, the `run_id` of its
+   `bootstrap_owner.run_ended` JSON line (step 9 needs it, and the service keeps no log).
+   Copy the token once to the Owner over the channel above: never a ticket, chat, email,
+   screenshot, shell history or file. Then clear the terminal's scrollback. Any other status is in
+   the table above: fix the cause and run again.
+5. Start cv-api and wait until it is healthy:
+
+   ```bash
+   $COMPOSE --profile core up -d --wait api
+   ```
+
+6. The Owner redeems at once: opens `/invite/<token>`, whose page now says `owner`, sets a password
+   of 12 or more characters inside the invite's 4 h, enrols TOTP and confirms it with a first code
+   within 30 minutes of that password step. The confirmation answers `active`, `owner` and 10
+   recovery codes.
+7. The Owner signs in with the password and a TOTP code. That first session with MFA satisfied
+   resolves the critical `auth`/`owner_bootstrapped` system event.
+8. Seal the 10 recovery codes in the SR-023 envelope.
+9. Check the records, read-only. Every run row shares the run's id; compare the `actor_ip` and
+   `event_ts` of `users.owner_bootstrapped` and `users.invite_redeemed` (role `owner`) with the
+   Owner's own address and time of redemption. A new CLI run now exits 17. Close the session before
+   any later CLI run (exit 5).
+
+   ```bash
+   $COMPOSE exec -T -e PGOPTIONS='-c default_transaction_read_only=on' postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+   SELECT id, action, outcome, reason, event_ts FROM audit_log WHERE request_id = '<run id>' ORDER BY id;
+   SELECT id, action, object_id, actor_ip, event_ts, after_state FROM audit_log
+    WHERE action IN ('users.owner_bootstrapped', 'users.invite_redeemed') ORDER BY id DESC LIMIT 4;
+   SQL
+   ```
+
+**When it goes wrong.**
+
+- **Re-run** (from step 2; the new run supersedes the old invite, whose token stops working): the
+  token was lost; the invite expired (4 h); the enrolment lapsed (30 minutes after the password
+  step); or the confirmation answered `503` because its record was refused, which rolled the grant
+  back and left the user `invited` with TOTP enrolled.
+- **Someone else redeemed it.** The Owner's `/invite/<token>` answers not valid though nobody
+  redeemed it, or step 9's `actor_ip` or time is not the Owner's. Read the invite and the user
+  (read-only, as in step 9):
+
+  ```sql
+  SELECT u.status, i.created_at, i.expires_at, i.consumed_at, i.revoked_at
+    FROM users u JOIN user_invites i ON i.user_id = u.id
+   WHERE u.email = '<owner email>' AND i.role = 'owner' ORDER BY i.created_at DESC LIMIT 3;
+  ```
+
+  A `revoked_at` means a later run superseded it, and an `expires_at` in the past that it expired:
+  re-run. No `consumed_at`, no `revoked_at` and an `expires_at` ahead means it is still open and the
+  token the Owner typed is not its own (mistyped or cut short): re-run from step 2, which revokes
+  it. A `consumed_at` with no `revoked_at` while the user is still `invited` means its password
+  step was taken and its TOTP is not confirmed yet: whoever took that step has up to 30 minutes to
+  become the Owner, and the page already answers that it was redeemed. Re-run from step 2 at once:
+  stopping cv-api stops the confirmation, and the run revokes the half-redeemed invite, so its
+  token and the pending enrolment die. If nobody on your side took that password step, the token
+  leaked: open an S1 incident (`SECURITY.md` section 7) as well. A user that is `active`, or a
+  `users.owner_bootstrapped` row the Owner did not make, means someone else holds the Owner: stop
+  cv-api (`$COMPOSE stop api`), open an S1 incident (`SECURITY.md` section 7) and escalate to the
+  repository owner, who decides between a rebuild and a database repair under the security
+  process. Do not re-run (it exits 17) and do not edit rows by hand.
+
+- **After a restore** to a database with no active Owner (a backup taken between a mint and its
+  redemption brings the old invite back), run the CLI again before cv-api starts on it: the run
+  revokes the restored invite.
+- **Rolling the image back** to one older than this CLI: that cv-api treats `auth.bootstrap_owner_*`
+  records still waiting in the journal as foreign. It keeps the journal, records
+  `auth.break_glass_refused` with reason `journal_unusable` and folds nothing in, break-glass
+  records included, until a newer image boots. Before a rollback, make sure the last run's
+  `Audit:` line said every record reached `audit_log`.
+
+**Alert.** `AuthOwnerBootstrapped` pages when the count of `users.owner_bootstrapped` rows rises,
+the expected redemption included (step 1 warns the on-call). It also pages on a count above 0 with
+no sample in the 7 days before the last 15 minutes
+(`docs/plan/07-release-and-prr.md#alert-authownerbootstrapped`), so a Prometheus that first scrapes
+cv-api after the redemption still pages, and so, once, does one that lost its history: account for
+each page as step 9 does. A CLI run, refused or not, raises no page (`AuthBreakGlassAttempted`
+counts break-glass runs only): if the host may have been touched, read the `auth.bootstrap_owner_*`
+rows (command 2 of that 07 section).
 
 **A commit lost on the wire (#2710, #3445).** When the commit of a disable fails on the wire, the
 `users.disable` record is followed by a `failure` record with reason `outcome_unknown`, and the
@@ -1550,7 +1710,6 @@ boot's `previous_kid` is gone, and destroy the old secret file.
 | `PUT /auth/password` not implemented (no revoke-other-sessions on change) | #2110          |
 | Scheduled audit-chain verifier                                            | #2111          |
 | Disable-user drill on staging (SR-029)                                    | #2494, #300    |
-| Activating the seeded `invited` bootstrap Owner (O5)                      | #2710          |
 | No B16 record of a lost disable commit's sessions if not read back        | #2710, #3445   |
 | Session rotation on role change and step-up                               | #2101          |
 | Lock alerts lost inside quiet hours                                       | #2621          |

@@ -11,6 +11,7 @@
 ["auth_lockouts_total", "counter", [], "live", "E09"]
 ["auth_login_failures_total", "counter", ["method"], "live", "E09"]
 ["auth_owner_bootstrap_events", "gauge", [], "live", "E09"]
+["auth_owner_bootstraps", "gauge", [], "live", "E09"]
 ["auth_readonly_downgrades_total", "counter", [], "live", "E09"]
 ["auth_recovery_codes_used_total", "counter", [], "live", "E09"]
 ["auth_refresh_reuse_total", "counter", [], "live", "E09"]

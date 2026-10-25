@@ -95,6 +95,7 @@ def test_required_rules_present() -> None:
         "AuthBreakGlassUsed",  # #2496 SR-023
         "AuthBreakGlassAttempted",  # #2496 SR-023, a run that changed nothing
         "AuthBreakGlassStateReadFailing",  # #2496 SR-125, the two pages above going blind
+        "AuthOwnerBootstrapped",  # #4479 C2 SR-023, a bootstrap Owner grant on record
         "AuditSigningKeyUnavailable",  # #889 ADR-0039 decision 2: export alone, a page
         "AuditSigningKeyBootStepFailed",  # #889 S6a-2's security F1: a step that degraded nothing
     }
@@ -422,6 +423,31 @@ def test_break_glass_attempt_alert_pages_on_a_rise_of_the_run_count() -> None:
     ]
 
 
+def test_owner_bootstrap_alert_pages_on_a_rise_of_the_grant_count_or_its_first_sample() -> None:
+    """#4479 C2 (SR-023, U46): the durable count of `users.owner_bootstrapped` rows, read as the
+    break-glass run count is (a rise over the maximum before the last 15 minutes), and also a
+    count above 0 with no sample there at all, so a Prometheus that first scrapes cv-api after
+    the redemption still pages. No hold time and a page; its own component and receiver."""
+    rules = _rules()
+    rule = {r["alert"]: r for r in rules}["AuthOwnerBootstrapped"]
+    recent = "max by (env) (max_over_time(auth_owner_bootstraps[15m]))"
+    older = "max by (env) (max_over_time(auth_owner_bootstraps[7d] offset 15m))"
+    assert rule["expr"] == f"{recent} > {older} or ({recent} > 0 unless {older})"
+    assert rule["for"] == "0m"
+    assert rule["labels"] == {
+        "severity": "page",
+        "component": "auth_owner_bootstrap",
+        "resolves": "window",
+    }
+    route = _route_for(_alert_labels(rule))
+    assert route["receiver"] == "page_event" and "mute_time_intervals" not in route
+    url = rule["annotations"]["runbook_url"]
+    assert url == "docs/plan/07-release-and-prr.md#alert-authownerbootstrapped"
+    assert [r["alert"] for r in rules if r["labels"]["component"] == "auth_owner_bootstrap"] == [
+        "AuthOwnerBootstrapped"
+    ]
+
+
 def test_break_glass_read_failure_ticket_says_when_the_two_pages_go_blind() -> None:
     """#2496 review (SR-125, detection health): a failed read keeps the last value of both
     break-glass gauges (0 in a fresh process) and the `absent()` guards cannot see it, so the
@@ -464,7 +490,7 @@ def test_break_glass_read_failure_ticket_says_when_the_two_pages_go_blind() -> N
 #: a scrape gap, so it also ends when cv-api has merely been down for that window, which a
 #: [RESOLVED] would report as handled while the event is unresolved. `AuthBreakGlassAttempted`
 #: reads a rise of a gauge that only ever rises, over the same window, so it also ends when the
-#: window moves on.
+#: window moves on; so does `AuthOwnerBootstrapped` (#4479 C2), on the bootstrap grant count.
 #: Not classified yet: `NakedPositionDetected`. Whether its [RESOLVED] means "protected again"
 #: or only "the window moved on" depends on how the E32 watchdog counts
 #: `naked_position_alerts_total`: once per detection (an event page), or on every scan while a
@@ -474,6 +500,7 @@ EVENT_TYPE_PAGES = {
     "AuthAuditOutcomesLostBurst",
     "AuthBreakGlassAttempted",
     "AuthBreakGlassUsed",
+    "AuthOwnerBootstrapped",
     "AuthRecoveryCodeUsed",
     "IngestionTradeGapUnrecovered",
 }

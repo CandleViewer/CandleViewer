@@ -18,12 +18,15 @@ Every successful read also sets `auth_break_glass_unresolved_events` (how many a
 0 when none), the series `AuthBreakGlassUsed` pages the Owner on (#2496). A failed read leaves it
 as it was. The same refresh reads how many CLI runs `audit_log` holds a record of into
 `auth_break_glass_attempts`, which `AuthBreakGlassAttempted` pages on: a run that changed nothing
-leaves audit rows and no unresolved event. The two are separate statements with separate
-failures, so a broken attempts read cannot silence the unresolved-events page or the notice.
+leaves audit rows and no unresolved event. A third read counts the bootstrap Owner grants on
+record (#4479 C2, the CRITICAL `users.owner_bootstrapped` rows) into `auth_owner_bootstraps`, which
+`AuthOwnerBootstrapped` pages on: the durable count, which no restart resets and no sign-in
+resolves. They are separate statements with separate failures, so a broken read cannot silence
+another page or the notice.
 
 Every failed read is also counted in `auth_break_glass_state_read_failures_total`: a failed read
-keeps the last value of both gauges (0 in a fresh process), so without the counter a reader that
-cannot read leaves both pages silent with nothing to say so. `AuthBreakGlassStateReadFailing`
+keeps the last value of its gauge (0 in a fresh process), so without the counter a reader that
+cannot read leaves all three pages silent with nothing to say so. `AuthBreakGlassStateReadFailing`
 raises a ticket on it.
 """
 
@@ -39,6 +42,7 @@ from candleviewer.auth.metrics import (
     auth_break_glass_attempts,
     auth_break_glass_state_read_failures_total,
     auth_break_glass_unresolved_events,
+    auth_owner_bootstraps,
 )
 from candleviewer.observability.context import spawn
 
@@ -61,6 +65,11 @@ class BreakGlassEvents(Protocol):
 
     async def break_glass_attempt_count(self) -> int:
         """How many CLI runs `audit_log` has a record of (`auth.break_glass_attempt` rows)."""
+        ...
+
+    async def owner_bootstrap_count(self) -> int:
+        """How many bootstrap Owner grants `audit_log` has a record of
+        (`users.owner_bootstrapped` rows, #4479)."""
         ...
 
 
@@ -103,6 +112,9 @@ class BreakGlassNotice:
         attempts = await self._read("attempts", self._events.break_glass_attempt_count)
         if attempts is not None:
             auth_break_glass_attempts.set(attempts)
+        bootstraps = await self._read("owner_bootstraps", self._events.owner_bootstrap_count)
+        if bootstraps is not None:
+            auth_owner_bootstraps.set(bootstraps)
 
     async def _read(self, series: str, count: Callable[[], Awaitable[int]]) -> int | None:
         """One bounded read: its count, or `None` after counting and logging the failure."""

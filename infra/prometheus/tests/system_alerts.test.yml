@@ -516,6 +516,70 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: auth_owner_bootstraps{env="live"}
+    values: 0+0x10 1+0x10
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: AuthOwnerBootstrapped
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: auth_owner_bootstrap
+        resolves: window
+        env: live
+      exp_annotations:
+        summary: 'A first Owner was bootstrapped on this host: review the audit log'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-authownerbootstrapped
+- interval: 1m
+  input_series:
+  - series: auth_owner_bootstraps{env="live"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: AuthOwnerBootstrapped
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: auth_owner_bootstraps{env="live"}
+    values: _x30 1+0x20
+  alert_rule_test:
+  - eval_time: 35m
+    alertname: AuthOwnerBootstrapped
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: auth_owner_bootstrap
+        resolves: window
+        env: live
+      exp_annotations:
+        summary: 'A first Owner was bootstrapped on this host: review the audit log'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-authownerbootstrapped
+- interval: 1m
+  input_series:
+  - series: auth_owner_bootstraps{env="live"}
+    values: _x30 1+0x40
+  alert_rule_test:
+  - eval_time: 50m
+    alertname: AuthOwnerBootstrapped
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: auth_owner_bootstraps{env="live"}
+    values: 0+0x10 1+0x40
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: AuthOwnerBootstrapped
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: auth_owner_bootstraps{env="live"}
+    values: 1+0x10 _x30 1+0x10
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: AuthOwnerBootstrapped
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: auth_audit_outcome_lost_total{action="auth.session_revoked",env="live"}
     values: 0+0x10 1+0x10
   alert_rule_test:

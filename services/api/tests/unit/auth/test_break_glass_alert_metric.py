@@ -66,6 +66,9 @@ class _Events:
     async def break_glass_attempt_count(self) -> int:
         return 0  # the attempts series has its own tests: test_break_glass_attempts_metric.py
 
+    async def owner_bootstrap_count(self) -> int:
+        return 0  # so has the third read: test_owner_bootstraps_metric.py
+
 
 @pytest.fixture(autouse=True)
 def _clean_gauge() -> Iterator[None]:
