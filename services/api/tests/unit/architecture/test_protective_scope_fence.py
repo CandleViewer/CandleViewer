@@ -79,6 +79,22 @@ def _offenders(sources: dict[str, str]) -> list[str]:
     return sorted(name for name, tree in trees.items() if _registered(tree) and not _scopes(tree))
 
 
+#: The scan reads some 880 modules today; one that read far fewer lost its input (a moved root, a
+#: changed pattern), and a scan of nothing finds nothing.
+MIN_MODULES = 400
+
+
+def _sources(root: Path) -> dict[str, str]:
+    return {path.relative_to(root).as_posix(): path.read_text() for path in root.rglob("*.py")}
+
+
+def _scan(root: Path, *, at_least: int) -> list[str]:
+    return _offenders(_sources(root))
+
+
+_REGISTERS = 'protective.register("cancelOrder")\n'
+
+
 @pytest.mark.parametrize(
     ("source", "offends"),
     [
@@ -86,16 +102,100 @@ def _offenders(sources: dict[str, str]) -> list[str]:
         ('_OP: Final = "cancelAllOrders"\nprotective.register(_OP)', True),
         ('_OP = "amendOrder"\nprotective.register(_OP)', True),
         ('protective.register(operation_id="cancelOrder")', True),
-        ('protective.register("cancelOrder")\nscope = scope_for_target(viewer, target)', False),
-        ('protective.register("cancelOrder")\nscope = principals.scope_for_target(v, t)', False),
+        (_REGISTERS + "scope = scope_for_target(p.snapshot, p.target)", False),
+        (_REGISTERS + "scope = principals.scope_for_target(v, p.target)", False),
+        (_REGISTERS + "scope = scope_for_target(p.snapshot, target=p.target)", False),
+        (_REGISTERS + "scope = scope_for_target(p.snapshot, None)", True),  # no target passed
+        (_REGISTERS + "scope = scope_for_target(p.snapshot, t)", True),  # a name, not `.target`
+        (_REGISTERS + "scope = scope_for_target(p.snapshot)", True),
         ('atexit.register("placeOrder")', False),  # not a protective write
         ("protective.register(operation)", False),  # not a constant: out of the scan's reach
+        ("protective.register()", False),  # names nothing
     ],
 )
 def test_the_scan_finds_a_protective_registration_with_no_scope(source: str, offends: bool) -> None:
     assert _offenders({"m.py": source}) == (["m.py"] if offends else [])
 
 
+def _route(imports: str, call: str) -> str:
+    """A route module: it imports, registers a protective write and calls."""
+    return f"{imports}\n{_REGISTERS}{call}\n"
+
+
+_COMMON = "from candleviewer.api.common import caller"
+_SCOPED = "def caller(p):\n    return scope_for_target(p.snapshot, p.target)\n"
+
+
+@pytest.mark.parametrize(
+    ("sources", "offenders"),
+    [
+        ({"api/r.py": _route(_COMMON, "caller(p)"), "api/common.py": _SCOPED}, []),
+        ({"api/r.py": _route(_COMMON + " as c", "c(p)"), "api/common.py": _SCOPED}, []),
+        (
+            {
+                "api/r.py": _route("from candleviewer.api import common as k", "k.caller(p)"),
+                "api/common.py": _SCOPED,
+            },
+            [],
+        ),
+        ({"api/r.py": _route(_COMMON, ""), "api/common.py": _SCOPED}, ["api/r.py"]),  # not called
+        (
+            {"api/r.py": _route(_COMMON, "caller(p)"), "api/common.py": "def caller(p): ..."},
+            ["api/r.py"],  # the helper scopes nothing
+        ),
+        (
+            {
+                "api/r.py": _route(_COMMON, "caller(p)"),
+                "api/common.py": "def caller(p):\n    return scope_for_target(p.snapshot, None)",
+            },
+            ["api/r.py"],  # and one that passes no target scopes nothing either
+        ),
+        (
+            {
+                "api/r.py": _route(_COMMON.replace("caller", "other"), "other(p)"),
+                "api/common.py": _SCOPED + "def other(p): ...",
+            },
+            ["api/r.py"],  # another function of the module it imports
+        ),
+        (
+            {
+                "api/r.py": _route("from candleviewer.oms.common import caller", "caller(p)"),
+                "oms/common.py": _SCOPED,
+            },
+            ["api/r.py"],  # outside `candleviewer.api`
+        ),
+        (
+            {
+                "api/r.py": _route(_COMMON, "caller(p)"),
+                "api/common.py": "from candleviewer.api.leaf import caller as inner\n"
+                "def caller(p):\n    return inner(p)",
+                "api/leaf.py": _SCOPED,
+            },
+            ["api/r.py"],  # a second hop
+        ),
+    ],
+)
+def test_the_scan_follows_one_import_hop_within_the_api_package(
+    sources: dict[str, str], offenders: list[str]
+) -> None:
+    """`order_exits.py` registers its routes and calls `exit_caller` of `order_exits_common.py`,
+    which takes the scope: a call there counts, by name and one hop only."""
+    assert _offenders(sources) == offenders
+
+
+def test_a_module_that_does_not_parse_is_named() -> None:
+    with pytest.raises(SyntaxError) as raised:
+        _offenders({"api/broken.py": "def ("})
+    assert raised.value.filename == "api/broken.py"
+
+
+def test_a_scan_that_read_too_few_modules_fails(tmp_path: Path) -> None:
+    """A scan of an emptied or moved root finds nothing and passes: it must have read its input."""
+    (tmp_path / "m.py").write_text(_REGISTERS, encoding="utf-8")
+    with pytest.raises(AssertionError, match="read 1 modules"):
+        _scan(tmp_path, at_least=2)
+    assert _scan(tmp_path, at_least=1) == ["m.py"]  # and what it read, it judged
+
+
 def test_every_module_registering_a_protective_write_scopes_through_the_helper() -> None:
-    sources = {str(path.relative_to(PKG)): path.read_text() for path in PKG.rglob("*.py")}
-    assert _offenders(sources) == []
+    assert _scan(PKG, at_least=MIN_MODULES) == []
