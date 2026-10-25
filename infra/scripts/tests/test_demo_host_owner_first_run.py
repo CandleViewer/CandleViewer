@@ -808,6 +808,44 @@ def test_the_password_bound_counts_characters_not_bytes(tmp_path: Path) -> None:
     assert [r["body_ok"] for r in sent.records if r["route"] == REDEEM] == [{"password": True}]
 
 
+@pytest.mark.parametrize(("length", "sent"), [(11, False), (12, True), (512, True), (513, False)])
+def test_the_password_bound_holds_at_12_and_512_characters(
+    tmp_path: Path, length: int, sent: bool
+) -> None:
+    """The new password's bound, at both ends: 12 and 512 characters are sent, 11 and 513 are
+    refused before anything is sent."""
+    password = "p" * length
+    scenario = full_run()
+    refusal = problem(422, "password_policy", "too_common")  # stops the run once it is sent
+    scenario[REDEEM] = [refusal | {"expect": {"password": password}}]
+    done = run(tmp_path, scenario, [EMAIL, TOKEN, password, password])
+    expected = [{"password": True}] if sent else []
+    assert [r["body_ok"] for r in done.records if r["route"] == REDEEM] == expected
+    assert ("a password is 12 to 512 characters" in done.proc.stderr) is not sent
+
+
+#: How a run refused at the step-up says to run again: with the account id once one exists.
+STEP_UP_AGAIN = "the step-up was refused twice: wait 5 minutes, then run again with --skip-invite"
+
+
+@pytest.mark.parametrize(
+    ("answers", "args", "rerun"),
+    [
+        (ANSWERS + [CODES[2]], (), ""),
+        (TO_IMPORT + [CODES[2]], KEEP, " --account-id <the account id>"),
+    ],
+    ids=["no-account-yet", "account-registered"],
+)
+def test_a_refused_step_up_names_the_rerun(
+    tmp_path: Path, answers: list[str], args: tuple[str, ...], rerun: str
+) -> None:
+    scenario = full_run()
+    scenario[STEP_UP] = [BAD_STEP_UP] * 2
+    stopped = run(tmp_path, scenario, answers, *args)
+    assert stopped.proc.returncode == 1
+    assert f"demo_host_owner_first_run: {STEP_UP_AGAIN}{rerun}\n" in stopped.proc.stderr
+
+
 ELEVATED = {"elevated_until": "2026-10-26T04:05:00+00:00", "action_class": "keys"}
 NO_CHALLENGE = problem(403, "step_up_required", "Re-enter your password and code.",
                        action_class="keys")  # fmt: skip
