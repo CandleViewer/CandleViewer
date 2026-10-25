@@ -66,8 +66,8 @@ it (BQ-16 is the scope):
    occurrences, so a copy of an allowed phrase elsewhere fails; one FAIL per line.
 7d. The security text, pinned default-deny (the orchestrator's text round 3): a clause of the spec
    or the hand-off (a heading, a table cell, a prose sentence, a fenced line) that names a key, a
-   secret, a credential, a passphrase, private, a withdrawal / transfer word, a fund right, a reveal
-   or mask word, plain / clear text, CMP-034 / CMP-175 / CMP-201, a full / whole / raw id, or the
+   secret, a credential, a passphrase, private, a withdrawal / transfer word, any fund / funds /
+   money word, a reveal or mask word, plain / clear text or "in clear", CMP-034 / CMP-175 / CMP-201, a full / whole / raw id, or the
    view-as leg is security-bearing (BEARING), and every one must equal, whitespace normalised and in
    document order, its entry of SEC_PIN_TXT (section, row and column or "prose", exact text). New,
    changed, moved or duplicated security text, and a pinned clause gone, FAIL ``sec-pin`` with its
@@ -2169,13 +2169,15 @@ def doc_gate(spec: str, handoff: str, sec: dict[str, str], out: Out) -> None:
 # A clause of the spec or the hand-off (a heading, a table cell, a prose sentence, a fenced line) is
 # security-bearing when it names any of these, case-insensitive, at a word boundary, plurals and
 # hyphenations included: a key, an API key or a key id, a secret, a credential, a passphrase,
-# private, a withdrawal or transfer word, a fund right, reveal or (un)mask, plain or clear text,
+# private, a withdrawal or transfer word, any fund / funds / money word (so a fund right in any
+# phrasing: "can move funds", "funds can leave"), reveal or (un)mask, plain or clear text, "in clear",
 # CMP-034 / CMP-175 / CMP-201 by number or name, a full / whole / raw id; and, pinned explicitly,
 # a clause naming the view-as leg (section 8's and section 10.1's statements of the leg order).
 BEARING = re.compile(
     r"\b(?:api[- ]?)?keys?(?:[- ]?ids?)?\b|\bsecrets?\b|\bcredentials?\b|\bpassphrases?\b"
-    r"|\bprivate\b|\bwithdraw\w*|\btransfer\w*|\bfunds?[- ]rights?\b"
+    r"|\bprivate\b|\bwithdraw\w*|\btransfer\w*|\bfund(?:s|ed|ing)?\b|\bmoney\b"
     r"|\b(?:un-?)?(?:reveal|mask)\w*|\bunmask\w*|\b(?:plain|clear)[- ]?text\b"
+    r"|\bin\s+(?:the\s+)?clear\b"
     r"|\bCMP-(?:034|175|201)\b|MaskedValue|PasswordField|KeyPermissionBadge"
     r"|\b(?:full|whole|complete|entire|raw|real|unmasked)\s+(?:\w+\s+)?ids?\b"
     r"|\bview[- ]as leg\b",
@@ -2588,7 +2590,7 @@ def gates(
         {
             "mutations": len(MUTATIONS),
             "k_mutations": len(K_MUTATIONS) + len(HAND_MUTATIONS),
-            "pin_mutations": len(PIN_FORMS) * 2 + len(PIN_FIXED) + 2 * GRID_DRAWS,
+            "pin_mutations": len(PIN_FORMS) * 2 + len(PIN_FIXED) + 2 * (GRID_DRAWS + FUND_DRAWS),
         }
     )
     if check_markers:
@@ -4038,6 +4040,11 @@ PIN_FORMS = (
     "un-hide the key",
     "withdraw is on",
     "Withdrawal ✓",
+    # r3o fix: the fund right and the clear text with no key, secret or withdrawal word
+    "can move funds",
+    "Can move funds",
+    "funds can leave",
+    "in clear",
 )
 # r3o: the view-as prose (the MINOR) and two hand-off placements: (id, name, doc, old, new)
 PIN_FIXED: tuple[tuple[str, str, str, str, str], ...] = (
@@ -4063,6 +4070,22 @@ PIN_FIXED: tuple[tuple[str, str, str, str, str], ...] = (
         "Fixture values only; the key in plain text; no key material",
     ),
     ("P4", "hand-off row: Withdrawal ✓", "hand-off", HAND_ROW, f"{HAND_ROW}; Withdrawal ✓"),
+    (
+        "P5",
+        "hand-off prose: funds can leave",
+        "hand-off",
+        "Fixture values only; no key material",
+        "Fixture values only; funds can leave; no key material",
+    ),
+    ("P6", "hand-off row: can move funds", "hand-off", HAND_ROW, f"{HAND_ROW}; can move funds"),
+    (
+        "P7",
+        "hand-off prose: in clear",
+        "hand-off",
+        "Fixture values only; no key material",
+        "Fixture values only; shown in clear; no key material",
+    ),
+    ("P8", "hand-off row: in clear", "hand-off", HAND_ROW, f"{HAND_ROW}; in clear"),
 )
 # r3o: new phrasings drawn at run time (seeded, so two runs print the same) from a verb x object
 # grid, each into a table row and into a prose sentence; every one must FAIL `sec-pin`
@@ -4070,6 +4093,28 @@ GRID_VERBS = ("see", "show", "read", "copy", "export", "print", "send", "decrypt
 GRID_OBJECTS = ("the key", "the secret", "the key id")
 GRID_DRAWS = 10
 GRID_SEED = 816
+# r3o fix: a second grid with no key / secret word, so the draws reach the fund right and the
+# clear text too: (subject x modal x verb) fund phrasings and (verb x "in clear") placements
+FUND_GRID = tuple(
+    [
+        f"{s} {m} {v}"
+        for s in ("funds", "the funds", "money")
+        for m in ("can", "may")
+        for v in ("leave", "move")
+    ]
+    + [
+        f"{m} {v} {o}"
+        for m in ("can", "may")
+        for v in ("move", "send", "pull")
+        for o in ("funds", "money")
+    ]
+    + [
+        f"{v} {w}"
+        for v in ("shown", "stored", "sent", "kept")
+        for w in ("in clear", "in the clear")
+    ]
+)
+FUND_DRAWS = 10
 # the sections whose tables or prose a specific gate parses strictly (the variants, the deck, the
 # reason keys, T2, Appendix A, the BQ rows); a placement there would trip that gate as well
 PIN_SKIP = re.compile(r"^(?:0\.|2\.1 |10\.|12\.|14\.|16\.|Appendix A)")
@@ -4137,7 +4182,7 @@ def place(spec: str, clause: Clause, phrase: str) -> str:
 
 
 def pin_selftest(spec: str, base: dict[str, Any]) -> tuple[bool, list[str]]:
-    """The default-deny pin's own mutations: each lens form twice, the fixed four, the grid."""
+    """The default-deny pin's own mutations: each lens form twice, the fixed eight, the grids."""
     before = gates(spec, base)
     if before.fails:
         return False, [
@@ -4183,7 +4228,8 @@ def pin_selftest(spec: str, base: dict[str, Any]) -> tuple[bool, list[str]]:
         else:
             run(f"{k} {name}", spec, edited_text, True)
     grid = [f"{v} {o}" for v in GRID_VERBS for o in GRID_OBJECTS]
-    for j, phrase in enumerate(rng.sample(grid, GRID_DRAWS), 1):
+    drawn = rng.sample(grid, GRID_DRAWS) + rng.sample(list(FUND_GRID), FUND_DRAWS)
+    for j, phrase in enumerate(drawn, 1):
         for kind in ("row", "prose"):
             clause = rng.choice(targets[kind] + targets[kind + "+"])
             run(
@@ -4262,7 +4308,7 @@ def selftest(base: dict[str, Any], spec: str) -> tuple[bool, list[str]]:
         f"{len(K_MUTATIONS)} K mutations on the spec and {len(HAND_MUTATIONS)} on the hand-off, "
         "each one FAIL of its own; "
         f"{len(PIN_FORMS) * 2 + len(PIN_FIXED)} pin mutations, each one distinct FAIL (sec-pin), "
-        f"and {2 * GRID_DRAWS} drawn phrasings, each refused by the pin"
+        f"and {2 * (GRID_DRAWS + FUND_DRAWS)} drawn phrasings, each refused by the pin"
     )
     return ok, [mask_vendor(x) for x in lines]
 
@@ -4421,10 +4467,10 @@ SEC_PIN_TXT = r"""
   owner's, PROPOSED.
 @ prose
   **Revision:** r9 — the orchestrator's text round 3 folded as a default-deny pin (§16 item 13):
-  every clause of this spec and the hand-off that names a key, a secret, a credential, a fund
-  right, a mask word, plain text or CMP-034, CMP-175 or CMP-201, and every statement of the
-  view-as leg, equals one entry of the audit tool's pinned table, so security text that is new,
-  changed, moved or duplicated fails `sec-pin` until a reviewer reads it there; no word list
+  every clause of this spec and the hand-off that names a key, a secret, a credential, a fund or
+  money word, a mask word, plain or clear text or CMP-034, CMP-175 or CMP-201, and every statement
+  of the view-as leg, equals one entry of the audit tool's pinned table, so security text that is
+  new, changed, moved or duplicated fails `sec-pin` until a reviewer reads it there; no word list
   decides what may be said; r8 — the orchestrator's text round 3 folded into the audit tool (§16
   items 10–12): every line is read for a bare id, a show, view, copy or toggle of a key or a
   secret, a visibility toggle, a bracketed control that is not the egress IP's copy and a fund
@@ -6459,6 +6505,12 @@ SEC_PIN_TXT = r"""
 @ prose
   No secret is displayed, ever (`14:1753`; D13, `D02:199`): the one key value is CMP-034's
   `...{last4}` (§2.3, BQ-8).
+@ row Balances ‖ Content and copy
+  the caption "Balances · as of {hh:mm:ss} UTC" (CMP-036 `freshness`); a two-column `dl` of
+  CMP-036 rows — Equity, Wallet balance, Available balance, Unrealised PnL (CMP-116),
+  Initial-margin rate, Realised PnL today (CMP-116), Maint.-margin rate — every figure with its
+  unit; used margin is the initial-margin rate in % until O-E serves it in USDT, and fees and
+  funding are not drawn until a field serves them
 @ row Key and health — the Owner ‖ Block
   Key and health — the Owner
 @ row Key and health — the Owner ‖ Content and copy
@@ -7776,7 +7828,7 @@ SEC_PIN_TXT = r"""
   32-hex id, "Can Withdraw", "view the full key") — 109 <!-- audit:numbers.k_mutations=109 --> in
   all, each run in memory on this spec (or the hand-off) as a plain run: rc 1 with exactly one
   distinct FAIL, its own code, among the gates of items 1–12 (item 13's pin refuses it too
-  wherever it edits pinned text); then item 13's 62 <!-- audit:numbers.pin_mutations=62 --> pin
+  wherever it edits pinned text); then item 13's 94 <!-- audit:numbers.pin_mutations=94 --> pin
   mutations; restored, `--check` exits 0 and the spec on disk is byte-identical (its sha256
   compared).
 @ prose
@@ -7804,15 +7856,19 @@ SEC_PIN_TXT = r"""
   **The security text, pinned default-deny** (the orchestrator's text round 3; `sec-pin`): a
   clause of this spec or of the hand-off (a heading, each table cell, each prose sentence, each
   fenced line) is security-bearing when it names a key, an API key or a key id, a secret, a
-  credential, a passphrase, private, a withdrawal or transfer word, a fund right, a mask word in
-  any form, plain or clear text, CMP-034, CMP-175 or CMP-201 by number or name, or a full, whole
-  or raw id, case-insensitive, at a word boundary, plurals and hyphenations included; a clause
-  that names the view-as leg is pinned too (§8's and §10.1's statements of the leg order).
+  credential, a passphrase, private, a withdrawal or transfer word, any fund, funds or money word
+  (so a fund right in any phrasing), a mask word in any form, plain or clear text or "in clear",
+  CMP-034, CMP-175 or CMP-201 by number or name, or a full, whole or raw id, case-insensitive, at
+  a word boundary, plurals and hyphenations included; a clause that names the view-as leg is
+  pinned too (§8's and §10.1's statements of the leg order).
 @ prose
   Its self-test: each round-3 lens form twice (in a clause with no security word, and inside a
-  pinned clause), §8's and §10.1's view-as leg cut, two placements on the hand-off, each refused
-  by the pin alone, and ten phrasings drawn at run time (seeded) from a verb × object grid, each
-  placed in a table row and in a prose sentence and each refused.
+  pinned clause), the fund right and the clear text with no key word ("can move funds", "Can move
+  funds", "funds can leave", "in clear") twice each too, §8's and §10.1's view-as leg cut, six
+  placements on the hand-off, each refused by the pin alone, and twenty phrasings drawn at run
+  time (seeded) — ten from a verb × object grid of key and secret words and ten from a grid of
+  fund and clear-text phrasings with no key word — each placed in a table row and in a prose
+  sentence and each refused.
 @ prose
   r3 gave the frame rows the elements the K gates read where a row named them only by reference:
   the `lock` on frames 62–71 and 78, frame 66's `accounts.mode_locked` (`D02:828-830`), and the
