@@ -841,7 +841,8 @@ class OrderStateFeed:
 # ticker and phase (one dict read each, of a frozen event), the clock guard's health
 # (`ServedClock`), the read-only gate and the governor's headroom (each under its own lock,
 # #4370), the persistence bundle's chain-trip latch (a dict the serving loop's restores write an
-# item at a time), the metrics and the pager.
+# item at a time), its own refusals of rejected credentials, which the route's gate reads on the
+# serving loop too (`ServedStandings.refused`, one dict read), the metrics and the pager.
 
 
 class PrivateStreamRefused(RuntimeError):
@@ -920,11 +921,6 @@ class ServedProfiles:
         return await self._serving.call(read)
 
 
-#: The lane's gate's answer for an account whose rejected credential has not reached the key
-#: standing yet (`ServedStandings.refused`); the standing's own answer once it has.
-_REJECTED: Final = OrderEntryRefusal("no_active_key", "The account has no verified active key.")
-
-
 class ServedGate:
     """The order-entry gate as the lane asks it (C-2.21). Its account check reads the key standing,
     whose read also drops a rejection a later pass cleared, so it is not safe from another thread:
@@ -938,7 +934,7 @@ class ServedGate:
 
     def refusal(self, account_id: UUID) -> OrderEntryRefusal | None:
         if self._standings.refused(account_id):
-            return _REJECTED
+            return NO_ACTIVE_KEY
         try:
             return self._serving.block(lambda: self._gate.refusal(account_id))
         except TimeoutError:
@@ -966,20 +962,26 @@ class ServedStandings:
 
     def __init__(self, standings: KeyStandingReactions, serving: Serving) -> None:
         self._standings, self._serving = standings, serving
-        #: Each account's last rejection, set once its notice has landed; changed on the lane only.
-        self._sent: dict[UUID, threading.Event] = {}
+        #: Each account whose last rejection's notice has not landed: assigned on the lane, dropped
+        #: on the serving loop once it lands, read on either (20 Sec.6.2: one dict read, GIL-atomic
+        #: against either write); `_guard` orders the writes, so a later rejection stays.
+        self._sent: dict[UUID, object] = {}
+        self._guard = threading.Lock()
 
     def credential_rejected(self, account_id: UUID, refusal: Refusal) -> None:
-        landed = self._sent[account_id] = threading.Event()
-        self._serving.notify(self._land, account_id, refusal, landed)
+        sent = object()
+        with self._guard:
+            self._sent[account_id] = sent
+        self._serving.notify(self._land, account_id, refusal, sent)
 
-    def _land(self, account_id: UUID, refusal: Refusal, landed: threading.Event) -> None:
+    def _land(self, account_id: UUID, refusal: Refusal, sent: object) -> None:
         self._standings.credential_rejected(account_id, refusal)
-        landed.set()
+        with self._guard:  # the key standing refuses it from now on
+            if self._sent.get(account_id) is sent:
+                del self._sent[account_id]
 
     def refused(self, account_id: UUID) -> bool:
-        landed = self._sent.get(account_id)
-        return landed is not None and not landed.is_set()
+        return account_id in self._sent
 
 
 class ServedFeed:
@@ -1505,6 +1507,8 @@ class OmsRuntime:
         self._failed = self._stopping = False
         #: The step `_compose` has reached, which a failed start logs and pages.
         self._phase = "settings"
+        #: Taken, never released, by the first read that finds this start's lane dead: it pages.
+        self._lane_paged = threading.Lock()
 
     @property
     def started(self) -> bool:
@@ -1515,9 +1519,11 @@ class OmsRuntime:
     @property
     def state(self) -> OmsState:
         """`ok` once ready; `degraded` once it will not get ready (it failed closed, its sweep
-        refused, or its startup task ended without it) or its order lane died; else `starting`
-        (20 Sec.6.2)."""
+        refused, or its startup task ended without it) or its order lane died, paged at its first
+        read (SEC-S3L1A-02); else `starting` (20 Sec.6.2)."""
         if (parts := self._parts) is not None and parts.lane.dead:
+            if self._lane_paged.acquire(blocking=False):  # once per death: never released
+                _page(self._pager, "oms_lane_died")
             return "degraded"
         if self._ready.is_set():
             return "ok"
@@ -1598,6 +1604,7 @@ class OmsRuntime:
         if self._loop is not None and not self._stopping:
             return
         self._loop, self._stopping, self._failed = asyncio.get_running_loop(), False, False
+        self._lane_paged = threading.Lock()  # a new lane: its death pages anew
         lane = self._lanes()
         try:
             self._phase = "lane"
@@ -1610,10 +1617,12 @@ class OmsRuntime:
             _page(self._pager, f"oms_runtime_failed_closed: {phase}")
             return
         except BaseException:  # cancelled: the compose closes what it built on the lane first
-            with contextlib.suppress(LaneStopped, TimeoutError):
-                async with asyncio.timeout(OMS_STOP_RESERVE_S):
-                    await lane.idle()
-            await lane.stop()
+            try:
+                with contextlib.suppress(LaneStopped, TimeoutError):
+                    async with asyncio.timeout(OMS_STOP_RESERVE_S):
+                        await lane.idle()
+            finally:  # cancelled again meanwhile or not (SEC-S3L1C-01)
+                await lane.stop()
             raise
         self._startup = spawn(self._started(), name="oms-startup")
         self._startup.add_done_callback(self._startup_ended)

@@ -9,7 +9,8 @@ and `stop()` stops it last. `call(coro)` runs a coroutine on the lane from any o
 cancelled before the lane begins it is closed unrun, and the lane tracks each task so the stop can
 wait for them (`idle`). With `timeout_s`, a call not answered by then is a `TimeoutError`, its task
 cancelled. A loop that ends without `stop()` leaves the lane `dead`, logged; a call it abandoned
-is cancelled before the loop closes, so no caller waits for ever.
+is cancelled before the loop closes, so no caller waits for ever. Once its stop or death has
+begun, nothing begins on the lane: a call it takes then is closed unrun, its caller answered.
 
 `Serving` is the way back to the serving loop, the loop that started the runtime, for what is bound
 to it. `call` awaits a coroutine run there; `block` waits on the lane's thread for a synchronous
@@ -98,6 +99,8 @@ class OrderLane:
         #: on the lane only, until its thread cancels the answers left (`_serve`).
         self._tasks: dict[asyncio.Task[Any], concurrent.futures.Future[Any]] = {}
         self._died = threading.Event()
+        #: Set, under the lock, once the stop or the death has begun: nothing begins there after.
+        self._stopping = threading.Event()
 
     @property
     def dead(self) -> bool:
@@ -112,8 +115,8 @@ class OrderLane:
             if self._loop is not None:
                 raise RuntimeError("the order lane is already started")
             loop, running = self.loop_factory(), threading.Event()
-            self._tasks, self._died = {}, threading.Event()
-            args = (loop, running, self._tasks, self._died)
+            self._tasks, self._died, self._stopping = {}, threading.Event(), threading.Event()
+            args = (loop, running, self._tasks, self._died, self._stopping, self._lock)
             thread = threading.Thread(target=_serve, args=args, name=self._name, daemon=True)
             try:
                 thread.start()
@@ -133,9 +136,12 @@ class OrderLane:
         `TimeoutError`, its task on the lane cancelled, or never begun."""
         with self._lock:
             try:
-                if self._loop is None or self._died.is_set():
+                if self._loop is None or self._died.is_set() or self._stopping.is_set():
                     raise LaneStopped("the order lane is not running")
-                answer = _run_on(self._loop, coro, name=f"{self._name}-call", tasks=self._tasks)
+                answer = _run_on(
+                    self._loop, coro, name=f"{self._name}-call", tasks=self._tasks,
+                    stopping=self._stopping,
+                )  # fmt: skip
             except RuntimeError as exc:  # `LaneStopped`, or a loop closed by the lane's death
                 coro.close()
                 raise LaneStopped("the order lane is not running") from exc
@@ -160,6 +166,7 @@ class OrderLane:
             loop, thread, self._loop, self._thread = self._loop, self._thread, None, None
             if loop is None or thread is None:
                 return
+            self._stopping.set()
             with contextlib.suppress(RuntimeError):  # its loop has closed: the lane died
                 loop.call_soon_threadsafe(loop.stop)
         await run_in_thread(thread.join, LANE_JOIN_S)
@@ -176,13 +183,15 @@ def _run_on[T](
     *,
     name: str,
     tasks: _Tasks | None = None,
+    stopping: threading.Event | None = None,
 ) -> asyncio.Future[T]:
     """`coro` run as a task on `loop`, in the caller's context, as `run_coroutine_threadsafe`
     does, its answer a future on the caller's loop (`wrap_future`): cancelling it cancels the
     task, and a call cancelled before `loop` takes it is closed unrun. `tasks`, read and changed
-    on `loop` only, holds the task and its answer while it runs."""
+    on `loop` only, holds the task and its answer while it runs; a call `loop` takes once
+    `stopping` is set is closed unrun, its caller answered."""
     answer: concurrent.futures.Future[T] = concurrent.futures.Future()
-    loop.call_soon_threadsafe(_begin, coro, answer, name, tasks)
+    loop.call_soon_threadsafe(_begin, coro, answer, name, tasks, stopping)
     return asyncio.wrap_future(answer)
 
 
@@ -198,8 +207,11 @@ def _begin(
     answer: concurrent.futures.Future[Any],
     name: str,
     tasks: _Tasks | None,
+    stopping: threading.Event | None,
 ) -> None:
-    if answer.cancelled():  # its caller gave up before this loop took it
+    if stopping is not None and stopping.is_set():  # the lane stops or dies: nothing begins
+        answer.cancel()
+    if answer.cancelled():  # so, or its caller gave up before this loop took it
         coro.close()
         return
     task = spawn(coro, name=name)
@@ -234,13 +246,15 @@ def _cancel_on(task: asyncio.Task[Any], answer: concurrent.futures.Future[Any]) 
 
 
 def _serve(
-    loop: asyncio.AbstractEventLoop, running: threading.Event, tasks: _Tasks, died: threading.Event
-) -> None:
+    loop: asyncio.AbstractEventLoop, running: threading.Event, tasks: _Tasks, died: threading.Event,
+    stopping: threading.Event, lock: threading.Lock,
+) -> None:  # fmt: skip
     """The lane's thread: its loop runs until `OrderLane.stop()`; then what is left on it is
     cancelled and awaited, and its async generators and executor are shut down, each bounded,
     before the loop is closed. A loop that ends any other way marks the lane `died`, logged, and is
     cleaned up the same way. Either way a call still unanswered is cancelled before the loop
-    closes, so its caller is answered."""
+    closes, so its caller is answered. Nothing begins there once its loop has ended (`stopping`),
+    and a task begun after the cleanup's last round is cancelled, and given a turn, all the same."""
     asyncio.set_event_loop(loop)
     loop.call_soon(running.set)
     try:
@@ -249,6 +263,9 @@ def _serve(
         except BaseException as exc:  # nothing else watches this thread: the runtime reads `dead`
             died.set()
             _log().critical("oms_lane_died", error=type(exc).__name__)
+        finally:
+            with lock:  # a call taken before is refused in the cleanup (`_begin`), none after
+                stopping.set()
         for _ in range(3):  # a task's cleanup may start another, a few times at most
             if not (left := asyncio.all_tasks(loop)):
                 break
@@ -259,6 +276,10 @@ def _serve(
             loop.run_until_complete(asyncio.wait_for(loop.shutdown_asyncgens(), _CLEANUP_S))
         with contextlib.suppress(TimeoutError):
             loop.run_until_complete(asyncio.wait_for(loop.shutdown_default_executor(), _CLEANUP_S))
+        if late := asyncio.all_tasks(loop):  # begun after the last round: cancelled all the same
+            for task in late:
+                task.cancel()
+            loop.run_until_complete(asyncio.wait(late, timeout=0))
     finally:
         for answer in list(tasks.values()):  # abandoned: its caller is cancelled, never left
             answer.cancel()
