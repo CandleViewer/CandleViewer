@@ -63,7 +63,7 @@ async def test_take_applied_push_upserts_the_mapped_state_then_one_ws_push_snaps
             liq_price=Decimal("50000"),
         )
     ]  # fmt: skip
-    assert rig.calls == ["upsert", "protecting", "take_reading", "append"]
+    assert rig.calls == ["upsert", "protecting", "take_reading", "live_for_key", "append"]
     assert rig.counts == ["applied", "to_protection"]
 
 
@@ -395,18 +395,21 @@ async def test_take_fully_hung_or_slow_take_returns_within_its_budget(slow: bool
     """Q1: every phase at its bound (a held row re-applied too) fits under the consumer's 50 s."""
     rig = Rig(upserts=["dated"])
     await rig.take()
-    rig.ids, rig.hang = (O1,), {"push"}
+    rig.ids, rig.hang = (O1,), {"push", "live_for_key"}  # the hook takes its whole share
     for name in ("upsert", "take_reading", "append"):
         if slow:
             rig.cost[name] = PORT_TIMEOUT_S - 0.5
         else:
             rig.hang.add(name)
     assert await rig.take(position(**ETH)) <= TAKE_BUDGET_S
+    assert ("live_for_key" in rig.calls) is slow  # an applied row runs the hook
 
 
 @virtual
 async def test_take_raises_nothing_when_every_port_raises() -> None:
-    names = ("upsert", "push", "take_reading", "append", "protecting", "count", "page")
+    names = (
+        "upsert", "push", "take_reading", "append", "protecting", "count", "page", "live_for_key"
+    )  # fmt: skip
     rig = Rig(ids=(O1,), raises=dict.fromkeys(names, RuntimeError("x")))
     await rig.take()
     await rig.take(position(**ETH))

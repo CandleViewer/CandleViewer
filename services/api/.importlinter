@@ -1212,6 +1212,7 @@ source_modules =
     candleviewer.oms.pairing
     candleviewer.oms.positions
     candleviewer.oms.push_mapping
+    candleviewer.oms.stop_shown
     candleviewer.oms.stream_consumer
     candleviewer.oms.stream_push
     candleviewer.orderflow

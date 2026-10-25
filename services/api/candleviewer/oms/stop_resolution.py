@@ -112,6 +112,7 @@ from candleviewer.storage.repositories.recorded_stops import (
 from .commands import LIVE_HISTORY_SPAN_S, found_view
 from .ports import PositionKey
 from .routing import read_position
+from .stop_shown import PositionState, full_shows, position_state, trail_unreadable
 
 __all__ = [
     "ENTRY_HELD", "FILL_PAGE", "HISTORY_LEAD_S", "HISTORY_SPAN_S", "MAX_HISTORY_WINDOWS",
@@ -159,8 +160,6 @@ type Outcome = Literal[
 type VoidReason = Literal["in_flight_resolved", "entry_filled_stop_absent"]
 #: What the decision does with one row: `kept` writes nothing.
 type Move = Literal["in_force", "answered", "replaced", "kept", VoidReason]
-#: The row's position as the read shows it: `open` on the row's side, else `flat`.
-type PositionState = Literal["open", "flat"]
 #: An entry's order as the read shows it, the full match passed: still `resting` unfilled,
 #: `filled` (any fill, a partly filled entry still resting included), `gone` (ended unfilled, not
 #: found, or not the row's order), or `unseen` (not found where a miss proves nothing).
@@ -287,36 +286,6 @@ def group_requests(key: PositionKey, rows: Sequence[RecordedStopRow]) -> tuple[S
 
 def _kind_order(row: RecordedStopRow) -> tuple[bool, str]:
     return (row.kind != "stop_loss", str(row.id))
-
-
-def position_state(row: RecordedStopRow, position: Position | None) -> PositionState:
-    """`open` when the position holds a size on the row's side, else `flat`: none on its side,
-    the other side's included (a one-way reversal)."""
-    if position is None or position.qty <= 0 or position.side != row.position_side.lower():
-        return "flat"
-    return "open"
-
-
-def full_shows(row: RecordedStopRow, position: Position | None) -> bool:
-    """A Full side the position shows: open on the row's side, its stop-loss or take-profit at
-    the trigger. Never a trail: it is shown only by its distance and activation price."""
-    if row.tpsl_mode != "Full" or position is None or position_state(row, position) != "open":
-        return False
-    if row.kind == "take_profit":
-        return position.take_profit == row.trigger_price
-    return row.trailing_distance is None and position.stop_loss == row.trigger_price
-
-
-def trail_unreadable(row: RecordedStopRow, position: Position | None) -> bool:
-    """A trail whose distance the open position shows: no read shows its activation price yet
-    (`[O-4]`), so it can be neither shown nor taken for absent, and is held."""
-    return (
-        row.tpsl_mode == "Full"
-        and row.trailing_distance is not None
-        and position is not None
-        and position_state(row, position) == "open"
-        and position.trailing_stop_distance == row.trailing_distance
-    )
 
 
 def shows_no_stop(position: Position | None, open_orders: Sequence[Order] | None = None) -> bool:
