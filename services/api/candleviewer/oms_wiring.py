@@ -988,8 +988,8 @@ class ServedGate:
 
     An account whose rejected credential the lane notified (`ServedStandings`) is refused first and
     at once, as the key standing holds it only once the notice lands (CR-S3L1B-04). A new submit
-    meets the serving loop's tick before the gate (`FencedSwitches`); the exit service reads the
-    gate unfenced."""
+    and a risk-increasing amend meet the serving loop's tick before the gate (`FencedSwitches`); no
+    other exit reads it."""
 
     def __init__(self, gate: OrderEntryCheck, standings: ServedStandings) -> None:
         self._gate, self._standings = gate, standings
@@ -1001,10 +1001,10 @@ class ServedGate:
         return first if first is not None else self._gate.refusal(account_id)
 
 
-#: The serving loop's tick, in seconds (#913 L4; the orchestrator's ruling of 2026-10-25 19:19Z on
-#: CR-S3L4-04): how often the OMS stamps the serving loop's time there, and how old the last stamp
-#: may be before the lane admits no new submit, twice that: the 1 s within which a stalled serving
-#: loop refused a gate read before L4 read the gate in place.
+#: The serving loop's tick, in seconds (#913 L4; the orchestrator's rulings of 2026-10-25 19:19Z on
+#: CR-S3L4-04 and 21:56Z): how often the OMS stamps the serving loop's time there, and how old the
+#: last stamp may be before the lane admits no new submit or risk-increasing amend, twice that: the
+#: 1 s within which a stalled serving loop refused a gate read before L4 read the gate in place.
 SERVING_TICK_S: Final = 0.5
 SERVING_STALE_S: Final = 2 * SERVING_TICK_S
 
@@ -1041,13 +1041,14 @@ class ServingTick:
 
 
 class FencedSwitches:
-    """`TradingSwitches` for a new submit (#913 L4; the ruling of 2026-10-25 19:19Z): the route's
-    step 10, the pipeline's switches and a re-send read these. While the serving loop's tick is
-    stale, `OmsNotReady`, logged, and no switch is read; else the switches' own answer, whose first
-    refusal is the environment lock's fence (#913 L2): the two compose, either refusing on its own.
-    The exit service reads the switches themselves, never fenced by the tick, and a cancel,
-    cancel-all, a stop attach or a KILL reads none (C-2.6); the gate's own age bounds stay the
-    outer ones (20 Sec.6.2)."""
+    """`TradingSwitches` for new exposure (#913 L4; the rulings of 2026-10-25 19:19Z and 21:56Z):
+    a new submit's, the route's step 10, the pipeline's switches and a re-send, and the exit
+    service's, which a risk-increasing amend alone reads, as it meets the gate as a submit does
+    (SR-E28-27, C-2.21). While the serving loop's tick is stale, `OmsNotReady`, logged, and no
+    switch is read; else the switches' answer, whose first refusal is the environment lock's fence
+    (#913 L2): the two compose, either refusing on its own. A protective amend, a cancel,
+    cancel-all, a stop attach or a KILL reads none (C-2.6); the gate's age bounds stay the outer
+    ones (20 Sec.6.2)."""
 
     def __init__(self, switches: TradingSwitches, tick: ServingTick) -> None:
         self._switches, self._tick = switches, tick
@@ -1780,8 +1781,8 @@ def _heartbeat_ended(pager: Pager, task: asyncio.Task[None]) -> None:
 
 
 def _tick_ended(task: asyncio.Task[None]) -> None:
-    """A serving-loop tick that ended other than by its stop's cancel leaves every new submit
-    fenced (`FencedSwitches`), never admitted: logged by its error's class."""
+    """A serving-loop tick that ended other than by its stop's cancel leaves every new submit and
+    risk-increasing amend fenced (`FencedSwitches`), never admitted: logged by its error's class."""
     if not task.cancelled() and (error := task.exception()) is not None:
         _log().critical("oms_serving_tick_ended", error=type(error).__name__)
 
@@ -2383,7 +2384,8 @@ class OmsRuntime:
             fenced=fenced,
         )
         switches.announce(metrics=metrics)
-        # a new submit's, fenced while the serving loop stalls (L4); the exit service's never are
+        # fenced while the serving loop stalls (L4): a new submit's, and the exit service's, which a
+        # risk-increasing amend alone reads (the orchestrator's ruling of 2026-10-25 21:56Z)
         submits = FencedSwitches(switches, tick)
         self._phase = "sink"
         bundle = self._persistence
@@ -2541,7 +2543,7 @@ class OmsRuntime:
                 machines=machines, commands=commands, orders=orders, stops=stops, audit=audit,
                 instruments=instruments, profiles=profiles,
                 stop_resolver=ports.stop_resolver, risk_gate=ports.risk_gate, validator=validator,
-                switches=switches, oms_enabled=self._oms_enabled, environment=env,
+                switches=submits, oms_enabled=self._oms_enabled, environment=env,
             ))  # fmt: skip
             self._phase = "audit_start"
             await writer.start()
