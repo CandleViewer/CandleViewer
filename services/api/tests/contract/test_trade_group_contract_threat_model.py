@@ -267,10 +267,11 @@ def test_a_leg_only_narrows_its_bound_profile_and_a_widening_request_is_refused_
         "The leg's account's bound profile, its default profile (`is_default`), is the ceiling "
         "(E28 threat model D7)",
         "only narrow it, field by field, judged on the resulting leg after the sizer and its "
-        "clamps run again: quantity, notional, leverage, margin and risk at the stop may not rise",
-        "and the stop may not move further from entry",
+        "clamps run again: quantity, notional, leverage, margin and risk at the stop may not "
+        "exceed the bound profile's caps and risk budget, and the stop may not move further from "
+        "entry (ADR-0040 (proposed, #4461) Decision 1)",
         "never clamped and never a partial group (C-12.5, D6)",
-        "one `errors[]` entry per offending leg, audited, before any leg is sent",
+        "It is audited, before any leg is sent, whatever `atomicity` says",
         "whatever `atomicity` says; it is never a per-leg failure",
         "only submitted values that widen the bound profile refuse the whole request",
         "an alternate profile never relaxes one",
@@ -317,6 +318,76 @@ def test_a_profile_id_of_another_account_is_answered_as_a_missing_one(operation:
         "then validation (where a `profile_id` that is not one of the account's own profiles is "
         "`404 not_found`), sizing, risk" in order
     )
+
+
+def test_a_widening_refusal_is_declared_on_the_submit_and_the_preview_with_its_leg_entries() -> (
+    None
+):
+    """#2635 (F-01, ADR-0040 (proposed, #4461) Decision 1): the refused widening is the registered
+    `403 risk_limit_breached`, declared on both operations through `Forbidden`, with one
+    `errors[]` entry per offending leg naming the field, the requested value and the limit."""
+    create = _words(_OPS["createTradeGroup"]["description"])
+    assert "may not rise" not in create  # the ceiling is the bound profile's caps and budget
+    entry = (
+        "one `errors[]` entry per offending leg: its `field` (the leg's member, such as "
+        "`legs[1].overrides.leverage`), the cap it breaks as `rule`, the cap's value as `limit` "
+        "and the requested value in `message`"
+    )
+    assert entry in create
+    registered = _CODES["risk_limit_breached"]
+    assert registered["title"].endswith(
+        "would be exceeded, by the account's state or by a submitted value"
+    )
+    forbidden = _SPEC["components"]["responses"]["Forbidden"]
+    assert (
+        "On `createTradeGroup` and `previewTradeGroup` it may be `code: risk_limit_breached`"
+        in _words(forbidden["description"])
+    )
+    example = forbidden["content"]["application/problem+json"]["examples"]["tradeGroupWidening"]
+    value = example["value"]
+    assert (value["code"], value["status"], value["title"]) == (
+        "risk_limit_breached",
+        403,
+        registered["title"],
+    )
+    assert value["type"] == "https://candleviewer.local/errors/risk_limit_breached"
+    (item,) = value["errors"]
+    assert re.fullmatch(r"legs\[\d+\]\.overrides\.[a-z_]+", item["field"])
+    assert set(item) == {"field", "rule", "limit", "message"}
+    assert item["limit"] in item["message"] and "25" in item["message"]  # requested 25x
+    problem = Draft202012Validator(deref(_SPEC, _SCHEMAS["Problem"]))
+    assert list(problem.iter_errors(value)) == []
+    for operation in ("createTradeGroup", "previewTradeGroup"):
+        assert _OPS[operation]["responses"]["403"] == _ref("responses", "Forbidden")
+
+
+def test_a_leg_s_first_native_stop_covers_its_full_quantity_at_admission() -> None:
+    """#2635, ADR-0040 (proposed, #4461) R rule 8 (C-2.6; PF-T20): the leg has no stop-size
+    member, so under `Partial` the server sizes the first stop to the whole leg."""
+    create = _words(_OPS["createTradeGroup"]["description"])
+    for phrase in (
+        "At admission the leg's first native stop covers the leg's full quantity under either "
+        "`tpsl_mode`: a leg has no stop-size member, so under `Partial` the server sets that "
+        "stop's size to the leg's full quantity (C-2.6; ADR-0040 (proposed, #4461) rule 8)",
+        "After admission only the owner's `sl_loosen` step-up on `setPositionTpSl` (`sl_size`) "
+        "makes it smaller",
+        "a full-quantity stop that cannot be placed under `Partial` is a post-entry failure that "
+        "starts the leg's unwind (E34-S03), never a refusal",
+    ):
+        assert phrase in create, phrase
+    overrides = _SCHEMAS["TradeGroupLegInput"]["properties"]["overrides"]["properties"]
+    assert not [name for name in overrides if "size" in name and name != "sizing"]
+
+
+@pytest.mark.parametrize("operation", ["createTradeGroup", "previewTradeGroup", "placeOrder"])
+def test_a_foreign_profile_id_is_never_a_forbidden_answer(operation: str) -> None:
+    """#2635 (SR-E28-03): a missing, deleted or another account's profile is `404`, never `403`,
+    so the status never tells which it is."""
+    fields = _SCHEMAS["PlaceOrderRequest"]["properties"]
+    if operation != "placeOrder":
+        fields = _SCHEMAS["TradeGroupLegInput"]["properties"]["overrides"]["properties"]
+    assert "never a `403`" in _words(fields["profile_id"]["description"])
+    assert _OPS[operation]["responses"]["404"] == _ref("responses", "NotFound")
 
 
 def test_the_preview_refuses_an_out_of_scope_leg_account_whole_as_the_submit_does() -> None:
@@ -386,8 +457,8 @@ def test_a_group_amend_never_clears_or_loosens_a_stop() -> None:
         "move but is never removed",
         "A stop moved to loosen is refused with `403 risk_limit_breached`: compared with the stop "
         "it replaces, a long leg's stop may only rise and a short leg's only fall",
-        "above what its bound profile allows is refused with `403 risk_limit_breached`, never "
-        "clamped (C-12.5, D6)",
+        "above the bound profile's caps and risk budget is refused with "
+        "`403 risk_limit_breached`, never clamped (C-12.5, D6)",
         "A reduction or a tightening is never refused by these checks",
         "a stop moved the ratchet's way (a long leg's up, a short leg's down), passes",
         "When one request holds both a `400` and a `403` offender, the `400` answers",

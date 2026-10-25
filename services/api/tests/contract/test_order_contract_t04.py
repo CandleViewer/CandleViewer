@@ -536,7 +536,10 @@ def test_a_profile_that_is_off_or_does_not_allow_the_symbol_is_a_risk_refusal() 
     breached = _CODES["risk_limit_breached"]
     assert (breached["status"], breached["retryable"]) == (403, False)
     title = "The account's profile is disabled, is not trading-enabled, does not allow the symbol, "
-    assert breached["title"] == title + "or a risk cap (daily loss, max position) would be exceeded"
+    assert breached["title"] == title + (
+        "or a risk cap (daily loss, max position) would be exceeded, by the account's state or "
+        "by a submitted value"
+    )
     assert ERROR_META[ErrorCode("risk_limit_breached")].title == breached["title"]
     assert (
         "The account's bound profile, its default (`is_default`), must be enabled and "

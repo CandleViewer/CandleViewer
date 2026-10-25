@@ -141,7 +141,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.ACCOUNT_SCOPE_DENIED: ErrorMeta(("rest", "ws",), "any", False, None, None, "Caller has no granted access to the targeted exchange account"),
     ErrorCode.KEK_UNAVAILABLE: ErrorMeta(("rest",), None, False, None, None, "The credential key is unavailable; operations that need it are refused"),
     ErrorCode.TRADING_DISABLED: ErrorMeta(("rest",), None, False, None, None, "Order entry refused"),
-    ErrorCode.RISK_LIMIT_BREACHED: ErrorMeta(("rest",), None, False, None, None, "The account's profile is disabled, is not trading-enabled, does not allow the symbol, or a risk cap (daily loss, max position) would be exceeded"),
+    ErrorCode.RISK_LIMIT_BREACHED: ErrorMeta(("rest",), None, False, None, None, "The account's profile is disabled, is not trading-enabled, does not allow the symbol, or a risk cap (daily loss, max position) would be exceeded, by the account's state or by a submitted value"),
     ErrorCode.VIEW_AS_READ_ONLY: ErrorMeta(("rest", "ws",), "any", False, None, None, "Session is viewing as another user, read-only; end view-as to make changes"),
     ErrorCode.VIEW_AS_EXPIRED: ErrorMeta(("rest",), None, False, None, None, "View-as context ended by the server; clear it with DELETE /auth/session/view-as"),
     ErrorCode.VIEW_AS_SELF_TARGET: ErrorMeta(("rest",), None, False, None, None, "A session cannot view as its own user"),
