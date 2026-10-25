@@ -61,7 +61,7 @@ from candleviewer.exchange.base.models import (
 from candleviewer.exchange.base.ports import PrivateStream
 from candleviewer.observability import spawn
 
-from .cancel_all_fold import GATHER_S, CancelAllJoin, CancelAllSpacer, covers
+from .cancel_all_fold import GATHER_S, CancelAllJoin, CancelAllSpacer, FoldRefused, covers
 from .routing import RoutedPort
 
 __all__ = ["SPACER_WAIT_S", "CancelAllCoalescer"]
@@ -112,10 +112,10 @@ class CancelAllCoalescer:
         self, account: AccountRef, symbol: Symbol, members: Collection[str]
     ) -> Iterator[CancelAllJoin]:
         """The members' join while the block runs: each member's `cancel_order` meets it. A member
-        already in another open fold is refused (`ValueError`): one order meets one fold."""
+        already in another open fold refuses the fold (`FoldRefused`): one order meets one fold."""
         keys = [(account.account_id, link) for link in members]
         if any(key in self._joins for key in keys):
-            raise ValueError("an order is already a member of an open fold")
+            raise FoldRefused("an order is already a member of an open fold")
 
         async def slot() -> bool:
             deadline = self._monotonic() + self._spacer_wait_s

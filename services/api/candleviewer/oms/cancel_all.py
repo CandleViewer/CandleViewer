@@ -49,7 +49,7 @@ from __future__ import annotations
 import asyncio
 import math
 from collections.abc import Collection, Iterable, Sequence
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, ExitStack
 from dataclasses import dataclass
 from typing import Final, Protocol, cast
 from uuid import UUID
@@ -59,6 +59,7 @@ import structlog
 from candleviewer.domain.primitives import AccountId, Symbol
 from candleviewer.exchange.base.models import AccountRef
 from candleviewer.observability import spawn_child
+from candleviewer.oms.cancel_all_fold import FoldRefused
 from candleviewer.oms.exits import CancelReason, ExitOutcome
 from candleviewer.oms.ports import SubmitActor, TradingAccounts
 from candleviewer.oms.recovery import FINALS
@@ -189,7 +190,10 @@ class Folds(Protocol):
 
     def fold(
         self, account: AccountRef, symbol: Symbol, members: Collection[str]
-    ) -> AbstractContextManager[Fold]: ...
+    ) -> AbstractContextManager[Fold]:
+        """The members' fold while the block runs; `FoldRefused`, raised entering it, when one
+        of them is already in another open fold."""
+        ...
 
 
 def unrestricted(request: CancelAllRequest) -> bool:
@@ -392,23 +396,26 @@ class CancelAll:
     ) -> list[ExitOutcome]:
         """One symbol's orders commanded together inside their fold (the 21:11Z ruling, Q2): each
         member that finishes leaves it, so a member refused before its send never holds the
-        others; a fold the port refuses runs the orders in turn instead."""
+        others. A fold the port refuses (`FoldRefused`: an order already meets another request's
+        fold) runs the orders in turn instead, as it is raised entering the fold."""
         (folds, ref), links = port, [row.order_link_id for row in group]
+        stack = ExitStack()
         try:
-            fold = folds.fold(ref, Symbol(symbol), links)
-        except ValueError:  # an order already meets another request's fold
+            join = stack.enter_context(folds.fold(ref, Symbol(symbol), links))
+        except FoldRefused:
+            _log().warning("oms_cancel_all_fold_refused", symbol=symbol)
             return [await self._cancel(run, row) for row in group]
 
-        async def member(row: OrderRow, join: Fold) -> ExitOutcome:
+        async def member(row: OrderRow) -> ExitOutcome:
             try:
                 return await self._cancel(run, row)
             finally:
                 join.leave(row.order_link_id)
 
-        with fold as join:
+        with stack:
             async with asyncio.TaskGroup() as members:
                 tasks = [
-                    spawn_child(members, member(row, join), name="oms-cancel-all-fold-member")
+                    spawn_child(members, member(row), name="oms-cancel-all-fold-member")
                     for row in group
                 ]
         return [task.result() for task in tasks]

@@ -21,7 +21,7 @@ from candleviewer.exchange.base.errors import OmsErrorCode, TransportError
 from candleviewer.exchange.base.fakes import FakeReject, FakeTradingPort
 from candleviewer.exchange.base.models import AccountRef, CancelOrderRequest, Order, OrderAck
 from candleviewer.oms.cancel_all_coalescer import CancelAllCoalescer
-from candleviewer.oms.cancel_all_fold import CancelAllSpacer
+from candleviewer.oms.cancel_all_fold import CancelAllSpacer, FoldRefused
 
 _ACCOUNT = AccountId(UUID("5b1c9d2e-7f30-4a6b-8c4d-2e3f4a5b6c7d"))
 _REF = AccountRef(account_id=_ACCOUNT, uid="100001", environment="demo", key_ref=str(UUID(int=1)))
@@ -248,7 +248,7 @@ async def test_a_closed_fold_no_longer_meets_its_members() -> None:
 async def test_an_order_meets_one_open_fold_only() -> None:
     port, _, _ = _port(_venue("a", "b"))
     with port.fold(_REF, _BTC, _ids("a", "b")):
-        with pytest.raises(ValueError, match="already a member"):
+        with pytest.raises(FoldRefused, match="already a member"):
             with port.fold(_REF, _BTC, _ids("b", "c")):
                 pass
         with port.fold(_REF, _BTC, _ids("c")):  # a disjoint fold opens beside it

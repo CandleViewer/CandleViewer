@@ -39,7 +39,7 @@ from candleviewer.observability import spawn
 
 __all__ = [
     "CANCEL_ALL_INTERVAL_S", "FOLDED_KIND", "GATHER_S", "MAX_UIDS", "CancelAllJoin",
-    "CancelAllSpacer", "Spawn", "covers",
+    "CancelAllSpacer", "FoldRefused", "Spawn", "covers",
 ]  # fmt: skip
 
 #: The order kind the venue's `cancel-all` cancels: the venue's plain-order filter (24 Sec.14.2
@@ -52,6 +52,11 @@ MAX_UIDS: Final = 4096
 #: How long a fold's members may take to arrive, from the join's opening, before it is abandoned:
 #: well inside a cancel's own 9 s (24 Sec.8.7), so its fallback still has its time.
 GATHER_S: Final = 1.0
+
+
+class FoldRefused(Exception):
+    """A fold not opened: one of its orders is already a member of another open fold (one order
+    meets one fold). Its orders are cancelled one at a time instead."""
 
 
 def covers(resting: Iterable[Order], selected: Collection[str]) -> bool:
