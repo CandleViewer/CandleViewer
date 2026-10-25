@@ -240,12 +240,13 @@ the email, steps up for `keys` (registering the account needs it too), registers
 and imports the key. Each code it asks for is a new one from the authenticator.
 
 It prints only the verification verdict fields and exits 0 with `passed: true`. A run that succeeds
-first clears the terminal and its scrollback (and tmux's history), so the token, the URI and the
-codes are gone from it; one that stops says to clear them yourself. Clear any clipboard history
-yourself either way. A refused step stops it with a message and exit 1. Once the invite is
-redeemed, run it again with `--skip-invite`; once the account is registered (it shows the id on the
-terminal), add `--account-id <id>`. A refused key names its rule (`key-selfcheck.md`, "Key import:
-a refused key").
+first asks the terminal to clear its screen and scrollback (`CSI 3 J`) and clears tmux's history. A
+terminal that ignores the request keeps its scrollback: scroll up, and clear the token, the URI or
+the codes yourself if they are still there. One that stops says to clear them yourself. Clear any
+clipboard history yourself either way. A refused step stops it with a message and exit 1. Once the
+invite is redeemed, run it again with `--skip-invite`; once the account is registered (it shows the
+id on the terminal), add `--account-id <id>`. A refused key names its rule (`key-selfcheck.md`, "Key
+import: a refused key").
 
 ## 8. `/readyz` ok
 

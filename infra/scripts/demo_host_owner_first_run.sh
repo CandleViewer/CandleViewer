@@ -17,7 +17,8 @@
 # Past step 1 it calls the api on http://127.0.0.1:8000 only. stdout carries only the verification
 # verdict fields of step 6, never the egress address (Confidential); prompts and messages go to
 # stderr, the one-time URI and codes, and the account id a rerun needs, to the terminal. A run that
-# succeeds clears the terminal's scrollback of what it showed once; one that stops says to.
+# succeeds asks the terminal to clear what it showed once (one may ignore that); one that stops
+# says to clear it.
 #
 # Secrets are typed silently and never echoed or put on a command line: each request reaches curl
 # as a config on stdin (`--config -`), and its JSON is written and read by python3 through pipes,
@@ -167,7 +168,7 @@ still_shown() { # the run stops, or has no terminal to clear: what it showed onc
     "clipboard history."
 }
 
-forget_shown() { # the run succeeded: clear what it showed once from the screen and scrollback
+forget_shown() { # the run succeeded: ask the terminal to clear what it showed once
   [[ $SHOWN == true ]] || return 0
   [[ -t 3 ]] || {
     still_shown
@@ -178,8 +179,9 @@ forget_shown() { # the run succeeded: clear what it showed once from the screen 
   if [[ -n ${TMUX-} ]]; then # tmux keeps a pane's history apart from the terminal's
     tmux clear-history ${TMUX_PANE:+-t "$TMUX_PANE"} </dev/null >/dev/null 2>&1 || true
   fi
-  say "This terminal and its scrollback are cleared of what was shown once; clear any" \
-    "clipboard history yourself."
+  say "This terminal was asked to clear what was shown once from its screen and scrollback;" \
+    "some terminals keep the scrollback, so scroll up and clear anything still there yourself" \
+    "(clear; printf '\\033[3J'), and any clipboard history."
 }
 
 ask() { # ask NAME PROMPT [DEFAULT]: a visible answer, trimmed, else DEFAULT
@@ -306,7 +308,7 @@ bootstrap_invite() { # #4479's mint, in bootstrap-owner on this terminal: its to
     "the next prompt."
   say "Shown once from here on: the token, then the authenticator URI and the recovery codes." \
     "Run no session recorder (script, asciinema) and keep them out of any clipboard manager's" \
-    "history; a run that succeeds clears this terminal's scrollback at its end."
+    "history; a run that succeeds asks this terminal to clear its scrollback at its end."
   SHOWN=true
   "${COMPOSE[@]}" --profile bootstrap-owner run --rm --no-deps bootstrap-owner \
     --owner "$OWNER_EMAIL" >&3 2>&3 || rc=$?
