@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack
 from decimal import Decimal
 from typing import Any
 
@@ -19,7 +20,7 @@ from candleviewer.oms.errors import (
     OrderStepUnknown,
     ReconcileAnomaly,
 )
-from candleviewer.oms.order_machine import MAX_HELD, _Held
+from candleviewer.oms.order_machine import FOLLOWS, MAX_HELD, _Held
 from candleviewer.oms.ports import PositionKey
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.storage.repositories.orders import NewOrder
@@ -302,3 +303,47 @@ async def test_a_reading_pushed_during_a_resync_is_taken_by_the_successor(rig: R
     assert await asyncio.wait_for(waiting, 5) is True
     assert rig.facade._orders[order.id] is not old
     assert rig.facade.state(order.id) == ("partially_filled", "sl_missing")
+
+
+@pytest.mark.parametrize("named", ["SL_OBSERVED", "SL_LOST"])
+async def test_push_protection_refuses_a_payload_naming_its_own_type(rig: Rig, named: str) -> None:
+    """#4511 Sec F1: the payload cannot rename the step (`_vet`): refused before a read, so
+    nothing is recorded and the caller hands the reading on."""
+    order = order_of()
+    await _protected(rig, order)
+    with pytest.raises(IllegalTransition):
+        await rig.facade.push_protection(ACCOUNT, order.id, "SL_LOST", _LOST | {"type": named})
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
+
+
+async def test_protecting_lists_a_resyncing_order_once(rig: Rig) -> None:
+    """#4511 code 1: an order the facade is rebuilding still protects its position."""
+    order = order_of()
+    await _protected(rig, order)
+    rig.facade._resyncing[order.id] = rig.facade._orders[order.id]
+    assert rig.facade.protecting(_KEY) == (order.id,)
+    del rig.facade._orders[order.id]
+    assert rig.facade.protecting(_KEY) == (order.id,)
+
+
+async def test_push_protection_answers_false_once_follows_is_spent(rig: Rig) -> None:
+    """#4511 Sec F2: a reading that waited through FOLLOWS rebuilds is not taken, and the caller
+    hands it on (C-2.6); the latest machine records nothing."""
+    order = order_of()
+    await _protected(rig, order)
+    first = rig.facade._orders[order.id]
+    async with AsyncExitStack() as held:
+        await held.enter_async_context(rig.facade._holding(first))
+        waiting = asyncio.create_task(
+            rig.facade.push_protection(ACCOUNT, order.id, "SL_LOST", _LOST)
+        )
+        for _ in range(8):
+            await asyncio.sleep(0)
+        o = first
+        for _ in range(FOLLOWS):
+            await rig.facade._resync(o)
+            o = rig.facade._orders[order.id]
+            await held.enter_async_context(rig.facade._holding(o))
+        await held.aclose()
+        assert await asyncio.wait_for(waiting, 5) is False
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
