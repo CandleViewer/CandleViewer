@@ -37,7 +37,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Collection, Coroutine, Iterator, Sequence
 from contextlib import contextmanager
 from decimal import Decimal
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 import structlog
 
@@ -61,15 +61,21 @@ from candleviewer.exchange.base.models import (
 )
 from candleviewer.exchange.base.ports import PrivateStream
 from candleviewer.observability import spawn
+from candleviewer.observability.metrics import BoundedMetric
 
 from .cancel_all_fold import GATHER_S, CancelAllJoin, CancelAllSpacer, FoldRefused, covers
 from .routing import RoutedPort
 
-__all__ = ["SPACER_WAIT_S", "CancelAllCoalescer"]
+__all__ = ["FOLD_OUTCOMES", "SPACER_WAIT_S", "CancelAllCoalescer", "FoldOutcome"]
 
 #: How long a fold's call may wait for its UID's spacer slot before the fold is abandoned: a slot
 #: further off leaves the members to their own cancels, inside their 9 s (24 Sec.8.7).
 SPACER_WAIT_S: Final = 2.0
+
+#: How a fold ended, the `outcome` of `oms_cancel_all_fold_members`: its one venue call left, or
+#: nothing was sent and each member sent its own cancel.
+type FoldOutcome = Literal["sent", "abandoned"]
+FOLD_OUTCOMES: Final[tuple[FoldOutcome, ...]] = ("sent", "abandoned")
 
 
 def _log() -> Any:
@@ -89,11 +95,13 @@ class CancelAllCoalescer:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         gather_s: float = GATHER_S,
         spacer_wait_s: float = SPACER_WAIT_S,
+        fold_sizes: BoundedMetric | None = None,
     ) -> None:
         self.capabilities = inner.capabilities
         self._inner, self._spacer = inner, spacer
         self._monotonic, self._sleep = monotonic, sleep
         self._gather_s, self._spacer_wait_s = gather_s, spacer_wait_s
+        self._fold_sizes = fold_sizes
         self._joins: dict[tuple[AccountId, str], CancelAllJoin] = {}
         #: Each fold's own tasks still running, its call and its gather's watchdog (C-2.18).
         self._running: set[asyncio.Task[None]] = set()
@@ -147,6 +155,7 @@ class CancelAllCoalescer:
             for key in keys:
                 if self._joins.get(key) is join:
                     del self._joins[key]
+            self._closed(join, symbol, len(keys))
 
     async def cancel_order(self, req: CancelOrderRequest) -> OrderAck:
         """A fold member's cancel meets its join; any other, or a member the fold leaves to its own
@@ -158,6 +167,17 @@ class CancelAllCoalescer:
             if ack is not None:
                 return ack
         return await self._inner.cancel_order(req)
+
+    def _closed(self, join: CancelAllJoin, symbol: Symbol, members: int) -> None:
+        """A fold's end, once every member has left it: its size by outcome, sent or abandoned
+        (`oms_cancel_all_fold_members`, CR-S4F-06), and a WARNING for one abandoned."""
+        outcome: FoldOutcome = "sent" if join.left else "abandoned"
+        if self._fold_sizes is not None:
+            self._fold_sizes.labels(outcome).observe(members)
+        if outcome == "abandoned":
+            _log().warning(
+                "oms_cancel_all_fold_abandoned", symbol=symbol, members=members, why=join.abandoned
+            )
 
     async def aclose(self) -> None:
         """At teardown (the runtime's stop): every fold task still running, a call whose members

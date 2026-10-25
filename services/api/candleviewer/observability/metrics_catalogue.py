@@ -163,6 +163,9 @@ STORAGE_BUCKETS: Final = (
 )
 #: OMS Postgres writes (E29-T01): edges at and around the order store's 2 s statement cap.
 OMS_WRITE_BUCKETS: Final = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 2.5)
+#: Members per cancel-all fold (#913 S4-F): a fold takes two or more, the venue's call at most its
+#: 500-order cap; an edge sits on the proposed cap of 32 (E29-oms.md section 12.2).
+CANCEL_ALL_FOLD_BUCKETS: Final = (2, 4, 8, 16, 32, 64, 128, 256, 500)
 #: Order submit click→ack, p99 ≤ 500 ms.
 SUBMIT_BUCKETS: Final = (0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 2.0, 5.0)
 #: Audit page: edges at the SCR-135 filter round trip (0.4 s p95), the US-ADMIN-009 first
@@ -2837,6 +2840,21 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "> 0 (rule: E29-T08)",
         _P,
         "E29",
+        max_series=2,
+    ),
+    _s(
+        "oms_cancel_all_fold_members",
+        "histogram",
+        "orders",
+        ("outcome",),
+        "Members per cancel-all fold (E29-T04 slice 4, S4-F; 24 Sec.8.7), observed once as each "
+        "fold closes, by outcome: sent, its one venue cancel-all left; abandoned, nothing was sent "
+        "(a member left or was cut short, the gather's 1 s bound, or no spacer slot in time) and "
+        "each member sent its own cancel. A fold takes two members or more.",
+        "abandoned folds above 32 members: the proposed fold cap M = 32 (E29-oms.md section 12.2)",
+        _P,
+        "E29",
+        CANCEL_ALL_FOLD_BUCKETS,
         max_series=2,
     ),
     _s(

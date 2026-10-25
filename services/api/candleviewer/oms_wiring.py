@@ -1906,8 +1906,9 @@ class OmsRuntime:
             # call passes through it as it is. The folds sit on the lane, before the serving hop.
             spacer = CancelAllSpacer(monotonic=self._monotonic, sleep=self._sleep)
             folds = CancelAllCoalescer(
-                served, spacer=spacer, monotonic=self._monotonic, sleep=self._sleep
-            )
+                served, spacer=spacer, monotonic=self._monotonic, sleep=self._sleep,
+                fold_sizes=_histogram(metrics, "oms_cancel_all_fold_members"),
+            )  # fmt: skip
             router = TradingRouter({env: folds}, lane_waits=self._venue.lane_waits())
             self._phase = "stores"
             stores = self._stores()

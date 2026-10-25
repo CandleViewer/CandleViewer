@@ -80,6 +80,8 @@ rules:
       # code (E29-T04, #913, oms_submit_rejected_total): the problem code a refused order request
       #   was answered with, one of the closed `oms/errors.PROBLEMS` codes or `internal_error`
       #   (21, pinned by `test_submit.py`); never an exchange code or text; max_series=21.
+      # outcome, also (E29-T04, #913 slice 4 S4-F, oms_cancel_all_fold_members): how a fold ended,
+      #   {sent, abandoned} (`oms/cancel_all_coalescer.FOLD_OUTCOMES`); max_series=2.
       # kind (E42-T05, #966, cv_backup_last_success_age_seconds): the five `BackupKind` values; a
       #   kind outside them never makes a series (`admin/backups/metrics.KINDS`); max_series=5.
       # result, also (E42-T05, #966, cv_restore_jobs_total): {refused, succeeded, failed,

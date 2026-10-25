@@ -13,6 +13,8 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from prometheus_client import generate_latest
+from prometheus_client.parser import text_string_to_metric_families
 from structlog.testing import capture_logs
 
 from candleviewer.domain.order_link import account_tag
@@ -21,7 +23,10 @@ from candleviewer.exchange.base.errors import OmsErrorCode, TransportError
 from candleviewer.exchange.base.fakes import FakeReject, FakeTradingPort
 from candleviewer.exchange.base.models import AccountRef, CancelOrderRequest, Order, OrderAck
 from candleviewer.observability.logging import _redaction_processor
-from candleviewer.oms.cancel_all_coalescer import CancelAllCoalescer
+from candleviewer.observability.metrics import BoundedMetric, Metrics
+from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.oms.cancel_all import FOLD_MIN
+from candleviewer.oms.cancel_all_coalescer import FOLD_OUTCOMES, CancelAllCoalescer
 from candleviewer.oms.cancel_all_fold import CancelAllSpacer, FoldRefused
 
 _ACCOUNT = AccountId(UUID("5b1c9d2e-7f30-4a6b-8c4d-2e3f4a5b6c7d"))
@@ -277,6 +282,64 @@ async def test_an_order_placed_after_the_coverage_read_is_taken_and_logged() -> 
         (_BTC, link) for link in sorted(_ids("other", "c"))
     ]
     assert all(e["log_level"] == "warning" for e in taken)
+
+
+_SIZES = next(spec for spec in CATALOGUE if spec.name == "oms_cancel_all_fold_members")
+
+
+def _fold_sizes(metrics: Metrics) -> BoundedMetric:
+    """The histogram as the wiring registers it, from the catalogue."""
+    return metrics.histogram(
+        _SIZES.name, _SIZES.help, _SIZES.labels, buckets=_SIZES.buckets or (),
+        max_series=_SIZES.max_series,
+    )  # fmt: skip
+
+
+def _observed(metrics: Metrics) -> dict[tuple[str, str], float]:
+    """`oms_cancel_all_fold_members` as served: (count or sum, outcome) to its value."""
+    seen: dict[tuple[str, str], float] = {}
+    for family in text_string_to_metric_families(generate_latest(metrics.registry).decode()):
+        for sample in family.samples:
+            if sample.name in (f"{_SIZES.name}_count", f"{_SIZES.name}_sum"):
+                seen[(sample.name.rsplit("_", 1)[1], sample.labels["outcome"])] = sample.value
+    return seen
+
+
+def test_the_fold_size_histogram_is_bounded_by_its_outcomes() -> None:
+    """CR-S4F-06 (b): two series, one per outcome; the edges start at the fewest members a fold
+    takes and hold the proposed cap of 32."""
+    assert (_SIZES.kind, _SIZES.labels, _SIZES.max_series) == ("histogram", ("outcome",), 2)
+    assert FOLD_OUTCOMES == ("sent", "abandoned")
+    assert (_SIZES.buckets or ())[0] == FOLD_MIN and 32 in (_SIZES.buckets or ())
+
+
+async def test_each_fold_is_counted_once_by_size_and_outcome_and_an_abandoned_one_logged() -> None:
+    """CR-S4F-06 (b) and the abandoned fold's log signal (CR-S4F-20): each fold observes its
+    members once, as it closes, sent or abandoned; an abandoned one also logs why."""
+    metrics, venue = Metrics("dev"), _venue("a", "b")
+    clock, sleeps = _Clock(), _Sleeps()
+    port = CancelAllCoalescer(
+        venue, spacer=CancelAllSpacer(monotonic=clock, sleep=sleeps.sleep), monotonic=clock,
+        sleep=sleeps.sleep, fold_sizes=_fold_sizes(metrics),
+    )  # fmt: skip
+    async with asyncio.timeout(5):
+        with port.fold(_REF, _BTC, _ids("a", "b")):  # sent
+            first = asyncio.create_task(port.cancel_order(_cancel("a")))
+            assert (await port.cancel_order(_cancel("b"))).ok and (await first).ok
+        for name in ("c", "d"):  # placed after the first call, so only the second could take them
+            venue.seed_order(_resting(name), uid=_REF.uid)
+        with capture_logs() as logs, port.fold(_REF, _BTC, _ids("c", "d", "other")) as join:
+            third = asyncio.create_task(port.cancel_order(_cancel("c")))
+            await _settle()
+            join.leave(_id("other"))  # refused before its send: abandoned, nothing sent
+            assert (await third).ok
+    assert _observed(metrics) == {
+        ("count", "sent"): 1.0, ("sum", "sent"): 2.0,
+        ("count", "abandoned"): 1.0, ("sum", "abandoned"): 3.0,
+    }  # fmt: skip
+    [abandoned] = [e for e in logs if e["event"] == "oms_cancel_all_fold_abandoned"]
+    assert (abandoned["symbol"], abandoned["members"], abandoned["why"]) == (_BTC, 3, "left")
+    assert _methods(venue) == ["cancel_all", "cancel_order"]
 
 
 # --- L1 (CR-S4F-03): the call is the fold's own task -------------------------------------------

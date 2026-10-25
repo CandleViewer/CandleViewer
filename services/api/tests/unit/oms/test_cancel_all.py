@@ -563,6 +563,7 @@ class _PortExits:
     ):
         self.port, self.log, self.refuse = port, log, set(refuse)
         self.refs = dict(refs or {})
+        self.running, self.peak = 0, 0
 
     async def accounts_in_scope(
         self, scope: object, requested: Collection[UUID]
@@ -574,12 +575,17 @@ class _PortExits:
     ) -> ExitOutcome:
         if row.id in self.refuse:
             return _refused("conflict")
-        self.log.append(("ahead", row.order_link_id))
-        account = self.refs.get(row.exchange_account_id, _FOLD_REF)
-        request = CancelOrderRequest(
-            account=account, symbol=Symbol(row.symbol), order_link_id=row.order_link_id
-        )
-        ack = await self.port.cancel_order(request)
+        self.running += 1
+        self.peak = max(self.peak, self.running)
+        try:
+            self.log.append(("ahead", row.order_link_id))
+            account = self.refs.get(row.exchange_account_id, _FOLD_REF)
+            request = CancelOrderRequest(
+                account=account, symbol=Symbol(row.symbol), order_link_id=row.order_link_id
+            )
+            ack = await self.port.cancel_order(request)
+        finally:
+            self.running -= 1
         return _CANCELLED if ack.ok else _refused("exchange_error", status=502)
 
 
@@ -780,6 +786,18 @@ async def test_a_single_covered_order_sends_its_own_cancel_and_reads_nothing() -
     assert got.accounts == (AccountCancels(_A, affected=3, error=None),)
     assert [c.method for c in fold.venue.calls] == ["cancel_order"] * 3
     assert fold.accounts.asked == 0 and FOLD_MIN == 2
+
+
+async def test_a_fold_of_a_hundred_runs_its_hundred_write_aheads_at_once() -> None:
+    """CR-S4F-06 (b), ruled (c): a covered symbol's orders are commanded together, so a fold of N
+    runs its N members at once, bounded by the store pool and the audit WAL (C-2.18), with the
+    1 s gather its fail-safe. Measured: the peak is N, and one cancel-all answers them all."""
+    rows, resting = [_fold_row(n) for n in range(1, 101)], [_venue_order(n) for n in range(1, 101)]
+    fold = _Fold(rows, resting)
+    got = await fold.run()
+    assert got.accounts == (AccountCancels(_A, affected=100, error=None),)
+    assert fold.exits.peak == 100
+    assert [entry for entry in fold.log if entry[0] == "venue"] == [("venue", "cancel_all")]
 
 
 # --- L1 (CR-S4F-03): the real B1 machine meets the fold -----------------------------------------
