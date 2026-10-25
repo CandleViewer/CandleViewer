@@ -40,9 +40,10 @@ from candleviewer.oms.errors import (
     OrderEntryRefused,
     StoreUnavailable,
 )
+from candleviewer.oms.exits import ExitCaller, OrderExits
 from candleviewer.oms.fakes import FakeClockHealth, InMemoryOrderStore, InMemorySubmissionStore
 from candleviewer.oms.order_machine import OrderMachines
-from candleviewer.oms.ports import PositionKey
+from candleviewer.oms.ports import PositionKey, SubmitActor
 from candleviewer.oms.repository import RecordedStopRepository
 from candleviewer.oms_lane import HOP_TIMEOUT_S, LaneStopped
 from candleviewer.oms_wiring import (
@@ -63,6 +64,7 @@ from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.persistence import ChainTripLatch, DegradedLatchError, MachineKey
 from candleviewer.statechart.plugins import InMemoryMachineEventSink
 from candleviewer.storage.errors import StorageQueryFailed
+from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import NewOrder
 from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
 from candleviewer.storage.repositories.recorded_stops import NewRecordedStop, RecordedStopRow
@@ -193,6 +195,36 @@ class InlineLane:
 
     async def stop(self) -> None:
         return None
+
+
+class Refusing(InlineLane):
+    """A lane that refuses every call with `error`, closing its coroutine unrun, and notes each
+    call's bound."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self.error, self.bounds = error, list[float | None]()
+
+    def call[T](
+        self, coro: Coroutine[Any, Any, T], *, timeout_s: float | None = None
+    ) -> asyncio.Future[T]:
+        coro.close()
+        self.bounds.append(timeout_s)
+        raise self.error
+
+
+class Recording(InlineLane):
+    """The inline lane, noting what each call carries, by its coroutine's name, and its bound."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hops = list[tuple[str, float | None]]()
+
+    def call[T](
+        self, coro: Coroutine[Any, Any, T], *, timeout_s: float | None = None
+    ) -> asyncio.Future[T]:
+        self.hops.append((getattr(coro, "__qualname__", "?"), timeout_s))
+        return super().call(coro, timeout_s=timeout_s)
 
 
 @dataclass
@@ -567,18 +599,6 @@ async def test_on_a_stopped_or_unanswering_lane_the_routes_calls_are_not_ready()
     within `HOP_TIMEOUT_S`, is `OmsNotReady` (503 `oms_not_ready`), not a 500; the submit has no
     hop bound (its bound is the stop's drain), so the lane's timeout is not one it gets."""
 
-    class Refusing(InlineLane):
-        def __init__(self, error: Exception) -> None:
-            super().__init__()
-            self.error, self.bounds = error, list[float | None]()
-
-        def call[T](
-            self, coro: Coroutine[Any, Any, T], *, timeout_s: float | None = None
-        ) -> asyncio.Future[T]:
-            coro.close()
-            self.bounds.append(timeout_s)
-            raise self.error
-
     async with started(World().runtime()) as runtime:
         parts, nothing = runtime._composed(), cast(Any, None)
         for error in (LaneStopped("stopped"), TimeoutError()):
@@ -588,6 +608,51 @@ async def test_on_a_stopped_or_unanswering_lane_the_routes_calls_are_not_ready()
             with pytest.raises(OmsNotReady if isinstance(error, LaneStopped) else TimeoutError):
                 await on_lane.submit(nothing, nothing)
             assert lane.bounds == [HOP_TIMEOUT_S, None]
+
+
+async def test_the_exit_routes_reach_the_exit_service_on_the_lane() -> None:
+    """#913 slice 4 on the lane (the orchestrator's ruling of 2026-10-25 02:34Z): `runtime.exits`
+    hops each of the exit service's calls to the order lane, where its store and B1's facade run,
+    a read within `HOP_TIMEOUT_S`; the route's own task stays on the serving loop."""
+    lane = Recording()
+    async with started(World().runtime(lane=lambda: lane)) as runtime:
+        exits = runtime.exits
+        assert isinstance(exits, oms_wiring.OnLaneExits)
+        lane.hops.clear()
+        owner = SubmitActor(user_id=UUID(int=1), role="owner")
+        got = await exits.scope(ExitCaller(OwnerScope(UUID(int=1)), owner), UUID(int=7))
+        assert got.status == 404  # no such order: nothing recorded, nothing else read
+        assert lane.hops == [("OrderExits.scope", HOP_TIMEOUT_S)]
+
+
+async def test_on_a_stopped_or_unanswering_lane_the_exit_service_is_not_ready() -> None:
+    """As the submit's (CR-S3L1B-07): a lane that stopped is `OmsNotReady` for each of the exit
+    service's calls, unrun; its reads are bounded by `HOP_TIMEOUT_S` and `OmsNotReady` past it,
+    while a refusal's record and a cancel wait out the service's own bounds, so the lane's timeout
+    is not one they get."""
+    async with started(World().runtime()) as runtime:
+        parts, nothing = runtime._composed(), cast(Any, None)
+        for error in (LaneStopped("stopped"), TimeoutError()):
+            exits = oms_wiring.OnLaneExits(replace(parts, lane=(lane := Refusing(error))))
+            with pytest.raises(OmsNotReady):
+                await exits.scope(nothing, UUID(int=7))
+            with pytest.raises(OmsNotReady):
+                await exits.accounts_in_scope(nothing, ())
+            written = OmsNotReady if isinstance(error, LaneStopped) else TimeoutError
+            with pytest.raises(written):
+                await exits.deny(nothing, "cancel", nothing, actor=nothing, request_id=None)
+            with pytest.raises(written):
+                await exits.cancel_admitted(nothing, actor=nothing, reason="user", request_id=None)
+            assert lane.bounds == [HOP_TIMEOUT_S, HOP_TIMEOUT_S, None, None]
+
+
+async def test_the_exit_routes_in_flight_guard_is_read_in_place_and_theirs_alone() -> None:
+    """20 Sec.6.2's read in place: the routes' `run_claimed` claims and releases the in-flight guard
+    on the serving loop, and the exit service never touches it after building it."""
+    async with started(World().runtime()) as runtime:
+        assert runtime.exits.guard is runtime._composed().exits.guard
+    source = inspect.getsource(OrderExits)
+    assert source.count("self.guard") == 1 and "self.guard = InFlightGuard()" in source
 
 
 async def test_an_error_out_of_the_startup_task_is_logged_with_its_type() -> None:

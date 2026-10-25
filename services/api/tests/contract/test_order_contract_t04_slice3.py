@@ -567,6 +567,8 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         "clock guard's resync; until L2 gives the lane its own, the audit writer",
         "until L3 lets the lane sign and send from its own loop, every venue call",
         "the lane's port refuses `subscribe_private` (`PrivateStreamRefused`)",
+        "the exit routes reach the exit service the same way (`OnLaneExits`)",
+        "and the exit routes' in-flight guard, claimed and released on the serving loop only",
         f"waits at most `CV_PERSIST_TIMEOUT` ({BLOCK_TIMEOUT_S:g} s) for the call to begin",
         "These notices have no cap of their own: while the serving loop stalls they queue there at "
         "the lane's step rate, so a stall holds at most that rate times its length.",
