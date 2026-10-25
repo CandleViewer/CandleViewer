@@ -92,16 +92,17 @@ equity) is a further per-leg cap: the ceiling is the lesser of that budget and t
 nothing is counted twice. A reservation is the leg's risk at the stop, made for every admitted leg at admission, in the
 same transaction as the leg insert (the SR-E28-15 transaction). When the order fills, the same reservation covers the
 position; no second one is made. It is reduced pro rata as quantity leaves the order or the position (a partial fill
-then a cancel, a partial close, a take-profit ladder fill), and released when the order is cancelled or the position
-closes otherwise. When the stop fills, the release and the count of the realised loss in the headroom are one step, so
-the loss is neither counted twice nor missing between them. Reduce-only and take-profit ladder orders add nothing to
-the committed risk. On an amend of a leg's quantity or stop, that leg's own reservation is left out while R judges it
-again (`amendTradeGroup`, yaml:6548-6550), and the new reservation replaces it on admission. So concurrent legs and
-tickets on one account together never risk more than `max_daily_loss`, where each judged alone against the full
-headroom could. The preview shows the net figure. When the committed risk cannot be established (a position or
-working order whose stop is unknown, or an account whose positions and orders are not reconciled), the net headroom is
-zero: rule 2 fails every leg (fail closed), and the preview and the refusal name the reason. The netting is a
-money-semantics decision and is on the owner's sign-off list (Owner sign-off items).
+then a cancel, a partial close, a take-profit ladder fill), and released when the order reaches any terminal state
+without a fill (cancelled, rejected, expired) or the position closes otherwise. When the position closes with a realised
+loss, by the stop or otherwise, the release and the count of the realised loss in the headroom are one step, so the loss
+is neither counted twice nor missing between them. Reduce-only and take-profit ladder orders add nothing to the
+committed risk. On an amend of a leg's quantity or stop, that leg's own reservation is excluded from the sum R reads,
+not released, while R judges it again (`amendTradeGroup`, yaml:6548-6550), and the new reservation replaces it on
+admission. So concurrent legs and tickets on one account together never risk more than `max_daily_loss`, where each
+judged alone against the full headroom could. The preview shows the net figure. When the committed risk cannot be
+established (a position or working order whose stop is unknown, or an account whose positions and orders are not
+reconciled), the net headroom is zero: rule 2 fails every leg (fail closed), and the preview and the refusal name the
+reason. The netting is a money-semantics decision and is on the owner's sign-off list (Owner sign-off items).
 
 **The resulting-leg comparator R (SR-E28-04).** A leg is admitted only if every one of these holds for _L_:
 
