@@ -22,6 +22,7 @@ import pytest
 from psycopg.rows import dict_row
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.recorder.sessions import SessionManager, to_us
 from candleviewer.storage.errors import StorageConstraintViolated
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import STREAM_BY_DB_KIND, RecordedGap
@@ -31,6 +32,8 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 )
 from candleviewer.storage.testing import StaticGapReader
 from tests.unit.recorder._fakes import FakeAudit
+from tests.unit.recorder._session_fakes import DEMO, LIVE
+from tests.unit.recorder.test_sessions import _added
 
 pytestmark = pytest.mark.integration
 
@@ -129,13 +132,13 @@ async def test_policy_resolution_most_specific_then_pinned(
 async def test_repository_lifecycle(dsns: tuple[str, str], conn: psycopg.Connection) -> None:
     repo = SqlAlchemyRecorderRepository(SqlAlchemyRelationalRepository(dsns[1]))
     ref = {"kind": "chart", "id": "c1"}
-    rid = await repo.upsert_auto("BTCUSDT", "chart_open", ref)
-    assert await repo.upsert_auto("BTCUSDT", "chart_open", ref) == rid
+    rid = await repo.upsert_auto("BTCUSDT", "chart_open", ref, "live")
+    assert await repo.upsert_auto("BTCUSDT", "chart_open", ref, "live") == rid
     await repo.add_reason_ref(rid, {"kind": "position", "id": "p1"})
-    row = await repo.get_by_symbol("BTCUSDT")
+    row = await repo.get_by_symbol("BTCUSDT", "live")
     assert row is not None and len(row["reason_refs"]) == 2
     await repo.remove_reason_ref(rid, ref)
-    row = await repo.get_by_symbol("BTCUSDT")
+    row = await repo.get_by_symbol("BTCUSDT", "live")
     assert row is not None and row["reason_refs"] == [{"kind": "position", "id": "p1"}]
     sid = await repo.open_session(
         recorded_symbol_id=rid,
@@ -156,7 +159,7 @@ async def test_repository_lifecycle(dsns: tuple[str, str], conn: psycopg.Connect
     )
     assert await repo.close_session(sid, "manual_stop")
     assert await repo.soft_remove(rid)
-    assert await repo.list_recorded() == []
+    assert await repo.list_recorded("live") == []
 
 
 async def test_e16_t04_session_gap_coverage_round_trip(
@@ -166,12 +169,11 @@ async def test_e16_t04_session_gap_coverage_round_trip(
     store wired here -> all `questdb`; tier split is unit-tested)."""
     from candleviewer.recorder.coverage import CoverageService
     from candleviewer.recorder.models import RecorderSetChanged
-    from candleviewer.recorder.sessions import SessionManager, to_us
 
     repo = SqlAlchemyRecorderRepository(SqlAlchemyRelationalRepository(dsns[1]))
     t0 = to_us(datetime(2026, 9, 1, tzinfo=UTC))
     clock = [t0]
-    dead = SessionManager(repo, now_us=lambda: clock[0], audit=FakeAudit())
+    dead = SessionManager(repo, now_us=lambda: clock[0], audit=FakeAudit(), config=LIVE)
     ev = RecorderSetChanged(symbol="BTCUSDT", change="added", reason="manual",
                             reasons=("manual",), priority=300, auto_evictable=False,
                             ts_event=t0)  # fmt: skip
@@ -183,12 +185,12 @@ async def test_e16_t04_session_gap_coverage_round_trip(
     restart = to_us(datetime(2026, 9, 1, 1, 5, tzinfo=UTC))
     clock[0] = restart
     audit = FakeAudit()
-    fresh = SessionManager(repo, now_us=lambda: clock[0], audit=audit)
+    fresh = SessionManager(repo, now_us=lambda: clock[0], audit=audit, config=LIVE)
     assert await fresh.recover_on_startup(restart) == 1
     assert audit.actions() == ["recorder.stop"]  # C-2.9: the close is audited, never skipped
     stop = audit.records[0][1]  # and it names the symbol and the session it closes
     assert (stop["object_id"], stop["after_state"]["recording_session_id"]) == ("BTCUSDT", sid)
-    assert await repo.list_live_sessions() == []
+    assert await repo.list_live_sessions("live") == []
     svc = CoverageService(repo, now_us=lambda: clock[0])
     (cov,) = await svc.coverage("BTCUSDT", ["trades"], t0, restart)
     assert [(i.lo, i.hi, i.tier) for i in cov.intervals] == [
@@ -316,7 +318,7 @@ async def test_upsert_manual_absent_inserts_a_manual_row(repo: Repo, conn: Conn)
     assert (row["streams"], row["orderbook_depth"]) == (["trades", "tickers"], 50)
     assert (row["pinned"], row["reason_refs"], row["auto_added_at"]) == (False, [], None)
     assert await repo.get_by_symbol("BTCUSDT", "demo") == row
-    assert await repo.get_by_symbol("BTCUSDT") is None  # the live row is another one
+    assert await repo.get_by_symbol("BTCUSDT", "live") is None  # the live row is another one
 
 
 async def test_upsert_manual_naming_no_streams_or_depth_takes_the_column_defaults(
@@ -333,7 +335,7 @@ async def test_upsert_manual_naming_no_streams_or_depth_takes_the_column_default
 async def test_upsert_manual_auto_promotes_keeping_refs_stamp_and_pin(
     repo: Repo, conn: Conn
 ) -> None:
-    user, rid = _user(conn), await repo.upsert_auto("BTCUSDT", "chart_open", _CHART)
+    user, rid = _user(conn), await repo.upsert_auto("BTCUSDT", "chart_open", _CHART, "live")
     assert await repo.set_pinned(rid, True)
     stamped = _state(conn, rid)["auto_added_at"]
     assert stamped is not None  # a control: there is a stamp to keep
@@ -394,7 +396,7 @@ async def test_clear_manual_with_refs_demotes_to_the_reason_they_imply(
 async def test_clear_manual_keeps_the_auto_added_at_a_promoted_row_has(
     repo: Repo, conn: Conn
 ) -> None:
-    rid = await repo.upsert_auto("BTCUSDT", "chart_open", _CHART)
+    rid = await repo.upsert_auto("BTCUSDT", "chart_open", _CHART, "live")
     stamped = _state(conn, rid)["auto_added_at"]
     await repo.upsert_manual("BTCUSDT", None, (), None, "live")
     assert await repo.clear_manual("BTCUSDT", "live") == "demoted"
@@ -405,7 +407,7 @@ async def test_clear_manual_without_refs_soft_removes_the_row(repo: Repo, conn: 
     rid = await _manual(repo)
     assert await repo.clear_manual("BTCUSDT", "live") == "removed"
     assert _state(conn, rid)["removed_at"] is not None  # soft: the row is still there
-    assert await repo.get_by_symbol("BTCUSDT") is None
+    assert await repo.get_by_symbol("BTCUSDT", "live") is None
 
 
 @pytest.mark.parametrize("held", ["nothing", "auto-row", "removed-manual", "other-env"])
@@ -414,7 +416,7 @@ async def test_clear_manual_without_an_active_manual_row_is_absent_and_changes_n
 ) -> None:
     rid = None
     if held == "auto-row":
-        rid = await repo.upsert_auto("BTCUSDT", "chart_open", _CHART)
+        rid = await repo.upsert_auto("BTCUSDT", "chart_open", _CHART, "live")
     elif held == "removed-manual":
         rid = await _manual(repo)
         assert await repo.soft_remove(rid)
@@ -455,9 +457,10 @@ async def test_clear_manual_racing_upsert_auto_never_loses_the_ref(repo: Repo, c
         conn.execute("TRUNCATE recorded_symbols CASCADE")
         await _manual(repo)
         await asyncio.gather(
-            repo.clear_manual("BTCUSDT", "live"), repo.upsert_auto("BTCUSDT", "chart_open", _CHART)
+            repo.clear_manual("BTCUSDT", "live"),
+            repo.upsert_auto("BTCUSDT", "chart_open", _CHART, "live"),
         )
-        assert [r["reason_refs"] for r in await repo.list_recorded()] == [[_CHART]]
+        assert [r["reason_refs"] for r in await repo.list_recorded("live")] == [[_CHART]]
 
 
 async def test_set_pinned_toggles_by_id_and_bumps_updated_at(repo: Repo, conn: Conn) -> None:
@@ -506,7 +509,8 @@ async def test_set_retention_writes_the_days_and_none_restores_the_default(
     assert _days(conn, rid) is None  # NULL: the default
     assert await repo.set_retention(rid, 7) is True
     assert _days(conn, rid) == 7 and _state(conn, rid)["updated_at"] > inserted
-    assert ((await repo.get_by_symbol("BTCUSDT")) or {})["retention_days"] == 7  # the policy's read
+    row = await repo.get_by_symbol("BTCUSDT", "live")  # the policy's read
+    assert (row or {})["retention_days"] == 7
     assert await repo.set_retention(rid, 7) is True  # the value it holds
     assert await repo.set_retention(rid, None) is True and _days(conn, rid) is None
 
@@ -534,3 +538,60 @@ async def test_set_retention_refuses_what_rs_retention_refuses(
         await repo.set_retention(rid, days)
     assert (refused.value.sqlstate, refused.value.constraint) == ("23514", "rs_retention")
     assert _days(conn, rid) is None
+
+
+# --- #2188 S3d: startup recovery, gaps and counters are per env (C-2.11) -------------------------
+
+
+async def test_a_startup_leaves_another_envs_open_session_alone(repo: Repo, conn: Conn) -> None:
+    """SEC-1 (S3a lens): a demo process's startup closed a live session as `process_restart`,
+    logged a gap that never happened and wrote its `recorder.stop` with `env=demo`. BTCUSDT is
+    recorded in both envs, each with a session left open, so only the row link tells them apart
+    (a join on the symbol and the env would close both)."""
+    t0 = to_us(datetime(2026, 9, 1, tzinfo=UTC))
+    for config in (LIVE, DEMO):  # one killed process per env
+        killed = SessionManager(repo, now_us=lambda: t0, audit=FakeAudit(), config=config)
+        await killed.on_set_changed(_added())
+    audit, start = FakeAudit(), t0 + 60_000_000
+    demo = SessionManager(repo, now_us=lambda: start, audit=audit, config=DEMO)
+    assert await demo.recover_on_startup(start) == 1  # its own session, not live's too
+    assert audit.envs() == [("recorder.stop", "demo")]
+    by_env = (
+        "SELECT rs.env::text, s.state::text, (SELECT count(*) FROM recording_gaps g "
+        "WHERE g.recording_session_id = s.id) FROM recording_sessions s "
+        "JOIN recorded_symbols rs ON rs.id = s.recorded_symbol_id"
+    )
+    states = {env: (state, gaps > 0) for env, state, gaps in conn.execute(by_env)}
+    assert states == {"live": ("starting", False), "demo": ("stopped", True)}  # live: no gap
+
+
+async def test_the_gap_insert_and_the_counters_reach_only_their_own_envs_session(
+    repo: Repo, conn: Conn
+) -> None:
+    """BTCUSDT is recorded in two envs and the newest live session is demo's: a write that found
+    its session by symbol alone would put live's gap and counters on demo's."""
+    t0, sids = datetime(2026, 9, 1, tzinfo=UTC), dict[str, str]()
+    for minutes, env in enumerate(("live", "demo")):
+        sids[env] = await repo.open_session_at(
+            recorded_symbol_id=await repo.upsert_auto("BTCUSDT", "chart_open", _CHART, env),
+            symbol="BTCUSDT", streams=["trades"], orderbook_depth=200,
+            ws_endpoint="wss://example.invalid", started_at=t0 + timedelta(minutes=minutes),
+        )  # fmt: skip
+
+    async def write(env: str) -> list[bool]:
+        gap = await repo.record_live_gap(
+            symbol="BTCUSDT", env=env, stream="trades", gap_start=t0,
+            gap_end=t0 + timedelta(seconds=1), cause="backpressure_drop",
+        )  # fmt: skip
+        counted = await repo.add_session_counters(
+            "BTCUSDT", env=env, messages_received=3, messages_dropped=0, bytes_written=9,
+            reconnect_count=0,
+        )  # fmt: skip
+        return [gap, counted]
+
+    assert [await write(env) for env in ("live", "demo")] == [[True, True]] * 2
+    gaps = "SELECT recording_session_id::text FROM recording_gaps ORDER BY id"
+    assert conn.execute(gaps).fetchall() == [(sids["live"],), (sids["demo"],)]
+    rows = "SELECT id::text, messages_received FROM recording_sessions ORDER BY started_at"
+    assert conn.execute(rows).fetchall() == [(sids["live"], 3), (sids["demo"], 3)]
+    assert await write("testnet") == [False, False]  # no session of its own: neither write lands

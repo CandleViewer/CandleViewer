@@ -27,6 +27,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, FakeSeed, no_restore
+from tests.unit.recorder._session_fakes import DEMO
 
 pytestmark = pytest.mark.integration
 
@@ -134,7 +135,7 @@ async def run(dsns: tuple[str, str], conn: Conn) -> AsyncIterator[_Run]:
         bus=FakeBus(), audit=audit, env="demo", now=clock, disk_refuses=bool, recorded=repo,
         config=PolicyConfig(max_symbols=7),
     )  # fmt: skip
-    sessions = SessionManager(repo, now_us=lambda: 0, audit=FakeAudit())
+    sessions = SessionManager(repo, now_us=lambda: 0, audit=FakeAudit(), config=DEMO)
     await startup_reconcile(sessions, policy, process_start_us=0, restore_b11=no_restore,
                             seed=FakeSeed([("ADAUSDT", "p1")]))  # fmt: skip
     yield _Run(policy, audit, clock, conn, user, repo)

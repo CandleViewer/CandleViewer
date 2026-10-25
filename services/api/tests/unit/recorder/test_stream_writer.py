@@ -328,7 +328,7 @@ async def test_remove_clears_stale_update_id(tmp_path: Path) -> None:
 
 
 def test_writer_config_defaults_match_the_ticket(tmp_path: Path) -> None:
-    cfg = WriterConfig(wal_dir=tmp_path)
+    cfg = WriterConfig(wal_dir=tmp_path, env="live")
     assert (cfg.flush_rows, cfg.flush_interval_s, cfg.wal_max_bytes) == (10_000, 0.2, 1 << 30)
     assert cfg.counters_interval_s == 10.0
     assert StreamWriter.__name__ == "StreamWriter"
@@ -343,6 +343,7 @@ def test_default_protected_paths_derive_from_settings(tmp_path: Path) -> None:
     assert Path(s.parquet_root) in cfg.protected_paths
     assert cfg.wal_dir == Path(s.recorder_wal_dir)
     assert cfg.wal_max_bytes == s.recorder_wal_max_bytes
+    assert cfg.env == s.environment.value  # the process's own env, never a default
 
 
 async def test_wal_on_the_parquet_volume_is_refused_with_defaults(tmp_path: Path) -> None:

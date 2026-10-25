@@ -27,7 +27,7 @@ from candleviewer.statechart.persistence import (
 )
 from candleviewer.statechart.registry import Registry
 from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, FakeSeed, Mem, no_restore
-from tests.unit.recorder._session_fakes import MemRecorderStore, UsClock
+from tests.unit.recorder._session_fakes import DEMO, MemRecorderStore, UsClock
 from tests.xstate_contract._harness import Audit, Keys, Pager, Repo
 
 GRACE = 1_800.0  # `PolicyConfig.autostop_grace_s`
@@ -56,7 +56,7 @@ async def _startup(
     seed: PositionSeed | None = None,
     restore: Callable[[], Awaitable[None]] = no_restore,
 ) -> None:
-    sessions = SessionManager(MemRecorderStore(), now_us=UsClock(0), audit=FakeAudit())
+    sessions = SessionManager(MemRecorderStore(), now_us=UsClock(0), audit=FakeAudit(), config=DEMO)
     seed = seed or FakeSeed(pairs or [])
     await startup_reconcile(sessions, policy, process_start_us=0, restore_b11=restore, seed=seed)
 

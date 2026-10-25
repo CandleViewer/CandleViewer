@@ -59,7 +59,7 @@ async def test_stalled_lane_on_real_ilp_writer_does_not_block_trades(tmp_path: P
         factory,
         FakeStore(),
         FakeEvents(),
-        WriterConfig(wal_dir=tmp_path / "wal", write_timeout_s=60.0),
+        WriterConfig(wal_dir=tmp_path / "wal", env="live", write_timeout_s=60.0),
         clock=clock,
         wall_clock_us=lambda: T0,
         fsync=FsyncCounter(),

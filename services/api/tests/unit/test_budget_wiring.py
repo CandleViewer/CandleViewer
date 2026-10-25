@@ -181,7 +181,7 @@ class _Repo:
     def __init__(self) -> None:
         self.envs: list[str] = []
 
-    async def list_recorded(self, env: str = "live") -> list[dict[str, object]]:
+    async def list_recorded(self, env: str) -> list[dict[str, object]]:
         self.envs.append(env)
         if env != "demo":  # another environment's rows are never read for demo
             return [{"symbol": "LIVEUSDT", "pinned": True}]

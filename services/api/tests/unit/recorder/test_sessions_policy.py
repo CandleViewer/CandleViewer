@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from candleviewer.recorder.policy import RecordingPolicy
 from candleviewer.recorder.sessions import SessionManager, startup_reconcile, to_dt, to_us
 from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, Mem, no_restore
-from tests.unit.recorder._session_fakes import MemRecorderStore, UsClock
+from tests.unit.recorder._session_fakes import DEMO, MemRecorderStore, UsClock
 
 T0 = to_us(datetime(2026, 9, 14, tzinfo=UTC))
 
@@ -18,12 +18,11 @@ async def test_crash_recovery_then_warmup_gate_opens_and_only_then_stops(
 ) -> None:
     """Gherkin "Crash leaves no open session" + policy gate (C-13.6 #12)."""
     store = MemRecorderStore()
-    dead = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit())
-    sid = await store.open_session_at(recorded_symbol_id="r", symbol="ETHUSDT",
+    rsid = await store.upsert_auto("ETHUSDT", "chart_open", {"kind": "chart", "id": "c1"}, "demo")
+    sid = await store.open_session_at(recorded_symbol_id=rsid, symbol="ETHUSDT",
                                       streams=["trades"], orderbook_depth=1, ws_endpoint="x",
                                       started_at=to_dt(T0))  # fmt: skip
     await store.touch_session_events(sid, first=to_dt(T0), last=to_dt(T0 + 5_000_000))
-    del dead  # process killed
     p = RecordingPolicy(
         disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock, recorded=Mem()
     )
@@ -42,7 +41,7 @@ async def test_crash_recovery_then_warmup_gate_opens_and_only_then_stops(
                 order.append(f"positions:{p.leaf('ETHUSDT')}")  # still gated while it reads
                 return []
 
-        mgr = SessionManager(store, now_us=UsClock(start), audit=FakeAudit())
+        mgr = SessionManager(store, now_us=UsClock(start), audit=FakeAudit(), config=DEMO)
         await startup_reconcile(mgr, p, process_start_us=start, restore_b11=no_restore,
                                 seed=Seed())  # fmt: skip
         s = store.sessions[sid]
@@ -61,7 +60,7 @@ async def test_policy_forwards_b11_state_entries_to_the_session_mirror(
     clock: FakeClock, bus: FakeBus, audit: FakeAudit
 ) -> None:
     store = MemRecorderStore()
-    mgr = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit())
+    mgr = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit(), config=DEMO)
     p = RecordingPolicy(
         disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock, recorded=Mem()
     )

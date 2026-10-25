@@ -17,7 +17,7 @@ from candleviewer.recorder.policy import PolicyConfig, RecordedStore, RecordingP
 from candleviewer.recorder.sessions import DEFAULT_STREAMS, SessionManager
 from candleviewer.storage.repositories.recorder_sqlalchemy import SqlAlchemyRecorderRepository
 from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, Mem
-from tests.unit.recorder._session_fakes import MemRecorderStore, UsClock
+from tests.unit.recorder._session_fakes import LIVE, MemRecorderStore, UsClock
 
 OWNER, MANAGER = user_actor("owner-1"), user_actor("mgr-2")
 POS, CHART = {"kind": "position", "id": "p1"}, {"kind": "chart", "id": "c1"}
@@ -551,7 +551,7 @@ async def test_the_demo_policy_leaves_the_live_rows_alone(
 
 async def test_a_set_change_with_no_row_opens_on_the_constant_ref_and_warns() -> None:
     store = MemRecorderStore()
-    mgr = SessionManager(store, now_us=UsClock(0), audit=FakeAudit())
+    mgr = SessionManager(store, now_us=UsClock(0), audit=FakeAudit(), config=LIVE)
     event = RecorderSetChanged(
         symbol="BTCUSDT", change="added", reason="manual", reasons=("manual",),
         priority=300, auto_evictable=False, ts_event=0,

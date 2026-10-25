@@ -13,8 +13,8 @@ Gap sources (cause, `recording_gaps.cause`):
   stream covering exactly the outage is written on it, and a new session is opened.
 - `seq_jump`: the StreamWriter's `seq_jump_windows` signal (E16-T03) — not re-detected here.
 - `exchange_outage`: `on_exchange_outage(...)` (no E08 emitter exists yet; see the PR).
-- `process_restart`: `recover_on_startup()` closes every session left open by a dead process
-  and writes a gap from its `last_event_ts` (or `started_at`) to process start.
+- `process_restart`: `recover_on_startup()` closes every session of its env left open by a dead
+  process and writes a gap from its `last_event_ts` (or `started_at`) to process start.
 - `backpressure_drop`: written by the StreamWriter itself on the live session this module
   opens (its buffered gaps flush once `open` has run).
 
@@ -81,13 +81,12 @@ def to_us(value: datetime) -> int:
 
 
 class SessionStore(Protocol):
-    """`SqlAlchemyRecorderRepository` conforms."""
+    """`SqlAlchemyRecorderRepository` conforms. `env` is never defaulted: a default would let a
+    demo process read, or write, the `live` rows and sessions (C-2.11, #2726)."""
 
-    async def get_by_symbol(self, symbol: str, env: str = "live") -> dict[str, Any] | None: ...
+    async def get_by_symbol(self, symbol: str, env: str) -> dict[str, Any] | None: ...
 
-    async def upsert_auto(
-        self, symbol: str, reason: str, ref: dict[str, str], env: str = "live"
-    ) -> str: ...
+    async def upsert_auto(self, symbol: str, reason: str, ref: dict[str, str], env: str) -> str: ...
 
     async def open_session_at(
         self,
@@ -121,7 +120,7 @@ class SessionStore(Protocol):
         cause: str,
     ) -> int: ...
 
-    async def list_live_sessions(self) -> list[dict[str, Any]]: ...
+    async def list_live_sessions(self, env: str) -> list[dict[str, Any]]: ...
 
 
 class SessionAudit(Protocol):
@@ -175,7 +174,7 @@ class _Live:
 
 @dataclass(frozen=True, slots=True)
 class SessionConfig:
-    env: str = "live"
+    env: str  # no default: a `live` one would let a demo process close the live sessions (#2726)
     ws_endpoint: str = "public"
     orderbook_depth: int = 200
     store_timeout_s: float = 5.0
@@ -204,7 +203,7 @@ class SessionManager:
         *,
         now_us: Callable[[], int],
         audit: SessionAudit,
-        config: SessionConfig | None = None,
+        config: SessionConfig,
         invalidate: Invalidate | None = None,
         topics: TopicResolver | None = None,
     ) -> None:
@@ -213,11 +212,16 @@ class SessionManager:
                 "SessionManager needs an audit writer: the crash-recovery `recorder.stop` "
                 "audit (C-2.9) must never be skipped"
             )
+        if config is None:  # likewise: no config means no env, and an env is never assumed
+            raise ValueError(
+                "SessionManager needs a config: its env scopes every session it reads or writes "
+                "(C-2.11)"
+            )
         self._audit = audit
         self._store = store
         self._topics = topics or _all_streams
         self._now_us = now_us
-        self._cfg = config or SessionConfig()
+        self._cfg = config
         self._invalidate = invalidate or (lambda _symbol: None)
         self._live: dict[str, _Live] = {}
         self._lock = asyncio.Lock()
@@ -427,11 +431,13 @@ class SessionManager:
     # -- crash recovery (C-13.6 scenario 12) ---------------------------------------------------
 
     async def recover_on_startup(self, process_start_us: int) -> int:
-        """Close every session a dead process left open: `end_reason='process_restart'` and one
-        gap per stream from `last_event_ts` (else `started_at`) to process start. Must run
-        before any session is opened by this process. Returns the number closed."""
+        """Close every session of this env a dead process left open: `end_reason='process_restart'`
+        and one gap per stream from `last_event_ts` (else `started_at`) to process start. Another
+        env's open sessions are not ours to close (C-2.11). Must run before any session is opened
+        by this process. Returns the number closed."""
         async with self._lock:
-            rows = await self._call(self._store.list_live_sessions)
+            env = self._cfg.env
+            rows = await self._call(lambda: self._store.list_live_sessions(env))
             closed = 0
             for row in rows:
                 sid, symbol = str(row["id"]), str(row["symbol"])
