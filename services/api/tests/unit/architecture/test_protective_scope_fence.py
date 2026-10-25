@@ -256,6 +256,8 @@ _SCOPED = "def caller(p):\n    return scope_for_target(p.snapshot, p.target)\n"
             },
             ["api/r.py"],  # a second hop
         ),
+        # a module the scan did not read: no hop to follow, and named, never a KeyError
+        ({"api/r.py": _route(_COMMON, "caller(p)")}, ["api/r.py"]),
     ],
 )
 def test_the_scan_follows_one_import_hop_within_the_api_package(
