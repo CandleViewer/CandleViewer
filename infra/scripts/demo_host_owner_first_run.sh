@@ -107,7 +107,7 @@ else:
             print(plain(item))
     elif mode == "verdict":
         shown = find(doc, ["verification"])
-        for name in ("passed", "uid", "uta", "read_only", "withdraw_enabled",
+        for name in ("passed", "uta", "read_only", "withdraw_enabled",
                      "ip_whitelist_matches_egress", "warnings", "probe_ret_code",
                      "clock_offset_ms"):
             if isinstance(shown, dict) and name in shown:
@@ -117,6 +117,7 @@ else:
 TOKEN="" PASSWORD="" AGAIN="" CODE="" API_KEY="" API_SECRET="" ACCESS="" CSRF="" MFA_TOKEN=""
 METHOD_ID="" BODY="" RESP="" STATUS="" IDENT="" EXCHANGE_UID="" LABEL="" KEY_LABEL=""
 READ_ONLY=false READ_ONLY_ANSWER="" ACCOUNT_ID="" SKIP_INVITE=false OWNER_EMAIL=""
+SHOWN=false API_STOPPED=false # something was shown once and is not cleared; the run stopped api
 F=()
 # The runbook's compose files and project (docs/ops/runbooks/demo-host.md), from this checkout.
 HERE=${BASH_SOURCE[0]%/*}
@@ -126,11 +127,17 @@ readonly COMPOSE=(docker compose -p cv-demo
   -f "$ROOT/infra/compose/docker-compose.yml"
   -f "$ROOT/infra/compose/docker-compose.vps.yml"
   -f "$ROOT/infra/compose/docker-compose.demo-host.yml")
+# The command that starts api again, word for word, for a run that stopped it.
+printf -v UP_API '%q ' "${COMPOSE[@]}" --profile core up -d --wait api
+readonly UP_API="${UP_API% }"
 
 cleanup() {
   TOKEN="" PASSWORD="" AGAIN="" CODE="" API_KEY="" API_SECRET="" ACCESS="" CSRF="" MFA_TOKEN=""
   BODY="" RESP="" F=()
   unset -v TOKEN PASSWORD AGAIN CODE API_KEY API_SECRET ACCESS CSRF MFA_TOKEN BODY RESP F
+  [[ $SHOWN != true ]] || still_shown
+  [[ $API_STOPPED != true ]] ||
+    say "api may be stopped (the bootstrap stops it): start it with: $UP_API"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -148,6 +155,28 @@ usage() {
   exit "${1:-2}"
 }
 py() { python3 -I -B -c "$PY" "$@"; }
+
+still_shown() { # the run stops, or has no terminal to clear: what it showed once is still there
+  SHOWN=false
+  say "What was shown once is still in this terminal's scrollback: once you have read what is" \
+    "above, clear it (clear; printf '\\033[3J'; in tmux also tmux clear-history), and any" \
+    "clipboard history."
+}
+
+forget_shown() { # the run succeeded: clear what it showed once from the screen and scrollback
+  [[ $SHOWN == true ]] || return 0
+  [[ -t 3 ]] || {
+    still_shown
+    return 0
+  }
+  SHOWN=false
+  printf '\033[H\033[2J\033[3J' >&3 # the screen (ED 2), then the scrollback (ED 3)
+  if [[ -n ${TMUX-} ]]; then # tmux keeps a pane's history apart from the terminal's
+    tmux clear-history ${TMUX_PANE:+-t "$TMUX_PANE"} </dev/null >/dev/null 2>&1 || true
+  fi
+  say "This terminal and its scrollback are cleared of what was shown once; clear any" \
+    "clipboard history yourself."
+}
 
 ask() { # ask NAME PROMPT [DEFAULT]: a visible answer, trimmed, else DEFAULT
   local _reply=""
@@ -170,6 +199,12 @@ ask_code() { # ask_code PROMPT: CODE, six digits from the authenticator
   [[ $CODE =~ ^[0-9]{6}$ ]] || die "a code from the authenticator is 6 digits"
 }
 
+chars_within() { # chars_within MIN MAX: is PASSWORD MIN to MAX characters long? LC_ALL=C counts
+  local bare=${PASSWORD//[$'\x80'-$'\xbf']/} n # bytes, so drop UTF-8's continuation bytes first
+  n=${#bare} bare=""
+  ((n >= $1 && n <= $2))
+}
+
 encode() { # encode NAME:TYPE VALUE...: BODY becomes that JSON object
   local specs=() values=()
   while (($# >= 2)); do
@@ -188,8 +223,8 @@ get() { # get SPEC...: F holds those fields of the last answer, one per SPEC
   while IFS= read -r line; do F+=("$line"); done < <(printf '%s' "$RESP" | py get "$@")
 }
 
-call() { # call METHOD PATH [BODY [session [IDEMPOTENCY_KEY]]]: RESP and STATUS of its answer
-  local method=$1 path=$2 body=${3-} session=${4-} key=${5-} config rc=0
+call() { # call METHOD PATH [BODY [session [IDEMPOTENCY_KEY [MAX_TIME]]]]: RESP and STATUS
+  local method=$1 path=$2 body=${3-} session=${4-} key=${5-} max=${6:-60} config rc=0
   config="url = \"$API$path\""$'\n'"request = \"$method\""$'\n'
   config+=$'header = "Accept: application/json"\nheader = "Expect:"\n'
   if [[ $session == session ]]; then
@@ -203,7 +238,7 @@ call() { # call METHOD PATH [BODY [session [IDEMPOTENCY_KEY]]]: RESP and STATUS 
     body=${body//\"/\\\"}
     config+=$'header = "Content-Type: application/json"\n'"data-binary = \"$body\""$'\n'
   fi
-  RESP=$(printf '%s' "$config" | curl -q --silent --noproxy '*' --proto =http --max-time 60 \
+  RESP=$(printf '%s' "$config" | curl -q --silent --noproxy '*' --proto =http --max-time "$max" \
     --dump-header - --write-out '\n%{http_code}' --config - 2>/dev/null) || rc=$?
   config="" body="" STATUS=000
   if ((rc == 0)); then # the last line is --write-out's status
@@ -246,7 +281,9 @@ bootstrap_refusal() { # bootstrap_refusal STATUS: #4479's exit status in words (
     13) printf 'confirmation_timeout (the phrase was not retyped within 5 minutes)' ;;
     16) printf 'operator_cancelled' ;;
     17) printf 'owner_exists (an Owner is active: run again with --skip-invite)' ;;
-    18) printf 'not_candidate (that email is a user who cannot become the Owner)' ;;
+    18)
+      printf 'not_candidate (not a usable bootstrap email, or a user who cannot become the Owner)'
+      ;;
     130) printf 'interrupted (its outcome is unknown: read the auth.bootstrap_owner_* records)' ;;
     *) printf 'status %s' "$1" ;;
   esac
@@ -259,17 +296,24 @@ bootstrap_invite() { # #4479's mint, in bootstrap-owner on this terminal: its to
     die "the owner is an email whose part before @ is 3 to 32 letters, digits, '.', '_' or '-'"
   command -v docker >/dev/null 2>&1 || die "docker is not installed"
   say "Stopping api: #4479's CLI runs only while it is stopped."
+  API_STOPPED=true
   "${COMPOSE[@]}" stop api </dev/null || die "could not stop api: read the lines above"
-  say "The bootstrap: retype the phrase it shows. It prints the invite token once; copy it."
+  say "The bootstrap: retype the phrase it shows. It prints the invite token once: paste it at" \
+    "the next prompt."
+  say "Shown once from here on: the token, then the authenticator URI and the recovery codes." \
+    "Run no session recorder (script, asciinema) and keep them out of any clipboard manager's" \
+    "history; a run that succeeds clears this terminal's scrollback at its end."
+  SHOWN=true
   "${COMPOSE[@]}" --profile bootstrap-owner run --rm --no-deps bootstrap-owner \
     --owner "$OWNER_EMAIL" >&3 2>&3 || rc=$?
   if ((rc != 0)); then
-    die "the bootstrap refused: $(bootstrap_refusal "$rc"). api is stopped; start it with" \
-      "docker compose -p cv-demo <the runbook's -f files> --profile core up -d --wait api"
+    ((rc == 130)) || SHOWN=false # a refusal gives no token; an interrupted run may have shown it
+    die "the bootstrap refused: $(bootstrap_refusal "$rc")."
   fi
   say "Starting api again."
   "${COMPOSE[@]}" --profile core up -d --wait api </dev/null ||
     die "api did not get healthy after the bootstrap: read its log (runbook step 4)"
+  API_STOPPED=false
 }
 
 redeem_invite() {
@@ -289,7 +333,7 @@ redeem_invite() {
   ask_secret AGAIN "The same password again: "
   [[ $PASSWORD == "$AGAIN" ]] || die "the two passwords differ"
   AGAIN=""
-  ((${#PASSWORD} >= 12 && ${#PASSWORD} <= 512)) || die "a password is 12 to 512 characters"
+  chars_within 12 512 || die "a password is 12 to 512 characters"
   encode password:s "$PASSWORD"
   call POST "/invites/$TOKEN" "$BODY"
   case $STATUS in
@@ -342,7 +386,7 @@ sign_in() {
   ((${#IDENT} >= 1 && ${#IDENT} <= 254)) || die "a username or email is 1 to 254 characters"
   if [[ -z $PASSWORD ]]; then
     ask_secret PASSWORD "Password: "
-    ((${#PASSWORD} >= 1 && ${#PASSWORD} <= 512)) || die "a password is 1 to 512 characters"
+    chars_within 1 512 || die "a password is 1 to 512 characters"
   fi
   encode identifier:s "$IDENT" password:s "$PASSWORD"
   call POST /auth/login "$BODY"
@@ -411,10 +455,11 @@ create_account() {
   case $STATUS in
     201) ;;
     000) unreachable ;;
-    404 | 405 | 501)
+    404 | 405)
       die "this api does not serve POST /exchange-accounts (a build before #4484):" \
         "build the pinned main sha (runbook step 1)"
       ;;
+    501) refused "the account registration (is the api on the real backend? runbook step 4)" ;;
     409)
       get .detail
       die "the account was not registered: ${F[0]:-a conflict}. If it is this demo account," \
@@ -425,8 +470,9 @@ create_account() {
   get .id
   ACCOUNT_ID=${F[0]-}
   [[ $ACCOUNT_ID =~ $UUID_RE ]] || die "the account registration answered without an account id"
-  say "Demo account $ACCOUNT_ID registered; it stays pending until its key is imported."
-  say "A later run can reuse it: --skip-invite --account-id $ACCOUNT_ID"
+  # L6: the one value --account-id needs, on the terminal alone (never stdout or stderr).
+  show "Demo account $ACCOUNT_ID registered; it stays pending until its key is imported." \
+    "A later run can reuse it: --skip-invite --account-id $ACCOUNT_ID"
 }
 
 step_up() { # step_up [CHALLENGE_ID]: elevate the session for the keys class
@@ -448,7 +494,7 @@ step_up() { # step_up [CHALLENGE_ID]: elevate the session for the keys class
     000) unreachable ;;
     401)
       die "the step-up was refused twice: wait 5 minutes, then run again" \
-        "with --skip-invite${ACCOUNT_ID:+ --account-id $ACCOUNT_ID}"
+        "with --skip-invite${ACCOUNT_ID:+ --account-id <the account id>}"
       ;;
     *) refused "the step-up" ;;
   esac
@@ -465,9 +511,9 @@ step_up() { # step_up [CHALLENGE_ID]: elevate the session for the keys class
   F=()
 }
 
-elevated() { # elevated PATH BODY KEY: POST it on the session; a step-up challenge is answered once
+elevated() { # elevated PATH BODY KEY [MAX_TIME]: POST it on the session; a challenge once
   local challenge
-  call POST "$1" "$2" session "$3"
+  call POST "$1" "$2" session "$3" "${4-}"
   if [[ $STATUS == 403 ]]; then
     get .code .challenge_id
     if [[ ${F[0]-} == step_up_required ]]; then
@@ -475,7 +521,7 @@ elevated() { # elevated PATH BODY KEY: POST it on the session; a step-up challen
       [[ $challenge =~ $UUID_RE ]] || die "the api asked for a step-up without a challenge id"
       say "The api asks for the step-up again."
       step_up "$challenge"
-      call POST "$1" "$2" session "$3" # the held request, sent again as it was
+      call POST "$1" "$2" session "$3" "${4-}" # the held request, sent again as it was
     fi
   fi
 }
@@ -486,10 +532,11 @@ import_key() {
   encode api_key:s "$API_KEY" api_secret:s "$API_SECRET" label:s "$KEY_LABEL" \
     read_only:b "$READ_ONLY" expected_uid:s "$EXCHANGE_UID"
   held=$BODY API_KEY="" API_SECRET=""
-  elevated "/exchange-accounts/$ACCOUNT_ID/keys" "$held" "$key"
+  elevated "/exchange-accounts/$ACCOUNT_ID/keys" "$held" "$key" 120 # it signs against Bybit
   held="" BODY=""
   case $STATUS in
     201)
+      forget_shown
       printf '%s' "$RESP" | py verdict
       say "The key passed every check and is stored."
       ;;
@@ -504,7 +551,7 @@ import_key() {
       ;;
     502 | 503)
       refused "the key import (no verdict, nothing was stored: run again later" \
-        "with --skip-invite --account-id $ACCOUNT_ID)"
+        "with --skip-invite --account-id <the account id>)"
       ;;
     *) refused "the key import" ;;
   esac
