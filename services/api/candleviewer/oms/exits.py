@@ -111,7 +111,7 @@ from .validator import Validator
 
 __all__ = [
     "ALREADY_FINAL", "IN_FLIGHT_RETRY_AFTER_S", "MAX_IN_FLIGHT", "MAX_IN_FLIGHT_PER_PRINCIPAL",
-    "MOVED_RETRY_AFTER_S", "NOT_GRANTED", "NOT_ORDER_CREATOR",
+    "MOVED_RETRY_AFTER_S", "NOT_GRANTED", "NOT_ORDER_CREATOR", "RECLASSIFIED",
     "SETTLE_TIMEOUT_S", "TRANSITION_TIMEOUT_S", "VIEW_ONLY", "AmendTerms", "CancelReason",
     "ExitCaller", "ExitCommands", "ExitDeps", "ExitMachines", "ExitOperation", "ExitOrders",
     "ExitOutcome", "ExitStep", "InFlightGuard", "LiveStops", "OrderExits", "OutcomeKind",
@@ -127,9 +127,11 @@ type UnknownReason = Literal["already_terminal", "transport", "timeout"]
 type CancelReason = Literal["user", "cancel_all"]
 #: The exits the in-flight guard keys (ruling Q11) and the audit names.
 type ExitOperation = Literal["amend", "cancel", "cancel_all"]
-#: The step of an exit route's own refusal that its `deny` record names (24 Sec.8.4, the exit
-#: routes): the `Idempotency-Key` (7), the 24 h record (8) or the in-flight guard (9).
-type ExitStep = Literal["key", "replay", "guard"]
+#: The step of a refusal that its `deny` record names (24 Sec.8.4, the exit routes): a route's own,
+#: the `Idempotency-Key` (7), the 24 h record (8) or the in-flight guard (9), or step 11's class
+#: re-check (`class`), the exit service's, of an amend the order as it stands makes risk-increasing
+#: where step 4's read did not (SEC-S4C2B-01; the orchestrator's ruling of 2026-10-25 00:27Z (1)).
+type ExitStep = Literal["key", "replay", "guard", "class"]
 
 #: How long a cancel waits for a step in flight to settle before it is sent (D9).
 TRANSITION_TIMEOUT_S: Final = CV_COMMAND_TIMEOUT
@@ -152,6 +154,9 @@ NOT_ORDER_CREATOR: Final = "not_order_creator"
 #: The reason of a cancel's record when its order is already final, nothing to send (C-2.9; the
 #: orchestrator's ruling of 2026-10-24 21:47Z (2)).
 ALREADY_FINAL: Final = "already_final"
+#: The reason in its record's detail of an amend refused at step 11's class re-check, beside its
+#: code: the class changed since step 4 (the orchestrator's ruling of 2026-10-25 00:27Z (1)).
+RECLASSIFIED: Final = "reclassified"
 _ACTIONS: Final[Mapping[ExitOperation, str]] = {
     "amend": "orders.amend",
     "cancel": "orders.cancel",
@@ -514,20 +519,26 @@ class OrderExits:
         actor: SubmitActor,
         request_id: UUID | None,
         step: ExitStep | None = None,
+        reason: str | None = None,
     ) -> ExitOutcome:
         """`outcome`, a refusal, recorded before it is answered (C-2.9): `orders.amend` or
         `orders.cancel` denied with its code, the order-entry gate's `account.disabled_by_policy`
-        with its reason; else `503 audit_unavailable` in its place, nothing sent. The route's own
-        refusals of an order (its in-flight guard's, the arm token's) take it too, `step` naming
-        the 24 Sec.8.4 step that refused (`key`, `replay`, `guard`) as `placeOrder`'s records do."""
+        with its reason (`outcome.reason`, the gate's alone); else `503 audit_unavailable` in its
+        place, nothing sent. The route's own refusals of an order (its in-flight guard's, the arm
+        token's) take it too, `step` naming the 24 Sec.8.4 step that refused (`key`, `replay`,
+        `guard`) as `placeOrder`'s records do, and so does `amend`'s refusal at step 11's class
+        re-check (`class`), `reason` naming its cause in the detail beside the code
+        (`RECLASSIFIED`)."""
         action = DISABLED_BY_POLICY if outcome.reason is not None else _ACTIONS[operation]
         detail = {"operation": operation, "code": outcome.code, "order_link_id": row.order_link_id}
         if step is not None:
             detail["step"] = step
+        if reason is not None:
+            detail["reason"] = reason
         severity: Literal["warning", "error"] = "error" if outcome.status >= 500 else "warning"
-        reason = outcome.reason or outcome.code or ""
+        stated = outcome.reason or outcome.code or ""
         written = await self._recorded(
-            row, action, "denied", reason, detail, actor, request_id, severity=severity
+            row, action, "denied", stated, detail, actor, request_id, severity=severity
         )
         if written:
             return outcome
@@ -791,7 +802,9 @@ class OrderExits:
         `If-Match`, when given, must name, so a step the order took meanwhile is refused under the
         order's lock (`_taken_not`). The route judged the arm token and the switches (24 Sec.8.4
         steps 6 and 10) on `scoped`, its step 4 read: an amend the row makes risk-increasing when
-        `scoped` did not is refused before the send (`_version_refusal`)."""
+        `scoped` did not is refused before the send (`_version_refusal`), its record naming the
+        step, `class`, and the reason, `RECLASSIFIED` (the orchestrator's ruling of 2026-10-25
+        00:27Z (1)); the client sends it again, judged afresh."""
         if self._closed:
             return _CLOSED
         read, actor, rid = scoped.order, caller.actor, caller.request_id
@@ -815,11 +828,15 @@ class OrderExits:
         refusal = await self._ratchet(row, sized.stop_loss if sides else None)
         if refusal is None and raises:
             refusal = await self._gated(replace(scoped, order=row), sized, instrument)
+        reclassed = False
         if refusal is None:
             reclassed = raises and not risk_increasing(read, terms)
             refusal = _version_refusal(seen, expected_seq, reclassed=reclassed)
         if refusal is not None:
-            return await self.deny(row, "amend", refusal, actor=actor, request_id=rid)
+            return await self.deny(
+                row, "amend", refusal, actor=actor, request_id=rid,
+                step="class" if reclassed else None, reason=RECLASSIFIED if reclassed else None,
+            )  # fmt: skip
         named = {"qty": terms.qty, "price": terms.price, "trigger_price": terms.trigger_price}
         if sides:  # Q2: both sides re-paired, the unchanged one at its current value
             named |= {"stop_loss": sized.stop_loss, "take_profit": sized.take_profit}
