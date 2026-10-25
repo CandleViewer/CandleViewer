@@ -635,7 +635,7 @@ async def test_a_recorded_business_kyc_tier_widens_the_cap_to_twenty(
 async def test_two_concurrent_creates_for_the_last_slot_admit_exactly_one(
     store: SqlAlchemyAccountsStore, pg_dsn: str
 ) -> None:
-    """`FOR UPDATE` on the parent serialises them: the later count sees the earlier commit."""
+    """`FOR NO KEY UPDATE` on the parent serialises them: the later count sees the first commit."""
     exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
     parent = await store.create_account(owner, _new(exch))
     await _subs(store, owner, exch, parent.id, 4)

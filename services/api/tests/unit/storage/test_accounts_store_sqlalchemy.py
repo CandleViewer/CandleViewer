@@ -509,7 +509,7 @@ async def test_create_sub_locks_the_parent_and_counts_before_the_insert() -> Non
     )
     stmts = [c[0] for c in rel.calls]
     assert stmts == [mod._OWNER_GATE, mod._LOCK_PARENT, mod._COUNT_SUBS, mod._CREATE]
-    assert rel.calls[1][1] == {"parent": str(parent)}
+    assert rel.calls[1][1] == {"parent": str(parent), "env": "demo"}
     assert rel.calls[2][1] == {"parent": str(parent), "env": "demo"}
 
 
@@ -552,8 +552,8 @@ async def test_create_sub_under_a_recorded_business_kyc_tier_caps_at_twenty(
 
 
 async def test_create_under_a_locked_parent_that_is_no_live_main_is_parent_unavailable() -> None:
-    """The lock finds any row by id; the insert's own predicate still refuses a deleted or sub
-    parent, so the refusal is the same rule error."""
+    """Defence in depth behind the lock: if the insert's own parent predicate still finds no
+    live main parent, the refusal is the same rule error."""
     rel, parent = _sub_rel(0)
     rel.results[-1] = _Result([])
     with pytest.raises(AccountsStoreRuleError) as ei:
@@ -581,9 +581,18 @@ def test_sub_count_is_live_same_env_children_of_the_one_parent() -> None:
     assert set(mod._COUNT_SUBS.compile().params) == {"parent", "env"}
 
 
-def test_parent_lock_is_a_row_lock_on_the_named_parent() -> None:
+def test_parent_lock_is_a_no_key_row_lock_on_a_live_main_parent_of_the_env() -> None:
+    """`FOR NO KEY UPDATE` serialises sub creates without blocking key / grant inserts that
+    reference the parent (their `FOR KEY SHARE` does not conflict with it); an invalid parent
+    is not locked, so it keeps the insert's `parent_unavailable` answer, never a cap 409."""
     text = str(mod._LOCK_PARENT)
-    assert "p.id = CAST(:parent AS uuid)" in text and text.endswith("FOR UPDATE")
+    for fragment in (
+        "p.id = CAST(:parent AS uuid)", "p.deleted_at IS NULL", "p.kind = 'main'",
+        "p.env::text = CAST(:env AS text)",
+    ):  # fmt: skip
+        assert fragment in text
+    assert text.endswith("FOR NO KEY UPDATE")
+    assert set(mod._LOCK_PARENT.compile().params) == {"parent", "env"}
 
 
 def test_sub_account_caps_match_the_admin_capacity_tiers() -> None:
