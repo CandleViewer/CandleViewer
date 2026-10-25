@@ -508,31 +508,46 @@ PAIRS: list[Pair] = [
         "color.status.danger.subtle",
         "non-text",
     ),
-    # --- meters on raised: CMP-023 capacity, CMP-138 caps (§6, §8) ---
+    # --- meters on raised: the CMP-023 capacity meter (§6, §7); E39-D02's merged CMP-138 in
+    # SCR-122's Limits (§8, R-1), measured as E39-D02 §6 binds it: on a `surface.sunken` track ---
     Pair(
         "meter.fill",
-        "meter fill",
+        "CMP-023 capacity meter fill",
         "color.action.primary.default",
         "color.surface.raised",
         "non-text",
     ),
     Pair(
         "meter.near",
-        "meter fill near the cap",
+        "CMP-023 capacity meter fill at capacity (the warning tone, §7)",
         "color.status.warning.strong",
         "color.surface.raised",
         "non-text",
     ),
     Pair(
-        "meter.breached",
-        "meter fill breached and tightened",
-        "color.status.danger.strong",
-        "color.surface.raised",
+        "meter.tick80",
+        "CMP-138 80 % tick on its track (a reading aid)",
+        "color.text.secondary",
+        "color.surface.sunken",
         "non-text",
     ),
     Pair(
-        "meter.tick",
-        "meter cap tick",
+        "meter.overflow",
+        "CMP-138 overflow marker (over-cap-after-tightening)",
+        "color.status.danger.strong",
+        "color.surface.sunken",
+        "non-text",
+    ),
+    Pair(
+        "meter.hatch",
+        "CMP-138 hatched track strokes (unknown, down)",
+        "color.text.tertiary",
+        "color.surface.sunken",
+        "non-text",
+    ),
+    Pair(
+        "meter.glyph",
+        "CMP-138 state glyph stroke beside the number (diamond WARN, square LOCK)",
         "color.text.primary",
         "color.surface.raised",
         "non-text",
@@ -747,10 +762,38 @@ PAIRS: list[Pair] = [
         "rejected-non-text",
     ),
     Pair(
-        "meter.track",
-        "meter track (Appendix A, CMP-138): the fill, the tick and the words carry",
+        "meter.track.capacity",
+        "CMP-023 capacity meter track vs the tile: the text and the number carry",
         "color.surface.hover",
         "color.surface.raised",
+        "decorative",
+    ),
+    Pair(
+        "meter.track",
+        "CMP-138 track vs the row (E39-D02 §6): the number, the glyph and the word carry",
+        "color.surface.sunken",
+        "color.surface.raised",
+        "decorative",
+    ),
+    Pair(
+        "meter.ok",
+        "CMP-138 ok fill on its track (reinforcement)",
+        "color.text.secondary",
+        "color.surface.sunken",
+        "decorative",
+    ),
+    Pair(
+        "meter.warn",
+        "CMP-138 WARN fill on its track (reinforcement)",
+        "color.status.warning.default",
+        "color.surface.sunken",
+        "decorative",
+    ),
+    Pair(
+        "meter.lock",
+        "CMP-138 LOCK and CAP fill on its track (reinforcement)",
+        "color.status.danger.default",
+        "color.surface.sunken",
         "decorative",
     ),
     Pair(
@@ -1041,8 +1084,17 @@ CONTRAST_TABLE: list[TableRow] = [
         [["chip.check", "chip.ring", "chip.slashed", "chip.triangle", "chip.octagon"]],
     ),
     TableRow(
-        "meters on raised: fill · near · breached and tightened · cap tick",
-        [["meter.fill", "meter.near", "meter.breached", "meter.tick"]],
+        "meters: CMP-023 capacity fill · at capacity on raised; CMP-138 (E39-D02 §6) 80 % tick · "
+        "overflow marker · unknown hatch on `surface.sunken` · state glyph on raised",
+        [
+            ["meter.fill", "meter.near"],
+            ["meter.tick80", "meter.overflow", "meter.hatch", "meter.glyph"],
+        ],
+    ),
+    TableRow(
+        "meter tracks and CMP-138 fills (reinforcement, not gated): ok · WARN · LOCK and CAP on "
+        "the track; the CMP-138 track · the CMP-023 track vs raised",
+        [["meter.ok", "meter.warn", "meter.lock"], ["meter.track", "meter.track.capacity"]],
     ),
     TableRow(
         "notices: text on `info.subtle` · info glyph · text on `warning.subtle` (shown-once note)",
