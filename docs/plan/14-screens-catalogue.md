@@ -598,7 +598,7 @@ Drag preview                Drop zones
 
 ### SCR-024 — Panel picker ("Add panel")
 
-- **Type:** Modal. Grouped catalogue of every addable panel with a one-line description, a thumbnail and chips for "requires recording", "(estimated)", "owner only".
+- **Type:** Modal. Grouped catalogue of every addable panel with a one-line description, a thumbnail and chips for "requires recording", "(estimated)", "owner only". Categories, in order: Charts · Order flow · Market context · Account · Trading. Growth rule: a new kind lands by the data it shows: one instrument's price or trade data → Charts if it is a price-time plot, otherwise Order flow; instrument-wide or derived context (open interest, funding, regime, scanners) → Market context; the user's accounts, journal, alerts or lists → Account; order entry → Trading. Inside a category entries keep a fixed order (the R1 order, then new kinds appended in merge order), never alphabetical; a sixth category needs an amendment to SCR-024, and no epic adds one by itself. The list virtualises above 21 entries (E15-D07 §3.2).
 - **Data:** local panel registry + `GET /api/v1/admin/feature-flags` and role.
 - **States:** search · category filter · disabled entries with reasons ("Needs a recorded symbol", "Owner only").
 - **Components:** CMP-019 Icon (`lock`), CMP-043 Dialog, CMP-048 Combobox / AutoComplete, CMP-050 Card, CMP-079 RbacGate, CMP-213 FuzzyList.
@@ -607,6 +607,7 @@ Drag preview                Drop zones
 - **Performance:** Panel mounts <=150 ms; the picker pre-warms nothing and the newly added panel subscribes to its WS topics only after mount.
 - **Analytics/audit:** `panel.added` with `{type, placement}` (analytics).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.9 (Penpot page `E15-D02`, board 16; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
+- **Hi-fi (E15-D07):** [E15-D07.md](../design/E15/E15-D07.md) · [E15-D07-handoff.md](../design/E15/E15-D07-handoff.md) (E15-D07; SCR-024 in colour: the five categories in order — Charts · Order flow · Market context · Account · Trading — and the growth rule (a new kind lands by the data it shows; fixed order inside a category; a sixth category needs an amendment here), the fourteen R1 entries with icon, thumbnail, description and chips, search with synonyms, the category filter, no results keeping the term and naming the categories, disabled entries with the reason in the accessible name, the placement preview; Penpot page `E15-D07 Picker and menu hi-fi`, ten boards pending; heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] all panel types listed with an icon + description [ ] panels unavailable to the role are shown disabled with a reason [ ] search with no results [ ] placement choice (where it will be inserted) is previewed
 
 ### SCR-025 — Workspace settings modal
@@ -656,6 +657,7 @@ Drag preview                Drop zones
 - **Components:** CMP-019 Icon (`lock`), CMP-041 Menu, CMP-079 RbacGate, CMP-216 PanelMenu.
 - **Stories:** US-LAY-005.
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.5 (Penpot page `E15-D02`, board 11; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
+- **Hi-fi (E15-D07):** [E15-D07.md](../design/E15/E15-D07.md) · [E15-D07-handoff.md](../design/E15/E15-D07-handoff.md) (E15-D07; SCR-028 in colour: one fixed item order for every panel kind with Reset settings… and Close last, Reset settings… confirming and Close never, the Move to ▸ and Sync group ▸ submenus, flipping and clamping at the four corners and at 200 %, the `F11` hint and the proposed chords, disabled items with their reasons, the viewer and view-as menus, the browser footnote in place of Pop out; Penpot page `E15-D07 Picker and menu hi-fi`, ten boards pending; heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] full item set drawn (settings, duplicate, float, maximise, link to sync group, rename, close) [ ] disabled items show a reason [ ] keyboard invocation via the context-menu key and Shift+F10 [ ] submenu behaviour and overflow near the viewport edge
 
 ### SCR-029 — Unsaved-changes / layout-conflict dialog
