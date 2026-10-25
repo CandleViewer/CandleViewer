@@ -8,7 +8,9 @@ and the field names parsed by `candleviewer.exchange.bybit` (24-internal-schemas
 are the first such captures (#3447), listed here, never rewritten. The
 `rest/trading-*.json` files are transcribed from the Bybit v5 documentation
 (#2877 ruling R2), listed here and never rewritten either: the builder emits only
-their manifest entries. Re-running is byte-identical (seeded RNG, fixed epoch).
+their manifest entries. The `rest/risk_limit_*.json` files (S-RL, #913) are replies recorded
+by `capture_fixture.py --rest-path`, listed here and never rewritten either.
+Re-running is byte-identical (seeded RNG, fixed epoch).
 Run: python tools/fixtures/build_corpus.py
 """
 
@@ -208,6 +210,10 @@ def funding_history(symbol: str, step_h: int) -> dict[str, Any]:
 _SRC = "documented-shape (exception #1778 A)"
 _RECORDED = {"capture_date": "2026-10-19",
              "source": "capture_fixture.py, fixture-drift run 39210373369 (redacted)"}  # fmt: skip
+#: S-RL (#913): `GET /v5/market/risk-limit` replies recorded by `capture_fixture.py --rest-path`
+#: from the public `api.bybit.com` endpoint, no key; the redactor found nothing to redact.
+_RECORDED_RISK = {"capture_date": "2026-10-25",
+                  "source": "capture_fixture.py --rest-path (redacted)"}  # fmt: skip
 #: #2877 ruling R2 (the #1778 group A pattern): order-path shapes no recording holds yet. Each
 #: file is its documentation page's Response Example, keys and values unchanged (for an error,
 #: its error-table row). E29-K01's recordings replace them;
@@ -366,6 +372,12 @@ def build() -> list[dict[str, Any]]:
                "recorded: snapshot + 19 deltas, incl. tickDirection, prevPrice1h/24h, "
                "fundingCap, singleOpenInterest", cap=8_000) | _RECORDED
         | {"window_ms": [1_792_391_746_229, 1_792_391_748_529]},
+    ]  # fmt: skip
+    m += [
+        _entry(f"rest/risk_limit_{sym}.json", sym, "GET /v5/market/risk-limit",
+               "recorded: one page of 35 linear tiers, empty nextPageCursor",
+               host=PUBLIC_REST_HOST, cap=16_000) | _RECORDED_RISK
+        for sym in ("BTCUSDT", "ETHUSDT")
     ]  # fmt: skip
     m += [
         _entry(f"rest/{name}.json", symbol, stream, event, host="bybit-exchange.github.io",
