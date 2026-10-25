@@ -7,9 +7,16 @@ resolves it (same loader, same alias resolution, same set layering, checked agai
 (imported, not re-implemented); ΔE76, L* and the deuteranopia, protanopia and tritanopia
 projections are those of `docs/research/_tools/cvd_simulate.py`. It measures every pair the hi-fi
 spec (`docs/design/E42/E42-D03.md` §15) groups, the follow-up pairs beside its findings F2 to F4 and
-its colour-vision pairs, then regenerates §15's two tables and the numbers §2, §4, §15 and §22 cite.
+its colour-vision pairs, then regenerates the numbers of §15's two tables (its Verdict column is
+hand-written; section D names each row's role) and the numbers §2, §4, §15 and §22 cite.
 
-Usage: python3 -I docs/design/_tools/e42_d03_admin_audit.py   (prints Markdown; exit 1 on a FAIL)
+Usage: python3 -I docs/design/_tools/e42_d03_admin_audit.py
+(prints Markdown; exit 1 on a FAIL, 2 on a tool error)
+
+Exit codes: 0 every gated row passes; 1 a gated row FAILs; 2 the tool itself cannot run (a
+helper that does not load, a theme layered unlike verify_tokens.py, a duplicate key, a table
+cell with no pair, a token with no colour or not an opaque #RRGGBB), so a caller never reads a tool
+error as a FAIL.
 
 Roles. `text` (4.5:1, WCAG 1.4.3) and `non-text` (3:1, WCAG 1.4.11) rows are gated in every theme,
 and one FAIL exits 1. Every gated text row is also measured against the high-contrast theme's 7:1
@@ -26,18 +33,26 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from types import ModuleType
-from typing import NamedTuple
+from typing import NamedTuple, NoReturn
 
 ROOT = Path(__file__).resolve().parents[3]
 TOKENS = ROOT / "packages" / "ui" / "tokens"
+TOOL_ERROR = 2  # distinct from a gated FAIL (exit 1)
+
+
+def tool_error(message: str) -> NoReturn:
+    """Stop with exit 2: the audit could not run, which is never a contrast FAIL."""
+    print(f"e42_d03_admin_audit: tool error: {message}", file=sys.stderr)
+    raise SystemExit(TOOL_ERROR)
 
 
 def _load(path: Path, name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load {path}")
+        tool_error(f"cannot load {path}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -74,7 +89,7 @@ def check_layering() -> None:
         files = [verify.PRIMITIVES, *verify.THEMES[name]]
         want = [str(f).removesuffix(".tokens.json") for f in files]
         if sets.get(name) != want:
-            raise SystemExit(f"themes.json layers {name} as {sets.get(name)}, verify_tokens {want}")
+            tool_error(f"themes.json layers {name} as {sets.get(name)}, verify_tokens {want}")
 
 
 def resolve_theme(name: str) -> dict[str, str]:
@@ -113,9 +128,11 @@ CR: dict[str, dict[str, str]] = {
 def col(theme: str, token: str) -> str:
     if token in CR:
         return col(theme, CR[token][theme])
+    if token not in T[theme]:
+        tool_error(f"{token} resolves to no colour in {theme}")
     value = T[theme][token]
     if len(value) != 7 or not value.startswith("#"):
-        raise SystemExit(f"{token} is {value} in {theme}: not an opaque #RRGGBB colour")
+        tool_error(f"{token} is {value} in {theme}: not an opaque #RRGGBB colour")
     return value
 
 
@@ -1090,11 +1107,11 @@ def check_keys() -> None:
     keys = [p.key for p in PAIRS + FOLLOW_UPS] + [c.key for c in CVD_PAIRS]
     dupes = sorted({k for k in keys if keys.count(k) > 1})
     if dupes:
-        raise SystemExit(f"duplicate keys: {dupes}")
+        tool_error(f"duplicate keys: {dupes}")
     for rows, known in ((CONTRAST_TABLE, {p.key for p in PAIRS}), (CVD_TABLE, set(keys))):
         missing = [k for r in rows for g in r.groups for k in g if k not in known]
         if missing:
-            raise SystemExit(f"table cells without a pair: {missing}")
+            tool_error(f"table cells without a pair: {missing}")
 
 
 def lightness(h: str) -> float:
@@ -1284,4 +1301,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        code = main()
+    except (KeyError, OSError, ValueError) as exc:  # a broken input, never a contrast FAIL
+        tool_error(f"{type(exc).__name__}: {exc}")
+    raise SystemExit(code)
