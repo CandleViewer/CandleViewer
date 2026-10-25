@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from functools import reduce
 from pathlib import Path
 from typing import Any, Literal, cast
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import DEFAULT, AsyncMock, Mock
 
 import pytest
 from structlog.testing import capture_logs
@@ -237,7 +237,9 @@ async def test_a_position_source_that_is_not_deployed_is_logged_and_the_gate_sti
     with capture_logs() as logs:
         calls = await _startup(positions=None)
     assert calls == [name for name in _ORDER if name != "policy.adopt_positions"]
-    assert [e["event"] for e in logs] == ["recorder_positions_source_not_deployed"]
+    assert [(e["event"], e["log_level"]) for e in logs] == [
+        ("recorder_positions_source_not_deployed", "warning")
+    ]
 
 
 async def test_stop_closes_all_live_sessions_as_shutdown() -> None:
@@ -342,6 +344,29 @@ async def test_crash_recovery_is_audited_write_ahead_as_system_recorder() -> Non
         assert kw["actor_label"] == "system:recorder" and kw["actor_user_id"] is None
         assert kw["object_id"] == symbol and kw["after_state"]["reason"] == "process_restart"
         assert kw["after_state"]["recording_session_id"] == dead.live_session(symbol)
+
+
+async def test_a_retried_recovery_audits_a_stale_session_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-A5: the runtime retries a failed startup, and recovery meets the same stale session
+    again when its close keeps failing after its audit: the append-only record is written once.
+    An audit that failed is still retried (never an unaudited close)."""
+    store, audit = MemRecorderStore(), FakeAudit()
+    dead = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit(), config=LIVE)
+    await dead.on_set_changed(_added())
+    fresh = SessionManager(store, now_us=UsClock(T0 + 9), audit=audit, config=LIVE)
+    emit = AsyncMock(side_effect=[OSError("audit down"), DEFAULT], wraps=audit.emit)
+    close = AsyncMock(
+        side_effect=[OSError("pg down")] * 2 + [DEFAULT], wraps=store.close_session_at
+    )
+    monkeypatch.setattr(audit, "emit", emit)
+    monkeypatch.setattr(store, "close_session_at", close)
+    for _ in range(3):  # the audit fails, then the close fails twice
+        with pytest.raises(OSError):
+            await fresh.recover_on_startup(T0 + 9)
+    assert await fresh.recover_on_startup(T0 + 9) == 1  # the fourth attempt closes it
+    assert audit.actions() == ["recorder.stop"]  # one record for four attempts
 
 
 async def test_crash_recovery_audit_failure_leaves_session_open() -> None:
