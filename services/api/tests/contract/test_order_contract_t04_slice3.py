@@ -38,6 +38,7 @@ from candleviewer.oms_wiring import (
     OmsRuntime,
     OrderStateFeed,
     ReferenceDemand,
+    UnclaimedMachineEvents,
 )
 from candleviewer.settings import (
     OMS_AFTER_ANCHOR_S,
@@ -665,8 +666,14 @@ def test_20_gives_the_lane_its_own_writer_and_sink_on_their_own_wal_files() -> N
         own,
         "Nothing the OMS records crosses to the serving loop",
         f"The writer's is `{LANE_WAL_PREFIX}<name>` beside `CV_AUDIT_WAL_PATH`, locked",
-        "the sink's is `CV_MACHINE_EVENT_WAL_PATH` while no persistence bundle holds that file for "
-        f"the serving loop, else `{LANE_WAL_PREFIX}<name>` beside it",
+        f"the sink's is `{LANE_WAL_PREFIX}<name>` beside `CV_MACHINE_EVENT_WAL_PATH`, under the "
+        "sink's own lock, a persistence bundle composed or not, so a bundle that comes or goes "
+        "across a restart never moves it (SEC-S3L2-03)",
+        "Without a bundle no sink of the process holds `CV_MACHINE_EVENT_WAL_PATH` itself: a start "
+        "that finds frames there that Postgres has not taken",
+        f"refuses, failing closed (`{UnclaimedMachineEvents.__name__}`, logged CRITICAL as "
+        "`oms_machine_event_wal_unclaimed` with their size, and paged), before the lane's sink or "
+        "the facade exists; it never adopts or skips them",
         f"(`{AuditWriterWrongLoop.__name__}`, an `{AuditUnavailable.__name__}`, so the audited "
         f"action is refused; `{MachineEventWrongLoop.__name__}`), the first refusal of each "
         f"{APPEND_FAILURE_COOLDOWN_S:g} s window, on its clock, logged CRITICAL as a page "

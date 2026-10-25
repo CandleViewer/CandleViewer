@@ -29,6 +29,8 @@ from structlog.testing import capture_logs
 
 from candleviewer import oms_wiring
 from candleviewer.api.health import make_health_router
+from candleviewer.audit.machine_events import MachineEventUnavailable
+from candleviewer.audit.wal import AuditWal, lock_wal_file
 from candleviewer.audit.writer import AuditUnavailable, keyed_record_id
 from candleviewer.domain.order_link import ext_key
 from candleviewer.domain.primitives import AccountId, Environment
@@ -267,6 +269,10 @@ class World:
     accounts: list[Any] = field(default_factory=list)
     sink_fails: Exception | None = None
     audit_fails: Exception | None = None
+    #: The bytes the stores' probe finds in `CV_MACHINE_EVENT_WAL_PATH` that Postgres has not
+    #: taken, and how often it was asked (SEC-S3L2-03).
+    unclaimed: int = 0
+    probes: int = 0
     lanes: list[InlineLane] = field(default_factory=list)
     sinks: list[Sink] = field(default_factory=list)
     #: The alarm each build of the lane's writer was given (ruling 4).
@@ -297,9 +303,14 @@ class World:
             self.sinks.append(Sink(self.log, self.sink_fails, wal))
             return self.sinks[-1]
 
+        def unclaimed() -> int:
+            self.probes += 1
+            return self.unclaimed
+
         return OmsStores(
             orders=store, executions=store.executions, submissions=store.submissions,
             anchors=store.anchors, stops=store.stops, groups=cast(GroupStores, None),
+            unclaimed=unclaimed,
             accounts=InMemoryTradingAccountReads(*self.accounts), sweep=store, audit=audit,
             sink=sink, release=release,
         )  # fmt: skip
@@ -423,9 +434,9 @@ _BESIDE = str(_SINK_WAL.with_name(f"oms_lane.{_SINK_WAL.name}"))
 @pytest.mark.parametrize(
     ("environment", "live_on", "with_bundle", "wal"),
     [
-        ("demo", True, False, str(_SINK_WAL)),
-        ("testnet", True, False, str(_SINK_WAL)),
-        ("live", False, False, str(_SINK_WAL)),
+        ("demo", True, False, _BESIDE),
+        ("testnet", True, False, _BESIDE),
+        ("live", False, False, _BESIDE),
         ("live", True, True, _BESIDE),
         ("live", True, False, None),
     ],
@@ -435,9 +446,9 @@ async def test_the_lane_has_its_own_sink_beside_a_bundles_and_none_on_live_with_
 ) -> None:
     """Rulings Q4 to Q6 and Q13 (20 Sec.6.2): the order lane builds and owns its `machine_events`
     sink, in demo and testnet whatever the setting says and in live while it is off, at
-    `CV_MACHINE_EVENT_WAL_PATH`, which no serving-loop sink holds; with a bundle, whose sink holds
-    that path, beside it, taking only the bundle's latch; a live process with the setting on and
-    no bundle fails closed: no sink, no order served."""
+    `oms_lane.<name>` beside `CV_MACHINE_EVENT_WAL_PATH`, a bundle composed or not (SEC-S3L2-03),
+    taking only a bundle's latch; a live process with the setting on and no bundle fails closed:
+    no sink, no order served."""
     world = World()
     bundle = SimpleNamespace(sink=InMemoryMachineEventSink(), latch=ChainTripLatch())
     runtime = world.runtime(environment, live_on=live_on, bundle=bundle if with_bundle else None)
@@ -512,13 +523,64 @@ async def test_a_lane_writer_that_cannot_build_or_start_fails_the_runtime_closed
 
 def test_the_lanes_wal_files_are_its_own_beside_the_serving_loops() -> None:
     """D6: `oms_lane.<name>` in the serving loop's directory, never its file, however it is
-    named; the sink's only beside a bundle's."""
+    named; the sink's at that one path, a bundle composed or not (SEC-S3L2-03)."""
     settings = Settings(audit_wal_path="/v/audit/audit.wal", machine_event_wal_path="/v/me.wal")
     assert oms_wiring.lane_audit_wal(settings) == "/v/audit/oms_lane.audit.wal"
-    assert oms_wiring.lane_sink_wal(settings, bundled=True) == "/v/oms_lane.me.wal"
-    assert oms_wiring.lane_sink_wal(settings, bundled=False) == "/v/me.wal"
+    assert oms_wiring.lane_sink_wal(settings) == "/v/oms_lane.me.wal"
     named = Settings(audit_wal_path="/v/oms_lane.audit.wal")
     assert oms_wiring.lane_audit_wal(named) != named.audit_wal_path
+
+
+@pytest.mark.parametrize("bundled", [False, True])
+async def test_frames_no_sink_holds_refuse_the_start_closed_and_paged_without_a_bundle(
+    bundled: bool,
+) -> None:
+    """SEC-S3L2-03 (the Fable lens at 864fa082; 20 Sec.6.2): without a bundle no sink of the
+    process holds `CV_MACHINE_EVENT_WAL_PATH`, so frames there that Postgres has not taken, which
+    a run before #913 L2 or a bundle's run left, refuse the start: logged CRITICAL with their
+    size, failed closed and paged, before the lane's sink or the facade exists, never adopted or
+    skipped. With a bundle, whose sink holds and drains that file, it is not asked."""
+    world = World(unclaimed=1024)
+    bundle = SimpleNamespace(sink=InMemoryMachineEventSink(), latch=ChainTripLatch())
+    with capture_logs() as logs:
+        async with started(world.runtime(bundle=bundle if bundled else None)) as runtime:
+            if bundled:
+                assert world.probes == 0 and world.log == STARTED and runtime.state != "degraded"
+                return
+            assert (failed_closed(logs), failed_phases(logs)) == (
+                ["UnclaimedMachineEvents"], ["sink_wal"]
+            )  # fmt: skip
+            left = [e for e in logs if e["event"] == "oms_machine_event_wal_unclaimed"]
+            assert [(e["log_level"], e["pending_bytes"]) for e in left] == [("critical", 1024)]
+            assert world.pager.calls == ["oms_runtime_failed_closed: sink_wal"]
+            assert world.probes == 1 and world.sinks == [] and not b01.ports_wired()
+            assert world.log == ["pool.release"] and world.venue.ports[0].closed
+            assert runtime.state == "degraded"
+
+
+async def test_pg_stores_probe_the_frames_postgres_has_not_taken_under_the_files_lock(
+    tmp_path: Path,
+) -> None:
+    """SEC-S3L2-03: the stores' probe reads `CV_MACHINE_EVENT_WAL_PATH` under its lock, never the
+    lane's own file: none when there is no file or its cursor is at its end, the bytes past the
+    cursor otherwise, and another holder of its lock is the sink's refusal, not a guess."""
+    wal = tmp_path / "machine_events.wal"
+    stores = pg_stores(Settings(machine_event_wal_path=str(wal)), Metrics("demo"))
+    assert await asyncio.to_thread(stores.unclaimed) == 0 and not wal.exists()
+    left = AuditWal(wal)
+    end = left.append({"machine_kind": "order", "entity_id": "a"})
+    assert await asyncio.to_thread(stores.unclaimed) == end
+    left.mark_committed(end)
+    assert await asyncio.to_thread(stores.unclaimed) == 0
+    left.append({"machine_kind": "order", "entity_id": "b"})
+    held = lock_wal_file(wal)
+    try:
+        with pytest.raises(MachineEventUnavailable):
+            await asyncio.to_thread(stores.unclaimed)
+    finally:
+        held.close()
+    assert not (tmp_path / "oms_lane.machine_events.wal").exists()
+    await stores.release()
 
 
 async def test_the_stop_gives_the_lanes_writer_its_own_grace() -> None:
