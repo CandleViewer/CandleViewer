@@ -2697,7 +2697,7 @@ def create_app(
     app.state.rolloff_job = build_rolloff_job(
         resolved,
         _LazyAuditEmitter(ctx.audit),
-        SqlAlchemyRecorderRepository(_kb_pg) if _kb_pg is not None else None,
+        _kb_pg,
     )
     # QA defect #1622 blocker: `/market/klines` (E08-S06 core deliverable)
     # was missing entirely — cache-only reads today (`ctx.storage.

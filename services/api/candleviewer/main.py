@@ -26,6 +26,7 @@ from candleviewer.app import AppContext, Supervisor, audit_test_clock_boot, crea
 from candleviewer.observability.logging import configure_logging
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_server import MetricsRuntime
+from candleviewer.recorder.rolloff import RollOffTask
 from candleviewer.settings import Settings
 from candleviewer.statechart.registry import default_registry
 
@@ -119,6 +120,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # stopped, and one never reached stays None, which the teardown skips; `WsRuntime.stop()`, for
     # one, would otherwise wait out its grace for a server that never served.
     feature_flags = scrub_task = audit_verify = disk_budget = rule_prune = funding_task = None
+    rolloff_task: RollOffTask | None = None
     bars_runtime = kline_refresh = audit_flush = overrides = health_registry = None
     account_health = ws_runtime = lost_jobs = view_as_flush = view_as_sweeper = None
     audit_exports = oms_runtime = profile_notices = None
@@ -163,6 +165,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         disk_budget = getattr(app.state, "disk_budget", None)
         if disk_budget is not None:  # E16-T07: one supervised sampling task
             disk_budget.start()
+        rolloff_job = getattr(app.state, "rolloff_job", None)
+        if rolloff_job is not None and ctx.settings.retention_enabled:  # E16-F01 S4c (C-4.13)
+            rolloff_task = RollOffTask(rolloff_job)  # one tracked nightly loop (C-2.18)
+            rolloff_task.start()
         rule_prune = getattr(app.state, "rule_prune_task", None)
         if rule_prune is not None:
             rule_prune.start()
@@ -271,6 +277,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await teardown.run("health_registry", health_registry.stop)
             if disk_budget is not None:  # before the PG engines its repository uses
                 await teardown.run("disk_budget", disk_budget.stop)
+            if rolloff_task is not None:  # its run lock holds a connection on the PG engine
+                await teardown.run("rolloff_task", rolloff_task.stop)
             health_pg = getattr(app.state, "health_pg", None)
             if health_pg is not None:
                 await teardown.run("health_pg", health_pg.dispose)

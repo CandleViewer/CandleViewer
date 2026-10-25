@@ -4,7 +4,7 @@ Builds `RollOffJob` with its real adapters: the QuestDB PGWire hot partitions,
 the cold archiver over the existing exporter, the file watermark store, the
 `retention_policies` resolver and the `system:rolloff` audit adapter over the
 hash-chained `AuditWriter`. Only on the `real` storage backend; the nightly
-loop is scheduled separately behind `retention_enabled` (C-4.13).
+loop is started by the lifespan behind `retention_enabled` (C-4.13).
 """
 
 from __future__ import annotations
@@ -19,15 +19,16 @@ from candleviewer.storage.cold.watermarks import FileWatermarkStore
 from candleviewer.storage.models import StreamKind
 from candleviewer.storage.questdb.wiring import LazyPgWire
 from candleviewer.storage.repositories.recorder_sqlalchemy import SqlAlchemyRecorderRepository
-from candleviewer.storage.retention.locks import InProcessRunLock
+from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
+from candleviewer.storage.retention.locks import PgAdvisoryRunLock
 
 
 def build_rolloff_job(
     settings: Settings,
     audit: AuditEmitter,
-    recorder_repo: SqlAlchemyRecorderRepository | None,
+    relational: SqlAlchemyRelationalRepository | None,
 ) -> RollOffJob | None:
-    if settings.storage_backend != "real" or recorder_repo is None:
+    if settings.storage_backend != "real" or relational is None:
         return None
     host, _, port = settings.questdb_pg.partition(":")
     pg = LazyPgWire(
@@ -39,7 +40,7 @@ def build_rolloff_job(
     )
     registry = DatasetRegistry(settings.parquet_root)
     events = LoggingSystemEventSink()
-    repo = recorder_repo
+    repo = SqlAlchemyRecorderRepository(relational)
 
     async def hot_days(symbol: str, stream: StreamKind) -> int | None:
         return await repo.resolve_policy(symbol, stream.value)
@@ -51,5 +52,6 @@ def build_rolloff_job(
         hot_days=hot_days,
         audit=SystemAuditAdapter(audit),
         events=events,
-        lock=InProcessRunLock(),
+        # cross-process: one roll-off per database (E16-F01 S4c, #2214 item 6)
+        lock=PgAdvisoryRunLock(relational.engine),
     )
