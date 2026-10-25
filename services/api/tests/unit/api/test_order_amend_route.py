@@ -1,10 +1,11 @@
 """`PATCH /orders/{orderId}`, `amendOrder` (E29-T04 #913 slice 4, S4-D2b; 24 Sec.8.4 "The exit
 routes", 22 `amendOrder`, the slice-4 rulings Q5 to Q7, Q10 to Q12 and Q14, SEC-S4C2B-01). The
 route runs in the exit routes' router (`make_order_exits_router`) over the real exit service: on
-S4-C's scripted facade (`test_exits.scripted`) for each step's refusal, and on the real B1 facade,
-command port and fake venue (`submit_rig`, the rig's limit buy entry resting `submitted`: 0.010 at
-60000, its stop 58000 and its take-profit 64000) for the answers, the scope, the arm token, the
-flag and the `ETag`. Each `202` is validated against 22 `Order`, each problem against
+S4-C's scripted facade (`test_exits.scripted`) for each step's refusal and, made to take an
+`AMEND` (`amending`), for each answer the service gives; and on the real B1 facade, command port
+and fake venue (`submit_rig`, the rig's limit buy entry resting `submitted`: 0.010 at 60000, its
+stop 58000 and its take-profit 64000) for the body's terms, the scope, the arm token, the flag
+and the `ETag`. Each `202` is validated against 22 `Order`, each problem against
 `OrderExchangeProblem`."""
 
 from __future__ import annotations
@@ -21,15 +22,19 @@ import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from candleviewer.api.idempotency import StoredResponse
+from candleviewer.api.idempotency import StoredResponse, request_fingerprint
 from candleviewer.api.order_admission import MAX_ORDER_BODY_BYTES
 from candleviewer.api.order_etag import order_etag
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.domain.primitives import Environment
+from candleviewer.exchange.base.errors import OmsErrorCode
+from candleviewer.oms import commands as oc
 from candleviewer.oms import exits as ex
-from candleviewer.oms.ports import ArmToken, RequestRecord
+from candleviewer.oms.errors import OMS_NOT_READY_RETRY_AFTER_S
+from candleviewer.oms.ports import ArmToken, RequestRecord, StopOffset
+from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import OrderRow, ScopedOrder
 from tests.unit.api import test_order_exits_route as er
@@ -39,17 +44,20 @@ from tests.unit.oms import submit_rig as sr
 from tests.unit.oms import test_exits as tx
 from tests.unit.oms.submit_rig import SubmitRig
 
-OWNER, KEY, TRACE = er.OWNER, er.KEY, er.TRACE
+OWNER, KEY, TRACE, PEER = er.OWNER, er.KEY, er.TRACE, er.PEER
+D = Decimal
 _DENIED = "orders.amend"
+_REUSED = (_DENIED, "idempotency_key_reuse")
 _CUT = {"qty": "0.005"}  # a smaller quantity: never gated (C-2.6)
 _RAISE = {"qty": "0.011"}  # a larger one on an entry: risk-increasing (24 Sec.8.10)
 
 
-def routed(world: er.World, env: Environment = "demo") -> ArmChecks:
-    """The route's reads of the runtime: `env`, and the arm records (a live account passes with a
-    token only)."""
+def routed(world: er.World, env: Environment = "demo", versions: object = None) -> ArmChecks:
+    """The route's reads of the runtime: `env`, the arm records (a live account passes with a
+    token only) and B1's facade, whose `version()` names a `202`'s `ETag` (kept when not given)."""
     arms = ArmChecks()
-    world.oms.route = SimpleNamespace(environment=env, arm_records=arms)
+    kept = getattr(world.oms.route, "versions", None) if versions is None else versions
+    world.oms.route = SimpleNamespace(environment=env, arm_records=arms, versions=kept)
     return arms
 
 
@@ -60,15 +68,49 @@ def refused(world: er.World, code: str) -> float:
 
 async def patch(
     world: er.World, order: object, body: object = _CUT, who: str = "owner", key: object = KEY,
-    **headers: str,
+    fields: tuple[tuple[str, str], ...] = (), **headers: str,
 ) -> httpx.Response:  # fmt: skip
-    sent = {"authorization": f"Bearer {who}", "x-correlation-id": str(TRACE)}
+    """The amend, from `PEER` as each record names it; `fields`, more header fields as sent."""
+    sent = [("authorization", f"Bearer {who}"), ("x-correlation-id", str(TRACE))]
     if key is not None:
-        sent["idempotency-key"] = str(key)
-    sent |= {name.replace("_", "-"): value for name, value in headers.items()}
+        sent.append(("idempotency-key", str(key)))
+    sent += [(name.replace("_", "-"), value) for name, value in headers.items()]
     raw = body if isinstance(body, bytes) else json.dumps(body).encode()
-    async with AsyncClient(transport=ASGITransport(app=world.app()), base_url="http://t") as c:
-        return await c.patch(f"/orders/{order}", content=raw, headers=sent)
+    transport = ASGITransport(app=world.app(), client=(PEER, 4321))
+    async with AsyncClient(transport=transport, base_url="http://t") as c:
+        return await c.patch(f"/orders/{order}", content=raw, headers=[*sent, *fields])
+
+
+_FINAL = frozenset({"filled", "cancelled"})
+
+
+def amending(machines: tx.Scripted, monkeypatch: pytest.MonkeyPatch) -> None:
+    """S4-C's scripted facade as an amend meets it: an `AMEND` taken leaves the order
+    `amend_pending`, each settle answers the amend's watch, and a final order has no version, as
+    B1's facade has none."""
+
+    async def command(account_id: UUID, order_id: UUID, event: Any, *_a: Any, **_k: Any) -> str:
+        if machines.refuse is not None:
+            raise machines.refuse
+        machines.sent.append(event)
+        machines.held = "amend_pending"
+        return machines.held
+
+    async def settled(account_id: UUID, order_id: UUID, *, leaving: str, timeout_s: float) -> str:
+        out = machines.settles.pop(0)
+        if isinstance(out, BaseException):
+            raise out
+        if (watch := machines.watches.held.get((order_id, "amend"))) is not None:
+            watch.resolve(machines.answer)
+        machines.held = out
+        return out
+
+    def version(order_id: UUID) -> int | None:
+        return None if machines.held in _FINAL else 7
+
+    monkeypatch.setattr(machines, "command", command)
+    monkeypatch.setattr(machines, "settled", settled)
+    monkeypatch.setattr(machines, "version", version)
 
 
 # --- each step's refusal (24 Sec.8.4, the exit routes), on the scripted facade ------------------
@@ -92,13 +134,20 @@ def _live(world: er.World) -> None:
     routed(world, "live")
 
 
+def _starting(world: er.World) -> None:
+    world.oms.state = "starting"
+
+
 _FULL = tuple(UUID(int=n) for n in range(1, ex.MAX_IN_FLIGHT_PER_PRINCIPAL + 1))
 _LARGE = b'{"qty": "0.005", "pad": "' + b"x" * MAX_ORDER_BODY_BYTES + b'"}'
+_BAD_OFFSET = {"stop_loss": {"unit": "price", "value": "abc"}}
+_TEXT_PERIOD = {"stop_loss": {"unit": "atr", "value": "1", "atr_period": "14"}}  # JSON text
 #: The step a route refusal's record names (`deny`'s `step`).
 _STEP_OF = {
-    "5_too_large": "body", "5_not_an_object": "body", "5_extra_member": "body",
-    "5_not_a_number": "body", "6_not_armed": "arm", "7_no_key": "key", "8_reuse": "replay",
-    "9_in_flight": "guard", "9_full": "guard",
+    "5_too_large": "body", "5_empty": "body", "5_not_an_object": "body",
+    "5_extra_member": "body", "5_not_a_number": "body", "5_two_rules": "body",
+    "5_bad_offset": "body", "5_text_integer": "body", "6_not_armed": "arm", "7_no_key": "key",
+    "8_reuse": "replay", "9_in_flight": "guard", "9_full": "guard",
 }  # fmt: skip
 #: Each step's refusal alone: (name, change, who, order, body, key) -> (status, code, records).
 #: Nothing is commanded or run, and the refusal is counted once.
@@ -113,18 +162,25 @@ _STEPS: list[tuple[str, Any, str, str, Any, UUID | None, int, str, list[tuple[st
      [("rbac.denied", "missing_permission:orders:write:none")]),
     ("3_no_runtime", lambda w: setattr(w, "composed", False), "owner", "row", _CUT, KEY, 501,
      "not_implemented", []),
-    ("3_starting", lambda w: setattr(w.oms, "state", "starting"), "owner", "row", _CUT, KEY, 503,
-     "oms_not_ready", []),
+    ("3_starting", _starting, "owner", "row", _CUT, KEY, 503, "oms_not_ready", []),
     ("3_stopping", lambda w: setattr(w.oms, "stopped", "exits"), "owner", "row", _CUT, KEY, 503,
      "oms_not_ready", []),
     ("4_missing", None, "owner", "missing", _CUT, KEY, 404, "not_found", []),
     ("5_too_large", None, "owner", "row", _LARGE, KEY, 400, "validation_failed",
+     [(_DENIED, "validation_failed")]),
+    ("5_empty", None, "owner", "row", b"", KEY, 400, "validation_failed",
      [(_DENIED, "validation_failed")]),
     ("5_not_an_object", None, "owner", "row", b"[1]", KEY, 400, "validation_failed",
      [(_DENIED, "validation_failed")]),
     ("5_extra_member", None, "owner", "row", {"qty": "0.005", "side": "sell"}, KEY, 400,
      "validation_failed", [(_DENIED, "validation_failed")]),
     ("5_not_a_number", None, "owner", "row", {"qty": "lots"}, KEY, 400, "validation_failed",
+     [(_DENIED, "validation_failed")]),
+    ("5_two_rules", None, "owner", "row", {"qty": "lots", "price": "x"}, KEY, 400,
+     "validation_failed", [(_DENIED, "validation_failed")]),
+    ("5_bad_offset", None, "owner", "row", _BAD_OFFSET, KEY, 400, "validation_failed",
+     [(_DENIED, "validation_failed")]),
+    ("5_text_integer", None, "owner", "row", _TEXT_PERIOD, KEY, 400, "validation_failed",
      [(_DENIED, "validation_failed")]),
     ("6_not_armed", _live, "owner", "row", _RAISE, KEY, 403, "session_not_armed",
      [(_DENIED, "session_not_armed")]),
@@ -139,6 +195,25 @@ _STEPS: list[tuple[str, Any, str, str, Any, UUID | None, int, str, list[tuple[st
     ("9_stopping", lambda w: setattr(w.oms, "stopped", "run"), "owner", "row", _CUT, KEY, 503,
      "oms_not_ready", []),
 ]  # fmt: skip
+#: 22's members of a step's problem: its `retry_after_seconds`, `Retry-After` alike, where 22
+#: gives one (`oms_not_ready`'s, the in-flight guard's), and each `errors[]` entry's field and rule.
+_RETRY = {
+    "3_starting": OMS_NOT_READY_RETRY_AFTER_S, "3_stopping": OMS_NOT_READY_RETRY_AFTER_S,
+    "9_in_flight": ex.IN_FLIGHT_RETRY_AFTER_S, "9_full": ex.IN_FLIGHT_RETRY_AFTER_S,
+    "9_stopping": OMS_NOT_READY_RETRY_AFTER_S,
+}  # fmt: skip
+_ERRORS: dict[str, list[tuple[str, str]]] = {
+    "1_not_an_id": [("orderId", "uuid")],
+    "5_too_large": [("body", "body_too_large")],
+    "5_empty": [("body", "object")],
+    "5_not_an_object": [("body", "object")],
+    "5_extra_member": [("side", "extra_forbidden")],
+    "5_not_a_number": [("qty", "string_pattern_mismatch")],
+    "5_two_rules": [("price", "string_pattern_mismatch"), ("qty", "string_pattern_mismatch")],
+    "5_bad_offset": [("stop_loss.value", "string_pattern_mismatch")],
+    "5_text_integer": [("stop_loss.atr_period", "int_type")],
+    "7_no_key": [("Idempotency-Key", "uuid")],
+}
 
 
 @pytest.mark.parametrize("case", _STEPS, ids=[case[0] for case in _STEPS])
@@ -155,32 +230,217 @@ async def test_each_step_refuses_before_the_next_runs(case: Any) -> None:
     assert (answer.status_code, problem["code"], world.actions()) == (status, code, records)
     assert world.steps() == ([_STEP_OF[name]] if name in _STEP_OF else [])
     assert (machines.sent, world.oms.tasks, refused(world, code)) == ([], [], 1)
-    if "retry_after_seconds" in problem:  # oms_not_ready, and the guard's 1
-        assert answer.headers["retry-after"] == str(problem["retry_after_seconds"])
-    if name.startswith("5_"):  # each rule that failed, named
-        assert problem["errors"] and all(e["rule"] for e in problem["errors"])
+    retry = _RETRY.get(name)
+    assert (problem.get("retry_after_seconds"), answer.headers.get("retry-after")) == (
+        retry, None if retry is None else str(retry),
+    )  # fmt: skip
+    listed = [(error["field"], error["rule"]) for error in problem.get("errors", [])]
+    assert listed == _ERRORS.get(name, [])
     if name == "9_stopping":  # the runtime refused the run: the claim is released
         assert callable(world.oms.service.guard.claim(OWNER, "amend", KEY))
 
 
-async def test_the_runtime_is_asked_after_the_permission() -> None:
-    """Step order: a viewer meets step 2's 403 even while the runtime is starting (step 3)."""
+#: Two steps refusing at once: the earlier answers and is the one counted, the later never runs
+#: (24 Sec.8.4, each before the next). (change, who, order, body, key) -> (status, code, records,
+#: the later step's code).
+_PAIRS: list[tuple[str, Any, str, str, Any, UUID | None, int, str, list[Any], str]] = [
+    ("1_before_2", None, "viewer", "not-a-uuid", _CUT, KEY, 400, "validation_failed", [],
+     "forbidden"),
+    ("2_before_3", _starting, "viewer", "row", _CUT, KEY, 403, "forbidden",
+     [("rbac.denied", "missing_permission:orders:write:none")], "oms_not_ready"),
+    ("3_before_4", _starting, "owner", "missing", _CUT, KEY, 503, "oms_not_ready", [],
+     "not_found"),
+    ("4_before_5", None, "owner", "missing", b"[1]", KEY, 404, "not_found", [],
+     "validation_failed"),
+    ("5_before_6", _live, "owner", "row", {"qty": "lots"}, KEY, 400, "validation_failed",
+     [(_DENIED, "validation_failed")], "session_not_armed"),
+    ("6_before_7", _live, "owner", "row", _RAISE, None, 403, "session_not_armed",
+     [(_DENIED, "session_not_armed")], "validation_failed"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("case", _PAIRS, ids=[case[0] for case in _PAIRS])
+async def test_of_two_refusing_steps_the_earlier_answers(case: Any) -> None:
+    _, change, who, order, body, key, status, code, records, later = case
+    world, machines, row, _ = await er.scripted_world("submitted")
+    routed(world)
+    if change is not None:
+        change(world)
+    target = {"row": row.id, "missing": uuid4()}.get(order, order)
+    answer = await patch(world, target, body, who, key)
+    assert (answer.status_code, answer.json()["code"], world.actions()) == (status, code, records)
+    assert (refused(world, code), refused(world, later), machines.sent) == (1, 0, [])
+
+
+async def test_a_stored_202_is_not_replayed_to_a_live_raise_without_its_token() -> None:
+    """Step 6 before step 8: the arm token is asked before the 24 h record is read, so a live
+    raise without one is `403 session_not_armed`, never the `202` stored under its key."""
+    world, machines, row, _ = await er.scripted_world("submitted")
+    _live(world)
+    digest = request_fingerprint("PATCH", f"/orders/{row.id}", json.dumps(_RAISE).encode())
+    world.cache.put(str(OWNER), f"amendOrder:{KEY}", StoredResponse(digest, 202, b"{}", None))
+    answer = await patch(world, row.id, _RAISE)
+    assert (answer.status_code, answer.json()["code"]) == (403, "session_not_armed")
+    assert "idempotency-replayed" not in answer.headers
+    assert (world.steps(), machines.sent) == (["arm"], [])
+
+
+@pytest.mark.parametrize("lands", [True, False], ids=["recorded", "unrecorded"])
+async def test_a_viewer_is_403_its_record_naming_the_order_and_still_403_unrecorded(
+    lands: bool,
+) -> None:
+    """Step 2: `orders:write`, audited `rbac.denied` naming the order asked for, the request, its
+    session and its source address, a 403 even when that record cannot be written, and counted
+    either way (24 Sec.8.4)."""
     world, _, row, _ = await er.scripted_world("submitted")
     routed(world)
-    world.oms.state = "starting"
+    world.audit.fail = not lands
     answer = await patch(world, row.id, who="viewer")
     assert (answer.status_code, answer.json()["code"]) == (403, "forbidden")
+    named = [
+        (e["object_kind"], e["object_id"], e["request_id"], e["session_id"], e["actor_ip"])
+        for e in world.audit.records
+    ]
+    assert named == ([("order", str(row.id), TRACE, sr.SESSION, PEER)] if lands else [])
+    assert refused(world, "forbidden") == 1
 
 
-async def test_the_step_2_refusal_is_counted_when_its_record_cannot_be_written() -> None:
+# --- each answer of the exit service, on the scripted facade taking an `AMEND` ------------------
+
+
+def _no(code: str, **more: Any) -> dict[str, Any]:
+    return {"ok": False, "error_code": code, **more}
+
+
+_OK: dict[str, Any] = {"ok": True}
+_GONE = {"unknown": b01.ALREADY_TERMINAL, "exchange_ret_code": 110001}
+_RATE, _VENUE = OmsErrorCode.RATE_BUDGET_EXCEEDED, OmsErrorCode.PRICE_OUT_OF_BOUNDS
+_SETTLED = ["submitted"]
+#: 22 `amendOrder`'s answers (24 Sec.8.4 steps 10 and 11), as B1's scripted step leaves the order
+#: and the port answers: (held, its settles, the port's answer) -> (status, lifecycle state or
+#: problem code, `Retry-After`, the `AMEND` sent, the `ETag` carried). The scripted facade's
+#: version is 7, none once the order is final.
+_ANSWERS: list[tuple[str, str, list[str], Any, int, str, str | None, bool, bool]] = [
+    ("accepted", "submitted", _SETTLED, _OK, 202, "submitted", None, True, True),
+    ("unknown_transport", "submitted", ["unknown"], None, 202, "unknown", None, True, True),
+    ("unknown_110001", "submitted", ["unknown"], _GONE, 202, "unknown", None, True, True),
+    ("final", "submitted", ["filled"], _OK, 202, "filled", None, True, False),
+    ("not_amendable", "cancel_pending", [], _OK, 422, "order_not_amendable", None, False, False),
+    ("no_account", "submitted", _SETTLED, _no(oc.ACCOUNT_UNAVAILABLE), 409,
+     "account_unavailable", None, True, False),
+    ("no_rate_token", "submitted", _SETTLED, _no(_RATE, retry_after_s=4), 429,
+     "exchange_rate_limited", "4", True, False),
+    ("venue_refusal", "submitted", _SETTLED, _no(_VENUE, exchange_ret_code=110003), 502,
+     "exchange_error", None, True, False),
+    ("unread", "submitted", _SETTLED, _no(oc.STORE_UNAVAILABLE), 503, "store_unavailable", "1",
+     True, False),
+    ("stop_in_flight", "submitted", _SETTLED, _no(oc.STOP_REQUEST_IN_FLIGHT, retry_after_s=5),
+     409, "stop_request_in_flight", "5", True, False),
+    ("port_not_amendable", "submitted", _SETTLED, _no(oc.ORDER_NOT_AMENDABLE), 422,
+     "order_not_amendable", None, True, False),
+    ("native_stop", "submitted", _SETTLED, _no(b01.NATIVE_STOP_REQUIRED), 400,
+     "validation_failed", None, True, False),
+    ("stop_loosening", "submitted", _SETTLED, _no(oc.STOP_LOOSENING_REFUSED), 403,
+     "risk_limit_breached", None, True, False),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("case", _ANSWERS, ids=[case[0] for case in _ANSWERS])
+async def test_each_answer_is_22s_from_the_exit_services_outcome(
+    case: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The service's outcome rendered as it gives it (24 Sec.8.4 step 11): a refusal recorded by
+    the service, naming no route step, and counted; a `202` with the order's `ETag` wherever B1's
+    facade gives a version, an `unknown` amend's too (22 `OrderETag`: none for a final order)."""
+    _, held, settles, port_answer, status, got, retry, sent, tagged = case
+    world, machines, row, _ = await er.scripted_world(held, *settles, answer=port_answer)
+    amending(machines, monkeypatch)
+    routed(world, versions=machines)
+    answer = await patch(world, row.id)
+    body = answer.json()
+    assert (answer.status_code, answer.headers.get("retry-after")) == (status, retry)
+    assert machines.sent == (["AMEND"] if sent else [])
+    assert answer.headers.get("etag") == (order_etag(row.id, 7) if tagged else None)
+    if status == 202:
+        er._ORDER.validate(body)
+        assert (body["id"], body["lifecycle_state"]) == (str(row.id), got)
+        return
+    er._PROBLEM.validate(body)
+    assert (body["code"], refused(world, got)) == (got, 1)
+    assert body.get("retry_after_seconds") == (None if retry is None else int(retry))
+    assert (world.actions()[-1], world.steps()[-1]) == ((_DENIED, got), None)
+    assert body.get("exchange") == ({"ret_code": 110003} if status == 502 else None)
+
+
+async def test_an_unknown_amends_202_carries_the_orders_etag_and_its_replay_the_stored_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An amend left `unknown` (never re-sent, 24 Sec.8.2 S1) is answered `202` with the order's
+    `ETag` as B1's facade reads it, kept with the `202` for 24 h: its replay answers the stored
+    tag, never the order's tag as it stands then."""
+    world, machines, row, _ = await er.scripted_world("submitted", "unknown", answer=None)
+    amending(machines, monkeypatch)
+    routed(world, versions=machines)
+    first = await patch(world, row.id)
+    assert (first.status_code, first.json()["lifecycle_state"]) == (202, "unknown")
+    assert first.headers["etag"] == order_etag(row.id, 7)
+    monkeypatch.setattr(machines, "version", lambda _order_id: 8)  # the order moved on since
+    again = await patch(world, row.id)
+    assert (again.headers["idempotency-replayed"], again.headers["etag"]) == (
+        "true", first.headers["etag"],
+    )  # fmt: skip
+    assert machines.sent == ["AMEND"]
+
+
+@pytest.mark.parametrize("where", ["scope", "amend"], ids=["step-4", "step-11"])
+@pytest.mark.parametrize(
+    ("error", "page"), er._FAULTS, ids=["a-row-that-pages", "no-row", "no-oms-error"]
+)
+async def test_a_fault_the_exit_service_raises_is_a_500_paged_once_and_counted_as_the_amends(
+    monkeypatch: pytest.MonkeyPatch, where: str, error: Exception, page: str
+) -> None:
+    """The orchestrator's ruling of 2026-10-25 02:50Z (2) on the amend route, as on the cancel's:
+    a fault the exit service raises at step 4's scope read or in step 11's amend, which no outcome
+    answers, is the redacted `500 internal_error` (`exit_fault`), paged once by its class alone,
+    never its text, and counted once under the amend's own operation (its own `faulted`), never
+    the cancel's; nothing is kept."""
     world, _, row, _ = await er.scripted_world("submitted")
     routed(world)
-    world.audit.fail = True
-    answer = await patch(world, row.id, who="viewer")
-    assert (answer.status_code, refused(world, "forbidden")) == (403, 1)
+
+    async def faulty(*_args: Any, **_kwargs: Any) -> ex.ExitOutcome:
+        raise error
+
+    monkeypatch.setattr(world.oms.service, where, faulty)
+    answer = await patch(world, row.id)
+    body = answer.json()
+    er._PROBLEM.validate(body)
+    assert (answer.status_code, body["code"], set(body)) == (500, "internal_error", er._REDACTED)
+    assert world.pages == [page] and str(error) not in answer.text
+    assert (refused(world, "internal_error"), world.refused("internal_error")) == (1, 0)
+    assert world.cache.get(str(OWNER), f"amendOrder:{KEY}") is None
 
 
-# --- the answers, over the real B1 facade, command port and fake venue ----------------------------
+async def test_a_key_is_the_principals_for_this_order_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Step 8: the key on another order is `409 idempotency_key_reuse`, recorded at step
+    `replay`; another principal's same key and body is a key never seen, amended afresh (C-12.4,
+    the cross-account case)."""
+    world, machines, row, port = await er.scripted_world("submitted", *_SETTLED * 2)
+    amending(machines, monkeypatch)
+    routed(world, versions=machines)
+    first = await patch(world, row.id)
+    other = await port.stored(cr.new_order(seq=1), lifecycle="submitted")
+    reused = await patch(world, other.id)
+    assert (first.status_code, reused.status_code) == (202, 409)
+    assert reused.json()["code"] == "idempotency_key_reuse"
+    assert (world.actions()[-1], world.steps()[-1]) == (_REUSED, "replay")
+    fresh = await patch(world, row.id, who="second")
+    assert fresh.status_code == 202 and "idempotency-replayed" not in fresh.headers
+    assert machines.sent == ["AMEND", "AMEND"]
+
+
+# --- the body's terms, the scope, the arm token and the `ETag`, over the real B1 facade ----------
 
 
 @pytest.fixture
@@ -201,12 +461,83 @@ async def amendable(rig: SubmitRig, who: str = "owner", **over: Any) -> tuple[er
         user = sr.USER if who == "creator" else tx.OTHER
         rig.store.seed_access(user, cr.ACCOUNT, trade=who != "view_only", frozen=who == "frozen")
     world = er.world_of(tx.exits_of(rig, **over), rig.port.audits)
-    routed(world)
+    routed(world, versions=rig.machines)
     return world, row
 
 
 def amends(rig: SubmitRig) -> list[Any]:
     return [call.request for call in rig.port.demo.calls if call.method == "amend_order"]
+
+
+#: Each body as the exit service's terms (22 `AmendOrderRequest`): a TP/SL side named `null` is
+#: asked cleared, one not named is not amended.
+_EVERY = {
+    "qty": "0.005", "price": "60100", "trigger_price": "61000",
+    "take_profit": {"unit": "price", "value": "64500"},
+    "stop_loss": {"unit": "ticks", "value": "10"},
+}  # fmt: skip
+_TERMS: list[tuple[str, dict[str, Any], ex.AmendTerms]] = [
+    ("every_member", _EVERY, ex.AmendTerms(
+        qty=D("0.005"), price=D("60100"), trigger_price=D("61000"),
+        sides={"take_profit": StopOffset("price", D("64500")),
+               "stop_loss": StopOffset("ticks", D("10"))},
+    )),
+    ("take_profit_null", {"take_profit": None}, ex.AmendTerms(sides={"take_profit": None})),
+    ("stop_loss_null", {"stop_loss": None}, ex.AmendTerms(sides={"stop_loss": None})),
+    ("price_alone", {"price": "60100"}, ex.AmendTerms(price=D("60100"))),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("body", "terms"), [case[1:] for case in _TERMS], ids=[case[0] for case in _TERMS]
+)
+async def test_the_body_reaches_the_exit_service_as_its_terms(
+    body: dict[str, Any], terms: ex.AmendTerms, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Step 5: the body read once, strictly, into the terms the service judges."""
+    world, _, row, _ = await er.scripted_world("submitted")
+    routed(world)
+    asked: list[ex.AmendTerms] = []
+
+    async def spy(_scoped: ScopedOrder, got: ex.AmendTerms, **_kwargs: Any) -> ex.ExitOutcome:
+        asked.append(got)
+        return ex.ExitOutcome(kind="refused", status=409, code="conflict", detail="Held.")
+
+    monkeypatch.setattr(world.oms.service, "amend", spy)
+    await patch(world, row.id, body)
+    assert asked == [terms]
+
+
+@pytest.mark.parametrize(
+    ("side", "rule", "kept"),
+    [("stop_loss", "native_stop_required", D("58000")),
+     ("take_profit", "tpsl_clear_unsupported", D("64000"))],
+    ids=["native_sl", "take_profit"],
+)  # fmt: skip
+async def test_native_sl_a_side_named_null_is_refused_nothing_sent_and_the_side_kept(
+    rig: SubmitRig, side: str, rule: str, kept: Decimal
+) -> None:
+    """C-2.6 over HTTP: a stop asked cleared is refused (`native_stop_required`), and a take-profit
+    too (`tpsl_clear_unsupported`), each recorded by the service; nothing is sent and the order's
+    side stays as it was."""
+    world, row = await amendable(rig)
+    answer = await patch(world, row.id, {side: None})
+    assert (answer.status_code, answer.json()["code"]) == (400, "validation_failed")
+    assert [(e["field"], e["rule"]) for e in answer.json()["errors"]] == [(side, rule)]
+    assert (world.actions()[-1], world.steps()[-1]) == ((_DENIED, "validation_failed"), None)
+    stored = await rig.port.orders.get(cr.ACCOUNT, row.id)
+    assert amends(rig) == [] and stored is not None and getattr(stored, side) == kept
+
+
+async def test_a_stop_tightened_beside_a_new_price_is_sent_with_both_sides(rig: SubmitRig) -> None:
+    """Q2 over HTTP: a tighter stop named beside a price is sent with the take-profit re-paired at
+    its current value."""
+    world, row = await amendable(rig)
+    body = {"price": "60100", "stop_loss": {"unit": "price", "value": "58500"}}
+    answer = await patch(world, row.id, body)
+    assert answer.status_code == 202
+    [sent] = amends(rig)
+    assert (sent.price, sent.stop_loss, sent.take_profit) == (D("60100"), D("58500"), D("64000"))
 
 
 async def test_an_amend_answers_202_with_the_order_and_its_new_etag(rig: SubmitRig) -> None:
@@ -225,15 +556,40 @@ async def test_an_amend_answers_202_with_the_order_and_its_new_etag(rig: SubmitR
 
 
 async def test_the_202_is_kept_24h_and_its_replay_carries_the_stored_etag(rig: SubmitRig) -> None:
+    """Step 8: the repeat is the first `202`, its `ETag` as stored, though the order moved on since
+    (an amend under another key); nothing is sent again."""
     world, row = await amendable(rig)
     first = await patch(world, row.id, {"price": "60100"})
+    moved = await patch(world, row.id, {"price": "60200"}, key=uuid4())
     again = await patch(world, row.id, {"price": "60100"})
-    assert (first.status_code, again.status_code) == (202, 202)
+    assert (first.status_code, moved.status_code, again.status_code) == (202, 202, 202)
+    assert moved.headers["etag"] != first.headers["etag"]
     assert again.headers["idempotency-replayed"] == "true"
     assert again.headers["etag"] == first.headers["etag"] and again.content == first.content
-    assert len(amends(rig)) == 1  # the repeat sent nothing
+    assert len(amends(rig)) == 2  # the repeat sent nothing
+
+
+async def test_another_body_under_a_key_is_409_recorded_nothing_sent(rig: SubmitRig) -> None:
+    world, row = await amendable(rig)
+    first = await patch(world, row.id, {"price": "60100"})
     other = await patch(world, row.id, {"price": "60200"})
-    assert (other.status_code, other.json()["code"]) == (409, "idempotency_key_reuse")
+    assert (first.status_code, other.status_code) == (202, 409)
+    assert other.json()["code"] == "idempotency_key_reuse" and len(amends(rig)) == 1
+    assert (world.actions()[-1], world.steps()[-1]) == (_REUSED, "replay")
+
+
+async def test_a_refusal_is_not_kept_and_its_key_is_free_once_its_amend_ended(
+    rig: SubmitRig,
+) -> None:
+    """The 24 h record holds a `2xx` only: an amend refused `412` may be sent again under its
+    key, which the guard frees once that amend's task ended (24 Sec.8.4 steps 8 and 9)."""
+    world, row = await amendable(rig)
+    seq = rig.machines.version(row.id)
+    assert seq is not None
+    stale = await patch(world, row.id, {"price": "60100"}, if_match=order_etag(row.id, seq + 1))
+    named = await patch(world, row.id, {"price": "60100"}, if_match=order_etag(row.id, seq))
+    assert (stale.status_code, named.status_code) == (412, 202)
+    assert "idempotency-replayed" not in named.headers and len(amends(rig)) == 1
 
 
 @pytest.mark.parametrize("tag", ["stale", "another_order", "star", "weak", "list"])
@@ -252,6 +608,19 @@ async def test_an_if_match_not_naming_the_version_read_is_412_nothing_sent(
     answer = await patch(world, row.id, {"price": "60100"}, if_match=named)
     assert (answer.status_code, answer.json()["code"]) == (412, "version_conflict")
     assert (amends(rig), refused(world, "version_conflict")) == ([], 1)
+
+
+async def test_an_if_match_sent_as_two_fields_is_one_list_and_412(rig: SubmitRig) -> None:
+    """22 `amendOrder` (RFC 9110 Sec.5.3): two `If-Match` fields are one list, which names no
+    version: `412` with nothing sent, though the first names the version read."""
+    world, row = await amendable(rig)
+    seq = rig.machines.version(row.id)
+    assert seq is not None
+    tag = order_etag(row.id, seq)
+    fields = (("if-match", tag), ("if-match", tag))
+    answer = await patch(world, row.id, {"price": "60100"}, fields=fields)
+    assert (answer.status_code, answer.json()["code"]) == (412, "version_conflict")
+    assert amends(rig) == []
 
 
 async def test_an_if_match_naming_the_version_read_sends_the_amend(rig: SubmitRig) -> None:
@@ -311,8 +680,8 @@ async def test_a_stored_202_is_not_replayed_once_the_callers_grant_is_frozen(
 async def test_every_record_the_route_causes_names_its_principal_and_its_request(
     rig: SubmitRig,
 ) -> None:
-    """C-2.9, #3990: a guard refusal's record and an amend's own, each the Owner's, from this
-    session, under this request's id."""
+    """C-2.9, #3990: a guard refusal's record and an amend's own, each the Owner's (user, role,
+    session and source address), under this request's id."""
     world, row = await amendable(rig)
     claimed = world.oms.service.guard.claim(OWNER, "amend", KEY)
     assert not isinstance(claimed, ex.ExitOutcome)
@@ -321,11 +690,7 @@ async def test_every_record_the_route_causes_names_its_principal_and_its_request
     answer = await patch(world, row.id, {"price": "60100"}, key=uuid4())
     assert (refusal.status_code, answer.status_code) == (409, 202)
     written = [r for r, _ in world.audits.written[world.since :] if isinstance(r, RequestRecord)]
-    assert len(written) == 3
-    for record in written:
-        assert record.actor is not None
-        assert (record.actor.user_id, record.actor.role) == (OWNER, "owner")
-        assert (record.actor.session_id, record.request_id) == (sr.SESSION, TRACE)
+    assert [(record.actor, record.request_id) for record in written] == [(er.ACTOR, TRACE)] * 3
 
 
 @pytest.mark.parametrize(
@@ -346,8 +711,10 @@ async def test_only_a_live_risk_increasing_amend_needs_the_arm_token(
     (C-2.6); a raise on a demo account neither."""
     world, row = await amendable(rig)
     arms = routed(world, env)
-    headers = {} if token is None else {"x_arm_token": token}
-    answer = await patch(world, row.id, body, **headers)
+    if token is None:
+        answer = await patch(world, row.id, body)
+    else:
+        answer = await patch(world, row.id, body, x_arm_token=token)
     assert answer.status_code == status
     if status == 403:
         assert answer.json()["code"] == "session_not_armed" and amends(rig) == []
@@ -368,21 +735,40 @@ async def test_with_the_flag_off_a_raise_is_refused_and_a_cut_passes(rig: Submit
     assert (down.status_code, len(amends(rig))) == (202, 1)
 
 
+@pytest.mark.parametrize(
+    ("tagged", "status", "code", "retry"),
+    [(False, 409, "conflict", "1"), (True, 412, "version_conflict", None)],
+    ids=["unpinned", "if-match"],
+)  # fmt: skip
 async def test_a_step_11_refusal_is_answered_as_the_service_gives_it_and_counted(
-    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """D2a's step-11 refusal is consumed, not re-decided: an amend the order as it stands made
-    risk-increasing since step 4 is `409 conflict` with `Retry-After: 1`, counted
-    `{operation="amend", code="conflict"}` (the orchestrator's ruling of 2026-10-25 01:11Z)."""
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch, tagged: bool, status: int, code: str,
+    retry: str | None,
+) -> None:  # fmt: skip
+    """D2a's step-11 refusal is consumed, never re-decided (the orchestrator's rulings of
+    2026-10-25 00:27Z (1) and 01:11Z): step 4 read the order before a cut settled, so it took a
+    quantity of 0.009 for a cut, which the order as it stands, 0.001, makes a raise. The service
+    refuses it before the send and records it once, at its step (`class`): `409 conflict` with
+    `Retry-After: 1`, `412` with `If-Match`, each counted `{operation="amend", code}`."""
     world, row = await amendable(rig)
+    first = await world.oms.service.scope(ex.ExitCaller(OwnerScope(OWNER), tx.actor(OWNER)), row.id)
+    assert isinstance(first, ScopedOrder)
+    assert (await patch(world, row.id, {"qty": "0.001"}, key=uuid4())).status_code == 202
 
-    async def moved(*_args: Any, **_kwargs: Any) -> ex.ExitOutcome:
-        return ex._MOVED
+    async def stale(*_args: Any) -> ScopedOrder:  # step 4's read, from before the cut
+        return first
 
-    monkeypatch.setattr(world.oms.service, "amend", moved)
-    answer = await patch(world, row.id, {"price": "60100"})
-    assert (answer.status_code, answer.json()["code"]) == (409, "conflict")
-    assert answer.headers["retry-after"] == "1" and refused(world, "conflict") == 1
+    monkeypatch.setattr(world.oms.service, "scope", stale)
+    world.since = len(world.audits.written)
+    seq = rig.machines.version(row.id)
+    assert seq is not None
+    if tagged:
+        answer = await patch(world, row.id, {"qty": "0.009"}, if_match=order_etag(row.id, seq))
+    else:
+        answer = await patch(world, row.id, {"qty": "0.009"})
+    assert (answer.status_code, answer.json()["code"]) == (status, code)
+    assert answer.headers.get("retry-after") == retry
+    assert (world.actions(), world.steps()) == ([(_DENIED, code)], ["class"])
+    assert (refused(world, code), len(amends(rig))) == (1, 1)
 
 
 async def test_the_services_body_refusal_is_answered_with_its_rules(rig: SubmitRig) -> None:

@@ -5,7 +5,8 @@ type, its body against the schema 22 declares there (2020-12, format checker), a
 sends declared there, with its type. `Idempotency-Replayed: true` comes on every repeat and
 `Retry-After` where 22 promises it, equal to `retry_after_seconds`; neither comes anywhere else, but
 the store and audit `503`s may carry `Retry-After`, which `ServiceUnavailable` declares (equal too).
-No answer carries `ETag` until `amendOrder` checks it (slice 4). Each body meets its narrower schema
+A `202` carries its order's `ETag` where B1's facade gives a version (ruling Q5), a string 22's
+`OrderETag` pattern takes; F's facade holds none. Each body meets its narrower schema
 too: the gate's `403` is a `TradingDisabledProblem`, every other `trading_disabled` a plain
 `Problem` with no `reason`, and the `502` an `OrderExchangeProblem` whose `exchange` is the return
 code alone. Left out, as no answer of this route: the `422` 22 lists (its examples predate the
@@ -24,6 +25,7 @@ import httpx
 import pytest
 from jsonschema.exceptions import ValidationError
 
+from candleviewer.api.order_etag import order_etag
 from candleviewer.oms.errors import (
     ClockDriftBlocked,
     ExchangeUnavailable,
@@ -90,9 +92,10 @@ def conforms(answer: httpx.Response) -> dict[str, Any]:
     declared = {name.lower(): spec for name, spec in response.get("headers", {}).items()}
     sent = {"retry-after", "idempotency-replayed", "etag"} & set(answer.headers)
     assert sent <= set(declared), f"{answer.status_code} sends {sent - set(declared)} undeclared"
-    for name in sent:
+    for name in sent:  # an `ETag` is a quoted string as sent, every other header a JSON value
         schema = declared[name]["$ref"].removeprefix("#") + "/schema"
-        validate_example(schema, json.loads(answer.headers[name]))
+        value = answer.headers[name]
+        validate_example(schema, value if name == "etag" else json.loads(value))
     if "retry-after" in sent:
         assert int(answer.headers["retry-after"]) == body["retry_after_seconds"]
     return body
@@ -203,7 +206,7 @@ async def test_each_answer_meets_the_schema_and_headers_22_declares_for_its_stat
     sent = "retry-after" in answer.headers  # equal to `retry_after_seconds` when it is: `conforms`
     assert case.retry_after is None or case.retry_after == sent
     assert answer.headers.get("idempotency-replayed") == ("true" if case.replayed else None)
-    assert "etag" not in answer.headers  # until `amendOrder` checks it (#913 slice 4, Q11)
+    assert "etag" not in answer.headers  # F's facade holds no version (ruling Q5)
 
 
 def test_every_status_22_lists_for_place_order_has_a_case_but_the_422() -> None:
@@ -211,6 +214,19 @@ def test_every_status_22_lists_for_place_order_has_a_case_but_the_422() -> None:
     `risk_limit_breached` with `403`, so the route gives no `422`."""
     listed = {int(status) for status in _PLACE["responses"]}
     assert listed - {case.status for case in CASES.values()} <= {422}
+
+
+async def test_a_202_carries_its_orders_etag_as_22_declares_it() -> None:
+    """22 `OrderETag` (ruling Q5): the first `202` names its order at the facade's version, a
+    strong tag the pattern takes, and its repeat carries the stored one."""
+    world = World()
+    written = world.oms.submission.outcome.written
+    assert written is not None
+    world.oms.route.versions.held[written.order.id] = 3
+    first, repeat = await post(world), await post(world)
+    conforms(first)
+    conforms(repeat)
+    assert first.headers["etag"] == repeat.headers["etag"] == order_etag(written.order.id, 3)
 
 
 async def test_a_repeat_from_the_24h_record_is_the_first_202_replayed() -> None:
