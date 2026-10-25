@@ -404,6 +404,20 @@ async def test_position_writes_change_the_seeded_position() -> None:
     assert (await port.set_trading_stop(stop)).ok is False
 
 
+async def test_a_trading_stop_write_stamps_the_positions_updated_at() -> None:
+    """#4413: a read after a stop write is not stale (INV-B1-f); another position keeps its time."""
+    now = [T0]
+    port = FakeTradingPort(environment="demo", now_us=lambda: now[0])
+    port.seed_position(_position())
+    port.seed_position(_position(OTHER))
+    now[0] = T0 + 7
+    await port.set_trading_stop(
+        TradingStopRequest(account=_ref(), symbol="BTCUSDT", stop_loss=Decimal("58000"))
+    )
+    [mine], [theirs] = await port.positions(_ref()), await port.positions(_ref(OTHER))
+    assert (mine.updated_at, theirs.updated_at) == (T0 + 7, T0)
+
+
 async def test_a_partial_stop_adds_the_venues_partial_orders_and_leaves_the_position_stop() -> None:
     """G-8b (24 §8.9, §14.4): a Partial-mode write adds one reduce-only conditional order per
     sized side, closing the held position under no id of ours, as the venue adds them; the

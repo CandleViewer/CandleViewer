@@ -13,7 +13,7 @@ first persist, replay anchor and recorded stops: their refusals as the OMS's typ
 from __future__ import annotations
 
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import fields, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -23,7 +23,7 @@ from typing import Any, cast, get_args
 import pytest
 from structlog.testing import capture_logs
 
-from candleviewer.domain.primitives import AccountId, GroupId
+from candleviewer.domain.primitives import AccountId, Environment, GroupId
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE, OMS_WRITE_BUCKETS
 from candleviewer.oms import (
@@ -51,6 +51,7 @@ from candleviewer.oms.repository import (
     SubmissionRepository,
 )
 from candleviewer.storage.errors import WriteAheadTimeout
+from candleviewer.storage.repositories.accounts import AccountScope
 from candleviewer.storage.repositories.executions import NewExecution
 from candleviewer.storage.repositories.idempotency_anchors import AnchorOutcome, NewAnchor
 from candleviewer.storage.repositories.orders import (
@@ -62,6 +63,8 @@ from candleviewer.storage.repositories.orders import (
     OrderEventRow,
     OrderRow,
     OrderTransition,
+    OutOfScope,
+    ScopedOrder,
 )
 from candleviewer.storage.repositories.orders_sqlalchemy import OMS_STATEMENT_TIMEOUT_MS
 from candleviewer.storage.repositories.positions import NewPositionSnapshot, PositionState
@@ -151,6 +154,16 @@ class _Store:
     async def link_id_taken(self, order_link_id: str) -> bool:
         self._call("link_id_taken", order_link_id)
         return order_link_id in self.taken
+
+    async def get_in_scope(
+        self, scope: AccountScope, order_id: uuid.UUID, *, environment: Environment
+    ) -> ScopedOrder | OutOfScope:
+        raise NotImplementedError  # the exit routes' scoped read: E29-T04's tests
+
+    async def accounts_in_scope(
+        self, scope: AccountScope, environment: Environment, requested: Collection[uuid.UUID]
+    ) -> tuple[uuid.UUID, ...]:
+        raise NotImplementedError  # cancel-all's scoped read: E29-T04's tests
 
     async def append(
         self, account_id: uuid.UUID, order_id: uuid.UUID, event: NewOrderEvent

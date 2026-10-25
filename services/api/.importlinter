@@ -1210,6 +1210,7 @@ source_modules =
     candleviewer.bars
     candleviewer.exchange.bybit.private_parse
     candleviewer.oms.pairing
+    candleviewer.oms.positions
     candleviewer.oms.push_mapping
     candleviewer.oms.stream_consumer
     candleviewer.oms.stream_push
