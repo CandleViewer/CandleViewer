@@ -132,10 +132,11 @@ type CancelReason = Literal["user", "cancel_all"]
 #: The exits the in-flight guard keys (ruling Q11) and the audit names.
 type ExitOperation = Literal["amend", "cancel", "cancel_all"]
 #: The step of a refusal that its `deny` record names (24 Sec.8.4, the exit routes): a route's own,
-#: the `Idempotency-Key` (7), the 24 h record (8) or the in-flight guard (9), or step 11's class
-#: re-check (`class`), the exit service's, of an amend the order as it stands makes risk-increasing
-#: where step 4's read did not (SEC-S4C2B-01; the orchestrator's ruling of 2026-10-25 00:27Z (1)).
-type ExitStep = Literal["key", "replay", "guard", "class"]
+#: an amend's body (5) or arm token (6), the `Idempotency-Key` (7), the 24 h record (8) or the
+#: in-flight guard (9), or step 11's class re-check (`class`), the exit service's, of an amend the
+#: order as it stands makes risk-increasing where step 4's read did not (SEC-S4C2B-01; the
+#: orchestrator's ruling of 2026-10-25 00:27Z (1)).
+type ExitStep = Literal["key", "replay", "guard", "class", "body", "arm"]
 
 #: How long a cancel waits for a step in flight to settle before it is sent (D9).
 TRANSITION_TIMEOUT_S: Final = CV_COMMAND_TIMEOUT

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -28,7 +29,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.domain.primitives import Environment
 from candleviewer.oms import exits as ex
-from candleviewer.oms.ports import ArmToken
+from candleviewer.oms.ports import ArmToken, RequestRecord
 from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import OrderRow, ScopedOrder
 from tests.unit.api import test_order_exits_route as er
@@ -219,7 +220,7 @@ async def test_an_amend_answers_202_with_the_order_and_its_new_etag(rig: SubmitR
     after = rig.machines.version(row.id)
     assert before is not None and after is not None and after > before
     assert answer.headers["etag"] == order_etag(row.id, after)
-    assert (answer.json()["price"], len(amends(rig))) == ("60100", 1)
+    assert (Decimal(answer.json()["price"]), len(amends(rig))) == (Decimal("60100"), 1)
     assert world.actions() == [(_DENIED, "user"), (_DENIED, "submitted")]
 
 
@@ -319,9 +320,10 @@ async def test_every_record_the_route_causes_names_its_principal_and_its_request
     claimed()  # release
     answer = await patch(world, row.id, {"price": "60100"}, key=uuid4())
     assert (refusal.status_code, answer.status_code) == (409, 202)
-    written = [record for record, _ in world.audits.written[world.since :]]
+    written = [r for r, _ in world.audits.written[world.since :] if isinstance(r, RequestRecord)]
     assert len(written) == 3
     for record in written:
+        assert record.actor is not None
         assert (record.actor.user_id, record.actor.role) == (OWNER, "owner")
         assert (record.actor.session_id, record.request_id) == (sr.SESSION, TRACE)
 

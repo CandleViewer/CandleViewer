@@ -54,6 +54,7 @@ from candleviewer.api.order_admission import (
     AuditEmitter,
     OnAccount,
     OrderPrincipals,
+    arm_token,
     field_errors,
     idempotency_key,
     parse_json_object,
@@ -63,6 +64,7 @@ from candleviewer.api.order_admission import (
     replay_cached,
     replay_key,
     resolve_principal,
+    stop_offset,
     submit_actor,
 )
 from candleviewer.api.order_problems import order_problem, outcome_problem
@@ -100,10 +102,8 @@ from candleviewer.oms.idempotency import InFlight, KeyReuse, Lookup, Replay
 from candleviewer.oms.ports import (
     FAILED,
     ArmRecords,
-    ArmToken,
     RequestRecord,
     SizingRequest,
-    StopOffset,
     SubmitActor,
     SubmitAudit,
     TradingSwitches,
@@ -130,7 +130,6 @@ _PERMISSION: Final = ORDERS_PERMISSION
 _NOT_GRANTED: Final = (
     f"{DenyReason.ACCOUNT_NOT_GRANTED.value}:{_PERMISSION.value}:{Scope.GRANTED_ACCOUNTS.value}"
 )
-_ARM_HEADER_MAX: Final = 256
 _UNREAD_ROWS: Final = (TimeoutError, StorageError, OrderStoreError, AccountsError)
 
 
@@ -216,19 +215,8 @@ def _parsed(raw: bytes) -> tuple[dict[str, object], AccountId] | None:
         return None
 
 
-def _arm_token(request: Request) -> ArmToken | None:
-    presented = request.headers.get("x-arm-token")
-    if presented is None or not 0 < len(presented) <= _ARM_HEADER_MAX:
-        return None
-    return ArmToken(presented)
-
-
 def _decimal(value: str | None) -> Decimal | None:
     return None if value is None else Decimal(value)
-
-
-def _offset(offset: api.Offset | None) -> StopOffset | None:
-    return None if offset is None else StopOffset(offset.unit, Decimal(offset.value))
 
 
 def _order_request(body: dict[str, object], account_id: AccountId) -> OrderRequest:
@@ -256,7 +244,7 @@ def _order_request(body: dict[str, object], account_id: AccountId) -> OrderReque
         trigger=None if trigger is None else OrderTrigger(
             Decimal(trigger.price), trigger.direction, trigger.trigger_by or "LastPrice"
         ),
-        stop_loss=_offset(read.stop_loss), take_profit=_offset(read.take_profit),
+        stop_loss=stop_offset(read.stop_loss), take_profit=stop_offset(read.take_profit),
         tpsl_mode=read.tpsl_mode or "Full", profile_id=read.profile_id, note=read.note,
     )  # fmt: skip
 
@@ -440,7 +428,7 @@ def make_orders_router(
         step = "arm"
         try:
             armed = reads.arm_records.check(
-                session_id=principal.session_id, environment=env, token=_arm_token(request)
+                session_id=principal.session_id, environment=env, token=arm_token(request)
             )
             if armed == FAILED:
                 raise SessionNotArmed

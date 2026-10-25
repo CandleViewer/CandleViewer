@@ -5,11 +5,12 @@ stacked on this module will too (`DELETE` / `PATCH /orders/{orderId}`, S4-D1b an
 `POST /orders/cancel-all`, S4-E), so they live once, here (#913 slice 4, S4-D1a): the principal
 (`resolve_principal`), step 2's RBAC refusal (`rbac_refusal`), a body read under its cap and
 parsed once (`read_capped`, `parse_json_object`), the `Idempotency-Key` (`idempotency_key`), the
-24 h record of first `2xx` answers (`replay_key`, `replay_cached`; the fingerprint is
-`api/idempotency.request_fingerprint`), the problems no `PROBLEMS` row names (`problem`), a 422's
-field errors through the redaction rules (`field_errors`), the records' actor (`submit_actor`)
-and an `rbac.denied` record naming the account it concerns (`OnAccount`). No log line, exception
-or problem carries the key or the fingerprint (C-12.6).
+24 h record of first `2xx` answers (`replay_key`, `replay_cached`, which replays a stored `ETag`;
+the fingerprint is `api/idempotency.request_fingerprint`), the problems no `PROBLEMS` row names
+(`problem`), a 422's field errors through the redaction rules (`field_errors`), the records' actor
+(`submit_actor`), an `rbac.denied` record naming the account it concerns (`OnAccount`), the
+session's arm token as presented (`arm_token`) and a body's stop offset (`stop_offset`). No log
+line, exception or problem carries the key, the fingerprint or the token (C-12.6).
 """
 
 from __future__ import annotations
@@ -19,12 +20,14 @@ import json
 import re
 import uuid
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Final, Protocol
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
+from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.csrf import source_ip
 from candleviewer.api.idempotency import IdempotencyCache
 from candleviewer.api.order_principal import TradingPrincipal
@@ -40,13 +43,14 @@ from candleviewer.oms.errors import (
     IdempotencyKeyReuse,
     OrderInvalid,
 )
-from candleviewer.oms.ports import SubmitActor
+from candleviewer.oms.ports import ArmToken, StopOffset, SubmitActor
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 __all__ = [
     "MAX_ORDER_BODY_BYTES", "ORDERS_PERMISSION", "AuditEmitter", "OnAccount", "OrderPrincipals",
-    "field_errors", "idempotency_key", "parse_json_object", "problem", "rbac_refusal",
-    "read_capped", "replay_cached", "replay_key", "resolve_principal", "submit_actor",
+    "arm_token", "field_errors", "idempotency_key", "parse_json_object", "problem",
+    "rbac_refusal", "read_capped", "replay_cached", "replay_key", "resolve_principal",
+    "stop_offset", "submit_actor",
 ]  # fmt: skip
 
 #: The body's ceiling, held before it is parsed (C-2.18): 16 KiB, as `api/feature_flags.py` and the
@@ -57,6 +61,7 @@ MAX_ORDER_BODY_BYTES: Final = 16 * 1024
 #: The permission every order route checks at step 2 (22 `x-rbac`).
 ORDERS_PERMISSION: Final = Permission.ORDERS_WRITE
 _LENGTH: Final = re.compile(r"[0-9]{1,19}")  # a usable `Content-Length`, as `api/rule_body.py`
+_ARM_HEADER_MAX: Final = 256
 
 
 class OrderPrincipals(Protocol):
@@ -152,8 +157,22 @@ def replay_cached(replays: IdempotencyCache, held: tuple[str, str], digest: str)
         return None
     if hit.digest != digest:
         raise IdempotencyKeyReuse
-    headers = {"Idempotency-Replayed": "true"}
+    headers = {"Idempotency-Replayed": "true"} | ({"ETag": hit.etag} if hit.etag else {})
     return Response(hit.body, hit.status, headers, media_type="application/json")
+
+
+def arm_token(request: Request) -> ArmToken | None:
+    """The session's arm token as presented (`X-Arm-Token`, SR-043), masked; None when it is
+    absent or past its bound."""
+    presented = request.headers.get("x-arm-token")
+    if presented is None or not 0 < len(presented) <= _ARM_HEADER_MAX:
+        return None
+    return ArmToken(presented)
+
+
+def stop_offset(offset: api.Offset | None) -> StopOffset | None:
+    """22 `Offset` as the stop resolver takes it."""
+    return None if offset is None else StopOffset(offset.unit, Decimal(offset.value))
 
 
 def field_errors(exc: ValidationError) -> list[FieldError]:
