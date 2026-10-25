@@ -22,11 +22,8 @@ import httpx
 import pytest
 from structlog.testing import capture_logs
 
-from candleviewer.exchange.base.errors import (
-    InstrumentFilterError,
-    TransportError,
-    UnknownStateError,
-)
+from candleviewer.exchange.base.errors import InstrumentFilterError as Filtered
+from candleviewer.exchange.base.errors import TransportError, UnknownStateError
 from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.key_info import (
     KEY_INFO_PATH,
@@ -61,6 +58,9 @@ from tests.unit.exchange.bybit.test_account_fixture_pack import (
 KEY_IDS: Final = fixture_key_ids(PACK)
 WALLET: Final = "/v5/account/wallet-balance"
 CREATE: Final = "/v5/order/create"
+CLOSED_PNL, LINEAR = "/v5/position/closed-pnl", {"category": "linear"}
+#: An order call as the OMS makes it: the order class, on the entry lane (20 section 4.3).
+ENTRY: Final[dict[str, Any]] = {"endpoint_class": EndpointClass.ORDER, "lane": "entry"}
 AMEND, STOP = "/v5/order/amend", "/v5/position/trading-stop"
 #: An order id no scenario lists, and the orders working_orders_2 seeds: (orderId, orderLinkId).
 FOREIGN: Final = "00000000-0000-4000-8000-0000000000f9"
@@ -160,12 +160,8 @@ async def test_exact_then_wildcard_then_extends_then_overlays_then_root(make: Ma
     assert (await stub.send(_get("ws_drop_rest_fail", path="/v5/position/list")))[0] == 503
     stub.transport.overlays = ("working_orders_2",)
     await stub.send(_post("compliant", "/v5/position/switch-isolated", {}))
-    line = stub.lines()[-1]
-    assert _of(line, "scenario", "overlays", "code_unconfirmed") == (
-        "compliant",
-        ["working_orders_2"],
-        True,
-    )
+    want = ("compliant", ["working_orders_2"], True)
+    assert _of(stub.lines()[-1], "scenario", "overlays", "code_unconfirmed") == want
 
 
 async def test_from_until_window_on_scenario_time(stub: Stub) -> None:
@@ -185,11 +181,8 @@ async def test_the_stack_default_counts_from_boot(make: Make) -> None:
     stub.clock.advance(seconds=10)
     status, _, _ = await stub.send(httpx.Request("GET", DEMO + "/v5/market/time"))
     assert status == 503
-    assert _of(stub.lines()[0], "outcome", "key_class", "scenario") == (
-        "served",
-        "unsigned",
-        "ws_blip_20s",
-    )
+    want = ("served", "unsigned", "ws_blip_20s")
+    assert _of(stub.lines()[0], "outcome", "key_class", "scenario") == want
 
 
 async def test_anchoring_before_merge_patch(stub: Stub) -> None:
@@ -221,7 +214,7 @@ async def test_http_status_and_anchored_rate_limit_headers(stub: Stub) -> None:
 async def test_bybit_5xx_retried_then_transport_error(stub: Stub) -> None:
     async with _client(stub.transport, DEMO, _key("bybit_5xx"), _secret("bybit_5xx")) as client:
         with pytest.raises(TransportError, match="HTTP 503 after 4 attempts"):
-            await client.signed_request("GET", KEY_INFO_PATH)
+            await client.signed_request("GET", KEY_INFO_PATH, lane="poll")
     assert [_of(line, "outcome", "status", "verified") for line in stub.lines()] == [
         ("served", 503, True)
     ] * 4
@@ -230,29 +223,22 @@ async def test_bybit_5xx_retried_then_transport_error(stub: Stub) -> None:
 async def test_unstubbed_call_is_non_2xx_and_never_success(stub: Stub) -> None:
     async with _client(stub.transport, DEMO, _key("compliant"), _secret("compliant")) as client:
         with pytest.raises(UnknownStateError, match="HTTP 404 with no usable retCode") as caught:
-            await client.signed_request("GET", "/v5/position/closed-pnl")
+            await client.signed_request("GET", CLOSED_PNL, params=LINEAR, lane="poll")
     assert refusal(caught.value) is None  # never a verdict on the key
     [line] = stub.lines()  # never retried
-    assert _of(line, "outcome", "status", "ret_code", "scenario") == (
-        "unstubbed",
-        404,
-        None,
-        "compliant",
-    )
+    want = ("unstubbed", 404, None, "compliant")
+    assert _of(line, "outcome", "status", "ret_code", "scenario") == want
 
 
 async def test_order_create_echoes_order_link_id(stub: Stub) -> None:
     links = ["fixture-order-0007", "fixture-order-0008", "fixture-order-0007"]
-    order = EndpointClass.ORDER
     async with _client(stub.transport, DEMO, _key("compliant"), _secret("compliant")) as client:
-        acks = [
-            await client.signed_request(
-                "POST", CREATE, body={**ORDER_BODY, "orderLinkId": link}, endpoint_class=order
-            )
-            for link in links
-        ]
-        cancel = {**ORDER_BODY, "orderLinkId": links[0]}
-        acks.append(await client.signed_request("POST", "/v5/order/cancel", body=cancel))
+        bodies = [ORDER_BODY | {"orderLinkId": link} for link in links]
+        acks = [await client.signed_request("POST", CREATE, body=b, **ENTRY) for b in bodies]
+        cancel = bodies[0]  # an exit, on the reserve lane
+        acks.append(
+            await client.signed_request("POST", "/v5/order/cancel", body=cancel, lane="critical")
+        )
     assert [ack["result"]["orderLinkId"] for ack in acks] == [*links, links[0]]
     ids = [ack["result"]["orderId"] for ack in acks]
     assert ids[0] == ids[2] == ids[3] != ids[1] and all(str(uuid.UUID(i)) == i for i in ids)
@@ -291,13 +277,9 @@ async def test_the_verified_body_reaches_when(stub: Stub) -> None:
     reference order to compliant's ack."""
     key, secret = _key("close_rejected"), _secret("close_rejected")
     async with _client(stub.transport, DEMO, key, secret) as client:
-        with pytest.raises(InstrumentFilterError):
-            await client.signed_request(
-                "POST", CREATE, body=CLOSE_BODY, endpoint_class=EndpointClass.ORDER
-            )
-        ack = await client.signed_request(
-            "POST", CREATE, body=REFERENCE_ORDER, endpoint_class=EndpointClass.ORDER
-        )
+        with pytest.raises(Filtered):
+            await client.signed_request("POST", CREATE, body=CLOSE_BODY, **ENTRY)
+        ack = await client.signed_request("POST", CREATE, body=REFERENCE_ORDER, **ENTRY)
     assert (ack["retCode"], ack["result"]["orderLinkId"]) == (0, REFERENCE_ORDER["orderLinkId"])
     assert [_of(line, "outcome", "ret_code") for line in stub.lines()] == [
         ("served", 110017),
@@ -375,19 +357,20 @@ async def test_every_key_scenario_answers_key_info_and_probe(stub: Stub, name: s
     expected = KEY_INFO[name]
     async with _client(stub.transport, DEMO, _key(name), _secret(name)) as client:
         if isinstance(expected, ApiKeyFacts):
-            assert parse_key_info(await client.signed_request("GET", KEY_INFO_PATH)) == expected
+            info = await client.signed_request("GET", KEY_INFO_PATH, lane="poll")
+            assert parse_key_info(info) == expected
         else:
             with pytest.raises(expected):
-                await client.signed_request("GET", KEY_INFO_PATH)
+                await client.signed_request("GET", KEY_INFO_PATH, lane="poll")
         params = {"accountType": "UNIFIED"}
         if name in PROBE_FAILS:
             error, reason = PROBE_FAILS[name]
             with pytest.raises(error) as caught:
-                await client.signed_request("GET", PROBE_PATH, params=params)
+                await client.signed_request("GET", PROBE_PATH, params=params, lane="poll")
             found = refusal(caught.value)
             assert (found[0] if found else None) == reason
         else:
-            body = await client.signed_request("GET", PROBE_PATH, params=params)
+            body = await client.signed_request("GET", PROBE_PATH, params=params, lane="poll")
             probe = parse_probe(body, sent_at_ms=NOW_MS, received_at_ms=NOW_MS)
             assert probe.server_time_ms == NOW_MS
     seen = {_of(line, "outcome", "verified", "scenario", "stored_under") for line in stub.lines()}
@@ -418,12 +401,8 @@ async def test_an_unsigned_private_call_is_refused_never_answered(stub: Stub, ca
     with capture_logs() as events, pytest.raises(httpx.ConnectError, match="refused_key"):
         await stub.transport.handle_async_request(httpx.Request(method, DEMO + path))
     [line] = stub.lines()
-    assert _of(line, "outcome", "key_class", "verified", "scenario") == (
-        "refused_key",
-        "unsigned",
-        None,
-        None,
-    )
+    want = ("refused_key", "unsigned", None, None)
+    assert _of(line, "outcome", "key_class", "verified", "scenario") == want
     assert [_of(e, "log_level", "priority", "latched") for e in events] == [("error", None, False)]
     assert not stub.transport.latched
 
