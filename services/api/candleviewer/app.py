@@ -2355,6 +2355,7 @@ def create_app(
             records=order_records,
             metrics=metrics_facade,
             auth=ctx.auth,
+            protective=protective_writes,
         )
     )
     # #913 slice 4 (S4-D1; 24 Sec.8.4 "The exit routes"): `DELETE /orders/{orderId}` over the same

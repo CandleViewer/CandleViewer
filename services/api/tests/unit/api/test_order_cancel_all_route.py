@@ -26,10 +26,12 @@ from jsonschema import Draft202012Validator
 from prometheus_client import generate_latest
 
 from candleviewer.api import order_cancel_all
-from candleviewer.api.deny_by_default import served_operations
+from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.deny_by_default import declared_operations, served_operations
 from candleviewer.api.idempotency import IdempotencyCache, StoredResponse
 from candleviewer.api.order_cancel_all import CANCEL_ALL_PATH, make_cancel_all_router
 from candleviewer.api.order_principal import TradingPrincipal
+from candleviewer.api.view_as_policy import ProtectiveWrites
 from candleviewer.app import create_app
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission
@@ -65,6 +67,7 @@ from tests.unit.api.test_orders_route import (
     Principals,
     authz_denied,
 )
+from tests.unit.api.test_orders_route import snapshot as role_snapshot
 
 OTHER_KEY = UUID("6c1f0e2d-3b4a-4c5d-8e6f-7a8b9c0d1e2f")
 MISSING = UUID("a1000000-0000-4000-8000-0000000000ee")  # no such account
@@ -923,3 +926,56 @@ async def test_a_fault_answering_or_keeping_the_200_is_the_paged_500(
     assert (answer.status_code, answer.json()["code"]) == (500, "internal_error")
     assert world.pager.pages == ["orders_cancel_all_failed"]
     assert len(world.oms.exits.cancelled) == 2
+
+
+# --- view-as (#3085; 22's dual check; the orchestrator's rulings of 2026-10-24 23:10Z, 23:44Z) ----
+
+
+def _viewing(world: World, target: PrincipalSnapshot | None) -> None:
+    """The Owner viewing as the Manager: live (`target`, its RBAC) or in the hold (`None`)."""
+    assert world.principals is not None
+    world.principals.tokens["viewing"] = TradingPrincipal(SESSION, role_snapshot("owner"), target)
+
+
+async def test_a_viewing_owners_cancel_all_reaches_only_the_targets_trade_accounts() -> None:
+    """A live protective write is admitted only where the target's `x-rbac` allows it too: the
+    scope is the target's trade grants (`scope_for_target`), and the viewer stays the actor."""
+    world = World()
+    _viewing(world, role_snapshot("manager"))
+    answer = await post(world, "viewing", {})
+    assert answer.status_code == 200
+    assert world.oms.exits.scoped == [(GrantScope(MANAGER, frozenset({ACCOUNT})), ())]
+    assert [row for row, *_ in world.oms.exits.cancelled] == [_row(1).id]
+    assert {(actor.user_id, actor.role) for _, actor, _, _ in world.oms.exits.cancelled} == {
+        (USER, "owner"),
+    }  # fmt: skip
+
+
+async def test_a_viewing_owner_naming_an_account_the_target_cannot_trade_is_refused() -> None:
+    world = World()
+    _viewing(world, role_snapshot("manager"))
+    answer = await post(world, "viewing", _listed(ACCOUNT, FOREIGN))
+    assert (answer.status_code, answer.json()["code"]) == (403, "account_scope_denied")
+    [denied] = world.audit.emitted
+    assert (denied["actor_user_id"], denied["session_id"]) == (USER, SESSION)  # never the target
+    assert (world.oms.exits.cancelled, world.oms.tasks) == ([], [])
+
+
+async def test_in_the_hold_a_viewing_owners_cancel_all_is_its_own() -> None:
+    """22: in the hold a protective write runs in the viewer's own scope."""
+    world = World()
+    _viewing(world, None)
+    assert (await post(world, "viewing", {})).status_code == 200
+    assert world.oms.exits.scoped == [(OwnerScope(USER), ())]
+    assert len(world.oms.exits.cancelled) == 2
+
+
+def test_the_router_registers_cancel_all_as_a_protective_write() -> None:
+    """Its handler decides a viewer's cancel-all itself, so the view-as guard passes it to it."""
+    protective = ProtectiveWrites(declared_operations(load_openapi_spec()))
+    assert not protective.is_registered(("POST", CANCEL_ALL_PATH))
+    make_cancel_all_router(
+        None, lambda: None, audit=Audit(), records=Audit(), metrics=Metrics("demo"),
+        protective=protective,
+    )  # fmt: skip
+    assert protective.is_registered(("POST", CANCEL_ALL_PATH))

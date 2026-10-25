@@ -17,7 +17,11 @@ guard, deny-by-default) it checks, each before the next (24 Sec.8.4's numbers):
    yet; then the scope, all or nothing (`CancelAll.scope`, SR-E29-13): one listed account the
    caller may not trade, or one that does not exist, refuses the whole request with 403
    `account_scope_denied` and one `rbac.denied` (a 403 even when that record cannot be written); a
-   scope that cannot be read is 503 `store_unavailable`; nothing is sent either way;
+   scope that cannot be read is 503 `store_unavailable`; nothing is sent either way. A viewer's
+   cancel-all in a live view-as context passes the guard as the protective write it is, once the
+   target holds `orders:write` (22's dual check, its permission half): its scope is also the
+   target's trade grants (`scope_for_target`), while the viewer stays the actor, the claim's and
+   the 24 h record's principal; in the hold it is the viewer's own;
 7. `Idempotency-Key`: missing or not a UUID is 400 `validation_failed`;
 8. the 24 h record: the same fingerprint replays the stored `200` (`Idempotency-Replayed: true`),
    another is 409 `idempotency_key_reuse`;
@@ -75,8 +79,10 @@ from candleviewer.api.order_exits_common import (
     exit_refusals,
     run_claimed,
 )
+from candleviewer.api.order_principal import scope_for_target
 from candleviewer.api.order_problems import order_problem
 from candleviewer.api.refusal_session import SessionsLike
+from candleviewer.api.view_as_policy import ProtectiveWrites
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Scope
 from candleviewer.auth.metrics import authz_denied_total, normalise_permission
@@ -219,10 +225,15 @@ def make_cancel_all_router(
     auth: SessionsLike | None = None,
     replays: IdempotencyCache | None = None,
     pager: Pager | None = None,
+    protective: ProtectiveWrites | None = None,
 ) -> APIRouter:
     """`POST /orders/cancel-all` (module docstring). No principal source (no identity composed)
     answers 501, as no runtime (the fake backend) does after RBAC. `audit` takes `rbac.denied`,
-    `records` the refusals after the scope; `replays` is the 24 h record of first `2xx` answers."""
+    `records` the refusals after the scope; `replays` is the 24 h record of first `2xx` answers;
+    `protective`, the view-as guard's registry, learns that this handler decides a viewer's
+    cancel-all itself."""
+    if protective is not None:
+        protective.register(_OPERATION)
     router = APIRouter(tags=["trading"])
     kept = replays if replays is not None else IdempotencyCache()
     paging: Pager = LogPager() if pager is None else pager
@@ -339,7 +350,7 @@ def make_cancel_all_router(
             return refused(exc)
         try:
             service = oms.cancel_all
-            accounts = await service.scope(caller.scope, asked)
+            accounts = await service.scope(scope_for_target(snapshot, principal.target), asked)
         except AccountScopeDenied:
             return await scope_denied(caller, asked)
         except StoreUnavailable:  # nothing read: no account to record it on, counted
