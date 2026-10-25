@@ -31,14 +31,20 @@ the caller must refuse the audited action.
 Idempotency: every record carries a `record_id` (uuid) that is UNIQUE in
 `audit_log`, so the one crash window this file cannot close (row committed to
 Postgres, cursor not yet advanced) replays as an `ON CONFLICT DO NOTHING`.
+
+One writer per file (D6, #913 L2): `lock_wal_file` is the exclusive `flock` on
+`<wal>.lock` that a writer owning its WAL takes before it opens it, the
+`machine_events` sink's and an exclusive `AuditWriter`'s.
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import zlib
 from collections.abc import Iterator
+from io import FileIO
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +64,27 @@ _CRC_FIELD = 9  # 8 hex digits + "\n"
 
 class AuditWalFull(AuditError):
     """Raised by `AuditWal.append` when the WAL file has reached `max_bytes`."""
+
+
+class AuditWalLocked(AuditError):
+    """`lock_wal_file`: another writer holds the WAL's lock (one writer per file, D6)."""
+
+
+def lock_wal_file(path: Path) -> FileIO:
+    """An exclusive, non-blocking lock on `<wal>.lock`, never through a symlink, the lock file
+    made owner-only when created; closing the returned file drops it. `AuditWalLocked` while
+    another holder has it; any other `OSError` as it is."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW
+    fd = os.open(path.with_name(path.name + ".lock"), flags, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BaseException as exc:
+        os.close(fd)
+        if isinstance(exc, BlockingIOError):
+            raise AuditWalLocked("the WAL is locked by another writer") from None
+        raise
+    return FileIO(fd, "r")
 
 
 class AuditWalCorrupt(AuditError):
