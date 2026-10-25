@@ -7,6 +7,7 @@ the gather's bound and the spacer's wait are injected and released by the test."
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any
@@ -26,8 +27,11 @@ from candleviewer.observability.logging import _redaction_processor
 from candleviewer.observability.metrics import BoundedMetric, Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms.cancel_all import FOLD_MIN
-from candleviewer.oms.cancel_all_coalescer import FOLD_OUTCOMES, CancelAllCoalescer
+from candleviewer.oms.cancel_all_coalescer import FOLD_OUTCOMES, CancelAllCoalescer, unfolded
 from candleviewer.oms.cancel_all_fold import CancelAllSpacer, FoldRefused
+from candleviewer.oms.routing import TradingRouter
+from candleviewer.storage.repositories.orders import OrderRow
+from tests.unit.oms import command_rig as cr
 
 _ACCOUNT = AccountId(UUID("5b1c9d2e-7f30-4a6b-8c4d-2e3f4a5b6c7d"))
 _REF = AccountRef(account_id=_ACCOUNT, uid="100001", environment="demo", key_ref=str(UUID(int=1)))
@@ -454,3 +458,61 @@ async def test_a_call_every_member_left_runs_on_owned_until_aclose_ends_it() -> 
         await port.aclose()
     assert _fold_tasks() == [] and venue.cut == 1
     assert _methods(venue) == ["cancel_all"]  # cut short at teardown, never re-sent
+
+
+# --- CR-S4F-12: a KILL's cancel never waits on a fold --------------------------------------------
+
+
+async def _resting_row(rig: cr.Rig, seq: int) -> OrderRow:
+    """The command rig's order `seq`, resting at the venue and stored `submitted`, bound."""
+    order = cr.new_order(seq=seq)
+    resting = cr.exchange_order(order)
+    rig.demo.seed_order(resting, uid=cr.UIDS["demo"])
+    bound = dataclasses.replace(order, exchange_order_id=resting.exchange_order_id)
+    return await rig.stored(bound, lifecycle="submitted")
+
+
+async def test_a_kills_cancel_of_a_fold_member_goes_out_at_once_and_b1s_own_meets_the_fold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-S4F-12: the command port marks a KILL's own cancel (B1's `issue_kill_cancel`, kind
+    `kill_cancel`), so the coalescer sends it to the venue at once, though its order is a member
+    of an open fold, never held by the gather, the spacer or the call. B1's own cancel of another
+    member still meets the fold."""
+    rig = cr.build_rig()
+    killed, own = await _resting_row(rig, 1), await _resting_row(rig, 2)
+    clock, sleeps = _Clock(), _Sleeps()  # the gather's bound never passes on its own here
+    folds = CancelAllCoalescer(
+        rig.demo, spacer=CancelAllSpacer(monotonic=clock, sleep=sleeps.sleep), monotonic=clock,
+        sleep=sleeps.sleep,
+    )  # fmt: skip
+    router = TradingRouter({"demo": folds, "live": rig.live}, lane_waits=cr.LANE_WAITS)
+    monkeypatch.setattr(rig.port, "_router", router)
+    members = [killed.order_link_id, own.order_link_id]
+    async with asyncio.timeout(5):
+        with folds.fold(cr.ref(), Symbol(cr.SYMBOL), members) as join:
+            answer = await rig.port.cancel(cr.command("kill_cancel", killed))
+            assert answer["ok"] is True and rig.calls() == ["cancel_order"]
+            waiting = asyncio.create_task(rig.port.cancel(cr.command("cancel", own)))
+            await _settle()
+            assert not waiting.done()  # B1's own cancel meets its fold
+            join.leave(killed.order_link_id)  # its own cancel never comes once it is killed
+            assert (await waiting)["ok"] is True
+    assert rig.calls() == ["cancel_order", "cancel_order"]
+
+
+async def test_a_cancel_sent_unfolded_never_meets_its_fold_and_the_mark_ends_with_it() -> None:
+    """`unfolded`: a member's cancel so sent goes to the venue at once; the cancels after it, not
+    so sent, meet the fold as before. Its own cancel never coming, the fold is abandoned."""
+    venue = _venue("a", "b")
+    port, _, _ = _port(venue)
+    async with asyncio.timeout(5):
+        with port.fold(_REF, _BTC, _ids("a", "b")) as join:
+            assert (await unfolded(port.cancel_order(_cancel("a")))).order_link_id == _id("a")
+            assert _methods(venue) == ["cancel_order"]
+            second = asyncio.create_task(port.cancel_order(_cancel("b")))
+            await _settle()
+            assert not second.done()  # unmarked: it meets the fold and waits for "a"
+            join.leave(_id("a"))
+            assert (await second).ok and join.abandoned == "left"
+    assert _methods(venue) == ["cancel_order", "cancel_order"]

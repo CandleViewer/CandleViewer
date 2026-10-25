@@ -28,6 +28,13 @@ through as it is but a fold member's `cancel_order`, which meets its fold's `Can
   retries' pauses), plus one round trip: 10 s and a round trip, at its widest under rate
   pressure, when cancel-alls happen.
 
+- **A KILL's cancel** (`unfolded`, CR-S4F-12): the command port marks a KILL's own cancel (B1's
+  `issue_kill_cancel`), and the coalescer sends it to the venue at once, never into a fold, so a
+  KILL never waits on one; its order's own cancel then never comes, which abandons the fold. A
+  KILL that finds the order's own cancel in flight (`cancel_pending`) sends none and reuses that
+  one, as B1's contract says, and that cancel may wait in its fold: at most the gather's bound,
+  the spacer's wait and the call.
+
 One event loop's, as the order lanes are. Nothing here imports the exchange adapter (C-2.2).
 """
 
@@ -36,6 +43,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Collection, Coroutine, Iterator, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from decimal import Decimal
 from typing import Any, Final, Literal
 
@@ -66,7 +74,7 @@ from candleviewer.observability.metrics import BoundedMetric
 from .cancel_all_fold import GATHER_S, CancelAllJoin, CancelAllSpacer, FoldRefused, covers
 from .routing import RoutedPort
 
-__all__ = ["FOLD_OUTCOMES", "SPACER_WAIT_S", "CancelAllCoalescer", "FoldOutcome"]
+__all__ = ["FOLD_OUTCOMES", "SPACER_WAIT_S", "CancelAllCoalescer", "FoldOutcome", "unfolded"]
 
 #: How long a fold's call may wait for its UID's spacer slot before the fold is abandoned: a slot
 #: further off leaves the members to their own cancels, inside their 9 s (24 Sec.8.7).
@@ -76,6 +84,18 @@ SPACER_WAIT_S: Final = 2.0
 #: nothing was sent and each member sent its own cancel.
 type FoldOutcome = Literal["sent", "abandoned"]
 FOLD_OUTCOMES: Final[tuple[FoldOutcome, ...]] = ("sent", "abandoned")
+#: Set while a KILL's own cancel runs (`unfolded`): a cancel so marked never meets a fold.
+_UNFOLDED: Final = ContextVar[bool]("oms_cancel_all_unfolded", default=False)
+
+
+async def unfolded[T](call: Awaitable[T]) -> T:
+    """`call`, a KILL's own cancel, awaited so that no fold holds it: the coalescer sends it to the
+    venue at once, though its order is a member of an open fold (module docstring)."""
+    token = _UNFOLDED.set(True)
+    try:
+        return await call
+    finally:
+        _UNFOLDED.reset(token)
 
 
 def _log() -> Any:
@@ -158,10 +178,14 @@ class CancelAllCoalescer:
             self._closed(join, symbol, len(keys))
 
     async def cancel_order(self, req: CancelOrderRequest) -> OrderAck:
-        """A fold member's cancel meets its join; any other, or a member the fold leaves to its own
-        cancel, goes to the venue as it is."""
+        """A fold member's cancel meets its join; any other, a KILL's (`unfolded`), or a member
+        the fold leaves to its own cancel, goes to the venue as it is."""
         link = req.order_link_id
-        join = None if link is None else self._joins.get((req.account.account_id, link))
+        join = (
+            None
+            if link is None or _UNFOLDED.get()
+            else self._joins.get((req.account.account_id, link))
+        )
         if join is not None and link is not None:
             ack = await join.arrive(link)
             if ack is not None:
