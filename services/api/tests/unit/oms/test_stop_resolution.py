@@ -739,6 +739,54 @@ async def test_an_end_between_the_read_and_its_put_loses_the_put_and_the_next_as
     assert (decision.outcome, held, db._stops[new.id].status) == expected
 
 
+async def test_an_end_inside_the_venue_read_loses_the_put_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-S2DC-01: an end (E29-T05's, simulated) commits on the key's row in force inside the
+    venue read, once the venue answered the position open with the entry's stop-loss shown. The
+    view each put compares was read before that read and still names the row the end took out of
+    force, so the put loses (`StaleRecordedStop`) and nothing is written: no row put in force on a
+    key the end showed flat, no void and no write-ahead hook. A view read after the venue read
+    held the end already: the put committed, and the fill void of the take-profit followed it."""
+    db = InMemoryOrderStore(clock=lambda: T0)
+    stops = RecordedStopRepository(InMemoryRecordedStopStore(db))
+    audit = Audit()
+    resolver = StopResolver(stops, CompleteRead(db), audit, now=lambda: NOW)
+    port = FakeTradingPort(now_us=lambda: NOW_US)
+    [old] = await stops.record([sc.trading_stop(ACCOUNT, trigger_price=Decimal("59000"))],
+                               write_ahead=sc.audited)  # fmt: skip
+    [held] = (await stops.put_in_force(ACCOUNT, [old], in_force=(), at=T0)).in_force
+    submitting: dict[str, Any] = {
+        "state": ORDER_STATE_OF["submitting"], "lifecycle_state": "submitting"
+    }  # fmt: skip
+    event = NewOrderEvent(kind="submit_attempt", source="local", event_ts=T0)
+    entry = await db.create(new_order(**submitting), event)
+    port.seed_order(exchange_order(new_order(), state="filled", filled_qty=Decimal("0.010")),
+                    uid=UID)  # fmt: skip
+    attach: dict[str, Any] = {"source": "entry_attach", "order_id": entry.id,
+                              "position_marker": None}  # fmt: skip
+    sl, tp = await stops.record(
+        [sc.trading_stop(ACCOUNT, trigger_price=STOP, **attach),
+         sc.trading_stop(ACCOUNT, kind="take_profit", trigger_price=TP, **attach)],
+        write_ahead=sc.audited,
+    )  # fmt: skip
+    port.seed_position(position(stop_loss=STOP))  # its stop-loss shown, its take-profit absent
+    read = port.positions
+
+    async def ends_inside_the_read(account: AccountRef) -> Any:
+        answered = await read(account)
+        await stops.end(ACCOUNT, [held], at=T0)  # commits before the venue read returns
+        return answered
+
+    monkeypatch.setattr(port, "positions", ends_inside_the_read)
+    with pytest.raises(StaleRecordedStop):
+        await resolver.resolve_key(port, ref(), KEY, bound_s=10.0)
+    assert db._stops[old.id].status == "ended"  # the end landed inside the read
+    assert await stops.in_force_for_key(ACCOUNT, SYMBOL, 0) == ()  # no put
+    assert (db._stops[sl.id], db._stops[tp.id]) == (sl, tp)  # pending, unanswered, not voided
+    assert audit.hooks == []  # no void, so no write-ahead hook
+
+
 # --- failures ----------------------------------------------------------------------------------
 
 
