@@ -6,8 +6,8 @@
 # refuses every command while a required one (`:?`) is unset or empty. Not for local development,
 # and not the dev deploy's: tools/ci/deploy_dev.py applies docker-compose.deploy.yml over the base
 # file only (taking this overlay there is a follow-up). infra/scripts/lint_compose.py checks this
-# file: api and migrate only, values from the env file, the KEK a file secret and never a value,
-# no core dumps, /data a named volume.
+# file: api, migrate and bootstrap-owner only, values from the env file, the KEK a file secret and
+# never a value, no core dumps, /data a named volume, no log of the bootstrap's output.
 
 secrets:
   # The KEK (docs/plan/spikes/e27-kek.md §3): a host file of exactly 32 raw bytes, mode 0400 and
@@ -69,3 +69,53 @@ services:
   migrate:
     environment:
       CV_PG_DSN: ${CV_PG_OWNER_DSN:?set in infra/compose/.env}
+
+  # DC-4479-02 (#4479's design critique): #4479's CLI prints the Owner's invite token once, on its
+  # TTY, and a container's output also goes to Docker's logging driver, which would keep it
+  # (json-file and local until the container is removed; journald, syslog and remote drivers for
+  # good). So the CLI runs here, with no logging driver, and never as `run ... api`: a one-shot
+  # under its own profile, which `up` never starts, run from a terminal while cv-api is stopped:
+  # `--profile bootstrap-owner run --rm --no-deps bootstrap-owner --owner <email>` (demo-host.md
+  # step 6). It has cv-api's settings for what the CLI reads: the environment, the database role
+  # (CV_PG_DSN: the CLI's probe refuses while another session of that role is connected), the KEK
+  # and the audit volume, where its journal and the run lock it shares with cv-api live. Built from
+  # this checkout on every run, as migrate is.
+  bootstrap-owner:
+    build:
+      context: ../..
+      dockerfile: infra/images/Dockerfile.api
+    pull_policy: build
+    profiles: ["bootstrap-owner"]
+    entrypoint: ["python", "-m", "candleviewer.bootstrap_owner"]
+    logging:
+      driver: none
+    environment:
+      CV_ENVIRONMENT: ${CV_ENVIRONMENT:?set in infra/compose/.env}
+      CV_PG_DSN: ${CV_PG_DSN:?set in infra/compose/.env}
+      CV_KEK_SOURCE: file
+      CV_KEK_HANDLE: /run/secrets/cv_kek
+      CV_KEK_VERSION: ${CV_KEK_VERSION:?set in infra/compose/.env}
+      CV_AUDIT_WAL_PATH: /var/lib/candleviewer/audit/audit.wal
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - cv-audit-data:/var/lib/candleviewer/audit
+    secrets:
+      - source: cv_kek
+        target: cv_kek
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: cv_audit_lane_key
+        target: cv_audit_lane_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+    # SR-009: the CLI loads the KEK to prove it.
+    ulimits:
+      core: 0
+    # A one-shot: its exit status is its result.
+    healthcheck:
+      disable: true
+    networks: [cv-internal]
