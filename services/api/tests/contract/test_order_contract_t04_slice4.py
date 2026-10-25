@@ -838,6 +838,58 @@ def test_a_step_11_class_refusal_is_audited_naming_its_step_and_its_reason() -> 
     )
 
 
+def test_a_stopped_lane_after_step_3_is_a_counted_unaudited_503() -> None:
+    """L1b's handoff for D2b (2026-10-25): an `OmsNotReady` met through the order lane at step 4's
+    scope read, step 9's run or step 11's exit service is answered as step 3's is: counted, never
+    audited through the stalled lane, with no `ETag`, no 24 h record and its key freed; and so is
+    one met at the record of a refusal the route makes from step 5 on, in that refusal's place,
+    which 15.5 says beside the steps a refusal's record names (the delta's F3 at e677aa89)."""
+    assert not _missing(
+        _EXITS,
+        "A `503 oms_not_ready` met after step 3, a stop begun meanwhile or the order lane stopped "
+        "or not answering a hop within its bound (`20-architecture.md` §6.2) at step 4's scope "
+        "read, step 9's run or step 11's exit service, is unaudited as step 3's is, as its record "
+        "would go through the stalled lane: it carries no `ETag`, keeps no 24 h record and frees "
+        "its in-flight key, and whatever B1 did before the lane stopped keeps B1's own records",
+        "Like step 3's, it pages nothing. The order's gateway refusing step 11's command for "
+        "backpressure, its inbox full or its admission refused, is no such stop: that `503 "
+        "oms_not_ready` is the exit service's own refusal, recorded `denied` beside the intent as "
+        "every step-11 refusal is.",
+        "A refusal the route makes from step 5 on (an amend's steps 5 to 9, a cancel's 7 to 9) is "
+        "recorded through the order lane too (`deny`): one whose record's hop meets the lane "
+        "stopped is answered `503 oms_not_ready` in the refusal's place, as step 3's is, unaudited "
+        "and unpaged, and counted under its own operation.",
+    )
+    assert not _missing(
+        _RECORDS,
+        "A route refusal whose record meets the stopped order lane is not recorded: the route "
+        "answers `503 oms_not_ready` in its place (§8.4).",
+    )
+
+
+def test_the_change_log_records_the_amend_routes_steps_and_a_stopped_lane() -> None:
+    """D2a's CR-S4D2A-04 for S4-D2b: 19 is the contract change log, so S4-D2b's changes to 8.4
+    (a stopped order lane's unaudited `503`, at a refusal's record too, the gateway's backpressure
+    told apart) and 15.5 (the amend route's `body` and `arm` steps, and a refusal's record that
+    meets the stopped lane) have an entry of their own."""
+    entry = _words(_INTERNAL_DOC.split("\n### 19.37 2026-10-25 — §8.4, §15.5: ", 1)[1])
+    assert not _missing(
+        entry,
+        "the amend route's steps and a stopped order lane (E29-T04, #913)",
+        "is unaudited as step 3's is and pages nothing, with no `ETag`, no 24 h record and its "
+        "in-flight key freed",
+        "The gateway's backpressure at step 11 is no such stop: its `503` is the exit service's "
+        "own refusal, recorded `denied` beside the intent.",
+        "§15.5: a refusal's `step` names the amend route's `body` and `arm` too, its steps 5 "
+        "and 6.",
+        "A refusal the route makes from step 5 on whose record's hop meets the stopped lane is "
+        "answered `503 oms_not_ready` in its place, unrecorded and counted under its own "
+        "operation.",
+        "A route refusal whose record meets the stopped order lane is not recorded but answered "
+        "`503 oms_not_ready` in its place.",
+    )
+
+
 def test_the_exit_routes_declare_every_answer_their_routes_give() -> None:
     """The orchestrator's ruling of 2026-10-24 21:47Z (1) and vw3's gap of 22:11Z: `cancelOrder`
     declares the `500` its route answers for a fault the exit service raises, as `amendOrder`,
@@ -997,21 +1049,22 @@ def test_a_step_into_a_state_that_takes_no_amend_is_422_as_at_admission() -> Non
 def test_a_gone_row_an_already_final_cancel_and_a_refusals_detail_are_written_down() -> None:
     """CR-S4D2A-07: step 11 says that a row its re-read no longer finds is `409 conflict`, as
     `OrderExits.amend` answers it; 15.5's reasons name `already_final` and a refusal's detail
-    keys, `step` (`ExitStep`'s four) and the class re-check's `reason` (`RECLASSIFIED`), beside
-    the record's own `reason`, its code."""
+    keys, `step` (`ExitStep`'s six, the amend route's `body` and `arm` among them, S4-D2b) and the
+    class re-check's `reason` (`RECLASSIFIED`), beside the record's own `reason`, its code."""
     assert "a row that read no longer finds is `409 conflict`, nothing sent." in _EXITS
     assert not _missing(
         _RECORDS,
         "A cancel that finds its order already final, nothing to send, is `orders.cancel` with "
         "outcome `success` and reason `already_final`, written before its `202` (§8.4).",
         "A refusal's detail names, beside `code`, the step that refused it where one did "
-        "(`step`: the route's `key`, `replay` or `guard`, or `class`, step 11's class "
-        "re-check), and the class re-check's refusal its cause too (`reason`: `reclassified`, "
-        "the class changed since step 4): the record's own `reason` is the code, "
-        "`detail.reason` the cause.",
+        "(`step`: the route's `key`, `replay` or `guard`, and an amend's `body` or `arm` too, or "
+        "`class`, step 11's class re-check), and the class re-check's refusal its cause too "
+        "(`reason`: `reclassified`, the class changed since step 4): the record's own `reason` "
+        "is the code, `detail.reason` the cause.",
     )
     assert (ALREADY_FINAL, RECLASSIFIED) == ("already_final", "reclassified")
-    assert set(get_args(ExitStep.__value__)) == {"key", "replay", "guard", "class"}
+    steps = {"key", "replay", "guard", "class", "body", "arm"}
+    assert set(get_args(ExitStep.__value__)) == steps
 
 
 def test_the_change_log_records_the_amend_judged_as_it_stands_and_the_exit_answers() -> None:

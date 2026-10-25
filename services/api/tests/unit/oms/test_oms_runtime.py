@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Coroutine, Mapping
 from contextlib import asynccontextmanager
@@ -743,6 +744,24 @@ async def test_on_a_stopped_or_unanswering_lane_cancel_all_is_not_ready() -> Non
             with pytest.raises(OmsNotReady if isinstance(error, LaneStopped) else TimeoutError):
                 await cancel_all.run(nothing, nothing, actor=nothing, request_id=None)
             assert lane.bounds == [HOP_TIMEOUT_S, None]
+
+
+async def test_a_202s_etag_reads_the_order_facades_versions_in_place_never_on_the_lane() -> None:
+    """20 Sec.6.2's read in place (ruling Q5, the orchestrator's Q8 ruling): the route's `versions`
+    is B1's facade itself, whose `version()` a `202`'s `ETag` reads from the serving loop with no
+    hop to the lane, a single read of the order's view, which each committed step replaces whole
+    (`_stepped`) and nothing writes in place."""
+    lane = Recording()
+    async with started(World().runtime(lane=lambda: lane)) as runtime:
+        lane.hops.clear()
+        versions = runtime.route.versions
+        assert versions is runtime._composed().machines
+        assert versions.version(UUID(int=7)) is None  # no such order, so no version
+        assert lane.hops == []
+    assert not inspect.iscoroutinefunction(OrderMachines.version)
+    source = inspect.getsource(OrderMachines)
+    in_place = re.compile(r"\.view(\[|\.(update|pop|popitem|setdefault|clear)\()")
+    assert source.count(".view = {") == 1 and not in_place.search(source)
 
 
 async def test_an_error_out_of_the_startup_task_is_logged_with_its_type() -> None:

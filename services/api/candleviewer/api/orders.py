@@ -13,11 +13,14 @@ checks, each before the next (24 Sec.8.4, steps 1 to 12):
    `Retry-After`, counted and never audited (SEC-S3E2-01: `run` is not reached);
 4. the account's existence through the runtime: `account_scope_denied` in step 2's shape;
 5. the arm token; 6. `Idempotency-Key`; 7. the 24 h record; 8. the anchor's lookup on the
-   runtime's own `AnchorService` (SEC-S3D-02): a replay answers the rows as read now;
+   runtime's own `AnchorService` (SEC-S3D-02): a replay answers the rows as read now, with its
+   order's `ETag` as it stands;
 9. `trading.oms_enabled`, which an order whose parsed body says `reduce_only: true` passes;
 10. the switches B1's `SEND` asks too; 11. the body read strictly into the pipeline's request;
 12. `submit`, run by the runtime as a task it tracks and shielded from the client's disconnect:
-    the task renders the answer and keeps a first `2xx` in the 24 h record itself.
+    the task renders the answer and keeps a first `2xx` in the 24 h record itself. A `202` carries
+    its order's `ETag` (ruling Q5, `api.order_etag`) where B1's facade gives a version, none in a
+    resync window, and the 24 h record replays the one it stored.
 
 Every refusal from step 4 on is counted, then audited before it is answered: `orders.submit` with
 outcome `denied` and its code, the gate's `account.disabled_by_policy`; one whose record cannot be
@@ -54,6 +57,7 @@ from candleviewer.api.order_admission import (
     AuditEmitter,
     OnAccount,
     OrderPrincipals,
+    arm_token,
     field_errors,
     idempotency_key,
     parse_json_object,
@@ -63,8 +67,10 @@ from candleviewer.api.order_admission import (
     replay_cached,
     replay_key,
     resolve_principal,
+    stop_offset,
     submit_actor,
 )
+from candleviewer.api.order_etag import order_etag
 from candleviewer.api.order_problems import order_problem, outcome_problem
 from candleviewer.api.refusal_session import SessionsLike
 from candleviewer.audit.errors import AuditError
@@ -100,10 +106,8 @@ from candleviewer.oms.idempotency import InFlight, KeyReuse, Lookup, Replay
 from candleviewer.oms.ports import (
     FAILED,
     ArmRecords,
-    ArmToken,
     RequestRecord,
     SizingRequest,
-    StopOffset,
     SubmitActor,
     SubmitAudit,
     TradingSwitches,
@@ -130,7 +134,6 @@ _PERMISSION: Final = ORDERS_PERMISSION
 _NOT_GRANTED: Final = (
     f"{DenyReason.ACCOUNT_NOT_GRANTED.value}:{_PERMISSION.value}:{Scope.GRANTED_ACCOUNTS.value}"
 )
-_ARM_HEADER_MAX: Final = 256
 _UNREAD_ROWS: Final = (TimeoutError, StorageError, OrderStoreError, AccountsError)
 
 
@@ -151,6 +154,10 @@ class _GroupRows(Protocol):
     async def get(self, scope: AccountScope, group_id: GroupId) -> ScopedTradeGroup: ...
 
 
+class _Versions(Protocol):
+    def version(self, order_id: uuid.UUID) -> int | None: ...
+
+
 class _RouteReads(Protocol):
     """`oms_wiring.OrderRoute`: what the route reads of the composed OMS."""
 
@@ -164,6 +171,8 @@ class _RouteReads(Protocol):
     def orders(self) -> _OrderRows: ...
     @property
     def groups(self) -> _GroupRows: ...
+    @property
+    def versions(self) -> _Versions: ...
 
 
 class _Pipeline(Protocol):
@@ -216,19 +225,17 @@ def _parsed(raw: bytes) -> tuple[dict[str, object], AccountId] | None:
         return None
 
 
-def _arm_token(request: Request) -> ArmToken | None:
-    presented = request.headers.get("x-arm-token")
-    if presented is None or not 0 < len(presented) <= _ARM_HEADER_MAX:
-        return None
-    return ArmToken(presented)
+def _etag(reads: _RouteReads, order_id: uuid.UUID) -> dict[str, str]:
+    """The order's `ETag` header (ruling Q5), or none: B1's facade has no version for an order in
+    a resync window or a final one. It is read once the step a `202` renders returned, so it names
+    the order as it stands, which may be a step past those rows; an `If-Match` naming it is
+    compared under the order's lock."""
+    seq = reads.versions.version(order_id)
+    return {} if seq is None else {"ETag": order_etag(order_id, seq)}
 
 
 def _decimal(value: str | None) -> Decimal | None:
     return None if value is None else Decimal(value)
-
-
-def _offset(offset: api.Offset | None) -> StopOffset | None:
-    return None if offset is None else StopOffset(offset.unit, Decimal(offset.value))
 
 
 def _order_request(body: dict[str, object], account_id: AccountId) -> OrderRequest:
@@ -256,7 +263,7 @@ def _order_request(body: dict[str, object], account_id: AccountId) -> OrderReque
         trigger=None if trigger is None else OrderTrigger(
             Decimal(trigger.price), trigger.direction, trigger.trigger_by or "LastPrice"
         ),
-        stop_loss=_offset(read.stop_loss), take_profit=_offset(read.take_profit),
+        stop_loss=stop_offset(read.stop_loss), take_profit=stop_offset(read.take_profit),
         tpsl_mode=read.tpsl_mode or "Full", profile_id=read.profile_id, note=read.note,
     )  # fmt: skip
 
@@ -356,7 +363,8 @@ def make_orders_router(
             mismatch = OmsError("a replay read a group other than its outcome's")
             rejected.labels(problem_for(mismatch).code).inc()  # `internal_error`, 20 Sec.12.1
             return order_problem(mismatch)
-        return JSONResponse(body, 202, {"Idempotency-Replayed": "true"})
+        headers = {"Idempotency-Replayed": "true"} | _etag(reads, row.id)
+        return JSONResponse(body, 202, headers)
 
     async def answer(
         pipeline: _Pipeline, reads: _RouteReads, order: OrderRequest, context: SubmitContext,
@@ -380,9 +388,11 @@ def make_orders_router(
             unwritten = OmsError("a first answer carried no written rows")
             rejected.labels(problem_for(unwritten).code).inc()  # `internal_error`, 20 Sec.12.1
             return order_problem(unwritten)
-        out = JSONResponse(first_acceptance(outcome, env), 202)
+        tagged = _etag(reads, outcome.written.order.id)
+        out = JSONResponse(first_acceptance(outcome, env), 202, tagged)
         held = replay_key(caller.principal.user_id, _OPERATION, context.client_ref)
-        kept.put(*held, StoredResponse(context.request_sha256, 202, bytes(out.body), None))
+        stored = StoredResponse(context.request_sha256, 202, bytes(out.body), tagged.get("ETag"))
+        kept.put(*held, stored)
         return out
 
     @router.post("/orders", status_code=202)
@@ -440,7 +450,7 @@ def make_orders_router(
         step = "arm"
         try:
             armed = reads.arm_records.check(
-                session_id=principal.session_id, environment=env, token=_arm_token(request)
+                session_id=principal.session_id, environment=env, token=arm_token(request)
             )
             if armed == FAILED:
                 raise SessionNotArmed

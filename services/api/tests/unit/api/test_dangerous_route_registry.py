@@ -87,6 +87,11 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     ("DELETE", "/orders/{orderId}"): (
         "cancelOrder: no step-up (04 rows 12, 13); a cancel is never gated (C-2.6)"
     ),
+    # 04 §7.2.2 rows 12 and 13: amending an order takes no step-up; a risk-increasing amend on a
+    # live account needs the session's arm token, as an order does (22 `amendOrder`, SR-043).
+    ("PATCH", "/orders/{orderId}"): (
+        "amendOrder: no step-up (04 rows 12, 13); live risk-increasing amends need the arm token"
+    ),
     # #3085 (D1): ending one's own view-as only lowers capability, so it never needs a step-up.
     ("DELETE", "/auth/session/view-as"): "endViewAs: the contract says no step-up",
     # `rules:write` is seeded `dangerous`, so the sweep flags each rule write. 04 §7.2.2 rows 22,
