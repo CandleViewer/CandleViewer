@@ -45,17 +45,30 @@ formula is re-implemented here. Nine sections, each row labelled with its source
    surviving a sync symbol change (the disarm or the held alternative beside it); section 5.1
    quotes the computed heights.
 9. The counts (``--json``) the boards and the PR quote.
+10. Frame-keyed gates (8b; the A2 list): each element is required on the state-inventory rows
+    that draw it, by frame id -- the letter and the `link` glyph beside every group colour; the
+    full conflict sentence and the `warning` glyph on every conflict frame; the one T2's anatomy
+    (lock, full label, reason, key, ``aria-disabled``) on its three frames and the T2 form on no
+    other row (A1); PROPOSED after every drawn chord that ``keymap.json`` lacks; the disarm on
+    every symbol-switch frame, with no armed state surviving (BQ-16); each frame's exits in the
+    inventory's Exits column, all T1 and never paired with a gate (A3).
+11. Numbers (8c): the ``audit:`` block at the end of the spec equals ``--json``'s markers; the
+    registered prose contexts, the section 4.1 and section 12 tables and the CVD paragraph are
+    re-derived; every two-decimal ratio and ratio triple in the spec and the hand-off is one
+    the tool derives.
 
 Usage: python3 -I docs/design/_tools/e15_d06_sync_audit.py [--json] [--check] [--table] [--self-test]
 A plain run prints every section and exits 0; ``--check`` exits 1 on any gated FAIL; ``--self-test``
-mutates the spec in memory and proves that every gate fails on its mutation (the gates are mutation-tested
-from the first commit); ``--table`` prints section 3 as a Markdown table. UTF-8 stdout. No network; no URL
-literal anywhere in this file.
+mutates the spec in memory and proves that every gate fails on its mutation, and runs the frame-level
+``MUTATIONS`` table: each mutation trips its own FAIL message exactly once, the files untouched;
+``--table`` prints section 3 as a Markdown table. UTF-8 stdout. No network; no URL literal
+anywhere in this file.
 """
 
 from __future__ import annotations
 
 import argparse
+import functools
 import importlib.util
 import json
 import math
@@ -992,6 +1005,299 @@ def inventory_rows(spec: str) -> list[list[str]]:
     return [r for r in rows_of(section(spec, "### 3.2 ", "## 4. ")) if r and r[0].startswith("`")]
 
 
+# -------------------------------------------------------- 8b. frame-keyed gates (A1-A3) --------
+# Every A2 gate reads the frame rows that draw its element, never a ruling sentence anywhere in the
+# file: removing the element from one frame row fails that frame by name.
+SENTENCE = "Chart 15m has a different interval: crosshair sync aligns by timestamp."
+# frame -> the group letters it draws beside their hues (each needs "letter X" and the `link` glyph)
+BADGE_FRAMES: dict[str, str] = {
+    "CMP-082/badge-a-compact": "A",
+    "CMP-082/badge-b-compact": "B",
+    "CMP-082/badge-c-compact": "C",
+    "CMP-082/badge-a-comfortable": "A",
+    "CMP-082/badge-narrow-steps": "A",
+    "CMP-082/badge-forced-colors": "A",
+    "CMP-082/badge-greyscale": "ABC",
+    "CMP-082/chart-toolbar-badge": "A",
+    "SCR-023/light-badges": "ABC",
+    "SCR-023/join-after": "A",
+}
+HUE_LETTER = {"cyan": "A", "amber": "B", "purple": "C"}
+NO_SYNC_CARRIERS = (("the `unlink` glyph", "`unlink`"), ("the words", '"No sync"'))
+CONFLICT_FRAMES: dict[str, tuple[tuple[str, str], ...]] = {
+    "SCR-023/conflict-interval": (("its polite announcement", "AN-5"),),
+    "CMP-082/conflict-header": (("its never-a-toast clause", "never a toast alone"),),
+    "SCR-023/light-conflict": (("its polite announcement", "AN-5"),),
+}
+_T2_LINK = (
+    ("the lock glyph", "lock glyph"),
+    ("the full label", "full label"),
+    ("the reason", '"Join a sync group to link its scale."'),
+    ("the state key", "`scale.link.no_group`"),
+    ("aria-disabled", "`aria-disabled`"),
+    ("the second line", "as the second line"),
+    ("the re-shown reason", "AN-11"),
+)
+T2_ANATOMY: dict[str, tuple[tuple[str, str], ...]] = {
+    "SCR-043/link-no-group": (
+        *_T2_LINK,
+        ("arrow reach", "arrow-reachable"),
+        ("the state path", "`disabledReason`"),
+        ("the label token", "`color.text.tertiary`"),
+        ("the reason token", "`color.text.secondary`"),
+    ),
+    "SCR-043/light-link-no-group": _T2_LINK,
+    "SCR-023/dirty-save-view-as": (
+        ("the lock glyph", "lock glyph"),
+        ("the full label", 'full label "Save"'),
+        ("aria-disabled", "`aria-disabled`"),
+        ("the label token", "`color.text.tertiary`"),
+        ("the raised fill", "`color.surface.raised` fill"),
+        ("the view-as key", "`rbac.view_as`"),
+        ("the banner's notice", "banner"),
+        ("CMP-079 on the role leg", "CMP-079 on the role leg"),
+        ("the nothing-sent key", "nothing sent"),
+    ),
+}
+DISARM: dict[str, tuple[tuple[str, str], ...]] = {
+    "SCR-023/symbol-switch-disarm": (
+        ("the DOM's disarm", '"ETHUSDT · symbol set by sync group A" and `LOCKED`'),
+        ("the chart's disarm", "CMP-221 arm reads `LOCKED`"),
+        ("the drawn-outcome clause", "the disarm is the drawn outcome"),
+        ("the assertive disarm", "assertive the disarm (AN-3, AN-4)"),
+    ),
+    "SCR-023/symbol-switch-hold": (
+        ("the disarm on [Follow group]", "[Follow group], which disarms and follows"),
+        ("the follow announcement", "[Follow group] → AN-4's disarm"),
+        ("the inset", "as an inset"),
+    ),
+}
+ARMED_SURVIVES = re.compile(
+    r"\b(?:still|stays|remains?|kept|left|keeps(?: it)?) armed\b|\barmed and follow|\bre-arm",
+    re.IGNORECASE,
+)
+DIALOG_CARRIERS: dict[str, tuple[tuple[str, str], ...]] = {
+    "SCR-043/link-refused": (
+        ("the focused primary", "`[[ Use percentage scale ]]` focused"),
+        ("the Cancel exit", "`[ Cancel ]`"),
+    ),
+}
+# A3: each frame's exits (the inventory's last column), by surface kind; every one T1
+EXIT_NEEDLES: dict[str, tuple[str, ...]] = {
+    "panel": ("No sync", "`Esc`"),
+    "panel-none": ("`Esc`",),
+    "popover": ("\u00d7", "`Esc`", "No sync", "Independent"),
+    "popover-none": ("\u00d7", "`Esc`"),
+    "modal": ("Close", "`Esc`", "No sync", "Independent"),
+    "axis-linked": ("Independent", "No sync", "`Esc`"),
+    "menu-checked": ("Independent", "`Esc`"),
+    "menu": ("`Esc`",),
+    "dialog": ("Cancel", "`Esc`"),
+    "view-as": ("No sync", "Independent", "\u00d7", "`Esc`"),
+}
+EXIT_KIND: dict[str, str] = {
+    "CMP-082/badge-none-compact": "panel-none",
+    **{
+        f"CMP-082/{n}": "panel"
+        for n in (
+            "badge-a-compact",
+            "badge-b-compact",
+            "badge-c-compact",
+            "badge-a-comfortable",
+            "badge-narrow-steps",
+            "badge-forced-colors",
+            "badge-greyscale",
+            "chart-toolbar-badge",
+            "conflict-header",
+        )
+    },
+    **{
+        f"SCR-023/{n}": "popover"
+        for n in (
+            "popover-1920",
+            "popover-1280",
+            "popover-text-scale-125",
+            "conflict-interval",
+            "drawings-cross-symbol",
+            "account-env-refused",
+            "light-conflict",
+        )
+    },
+    "SCR-023/popover-no-sync": "popover-none",
+    "SCR-023/modal-200pct": "modal",
+    **{
+        f"SCR-043/{n}": "axis-linked"
+        for n in ("axis-linked", "axis-linked-locked", "linked-zoom-before", "linked-zoom-after")
+    },
+    "SCR-043/percent-result": "axis-linked",
+    "SCR-043/axis-independent": "panel",
+    "SCR-043/menu-link-checked": "menu-checked",
+    "SCR-043/menu-link-unchecked": "menu",
+    "SCR-043/link-no-group": "menu",
+    "SCR-043/light-link-no-group": "menu",
+    "SCR-043/link-refused": "dialog",
+    "SCR-043/link-refused-btc-eth": "dialog",
+    "SCR-043/light-link-refused": "dialog",
+    "SCR-023/join-before": "panel-none",
+    "SCR-023/leave-after": "panel",
+    **{
+        f"SCR-023/{n}": "panel"
+        for n in (
+            "join-after",
+            "symbol-switch-disarm",
+            "symbol-switch-hold",
+            "crosshair-remote-compact",
+            "crosshair-remote-comfortable",
+            "crosshair-remote-dense",
+            "crosshair-remote-footprint",
+            "crosshair-readout-engine",
+            "light-badges",
+            "light-crosshair-footprint",
+        )
+    },
+    "SCR-023/dirty-save-view-as": "view-as",
+}
+EXIT_GATED = re.compile(
+    r"lock|aria-disabled|\bT2\b|CMP-079|rbac\.|disabledReason|\bblocked\b|\bdisabled\b|"
+    r"(?<!never )\bgated\b",
+    re.IGNORECASE,
+)
+EXIT_NEAR_GATE = re.compile(
+    r"(?:\u00d7|`Esc`|No sync|Independent|Cancel|Close)[^;.|]{0,40}?"
+    r"\b(?:locked|lock glyph|aria-disabled|disabled|blocked|(?<!never )gated)\b"
+)
+# A1: the T2 form only on the three T2 frames (and the account absence's aria-disabled)
+T2_FORM = re.compile(r"lock glyph|`lock`|CMP-079|disabledReason|rbac\.[a-z_]+|\bT2\b|aria-disabled")
+T2_FORM_ALLOWED = ("not a T2", "no lock", "no CMP-079")
+CHORD = re.compile(
+    r"(?:Ctrl|Alt|Shift|Meta|Cmd)\+[A-Za-z0-9←→↑↓]+(?:\+[A-Za-z0-9←→↑↓]+)*(?:\.\.\d)?"
+)
+
+
+def chords_in(text: str) -> list[tuple[str, int, list[str]]]:
+    """Each chord with its end offset and its expansion (``Ctrl+Shift+1..3`` -> three chords)."""
+    out: list[tuple[str, int, list[str]]] = []
+    for m in CHORD.finditer(text):
+        c = m.group(0)
+        r = re.fullmatch(r"(.*\+)(\d)\.\.(\d)", c)
+        exp = (
+            [f"{r.group(1)}{k}" for k in range(int(r.group(2)), int(r.group(3)) + 1)] if r else [c]
+        )
+        out.append((c, m.end(), exp))
+    return out
+
+
+def letter_drawn(text: str, x: str) -> bool:
+    return re.search(rf"\bletters? (?:[ABC](?: / |, | and ))*{x}\b", text) is not None
+
+
+def frame_gates(spec: str, bindings: set[str]) -> list[str]:
+    fails: list[str] = []
+    inv = inventory_rows(spec)
+    by = {r[0].strip("`"): r for r in inv}
+    for name, r in by.items():
+        text = " | ".join(r)
+        # A2-1: the letter and the glyph beside every group colour, per frame
+        need = set(BADGE_FRAMES.get(name, ""))
+        need |= {HUE_LETTER[h] for h in HUE_LETTER if re.search(rf"\b{h}\b", text)}
+        need |= set(re.findall(r"\btile ([ABC])\b", text))
+        need |= set(re.findall(r'"([ABC]) · ', text))
+        for x in sorted(need):
+            if not letter_drawn(text, x):
+                fails.append(f"badge: frame {name} draws group {x}'s colour without its letter")
+        if need and "`link`" not in text:
+            fails.append(f"badge: frame {name} draws a group colour without the `link` glyph")
+        # A2-2: the conflict grammar, the glyph and the frame's own carrier, per conflict frame
+        if name in CONFLICT_FRAMES or re.search(r"different interval|aligns by timestamp", text):
+            if SENTENCE not in text:
+                fails.append(f"conflict: frame {name} lacks the full notice sentence")
+            if "`warning` glyph" not in text:
+                fails.append(f"conflict: frame {name} lacks the `warning` glyph")
+            for label, needle in CONFLICT_FRAMES.get(name, ()):
+                if needle not in text:
+                    fails.append(f"conflict: frame {name} lacks {label}")
+        # A2-3: the one T2's anatomy on each T2 frame; A1: the T2 form nowhere else
+        for label, needle in T2_ANATOMY.get(name, ()):
+            if needle not in text:
+                fails.append(f"t2-anatomy: frame {name} lacks {label}")
+        if name not in T2_ANATOMY:
+            body = text
+            for ok in T2_FORM_ALLOWED:
+                body = body.replace(ok, "")
+            for m in T2_FORM.finditer(body):
+                tok_ = m.group(0)
+                if tok_ == "aria-disabled" and "account row" in body:
+                    continue  # the account axis: an absence, aria-disabled without a lock (D-9)
+                fails.append(f"t2-form: frame {name} draws '{tok_}' outside the three T2 frames")
+        # A2-5 (BQ-16): the disarm on every symbol-switch frame; no armed state survives
+        for label, needle in DISARM.get(name, ()):
+            if needle not in text:
+                fails.append(f"disarm: frame {name} lacks {label}")
+        surviving = name in DISARM or "ETHUSDT · symbol set by sync group" in text
+        if surviving and ARMED_SURVIVES.search(text):
+            fails.append(f"armed: frame {name} draws an armed state surviving the sync change")
+        for label, needle in DIALOG_CARRIERS.get(name, ()):
+            if needle not in text:
+                fails.append(f"dialog: frame {name} lacks {label}")
+        # A3: every frame names its exits, all T1; no exit is paired with a gate anywhere in the row
+        kind = EXIT_KIND.get(name)
+        exits = r[-1] if len(r) > 5 else ""
+        if kind is None:
+            fails.append(f"exits: frame {name} has no exit kind in the tool")
+        else:
+            for needle in EXIT_NEEDLES[kind]:
+                if needle not in exits:
+                    fails.append(f"exits: frame {name} does not draw its exit {needle}")
+        if "T1" not in exits:
+            fails.append(f"exits: frame {name} does not class its exits T1")
+        if EXIT_GATED.search(exits):
+            fails.append(f"exits: frame {name} gates an exit in its Exits cell")
+        hit = EXIT_NEAR_GATE.search(text)
+        if hit:
+            fails.append(f"exits: frame {name} gates an exit ('{hit.group(0)}')")
+    for name in sorted(set(EXIT_KIND) - set(by)):
+        fails.append(f"exits: the tool names frame {name}, the inventory does not")
+    # A1: the switch table — only the account row is aria-disabled, and never with a lock
+    for r in rows_of(section(spec, "### 5.2 ", "### 5.3 ")):
+        body = " | ".join(r)
+        for ok in T2_FORM_ALLOWED:
+            body = body.replace(ok, "")
+        for m in T2_FORM.finditer(body):
+            if m.group(0) == "aria-disabled" and r[0] == "Account":
+                continue
+            fails.append(f"t2-form: the {r[0]} switch row draws '{m.group(0)}'")
+    # A2-4: every drawn chord is in keymap.json, a component key, or marked PROPOSED after it
+    component = {
+        e
+        for r in rows_of(section(spec, "### 9.1 ", "### 9.2 "))
+        if len(r) > 4 and r[4].startswith("component key")
+        for _c, _e, exp in chords_in(r[1])
+        for e in exp
+    }
+    surfaces: list[tuple[str, str]] = [(f"frame {n}", " | ".join(r)) for n, r in by.items()]
+    surfaces += [
+        (f"board {r[0]}", " | ".join(r))
+        for r in rows_of(section(spec, "## 0. ", "## 1. "))
+        if r and re.fullmatch(r"\d\d", r[0])
+    ]
+    hint = section(spec, "### 9.4 ", "## 10. ").split("with the two defects")[0]
+    surfaces += [("the §9.4 board-09 hint", q) for q in re.findall(r'"([^"]*)"', hint)]
+    surfaces += [
+        (f"copy deck {r[0]}", r[1])
+        for r in rows_of(section(spec, "## 11. ", "## 12. "))
+        if len(r) > 1
+    ]
+    for where, text in surfaces:
+        for cell in text.split("|"):
+            for clause in cell.split(";"):
+                for c, end, exp in chords_in(clause):
+                    if all(e in bindings or e in component for e in exp):
+                        continue
+                    if not re.search(r"proposed", clause[end:], re.IGNORECASE):
+                        fails.append(f"keys: {where} draws {c} without PROPOSED after it")
+    return fails
+
+
 def gates(
     spec: str, handoff: str, tool: str, bindings: set[str], switches: Switches = SWITCHES
 ) -> list[str]:
@@ -1204,6 +1510,8 @@ def gates(
     for t in PROPOSED_TOKENS:
         if not re.search(re.escape(t) + r"[^\n]*PROPOSED|PROPOSED[^\n]*" + re.escape(t), spec):
             fails.append(f"tokens: {t} is not marked PROPOSED on its row")
+    fails.extend(frame_gates(spec, bindings))
+    fails.extend(number_gates(spec, handoff))
     return fails
 
 
@@ -1239,6 +1547,824 @@ def counts(spec: str, handoff: str) -> dict[str, int]:
     }
 
 
+@functools.lru_cache(maxsize=1)
+def _matrix() -> dict[str, Any]:
+    return matrix_report([])
+
+
+@functools.lru_cache(maxsize=1)
+def _cvd() -> dict[str, Any]:
+    return cvd_report()
+
+
+@functools.lru_cache(maxsize=1)
+def _pop() -> dict[str, Any]:
+    return popover_report()
+
+
+def bound_missing() -> list[str]:
+    dark = theme("dark")
+    return [n for n in BOUND if n not in dark]
+
+
+def build_markers(spec: str, handoff: str) -> dict[str, Any]:
+    """The values the spec's `audit:` markers carry (also printed under ``--json``)."""
+    badge, pop, refusal = badge_report(), _pop(), refusal_report()
+    matrix, cvd_rows = _matrix(), _cvd()
+    missing = bound_missing()
+    c = counts(spec, handoff)
+    cb, cf = badge["densities"]["compact"], badge["densities"]["comfortable"]
+    at125 = popover_layout("compact", 125)
+    markers: dict[str, Any] = {
+        "popover_w": POPOVER_W,
+        "popover_h_compact": pop["height"]["compact"],
+        "popover_h_comfortable": pop["height"]["comfortable"],
+        "popover_column_w": pop["column_w"],
+        "zoom200_w": ZOOM200[0],
+        "zoom200_h": ZOOM200[1],
+        "zoom200_body_h_compact": pop["zoom200"]["body_h"]["compact"],
+        "zoom200_visible_body": pop["zoom200"]["visible_body"],
+        "zoom200_switch_row": pop["zoom200"]["switch_row"],
+        "switch_row_column_compact": pop["switch_rows"]["compact"]["column"],
+        "switch_row_full_compact": pop["switch_rows"]["compact"]["full"],
+        "switch_row_column_comfortable": pop["switch_rows"]["comfortable"]["column"],
+        "switch_row_full_comfortable": pop["switch_rows"]["comfortable"]["full"],
+        "switch_box_column": pop["boxes"]["column"],
+        "switch_box_full": pop["boxes"]["full"],
+        "switch_label_px": SWITCH_TEXT["label"],
+        "switch_consequence_px": SWITCH_TEXT["consequence"],
+        "label_w_drawings": label_w("Drawings (same symbol only)", SWITCH_TEXT["label"]),
+        "label_w_account": label_w("Account and trade group", SWITCH_TEXT["label"]),
+        "text_scale_125_max_lines": pop["text_scale_125"]["max_cons_lines"],
+        "text_scale_125_row_symbol_crosshair": at125["switch_rows"][0]["px"],
+        "text_scale_125_row_other": at125["switch_rows"][1]["px"],
+        "text_scale_125_row_top": at125["switch_rows"][0]["top"],
+        "text_scale_150_max_lines": pop["text_scale_150"]["max_cons_lines"],
+        "modal_header": MODAL_HEADER,
+        "modal_footer": MODAL_FOOTER,
+        "text_scale_125_h": pop["text_scale_125"]["compact_h"],
+        "text_scale_150_h": pop["text_scale_150"]["compact_h"],
+        "canvas_1280_w": CANVAS_1280[0],
+        "canvas_1280_h": CANVAS_1280[1],
+        "canvas_1920_w": CANVAS_1920[0],
+        "canvas_1920_h": CANVAS_1920[1],
+        "row_compact": cb["row"],
+        "row_comfortable": cf["row"],
+        "badge_h_compact": cb["badge_h"],
+        "badge_h_comfortable": cf["badge_h"],
+        "tile_compact": cb["tile"],
+        "tile_comfortable": cf["tile"],
+        "glyph_compact": cb["glyph"],
+        "glyph_comfortable": cf["glyph"],
+        "badge_gap": cb["gap"],
+        "badge_pad_compact": cb["pad_x"],
+        "badge_pad_comfortable": cf["pad_x"],
+        "badge_text_compact": cb["text"],
+        "badge_text_comfortable": cf["text"],
+        "badge_w_full_compact": cb["width"]["full"],
+        "badge_w_one_compact": cb["width"]["one"],
+        "badge_w_count_compact": cb["width"]["count"],
+        "badge_w_none_compact": cb["width"]["none"],
+        "badge_w_min_compact": cb["width"]["letter_glyph"],
+        "badge_w_full_comfortable": cf["width"]["full"],
+        "badge_w_one_comfortable": cf["width"]["one"],
+        "badge_w_count_comfortable": cf["width"]["count"],
+        "badge_w_none_comfortable": cf["width"]["none"],
+        "badge_w_min_comfortable": cf["width"]["letter_glyph"],
+        "d02_min_count": D02_MIN["A · 1"],
+        "d02_min_one": D02_MIN["A · symbol"],
+        "d02_min_full": D02_MIN["A · symbol, crosshair, drawings"],
+        "d02_min_via": D02_MIN["via A"],
+        "kind_minimum_delta": badge["kind_minimum_delta"],
+        "min_w_chart_d02": 328,
+        "min_w_dom_d02": 380,
+        "min_w_tape_d02": 232,
+        "min_w_chart": 328 + badge["kind_minimum_delta"],
+        "min_w_dom": 380 + badge["kind_minimum_delta"],
+        "min_w_tape": 232 + badge["kind_minimum_delta"],
+        "btc": PRICES["BTCUSDT"],
+        "eth": PRICES["ETHUSDT"],
+        "sol": PRICES["SOLUSDT"],
+        "btc_sol_ratio": refusal["btc_sol"]["ratio"],
+        "btc_sol_about": refusal["btc_sol"]["about"],
+        "btc_sol_decades": refusal["btc_sol"]["decades"],
+        "btc_eth_ratio": refusal["btc_eth"]["ratio"],
+        "btc_eth_decades": refusal["btc_eth"]["decades"],
+        "eth_sol_ratio": refusal["eth_sol"]["ratio"],
+        "eth_sol_decades": refusal["eth_sol"]["decades"],
+        "threshold_decades": THRESHOLD_DECADES,
+        "opacity_muted": float(tok("opacity.muted")),
+        "matrix_gated": matrix["gated"],
+        "matrix_failed": matrix["failed"],
+        "matrix_pairs": len(PAIRS),
+        "remote_bgs": len(REMOTE_BGS),
+        "cvd_kinds": 4,
+        "cvd_min_de_dark": cvd_rows["min_de"]["dark"],
+        "cvd_min_de_light": cvd_rows["min_de"]["light"],
+        "tokens_bound": len(BOUND),
+        "tokens_missing": len(missing),
+        "tokens_proposed": len(PROPOSED_TOKENS),
+        "glyphs_proposed": len(PROPOSED_GLYPHS),
+        "events": len(EVENTS),
+        "t2_frames_expected": len(T2_FRAMES),
+        **{f"count_{k}": v for k, v in c.items()},
+    }
+    return markers
+
+
+# -------------------------------------------------------- 8c. every number from --json (M-3) ---
+# Three checks, each failing by name: (1) the `audit:` block at the end of the spec equals
+# ``--json``'s markers (every key once, no unknown key); (2) every registered prose context
+# re-derives its numbers (a context that vanishes is a FAIL); (3) the section 4.1 and section 12
+# tables equal the tool's, and every
+# two-decimal ratio and ratio triple in the spec and the hand-off is one the tool derives.
+MARKER = re.compile(r"<!--\s*audit:([A-Za-z0-9_.-]+)=([^\s>]+)\s*-->")
+WORD_NUM = {"three": 3, "ten": 10}
+_N = r"(\d[\d,]*(?:\.\d+)?)"
+_R = r"(\d+\.\d\d)"
+_T = rf"{_R} / {_R} / {_R}"
+# fmt: off
+CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    (
+        "fixture prices",
+        rf"Fixture content is E15-D02 §0's: BTCUSDT {_N}, ETHUSDT {_N}, SOLUSDT {_N}",
+        ("btc", "eth", "sol"),
+    ),
+    ("the popover width", r"the (\d+) px popover", ("popover_w",)),
+    ("the 200 % viewport", r"(\d+)\u00d7(\d+) CSS px", ("zoom200_w", "zoom200_h")),
+    ("the text-scale strip", r"the (\d+) % in-app text-scale strip", ("text_scale_low",)),
+    (
+        "tokens bound",
+        r"\((\d+) bound, (\d+) missing — the tool\)",
+        ("tokens_bound", "tokens_missing"),
+    ),
+    (
+        "token sets",
+        r"\((\d+) dark · (\d+) light · (\d+) high-contrast\)",
+        ("tokens_dark", "tokens_light", "tokens_hc"),
+    ),
+    (
+        "E15-D02 minimums",
+        r'the badge minimums (\d+) / (\d+) / (\d+) px at compact, "via A" (\d+)',
+        ("d02_min_count", "d02_min_one", "d02_min_full", "d02_min_via"),
+    ),
+    ("the minimum delta", r"\+(\d+) px at the letter-and-glyph minimum", ("kind_minimum_delta",)),
+    (
+        "BTC / ETH decades",
+        rf"BTC(?:USDT)? ?/? ?(?:against )?ETH[^.;|]*?{_R} decades",
+        ("btc_eth_decades",),
+    ),
+    ("the tile sizes", r"a (\d+) / (\d+) px letter tile", ("tile_compact", "tile_comfortable")),
+    (
+        "the badge heights",
+        r"Compact (\d+) px tall in the (\d+) px row, comfortable (\d+) in (\d+)",
+        ("badge_h_compact", "row_compact", "badge_h_comfortable", "row_comfortable"),
+    ),
+    (
+        "D-1's minimum",
+        r"the minimum is (\d+) / (\d+) px",
+        ("badge_w_min_compact", "badge_w_min_comfortable"),
+    ),
+    ("the rejected tint", rf"the rejected tint measures {_R}:1 in light", ("tint_purple_light",)),
+    ("the modal margin", r"with a (\d+) px margin", ("modal_margin",)),
+    (
+        "D-3's 200 % case",
+        r"the viewport is (\d+)\u00d7(\d+) and the popover is (\d+) px tall in compact",
+        ("zoom200_w", "zoom200_h", "popover_h_compact"),
+    ),
+    (
+        "D-3's 125 % case",
+        r"\((\d+) px inside the (\d+) px canvas, a consequence line on up to (\w+) lines",
+        ("text_scale_125_h", "canvas_1280_h", "text_scale_125_lines"),
+    ),
+    ("the 150 % height", r"150 % it measures (\d+) px", ("text_scale_150_h",)),
+    ("D-4's columns", r"in two (\d+) px columns", ("popover_column_w",)),
+    (
+        "D-4's Drawings fit",
+        r"its (\d+) px label never fits a (\d+) px column box",
+        ("label_w_drawings", "switch_box_column"),
+    ),
+    (
+        "D-4's row heights",
+        r"\((\d+) px for a two-line consequence in a column, (\d+) full width, compact\)",
+        ("switch_row_column_compact", "switch_row_full_compact"),
+    ),
+    (
+        "the refusal sentence",
+        (
+            r"BTCUSDT\}? trades near \{?([\d,]+)\}? and \{?SOLUSDT\}? near \{?([\d.]+)\}?: "
+            r"about \{?(\d+)\}? times"
+        ),
+        ("btc", "sol", "btc_sol_about"),
+    ),
+    ("about N times", r"about (\d+) times", ("btc_sol_about",)),
+    ("badge none width", r"no tile; (\d+) px", ("badge_w_none_compact",)),
+    ("badge one width", r'\+ "symbol"; (\d+) px', ("badge_w_one_compact",)),
+    ("badge B width", r"three axes in words; (\d+) px", ("badge_w_full_compact",)),
+    (
+        "the compact redlines",
+        r"redlines: tile (\d+), glyph (\d+), gap (\d+), pad (\d+), text (\d+)",
+        ("tile_compact", "glyph_compact", "badge_gap", "badge_pad_compact", "badge_text_compact"),
+    ),
+    (
+        "the comfortable frame",
+        (
+            r"the (\d+) px row: tile A [^;]*; badge (\d+), tile (\d+), glyph (\d+), pad (\d+), "
+            r"text (\d+); (\d+) px for three axes"
+        ),
+        (
+            "row_comfortable", "badge_h_comfortable", "tile_comfortable", "glyph_comfortable",
+            "badge_pad_comfortable", "badge_text_comfortable", "badge_w_full_comfortable",
+        ),
+    ),
+    (
+        "the narrow steps",
+        r'words → "3" \((\d+) px\) → tile \+ glyph only \((\d+) px',
+        ("badge_w_count_compact", "badge_w_min_compact"),
+    ),
+    (
+        "the greyscale strip",
+        r"greys of ΔE (\d+\.\d) \(dark\) and (\d+\.\d) \(light\)",
+        ("cvd_min_de_dark", "cvd_min_de_light"),
+    ),
+    ("the 1920 frame", r"the (\d+) \u00d7 (\d+) px popover", ("popover_w", "popover_h_compact")),
+    ("the 1280 canvas", r"inside the (\d+)\u00d7(\d+) canvas", ("canvas_1280_w", "canvas_1280_h")),
+    (
+        "the 1920 canvas",
+        r"the (\d+)\u00d7(\d+) canvas at 1920\u00d71080",
+        ("canvas_1920_w", "canvas_1920_h"),
+    ),
+    (
+        "the modal frame",
+        (
+            r"(\d+)\u00d7(\d+) CSS px: a CMP-043 modal filling the viewport, header (\d+), "
+            r"sticky footer (\d+), one column of six single-line switch rows \((\d+) px each\), "
+            r"the body \((\d+) px\) "
+            r"scrolling inside (\d+) px"
+        ),
+        (
+            "zoom200_w", "zoom200_h", "modal_header", "modal_footer", "zoom200_switch_row",
+            "zoom200_body_h_compact", "zoom200_visible_body",
+        ),
+    ),
+    (
+        "the 125 % frame",
+        r"the popover at (\d+) px, still a popover inside the (\d+) px canvas",
+        ("text_scale_125_h", "canvas_1280_h"),
+    ),
+    (
+        "the BTC / ETH inset",
+        rf"BTCUSDT {_N} against ETHUSDT {_N}, about (\d+\.\d) times, {_R} decades",
+        ("btc", "eth", "btc_eth_about", "btc_eth_decades"),
+    ),
+    (
+        "the footprint frame (dark)",
+        rf"callouts {_T} without and {_T} with the halo \(dark\)",
+        ("rf.bid.dark", "rf.ask.dark", "rf.imb.dark", "bt.bid.dark", "bt.ask.dark", "bt.imb.dark"),
+    ),
+    (
+        "the light edges",
+        rf"edges {_T} on the header",
+        ("edge.a.light", "edge.b.light", "edge.c.light"),
+    ),
+    ("the light conflict glyph", rf"glyph {_R}:1", ("conflict_glyph_light",)),
+    (
+        "the light T2 item",
+        rf"label {_R}, reason {_R}, lock {_R}",
+        ("t2_label_light", "t2_reason_light", "t2_lock_light"),
+    ),
+    ("the light primary", rf"primary action label {_R}:1", ("primary_light",)),
+    (
+        "the footprint frame (light)",
+        rf"{_T} without, {_T} with the halo",
+        (
+            "rf.bid.light", "rf.ask.light", "rf.imb.light", "bt.bid.light", "bt.ask.light",
+            "bt.imb.light",
+        ),
+    ),
+    (
+        "the focus ring on the header",
+        rf"outside the chip \({_T}:1 on the header\)",
+        ("focus_header.dark", "focus_header.light", "focus_header.hc"),
+    ),
+    (
+        "the badge minimum (4.2)",
+        (
+            r"\*\*(\d+) px compact / (\d+) px comfortable\*\*, against E15-D02 §3's text-only "
+            r'"A · 1" at '
+            r"(\d+) px — \*\*\+(\d+) px\*\*"
+        ),
+        ("badge_w_min_compact", "badge_w_min_comfortable", "d02_min_count", "kind_minimum_delta"),
+    ),
+    (
+        "the kind minimums",
+        r"\(chart (\d+), DOM (\d+), tape (\d+)\) to (\d+) / (\d+) / (\d+) at compact",
+        (
+            "min_w_chart_d02", "min_w_dom_d02", "min_w_tape_d02", "min_w_chart", "min_w_dom",
+            "min_w_tape",
+        ),
+    ),
+    (
+        "the header edges (4.3)",
+        rf"A {_T}, B {_T}, C {_T} — every edge",
+        (
+            "edge.a.dark", "edge.a.light", "edge.a.hc", "edge.b.dark", "edge.b.light", "edge.b.hc",
+            "edge.c.dark", "edge.c.light", "edge.c.hc",
+        ),
+    ),
+    (
+        "the CVD minimum (4.3)",
+        r"ΔE76 ≥ (\d+\.\d) in dark, ≥ (\d+\.\d) in light",
+        ("cvd_min_cvd_dark", "cvd_min_cvd_light"),
+    ),
+    (
+        "the greyscale collapse (4.3)",
+        r"collapse \(ΔE (\d+\.\d) dark, (\d+\.\d) light\)",
+        ("cvd_min_de_dark", "cvd_min_de_light"),
+    ),
+    ("the tint (4.3)", rf"purple tint in light: {_R}:1", ("tint_purple_light",)),
+    (
+        "the switch area (5.1)",
+        r"two (\d+) px columns \(a (\d+) px label box beside the (\d+) px track\)",
+        ("popover_column_w", "switch_box_column", "switch_track_w"),
+    ),
+    (
+        "the full width (5.1)",
+        r"the full (\d+) px width \(a (\d+) px box\)",
+        ("inner_w", "switch_box_full"),
+    ),
+    ("the label size", r"\(`type\.ui\.body`, (\d+) px\)", ("switch_label_px",)),
+    (
+        "the label widths",
+        r"Drawings needs (\d+) px, Account (\d+)",
+        ("label_w_drawings", "label_w_account"),
+    ),
+    ("the consequence size", r"\(`type\.ui\.caption`, (\d+) px\)", ("switch_consequence_px",)),
+    (
+        "the row stack (5.1)",
+        (
+            r"title row (\d+) / (\d+) — .*?\"Group A shares:\" (\d+) / (\d+); "
+            r"two column rows (\d+) / (\d+) each \(switch (\d+) / (\d+) \+ a two-line "
+            r"consequence\); the Drawings row (\d+) / (\d+) \(one line\); the account row "
+            r"(\d+) / (\d+); .*?DOM\" (\d+) / (\d+); the conflict "
+            r"notice (\d+) / (\d+) when present; .*?\(not a group setting\)\" (\d+) / (\d+) "
+            r"and .*? per "
+            r"member, (\d+) / (\d+) each"
+        ),
+        (
+            "row_title_compact", "row_title_comfortable", "row_shares_compact",
+            "row_shares_comfortable", "switch_row_column_compact", "switch_row_column_comfortable",
+            "switch_h_compact", "switch_h_comfortable", "switch_row_full_compact",
+            "switch_row_full_comfortable", "switch_row_full_compact", "switch_row_full_comfortable",
+            "row_members_compact", "row_members_comfortable", "row_conflict_compact",
+            "row_conflict_comfortable", "row_heading_compact", "row_heading_comfortable",
+            "row_select_compact", "row_select_comfortable",
+        ),
+    ),
+    (
+        "the canvases (5.1)",
+        (
+            r"inside the (\d+)\u00d7(\d+) canvas at 1280\u00d7800 "
+            r"\(and the (\d+)\u00d7(\d+) canvas at 1920\u00d71080\) "
+            r"with a (\d+) px margin"
+        ),
+        ("canvas_1280_w", "canvas_1280_h", "canvas_1920_w", "canvas_1920_h", "modal_margin"),
+    ),
+    (
+        "the 200 % modal (5.3)",
+        (
+            r"the CSS viewport is (\d+)\u00d7(\d+): the popover \((\d+) px \+ (\d+) margin\) "
+            r"cannot fit, .*?header (\d+) px \(title and \u00d7\), .*?the modal's (\d+) px box, "
+            r"(\d+) px each\), .*?a body of "
+            r"(\d+) px that scrolls inside (\d+) px, and a sticky (\d+) px footer"
+        ),
+        (
+            "zoom200_w", "zoom200_h", "popover_h_compact", "modal_margin_x2", "modal_header",
+            "modal_box", "zoom200_switch_row", "zoom200_body_h_compact", "zoom200_visible_body",
+            "modal_footer",
+        ),
+    ),
+    (
+        "the 125 % stack (5.3)",
+        (
+            r"the popover measures (\d+) px \(the boxes stay, the text grows: the label's "
+            r"(\d+\.\d+) px "
+            r"line box lifts every row's top to (\d+) px, the Symbol \| Crosshair row is "
+            r"(\d+) px with three-line consequences, the other switch rows (\d+)\) and stays "
+            r"a popover inside the "
+            r"(\d+) px canvas"
+        ),
+        (
+            "text_scale_125_h", "label_line_125", "text_scale_125_row_top",
+            "text_scale_125_row_symbol_crosshair", "text_scale_125_row_other", "canvas_1280_h",
+        ),
+    ),
+    ("the canvas margins (5.3)", r"less its (\d+) px margins", ("modal_margin",)),
+    (
+        "the axis text (7.2)",
+        rf"\({_T}:1 on the canvas — CMP-188's own",
+        ("axis_text.dark", "axis_text.light", "axis_text.hc"),
+    ),
+    (
+        "the T2 label and reason (7.3)",
+        rf"\({_T}:1 on the menu\), the reason .*? \({_T}:1\)",
+        (
+            "t2_label.dark", "t2_label.light", "t2_label.hc", "t2_reason.dark", "t2_reason.light",
+            "t2_reason.hc",
+        ),
+    ),
+    (
+        "the reason length",
+        r'"Join a sync group to link its scale\." \| (\d+) \|',
+        ("reason_chars",),
+    ),
+    ("the reason length (copy)", r"\((\d+) characters\)", ("reason_chars",)),
+    (
+        "the refusal arithmetic (7.4)",
+        rf"BTCUSDT {_N} against SOLUSDT {_N} is {_R} times — \"about (\d+)\" — or {_R} decades",
+        ("btc", "sol", "btc_sol_ratio", "btc_sol_about", "btc_sol_decades"),
+    ),
+    (
+        "the threshold (7.5)",
+        (
+            rf"BTCUSDT against ETHUSDT \({_N}\) is {_R} times, {_R} decades — refused; "
+            r"ETHUSDT against "
+            rf"SOLUSDT, {_R} times, {_R} decades"
+        ),
+        ("eth", "btc_eth_ratio", "btc_eth_decades", "eth_sol_ratio", "eth_sol_decades"),
+    ),
+    (
+        "the blended dash (7.6)",
+        rf"— {_T}:1 over the canvas when blended",
+        ("rf.canvas.dark", "rf.canvas.light", "rf.canvas.hc"),
+    ),
+    (
+        "the dash over cells (7.6)",
+        rf"the dash alone measures {_T}:1 \(dark\)",
+        ("rf.bid.dark", "rf.ask.dark", "rf.imb.dark"),
+    ),
+    (
+        "the two-tone (7.6)",
+        rf"against the cell {_T}, the dash against its halo {_T}",
+        ("bt.bid.dark", "bt.ask.dark", "bt.imb.dark", "dh.bid.dark", "dh.ask.dark", "dh.imb.dark"),
+    ),
+    ("the dash range (D-14)", rf"the dash alone measures {_R}\u2013{_R}:1", ("rf_min", "rf_max")),
+    (
+        "the gated pairs",
+        r"\*\*(\d+) gated pairs, (\d+) FAIL\*\*",
+        ("matrix_gated", "matrix_failed"),
+    ),
+    (
+        "the footprint edges (12)",
+        rf"would measure {_R}\u2013{_R}:1",
+        ("edge_fp_min", "edge_fp_max"),
+    ),
+    ("opacity.muted (12)", r"`opacity\.muted` \((\d+\.\d+)\)", ("opacity_muted",)),
+    (
+        "tokens (12)",
+        r"\*\*Tokens bound:\*\* (\d+), (\d+) missing",
+        ("tokens_bound", "tokens_missing"),
+    ),
+    (
+        "the CVD minimum (12)",
+        r"The minimum ΔE is (\d+\.\d) in dark and (\d+\.\d) in light",
+        ("cvd_min_de_dark", "cvd_min_de_light"),
+    ),
+    (
+        "A-10",
+        r'the badge "A · 1" (\d+) px; chart (\d+), DOM (\d+), tape (\d+)',
+        ("d02_min_count", "min_w_chart_d02", "min_w_dom_d02", "min_w_tape_d02"),
+    ),
+    (
+        "A-10 proposed",
+        r"tile \+ glyph minimum (\d+) px \(\+(\d+)\): chart (\d+), DOM (\d+), tape (\d+)",
+        ("badge_w_min_compact", "kind_minimum_delta", "min_w_chart", "min_w_dom", "min_w_tape"),
+    ),
+    (
+        "OQ-4",
+        (
+            r"the \+(\d+) px badge minimum raising the kind minimums "
+            r"\(chart (\d+), DOM (\d+), tape (\d+)\)"
+        ),
+        ("kind_minimum_delta", "min_w_chart", "min_w_dom", "min_w_tape"),
+    ),
+    ("the account row cost (16)", r"the account row costs (\d+) px", ("switch_row_full_compact",)),
+    (
+        "the summary badge (19)",
+        r"(\d+) / (\d+) px minimum, \+(\d+) on",
+        ("badge_w_min_compact", "badge_w_min_comfortable", "kind_minimum_delta"),
+    ),
+    (
+        "the summary popover (19)",
+        r"The (\d+) px popover \((\d+) / (\d+) px\)",
+        ("popover_w", "popover_h_compact", "popover_h_comfortable"),
+    ),
+    (
+        "the summary refusal (19)",
+        rf"about (\d+) times, {_R} decades\)",
+        ("btc_sol_about", "btc_sol_decades"),
+    ),
+    (
+        "the summary halo (19)",
+        rf"\({_R}\u2013{_R}:1 without, {_R}\u2013{_R} with\)",
+        ("rf_min", "rf_max", "bt_min", "bt_max"),
+    ),
+    (
+        "the summary counts (19)",
+        (
+            r"(\d+) named frames on (\w+) PENDING boards; (\d+) gated pairs, (\d+) FAIL; "
+            r"(\d+) A-rows, "
+            r"(\d+) C-rows, (\d+) G-rows, (\d+) OQs"
+        ),
+        (
+            "count_frames_named", "count_boards", "matrix_gated", "matrix_failed", "count_a_rows",
+            "count_c_rows", "count_g_rows", "count_oq_rows",
+        ),
+    ),
+)
+HANDOFF_CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    (
+        "hand-off: the popover densities",
+        r"title (\d+), column rows (\d+), full rows (\d+), selects (\d+); height (\d+)",
+        (
+            "row_title_compact", "switch_row_column_compact", "switch_row_full_compact",
+            "row_select_compact", "popover_h_compact",
+        ),
+    ),
+    (
+        "hand-off: the comfortable popover",
+        r"\| (\d+) / (\d+) / (\d+) / (\d+); height (\d+) ",
+        (
+            "row_title_comfortable", "switch_row_column_comfortable", "switch_row_full_comfortable",
+            "row_select_comfortable", "popover_h_comfortable",
+        ),
+    ),
+    (
+        "hand-off: the compact badge widths",
+        r"text (\d+), widths (\d+) / (\d+) / (\d+) / (\d+) / (\d+); comfortable",
+        (
+            "badge_text_compact", "badge_w_full_compact", "badge_w_one_compact",
+            "badge_w_count_compact", "badge_w_none_compact", "badge_w_min_compact",
+        ),
+    ),
+    (
+        "hand-off: the comfortable badge widths",
+        r"text (\d+), widths (\d+) / (\d+) / (\d+) / (\d+) / (\d+) \(spec",
+        (
+            "badge_text_comfortable", "badge_w_full_comfortable", "badge_w_one_comfortable",
+            "badge_w_count_comfortable", "badge_w_none_comfortable", "badge_w_min_comfortable",
+        ),
+    ),
+    (
+        "hand-off: the modal",
+        (
+            r"header (\d+), footer (\d+), single-line rows (\d+), body (\d+) scrolling in (\d+); "
+            r"the text "
+            r"scale 125 % (\d+) \(popover\), 150 % (\d+) \(modal\)"
+        ),
+        (
+            "modal_header", "modal_footer", "zoom200_switch_row", "zoom200_body_h_compact",
+            "zoom200_visible_body", "text_scale_125_h", "text_scale_150_h",
+        ),
+    ),
+    (
+        "hand-off: the gated pairs",
+        r"(\d+) gated pairs, (\d+) FAIL",
+        ("matrix_gated", "matrix_failed"),
+    ),
+)
+
+# fmt: on
+
+
+def number_values(spec: str, handoff: str) -> dict[str, Any]:
+    """The markers plus the derived values the registered contexts quote (never typed)."""
+    v: dict[str, Any] = dict(build_markers(spec, handoff))
+    pop = _pop()
+    m = _matrix()
+    th3 = {"dark": "dark", "light": "light", "high-contrast": "hc"}
+
+    def mrow(prefix: str, th: str) -> float:
+        return float(
+            next(
+                r["ratio"]
+                for r in m["rows"]
+                if r["element"].startswith(prefix) and r["theme"] == th
+            )
+        )
+
+    for th, short in th3.items():
+        for k in ("a", "b", "c"):
+            v[f"edge.{k}.{short}"] = mrow(f"tile edge {k.upper()} on the header", th)
+        v[f"focus_header.{short}"] = mrow("focus ring on the header", th)
+        v[f"axis_text.{short}"] = mrow("axis text Linked", th)
+        v[f"t2_label.{short}"] = mrow("T2 label", th)
+        v[f"t2_reason.{short}"] = mrow("T2 reason", th)
+    v["conflict_glyph_light"] = mrow("conflict glyph", "light")
+    v["t2_label_light"], v["t2_reason_light"] = (
+        mrow("T2 label", "light"),
+        mrow("T2 reason", "light"),
+    )
+    v["t2_lock_light"] = mrow("T2 lock glyph", "light")
+    v["primary_light"] = mrow("refusal primary action label", "light")
+    v["tint_purple_light"] = mrow("rejected tint: letter on a purple", "light")
+    fp = [r["ratio"] for r in m["rows"] if "on a footprint" in r["element"]]
+    v["edge_fp_min"], v["edge_fp_max"] = min(fp), max(fp)
+    short_bg = {
+        "color.surface.canvas": "canvas",
+        "color.footprint.bid": "bid",
+        "color.footprint.ask": "ask",
+        "color.footprint.imbalance": "imb",
+    }
+    for r in m["remote"]:
+        k = f"{short_bg[r['bg']]}.{th3[r['theme']]}"
+        v[f"rf.{k}"], v[f"bt.{k}"], v[f"dh.{k}"] = (
+            r["ratio"],
+            r["best_of_two_tone"],
+            r["dash_vs_halo"],
+        )
+    cells = [r for r in m["remote"] if r["bg"] != "color.surface.canvas"]
+    v["rf_min"], v["rf_max"] = min(r["ratio"] for r in cells), max(r["ratio"] for r in cells)
+    v["bt_min"], v["bt_max"] = (
+        min(r["best_of_two_tone"] for r in cells),
+        max(r["best_of_two_tone"] for r in cells),
+    )
+    cv = _cvd()
+    for th, short in (("dark", "dark"), ("light", "light")):
+        v[f"cvd_min_cvd_{short}"] = min(
+            p[k]
+            for kind, p in cv["pairs"][th].items()
+            if kind != "greyscale"
+            for k in ("a-b", "a-c", "b-c")
+        )
+    for th, name in (
+        ("dark", "tokens_dark"),
+        ("light", "tokens_light"),
+        ("high-contrast", "tokens_hc"),
+    ):
+        v[name] = len(verify.merged_set([verify.THEMES[th][-1]]))
+    v["btc_eth_about"] = refusal_report()["btc_eth"]["about"]
+    v["text_scale_low"], v["text_scale_125_lines"] = (
+        TEXT_SCALES[0],
+        pop["text_scale_125"]["max_cons_lines"],
+    )
+    v["modal_margin"], v["modal_margin_x2"] = MODAL_MARGIN, 2 * MODAL_MARGIN
+    v["switch_track_w"], v["inner_w"] = SWITCH_TRACK_W, POPOVER_W - 2 * POPOVER_PAD
+    v["modal_box"] = popover_layout("compact", 100, ZOOM200[0], 1)["boxes"]["full"]
+    v["label_line_125"] = SWITCH_TEXT["label"] * TEXT_SCALES[0] / 100
+    v["switch_h_compact"], v["switch_h_comfortable"] = SWITCH_H["compact"], SWITCH_H["comfortable"]
+    fixed = {
+        n.split(":")[0].split(" ")[0]: (c, f)
+        for n, c, f in POPOVER_FIXED_TOP + POPOVER_FIXED_BOTTOM
+    }
+    for key, name in (
+        ("title", "row_title"),
+        ("heading", "row_shares"),
+        ("members", "row_members"),
+        ("conflict", "row_conflict"),
+    ):
+        v[f"{name}_compact"], v[f"{name}_comfortable"] = fixed[key]
+    head = [r for n, c, f in POPOVER_FIXED_BOTTOM for r in [(n, c, f)] if n.startswith("heading")]
+    v["row_heading_compact"], v["row_heading_comfortable"] = head[0][1], head[0][2]
+    sel = next((c, f) for n, c, f in POPOVER_FIXED_BOTTOM if n.startswith("scale select"))
+    v["row_select_compact"], v["row_select_comfortable"] = sel[0] // 2, sel[1] // 2
+    v["reason_chars"] = len("Join a sync group to link its scale.")
+    return v
+
+
+def same_number(text: str, value: Any) -> bool:
+    t = text.replace(",", "").strip("{}")
+    if t in WORD_NUM:
+        return bool(WORD_NUM[t] == value)
+    if isinstance(value, str):
+        return t == value
+    try:
+        f = float(t)
+    except ValueError:
+        return False
+    nd = len(t.split(".")[1]) if "." in t else 0
+    return bool(round(float(value), nd) == f)
+
+
+def edge_ratio(m: dict[str, Any], x: str, th: str) -> str:
+    return fmt(
+        next(
+            r["ratio"]
+            for r in m["rows"]
+            if r["element"] == f"tile edge {x} on the header" and r["theme"] == th
+        )
+    )
+
+
+@functools.lru_cache(maxsize=1)
+def allowed_ratios() -> tuple[set[str], set[tuple[str, str, str]]]:
+    m = _matrix()
+    singles: set[str] = set()
+    triples: set[tuple[str, str, str]] = set()
+    by: dict[str, dict[str, dict[str, Any]]] = {}
+    for r in m["rows"]:
+        singles |= {fmt(r["ratio"]), fmt(r["grey"])}
+        by.setdefault(r["element"], {})[r["theme"]] = r
+    for ths in by.values():
+        for k in ("ratio", "grey"):
+            triples.add(tuple(fmt(ths[t][k]) for t in THEMES))  # type: ignore[arg-type]
+    rem: dict[str, dict[str, dict[str, Any]]] = {}
+    for r in m["remote"]:
+        singles |= {fmt(r[k]) for k in ("ratio", "grey", "best_of_two_tone", "dash_vs_halo")}
+        rem.setdefault(r["bg"], {})[r["theme"]] = r
+    keys = ("ratio", "best_of_two_tone", "dash_vs_halo")
+    for ths in rem.values():
+        for k in keys:
+            triples.add(tuple(fmt(ths[t][k]) for t in THEMES))  # type: ignore[arg-type]
+    for th in THEMES:
+        cells = [rem[b][th] for b in REMOTE_BGS[1:]]
+        for k in keys:
+            triples.add(tuple(fmt(c[k]) for c in cells))  # type: ignore[arg-type]
+        edges = [edge_ratio(m, x, th) for x in "ABC"]
+        triples.add((edges[0], edges[1], edges[2]))
+    ref = refusal_report()
+    for k in ("btc_sol", "btc_eth", "eth_sol"):
+        singles |= {fmt(ref[k]["ratio"]), fmt(ref[k]["decades"])}
+    singles |= {fmt(PRICES["SOLUSDT"]), fmt(SWITCH_TEXT["label"] * TEXT_SCALES[0] / 100)}
+    return singles, triples
+
+
+def number_gates(spec: str, handoff: str) -> list[str]:
+    fails: list[str] = []
+    v = number_values(spec, handoff)
+    marks = build_markers(spec, handoff)
+    seen: dict[str, int] = {}
+    for hit in MARKER.finditer(spec):
+        name, value = hit.group(1), hit.group(2)
+        seen[name] = seen.get(name, 0) + 1
+        if name not in marks:
+            fails.append(f"marker: audit:{name} is not a key the tool prints")
+        elif str(marks[name]) != value:
+            fails.append(f"marker: audit:{name}={value} but --json prints {marks[name]}")
+    for name in sorted(marks):
+        if seen.get(name, 0) != 1:
+            fails.append(f"marker: audit:{name} appears {seen.get(name, 0)} times (once expected)")
+    prose = "\n".join(ln for ln in spec.split("\n") if not ln.startswith("<!--"))
+    for where, text, ctx in (("spec", prose, CONTEXTS), ("hand-off", handoff, HANDOFF_CONTEXTS)):
+        for label, pattern, names in ctx:
+            hits = list(re.finditer(pattern, text))
+            if not hits:
+                fails.append(f"number: the {where} context '{label}' vanished")
+            for hit in hits:
+                for i, name in enumerate(names, start=1):
+                    got = hit.group(i)
+                    if got is not None and not same_number(got, v[name]):
+                        fails.append(f"number: {label}: the {where} says {got}, the tool {v[name]}")
+    # the section 4.1 density pair, cell by cell
+    cols = ("row", "badge_h", "tile", "glyph", "gap", "pad_x", "text")
+    wcols = ("full", "one", "count", "none", "letter_glyph")
+    rows = {r[0]: r for r in rows_of(section(spec, "### 4.1 ", "### 4.2 ")) if r}
+    for dens, g in badge_report()["densities"].items():
+        r = rows.get(dens)
+        if r is None or len(r) != 1 + len(cols) + len(wcols):
+            fails.append(f"badge: the §4.1 table lacks its {dens} row")
+            continue
+        want = [str(g[c]) for c in cols] + [f"{g['width'][c]} px" for c in wcols]
+        for head, got, exp in zip((*cols, *wcols), r[1:], want, strict=True):
+            if got != exp:
+                fails.append(f"badge: the §4.1 {dens} {head} cell reads {got}, the tool {exp}")
+    # the section 12 tables, row by row, against the tool's own table
+    want_rows = rows_of(matrix_table(_matrix()))
+    have = rows_of(section(spec, "## 12. ", "**CVD and greyscale"))
+    want_by = {r[0]: r for r in want_rows}
+    have_by = {r[0]: r for r in have}
+    for key, r in want_by.items():
+        if have_by.get(key) != r:
+            fails.append(f"matrix: the §12 row '{key[:48]}' differs from the tool's")
+    for key in set(have_by) - set(want_by):
+        fails.append(f"matrix: the §12 row '{key[:48]}' is not a tool row")
+    # the CVD paragraph: every simulated pair and both hue sets, from the tool
+    cvd_p = section(spec, "**CVD and greyscale", "**Tokens bound")
+    cv = _cvd()
+    for th in ("dark", "light"):
+        for kind, p in cv["pairs"][th].items():
+            s = f"{kind} {p['a-b']:.1f} / {p['a-c']:.1f} / {p['b-c']:.1f}"
+            if s not in cvd_p:
+                fails.append(f"cvd: the {th} {kind} row is not the tool's ({s})")
+        for k in ("a", "b", "c"):
+            if f"`{cv['hues'][th][k]}`" not in cvd_p:
+                fails.append(f"cvd: the {th} hue {k} is not the tool's")
+    # every two-decimal ratio and every ratio triple in the spec and the hand-off is the tool's
+    singles, triples = allowed_ratios()
+    for where, text in (("spec", prose), ("hand-off", handoff)):
+        for hit in re.finditer(r"(?<![\d.\-])(\d+\.\d\d)(?![\d.])", text):
+            if hit.group(1) not in singles:
+                fails.append(
+                    f"number: the {where}'s ratio {hit.group(1)} is not one the tool derives"
+                )
+        for hit in re.finditer(rf"(?<![\d.]){_T}(?![\d.])", text):
+            if hit.groups() not in triples:
+                fails.append(
+                    f"number: the {where}'s triple {' / '.join(hit.groups())} is not the tool's"
+                )
+    return fails
+
+
 # ---------------------------------------------------------------- self-test ----------------------------------
 def in_section(text: str, start: str, end: str, fn: Callable[[str], str]) -> str:
     """Apply fn to the section slice only, so a mutation lands where its gate reads."""
@@ -1260,6 +2386,191 @@ def set_cell(line: str, idx: int, value: str) -> str:
     cells = line.strip().strip("|").split("|")
     cells[idx] = f" {value} "
     return "|" + "|".join(cells) + "|"
+
+
+# The frame-level mutation table (the pre-READY audit): each edits ONE element in ONE named row
+# (or one table cell / marker) and must trip its own FAIL message exactly once. Targets:
+# "frame:<id>" (the state-inventory row), "line:<prefix>" (the one spec line starting so),
+# "hand:<prefix>" (the hand-off).
+Edit = tuple[str, str, str]
+# fmt: off
+MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
+    ("M01", "frame CMP-082/badge-a-compact draws group A's colour without its letter",
+     (("frame:CMP-082/badge-a-compact", "tile A (cyan edge, letter A)", "a cyan-edged tile"),)),
+    ("M02", "frame CMP-082/badge-a-compact draws a group colour without the `link` glyph",
+     (("frame:CMP-082/badge-a-compact", " + `link` + ", " + "),)),
+    ("M03", "frame CMP-082/badge-b-compact draws group B's colour without its letter",
+     (("frame:CMP-082/badge-b-compact", "tile B (amber edge, letter B)", "an amber-edged tile"),)),
+    ("M04", "frame CMP-082/badge-c-compact draws group C's colour without its letter",
+     (("frame:CMP-082/badge-c-compact", "tile C (purple edge, letter C)", "a purple-edged tile"),)),
+    ("M05", "frame CMP-082/badge-narrow-steps draws group A's colour without its letter",
+     (("frame:CMP-082/badge-narrow-steps",
+       "(44 px: tile A, letter A, `link`)",
+       "(44 px: the hue edge only)"),)),
+    ("M06", "frame SCR-023/light-badges draws group A's colour without its letter",
+     (("frame:SCR-023/light-badges",
+       "(letters A / B / C, each with `link`)",
+       "(three coloured edges)"),)),
+    ("M07", "frame CMP-082/chart-toolbar-badge draws group A's colour without its letter",
+     (("frame:CMP-082/chart-toolbar-badge", "(tile A, letter A, `link`)", "(a cyan chip)"),)),
+    ("M08", "conflict: frame SCR-023/conflict-interval lacks the full notice sentence",
+     (("frame:SCR-023/conflict-interval",
+       "Chart 15m has a different interval: crosshair",
+       "Chart 15m differs: crosshair"),)),
+    ("M09", "conflict: frame CMP-082/conflict-header lacks the `warning` glyph",
+     (("frame:CMP-082/conflict-header",
+       "the `warning` glyph beside the badge;",
+       "a tint on the badge;"),)),
+    ("M10", "conflict: frame CMP-082/conflict-header lacks its never-a-toast clause",
+     (("frame:CMP-082/conflict-header",
+       "the same sentence, never a toast alone",
+       "a toast only"),)),
+    ("M11", "conflict: frame SCR-023/light-conflict lacks the `warning` glyph",
+     (("frame:SCR-023/light-conflict", "in light, `warning` glyph:", "in light:"),)),
+    ("M12", "conflict: a conflict frame row lacks the notice grammar",
+     (("frame:SCR-023/conflict-interval",
+       '"Chart 15m has a different interval: crosshair sync aligns by timestamp."',
+       "the notice"),)),
+    ("M13", "t2-anatomy: frame SCR-043/link-no-group lacks the lock glyph",
+     (("frame:SCR-043/link-no-group", "lock glyph leading in", "leading in"),
+      ("frame:SCR-043/link-no-group", "; lock glyph;", ";"))),
+    ("M14", "t2-anatomy: frame SCR-043/link-no-group lacks the reason",
+     (("frame:SCR-043/link-no-group", '"Join a sync group to link its scale." (', "("),)),
+    ("M15", "t2-anatomy: frame SCR-043/link-no-group lacks aria-disabled",
+     (("frame:SCR-043/link-no-group", "`aria-disabled`, arrow-reachable", "arrow-reachable"),)),
+    ("M16", "t2-anatomy: frame SCR-043/link-no-group lacks the state key",
+     (("frame:SCR-043/link-no-group", " (`scale.link.no_group`) as", " as"),)),
+    ("M17", "t2-anatomy: frame SCR-043/light-link-no-group lacks the lock glyph",
+     (("frame:SCR-043/light-link-no-group",
+       "in light: lock glyph, full label",
+       "in light: full label"),
+      ("frame:SCR-043/light-link-no-group", "; lock glyph)", ")"))),
+    ("M18", "t2-anatomy: frame SCR-023/dirty-save-view-as lacks the lock glyph",
+     (("frame:SCR-023/dirty-save-view-as", "lock glyph, full label", "full label"),)),
+    ("M19", "t2-anatomy: frame SCR-023/dirty-save-view-as lacks the view-as key",
+     (("frame:SCR-023/dirty-save-view-as", "the banner's `rbac.view_as` node", "the banner"),)),
+    ("M20", "t2-form: frame SCR-023/leave-after draws 'aria-disabled'",
+     (("frame:SCR-023/leave-after",
+       "nothing re-fetched",
+       "nothing re-fetched; No sync `aria-disabled` with `rbac.permission` second"),)),
+    ("M21", "t2-form: frame SCR-023/popover-1280 draws '`lock`'",
+     (("frame:SCR-023/popover-1280",
+       "note at full opacity",
+       "note at full opacity, the CMP-019 `lock` leading"),)),
+    ("M22", "t2-form: the Interval switch row draws 'T2'",
+     (("line:| Interval ",
+       "the frame annotates it",
+       "the frame annotates it; T2 `aria-disabled` with `disabledReason`"),)),
+    ("M23", "over-conversion: frame SCR-023/popover-1280 draws a lock glyph",
+     (("frame:SCR-023/popover-1280", "note at full opacity", "note at full opacity, lock glyph"),)),
+    ("M24", "keys: frame SCR-023/join-after draws Ctrl+Shift+1 without PROPOSED",
+     (("frame:SCR-023/join-after",
+       "the layout tab shows the dirty `*`",
+       "joined with `Ctrl+Shift+1`; the layout tab shows the dirty `*`"),)),
+    ("M25", "keys: the §9.4 board-09 hint draws Ctrl+Shift+1..3 without PROPOSED",
+     (("line:The chords are drawn with CMP-022", ' — proposed; not in the keymap")', '")'),)),
+    ("M26", "keys: copy deck `sync.hotkeys.note` draws Ctrl+Shift+1..3 without PROPOSED",
+     (("line:| `sync.hotkeys.note`", " — proposed; not in the keymap", " — in the keymap"),)),
+    ("M27", "keys: board 05 draws Ctrl+Shift+L without PROPOSED",
+     (("line:| 05 ",
+       "checkbox checked, unchecked",
+       "checkbox (`Ctrl+Shift+L`) checked, unchecked"),)),
+    ("M28", "disarm: frame SCR-023/symbol-switch-disarm lacks the DOM's disarm",
+     (("frame:SCR-023/symbol-switch-disarm",
+       'sync group A" and `LOCKED`',
+       'sync group A" and still armed'),)),
+    ("M29", "disarm: frame SCR-023/symbol-switch-disarm lacks the chart's disarm",
+     (("frame:SCR-023/symbol-switch-disarm",
+       "the armed chart's CMP-221 arm reads `LOCKED` too",
+       "the armed chart stays armed"),)),
+    ("M30", "disarm: frame SCR-023/symbol-switch-hold lacks the disarm on [Follow group]",
+     (("frame:SCR-023/symbol-switch-hold", ", which disarms and follows", ""),)),
+    ("M31", "disarm: frame SCR-023/symbol-switch-disarm lacks the assertive disarm",
+     (("frame:SCR-023/symbol-switch-disarm",
+       " then assertive the disarm (AN-3, AN-4)",
+       " (AN-3)"),)),
+    ("M32", "disarm: frame SCR-023/symbol-switch-disarm lacks the drawn-outcome clause",
+     (("frame:SCR-023/symbol-switch-disarm",
+       "— the disarm is the drawn outcome (the default, OQ-1)",
+       "— the default (OQ-1)"),)),
+    ("M33", "badge: the §4.1 comfortable letter_glyph cell reads 52 px",
+     (("line:| comfortable | 32 ", "| 54 px ", "| 52 px "),)),
+    ("M34", "number: the comfortable frame: the spec says 14",
+     (("frame:CMP-082/badge-a-comfortable", "glyph 16", "glyph 14"),)),
+    ("M35", "badge: the §4.1 compact text cell reads 12",
+     (("line:| compact     | 24 ", "| 11   |", "| 12   |"),)),
+    ("M36", "exits: frame SCR-023/dirty-save-view-as gates an exit ('",
+     (("frame:SCR-023/dirty-save-view-as",
+       "every pointer shares",
+       "every pointer shares; \u00d7 and `Esc` locked"),)),
+    ("M37", "exits: frame SCR-043/link-refused does not draw its exit Cancel",
+     (("frame:SCR-043/link-refused", "Cancel; `Esc` (= Cancel)", "`Esc`"),)),
+    ("M38", "exits: frame SCR-023/leave-after gates an exit ('",
+     (("frame:SCR-023/leave-after",
+       'Chart 15m back to "No sync"',
+       "Chart 15m kept in A (No sync blocked under view-as)"),)),
+    ("M39", "exits: frame SCR-023/modal-200pct does not draw its exit Close",
+     (("frame:SCR-023/modal-200pct", "Close (\u00d7's twin); ", ""),)),
+    ("M40", "number: the 125 % frame: the spec says 590",
+     (("frame:SCR-023/popover-text-scale-125", "the popover at 591 px", "the popover at 590 px"),)),
+    ("M41", "number: the BTC / ETH inset: the spec says 1.43",
+     (("frame:SCR-043/link-refused-btc-eth", "1.42 decades", "1.43 decades"),)),
+    ("M42", "number: the footprint frame (dark): the spec says 7.54",
+     (("frame:SCR-023/crosshair-remote-footprint", "7.45 / 4.68", "7.54 / 4.68"),)),
+    ("M43", "number: the gated pairs: the spec says 82",
+     (("line:Two UI densities for the badge", "**81 gated pairs", "**82 gated pairs"),)),
+    ("M44", "matrix: the §12 row 'tile edge C on the header",
+     (("line:| tile edge C on the header",
+       "4.09 (grey 4.17)   | 5.21",
+       "4.90 (grey 4.17)   | 5.21"),)),
+    ("M45", "number: the summary popover (19): the spec says 526",
+     (("line:SCR-023 in colour on E15-D02", "(437 / 525 px)", "(437 / 526 px)"),)),
+    ("M46", "frames: the hand-off's named-frame count differs",
+     (("hand:Three blocks", "45 named frames", "46 named frames"),)),
+    ("M47", "number: the CVD minimum (4.3): the spec says 24.2",
+     (("line:`color.sync.a` / `.b` / `.c` are PROPOSED", "ΔE76 ≥ 22.4", "ΔE76 ≥ 24.2"),)),
+    ("M48", "number: the refusal arithmetic (7.4): the spec says 449.38",
+     (("line:Linking across magnitudes", "449.83 times", "449.38 times"),)),
+    ("M49", "t2-anatomy: frame SCR-043/link-no-group lacks the state path",
+     (("frame:SCR-043/link-no-group", "`disabledReason`, state-gated", "state-gated"),)),
+    ("M50", "armed: frame SCR-023/symbol-switch-hold draws an armed state surviving",
+     (("frame:SCR-023/symbol-switch-hold",
+       "which disarms and follows",
+       "which disarms and follows; the DOM keeps it armed on ETHUSDT"),)),
+    ("M51", "dialog: frame SCR-043/link-refused lacks the Cancel exit",
+     (("frame:SCR-043/link-refused", ", `[ Cancel ]`", ""),)),
+    ("M52", "marker: audit:popover_h_compact=438",
+     (("line:<!-- audit:popover_w=",
+       "audit:popover_h_compact=437",
+       "audit:popover_h_compact=438"),)),
+    ("M53", "number: the axis text (7.2): the spec says 6.63",
+     (("line:The axis says it in text", "5.96 / 6.36 / 11.87", "5.96 / 6.63 / 11.87"),)),
+    ("M54", "cvd: the dark tritanopia row",
+     (("line:**CVD and greyscale",
+       "tritanopia 134.8 / 22.4 / 129.2",
+       "tritanopia 134.8 / 24.2 / 129.2"),)),
+    ("M55", "exits: frame SCR-023/popover-1920 does not draw its exit \u00d7",
+     (("frame:SCR-023/popover-1920", "\u00d7; `Esc`; the radio", "`Esc`; the radio"),)),
+    ("M56", "conflict: frame SCR-023/light-conflict lacks the full notice sentence",
+     (("frame:SCR-023/light-conflict",
+       '"Chart 15m has a different interval: crosshair sync',
+       '"… crosshair sync'),)),
+)
+# fmt: on
+
+
+def apply_mutation(spec: str, handoff: str, edits: tuple[Edit, ...]) -> tuple[str, str]:
+    """Apply each edit to the one line its target names; raise if a target or text is missing."""
+    docs = {"spec": spec.split("\n"), "hand": handoff.split("\n")}
+    for target, old, new in edits:
+        kind, _, key = target.partition(":")
+        doc = docs["hand" if kind == "hand" else "spec"]
+        prefix = f"| `{key}` " if kind == "frame" else key
+        idx = [i for i, ln in enumerate(doc) if ln.startswith(prefix)]
+        if len(idx) != 1 or old not in doc[idx[0]]:
+            raise ValueError(f"mutation target {target!r} / {old!r} not found exactly once")
+        doc[idx[0]] = doc[idx[0]].replace(old, new, 1)
+    return "\n".join(docs["spec"]), "\n".join(docs["hand"])
 
 
 def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[str]:
@@ -1333,12 +2644,14 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[st
             lambda t: edit_row(
                 t,
                 r"^\| `SCR-023/symbol-switch-hold` .*$",
-                lambda ln: ln.replace(
-                    "held: armed (group A is on ETHUSDT)",
-                    "armed and following group A onto ETHUSDT",
-                )
-                .replace("which disarms and follows", "which keeps it armed")
-                .replace("disarm", "follow"),
+                lambda ln: (
+                    ln.replace(
+                        "held: armed (group A is on ETHUSDT)",
+                        "armed and following group A onto ETHUSDT",
+                    )
+                    .replace("which disarms and follows", "which keeps it armed")
+                    .replace("disarm", "follow")
+                ),
             ),
         ),
         "armed: frame SCR-023/symbol-switch-hold",
@@ -1590,6 +2903,22 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[st
         ),
         "tokens:",
     )
+    # the frame-level mutation table: each mutation trips its own message exactly once
+    expects = [e for _m, e, _ed in MUTATIONS]
+    if len(set(expects)) != len(expects):
+        problems.append("self-test: two mutations share a FAIL message")
+    for mid, want, edits in MUTATIONS:
+        try:
+            s2, h2 = apply_mutation(spec, handoff, edits)
+        except ValueError as exc:
+            problems.append(f"self-test: {mid} cannot be applied ({exc})")
+            continue
+        hits = sum(want in g for g in gates(s2, h2, tool, bindings))
+        if hits != 1:
+            problems.append(f"self-test: {mid} tripped '{want}' {hits} times (once expected)")
+    # the in-memory mutations never touch the files: both are byte-identical after the run
+    if (SPEC.exists() and read(SPEC) != spec) or (HANDOFF.exists() and read(HANDOFF) != handoff):
+        problems.append("self-test: the spec or the hand-off on disk changed during the run")
     return problems
 
 
@@ -1632,102 +2961,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.self_test and spec:
         st = self_test(spec, handoff, tool, bindings)
         fails.extend(st)
-    cb, cf = badge["densities"]["compact"], badge["densities"]["comfortable"]
-    at125 = popover_layout("compact", 125)
-    markers: dict[str, Any] = {
-        "popover_w": POPOVER_W,
-        "popover_h_compact": pop["height"]["compact"],
-        "popover_h_comfortable": pop["height"]["comfortable"],
-        "popover_column_w": pop["column_w"],
-        "zoom200_w": ZOOM200[0],
-        "zoom200_h": ZOOM200[1],
-        "zoom200_body_h_compact": pop["zoom200"]["body_h"]["compact"],
-        "zoom200_visible_body": pop["zoom200"]["visible_body"],
-        "zoom200_switch_row": pop["zoom200"]["switch_row"],
-        "switch_row_column_compact": pop["switch_rows"]["compact"]["column"],
-        "switch_row_full_compact": pop["switch_rows"]["compact"]["full"],
-        "switch_row_column_comfortable": pop["switch_rows"]["comfortable"]["column"],
-        "switch_row_full_comfortable": pop["switch_rows"]["comfortable"]["full"],
-        "switch_box_column": pop["boxes"]["column"],
-        "switch_box_full": pop["boxes"]["full"],
-        "switch_label_px": SWITCH_TEXT["label"],
-        "switch_consequence_px": SWITCH_TEXT["consequence"],
-        "label_w_drawings": label_w("Drawings (same symbol only)", SWITCH_TEXT["label"]),
-        "label_w_account": label_w("Account and trade group", SWITCH_TEXT["label"]),
-        "text_scale_125_max_lines": pop["text_scale_125"]["max_cons_lines"],
-        "text_scale_125_row_symbol_crosshair": at125["switch_rows"][0]["px"],
-        "text_scale_125_row_other": at125["switch_rows"][1]["px"],
-        "text_scale_125_row_top": at125["switch_rows"][0]["top"],
-        "text_scale_150_max_lines": pop["text_scale_150"]["max_cons_lines"],
-        "modal_header": MODAL_HEADER,
-        "modal_footer": MODAL_FOOTER,
-        "text_scale_125_h": pop["text_scale_125"]["compact_h"],
-        "text_scale_150_h": pop["text_scale_150"]["compact_h"],
-        "canvas_1280_w": CANVAS_1280[0],
-        "canvas_1280_h": CANVAS_1280[1],
-        "canvas_1920_w": CANVAS_1920[0],
-        "canvas_1920_h": CANVAS_1920[1],
-        "row_compact": cb["row"],
-        "row_comfortable": cf["row"],
-        "badge_h_compact": cb["badge_h"],
-        "badge_h_comfortable": cf["badge_h"],
-        "tile_compact": cb["tile"],
-        "tile_comfortable": cf["tile"],
-        "glyph_compact": cb["glyph"],
-        "glyph_comfortable": cf["glyph"],
-        "badge_gap": cb["gap"],
-        "badge_pad_compact": cb["pad_x"],
-        "badge_pad_comfortable": cf["pad_x"],
-        "badge_text_compact": cb["text"],
-        "badge_text_comfortable": cf["text"],
-        "badge_w_full_compact": cb["width"]["full"],
-        "badge_w_one_compact": cb["width"]["one"],
-        "badge_w_count_compact": cb["width"]["count"],
-        "badge_w_none_compact": cb["width"]["none"],
-        "badge_w_min_compact": cb["width"]["letter_glyph"],
-        "badge_w_full_comfortable": cf["width"]["full"],
-        "badge_w_one_comfortable": cf["width"]["one"],
-        "badge_w_count_comfortable": cf["width"]["count"],
-        "badge_w_none_comfortable": cf["width"]["none"],
-        "badge_w_min_comfortable": cf["width"]["letter_glyph"],
-        "d02_min_count": D02_MIN["A · 1"],
-        "d02_min_one": D02_MIN["A · symbol"],
-        "d02_min_full": D02_MIN["A · symbol, crosshair, drawings"],
-        "d02_min_via": D02_MIN["via A"],
-        "kind_minimum_delta": badge["kind_minimum_delta"],
-        "min_w_chart_d02": 328,
-        "min_w_dom_d02": 380,
-        "min_w_tape_d02": 232,
-        "min_w_chart": 328 + badge["kind_minimum_delta"],
-        "min_w_dom": 380 + badge["kind_minimum_delta"],
-        "min_w_tape": 232 + badge["kind_minimum_delta"],
-        "btc": PRICES["BTCUSDT"],
-        "eth": PRICES["ETHUSDT"],
-        "sol": PRICES["SOLUSDT"],
-        "btc_sol_ratio": refusal["btc_sol"]["ratio"],
-        "btc_sol_about": refusal["btc_sol"]["about"],
-        "btc_sol_decades": refusal["btc_sol"]["decades"],
-        "btc_eth_ratio": refusal["btc_eth"]["ratio"],
-        "btc_eth_decades": refusal["btc_eth"]["decades"],
-        "eth_sol_ratio": refusal["eth_sol"]["ratio"],
-        "eth_sol_decades": refusal["eth_sol"]["decades"],
-        "threshold_decades": THRESHOLD_DECADES,
-        "opacity_muted": float(tok("opacity.muted")),
-        "matrix_gated": matrix["gated"],
-        "matrix_failed": matrix["failed"],
-        "matrix_pairs": len(PAIRS),
-        "remote_bgs": len(REMOTE_BGS),
-        "cvd_kinds": 4,
-        "cvd_min_de_dark": cvd_rows["min_de"]["dark"],
-        "cvd_min_de_light": cvd_rows["min_de"]["light"],
-        "tokens_bound": len(BOUND),
-        "tokens_missing": len(missing),
-        "tokens_proposed": len(PROPOSED_TOKENS),
-        "glyphs_proposed": len(PROPOSED_GLYPHS),
-        "events": len(EVENTS),
-        "t2_frames_expected": len(T2_FRAMES),
-        **{f"count_{k}": v for k, v in c.items()},
-    }
+    markers = build_markers(spec, handoff) if spec else {}
     out = {
         "badge": badge,
         "popover": pop,
