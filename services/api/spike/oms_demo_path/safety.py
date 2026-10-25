@@ -7,26 +7,29 @@ every one is proven offline (`tests/test_safety.py`).
 - `check_online_args` and `confirm`: `--demo` needs `--i-understand-this-places-demo-orders`, the
   account and key ids, the ticket's floors and a typed confirmation.
 - `check_audit_dir`: the harness's audit WAL is never the stack's (brief item 2).
-- `check_flat`: a run that touches orders starts with no open order and no position; until that
-  holds the run is not armed, and a refusal touches nothing (ruling R1C-02 (a)).
-- `key_mismatch` (fold 3): before a run is armed, the key's live rights, read through the
-  adapter's own signed key-info read (`harness.Harness.check_key`), against what M2's import
-  admitted it with (C-2.8): no withdrawal or transfer right, no right outside the import's
-  allow-list, write access with both trade rights, and an IP allow-list of host addresses. Any
-  mismatch refuses the run, and nothing is touched.
+- `check_flat`: a run that touches orders starts with no open order on any USDT perpetual and no
+  position, both read account-wide (the adapter's `settleCoin` reads); until that holds the run
+  is not armed, and a refusal touches nothing (ruling R1C-02 (a)).
+- `key_mismatch` (fold 3): the key's live rights, read through the adapter's own signed key-info
+  read (`harness.Harness.check_key`, the first signed call of every mode that signs anything:
+  the coordinator's ruling 2 of fold 4), against what M2's import admitted it with (C-2.8): no
+  withdrawal or transfer right, no right outside the import's allow-list, write access with both
+  trade rights, and an IP allow-list of host addresses. Any mismatch refuses the run, and
+  nothing is touched.
 - `GuardedPort`: the only trading surface the modes see. BTCUSDT only; no size above the cap;
   a native `stop_loss` on the protective side of every position-opening order (C-2.6); a close
   is a reduce-only market order with no stop (the venue refuses a stop on one), so it never
   opens; no amend removes a stop; an amend or a cancel names one of the run's own orders; no
   cancel-all, batch, leverage, stop write, withdrawal or transfer (C-2.8). No row, no order: each
-  create's intent is written to the run's ledger (`ledger.IntentLedger`) before it is sent, and a
-  create whose row is not written is not sent.
+  create's intent is written and fsynced to the run's ledger (`ledger.IntentLedger`) before it
+  is sent, outside its measured window, and a create whose row is not on disk is not sent.
 - `RunScope` and `flatten` (ruling R1C-02 (b)): what the run owns is the orders its intent ledger
   lists and the fills of those orders, never what an id's form suggests. SIGINT, SIGTERM, SIGHUP
   (the owner's terminal closing) or an unhandled error ends an armed mode, then the flatten
   cancels the run's own open orders one by one and closes, reduce-only, the quantity its own
   fills hold open, before M2 and audit stop (`run.py`). It never cancels or closes anything else:
-  a foreign order or position is left.
+  a foreign order or position is left. A stop that arrives before the run is armed ends it
+  unarmed (`Stopped`): nothing touched.
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ import hashlib
 import os
 import signal
 import time
+from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -101,6 +105,11 @@ _ZERO: Final = Decimal(0)
 
 class Refused(RuntimeError):
     """A safety check refused the run or a request; nothing was sent."""
+
+
+class Stopped(RuntimeError):
+    """A stop (SIGINT, SIGTERM, SIGHUP) arrived before the run was armed: it ends `stopped`
+    with nothing on the account touched (R2-06)."""
 
 
 def check_environment(settings: Settings) -> None:
@@ -219,6 +228,9 @@ def check_audit_dir(wal_path: str, *, stack_wal: str, stack_volume: str, mountin
 
 
 def check_flat(orders: Sequence[Order], positions: Sequence[Position]) -> None:
+    """Ruling R1C-02 (a): a flat account, from reads of every USDT perpetual (`open_orders` with
+    no symbol and `positions`, both the adapter's `settleCoin` form): no open order, no
+    position."""
     if orders:
         raise Refused("the account has an open order: a run starts flat; nothing was touched")
     if any(p.qty > 0 for p in positions):
@@ -292,7 +304,11 @@ class RunScope:
     of those orders, from `start_us` (the venue's clock, when it was armed). Nothing is owned by
     the form of its id: an order the ledger does not list is never the run's, whatever its prefix.
     `net` is what the run's own fills hold open. A `flatten` run adopts a failed run's scope
-    (`adopt`): its window from that run's summary, its orders from that run's ledger."""
+    (`adopt`): its window from that run's summary, its orders from that run's ledger. The BTCUSDT
+    fills in the window that are not the run's are counted by type (`not_ours`, R2-12): a native
+    stop's close is a `trade` no ledger lists (as a manual trade is, which a run forbids), a
+    liquidation a `bust_trade`, an ADL an `adl_trade`; such a close leaves the run's own net as it
+    was, since its order is in no ledger."""
 
     def __init__(
         self,
@@ -308,16 +324,25 @@ class RunScope:
         self.fills: dict[str, tuple[str, Decimal]] = {}
         #: Each reduce-only close the venue accepted: its link, to its size and when it was sent.
         self.closes: dict[str, tuple[Decimal, float]] = {}
+        #: Each BTCUSDT fill in the window that is not the run's: its exec id, to its type.
+        self.not_ours: dict[str, str] = {}
 
     def owns(self, link: str | None) -> bool:
         return self.ledger.owns(link)
 
     def add(self, fills: Iterable[Execution]) -> None:
         for fill in fills:
-            trade = fill.symbol == SYMBOL and fill.exec_type == "trade"
-            if trade and self.owns(fill.order_link_id):
+            if fill.symbol != SYMBOL:
+                continue
+            if not self.owns(fill.order_link_id):
+                self.not_ours[fill.exec_id] = fill.exec_type
+            elif fill.exec_type == "trade":
                 signed = fill.qty if fill.side == "buy" else -fill.qty
                 self.fills[fill.exec_id] = (fill.order_link_id, signed)
+
+    def not_ours_by_type(self) -> dict[str, int]:
+        """The window's BTCUSDT fills that are not the run's, counted by type (see the class)."""
+        return dict(sorted(Counter(self.not_ours.values()).items()))
 
     def net(self) -> Decimal:
         return sum((qty for _, qty in self.fills.values()), _ZERO)
@@ -338,14 +363,14 @@ class RunScope:
             _ZERO,
         )
 
-    def adopt(self, record: Mapping[str, object], ledger: Path) -> None:
+    async def adopt(self, record: Mapping[str, object], ledger: Path) -> None:
         """A failed run's scope: its window from its summary's `run_scope` (refused when it names
         none: that run was never armed), then its orders from its intent ledger at `ledger`
         (`IntentLedger.adopt`); the window reaches back to its start."""
         start_ms = record.get("window_start_ms")
         if not isinstance(start_ms, int):
             raise Refused("that summary names no run scope: nothing to flatten from it")
-        self.ledger.adopt(ledger)
+        await self.ledger.adopt(ledger)
         start = start_ms * 1000
         self.start_us = start if self.start_us is None else min(self.start_us, start)
 
@@ -408,11 +433,12 @@ class GuardedPort:
         if self.scope is not None and not self.scope.owns(link):
             raise Refused("not one of the run's orders: the harness touches only its own")
 
-    def _intend(self, req: PlaceOrderRequest) -> None:
-        """No row, no order: `req`'s intent is written to the ledger before it is sent."""
+    async def _intend(self, req: PlaceOrderRequest) -> None:
+        """No row, no order: `req`'s intent is on disk in the ledger (written and fsynced)
+        before it is sent, and before its measured window opens (`_call`)."""
         if self.ledger is None:
             raise Refused("no row, no order: no intent ledger; nothing was sent")
-        self.ledger.record(req)
+        await self.ledger.record(req)
 
     @asynccontextmanager
     async def _call(self, name: str) -> AsyncIterator[CallRecord]:
@@ -438,7 +464,7 @@ class GuardedPort:
         else:
             self._qty(req.qty, closing=False)
             _check_opener_stop(req)
-        self._intend(req)
+        await self._intend(req)
         async with self._call("create"):
             ack = await self._port.place_order(req)
         if req.reduce_only:
@@ -692,5 +718,6 @@ async def flatten(
             "open_orders": foreign_orders,
             "venue_position_less_own_net": None if venue is None else _text(venue - net),
         },
+        "fills_not_ours_in_window": scope.not_ours_by_type(),
         "errors": errors,
     }

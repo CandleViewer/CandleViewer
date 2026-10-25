@@ -50,6 +50,11 @@ _QUESTIONS: Final = {
     REORDER: "Execution before its order transition (23 S5): a venue reorder, E29-T05's buffer",
     DROPPED: "Execution only via the backfill: a dropped push, ADR-0006's reconciliation",
 }
+#: Where the intent ledger's row falls (the coordinator's ruling 3 of fold 4), under the table.
+LEDGER_NOTE: Final = (
+    "Note: the ledger row's write and fsync happen before the measured window opens (no row, no"
+    " order): none of these numbers holds them."
+)
 #: The budget table's rows: the create's stats per kind, and the budget its p95 is held to.
 _BUDGET_ROWS: Final = (
     ("rtt_ms", "create RTT at the seam", "<= 250 ms"),
@@ -130,6 +135,8 @@ def _budget(summary: Mapping[str, Any]) -> list[str]:
         "### Budget #4 (create)",
         "",
         *rows,
+        "",
+        LEDGER_NOTE,
         "",
         split,
         "",
@@ -224,7 +231,8 @@ def _addendum_budget(summary: Mapping[str, Any], offline: bool) -> list[str]:
     budget = summary.get("budget4", {})
     lines = [_heading("Budget #4 (`06` §5.2)", offline), ""]
     lines += [f"Rule (#843, agreed up front): {_num(budget.get('rule'))}", ""]
-    lines += [*_budget_rows(summary), "", _split_line(summary), "", _verdict_line(summary), ""]
+    lines += [*_budget_rows(summary), "", LEDGER_NOTE, "", _split_line(summary), ""]
+    lines += [_verdict_line(summary), ""]
     return lines
 
 

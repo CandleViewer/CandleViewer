@@ -86,7 +86,7 @@ def memory_ledger(rows: list[bytes] | None = None) -> IntentLedger:
     """An intent ledger whose rows go to `rows`, never a file: the unit tests' disk."""
     kept: list[bytes] = [] if rows is None else rows
 
-    def keep(_path: Path, data: bytes, _append: bool) -> None:
+    def keep(data: bytes) -> None:
         kept.append(data)
 
     return IntentLedger(Path("/nonexistent/run"), Scrubber(), elapsed=lambda: 0.0, write=keep)
@@ -148,13 +148,20 @@ def open_order(link_id: str | None = None, order_id: str = "venue-order-1") -> O
 
 @pytest.mark.parametrize("environment", ["live", "testnet"])
 def test_check_environment_refuses_every_environment_but_demo(environment: str) -> None:
-    settings = Settings(_env_file=None, environment=Environment(environment))  # type: ignore[call-arg]
+    settings = Settings(  # type: ignore[call-arg]  # pydantic-settings' `_env_file` keyword
+        _env_file=None,
+        environment=Environment(environment),
+    )
     with pytest.raises(safety.Refused, match="demo"):
         safety.check_environment(settings)
 
 
 def test_check_environment_admits_demo() -> None:
-    safety.check_environment(Settings(_env_file=None, environment=Environment.DEMO))  # type: ignore[call-arg]
+    settings = Settings(  # type: ignore[call-arg]  # pydantic-settings' `_env_file` keyword
+        _env_file=None,
+        environment=Environment.DEMO,
+    )
+    safety.check_environment(settings)
 
 
 def test_check_venue_urls_admits_the_adapters_demo_tables() -> None:
@@ -184,7 +191,7 @@ def _online(**fields: object) -> RunConfig:
         "account_id": uuid4(),
         "key_ref": str(uuid4()),
     }
-    return RunConfig(**(base | fields))  # type: ignore[arg-type]
+    return RunConfig(**(base | fields))  # type: ignore[arg-type]  # test overrides, typed object
 
 
 NOW_MS = int(time.time() * 1000)
@@ -438,12 +445,12 @@ def scoped() -> tuple[Links, safety.RunScope]:
     return links, scope
 
 
-def mine(links: Links, scope: safety.RunScope, purpose: OrderPurpose = "entry") -> str:
+async def mine(links: Links, scope: safety.RunScope, purpose: OrderPurpose = "entry") -> str:
     """One of the run's own links: minted, and its intent in the run's ledger, as a create the
     guard let through leaves it; so the scope owns it."""
     value = links.new(purpose)
     req = opener(order_link_id=value) if purpose == "entry" else close(order_link_id=value)
-    scope.ledger.record(req)
+    await scope.ledger.record(req)
     return value
 
 
@@ -528,9 +535,12 @@ async def test_flatten_cancels_only_the_runs_own_orders_and_closes_only_its_own_
     fake = _Venue("0.005")  # the run's 0.002 and a foreign 0.003, netted as on the venue
     guard, _ = guarded(fake)
     bind(guard, scope)
-    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
+    fake.seed_execution(execution(await mine(links, scope), "buy", "0.002", 1))
     fake.seed_execution(execution(link(), "buy", "0.003", 2))  # a foreign fill
-    own, foreign = open_order(mine(links, scope), "venue-own"), open_order(link(), "venue-foreign")
+    own, foreign = (
+        open_order(await mine(links, scope), "venue-own"),
+        open_order(link(), "venue-foreign"),
+    )
     for order in (own, foreign):
         fake.seed_order(order, uid=ACCOUNT.uid)
     report = await _flatten(guard, scope, links)
@@ -564,10 +574,10 @@ async def test_flatten_owns_what_the_ledger_lists_never_what_an_ids_form_suggest
     fake = _Venue("0.002")
     guard, _ = guarded(fake)
     bind(guard, scope)
-    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
+    fake.seed_execution(execution(await mine(links, scope), "buy", "0.002", 1))
     other_run = Links(ACCOUNT.account_id, Scrubber())
     for order in (
-        open_order(mine(links, scope), "venue-own"),
+        open_order(await mine(links, scope), "venue-own"),
         open_order(links.new(), "venue-no-row"),  # the run's prefix, never sent by it
         open_order(other_run.new(), "venue-other-run"),
     ):
@@ -584,8 +594,8 @@ async def test_flatten_never_closes_more_than_the_run_opened() -> None:
     fake = _Venue("0.004")
     guard, _ = guarded(fake)
     bind(guard, scope)
-    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
-    closed = mine(links, scope, "flatten")  # its own earlier close
+    fake.seed_execution(execution(await mine(links, scope), "buy", "0.002", 1))
+    closed = await mine(links, scope, "flatten")  # its own earlier close
     fake.seed_execution(execution(closed, "sell", "0.001", 2))
     first = await _flatten(guard, scope, links)
     again = await _flatten(guard, scope, links)
@@ -602,7 +612,7 @@ async def test_flatten_counts_a_close_sent_but_not_yet_listed_and_never_closes_t
     fake = _Venue("0.002", lists_closes=False)
     guard, _ = guarded(fake)
     bind(guard, scope)
-    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
+    fake.seed_execution(execution(await mine(links, scope), "buy", "0.002", 1))
     report = await _flatten(guard, scope, links)
     assert [c.method for c in fake.calls].count("place_order") == 1
     assert report["flat"] is False and report["flatten_orders"] == 1
@@ -613,7 +623,7 @@ async def test_flatten_leaves_a_net_the_venue_no_longer_holds() -> None:
     fake = _Venue("0")  # its native stop closed it: the venue holds nothing
     guard, _ = guarded(fake)
     bind(guard, scope)
-    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
+    fake.seed_execution(execution(await mine(links, scope), "buy", "0.002", 1))
     report = await _flatten(guard, scope, links)
     assert "place_order" not in [c.method for c in fake.calls]
     assert report["errors"] == ["net_not_held"] and report["flat"] is False
@@ -624,7 +634,7 @@ async def test_flatten_records_a_failed_read_by_class_and_still_closes() -> None
     fake = _Venue("0.002")
     guard, _ = guarded(fake)
     bind(guard, scope)
-    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
+    fake.seed_execution(execution(await mine(links, scope), "buy", "0.002", 1))
     fake.script("open_orders", RuntimeError("venue down"))
     fake.script("positions", RuntimeError("venue down"))
     report = await _flatten(guard, scope, links)
@@ -637,7 +647,7 @@ async def test_flatten_stops_at_its_deadline() -> None:
     fake = _Venue("0.002")
     guard, _ = guarded(fake)
     bind(guard, scope)
-    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
+    fake.seed_execution(execution(await mine(links, scope), "buy", "0.002", 1))
     ticks = iter([0.0, 0.0, 41.0, 41.0, 41.0])
     report = await _flatten(guard, scope, links, monotonic=lambda: next(ticks))
     errors = report["errors"]
@@ -650,7 +660,7 @@ async def test_flatten_stops_at_its_deadline_before_any_cancel() -> None:
     fake = _Venue("0")
     guard, _ = guarded(fake)
     bind(guard, scope)
-    fake.seed_order(open_order(mine(links, scope), "venue-own"), uid=ACCOUNT.uid)
+    fake.seed_order(open_order(await mine(links, scope), "venue-own"), uid=ACCOUNT.uid)
     ticks = iter([0.0, 41.0, 41.0])
     report = await _flatten(guard, scope, links, monotonic=lambda: next(ticks))
     assert report["errors"] == ["deadline", "deadline"] and report["flat"] is False
@@ -662,8 +672,8 @@ async def test_flatten_records_a_cancel_and_a_close_that_raise_and_tries_again()
     fake = _Venue("0.002")
     guard, _ = guarded(fake)
     bind(guard, scope)
-    fake.seed_order(open_order(mine(links, scope), "venue-own"), uid=ACCOUNT.uid)
-    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
+    fake.seed_order(open_order(await mine(links, scope), "venue-own"), uid=ACCOUNT.uid)
+    fake.seed_execution(execution(await mine(links, scope), "buy", "0.002", 1))
     fake.script("cancel_order", RuntimeError("venue down"))
     fake.script("place_order", RuntimeError("venue down"))
     report = await _flatten(guard, scope, links)
@@ -677,7 +687,7 @@ async def test_a_close_the_flatten_cancels_no_longer_counts_as_pending() -> None
     fake = _Venue("0.002", lists_closes=False)
     guard, _ = guarded(fake)
     bind(guard, scope)
-    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
+    fake.seed_execution(execution(await mine(links, scope), "buy", "0.002", 1))
     await _flatten(guard, scope, links)  # its close rests unfilled, pending
     assert scope.unconfirmed() == Decimal("0.002")
     fake.lists_closes = True
@@ -703,7 +713,7 @@ async def test_guarded_port_refuses_an_amend_or_a_cancel_of_another_order() -> N
     assert fake.calls == []
 
 
-def test_the_run_scope_owns_what_its_ledger_lists_records_no_id_and_adopts_a_failed_runs(
+async def test_the_run_scope_owns_what_its_ledger_lists_records_no_id_and_adopts_a_failed_runs(
     tmp_path: Path,
 ) -> None:
     for name in ("failed", "later"):
@@ -711,7 +721,8 @@ def test_the_run_scope_owns_what_its_ledger_lists_records_no_id_and_adopts_a_fai
     failed = IntentLedger(tmp_path / "failed", Scrubber(), elapsed=lambda: 0.0)
     scope = safety.RunScope(failed, ACCOUNT.account_id)
     links = Links(ACCOUNT.account_id, Scrubber())
-    mine_, unsent = mine(links, scope), links.new()  # the run's prefix, never sent: not the run's
+    mine_ = await mine(links, scope)
+    unsent = links.new()  # the run's prefix, never sent: not the run's
     assert scope.owns(mine_) and not scope.owns(unsent) and not scope.owns(link())
     assert not scope.owns(None) and not scope.owns("ext-" + "0" * 32)
     scope.start_us = NOW_US - 60_000_000
@@ -726,18 +737,18 @@ def test_the_run_scope_owns_what_its_ledger_lists_records_no_id_and_adopts_a_fai
         IntentLedger(tmp_path / "later", Scrubber(), elapsed=lambda: 0.0), ACCOUNT.account_id
     )
     later.start_us = NOW_US
-    later.adopt(record, tmp_path / "failed" / LEDGER)
+    await later.adopt(record, tmp_path / "failed" / LEDGER)
     assert later.owns(mine_) and not later.owns(unsent) and later.start_us == NOW_US - 60_000_000
     adopted = (tmp_path / "later" / LEDGER).read_text()
     assert safety.digest(mine_) in adopted and '"adopted":true' in adopted  # a later flatten's too
     assert mine_ not in adopted and mine_ not in (tmp_path / "failed" / LEDGER).read_text()
     with pytest.raises(safety.Refused, match="no run scope"):
-        later.adopt({"window_start_ms": None}, tmp_path / "failed" / LEDGER)
+        await later.adopt({"window_start_ms": None}, tmp_path / "failed" / LEDGER)
     with pytest.raises(safety.Refused, match="no readable intent ledger"):
-        later.adopt(record, tmp_path / "none" / LEDGER)
+        await later.adopt(record, tmp_path / "none" / LEDGER)
     (tmp_path / "torn.jsonl").write_text('{"t":1.0,"link_dig\n')  # a row a kill cut short
     with pytest.raises(safety.Refused, match="lists no order"):
-        later.adopt(record, tmp_path / "torn.jsonl")
+        await later.adopt(record, tmp_path / "torn.jsonl")
 
 
 def test_links_carry_one_prefix_and_keep_the_last_numbers_for_the_flatten(

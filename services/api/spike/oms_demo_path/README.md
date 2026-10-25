@@ -1,6 +1,6 @@
 # E29-K01 demo order-path spike harness (#843 A4): throwaway, never merged
 
-Throwaway, on `spike/oms-demo-path`, **never merged** (#843: "Branch left unmerged and marked
+Throwaway, on `spike/oms-demo-path-m2`, **never merged** (#843: "Branch left unmerged and marked
 throwaway"). It measures the exchange's **demo** order path and the private stream's parity
 through the E08 adapter as production composes it. This slice builds and proves it **offline
 only**: nothing here has dialled a venue host. The host runs come later, after A1 to A3 (#4479,
@@ -41,6 +41,12 @@ python -m spike.oms_demo_path report --out <run> --run-dir <run>
 The tests (`spike/oms_demo_path/tests`) run under a session guard that fails any socket connect or
 name lookup, loopback included.
 
+**A git worktree that shares a virtualenv**: running the harness or its tests from a worktree can
+leave that venv's editable `.pth` (`_editable_impl_candleviewer_api.pth`) pointing at the worktree.
+Restore it from the main checkout when the worktree goes, so no other checkout or machine inherits
+the pointer. Better, use a virtualenv per worktree, or only commands that put the checkout's
+directory first (`python -m`, pytest from `services/api`). Never commit a venv or a `.pth`.
+
 `--offline` swaps only the two I/O edges the adapter exposes (`ExchangeBybitService`'s
 `rest_transport` and `private_ws_connect`) and the stores:
 
@@ -58,7 +64,8 @@ name lookup, loopback included.
 - **The stack, in memory** (`offline.offline_stack`): cv-api's first boot (M2 over
   `InMemoryCredentialStore`, which enrols the KEK's check value) and the owner's key import (M2's
   own `candidate_keys`, a synthetic pasted pair). The KEK is a file of 32 random bytes made for
-  the run in a temporary directory (0400) and removed with it.
+  the run in a temporary directory (0400) and removed with it, read as a file source
+  (`CV_KEK_SOURCE=file`) as on the demo host (#4522).
 - **The harness then composes exactly as online** (`compose.compose`): the KEK proof, the audit
   service with the real `AuditWriter` on a WAL of its own (its repository in memory: the fake
   audit sink), M2 over the same store, the real `BybitTradingPort` and `PrivateStreams`. The only
@@ -83,22 +90,28 @@ Pure logic is also tested against `FakeTradingPort` (`tests/test_safety.py`, `te
   governor's bucket label is a constant; `AccountRef.uid` is never sent).
 - **A run that touches orders is armed only after its preflight** (ruling R1C-02 (a)): the size
   limits set from the instrument read, the key's rights checked (below), the account flat (no open
-  order, no position), the offset measured. If anything fails first (an account not flat, the
-  limits unset, a failed instrument read, a failed key check, any error, composition included),
-  the run is `refused` and touches nothing on the account: no cancel, no close. The summary's
-  `outcome` is `refused`, `refused` names the reason and the `shutdown` block shows no action
-  (`action: none`); the exit code is 2.
-- **The key's rights, before arming** (fold 3): the preflight's first signed call is the adapter's
-  own key-info read (`GET /v5/user/query-api` through `key_verification_calls`, signed by M2 under
-  `key_verify`, through the recording seam: never a second signing path, never a write). The
-  key's live rights must still be what M2's import admitted (C-2.8): no withdrawal or transfer
-  right (the shared deny-list the import applies), no right outside the import's allow-list (a
-  fund group's, a spot right), write access with both trade rights, and an IP allow-list of host
-  addresses (none empty, no wildcard or range). Any mismatch refuses the run, nothing touched;
-  `summary.key_check` says what was judged and why, never the UID, an address or the key id. The
-  reply is never kept as a fixture candidate (it names the key, the UID and the host's egress);
-  the UID and the addresses it holds are registered with the scrubber. `flatten` checks the key
-  the same way; `soak` and `retention` arm nothing and send no order, so they do not.
+  order on any USDT perpetual and no position: both read account-wide, the adapter's `settleCoin`
+  form), the offset measured. If anything fails first (an account not flat, the limits unset, a
+  failed instrument read, a failed key check, any error, composition included), the run is
+  `refused` and touches nothing on the account: no cancel, no close. The summary's `outcome` is
+  `refused`, `refused` names the reason and the `shutdown` block shows no action
+  (`action: none`); the exit code is 2. A stop (SIGINT, SIGTERM, SIGHUP) that arrives during the
+  preflight never arms the run: it ends `stopped`, the `shutdown` block shows no action, and
+  nothing is touched.
+- **The key's rights, the first signed call of every mode that signs** (fold 3; fold 4's ruling 2):
+  the adapter's own key-info read (`GET /v5/user/query-api` through `key_verification_calls`,
+  signed by M2 under `key_verify`, through the recording seam: never a second signing path, never
+  a write). `cycles`, `shapes` and `flatten` read it first in their preflight, before arming;
+  `soak` before its private stream's `auth` and before any signed REST read; `retention` before
+  its order history; `report` signs nothing, so it never does. The key's live rights must still
+  be what M2's import admitted (C-2.8): no withdrawal or transfer right (the shared deny-list the
+  import applies), no right outside the import's allow-list (a fund group's, a spot right), write
+  access with both trade rights, and an IP allow-list of host addresses (none empty, no wildcard
+  or range). Any mismatch refuses the run in every mode (exit 2), with nothing touched: a refused
+  `soak` dialled no stream and sent no `auth`; `summary.key_check` says what was judged and why,
+  never the UID, an address or the key id. The reply is never kept as a fixture candidate (it
+  names the key, the UID and the host's egress); the UID and the addresses it holds are
+  registered with the scrubber. No signed use of a key that fails it, ever.
 - BTCUSDT only; no order above `--max-qty-multiple` minimums or off the quantity step.
 - **Every position-opening order carries a native `stop_loss` on the protective side** (C-2.6);
   a close is a reduce-only market order with no stop (the venue refuses one), so it never opens;
@@ -107,10 +120,15 @@ Pure logic is also tested against `FakeTradingPort` (`tests/test_safety.py`, `te
 - **No row, no order** (fold 3): each create's intent is written, scrubbed, to the run's ledger
   `intents.jsonl` before the create is sent: the run-scoped `orderLinkId` token (`link#3`), side,
   quantity, price, stop and reduce-only, with the link's digest (16 hex of its sha256, a handle,
-  never the id). One `write(2)` on a file opened for append, synchronously: a run killed after it
-  (SIGKILL, the OOM killer) leaves the row, so the row of an order exists before the order can.
-  A row not written (the scrub's leak check or the disk refused it) is refused, and its create
-  is not sent: a flatten's close too (the native stop stays the backstop; `flatten` retries).
+  never the id). One `write(2)` on a file opened for append, then `fsync` of it (fold 4's ruling
+  3), off the event loop; the file's creation also fsyncs the run directory once, so its entry
+  survives too. Only then is the create sent, so the row of an order is on disk before the order
+  can exist, whatever ends the process (a kill, the OOM killer, a host crash). Every row goes this
+  way: each opener and close, the flatten's closes, and `flatten` mode's `adopted` rows. A row
+  not written (the scrub's leak check, the disk or an `fsync` refused it: a failed fsync is a
+  failed write) is refused, and its create is not sent: a flatten's close too (the native stop
+  stays the backstop; `flatten` retries). The ledger row's write and fsync happen before the
+  measured window opens, so no timing in the record holds them.
 - **Once armed, the shutdown flatten is scoped to the run's own state** (ruling R1C-02 (b)).
   The ledger is the run's own state: the run owns exactly the orders its ledger lists and the
   fills of those orders, never what an id's form suggests (an order with the run's own prefix that
@@ -122,14 +140,25 @@ Pure logic is also tested against `FakeTradingPort` (`tests/test_safety.py`, `te
   the run's own fills hold open (re-read from the execution list over the run's window), never
   more than the venue's position on that side. It never flattens the account: a foreign order or
   position is left and counted (`shutdown.not_ours_left`). The guard refuses an amend or a cancel
-  of any order not the run's. The flatten has 40 s in all, inside the container's 60 s grace.
-  Three venue failures in a row end a `cycles` run the same way.
+  of any order not the run's. The flatten has 40 s in all, inside the container's 60 s grace; a
+  stop ends a cycle's fill waits (`--fill-wait-s`) at once, so a stopped run reaches its flatten
+  well inside that grace, and `shapes` checks for a stop before each create. Three venue failures
+  in a row end a `cycles` run the same way.
 - The venue keeps one one-way position per symbol, so a foreign position nets with the run's own:
   a run's sell against a foreign long reduces that long, and undoing it would open a position.
   The flatten never opens one: it reports the run's net it could not close (`net_not_held`) and
   leaves it. The preflight's flat check and "No manual trading on that demo account during a
-  run." keep this from arising; a native stop's or a liquidation's close is the venue's own (no
-  row in the run's ledger), so it is not in the run's fills either, and the same cap applies.
+  run." keep this from arising.
+- **A native stop or a liquidation closes the run's position, not its net** (R2-12): the venue's
+  own close order is in no ledger, so its fill is not the run's, and the run's own-fill net stays
+  what its fills opened. With a flat account that is harmless: the venue then holds nothing on
+  that side, and the flatten reports `net_not_held` and closes nothing. But with a foreign
+  position on the same side (a broken precondition: a manual trade during the run), the capped
+  close then reduces that foreign position by up to the run's net. The flatten's record counts
+  the fills in the run's window that are not the run's, by type
+  (`fills_not_ours_in_window`: a native stop's close is a `trade` no ledger lists, as a manual
+  trade is; a liquidation a `bust_trade`; an ADL an `adl_trade`), so such a close is visible
+  next to what the flatten did. The close rule itself is unchanged.
 
 ## Audit: a WAL of its own (decided, brief item 2)
 
@@ -187,8 +216,8 @@ bundle.exchange_borrower, ...).trading_port("demo")`. A second process starting 
 ## Outputs, scrubbed before they are written (brief item 7)
 
 `<out>/events.jsonl`, `summary.json`, `metrics.prom`, the intent ledger `intents.jsonl` (above:
-written before each create, never through the writer's queue), and fixture candidates in the
-corpus's layout: `fixtures/rest_<call>_<code>_<n>.json` (reply bodies) and
+written and fsynced before each create, never through the writer's queue), and fixture
+candidates in the corpus's layout: `fixtures/rest_<call>_<code>_<n>.json` (reply bodies) and
 `fixtures/private_<topic>.jsonl.gz`. The directory is 0700, every file 0600.
 
 Every write passes `Scrubber.dumps` first (`outputs._emit`): a value under an identifier key
@@ -229,7 +258,9 @@ are reviewed before anything reaches `packages/fixtures`, in the findings PR.
   each class by `cold`/`warm` and the create by kind (`create_open`, `create_close`), and the
   budget block prints the create's p95 by both (R1C-06): the cycles are paced 72 s apart, so an
   opener's RTT is usually cold and a close's warm. **Our overhead** is each port call's latency
-  minus the RTTs of its exchanges: it holds M2's key read and the fsynced audit append before
+  minus the RTTs of its exchanges (never the intent ledger's row: the ledger row's write and
+  fsync happen before the measured window opens): it holds M2's key read and the fsynced audit
+  append before
   each signature, the governor and the parse (budget #4's <=50 ms).
 - **The signing share**, on its own: the borrower `compose` hands `ExchangeBybitService` is
   wrapped (`measure.timed_borrower`, offline over the in-memory M2 the same way), and each M2
@@ -323,11 +354,19 @@ the run signs with the one key it was given, so a KEK re-wrap, a rotation or a r
 strands its signing: every signed request, the shutdown flatten's included, then fails closed
 (the native stop on each opener stays the backstop, and `flatten` retries once the key is back).
 
-1. **The spike checkout** at `<spike>` on `spike/oms-demo-path`, rebased onto the pinned sha if
-   it differs from this branch's base, with its offline gates re-run (README "Offline"); the
-   image's `candleviewer` must be the one the harness was built against.
+1. **The spike checkout** at `<spike>`: check out `spike/oms-demo-path-m2` at the head named in
+   the latest APPROVE record on the draft PR, and confirm it with `git rev-parse HEAD` (a commit
+   cannot hold its own SHA, so the record names it). If the stack's pinned sha differs from that
+   head's base, rebase onto it and re-run the offline gates (README "Offline"); the image's
+   `candleviewer` must be the one the harness was built against.
 2. **The image**, built from the stack's checkout (**CHECK #3180**: its overlay's name, and the
-   image name it gives `api`; compose's default is `cv-demo-api`):
+   image name it gives `api`; compose's default is `cv-demo-api`). Run this and every compose
+   command below as root, as all of #4522's commands are: its `infra/compose/.env` is
+   root-owned, mode 0600. On #4522's digest-verified path (the image checked by digest with
+   `cosign verify` and brought up with `--no-build`, not built), set
+   `CV_SPIKE_API_IMAGE=$IMAGE@$DIGEST` before step 4, so the spike runs that verified image and
+   never an absent or stale `cv-demo-api`; the service has `pull_policy: never`, so compose never
+   pulls an image in its place (the stack's `up` already holds it).
 
    ```sh
    cd <stack>/infra/compose
@@ -337,8 +376,8 @@ strands its signing: every signed request, the shutdown flatten's included, then
 
 3. **The output directory**, owned by the container's uid:
    `sudo install -d -o 10001 -g 10001 -m 0700 /srv/cv-spike/out`.
-4. **The command prefix** (from `<stack>/infra/compose`, so compose reads the host's `.env`:
-   `CV_PG_DSN`, `CV_KEK_FILE`, `CV_KEK_VERSION`, **CHECK #3180**):
+4. **The command prefix**, as root (from `<stack>/infra/compose`, so compose reads the host's
+   root-owned `.env`: `CV_PG_DSN`, `CV_KEK_FILE`, `CV_KEK_VERSION`, **CHECK #3180**):
 
    ```sh
    export CV_SPIKE_SRC=<spike>/services/api/spike CV_SPIKE_OUT=/srv/cv-spike/out
@@ -349,10 +388,15 @@ strands its signing: every signed request, the shutdown flatten's included, then
    IDS="--demo --i-understand-this-places-demo-orders --account-id <ACCOUNT_ID> --key-ref <KEY_ID>"
    ```
 
-   The container: the `api` image, `python -m spike.oms_demo_path` with `/app/spike` bind-mounted
-   read-only and `PYTHONPATH=/app`, uid 10001, read-only root, the `cv_kek` secret at
-   `/run/secrets/cv_kek` (the host file `CV_KEK_FILE`, 10001:10001 0400), the runtime DSN, the
-   audit WAL on `cv-spike-audit`, no lane-key secret, no `cv-audit-data`, no static IP.
+   The container: the `api` image (`pull_policy: never`), `python -m spike.oms_demo_path` with
+   `/app/spike` bind-mounted read-only and `PYTHONPATH=/app`, uid 10001, read-only root, the
+   `cv_kek` secret at `/run/secrets/cv_kek` (the host file `CV_KEK_FILE`, 10001:10001 0400) read
+   as a file source (`CV_KEK_SOURCE=file`, as #4522's api: one custody description for one KEK;
+   demo logs the expected `secrets.kek_file_source` warning), the runtime DSN, the audit WAL on
+   `cv-spike-audit`, no lane-key secret, no `cv-audit-data`, no static IP. Core dumps are off
+   (`ulimits: core: 0`, as #4522 sets for every service that loads the KEK): the harness's M2
+   holds the KEK for the whole run. #4522's accepted swap deviation (swap on and not encrypted on
+   this demo host, demo funds only) covers this container too.
 
 5. **Run each mode in a terminal you keep** (tmux), since each asks for the typed confirmation:
 
@@ -364,16 +408,24 @@ strands its signing: every signed request, the shutdown flatten's included, then
    $SPIKE retention $IDS --since-ms <started_at_ms> --out /var/lib/candleviewer/spike-out/retention-<yyyymmdd>
    ```
 
-   Follow a run with `tail -f /srv/cv-spike/out/<run>/events.jsonl` (scrubbed).
+   Follow a run with `tail -f /srv/cv-spike/out/<run>/events.jsonl` (scrubbed). Every mode's
+   first signed call is the key-rights read (Safety): a key that fails it refuses the run, exit
+   code 2, with nothing touched; a refused `soak` never dialled its stream.
 
 6. **Stop**: Ctrl-C in its terminal (SIGINT), `docker kill --signal SIGTERM <container>`, or the
    terminal closing (SIGHUP): the harness cancels the run's own open orders, closes reduce-only
    what its own fills hold open, and writes its summary (the flatten has 40 s, inside
-   `stop_grace_period` 60 s). It touches nothing its ledger does not list. The summary is written
-   provisionally when the run is armed and again before that flatten, with the run's scope
-   (`run_scope`: its ledger's file, the account's digest and its window start), and every create
-   was in `intents.jsonl` before it was sent, so even a run killed past the grace period leaves
-   both. A refused run (`outcome: refused`) touched nothing: read `refused`, fix it, start again.
+   `stop_grace_period` 60 s; a stop ends a cycle's fill waits at once, so it reaches the flatten
+   at once). It touches nothing its ledger does not list. A stop during the preflight never arms
+   the run: `outcome: stopped`, nothing touched. A closed terminal sends SIGHUP into the
+   container only if the compose client forwards it, which nothing offline proves (without it
+   the run goes on to its end, then flattens); tmux (step 5) is the supported way to keep a run
+   alive, and Ctrl-C or `docker kill --signal SIGTERM` the supported ways to stop one. The
+   summary is written provisionally when the run is armed and again before that flatten, with
+   the run's scope (`run_scope`: its ledger's file, the account's digest and its window start),
+   and every create was in `intents.jsonl`, fsynced, before it was sent, so even a run killed past
+   the grace period leaves both. A refused run (`outcome: refused`) touched nothing: read
+   `refused`, fix it, start again.
 7. **Flatten** (the owner's recovery when a run's shutdown flatten failed: `shutdown.flat: false`,
    or a run killed with only its provisional summary): an audited, M2-signed retry, scoped to the
    failed run as its shutdown was. It adopts that run's scope (its window from its summary, its
@@ -418,6 +470,7 @@ strands its signing: every signed request, the shutdown flatten's included, then
 | No reserve for stop and cancel calls yet (E34-T02)                                                                    | Low pacing (one cycle every 72 s at 200 over 4 h)                                                                                                                                                                                                                                               |
 | A flatten needs M2 and audit (every borrow is audited first, fail closed)                                             | The native stop is the backstop; `flatten` (the runbook's step 7) retries it, audited and scoped                                                                                                                                                                                                |
 | The port audits signings, not order actions (the OMS will audit those)                                                | One `security.credential_borrowed` row per signed request; the order actions in `events.jsonl`; the findings claim no order-action audit coverage                                                                                                                                               |
+| The adapter's `Execution` keeps no `stopOrderType` or `createType`                                                    | The flatten counts the window's fills that are not the run's by `exec_type` (`fills_not_ours_in_window`): a native stop's close shows as a `trade`, as a manual one would, a liquidation as a `bust_trade`; an E08 follow-up only if the record must tell a stop's close from a manual trade    |
 | The venue's one-way position nets a foreign position with the run's own                                               | The flatten never opens one: `net_not_held` is reported, the runbook's step 7 says what to do                                                                                                                                                                                                   |
 | httpx mounts an environment proxy for a client built without a transport (`public_rest_client`; production's clients) | The harness refuses a proxy variable; its account clients get the recording transport, so no proxy is mounted there (a note to E08 for the clients built without one)                                                                                                                           |
 | `audit.lane` is a façade over the writer, not `LaneNotWired`, once a writer runs with no lane key                     | Tests assert `lane_parts()` has no lane instead                                                                                                                                                                                                                                                 |

@@ -1,4 +1,11 @@
-"""`soak`, `shapes` and `retention` (#843 A4 brief item 4).
+"""`soak`, `shapes`, `retention` and `flatten` (#843 A4 brief item 4).
+
+Every mode here signs, so each checks the key first (`Harness.check_key`, the coordinator's
+ruling 2 of fold 4): the key's live rights against what M2's import admitted, through the
+adapter's own signed key-info read, before any other signed call. `shapes` and `flatten` run it
+before they arm; `soak` before the stream's `auth` and any signed read; `retention` before its
+history read. A mismatch refuses the run (exit 2) with nothing touched, and the summary's
+`key_check` says why; `report` signs nothing, so it never runs it.
 
 - `soak`: the private stream open for `--hours` with no orders: dials (reconnects), heartbeats
   and pongs, `auth` grants and refusals, `down`s and the gaps they open, the longest silence.
@@ -15,7 +22,8 @@
   (`clock_offset_ms`), and reads the wallet: the client re-signs once with the same offset and
   the read raises `ClockDriftError`, both replies recorded; nothing is created on that port.
   `10018` is never provoked (it would hold this process for 600 s and the venue's IP limit
-  covers cv-api's egress too); a run of any mode that meets one records its shape.
+  covers cv-api's egress too); a run of any mode that meets one records its shape. A stop is
+  checked before each create (R2-06): once one arrived, no further create is sent.
 - `retention`: on day 8 or later of an earlier run, the order history from its start, counted by
   state and age (24 §8.3 rule 6: demo keeps orders 7 days; a cancelled one may show 24 h only).
 - `flatten` (R1S-04): the owner's audited, M2-signed retry when a run's shutdown flatten failed.
@@ -100,6 +108,7 @@ def idle_phase(
 
 
 async def run_soak(h: Harness, cfg: RunConfig) -> dict[str, object]:
+    await h.check_key()  # the first signed call: before the stream's `auth` and any signed read
     await h.measure_offset()
     deadline = h.monotonic() + cfg.hours * 3600
     async with h.private_stream():
@@ -128,10 +137,11 @@ async def run_shapes(h: Harness, cfg: RunConfig) -> dict[str, object]:
     instrument = await h.public.instrument()
     limits, qty = QtyLimits.of(instrument, multiple=1, max_multiple=cfg.max_qty_multiple)
     h.port.limits = limits
-    await h.preflight()  # flat, the offset measured: armed
+    await h.preflight()  # the key checked, flat, the offset measured: armed
     ref = await h.public.reference()
     away, _, stop = prices(ref, "buy", cfg, instrument.tick_size)
     link = h.links.new("entry")
+    stopping = h.shutdown.event.is_set  # checked before each create (R2-06)
     create = PlaceOrderRequest(
         account=h.account,
         symbol=SYMBOL,
@@ -143,9 +153,13 @@ async def run_shapes(h: Harness, cfg: RunConfig) -> dict[str, object]:
         order_link_id=link,
         stop_loss=stop,
     )
+    if stopping():
+        return {"stopped": "before the first create"}
     first = await h.port.place_order(create)
     duplicate: dict[str, object] = {"first_ok": first.ok}
     try:
+        if stopping():
+            return {"duplicate": duplicate, "stopped": "before the second create"}
         again = await h.port.place_order(create)
         duplicate |= {"raised": None, "second_ok": again.ok, "code": again.exchange_ret_code}
     except ExchangeError as exc:
@@ -181,6 +195,7 @@ async def run_shapes(h: Harness, cfg: RunConfig) -> dict[str, object]:
 
 
 async def run_retention(h: Harness, cfg: RunConfig) -> dict[str, object]:
+    await h.check_key()  # the first signed call: before the history read
     now = h.now_us()
     since = now - 9 * _DAY_US if cfg.since_ms is None else cfg.since_ms * 1000
     orders = await h.port.order_history(h.account, start=since, end=now)
@@ -216,7 +231,7 @@ async def run_flatten(h: Harness, cfg: RunConfig) -> dict[str, object]:
     instrument = await h.public.instrument()
     limits, _ = QtyLimits.of(instrument, multiple=1, max_multiple=cfg.max_qty_multiple)
     h.port.limits = limits
-    h.scope.adopt(record, cfg.run_dir / LEDGER)
+    await h.scope.adopt(record, cfg.run_dir / LEDGER)
     await h.check_key()
     await h.measure_offset()
     h.arm()

@@ -8,10 +8,15 @@ reads demo's market data: demo has no public feed), limited to two `GET` paths a
 key; offline, the corpus. The clock offset comes from the signed wallet read's envelope `time`,
 timed at the seam (`ClockOffset`).
 
-A mode that touches orders runs `preflight` first: the size limits set, the key's rights checked
-against what M2's import admitted (`check_key`: the adapter's own signed key-info read, never a
-write), the account flat, the offset measured; only then is the run armed (`arm`). Until it is,
-nothing it does touches the account, and the shutdown touches nothing either (ruling R1C-02 (a)).
+Every mode that signs anything checks the key first: its first signed call is `check_key`, the
+key's rights against what M2's import admitted (the adapter's own signed key-info read, never a
+write; the coordinator's ruling 2 of fold 4): `soak` before its stream's `auth` and any signed
+read, `retention` before its history read, and the modes that touch orders in their `preflight`.
+That preflight goes on: the size limits set, the account flat (every USDT perpetual's open
+orders and positions), the offset measured; only then is the run armed (`arm`), and never once a
+stop arrived (R2-06: it ends `stopped`). Until it is armed, nothing it does touches the account,
+and the shutdown touches nothing either (ruling R1C-02 (a)). A stop ends a fill wait at once
+(`wait`), so a stopped run reaches its flatten at once.
 Every create the run sends is written to its intent ledger first (`ledger.IntentLedger`: no row,
 no order), and its `RunScope` owns exactly what that ledger lists and the fills of those orders,
 so the shutdown flatten cancels and closes only what the run itself placed and opened (ruling
@@ -52,6 +57,7 @@ from spike.oms_demo_path.safety import (
     Refused,
     RunScope,
     Shutdown,
+    Stopped,
     check_flat,
     flatten,
     key_mismatch,
@@ -175,6 +181,8 @@ class Harness:
     armed: bool = field(init=False, default=False)
     #: The key-rights preflight's record (`safety.key_record`), once the key was read.
     key_check: dict[str, object] | None = field(init=False, default=None)
+    #: The key's rights matched (`check_key`): a mode that never arms is committed from here.
+    key_passed: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
         self.links = Links(self.account.account_id, self.scrubber)
@@ -204,13 +212,13 @@ class Harness:
 
     async def preflight(self) -> None:
         """Ruling R1C-02 (a): the size limits set, the key's rights checked (`check_key`), the
-        account flat (no open order, no position), the offset measured; then the run is armed.
-        Whatever fails first refuses the run, and nothing was sent: the shutdown then touches
-        nothing either."""
+        account flat (no open order on any USDT perpetual, no position: R2-08), the offset
+        measured; then the run is armed. Whatever fails first refuses the run, and nothing was
+        sent: the shutdown then touches nothing either."""
         if self.port.limits is None:
             raise Refused("no size limits: the instrument read comes first; nothing was sent")
         await self.check_key()
-        orders = await self.port.open_orders(self.account, SYMBOL)
+        orders = await self.port.open_orders(self.account)  # every symbol (`settleCoin`)
         positions = await self.port.positions(self.account)
         check_flat(orders, positions)
         await self.measure_offset()
@@ -219,9 +227,10 @@ class Harness:
     async def check_key(self) -> None:
         """The key's live rights against what M2's import admitted it with (`safety.key_mismatch`,
         C-2.8), from the adapter's own key-info read (one signed `GET /v5/user/query-api`, never
-        a write, the first signed call of the preflight), before the run is armed. A mismatch,
-        or no read wired, refuses the run with nothing touched (ruling R1C-02 (a)). The UID and
-        the allow-list's addresses it reads are registered with the scrubber, never written."""
+        a write): the first signed call of every mode that signs anything (ruling 2), before
+        anything else is signed, read, dialled or armed. A mismatch, or no read wired, refuses
+        the run with nothing touched (ruling R1C-02 (a)). The UID and the allow-list's addresses
+        it reads are registered with the scrubber, never written."""
         if self.key_info is None:
             raise Refused("no key-info read is wired: the key's rights are unchecked")
         facts = await self.key_info()
@@ -231,6 +240,7 @@ class Harness:
         self.key_check = key_record(facts, mismatch)
         if mismatch is not None:
             raise Refused(f"{mismatch}; nothing was touched")
+        self.key_passed = True
 
     async def flatten(self) -> dict[str, object]:
         """`safety.flatten` over the run's own scope (ruling R1C-02 (b)), on its clocks."""
@@ -246,12 +256,30 @@ class Harness:
 
     def arm(self) -> None:
         """From here on the run may touch the account, and its shutdown flattens what it owns:
-        its window starts now, on the exchange's clock."""
+        its window starts now, on the exchange's clock. Never once a stop arrived (R2-06): the
+        run then ends `stopped`, unarmed, with nothing touched (`Stopped`)."""
+        if self.shutdown.event.is_set():
+            raise Stopped("a stop arrived before the run was armed: nothing was touched")
         start, held = self.venue_now_us(slack=-1), self.scope.start_us
         self.scope.start_us = start if held is None else min(held, start)  # an adopted scope's
         self.armed = True
         if self.on_armed is not None:
             self.on_armed()
+
+    async def wait(self, predicate: Callable[[], bool], timeout_s: float) -> bool:
+        """`StreamMonitor.wait` (`predicate` on the stream, at most `timeout_s`), ended at once
+        by a stop (R2-06): a stopped cycle never waits out its `--fill-wait-s`, so it reaches the
+        flatten's 40 s well inside the container's 60 s grace. Whether `predicate()` holds."""
+        if not self.shutdown.event.is_set():
+            waiter = spawn(self.stream.wait(predicate, timeout_s), name="spike-fill-wait")
+            stop = spawn(self.shutdown.event.wait(), name="spike-fill-wait-stop")
+            try:
+                await asyncio.wait({waiter, stop}, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for task in (waiter, stop):
+                    task.cancel()
+                await asyncio.gather(waiter, stop, return_exceptions=True)
+        return predicate()
 
     async def measure_offset(self, samples: int = 5) -> int | None:
         """The offset from the signed wallet read's envelope `time` against its exchange at the

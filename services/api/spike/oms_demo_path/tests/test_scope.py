@@ -74,6 +74,13 @@ def _foreign(venue: CorpusVenue) -> VenueOrder:
     return venue.rest_foreign_order()
 
 
+def _foreign_in_window(venue: CorpusVenue) -> VenueOrder:
+    """The same, mid-run: a manual order resting and a manual market fill inside the run's window
+    (a foreign execution and the position it opens: R2-11, as the re-check's probe has it)."""
+    venue.fill_foreign(FOREIGN)
+    return venue.rest_foreign_order()
+
+
 def _untouched(venue: CorpusVenue, order: VenueOrder, size: Decimal) -> None:
     assert (order.status, order.qty, order.filled) == ("New", Decimal("0.003"), Decimal(0))
     assert venue.size == size
@@ -175,7 +182,7 @@ async def test_foreign_rows_survive_an_error_shutdown_and_the_runs_own_are_flatt
     seeded: list[VenueOrder] = []
 
     async def boom(h: Harness, link: str) -> None:
-        seeded.append(_foreign(venue))  # someone trades the account mid-run
+        seeded.append(_foreign_in_window(venue))  # someone trades the account mid-run
         raise RuntimeError("mid-cycle")
 
     monkeypatch.setattr(cycles, "read_order", boom)
@@ -185,6 +192,7 @@ async def test_foreign_rows_survive_an_error_shutdown_and_the_runs_own_are_flatt
     assert shutdown["cancelled"] == 1 and shutdown["own_net_qty"] == "0.001"
     assert shutdown["closed_qty"] == "0.001" and shutdown["flat"] is True
     assert shutdown["not_ours_left"] == {"open_orders": 1, "venue_position_less_own_net": "0.003"}
+    assert shutdown["fills_not_ours_in_window"] == {"trade": 1}  # the manual fill, never closed
     [order] = seeded
     _untouched(venue, order, FOREIGN)
     own = [o for o in venue.orders.values() if o is not order]
@@ -202,7 +210,7 @@ async def test_foreign_rows_survive_a_normal_shutdown(
     async def then_trade(*args: Any, **kwargs: Any) -> str:
         outcome = await original(*args, **kwargs)
         if not seeded:
-            seeded.append(_foreign(venue))  # between the run's two cycles
+            seeded.append(_foreign_in_window(venue))  # between the run's cycles
         return outcome
 
     monkeypatch.setattr(cycles, "one_cycle", then_trade)
@@ -212,6 +220,7 @@ async def test_foreign_rows_survive_a_normal_shutdown(
     s = _summary(tmp_path / "out")
     assert s["cycles"]["completed"] == 3 and "residual_flatten" not in s["cycles"]["actions"]
     assert s["shutdown"]["flat"] is True and s["shutdown"]["flatten_orders"] == 0
+    assert s["shutdown"]["fills_not_ours_in_window"] == {"trade": 1}
     [order] = seeded
     _untouched(venue, order, FOREIGN)
     assert "/v5/order/cancel-all" not in venue.paths

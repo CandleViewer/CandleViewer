@@ -12,18 +12,21 @@ signed outside the receive window, the transcribed `110072` to a reused `orderLi
 from the stream or push its order update first, so the parity and ordering counters can be seen
 to count; a run that sets either says so in its summary. Its list reads page by the request's
 `limit`, each `nextPageCursor` in its corpus row's own form (R1C-08), so a run long enough to
-list more than a page reads every page, as on the venue. A test can rest an order or hold a
-position no run placed (`rest_foreign_order`, `hold_foreign_position`): the account's other
-users, which the harness must never touch. It serves no cancel-all: the harness never sends one
-(ruling R1C-02 (b)), and one sent would be refused here as an unknown route. Its key-info read
-(`GET /v5/user/query-api`) answers `key_info`: by default the accounts pack's compliant reply
-(`packages/fixtures/accounts`, E27-Q01, the key-info corpus), and a test serves another of that
-pack's replies (a withdrawal right, a transfer right, no IP binding) through the pack's resolver.
+list more than a page reads every page, as on the venue. A test can rest an order (on BTCUSDT or
+another symbol), fill one or hold a position no run placed (`rest_foreign_order`, `fill_foreign`,
+`hold_foreign_position`): the account's other users, which the harness must never touch. The
+open-orders read answers the request's `symbol`, or every symbol for the `settleCoin` form. It
+serves no cancel-all: the harness never sends one (ruling R1C-02 (b)), and one sent would be
+refused here as an unknown route. Its key-info read (`GET /v5/user/query-api`) answers
+`key_info`: by default the accounts pack's compliant reply (`packages/fixtures/accounts`, E27-Q01,
+the key-info corpus), and a test serves another of that pack's replies (a withdrawal right, a
+transfer right, no IP binding) through the pack's resolver.
 
 `offline_stack` stands in for the host: the stack's M2 boots once over an in-memory store (which
 enrols the KEK's check value, as cv-api's first boot does) and the owner imports one synthetic
-key through M2's own import capability. The harness then composes over the same store exactly as
-it would over Postgres (`compose.py`). Nothing here runs online, and nothing in it is a key.
+key through M2's own import capability. The KEK is read as a file source, as on the demo host
+(#4522's `CV_KEK_SOURCE=file`). The harness then composes over the same store exactly as it would
+over Postgres (`compose.py`). Nothing here runs online, and nothing in it is a key.
 """
 
 from __future__ import annotations
@@ -158,6 +161,7 @@ class VenueOrder:
     status: str = "New"
     filled: Decimal = Decimal(0)
     value: Decimal = Decimal(0)
+    symbol: str = SYMBOL
 
     @property
     def avg(self) -> Decimal | None:
@@ -381,7 +385,8 @@ class CorpusVenue:
         self._send("order", self._push_order(order))
 
     def _order_realtime(self, _body: dict[str, Any], params: dict[str, str]) -> dict[str, Any]:
-        rows = [o for o in self.orders.values() if o.status in _OPEN]
+        symbol = params.get("symbol")  # none: the `settleCoin` form, every symbol
+        rows = [o for o in self.orders.values() if o.status in _OPEN and symbol in (None, o.symbol)]
         return self._order_page("trading-order-realtime", rows, params)
 
     def _order_history(self, _body: dict[str, Any], params: dict[str, str]) -> dict[str, Any]:
@@ -521,7 +526,7 @@ class CorpusVenue:
         values: dict[str, Any] = {
             "orderId": o.order_id,
             "orderLinkId": o.link,
-            "symbol": SYMBOL,
+            "symbol": o.symbol,
             "price": _text(o.price),
             "qty": _text(o.qty),
             "side": o.side,
@@ -662,9 +667,9 @@ class CorpusVenue:
             )
             self.orders[order.order_id] = order
 
-    def rest_foreign_order(self) -> VenueOrder:
+    def rest_foreign_order(self, symbol: str = SYMBOL) -> VenueOrder:
         """An order no run of the harness placed (a manual one: no `orderLinkId`), resting
-        away from the touch."""
+        away from the touch, on `symbol`."""
         now = self.now_ms()
         order = VenueOrder(
             order_id=str(uuid4()),
@@ -678,8 +683,32 @@ class CorpusVenue:
             stop_loss=None,
             created_ms=now,
             updated_ms=now,
+            symbol=symbol,
         )
         self.orders[order.order_id] = order
+        return order
+
+    def fill_foreign(self, qty: Decimal) -> VenueOrder:
+        """A manual market buy no run placed (no `orderLinkId`), filled whole at the touch now:
+        its execution listed and pushed as any fill's, and the position it opens (R2-11: inside
+        a run's window, so a run that took every fill for its own would close it)."""
+        now = self.now_ms()
+        order = VenueOrder(
+            order_id=str(uuid4()),
+            link="",
+            side="Buy",
+            order_type="Market",
+            qty=qty,
+            price=Decimal(0),
+            tif="IOC",
+            reduce_only=False,
+            stop_loss=None,
+            created_ms=now,
+            updated_ms=now,
+        )
+        self.orders[order.order_id] = order
+        self._send("order", self._push_order(order))
+        self._fill(order, qty, self.ask, maker=False)
         return order
 
     def hold_foreign_position(self, qty: Decimal) -> None:
@@ -756,7 +785,8 @@ def assume_hardened() -> bool:
 
 def offline_settings(state: Path) -> Settings:
     """Demo settings over a KEK file made for this run in `state` (0400, 32 random bytes, never
-    written anywhere else and removed with the state directory) and the harness's own WAL."""
+    written anywhere else and removed with the state directory), read as a file source as on the
+    demo host (#4522), and the harness's own WAL."""
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
     kek = state / "kek-offline.bin"
     if not kek.exists():
@@ -768,7 +798,7 @@ def offline_settings(state: Path) -> Settings:
     return Settings(  # type: ignore[call-arg]  # pydantic-settings' `_env_file` keyword
         _env_file=None,
         environment=Environment.DEMO,
-        kek_source="handle",
+        kek_source="file",
         kek_handle=str(kek),
         kek_version=1,
         audit_wal_path=str(state / "spike-audit" / "spike" / "audit.wal"),

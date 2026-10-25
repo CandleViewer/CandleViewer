@@ -3,12 +3,17 @@
 Each create's intent is written, scrubbed, before the create is sent (`GuardedPort.place_order`):
 the run-scoped token of its `orderLinkId` (`link#3`), the side, the quantity, the price, the stop
 and reduce-only, with the link's digest (`safety.digest`: the first 16 hex characters of its
-sha256, a handle, never the id). The row passes the scrubber and its leak check, then one
-`write(2)` on the file opened for append (`outputs.write_file`: `0600`, no symlink followed),
-synchronously and never through the outputs' queue: once `record` returns, the row is the
-operating system's, so a run killed right after it (SIGKILL, the OOM killer) leaves it, and an
-order's row exists before the order can. A row that is not written (the leak check or the disk
-refused it) is `Refused`, and its create is not sent: no row, no order.
+sha256, a handle, never the id). The row passes the scrubber and its leak check, then, off the
+event loop (`asyncio.to_thread`), one `write(2)` on the file opened for append (`0600`, no
+symlink followed) and `fsync` of its descriptor (fold 4, the coordinator's ruling 3); until one
+such row is down, the run directory is fsynced too, so the file's entry survives a crash (in
+practice once: the first row creates the file). Only then does `record` return, so an order's row
+is on disk before the order can exist, whatever ends the process: a kill, the OOM killer, a host
+crash. A row that is not written (the leak check, the disk or an `fsync` refused it: a failed
+`fsync` is a failed write) is `Refused`, and its create is not sent: no row, no order. Every row
+goes this way: each create's, the flatten's closes and `flatten` mode's `adopted` rows. The row's
+write and fsync happen before the create's measured window opens (`GuardedPort._call`), so neither
+is in any timing the record reports.
 
 The ledger is also the run's own state (ruling R1C-02 (b)): the run owns exactly the orders its
 ledger lists and the fills of those orders (`safety.RunScope`), so the shutdown flatten cancels
@@ -19,13 +24,14 @@ is written, so the set in memory is the file's.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
-from spike.oms_demo_path.outputs import Writer, write_file
 from spike.oms_demo_path.safety import Refused, digest
 from spike.oms_demo_path.scrub import LeakDetected, Scrubber
 
@@ -35,6 +41,11 @@ if TYPE_CHECKING:
 #: The ledger's file in a run's directory.
 LEDGER: Final = "intents.jsonl"
 _DIGEST: Final = re.compile(r"[0-9a-f]{16}")
+_APPEND: Final = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC
+#: A row's write: its bytes durable when it returns, else it raises (`IntentLedger.write`).
+Append = Callable[[bytes], None]
+#: `os.fsync`'s shape: the seam a test replaces (a slow disk, a failing one).
+Sync = Callable[[int], None]
 
 
 def _plain(value: object) -> str | None:
@@ -51,12 +62,16 @@ class IntentLedger:
         scrubber: Scrubber,
         *,
         elapsed: Callable[[], float],
-        write: Writer = write_file,
+        write: Append | None = None,
+        fsync: Sync = os.fsync,
     ) -> None:
         self.path = directory / LEDGER
-        self.write = write
+        self.fsync = fsync
+        #: The row's write (`durable` unless a test gives another), run off the event loop.
+        self.write: Append = self.durable if write is None else write
         self._scrubber = scrubber
         self._elapsed = elapsed
+        self._entry_synced = False
         #: The digest of every order the ledger lists: the run's own, and any it adopted.
         self.digests: set[str] = set()
         self.intents = 0
@@ -66,10 +81,10 @@ class IntentLedger:
         """`link` is an order this ledger lists (an order it does not list is never the run's)."""
         return link is not None and digest(link) in self.digests
 
-    def record(self, req: PlaceOrderRequest) -> None:
-        """`req`'s intent, written before it is sent; `Refused` when it is not (nothing is sent)."""
+    async def record(self, req: PlaceOrderRequest) -> None:
+        """`req`'s intent, on disk before it is sent; `Refused` when it is not (nothing is sent)."""
         handle = digest(req.order_link_id)
-        self._append(
+        await self._append(
             {
                 "order_link_id": req.order_link_id,
                 "link_digest": handle,
@@ -83,21 +98,21 @@ class IntentLedger:
         self.digests.add(handle)
         self.intents += 1
 
-    def adopt(self, path: Path) -> int:
+    async def adopt(self, path: Path) -> int:
         """A failed run's orders, from its ledger at `path` (R1S-04's `flatten`): each digest it
         lists joins this ledger's, written here first as an `adopted` row, so this run's own
         ledger lists all it may touch and a later `flatten` of this run adopts them too. `Refused`
         (nothing touched) when that ledger is unreadable or lists no order. How many it lists."""
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            text = await asyncio.to_thread(path.read_text, encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             failed = type(exc).__name__
             raise Refused(f"no readable intent ledger in --run-dir ({failed})") from None
-        listed = {handle for handle in map(_digest_of, lines) if handle is not None}
+        listed = {handle for handle in map(_digest_of, text.splitlines()) if handle is not None}
         if not listed:
             raise Refused("that run's intent ledger lists no order: nothing to flatten from it")
         for handle in sorted(listed - self.digests):
-            self._append({"adopted": True, "link_digest": handle})
+            await self._append({"adopted": True, "link_digest": handle})
             self.digests.add(handle)
             self.adopted += 1
         return len(listed)
@@ -111,11 +126,31 @@ class IntentLedger:
             "orders": len(self.digests),
         }
 
-    def _append(self, row: dict[str, object]) -> None:
+    def durable(self, data: bytes) -> None:
+        """One row on disk (see the module docstring): `write(2)` of all of `data` on the file
+        opened for append, then `fsync`; the directory's `fsync` until one row is down. Any
+        failure raises `OSError`."""
+        fd = os.open(self.path, _APPEND, 0o600)
+        try:
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view) :]
+            self.fsync(fd)
+        finally:
+            os.close(fd)
+        if not self._entry_synced:
+            directory = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+            try:
+                self.fsync(directory)
+            finally:
+                os.close(directory)
+            self._entry_synced = True
+
+    async def _append(self, row: dict[str, object]) -> None:
         line = {"t": self._elapsed(), **row}
         try:
             text = self._scrubber.dumps(line)
-            self.write(self.path, (text + "\n").encode(), True)
+            await asyncio.to_thread(self.write, (text + "\n").encode())
         except (LeakDetected, OSError) as exc:
             raise Refused(
                 f"no row, no order: the ledger row was not written ({type(exc).__name__});"

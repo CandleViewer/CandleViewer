@@ -1,4 +1,4 @@
-"""#843 (E29-K01): the demo order-path spike harness. Throwaway, on `spike/oms-demo-path`.
+"""#843 (E29-K01): the demo order-path spike harness. Throwaway, on `spike/oms-demo-path-m2`.
 
 It measures the exchange's demo order path through the adapter as production composes it: M2
 signs (the harness never holds a secret), M19 audits every borrow into a WAL of the harness's own,

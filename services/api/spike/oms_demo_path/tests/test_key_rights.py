@@ -5,6 +5,10 @@ M2's import admitted it with (C-2.8). A mismatch refuses the run and nothing is 
 R1C-02 (a)). The accounts pack's key-info replies drive it (`packages/fixtures/accounts`, E27-Q01,
 through its own resolver): one compliant, one per refusal; the pack has no read-only reply, so that
 one is the compliant reply with its flag patched (`offline.patched` refuses a key the shape lacks).
+
+Fold 4 (the coordinator's ruling 2): the check runs in every mode that signs anything, as its
+first signed call: `soak` before its stream's `auth` and any signed read, `retention` before its
+history read. A mismatch there refuses the run too (exit 2), with nothing touched.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ import pytest
 
 from candleviewer.exchange.bybit.key_info import parse_key_info
 from spike.oms_demo_path import report, run, safety
-from spike.oms_demo_path.config import RunConfig
+from spike.oms_demo_path.config import Mode, RunConfig
 from spike.oms_demo_path.offline import (
     Corpus,
     CorpusVenue,
@@ -183,3 +187,56 @@ async def test_flatten_refuses_a_key_that_lost_its_ip_binding_and_touches_nothin
     _refused_and_untouched(out, venue, "no IP allow-list")
     assert venue.paths == [KEY_INFO] and venue.size == Decimal("0.001")
     assert [o.status for o in venue.orders.values()] == ["PartiallyFilled"]
+
+
+# -- fold 4, ruling 2: `soak` and `retention` check the key first too ---------------------------
+
+
+@pytest.mark.parametrize("mode", ["soak", "retention"])
+@pytest.mark.parametrize(("scenario", "reason"), [REFUSALS[0], REFUSALS[2]])
+async def test_a_mode_that_never_arms_still_checks_the_key_first_and_touches_nothing(
+    tmp_path: Path, mode: Mode, scenario: str, reason: str
+) -> None:
+    venue, out = _venue(scenario), tmp_path / "out"
+    assert await run.run(RunConfig(mode=mode, out=out, hours=0.001), venue=venue) == 2
+    s = _refused_and_untouched(out, venue, reason)
+    assert venue.paths == [KEY_INFO]  # the key's rights first: nothing else signed or read
+    assert venue.sockets == [] and s["private"]["socket"]["dials"] == 0  # no stream, no `auth`
+    assert s["key_check"]["verdict"] == "refused" and reason in s["key_check"]["reason"]
+    assert mode not in s and f"Refused, nothing touched: {s['refused']}" in report.render(out)
+
+
+async def test_a_soak_reads_the_keys_rights_before_any_signed_read_and_its_auth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    venue, out = _venue(), tmp_path / "out"
+    calls: list[str] = []
+    handle, auth = venue.handle, venue.auth_reply
+
+    async def rest(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return await handle(request)
+
+    def stream_auth() -> str:
+        calls.append("auth")
+        return auth()
+
+    monkeypatch.setattr(venue, "handle", rest)
+    monkeypatch.setattr(venue, "auth_reply", stream_auth)
+    assert await run.run(RunConfig(mode="soak", out=out, hours=0.0001), venue=venue) == 0
+    s = dict(run.summary_of(out))
+    assert calls[0] == KEY_INFO and calls.count(KEY_INFO) == 1  # before the offset's reads
+    assert calls.index("auth") > calls.index("/v5/account/wallet-balance") > 0
+    assert s["outcome"] == "completed" and s["key_check"]["verdict"] == "compliant"
+    assert s["signing_ms"]["key_verify"]["n"] == 1
+    assert s["soak"]["idle_phase"]["zero_missed_executions"] == "met"
+
+
+async def test_retention_reads_the_keys_rights_before_its_history(tmp_path: Path) -> None:
+    venue, out = _venue(), tmp_path / "out"
+    venue.seed_history(2, age_days=8)  # inside the offline default: 9 days back
+    assert await run.run(RunConfig(mode="retention", out=out), venue=venue) == 0
+    s = dict(run.summary_of(out))
+    assert venue.paths[0] == KEY_INFO and set(venue.paths[1:]) == {"/v5/order/history"}
+    assert s["key_check"]["verdict"] == "compliant" and s["retention"]["rows"] == 2
+    assert s["shutdown"] == {"reason": "completed"} and s["outcome"] == "completed"

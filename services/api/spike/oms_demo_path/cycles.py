@@ -10,8 +10,9 @@ one step, an order fills all or nothing, so no partial fill could be seen):
 2. an amend one tick further away;
 3. the drive: an amend to the touch, joining it (a maker that may fill in part) or crossing it
    by `--cross-bps` (a taker that fills whole), alternating by default; then the fill is waited
-   for on the stream for `--fill-wait-s`, and the order is read back over REST (the exchange is
-   truth) to record `filled`, `partial` or `unfilled`;
+   for on the stream for `--fill-wait-s` (a stop ends every such wait at once: `Harness.wait`,
+   R2-06), and the order is read back over REST (the exchange is truth) to record `filled`,
+   `partial` or `unfilled`;
 4. a cancel of any remainder;
 5. a reduce-only market close of what filled, then a REST read that the book is flat (else the
    flatten of `safety.py`, over the run's own orders and fills only).
@@ -94,7 +95,7 @@ async def run_cycles(h: Harness, cfg: RunConfig) -> dict[str, object]:
         instrument, multiple=cfg.qty_multiple, max_multiple=cfg.max_qty_multiple
     )
     h.port.limits = limits
-    await h.preflight()  # flat, the offset measured: armed
+    await h.preflight()  # the key checked, flat, the offset measured: armed
     outcomes: Counter[str] = Counter()
     actions: Counter[str] = Counter()
     errors: Counter[str] = Counter()
@@ -196,7 +197,7 @@ async def one_cycle(
         return "rejected"
     oid = placed.exchange_order_id
     monitor = h.stream
-    await monitor.wait(lambda: oid in monitor.orders, cfg.fill_wait_s)
+    await h.wait(lambda: oid in monitor.orders, cfg.fill_wait_s)
 
     def amend(price: Decimal) -> AmendOrderRequest:
         return AmendOrderRequest(
@@ -222,7 +223,7 @@ async def one_cycle(
         order = monitor.orders.get(oid)
         return order is not None and order.state in TERMINAL
 
-    await monitor.wait(filled, cfg.fill_wait_s)
+    await h.wait(filled, cfg.fill_wait_s)
     order = await read_order(h, link)
     done = order.filled_qty if order is not None else Decimal(0)
     if order is not None and order.state == "filled":
@@ -240,7 +241,7 @@ async def one_cycle(
             ),
         )
         actions["cancel"] += 1
-        await monitor.wait(lambda: oid in monitor.orders and filled(), cfg.fill_wait_s)
+        await h.wait(lambda: oid in monitor.orders and filled(), cfg.fill_wait_s)
         after = await read_order(h, link)
         done = after.filled_qty if after is not None else done
         if after is not None and after.state == "filled":
@@ -268,7 +269,7 @@ async def one_cycle(
             order = None if close_id is None else monitor.orders.get(close_id)
             return order is not None and order.state in TERMINAL
 
-        await monitor.wait(close_done, cfg.fill_wait_s)
+        await h.wait(close_done, cfg.fill_wait_s)
     if any(p.symbol == SYMBOL and p.qty > 0 for p in await h.port.positions(h.account)):
         if (await h.flatten())["flatten_orders"]:
             actions["residual_flatten"] += 1

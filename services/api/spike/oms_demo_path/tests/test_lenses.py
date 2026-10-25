@@ -354,7 +354,8 @@ def test_the_monitor_counts_reorders_parity_and_corrected_latency() -> None:
     monitor.observe(_fill("B", "0.001", 2))  # its order event comes after: in order
     monitor.observe(_order("B", "0.001"))
     monitor.observe(_fill("B", "0.001", 2))  # a duplicate push
-    monitor.rest_executions([_fill("C", "0.001", 3).payload])  # type: ignore[list-item]
+    fill = _fill("C", "0.001", 3).payload
+    monitor.rest_executions([fill])  # type: ignore[list-item]  # the payload union, an Execution
     assert monitor.ordering_counts() == {
         "venue_reorder_execution_after_its_order_transition": 1,
         "dropped_push_execution_only_via_backfill": 1,
@@ -619,7 +620,7 @@ async def test_flatten_mode_refuses_without_a_scope_and_reports_a_net_it_cannot_
         order_link_id=theirs,
         stop_loss=Decimal("58000"),
     )
-    IntentLedger(run_dir, Scrubber(), elapsed=lambda: 0.0).record(sent)
+    await IntentLedger(run_dir, Scrubber(), elapsed=lambda: 0.0).record(sent)
     report_ = await modes.run_flatten(h, RunConfig(mode="flatten", out=tmp_path, run_dir=run_dir))
     assert report_["flat"] is False and report_["errors"] == ["net_not_held"]
     assert h.shutdown.reason == "error:not_flat"

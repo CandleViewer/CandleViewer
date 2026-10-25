@@ -13,9 +13,11 @@ the loop, so neither the private socket's `recv` nor a port call pays for a scru
 bounded (`QUEUE_BOUND`, C-2.18): an item past it is dropped and counted (`dropped`), never
 waited for. Items are written in the order they were handed over, so the scrubber learns each
 identifier in the same order as before; `flush` waits for the queue to empty and `stop` ends the
-writer, after which every write is synchronous again (the summary and the metrics). Unstarted,
-every write is synchronous. The intent ledger (`ledger.py`, `intents.jsonl`) is never queued: its
-row is written, through the same scrubber and `write_file`, before its create is sent.
+writer, after which every write is synchronous again (the summary and the metrics). An item that
+fails, whatever the error, is counted (`write_errors`) and the writer goes on (R2-07), so `flush`
+and `stop` never wait forever. Unstarted, every write is synchronous. The intent ledger
+(`ledger.py`, `intents.jsonl`) is never queued: its row is scrubbed by the same scrubber, then
+written and fsynced before its create is sent.
 """
 
 from __future__ import annotations
@@ -120,7 +122,7 @@ class RunOutputs:
             work, args = await queue.get()
             try:
                 work(*args)
-            except OSError:  # a file the run cannot write: counted, the run goes on
+            except Exception:  # a file it cannot write, or any other failure: counted, goes on
                 self.write_errors += 1
             finally:
                 queue.task_done()

@@ -6,10 +6,13 @@ connector; offline, demo settings over a KEK file made for the run, the stack in
 (`offline.offline_stack`), the corpus venue behind both seams. Everything between is the same
 composition, the same recording seams, the same scrubbed outputs.
 
-A mode that touches orders is armed only once its preflight passed (the limits set, the key's
-rights checked, the account flat, the offset measured). Anything that ends it before that, a
-refusal or any error, composition included, is a `refused` outcome naming the reason, and nothing
-on the account is touched: no cancel, no close (ruling R1C-02 (a)). Once armed, whatever ends the
+Every mode that signs checks the key first (the coordinator's ruling 2 of fold 4). A mode that
+touches orders is armed only once its preflight passed (the limits set, the key's rights
+checked, the account flat, the offset measured); `soak` and `retention` never arm, and commit
+once the key's rights matched. Anything that ends a run before that, a refusal or any error,
+composition included, is a `refused` outcome naming the reason, and nothing on the account is
+touched: no cancel, no close (ruling R1C-02 (a)). A stop before the run is armed ends it
+`stopped`, unarmed, with nothing touched either (R2-06). Once armed, whatever ends the
 mode (completion, SIGINT, SIGTERM, SIGHUP or an error), the shutdown flatten runs over the run's
 own orders and fills only, as its intent ledger lists them (ruling R1C-02 (b)), before M2 and
 audit stop, and the summary records why it ended and what the flatten did. The summary is
@@ -88,6 +91,7 @@ from spike.oms_demo_path.safety import (
     GuardedPort,
     Refused,
     Shutdown,
+    Stopped,
     check_audit_dir,
     check_environment,
     check_no_proxy,
@@ -396,26 +400,34 @@ def _provisional(outputs: RunOutputs, summary: Mapping[str, Any], h: Harness, at
     outputs.write_summary({**summary, "provisional": at, "run_scope": h.scope.record()})
 
 
+def _uncommitted(cfg: RunConfig, h: Harness) -> bool:
+    """Nothing on the account touched yet: a mode that arms, until it is armed; a mode that
+    never arms (`soak`, `retention`), until the key's rights matched (ruling 2)."""
+    return not h.armed if cfg.arms else not h.key_passed
+
+
 def _failed(
     exc: Exception, cfg: RunConfig, h: Harness, summary: dict[str, Any], shutdown: Shutdown
 ) -> int:
-    """A mode's failure: before the run was armed, a refusal (2) that touched nothing (ruling
-    R1C-02 (a)); after, an error (1) the scoped flatten follows."""
-    if cfg.arms and not h.armed:
+    """A mode's failure: before the run committed (`_uncommitted`), a refusal (2) that touched
+    nothing (ruling R1C-02 (a)); after, an error (1), which the scoped flatten follows once the
+    run is armed."""
+    if _uncommitted(cfg, h):
         shutdown.trip("refused")
-        summary["refused"] = _refusal(exc)
+        summary["refused"] = _refusal(exc, cfg)
         return 2
     shutdown.trip(f"error:{type(exc).__name__}")
     summary["error"] = type(exc).__name__
     return 1
 
 
-def _refusal(exc: BaseException) -> str:
+def _refusal(exc: BaseException, cfg: RunConfig) -> str:
     """A refusal's reason: the harness's own words, else the error's class only (a setup
     error's text may echo a setting's value)."""
     if isinstance(exc, Refused):
         return str(exc)
-    return f"an error before the run was armed: {type(exc).__name__}"
+    before = "the run was armed" if cfg.arms else "the key check passed"
+    return f"an error before {before}: {type(exc).__name__}"
 
 
 def _outcome(code: int, summary: Mapping[str, Any]) -> str:
@@ -473,12 +485,14 @@ async def run(
                 summary[cfg.mode] = await MODES[cfg.mode](h, cfg)
                 if (shutdown.reason or "").startswith("error:"):
                     code = 1  # the mode ended itself on repeated failures
+            except Stopped as exc:  # a stop before the run was armed: `stopped`, nothing touched
+                summary["stopped"] = str(exc)
             except Exception as exc:
                 code = _failed(exc, cfg, h, summary, shutdown)
                 mode_failed(exc, offline=not cfg.online)
             finally:
                 ending: dict[str, Any] = {"reason": shutdown.reason or "completed"}
-                if cfg.arms and not h.armed:
+                if _uncommitted(cfg, h):
                     ending |= NO_ACTION
                 elif cfg.places_orders:
                     ending |= {"armed": True, "action": "scoped flatten"}
@@ -495,7 +509,7 @@ async def run(
         if entered:
             raise
         code = 2  # nothing composed, nothing sent
-        summary["refused"] = _refusal(exc)
+        summary["refused"] = _refusal(exc, cfg)
         summary["shutdown"] = {"reason": "refused", **NO_ACTION}
     finally:
         remove()

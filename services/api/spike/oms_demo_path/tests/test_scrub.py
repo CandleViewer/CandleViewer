@@ -12,6 +12,7 @@ from __future__ import annotations
 import gzip
 import json
 import string
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -252,12 +253,17 @@ def test_the_scrub_runs_before_a_line_reaches_the_file(tmp_path: Path) -> None:
     assert any(name.startswith("private_order") for name in names)
 
 
+def _blind(value: object, transient: Sequence[str] = ()) -> object:
+    """A scrub that misses everything: only the final leak check stands between it and a file."""
+    return value
+
+
 def test_a_line_the_scrub_misses_is_refused_and_never_written(tmp_path: Path) -> None:
     recorder = _Recorder()
     scrubber = Scrubber()
     scrubber.secret(ACCOUNT)
     outputs = RunOutputs(tmp_path / "run", scrubber, write=recorder)
-    scrubber.scrub = lambda value, transient=(): value  # type: ignore[method-assign]
+    scrubber.scrub = _blind  # type: ignore[method-assign]  # the scrub under test, blinded
     assert outputs.event("leak", note=f"for {ACCOUNT}") is False
     outputs.write_summary({"account": ACCOUNT})
     assert ACCOUNT not in recorder.text()
@@ -309,7 +315,7 @@ def test_a_frame_or_metrics_text_the_check_refuses_is_never_written(tmp_path: Pa
     scrubber.secret(ACCOUNT)
     scrubber.secret(None)
     outputs = RunOutputs(tmp_path / "run", scrubber, write=recorder)
-    scrubber.scrub = lambda value, transient=(): value  # type: ignore[method-assign]
+    scrubber.scrub = _blind  # type: ignore[method-assign]  # the scrub under test, blinded
     outputs.frame("order", json.dumps({"topic": "order", "note": ACCOUNT}))
     outputs.write_metrics(f"# HELP x {ACCOUNT}\n")
     outputs.close()
