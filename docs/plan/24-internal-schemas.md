@@ -2532,6 +2532,8 @@ def size_leg(intent: OrderIntent, profile: AccountProfile,
 
     # 5. Fee-aware risk correction (risk_based only): the real loss at the stop
     #    includes entry + exit taker fees, so shrink qty to keep true risk <= budget.
+    #    ADR-0040 amendment (2026-10-25, #2635): the comparator prices the exit fee at the further
+    #    of ref and the stop; the E34 sizer adopts the same pricing (a short's exit is above ref).
     if profile.sizing_mode == "risk_based":
         fee_per_unit = ref * (fee.taker * 2)
         qty = risk_amt / (stop_dist + fee_per_unit)

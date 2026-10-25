@@ -595,7 +595,8 @@ def _r3_leverage(c: _Case) -> list[Violation]:
     room = c.leg.ref_price * (_FLOOR.divide(Decimal(1), c.leg.leverage) - mmr)
     room -= 2 * fee * c.leg.stop_price
     if c.distance >= room:
-        liquidation = c.leg.ref_price - room if c.long else c.leg.ref_price + room
+        reach = max(room, Decimal(0))  # the estimate is never reported past the entry
+        liquidation = c.leg.ref_price - reach if c.long else c.leg.ref_price + reach
         found.append(_v("leverage", "R3", "outside_liquidation", limit=liquidation,
                         requested=c.leg.stop_price))  # fmt: skip
     return found
