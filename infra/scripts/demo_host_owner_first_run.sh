@@ -1,23 +1,29 @@
 #!/usr/bin/env bash
 # infra/scripts/demo_host_owner_first_run.sh — the Owner's first run on the Bybit demo host (#3180).
 #
-# Interactive. The Owner runs it once on the host, with the stack up (docs/ops/runbooks/demo-host.md
-# step 7). It calls the api on http://127.0.0.1:8000 only, and walks through, in order:
-#   1. the bootstrap invite (#4479): getInvite, then redeemInvite with a new password (the otpauth
-#      URI for the authenticator is shown once), then confirmInvite with its first code (the
-#      recovery codes are shown once, to be sealed: SR-023);
-#   2. the sign-in: authLogin, then authMfaVerify with a new code;
-#   3. the demo account: createExchangeAccount (#895);
-#   4. the `keys` step-up: authStepUp with the password and a new code;
-#   5. the key import: createApiKey with the key and secret typed at the prompt, and expected_uid.
-# stdout carries only the verification verdict fields of step 5, never the egress address
-# (Confidential); prompts and messages go to stderr, the one-time URI and codes to the terminal.
+# Interactive. The Owner runs it once on the host, from a terminal, with the stack up
+# (docs/ops/runbooks/demo-host.md steps 6 and 7). In order:
+#   1. the bootstrap (#4479): it stops api, runs #4479's CLI in the overlay's `bootstrap-owner`
+#      service on this terminal (`--owner <email>`; DC-4479-02: no logging driver keeps the token
+#      it prints once), starts api again and waits for it, then asks for that token;
+#   2. the invite: getInvite, then redeemInvite with a new password (the otpauth URI for the
+#      authenticator is shown once), then confirmInvite with its first code (the recovery codes
+#      are shown once, to be sealed: SR-023);
+#   3. the sign-in, with the email: authLogin, then authMfaVerify with a new code;
+#   4. the `keys` step-up: authStepUp with the password and a new code. The served
+#      createExchangeAccount needs it too, so it comes first, and its 5 minutes cover both writes;
+#   5. the demo account: createExchangeAccount;
+#   6. the key import: createApiKey with the key and secret typed at the prompt, and expected_uid.
+# Past step 1 it calls the api on http://127.0.0.1:8000 only. stdout carries only the verification
+# verdict fields of step 6, never the egress address (Confidential); prompts and messages go to
+# stderr, the one-time URI and codes to the terminal.
 #
 # Secrets are typed silently and never echoed or put on a command line: each request reaches curl
 # as a config on stdin (`--config -`), and its JSON is written and read by python3 through pipes,
 # so `ps` shows neither. Nothing is written to disk (no cookie jar, no temp file, no history); curl
 # reads no ~/.curlrc and uses no proxy; every variable is cleared on exit. Needs bash, curl and
-# python3. Exit status: 0 the key is imported, 1 a step was refused, 2 bad arguments.
+# python3, and docker compose for step 1. Exit status: 0 the key is imported, 1 a step was
+# refused, 2 bad arguments.
 #   --skip-invite        the invite is redeemed already: start at the sign-in
 #   --account-id UUID    the demo account is registered already: import its key
 
@@ -26,7 +32,7 @@ set -euo pipefail
 umask 077
 export LC_ALL=C
 unset HISTFILE
-unset -f curl python3 printf read command 2>/dev/null || true
+unset -f curl docker python3 printf read command 2>/dev/null || true
 trap - DEBUG RETURN
 
 readonly API="http://127.0.0.1:8000"
@@ -110,8 +116,16 @@ else:
 
 TOKEN="" PASSWORD="" AGAIN="" CODE="" API_KEY="" API_SECRET="" ACCESS="" CSRF="" MFA_TOKEN=""
 METHOD_ID="" BODY="" RESP="" STATUS="" IDENT="" EXCHANGE_UID="" LABEL="" KEY_LABEL=""
-READ_ONLY=false READ_ONLY_ANSWER="" ACCOUNT_ID="" SKIP_INVITE=false
+READ_ONLY=false READ_ONLY_ANSWER="" ACCOUNT_ID="" SKIP_INVITE=false OWNER_EMAIL=""
 F=()
+# The runbook's compose files and project (docs/ops/runbooks/demo-host.md), from this checkout.
+HERE=${BASH_SOURCE[0]%/*}
+[[ $HERE != "${BASH_SOURCE[0]}" ]] || HERE=.
+ROOT=$(cd -P -- "$HERE/../.." && pwd) || exit 2
+readonly COMPOSE=(docker compose -p cv-demo
+  -f "$ROOT/infra/compose/docker-compose.yml"
+  -f "$ROOT/infra/compose/docker-compose.vps.yml"
+  -f "$ROOT/infra/compose/docker-compose.demo-host.yml")
 
 cleanup() {
   TOKEN="" PASSWORD="" AGAIN="" CODE="" API_KEY="" API_SECRET="" ACCESS="" CSRF="" MFA_TOKEN=""
@@ -217,6 +231,47 @@ refused() { # refused WHAT: the plain message for the last answer
   die "$* was refused: HTTP $STATUS${F[0]:+ ${F[0]}}${F[1]:+: ${F[1]}}"
 }
 
+bootstrap_refusal() { # bootstrap_refusal STATUS: #4479's exit status in words (its design note)
+  case $1 in
+    1) printf 'step_failed or a compose error (read the lines above)' ;;
+    2) printf 'a usage or settings error' ;;
+    3) printf 'mint_failed (nothing was minted: run again)' ;;
+    4) printf 'host_fs_unavailable (the audit volume)' ;;
+    5) printf 'api_running (cv-api, another run or a session of its database role is connected)' ;;
+    6) printf 'audit_unavailable (no token was given: run again once audit_log takes records)' ;;
+    7 | 8) printf 'live_flag (this host is demo: never --live)' ;;
+    9) printf 'kek_unproven (no cv-api boot enrolled this KEK: runbook steps 4 and 5)' ;;
+    11) printf 'no_tty (run this script from a terminal)' ;;
+    12) printf 'confirmation_mismatch (the phrase was not retyped exactly)' ;;
+    13) printf 'confirmation_timeout (the phrase was not retyped within 5 minutes)' ;;
+    16) printf 'operator_cancelled' ;;
+    17) printf 'owner_exists (an Owner is active: run again with --skip-invite)' ;;
+    18) printf 'not_candidate (that email is a user who cannot become the Owner)' ;;
+    130) printf 'interrupted (its outcome is unknown: read the auth.bootstrap_owner_* records)' ;;
+    *) printf 'status %s' "$1" ;;
+  esac
+}
+
+bootstrap_invite() { # #4479's mint, in bootstrap-owner on this terminal: its token is never ours
+  local rc=0
+  ask OWNER_EMAIL "Owner email (the bootstrap invites it; it signs in with it): "
+  [[ ${#OWNER_EMAIL} -le 254 && $OWNER_EMAIL =~ ^[A-Za-z0-9._-]{3,32}@[^@[:space:]]+$ ]] ||
+    die "the owner is an email whose part before @ is 3 to 32 letters, digits, '.', '_' or '-'"
+  command -v docker >/dev/null 2>&1 || die "docker is not installed"
+  say "Stopping api: #4479's CLI runs only while it is stopped."
+  "${COMPOSE[@]}" stop api </dev/null || die "could not stop api: read the lines above"
+  say "The bootstrap: retype the phrase it shows. It prints the invite token once; copy it."
+  "${COMPOSE[@]}" --profile bootstrap-owner run --rm --no-deps bootstrap-owner \
+    --owner "$OWNER_EMAIL" >&3 2>&3 || rc=$?
+  if ((rc != 0)); then
+    die "the bootstrap refused: $(bootstrap_refusal "$rc"). api is stopped; start it with" \
+      "docker compose -p cv-demo <the runbook's -f files> --profile core up -d --wait api"
+  fi
+  say "Starting api again."
+  "${COMPOSE[@]}" --profile core up -d --wait api </dev/null ||
+    die "api did not get healthy after the bootstrap: read its log (runbook step 4)"
+}
+
 redeem_invite() {
   local try
   ask_secret TOKEN "Invite token (the bootstrap printed it once): "
@@ -282,7 +337,8 @@ redeem_invite() {
 
 sign_in() {
   local try
-  ask IDENT "Owner username or email: "
+  IDENT=$OWNER_EMAIL # the bootstrap's email, else asked
+  [[ -n $IDENT ]] || ask IDENT "Owner username or email: "
   ((${#IDENT} >= 1 && ${#IDENT} <= 254)) || die "a username or email is 1 to 254 characters"
   if [[ -z $PASSWORD ]]; then
     ask_secret PASSWORD "Password: "
@@ -350,12 +406,19 @@ create_account() {
   key=$(new_uuid) || die "python3 could not make an idempotency key"
   encode exchange:s bybit environment:s demo kind:s main label:s "$LABEL" \
     exchange_uid:s "$EXCHANGE_UID"
-  call POST /exchange-accounts "$BODY" session "$key"
+  elevated /exchange-accounts "$BODY" "$key"
+  BODY=""
   case $STATUS in
     201) ;;
     000) unreachable ;;
     404 | 405 | 501)
-      die "this build does not serve POST /exchange-accounts yet (#895): build one that does"
+      die "this api does not serve POST /exchange-accounts (a build before #4484):" \
+        "build the pinned main sha (runbook step 1)"
+      ;;
+    409)
+      get .detail
+      die "the account was not registered: ${F[0]:-a conflict}. If it is this demo account," \
+        "run again with --skip-invite --account-id <its id> (the run that registered it printed it)"
       ;;
     *) refused "the account registration" ;;
   esac
@@ -385,7 +448,7 @@ step_up() { # step_up [CHALLENGE_ID]: elevate the session for the keys class
     000) unreachable ;;
     401)
       die "the step-up was refused twice: wait 5 minutes, then run again" \
-        "with --skip-invite --account-id $ACCOUNT_ID"
+        "with --skip-invite${ACCOUNT_ID:+ --account-id $ACCOUNT_ID}"
       ;;
     *) refused "the step-up" ;;
   esac
@@ -402,23 +465,28 @@ step_up() { # step_up [CHALLENGE_ID]: elevate the session for the keys class
   F=()
 }
 
-import_key() {
-  local key held challenge
-  key=$(new_uuid) || die "python3 could not make an idempotency key"
-  encode api_key:s "$API_KEY" api_secret:s "$API_SECRET" label:s "$KEY_LABEL" \
-    read_only:b "$READ_ONLY" expected_uid:s "$EXCHANGE_UID"
-  held=$BODY API_KEY="" API_SECRET=""
-  call POST "/exchange-accounts/$ACCOUNT_ID/keys" "$held" session "$key"
+elevated() { # elevated PATH BODY KEY: POST it on the session; a step-up challenge is answered once
+  local challenge
+  call POST "$1" "$2" session "$3"
   if [[ $STATUS == 403 ]]; then
     get .code .challenge_id
     if [[ ${F[0]-} == step_up_required ]]; then
       challenge=${F[1]-}
-      [[ $challenge =~ $UUID_RE ]] || die "the import asked for a step-up without a challenge id"
-      say "The import asks for the step-up again."
+      [[ $challenge =~ $UUID_RE ]] || die "the api asked for a step-up without a challenge id"
+      say "The api asks for the step-up again."
       step_up "$challenge"
-      call POST "/exchange-accounts/$ACCOUNT_ID/keys" "$held" session "$key"
+      call POST "$1" "$2" session "$3" # the held request, sent again as it was
     fi
   fi
+}
+
+import_key() {
+  local key held
+  key=$(new_uuid) || die "python3 could not make an idempotency key"
+  encode api_key:s "$API_KEY" api_secret:s "$API_SECRET" label:s "$KEY_LABEL" \
+    read_only:b "$READ_ONLY" expected_uid:s "$EXCHANGE_UID"
+  held=$BODY API_KEY="" API_SECRET=""
+  elevated "/exchange-accounts/$ACCOUNT_ID/keys" "$held" "$key"
   held="" BODY=""
   case $STATUS in
     201)
@@ -463,12 +531,15 @@ main() {
   command -v curl >/dev/null 2>&1 || die "curl is not installed"
   command -v python3 >/dev/null 2>&1 || die "python3 is not installed"
   if (: >/dev/tty) 2>/dev/null; then exec 3>/dev/tty; else exec 3>&2; fi
-  say "CandleViewer demo host: the Owner's first run, against $API only."
-  [[ $SKIP_INVITE == true ]] || redeem_invite
+  say "CandleViewer demo host: the Owner's first run (the bootstrap, then $API only)."
+  if [[ $SKIP_INVITE != true ]]; then
+    bootstrap_invite
+    redeem_invite
+  fi
   sign_in
   collect_key
+  step_up # createExchangeAccount and createApiKey both need the keys step-up
   [[ -n $ACCOUNT_ID ]] || create_account
-  step_up
   import_key
 }
 
