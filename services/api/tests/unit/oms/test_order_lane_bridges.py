@@ -22,9 +22,13 @@ from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.exchange.base.models import AccountRef, Position
 from candleviewer.exchange.base.ports import TradingPort
 from candleviewer.observability.metrics import Metrics
+from candleviewer.oms.cancel_all import CancelAll
 from candleviewer.oms.errors import OmsNotReady
+from candleviewer.oms.exits import OrderExits
 from candleviewer.oms_lane import Serving
 from candleviewer.oms_wiring import (
+    OnLaneCancelAll,
+    OnLaneExits,
     ServedAudit,
     ServedClock,
     ServedDemand,
@@ -298,3 +302,29 @@ async def test_the_feed_demand_profiles_clock_and_audit_land_on_the_serving_loop
         ("publish", here), ("asked", here), ("get_effective_profile", here),
         ("assert_healthy", on), ("resync_after_signature_failure", here), ("emit", here),
     ]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("bridge", "service"),
+    [(OnLaneExits, OrderExits), (OnLaneCancelAll, CancelAll)],
+    ids=["exits", "cancel_all"],
+)
+def test_each_lane_bridge_takes_exactly_its_services_parameters(
+    bridge: type, service: type
+) -> None:
+    """A bridge re-declares each coroutine it hops to the lane, so a parameter the service has and
+    the bridge does not take is a TypeError in the route that passes it, or a value the service
+    never sees (`deny`'s `step`, #913): each public coroutine of a bridge takes exactly its
+    service's same-named parameters, by name, kind and default."""
+    hops = {
+        name: method
+        for name, method in inspect.getmembers(bridge, inspect.iscoroutinefunction)
+        if not name.startswith("_")
+    }
+    assert hops  # the bridge was read, not an emptied scan
+    for name, hop in hops.items():
+        own = inspect.signature(getattr(service, name)).parameters.values()
+        lane = inspect.signature(hop).parameters.values()
+        assert [(p.name, p.kind, p.default) for p in lane] == [
+            (p.name, p.kind, p.default) for p in own
+        ], name
