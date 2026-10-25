@@ -1,9 +1,9 @@
 """`SqlAlchemySessionLock` (#913 slice 3 L2, SEC-S3N-01) over a fake engine whose server keeps
 session advisory locks as Postgres does: `pg_try_advisory_lock` never waits and a session's lock
 goes with the session. One holder per key; a lock not got keeps nothing; a held one sets its
-session's keepalives (CR-S3L2-03); a release ends its session whatever the unlock did, after the
-pool's dispose too (CR-S3L2-06); a lock that cannot be asked, or whose ask is cut short, keeps
-nothing and says only so (CR-S3L2-05). The real
+session's keepalives (CR-S3L2-03); `confirm` answers whether the session still holds it; a release
+ends its session whatever the unlock did, after the pool's dispose too (CR-S3L2-06); a lock that
+cannot be asked, or whose ask is cut short, keeps nothing and says only so (CR-S3L2-05). The real
 statements run in `tests/integration/oms/test_environment_lock_pg.py`."""
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ KEY, OTHER = -0x1234_5678_9ABC_DEF0, 0x0FED_CBA9_8765_4321
 STATEMENTS = {
     str(module._TRY): "try",
     str(module._KEEPALIVE): "keepalive",
+    str(module._HELD): "held",
     str(module._UNLOCK): "unlock",
 }
 #: A bound on each of the tests' waits, never a time they expect.
@@ -51,6 +52,12 @@ class Result:
         return self._value
 
 
+def _key(params: Mapping[str, int]) -> int:
+    """The signed 64-bit key a `pg_locks` probe names by its two unsigned 32-bit halves."""
+    unsigned = (params["high"] << 32) | params["low"]
+    return unsigned - (1 << 64) if unsigned >= 1 << 63 else unsigned
+
+
 class Connection:
     def __init__(self, server: Server) -> None:
         self.server, self.calls = server, list[str]()
@@ -69,6 +76,8 @@ class Connection:
         elif kind == "keepalive":
             self.settings = dict(params)
             answer = None
+        elif kind == "held":
+            answer = server.holders.get(_key(params)) is self
         else:
             answer = server.holders.pop(params["key"], None) is self
         if server.hang == kind:
@@ -226,6 +235,42 @@ async def test_a_cancelled_acquire_ends_its_session_and_keeps_nothing() -> None:
         await asyncio.wait_for(asking, BOUND_S)
     assert engine.opened[0].calls == ["try", "invalidate", "close"]
     assert not lock.held and server.holders == {}
+
+
+async def test_confirm_answers_true_while_the_session_holds_the_key() -> None:
+    """CR-S3L2-03: the watchdog's probe, on the holder's own session: its `pg_locks` row, by the
+    key's two halves."""
+    server = Server()
+    engine = Engine(server)
+    lock = _lock(engine)
+    assert await lock.acquire()
+    assert await lock.confirm()
+    assert engine.opened[0].calls[-2:] == ["held", "commit"]
+
+
+async def test_confirm_answers_false_once_the_session_holds_it_no_more_or_none_is_held() -> None:
+    server = Server()
+    engine = Engine(server)
+    lock = _lock(engine)
+    assert not await lock.confirm() and engine.opened == []  # nothing held: nothing asked
+    assert await lock.acquire()
+    server.holders.clear()  # the key was given up on that session without this lock's release
+    assert not await lock.confirm()
+
+
+async def test_confirm_on_a_session_that_cannot_answer_is_unavailable_without_server_text() -> None:
+    """CR-S3L2-03: an ended session, or one that does not answer within `timeout_s`: the caller
+    cannot tell, so it is told so, never that the lock is held."""
+    server = Server()
+    lock = _lock(Engine(server), timeout_s=0.0)
+    assert await lock.acquire()
+    server.fail = "held"
+    with pytest.raises(StorageTierUnavailable) as failed:
+        await lock.confirm()
+    assert "server text" not in str(failed.value) and failed.value.__cause__ is None
+    server.fail, server.hang = None, "held"
+    with pytest.raises(StorageTierUnavailable):
+        await asyncio.wait_for(lock.confirm(), BOUND_S)
 
 
 async def test_a_release_after_the_pools_dispose_still_unlocks_on_its_session() -> None:

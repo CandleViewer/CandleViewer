@@ -28,6 +28,8 @@ from candleviewer.oms_wiring import (
     ENVIRONMENT_LOCK_TIMEOUT_S,
     LANE_AUDIT_PAGE_S,
     LANE_AUDIT_STOP_S,
+    LANE_STALE_S,
+    LANE_TICK_S,
     LANE_WAL_PREFIX,
     REFERENCE_DEMAND_MAX,
     REFERENCE_DEMAND_NEW,
@@ -503,8 +505,16 @@ def test_20_says_what_a_second_oms_process_and_a_testnet_one_do() -> None:
         f"{KEEPALIVE['interval']} s, `tcp_keepalives_count` {KEEPALIVE['count']}, "
         f"`tcp_user_timeout` {STALE_HOLDER_S} s)",
         f"and with it the lock, within about {STALE_HOLDER_S} s: that is the stale-holder window",
-        "The lock is its session's: a holder whose connection drops (a cut network, a Postgres "
-        "restart) loses it without noticing until its stop",
+        f"the lane ticks every {LANE_TICK_S:g} s (`LANE_TICK_S`) and, on the same tick, asks "
+        f"within {ENVIRONMENT_LOCK_TIMEOUT_S:g} s whether the lock's session still holds the key",
+        "every new submit is refused `503 oms_not_ready` from then on, while cancels, stop "
+        "attaches and repairs, KILLs and the exit routes run on (C-2.6, C-2.21): never a silent "
+        "run without the lock, never a blocked exit.",
+        f"A lane that has not ticked for {LANE_STALE_S:g} s (`LANE_STALE_S`) is wedged, alive but "
+        "stuck: the runtime reads `degraded`, as for a dead lane, and pages the first read of "
+        "each stall (CR-S3L1A-02).",
+        "and `degraded` whenever its order lane has died or stalled, or the environment's lock is "
+        "lost (below)",
         "On the real backend, while the runtime runs, `/readyz` carries an `oms` check",
         "A testnet process's runtime is `degraded` from its start, before any sink is built: "
         "testnet serves connectivity smoke tests only (CONSTITUTION §1.2), and the exchange "
@@ -512,6 +522,7 @@ def test_20_says_what_a_second_oms_process_and_a_testnet_one_do() -> None:
         "check stays `degraded`.",
     )
     assert "that follow-up is not scheduled" not in _RUNTIME
+    assert "loses it without noticing until its stop" not in _RUNTIME
     assert "no request can send any more" in _words(_SCHEMA_DOC)  # the sentence 20 quotes
     guard = _SCHEMA_DOC.split("CREATE FUNCTION rs_guard()", 1)[1].split("END $BODY$;", 1)[0]
     assert "('pending','void')" in guard and "('void'," not in guard  # a `void` row never leaves

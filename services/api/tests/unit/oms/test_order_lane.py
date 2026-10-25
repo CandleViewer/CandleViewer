@@ -31,6 +31,7 @@ from candleviewer.oms.fakes import InMemorySubmissionStore
 from candleviewer.oms.order_machine import OrderMachines
 from candleviewer.oms.ports import SubmitActor
 from candleviewer.oms_lane import LANE_JOIN_S, LaneStopped, OrderLane, Serving
+from candleviewer.oms_wiring import LANE_STALE_S
 from candleviewer.settings import OMS_STOP_RESERVE_S, TEARDOWN_BUDGET_S, Settings
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.gateway import Gateway, LoopAffinityError
@@ -47,6 +48,7 @@ from tests.unit.oms.test_oms_runtime import (
     SENDING,
     STARTED,
     STOPPED,
+    Beats,
     Port,
     Sink,
     World,
@@ -804,17 +806,18 @@ async def test_a_closer_the_dying_lane_refuses_leaves_the_closers_after_it_to_ru
     """SEC-S3L1CD-01: the lane dies as the stop calls the sink's close there, once the machines and
     the commands have closed. That closer is refused, `LaneStopped`, logged, and the ones after it
     still run: the lane's audit writer's is refused in turn (#913 L2), the trading port closes on
-    this loop, the pool's and the environment lock's are refused too, and the stop ends, not
-    cancelled."""
+    this loop, the pool's, the heartbeat's and the environment lock's are refused too, and the stop
+    ends, not cancelled."""
     _dying_at(monkeypatch, "Sink.stop")
     world = World()
     with capture_logs() as logs:
         async with asyncio.timeout(BOUND_S), started(world.runtime(lane=OrderLane)):
             pass
     steps = [(e["step"], e["error"]) for e in logs if e["event"] == "oms_stop_step_failed"]
-    refused = ["sink", "audit", "pool", "environment_lock"]
+    refused = ["sink", "audit", "pool", "heartbeat", "environment_lock"]
     assert steps == [(step, "LaneStopped") for step in refused]
-    assert world.venue.ports[0].closed and world.log == STARTED and not b01.ports_wired()
+    assert world.venue.ports[0].closed and not b01.ports_wired()
+    assert world.log == [*STARTED, "heartbeat.end"]  # the death's cleanup ended the heartbeat
     assert [e["error"] for e in logs if e["event"] == "oms_lane_died"] == ["SystemExit"]
 
 
@@ -941,3 +944,38 @@ async def test_order_turns_on_the_lane_need_no_turn_of_the_blocked_serving_loop(
     assert world.writer.actions.count(killed) == count
     [sink] = world.sinks
     assert sink.rows and bundle.sink.rows == []
+
+
+async def _ticked(beats: Beats) -> None:
+    """One more tick of the lane's heartbeat, let go on the lane's loop, where it waits."""
+    beats.tick()
+    for _ in range(8):
+        await asyncio.sleep(0)
+
+
+async def test_a_wedged_lane_reads_degraded_and_pages_once_until_it_ticks_again() -> None:
+    """Ruling 2 (OM-D12's wedged lane; CR-S3L1A-02), the lane heartbeat's stall test, on
+    `OrderLane`: a call that holds the lane's own thread, as a begun `block` whose serving-loop call
+    never returns does, stops the heartbeat; once its last tick is past `LANE_STALE_S` the runtime
+    reads `degraded` and pages once, though `OrderLane.dead` stays false; once the lane turns and
+    ticks again it reads `ok`. No timing: the heartbeat's clock is the test's."""
+    world, wedged, freed = World(), threading.Event(), threading.Event()
+    for flag in world.flags:
+        flag.read()
+
+    async def wedge() -> None:
+        wedged.set()
+        freed.wait(BOUND_S)  # holds the lane's thread: nothing else runs there meanwhile
+
+    async with asyncio.timeout(3 * BOUND_S), started(world.runtime(lane=OrderLane)) as runtime:
+        await runtime.wait_ready()
+        parts = runtime._composed()
+        stuck = parts.lane.call(wedge())
+        await _began(wedged)
+        world.beats.s += LANE_STALE_S + 0.001
+        assert [runtime.state for _ in range(2)] == ["degraded"] * 2 and not parts.lane.dead
+        freed.set()
+        await stuck
+        await parts.lane.call(_ticked(world.beats))
+        assert runtime.state == "ok"
+    assert world.pager.calls == ["oms_lane_stalled"]

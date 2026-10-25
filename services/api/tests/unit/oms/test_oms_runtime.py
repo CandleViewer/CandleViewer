@@ -30,6 +30,7 @@ from structlog.testing import capture_logs
 
 from candleviewer import oms_wiring
 from candleviewer.api.health import make_health_router
+from candleviewer.app import _oms_state
 from candleviewer.audit.machine_events import MachineEventUnavailable
 from candleviewer.audit.wal import AuditWal, lock_wal_file
 from candleviewer.audit.writer import AuditUnavailable, keyed_record_id
@@ -56,12 +57,16 @@ from candleviewer.oms.ports import NoDayFigures, PositionKey, SubmitActor
 from candleviewer.oms.repository import RecordedStopRepository
 from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, LaneStopped
 from candleviewer.oms_wiring import (
+    ENVIRONMENT_LOCK_TIMEOUT_S,
     HYDRATE_CONCURRENCY,
+    LANE_STALE_S,
+    LANE_TICK_S,
     SWEEP_MAX_FAILURES,
     SWEEP_RETRY_S,
     SWEEP_STATEMENT_TIMEOUT_MS,
     CommandAccounts,
     GroupStores,
+    LaneHeartbeat,
     OmsRuntime,
     OmsStores,
     TradingAccountsBinding,
@@ -76,7 +81,7 @@ from candleviewer.statechart.plugins import InMemoryMachineEventSink
 from candleviewer.statechart_wiring import PersistOps
 from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
 from candleviewer.storage.repositories.accounts import OwnerScope
-from candleviewer.storage.repositories.orders import NewOrder
+from candleviewer.storage.repositories.orders import NewOrder, ScopedOrder
 from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
 from candleviewer.storage.repositories.recorded_stops import NewRecordedStop, RecordedStopRow
 from candleviewer.storage.repositories.session_lock_sqlalchemy import SqlAlchemySessionLock
@@ -202,12 +207,16 @@ class Writer:
 class Lock:
     """The environment's lock (SEC-S3N-01): held unless another process holds it (`elsewhere`),
     or refused with the next of `fails`; each take and give-up lands in `log`, the world's, and
-    each ask notes whether B1's process-wide ports were wired then (a facade existed)."""
+    each ask notes whether B1's process-wide ports were wired then (a facade existed). Its
+    watchdog's probe (`confirm`, CR-S3L2-03) answers `confirmed`, or raises `unconfirmed`."""
 
     log: list[str] = field(default_factory=list)
     elsewhere: bool = False
     fails: list[Exception] = field(default_factory=list)
     wired: list[bool] = field(default_factory=list)
+    confirmed: bool = True
+    unconfirmed: Exception | None = None
+    confirms: int = 0
 
     async def acquire(self) -> bool:
         self.wired.append(b01.ports_wired())
@@ -217,8 +226,49 @@ class Lock:
             self.log.append("lock.acquire")
         return not self.elsewhere
 
+    async def confirm(self) -> bool:
+        self.confirms += 1
+        if self.unconfirmed is not None:
+            raise self.unconfirmed
+        return self.confirmed
+
     async def release(self) -> None:
         self.log.append("lock.release")
+
+
+class Beats:
+    """The lane heartbeat's clock and wait (ruling 2): the clock moves only when a test moves it
+    (`s`), and each wait between ticks ends only when a test lets one more tick happen (`tick`), on
+    the loop the heartbeat runs on."""
+
+    def __init__(self) -> None:
+        self.s = 0.0
+        self._next: asyncio.Event | None = None
+
+    def clock(self) -> float:
+        return self.s
+
+    async def wait(self, seconds: float) -> None:
+        self._next = asyncio.Event()
+        await self._next.wait()
+
+    def tick(self) -> None:
+        if self._next is not None:
+            self._next.set()
+
+
+class Heart(LaneHeartbeat):
+    """The lane's heartbeat on the world's beats; its end lands in the world's log."""
+
+    def __init__(self, lock: Any, pager: Any, beats: Beats, log: list[str]) -> None:
+        super().__init__(lock, pager, clock=beats.clock, wait=beats.wait)
+        self.log = log
+
+    async def run(self) -> None:
+        try:
+            await super().run()
+        finally:
+            self.log.append("heartbeat.end")
 
 
 class InlineLane:
@@ -305,6 +355,7 @@ class World:
     #: The alarm each build of the lane's writer was given (ruling 4).
     alarms: list[Callable[[str], Awaitable[None]]] = field(default_factory=list)
     lock: Lock = field(default_factory=Lock)
+    beats: Beats = field(default_factory=Beats)
 
     def __post_init__(self) -> None:
         self.writer.log = self.lock.log = self.log
@@ -355,9 +406,12 @@ class World:
             "live_enabled": self.flags[1], "profiles": Profiles(), "persistence": bundle,
             "feed": feed, "stores": self.stores, "pager": self.pager, "now": lambda: T0,
             "monotonic": self.clock, "registry": REGISTRY, "oms_enabled": self.flags[0],
-            "sleep": self.clock.sleep, "lane": self.lane,
+            "sleep": self.clock.sleep, "lane": self.lane, "heartbeat": self.heartbeat,
         }  # fmt: skip
         return OmsRuntime(settings, **(built | over))
+
+    def heartbeat(self, lock: Any, pager: Any) -> Heart:
+        return Heart(lock, pager, self.beats, self.log)
 
     def lane(self) -> InlineLane:
         self.lanes.append(InlineLane())
@@ -460,7 +514,7 @@ async def test_the_router_and_cancel_all_share_the_one_fold_port_before_the_serv
 #: What a composed runtime has started, in order (#913 L2): the environment's lock, then the lane's
 #: own writer and sink; and what its stop closes, in order, the lock last.
 STARTED = ["lock.acquire", "audit.start", "sink.start"]
-STOPPED = ["sink.stop", "audit.stop", "pool.release", "lock.release"]
+STOPPED = ["sink.stop", "audit.stop", "pool.release", "heartbeat.end", "lock.release"]
 _SINK_WAL = Path(Settings().machine_event_wal_path)
 _BESIDE = str(_SINK_WAL.with_name(f"oms_lane.{_SINK_WAL.name}"))
 
@@ -819,6 +873,83 @@ async def test_another_holder_met_on_a_later_ask_fails_the_runtime_closed_and_pa
             assert world.pager.calls == ["oms_runtime_failed_closed: environment_lock"]
             assert world.lanes[0].stopped and not b01.ports_wired()
     assert world.log == ["pool.release", "pool.release"] and len(world.lock.wired) == 2
+
+
+async def test_a_lane_that_has_not_ticked_within_its_bound_reads_degraded_and_pages_once_a_stall(
+) -> None:  # fmt: skip
+    """Ruling 2 (the orchestrator's of 2026-10-25 12:22Z; CR-S3L1A-02, OM-D12): a lane alive but
+    stuck stops ticking; once its last tick is past `LANE_STALE_S` the runtime reads `degraded`,
+    as for a dead lane, and pages the first read of the stall alone; a tick ends the stall, and a
+    later one pages again."""
+    world = World()
+    for flag in world.flags:
+        flag.read()
+    async with started(world.runtime()) as runtime:
+        await runtime.wait_ready()
+        await settle()  # the heartbeat's first tick
+        world.beats.s += LANE_STALE_S
+        assert runtime.state == "ok"  # at the bound: not past it
+        world.beats.s += 0.001
+        assert [runtime.state for _ in range(3)] == ["degraded"] * 3
+        world.beats.tick()
+        await settle()
+        assert runtime.state == "ok"
+        world.beats.s += LANE_STALE_S + 0.001
+        assert runtime.state == "degraded"
+    assert world.pager.calls == ["oms_lane_stalled"] * 2
+
+
+@pytest.mark.parametrize("lost", ["released", "unanswered"])
+async def test_a_lost_lock_fences_every_new_submit_and_pages_once_and_leaves_the_exits_open(
+    lost: str,
+) -> None:
+    """Ruling 3 (the orchestrator's of 2026-10-25 12:22Z; CR-S3L2-03): on its tick the watchdog
+    finds the lock's session no longer holds the key, or cannot tell: it pages once and the `oms`
+    check reads `degraded`; every new submit is refused `oms_not_ready`, the route's task and the
+    pipeline's own entry alike; the exit routes' state stays `ok`, so a cancel still runs to the
+    venue (C-2.6, C-2.21), and the watchdog asks no more."""
+    world = World()
+    await crashed(world)
+    for flag in world.flags:
+        flag.read()
+    owner = UUID(int=0x0E)
+    actor = SubmitActor(user_id=owner, role="owner")
+    caller = ExitCaller(OwnerScope(owner), actor)
+    world.store.seed_owner(owner)
+    async with started(world.runtime()) as runtime:
+        await runtime.wait_ready()
+        await settle()
+        assert (runtime.readiness, world.lock.confirms) == ("ok", 1)
+        if lost == "released":
+            world.lock.confirmed = False
+        else:
+            world.lock.unconfirmed = StorageTierUnavailable("no answer")
+        for _ in range(2):  # two ticks: one loss, one page
+            world.beats.tick()
+            await settle()
+        assert (runtime.state, runtime.readiness, _oms_state(runtime)) == (
+            "ok", "degraded", "degraded"
+        )  # fmt: skip
+        with pytest.raises(OmsNotReady):
+            runtime.run(asyncio.sleep(0))
+        with pytest.raises(OmsNotReady):
+            await runtime.submission.submit(cast(Any, None), cast(Any, None))
+        await runtime._composed().machines.settled(
+            cr.ACCOUNT, SENDING.id, leaving="submitting", timeout_s=10
+        )
+        scoped = await runtime.exits.scope(caller, SENDING.id)
+        assert isinstance(scoped, ScopedOrder)
+        cancelled = await runtime.exits.cancel_admitted(
+            scoped.order, actor=actor, reason="user", request_id=None
+        )
+        assert (cancelled.kind, cancelled.status) == ("accepted", 202)
+    assert world.pager.calls == ["oms_environment_lock_lost"] and world.lock.confirms == 2
+
+
+def test_the_heartbeats_bounds_fit_a_tick_and_a_probe_and_a_lanes_own_read() -> None:
+    """Ruling 2: a stall reads only past a tick and the watchdog's bound, so a slow probe is not a
+    wedged lane, and within a lane read's own bound (`HOP_TIMEOUT_S`)."""
+    assert LANE_TICK_S + ENVIRONMENT_LOCK_TIMEOUT_S < LANE_STALE_S <= HOP_TIMEOUT_S
 
 
 def test_the_environments_lock_key_is_its_namespace_and_name_outside_any_hashtext_key() -> None:
@@ -1231,10 +1362,10 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
     """CR-S3E2-04: each close step is isolated and has its share of `OMS_STOP_RESERVE_S`. The
     command port fails to close and the sink's drain never ends; the trading port, which needs a
     turn of the loop, and the pool still close, and the whole stop is bounded."""
-    # 11 closers share 0.5 s (the reserve less the lane's join): the drain's cancel, the lane's
+    # 12 closers share 0.5 s (the reserve less the lane's join): the drain's cancel, the lane's
     # wait, the exits, the stop gate (CR-S3H3B-01), the machines, the commands, then the hung sink,
-    # which costs a fifth of what is left, the lane's audit writer (#913 L2), the trading port,
-    # the pool and the environment's lock (SEC-S3N-01)
+    # which costs a sixth of what is left, the lane's audit writer (#913 L2), the trading port,
+    # the pool, the lane's heartbeat and the environment's lock (SEC-S3N-01)
     monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 1.5)
 
     async def fails(self: OmsCommandPort) -> None:
@@ -1257,7 +1388,7 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
     steps = [(e["step"], e["error"]) for e in logs if e["event"] == "oms_stop_step_failed"]
     assert steps == [("commands", "RuntimeError"), ("sink", "TimeoutError")]
     assert world.venue.ports[0].closed
-    assert world.log == [*STARTED, "audit.stop", "pool.release", "lock.release"]
+    assert world.log == [*STARTED, "audit.stop", "pool.release", "heartbeat.end", "lock.release"]
     assert not b01.ports_wired()  # the facade, first in line, closed too
 
 
