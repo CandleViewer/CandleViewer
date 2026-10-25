@@ -46,7 +46,7 @@ def _sql(template: str) -> sa.TextClause:
     return sa.text(template.replace("@C@", _COLS).replace("@F@", _FROM))
 
 
-_INSERT_USER = sa.text(
+INSERT_INVITED_USER = sa.text(
     "INSERT INTO users (id, email, username, display_name, password_hash, status, "
     "mfa_required, invited_by) VALUES (CAST(:id AS uuid), :email, :username, :dn, :ph, "
     "'invited', true, CAST(:by AS uuid))"
@@ -56,7 +56,7 @@ _INSERT_ROLE = sa.text(
     "SELECT CAST(:id AS uuid), r.id, CAST(:by AS uuid) FROM roles r "
     "WHERE r.name = CAST(:role AS role_name)"
 )
-_INSERT_INVITE = sa.text(
+INSERT_INVITE = sa.text(
     "INSERT INTO user_invites (id, user_id, role, token_hash, invited_by, expires_at, "
     "created_at) VALUES (CAST(:iid AS uuid), CAST(:id AS uuid), CAST(:role AS role_name), "
     ":th, CAST(:by AS uuid), :exp, :now)"
@@ -143,7 +143,7 @@ class SqlAlchemyInviteRepository:
             async with self._relational.unit_of_work() as uow:
                 s = uow.session
                 await s.execute(
-                    _INSERT_USER,
+                    INSERT_INVITED_USER,
                     {
                         "id": str(user_id),
                         "email": email,
@@ -256,7 +256,7 @@ class SqlAlchemyInviteRepository:
                 {"id": str(user_id), "now": now},
             )
             await s.execute(
-                _INSERT_INVITE,
+                INSERT_INVITE,
                 {
                     "iid": str(invite_id),
                     "id": str(user_id),

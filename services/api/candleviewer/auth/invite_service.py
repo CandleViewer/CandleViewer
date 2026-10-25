@@ -162,7 +162,7 @@ class InviteService:
             username=request.username,
             display_name=request.display_name,
             role=role,
-            placeholder_password_hash=_placeholder_hash(),
+            placeholder_password_hash=placeholder_password_hash(),
             invited_by=invited_by,
             token_hash=hash_token(token),
             expires_at=expires_at,
@@ -348,7 +348,7 @@ class InviteService:
         return record
 
 
-def _placeholder_hash() -> str:
+def placeholder_password_hash() -> str:
     # Satisfies `users_pwd_argon`; never verifies (the random tail is not a
     # valid Argon2id digest), so an invited user cannot sign in.
     return "$argon2id$v=19$m=65536,t=3,p=4$" + secrets.token_hex(16)
