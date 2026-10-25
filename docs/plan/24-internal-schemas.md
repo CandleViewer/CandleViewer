@@ -2518,8 +2518,8 @@ class ProfileChanges(Protocol):              # the M13 port; profiles_wiring.Bus
 ### 9.3 Sizing algorithm
 
 ```python
-def size_leg(intent: OrderIntent, profile: AccountProfile,
-             wallet: Wallet, inst: Instrument, metrics: MetricSnapshot) -> LegSizing:
+def size_leg(intent: SizingIntent, profile: AccountProfile,
+             wallet: AccountFigures, inst: Instrument, metrics: SizingMarket) -> LegSizing:
     # 1. Gate
     if not profile.enabled or not profile.trading_enabled:
         return LegSizing.skip("profile_disabled")
@@ -2548,6 +2548,7 @@ def size_leg(intent: OrderIntent, profile: AccountProfile,
             risk_amt = (profile.risk_fixed_amount
                         if profile.risk_fixed_amount is not None
                         else wallet.equity * profile.risk_pct_equity)
+    # a figure the mode reads that is unknown (None) fails closed: LegSizing.fail("figure_unknown")
             qty = risk_amt / stop_dist                      # fees added in step 5
 
     # 5. Fee-aware risk correction (risk_based only): the real loss at the stop
@@ -2555,10 +2556,10 @@ def size_leg(intent: OrderIntent, profile: AccountProfile,
     #    ADR-0040 amendment (2026-10-25, #2635): the comparator prices the exit fee at the further
     #    of ref and the stop; the E34 sizer adopts the same pricing (a short's exit is above ref).
     if profile.sizing_mode == "risk_based":
-        fee_per_unit = ref * (fee.taker * 2)
+        fee_per_unit = (ref + max(ref, stop)) * wallet.taker_fee_rate   # long: 2 * ref * taker
         qty = risk_amt / (stop_dist + fee_per_unit)
 
-    # 6. Clamp to caps (each clamp is recorded, so the UI can explain the number)
+    # 6. Clamp to caps, §9.3.2 (each clamp is recorded, so the UI can explain the number)
     qty = clamp_to_caps(qty, profile, wallet, ref, inst)
 
     # 7. Exchange rounding — ALWAYS floor
@@ -2577,11 +2578,20 @@ def size_leg(intent: OrderIntent, profile: AccountProfile,
 
 **9.3.1 Stop resolution.** `ticks` → `ref ± value*tick_size`; `percent` → `ref * (1 ∓ value)`; `atr` → `ref ∓ atr(period)*multiple`; `r_multiple` is invalid for the stop itself (it _defines_ R) and raises a validation error at profile save time. Sign follows side (long: stop below). The resolved stop is rounded conservatively (further from entry, never closer) so the actual risk never exceeds the budget. If ATR is unavailable (warmup), the resolver falls back to `fallback_sl_offset_pct` and flags `stop_fallback=True` on the leg.
 
-**9.3.2 Clamp order** (deterministic, each recorded): `max_leverage_cap` → `max_position_pct_equity` → `max_position_notional` → remaining headroom under `max_daily_loss` → `inst.max_order_qty`/`max_mkt_order_qty` → available margin × 0.98. Applying clamps in a fixed order makes the resulting size explainable: the UI shows "reduced from 1.2 to 0.8 by max_position_notional".
+**9.3.2 Clamp order** (deterministic, each recorded): `max_leverage_cap` → `max_position_pct_equity` → `max_position_notional` → remaining headroom under `max_daily_loss` → `inst.max_order_qty`/`max_mkt_order_qty`. `max_leverage_cap` bounds the leg's quantity: `qty ≤ max_leverage_cap × equity / ref`. Available margin × 0.98 is no clamp: it is step 8's failure `insufficient_margin` (ruled on #907, 2026-10-24). Applying clamps in a fixed order makes the resulting size explainable: the UI shows "reduced from 1.2 to 0.8 by max_position_notional".
 
 **9.3.2a Overrides: the resulting-leg comparator** (ADR-0040 (proposed, #4461) Decision 1; #2635, E28 threat model F-01). A trade-group leg's request values (`defaults`, then `legs[].overrides`, an alternate `overrides.profile_id` included) are later-narrows: the bound profile (the account's default) is the ceiling. The effective caps are the bound profile's, tightened by an alternate's stricter values, and the comparator judges the resulting leg after the steps above and the clamps of §9.3.2 run again: its quantity, notional, leverage, margin and risk at the stop may not exceed the bound profile's caps and risk budget, and its stop may not lie further from entry than the bound profile's own resolved stop for that leg (ADR-0040 (proposed, #4461) Decision 1, rule 4). The ADR proposes the risk ceiling as the net daily-loss headroom (the effective `max_daily_loss` headroom minus the account's committed risk, capped by the per-trade budget for a `risk_based` profile, zero when the committed risk cannot be established); that netting awaits the owner's sign-off (#2701). A request value that breaks the comparator is refused whole with `403 risk_limit_breached` and one `errors[]` entry per offending leg, never clamped (C-12.5, D6); only the profile's own sizing, with no request value, is clamped and explained here (`sizing_explanation`). `22-api-openapi.yaml` `createTradeGroup` is the contract.
 
 **9.3.3 Take-profit resolution.** The `tp_ladder` rungs' `qty_pct` must sum to ≤ 1; any remainder is left to be managed by stop/rules. `r_multiple` TPs are computed from the resolved stop distance. Each TP leg becomes a `reduce_only` limit order after the entry fills, sized `floor(filled_qty * qty_pct)` with the **last** leg absorbing the rounding remainder so the TP ladder always totals exactly the filled quantity.
+
+**9.3.4 Outcomes and inputs (as built, E28-T03 #907).** `size_leg` lives in `candleviewer.accounts.sizer` (M13, `candleviewer.accounts`; no `profiles` module exists). It never raises for a business outcome: it returns `LegSizing` with `outcome` `ok`, `skip` (grey) or `fail` (red), and a reason from one closed set per kind, which are never conflated (§9.5).
+
+| Kind   | Reasons                                                                                                                        |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `skip` | `profile_disabled`, `symbol_not_allowed`, `symbol_denied`, `below_min_notional`                                                |
+| `fail` | `no_reference_price`, `invalid_stop_distance`, `insufficient_margin`, `cap_breached`, `figure_unknown`, `leverage_unavailable` |
+
+`below_min_notional` covers the minimum quantity, the instrument's minimum notional and `min_leg_notional`; the leg names which (`minimum`). `cap_breached` is a clamp that bound and left the floored quantity below a minimum; `leverage_unavailable` is a `profile.leverage` above `inst.max_leverage`. The inputs are M13's own, as M13 imports no `exchange.base`, `rules` or `oms`: `SizingIntent` (symbol, side, `order_type` `market` or `limit`, `price`), `SizingMarket` (`mid`, `last_price`, `atr`) with `AtrReading` (`period`, `value`, `None` in warm-up; a reading of another period than `sl_atr_period` falls back too), and the comparator's `AccountFigures` as `wallet` (§9.3.2a), so the sizer and the comparator read one set of figures. `atr` stops use `sl_atr_multiple`. Every quotient is taken at 100 digits rounding down, so no quotient rounds up onto a lot step. A leg reports `risk_usdt` (1R, `stop_distance × qty`, no fees) and `risk_with_fees_usdt` (step 5's).
 
 ### 9.4 Fan-out algorithm
 
@@ -5943,3 +5953,7 @@ This number follows `main`'s last entry, §19.32; an entry that lands first take
 - §8.4 steps 1, 2, 4, 5 and 11: an id route's malformed id is `400 validation_failed` before step 2, unaudited; step 2 checks `orders:write` alone, the trade grant read with the order at step 4, whose scope under view-as is the target's trade grants as the viewer may act on them; the class step 5 judges is read again at step 11, which refuses an amend its own read makes risk-increasing where step 4's did not, audited `orders.amend` denied with `step` `class` and `reason` `reclassified` in its detail (the orchestrator's ruling of 2026-10-25 00:27Z (1)).
 - §15.5: a cancel of an order already final is `orders.cancel`, outcome `success`, reason `already_final`; a refusal's `step` and the class re-check's `reason` in the detail.
 - `22-api-openapi.yaml`: `amendOrder` and `cancelOrder` gain `401` and `500`, and `cancelAllOrders` `401`, `429` and `500`. The three `500`s are one new response, `InternalError`, the registry's `internal_error` with no `instance`, the correlation id on `X-Correlation-Id`, and every exit `500` pages, one page for the fault's class (the orchestrator's rulings of 2026-10-25 00:27Z (3), 00:36Z and 02:50Z (2)).
+
+### 19.36 2026-10-25 — §9.3: the sizer's inputs, fee pricing, outcomes and the margin step (E28-T03, #907)
+
+- §9.3 step 5 prices the exit fee at the further of `ref` and the stop, as the comparator does (ADR-0040 OPEN-4); the fee rate is `AccountFigures.taker_fee_rate`. §9.3.2 drops available margin × 0.98 from the clamps (step 8's failure `insufficient_margin`) and states the `max_leverage_cap` bound. §9.3.4 (new) names the module, the M13 input types and the closed skip and fail reasons. No REST, WS, table or column changes.
