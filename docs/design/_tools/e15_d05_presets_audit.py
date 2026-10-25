@@ -42,16 +42,24 @@ deficiency matrices and dE76), so no formula is re-implemented here. Sections, e
    section 0 = the state inventory = the hand-off's count; ``15`` refused in ``--files``; the ``14`` write-back
    lines present and the SCR-022 sketch and Data line unchanged.
 10. Frame-keyed gates (the A2 list): every element is required on the state-inventory rows that draw it, by frame
-    id, never on a ruling sentence, and read clause by clause rather than by one keyword: the spine word per
-    surface (a saved-layout frame names the saved layout); no key chip on a preset card; the dirty marker in the
-    row name on every dirty frame; no prompt on the dirty switch; the footer carriers on every gallery frame; the
-    one T2's anatomy on every T2 frame and the T2 form on no other row; no CTA, button or bracketed action in the
-    sentence form; no lock token in an availability clause; no one-click delete in any wording; every exit T1 and
-    never paired with a gate (one gate for the exit class); every "N px" or count a frame draws is a value the
-    tool prints; every chord outside the keymap marked PROPOSED; the inventory's order, counts, cut preset and
-    card notes.
-11. Numbers: the ``audit:`` block at the end of the spec equals ``--json``'s markers; every W x H and two-decimal
-    ratio in the spec and the hand-off is one the tool derives; the section 13 table rows equal the tool's.
+    id, never on a ruling sentence, and read clause by clause with a case-insensitive vocabulary per ruled sentence
+    (text round 1): the Spine cell is exactly its surface's bare noun phrase and no other surface's noun stands in
+    any other cell; no key word (a chord, "hotkey", "chip", "Kbd", a bare F-key) on a preset-card clause, in the
+    rows or the section 5.2 / 6.2 prose; the trigger carries no key chip inline (merged E15-D03 D-9); the dirty
+    marker in the row name, never moved to a tab, tooltip or toolbar; no prompt, dialog, toast, confirm or
+    "Save first?" on a switch frame or in section 10.3 unless directly negated; the footer carriers on every
+    gallery frame; the one T2's anatomy on every T2 frame (C-16's four frames name their gated writes) and the T2
+    form on no other row; no lock, inert or can't-be-pressed wording on a T1 control (Apply, Browse presets…,
+    Rename… outside C-16's frames, Discard changes, a switch, Open, Keep current symbols, an exit) or in an Exits
+    cell; no account or environment control on these surfaces; no one-click delete in any wording; every number a
+    frame draws equals a name the frame registers; every chord outside the keymap's Global / Workspace contexts
+    marked PROPOSED (rows, board rows, copy deck, key rows and the prose of sections 4-12), a bare F-key never
+    drawn (RULED Q-22); unmerged siblings never pinned or quoted; the inventory's order, counts, cut preset and
+    card notes; each `14` line present exactly once.
+11. Numbers: the ``audit:`` block at the end of the spec equals ``--json``'s markers; every counted number the prose
+    types sits in a registered context bound to a marker, a token size or a carried literal of ``CONSTS`` (printed
+    under ``constants``); every W x H and two-decimal ratio in the spec and the hand-off is one the tool derives;
+    the section 13 table rows equal the tool's.
 
 Usage: python3 -I docs/design/_tools/e15_d05_presets_audit.py [--json] [--check] [--table] [--pairs]
        [--self-test] [--pr-body FILE] [--files PATH ...]
@@ -269,6 +277,7 @@ WORKSPACE_CAP, LAYOUT_CAP, HOTKEY_SLOTS = (
     9,
 )  # `22` listWorkspaces, listLayouts, LayoutInput.hotkey_slot
 TWELVE = 12  # the ticket's AC 5 fixture: twelve saved layouts
+SEARCH_FIXTURE = 24  # E15-D02 :304: the search frame's fixture holds 24 workspaces (carried)
 MIN_CARD_W = 160  # PROPOSED: the narrowest preset card (the thumbnail stays legible, section 2)
 CARD_GUTTER = 16  # space.4 between cards (the grid gap)
 THUMB_ASPECT = 0.6  # PROPOSED: thumbnail height / width
@@ -1168,7 +1177,11 @@ def expand_chord(c: str) -> list[str]:
     return [f"{r.group(1)}{k}" for k in range(int(r.group(2)), int(r.group(3)) + 1)] if r else [c]
 
 
+KEYMAP_CONTEXTS = ("Global", "Workspace")  # the contexts SCR-022, CMP-217 and SCR-011 live in
+
+
 def keymap_bindings() -> set[str]:
+    """Every chord bound in a context these surfaces live in (``F2`` is ``rules.rename`` in Rules: not here)."""
     out: set[str] = set()
     try:
         data = json.loads(KEYMAP.read_text(encoding="utf-8"))
@@ -1178,7 +1191,7 @@ def keymap_bindings() -> set[str]:
     if isinstance(cmds, dict):
         cmds = list(cmds.values())
     for c in cmds if isinstance(cmds, list) else []:
-        if not isinstance(c, dict):
+        if not isinstance(c, dict) or c.get("context") not in KEYMAP_CONTEXTS:
             continue
         b = c.get("defaultBinding")
         for x in [b] if isinstance(b, str) else (b if isinstance(b, list) else []):
@@ -1276,7 +1289,7 @@ CAT_TYPE_LINE = (
 )
 CAT_CHECKLIST_LINE = (
     "- **Design sign-off acceptance checklist:** [ ] built-in presets drawn (the eleven built-in presets of E15-D05 §6; "
-    "the 2026 checklist names map there) [ ] user presets with rename/delete [ ] 'applying replaces your current layout' "
+    "the legacy checklist names map there) [ ] user presets with rename/delete [ ] 'applying replaces your current layout' "
     "confirmation [ ] empty user-preset state"
 )
 CAT_POINTER_022 = "- **Design (wireframe → hi-fi):** [E15-D05.md](../design/E15/E15-D05.md) §5–§9 (E15-D05; PROPOSED, owner approval pending:"
@@ -1379,6 +1392,10 @@ def string_gates(
             fails.append("boards: a section-0 board row is not PENDING")
             break
     f0, finv = frame_names(boards), {r[0].strip("`") for r in inventory_rows(spec)}
+    listed = [r[0].strip("`") for r in inventory_rows(spec)]
+    twice = sorted({n for n in listed if listed.count(n) > 1})
+    if twice:
+        fails.append(f"frames: the state inventory lists {twice[0]} twice")
     if f0 != finv:
         fails.append(
             f"frames: section 0 names {len(f0)} frames, the state inventory {len(finv)}; they differ"
@@ -1398,6 +1415,26 @@ def string_gates(
             fails.append(f"events: {e} is missing from the observability table")
     if re.search(r"workspace\.switched[^|]*\{[^}]*\bname\b", obs):
         fails.append("events: workspace.switched carries a name")
+    # unmerged siblings are named PENDING only: never pinned by a sha or a line, never quoted
+    for name, text in (("spec", spec), ("handoff", handoff)):
+        for m in SIBLING_PIN.finditer(text):
+            fails.append(f"siblings: the {name} pins or quotes {m.group(1)} ('{m.group(0)[:48]}')")
+    # C-16 (RULED, comment 6396465673) names exactly the four frames that gate the non-save writes
+    c16 = next((ln for ln in spec.split("\n") if ln.startswith("| C-16 ")), "")
+    if set(re.findall(r"`((?:SCR-022|CMP-217|SCR-011)/[a-z0-9-]+)`", c16)) != set(C16_FRAMES):
+        fails.append("t2: C-16 does not name its four frames")
+    # D-9 in prose: the dirty switch section never prompts, in any wording
+    word = first_prompt(section(spec, "### 10.3 ", "## 11. "), SWITCH_PROSE_WORD)
+    if word:
+        fails.append(f"switch: §10.3 prompts on a switch ('{word}')")
+    # no key on a preset card in the gallery's prose either
+    for start, end, label in (("### 5.2 ", "### 5.3 ", "§5.2"), ("### 6.2 ", "## 7. ", "§6.2")):
+        prose_ = " ".join(
+            ln for ln in section(spec, start, end).split("\n") if not ln.startswith("|")
+        )
+        cl = key_on_card(re.sub(r"\.\s", ";", prose_))
+        if cl:
+            fails.append(f"spine: {label} puts a hotkey on a preset card ('{cl[:60]}')")
     # the `14` write-back: the added lines present, the kept lines unchanged
     if catalogue:
         for label, line in (
@@ -1406,8 +1443,11 @@ def string_gates(
             ("the SCR-022 hi-fi pointer", CAT_POINTER_022),
             ("the SCR-011 hi-fi pointer", CAT_POINTER_011),
         ):
-            if line not in catalogue:
+            n_line = catalogue.count(line)
+            if n_line == 0:
                 fails.append(f"catalogue: {label} is not in `14`")
+            elif n_line > 1:
+                fails.append(f"catalogue: {label} appears {n_line} times in `14`")
         for line in CAT_KEEP:
             if line not in catalogue:
                 fails.append("catalogue: a kept SCR-022 line changed")
@@ -1432,13 +1472,9 @@ T2_FORM_ALLOWED = (
     "no `aria-disabled`",
 )
 EXIT_GATED = re.compile(
-    r"lock|aria-disabled|\bT2\b|CMP-079|rbac\.|disabledReason|\bblocked\b|\bdisabled\b|(?<!never )\bgated\b",
+    r"lock|aria-disabled|\bT2\b|CMP-079|rbac\.|disabledReason|\bblocked\b|\bdisabled\b|(?<!never )\bgated\b"
+    r"|\binert\b|can(?:'|’|no)t be (?:pressed|used|clicked|chosen|activated)|\bunavailable\b|\bgr[ae]yed\b",
     re.IGNORECASE,
-)
-EXIT_NEAR_GATE = re.compile(
-    r"(?:×|`Esc`|Cancel|Close|Discard changes|Browse presets…|Apply|Keep current symbols|\bOpen\b|Back)[^;.|]{0,40}?"
-    r"\b(?:locked|lock glyph|`lock`|lock|padlock|aria-disabled|disabled|blocked|(?<!never )gated|T2|CMP-079"
-    r"|rbac\.[a-z_]+|disabledReason)\b"
 )
 # the lock tokens an availability clause or a sentence-form row must not carry un-negated (per clause, any wording)
 LOCK_TOKEN = re.compile(
@@ -1449,8 +1485,35 @@ ONE_CLICK = re.compile(
     r"one-click|deletes? (?:at once|immediately|straight away)|without (?:a |the )?(?:typed )?confirm|no confirm"
 )
 UNIT_NUM = re.compile(
-    r"(?<![\d.×+:])(\d+(?:,\d{3})?) (px|rows|columns|card skeletons|workspaces|layouts|cards)\b"
+    r"(?<![\d.×+:–\-])(\d+(?:,\d{3})?) (px|rows?|columns|workspaces|layouts|cards|lines|at comfortable)\b"
+    r"|\bthe (\d+) (that fit)\b"
 )
+# every number a frame row draws, bound to the --json names it may equal (M-3: no "any printed integer")
+FRAME_NUMS: dict[str, tuple[str, ...]] = {
+    "SCR-022/presets-listbox": ("card_w_1920",),
+    "SCR-022/gallery-1280": ("card_w_1280",),
+    "SCR-022/gallery-zoom200": ("zoom200_card_h", "zoom200_scroll"),
+    "SCR-022/gallery-text-125": ("text125_card_h", "text125_listbox_visible", "text125_yl_rows"),
+    "SCR-022/thumbnails-smallest": ("glyph_px",),
+    "SCR-022/your-layouts-twelve": ("yl_rows_1920_compact", "yl_rows_1280_compact"),
+    "SCR-022/save-as-limit": ("layout_cap",),
+    "CMP-217/menu-default": ("menu_w",),
+    "CMP-217/menu-twelve": (
+        "menu_h_compact_12",
+        "menu_first_scroll_1280_compact",
+        "menu_first_scroll_1280_comfortable",
+    ),
+    "CMP-217/menu-limit": ("layout_cap",),
+    "SCR-011/expanded": ("rail_expanded",),
+    "SCR-011/collapsed": ("rail_collapsed",),
+    "SCR-011/search": (
+        "search_fixture",
+        "search_threshold",
+        "menu_row_compact",
+        "rail_fit_1280_compact_search",
+    ),
+    "SCR-011/limit": ("workspace_cap",),
+}
 STROKE_PX = ("1", "2", "3")  # hairline, ring and bar strokes: token widths, not layout numbers
 SAVED_LAYOUT_FRAMES = (  # gallery frames that act on a saved layout, not on an arrangement (lens round 1 F-10)
     "SCR-022/your-layouts-empty",
@@ -1465,7 +1528,8 @@ SAVED_LAYOUT_FRAMES = (  # gallery frames that act on a saved layout, not on an 
     "SCR-022/save-as-limit",
 )
 CHORD = re.compile(
-    r"(?:Ctrl|Alt|Shift|Meta|Cmd)\+[A-Za-z0-9←→↑↓\\]+(?:\+[A-Za-z0-9←→↑↓\\]+)*(?:\.\.\d)?"
+    r"(?:Ctrl|Alt|Shift|Meta|Cmd)\+[A-Za-z0-9←→↑↓\\]+(?:\+[A-Za-z0-9←→↑↓\\]+)*(?:\.\.\d)?",
+    re.IGNORECASE,
 )
 COMPONENT_KEYS = {"Shift+Tab"}  # a widget's own key, never a keymap row
 VIEW_AS_FRAMES = ("SCR-022/your-layouts-view-as", "CMP-217/menu-view-as", "SCR-011/menu-view-as")
@@ -1562,6 +1626,171 @@ for _n in (
     EXIT_KIND[f"SCR-011/{_n}"] = MENU_EXIT
 EXIT_KIND["SCR-011/new-workspace"] = DIALOG_EXIT
 EDITING_FRAMES = ("SCR-011/rename-inplace", "SCR-011/rename-clash", "SCR-022/rename-clash")
+# Text round 1 (M-1): every ruled sentence is read clause by clause with a case-insensitive vocabulary, never
+# by one keyword. A clause is a stretch between ";", "|" and "—"; a sub-clause also stops at "," and "(".
+SPINE_CELL = {
+    "SCR-022": "picks an arrangement",
+    "CMP-217": "switches a saved layout",
+    "SCR-011": "picks a saved workspace",
+}
+SAVED_LAYOUT_SPINE = "manages a saved layout"
+SPINE_NOUNS = {
+    "arrangement": re.compile(r"\barrangements?\b", re.IGNORECASE),
+    "saved layout": re.compile(r"\bsaved layouts?\b", re.IGNORECASE),
+    "saved workspace": re.compile(r"\bsaved workspaces?\b", re.IGNORECASE),
+}
+PRESET_ROWS = ("SCR-022/presets-listbox", "SCR-022/thumbnails", "SCR-022/thumbnails-smallest")
+FIXTURE_WORKSPACES = ("Swing 4H", "Fanout review")  # Scalping shares the preset's name (lens nit)
+KEY_WORD = re.compile(
+    r"ctrl\s*\+|\bhot\s*-?keys?\b|\bkey\s*chips?\b|\bchips?\b|\bkbd\b|CMP-022|\bshortcuts?\b"
+    r"|(?<![+\w])F\d{1,2}\b|\bkey\s+\d",
+    re.IGNORECASE,
+)
+CARD_WORD = re.compile(r"\bcards?\b|\bpresets?\b|\bthumbnails?\b|\boptions?\b", re.IGNORECASE)
+NEG_WORD = re.compile(r"\b(?:no|not|never|without|nor|none)\b", re.IGNORECASE)
+DIRTY_DENY = re.compile(
+    r"\b(?:not|never|no longer|without)\b[^;|,]{0,30}?\b(?:row(?:'s)? name|accessible name|the name)\b"
+    r"|\b(?:tab strip|tab|toolbar|status ?bar|tooltip)\s+only\b"
+    r"|\bonly\s+(?:on|in)\s+the\s+(?:tab|toolbar|tooltip|status)",
+    re.IGNORECASE,
+)
+PROMPT_WORD = re.compile(
+    r"\bprompt(?:s|ed|ing)?\b|\bdialogs?\b|\btoasts?\b|\bconfirm(?:s|ation)?\b|\bmodal\b|alertdialog"
+    r"|SCR-029|\bsave first\b|\basks?\b",
+    re.IGNORECASE,
+)
+PROMPT_OK = (
+    "SCR-025's typed confirm",
+)  # the workspace delete's own confirm, never a switch prompt
+DIRECT_NEG = re.compile(r"\b(?:no|never|without|not)\s+(?:a\s+)?$", re.IGNORECASE)
+SWITCH_PROSE_WORD = re.compile(
+    r"\bprompt(?:s|ed|ing)?\b|\bdialogs?\b|\btoasts?\b|\bconfirm(?:s|ation)?\b|\bmodal\b|\bsave first\b",
+    re.IGNORECASE,
+)
+LOCK_WORD = re.compile(
+    r"\block(?:ed|s)?\b|\bpadlock\b|\binert\b|can(?:'|’|no)t be (?:pressed|used|clicked|chosen|activated)"
+    r"|\bdisabled\b|\bgr[ae]yed(?: out)?\b|\bunavailable\b|\bblocked\b|\bgated\b|aria-disabled|\bT2\b"
+    r"|CMP-079|disabledReason|rbac\.[a-z_]+",
+    re.IGNORECASE,
+)
+LOCK_SKIP = ("`opacity.disabled`", "`color.text.disabled`")  # token names, not states
+T1_SUBJECT = re.compile(
+    r"\bApply\b|Browse presets…|\bRename\b…?|Discard changes|\bswitch(?:es|ing)?\b|\bOpen\b|\bCancel\b"
+    r"|\bClose\b|`Esc`|Back to gallery|Keep current symbols|the search field|\bUndo\b",
+    re.IGNORECASE,
+)
+# C-16 (RULED, #321 comment 6396465673): the writes to a saved layout or workspace stay T2 under view-as and
+# for a viewer; besides the save frames, these four frames gate them, and each names its gated writes
+C16_WRITES: dict[str, tuple[str, ...]] = {
+    "SCR-022/your-layouts-view-as": ("Rename", "key picker", "Delete…"),
+    "SCR-022/your-layouts-viewer": (),
+    "SCR-011/menu-viewer": (
+        "Rename…",
+        "Duplicate",
+        "Set as default",
+        "Move up",
+        "Move down",
+        "Delete…",
+        "New workspace",
+    ),
+    "SCR-011/menu-view-as": (
+        "Rename…",
+        "Duplicate",
+        "Set as default",
+        "Move up",
+        "Move down",
+        "Delete…",
+    ),
+}
+C16_FRAMES = tuple(C16_WRITES)
+SCOPE_WORD = re.compile(
+    r"\bsub-?accounts?\b|\baccounts?\b|\benvironments?\b|\benv\b|\bDEMO\b|\btestnet\b|\blive\b|\bUID\b",
+    re.IGNORECASE,
+)
+FKEY = re.compile(r"(?<![+\w])`?(F\d{1,2})\b", re.IGNORECASE)
+SIBLING_PIN = re.compile(
+    r"(E15-D0[78])\b[^.;|\n]{0,40}?(?:\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b|\s:\d{2,}\b|\"[^\"]{4,}\")"
+)
+
+
+def strip_quotes(text: str) -> str:
+    """Blank every double-quoted string (copy, not drawn state), keeping the offsets."""
+    return re.sub(r'"[^"\n]*"', lambda m: " " * len(m.group(0)), text)
+
+
+def clauses_of(text: str) -> list[str]:
+    return [c for c in re.split(r"[;|—]", text) if c.strip()]
+
+
+def sub_negated(clause: str, i: int) -> bool:
+    """Whether the sub-clause (from the last ',' or '(' before i) negates what stands at i."""
+    a = max(clause.rfind(",", 0, i), clause.rfind("(", 0, i)) + 1
+    return bool(NEG_WORD.search(clause[a:i]))
+
+
+def key_on_card(text: str) -> str:
+    """The first clause that puts a key on a preset card un-negated, else ''."""
+    for clause in clauses_of(strip_quotes(text)):
+        if not CARD_WORD.search(clause):
+            continue
+        for m in KEY_WORD.finditer(clause):
+            if not sub_negated(clause, m.start()):
+                return clause.strip()
+    return ""
+
+
+def first_prompt(text: str, words: re.Pattern[str] = PROMPT_WORD) -> str:
+    """The first prompt / dialog / toast / confirm word not directly negated, else ''."""
+    for ok in PROMPT_OK:
+        text = text.replace(ok, " " * len(ok))
+    for m in words.finditer(text):
+        if not DIRECT_NEG.search(text[max(0, m.start() - 12) : m.start()]):
+            return m.group(0)
+    return ""
+
+
+def locked_t1(text: str, gated: tuple[str, ...]) -> tuple[str, str]:
+    """(subject, lock word) for the first clause that locks a T1 control un-negated, else ('', '')."""
+    for ok in LOCK_SKIP:
+        text = text.replace(ok, " " * len(ok))
+    for clause in clauses_of(text):
+        subs = [
+            m
+            for m in T1_SUBJECT.finditer(clause)
+            if not any(m.group(0).lower().startswith(g.lower()) for g in gated)
+        ]
+        if not subs:
+            continue
+        for m in LOCK_WORD.finditer(clause):
+            if NEGATED.search(clause[max(0, m.start() - 24) : m.start()]):
+                continue
+            # the subject the lock word speaks of: the nearest one before it (within 40), else after it
+            before = [s for s in subs if s.end() <= m.start() and m.start() - s.end() <= 40]
+            after = [s for s in subs if s.start() >= m.end()]
+            subj = before[-1] if before else (after[0] if after else subs[0])
+            return subj.group(0), m.group(0)
+    return "", ""
+
+
+def first_scope(text: str) -> str:
+    text = strip_quotes(text)
+    for m in SCOPE_WORD.finditer(text):
+        if not NEGATED.search(text[max(0, m.start() - 24) : m.start()]):
+            return m.group(0)
+    return ""
+
+
+def bare_fkeys(text: str, bindings: set[str]) -> list[str]:
+    """Bare function keys drawn un-negated and not bound in a context these surfaces live in (RULED Q-22)."""
+    low = {b.lower() for b in bindings}
+    out = []
+    for m in FKEY.finditer(text):
+        if m.group(1).lower() in low:
+            continue
+        if re.search(r"\bno\s+`?$", text[max(0, m.start() - 8) : m.start()], re.IGNORECASE):
+            continue
+        out.append(m.group(1))
+    return out
 
 
 def frame_needs(nums: dict[str, Any]) -> dict[str, tuple[tuple[str, str], ...]]:
@@ -1649,7 +1878,7 @@ def frame_needs(nums: dict[str, Any]) -> dict[str, tuple[tuple[str, str], ...]]:
         )
     needs["CMP-217/trigger"] = (
         ("the active layout's name", "Layout 1"),
-        ("the key chip", "Ctrl+1"),
+        ("the no-inline-chip rule", "never a key chip inline (merged E15-D03 D-9)"),
     )
     needs["CMP-217/menu-default"] = (
         ("Browse presets… last", "Browse presets…"),
@@ -1657,7 +1886,7 @@ def frame_needs(nums: dict[str, Any]) -> dict[str, tuple[tuple[str, str], ...]]:
     )
     needs["CMP-217/menu-twelve"] = (
         (f"{keyed} keyed", f"{keyed} keyed"),
-        ("the first scrolling count", f"from {nums['menu_first_scroll_1280_compact']} layouts"),
+        ("the first scrolling count", "layouts at compact"),
     )
     needs["CMP-217/menu-viewer"] = (("the availability look on Revert", "availability"),)
     needs["CMP-217/light-menu-t2"] = (("semantic-light", "semantic-light"),)
@@ -1699,10 +1928,9 @@ def frame_needs(nums: dict[str, Any]) -> dict[str, tuple[tuple[str, str], ...]]:
         ("[New workspace] T1", "[New workspace] T1"),
     )
     needs["SCR-011/loading"] = (("skeleton rows", "skeleton"), ("`aria-busy`", "`aria-busy`"))
-    needs["SCR-011/error"] = (
-        ("the load failure copy", "Workspaces didn't load."),
-        ("[Retry]", "[Retry]"),
-    )
+    # SCR-011/error's copy and action are gated by load_error_gates (RULED M-2), cell by cell
+    for f, writes in C16_WRITES.items():
+        needs[f] = needs.get(f, ()) + tuple((f"the gated write {w}", w) for w in writes)
     needs["SCR-011/new-workspace"] = (
         ("Start from", "Start from"),
         ("Scalping preselected", "Scalping preselected"),
@@ -1749,37 +1977,72 @@ def frame_gates(spec: str, bindings: set[str], nums: dict[str, Any]) -> list[str
     by = {r[0].strip("`"): r for r in inv}
     needs = frame_needs(nums)
     labels = [p["label"] for p in INVENTORY]
-    allowed_nums = {
-        str(int(v))
-        for v in nums.values()
-        if isinstance(v, (int, float)) and not isinstance(v, bool) and float(v).is_integer()
-    } | set(STROKE_PX)
     for name, r in by.items():
         text = " | ".join(r)
         prefix = name.split("/")[0]
         if len(r) < 7:
             fails.append(f"inventory: frame {name} has fewer than seven cells")
             continue
-        # A2: the spine word per surface, in the Spine cell (a saved-layout frame names the saved layout)
+        # A2: the Spine cell is its surface's bare noun phrase; no other surface's noun in any other cell
         noun = "saved layout" if name in SAVED_LAYOUT_FRAMES else SPINE_WORD.get(prefix, "")
+        want_cell = (
+            SAVED_LAYOUT_SPINE if name in SAVED_LAYOUT_FRAMES else SPINE_CELL.get(prefix, "")
+        )
         if noun not in r[4]:
             fails.append(f"spine: frame {name} does not name its noun ({noun})")
+        elif r[4].strip() != want_cell:
+            fails.append(
+                f"spine: frame {name}'s Spine cell is not the bare '{want_cell}' ('{r[4].strip()}')"
+            )
+        rest = strip_quotes(" | ".join(c for i, c in enumerate(r) if i != 4))
+        for other, pat in SPINE_NOUNS.items():
+            if other == noun:
+                continue
+            hit = next(
+                (
+                    m
+                    for m in pat.finditer(rest)
+                    if not NEGATED.search(rest[max(0, m.start() - 24) : m.start()])
+                ),
+                None,
+            )
+            if hit:
+                fails.append(
+                    f"spine: frame {name} names a {other} outside its Spine cell "
+                    f"('{clause_at(rest, hit.start())[:60]}')"
+                )
+                break
+        if name in PRESET_ROWS:
+            ws = next((w for w in FIXTURE_WORKSPACES if w in text), "")
+            if ws:
+                fails.append(f"spine: frame {name} names the workspace {ws} in the Presets listbox")
         if prefix == "SCR-022" and re.search(
-            r"(?:Rename|Delete|Duplicate) workspace|Set as default|Move up", text
+            r"(?:Rename|Delete|Duplicate) workspace|Set as default|Move up", text, re.IGNORECASE
         ):
             fails.append(f"spine: frame {name} offers a workspace action in the gallery")
-        if prefix == "SCR-011" and re.search(r"Ctrl\+[1-9]", text):
+        if prefix == "SCR-011" and re.search(r"ctrl\s*\+\s*[1-9]", text, re.IGNORECASE):
             fails.append(f"spine: frame {name} shows layout keys in the switcher")
         if prefix == "SCR-022":
-            for m in re.finditer(r"Ctrl\+(?:[1-9]|1\.\.9)", text):
-                cl = clause_at(text, m.start())
-                if re.search(r"\bcards?\b|\bpreset\b", cl) and not re.search(
-                    r"\bno\b|\bnever\b|\bnot\b", cl
-                ):
+            cl = key_on_card(" | ".join(r[2:]))
+            if cl:
+                fails.append(f"spine: frame {name} puts a hotkey on a preset card ('{cl[:60]}')")
+        # merged E15-D03 D-9: the trigger never carries a key chip inline
+        if name == "CMP-217/trigger":
+            for clause in clauses_of(strip_quotes(r[2])):
+                hit = next(
+                    (m for m in KEY_WORD.finditer(clause) if not sub_negated(clause, m.start())),
+                    None,
+                )
+                if hit:
                     fails.append(
-                        f"spine: frame {name} puts a hotkey on a preset card ('{cl[:60]}')"
+                        f"trigger: frame {name} draws a key chip inline ('{hit.group(0)}'; "
+                        "merged E15-D03 D-9)"
                     )
                     break
+        # C-2.11 made visible: no account or environment control on these surfaces
+        scope = first_scope(" | ".join(r[2:]))
+        if scope:
+            fails.append(f"scope: frame {name} draws an account or environment control ('{scope}')")
         # A2: the per-frame carriers
         for label, needle in needs.get(name, ()):
             seen = present(text, needle)
@@ -1787,13 +2050,23 @@ def frame_gates(spec: str, bindings: set[str], nums: dict[str, Any]) -> list[str
                 fails.append(f"carrier: frame {name} lacks {label}")
             elif seen == "negated" and label not in ("no prompt",):
                 fails.append(f"carrier: frame {name} negates {label}")
-        # A2: every "N px" / count in the drawn state is a value the tool prints (lens round 1 F-5)
-        for m in UNIT_NUM.finditer(r[2]):
-            if m.group(1).replace(",", "") not in allowed_nums:
+        # A2 / M-3: every "N px" / count in the drawn state equals one of the names the frame registers
+        mine = {str(nums[k]) for k in FRAME_NUMS.get(name, ())}
+        for m in UNIT_NUM.finditer(strip_quotes(r[2] + " | " + r[5])):
+            n, unit = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+            n = n.replace(",", "")
+            if n in mine or (unit == "px" and n in STROKE_PX):
+                continue
+            fails.append(
+                f"number: frame {name} draws {n} {unit}, not a value the tool derives for it"
+            )
+            break
+        if name in DIRTY_FRAMES:
+            hit = DIRTY_DENY.search(r[2] + " | " + r[5])
+            if hit:
                 fails.append(
-                    f"number: frame {name} draws {m.group(1)} {m.group(2)}, not a value the tool derives"
+                    f"dirty: frame {name} moves the dirty marker out of the row name ('{hit.group(0)}')"
                 )
-                break
         # the Presets listbox: inventory order, the cut preset
         if name == "SCR-022/presets-listbox":
             pos = [text.find(lb) for lb in labels]
@@ -1825,10 +2098,12 @@ def frame_gates(spec: str, bindings: set[str], nums: dict[str, Any]) -> list[str
                 fails.append(
                     f"delete: the context menu frame offers a one-click workspace delete ('{hit_tok}')"
                 )
-        if name == "SCR-011/switch-dirty" and (
-            present(text, "SCR-029") == "yes" or present(text, "prompt") != "negated"
-        ):
-            fails.append("switch: the dirty switch frame prompts or omits the no-prompt rule (D-9)")
+        if prefix in ("SCR-011", "CMP-217") and name != "SCR-011/new-workspace":
+            word = first_prompt(r[2] + " | " + r[5])
+            if word:
+                fails.append(f"switch: frame {name} prompts on a switch ('{word}')")
+            elif name == "SCR-011/switch-dirty" and present(text, "prompt") != "negated":
+                fails.append("switch: the dirty switch frame omits the no-prompt rule (D-9)")
         if name == "SCR-022/delete-layout-confirm" and (
             "Cancel focused" not in text or "Delete layout focused" in text
         ):
@@ -1856,6 +2131,10 @@ def frame_gates(spec: str, bindings: set[str], nums: dict[str, Any]) -> list[str
                         f"availability: frame {name} draws a lock on an availability state ('{hit_tok}')"
                     )
                     break
+        # A1 / A3: no lock, inert or can't-be-pressed wording on a T1 control, in any case or form
+        subj, lword = locked_t1(r[2] + " | " + r[5], ("Rename",) if name in C16_FRAMES else ())
+        if subj:
+            fails.append(f"lock: frame {name} locks {subj} ('{lword}')")
         # A1: the T2 anatomy on every T2 frame, the T2 form on no other frame
         if name in T2_FRAMES:
             if present(r[3], "T2") != "yes":
@@ -1896,7 +2175,7 @@ def frame_gates(spec: str, bindings: set[str], nums: dict[str, Any]) -> list[str
             body = " | ".join(re.sub(r"\bT2\b", "", c) if i == 3 else c for i, c in enumerate(r))
             for ok in T2_FORM_ALLOWED:
                 body = body.replace(ok, "")
-            for m in T2_FORM.finditer(body):
+            for m in T2_FORM.finditer(body if not subj else ""):
                 tok_ = m.group(0)
                 if NEGATED.search(body[max(0, m.start() - 24) : m.start()]):
                     continue
@@ -1922,13 +2201,13 @@ def frame_gates(spec: str, bindings: set[str], nums: dict[str, Any]) -> list[str
         if name in EDITING_FRAMES and "reverts" not in exits:
             fails.append(f"exits: frame {name} does not say what `Esc` reverts")
         # one gate for the exit class: a gated exit, else a class other than T1 (lens round 1 F-5)
-        if EXIT_GATED.search(exits):
-            fails.append(f"exits: frame {name} gates an exit in its Exits cell")
+        gate_hit = EXIT_GATED.search(exits)
+        if gate_hit:
+            fails.append(
+                f"exits: frame {name} gates an exit in its Exits cell ('{gate_hit.group(0)}')"
+            )
         elif "T1" not in exits:
             fails.append(f"exits: frame {name} does not class its exits T1")
-        hit = EXIT_NEAR_GATE.search(r[2] + " | " + r[5])
-        if hit:
-            fails.append(f"exits: frame {name} gates an exit ('{hit.group(0)}')")
     for name in sorted(set(EXIT_KIND) - set(by)):
         fails.append(f"exits: the tool names frame {name}, the inventory does not")
     for name in sorted(set(by) - set(EXIT_KIND)):
@@ -1982,17 +2261,145 @@ def frame_gates(spec: str, bindings: set[str], nums: dict[str, Any]) -> list[str
         for r in rows_of(section(spec, "### 11.1 ", "### 11.2 "))
         if r
     ]
+    # the prose of sections 4-12 is read too (a chord typed in a paragraph is drawn on a board)
+    for sec in range(4, 13):
+        body = section(spec, f"## {sec}. ", f"## {sec + 1}. ")
+        surfaces += [
+            (f"§{sec} prose", para)
+            for para in body.split("\n")
+            if para.strip() and not para.startswith(("|", "#", "<!--"))
+        ]
+    low = {b.lower() for b in bindings} | {k.lower() for k in COMPONENT_KEYS}
     for where, text in surfaces:
+        fk = bare_fkeys(text, bindings)
+        if fk:
+            fails.append(
+                f"keys: {where} draws {fk[0]}, a key with no row in this context (RULED Q-22)"
+            )
         for cell in text.split("|"):
             for clause in cell.split(";"):
                 for m in CHORD.finditer(clause):
                     c = m.group(0)
-                    if all(e in bindings or e in COMPONENT_KEYS for e in expand_chord(c)):
+                    if all(e.lower() in low for e in expand_chord(c)):
                         continue
                     pm = re.search(r"proposed", clause[m.end() :], re.IGNORECASE)
                     gap = clause[m.end() : m.end() + pm.start()] if pm else ""
                     if not pm or re.search(r"\b(?:SCR|CMP)-\d|\bor\b", gap):
                         fails.append(f"keys: {where} draws {c} without PROPOSED after it")
+    return fails
+
+
+# ---------------------------------------------------------------- the switcher's load error (RULED M-2) ------
+# The switcher's load error takes merged E15-D03 section 4.6's strings verbatim on every carrier; any other
+# wording of it (failed / didn't / couldn't / can't load, load failed, error loading) or any other action word
+# (Retry, Reload, another casing of Try again) fails. Read clause by clause, case-insensitively; a clause about
+# presets only is the gallery's ("Presets didn't load." with [Retry], valid) and is skipped.
+LOAD_ERROR = "Couldn't load workspaces."
+LOAD_ACTION = "Try again"
+_NOT = r"(?:n['\u2019]t|\s+not)"
+LOAD_FAIL_WORD = re.compile(
+    r"\bfail(?:ed|s|ing|ure)?\s+(?:to\s+)?load(?:ing)?\b"
+    rf"|\b(?:did|does|do|could|can|ca|would|will|wo){_NOT}\s+(?:\w+\s+){{0,2}}?(?:be\s+)?load(?:ed)?\b"
+    r"|\b(?:cannot|unable\s+to|not)\s+(?:be\s+)?load(?:ed)?\b"
+    r"|\bload(?:ing)?\s+(?:failed|error|failure)\b|\berror\s+loading\b",
+    re.IGNORECASE,
+)
+ACTION_WORD = re.compile(
+    r"\bre-?(?:try|load)(?:ing)?\b|\btry\s+(?:it\s+|that\s+)?again\b|\btry\s+once\s+more\b",
+    re.IGNORECASE,
+)
+PRESET_ONLY = re.compile(r"\bpresets?\b", re.IGNORECASE)
+WORKSPACE_WORD = re.compile(r"\bworkspaces?\b", re.IGNORECASE)
+
+
+def load_error_carriers(spec: str) -> list[tuple[str, str, tuple[tuple[str, str, str], ...]]]:
+    """(where, scanned text, ((label, needle, cell), ...)) per carrier; a missing carrier has no text."""
+    frame = next((r for r in inventory_rows(spec) if r[0].strip("`") == "SCR-011/error"), [])
+    copy_ = next(
+        (r for r in rows_of(section(spec, "## 14. ", "## 15. ")) if r and r[0] == "`rail.error`"),
+        [],
+    )
+    an7 = next((r for r in rows_of(section(spec, "### 11.3 ", "## 12. ")) if r[:1] == ["AN-7"]), [])
+    s102 = section(spec, "### 10.2 ", "### 10.3 ")
+    i = s102.find("**Error** (`SCR-011/error`)")
+    sentence = ""
+    if i >= 0:  # from the bold lead-in to the next bold lead-in or the end of the paragraph
+        rest = s102[i + len("**Error**") :]
+        ends = [k for k in (rest.find("**"), rest.find("\n")) if k >= 0]
+        sentence = rest[: min(ends)] if ends else rest
+    err, act = f'"{LOAD_ERROR}"', f"[{LOAD_ACTION}]"
+    out: list[tuple[str, str, tuple[tuple[str, str, str], ...]]] = []
+    if len(frame) >= 7:
+        out.append(
+            (
+                "frame SCR-011/error",
+                " | ".join(frame),
+                (
+                    ("frame SCR-011/error", err, frame[2]),
+                    ("frame SCR-011/error's announcement", err, frame[5]),
+                    ("frame SCR-011/error", act, frame[2]),
+                ),
+            )
+        )
+    else:
+        out.append(("frame SCR-011/error", "", ()))
+    if len(copy_) > 1:
+        out.append(
+            (
+                "copy deck `rail.error`",
+                copy_[1],
+                (
+                    ("copy deck `rail.error`", err, copy_[1]),
+                    ("copy deck `rail.error`", f'"{LOAD_ACTION}"', copy_[1]),
+                ),
+            )
+        )
+    else:
+        out.append(("copy deck `rail.error`", "", ()))
+    if len(an7) > 3:
+        out.append(("AN-7's string", an7[3], (("AN-7's string", err, an7[3]),)))
+    else:
+        out.append(("AN-7's string", "", ()))
+    out.append(
+        (
+            "§10.2's error sentence",
+            sentence,
+            (("§10.2's error sentence", err, sentence), ("§10.2's error sentence", act, sentence)),
+        )
+    )
+    return out
+
+
+def load_error_gates(spec: str) -> list[str]:
+    fails: list[str] = []
+    for where, text, needs in load_error_carriers(spec):
+        if not text:
+            fails.append(f"load-error: {where} is missing (RULED M-2)")
+            continue
+        masked = text.replace(LOAD_ERROR, " " * len(LOAD_ERROR))
+        bad_copy = bad_action = ""
+        for clause in re.split(r"[;|—/·]", masked):
+            if PRESET_ONLY.search(clause) and not WORKSPACE_WORD.search(clause):
+                continue  # the gallery's own load error
+            m = LOAD_FAIL_WORD.search(clause)
+            if m and not bad_copy:
+                bad_copy = m.group(0)
+            for a in ACTION_WORD.finditer(clause):
+                ok = a.group(0) == LOAD_ACTION and clause[max(0, a.start() - 1) : a.start()] in '["'
+                if not ok and not bad_action:
+                    bad_action = a.group(0)
+        if bad_copy:
+            fails.append(
+                f"load-error: {where} words the switcher's load error otherwise ('{bad_copy}')"
+            )
+        if bad_action:
+            fails.append(f"load-error: {where} names the switcher's action '{bad_action}'")
+        for label, needle, cell in needs:
+            is_copy = needle.startswith('"Couldn')
+            if (bad_copy if is_copy else bad_action) or needle in cell:
+                continue
+            what = "E15-D03's " + needle if is_copy else "the action " + needle
+            fails.append(f"load-error: {label} lacks {what}")
     return fails
 
 
@@ -2009,7 +2416,7 @@ def counts(spec: str, handoff: str) -> dict[str, int]:
             section(spec, "### 1.2 ", "## 2. "),
         ),
         "count_decisions": count(r"^\| D-\d+ ", section(spec, "### 3.1 ", "### 3.2 ")),
-        "count_frames_named": len(inv),
+        "count_frames_named": len({r[0] for r in inv}),
         "count_t2_frames": len(T2_FRAMES),
         "count_key_rows": len(rows_of(section(spec, "### 11.1 ", "### 11.2 "))),
         "count_announcements": count(r"^\| AN-\d+ ", section(spec, "### 11.3 ", "## 12. ")),
@@ -2270,6 +2677,29 @@ def bound_missing() -> list[str]:
     return [n for n in BOUND if n not in dark]
 
 
+# carried literals the prose and the frames quote, each with its source; printed under --json "constants"
+CONSTS: dict[str, Any] = {
+    "search_fixture": SEARCH_FIXTURE,  # E15-D02 :304
+    "topbar_h": TOPBAR_H,  # E15-D02 section 3
+    "statusbar_h": STATUSBAR_H,  # E15-D02 section 3
+    "stroke_hairline": int(STROKE_PX[0]),  # the hairline edge
+    "stroke_ring": int(STROKE_PX[1]),  # the selected and focus rings
+    "stroke_bar": int(STROKE_PX[2]),  # the current-row bar (E15-D02 :306)
+    "registry_glyphs": 47,  # `15` CMP-019 :225: the base registry's glyph count
+    "e10_cap_125": 300,  # E10-D03 :275: the rail's cap at the 125 % text scale
+    "e10_row_125": 30,  # E10-D03 :275
+    "e10_glyph_125": 20,  # E10-D03 :275
+    "e10_row_200": 48,  # E10-D03 :275: the rail at 200 % zoom
+    "e10_glyph_200": 32,  # E10-D03 :275
+}
+
+
+def ledger(mk: dict[str, Any]) -> dict[str, Any]:
+    """Every name a registered number may bind to: the carried literals, the token sizes and the markers."""
+    derived = {"inner_w_1280": _gallery()["layouts"]["1280-compact"]["inner_w"]}
+    return {**CONSTS, **derived, **{f"tok_{k}": v for k, v in tokens_px().items()}, **mk}
+
+
 MARKER = re.compile(r"<!--\s*audit:([A-Za-z0-9_.-]+)=([^\s>]+)\s*-->")
 _N = r"(\d[\d,]*(?:\.\d+)?)"
 # registered prose contexts: (label, pattern, marker names per group)
@@ -2343,6 +2773,317 @@ CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 )
 HANDOFF_CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("handoff matrix", rf"{_N} gated pairs, {_N} FAIL", ("matrix_gated", "matrix_failed")),
+    (
+        "handoff tokens",
+        rf"{_N} bound, {_N} missing; no new token",
+        ("tokens_bound", "tokens_missing"),
+    ),
+)
+
+
+def _tpl(template: str) -> str:
+    """A literal stretch of the spec with {} where a number stands, as a context pattern."""
+    return _N.join(re.escape(part) for part in template.split("{}"))
+
+
+# M-3: every other number the prose types, bound to its --json name (a marker, a token size or a carried
+# literal of CONSTS); a counted number outside every context fails the coverage gate below
+_LEDGER: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("shell rows", "between the {} px TopBar and the {} px StatusBar", ("topbar_h", "statusbar_h")),
+    ("dialog edge", "on a {} px `color.border.default` edge, `elevation", ("stroke_hairline",)),
+    ("dialog padding", "`space.dialog.padding` {} px. Rows", ("dialog_pad",)),
+    (
+        "dialog rows",
+        (
+            "the header {} px compact / {} comfortable, the footer {} / {} (§5.3), the body {} px at "
+            "1920×1080 compact and {} at 1280×800"
+        ),
+        (
+            "header_compact",
+            "header_comfortable",
+            "footer_compact",
+            "footer_comfortable",
+            "body_1920_compact",
+            "body_1280_compact",
+        ),
+    ),
+    ("rename field", "the inline Rename field ({} px; a", ("yl_name_w",)),
+    ("key picker", "the key picker ({} px,", ("yl_picker_w",)),
+    (
+        "your layouts row",
+        (
+            "kinds in words ({} px at 1280×800), Delete… ({} px) — rows {} px compact / {} comfortable "
+            "with a {} px gap"
+        ),
+        ("yl_kinds_w_1280", "yl_delete_w", "yl_row_compact", "yl_row_comfortable", "tok_inset_xs"),
+    ),
+    ("peek", "one full card row and a {} px peek of the next", ("yl_peek",)),
+    (
+        "your layouts comfortable",
+        "in compact ({} and {} in comfortable)",
+        ("yl_rows_1920_comfortable", "yl_rows_1280_comfortable"),
+    ),
+    ("grid", "from a {} px minimum card and {} px gutters", ("min_card_w", "card_gutter")),
+    ("card inset", "px at 1280×800 — {} px inset, the thumbnail", ("tok_inset_md",)),
+    ("tallest card", "the tallest card sets the row: {} caption lines", ("contents_lines_1920",)),
+    (
+        "full grid",
+        "Eleven cards make {} card rows; the full grid stands {} px at 1920×1080 and {} at 1280×800",
+        ("card_rows", "listbox_full_1920", "listbox_full_1280"),
+    ),
+    ("selected ring", "`aria-selected`, a {} px `color.border.selected` ring", ("stroke_ring",)),
+    ("focused ring", "takes the {} px `color.focus.ring` outside the ring", ("stroke_ring",)),
+    (
+        "footer lines",
+        "the warning {} px and the sentence {} px against the {} px inner width at 1280×800",
+        ("warning_w", "sentence_w", "inner_w_1280"),
+    ),
+    ("footer wrap", "the sentence wraps to {} lines (§5.4)", ("text150_sentence_lines",)),
+    (
+        "footer height",
+        "Footer height {} px compact / {} comfortable",
+        ("footer_compact", "footer_comfortable"),
+    ),
+    ("skeletons", "`SCR-022/gallery-loading`): {} card skeletons", ("inventory_count",)),
+    ("zoom bars", "the body between the bars {} px", ("zoom200_between_bars",)),
+    ("zoom padding", "its padding tightens to {} px", ("tok_inset_md",)),
+    ("zoom contents", "the contents ({} caption lines at most)", ("zoom200_contents_lines",)),
+    (
+        "zoom whole",
+        "A {} px row inside a {} px viewport is always whole",
+        ("zoom200_card_h", "zoom200_scroll"),
+    ),
+    (
+        "text 125",
+        "at 125 % the cards grow to {} px ({} caption lines), the listbox keeps {} px and Your layouts {} rows",
+        ("text125_card_h", "text125_contents_lines", "text125_listbox_visible", "text125_yl_rows"),
+    ),
+    (
+        "text 150",
+        (
+            "at 150 % the cards are {} px, the footer sentence wraps to {} lines ({} px against {}), "
+            "Your layouts shows {} row"
+        ),
+        (
+            "text150_card_h",
+            "text150_sentence_lines",
+            "text150_sentence_w",
+            "inner_w_1280",
+            "text150_yl_rows",
+        ),
+    ),
+    (
+        "inventory",
+        "the one inventory ({} presets, {} served, {} with PROPOSED ids, {} panels in all",
+        ("inventory_count", "served_count", "proposed_ids", "panel_total"),
+    ),
+    ("thumbnail gaps", "with {} px gaps, each cell", ("thumb_gap",)),
+    (
+        "thumbnail edge",
+        "with a {} px `color.border.default` edge and carrying",
+        ("stroke_hairline",),
+    ),
+    ("thumbnail word", "`font.size.2xs` ({} px, the smallest type token)", ("thumb_word_px",)),
+    ("thumbnail glyph", "beside a {} px glyph stand-in", ("glyph_px",)),
+    ("glyph requests", "`journal` ({}, the `PaneKind` words)", ("glyph_requests",)),
+    ("registry", "(E05-T06's {} glyphs are not shipped)", ("registry_glyphs",)),
+    (
+        "glyph fit",
+        "the {} px glyph fits in all {} thumbnails, the kind word fits in {} of them",
+        ("glyph_px", "glyph_fits_1280", "words_fit_1280"),
+    ),
+    ("word fit 200", "CSS px) the word fits in all {}.", ("words_fit_zoom200",)),
+    (
+        "menu rows",
+        "with rows {} px compact / {} comfortable and {} px separators",
+        ("menu_row_compact", "menu_row_comfortable", "menu_separator"),
+    ),
+    (
+        "menu room",
+        "({} px are available below the tab strip at 1280×800 compact, {} in comfortable; {} / {} at 1920×1080)",
+        (
+            "menu_avail_1280_compact",
+            "menu_avail_1280_comfortable",
+            "menu_avail_1920_compact",
+            "menu_avail_1920_comfortable",
+        ),
+    ),
+    (
+        "menu scroll 1920",
+        ", from {} at comfortable at 1920×1080 and never at 1920×1080 compact up to the cap of {}",
+        ("menu_first_scroll_1920_comfortable", "layout_cap"),
+    ),
+    (
+        "menu heights",
+        "Four layouts stand {} px in compact ({} comfortable), nine {}, thirty-two {} ({} comfortable)",
+        (
+            "menu_h_compact_4",
+            "menu_h_comfortable_4",
+            "menu_h_compact_9",
+            "menu_h_compact_32",
+            "menu_h_comfortable_32",
+        ),
+    ),
+    ("menu limit", "then at {} layouts Save as takes", ("layout_cap",)),
+    ("reach", "at the cap, {} layouts are reachable without a key", ("reach_without_key",)),
+    ("twelve rows", "above its {} visible rows", ("yl_rows_1920_compact",)),
+    ("save-as limit", "**At {} layouts** (`SCR-022/save-as-limit`)", ("layout_cap",)),
+    ("rename width", "a CMP-007 field {} px wide", ("yl_name_w",)),
+    ("empty lines", "({} lines at 1280×800) with the CTA", ("empty_lines_1280",)),
+    (
+        "rail widths",
+        "The expanded rail is {} px, the collapsed rail {} px",
+        ("rail_expanded", "rail_collapsed"),
+    ),
+    (
+        "rail row",
+        (
+            "rows {} px compact / {} comfortable (`size.row.height`), the name column {} px after the {} px "
+            "bar, the insets and the {} px glyph"
+        ),
+        ("tok_row_compact", "tok_row_comfortable", "rail_name_w", "stroke_bar", "tok_icon_md"),
+    ),
+    ("rail search row", "and, above {} workspaces, as the search combobox", ("search_threshold",)),
+    ("rail focus", "focus-visible — the {} px `color.focus.ring`", ("stroke_ring",)),
+    ("rail bar", "the {} px leading bar in `color.border.selected`", ("stroke_bar",)),
+    (
+        "rail 125",
+        "the rail grows to a cap of {} px, then labels ellipsise with a tooltip, rows {} px and the glyph {} px",
+        ("e10_cap_125", "e10_row_125", "e10_glyph_125"),
+    ),
+    (
+        "rail 200",
+        "the rail collapses to {} px by default with its labels in the tooltips, rows {} px and glyphs {} px",
+        ("rail_collapsed", "e10_row_200", "e10_glyph_200"),
+    ),
+    ("rail page", "`listWorkspaces` returns at most {} workspaces in one page", ("workspace_cap",)),
+    (
+        "rail canvas",
+        "against the {} px canvas at 1280×800 less the {} fixed rows",
+        ("canvas_1280_h", "rail_fixed_rows"),
+    ),
+    (
+        "rail fit others",
+        "({} and {} without it; {} and {} with it at 1920×1080)",
+        (
+            "rail_fit_1280_compact",
+            "rail_fit_1280_comfortable",
+            "rail_fit_1920_compact_search",
+            "rail_fit_1920_comfortable_search",
+        ),
+    ),
+    ("rail list", "(a list of {} rows needs none", ("workspace_cap",)),
+    ("search threshold", "above {} workspaces CMP-073's combobox", ("search_threshold",)),
+    ("workspace limit", "Duplicate and New workspace at {} workspaces take", ("workspace_cap",)),
+    ("reserved", "`reserved-keys.json` ({} entries)", ("reserved_count",)),
+    ("focus stop", "a visible {} px `color.focus.ring` marks every stop", ("stroke_ring",)),
+    ("reason max", "one sentence of at most {} characters", ("reason_max",)),
+    (
+        "reason view-as",
+        '"Read-only while viewing as {user}." ({} characters)',
+        ("reason_chars_view_as",),
+    ),
+    (
+        "reason permission",
+        '"Your role can\'t save workspaces." ({}); then',
+        ("reason_chars_permission",),
+    ),
+    (
+        "reason layout limit",
+        '"This workspace has the most layouts it can hold." ({})',
+        ("reason_chars_layout_limit",),
+    ),
+    (
+        "reason workspace limit",
+        '"You have the most workspaces you can have." ({})',
+        ("reason_chars_workspace_limit",),
+    ),
+    ("reason last", '"You need at least one workspace." ({}) —', ("reason_chars_workspace_last",)),
+    ("gate layouts", "(+ `layout.limit.count` at {} layouts)", ("layout_cap",)),
+    ("gate workspaces", "(+ `workspace.limit.count` at {} workspaces)", ("workspace_cap",)),
+    (
+        "densities",
+        "compact {} px rows and controls, comfortable {})",
+        ("tok_row_compact", "tok_row_comfortable"),
+    ),
+    ("tokens §13", "**Tokens bound:** {}, {} missing", ("tokens_bound", "tokens_missing")),
+    ("checklist search", "more than {} workspaces with search", ("search_threshold",)),
+    ("menu cap", "The menu lists at most {} layouts", ("layout_cap",)),
+    ("menu from", "from {} layouts at compact at 1280×800", ("menu_first_scroll_1280_compact",)),
+    ("rail cap", "The rail lists at most {} workspaces in one page", ("workspace_cap",)),
+    (
+        "rail fit §17",
+        "above the {} rows that fit at compact at 1280×800",
+        ("rail_fit_1280_compact_search",),
+    ),
+    (
+        "rail stack §17",
+        "{} rows at {} px are {} px",
+        ("workspace_cap", "tok_row_compact", "rail_stack_compact"),
+    ),
+    ("tokens §18", "the tool's {} bound tokens, {} missing", ("tokens_bound", "tokens_missing")),
+    ("frames §21", "{} named frames in §3.2", ("count_frames_named",)),
+    ("your layouts §21", "Your layouts shows {} rows then scrolls", ("yl_rows_1920_compact",)),
+    (
+        "listbox §21",
+        (
+            "the Presets listbox — {} columns of {} / {} px cards, {} / {} px tall — scrolls at both widths "
+            "with one card row and a {} px peek"
+        ),
+        ("cols", "card_w_1920", "card_w_1280", "card_h_1920", "card_h_1280", "yl_peek"),
+    ),
+    ("row card §21", "each card a {} px row", ("zoom200_card_h",)),
+    ("ids §21", "({} served ids, {} PROPOSED)", ("served_count", "proposed_ids")),
+    ("glyph §21", "the smallest cell 44×26 holds the {} px glyph", ("glyph_px",)),
+    ("twelve §21", '(twelve layouts: {} keyed, {} "(no key)")', ("twelve_keyed", "twelve_nokey")),
+    ("rail §21", "The rail: {} / {} px", ("rail_expanded", "rail_collapsed")),
+    ("search §21", "search above {};", ("search_threshold",)),
+    (
+        "contrast §21",
+        "Contrast: {} pairs in three themes with greyscale twins, {} gated rows, {} FAIL",
+        ("matrix_pairs", "matrix_gated", "matrix_failed"),
+    ),
+    (
+        "counts §21",
+        "{} tokens bound, {} missing; {} announcements, {} key rows ({} existing keymap rows cited by line",
+        (
+            "tokens_bound",
+            "tokens_missing",
+            "count_announcements",
+            "count_key_rows",
+            "keymap_rows_cited",
+        ),
+    ),
+    ("rows §21", "{} C-rows, {} G-rows, {} OQs", ("count_c_rows", "count_g_rows", "count_oq_rows")),
+)
+LEDGER_CONTEXTS = tuple((label, _tpl(tpl), names) for label, tpl, names in _LEDGER)
+# numbers inside table rows the record named (the inputs, the AC trace, D-2)
+TABLE_CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = tuple(
+    (label, _tpl(tpl), names)
+    for label, tpl, names in (
+        (
+            "tokens §1.1",
+            "the tool resolves {} bound tokens, {} missing",
+            ("tokens_bound", "tokens_missing"),
+        ),
+        (
+            "pairs §1.2",
+            (
+                "(the {} pairs, {} told apart by geometry and {} by glyphs and label; the smallest cell 44×26 "
+                "holds the {} px glyph)"
+            ),
+            ("pair_count", "pairs_by_geometry", "pairs_by_glyphs", "glyph_px"),
+        ),
+        ("D-2 card", "five columns from a {} px minimum card", ("min_card_w",)),
+        ("D-2 peek", "one card row and a {} px peek, then scrolls", ("yl_peek",)),
+        ("D-2 row", "a card is a {} px row (the thumbnail", ("zoom200_card_h",)),
+    )
+)
+COVER = re.compile(
+    r"(?<![\d.×+:–\-#§])(\d+(?:,\d{3})?(?:\.\d+)?) (?:px|rows?|columns|cards?|card rows|card skeletons"
+    r"|layouts|workspaces|lines?|caption lines|pairs|tokens|bound tokens|panels|presets|served|key rows"
+    r"|existing|announcements|A-rows|C-rows|G-rows|OQs|gated rows|characters|entries|glyphs|named frames"
+    r"|thumbnails|FAIL|missing|keyed|that fit|at comfortable|of them|with PROPOSED)\b"
 )
 
 
@@ -2433,17 +3174,34 @@ def number_gates(spec: str, handoff: str) -> list[str]:
         ln for ln in spec.split("\n") if not ln.startswith("<!--") and not ln.startswith("|")
     )
     hand_prose = "\n".join(ln for ln in handoff.split("\n") if not ln.startswith("|"))
-    for where, text, ctx in (("spec", prose, CONTEXTS), ("hand-off", hand_prose, HANDOFF_CONTEXTS)):
+    table_lines = "\n".join(ln for ln in spec.split("\n") if ln.startswith("|"))
+    led = ledger(mk)
+    spans: list[tuple[int, int]] = []
+    for where, text, ctx in (
+        ("spec", prose, CONTEXTS + LEDGER_CONTEXTS),
+        ("hand-off", hand_prose, HANDOFF_CONTEXTS),
+        ("spec table", table_lines, TABLE_CONTEXTS),
+    ):
         for label, pattern, names in ctx:
             hits = list(re.finditer(pattern, text))
             if not hits:
                 fails.append(f"number: the {where} context '{label}' vanished")
             for hit in hits:
+                if where == "spec":
+                    spans.append(hit.span())
                 for i, name in enumerate(names, start=1):
-                    if not same_number(hit.group(i), mk[name]):
+                    if not same_number(hit.group(i), led[name]):
                         fails.append(
-                            f"number: {label}: the {where} says {hit.group(i)}, the tool {mk[name]}"
+                            f"number: {label}: the {where} says {hit.group(i)}, the tool {led[name]}"
                         )
+    # coverage: every counted number the prose types sits inside a registered context (copy and headings aside)
+    blanked = strip_quotes(prose)
+    for hit in COVER.finditer(blanked):
+        line_start = blanked.rfind("\n", 0, hit.start()) + 1
+        if blanked.startswith("#", line_start):
+            continue
+        if not any(a <= hit.start() < b for a, b in spans):
+            fails.append(f"number: the spec types '{hit.group(0)}' outside a registered context")
     # the section 13 matrix rows equal the tool's, row by row
     want = {r[0]: r for r in rows_of(matrix_table(_matrix()))}
     have = {
@@ -2495,7 +3253,8 @@ def gates(
     if not spec:
         return fails
     mk = build_markers(spec, handoff)
-    fails += frame_gates(spec, bindings, mk)
+    fails += frame_gates(spec, bindings, ledger(mk))
+    fails += load_error_gates(spec)
     fails += number_gates(spec, handoff)
     fails += fit_gates(_gallery())
     km = keymap_rows()
@@ -2557,7 +3316,7 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
      (("frame:SCR-022/apply-dirty", "[Cancel], Cancel focused;", "[Cancel], Discard changes focused;"),)),
     ("M16", "carrier: frame SCR-022/apply-dirty lacks [Cancel]",
      (("frame:SCR-022/apply-dirty", "[Discard changes] [Cancel], Cancel focused", "[Discard changes], Cancel focused"),)),
-    ("M17", "exits: frame SCR-022/apply-dirty-viewer gates an exit ('Discard changes is locked')",
+    ("M17", "lock: frame SCR-022/apply-dirty-viewer locks Discard changes ('locked')",
      (("frame:SCR-022/apply-dirty-viewer", "Discard changes stays T1 and applies", "Discard changes is locked and applies"),)),
     ("M18", "t2-anatomy: frame SCR-022/save-as-limit lacks the limit key",
      (("frame:SCR-022/save-as-limit", "`disabledReason` → `layout.limit.count` ", "`disabledReason` → a free sentence "),)),
@@ -2597,7 +3356,7 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
      (("frame:SCR-011/search", "| picks a saved workspace ", "| picks an arrangement "),)),
     ("M36", "spine: frame CMP-217/trigger does not name its noun (saved layout)",
      (("frame:CMP-217/trigger", "| switches a saved layout ", "| picks a saved workspace "),)),
-    ("M37", "switch: the dirty switch frame prompts or omits the no-prompt rule (D-9)",
+    ("M37", "switch: frame SCR-011/switch-dirty prompts on a switch ('prompt')",
      (("frame:SCR-011/switch-dirty", "at once with no prompt (D-9)", "after a prompt (D-9)"),)),
     ("M38", "carrier: frame SCR-022/gallery-1280 lacks the arrangement-only sentence",
      (("frame:SCR-022/gallery-1280", "the sentence \"Applying a preset changes the arrangement only — never the selected account or environment.\", ", ""),)),
@@ -2613,7 +3372,7 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
      (("frame:SCR-011/context-menu", "`Shift+F10` PROPOSED)", "`Shift+F10` as drawn)"),)),
     ("M44", "t2-frames: frame CMP-217/menu-limit is not classed T2",
      (("frame:CMP-217/menu-limit", "| T2 ", "| T1 "),)),
-    ("M45", "t2-form: frame SCR-022/apply-clean draws '`lock`'",
+    ("M45", "lock: frame SCR-022/apply-clean locks Undo ('lock')",
      (("frame:SCR-022/apply-clean", "persistent until the next change)", "persistent until the next change, a `lock` glyph on Undo)"),)),
     ("M46", "inventory: Swing's id is not the served uuid or PROPOSED",
      (("inv:Swing", "| PROPOSED (G-1)                         | Swing ", "| `15000000-0000-4000-8000-000000000207` | Swing "),)),
@@ -2637,7 +3396,7 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
      (("frame:SCR-022/gallery-zoom200", "the footer is one sticky row:", "the footer is one row:"),)),
     ("M56", "carrier: frame SCR-022/apply-clean lacks the announcement",
      (("frame:SCR-022/apply-clean", "\"Layout changed to Order-flow, 4 panels.\"", "\"Layout changed to Order-flow, four panels.\""), ("frame:SCR-022/apply-clean", "\"Layout changed to Order-flow, 4 panels.\"", "\"Layout changed to Order-flow, four panels.\""),)),
-    ("M57", "carrier: frame CMP-217/menu-twelve lacks the first scrolling count",
+    ("M57", "number: frame CMP-217/menu-twelve draws 24 layouts",
      (("frame:CMP-217/menu-twelve", "from 22 layouts at compact", "from 24 layouts at compact"),)),
     ("M58", "t2-anatomy: frame SCR-011/menu-view-as lacks the banner node",
      (("frame:SCR-011/menu-view-as", "the banner's `rbac.view_as` node", "the `rbac.view_as` node"),)),
@@ -2652,7 +3411,7 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
      (("frame:SCR-022/gallery-zoom200", "the body is the one scroll container", "the body scrolls"),)),
     ("M63", "t2-anatomy: frame SCR-022/your-layouts-viewer draws a CTA in the sentence form ('CTA')",
      (("frame:SCR-022/your-layouts-viewer", "with no CTA and no button", "with the CTA [Save as new layout…], no button"),)),
-    ("M64", "exits: frame SCR-022/apply-dirty-viewer gates an exit ('Discard changes takes the lock')",
+    ("M64", "lock: frame SCR-022/apply-dirty-viewer locks Discard changes ('lock')",
      (("frame:SCR-022/apply-dirty-viewer", "Discard changes stays T1 and applies", "Discard changes takes the lock and applies"),)),
     ("M65", "availability: frame CMP-217/menu-viewer draws a lock on an availability state ('lock glyph')",
      (("frame:CMP-217/menu-viewer", "Revert to saved… in the availability look", "Revert to saved… with the lock glyph in the availability look"),)),
@@ -2666,16 +3425,236 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
      (("frame:CMP-217/menu-view-as", "| `Esc` closes the menu; T1 ", "| `Esc` closes the menu; T2 while viewing as "),)),
     ("M70", "spine: frame SCR-022/key-picker does not name its noun (saved layout)",
      (("frame:SCR-022/key-picker", "| manages a saved layout ", "| picks an arrangement "),)),
+    # RULED M-2: the switcher's load error is merged E15-D03's "Couldn't load workspaces." with [Try again] on
+    # each carrier (one mutation per carrier, one per forbidden form; the gallery's [Retry] stays valid)
+    ("M71", "load-error: frame SCR-011/error lacks E15-D03's \"Couldn't load workspaces.\"",
+     (("frame:SCR-011/error", "| \"Couldn't load workspaces.\" with [Try again]", "| an error line with [Try again]"),)),
+    ("M72", "load-error: frame SCR-011/error's announcement lacks E15-D03's \"Couldn't load workspaces.\"",
+     (("frame:SCR-011/error", "| \"Couldn't load workspaces.\" polite once", "| the error line polite once"),)),
+    ("M73", "load-error: frame SCR-011/error words the switcher's load error otherwise ('failed to load')",
+     (("frame:SCR-011/error", "\"Couldn't load workspaces.\" with [Try again]", "\"Workspaces failed to load.\" with [Try again]"),)),
+    ("M74", "load-error: copy deck `rail.error` words the switcher's load error otherwise ('didn't load')",
+     (("line:| `rail.error`", "\"Couldn't load workspaces.\"", "\"Workspaces didn't load.\""),)),
+    ("M75", "load-error: copy deck `rail.error` names the switcher's action 'Retry'",
+     (("line:| `rail.error`", "· \"Try again\"", "· \"Retry\""),)),
+    ("M76", "load-error: AN-7's string words the switcher's load error otherwise ('Could not load')",
+     (("line:| AN-7 ", "/ \"Couldn't load workspaces.\"", "/ \"Could not load the workspaces.\""),)),
+    ("M77", "load-error: §10.2's error sentence names the switcher's action 'Retry'",
+     (("line:**Create** = the", "with [Try again] (the `503`)", "with [Retry] (the `503`)"),)),
+    ("M78", "load-error: §10.2's error sentence lacks E15-D03's \"Couldn't load workspaces.\"",
+     (("line:**Create** = the", "\"Couldn't load workspaces.\" with [Try again] (the", "an error line with [Try again] (the"),)),
+)
+# The orchestrator's text round 1 (#321 comment 6396465673): its 95 independent A2 mutations, batches 1-3,
+# one row per form; 52 of them passed the keyword-keyed gates of the first commit. Each trips its own FAIL alone.
+RECORD_MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
+    ("R01", "spine: frame SCR-022/presets-listbox puts a hotkey on a preset card ('`Ctrl+1` on the Scalping card')",
+     (("frame:SCR-022/presets-listbox", "the selected card ringed and checked;", "the selected card ringed and checked; `Ctrl+1` on the Scalping card;"),)),
+    ("R02", "spine: frame SCR-022/gallery-1920 puts a hotkey on a preset card ('the Scalping card carries the key chip Ctrl+1')",
+     (("frame:SCR-022/gallery-1920", "no card carries a key chip", "the Scalping card carries the key chip Ctrl+1"),)),
+    ("R03", "spine: frame SCR-022/gallery-1920 does not name its noun (arrangement)",
+     (("frame:SCR-022/gallery-1920", "| picks an arrangement ", "| picks a saved workspace "),)),
+    ("R04", "spine: frame SCR-011/expanded does not name its noun (saved workspace)",
+     (("frame:SCR-011/expanded", "| picks a saved workspace ", "| picks an arrangement "),)),
+    ("R05", "spine: frame CMP-217/menu-default does not name its noun (saved layout)",
+     (("frame:CMP-217/menu-default", "| switches a saved layout ", "| picks an arrangement "),)),
+    ("R06", "carrier: frame SCR-011/switch-dirty lacks the dirty marker in the row name",
+     (("frame:SCR-011/switch-dirty", " is dirty (\"unsaved changes\" in the name) and", " is dirty and"),)),
+    ("R07", "carrier: frame SCR-011/expanded lacks the dirty marker in the row name",
+     (("frame:SCR-011/expanded", "dirty: \"unsaved changes\" in the name", "dirty"),)),
+    ("R08", "carrier: frame SCR-011/light-rail lacks the dirty marker in the row name",
+     (("frame:SCR-011/light-rail", "the dirty marker \\* with \"unsaved changes\" in the name", "the dirty marker \\*"),)),
+    ("R09", "switch: frame SCR-011/switch-dirty prompts on a switch ('dialog')",
+     (("frame:SCR-011/switch-dirty", "at once with no prompt (D-9)", "after a dialog opens (D-9)"),)),
+    ("R10", "carrier: frame SCR-022/gallery-text-125 lacks the arrangement-only sentence",
+     (("frame:SCR-022/gallery-text-125", ", \"Applying a preset changes the arrangement only — never the selected account or environment.\"", ""),)),
+    ("R11", "carrier: frame SCR-022/gallery-zoom200 lacks the arrangement-only sentence",
+     (("frame:SCR-022/gallery-zoom200", " and \"Applying a preset changes the arrangement only — never the selected account or environment.\"", ""),)),
+    ("R12", "carrier: frame SCR-022/gallery-loading lacks the arrangement-only sentence",
+     (("frame:SCR-022/gallery-loading", "changes the arrangement only — never the selected account or environment.", "changes the arrangement and keeps the account."),)),
+    ("R13", "t2-anatomy: frame CMP-217/menu-view-as lacks the lock glyph",
+     (("frame:CMP-217/menu-view-as", "T2 with the `lock` glyph, the full label", "T2 with the full label"),)),
+    ("R14", "t2-anatomy: frame CMP-217/menu-saves-t2 lacks the lock glyph",
+     (("frame:CMP-217/menu-saves-t2", "the `lock` glyph leads it, `aria-disabled`", "`aria-disabled`"),)),
+    ("R15", "t2-anatomy: frame SCR-022/apply-dirty-viewer lacks the lock glyph",
+     (("frame:SCR-022/apply-dirty-viewer", "with the `lock` glyph before its full label", "with its full label"),)),
+    ("R16", "t2-anatomy: frame CMP-217/menu-limit lacks the lock glyph",
+     (("frame:CMP-217/menu-limit", "T2 with the `lock` glyph, the full label", "T2 with the full label"),)),
+    ("R17", "t2-anatomy: frame SCR-011/menu-view-as uses the `disabled` attribute",
+     (("frame:SCR-011/menu-view-as", "the full label, `aria-disabled`, CMP-079", "the full label, the `disabled` attribute, CMP-079"),)),
+    ("R18", "lock: frame SCR-022/gallery-1920 locks Apply ('locked')",
+     (("frame:SCR-022/gallery-1920", "[Apply] [Cancel]", "[Apply] (locked) [Cancel]"),)),
+    ("R19", "lock: frame CMP-217/menu-default locks Browse presets… ('aria-disabled')",
+     (("frame:CMP-217/menu-default", "Browse presets… (last, AD-2)", "Browse presets… `aria-disabled` (last, AD-2)"),)),
+    ("R20", "lock: frame SCR-011/context-menu locks Open ('locked')",
+     (("frame:SCR-011/context-menu", ": Open, Rename…", ": Open (locked), Rename…"),)),
+    ("R21", "lock: frame SCR-011/rename-inplace locks Rename… ('locked')",
+     (("frame:SCR-011/rename-inplace", "Rename… turned", "Rename… (locked) turned"),)),
+    ("R22", "exits: frame SCR-022/gallery-1280 gates an exit in its Exits cell ('lock')",
+     (("frame:SCR-022/gallery-1280", "focus returns to `[Layout ▾]`; T1", "focus returns to `[Layout ▾]`; Close is locked; T1"),)),
+    ("R23", "exits: frame SCR-022/apply-dirty gates an exit in its Exits cell ('lock')",
+     (("frame:SCR-022/apply-dirty", "with nothing applied; T1", "with nothing applied; Back to gallery is locked; T1"),)),
+    ("R24", "exits: frame SCR-011/menu-view-as gates an exit in its Exits cell ('lock')",
+     (("frame:SCR-011/menu-view-as", "| `Esc` closes the menu; T1", "| `Esc` closes the menu (locked while viewing as); T1"),)),
+    ("R25", "keys: frame SCR-011/context-menu draws Ctrl+R without PROPOSED after it",
+     (("frame:SCR-011/context-menu", "Rename…, Duplicate", "Rename… `Ctrl+R`, Duplicate"),)),
+    ("R26", "keys: key row Next or previous workspace draws Ctrl+PageDown without PROPOSED after it",
+     (("line:| Next or previous workspace", "none yet;", "`Ctrl+PageDown`;"),)),
+    ("R27", "keys: frame SCR-022/gallery-1280 draws Alt+Enter without PROPOSED after it",
+     (("frame:SCR-022/gallery-1280", "[Apply] [Cancel]", "[Apply `Alt+Enter`] [Cancel]"),)),
+    ("R28", "marker: audit:cols=4 but --json prints 5",
+     (("line:<!-- audit:cols=5", "audit:cols=5", "audit:cols=4"),)),
+    ("R29", "number: listbox visible: the spec says 310, the tool 300",
+     (("line:One `role=", "the listbox keeps 300 px", "the listbox keeps 310 px"),)),
+    ("R30", "number: rail fit: the spec says 17, the tool 18",
+     (("line:The expanded rail is", "18 workspace rows fit", "17 workspace rows fit"),)),
+    ("R31", "number: pairs: the spec says 51, the tool 52",
+     (("line:**Pairwise check", "52 told apart", "51 told apart"),)),
+    ("R32", "number: frame CMP-217/menu-twelve draws 411 px, not a value the tool derives for it",
+     (("frame:CMP-217/menu-twelve", "410 px tall", "411 px tall"),)),
+    ("R33", "number: frame SCR-022/gallery-zoom200 draws 170 px, not a value the tool derives for it",
+     (("frame:SCR-022/gallery-zoom200", "the 160 px between", "the 170 px between"),)),
+    ("R34", "matrix: the §13 row 'selected card ring on the dialog: `color.border.' differs from the tool's",
+     (("line:| selected card ring on the dialog", "| 4.52 (grey 4.08)", "| 4.53 (grey 4.08)"),)),
+    ("R35", "catalogue: the SCR-022 Type line is not in `14`",
+     (("cat:- **Type:** Modal. Presets: Scalping", "- **Type:**", "- **Kind:**"),)),
+    ("R36", "t2: the one T2 rule is not stated exactly once",
+     (("spec:", "**The rule, once.**", "**The rule, once.** The rule, once."),)),
+    ("R37", "frames: the state inventory lists SCR-011/limit twice",
+     (("frame:SCR-011/limit", "| `SCR-011/limit` ", "| `SCR-011/limit`                 | 08    | 32 workspaces: New workspace T2 under the rail's button — the `lock` glyph, the full label, `aria-disabled`, `disabledReason` → `workspace.limit.count` \"You have the most workspaces you can have.\"; Duplicate takes the same key in the row menu                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | T2                                   | picks a saved workspace | the reason once, politely                                               | `Esc` does nothing; T1                                                                                                                                                                                                                                                       |\n| `SCR-011/limit` "),)),
+    ("R38", "spine: frame SCR-022/presets-listbox puts a hotkey on a preset card ('`ctrl+1` on the Scalping card')",
+     (("frame:SCR-022/presets-listbox", "the selected card ringed and checked;", "the selected card ringed and checked; `ctrl+1` on the Scalping card;"),)),
+    ("R39", "spine: frame SCR-022/light-gallery puts a hotkey on a preset card ('`ctrl+1` on the Scalping card')",
+     (("frame:SCR-022/light-gallery", "no card carries a key chip", "`ctrl+1` on the Scalping card"),)),
+    ("R40", "spine: frame SCR-022/presets-listbox puts a hotkey on a preset card ('each card = thumbnail, name, contents in words, the panel co')",
+     (("frame:SCR-022/presets-listbox", "the note where a panel cannot be stored;", "the note where a panel cannot be stored, its hotkey 1 shown at the corner;"),)),
+    ("R41", "spine: frame SCR-022/gallery-1920 puts a hotkey on a preset card ('each card carries its key chip')",
+     (("frame:SCR-022/gallery-1920", "no card carries a key chip", "each card carries its key chip"),)),
+    ("R42", "spine: frame SCR-022/thumbnails puts a hotkey on a preset card ('the eleven thumbnails at 145×87 with the glyph key and each ')",
+     (("frame:SCR-022/thumbnails", "with the glyph key;", "with the glyph key and each preset's hotkey 1..9 chip;"),)),
+    ("R43", "spine: §5.2 puts a hotkey on a preset card ('Each card carries a hotkey chip `Ctrl+1..9` (AD-2 / AD-11, §')",
+     (("line:One `role=", "No card carries a hotkey chip — presets have no keys", "Each card carries a hotkey chip `Ctrl+1..9`"),)),
+    ("R44", "spine: frame SCR-022/gallery-1280 names a saved workspace outside its Spine cell ('the 920×620 dialog inside the 1168×672 canvas, same anatomy ')",
+     (("frame:SCR-022/gallery-1280", "same anatomy at 161 px cards;", "same anatomy at 161 px cards, the gallery here picks a saved workspace;"),)),
+    ("R45", "spine: frame SCR-011/expanded names a arrangement outside its Spine cell ('each workspace row is an arrangement')",
+     (("frame:SCR-011/expanded", "no row carries a layout key", "no row carries a layout key; each workspace row is an arrangement"),)),
+    ("R46", "spine: frame SCR-022/gallery-1920's Spine cell is not the bare 'picks an arrangement' ('picks an arrangement or a saved workspace')",
+     (("frame:SCR-022/gallery-1920", "| picks an arrangement ", "| picks an arrangement or a saved workspace "),)),
+    ("R47", "spine: frame SCR-022/presets-listbox names a saved workspace outside its Spine cell ('each card = a saved workspace, thumbnail, name, contents in ')",
+     (("frame:SCR-022/presets-listbox", "each card = thumbnail", "each card = a saved workspace, thumbnail"),)),
+    ("R48", "dirty: frame SCR-011/dirty moves the dirty marker out of the row name ('tab strip only')",
+     (("frame:SCR-011/dirty", "the dirty marker in the row name", "the dirty marker on the tab strip only, not in the row name"),)),
+    ("R49", "switch: frame SCR-011/switch-dirty prompts on a switch ('toast')",
+     (("frame:SCR-011/switch-dirty", "; no SCR-029 ", "; no SCR-029; a toast \"Save first?\" asks before the switch "),)),
+    ("R50", "switch: frame SCR-011/switch-dirty prompts on a switch ('confirm')",
+     (("frame:SCR-011/switch-dirty", "; no SCR-029 ", "; no SCR-029; a confirm dialog asks to save first "),)),
+    ("R51", "switch: frame SCR-011/switch-dirty prompts on a switch ('Save first')",
+     (("frame:SCR-011/switch-dirty", "with no prompt (D-9)", "with no prompt (D-9) once the user answers the \"Save first?\" dialog"),)),
+    ("R52", "switch: frame SCR-011/search prompts on a switch ('Save first')",
+     (("frame:SCR-011/search", "`Enter` opens the first match", "`Enter` opens the first match after a \"Save first?\" prompt when dirty"),)),
+    ("R53", "switch: §10.3 prompts on a switch ('Save first')",
+     (("line:Selecting another workspace", "**switches at once and never prompts**", "**opens a \"Save first?\" dialog, then switches**"),)),
+    ("R54", "lock: frame SCR-022/gallery-1920 locks Apply ('inert')",
+     (("frame:SCR-022/gallery-1920", "[Apply] [Cancel]", "[Apply] (inert) [Cancel]"),)),
+    ("R55", "lock: frame SCR-022/gallery-1920 locks Apply ('can't be pressed')",
+     (("frame:SCR-022/gallery-1920", "[Apply] [Cancel]", "[Apply] [Cancel]; Apply can't be pressed"),)),
+    ("R56", "lock: frame SCR-022/gallery-1280 locks Apply ('Locked')",
+     (("frame:SCR-022/gallery-1280", "[Apply] [Cancel]", "[Apply] (Locked) [Cancel]"),)),
+    ("R57", "lock: frame SCR-022/your-layouts-view-as locks Apply ('inert')",
+     (("frame:SCR-022/your-layouts-view-as", "Apply stays T1", "Apply is inert"),)),
+    ("R58", "lock: frame CMP-217/menu-default locks Browse presets… ('inert')",
+     (("frame:CMP-217/menu-default", "Browse presets… (last, AD-2)", "Browse presets… inert (last, AD-2)"),)),
+    ("R59", "lock: frame CMP-217/menu-view-as locks Browse presets… ('inert')",
+     (("frame:CMP-217/menu-view-as", "and Browse presets… stay T1", "stay T1; Browse presets… is inert"),)),
+    ("R60", "lock: frame SCR-011/context-menu locks Rename… ('can't be pressed')",
+     (("frame:SCR-011/context-menu", ": Open, Rename…,", ": Open, Rename… (can't be pressed),"),)),
+    ("R61", "lock: frame SCR-022/your-layouts-twelve locks Rename ('locked')",
+     (("frame:SCR-022/your-layouts-twelve", "every row keeps Rename,", "every row keeps Rename (locked),"),)),
+    ("R62", "lock: frame SCR-011/expanded locks switching ('locked')",
+     (("frame:SCR-011/expanded", "no row carries a layout key", "no row carries a layout key; switching to another workspace is locked"),)),
+    ("R63", "lock: frame SCR-011/switch-dirty locks switch ('locked')",
+     (("frame:SCR-011/switch-dirty", "; no SCR-029 ", "; no SCR-029; under view-as the switch is locked "),)),
+    ("R64", "lock: frame CMP-217/menu-default locks switching ('locked')",
+     (("frame:CMP-217/menu-default", "\"Layout changed to Order-flow, 4 panels.\" on a switch", "\"Layout changed to Order-flow, 4 panels.\" on a switch; switching is locked while viewing as"),)),
+    ("R65", "lock: frame SCR-022/apply-dirty-viewer locks Discard changes ('inert')",
+     (("frame:SCR-022/apply-dirty-viewer", "Discard changes stays T1 and applies", "Discard changes is inert and applies"),)),
+    ("R66", "exits: frame SCR-022/gallery-1920 gates an exit in its Exits cell ('inert')",
+     (("frame:SCR-022/gallery-1920", "| `Esc` and Cancel close the dialog", "| `Esc` is inert, Cancel closes the dialog"),)),
+    ("R67", "exits: frame CMP-217/menu-view-as gates an exit in its Exits cell ('inert')",
+     (("frame:CMP-217/menu-view-as", "| `Esc` closes the menu; T1", "| `Esc` is inert while viewing as; T1"),)),
+    ("R68", "exits: frame SCR-022/gallery-1280 gates an exit in its Exits cell ('can't be pressed')",
+     (("frame:SCR-022/gallery-1280", "| `Esc` and Cancel close the dialog", "| `Esc` closes the dialog and Cancel can't be pressed"),)),
+    ("R69", "keys: frame SCR-011/rename-inplace draws F2, a key with no row in this context (RULED Q-22)",
+     (("frame:SCR-011/rename-inplace", "Rename… turned", "Rename… or `F2` as shipped turned"),)),
+    ("R70", "keys: frame SCR-011/context-menu draws F2, a key with no row in this context (RULED Q-22)",
+     (("frame:SCR-011/context-menu", "Rename…, Duplicate", "Rename… `F2`, Duplicate"),)),
+    ("R71", "keys: key row Rename-in-place draws F2, a key with no row in this context (RULED Q-22)",
+     (("line:| Rename-in-place                | `Enter`", "`Enter` (save), `Esc` (revert)", "`Enter` (save), `Esc` (revert), `F2` (existing)"),)),
+    ("R72", "keys: frame SCR-011/rename-inplace draws ctrl+r without PROPOSED after it",
+     (("frame:SCR-011/rename-inplace", "Rename… turned", "Rename… `ctrl+r` turned"),)),
+    ("R73", "keys: §7 prose draws Ctrl+L without PROPOSED after it",
+     (("line:**The trigger**", "(`aria-haspopup=\"menu\"`)", "(`aria-haspopup=\"menu\"`; `Ctrl+L` opens it)"),)),
+    ("R74", "scope: frame SCR-022/gallery-1920 draws an account or environment control ('Account')",
+     (("frame:SCR-022/gallery-1920", "[Apply] [Cancel]", "[Account ▾] [Apply] [Cancel]"),)),
+    ("R75", "scope: frame SCR-022/gallery-1280 draws an account or environment control ('account')",
+     (("frame:SCR-022/gallery-1280", "[Apply] [Cancel]", "an account picker beside [Apply] [Cancel]"),)),
+    ("R76", "scope: frame SCR-011/expanded draws an account or environment control ('environment')",
+     (("frame:SCR-011/expanded", "the \"+\" New workspace row;", "the \"+\" New workspace row; the environment switch [DEMO ▾];"),)),
+    ("R77", "scope: frame SCR-011/context-menu draws an account or environment control ('account')",
+     (("frame:SCR-011/context-menu", "Export…, Delete…", "Export…, Switch account…, Delete…"),)),
+    ("R78", "number: frame SCR-022/your-layouts-twelve draws 6 rows, not a value the tool derives for it",
+     (("frame:SCR-022/your-layouts-twelve", "the section shows 5 rows", "the section shows 6 rows"),)),
+    ("R79", "number: frame SCR-011/search draws 17 that fit, not a value the tool derives for it",
+     (("frame:SCR-011/search", "above the 18 that fit", "above the 17 that fit"),)),
+    ("R80", "number: reach: the spec says 24, the tool 23",
+     (("line:**The >9 rule", "at the cap, 23 layouts", "at the cap, 24 layouts"),)),
+    ("R81", "number: text 125: the spec says 298, the tool 296",
+     (("line:**Loading**", "grow to 296 px", "grow to 298 px"),)),
+    ("R82", "number: rail fit others: the spec says 31, the tool 30",
+     (("line:The expanded rail is", "30 and 20 with it", "31 and 20 with it"),)),
+    ("R83", "number: tokens §1.1: the spec table says 39, the tool 40",
+     (("line:| `packages/ui/tokens`", "40 bound tokens", "39 bound tokens"),)),
+    ("R84", "number: counts §21: the spec says 3, the tool 4",
+     (("line:9. Contrast:", "(4 existing keymap rows", "(3 existing keymap rows"),)),
+    ("R85", "siblings: the spec pins or quotes E15-D07 ('E15-D07 at `abc1234f')",
+     (("line:| The focused row's context menu", "the panel menu (E15-D07)", "the panel menu (E15-D07 at `abc1234f`)"),)),
+    ("R86", "siblings: the spec pins or quotes E15-D07 ('E15-D07 :212')",
+     (("line:**Hand-offs:**", "E15-D07 — `Shift+F10`", "E15-D07 :212 — `Shift+F10`"),)),
+    ("R87", "siblings: the spec pins or quotes E15-D07 ('E15-D07 (#361) says \"the picker rows are ours\"')",
+     (("line:| E15-D07 (#361)", "| E15-D07 (#361), E15-D08", "| E15-D07 (#361) says \"the picker rows are ours\", E15-D08"),)),
+    ("R88", "catalogue: the SCR-022 hi-fi pointer appears 2 times in `14`",
+     (("cat:- **Design (wireframe → hi-fi):** [E15-D05.md](../design/E15/E15-D05.md) §5–§9 (E15-D05; PROPOSED, owner approval pending:", "- **Design (wireframe", "- **Design (wireframe → hi-fi):** [E15-D05.md](../design/E15/E15-D05.md) §5–§9 (E15-D05; PROPOSED, owner approval pending: the gallery and thumbnails in colour, the reconciled inventory, Your layouts with rename / key / delete, the SCR-029 route, CMP-217's menu; Penpot page `E15-D05 Presets and switcher`, boards pending).\n- **Design (wireframe"),)),
+    ("R89", "number: pairs: the spec says 4, the tool 3",
+     (("line:**Pairwise check", "and 3 by glyphs", "and 4 by glyphs"),)),
+    ("R90", "view-as: frame CMP-217/menu-view-as does not put the view-as leg first",
+     (("frame:CMP-217/menu-view-as", "the banner's `rbac.view_as` node", "`rbac.permission` then the banner's `rbac.view_as` node"),)),
+    ("R91", "lock: frame SCR-022/gallery-zoom200 locks Keep current symbols ('locked')",
+     (("frame:SCR-022/gallery-zoom200", "[x] Keep current symbols (on) [Apply]", "[x] Keep current symbols (on) (locked) [Apply]"),)),
+    ("R92", "t2-anatomy: frame SCR-011/menu-view-as lacks the full label",
+     (("frame:SCR-011/menu-view-as", "the `lock` glyph, the full label, `aria-disabled`", "the `lock` glyph, `aria-disabled`"),)),
+    ("R93", "carrier: frame SCR-022/light-gallery lacks the arrangement-only sentence",
+     (("frame:SCR-022/light-gallery", "changes the arrangement only — never the selected account or environment.", "changes the arrangement."),)),
+    ("R94", "dirty: frame SCR-011/light-rail moves the dirty marker out of the row name ('tooltip only')",
+     (("frame:SCR-011/light-rail", "the dirty marker \\* with \"unsaved changes\" in the name", "the dirty marker \\* with \"unsaved changes\" in the tooltip only"),)),
+    ("R95", "switch: §10.3 prompts on a switch ('toast')",
+     (("line:Selecting another workspace", "**switches at once and never prompts**", "**switches once a toast confirms it**"),)),
 )
 # fmt: on
 
 
-def apply_mutation(spec: str, handoff: str, edits: tuple[Edit, ...]) -> tuple[str, str]:
+def apply_mutation(
+    spec: str, handoff: str, edits: tuple[Edit, ...], catalogue: str = ""
+) -> tuple[str, str, str]:
     """Apply each edit to the one line its target names; raise if a target or text is missing."""
-    docs = {"spec": spec.split("\n"), "hand": handoff.split("\n")}
+    docs = {"spec": spec.split("\n"), "hand": handoff.split("\n"), "cat": catalogue.split("\n")}
     for target, old, new in edits:
         kind, _, key = target.partition(":")
-        doc = docs["hand" if kind == "hand" else "spec"]
+        if kind == "spec":  # one exact stretch of the whole spec
+            whole = "\n".join(docs["spec"])
+            if whole.count(old) != 1:
+                raise ValueError(f"mutation target {target!r} / {old!r} not found exactly once")
+            docs["spec"] = whole.replace(old, new, 1).split("\n")
+            continue
+        doc = docs[kind] if kind in ("hand", "cat") else docs["spec"]
         if kind == "frame":
             idx = [i for i, ln in enumerate(doc) if ln.startswith(f"| `{key}` ")]
         elif kind == "inv":
@@ -2689,7 +3668,7 @@ def apply_mutation(spec: str, handoff: str, edits: tuple[Edit, ...]) -> tuple[st
         if len(idx) != 1 or old not in doc[idx[0]]:
             raise ValueError(f"mutation target {target!r} / {old!r} not found exactly once")
         doc[idx[0]] = doc[idx[0]].replace(old, new, 1)
-    return "\n".join(docs["spec"]), "\n".join(docs["hand"])
+    return "\n".join(docs["spec"]), "\n".join(docs["hand"]), "\n".join(docs["cat"])
 
 
 SELF_TEST_RUNS: dict[str, int] = {"inline": 0, "table": 0, "one_fail": 0}
@@ -2721,11 +3700,6 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str], catalogue:
                 + " / ".join(got)
             )
 
-    expect(
-        "state the T2 rule twice",
-        spec.replace("The rule, once.", "The rule, once. The rule, once.", 1),
-        "t2: the one T2 rule",
-    )
     expect(
         "drop the §12 cite from the rail section",
         in_section(spec, "## 10. ", "## 11. ", lambda t: t.replace("§12", "§ 12")),
@@ -2772,10 +3746,10 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str], catalogue:
         "number: the spec's ratio 9.99",
     )
     expect(
-        "the catalogue loses the Type line",
+        "the catalogue loses the checklist pointer",
         spec,
-        "catalogue: the SCR-022 Type line",
-        cat=catalogue.replace("3+1 cut, AM-2", "3+1 kept, AM-2", 1),
+        "catalogue: the SCR-022 checklist pointer",
+        cat=catalogue.replace("the legacy checklist names", "the old checklist names", 1),
     )
     expect(
         "the catalogue's kept Data line changes",
@@ -2810,7 +3784,7 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str], catalogue:
         ),
         "pairs: the §6.2 pair table",
     )
-    expects = [e for _m, e, _ed in MUTATIONS]
+    expects = [e for _m, e, _ed in MUTATIONS + RECORD_MUTATIONS]
     if len(set(expects)) != len(expects):
         problems.append("self-test: two mutations share a FAIL message")
     # the fit gate is computed, not read from the spec: probe it with a card one pixel taller than its viewport
@@ -2823,13 +3797,13 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str], catalogue:
         problems.append(
             "self-test: a card taller than its scroll viewport did not trip the fit gate once"
         )
-    for mid, want, edits in MUTATIONS:
+    for mid, want, edits in MUTATIONS + RECORD_MUTATIONS:
         try:
-            s2, h2 = apply_mutation(spec, handoff, edits)
+            s2, h2, c2 = apply_mutation(spec, handoff, edits, catalogue)
         except ValueError as exc:
             problems.append(f"self-test: {mid} cannot be applied ({exc})")
             continue
-        got = gates(s2, h2, tool, bindings, catalogue=catalogue)
+        got = gates(s2, h2, tool, bindings, catalogue=c2)
         SELF_TEST_RUNS["table"] += 1
         SELF_TEST_RUNS["one_fail"] += len(got) == 1 and want in got[0]
         hits = sum(want in g for g in got)
@@ -2907,6 +3881,7 @@ def main(argv: list[str] | None = None) -> int:
         "self_test": st,
         "fails": fails,
         "markers": markers,
+        "constants": {k: v for k, v in ledger(markers).items() if k not in markers},
     }
     if a.json:
         p(json.dumps(out, indent=2, ensure_ascii=False, default=str))

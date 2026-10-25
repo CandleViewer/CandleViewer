@@ -570,7 +570,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `layout.preset_previewed`, `layout.preset_applied`, `layout.preset_saved_as`, `layout.preset_deleted` (analytics).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.6 (Penpot page `E15-D02`, board 12; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
 - **Design (wireframe → hi-fi):** [E15-D05.md](../design/E15/E15-D05.md) §5–§9 (E15-D05; PROPOSED, owner approval pending: the gallery and thumbnails in colour, the reconciled inventory, Your layouts with rename / key / delete, the SCR-029 route, CMP-217's menu; Penpot page `E15-D05 Presets and switcher`, boards pending).
-- **Design sign-off acceptance checklist:** [ ] built-in presets drawn (the eleven built-in presets of E15-D05 §6; the 2026 checklist names map there) [ ] user presets with rename/delete [ ] 'applying replaces your current layout' confirmation [ ] empty user-preset state
+- **Design sign-off acceptance checklist:** [ ] built-in presets drawn (the eleven built-in presets of E15-D05 §6; the legacy checklist names map there) [ ] user presets with rename/delete [ ] 'applying replaces your current layout' confirmation [ ] empty user-preset state
 
 ### SCR-023 — Multi-chart sync configuration
 
