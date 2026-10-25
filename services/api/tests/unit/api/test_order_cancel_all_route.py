@@ -30,6 +30,7 @@ from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.deny_by_default import declared_operations, served_operations
 from candleviewer.api.idempotency import IdempotencyCache, StoredResponse
 from candleviewer.api.order_cancel_all import CANCEL_ALL_PATH, make_cancel_all_router
+from candleviewer.api.order_exits_common import EXIT_FAULT_PAGE
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.api.view_as_policy import ProtectiveWrites
 from candleviewer.app import create_app
@@ -678,7 +679,7 @@ async def test_a_run_that_raises_answers_500_pages_and_keeps_nothing() -> None:
     world.oms.broken = True
     answer = await post(world, "owner", {})
     assert (answer.status_code, answer.json()["code"]) == (500, "internal_error")
-    assert world.pager.pages == ["orders_cancel_all_failed"]
+    assert world.pager.pages == [f"{EXIT_FAULT_PAGE}:ExceptionGroup"]  # one page by its class
     assert world.cache.get(str(USER), f"cancelAllOrders:{KEY}") is None
     assert world.refused("internal_error") == 1
 
@@ -924,7 +925,7 @@ async def test_a_fault_answering_or_keeping_the_200_is_the_paged_500(
         monkeypatch.setattr(world.cache, "put", broken)
     answer = await post(world, "owner", {})
     assert (answer.status_code, answer.json()["code"]) == (500, "internal_error")
-    assert world.pager.pages == ["orders_cancel_all_failed"]
+    assert world.pager.pages == [f"{EXIT_FAULT_PAGE}:ValueError"]  # one page by its class
     assert len(world.oms.exits.cancelled) == 2
 
 
@@ -949,6 +950,28 @@ async def test_a_viewing_owners_cancel_all_reaches_only_the_targets_trade_accoun
     assert {(actor.user_id, actor.role) for _, actor, _, _ in world.oms.exits.cancelled} == {
         (USER, "owner"),
     }  # fmt: skip
+
+
+async def test_a_viewing_owners_claim_and_24_h_record_are_the_viewers() -> None:
+    """The viewer stays the in-flight claim's principal and the 24 h record's, never the target:
+    while the cancels run the key is the viewer's, and the target's is free; the `200` is kept
+    under the viewer."""
+    world = World()
+    _viewing(world, role_snapshot("manager"))
+    world.oms.exits.hold = asyncio.Event()
+    request = asyncio.create_task(post(world, "viewing", {}))
+    for _ in range(50):
+        await asyncio.sleep(0)
+        if world.oms.tasks:
+            break
+    assert isinstance(world.oms.exits.guard.claim(USER, "cancel_all", KEY), ExitOutcome)
+    release = world.oms.exits.guard.claim(MANAGER, "cancel_all", KEY)
+    assert not isinstance(release, ExitOutcome)  # the target holds no claim
+    release()
+    world.oms.exits.hold.set()
+    assert (await request).status_code == 200
+    assert world.cache.get(str(USER), f"cancelAllOrders:{KEY}") is not None
+    assert world.cache.get(str(MANAGER), f"cancelAllOrders:{KEY}") is None
 
 
 async def test_a_viewing_owner_naming_an_account_the_target_cannot_trade_is_refused() -> None:
