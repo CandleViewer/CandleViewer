@@ -2,7 +2,9 @@
 
 The script runs under bash with stubs first on PATH: `docker` (`stub_docker.py`), `curl`
 (`stub_curl.py`) and a `python3` that records its arguments; from an empty working directory, HOME
-and TMPDIR, with no terminal; stdin holds the answers to its prompts. No network and no Docker.
+and TMPDIR, with no terminal; stdin holds the answers to its prompts. One run also goes on a real
+pty (`on_a_terminal`), where bash's silent reads take effect: what reaches the terminal is checked
+there. No network and no Docker.
 The bootstrap is #4479's CLI in the overlay's `bootstrap-owner` service (DC-4479-02), as its design
 note describes it: #4479 is not merged. The curl stub answers in the shapes the served code gives
 (`api/invites.py`, `api/auth.py`, `api/step_up.py`, `api/exchange_accounts.py`,
@@ -14,11 +16,16 @@ from __future__ import annotations
 
 import functools
 import json
+import os
+import pty
 import re
+import select
 import shutil
 import stat
 import subprocess
 import sys
+import termios
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -210,12 +217,22 @@ class Run:
         return [r["route"] for r in self.records]
 
 
-def run(
-    tmp_path: Path, calls: dict[str, list[dict[str, Any]]], answers: list[str], *args: str,
-    xtrace: bool = False, schemas: bool = False, docker: dict[str, int] | None = None,
-) -> Run:  # fmt: skip
-    """One run of the script on `calls` (and `docker`'s exit statuses by subcommand); `schemas`
-    also holds each body to 22, a slower run."""
+@dataclass
+class Stage:
+    """A run's directories, its stubs first on PATH, and its environment."""
+
+    stub: Path
+    cwd: Path
+    dirs: tuple[Path, ...]  # the working directory, HOME and TMPDIR
+    env: dict[str, str]
+
+
+def stage(
+    tmp_path: Path, calls: dict[str, list[dict[str, Any]]], *, schemas: bool = False,
+    docker: dict[str, int] | None = None, with_docker: bool = True,
+) -> Stage:  # fmt: skip
+    """The stubs and the scenario for one run (`with_docker=False`: no docker, nothing else on
+    PATH either, so no docker of the host's can stand in)."""
     stub, bin_dir, cwd, home, tmp = (tmp_path / d for d in ("stub", "bin", "cwd", "home", "tmp"))
     for directory in (stub, bin_dir, cwd, home, tmp):
         directory.mkdir()
@@ -227,40 +244,163 @@ def run(
     ]  # fmt: skip
     scenario = {"routes": routes, "docker": docker or {}, "docker_print": CLI_PRINT}
     (stub / "scenario.json").write_text(json.dumps(scenario), encoding="utf-8")
+    # A run starts some 36 Pythons. Without `site` (-S) each starts in about two thirds of the
+    # time; the stubs and the script's python3 need the standard library alone, but for the
+    # curl stub's jsonschema when it checks bodies.
+    stubs = [("curl", STUB, "-I" if schemas else "-IS"), ("docker", DOCKER, "-IS")]
     tools = []
-    for name, source in (("curl", STUB), ("docker", DOCKER)):
+    for name, source, flags in stubs[: 2 if with_docker else 1]:
         tool = bin_dir / name
-        tool.write_text(f"#!{sys.executable}\n" + source.read_text("utf-8"), encoding="utf-8")
+        tool.write_text(f"#!{sys.executable} {flags}\n" + source.read_text("utf-8"), "utf-8")
         tools.append(tool)
     shim = bin_dir / "python3"  # the script's python3, recording its arguments
     shim.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$CV_STUB_DIR/python3.argv"\n'
-                    f'exec "{sys.executable}" "$@"\n', encoding="utf-8")  # fmt: skip
+                    f'exec "{sys.executable}" -S "$@"\n', encoding="utf-8")  # fmt: skip
     for tool in (*tools, shim):
         tool.chmod(stat.S_IRWXU)
-    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(home), "TMPDIR": str(tmp),
-           "CV_STUB_DIR": str(stub)}  # fmt: skip
-    proc = subprocess.run(
-        [BASH, *(["-x"] if xtrace else []), str(SCRIPT), *args],
-        input="".join(f"{line}\n" for line in answers),
-        capture_output=True, text=True, cwd=cwd, env=env, timeout=120, check=False,
-        start_new_session=True,  # no controlling terminal: /dev/tty cannot be opened
-    )  # fmt: skip
+    path = f"{bin_dir}:/usr/bin:/bin" if with_docker else str(bin_dir)
+    env = {"PATH": path, "HOME": str(home), "TMPDIR": str(tmp), "CV_STUB_DIR": str(stub)}
+    return Stage(stub, cwd, (cwd, home, tmp), env)
+
+
+def collect(staged: Stage, proc: subprocess.CompletedProcess[str]) -> Run:
+    """What the run left: its records, the stubs' logs and any file it wrote."""
 
     def lines(name: str) -> list[Any]:
-        path = stub / name
+        path = staged.stub / name
         text = path.read_text(encoding="utf-8") if path.exists() else ""
         return [json.loads(line) for line in text.splitlines()]
 
-    logs = {p.name: p.read_text(encoding="utf-8") for p in stub.iterdir() if p.is_file()}
+    logs = {p.name: p.read_text(encoding="utf-8") for p in staged.stub.iterdir() if p.is_file()}
     sequence = logs.get("sequence.log", "").splitlines()
-    left = [p for d in (cwd, home, tmp) for p in d.rglob("*")]
+    left = [p for d in staged.dirs for p in d.rglob("*")]
     return Run(proc, lines("requests.jsonl"), lines("argv.jsonl"), lines("docker.jsonl"),
                sequence, logs, left)  # fmt: skip
+
+
+def run(
+    tmp_path: Path, calls: dict[str, list[dict[str, Any]]], answers: list[str], *args: str,
+    xtrace: bool = False, schemas: bool = False, docker: dict[str, int] | None = None,
+    with_docker: bool = True,
+) -> Run:  # fmt: skip
+    """One run of the script on `calls` (and `docker`'s exit statuses by subcommand); `schemas`
+    also holds each body to 22, a slower run."""
+    staged = stage(tmp_path, calls, schemas=schemas, docker=docker, with_docker=with_docker)
+    proc = subprocess.run(
+        [BASH, *(["-x"] if xtrace else []), str(SCRIPT), *args],
+        input="".join(f"{line}\n" for line in answers),
+        capture_output=True, text=True, cwd=staged.cwd, env=staged.env, timeout=120, check=False,
+        start_new_session=True,  # no controlling terminal: /dev/tty cannot be opened
+    )  # fmt: skip
+    return collect(staged, proc)
+
+
+#: Starts the script in a session of its own whose controlling terminal is its stdin, the pty.
+CTTY = ("import fcntl, os, sys, termios; os.setsid(); fcntl.ioctl(0, termios.TIOCSCTTY, 0); "
+        "os.execv(sys.argv[1], sys.argv[1:])")  # fmt: skip
+#: A full run's prompts, in order: (how the prompt starts, the answer, typed at a silent prompt).
+PROMPTS = [
+    ("Owner email", EMAIL, False), ("Invite token", TOKEN, True), ("New password", PASSWORD, True),
+    ("The same password again", PASSWORD, True), ("Its current code", CODES[0], True),
+    ("A new code from the authenticator", CODES[1], True),
+    ("Bybit demo account UID", EXCHANGE_UID, False), ("Account label", "", False),
+    ("Key label", "", False), ("Read-only key?", "", False), ("Bybit API key", API_KEY, True),
+    ("Bybit API secret", API_SECRET, True), ("A new code for the keys step-up", CODES[2], True),
+]  # fmt: skip
+ECHO_WAIT_S = 2.0  # a silent prompt that leaves ECHO on this long is answered anyway, and fails
+PTY_DEADLINE_S = 120.0
+
+
+@dataclass
+class TerminalRun:
+    returncode: int | None
+    terminal: str  # what reached the pty: the echo of what was typed, and the script's fd 3
+    stdout: str
+    stderr: str
+    echo_off: list[bool]  # for each silent prompt: ECHO was off when its answer was typed
+    unanswered: list[str]  # the prompts the run never showed
+
+
+def on_a_terminal(
+    tmp_path: Path, calls: dict[str, list[dict[str, Any]]], prompts: list[tuple[str, str, bool]],
+    *args: str, env: dict[str, str] | None = None,
+) -> TerminalRun:  # fmt: skip
+    """One run with a pty as its stdin and controlling terminal (so /dev/tty, fd 3), and pipes as
+    stdout and stderr. Each answer is typed when its prompt reaches stderr, a silent one once
+    ECHO is off (or after ECHO_WAIT_S). One read loop, bounded by PTY_DEADLINE_S, reads all three
+    streams; it never sleeps beyond its select."""
+    staged = stage(tmp_path, calls)
+    master, slave = pty.openpty()
+    proc = subprocess.Popen(
+        [sys.executable, "-IS", "-c", CTTY, BASH, str(SCRIPT), *args],
+        stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=staged.cwd,
+        env=staged.env | (env or {}),
+    )  # fmt: skip
+    os.close(slave)
+    assert proc.stdout is not None and proc.stderr is not None
+    terminal, out, err = bytearray(), bytearray(), bytearray()
+    streams = {master: terminal, proc.stdout.fileno(): out, proc.stderr.fileno(): err}
+    waiting, matched = list(prompts), 0
+    echo_off: list[bool] = []
+    silent_since: float | None = None
+    deadline = time.monotonic() + PTY_DEADLINE_S
+    try:
+        while streams and time.monotonic() < deadline:
+            for fd in select.select(list(streams), [], [], 0.05)[0]:
+                try:
+                    chunk = os.read(fd, 1 << 16)
+                except OSError:  # EIO: every holder of the terminal has closed it
+                    chunk = b""
+                if chunk:
+                    streams[fd] += chunk
+                else:
+                    del streams[fd]
+            at = err.find(waiting[0][0].encode(), matched) if waiting and master in streams else -1
+            if at < 0:
+                continue
+            prompt, answer, silent = waiting[0]
+            if silent:
+                now = time.monotonic()
+                silent_since = now if silent_since is None else silent_since
+                echo = bool(termios.tcgetattr(master)[3] & termios.ECHO)
+                if echo and now - silent_since < ECHO_WAIT_S:
+                    continue
+                echo_off.append(not echo)
+                silent_since = None
+            os.write(master, answer.encode() + b"\n")
+            matched = at + len(prompt)
+            waiting.pop(0)
+        proc.wait(timeout=max(1.0, deadline - time.monotonic()))
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        os.close(master)
+        proc.stdout.close()
+        proc.stderr.close()
+    text = [b.decode("utf-8", "replace") for b in (terminal, out, err)]
+    return TerminalRun(proc.returncode, *text, echo_off, [p for p, _, _ in waiting])
 
 
 @pytest.fixture(scope="module")
 def full(tmp_path_factory: pytest.TempPathFactory) -> Run:
     return run(tmp_path_factory.mktemp("full"), full_run(), ANSWERS, schemas=True)
+
+
+@pytest.fixture(scope="module")
+def on_tty(tmp_path_factory: pytest.TempPathFactory) -> TerminalRun:
+    """A full run on a terminal, answered prompt by prompt."""
+    return on_a_terminal(tmp_path_factory.mktemp("tty"), full_run(), PROMPTS)
+
+
+def test_no_secret_typed_at_the_terminal_comes_back_on_it(on_tty: TerminalRun) -> None:
+    """The runbook's promise (step 7): every secret is read silently. On a real terminal ECHO is
+    off at each silent prompt and nothing typed there reaches the terminal, while the email and
+    the UID, typed at visible prompts, are echoed back: the check sees an echo when there is one."""
+    assert on_tty.returncode == 0 and on_tty.unanswered == [], on_tty.stderr
+    assert on_tty.echo_off == [True] * sum(silent for _, _, silent in PROMPTS)
+    assert [s for s in SECRETS if s in on_tty.terminal + on_tty.stdout + on_tty.stderr] == []
+    assert EMAIL in on_tty.terminal and EXCHANGE_UID in on_tty.terminal
 
 
 # --- the bootstrap: #4479's CLI in bootstrap-owner, while api is stopped ------------------------
@@ -481,6 +621,122 @@ def test_a_malformed_answer_stops_before_it_is_sent(
     assert stopped.proc.returncode == 1 and message in stopped.proc.stderr
     assert [r["route"] for r in stopped.records if r["route"] not in ORDER[:5]] == []
     assert [secret for secret in SECRETS if secret in stopped.proc.stderr] == []
+
+
+BOOTED = ["docker stop", "docker run", "docker up"]
+SKIP = ("--skip-invite",)
+KEEP = ("--skip-invite", "--account-id", ACCOUNT_ID)
+SIGN_IN = [IDENTIFIER, PASSWORD, CODES[1]]  # after --skip-invite: the identifier, password, code
+#: After --skip-invite --account-id: to the import (the UID, the key label, read-only, the key).
+TO_IMPORT = [*SIGN_IN, EXCHANGE_UID, "", "", API_KEY, API_SECRET, CODES[2]]
+
+
+def curl(*routes: str) -> list[str]:
+    return [f"curl {route}" for route in routes]
+
+
+@pytest.mark.parametrize(
+    ("answers", "args", "message", "sequence"),
+    [
+        ([], (), "no answer to: Owner email", []),
+        ([EMAIL], (), "no answer to: Invite token", BOOTED),
+        ([EMAIL, ""], (), "not an invite token", BOOTED),
+        ([EMAIL, TOKEN, "", ""], (), "a password is 12 to 512 characters",
+         BOOTED + curl(GET_INVITE)),
+        ([EMAIL, TOKEN, "p" * 513, "p" * 513], (), "a password is 12 to 512 characters",
+         BOOTED + curl(GET_INVITE)),
+        ([*ANSWERS[:4], ""], (), "6 digits", BOOTED + curl(GET_INVITE, REDEEM)),
+        ([IDENTIFIER, ""], SKIP, "a password is 1 to 512 characters", []),
+        ([*SIGN_IN, EXCHANGE_UID, "x" * 81], SKIP, "an account label is 1 to 80",
+         curl(LOGIN, VERIFY)),
+        ([*SIGN_IN, EXCHANGE_UID, "", "", ""], KEEP, "an API key is 8 to 128 characters",
+         curl(LOGIN, VERIFY)),
+        ([*SIGN_IN, EXCHANGE_UID, "", "", API_KEY, ""], KEEP, "an API secret is 8 to 256",
+         curl(LOGIN, VERIFY)),
+    ],
+    ids=["eof-first-prompt", "eof-first-secret", "empty-token", "empty-password",
+         "password-over-512", "empty-code", "empty-sign-in-password", "long-label",
+         "empty-api-key", "empty-api-secret"],
+)  # fmt: skip
+def test_an_empty_missing_or_oversized_answer_stops_before_it_is_sent(
+    tmp_path: Path, answers: list[str], args: tuple[str, ...], message: str, sequence: list[str]
+) -> None:
+    """EOF at a prompt (the first, and the first silent one) and an empty answer are refused
+    where they are typed: nothing after that prompt is called."""
+    stopped = run(tmp_path, full_run(), answers, *args)
+    assert stopped.proc.returncode == 1 and message in stopped.proc.stderr
+    assert stopped.sequence == sequence
+    assert [secret for secret in SECRETS if secret in stopped.proc.stderr] == []
+
+
+def test_a_yes_to_read_only_imports_a_key_declared_read_only(tmp_path: Path) -> None:
+    scenario = full_run()
+    scenario[LOGIN][0]["expect"] = {"identifier": IDENTIFIER, "password": PASSWORD}
+    scenario[IMPORT][0]["expect"] |= {"read_only": True}
+    answers = [*SIGN_IN, EXCHANGE_UID, "", "y", API_KEY, API_SECRET, CODES[2]]
+    done = run(tmp_path, scenario, answers, *KEEP)
+    assert done.proc.returncode == 0, done.proc.stderr
+    assert [r["body_ok"] for r in done.records if r["route"] == IMPORT] == [
+        dict.fromkeys(scenario[IMPORT][0]["expect"], True)
+    ]
+
+
+ELEVATED = {"elevated_until": "2026-10-26T04:05:00+00:00", "action_class": "keys"}
+NO_CHALLENGE = problem(403, "step_up_required", "Re-enter your password and code.",
+                       action_class="keys")  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("route", "calls", "answers", "args", "message", "sequence"),
+    [
+        (GET_INVITE, [problem(429, "rate_limited", "Too many attempts.")], ANSWERS[:2], (),
+         "too many invalid attempts", BOOTED + curl(GET_INVITE)),
+        (REDEEM, [problem(429, "rate_limited", "Too many attempts.")], ANSWERS[:4], (),
+         "too many invalid attempts", BOOTED + curl(GET_INVITE, REDEEM)),
+        (REDEEM, [answer(200, {"method_id": METHOD_ID})], ANSWERS[:4], (),
+         "without a TOTP enrolment", BOOTED + curl(GET_INVITE, REDEEM)),
+        (LOGIN, [problem(423, "locked", "Locked.")], SIGN_IN[:2], SKIP, "locked for now",
+         curl(LOGIN)),
+        (LOGIN, [answer(200, {"status": "authenticated"})], SIGN_IN[:2], SKIP,
+         "asked for no code", curl(LOGIN)),
+        (STEP_UP, [answer(200, ELEVATED | {"tokens": {"access_token": "not a token!"}})],
+         TO_IMPORT, KEEP, "malformed access token", curl(LOGIN, VERIFY, STEP_UP)),
+        (CREATE, [answer(201, {"exchange": "bybit"})], ANSWERS, (), "without an account id",
+         BOOTED + curl(*ORDER[:7])),
+        (IMPORT, [{"exit": 7}], TO_IMPORT, KEEP, "which may have run",
+         curl(LOGIN, VERIFY, STEP_UP, IMPORT)),
+        (IMPORT, [problem(502, "bad_gateway", "No answer upstream.")], TO_IMPORT, KEEP,
+         "no verdict, nothing was stored", curl(LOGIN, VERIFY, STEP_UP, IMPORT)),
+        (IMPORT, [NO_CHALLENGE], TO_IMPORT, KEEP, "a step-up without a challenge id",
+         curl(LOGIN, VERIFY, STEP_UP, IMPORT)),
+    ],
+    ids=["invite-check-429", "password-429", "no-totp-enrolment", "sign-in-423",
+         "sign-in-without-mfa", "step-up-malformed-token", "account-without-id",
+         "import-unanswered", "import-502", "challenge-without-id"],
+)  # fmt: skip
+def test_each_refusal_branch_stops_the_run_where_it_is(
+    tmp_path: Path, route: str, calls: list[dict[str, Any]], answers: list[str],
+    args: tuple[str, ...], message: str, sequence: list[str],
+) -> None:  # fmt: skip
+    scenario = full_run()
+    scenario[route] = calls
+    stopped = run(tmp_path, scenario, answers, *args)
+    assert stopped.proc.returncode == 1 and message in stopped.proc.stderr
+    assert stopped.sequence == sequence
+    assert [secret for secret in SECRETS if secret in stopped.proc.stderr] == []
+
+
+def test_help_prints_the_usage_and_exits_0_before_anything(tmp_path: Path) -> None:
+    helped = run(tmp_path, full_run(), [], "--help")
+    assert helped.proc.returncode == 0 and "usage:" in helped.proc.stderr
+    assert helped.sequence == []
+
+
+def test_a_host_without_docker_stops_before_the_bootstrap(tmp_path: Path) -> None:
+    """PATH holds the stubs alone here, so no docker of the host's can answer."""
+    stopped = run(tmp_path, full_run(), [EMAIL], with_docker=False)
+    assert stopped.proc.returncode == 1 and "docker is not installed" in stopped.proc.stderr
+    assert stopped.sequence == []
 
 
 # --- the step-up: 22's challenge and session rotation --------------------------------------------
