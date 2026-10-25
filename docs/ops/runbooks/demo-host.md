@@ -49,7 +49,7 @@ compose refuses every command while a required one is empty:
   trades only demo funds; before this host ever holds a live key, turn swap off or encrypt it.
 - `/etc/candleviewer/demo/` (root, 0700) holds the KEK and the audit lane key; the Owner's offline
   KEK copy waits for collection in root's home.
-- `infra/compose/.env` (0600) holds every name `.env.example` lists.
+- `infra/compose/.env` (owned by root, 0600) holds every name `.env.example` lists.
 
 The pinned sha must hold #4479 (`candleviewer.bootstrap_owner`, step 6) and #4484
 (`POST /exchange-accounts`, step 7). Every command below runs as root from the checkout's root,
@@ -75,7 +75,7 @@ $COMPOSE --profile core build api
 ```
 
 `git rev-parse HEAD` must print the pinned sha. Set `CV_GIT_SHA` in `infra/compose/.env` to it, so
-`/healthz` reports the build.
+`GET /admin/health` and `/metrics` report the build.
 
 **Alternative, once the package is public: verify the image by digest.** Take the digest of the
 `<version>-<12-digit sha>` tag that `main.yml` pushed for the pinned sha, and verify it with the
@@ -90,9 +90,11 @@ cosign verify \
   "$IMAGE@$DIGEST"
 ```
 
-Then add `-f infra/compose/docker-compose.deploy.yml` as the last file of `$COMPOSE`, set
-`CV_API_IMAGE_REF=$IMAGE` and `CV_IMAGE_DIGEST=$DIGEST` in `.env`, and pass `--no-build` to `up`.
-The `migrate` one-shot still builds from the checkout, so keep it at the same sha.
+If `cosign verify` exits non-zero, stop here: set neither variable and do not run `up`; build from
+the checkout (above) instead. Otherwise add `-f infra/compose/docker-compose.deploy.yml` as the last
+file of `$COMPOSE`, set `CV_API_IMAGE_REF=$IMAGE` and `CV_IMAGE_DIGEST=$DIGEST` in `.env`, and pass
+`--no-build` to `up`. The `migrate` one-shot still builds from the checkout, so keep it at the same
+sha.
 
 ## 2. The secret files and their modes
 
@@ -107,10 +109,11 @@ $COMPOSE --profile core --profile migrate config --quiet
 
 Expected: the directory `0:0 700`; `kek-demo-v1.bin` `10001:10001 400 32` (exactly 32 raw bytes);
 `audit-lane.key` `10001:10001 400` and 64 bytes (65 with a final line feed: 64 hex digits); `.env`
-`600`; `comm` prints nothing (no name of `.env.example` is missing, and it prints names only, never
-values); `config --quiet` prints nothing and exits 0. A missing required name is compose's
-`required variable ... is missing a value`. Fix a mode or an owner in place with
-`chown 10001:10001` and `chmod 0400`: never open, copy or print a secret file.
+`root 600` (owned by root, mode 600); `comm` prints nothing (no name of `.env.example` is missing,
+and it prints names only, never values); `config --quiet` prints nothing and exits 0. A missing
+required name is compose's `required variable ... is missing a value`. Fix a mode or an owner in
+place with `chown` and `chmod` (`10001:10001` and `0400` for the secret files, `root` and `0600`
+for `.env`): never open, copy or print a secret file.
 
 ## 3. The schema: `migrate`
 
@@ -138,11 +141,11 @@ read -rs -p 'cv_ro password: ' RO_PW; echo
 unset OWNER_PW APP_PW RO_PW
 ```
 
-Then apply both schemas (`docs/ops/runbooks/storage-migrate.md`; `migrate` has
-`pull_policy: build`, so `run` rebuilds it from this checkout):
+Then apply both schemas (`docs/ops/runbooks/storage-migrate.md`; `--build` rebuilds `migrate` from
+this checkout, as that runbook does):
 
 ```bash
-$COMPOSE --profile core --profile migrate run --rm migrate
+$COMPOSE --profile core --profile migrate run --rm --build migrate
 ```
 
 Expected: exit 0 and a `storage_migrate_done` line; a second run applies nothing and exits 0. Any
@@ -193,9 +196,11 @@ that email the Owner and prints its token once, on its terminal. A container's o
 Docker's logging driver, which would keep that print: `json-file` and `local` until the container
 is removed, `journald`, `syslog` and remote drivers for good (DC-4479-02, #4479's design critique).
 So the overlay runs the CLI in its own service, `bootstrap-owner`: `logging: driver: none`, a
-profile that `up` never starts, and cv-api's settings for what the CLI reads (the environment,
-cv-api's database role, the KEK and the audit volume, where its journal and the run lock it shares
-with cv-api live). Never run it as `$COMPOSE run ... api`, whose logging driver keeps the print.
+profile that `up` never starts, and cv-api's settings for what the CLI reads, and nothing else:
+`CV_ENVIRONMENT`, cv-api's database role (`CV_PG_DSN`), the KEK (`CV_KEK_SOURCE`, `CV_KEK_HANDLE`,
+`CV_KEK_VERSION` and the `cv_kek` file secret) and cv-api's `CV_AUDIT_WAL_PATH` on the audit
+volume, where its journal and the run lock it shares with cv-api live. Never run it as
+`$COMPOSE run ... api`, whose logging driver keeps the print.
 
 The first-run script (step 7) does this step for you. By hand, from a terminal (no `-T`, no pipe,
 no `| tee`), never with `--live` on this host:
@@ -207,8 +212,11 @@ $COMPOSE --profile core up -d --wait api
 ```
 
 Retype the phrase it shows. It prints the token once: take it straight to step 7, over nothing that
-keeps a copy. Its options, exit statuses and refusals are #4479's (its runbook section ships with
-it); 17 means an Owner is active already, and a new run supersedes an invite not yet redeemed.
+keeps a copy. Run it with no session recorder (`script`, `asciinema`), keep the token out of any
+clipboard manager's history, and once step 7 has redeemed it clear the terminal and its scrollback
+(`clear; printf '\033[3J'`, and `tmux clear-history` in tmux). Its options, exit statuses and
+refusals are #4479's: `docs/ops/runbooks/auth-rbac.md` §4, "Bootstrap the first Owner (O5, #4479)",
+which ships with it.
 
 ## 7. Account and key import: the first-run script
 
@@ -216,23 +224,28 @@ it); 17 means an Owner is active already, and a new run supersedes an invite not
 infra/scripts/demo_host_owner_first_run.sh
 ```
 
-Run it from a terminal. It starts with step 6: it asks for the Owner's email, stops api, runs
-`bootstrap-owner` on your terminal (retype the phrase; copy the token it prints), starts api, waits
-until it is healthy and asks you to paste the token, which it reads silently. From then on it calls
-`127.0.0.1:8000` only, reads every secret silently and writes nothing to disk. Have ready the
-authenticator app, the Bybit demo account's UID, and its API key and secret. Create the key at
-Bybit demo, on a unified trading account, with only `ContractTrade` `Order` and `Position` (and
-`Derivatives` `DerivativesTrade`), no withdrawal or transfer right, and the host's egress address
-(`CV_EGRESS_IP`) as its only whitelisted IP (`createApiKey` in `22-api-openapi.yaml`). In order, it
-redeems the invite (a new password; the otpauth URI is shown once, for the authenticator; the
-recovery codes are shown once: seal them, SR-023), signs in with the email, steps up for `keys`
-(registering the account needs it too), registers the demo account and imports the key. Each code
-it asks for is a new one from the authenticator.
+Run it from a terminal, with no session recorder, and keep what it shows once (the token, the
+otpauth URI, the recovery codes) out of any clipboard manager's history. It starts with step 6: it
+asks for the Owner's email, stops api, runs `bootstrap-owner` on your terminal (retype the phrase;
+the token is printed once), starts api, waits until it is healthy and asks you to paste the token,
+which it reads silently. If it stops while api is stopped, it prints the command that starts api
+again. From then on it calls `127.0.0.1:8000` only, reads every secret silently and writes nothing
+to disk. Have ready the authenticator app, the Bybit demo account's UID, and its API key and secret.
+Create the key at Bybit demo, on a unified trading account, with only `ContractTrade` `Order` and
+`Position` (and `Derivatives` `DerivativesTrade`), no withdrawal or transfer right, and the host's
+egress address (`CV_EGRESS_IP`) as its only whitelisted IP (`createApiKey` in
+`22-api-openapi.yaml`). In order, it redeems the invite (a new password; the otpauth URI is shown
+once, for the authenticator; the recovery codes are shown once: seal them, SR-023), signs in with
+the email, steps up for `keys` (registering the account needs it too), registers the demo account
+and imports the key. Each code it asks for is a new one from the authenticator.
 
-It prints only the verification verdict fields and exits 0 with `passed: true`. A refused step
-stops it with a message and exit 1. Once the invite is redeemed, run it again with `--skip-invite`;
-once the account is registered (it prints the id), add `--account-id <id>`. A refused key names its
-rule (`key-selfcheck.md`, "Key import: a refused key").
+It prints only the verification verdict fields and exits 0 with `passed: true`. A run that succeeds
+first clears the terminal and its scrollback (and tmux's history), so the token, the URI and the
+codes are gone from it; one that stops says to clear them yourself. Clear any clipboard history
+yourself either way. A refused step stops it with a message and exit 1. Once the invite is
+redeemed, run it again with `--skip-invite`; once the account is registered (it shows the id on the
+terminal), add `--account-id <id>`. A refused key names its rule (`key-selfcheck.md`, "Key import:
+a refused key").
 
 ## 8. `/readyz` ok
 

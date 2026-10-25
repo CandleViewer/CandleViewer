@@ -190,7 +190,8 @@ The case to expect is `CV_EGRESS_IP` unset with a stored key (`key_selfcheck_no_
 `accounts.key_selfcheck_unavailable`). The base compose file forwards neither `CV_EGRESS_IP` nor
 `CV_STORAGE_BACKEND` to the `api` container: the service lists its environment explicitly
 (`infra/compose/docker-compose.yml`, `environment:` of `api`) and has no `env_file`, so it runs the
-default `fake` backend, where no self-check is wired. The demo-host overlay
+default `fake` backend, where no self-check is wired, and the deployed lifespan cannot boot the real
+one yet (#2334). The demo-host overlay
 (`infra/compose/docker-compose.demo-host.yml`, runbook `demo-host.md`, #3180) forwards both from
 the operator's `infra/compose/.env`, with the KEK, the auth keys and the `/data` volume the real
 backend needs, and compose refuses to start it while either is empty. The dev deploy does not take

@@ -16,14 +16,16 @@
 #   6. the key import: createApiKey with the key and secret typed at the prompt, and expected_uid.
 # Past step 1 it calls the api on http://127.0.0.1:8000 only. stdout carries only the verification
 # verdict fields of step 6, never the egress address (Confidential); prompts and messages go to
-# stderr, the one-time URI and codes to the terminal.
+# stderr, the one-time URI and codes, and the account id a rerun needs, to the terminal. A run that
+# succeeds clears the terminal's scrollback of what it showed once; one that stops says to.
 #
 # Secrets are typed silently and never echoed or put on a command line: each request reaches curl
 # as a config on stdin (`--config -`), and its JSON is written and read by python3 through pipes,
 # so `ps` shows neither. Nothing is written to disk (no cookie jar, no temp file, no history); curl
 # reads no ~/.curlrc and uses no proxy; every variable is cleared on exit. Needs bash, curl and
 # python3, and docker compose for step 1. Exit status: 0 the key is imported, 1 a step was
-# refused, 2 bad arguments.
+# refused, 2 bad arguments, 130, 143 or 129 a signal (a run that stopped api then says how to
+# start it again).
 #   --skip-invite        the invite is redeemed already: start at the sign-in
 #   --account-id UUID    the demo account is registered already: import its key
 
@@ -36,6 +38,8 @@ unset -f curl docker python3 printf read command 2>/dev/null || true
 trap - DEBUG RETURN
 
 readonly API="http://127.0.0.1:8000"
+# The app mounts its routers at the root: 22's operations are served with no `/api/v1` prefix,
+# whatever 22's server URL says, so the paths below are 22's paths as they are.
 readonly PROG="demo_host_owner_first_run"
 readonly UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 readonly TOKEN_RE='^[A-Za-z0-9._~+/=-]{8,4096}$'
