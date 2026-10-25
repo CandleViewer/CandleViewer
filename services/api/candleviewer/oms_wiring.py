@@ -24,8 +24,9 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Collection, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Protocol
 from uuid import UUID
 
 import structlog
@@ -36,6 +37,7 @@ from candleviewer.accounts.trade_groups import ScopedTradeGroup
 from candleviewer.accounts.verification import Refusal
 from candleviewer.admin.wiring import (
     MachineEventSinkMetrics,
+    build_lane_audit_writer,
     build_machine_event_sink,
     keyed_record_id,
 )
@@ -145,6 +147,7 @@ from candleviewer.statechart.registry import Registry
 from candleviewer.statechart_wiring import EventFramesAdapter, EventsAdapter, PersistOps
 from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.accounts import AccountScope
+from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
 from candleviewer.storage.repositories.executions import ExecutionStore
 from candleviewer.storage.repositories.executions_sqlalchemy import SqlAlchemyExecutionStore
 from candleviewer.storage.repositories.idempotency_anchors import IdempotencyAnchorStore
@@ -186,7 +189,6 @@ from candleviewer.storage.repositories.trading_accounts_sqlalchemy import (
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
-    from candleviewer.statechart.plugins.audit import MachineEventRow
 
 #: The stop request's bound (21 Sec.3.3.11, [LANE-25]), in seconds: how long an unanswered stop
 #: request holds its key before it waits for the complete read (`ResolvingStopGate`); above an
@@ -867,7 +869,9 @@ class OrderStateFeed:
 # (`ServedClock`), the read-only gate and the governor's headroom (each under its own lock,
 # #4370), the persistence bundle's chain-trip latch (a dict the serving loop's restores write an
 # item at a time), its own refusals of rejected credentials, which the route's gate reads on the
-# serving loop too (`ServedStandings.refused`, one dict read), the metrics and the pager.
+# serving loop too (`ServedStandings.refused`, one dict read), the metrics and the pager. Its audit
+# writer and `machine_events` sink are its own, built on its loop (#913 L2, `OmsStores`): neither
+# crosses.
 
 
 class PrivateStreamRefused(RuntimeError):
@@ -917,21 +921,6 @@ class ServedPort:
         raise PrivateStreamRefused("a private stream stays on the loop that opens it")
 
 
-class ServedAudit:
-    """`AuditWriterPort` over the serving loop's audit writer, whose lock binds to that loop
-    (`audit/writer.py`), until L2 gives the lane its own: each append is awaited there, so a
-    refusal reaches the OMS (C-2.9)."""
-
-    def __init__(self, writer: AuditWriterPort, serving: Serving) -> None:
-        self._writer, self._serving = writer, serving
-
-    async def emit(self, action: str, **fields: Any) -> None:
-        await self._serving.call(self._writer.emit(action, **fields))
-
-    async def emit_keyed(self, action: str, name: str, **fields: Any) -> None:
-        await self._serving.call(self._writer.emit_keyed(action, name, **fields))
-
-
 class ServedProfiles:
     """`Profiles` over the process's profile cache, which is for one loop
     (`accounts/profile_cache.py`): each read is awaited on the serving loop."""
@@ -965,45 +954,6 @@ class ServedGate:
         except TimeoutError:
             _log().error("oms_gate_unanswered", account_id=str(account_id))
             raise OmsNotReady from None
-
-
-#: The window of the page for an append the serving loop did not begin (`ServedSink`), in seconds:
-#: M19's `APPEND_FAILURE_COOLDOWN_S`, in which the sink pages its own failed appends
-#: (`audit/machine_events.py`). This root reaches M19 only through M21's re-exports (C-3.3), so
-#: the bridge test pins the two equal.
-SINK_PAGE_COOLDOWN_S: Final = 5.0
-
-
-class ServedSink:
-    """A persistence bundle's `machine_events` sink, which runs on the serving loop, as B1 appends
-    to it from the lane until L2 gives the lane its own: each append waits for that loop's answer,
-    so a refusal is never lost (`audit/machine_events.py`). One the serving loop has not begun
-    within `BLOCK_TIMEOUT_S` never runs: its row is lost, a hole no chain check sees, so the first
-    of each `SINK_PAGE_COOLDOWN_S` window pages, by its class alone, and each still raises to the
-    audit plugin, which counts it while its machine runs on (SEC-S3L1CE-01, 24 Sec.17.6)."""
-
-    def __init__(
-        self,
-        sink: MachineEventSink,
-        serving: Serving,
-        *,
-        monotonic: Callable[[], float] = time.monotonic,
-    ) -> None:
-        self._sink, self._serving, self._monotonic = sink, serving, monotonic
-        #: When an unbegun append last paged, on `monotonic`: the lane's thread's alone, as the
-        #: serving loop's own appends never wait.
-        self._paged_at: float | None = None
-
-    def append(self, row: MachineEventRow) -> None:
-        try:
-            self._serving.block(lambda: self._sink.append(row))
-        except TimeoutError as exc:  # not begun, so never run: the row is lost
-            # the hop's alone: the append is synchronous, so one begun is waited out, never this
-            now, paged = self._monotonic(), self._paged_at
-            if paged is None or now - paged >= SINK_PAGE_COOLDOWN_S:
-                self._paged_at = now
-                _log().critical("oms_sink_append_dropped", cv_page=True, error=type(exc).__name__)
-            raise
 
 
 class ServedStandings:
@@ -1240,11 +1190,21 @@ class Bundle(Protocol):
 
 
 class OwnedSink(MachineEventSink, Protocol):
-    """The standalone `machine_events` WAL sink the runtime builds and owns with no bundle."""
+    """The order lane's own `machine_events` WAL sink, which the runtime builds and owns (#913 L2,
+    ruling Q13)."""
 
     async def start(self) -> None: ...
 
     async def stop(self) -> None: ...
+
+
+class OwnedAudit(AuditWriterPort, Protocol):
+    """The order lane's own audit writer, which the runtime builds on the lane and owns (#913 L2,
+    ruling Q12): started there, and stopped there within `grace_s`."""
+
+    async def start(self) -> None: ...
+
+    async def stop(self, grace_s: float = ...) -> None: ...
 
 
 class OrderStores(OrderStore, OrderEventStore, Protocol):
@@ -1259,8 +1219,9 @@ class GroupStores(TradeGroupStore, TradeGroupReads, Protocol):
 
 @dataclass(frozen=True, slots=True)
 class OmsStores:
-    """The runtime's stores, on one pool of its own that `release` disposes of, and the builder of
-    the standalone sink over it. They take no principal, so a route reaches them only through the
+    """The runtime's stores, on one pool of its own that `release` disposes of, and the builders
+    of the order lane's own audit writer and `machine_events` sink over it (#913 L2), the sink's at
+    the WAL path it is given. They take no principal, so a route reaches them only through the
     OMS's own surfaces, after its RBAC check (C-12.4): the pipeline, its anchors and `OrderRoute`'s
     reads, the existence read and a replay's two, the order by its account and the group through
     the principal-scoped `TradeGroupReader`. `sweep` is the startup sweep's reads, under their own
@@ -1274,16 +1235,41 @@ class OmsStores:
     groups: GroupStores
     accounts: TradingAccountReads
     sweep: UnfinishedOrders
-    sink: Callable[[], OwnedSink]
+    audit: Callable[[], OwnedAudit]
+    sink: Callable[[str], OwnedSink]
     release: Callable[[], Coroutine[Any, Any, None]]
+
+
+#: The name prefix of the order lane's own WAL files, each beside the serving loop's (#913 L2, D6).
+LANE_WAL_PREFIX: Final = "oms_lane."
+#: How long the stop gives the lane's audit writer to empty its WAL into Postgres, inside its
+#: share of `OMS_STOP_RESERVE_S`; what it has not inserted stays in the WAL for the next start.
+LANE_AUDIT_STOP_S: Final = 1.0
+
+
+def lane_audit_wal(settings: Settings) -> str:
+    """The order lane's own audit WAL: `oms_lane.<name>` beside `CV_AUDIT_WAL_PATH`, so never the
+    serving loop's file (#913 L2, D6)."""
+    wal = Path(settings.audit_wal_path)
+    return str(wal.with_name(LANE_WAL_PREFIX + wal.name))
+
+
+def lane_sink_wal(settings: Settings, *, bundled: bool) -> str:
+    """The order lane's own `machine_events` WAL (#913 L2, ruling Q13): `CV_MACHINE_EVENT_WAL_PATH`,
+    which no serving-loop sink holds without a persistence bundle, else `oms_lane.<name>` beside
+    the bundle's sink, which holds that path."""
+    wal = Path(settings.machine_event_wal_path)
+    return str(wal.with_name(LANE_WAL_PREFIX + wal.name)) if bundled else str(wal)
 
 
 def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
     """The stores over the runtime's own pool (`oms` in `pg_stat_activity`). Lazy: building them
-    connects nothing."""
+    connects nothing. The lane's audit writer inserts through the audit repository over that pool,
+    into the one `audit_log` chain, which the chain lock serialises (ruling Q12)."""
     pool = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "oms")
     events, ops = EventFramesAdapter(EventsAdapter(SqlAlchemyEventStore(pool))), PersistOps(metrics)
     counts = MachineEventSinkMetrics(flushed=ops.flushed, pending=ops.pending)
+    audit_wal = lane_audit_wal(settings)
     return OmsStores(
         orders=SqlAlchemyOrderStore(pool),
         executions=SqlAlchemyExecutionStore(pool),
@@ -1293,15 +1279,17 @@ def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
         groups=SqlAlchemyTradeGroupStore(pool),
         accounts=SqlAlchemyTradingAccountReads(pool),
         sweep=SqlAlchemyOrderStore(pool, statement_timeout_ms=SWEEP_STATEMENT_TIMEOUT_MS),
-        sink=lambda: build_machine_event_sink(settings, events, metrics=counts),
+        audit=lambda: build_lane_audit_writer(SqlAlchemyAuditRepository(pool), audit_wal),
+        sink=lambda wal: build_machine_event_sink(settings, events, metrics=counts, wal_path=wal),
         release=pool.dispose,
     )
 
 
 class StandaloneSink(Interim):
-    """No persistence bundle serves B1's `machine_events` (20 Sec.6.2): the startup announces it
-    as it does an interim port, `oms_interim_ports{port="machine_event_sink"}` at 1 with a
-    WARNING."""
+    """No persistence bundle is composed, so no HMAC'd journal stands beside B1's `machine_events`
+    (20 Sec.6.2, CV-C53): the startup announces it as it does an interim port,
+    `oms_interim_ports{port="machine_event_sink"}` at 1 with a WARNING. B1's rows go to the order
+    lane's own sink either way (#913 L2, ruling Q13)."""
 
     port: ClassVar[RuntimePortName] = "machine_event_sink"
     replaced_by: ClassVar[str] = "#2701"
@@ -1622,7 +1610,6 @@ class OmsRuntime:
         ingestion: Ingestion,
         read_only: ReadOnlyCheck,
         metrics: Metrics,
-        audit: AuditWriterPort,
         gate: OrderEntryCheck,
         standings: KeyStandingRead,
         oms_enabled: FlagRead,
@@ -1642,7 +1629,7 @@ class OmsRuntime:
         self._settings, self._metrics, self._lanes = settings, metrics, lane
         self._env: Environment = settings.environment.value
         self._venue, self._ingestion, self._read_only = venue, ingestion, read_only
-        self._audit, self._gate, self._standings = audit, gate, standings
+        self._gate, self._standings = gate, standings
         self._oms_enabled, self._live_enabled = oms_enabled, live_enabled
         self._persistence, self._feed = persistence, feed
         #: The process's one effective-profile cache (finding 6), `profiles_wiring`'s, which its
@@ -1792,11 +1779,11 @@ class OmsRuntime:
         """Clear `ready`; give the submits in flight at most `CV_OMS_DRAIN_S`; cancel what remains
         and the startup task, their work on the lane with them, and wait for it to end there; then
         close the stop gate (its complete reads and passes cancelled with the startup task, before
-        the machines), the facade (it unwires B1's ports), the command port, the sink it owns, the
-        trading port and its pool, each on its own loop, isolated, within its share of what is
-        left; then stop the lane and join its thread. All of it ends by `OMS_STOP_RESERVE_S` after
-        the drain, `LANE_JOIN_S` of it the join's, inside the OMS module's 15 s grace (20
-        Sec.6.2). The shared profile cache is its owner's to close."""
+        the machines), the facade (it unwires B1's ports), the command port, the lane's own sink
+        and audit writer, the trading port and its pool, each on its own loop, isolated, within its
+        share of what is left; then stop the lane and join its thread. All of it ends by
+        `OMS_STOP_RESERVE_S` after the drain, `LANE_JOIN_S` of it the join's, inside the OMS
+        module's 15 s grace (20 Sec.6.2). The shared profile cache is its owner's to close."""
         self._ready.clear()
         self._stopping = True
         pending = await _drained(set(self._running), self._settings.oms_drain_s)
@@ -1946,11 +1933,11 @@ class OmsRuntime:
 
     async def _compose(self, lane: Lane, serving: Serving) -> _Parts:
         """The C6 rig's composition, on the order lane (CV-C13), for the process's environment only
-        (C-2.11): the switches, bindings and announcements, the sink and latch (20 Sec.6.2), the
-        trading port and router, then over the pool, made here, the stores, the command port, the
-        facade, the anchors and the pipeline; what the serving loop holds, through its bridge
-        (`Served*`). A failure once the port exists closes what was built before it goes on, each
-        closer on its own loop."""
+        (C-2.11): the switches, bindings and announcements, the latch (20 Sec.6.2), the trading port
+        and router, then over the pool, made here, the stores, the lane's own audit writer and
+        sink (#913 L2), the command port, the facade, the anchors and the pipeline; what the
+        serving loop holds, through its bridge (`Served*`). A failure once the port exists closes
+        what was built before it goes on, each closer on its own loop."""
         self._phase = "settings"
         settings, env, metrics = self._settings, self._env, self._metrics
         ingestion = self._ingestion
@@ -1991,11 +1978,14 @@ class OmsRuntime:
             self._phase = "stores"
             stores = self._stores()
             closers.append(("pool", lambda: lane.call(stores.release())))
+            self._phase = "audit"
+            writer = stores.audit()  # on the lane, its own WAL locked (D6); stops after its users
+            closers.insert(0, ("audit", lambda: lane.call(writer.stop(LANE_AUDIT_STOP_S))))
             self._phase = "commands"
             timer = WriteTimer(_histogram(metrics, "oms_db_write_seconds"))
             orders = OrderRepository(stores.orders, timer)
             stops = RecordedStopRepository(stores.stops, timer)
-            audit = OmsAudit(ServedAudit(self._audit, serving), environment=env)
+            audit = OmsAudit(writer, environment=env)
             notices = OrderNoticesRouter(self._pager)
             accounts = TradingAccountsBinding(stores.accounts, environment=env)
             # S4-S-b3: built and announced; S4-S-b2 hands it to the size step (24 Sec.9.3.6)
@@ -2027,12 +2017,8 @@ class OmsRuntime:
                 clock=self._now,
                 submissions=SubmissionRepository(stores.submissions, timer),
             )
-            owned = stores.sink() if bundle is None else None
-            sink: MachineEventSink = (
-                ServedSink(bundle.sink, serving, monotonic=self._monotonic)
-                if bundle is not None
-                else cast(OwnedSink, owned)
-            )
+            # the lane's own, whether or not a bundle holds the serving loop's (ruling Q13)
+            sink = stores.sink(lane_sink_wal(settings, bundled=bundle is not None))
             states = OrderStateFeed(self._feed, max_orders=self._max)
             feed = CompositePublisher(ServedFeed(states, serving))
             self._phase = "facade"
@@ -2107,10 +2093,11 @@ class OmsRuntime:
                 stop_resolver=ports.stop_resolver, risk_gate=ports.risk_gate, validator=validator,
                 switches=switches, oms_enabled=self._oms_enabled, environment=env,
             ))  # fmt: skip
-            if owned is not None:
-                self._phase = "sink_start"
-                await owned.start()
-                closers.insert(3, ("sink", lambda: lane.call(owned.stop())))  # after the commands
+            self._phase = "audit_start"
+            await writer.start()
+            self._phase = "sink_start"
+            await sink.start()
+            closers.insert(3, ("sink", lambda: lane.call(sink.stop())))  # after the commands
             # its exits end before the facade stops
             closers.insert(0, ("exits", lambda: lane.call(exits.aclose())))
             # S4-F: a fold's call still out once the machines have cut its members' invokes, as
@@ -2141,7 +2128,6 @@ def build_oms_runtime(
     settings: Settings,
     *,
     metrics: Metrics,
-    audit: AuditWriterPort,
     gate: OrderEntryCheck,
     standings: KeyStandingRead,
     oms_enabled: FlagRead,
@@ -2151,12 +2137,13 @@ def build_oms_runtime(
     feed: MachineStatePort,
 ) -> OmsRuntime | None:
     """The process's OMS runtime, with no I/O; None on the fake backend, which composes no OMS, so
-    `placeOrder` answers `501 not_implemented` there (20 Sec.6.2)."""
+    `placeOrder` answers `501 not_implemented` there (20 Sec.6.2). Its audit writer is its order
+    lane's own (#913 L2), never the serving loop's."""
     if settings.storage_backend != "real":
         return None
     return OmsRuntime(
         settings, venue=ctx.exchange_bybit, ingestion=ctx.ingestion,
-        read_only=ctx.oms_read_only_gate, metrics=metrics, audit=audit, gate=gate,
+        read_only=ctx.oms_read_only_gate, metrics=metrics, gate=gate,
         standings=standings, oms_enabled=oms_enabled, live_enabled=live_enabled,
         profiles=profiles, persistence=persistence, feed=feed,
     )  # fmt: skip

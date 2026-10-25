@@ -2354,13 +2354,13 @@ def create_app(
         account_health.order_entry_check
     )
     # #913 slice 3E (20 Sec.6.2): the OMS runtime over that gate, the shared profile cache above
-    # and the persistence bundle's sink when there is one; the lifespan starts it after the
-    # account health runtime and stops it right after the gateway. None on the fake backend.
+    # and the persistence bundle's latch when there is one; its audit writer and sink are its order
+    # lane's own (#913 L2). The lifespan starts it after the account health runtime and stops it
+    # right after the gateway. None on the fake backend.
     app.state.oms_runtime = build_oms_runtime(
         ctx,
         resolved,
         metrics=metrics_facade,
-        audit=_LazyAuditEmitter(ctx.audit),
         gate=app.state.order_entry_gate,
         standings=account_health.standings,
         oms_enabled=feature_flags.oms_enabled,

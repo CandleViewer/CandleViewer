@@ -40,7 +40,10 @@ from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.service import AuditService, LaneKeyLoader, LaneNotWired
 from candleviewer.audit.verify_job import AuditVerifyJob
 from candleviewer.audit.verify_runner import VerifyRunner
-from candleviewer.audit.writer import keyed_record_id  # the OMS's keyed audit ids (#913, C-3.3)
+from candleviewer.audit.writer import (
+    AuditWriter,
+    keyed_record_id,  # the OMS's keyed audit ids (#913, C-3.3)
+)
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.observability.metrics import Metrics
 from candleviewer.secrets import (
@@ -152,6 +155,7 @@ __all__ = [
     "audit_writer_sink",
     "build_audit_service",
     "build_audit_verify_job",
+    "build_lane_audit_writer",
     "build_machine_event_sink",
     "build_secrets_service",
     "export_audit_lane_metrics",
@@ -397,17 +401,32 @@ def build_audit_verify_job(
 
 
 def build_machine_event_sink(
-    settings: Settings, store: MachineEventStore, *, metrics: SinkMetrics | None = None
+    settings: Settings,
+    store: MachineEventStore,
+    *,
+    metrics: SinkMetrics | None = None,
+    wal_path: str | None = None,
 ) -> MachineEventSinkHandle:
     """The WAL-backed `machine_events` sink (E50-T63) over the composition root's events store
-    adapter, its WAL at `settings.machine_event_wal_path` (beside the audit WAL unless set). No
-    I/O: `start()` locks and opens the WAL."""
+    adapter, its WAL at `wal_path`, else `settings.machine_event_wal_path` (beside the audit WAL
+    unless set). No I/O: `start()` locks and opens the WAL."""
     return MachineEventWalSink(
         store,
-        settings.machine_event_wal_path,
+        settings.machine_event_wal_path if wal_path is None else wal_path,
         max_bytes=settings.machine_event_wal_max_bytes,
         metrics=metrics,
     )
+
+
+def build_lane_audit_writer(repository: AuditRepository, wal_path: str) -> AuditWriter:
+    """The order lane's own `AuditWriter` (#913 slice 3 L2, 29 CV-C13), which the OMS runtime
+    builds on the lane's loop over the OMS pool's audit repository, for the composition root,
+    which may not import M19 (C-3.3). Its WAL at `wal_path` is its own, never the serving loop's:
+    exclusive, it is locked before it is opened and until the end of the writer's stop (D6). Its
+    records join the one `audit_log` chain, whose inserts the chain lock serialises (ruling
+    Q12). Opens and scans its WAL, so the lane calls it, as `AuditService.start` builds the
+    serving loop's on that loop."""
+    return AuditWriter(repository, wal_path, exclusive=True)
 
 
 def system_event_redactor() -> Callable[[dict[str, Any] | None], dict[str, Any] | None]:
