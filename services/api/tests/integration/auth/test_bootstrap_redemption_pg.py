@@ -210,7 +210,7 @@ _MUTANTS: dict[str, tuple[str, Any, str]] = {
     "count_owners_zero": ("COUNT_OWNERS", sa.text("SELECT 0"), "lock"),
     "no_bootstrap_lock": ("BOOTSTRAP_LOCK", sa.text("SELECT 1"), "lock"),
     "no_read_committed": ("_READ_COMMITTED", sa.text("SELECT 1"), "lock"),
-    "marker_true": ("_BOOTSTRAP_ROW", store.bootstrap_row_sql("true"), "marker"),
+    "marker_true": ("_BOOTSTRAP_ROW", store._bootstrap_row_sql("true"), "marker"),
     "no_write_ahead": ("bounded_write_ahead", _no_write_ahead, "write_ahead"),
 }
 
@@ -320,3 +320,23 @@ async def test_create_and_reissue_never_write_the_marker(template: str) -> None:
         sql.SQL(store.BOOTSTRAP_MARKER)  # a static fragment of the store, not data
     )
     assert (_one(dsn, marked), _one(dsn, "SELECT count(*) FROM user_invites")) == ((0,), (2,))
+
+
+async def test_bootstrap_offer_reads_open_stale_and_unmarked(template: str) -> None:
+    """DC-09: what `GET /invites/{token}` and the password step read; `stale` is refused there."""
+    dsn = _fresh(template)
+    marked, unmarked = _plant(dsn, consumed=False), _plant(dsn, inviter=None, consumed=False)
+    rel = SqlAlchemyRelationalRepository(dsn)
+    repo = SqlAlchemyInviteRepository(rel, lambda **f: InviteRecord.model_validate(f))
+    try:
+        before = [await repo.bootstrap_offer(i[0]) for i in (marked, unmarked)]
+        _seed_owner(dsn)
+        after = await repo.bootstrap_offer(marked[0])
+    finally:
+        await rel.dispose()
+    assert (before, after) == (["open", "unmarked"], "stale")
+
+
+def test_the_row_splice_takes_only_the_known_markers() -> None:
+    with pytest.raises(ValueError, match="marker"):
+        store._bootstrap_row_sql("i.role IS NOT NULL")

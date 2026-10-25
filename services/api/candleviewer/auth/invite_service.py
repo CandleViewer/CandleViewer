@@ -253,12 +253,9 @@ class InviteService:
     async def inspect(self, token: str, *, source_ip: str) -> InviteView:
         """`GET /invites/{token}`: validates without consuming."""
         record = await self._find_open_or_reject(token, source_ip)
-        role = InviteRole.VIEWER.value  # what redemption grants every other invite (#2109)
-        if _is_bootstrap_role(record.role) and await self._repo.offers_bootstrap_owner(record.id):
-            role = BOOTSTRAP_ROLE
         return InviteView(
             display_name=record.display_name or record.username,
-            role=role,
+            role=await self._offered_role(record, source_ip),
             expires_at=record.expires_at,
         )
 
@@ -267,6 +264,7 @@ class InviteService:
     ) -> EnrollmentStart:
         """Consume the token, park the password, start TOTP enrolment."""
         record = await self._find_open_or_reject(token, source_ip)
+        await self._offered_role(record, source_ip)  # a stale bootstrap invite parks nothing
         check_password_policy(password, username=record.username, email=record.email)
         pending_hash = await self._hasher.hash(password, DEFAULT_ARGON2_PARAMS)
         consumed = await self._repo.consume(
@@ -294,7 +292,7 @@ class InviteService:
         code: str,
         source_ip: str,
         audit_downgrade: DowngradeAudit,
-        audit_bootstrap: BootstrapAudit | None = None,
+        audit_bootstrap: BootstrapAudit,
     ) -> tuple[InviteRecord, tuple[str, ...]]:
         """Verify the first TOTP code and activate the account. Returns the
         invite (role) and the one-time recovery codes. An `owner` invite first tries the
@@ -324,7 +322,8 @@ class InviteService:
         pending_hash = record.pending_password_hash
         stored_role = record.role
         if _is_bootstrap_role(stored_role):  # only the offline bootstrap invite keeps it (#4479)
-            if audit_bootstrap is None:  # never an unrecorded Owner grant (C-2.9): fail closed
+            # The hook is a required argument; a falsy value still fails closed (C-2.9).
+            if audit_bootstrap is None:
                 raise InviteRejected("enrollment_invalid")
             kept = await self._repo.activate_bootstrap_owner(
                 record.id,
@@ -367,6 +366,16 @@ class InviteService:
         return record, recovery_codes
 
     # -- helpers -----------------------------------------------------------
+
+    async def _offered_role(self, record: InviteRecord, source_ip: str) -> str:
+        """The role redemption would grant: `viewer` (#2109), or `owner` for an open bootstrap
+        invite. A stale one (another Owner active) is rejected `revoked`, as `/confirm` would."""
+        if not _is_bootstrap_role(record.role):
+            return InviteRole.VIEWER.value
+        offer = await self._repo.bootstrap_offer(record.id)
+        if offer == "stale":
+            raise self._reject("revoked", source_ip)
+        return BOOTSTRAP_ROLE if offer == "open" else InviteRole.VIEWER.value
 
     async def _classify(self, token: str) -> str:
         record = await self._repo.find_by_token_hash(hash_token(token))

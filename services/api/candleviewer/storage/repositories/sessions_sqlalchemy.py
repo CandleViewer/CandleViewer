@@ -369,7 +369,10 @@ class SqlAlchemySessionRepository:
             user = (await uow.session.execute(_LOCK_USER_SQL, {"id": str(session.user_id)})).first()
             if user is None or user._mapping["status"] == "disabled":
                 return None  # rolled back: the lock goes, nothing was written
-            if session.mfa_satisfied_at is not None:  # #4479: the bootstrapped Owner signed in
+            # #4479: the bootstrapped Owner's first sign-in with MFA resolves its critical event.
+            # One extra UPDATE per MFA-satisfied insert (`ix_se_component` narrows it to `auth`
+            # rows); for every other user it matches no row and writes nothing.
+            if session.mfa_satisfied_at is not None:
                 now = session.issued_at
                 await uow.session.execute(
                     RESOLVE_BOOTSTRAP_EVENT,

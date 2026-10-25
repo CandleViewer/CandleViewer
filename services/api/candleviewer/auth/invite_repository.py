@@ -25,6 +25,9 @@ InviteAudit = Callable[[uuid.UUID, str], Awaitable[None]]
 BOOTSTRAP_ROLE = "owner"
 #: `activate_bootstrap_owner`'s answers; every one but `activated` changed nothing.
 BootstrapActivation = Literal["activated", "owner_exists", "not_bootstrap", "not_invited"]
+#: `bootstrap_offer`'s read: `open` (marked, no Owner active), `stale` (marked, an Owner is
+#: active: refused `revoked` like the redemption), `unmarked` (every other invite).
+BootstrapOffer = Literal["open", "stale", "unmarked"]
 #: Write-ahead audit of the Owner grant, `(invite_id, user_id)`: awaited inside the
 #: activation's transaction before its commit; what it raises rolls the grant back.
 BootstrapAudit = Callable[[uuid.UUID, uuid.UUID], Awaitable[None]]
@@ -88,8 +91,9 @@ class InviteRepository(Protocol):
         critical `system_events` row and `audit`, then commits. Anything else rolls back."""
         ...
 
-    async def offers_bootstrap_owner(self, invite_id: uuid.UUID) -> bool:
-        """Read only: the invite is marked as bootstrap and no Owner is active."""
+    async def bootstrap_offer(self, invite_id: uuid.UUID) -> BootstrapOffer:
+        """Read only: whether the invite is marked as bootstrap, and if so whether an Owner is
+        already active."""
         ...
 
     async def downgrade_to_viewer(self, user_id: uuid.UUID) -> None:

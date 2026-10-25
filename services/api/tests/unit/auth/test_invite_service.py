@@ -107,8 +107,10 @@ class FakeRepo:
             self.rows[hits[0]] = self.rows[hits[0]].model_copy(update=update)
             return "activated"
 
-    async def offers_bootstrap_owner(self, invite_id: uuid.UUID) -> bool:
-        return invite_id in self.marked and not self.owners
+    async def bootstrap_offer(self, invite_id: uuid.UUID) -> str:
+        if invite_id not in self.marked:
+            return "unmarked"
+        return "stale" if self.owners else "open"
 
     async def downgrade_to_viewer(self, user_id: uuid.UUID) -> None:
         for h, r in list(self.rows.items()):
@@ -174,6 +176,10 @@ async def _noop_audit(rec: Any, stored_role: str) -> None:
     return None
 
 
+async def _bootstrap_audit(invite_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    """Accepting write-ahead hook of the Owner grant."""
+
+
 async def ok_audit(user_id: uuid.UUID, role: str) -> None:
     """Accepting write-ahead audit hook of an owner invite action (#2510)."""
 
@@ -227,7 +233,12 @@ async def test_legacy_manager_invite_is_accepted_as_viewer() -> None:
     repo.rows[h] = repo.rows[h].model_copy(update={"role": "manager"})  # legacy row
     await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
     rec, _ = await svc.complete_redemption(
-        inv.token, method_id="m", code="123456", source_ip="1.1.1.1", audit_downgrade=_noop_audit
+        inv.token,
+        method_id="m",
+        code="123456",
+        source_ip="1.1.1.1",
+        audit_downgrade=_noop_audit,
+        audit_bootstrap=_bootstrap_audit,
     )
     assert rec.role == "viewer" and rec.downgraded_from == "manager"
     assert repo.rows[h].role == "viewer"
@@ -238,7 +249,12 @@ async def test_viewer_invite_redemption_is_not_flagged_downgraded() -> None:
     inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
     rec, _ = await svc.complete_redemption(
-        inv.token, method_id="m", code="123456", source_ip="1.1.1.1", audit_downgrade=_noop_audit
+        inv.token,
+        method_id="m",
+        code="123456",
+        source_ip="1.1.1.1",
+        audit_downgrade=_noop_audit,
+        audit_bootstrap=_bootstrap_audit,
     )
     assert rec.downgraded_from is None
 
@@ -248,7 +264,12 @@ async def test_invite_accepted_end_to_end_activates_user() -> None:
     inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
     rec, codes = await svc.complete_redemption(
-        inv.token, method_id="m", code="123456", source_ip="1.1.1.1", audit_downgrade=_noop_audit
+        inv.token,
+        method_id="m",
+        code="123456",
+        source_ip="1.1.1.1",
+        audit_downgrade=_noop_audit,
+        audit_bootstrap=_bootstrap_audit,
     )
     assert rec.role == "viewer" and codes == ("rc-1", "rc-2")
 
@@ -290,6 +311,7 @@ async def test_abandoned_enrolment_leaves_user_invited() -> None:
             code="123456",
             source_ip="1.1.1.1",
             audit_downgrade=_noop_audit,
+            audit_bootstrap=_bootstrap_audit,
         )
     assert repo.rows[hash_token(inv.token)].user_status is UserStatus.INVITED
 
@@ -305,6 +327,7 @@ async def test_wrong_totp_code_does_not_activate() -> None:
             code="000000",
             source_ip="1.1.1.1",
             audit_downgrade=_noop_audit,
+            audit_bootstrap=_bootstrap_audit,
         )
     assert e.value.reason == "enrollment_invalid"
     assert repo.rows[hash_token(inv.token)].user_status is UserStatus.INVITED
@@ -331,6 +354,7 @@ async def test_a_user_disabled_during_redemption_gets_the_redeemed_rejection(
             code="123456",
             source_ip="1.1.1.1",
             audit_downgrade=_noop_audit,
+            audit_bootstrap=_bootstrap_audit,
         )
     assert e.value.reason == "redeemed"
     assert repo.rows[hash_token(inv.token)].user_status is UserStatus.INVITED
@@ -405,6 +429,7 @@ async def test_abandoned_enrolment_cannot_sign_in_through_real_login() -> None:
             code="123456",
             source_ip="1.1.1.1",
             audit_downgrade=_noop_audit,
+            audit_bootstrap=_bootstrap_audit,
         )
     row = repo.rows[hash_token(inv.token)]
     assert row.user_status is UserStatus.INVITED
@@ -444,7 +469,12 @@ async def test_invite_metrics_count_created_redeemed_rejected() -> None:
     assert _sample(m.users_invites_created_total, role="viewer") == created0 + 1
     await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="2.2.2.2")
     await svc.complete_redemption(
-        inv.token, method_id="m", code="123456", source_ip="2.2.2.2", audit_downgrade=_noop_audit
+        inv.token,
+        method_id="m",
+        code="123456",
+        source_ip="2.2.2.2",
+        audit_downgrade=_noop_audit,
+        audit_bootstrap=_bootstrap_audit,
     )
     assert _sample(m.users_invites_redeemed_total) == redeemed0 + 1
     with pytest.raises(InviteRejected):
@@ -472,7 +502,12 @@ async def test_legacy_downgrade_aborted_when_audit_write_fails(exc: Exception) -
 
     with pytest.raises(type(exc)):
         await svc.complete_redemption(
-            inv.token, method_id="m", code="123456", source_ip="1.1.1.1", audit_downgrade=failing
+            inv.token,
+            method_id="m",
+            code="123456",
+            source_ip="1.1.1.1",
+            audit_downgrade=failing,
+            audit_bootstrap=_bootstrap_audit,
         )
     assert repo.rows[h].role == "manager"  # no role change persisted
     assert repo.rows[h].user_status is UserStatus.INVITED  # not activated
@@ -491,15 +526,12 @@ async def test_legacy_downgrade_without_hook_fails_closed() -> None:
             code="123456",
             source_ip="1.1.1.1",
             audit_downgrade=None,  # type: ignore[arg-type]  # proves runtime fail-closed
+            audit_bootstrap=_bootstrap_audit,
         )
     assert repo.rows[h].role == "manager"
 
 
 # -- #4479: the offline bootstrap invite keeps `owner` exactly once ---------------------------
-
-
-async def _bootstrap_audit(invite_id: uuid.UUID, user_id: uuid.UUID) -> None:
-    """Accepting write-ahead hook of the Owner grant."""
 
 
 async def _owner_invite(
@@ -546,17 +578,17 @@ async def test_bootstrap_invite_keeps_owner_without_a_downgrade_record() -> None
 
 
 @pytest.mark.parametrize(
-    ("marked", "store", "reason"),
+    ("store", "reason"),
     [
-        (True, "owner_exists", "revoked"),  # stale: another Owner first (ruling 4), no #2109 path
-        (True, "not_invited", "redeemed"),  # a second confirm lost the row lock
+        ("owner_exists", "revoked"),  # stale: another Owner first (ruling 4), no #2109 path
+        ("not_invited", "redeemed"),  # a second confirm lost the row lock
     ],
 )
 async def test_bootstrap_activation_refusals_reject_and_activate_nothing(
-    marked: bool, store: str, reason: str
+    store: str, reason: str
 ) -> None:
     svc, repo, _ = _make()
-    token = await _owner_invite(svc, repo, marked=marked)
+    token = await _owner_invite(svc, repo)
 
     async def answer(*_a: Any, **_kw: Any) -> str:
         return store
@@ -627,5 +659,21 @@ async def test_inspect_offers_owner_only_for_an_open_bootstrap_invite() -> None:
     assert (await svc.inspect(inv.token, source_ip="1.1.1.1")).role == "viewer"  # legacy
     repo.marked.add(repo.rows[h].id)
     assert (await svc.inspect(inv.token, source_ip="1.1.1.1")).role == "owner"
+
+
+async def test_a_stale_bootstrap_invite_is_revoked_at_inspect_and_parks_nothing() -> None:
+    """Another Owner is active: `GET` and the password step answer what `/confirm` would, so no
+    password hash is parked and no TOTP method enrolled on a dead invite (DC-09)."""
+    svc, repo, _ = _make()
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
+    h = hash_token(inv.token)
+    repo.rows[h] = repo.rows[h].model_copy(update={"role": "owner"})
+    repo.marked.add(repo.rows[h].id)
     repo.owners = 1
-    assert (await svc.inspect(inv.token, source_ip="1.1.1.1")).role == "viewer"
+    with pytest.raises(InviteRejected) as seen:
+        await svc.inspect(inv.token, source_ip="1.1.1.1")
+    with pytest.raises(InviteRejected) as begun:
+        await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
+    row = repo.rows[h]
+    assert (seen.value.reason, begun.value.reason) == ("revoked", "revoked")
+    assert (row.consumed_at, row.pending_password_hash) == (None, None)

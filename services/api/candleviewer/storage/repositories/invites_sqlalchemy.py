@@ -9,8 +9,9 @@ Owner actions (create, reissue, revoke) await the caller's write-ahead audit hoo
 in their transaction, after staging and before commit (C-2.9, #2510), bounded as
 in `user_roles_sqlalchemy`: a raise or a `WriteAheadTimeout` rolls every row back.
 `activate_bootstrap_owner` (#4479) is the one path that grants `owner` at redemption: READ
-COMMITTED, the bootstrap lock, the marked invite locked, no active Owner, then the grant, the
-activation, the critical `auth`/`owner_bootstrapped` event and its write-ahead record, one commit.
+COMMITTED, the bootstrap lock, the marked invite and its user locked, no active Owner, then the
+grant, the activation, the critical `auth`/`owner_bootstrapped` event and its write-ahead record,
+one commit.
 """
 
 from __future__ import annotations
@@ -41,6 +42,8 @@ AuditHook = Callable[[uuid.UUID, str], Awaitable[None]]
 BootstrapHook = Callable[[uuid.UUID, uuid.UUID], Awaitable[None]]
 #: `auth.invite_repository.BootstrapActivation`, typed here: `storage` may not import `auth`.
 BootstrapAnswer = Literal["activated", "owner_exists", "not_bootstrap", "not_invited"]
+#: `auth.invite_repository.BootstrapOffer`, typed here for the same reason.
+BootstrapOffer = Literal["open", "stale", "unmarked"]
 
 #: The offline bootstrap invite (#4479): an `owner` invite whose inviter is its own user. No API
 #: path writes it: `create` draws a fresh user id, `reissue` names the acting Owner.
@@ -74,17 +77,27 @@ _GRANT_OWNER = sa.text(
 )
 
 
-def bootstrap_row_sql(marker: str) -> sa.TextClause:
-    """The invite and its user under `FOR UPDATE`, judged by `marker` (a static fragment)."""
+#: The only fragments `_bootstrap_row_sql` splices: the marker, and `true` (the Postgres suite's
+#: marker mutant, which must be killed).
+_ROW_MARKERS = frozenset({BOOTSTRAP_MARKER, "true"})
+
+
+def _bootstrap_row_sql(marker: str) -> sa.TextClause:
+    """The invite and its user locked `FOR NO KEY UPDATE`, judged by `marker`. The user row is
+    where every activation and delete of that user queues; the invite row is locked too because
+    `_DOWNGRADE_INVITES` rewrites `i.role` without the user's lock, and the marker must hold to
+    the commit. NO KEY: a child row's FK check (`FOR KEY SHARE`) does not wait on it."""
+    if marker not in _ROW_MARKERS:
+        raise ValueError("not a bootstrap marker fragment")
     return sa.text(
         "SELECT @M@ AS bootstrap, (i.consumed_at IS NOT NULL AND i.revoked_at IS NULL) AS usable, "
         "u.status::text AS status FROM user_invites i JOIN users u ON u.id = i.user_id "
         "AND u.deleted_at IS NULL WHERE i.id = CAST(:iid AS uuid) "
-        "AND i.user_id = CAST(:id AS uuid) FOR UPDATE OF i, u".replace("@M@", marker)
+        "AND i.user_id = CAST(:id AS uuid) FOR NO KEY UPDATE OF i, u".replace("@M@", marker)
     )
 
 
-_BOOTSTRAP_ROW = bootstrap_row_sql(BOOTSTRAP_MARKER)
+_BOOTSTRAP_ROW = _bootstrap_row_sql(BOOTSTRAP_MARKER)
 _IS_MARKED = sa.text(
     "SELECT @M@ FROM user_invites i WHERE i.id = CAST(:iid AS uuid)".replace(
         "@M@", BOOTSTRAP_MARKER
@@ -331,11 +344,12 @@ class SqlAlchemyInviteRepository:
             await uow.commit()
         return "activated"
 
-    async def offers_bootstrap_owner(self, invite_id: uuid.UUID) -> bool:
+    async def bootstrap_offer(self, invite_id: uuid.UUID) -> BootstrapOffer:
         async with self._relational.unit_of_work() as uow:
             run = uow.session.execute
-            marked = bool((await run(_IS_MARKED, {"iid": str(invite_id)})).scalar())
-            return marked and int((await run(COUNT_OWNERS)).scalar_one()) == 0
+            if not (await run(_IS_MARKED, {"iid": str(invite_id)})).scalar():
+                return "unmarked"
+            return "stale" if int((await run(COUNT_OWNERS)).scalar_one()) > 0 else "open"
 
     async def downgrade_to_viewer(self, user_id: uuid.UUID) -> None:
         async with self._relational.unit_of_work() as uow:
