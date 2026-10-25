@@ -174,11 +174,12 @@ _ADD_COUNTERS = sa.text(
     "WHERE s.symbol = :symbol AND s.state IN ('starting','recording','degraded') "
     "ORDER BY s.started_at DESC LIMIT 1) RETURNING 1"
 )
-# The gap insert keeps its derived table, which looks removable and is not. Postgres analyses a
-# select list before the WHERE of the same query, so a flat form meets `:symbol` untyped in the
-# select list and then typed `symbol_code` in the WHERE, and refuses the statement: SQLSTATE
-# 42P08, "inconsistent types deduced for parameter $1". A derived table is analysed first, so its
-# WHERE types `:symbol` once and the select list agrees. The Postgres test of the env scope runs it.
+# The gap insert keeps its derived table, which looks removable and is not. In a flat form
+# `:symbol` is deduced twice, `symbol_code` from the insert's target column through the select
+# list and `text` from the WHERE's comparison, so Postgres refuses the statement: SQLSTATE 42P08,
+# "inconsistent types deduced for parameter $1" (text versus symbol_code). A derived table is
+# analysed first, so its WHERE types `:symbol` once and the select list agrees. The Postgres test
+# of the env scope runs it.
 _RECORD_LIVE_GAP = sa.text(
     "INSERT INTO recording_gaps (recording_session_id, symbol, stream, gap_start, gap_end, "
     "cause) SELECT s.id, :symbol, CAST(:stream AS stream_kind), :gs, :ge, :cause FROM "
