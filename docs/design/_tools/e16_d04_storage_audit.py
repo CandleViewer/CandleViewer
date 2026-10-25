@@ -1060,6 +1060,7 @@ LOCK_TERM = r"\b(?:locked|locks?|padlock|T2|CMP-079|RbacGate)\b"
 DIM_TERM = (
     r"\baria-disabled\b|\bopacity\.disabled\b|\bcolor\.text\.disabled\b|\b\d+ ?% opacity\b"
     r"|\b(?:disabled|gr[ae]yed(?: out)?|dimmed|dims|faded|inert|unavailable|blocked|gated)\b"
+    r"|\b(?:not|no longer) (?:available|usable|pressable|clickable)\b(?! on the server)"
     r"|\b(?:can't|cannot|can not) be (?:pressed|used|clicked|activated)\b"
 )
 # the T2 anatomy's own words on the view-as frame; every other dim word there is a FAIL
@@ -1067,12 +1068,69 @@ T2_DIM = (
     r"\bopacity\.disabled\b|\bcolor\.text\.disabled\b|\b\d+ ?% opacity\b"
     r"|(?<!aria-)\bdisabled\b|\b(?:gr[ae]yed(?: out)?|dimmed|dims|faded)\b"
 )
-FILL = r"\b(?:pre-?filled|prefill(?:ed)?|auto-?filled|pre-?populated|defaulted)\b"
+# R-7: a typed confirm field shown filled. The strong words fail anywhere; the context words fail when the typed
+# field is the subject (named before them in the unit, or carried by an item or a sentence that opens on a pronoun).
+SYM = r"(?:the |its |a |that )?\{?(?:symbol|ETHUSDT|BTCUSDT)"
+FILL = (
+    r"\b(?:pre-?filled|prefill(?:ed|s|ing)?|auto-?fill(?:ed|s|ing)?|pre-?populated|filled in"
+    rf"|typed into|copied into|pasted into|defaults? to {SYM}|(?:entered|inserted|supplied|filled"
+    r"|typed|put in|placed) (?:for (?:you|the Owner)|automatically|by the (?:dialog|client|app|page)))\b"
+)
+FILL_CONTEXT = (
+    r"\b(?:set to|already (?:holding|holds|contains|containing|carrying|carries|shows|showing|has|having"
+    r"|reads|reading|in (?:it|place|there))|defaulted|seeded|populated|holding the symbol"
+    r"|with the symbol in it|empty (?:at first|initially|until)|then (?:set|filled|holds|shows|reads)"
+    r"|(?:comes?|arrives?|opens?|starts?|loads?|appears?|renders?)(?: already)? (?:with|holding|showing"
+    rf"|containing|carrying|reading) {SYM}|suggests? {SYM})\b"
+)
+TYPED_SUBJ = (
+    r"\btyped (?:field|input|symbol|confirm)|\bconfirm(?:_symbol| field)\b|Type the symbol to confirm"
+    r"|\b(?:symbol|confirm(?:ation)?) (?:field|input|box)\b"
+)
+# R-5: the degradation order in any wording. REC = the recording side, TRADE = the trading side, HALT = a stop.
+REC = r"(?:recording|auto-record|the recorder|capture)"
+TRADE = r"(?:trading|orders?|order (?:placement|entry)|positions?|execution)"
+HALT = (
+    r"(?:pause[sd]?|stop(?:s|ped)?|halt(?:s|ed)?|freez(?:e|es)|suspend(?:s|ed)?"
+    r"|(?:is|are|gets?) (?:affected|refused|rejected|blocked|gated|stopped|paused|halted|suspended|cut|throttled))"
+)
 INVERTED = (
-    r"\btrading (?:pauses|stops|halts|is affected|is gated) (?:first|before)\b",
-    r"\borders? (?:pause|stop|halt)s? (?:first|before)\b",
-    r"\b(?:orders|trading) (?:are|is) (?:gated|stopped|paused|affected) before recording\b",
-    r"\brecording (?:pauses|stops) after trading\b",
+    (
+        rf"\b{TRADE}\W+(?:\w+\W+){{0,3}}?{HALT}\W+(?:\w+\W+){{0,2}}?"
+        rf"(?:first|before|earlier|sooner|ahead of)\b"
+    ),
+    rf"\b{TRADE}\W+(?:\w+\W+){{0,2}}?(?:is|are) (?:the )?first to\b",
+    (
+        rf"\b{REC}\W+(?:\w+\W+){{0,3}}?{HALT}\W+(?:\w+\W+){{0,2}}?(?:after|only after|once|later than|behind)"
+        rf"\W+(?:\w+\W+){{0,2}}?{TRADE}"
+    ),
+    (
+        rf"\b{REC}\W+(?:\w+\W+){{0,3}}?(?:continues?|keeps? (?:going|running|writing|recording)|goes on"
+        rf"|carries on|stays? up)\W+(?:\w+\W+){{0,3}}?(?:while|when|after|even as|as|until)\W+(?:\w+\W+){{0,2}}?"
+        rf"{TRADE}"
+    ),
+    rf"\bbefore {REC}\W+(?:\w+\W+){{0,2}}?{HALT}\W+(?:\w+\W+){{0,2}}?{TRADE}",
+    rf"\bfirst\W+(?:\w+\W+){{0,2}}?{TRADE}\b.*\bthen\b.*\b{REC}",
+)
+WEAKENED = (
+    (
+        rf"\b{REC}\W+(?:\w+\W+){{0,1}}?(?:may|might|could|can|usually|often|sometimes|generally|typically"
+        rf"|normally|mostly|ideally|should|tries to)\W+(?:\w+\W+){{0,2}}?(?:pause|stop|halt)"
+    ),
+    (
+        rf"\b{TRADE}\W+(?:\w+\W+){{0,3}}?(?:may|might|could|can|will) (?:also |then |still |eventually )?"
+        rf"(?:be )?(?:affected|stop|pause|halt|gated|refused|blocked|slowed)\b"
+    ),
+    rf"\b(?:{REC} and {TRADE}|{TRADE} and {REC})\W+(?:\w+\W+){{0,2}}?(?:pause|stop|halt)",
+    rf"\b(?:at the same time as|together with|simultaneously with|alongside) {TRADE}",
+)
+RULED_ORDER = (
+    (
+        rf"\b{REC}\W+(?:\w+\W+){{0,3}}?{HALT}\W+(?:\w+\W+){{0,2}}?(?:before|ahead of)"
+        rf"\W+(?:\w+\W+){{0,2}}?{TRADE}"
+    ),
+    rf"\b{TRADE}\W+(?:\w+\W+){{0,3}}?(?:only )?after\W+(?:\w+\W+){{0,2}}?{REC}",
+    rf"\b{REC}\W+(?:\w+\W+){{0,2}}?{HALT}\W+first\b",
 )
 PAGE_LEVEL = (
     r"\b(?:banners?|callouts?|toasts?|alerts?|page[- ]level|page error)\b|role=\"?alert"
@@ -1083,56 +1141,128 @@ OUTSIDE_CARD = r"\b(?:page|screen|top of)\b"
 DEFERRED = (
     r"(?i:\b(?:apply|run|start|execute)\s+(?:the\s+)?migrations?\b|\bmigrate now\b)|\bApply\b"
 )
-SECOND_PURGE = r"\b(?:one-click|single-click|standard purge|CMP-044 standard)\b"
+# R-21: a second purge shape, read when purge is the subject (or the words name it)
+SECOND_PURGE = (
+    r"\b(?:one-click|single-click|one-step)\b|\b(?:quick|lighter|simpler|simple|plain|standard) (?:purge|confirm|dialog)\b"
+    r"|\bCMP-044 standard\b|\b(?:without|no|skips?|skipping|drops?|dropping) (?:its |the )?typed "
+    r"(?:field|confirm|symbol|input)\b|\b(?:its|their|a|an) (?:own|separate|second|new|different|other) purge "
+    r"(?:dialog|confirm|shape|flow)\b|\bsecond (?:purge )?shape\b"
+)
+PURGE_SUBJ = r"Purge data…|\bPurge…|\b[Pp]urge(?:RecordedData)?\b"
+OTHER_ACTION = r"\b[Cc]ompact(?:ion|s|ed)?\b|\b[Vv]acuum\b|\b[Ii]mport(?:s|ed)?\b"
 NOTICE = r"\b(?:notices?|banners?|callouts?|toasts?)\b"
+# Subjects (A1 / A3): every exit and every write by its full and its short name. A lock or dim word speaks of the
+# nearest subject named before it in the item, else of the subject carried from the items before (a ";" item, a
+# "·" item, an item that opens on It / This / They / Then / Each speaks of the last subject named).
 EXIT_TERM = (
-    r"\bCancel (?:and|/) Esc\b|\bEsc\b|\bClose\b|\bBack\b|\blinks? to SCR-14[013]|\bShorten retention\b"
-    r"|\bReduce depth\b|\bUnpin\b|\bRetry\b|\bManage pin\b|→ SCR-14[013]"
+    r"\bCancel, Esc and the close ✕|\bCancel (?:and|/) Esc\b|\bEsc\b|\bclose ✕|✕|\bClose\b|\bBack\b"
+    r"|\blinks? to SCR-14[013]|\blinks?\b|\bShorten retention\b|\bReduce depth\b|\bUnpin\b|\bRetry\b"
+    r"|\bManage pin\b|→ SCR-14[013]|\bexits?\b"
 )
 WRITE_TERM = (
-    r"Compact Parquet…|Purge data…|\bPurge…|Import archives|Vacuum Postgres…|\bevery write\b"
-    r"|\bthe other writes\b|\bwrites?\b|\bactions?\b|\bConfirm\b"
+    r"Compact Parquet…|\bCompact\b|Purge data…|\bPurge…|\bPurge\b|Import archives|Vacuum Postgres…|\bVacuum\b"
+    r"|\bStop job\b|\bevery write\b|\bthe other writes\b|\bwrites?\b|\bactions?\b|\bConfirm\b|\bbuttons?\b"
+)
+# the exit Cancel in its own forms: never captioned, never locked; any other "Cancel" on a frame is a job action
+EXIT_CANCEL = (
+    r"\bCancel, Esc and the close ✕|\bCancel (?:and|/) (?:Esc|Confirm|Compact|Vacuum|the verb)\b"
+    r"|\bexits? Cancel\b|\bEsc = Cancel\b|\bfocus starts on Cancel\b"
 )
 # PROPOSED carriers: a vocabulary per gap id (the n the caption must carry); the first match in an item wins.
 CARRIERS: tuple[tuple[str, str, frozenset[int]], ...] = (
     ("last vacuum or compaction", r"\blast (?:vacuum|compaction)\b", frozenset({6})),
     ("vacuum", r"\bvacuum", frozenset({8})),
-    ("cancel", r"\b(?:cancel|stop|abort)\b", frozenset({10})),
-    ("row counts", r"\brows? by table\b|\brow counts?\b|\bRows [\d,]{3,}", frozenset({3})),
-    ("slow queries", r"\bslow(?:est)? quer|\bp95\b", frozenset({5})),
+    (
+        "stop job",
+        r"\b(?:stop(?: job)?|cancel|abort|end(?: the)? job|kill|terminate)\b",
+        frozenset({10}),
+    ),
+    (
+        "per-file rows",
+        r"\bper-file\b|files\[\]|\b\d+ skipped\b|skipped ⚠|\bDay / Status(?: / [A-Z]\w*)*",
+        frozenset({11}),
+    ),
+    (
+        "row counts",
+        r"\brows? by table\b|\brow counts?\b|\bRows [\d,]{3,}|(?-i:\bRows\b)",
+        frozenset({3}),
+    ),
+    (
+        "slow queries",
+        r"\bslow(?:est)? quer|\bp95\b|\bquery[- ]performance\b|\bstatement kind\b",
+        frozenset({5}),
+    ),
     ("per-tier growth", r"\bGrowth/day —|\bProjected full —", frozenset({1})),
     ("lag", r"\blag\b", frozenset({4})),
-    ("sparkline", r"\bsparkline|\bhistory_bytes|\bOldest\b", frozenset({2, 3})),
+    (
+        "sparkline",
+        r"\bspark ?lines?\b|\bhistory_bytes|\bOldest\b|\bCMP-024\b|\btrend ?lines?\b|\bmini[- ]?charts?\b",
+        frozenset({2, 3}),
+    ),
     (
         "migration",
         r"\bMigration (?:pending|\d{4})|\b\d{4} → \d{4}|\bschema[_ ]version|(?<!§)\b\d+ pending\b",
         frozenset({7}),
     ),
-    ("per-file rows", r"\bper-file\b|files\[\]|\b\d+ skipped\b|skipped ⚠", frozenset({11})),
     (
         "archive-derived ranges",
         r"\bimported ranges?\b|\bcoverage (?:chart|band|chip|intervals?)\b",
         frozenset({12}),
     ),
 )
-# A PROPOSED item presented as shipped (the ruling: never a frame's default), per CARRIERS name (its gap ids come
-# from there), read over every unit of the spec. A mention passes when its clause carries the caption with its n,
-# a negator governs it, or the clause names the gap as absent (GAP_ABSENT and the gap id); the rows that define a gap
-# (GAP_ROW: the A / C / CG / D / G / Q rows and the BQ table) discuss it by design.
+# A PROPOSED item presented as shipped outside the frame rows. DOC_STRONG: the item's names (a control label, a
+# column, a component) — a mention needs, in its clause (a table row is read whole, across its cells), the caption
+# with its n, or the gap named absent (GAP_ABSENT and the gap id), or a governing negator. SHIPPED: the generic nouns,
+# failing only in a presenting form (a verb or a control word). The rows that define a gap (GAP_ROW) are exempt.
+DOC_STRONG: dict[str, tuple[str, frozenset[int]]] = {
+    "vacuum": (
+        r"\bVacuum Postgres…|\bVacuum (?:button|control|action|inset)\b|\[ ?Vacuum",
+        frozenset({8}),
+    ),
+    "stop job": (
+        (
+            r"\bStop job\b|\bEnd(?: the)? job\b|\bCancel (?:button|control)\b"
+            r"|\bCancel (?:per|on (?:the|each|every)) job|\bCancel on the jobs strip\b"
+        ),
+        frozenset({10}),
+    ),
+    "row counts": (
+        r"(?-i:\bRows\b)(?! by)|\brows by table\b|\brow counts? (?:by|per) table\b",
+        frozenset({3, 11}),
+    ),
+    "slow queries": (r"\bp95\b|\bslowest queries\b|\bquery performance\b", frozenset({5})),
+    "sparkline": (
+        r"\bsparklines?\b|\bCMP-024\b(?! :)|\btrend ?lines?\b|\bhistory_bytes\b|\bOldest / Newest\b",
+        frozenset({2, 3}),
+    ),
+    "last vacuum or compaction": (r"(?-i:\bLast (?:vacuum|compaction)\b)", frozenset({6})),
+    "migration": (
+        r"\bschema[_ ]version\b|(?-i:\bMigration \d{4}\b)|\b\d{4} → \d{4}\b|\bpending_migrations\b",
+        frozenset({7}),
+    ),
+    "per-file rows": (
+        r"\bper-file (?:table|rows?|CMP-049)\b|Day / Status / Reason / Rows|\bskip counter\b|files\[\]",
+        frozenset({11}),
+    ),
+    "lag": (r"\blag (?:cell|field)\b|\bingest_lag_ms\b", frozenset({4})),
+    "per-tier growth": (r"\bper-tier growth\b|\btiers\[\]\.daily_growth_bytes\b", frozenset({1})),
+}
 SHIPPED: dict[str, str] = {
     "vacuum": (
         r"\bvacuum(?: postgres)?…? (?:button|control|link)\b|\[ ?vacuum"
         r"|\bvacuum(?: postgres)?…? (?:sits|stands|appears|shows|beside|next to|alongside)\b"
+        r"|\b(?:offers|has|includes|adds|gains|provides|carries|shows) (?:a |the |its )?vacuum\b"
     ),
-    "cancel": (
+    "stop job": (
         r"\b(?:stop|cancel|abort) (?:button|control|link)\b"
-        r"|\b(?:stops|cancels|aborts) (?:the|a) (?:running|job|compaction|import|vacuum|purge)\b"
+        r"|\b(?:stops|cancels|aborts|ends) (?:the|a) (?:running|job|compaction|import|vacuum|purge)\b"
     ),
     "row counts": (
-        r"\b(?:shows?|lists?|displays?|carries|reads|with) (?:its |the |their )?(?:row counts?|rows by table)\b"
+        r"\b(?:shows?|lists?|displays?|carries|reads|with|offers|has|includes) (?:its |the |their )?"
+        r"(?:row counts?|rows by table)\b"
     ),
     "slow queries": (
-        r"\b(?:shows?|lists?|displays?|carries|reads|with) (?:its |the |their )?slow(?:est)? quer"
+        r"\b(?:shows?|lists?|displays?|carries|reads|with|offers|has|includes) (?:its |the |their )?slow(?:est)? quer"
     ),
     "per-tier growth": (
         r"\b(?:Growth/day|Projected full):? \d|\bdaily_growth_bytes`? ?[=:]? ?\d"
@@ -1151,9 +1281,10 @@ SHIPPED: dict[str, str] = {
         r"|\b(?:during|while) (?:the )?(?:import |job )?(?:run|runs|running)\b[^.;·]{0,60}\bper-file\b"
     ),
 }
-GAP_ABSENT = r"(?i:\bneeds?\b|\buntil\b|\bnot yet\b)|\bPROPOSED\b"
+GAP_ABSENT = r"(?i:\bneeds?\b|\buntil\b|\bnot yet\b|\bnot produced\b|\babsen(?:t|ce)\b|\bnone\b|\bno such\b)|\bPROPOSED\b"
 GAP_ROW = r"^\| (?:\*\*)?(?:D04-(?:CG|[ACDGQ])\d+|BQ-\d+)\b"
 # Exits each frame lists (R-14): present, and T1. The dialog family carries Cancel and Esc; the page frames their links.
+CLOSE_EXITS = "Cancel, Esc and the close ✕"
 EXITS: dict[str, tuple[str, ...]] = {
     "SCR-142/healthy": ("links to SCR-140, SCR-141 and SCR-143",),
     "SCR-142/view-as": ("links to SCR-140, SCR-141 and SCR-143",),
@@ -1162,12 +1293,12 @@ EXITS: dict[str, tuple[str, ...]] = {
     "SCR-142/read-only-disk-full": ("Shorten retention",),
     "SCR-142/tier-unreachable-questdb": ("Retry",),
     "SCR-142/unavailable": ("Retry",),
-    "JOB/confirm-compact": ("Cancel and Esc",),
-    "JOB/confirm-vacuum": ("Cancel and Esc",),
-    "PURGE/dialog": ("Cancel and Esc",),
-    "PURGE/dialog-validity": ("Cancel and Esc",),
-    "PURGE/pinned-refused": ("Cancel and Esc",),
-    "PURGE/step-up": ("Cancel and Esc",),
+    "JOB/confirm-compact": (CLOSE_EXITS,),
+    "JOB/confirm-vacuum": (CLOSE_EXITS,),
+    "PURGE/dialog": (CLOSE_EXITS,),
+    "PURGE/dialog-validity": (CLOSE_EXITS,),
+    "PURGE/pinned-refused": (CLOSE_EXITS,),
+    "PURGE/step-up": (CLOSE_EXITS,),
     "TIER/per-symbol": ("Manage pin",),
 }
 # The view-as leg's writes (section 1.3's T2 row), each named on the frame (R-13), and its anatomy tokens.
@@ -1176,7 +1307,7 @@ VIEW_AS_WRITES = (
     "Purge data…",
     "Import archives",
     "Purge… in the row's detail popover",
-    "Cancel on the jobs strip",
+    "Stop job on the jobs strip",
     "Vacuum Postgres… inset",
 )
 T2_TOKENS = (
@@ -1200,7 +1331,7 @@ CLASS_MAP = (
     ("Compact Parquet… / Import archives / Purge…", "busy"),
     ("`409 job_running`", "T4"),
     ("disk full", "status"),
-    ("Cancel a job", "absence"),
+    ("Stop job (cancel a running job)", "absence"),
     ("a job's succeeded", "outcome"),
     ("exits and links", "T1"),
 )
@@ -1260,7 +1391,7 @@ DECK_KEYS = frozenset(
         "storage.confirm.cancel",
         "storage.job.running",
         "storage.job.started",
-        "storage.job.cancel",
+        "storage.job.stop",
         "storage.job.refused.running",
         "storage.compact.succeeded",
         "storage.compact.failed",
@@ -1310,9 +1441,9 @@ DECK_KEYS = frozenset(
 )
 # Numbers (R-17): every number a unit shows must be a `--json` value. Stripped first: markers (checked on their own),
 # code spans, line cites, section refs, rule / ticket / component ids, issue numbers, commit shas, ordinals.
-NUM_EXEMPT = (
-    r"[\d,.:-]+\s*<!-- audit:[^>]*-->",
-    r"<!--.*?-->",
+NUM_EXEMPT: tuple[str | re.Pattern[str], ...] = (
+    re.compile(r"[\d,.:-]+\s*<!-- audit:.*?--!?>", re.DOTALL),
+    re.compile(r"<!--.*?--!?>", re.DOTALL),
     r"`[^`]*`",
     r"\b\d\d:\d{3,5}(?:–\d+)?\b",
     r"\bBQ-\d+(?:\s*/\s*\d+)*",
@@ -1356,21 +1487,125 @@ def positive_term(text: str, pattern: str, flags: int = re.IGNORECASE) -> str | 
     return None
 
 
-def shipped_mention(text: str, exit_subject: bool = False) -> tuple[str, str, int] | None:
-    """The first PROPOSED item `text` presents as shipped, as (CARRIERS name, the words, its gap n), or None.
-    `text` is scrubbed (captions read CAPTIONn); a clause ends at `;` ` · ` a sentence break or a cell bar.
-    """
-    gap_ids = {what: ids for what, _, ids in CARRIERS}
+PRONOUN_LEAD = (
+    r"(?i:^\W*(?:it|its|this|that|these|those|they|them|their|then|both|each|either|neither|all)\b)"
+)
+
+
+def subject_at(text: str, i: int, carried: str, kinds: dict[str, str]) -> str:
+    """The kind of the nearest subject named before offset i in `text` (across any punctuation), else `carried`."""
+    best, kind = -1, ""
+    for name, pat in kinds.items():
+        for m in re.finditer(pat, text[:i]):
+            if m.end() > best:
+                best, kind = m.end(), name
+    return kind or carried
+
+
+def last_subject(text: str, carried: str, kinds: dict[str, str]) -> str:
+    """The kind of the last subject `text` names, else `carried` (what the next item or sentence speaks of)."""
+    return subject_at(text, len(text), carried, kinds)
+
+
+def ctrl_kinds(dialog: bool) -> dict[str, str]:
+    """Exits and writes by full and short name; in a dialog frame a bare Cancel is the dialog's exit."""
+    exit_ = EXIT_TERM + (r"|\bCancel\b" if dialog else "")
+    return {"exit": exit_, "write": WRITE_TERM}
+
+
+ACTION_KINDS = {"purge": PURGE_SUBJ, "other": OTHER_ACTION}
+
+
+def gated_term(
+    x: str,
+    carried: str,
+    kinds: dict[str, str],
+    want_exit: bool,
+    only: tuple[str, ...] = ("lock", "dim"),
+) -> tuple[str, str] | None:
+    """The first un-negated lock or dim word whose subject is (want_exit) or is not an exit: (word, kind)."""
+    hits = sorted(
+        (m.start(), m.group(0), which)
+        for which, pat in (("lock", LOCK_TERM), ("dim", DIM_TERM))
+        if which in only
+        for m in re.finditer(pat, x, re.IGNORECASE)
+        if not negated(x, m.start())
+    )
+    for i, word, which in hits:
+        is_exit = subject_at(x, i, carried, kinds) == "exit"
+        if is_exit == want_exit:
+            return word, which
+    return None
+
+
+def fill_term(x: str, carried_typed: bool) -> str | None:
+    """R-7: a strong fill word anywhere, or a context fill word whose subject is the typed field."""
+    if (term := positive_term(x, FILL)) is not None:
+        return term
+    for m in re.finditer(FILL_CONTEXT, x, re.IGNORECASE):
+        if negated(x, m.start()):
+            continue
+        if re.search(TYPED_SUBJ, x[: m.start()], re.IGNORECASE) or carried_typed:
+            return m.group(0)
+    return None
+
+
+def second_purge(x: str, carried: str) -> str | None:
+    """R-21: a second purge shape, read when purge is the subject (named before, carried, or in the words)."""
+    for m in re.finditer(SECOND_PURGE, x, re.IGNORECASE):
+        if negated(x, m.start()):
+            continue
+        near = x[m.start() : m.end() + 16].lower()  # the words name it: "a one-click purge"
+        if "purge" in near or subject_at(x, m.start(), carried, ACTION_KINDS) == "purge":
+            return m.group(0)
+    return None
+
+
+def order_issue(x: str) -> str | None:
+    """R-5 in any wording: 'inverted (…)' when trading is said to stop first, 'weakened (…)' when the order is
+    hedged; a governing negator exempts the trading clause."""
+    for kind, pats in (("inverted", INVERTED), ("weakened", WEAKENED)):
+        for p in pats:
+            # overlapping matches: a negated trading word must not swallow the clause after it
+            for m in re.finditer(rf"(?=({p}))", x, re.IGNORECASE):
+                if negated(x, m.start()) or (
+                    kind == "weakened" and re.search(r"\bnever\b", m.group(1), re.IGNORECASE)
+                ):
+                    continue
+                return f"{kind} ({m.group(1)[:48]!r})"
+    return None
+
+
+def ruled_order(x: str) -> bool:
+    """The ruled order stated in any wording (recording pauses before trading is affected)."""
+    return order_issue(x) is None and any(re.search(p, x, re.IGNORECASE) for p in RULED_ORDER)
+
+
+def shipped_mention(
+    text: str, dialog: bool = False, whole: bool = False, strong: bool = True
+) -> tuple[str, str, int] | None:
+    """The first PROPOSED item `text` presents as shipped, as (name, the words, its gap n), or None. `text` is
+    scrubbed (captions read CAPTIONn); a clause ends at `;` ` · ` a sentence break or a cell bar. A name (DOC_STRONG)
+    in a table row is answered by the caption or the absence anywhere in the row (`whole`: read across its cells);
+    a presenting form (SHIPPED) must be answered in its own clause."""
+    gap_ids = {what: ids for what, _, ids in CARRIERS} | {k: v[1] for k, v in DOC_STRONG.items()}
+
+    def answered(scope: str, ids: frozenset[int]) -> bool:
+        caps = {int(n) for n in re.findall(r"CAPTION(\d+)", scope)}
+        named = {int(n) for n in re.findall(r"\b(?:D04-)?G(\d+)\b", scope)}
+        return bool(caps & ids) or (re.search(GAP_ABSENT, scope) is not None and bool(named & ids))
+
+    exit_ = EXIT_CANCEL + (r"|\bCancel\b" if dialog else "")
     for clause in re.split(r";|\s·\s|\.\s|\|", text):
-        caps = {int(n) for n in re.findall(r"CAPTION(\d+)", clause)}
-        named = {int(n) for n in re.findall(r"\b(?:D04-)?G(\d+)\b", clause)}
-        absent = re.search(GAP_ABSENT, clause) is not None
-        for what, pat in SHIPPED.items():
+        bare = re.sub(exit_, " ", clause)
+        names = [(k, v[0]) for k, v in DOC_STRONG.items()] if strong else []
+        for what, pat in names + list(SHIPPED.items()):
             ids = gap_ids[what]
-            if (exit_subject and what == "cancel") or caps & ids or (absent and named & ids):
+            term = positive_term(bare, pat)
+            if term is None:
                 continue
-            term = positive_term(clause, pat)
-            if term is not None:
+            scope = text if (whole and what in DOC_STRONG and (what, pat) in names) else clause
+            if not answered(scope, ids):
                 return what, term, min(ids)
     return None
 
@@ -1397,7 +1632,7 @@ def items(cell: str) -> list[str]:
 
 def scrub(text: str) -> str:
     """Frame refs and ruled captions out of a scan (a frame named `…/unavailable` is not an unavailable control)."""
-    text = re.sub(r"<!--.*?-->", "", text)
+    text = re.sub(r"<!--.*?--!?>", "", text, flags=re.DOTALL)
     text = re.sub(r"(?:SCR-142|TIER|JOB|PURGE|IMPORT)/[a-z0-9-]+|(?<=`)/[a-z0-9-]+", "FRAME", text)
     text = re.sub(r"`(?:storage|notice|rbac)\.[a-z_.0-9]+`", "KEY", text)
     return re.sub(CAP_RE, lambda m: f"CAPTION{m.group(1)}", text)
@@ -1507,14 +1742,267 @@ def required_numbers(fx: dict[str, Any]) -> dict[str, list[str]]:
     }
 
 
-def subject(item: str, frame: str, carried: str) -> str:
-    """The subject an item speaks of: an exit, a write (named), or the subject carried from earlier in the unit."""
-    if re.search(EXIT_TERM, item) or (
-        frame.startswith(DIALOG_FAMILIES) and re.search(r"\bCancel\b", item)
-    ):
-        return "exit"
-    m = re.search(WRITE_TERM, item)
-    return m.group(0) if m else ("" if carried == "exit" else carried)
+Anchor = tuple[str, dict[str, set[tuple[str, ...]]], str]
+
+
+def anchor_table(fx: dict[str, Any], facts: dict[str, Any]) -> list[Anchor]:
+    """R-17 anchors: each typed number bound to its own `--json` value through its context words, per frame where
+    the value differs by frame ("*" = every other frame row and every unit of the document). A swap of one
+    registered value for another fails here, not only a value outside the register."""
+    d = facts["disk"]
+    warn, auto, halt = d["CV_DISK_WARN_PCT"], d["CV_DISK_AUTOSTOP_PCT"], d["CV_DISK_HALT_PCT"]
+    t, sy, lv, imp, lag, mig = (
+        fx["tiers"],
+        fx["symbols"],
+        fx["levels"],
+        fx["imp"],
+        fx["lag"],
+        fx["migration"],
+    )
+    comp = facts["compaction"]
+
+    def one(*v: object) -> set[tuple[str, ...]]:
+        return {tuple(norm(str(x)) for x in v)}
+
+    out: list[tuple[str, dict[str, set[tuple[str, ...]]], str]] = [
+        ("the warning step", {"*": one(warn)}, r"\b(\d+) % warning\b"),
+        ("the autostop step", {"*": one(auto)}, r"\b(\d+) % auto-record pauses"),
+        ("the halt step", {"*": one(halt)}, r"\b(\d+) % recording stops\b"),
+        ("the warning step", {"*": one(warn)}, r"\bat (\d+) % of the recording budget \(or"),
+        (
+            "the autostop step",
+            {"*": one(auto)},
+            r"\b[Aa]t (\d+) % (?:of the recording budget auto-record pauses|new auto-record starts)",
+        ),
+        ("the halt step", {"*": one(halt)}, r"\b[Aa]t (\d+) % (?:\(or less than|recording stops)"),
+        ("the halt step", {"*": one(halt)}, r"\bRecording stops at (\d+) %"),
+        ("the warning clear", {"*": one(warn - 5)}, r"\bclears below (\d+) %"),
+        ("the autostop clear", {"*": one(auto - 5)}, r"\bresumes below (\d+) % of the budget"),
+        ("the halt clear", {"*": one(halt - 5)}, r"\bresumes below (\d+) % with"),
+        ("the merge size", {"*": one(comp["merge_mib"])}, r"\bat most ([\d,]+) MiB"),
+        ("the lag threshold", {"*": one(lag["threshold_batches"])}, r"\b(\d+) (?:ILP )?batches\b"),
+        ("the ILP batch", {"*": one(facts["ilp_batch_rows"])}, r"\bbatches of ([\d,]+) rows"),
+        (
+            "the tier size",
+            {f"TIER/{k}": one(t[k]["size"]) for k in t} | {"*": set()},
+            r"\bSize ([\d,.]+ GB)",
+        ),
+        (
+            "the tier share",
+            {f"TIER/{k}": one(t[k]["share"]) for k in ("questdb", "parquet")} | {"*": set()},
+            r"\bShare of budget ([\d.]+ %)",
+        ),
+        (
+            "the tier retention",
+            {f"TIER/{k}": one(t[k]["retention"]) for k in t} | {"*": set()},
+            r"\bRetention (\d+ d|—)",
+        ),
+        (
+            "the tier sizes",
+            {"*": one(t["questdb"]["size"], t["parquet"]["size"], t["postgres"]["size"])},
+            r"\bSize ([\d,.]+ GB)\s+Size ([\d,.]+ GB)\s+Size ([\d,.]+ GB)",
+        ),
+        (
+            "the tier retentions",
+            {
+                "*": one(
+                    t["questdb"]["retention"], t["parquet"]["retention"], t["postgres"]["retention"]
+                )
+            },
+            r"\bRetention (\d+ d|—)\s+Retention (\d+ d|—)\s+Retention (\d+ d|—)",
+        ),
+        (
+            "the budget meter",
+            {"*": one(fx["budget_used"], fx["cap"])},
+            r"\bRecording budget:? +(?:\[[^\]]*\] +)?([\d,.]+ GB) of ([\d,.]+ GB)",
+        ),
+        (
+            "the volume meter",
+            {"*": one(fx["disk_used"], fx["disk_total"])},
+            r"\bDisk volume:? +(?:\[[^\]]*\] +)?([\d.]+ TB) of ([\d.]+ TB)",
+        ),
+        (
+            "the free volume",
+            {"*": one(fx["disk_free"])},
+            r"\bfree ([\d.]+ TB)|\b([\d.]+ TB) free\b",
+        ),
+        (
+            "the budget share",
+            {"*": one(fx["budget_pct"])},
+            r"\bRecording budget:? +(?:\[[^\]]*\] +)?[\d,.]+ GB of [\d,.]+ GB(?: cap_bytes)? \(([\d.]+ %)\)",
+        ),
+        (
+            "the volume share",
+            {"*": one(fx["volume_pct"])},
+            r"\bDisk volume:? +(?:\[[^\]]*\] +)?[\d.]+ TB of [\d.]+ TB(?: disk_total_bytes)? \(([\d.]+ %)\)",
+        ),
+        (
+            "the projection",
+            {"*": one(fx["runway"].split()[1], fx["full_date"], fx["growth"])},
+            r"\bFull in about ([\d,]+) days \((\d{4}-\d\d-\d\d)\) at ([\d.]+ GB/day)",
+        ),
+        (
+            "the volume wall",
+            {"*": one(fx["volume_wall"].split()[1])},
+            r"\bthe volume about ([\d,]+) days",
+        ),
+        (
+            "the headline runway",
+            {
+                "SCR-142/low-disk-warning": one(lv["1"]["runway_next"].split()[1]),
+                "*": one(lv["0"]["runway_next"].split()[1]),
+            },
+            r"\bauto-record pauses in about ([\d,]+) days",
+        ),
+        (
+            "the halt runway",
+            {"*": one(lv["2"]["runway_next"].split()[1])},
+            r"\bRecording stops at \d+ % in about ([\d,]+) days",
+        ),
+        (
+            "the formula",
+            {
+                "*": one(
+                    auto,
+                    fx["cap"],
+                    fx["budget_used"],
+                    fx["growth"],
+                    lv["0"]["runway_next"].split()[1],
+                )
+            },
+            r"\((\d+) % × ([\d,.]+ GB) − ([\d,.]+ GB)\) ÷ ([\d.]+ GB/day) ≈ ([\d,]+) days",
+        ),
+        ("the all-tiers growth", {"*": one(fx["growth"])}, r"\ball tiers ([\d.]+ GB/day)"),
+        ("the all-tiers date", {"*": one(fx["full_date"])}, r"\ball tiers (\d{4}-\d\d-\d\d)"),
+        (
+            "the level meter",
+            {
+                "SCR-142/low-disk-warning": one(lv["1"]["pct"]),
+                "SCR-142/autostop": one(lv["2"]["pct"]),
+                "SCR-142/read-only-disk-full": one(lv["3"]["pct"]),
+                "*": {(norm(lv[k]["pct"]),) for k in ("1", "2", "3")},
+            },
+            r"\bthe budget meter at ([\d.]+ %)",
+        ),
+        (
+            "the level budget",
+            {
+                "SCR-142/healthy": one(lv["0"]["pct"]),
+                "SCR-142/low-disk-warning": one(lv["1"]["pct"]),
+                "SCR-142/autostop": one(lv["2"]["pct"]),
+                "SCR-142/read-only-disk-full": one(lv["3"]["pct"]),
+                "*": {(norm(lv[k]["pct"]),) for k in ("0", "1", "2", "3")},
+            },
+            r"\(budget ([\d.]+ %)",
+        ),
+        ("the ingest rate", {"*": one(lag["ingest_rate"].split()[0])}, r"\bIngest ([\d,]+) msg/s"),
+        (
+            "the backlog",
+            {
+                "TIER/questdb": one(lag["healthy_backlog_rows"]),
+                "SCR-142/lag-warning": one(lag["backlog_rows"]),
+                "*": one(lag["healthy_backlog_rows"]) | one(lag["backlog_rows"]),
+            },
+            r"\bbacklog ([\d,]+) rows",
+        ),
+        (
+            "the import progress",
+            {
+                "*": one(imp["running_done"], imp["days"], imp["running_pct"])
+                | one(imp["skip_processed"], imp["days"], imp["skip_pct"])
+            },
+            r"\b([\d,]+) of ([\d,]+) days · (\d+) %",
+        ),
+        (
+            "the import strip",
+            {
+                "JOB/strip-running": one(imp["running_pct"]),
+                "IMPORT/running-with-skips": one(imp["skip_pct"]),
+                "*": one(imp["running_pct"]) | one(imp["skip_pct"]),
+            },
+            r"\bImport running · (\d+) %",
+        ),
+        (
+            "the compaction strip",
+            {"*": one(fx["jobs"]["compact_pct"])},
+            r"\bCompaction running · (\d+) %",
+        ),
+        (
+            "the overlap",
+            {"*": one(imp["overlap_rows"].split()[0])},
+            r"\b([\d,]+) (?:overlapping rows|rows inside recorded windows)",
+        ),
+        ("the imported days", {"*": one(imp["skip_done"])}, r"\bImported (\d+) days"),
+        (
+            "the done count",
+            {"IMPORT/running-with-skips": one(imp["skip_done"]), "*": set()},
+            r"\b(\d+) done\b",
+        ),
+        (
+            "the attribution",
+            {"*": one(fx["symbols_sum"], fx["budget_used"], fx["attributed_pct"])},
+            r"\b([\d,.]+ GB) of ([\d,.]+ GB) attributed to symbols \(([\d.]+ %)\)",
+        ),
+        (
+            "the BTCUSDT row",
+            {"*": one(sy[0]["size"], sy[0]["growth"], sy[0]["share"])},
+            r"\bBTCUSDT ([\d,.]+ GB) ([\d,]+ MB/day) ([\d.]+ %)",
+        ),
+        (
+            "the ETHUSDT row",
+            {"*": one(sy[1]["size"], sy[1]["growth"], sy[1]["share"])},
+            r"\bETHUSDT ([\d,.]+ GB) ([\d,]+ MB/day) ([\d.]+ %)",
+        ),
+        ("the sample time", {"*": one(fx["sample_time"])}, r"\bSampled (\d\d:\d\d:\d\d) UTC"),
+        ("the stale age", {"*": one(fx["stale_age"].split()[0])}, r"\bstale \((\d+) min old\)"),
+        (
+            "the last good time",
+            {"*": one(fx["last_good"].split()[0])},
+            r"\bsince (\d\d:\d\d:\d\d) UTC",
+        ),
+        (
+            "the migration",
+            {"*": one(mig["pending"], mig["schema_version"], mig["target_version"])},
+            r"\b(\d+) pending · (\d{4}) → (\d{4})",
+        ),
+        (
+            "the purge window",
+            {"*": one(fx["purge"]["size"], fx["purge"]["from"], fx["purge"]["before"])},
+            r"\babout ([\d.]+ GB) recorded from (\d{4}-\d\d-\d\d) to (\d{4}-\d\d-\d\d)",
+        ),
+        (
+            "the purge cut-off",
+            {"*": one(fx["purge"]["before"])},
+            r"\(CMP-047 single\) (\d{4}-\d\d-\d\d)",
+        ),
+        (
+            "the compacted time",
+            {"*": one(first(r"(\d\d:\d\d)", fx["jobs"]["compacted_at"]))},
+            r"\bCompacted at (\d\d:\d\d) UTC",
+        ),
+        ("the rows per day", {"*": one(imp["rows_per_day"].split()[0])}, r"done ✓ / ([\d,]+) rows"),
+        ("the purged size", {"*": one(fx["purge"]["size"])}, r"\bPurged ([\d.]+ GB) of ETHUSDT"),
+    ]
+    return out
+
+
+def norm(v: str) -> str:
+    return v.replace(",", "").strip()
+
+
+def anchor_miss(text: str, scope: str, anchors: list[Anchor]) -> str | None:
+    """The first anchored number in `text` that is not its own `--json` value: 'label reads X, not Y'."""
+    plain = re.sub(r"[\d,.:-]+\s*<!-- audit:.*?--!?>", " ", text, flags=re.DOTALL)
+    for label, want, pat in anchors:
+        ok = want.get(scope, want["*"])
+        if not ok:
+            continue
+        for m in re.finditer(pat, plain):
+            got = tuple(norm(g) for g in m.groups() if g is not None)
+            if got not in ok:
+                exp = " / ".join(sorted(" · ".join(o) for o in ok)) or "none here"
+                return f"{label} reads {' · '.join(got)}, not the tool's {exp}"
+    return None
 
 
 def item_gate(
@@ -1522,18 +2010,23 @@ def item_gate(
     own: str,
     item: str,
     cell: str,
-    subj: str,
+    carry: dict[str, str],
     reg: tuple[set[tuple[str, str]], set[float]],
+    anchors: list[Anchor],
 ) -> str | None:
-    """The first violation one item of a frame row carries (priority order), or None."""
+    """The first violation one item of a frame row carries (priority order), or None. `carry` holds the subjects
+    the items before it named (the control, the action, the typed field), read when this item names none first.
+    """
     s = short(name)
     x = scrub(item)
-    on = f" on {subj}" if subj not in ("", "exit") else ""
+    dialog = name.startswith(DIALOG_FAMILIES)
+    kinds = ctrl_kinds(dialog)
     if cell != "producer":
-        if subj == "exit":
-            term = positive_term(x, LOCK_TERM) or positive_term(x, DIM_TERM)
-            if term:
-                return f"R-14 {s}: exit gated ({term!r})"
+        hit = gated_term(x, carry["ctrl"], kinds, True)
+        if hit:
+            return f"R-14 {s}: exit gated ({hit[0]!r} in {x.strip()[:28]!r})"
+        if re.search(EXIT_CANCEL, x) and re.search(r"CAPTION\d+", x):
+            return f"R-14 {s}: the exit Cancel captioned PROPOSED"
         if name == "SCR-142/tier-unreachable-questdb":
             term = positive_term(x, PAGE_LEVEL)
             if term:
@@ -1553,38 +2046,44 @@ def item_gate(
             term = positive_term(x, DEFERRED, 0)
             if term:
                 return f"R-6 {s}: deferred capability drawn as a control ({term!r})"
-        if subj != "exit":
-            lock, dim = positive_term(x, LOCK_TERM), positive_term(x, DIM_TERM)
-            if own == "R6" and lock:
-                return f"R-6 {s}: state drawn as a lock ({lock!r}{on})"
-            if own == "R6" and dim:
-                return f"R-6 {s}: action gated by state ({dim!r}{on})"
-            if own == "R8" and lock in ("CMP-079", "RbacGate"):
-                return f"R-8 {name}: RbacGate on validity ({lock!r})"
-            if own == "R8" and lock:
-                return f"R-8 {name}: lock on a validity control ({lock!r})"
-            if own == "R8" and (term := positive_term(x, r"\binside\b")):
-                return f"R-8 {name}: the reason {term} the control"
-            if own == "R11" and lock:
-                return (
-                    f"R-11 {s}: busy drawn as T2 ({lock!r}{on})"
-                    if name == "JOB/strip-running"
-                    else f"R-11 {s}: refusal drawn as a lock ({lock!r}{on})"
-                )
-            if own == "R11" and dim:
-                return (
-                    f"R-11 {s}: a write gated while a job runs ({dim!r}{on})"
-                    if name == "JOB/strip-running"
-                    else f"R-11 {s}: refusal drawn as a disabled control ({dim!r}{on})"
-                )
-            if own == "R13" and (term := positive_term(x, T2_DIM)):
-                return f"R-13 {s}: T2 dimmed ({term!r}{on})"
-        if re.search(r"Purge data…|\bPurge…", x) and (term := positive_term(x, SECOND_PURGE)):
+        lock_hit = gated_term(x, carry["ctrl"], kinds, False, ("lock",))
+        dim_hit = gated_term(x, carry["ctrl"], kinds, False, ("dim",))
+        lock = lock_hit[0] if lock_hit else None
+        dim = dim_hit[0] if dim_hit else None
+        on = ""
+        if lock or dim:
+            w = list(re.finditer(WRITE_TERM, x))
+            on = f" on {w[0].group(0)}" if w else ""
+        if own == "R6" and lock:
+            return f"R-6 {s}: state drawn as a lock ({lock!r}{on})"
+        if own == "R6" and dim:
+            return f"R-6 {s}: action gated by state ({dim!r}{on})"
+        if own == "R8" and lock in ("CMP-079", "RbacGate"):
+            return f"R-8 {name}: RbacGate on validity ({lock!r})"
+        if own == "R8" and lock:
+            return f"R-8 {name}: lock on a validity control ({lock!r})"
+        if own == "R8" and (term := positive_term(x, r"\binside\b")):
+            return f"R-8 {name}: the reason {term} the control"
+        if own == "R11" and lock:
+            return (
+                f"R-11 {s}: busy drawn as T2 ({lock!r}{on})"
+                if name == "JOB/strip-running"
+                else f"R-11 {s}: refusal drawn as a lock ({lock!r}{on})"
+            )
+        if own == "R11" and dim:
+            return (
+                f"R-11 {s}: a write gated while a job runs ({dim!r}{on})"
+                if name == "JOB/strip-running"
+                else f"R-11 {s}: refusal drawn as a disabled control ({dim!r}{on})"
+            )
+        if own == "R13" and (term := positive_term(x, T2_DIM)):
+            return f"R-13 {s}: T2 dimmed ({term!r}{on})"
+        if (term := second_purge(x, carry["action"])) is not None:
             return f"R-21 {s}: a second purge shape ({term!r})"
-        if (term := positive_term(x, FILL)) is not None:
+        if (term := fill_term(x, carry["typed"] == "typed")) is not None:
             return f"R-7 {name}: confirm_symbol pre-filled ({term!r})"
-        if any(re.search(p, x, re.IGNORECASE) for p in INVERTED):
-            return f"R-5 {s}: degradation order inverted"
+        if (issue := order_issue(x)) is not None:
+            return f"R-5 {s}: degradation order {issue}"
         if (term := positive_term(x, r"\bconsoles?\b")) is not None:
             return f"R-15 {name}: data-store console linked ({term!r})"
         if (term := positive_term(x, r"\bbackups?\b|\brestore\b")) is not None:
@@ -1593,9 +2092,11 @@ def item_gate(
             return f"R-22 {s}: announcement per tick"
         caps = {int(n) for n in re.findall(r"CAPTION(\d+)", x)}
         rest = re.sub(r'"(?:Row counts|Slowest queries)[^"]*"', "", x)
+        rest = re.sub(EXIT_CANCEL + (r"|\bCancel\b" if dialog else ""), " ", rest)
+        if (m := re.search(r"\bCancel\b", rest)) is not None and not negated(rest, m.start()):
+            ctx = rest[m.end() : m.end() + 24].strip()
+            return f"R-12 {s}: the job action drawn as 'Cancel {ctx}…' (it is Stop job, D04-G10; Cancel is the exit)"
         for what, pat, ids in CARRIERS:
-            if subj == "exit" and what == "cancel":
-                continue
             for m in re.finditer(pat, rest, re.IGNORECASE):
                 if negated(rest, m.start()):
                     continue
@@ -1606,6 +2107,9 @@ def item_gate(
         for g in re.findall(r"\bD04-G(\d+)\b", x):
             if int(g) not in caps:
                 return f"R-12 {s}: D04-G{g} named without its caption"
+    miss = anchor_miss(item, name, anchors)
+    if miss is not None:
+        return f"R-17 {name}: {miss}"
     term = unregistered(item, reg)
     if term is not None:
         return f"R-17 {name}: number not the tool's ({term})"
@@ -1613,9 +2117,13 @@ def item_gate(
 
 
 def frame_gates(
-    spec: str, fx: dict[str, Any], reg: tuple[set[tuple[str, str]], set[float]]
+    spec: str,
+    fx: dict[str, Any],
+    reg: tuple[set[tuple[str, str]], set[float]],
+    anchors: list[Anchor],
 ) -> tuple[list[str], dict[str, int]]:
-    """Every frame row, item by item (the priority order of `item_gate`), then the row's presence rules."""
+    """Every frame row read whole: item by item (the priority order of `item_gate`), each item's subject carried
+    across `;` and `·` from Shows into Controls; then the row's presence rules."""
     bad: list[str] = []
     seen: dict[str, int] = {}
     need = required_numbers(fx)
@@ -1632,18 +2140,38 @@ def frame_gates(
         low = text.lower()
         s = short(name)
         own = owner_of(name, cls)
+        dialog = name.startswith(DIALOG_FAMILIES)
+        start = (
+            "purge"
+            if name.startswith("PURGE/")
+            else ("other" if name.startswith("JOB/confirm-") else "")
+        )
+        carry = {"ctrl": "", "action": start, "typed": ""}
         flagged = False
         for kind, cell_text in (("producer", producer), ("shows", shows), ("controls", controls)):
-            carried = ""
+            if kind == "producer":
+                carry = {"ctrl": "", "action": start, "typed": ""}
             for it in items(cell_text):
-                carried = subject(it, name, carried)
-                msg = item_gate(name, own, it, kind, carried, reg)
-                if msg is None and (hit := shipped_mention(scrub(it), carried == "exit")):
+                x = scrub(it)
+                msg = item_gate(name, own, it, kind, carry, reg, anchors)
+                if msg is None and (hit := shipped_mention(x, dialog, strong=False)):
                     what, term, n = hit
                     msg = f"R-12 {s}: {what} drawn as shipped ({term!r}) without its caption (D04-G{n})"
                 if msg:
                     bad.append(msg)
                     flagged = True
+                # the next item reads the subject this item named last; an item that names none passes the
+                # carried subject on only when it opens on a pronoun (It / They / Each …)
+                keep = re.match(PRONOUN_LEAD, x) is not None
+                carry = {
+                    "ctrl": last_subject(x, carry["ctrl"] if keep else "", ctrl_kinds(dialog)),
+                    "action": last_subject(x, carry["action"], ACTION_KINDS),
+                    "typed": last_subject(
+                        x,
+                        carry["typed"] if keep else "",
+                        {"typed": TYPED_SUBJ, "other": WRITE_TERM + "|" + EXIT_TERM},
+                    ),
+                }
         if flagged:
             continue
         bad += row_presence(
@@ -1713,7 +2241,7 @@ def row_presence(
         bad.append(f"R-4 {s}: page-level error")
     # R-5 the degradation sentence on every level >= 1 frame
     lv = re.search(r"`level` ([0-3])", producer)
-    if lv and int(lv.group(1)) >= 1 and DEGRADATION not in text:
+    if lv and int(lv.group(1)) >= 1 and not ruled_order(scrub(text)):
         bad.append(f"R-5 {s}: degradation sentence missing")
     # R-6 the BQ-14 sentence on the disk-full frame
     if name == "SCR-142/read-only-disk-full" and BQ14.lower() not in low:
@@ -1889,16 +2417,36 @@ def t2_context(text: str) -> bool:
     )
 
 
+def sketch_lines(spec: str) -> dict[str, str]:
+    """The sketch's footnote markers mapped to the ruled caption each footnote line carries (¹ → CAPTION1)."""
+    marks: dict[str, str] = {}
+    for m in re.finditer(r"^([¹²³⁴⁵⁶⁷⁸⁹]) (" + CAP_RE + r")", spec, MULTI):
+        marks[m.group(1)] = f"CAPTION{m.group(3)}"
+    return marks
+
+
 def doc_gates(
     spec: str,
     fx: dict[str, Any],
     reg: tuple[set[tuple[str, str]], set[float]],
     prior: list[str],
+    anchors: list[Anchor],
 ) -> list[str]:
-    """The whole document beyond the frame rows: prose, the non-frame tables, the deck and the sketch."""
+    """The whole document beyond the frame rows: prose, the non-frame tables, the deck and the sketch. A table row
+    is read whole, across its cells; a prose sentence that opens on a pronoun is read with the sentence before it.
+    """
     bad: list[str] = []
     r5_in_1 = False
-    for where, kind, raw in doc_units(spec):
+    marks = sketch_lines(spec)
+    prev = ("", "", "")
+    for where, kind, raw0 in doc_units(spec):
+        last, prev = prev, (where, kind, raw0)
+        raw = raw0
+        if kind == "prose" and last[:2] == (where, kind) and re.match(PRONOUN_LEAD, raw0):
+            raw = last[2] + " " + raw0
+        if kind == "sketch":
+            for k, v in marks.items():
+                raw = raw.replace(k, f" {v} ")
         x = scrub(raw)
         key_m = re.match(r"^\| `([^`]+)` +\|", raw) if where.startswith("§14") else None
         if key_m and key_m.group(1) not in DECK_KEYS:
@@ -1912,33 +2460,13 @@ def doc_gates(
             if have != want:
                 bad.append(f"R-6 §1.3: {lead[:30]!r} classed {have}, not {want}")
                 continue
-        hit = None if re.match(GAP_ROW, raw) else shipped_mention(x)
-        msg: str | None
-        if hit is not None:
-            what, shown, n = hit
-            msg = f"R-12 {where}: {what} presented as shipped ({shown!r}) without its caption (D04-G{n})"
-        elif where.startswith(("§12", "§15")):
-            msg = None  # the rule table and the measured matrix name the forbidden forms by design
-        elif any(re.search(p, x, re.IGNORECASE) for p in INVERTED):
-            msg = f"R-5 {where}: degradation order inverted"
-            r5_in_1 = r5_in_1 or where.startswith("§1")
-        elif (term := positive_term(x, FILL)) is not None:
-            msg = f"R-7 {where}: typed field pre-filled ({term!r})"
-        elif not t2_context(raw) and (
-            term := positive_term(x, LOCK_TERM) or positive_term(x, DIM_TERM)
-        ):
-            msg = f"R-6 {where}: a state or write drawn as a lock ({term!r})"
-        elif where.startswith("§8 prose") and (term := positive_term(x, PAGE_LEVEL)):
-            msg = f"R-9 {where}: page banner on a skipped file ({term!r})"
-        elif (term := unregistered(raw, reg)) is not None:
-            msg = f"R-17 {where}: number not the tool's ({term})"
-        else:
-            msg = None
+        msg = unit_gate(where, kind, raw, x, fx, reg, anchors)
         if msg:
+            r5_in_1 = r5_in_1 or (msg.startswith("R-5") and where.startswith("§1"))
             bad.append(msg)
-    # section 1.4 states the AC 2 sentence (unless an inversion there was already reported)
+    # section 1.4 states the AC 2 sentence in any ruled wording (unless an inversion there was already reported)
     s14 = spec[spec.index("### 1.4") : spec.index("\n## 2.")]
-    if DEGRADATION not in s14 and not r5_in_1:
+    if not ruled_order(scrub(s14)) and not r5_in_1:
         bad.append("R-5 §1.4: the AC 2 sentence missing")
     # section 1.3's classification: each row's class fixed by its lead; the view-as row first
     s1 = section(spec, 1, 2)
@@ -1974,6 +2502,7 @@ def doc_gates(
             bad.append("R-21 §6 table: purge without E16-D02's typed dialog")
     # the deck's ruled strings, byte for byte
     deck = {k: v for k, v, _ in deck_rows(spec)}
+    src = {k: v for k, _, v in deck_rows(spec)}
     for key, want in (
         ("storage.degradation", f'"{DEGRADATION}"'),
         ("storage.degradation.detail", f'"{fx["degradation_detail"]}"'),
@@ -1987,7 +2516,89 @@ def doc_gates(
     for key in ("storage.compact.body", "storage.vacuum.body"):
         if NOTHING_DELETED not in deck.get(key, ""):
             bad.append(f"R-21 §14: {key} without 'Nothing is deleted.'")
+    # the job action and the exit never share a label: Stop job carries PROPOSED, Cancel never does
+    if deck.get("storage.job.stop") != '"Stop job"' and not any("storage.job" in b for b in bad):
+        bad.append("R-12 §14: the PROPOSED job action is not labelled Stop job")
+    if "PROPOSED" in src.get("storage.confirm.cancel", "") and not any(
+        "confirm.cancel" in b for b in bad
+    ):
+        bad.append("R-14 §14: the exit Cancel captioned PROPOSED (storage.confirm.cancel)")
     return bad
+
+
+def unit_gate(
+    where: str,
+    kind: str,
+    raw: str,
+    x: str,
+    fx: dict[str, Any],
+    reg: tuple[set[tuple[str, str]], set[float]],
+    anchors: list[Anchor],
+) -> str | None:
+    """The first violation one document unit carries (priority order), or None."""
+    gap_row = re.match(GAP_ROW, raw) is not None
+    if kind == "sketch":
+        if re.search(r"\bPROPOSED\b", x):
+            return f"R-12 {where}: a short PROPOSED form (the full caption, or its footnote)"
+        for what, pat, ids in CARRIERS:
+            for m in re.finditer(pat, x, re.IGNORECASE):
+                if (
+                    not negated(x, m.start())
+                    and not {int(n) for n in re.findall(r"CAPTION(\d+)", x)} & ids
+                ):
+                    return f"R-12 {where}: {what} without its caption ({m.group(0)!r}, D04-G{min(ids)})"
+            x = re.sub(pat, " ", x, flags=re.IGNORECASE)
+        if re.search(r"\(g\) Maintenance", raw) and positive_term(raw, PURGE_SUBJ, 0):
+            return f"R-21 {where}: Purge data… on the maintenance card (the entry points are the tier cards)"
+    deck_str = (cells(x) + ["", ""])[1].replace(CAPTION, "")
+    if where.startswith("§14 table") and re.search(r"\bPROPOSED\b", deck_str):
+        return f"R-12 {where}: a short PROPOSED form in a deck string (the full caption)"
+    if where.startswith("§2 table ((g))") and positive_term(raw, PURGE_SUBJ, 0):
+        return "R-21 §2 table ((g)): Purge data… on the maintenance card (the entry points are the tier cards)"
+    rule_row = where.startswith(
+        "§12 table (R-"
+    )  # the rule table names the forbidden forms by design
+    hit = None if gap_row or rule_row else shipped_mention(x, whole=kind == "row")
+    if hit is not None:
+        what, shown, n = hit
+        return (
+            f"R-12 {where}: {what} presented as shipped ({shown!r}) without its caption (D04-G{n})"
+        )
+    if where.startswith(("§12", "§15")):
+        return None  # the rule table and the measured matrix name the forbidden forms by design
+    if (issue := order_issue(x)) is not None:
+        return f"R-5 {where}: degradation order {issue}"
+    if (term := second_purge(x, "")) is not None:
+        return f"R-21 {where}: a second purge shape ({term!r})"
+    if (term := fill_term(x, False)) is not None:
+        return f"R-7 {where}: typed field pre-filled ({term!r})"
+    if not t2_context(raw):
+        ctrl = ctrl_kinds(False)
+        hit2 = gated_term(x, "", ctrl, True) or gated_term(x, "", ctrl, False)
+        if hit2:
+            return f"R-6 {where}: a state or write drawn as a lock ({hit2[0]!r})"
+    else:
+        hit2 = gated_term(x, "", ctrl_kinds(False), True)
+        if hit2:
+            return f"R-14 {where}: an exit drawn locked ({hit2[0]!r})"
+    if where.startswith("§8 prose") and (term := positive_term(x, PAGE_LEVEL)):
+        return f"R-9 {where}: page banner on a skipped file ({term!r})"
+    if (miss := anchor_miss(raw, "*", anchors)) is not None:
+        return f"R-17 {where}: {miss}"
+    if (term := unregistered(raw, reg)) is not None:
+        return f"R-17 {where}: number not the tool's ({term})"
+    return None
+
+
+# R-16: the PENDING siblings in any spelling (the PR number, the boards by name), then a sha in any form (hex with a
+# letter, a code span of 7-40 hex digits, "at" and 7+ digits) or a line cite
+SIBLING = (
+    r"(?:#|\bPR\s*|\bpulls?/|\bpull request\s*|\b)(?:4463|4501)\b"
+    r"|\bE16-D0[35](?:'s)? boards(?: PR)?\b"
+)
+SHA_OR_LINE = (
+    r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b|`[0-9a-f]{7,40}`|\bat\s+\d{7,40}\b|(?<![\d:]):\d{2,}"
+)
 
 
 def gates(
@@ -2001,7 +2612,8 @@ def gates(
     bad: list[str] = []
     constitution = (ROOT / "CONSTITUTION.md").read_text(encoding="utf-8")
     reg = registry(numbers)
-    fb, seen = frame_gates(spec, fx, reg)
+    anchors = anchor_table(fx, facts)
+    fb, seen = frame_gates(spec, fx, reg, anchors)
     bad += fb
     # R-18 the inventory: every frame section 0 names is a row; the twins are rows
     s0 = section(spec, 0, 1)
@@ -2012,10 +2624,13 @@ def gates(
         if tw not in seen:
             bad.append(f"R-18: light twin {tw} is not a frame row")
     # R-16 the PENDING siblings by name only: any spelling of the number, then a sha or a line cite
-    for m in re.finditer(r"(?:#|\bPR\s*|\bpulls?/|\bpull request\s*|\b)(4463|4501)\b", spec):
-        after = spec[m.end() : m.end() + 80]
-        if re.search(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b|(?<![\d:]):\d{2,}", after):
-            bad.append(f"R-16: unmerged sibling pinned ({m.group(0).strip()})")
+    for m in re.finditer(SIBLING, spec):
+        after = spec[m.end() : m.end() + 80].split("\n")[0]
+        if re.search(SHA_OR_LINE, after):
+            pin = re.search(SHA_OR_LINE, after)
+            bad.append(
+                f"R-16: unmerged sibling pinned ({m.group(0).strip()} at {pin.group(0) if pin else '?'})"
+            )
             break
     # R-19 the rbac sentences in the deck
     deck = section(spec, 14, 15)
@@ -2029,7 +2644,7 @@ def gates(
             elif re.search(r"\d|[A-Z]{3,}USDT", q):
                 r19.append(f"R-19 §14: reason names data ({key})")
     bad += r19
-    bad += doc_gates(spec, fx, reg, r19)
+    bad += doc_gates(spec, fx, reg, r19, anchors)
     if NOTICE_D16 not in deck:
         bad.append("spec section 14: the D-16 notice is not in the copy deck")
     strings = [s for _, s, _ in deck_rows(spec)]
@@ -2246,6 +2861,9 @@ def cap(n: int) -> str:
     return CAPTION.format(n=n)
 
 
+STOP_ITEM = f"Stop job per job line, {cap(10)}: today a started job runs to its end"
+
+
 def _para_add(start: str, text: str) -> Callable[[str], str]:
     """Append `text` as one more sentence to the prose line that starts with `start`."""
 
@@ -2269,6 +2887,19 @@ Mutation = tuple[str, Callable[[str], str], str]
 ROD, TUQ, VAS = "SCR-142/read-only-disk-full", "SCR-142/tier-unreachable-questdb", "SCR-142/view-as"
 SKP, SRN, PDL = "IMPORT/running-with-skips", "JOB/strip-running", "PURGE/dialog"
 P11 = "SCR-142 is where the Owner sees"
+P04, P05, P06 = (
+    "The three cards are the AC 1 surface",
+    "The ticket's five states",
+    "**Who may run them:**",
+)
+P07, P08 = (
+    "Purge is the one destructive action here",
+    "`importTradeArchive` (`22` :14081–14134) imports",
+)
+P14, PEND = "The ladder is the server's", "E16-D06 and E16-D07 are PENDING by name;"
+PDV, EXITS_T1 = "PURGE/dialog-validity", "exits Cancel, Esc and the close ✕ (T1)"
+LINKS_T1 = "links to SCR-140, SCR-141 and SCR-143 enabled (T1)"
+G_REGION = 'CMP-001 secondary "Compact Parquet…"; "Vacuum Postgres…" only as the captioned PROPOSED inset (D04-G8)'
 MUTATIONS: list[Mutation] = [
     (
         "M01 TIER/questdb: the Size cell's unit removed",
@@ -2458,9 +3089,9 @@ MUTATIONS: list[Mutation] = [
         "R-11 strip-refused-409: refusal drawn as a lock",
     ),
     (
-        "M30 JOB/strip-running: the caption removed from the Cancel item",
-        _sub(SRN, CT, f"Cancel per job line, {cap(10)}:", "Cancel per job line (D04-G10):"),
-        "R-12 strip-running: Cancel without its caption",
+        "M30 JOB/strip-running: the caption removed from the Stop job item",
+        _sub(SRN, CT, f"Stop job per job line, {cap(10)}:", "Stop job per job line (D04-G10):"),
+        "R-12 strip-running: Stop job without its caption",
     ),
     (
         "M31 SCR-142/view-as: rbac.view_as removed",
@@ -2484,7 +3115,7 @@ MUTATIONS: list[Mutation] = [
     ),
     (
         "M34 SCR-142/view-as: opacity.disabled added",
-        _append(VAS, CT, "label at opacity.disabled"),
+        _append(VAS, CT, "Compact Parquet… label at opacity.disabled"),
         "R-13 view-as: T2 dimmed",
     ),
     (
@@ -2522,17 +3153,17 @@ MUTATIONS: list[Mutation] = [
     (
         "M40 the whole file: #4463 pinned at a sha",
         lambda s: _first(s, "boards PR #4463 and", "boards PR #4463 (head 0a1b2c3d4e5f) and"),
-        "R-16: unmerged sibling pinned (#4463)",
+        "R-16: unmerged sibling pinned (E16-D03 boards PR at 0a1b2c3d4e5f)",
     ),
     (
         "M41 SCR-142/healthy: the runway days +1",
         _sub("SCR-142/healthy", SH, "about 560 days", "about 561 days"),
-        "R-17 SCR-142/healthy: number not the tool's (561 days)",
+        "R-17 SCR-142/healthy: the projection reads 561",
     ),
     (
         "M42 IMPORT/running-with-skips: 29 done -> 28 done",
         _sub(SKP, SH, "29 done", "28 done"),
-        "R-17 IMPORT/running-with-skips: number not the tool's (28 done)",
+        "R-17 IMPORT/running-with-skips: the done count reads 28",
     ),
     (
         "M43 §0: board 07's count 6 -> 5",
@@ -2576,7 +3207,7 @@ MUTATIONS: list[Mutation] = [
     (
         "M49 PURGE/dialog: the typed pattern replaced by standard",
         _sub(PDL, SH, "CMP-044 typed", "CMP-044 standard"),
-        "R-21 PURGE/dialog: destructive action without typed confirm",
+        "R-21 dialog: a second purge shape ('CMP-044 standard')",
     ),
     (
         "M50 JOB/strip-running: an announcement per tick",
@@ -2705,18 +3336,18 @@ MUTATIONS: list[Mutation] = [
     ),
     (
         "A20 PURGE/dialog: the exits removed",
-        _sub(PDL, CT, "exits Cancel and Esc (T1) · Confirm", "Confirm"),
-        "R-14 dialog: exit missing (Cancel and Esc)",
+        _sub(PDL, CT, "exits Cancel, Esc and the close ✕ (T1) · Confirm", "Confirm"),
+        "R-14 dialog: exit missing (Cancel, Esc and the close ✕)",
     ),
     (
         "A21 confirm-compact: the exits disabled",
         _sub(
             "JOB/confirm-compact",
             CT,
-            "exits Cancel and Esc (T1)",
-            "exits Cancel and Esc disabled while confirming",
+            "exits Cancel, Esc and the close ✕ (T1)",
+            "exits Cancel, Esc and the close ✕ disabled while confirming",
         ),
-        "R-14 confirm-compact: exit gated ('disabled')",
+        "R-14 confirm-compact: exit gated ('disabled'",
     ),
     (
         "A22 healthy: the links greyed out",
@@ -2726,7 +3357,7 @@ MUTATIONS: list[Mutation] = [
             "links to SCR-140, SCR-141 and SCR-143 enabled (T1)",
             "links to SCR-140, SCR-141 and SCR-143 greyed out",
         ),
-        "R-14 healthy: exit gated ('greyed out')",
+        "R-14 healthy: exit gated ('greyed out'",
     ),
     (
         "A23 view-as: the links inert",
@@ -2736,7 +3367,7 @@ MUTATIONS: list[Mutation] = [
             "links to SCR-140, SCR-141 and SCR-143 enabled (T1)",
             "links to SCR-140, SCR-141 and SCR-143 inert",
         ),
-        "R-14 view-as: exit gated ('inert')",
+        "R-14 view-as: exit gated ('inert'",
     ),
     (
         "A24 PURGE/dialog: the typed field auto-filled",
@@ -2832,15 +3463,15 @@ MUTATIONS: list[Mutation] = [
         _sub(
             SRN,
             CT,
-            f"Cancel per job line, {cap(10)}: today a started job runs to its end",
+            f"Stop job per job line, {cap(10)}: today a started job runs to its end",
             "Stop per job line (T1)",
         ),
         "R-12 strip-running: Stop without its caption (D04-G10)",
     ),
     (
-        "A39 view-as: the Cancel carrier without its caption",
-        _sub(VAS, CT, f"Cancel on the jobs strip ({cap(10)})", "Cancel on the jobs strip"),
-        "R-12 view-as: Cancel without its caption (D04-G10)",
+        "A39 view-as: the Stop job carrier without its caption",
+        _sub(VAS, CT, f"Stop job on the jobs strip ({cap(10)})", "Stop job on the jobs strip"),
+        "R-12 view-as: Stop job without its caption (D04-G10)",
     ),
     (
         "A40 migration-pending: the banner's caption removed",
@@ -2918,17 +3549,17 @@ MUTATIONS: list[Mutation] = [
     (
         "A50 TIER/questdb: Size 641.0 GB",
         _sub("TIER/questdb", SH, "Size 640.0 GB", "Size 641.0 GB"),
-        "R-17 TIER/questdb: number not the tool's (641.0 GB)",
+        "R-17 TIER/questdb: the tier size reads 641.0 GB",
     ),
     (
         "A51 TIER/parquet: Retention 31 d",
         _sub("TIER/parquet", SH, "Retention 30 d", "Retention 31 d"),
-        "R-17 TIER/parquet: number not the tool's (31 d)",
+        "R-17 TIER/parquet: the tier retention reads 31 d",
     ),
     (
         "A52 healthy: 1,189.0 GB",
         _sub("SCR-142/healthy", SH, "1,188.0 GB of", "1,189.0 GB of"),
-        "R-17 SCR-142/healthy: number not the tool's (1189.0 GB)",
+        "R-17 SCR-142/healthy: the budget meter reads 1189.0 GB",
     ),
     (
         "A53 low-disk-warning: 1,611.0 GB",
@@ -2938,17 +3569,17 @@ MUTATIONS: list[Mutation] = [
     (
         "A54 lag-warning: 6 batches",
         _sub("SCR-142/lag-warning", SH, "5 batches", "6 batches"),
-        "R-17 SCR-142/lag-warning: number not the tool's (6 batches)",
+        "R-17 SCR-142/lag-warning: the lag threshold reads 6",
     ),
     (
         "A55 confirm-compact: 640 MiB",
         _sub("JOB/confirm-compact", SH, "512 MiB", "640 MiB"),
-        "R-17 JOB/confirm-compact: number not the tool's (640 MiB)",
+        "R-17 JOB/confirm-compact: the merge size reads 640",
     ),
     (
         "A56 healthy: free 2.9 TB",
         _sub("SCR-142/healthy", SH, "free 2.8 TB", "free 2.9 TB"),
-        "R-17 SCR-142/healthy: number not the tool's (2.9 TB)",
+        "R-17 SCR-142/healthy: the free volume reads 2.9 TB",
     ),
     (
         "A57 R-16: 'PR 4463 at <sha>'",
@@ -2957,7 +3588,7 @@ MUTATIONS: list[Mutation] = [
             "**the E16-D03 boards PR #4463",
             "the E16-D03 boards (PR 4463 at 1a2b3c4d) **the E16-D03 boards PR #4463",
         ),
-        "R-16: unmerged sibling pinned (PR 4463)",
+        "R-16: unmerged sibling pinned (E16-D03 boards at 1a2b3c4d)",
     ),
     (
         "A58 tier-unreachable: a page-level danger banner",
@@ -3051,24 +3682,24 @@ MUTATIONS: list[Mutation] = [
             "**Hand-offs:**",
             "**Hand-offs:** the E16-D05 boards (pull/4501 at :88) stay PENDING;",
         ),
-        "R-16: unmerged sibling pinned (pull/4501)",
+        "R-16: unmerged sibling pinned (E16-D05 boards at :88)",
     ),
     (
         "O15 TIER/questdb: the healthy backlog 1 row",
         _sub("TIER/questdb", SH, "backlog 0 rows", "backlog 1 rows"),
-        "R-17 TIER/questdb: number not the tool's (1 rows)",
+        "R-17 TIER/questdb: the backlog reads 1",
     ),
     (
         "O16 PURGE/dialog: the window's first date moved",
         _sub(PDL, SH, "from 2026-08-13 to", "from 2026-08-12 to"),
-        "R-17 PURGE/dialog: number not the tool's (2026-08-12)",
+        "R-17 PURGE/dialog: the purge window reads 1.2 GB · 2026-08-12",
     ),
     (
         "O17 §14: the AC 2 sentence weakened",
         lambda s: _deck_edit(
             s, "storage.degradation", "Recording pauses before", "Recording may pause before"
         ),
-        "R-5 §14: storage.degradation is not the ruled string",
+        "R-5 §14 table (storage.degradation): degradation order weakened",
     ),
     (
         "O18 view-as: the label in color.text.disabled",
@@ -3077,8 +3708,8 @@ MUTATIONS: list[Mutation] = [
     ),
     (
         "O19 PURGE/step-up: the exits removed",
-        _sub("PURGE/step-up", CT, "exits Cancel and Esc on the modal (T1); ", ""),
-        "R-14 step-up: exit missing (Cancel and Esc)",
+        _sub("PURGE/step-up", CT, "exits Cancel, Esc and the close ✕ on the modal (T1); ", ""),
+        "R-14 step-up: exit missing (Cancel, Esc and the close ✕)",
     ),
     (
         "O20 JOB/confirm-vacuum: the Vacuum button uncaptioned",
@@ -3116,12 +3747,12 @@ MUTATIONS: list[Mutation] = [
     (
         "P02 §1.1 prose: each tier card lists its slowest queries",
         _para_add(P11, "Each tier card lists its slowest queries."),
-        "R-12 §1.1 prose: slow queries presented as shipped ('lists its slowest quer')",
+        "R-12 §1.1 prose: slow queries presented as shipped ('slowest queries')",
     ),
     (
         "P03 §1.1 prose: a Stop button cancels the running compaction",
         _para_add(P11, "A Stop button cancels the running compaction."),
-        "R-12 §1.1 prose: cancel presented as shipped ('Stop button')",
+        "R-12 §1.1 prose: stop job presented as shipped ('Stop button')",
     ),
     (
         "P04 healthy: the Vacuum button in the Producer cell",
@@ -3134,11 +3765,11 @@ MUTATIONS: list[Mutation] = [
         "R-12 healthy: vacuum drawn as shipped ('Vacuum button')",
     ),
     (
-        "P05 §6 action table: a Cancel button in the Cancel column",
+        "P05 §6 action table: a Cancel button in the Stop job column",
         lambda s: _line_sub(
-            s, "| Compact Parquet |", "| PROPOSED (D04-G10) |", "| a Cancel button    |"
+            s, "| Compact Parquet ", "| PROPOSED (D04-G10) ", "| a Cancel button    "
         ),
-        "R-12 §6 table (Compact Parquet): cancel presented as shipped ('Cancel button')",
+        "R-12 §6 table (Compact Parquet): stop job presented as shipped ('Cancel button')",
     ),
     (
         "P06 §14: the vacuum key's Where reads the Vacuum button beside Compact",
@@ -3149,10 +3780,8 @@ MUTATIONS: list[Mutation] = [
     ),
     (
         "P07 §2 sketch: Vacuum Postgres… drawn as a button",
-        lambda s: _first(
-            s, "┆ Vacuum Postgres… PROPOSED D04-G8 ┆", "[ Vacuum Postgres… ]             "
-        ),
-        "R-12 §2 sketch: vacuum presented as shipped ('[ Vacuum')",
+        lambda s: _first(s, "┆ Vacuum Postgres… ⁴ ┆", "[ Vacuum Postgres… ]"),
+        "R-12 §2 sketch: vacuum without its caption ('Vacuum'",
     ),
     (
         "P08 §4 prose: a per-tier Growth/day value",
@@ -3169,7 +3798,7 @@ MUTATIONS: list[Mutation] = [
             "the sparkline only as captioned PROPOSED carriers",
             "the growth sparkline beside the Growth column",
         ),
-        "R-12 §2 table ((e)): sparkline presented as shipped ('growth sparkline')",
+        "R-12 §2 table ((e)): sparkline presented as shipped ('Oldest / Newest')",
     ),
     (
         "P10 §5 prose: a lag value on the QuestDB card",
@@ -3188,9 +3817,408 @@ MUTATIONS: list[Mutation] = [
     (
         "P12 §10 prose: the jobs strip's lowercase stop button",
         lambda s: _first(
-            s, "the jobs strip's PROPOSED Cancel carriers", "the jobs strip's stop button"
+            s,
+            "the jobs strip's Stop job carriers (PROPOSED D04-G10)",
+            "the jobs strip's stop button",
         ),
-        "R-12 §10 prose: cancel presented as shipped ('stop button')",
+        "R-12 §10 prose: stop job presented as shipped ('stop button')",
+    ),
+    # ---- the orchestrator's text round 1 probes (R01-R31), rebuilt verbatim: each slipped at the pushed head
+    (
+        "R01 dialog-validity: an exit greyed out after ';'",
+        _sub(PDV, CT, EXITS_T1, EXITS_T1 + "; greyed out until the form is valid"),
+        "R-14 dialog-validity: exit gated ('greyed out' in 'greyed out until the form is')",
+    ),
+    (
+        "R02 dialog-validity: an exit greyed out in an 'It …' follow-on",
+        _sub(PDV, CT, EXITS_T1, EXITS_T1 + " · It is greyed out until the form is valid."),
+        "R-14 dialog-validity: exit gated ('greyed out' in 'It is greyed out until the f')",
+    ),
+    (
+        "R03 view-as: the links '; locked'",
+        _sub(VAS, CT, LINKS_T1, LINKS_T1 + "; locked"),
+        "R-14 view-as: exit gated ('locked' in 'locked')",
+    ),
+    (
+        "R04 view-as: the links '; each with the lock glyph'",
+        _sub(VAS, CT, LINKS_T1, LINKS_T1 + "; each with the lock glyph"),
+        "R-14 view-as: exit gated ('lock' in 'each with the lock glyph')",
+    ),
+    (
+        "R05 view-as: the links in a 'They …' follow-on",
+        _sub(VAS, CT, LINKS_T1, LINKS_T1 + " · They are unavailable while viewing as."),
+        "R-14 view-as: exit gated ('unavailable' in 'They are unavailable while v')",
+    ),
+    (
+        "R06 strip-running: a Cancel per job line beside an exit",
+        _sub(SRN, CT, STOP_ITEM, "Cancel per job line and a link to SCR-140 (T1)"),
+        "R-12 strip-running: the job action drawn as 'Cancel per job line and a link…' (it is Stop ",
+    ),
+    (
+        "R07 healthy: a Cancel button on each job line beside the links",
+        _sub("SCR-142/healthy", CT, LINKS_T1, LINKS_T1 + " and a Cancel button on each job line"),
+        "R-12 healthy: the job action drawn as 'Cancel button on each job line…' (it is Stop job, D",
+    ),
+    (
+        "R08 per-symbol: a bare Rows column",
+        _sub("TIER/per-symbol", SH, "Share of budget / Pinned", "Share of budget / Pinned / Rows"),
+        "R-12 per-symbol: Rows without its caption (D04-G3)",
+    ),
+    (
+        "R09 per-symbol: a CMP-024 per row",
+        _append("TIER/per-symbol", SH, "a CMP-024 per row"),
+        "R-12 per-symbol: CMP-024 without its caption (D04-G2)",
+    ),
+    (
+        "R10 per-symbol: a growth trend line per row",
+        _append("TIER/per-symbol", SH, "a growth trend line per row"),
+        "R-12 per-symbol: trend line without its caption (D04-G2)",
+    ),
+    (
+        "R11 strip-running: an End job button",
+        _append(SRN, CT, "an End job button per job line"),
+        "R-12 strip-running: End job without its caption (D04-G10)",
+    ),
+    (
+        "R12 PURGE/dialog: the typed field set to the symbol later",
+        _sub(
+            PDL,
+            SH,
+            "empty, never pre-filled",
+            "empty at first, then set to ETHUSDT when the dialog opens",
+        ),
+        "R-7 PURGE/dialog: confirm_symbol pre-filled ('empty at first')",
+    ),
+    (
+        "R13 PURGE/entry-points: the typed field already holding it",
+        _sub(
+            "PURGE/entry-points", SH, "the typed field empty", "the typed field already holding it"
+        ),
+        "R-7 PURGE/entry-points: confirm_symbol pre-filled ('already holding')",
+    ),
+    (
+        "R14 per-symbol: the symbol typed into the confirm field",
+        _sub(
+            "TIER/per-symbol",
+            CT,
+            "the typed field empty",
+            "the symbol typed into the confirm field",
+        ),
+        "R-7 TIER/per-symbol: confirm_symbol pre-filled ('typed into')",
+    ),
+    (
+        "R15 §7 prose: the typed field filled in",
+        lambda s: _first(
+            s,
+            "**the typed field empty — never pre-filled**",
+            "the typed field filled in with the symbol",
+        ),
+        "R-7 §7 prose: typed field pre-filled ('filled in')",
+    ),
+    (
+        "R16 healthy: Purge data… opens a lighter confirm",
+        _sub(
+            "SCR-142/healthy",
+            CT,
+            "Purge data…",
+            "Purge data… (opens a lighter confirm with no typed field)",
+        ),
+        "R-21 healthy: a second purge shape ('lighter confirm')",
+    ),
+    (
+        "R17 TIER/questdb: §6.5 without its typed field",
+        _sub(
+            "TIER/questdb", CT, "opens E16-D02 §6.5)", "opens E16-D02 §6.5 without its typed field)"
+        ),
+        "R-21 questdb: a second purge shape ('without its typed field')",
+    ),
+    (
+        "R18 §7 prose: its own purge dialog, a standard confirm",
+        lambda s: _first(
+            s,
+            "SCR-142 adds **entry points**, not a dialog:",
+            "SCR-142 adds its own purge dialog, a CMP-044 standard confirm:",
+        ),
+        "R-21 §7 prose: a second purge shape ('its own purge dialog')",
+    ),
+    (
+        "R19 §7 prose: a one-click purge",
+        _para_add(P07, "The per-symbol row offers a one-click purge."),
+        "R-21 §7 prose: a second purge shape ('one-click')",
+    ),
+    (
+        "R20 TIER/questdb: Size 548.0 GB",
+        _sub("TIER/questdb", SH, "Size 640.0 GB", "Size 548.0 GB"),
+        "R-17 TIER/questdb: the tier size reads 548.0 GB, not the tool's 640.0 GB",
+    ),
+    (
+        "R21 TIER/parquet: Retention 7 d",
+        _sub("TIER/parquet", SH, "Retention 30 d", "Retention 7 d"),
+        "R-17 TIER/parquet: the tier retention reads 7 d, not the tool's 30 d",
+    ),
+    (
+        "R22 healthy: 85 % warning",
+        _sub("SCR-142/healthy", SH, "80 % warning", "85 % warning"),
+        "R-17 SCR-142/healthy: the warning step reads 85, not the tool's 80",
+    ),
+    (
+        "R23 low-disk-warning: clears below 80 %",
+        _sub("SCR-142/low-disk-warning", SH, "clears below 75 %", "clears below 80 %"),
+        "R-17 SCR-142/low-disk-warning: the warning clear reads 80, not the tool's 75",
+    ),
+    (
+        "R24 confirm-compact: at most 16 MiB",
+        _sub("JOB/confirm-compact", SH, "at most 512 MiB", "at most 16 MiB"),
+        "R-17 JOB/confirm-compact: the merge size reads 16, not the tool's 512",
+    ),
+    (
+        "R25 §1.4: at 85 %",
+        lambda s: _first(
+            s,
+            "at 80 % of the recording budget (or a runway",
+            "at 85 % of the recording budget (or a runway",
+        ),
+        "R-17 §1.4 prose: the warning step reads 85, not the tool's 80",
+    ),
+    (
+        "R26 autostop: orders refused before recording pauses",
+        _append("SCR-142/autostop", SH, "orders are refused before recording pauses"),
+        "R-5 autostop: degradation order inverted ('orders are refused before')",
+    ),
+    (
+        "R27 §1.4: orders refused before recording pauses",
+        _para_add(P14, "Orders are refused before recording pauses."),
+        "R-5 §1.4 prose: degradation order inverted ('Orders are refused before')",
+    ),
+    (
+        "R28 §2 (g): Purge data… and Vacuum Postgres… as CMP-001 secondary",
+        lambda s: _first(
+            s,
+            G_REGION,
+            'CMP-001 secondary "Compact Parquet…", "Purge data…" and "Vacuum Postgres…"',
+        ),
+        "R-21 §2 table ((g)): Purge data… on the maintenance card (the entry points are the tier ca",
+    ),
+    (
+        "R29 §6 prose: the maintenance card also offers Vacuum Postgres…",
+        _para_add(
+            P06, "The maintenance card also offers Vacuum Postgres… for the relational tier."
+        ),
+        "R-12 §6 prose: vacuum presented as shipped ('Vacuum Postgres…') without its caption (D04-G",
+    ),
+    (
+        "R30 R-16: the E16-D03 boards read at a sha, no number",
+        lambda s: _first(s, PEND, "The E16-D03 boards are read at `9f8e7d6c5b`. " + PEND),
+        "R-16: unmerged sibling pinned (E16-D03 boards at `9f8e7d6c5b`)",
+    ),
+    (
+        "R31 R-16: an all-digit sha",
+        lambda s: _first(s, PEND, "The E16-D05 boards PR #4501 is read at `12345678`. " + PEND),
+        "R-16: unmerged sibling pinned (E16-D05 boards PR at `12345678`)",
+    ),
+    # ---- this fold's own variants (N01-N25): the same gates in wordings and carriers the probes did not try
+    (
+        "N01 dialog-validity: 'Each is not available' after the exits",
+        _sub(PDV, CT, EXITS_T1, EXITS_T1 + " · Each is not available until the form is valid."),
+        "R-14 dialog-validity: exit gated ('not available' in 'Each is not available until ')",
+    ),
+    (
+        "N02 confirm-vacuum: the exits can't be used",
+        _sub(
+            "JOB/confirm-vacuum", CT, EXITS_T1, EXITS_T1 + "; they can't be used while confirming"
+        ),
+        'R-14 confirm-vacuum: exit gated ("can\'t be used" in "they can\'t be used while con")',
+    ),
+    (
+        "N03 pinned-refused: the close ✕ no longer available",
+        _append("PURGE/pinned-refused", CT, "the close ✕ no longer available after the refusal"),
+        "R-14 pinned-refused: exit gated ('no longer available' in 'the close ✕ no longer availa')",
+    ),
+    (
+        "N04 strip-running: Abort per job line",
+        _sub(SRN, CT, STOP_ITEM, "Abort per job line (T1)"),
+        "R-12 strip-running: Abort without its caption (D04-G10)",
+    ),
+    (
+        "N05 confirm-compact: the exit Cancel captioned PROPOSED",
+        _sub("JOB/confirm-compact", CT, EXITS_T1, f"{EXITS_T1}, {cap(10)}"),
+        "R-14 confirm-compact: the exit Cancel captioned PROPOSED",
+    ),
+    (
+        "N06 §14: the job action labelled Cancel",
+        lambda s: _deck_edit(s, "storage.job.stop", '"Stop job"', '"Cancel"'),
+        "R-12 §14: the PROPOSED job action is not labelled Stop job",
+    ),
+    (
+        "N07 §14: the exit Cancel's source PROPOSED",
+        lambda s: _deck_edit(
+            s, "storage.confirm.cancel", "CMP-044 `15` :473", "CMP-044 `15` :473 (PROPOSED D04-G10)"
+        ),
+        "R-14 §14: the exit Cancel captioned PROPOSED (storage.confirm.cancel)",
+    ),
+    (
+        "N08 PURGE/dialog: the symbol copied into the typed field",
+        _sub(PDL, SH, "empty, never pre-filled", "empty until the symbol is copied into it"),
+        "R-7 PURGE/dialog: confirm_symbol pre-filled ('copied into')",
+    ),
+    (
+        "N09 §4 prose: the popover's Purge… skips the typed field",
+        _para_add(P04, "Purge… in the per-symbol popover skips the typed field."),
+        "R-21 §4 prose: a second purge shape ('skips the typed field')",
+    ),
+    (
+        "N10 §1.4: the halt step at 90 %",
+        lambda s: _first(
+            s,
+            "at 95 % (or less than 5 % of the volume free)",
+            "at 90 % (or less than 5 % of the volume free)",
+        ),
+        "R-17 §1.4 prose: the halt step reads 90, not the tool's 95",
+    ),
+    (
+        "N11 autostop: resumes below 80 % of the budget",
+        _sub(
+            "SCR-142/autostop",
+            SH,
+            "resumes below 85 % of the budget",
+            "resumes below 80 % of the budget",
+        ),
+        "R-17 SCR-142/autostop: the autostop clear reads 80, not the tool's 85",
+    ),
+    (
+        "N12 §14: the formula's runway swapped for the full date's",
+        lambda s: _deck_edit(s, "storage.formula", "≈ 422 days", "≈ 560 days"),
+        "R-17 §14 table (storage.formula): the formula reads 90 · 2000.0 GB · 1188.0 GB · 1.45 GB/d",
+    ),
+    (
+        "N13 §2 sketch: the QuestDB and Parquet sizes swapped",
+        lambda s: _first(
+            s, "Size 640.0 GB          Size 548.0 GB", "Size 548.0 GB          Size 640.0 GB"
+        ),
+        "R-17 §2 sketch: the tier sizes reads 548.0 GB · 640.0 GB · 16.0 GB, not the tool's 640.0 G",
+    ),
+    (
+        "N14 per-symbol: BTCUSDT's growth swapped for ETHUSDT's",
+        _sub("TIER/per-symbol", SH, "BTCUSDT 812.3 GB 780 MB/day", "BTCUSDT 812.3 GB 520 MB/day"),
+        "R-17 TIER/per-symbol: the BTCUSDT row reads 812.3 GB · 520 MB/day · 40.6 %, not the tool's",
+    ),
+    (
+        "N15 low-disk-warning: trading may also be affected",
+        _append("SCR-142/low-disk-warning", SH, "trading may also be affected"),
+        "R-5 low-disk-warning: degradation order weakened ('trading may also be affected')",
+    ),
+    (
+        "N16 §1.4: recording continues while trading halts",
+        _para_add(P14, "Recording continues while trading halts."),
+        "R-5 §1.4 prose: degradation order inverted ('Recording continues while trading')",
+    ),
+    (
+        "N17 §5 prose: trading is the first to stop",
+        _para_add(P05, "Trading is the first to stop when the disk fills."),
+        "R-5 §5 prose: degradation order inverted ('Trading is the first to')",
+    ),
+    (
+        "N18 §2 (g): Vacuum Postgres… as a shipped secondary button",
+        lambda s: _first(
+            s, G_REGION, 'CMP-001 secondary "Compact Parquet…" and "Vacuum Postgres…"'
+        ),
+        "R-12 §2 table ((g)): vacuum presented as shipped ('Vacuum Postgres…') without its caption ",
+    ),
+    (
+        "N19 §2 sketch: a short PROPOSED form on the (g) line",
+        lambda s: _first(s, "┆ Vacuum Postgres… ⁴ ┆", "┆ Vacuum Postgres… PROPOSED D04-G8 ┆"),
+        "R-12 §2 sketch: a short PROPOSED form (the full caption, or its footnote)",
+    ),
+    (
+        "N20 §14: the ingestion example with a short caption",
+        lambda s: _deck_edit(
+            s, "storage.ingestion", f"lag — ({cap(4)})", "lag — (PROPOSED D04-G4)"
+        ),
+        "R-12 §14 table (storage.ingestion): a short PROPOSED form in a deck string (the full capti",
+    ),
+    (
+        "N21 §2 sketch: Purge data… back on the maintenance line",
+        lambda s: _first(s, "[ Compact Parquet… ]   ┆", "[ Compact Parquet… ] [ Purge data… ] ┆"),
+        "R-21 §2 sketch: Purge data… on the maintenance card (the entry points are the tier cards)",
+    ),
+    (
+        "N22 §1.3 prose: 'They are locked' after the exits sentence",
+        lambda s: _first(
+            s,
+            "enabled for every role on every frame.",
+            "enabled for every role on every frame. They are locked while viewing as.",
+        ),
+        "R-14 §1.3 prose: an exit drawn locked ('locked')",
+    ),
+    (
+        "N23 strip-running: Cancel per job line, captioned",
+        _sub(
+            SRN,
+            CT,
+            STOP_ITEM,
+            f"Cancel per job line, {cap(10)}: today a started job runs to its end",
+        ),
+        "R-12 strip-running: the job action drawn as 'Cancel per job line, CAPTION10…' (it is Stop ",
+    ),
+    (
+        "N24 IMPORT/running: the Stop job carrier uncaptioned",
+        _sub("IMPORT/running", CT, f"Stop job, {cap(10)}", "Stop job (T1)"),
+        "R-12 running: Stop job without its caption (D04-G10)",
+    ),
+    (
+        "N25 R-16: the E16-D05 boards at a line cite",
+        lambda s: _first(s, PEND, "The E16-D05 boards are read at :142. " + PEND),
+        "R-16: unmerged sibling pinned (E16-D05 boards at :142)",
+    ),
+    (
+        "N26 §1.1 prose: the typed field arrives with the symbol already in it",
+        _para_add(P11, "The typed field arrives with the symbol already in it."),
+        "R-7 §1.1 prose: typed field pre-filled ('arrives with the symbol')",
+    ),
+    (
+        "N27 PURGE/dialog: the typed field already holds the symbol",
+        _append(PDL, SH, "the typed field already holds the symbol"),
+        "R-7 PURGE/dialog: confirm_symbol pre-filled ('already holds')",
+    ),
+    (
+        "N28 PURGE/entry-points: the symbol entered for you",
+        _append("PURGE/entry-points", SH, "the symbol is entered for you"),
+        "R-7 PURGE/entry-points: confirm_symbol pre-filled ('entered for you')",
+    ),
+    (
+        "N29 §14: the typed field opens with the symbol",
+        lambda s: _deck_edit(
+            s,
+            "storage.purge.typed",
+            "E16-D02 §6.5 :415",
+            "E16-D02 §6.5 :415; it opens with the symbol",
+        ),
+        "R-7 §14 table (storage.purge.typed): typed field pre-filled ('opens with the symbol')",
+    ),
+    (
+        "N30 §6 table: the purge symbol field defaults to the symbol",
+        lambda s: _line_sub(
+            s,
+            "| Purge data ",
+            "reused whole (§7)",
+            "reused whole (§7), its symbol field defaults to the symbol",
+        ),
+        "R-7 §6 table (Purge data): typed field pre-filled ('defaults to the symbol')",
+    ),
+    (
+        "N31 §7 prose: the confirm field starts with ETHUSDT",
+        _para_add(P07, "The confirm field starts with ETHUSDT."),
+        "R-7 §7 prose: typed field pre-filled ('starts with ETHUSDT')",
+    ),
+    (
+        "N32 PURGE/dialog-validity: the typed field suggests the symbol",
+        _append(PDV, SH, "the typed field suggests the symbol"),
+        "R-7 PURGE/dialog-validity: confirm_symbol pre-filled ('suggests the symbol')",
+    ),
+    (
+        "N33 §1.1 prose: the symbol field uses autofill",
+        _para_add(P11, "The symbol field uses autofill."),
+        "R-7 §1.1 prose: typed field pre-filled ('autofill')",
     ),
 ]
 # Valid twins: each must raise nothing (a captioned inset line, the gap's own G-row, a negated mention).
@@ -3211,6 +4239,50 @@ VALID: list[tuple[str, Callable[[str], str]]] = [
     (
         "V03 §1.1 prose: no Vacuum control on the shipped card",
         _para_add(P11, "There is no Vacuum control on the shipped card."),
+    ),
+    (
+        "V04 confirm-compact: the exit Cancel named again, never locked",
+        _append("JOB/confirm-compact", CT, "Cancel / Esc close the dialog, never locked"),
+    ),
+    (
+        "V05 PURGE/dialog: the typed field is never set to the symbol",
+        _append(PDL, SH, "the typed field is never set to the symbol"),
+    ),
+    (
+        "V06 §6 prose: Stop job captioned",
+        _para_add(P06, f"Stop job sits on each job line, {cap(10)}."),
+    ),
+    (
+        "V07 low-disk-warning: the ruled order reworded",
+        _sub(
+            "SCR-142/low-disk-warning",
+            SH,
+            '"Recording pauses before trading is affected."',
+            '"Trading is affected only after recording pauses."',
+        ),
+    ),
+    (
+        "V08 D04-G10: the G-row names the Stop job button",
+        lambda s: _line_sub(
+            s,
+            "| D04-G10 ",
+            "`POST /admin/jobs/{jobId}/cancel`",
+            "`POST /admin/jobs/{jobId}/cancel` (the Stop job button on each job line)",
+        ),
+    ),
+    (
+        "V09 §0 prose: the E16-D05 boards PR PENDING by name",
+        lambda s: _first(
+            s, PEND, "The E16-D05 boards PR #4501 stays PENDING by name only. " + PEND
+        ),
+    ),
+    (
+        "V10 §8 prose: the per-file table captioned",
+        _para_add(P08, f"The per-file table is an inset, {cap(11)}."),
+    ),
+    (
+        "V11 §7 prose: the typed field starts empty and the Owner types the symbol",
+        _para_add(P07, "The typed field starts empty; the Owner types the symbol."),
     ),
 ]
 
@@ -3373,6 +4445,8 @@ def numbers_of(
     n["mutations_lens"] = sum(d.startswith("A") for d, _, _ in MUTATIONS)
     n["mutations_own"] = sum(d.startswith("O") for d, _, _ in MUTATIONS)
     n["mutations_shipped"] = sum(d.startswith("P") for d, _, _ in MUTATIONS)
+    n["mutations_text1"] = sum(d.startswith("R") for d, _, _ in MUTATIONS)
+    n["mutations_text1_own"] = sum(d.startswith("N") for d, _, _ in MUTATIONS)
     n["valid_twins"] = len(VALID)
     n["bq_rows"] = count(r"^\| BQ-\d+ ", spec)
     n["checklist_boxes_14"] = facts["scr142"]["checklist_boxes"]
