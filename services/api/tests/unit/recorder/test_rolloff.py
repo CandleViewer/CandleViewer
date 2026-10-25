@@ -298,6 +298,146 @@ async def test_rolloff_task_runs_job_survives_failure_and_stops() -> None:
     assert not task.running
 
 
+class _UnwindFails:
+    """A job whose run, once cancelled, fails while unwinding (a lock release that raises)."""
+
+    def __init__(self) -> None:
+        self.parked = asyncio.Event()
+
+    async def run(self) -> None:
+        try:
+            self.parked.set()
+            await asyncio.Event().wait()
+        finally:
+            raise ConnectionError("release failed")
+
+
+class _CancelResistant:
+    """A job that absorbs every cancel and hangs until released."""
+
+    def __init__(self) -> None:
+        self.parked = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def run(self) -> None:
+        self.parked.set()
+        while not self.release.is_set():
+            try:
+                await self.release.wait()
+            except asyncio.CancelledError:
+                continue
+
+
+async def test_rolloff_stop_returns_when_the_run_fails_while_unwinding_the_cancel() -> None:
+    job = _UnwindFails()
+    sleeps: list[float] = []
+
+    async def sleep(s: float) -> None:
+        sleeps.append(s)
+        await asyncio.Event().wait()
+
+    task = RollOffTask(job, interval_s=86400.0, sleep=sleep)  # type: ignore[arg-type]  # duck-typed job
+    task.start()
+    await asyncio.wait_for(job.parked.wait(), 5)
+    await asyncio.wait_for(task.stop(), 5)  # returns: no 24 h sleep after the failed release
+    assert sleeps == [] and not task.running
+
+
+async def test_rolloff_stop_is_bounded_when_the_run_will_not_unwind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("candleviewer.recorder.rolloff.ROLLOFF_STOP_TIMEOUT_S", 0.05)
+    job = _CancelResistant()
+    slept = asyncio.Event()
+
+    async def park(_: float) -> None:  # the released run's next night never comes
+        slept.set()
+        await asyncio.Event().wait()
+
+    task = RollOffTask(job, interval_s=1.0, sleep=park)  # type: ignore[arg-type]  # duck-typed job
+    task.start()
+    await asyncio.wait_for(job.parked.wait(), 5)
+    try:
+        with capture_logs() as logs:
+            await asyncio.wait_for(task.stop(), 5)  # the bound, not the 5 s guard, ends the wait
+        assert [e["event"] for e in logs] == ["rolloff_stop_timed_out"]
+        stuck = task._stuck  # the run left behind stays referenced
+        assert stuck is not None and not stuck.done()
+    finally:
+        job.release.set()
+    await asyncio.wait_for(slept.wait(), 5)
+    stuck.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(stuck, 5)
+
+
+async def test_an_outer_cancel_of_rolloff_stop_propagates() -> None:
+    class Parked:
+        parked = asyncio.Event()
+
+        async def run(self) -> None:
+            self.parked.set()
+            await asyncio.Event().wait()
+
+    job = Parked()
+    task = RollOffTask(job, interval_s=1.0)  # type: ignore[arg-type]  # duck-typed job
+    task.start()
+    await asyncio.wait_for(job.parked.wait(), 5)
+    stopper = asyncio.ensure_future(task.stop())
+    await asyncio.sleep(0)  # stop() has cancelled the run and waits for it
+    stopper.cancel()  # the caller's own cancel, while stop() waits
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(stopper, 5)
+
+
+async def test_a_run_left_by_a_cancelled_stop_stays_referenced() -> None:
+    job = _CancelResistant()
+    slept = asyncio.Event()
+
+    async def park(_: float) -> None:  # the released run's next night never comes
+        slept.set()
+        await asyncio.Event().wait()
+
+    task = RollOffTask(job, interval_s=1.0, sleep=park)  # type: ignore[arg-type]  # duck-typed job
+    task.start()
+    await asyncio.wait_for(job.parked.wait(), 5)
+    stopper = asyncio.ensure_future(task.stop())
+    await asyncio.sleep(0)  # stop() has cancelled the run and waits for it
+    stopper.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(stopper, 5)
+    stuck = task._stuck  # the run, still pending, is not dropped with the caller's wait
+    assert stuck is not None and not stuck.done()
+    job.release.set()
+    await asyncio.wait_for(slept.wait(), 5)
+    stuck.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(stuck, 5)
+
+
+async def test_rolloff_stop_logs_a_run_that_ended_on_an_error() -> None:
+    class Done:
+        async def run(self) -> None:
+            return None
+
+    slept = asyncio.Event()
+
+    async def fails_on_cancel(_: float) -> None:
+        slept.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raise RuntimeError("boom") from None
+
+    task = RollOffTask(Done(), interval_s=1.0, sleep=fails_on_cancel)  # type: ignore[arg-type]  # duck-typed job
+    task.start()
+    await asyncio.wait_for(slept.wait(), 5)
+    with capture_logs() as logs:
+        await asyncio.wait_for(task.stop(), 5)
+    assert [(e["event"], e.get("error")) for e in logs] == [("rolloff_stop_failed", "RuntimeError")]
+    assert task._stuck is None
+
+
 @settings(max_examples=60, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(
     nights=st.lists(
@@ -784,3 +924,22 @@ async def test_rolloff_does_not_count_a_stream_with_nothing_aged_or_with_days_li
 
     assert _unlisted(D) == before
     assert hot.aged_before == ([] if days else [NOW_US - 2 * US_PER_DAY])  # read only if none
+
+
+def test_rolloff_wiring_takes_the_cross_process_advisory_lock() -> None:
+    """E16-F01 S4c (#2214 item 6): one roll-off per database, not per process."""
+    from types import SimpleNamespace
+    from typing import Any, cast
+
+    from candleviewer.rolloff_wiring import build_rolloff_job
+    from candleviewer.settings import Settings
+    from candleviewer.storage.retention.locks import PgAdvisoryRunLock
+
+    engine = object()
+    relational = cast(Any, SimpleNamespace(engine=engine))
+    audit = cast(Any, object())
+    job = build_rolloff_job(Settings(storage_backend="real"), audit, relational)
+    assert job is not None and isinstance(job._lock, PgAdvisoryRunLock)
+    assert job._lock._engine is engine
+    assert build_rolloff_job(Settings(), audit, relational) is None  # fake backend: no job
+    assert build_rolloff_job(Settings(storage_backend="real"), audit, None) is None

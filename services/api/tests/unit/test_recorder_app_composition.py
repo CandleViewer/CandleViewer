@@ -49,3 +49,14 @@ def test_no_request_path_starts_the_runtime_or_ticks() -> None:
         text = path.read_text(encoding="utf-8")
         assert ".tick(" not in text and "startup_reconcile" not in text, path.name
         assert "recorder.runtime" not in text and "recorder_runtime.start" not in text, path.name
+
+
+def test_the_rolloff_job_holds_the_pg_advisory_lock_over_the_apps_relational_engine(
+    app: Any,
+) -> None:
+    from candleviewer.storage.retention.locks import PgAdvisoryRunLock
+
+    job = app.state.rolloff_job
+    assert job is not None  # the real backend builds it (a `None` repo would build nothing)
+    assert isinstance(job._lock, PgAdvisoryRunLock)
+    assert job._lock._engine is app.state.kline_boundary_pg.engine

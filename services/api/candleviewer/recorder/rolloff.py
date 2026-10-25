@@ -461,6 +461,9 @@ class RollOffJob:
 
 
 ROLLOFF_INTERVAL_S = 24 * 3600.0
+#: Bound on `RollOffTask.stop` waiting for the cancelled loop, well inside the api stop budget
+#: (`api_stop_budget_s`, at least 20 s): a run that cannot unwind never holds the teardown.
+ROLLOFF_STOP_TIMEOUT_S = 5.0
 
 
 class RollOffTask:
@@ -479,6 +482,7 @@ class RollOffTask:
         self._interval_s = interval_s
         self._sleep = sleep
         self._task: asyncio.Task[None] | None = None
+        self._stuck: asyncio.Task[None] | None = None
 
     @property
     def running(self) -> bool:
@@ -491,6 +495,9 @@ class RollOffTask:
             except Exception as exc:
                 recorder_rolloff_failures_total.labels(reason="run_failed").inc()
                 logger().error("rolloff_run_failed", error=type(exc).__name__)
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise asyncio.CancelledError from exc  # a failed unwind never hides the cancel
             await self._sleep(self._interval_s)
 
     def start(self) -> None:
@@ -502,7 +509,14 @@ class RollOffTask:
         if task is None:
             return
         task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        # `asyncio.wait` returns at the bound even when the run absorbs every cancel, where a
+        # timeout around `await task` cancels it again and keeps waiting; the caller's own cancel
+        # still propagates out of it
+        self._stuck = task  # referenced while pending, even when the caller's cancel ends the wait
+        done, _ = await asyncio.wait({task}, timeout=ROLLOFF_STOP_TIMEOUT_S)
+        if not done:
+            logger().error("rolloff_stop_timed_out")
+            return
+        self._stuck = None
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            logger().error("rolloff_stop_failed", error=type(exc).__name__)
