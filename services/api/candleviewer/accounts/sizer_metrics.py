@@ -76,10 +76,18 @@ class SizerMetrics:
         )
 
     def record(self, leg: LegSizing, elapsed_s: float) -> None:
-        """One sized leg: its time, its outcome, each cap that lowered it, its ATR fallback."""
-        self._duration.observe(elapsed_s)
+        """One sized leg: its time, its outcome, each cap that lowered it, its ATR fallback.
+
+        Never raises: it runs on the request path after the leg is sized, so a leg whose
+        `(outcome, reason)` is not a catalogued pair (unconstructible through `LegSizing`) is
+        dropped whole, with nothing half-recorded, rather than turned into a sizing failure.
+        """
         reason = "none" if leg.reason is None else leg.reason.value
-        self._outcomes[(leg.outcome, reason)].inc()
+        outcome = self._outcomes.get((leg.outcome, reason))
+        if outcome is None:
+            return
+        self._duration.observe(elapsed_s)
+        outcome.inc()
         for rule in leg.rules:  # a cap is in `rules` only when it lowered the quantity
             child = self._clamped.get(rule)
             if child is not None:
@@ -98,7 +106,7 @@ def size_leg_observed(
     observer: SizerMetrics,
     clock: Callable[[], float] = time.perf_counter,
 ) -> LegSizing:
-    """`size_leg`, timed by `clock` and recorded; a programming error raises unrecorded."""
+    """`size_leg`, timed by `clock` and recorded; a `size_leg` error propagates unrecorded."""
     start = clock()
     leg = size_leg(intent, profile, wallet, inst, market)
     observer.record(leg, clock() - start)

@@ -15,8 +15,10 @@ from typing import Any, Final
 import pytest
 
 from candleviewer.accounts import sizer as sz
+from candleviewer.accounts import sizer_metrics as sm
+from candleviewer.observability.metrics import Metrics
 from tests.unit.accounts.test_sizer import atr, instrument, profile, wallet
-from tests.unit.accounts.test_sizer_golden import _VECTORS
+from tests.unit.accounts.test_sizer_golden import VECTORS
 
 D = Decimal
 SINGLE_P95_S: Final = 1e-3
@@ -36,11 +38,12 @@ def _inputs(v: dict[str, Any]) -> tuple[Any, ...]:
     return intent, p, w, instrument(intent.symbol), market
 
 
-_LEGS: Final = [_inputs(v) for v in _VECTORS]
+assert len(VECTORS) >= 40  # a renamed or emptied golden set must not pass the bench
+_LEGS: Final = [_inputs(v) for v in VECTORS]
 
 
-def _timed(legs: list[tuple[Any, ...]]) -> list[float]:
-    """Each round's seconds to size every leg of `legs` once."""
+def _timed(legs: list[tuple[Any, ...]], observer: sm.SizerMetrics | None = None) -> list[float]:
+    """Each round's seconds to size every leg of `legs` once (recorded, with an `observer`)."""
     gc.collect()
     gc.disable()
     try:
@@ -48,7 +51,10 @@ def _timed(legs: list[tuple[Any, ...]]) -> list[float]:
         for _ in range(ROUNDS):
             t0 = time.perf_counter()
             for args in legs:
-                sz.size_leg(*args)
+                if observer is None:
+                    sz.size_leg(*args)
+                else:
+                    sm.size_leg_observed(*args, observer=observer)
             out.append(time.perf_counter() - t0)
     finally:
         gc.enable()
@@ -71,12 +77,10 @@ def test_size_leg_single_leg_p95_is_within_1_ms() -> None:
 
 @pytest.mark.perf
 def test_size_leg_five_leg_group_is_within_5_ms() -> None:
-    oks = [
-        args for args, v in zip(_LEGS, _VECTORS, strict=True) if v["expected"]["outcome"] == "ok"
-    ]
+    oks = [args for args, v in zip(_LEGS, VECTORS, strict=True) if v["expected"]["outcome"] == "ok"]
     group = oks[:5]  # the full path: caps, margin and take-profits
     assert len(group) == 5
-    samples = _timed(group)
+    samples = _timed(group, sm.SizerMetrics.register(Metrics("dev")))  # as callers run it
     p95, worst = _p95(samples), max(samples)
-    print(f"\nsize_leg 5-leg group: p95 {p95 * 1e6:.1f} us, max {worst * 1e6:.1f} us")
+    print(f"\nsize_leg_observed 5-leg group: p95 {p95 * 1e6:.1f} us, max {worst * 1e6:.1f} us")
     assert 0 < p95 <= GROUP_S

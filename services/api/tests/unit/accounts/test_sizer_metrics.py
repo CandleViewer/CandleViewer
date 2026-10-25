@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 import inspect
 from collections.abc import Callable, Iterator
 
@@ -14,7 +15,8 @@ from candleviewer.accounts import sizer_metrics as sm
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE, SIZER_BUCKETS
 from tests.unit.accounts.test_sizer import instrument, profile, sized, wallet
-from tests.unit.accounts.test_sizer_caps import leg, vector
+from tests.unit.accounts.test_sizer_caps import _LEGS, leg, run, vector
+from tests.unit.accounts.test_sizer_golden import VECTORS
 
 _NAMES = (sm.DURATION, sm.OUTCOMES, sm.CLAMPED, sm.FALLBACK)
 
@@ -138,3 +140,64 @@ def test_size_leg_stays_pure_and_records_nothing() -> None:
     imported = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
     imported |= {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     assert not {m for m in imported if m and ("observability" in m or m in {"time", "logging"})}
+
+
+def _total(metrics: Metrics) -> float:
+    return sum(_value(metrics, sm.OUTCOMES, outcome=o, reason=r) for o, r in sm.OUTCOME_REASONS)
+
+
+def test_sizer_metrics_record_accepts_every_golden_vector_and_named_leg() -> None:
+    metrics, observer = _metrics()
+    legs = [run(v) for v in VECTORS] + [leg(name) for name in _LEGS]
+    for result in legs:
+        observer.record(result, 0.0001)
+    assert _total(metrics) == len(legs) > 40
+    assert _value(metrics, f"{sm.DURATION}_count") == len(legs)
+
+
+def test_sizer_metrics_record_never_raises_on_a_pair_outside_the_catalogue() -> None:
+    metrics, observer = _metrics()
+    bad = copy.copy(leg("denied"))  # skip / symbol_denied
+    object.__setattr__(bad, "reason", sz.FailReason.CAP_BREACHED)  # ("skip", a fail reason)
+    observer.record(bad, 0.0001)  # no KeyError, and nothing half-recorded
+    assert _total(metrics) == 0
+    assert _value(metrics, f"{sm.DURATION}_count") == 0
+    assert _value(metrics, sm.FALLBACK) == 0
+
+
+def test_size_leg_observed_propagates_a_sizing_error_and_records_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics, observer = _metrics()
+
+    def boom(*_: object) -> sz.LegSizing:
+        raise RuntimeError("programming error")
+
+    monkeypatch.setattr(sm, "size_leg", boom)
+    it = sz.SizingIntent.model_validate(
+        {"symbol": "BTCUSDT", "side": "buy", "order_type": "limit", "price": "64000.0"}
+    )
+    with pytest.raises(RuntimeError, match="programming error"):
+        sm.size_leg_observed(
+            it,
+            profile("P-QTY"),
+            wallet(),
+            instrument("BTCUSDT"),
+            sz.SizingMarket(),
+            observer=observer,
+            clock=_ticks(1, 2),
+        )
+    assert _total(metrics) == 0
+    assert _value(metrics, f"{sm.DURATION}_count") == 0
+
+
+@pytest.mark.parametrize("rule", ["stop_atr", "tp_ladder"])
+def test_sizer_metrics_record_counts_no_cap_for_a_non_cap_rule(rule: str) -> None:
+    metrics, observer = _metrics()
+    base = vector("V01")
+    assert rule not in sm.CAPS
+    stub = copy.copy(base)
+    object.__setattr__(stub, "rules", (rule,))
+    observer.record(stub, 0.0001)
+    assert sum(_value(metrics, sm.CLAMPED, cap=c) for c in sm.CAPS) == 0
+    assert _total(metrics) == 1
