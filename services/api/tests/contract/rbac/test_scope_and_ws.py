@@ -3,8 +3,10 @@ and WS parity assertions for the RBAC matrix pack (E09-Q03)."""
 
 from __future__ import annotations
 
+import functools
 import json
 import re
+import statistics
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -16,21 +18,30 @@ from typing import Any
 import pytest
 
 from candleviewer.api.deny_by_default import served_operations
+from candleviewer.api.step_up import HANDLER_GATED_ROUTES, dangerous_action_class
 from candleviewer.auth.errors import SessionReadOnly
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import Allow, Deny, decide
+from candleviewer.auth.step_up import ACTION_CLASSES, NO_GRACE_ACTION_CLASSES
 from tests.contract.rbac.rbac_harness import (
+    ABSENT,
     ACTORS,
     FOREIGN,
     GRANTED,
     ROLE_OF,
+    SCOPE_ACTOR,
+    SCOPE_KEY_ID,
     World,
     bearer,
     fill_path,
+    grant_viewer_a,
+    observed,
     record_cell,
+    scope_request,
     seed_machine,
     user_id_of,
 )
+from tests.contract.rbac.test_route_matrix import _OPS, _SCOPE, scope_expected
 
 _FIXTURE = Path(__file__).parents[2] / "fixtures" / "rule_ir" / "form_simple_0.json"
 
@@ -796,3 +807,212 @@ def test_every_system_kind_x_actor_matches_the_matrix(world: World, kind: str, a
         record_cell("ws", f"WS system.{kind}", actor, "fail", started)
         raise
     record_cell("ws", f"WS system.{kind}", actor, "pass", started)
+
+
+# -- account scope (E27-X03, #902): enumeration, step-up and the account-scoped topics ----------
+
+#: Left out of the header comparison: `x-correlation-id` is minted per request (a fresh id on
+#: every answer) and `date` is the server clock (uvicorn adds it; TestClient does not).
+_PER_REQUEST_HEADERS = frozenset({"x-correlation-id", "date"})
+_SCOPE_IDS = {"granted": GRANTED, "foreign": FOREIGN, "absent": ABSENT}
+_DELETE = "DELETE /exchange-accounts/{accountId}"
+#: The timing bound's floor: two answers both faster than this pass whatever their ratio.
+_TIMING_FLOOR_S = 0.05
+
+
+def _served(key: str) -> bool:
+    return not key.startswith("WS ") and _OPS[key]["state"] == "executed"
+
+
+def _scope_req(key: str) -> dict[str, Any]:
+    return {**_OPS[key].get("request", {}), **_SCOPE[key].get("request", {})}
+
+
+def _denials(world: World) -> list[dict[str, Any]]:
+    return [r for r in world.audit.records if r["action"] == "rbac.denied"]
+
+
+#: M3: every served route naming an account, `delegated` rows included (the equality needs no
+#: expected cell), so the scope layer's refusal is compared wherever it is reachable today.
+_EQUALITY_ROWS = [k for k in _SCOPE if _served(k) and "{accountId}" in k]
+
+
+@pytest.mark.parametrize("role", ["manager", "viewer"])
+@pytest.mark.parametrize("key", _EQUALITY_ROWS)
+def test_a_foreign_account_and_an_absent_one_answer_identically_and_both_are_audited(
+    world: World, key: str, role: str
+) -> None:
+    """KV-I13: status, body (byte for byte) and headers but the per-request ones are equal; each
+    refusal (403/404) is one `rbac.denied` naming the account asked for, and an answer given
+    before any scope check (the profile reads' `503 store_unavailable` on the CI app) is none;
+    timing within an order of magnitude, or both medians of five under 50 ms (a loose bound: no
+    constant-time claim)."""
+    if role == "viewer":
+        grant_viewer_a(world)
+    answers, records, medians = [], [], []
+    for account in (FOREIGN, ABSENT):
+        world.audit.records.clear()
+        times = []
+        for _ in range(5):
+            started = time.perf_counter()
+            resp = scope_request(world, key, _scope_req(key), role, account)
+            times.append(time.perf_counter() - started)
+        answers.append(resp)
+        medians.append(statistics.median(times))
+        records.append(_denials(world))
+        assert resp.status_code >= 400, f"{key} {role}: a non-Owner was admitted on {account}"
+        refused = resp.status_code in (403, 404)  # else the CI app answers before any scope check
+        want = [str(account)] * 5 if refused else []
+        assert [r["object_id"] for r in records[-1]] == want, records[-1]
+    foreign, absent = answers
+    assert foreign.status_code == absent.status_code
+    assert foreign.content == absent.content, "the body is an existence oracle"
+    heads = [{k: v for k, v in r.headers.items() if k not in _PER_REQUEST_HEADERS} for r in answers]
+    assert heads[0] == heads[1]
+    strip = {"object_id", "request_id"}
+    assert [{k: v for k, v in r.items() if k not in strip} for r in records[0]] == [
+        {k: v for k, v in r.items() if k not in strip} for r in records[1]
+    ]
+    fast = max(medians) < _TIMING_FLOOR_S
+    assert fast or max(medians) < 10 * min(medians), f"timing differs by over 10x: {medians}"
+
+
+def _registered(key: str) -> set[str]:
+    """The step-up classes gating `key`: its path gate (`DANGEROUS_ROUTES`) and every class its
+    handler declares (`HANDLER_GATED_ROUTES`, keyed by the 22 path, as a no-grace gate must be)."""
+    method, path = key.split(" ", 1)
+    url = fill_path(path, {"accountId": str(GRANTED), "keyId": SCOPE_KEY_ID})
+    by_path = dangerous_action_class(method, url)
+    by_handler = {cls for m, p, cls in HANDLER_GATED_ROUTES if (m, p) == (method, path)}
+    return by_handler | ({by_path} if by_path else set())
+
+
+def _gated_or_xfail(key: str) -> set[str]:
+    """M2: only "not gated at all" is the known gap; any registration is asserted exactly."""
+    got = _registered(key)
+    if not got and _SCOPE[key].get("step_up_pending"):
+        pytest.xfail(_SCOPE[key]["step_up_pending"])
+    return got
+
+
+@pytest.mark.parametrize("key", [k for k, row in _SCOPE.items() if "step_up" in row])
+def test_account_scope_step_up_rows_agree_with_the_registries(key: str) -> None:
+    """SR-E27-02: the class the registries gate the operation with (none for a null row),
+    mounted or not; a registered gap fails until its `step_up_pending` goes."""
+    got, want = _gated_or_xfail(key), _SCOPE[key]["step_up"]
+    assert got == ({want} if want else set()), f"{key}: registered {got}, matrix says {want}"
+    assert not _SCOPE[key].get("step_up_pending"), f"{key}: gated now, drop step_up_pending"
+
+
+_SERVED_STEP_UP = [k for k in _SCOPE if _served(k) and _SCOPE[k].get("step_up")]
+
+
+@pytest.mark.parametrize("key", _SERVED_STEP_UP)
+def test_a_step_up_gated_account_route_refuses_without_it_and_takes_no_other_class(
+    world: World, key: str
+) -> None:
+    """SR-025 as the step-up unit tests prove it: refused without a step-up, refused with a live
+    step-up of any other class, admitted with one of its own class (the cell's own outcome)."""
+    cls, req = _SCOPE[key]["step_up"], _scope_req(key)
+    want = scope_expected(key, "owner", "granted")
+    world.step_up.elevated = False
+    refused = scope_request(world, key, req, "owner", GRANTED)
+    assert observed(refused) == "403 step_up_required" and refused.json()["action_class"] == cls
+    world.step_up.elevated = True
+    for other in sorted(ACTION_CLASSES - {cls}):
+        world.step_up.classes = frozenset({other})
+        resp = scope_request(world, key, req, "owner", GRANTED)
+        assert observed(resp) == "403 step_up_required", f"{key}: a {other} step-up admitted it"
+    world.step_up.classes = frozenset({cls})
+    assert observed(scope_request(world, key, req, "owner", GRANTED)) == want
+
+
+def test_a_key_rotation_step_up_cannot_admit_an_account_deletion() -> None:
+    """AC 'Step-up cannot be replayed across actions' (ruling 25 Oct 10:10Z): the deletion has a
+    no-grace class of its own, `accounts`, which a rotation's `keys` grant never satisfies.
+    Only "not gated yet" xfails (E27-S04, #898); a deletion under `keys` fails."""
+    rotate = dangerous_action_class("POST", f"/exchange-accounts/{GRANTED}/keys/k/rotate")
+    assert rotate == "keys"
+    delete = _gated_or_xfail(_DELETE)
+    assert delete == {"accounts"} and "accounts" in NO_GRACE_ACTION_CLASSES, delete
+
+
+def test_an_account_deletion_step_up_binds_one_request_so_no_other_body_replays_it() -> None:
+    """Replay across bodies: only a no-grace grant is bound to the SHA-256 of the one request
+    it was issued for (#2304, E09-S04 #231 owns SR-025's service; proven over HTTP by
+    `tests/unit/api/test_step_up_binding_router.py::test_bound_grant_refuses_a_swapped_payload`),
+    and only a handler can fingerprint the request it validated, so the deletion must be
+    handler-gated, never path-gated. Within a grace class, such as the `keys` routes served
+    today, a second body inside the 5-minute window is admitted by design (SR-025)."""
+    delete = _gated_or_xfail(_DELETE)
+    method, path = _DELETE.split(" ", 1)
+    assert dangerous_action_class(method, f"/exchange-accounts/{GRANTED}") is None, "path-gated"
+    assert delete <= NO_GRACE_ACTION_CLASSES, f"{delete}: a grace grant replays across bodies"
+    assert {(method, path, c) for c in delete} <= set(HANDLER_GATED_ROUTES)
+
+
+def _ws_scope_cells() -> list[Any]:
+    return [
+        pytest.param(key, role, where, id=f"{key}|{role}|{where}")
+        for key, row in _SCOPE.items()
+        if key.startswith("WS ")
+        for role, cells in row["cells"].items()
+        for where in cells
+    ]
+
+
+def _accounts_of(where: str) -> list[uuid.UUID]:
+    return [_SCOPE_IDS[w] for w in where.split("+")] if where != "mixed" else [GRANTED, FOREIGN]
+
+
+def _sub_accounts(ws: Any, topic: str, accounts: list[uuid.UUID]) -> dict[str, Any]:
+    opts = {"exchange_account_ids": [str(a) for a in accounts]}
+    ws.send_json({"t": "sub", "id": topic, "p": {"topics": [{"ch": topic, "opts": opts}]}})
+    frame = _recv(ws)
+    assert frame["t"] == "sub_ok", frame
+    result: dict[str, Any] = frame["p"]["results"][0]
+    return result
+
+
+@pytest.mark.parametrize(("key", "role", "where"), _ws_scope_cells())
+def test_account_scope_topic_cell_matches_the_matrix(
+    world: World, key: str, role: str, where: str
+) -> None:
+    """A real gateway connection per cell (23 §6.2): narrowed silently, or one refusal code."""
+    if role == "viewer":
+        grant_viewer_a(world)
+    names = {str(v): k for k, v in _SCOPE_IDS.items()}
+    with world.client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+        assert _auth(ws, SCOPE_ACTOR[role])["t"] == "auth_ok"
+        result = _sub_accounts(ws, key.split(" ", 1)[1], _accounts_of(where))
+    if result["ok"]:
+        got = "sub_ok " + "+".join(names[a] for a in result["effective"]["exchange_account_ids"])
+    else:
+        got = result["error"]["code"]
+    assert got == _SCOPE[key]["cells"][role][where], f"{key} {role} {where}: {result}"
+
+
+@pytest.mark.parametrize("role", ["manager", "viewer"])
+def test_a_raw_frame_naming_a_foreign_account_never_receives_its_frames(
+    world: World, role: str
+) -> None:
+    """AC 'A raw WS frame cannot widen scope': `[A, B, absent]` narrows to A, the refusal of a
+    foreign and of an absent account is one entry, and a delta for B never arrives. `wallet`
+    only: the CI app has no `positions` source, so a `positions` subscription stays pending its
+    snap and receives nothing for A either (a vacuous pass); both go through `in_scope`."""
+    topic = "wallet"
+    if role == "viewer":
+        grant_viewer_a(world)
+    hub, seq = world.app.state.ws_hub, world.app.state.ws_registry.services.sequencing
+    with world.client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+        assert _auth(ws, SCOPE_ACTOR[role])["t"] == "auth_ok"
+        denied = [_sub_accounts(ws, topic, [a]) for a in (FOREIGN, ABSENT)]
+        assert denied[0] == denied[1] and denied[0]["error"]["code"] == "account_scope_denied"
+        result = _sub_accounts(ws, topic, [GRANTED, FOREIGN, ABSENT])
+        assert result["effective"]["exchange_account_ids"] == [str(GRANTED)]
+        _until_mark(ws, hub)  # its `snap`
+        for account in (FOREIGN, ABSENT, GRANTED):
+            body = {"items": [{"exchange_account_id": str(account)}]}
+            ws.portal.call(functools.partial(seq.publish, topic, body, account=account))
+        got = _until_mark(ws, hub)
+    assert got == [{"items": [{"exchange_account_id": str(GRANTED)}]}], got

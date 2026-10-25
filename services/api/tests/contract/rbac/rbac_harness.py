@@ -88,6 +88,12 @@ ROLE_OF = {
 }
 GRANTED = uuid.UUID("00000000-0000-4000-8000-00000000000a")  # the one account the grant covers
 FOREIGN = uuid.UUID("00000000-0000-4000-8000-00000000000b")  # an account nobody here is granted
+#: E27-X03 (#902): an account id no store and no grant knows, beside A and B (`account_scope`).
+ABSENT = uuid.UUID("00000000-0000-4000-8000-00000000000c")
+SCOPE_KEY_ID = "00000000-0000-4000-8000-0000000000dd"  # the `{keyId}` of the account-scope cells
+SCOPE_PROFILE_ID = "00000000-0000-4000-8000-0000000000de"  # and their `{profileId}`
+#: The three roles of the `account_scope` cells; its viewer holds a grant on A (`_Resolver.extra`).
+SCOPE_ACTOR = {"owner": "owner", "manager": "manager_with_grant", "viewer": "viewer"}
 _USER_IDS = {a: uuid.uuid5(uuid.NAMESPACE_URL, f"cv-rbac-matrix/{a}") for a in ACTORS[:4]}
 _TOKENS = {f"tok-{a}": a for a in ACTORS[:4]}
 #: #3085 S9: the users the Owner views as, every non-Owner actor (an Owner target is refused at
@@ -317,6 +323,8 @@ class _Resolver:
         self._spec = spec
         #: actors whose account grants have been withdrawn mid-run (SR-050 / revocation tests).
         self.revoked: set[str] = set()
+        #: grants added to an actor's own for one test (E27-X03: the viewer granted A).
+        self.extra: dict[str, tuple[uuid.UUID, ...]] = {}
 
     def resolve(self, request: Any) -> PrincipalSnapshot | None:
         """As the deployed resolver (`SessionSnapshotResolver`): the session's subject, the
@@ -331,22 +339,26 @@ class _Resolver:
 
     def snapshot(self, actor: str) -> PrincipalSnapshot:
         perms = frozenset(Permission(p) for p in actor_permissions(actor, self._spec))
-        grants = tuple(
-            AccountGrant(g, True, True, False)
-            for g in (() if actor in self.revoked else actor_grants(actor))
-        )
+        held = () if actor in self.revoked else actor_grants(actor) + self.extra.get(actor, ())
+        grants = tuple(AccountGrant(g, True, True, False) for g in held)
         return PrincipalSnapshot(_USER_IDS[actor], frozenset({ROLE_OF[actor]}), perms, grants)
 
 
 class _StepUp:
     """Stand-in for the DB-backed `StepUpService` (same seam as `tests/unit/ws`). `elevated`
-    models a completed step-up on the caller's session (SR-025), a window or a one-shot grant."""
+    models a completed step-up on the caller's session (SR-025), a window or a one-shot grant.
+    `classes`, when set, elevates only those action classes, as the real service's per-class
+    grace does (`tests/unit/auth/test_step_up.py`, E27-X03 #902)."""
 
     def __init__(self) -> None:
         self.elevated = True
+        self.classes: frozenset[str] | None = None
+
+    def _held(self, action_class: str) -> bool:
+        return self.elevated and (self.classes is None or action_class in self.classes)
 
     async def require_elevation(self, session_id: str, action_class: str) -> None:
-        if not self.elevated:
+        if not self._held(action_class):
             raise StepUpRequired(action_class)
 
     async def record_pending(
@@ -358,7 +370,7 @@ class _StepUp:
     async def consume_single_use(
         self, session_id: str, action_class: str, *, fingerprint: str
     ) -> StepUpChallenge:
-        if not self.elevated:
+        if not self._held(action_class):
             raise StepUpRequired(action_class)
         return await self.record_pending(session_id, action_class, fingerprint=fingerprint)
 
@@ -837,3 +849,35 @@ CELLS: dict[str, str] = {}
 def record_cell(group: str, key: str, actor: str, outcome: str, started: float) -> None:
     TIMINGS[group].append(time.perf_counter() - started)
     CELLS[f"{key}|{actor}"] = outcome
+
+
+def grant_viewer_a(world: World) -> None:
+    """The `account_scope` viewer holds a grant on A (the matrix's viewer column), for this test
+    only: the fixture clears `_Resolver.extra`. Called for a viewer cell, never otherwise."""
+    world.resolver.extra["viewer"] = (GRANTED,)
+
+
+def scope_request(
+    world: World, key: str, req: dict[str, Any], role: str, account: uuid.UUID
+) -> Any:
+    """One `account_scope` cell (E27-X03, #902): `key` as `role` on `account`, with the row's
+    `request` (body, headers). A viewer cell needs `grant_viewer_a(world)` first."""
+    method, path = key.split(" ", 1)
+    assert "{positionId}" not in path, f"{key}: seed a position per situation before executing it"
+    body = req.get("json")
+    ids = {"accountId": str(account), "keyId": SCOPE_KEY_ID, "profileId": SCOPE_PROFILE_ID}
+    return world.client.request(
+        method,
+        fill_path(path, ids),
+        json=body if body is not None else ({} if method in ("POST", "PUT", "PATCH") else None),
+        headers={**bearer(SCOPE_ACTOR[role]), **req.get("headers", {})},
+    )
+
+
+def observed(resp: Any) -> str:
+    """`<status> <problem code>`, or the bare status of an answer that is not a problem."""
+    try:
+        code = resp.json().get("code")
+    except (ValueError, AttributeError):
+        code = None
+    return f"{resp.status_code} {code}" if isinstance(code, str) else str(resp.status_code)

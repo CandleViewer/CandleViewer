@@ -9,6 +9,8 @@ token for its actor against the real app (identity/backend seams faked, no netwo
 
 from __future__ import annotations
 
+import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -17,25 +19,34 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
+from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH
 from candleviewer.api.deny_by_default import (
     DECLARED_WS_ROUTES,
     UndeclaredRouteAtBuildError,
     assert_app_routes_declared,
     served_operations,
 )
+from candleviewer.api.rbac_conformance import RBAC_SEED_PATH
 from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.step_up import ACTION_CLASSES
 from candleviewer.ws.permissions import TOPIC_PERMISSIONS
 from candleviewer.ws.topics import MACHINE_KINDS
 from tests.contract.rbac.rbac_harness import (
+    ABSENT,
     ACTORS,
+    FOREIGN,
+    GRANTED,
     HTTP,
     MATRIX_PATH,
     PUBLIC_OPERATIONAL,
     World,
     bearer,
     fill_path,
+    grant_viewer_a,
     load_contract,
+    observed,
     record_cell,
+    scope_request,
 )
 
 with MATRIX_PATH.open(encoding="utf-8") as _fh:
@@ -43,6 +54,7 @@ with MATRIX_PATH.open(encoding="utf-8") as _fh:
 _OPS: dict[str, dict[str, Any]] = _MATRIX["operations"]
 _ROW_INDEX: dict[str, int] = {k: i for i, k in enumerate(_OPS)}
 _TOPICS: dict[str, dict[str, Any]] = _MATRIX["topics"]
+_SCOPE: dict[str, dict[str, Any]] = _MATRIX["account_scope"]
 _OUTCOMES = {"allow", "401", "403"}
 #: `unknown_topic`: a family the contract lists before anything serves it (23 §6.1, `served`).
 _TOPIC_OUTCOMES = {
@@ -377,3 +389,158 @@ def test_not_executable_rows_keep_their_stub_status_for_every_logged_in_actor(
         if resp.status_code != expected:
             drifted.append(f"{key}: expected {expected}, got {resp.status_code}")
     assert not drifted, f"{actor}: not_executable rows changed behaviour: {drifted}"
+
+
+# -- account scope (E27-X03, #902): role x granted / foreign / absent account ------------------
+
+#: Also in E27-X03's scope: the leverage route (22 tags it `positions`; threat model 4.2) and
+#: the account-scoped topics of E27's data.
+_SCOPE_EXTRA = frozenset({"PUT /positions/{positionId}/leverage", "WS wallet", "WS positions"})
+_ACCOUNT_OF = {"granted": GRANTED, "foreign": FOREIGN, "absent": ABSENT}
+#: A cell of an executed row: a 4xx/5xx always names its problem code (m1); 1xx-3xx may not.
+_EXACT = re.compile(r"^([1-3]\d\d( [a-z_]+)?|[45]\d\d [a-z_]+)$")
+_WS_CELL = re.compile(r"^(sub_ok (granted|foreign|absent)(\+(granted|foreign|absent))*|[a-z_]+)$")
+#: A ticket another row hands its cells or its gap to, resolvable on the board (m3).
+_TICKET = re.compile(r"(E\d\d-[A-Z]\d\d) \(#(\d+)\)")
+_PUBLISHED = OPENAPI_SPEC_PATH.parent / "backlog" / "_tools" / "published.json"
+
+
+def _contract_scope_keys() -> set[str]:
+    """Every 22 operation tagged `exchange-accounts` or whose path is under `/exchange-accounts`
+    (M4: an untagged operation there cannot slip past the guard)."""
+    spec = load_contract()
+    return {
+        f"{m.upper()} {p}"
+        for p, item in spec["paths"].items()
+        for m in HTTP
+        if isinstance(item.get(m), dict)
+        and (
+            "exchange-accounts" in (item[m].get("tags") or [])
+            or p == "/exchange-accounts"
+            or p.startswith("/exchange-accounts/")
+        )
+    }
+
+
+def test_account_scope_rows_cover_every_exchange_accounts_operation_both_ways() -> None:
+    """The coverage guard: a 22 operation tagged `exchange-accounts`, or under that path, with no
+    `account_scope` row (all three roles) fails here, as does a row whose operation is gone."""
+    wanted = _contract_scope_keys() | _SCOPE_EXTRA
+    missing, orphans = sorted(wanted - set(_SCOPE)), sorted(set(_SCOPE) - wanted)
+    assert not missing, "add account_scope rows to matrix.yaml for: " + ", ".join(missing)
+    assert not orphans, "account_scope rows for nothing in scope: " + ", ".join(orphans)
+    for key in (k for k in _SCOPE if k.startswith("WS ")):
+        assert TOPIC_PERMISSIONS[key[3:]][1].value == "granted_accounts", f"{key}: not scoped"
+
+
+def _scope_state(key: str) -> str:
+    return "executed" if key.startswith("WS ") else str(_OPS[key]["state"])
+
+
+def _cells_by_situation(key: str) -> list[tuple[str, dict[str, str]]]:
+    return [
+        (role, cell if isinstance(cell, dict) else {"any": cell})
+        for role, cell in _SCOPE[key]["cells"].items()
+    ]
+
+
+def _resolvable(text: str) -> bool:
+    published = json.loads(_PUBLISHED.read_text("utf-8"))
+    found = _TICKET.findall(text)
+    return bool(found) and all(published[k]["number"] == int(n) for k, n in found)
+
+
+def test_account_scope_rows_have_the_shape_the_runner_reads() -> None:
+    for key, row in _SCOPE.items():
+        if "delegated" in row:
+            assert set(row) == {"delegated"} and _resolvable(row["delegated"]), key
+            continue
+        ws, cells = key.startswith("WS "), row["cells"]
+        assert set(cells) == {"owner", "manager", "viewer"}, f"{key}: needs the three roles"
+        per_account = ws or "{accountId}" in key or "{positionId}" in key
+        assert per_account != isinstance(cells["owner"], str), f"{key}: cell shape"
+        situations = {*_ACCOUNT_OF, "mixed"} if ws else set(_ACCOUNT_OF)
+        for role, by in _cells_by_situation(key):
+            assert not per_account or set(by) == situations, f"{key} {role}: situations"
+        if ws:
+            continue
+        cls, gap = row["step_up"], row.get("step_up_pending")
+        # m2: a class nothing registers yet is valid only beside the gap that names its ticket.
+        assert cls is None or cls in ACTION_CLASSES or gap, f"{key}: {cls} is no action class"
+        assert gap is None or (cls and _resolvable(gap)), f"{key}: step_up_pending"
+
+
+def test_account_scope_cells_are_exact_outcomes_for_their_state() -> None:
+    for key in (k for k, r in _SCOPE.items() if "cells" in r):
+        ws, executed = key.startswith("WS "), _scope_state(key) == "executed"
+        for role, by in _cells_by_situation(key):
+            for value in by.values():
+                vague = value == "admitted" and not executed
+                ok = _WS_CELL.match(value) if ws else (_EXACT.match(value) or vague)
+                assert ok, f"{key} {role}: {value!r} is not an exact outcome for its state"
+
+
+def test_account_scope_cells_hide_whether_an_account_exists() -> None:
+    """KV-I13: a non-Owner's foreign and absent cells are the same outcome."""
+    for key in (k for k, r in _SCOPE.items() if "cells" in r):
+        for role, by in _cells_by_situation(key):
+            if role != "owner" and "foreign" in by:
+                assert by["foreign"] == by["absent"], f"{key} {role}: foreign != absent"
+
+
+def test_only_the_owner_role_holds_keys_and_accounts_write() -> None:
+    """KV-E02: `keys:read`, `keys:manage` and `accounts:write` stay Owner-only, in the contract
+    and in the seed the database is loaded from."""
+    seed = json.loads(RBAC_SEED_PATH.read_text("utf-8"))
+    owner_only = {"keys:read", "keys:manage", "accounts:write"}
+    for source in (load_contract()["x-permissions"], seed["role_permissions"]):
+        leaked = {r: owner_only & set(p) for r, p in source.items() if r != "owner"}
+        assert not any(leaked.values()), f"owner-only permissions leaked: {leaked}"
+
+
+def _scope_cells() -> list[Any]:
+    out: list[Any] = []
+    for key, row in _SCOPE.items():
+        if key.startswith("WS ") or "cells" not in row or _scope_state(key) != "executed":
+            continue
+        for role, cell in row["cells"].items():
+            for where in cell if isinstance(cell, dict) else ("granted",):
+                reason = row.get("pending", {}).get(f"{role}.{where}")
+                marks = [pytest.mark.xfail(strict=True, reason=reason)] if reason else []
+                out.append(pytest.param(key, role, where, id=f"{key}|{role}|{where}", marks=marks))
+    return out
+
+
+def scope_expected(key: str, role: str, where: str) -> str:
+    cell = _SCOPE[key]["cells"][role]
+    return str(cell[where] if isinstance(cell, dict) else cell)
+
+
+def assert_scope_cell(resp: Any, expected: str, cell_id: str) -> None:
+    assert observed(resp) == expected, f"{cell_id}: expected {expected}, got {observed(resp)}"
+
+
+@pytest.mark.parametrize(("key", "role", "where"), _scope_cells())
+def test_account_scope_cell_matches_the_matrix(
+    world: World, key: str, role: str, where: str
+) -> None:
+    started = time.perf_counter()
+    if role == "viewer":
+        grant_viewer_a(world)
+    req = {**_OPS[key].get("request", {}), **_SCOPE[key].get("request", {})}
+    resp = scope_request(world, key, req, role, _ACCOUNT_OF[where])
+    try:
+        assert_scope_cell(resp, scope_expected(key, role, where), f"{key} {role} {where}")
+    except AssertionError:
+        record_cell("account-scope", key, f"{role}.{where}", "fail", started)
+        raise
+    record_cell("account-scope", key, f"{role}.{where}", "pass", started)
+
+
+def test_account_scope_runner_is_not_vacuous_a_flipped_cell_fails(world: World) -> None:
+    """The ticket's self-check: one real cell, its expectation flipped, must fail the check."""
+    key = "POST /exchange-accounts/{accountId}/keys/{keyId}/test"
+    resp = scope_request(world, key, {}, "manager", FOREIGN)
+    assert_scope_cell(resp, "403 forbidden", "control")
+    with pytest.raises(AssertionError):
+        assert_scope_cell(resp, "503 store_unavailable", "flipped")
