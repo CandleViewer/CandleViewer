@@ -57,6 +57,10 @@ EXCLUDED: dict[str, str] = {
 PYTHON_FILES = ("test_*.py", "*_test.py")  # pytest's default; no pytest.ini sets another
 DEFAULT_WEIGHT = 0.1
 WEIGHTS: dict[str, float] = {
+    # #3180, 2026-10-25: 105.08 s by this recipe on a loaded host (1-minute load 10-12; the lower
+    # of two runs), scaled by test_relayroom_scripts.py's 14.85 s against its 3.92 in the same run:
+    # both spend their time starting processes. Re-measure it with the table.
+    "infra/scripts/tests/test_demo_host_owner_first_run.py": 27.74,
     "scripts/tests/test_backlog_validate_check.py": 13.08,
     "scripts/tests/test_event_coverage.py": 6.67,
     "scripts/tests/test_pr_yml_path_filters.py": 6.42,

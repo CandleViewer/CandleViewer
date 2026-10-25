@@ -60,6 +60,15 @@ RUN mkdir -p /var/lib/candleviewer/audit \
     && chown 10001:10001 /var/lib/candleviewer/audit \
     && chmod 0700 /var/lib/candleviewer/audit
 
+# #3180: the mount point of the demo-host overlay's data volume, seeded the same way: /data holds
+# the cold tier's root /data/parquet (CV_PARQUET_ROOT), which the real backend's storage requires
+# and never creates, and the recorder WAL, admin jobs and audit exports it creates beside it.
+# 0700: audit exports carry audit records. Without that volume (the dev stack) /data is part of
+# the read-only root filesystem and nothing writes it.
+RUN mkdir -p /data/parquet \
+    && chown -R 10001:10001 /data \
+    && chmod 0700 /data /data/parquet
+
 WORKDIR /app
 COPY --from=builder --chown=10001:10001 /build/.venv /app/.venv
 COPY --from=builder --chown=10001:10001 /build/candleviewer /app/candleviewer
