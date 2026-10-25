@@ -3656,8 +3656,9 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "denials",
         ("permission",),
         "Permission-check denials decided by auth.scopes.enforce or, once it allowed, by the key "
-        "store's owner gate in api.exchange_keys (both audit rbac.denied), or by the "
-        "admin-area guard, admin.http (audit admin.area_entered, outcome denied).",
+        "store's owner gate in api.exchange_keys, or by the view-as guard for a protective write's "
+        "target, api.view_as_guard (each audits rbac.denied), or by the admin-area guard, "
+        "admin.http (audit admin.area_entered, outcome denied).",
         "AuthzDeniedSpike (>20/10m, ticket)",
         _L,
         "E09",

@@ -34,10 +34,9 @@ from typing import Final, Protocol
 import structlog
 from fastapi import Request
 
-from candleviewer.api.audit_principal import _Identity, _Sessions
+from candleviewer.api.audit_principal import _Identity, _Sessions, identity_snapshot
 from candleviewer.api.view_as_subject import view_as_stamp, view_as_subject
 from candleviewer.auth.errors import AuthError, AuthServiceUnavailable
-from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.view_as import ViewAsPhase
 from candleviewer.oms.errors import StoreUnavailable
@@ -95,7 +94,7 @@ class SessionTradingPrincipalResolver:
             # A context with no stamp raises `ViewAsUnstamped`: neither an `AuthError` nor a
             # `LookupError`, so it reaches `resolve`'s catch and is `StoreUnavailable` (#3085).
             user_id = view_as_subject(request, record)
-            snapshot = await self._identity_of(user_id)
+            snapshot = await identity_snapshot(self._identity, user_id)
         except AuthServiceUnavailable:
             raise  # auth not started: an `AuthError` that is the store's, not a session's
         except (AuthError, LookupError):  # no such session, or no such user
@@ -105,23 +104,6 @@ class SessionTradingPrincipalResolver:
         target = await self._target(request, user_id)
         snapshot = await self._granted(snapshot)
         return TradingPrincipal(session_id=record.id, snapshot=snapshot, target=target)
-
-    async def _identity_of(self, user_id: uuid.UUID) -> PrincipalSnapshot | None:
-        """The user's roles and permissions, or `None` for one not `active` or holding a role
-        outside the system set (fail closed); a missing user raises `LookupError`."""
-        user = await self._identity.user(str(user_id))
-        info = await self._identity.session_info(str(user_id))
-        if user.get("status") != "active":
-            return None
-        codes = {str(code) for code in info.get("permissions", ())}
-        try:
-            return PrincipalSnapshot(
-                user_id=user_id,
-                roles=frozenset(str(role) for role in user.get("roles") or ()),
-                permissions=frozenset(p for p in Permission if p.value in codes),
-            )
-        except ValueError:
-            return None
 
     async def _granted(self, snapshot: PrincipalSnapshot) -> PrincipalSnapshot:
         """`snapshot` with its trade grants, but an Owner's, which are every account. Only the
@@ -144,7 +126,7 @@ class SessionTradingPrincipalResolver:
         ):
             return None
         try:
-            found = await self._identity_of(stamp.target_user_id)
+            found = await identity_snapshot(self._identity, stamp.target_user_id)
         except LookupError:  # no such user any more
             found = None
         if found is None:

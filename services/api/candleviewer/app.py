@@ -122,6 +122,7 @@ from candleviewer.api.deny_by_default import (
     assert_app_routes_declared,
     declared_operations,
     make_deny_undeclared_dependency,
+    rbac_permissions,
 )
 from candleviewer.api.drawings import make_drawings_router
 from candleviewer.api.drawings_models import TOOLS
@@ -1864,6 +1865,9 @@ def create_app(
             protective=protective_writes,
             operations=declared_operations(spec),
             clock=auth_clock or (lambda: datetime.now(UTC)),
+            permissions=rbac_permissions(spec),
+            identity=identity,
+            denials=_LazyAuditEmitter(ctx.audit),
         )
     )
     # #2295: the enrolment-only session reaches five operations; added after (so outside) the
