@@ -75,8 +75,12 @@ class RecorderRuntime:
         sleep: Callable[[float], Awaitable[None]],
         rng: Callable[[], float],
         bounds: RuntimeBounds,
+        on_ready: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
-        """`clock` is monotonic seconds, `rng` a uniform draw in [0, 1) (the backoff's jitter)."""
+        """`clock` is monotonic seconds, `rng` a uniform draw in [0, 1) (the backoff's jitter).
+        `on_ready` runs once, after the startup and before `startup_complete` turns true: it opens
+        what a restored chart never published (S3a finding 1). It is isolated: a raise is logged."""
+        self._on_ready = on_ready
         self._policy, self._sessions, self._writer = policy, sessions, writer
         self._restore_b11, self._seed, self._env = restore_b11, seed, env
         self._start_us, self._bounds = process_start_us, bounds
@@ -219,6 +223,12 @@ class RecorderRuntime:
                 gate_closed_s=int(self._clock() - self._t0),
             )
             return False
+        if self._on_ready is not None:
+            try:
+                async with asyncio.timeout(b.startup_timeout_s):
+                    await self._on_ready()
+            except Exception as exc:  # the startup is over (the gate is open): it is not retried
+                logger().error("recorder_on_ready_failed", error=type(exc).__name__)
         self._done, self._last_error, self._source_deployed = True, None, positions is not None
         logger().info("recorder_startup_done", env=self._env, failed_attempts=self._attempts)
         return True

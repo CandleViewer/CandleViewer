@@ -235,6 +235,10 @@ from candleviewer.exchange.base.instruments import InstrumentsFetcher
 from candleviewer.exchange.base.models import TickerEvent, TradeEvent
 from candleviewer.exchange.base.service import ExchangeBaseService
 
+# Composition root: injects the adapter's topic vocabulary into the recorder's sessions (C-2.2).
+# nosemgrep: cv-adapter-isolation reason=B5-b owner=@CandleViewer/security review=2026-12-31
+from candleviewer.exchange.bybit.public_ws import stream_for_topic
+
 # Composition root: wires the one concrete exchange adapter (C-2.2).
 # nosemgrep: cv-adapter-isolation reason=B5-b owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.service import ExchangeBybitService
@@ -250,6 +254,7 @@ from candleviewer.health_wiring import (
     register_ingestion_probe,
     register_public_ws_probe,
     register_real_probes,
+    register_recorder_probe,
     register_secrets_probe,
     register_write_behind_probe,
 )
@@ -312,13 +317,19 @@ from candleviewer.orderflow.indicators.metrics import export_indicator_metrics
 from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
 from candleviewer.profiles_wiring import wire_profiles
-from candleviewer.recorder.control import StoredRecordingControl
+from candleviewer.recorder.control import RecordingControl, StoredRecordingControl
 from candleviewer.recorder.control_runtime import RecorderWiring, RuntimeRecordingControl
 from candleviewer.recorder.coverage import CoverageService
 from candleviewer.recorder.metrics import current_write_backlog_rows, export_recorder_metrics
 from candleviewer.recorder.policy import PolicyConfig
 from candleviewer.recorder.service import RecorderService
 from candleviewer.recorder.status import RecordingStatusCache
+from candleviewer.recorder_wiring import (
+    ComposedRecorder,
+    build_recorder,
+    policy_config,
+    questdb_sinks,
+)
 from candleviewer.replay.metrics import export_replay_metrics
 from candleviewer.replay.service import ReplayService
 from candleviewer.replay.sessions_service import LANE as REPLAY_LANE
@@ -556,6 +567,14 @@ def bind_recording_runtime(
         return
     control = RuntimeRecordingControl(wiring, config=config, now=lambda: datetime.now(UTC))
     state.recording_control = state.recording_writer = state.recording_runtime = control
+
+
+def recording_writer(state: State) -> RecordingControl | None:
+    """The control the writes route reads per request (`state` is `app.state`): none, so `503`,
+    until the recorder's startup has completed, while its memory still lacks the stored rows and a
+    remove or an unpin would change nothing (SEC-4, #2188). `recording_ready` is read each time."""
+    control: RecordingControl | None = state.recording_writer if state.recording_ready() else None
+    return control
 
 
 def _same_user(value: object, user: uuid.UUID) -> bool:
@@ -2610,19 +2629,38 @@ def create_app(
         make_recording_status_router(recording_status, audit_resolver, _LazyAuditEmitter(ctx.audit))
     )
     # The recorded-set writes: no control has them until the recorder runtime is bound (#2188),
-    # so `recording_writer` stays `None` and every write answers `503` until then.
+    # so `recording_writer` stays `None` and every write answers `503` until then, and after it
+    # until the recorder's startup has completed (`recording_ready`, read per request: SEC-4).
     app.state.recording_writer = None
-    # #492 S9: #2188 S4b's composed recorder (`RecorderWiring`, on the context once it lands)
-    # binds the runtime control here; `None` until then.
-    recorder_config = PolicyConfig(default_retention_days=resolved.recorder_retention_days)
-    bind_recording_runtime(app.state, None, recorder_config)
+    app.state.recording_ready = lambda: False
+    # #2188 S4b: the recorder on the real backend: the policy, the sessions and the writer under
+    # one runtime that the supervisor starts (a request never does), and #492's control over it.
+    # One `PolicyConfig` serves both, so the control's default retention cannot drift from the
+    # policy's.
+    recorder_config = policy_config(resolved)
+    recorder: ComposedRecorder | None = None
+    if _kb_pg is not None and coverage_service is not None and health_pg is not None:
+        repo = SqlAlchemyRecorderRepository(_kb_pg)
+        recorder = build_recorder(
+            resolved, recorder_config, recorded=repo, sessions=repo, counters=repo,
+            rows=SqlAlchemyRecordingReads(_kb_pg), audit=_LazyAuditEmitter(ctx.audit),
+            bus=ctx.bus.bus, budget=app.state.disk_budget, invalidate=coverage_service.invalidate,
+            topics=stream_for_topic, sinks=questdb_sinks(resolved),
+            events=PgSystemEventWriter(health_pg, redact_details=system_event_redactor()),
+        )  # fmt: skip
+        runtime = recorder.runtime
+        ctx.recorder.attach_runtime(runtime)
+        app.state.recording_ready = lambda: runtime.startup_complete
+        register_recorder_probe(health_registry, ctx.recorder.health)
+    app.state.recorder = recorder
+    bind_recording_runtime(app.state, recorder, recorder_config)
 
     async def _recording_elevation(session_id: uuid.UUID | None) -> JSONResponse | None:
         return await require_session_elevation(ctx.auth, session_id, "recorder")
 
     app.include_router(
         make_recording_writes_router(
-            lambda: app.state.recording_writer, audit_resolver, _LazyAuditEmitter(ctx.audit),
+            lambda: recording_writer(app.state), audit_resolver, _LazyAuditEmitter(ctx.audit),
             _recording_elevation, lambda symbol: _catalogue_listed(ctx, symbol),
         )
     )  # fmt: skip

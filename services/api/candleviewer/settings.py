@@ -580,6 +580,13 @@ class Settings(BaseSettings):
     book_depth: int = 200
     recorder_retention_days: int = 30
     recorder_hot_days: int = 7
+    # #2188 `RecordingPolicy` (20-architecture.md §7.2): a chart open this long starts auto-record;
+    # a symbol no trigger holds lingers this long; `CV_RECORDER_AUTORECORD_ENABLED` gates
+    # chart-open recording only, never a position or a manual row; the cap on recorded symbols.
+    recorder_autostart_delay_s: int = Field(default=60, ge=0)
+    recorder_autostop_grace_s: int = Field(default=1800, ge=0)
+    recorder_autorecord_enabled: bool = True
+    recorder_max_symbols: int = Field(default=20, ge=1)
     # E16-T03: StreamWriter spill WAL (bounded; SR-096 — a volume separate from the backend).
     # Empty (default) = `<data dir>/recorder-wal`, data dir = parent of `parquet_root`.
     recorder_wal_dir: str = ""
