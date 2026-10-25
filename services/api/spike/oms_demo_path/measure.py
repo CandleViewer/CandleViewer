@@ -3,10 +3,14 @@
 - `Timings`: each port call's latency, and the venue round trips its HTTP exchanges took at the
   `rest_transport` seam (`recorder.RecordingTransport` adds them to the call in flight through a
   context variable), so our overhead is the call's latency minus its round trips: budget #4's
-  50 ms share (`06-performance-and-load-standard.md` §5.2). M2's key read and fsynced audit
-  append before each signature fall in that overhead (`secrets/broker.py`, `audit/writer.py`),
-  and are also timed on their own: `timed_borrower` wraps the borrower the adapter is handed and
-  times each `sign` call, by the port call in flight (else by M2's purpose): the signing share.
+  50 ms share (`06-performance-and-load-standard.md` §5.2). Each round trip is also kept by its
+  connection, `cold` (a new one: TCP and TLS) or `warm`, and a create's by its kind, a limit
+  opener or a reduce-only close (`rtt_split_ms`, R1C-06); a failed exchange is counted by its
+  class (`failed`, R1C-09), so a timeout is never missing from the record. M2's key read and
+  fsynced audit append before each signature fall in that overhead (`secrets/broker.py`,
+  `audit/writer.py`), and are also timed on their own: `timed_borrower` wraps the borrower the
+  adapter is handed and times each `sign` call, by the port call in flight (else by M2's
+  purpose): the signing share.
 - `ClockOffset`: exchange minus host, from the wallet read's envelope `time` against the
   midpoint of its exchange at the seam; the sample with the smallest round trip wins.
 - `StreamMonitor`: the private stream's items in arrival order: latency from the venue's own
@@ -116,6 +120,8 @@ class Timings:
         self._monotonic = monotonic
         self.port_ms: defaultdict[str, list[float]] = defaultdict(list)
         self.rtt_ms: defaultdict[str, list[float]] = defaultdict(list)
+        self.rtt_split_ms: defaultdict[str, list[float]] = defaultdict(list)
+        self.failed_exchanges: Counter[str] = Counter()
         self.overhead_ms: defaultdict[str, list[float]] = defaultdict(list)
         self.signing_ms: defaultdict[str, list[float]] = defaultdict(list)
 
@@ -133,12 +139,24 @@ class Timings:
             if record.rtts_ms:
                 self.overhead_ms[name].append(max(0.0, elapsed - sum(record.rtts_ms)))
 
-    def exchanged(self, path: str, rtt_ms: float) -> None:
-        """One HTTP exchange at the seam: its RTT by path class, and on the call in flight."""
-        self.rtt_ms[call_class(path)].append(rtt_ms)
+    def exchanged(
+        self, path: str, rtt_ms: float, *, cold: bool = False, kind: str | None = None
+    ) -> None:
+        """One HTTP exchange at the seam: its RTT by path class, by `class:cold|warm`, by its
+        create `kind` (`create_open`, `create_close`) and its `kind:cold|warm`, and on the call
+        in flight."""
+        name, temperature = call_class(path), "cold" if cold else "warm"
+        self.rtt_ms[name].append(rtt_ms)
+        for split in (f"{name}:{temperature}", kind, f"{kind}:{temperature}" if kind else None):
+            if split is not None:
+                self.rtt_split_ms[split].append(rtt_ms)
         record = CURRENT.get()
         if record is not None:
             record.rtts_ms.append(rtt_ms)
+
+    def failed(self, path: str) -> None:
+        """An exchange that ended in a transport failure, by path class."""
+        self.failed_exchanges[call_class(path)] += 1
 
     @asynccontextmanager
     async def signing(self, purpose: Purpose) -> AsyncIterator[None]:
@@ -155,8 +173,13 @@ class Timings:
     def summary(self) -> dict[str, dict[str, dict[str, float]]]:
         every = [ms for values in self.signing_ms.values() for ms in values]
         signing = {k: stats(v) for k, v in sorted(self.signing_ms.items())}
+        names = sorted(set(self.rtt_ms) | set(self.failed_exchanges))
         return {
-            "rtt_ms": {k: stats(v) for k, v in sorted(self.rtt_ms.items())},
+            "rtt_ms": {
+                k: stats(self.rtt_ms.get(k, [])) | {"failed": self.failed_exchanges[k]}
+                for k in names
+            },
+            "rtt_split_ms": {k: stats(v) for k, v in sorted(self.rtt_split_ms.items())},
             "port_ms": {k: stats(v) for k, v in sorted(self.port_ms.items())},
             "overhead_ms": {k: stats(v) for k, v in sorted(self.overhead_ms.items())},
             "signing_ms": signing | {"overall": stats(every)},

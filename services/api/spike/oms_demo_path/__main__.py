@@ -12,7 +12,8 @@ from spike.oms_demo_path.safety import Refused
 
 
 def main(argv: Sequence[str] | None = None, *, read_line: Callable[[str], str] = input) -> int:
-    """The run's exit code: 0 completed, 1 an error, 2 refused (nothing sent)."""
+    """The run's exit code: 0 completed, 1 an error, 2 refused (nothing on the account
+    touched)."""
     cfg = parse(sys.argv[1:] if argv is None else argv)
     try:
         return asyncio.run(run(cfg, read_line=read_line))

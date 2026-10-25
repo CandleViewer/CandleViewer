@@ -19,6 +19,7 @@ from candleviewer.exchange.base.models import (
     AccountRef,
     AmendOrderRequest,
     CancelOrderRequest,
+    Execution,
     Order,
     OrderAck,
     PlaceOrderRequest,
@@ -30,6 +31,8 @@ from candleviewer.oms.order_link import OrderLinkIdParts, OrderPurpose
 from candleviewer.settings import Environment, Settings
 from spike.oms_demo_path import safety
 from spike.oms_demo_path.config import CONFIRMATION, RunConfig
+from spike.oms_demo_path.harness import Links
+from spike.oms_demo_path.scrub import Scrubber
 from tests._corpus import rest
 
 ACCOUNT = AccountRef(
@@ -107,11 +110,11 @@ def position(qty: str, side: str | None = "buy") -> Position:
     )
 
 
-def open_order() -> Order:
+def open_order(link_id: str | None = None, order_id: str = "venue-order-1") -> Order:
     return Order.model_validate(
         {
-            "order_link_id": link(),
-            "exchange_order_id": "venue-order-1",
+            "order_link_id": link() if link_id is None else link_id,
+            "exchange_order_id": order_id,
             "account_id": ACCOUNT.account_id,
             "symbol": "BTCUSDT",
             "side": "buy",
@@ -227,9 +230,9 @@ async def test_guarded_port_refuses_another_symbol_before_anything_is_sent() -> 
     with pytest.raises(safety.Refused, match="BTCUSDT"):
         await guard.place_order(opener(symbol="ETHUSDT"))
     with pytest.raises(safety.Refused, match="BTCUSDT"):
-        await guard.cancel_all(ACCOUNT, "ETHUSDT")
-    with pytest.raises(safety.Refused, match="BTCUSDT"):
-        await guard.cancel_all(ACCOUNT, None)
+        await guard.cancel_order(
+            CancelOrderRequest(account=ACCOUNT, symbol="ETHUSDT", order_link_id=link())
+        )
     assert fake.calls == []
 
 
@@ -308,7 +311,14 @@ async def test_guarded_port_refuses_an_amend_that_removes_the_stop() -> None:
 
 async def test_guarded_port_exposes_no_withdrawal_or_transfer_or_stop_write() -> None:
     guard, _ = guarded()
-    for name in ("set_trading_stop", "set_leverage", "place_batch", "withdraw", "transfer"):
+    for name in (
+        "cancel_all",
+        "set_trading_stop",
+        "set_leverage",
+        "place_batch",
+        "withdraw",
+        "transfer",
+    ):
         assert not hasattr(guard, name)
 
 
@@ -404,61 +414,270 @@ def test_check_audit_dir_refuses_a_relative_path(tmp_path: Path) -> None:
         _check(Path("var/audit/audit.wal"), stack=tmp_path / "audit.wal")
 
 
-# -- shutdown: a signal or an error cancels everything and flattens -------------------------------
+# -- the run's scope and its flatten: only what the run placed and opened (ruling R1C-02 (b)) ----
+
+NOW_US = 1_790_000_000_000_000
 
 
-class _Filling(FakeTradingPort):
-    """A fake whose reduce-only close flattens the position, as the venue's would."""
+def scoped() -> tuple[Links, safety.RunScope]:
+    links = Links(ACCOUNT.account_id, Scrubber())
+    scope = safety.RunScope(links.prefix, ACCOUNT.account_id)
+    scope.start_us = NOW_US - 60_000_000
+    return links, scope
+
+
+def execution(link_id: str, side: str, qty: str, n: int) -> Execution:
+    return Execution.model_validate(
+        {
+            "exec_id": f"exec-{n:04d}",
+            "exchange_order_id": f"venue-fill-{n}",
+            "order_link_id": link_id,
+            "account_id": ACCOUNT.account_id,
+            "symbol": "BTCUSDT",
+            "side": side,
+            "price": Decimal("60000"),
+            "qty": Decimal(qty),
+            "fee": Decimal("0.01"),
+            "fee_rate": Decimal("0.0002"),
+            "fee_currency": "USDT",
+            "is_maker": True,
+            "exec_type": "trade",
+            "closed_pnl": None,
+            "ts_exec": NOW_US,
+            "ts_ingest": NOW_US,
+            "seq": n,
+        }
+    )
+
+
+class _Venue(FakeTradingPort):
+    """A fake with one one-way BTCUSDT position (signed `held`): a reduce-only close fills
+    against it and is listed, as the venue's would; `lists_closes=False` accepts a close and
+    never lists its fill (a slow execution list)."""
+
+    def __init__(self, held: str = "0", *, lists_closes: bool = True) -> None:
+        super().__init__(now_us=lambda: NOW_US)
+        self.held = Decimal(held)
+        self.lists_closes = lists_closes
+        self.n = 100
+        self._show()
+
+    def _show(self) -> None:
+        side = None if self.held == 0 else ("buy" if self.held > 0 else "sell")
+        self.seed_position(position(str(abs(self.held)), side=side))
 
     async def place_order(self, req: PlaceOrderRequest) -> OrderAck:
         ack = await super().place_order(req)
-        if req.reduce_only:
-            self.seed_position(position("0", side=None))
+        closing = (self.held > 0) == (req.side == "sell") and self.held != 0
+        if req.reduce_only and closing and self.lists_closes and ack.exchange_order_id:
+            qty = min(req.qty, abs(self.held))
+            self.n += 1
+            self.seed_execution(execution(req.order_link_id, req.side, str(qty), self.n))
+            self.held += qty if req.side == "buy" else -qty
+            self._show()
+            done = self._open.pop(ack.exchange_order_id)  # a market close: filled, not resting
+            self._history[ack.exchange_order_id] = done.model_copy(
+                update={"state": "filled", "filled_qty": qty, "leaves_qty": Decimal(0)}
+            )
         return ack
 
 
-async def test_flatten_cancels_every_order_and_closes_the_position_reduce_only() -> None:
-    fake = _Filling()
+async def _flatten(
+    guard: safety.GuardedPort, scope: safety.RunScope, links: Links, **options: object
+) -> dict[str, object]:
+    return await safety.flatten(
+        guard,
+        ACCOUNT,
+        scope,
+        links.flatten,
+        venue_now_us=lambda: NOW_US + 60_000_000,
+        sleep=_no_sleep,
+        **options,  # type: ignore[arg-type]  # the keyword options of `flatten`
+    )
+
+
+async def test_flatten_cancels_only_the_runs_own_orders_and_closes_only_its_own_net() -> None:
+    links, scope = scoped()
+    fake = _Venue("0.005")  # the run's 0.002 and a foreign 0.003, netted as on the venue
     guard, _ = guarded(fake)
-    await guard.place_order(opener())
-    fake.seed_position(position("0.002"))
-    report = await safety.flatten(guard, ACCOUNT, lambda: link("flatten"), sleep=_no_sleep)
-    calls = [c.method for c in fake.calls]
-    assert calls.index("cancel_all") < calls.index("positions")
-    closes = [c.request for c in fake.calls if c.method == "place_order"][1:]
-    assert len(closes) == 1
-    assert isinstance(closes[0], PlaceOrderRequest)
-    assert (closes[0].reduce_only, closes[0].order_type, closes[0].side, closes[0].qty) == (
+    guard.scope = scope
+    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
+    fake.seed_execution(execution(link(), "buy", "0.003", 2))  # a foreign fill
+    own, foreign = open_order(links.new(), "venue-own"), open_order(link(), "venue-foreign")
+    for order in (own, foreign):
+        fake.seed_order(order, uid=ACCOUNT.uid)
+    report = await _flatten(guard, scope, links)
+    cancels = [c.request for c in fake.calls if c.method == "cancel_order"]
+    assert [c.order_link_id for c in cancels if isinstance(c, CancelOrderRequest)] == [
+        own.order_link_id
+    ]
+    assert "cancel_all" not in [c.method for c in fake.calls]
+    assert [o.exchange_order_id for o in await fake.open_orders(ACCOUNT)] == ["venue-foreign"]
+    closes = [c.request for c in fake.calls if c.method == "place_order"]
+    assert len(closes) == 1 and isinstance(closes[0], PlaceOrderRequest)
+    assert (closes[0].reduce_only, closes[0].side, closes[0].qty) == (
         True,
-        "market",
         "sell",
         Decimal("0.002"),
     )
-    assert report["flat"] is True
-    assert report["cancel_all_calls"] == 1
-    assert report["flatten_orders"] == 1
-    assert fake.cancel_all_scopes[0][1] == "BTCUSDT"
+    assert fake.held == Decimal("0.003")  # the foreign position, untouched
+    assert report["flat"] is True and report["errors"] == []
+    assert (report["cancelled"], report["own_net_qty"], report["closed_qty"]) == (
+        1,
+        "0.002",
+        "0.002",
+    )
+    assert report["not_ours_left"] == {"open_orders": 1, "venue_position_less_own_net": "0.003"}
 
 
-async def test_flatten_reports_a_position_it_could_not_close() -> None:
-    fake = FakeTradingPort()  # never fills the close
+async def test_flatten_never_closes_more_than_the_run_opened() -> None:
+    links, scope = scoped()
+    fake = _Venue("0.004")
     guard, _ = guarded(fake)
-    fake.seed_position(position("0.001", side="sell"))
-    report = await safety.flatten(guard, ACCOUNT, lambda: link("flatten"), sleep=_no_sleep)
-    assert report["flat"] is False
-    assert report["flatten_orders"] == 3
-    closes = [c.request for c in fake.calls if c.method == "place_order"]
-    assert all(isinstance(r, PlaceOrderRequest) and r.side == "buy" for r in closes)
+    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
+    fake.seed_execution(execution(links.flatten(), "sell", "0.001", 2))  # its own earlier close
+    first = await _flatten(guard, scope, links)
+    again = await _flatten(guard, scope, links)
+    assert (first["own_net_qty"], first["closed_qty"], fake.held) == (
+        "0.001",
+        "0.001",
+        Decimal("0.003"),
+    )
+    assert (again["own_net_qty"], again["flatten_orders"], again["flat"]) == ("0", 0, True)
 
 
-async def test_flatten_survives_a_failing_cancel_all_and_still_closes() -> None:
-    fake = _Filling()
+async def test_flatten_counts_a_close_sent_but_not_yet_listed_and_never_closes_twice() -> None:
+    links, scope = scoped()
+    fake = _Venue("0.002", lists_closes=False)
     guard, _ = guarded(fake)
-    fake.script("cancel_all", RuntimeError("venue down"))
-    fake.seed_position(position("0.002"))
-    report = await safety.flatten(guard, ACCOUNT, lambda: link("flatten"), sleep=_no_sleep)
-    assert report["errors"] == ["cancel_all:RuntimeError"]
-    assert report["flat"] is True
+    guard.scope = scope
+    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
+    report = await _flatten(guard, scope, links)
+    assert [c.method for c in fake.calls].count("place_order") == 1
+    assert report["flat"] is False and report["flatten_orders"] == 1
+
+
+async def test_flatten_leaves_a_net_the_venue_no_longer_holds() -> None:
+    links, scope = scoped()
+    fake = _Venue("0")  # its native stop closed it: the venue holds nothing
+    guard, _ = guarded(fake)
+    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
+    report = await _flatten(guard, scope, links)
+    assert "place_order" not in [c.method for c in fake.calls]
+    assert report["errors"] == ["net_not_held"] and report["flat"] is False
+
+
+async def test_flatten_records_a_failed_read_by_class_and_still_closes() -> None:
+    links, scope = scoped()
+    fake = _Venue("0.002")
+    guard, _ = guarded(fake)
+    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
+    fake.script("open_orders", RuntimeError("venue down"))
+    fake.script("positions", RuntimeError("venue down"))
+    report = await _flatten(guard, scope, links)
+    assert report["errors"] == ["open_orders:RuntimeError", "read:RuntimeError"]
+    assert report["flat"] is True and fake.held == 0
+
+
+async def test_flatten_stops_at_its_deadline() -> None:
+    links, scope = scoped()
+    fake = _Venue("0.002")
+    guard, _ = guarded(fake)
+    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
+    ticks = iter([0.0, 0.0, 41.0, 41.0, 41.0])
+    report = await _flatten(guard, scope, links, monotonic=lambda: next(ticks))
+    errors = report["errors"]
+    assert isinstance(errors, list) and "deadline" in errors and report["flat"] is False
+    assert "place_order" not in [c.method for c in fake.calls]
+
+
+async def test_flatten_stops_at_its_deadline_before_any_cancel() -> None:
+    links, scope = scoped()
+    fake = _Venue("0")
+    guard, _ = guarded(fake)
+    fake.seed_order(open_order(links.new(), "venue-own"), uid=ACCOUNT.uid)
+    ticks = iter([0.0, 41.0, 41.0])
+    report = await _flatten(guard, scope, links, monotonic=lambda: next(ticks))
+    assert report["errors"] == ["deadline", "deadline"] and report["flat"] is False
+    assert [c.method for c in fake.calls] == []
+
+
+async def test_flatten_records_a_cancel_and_a_close_that_raise_and_tries_again() -> None:
+    links, scope = scoped()
+    fake = _Venue("0.002")
+    guard, _ = guarded(fake)
+    guard.scope = scope
+    fake.seed_order(open_order(links.new(), "venue-own"), uid=ACCOUNT.uid)
+    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
+    fake.script("cancel_order", RuntimeError("venue down"))
+    fake.script("place_order", RuntimeError("venue down"))
+    report = await _flatten(guard, scope, links)
+    assert report["errors"] == ["cancel:RuntimeError", "close:RuntimeError"]
+    assert (report["cancelled"], report["flatten_orders"], report["flat"]) == (1, 1, True)
+    assert fake.held == 0 and await fake.open_orders(ACCOUNT) == []
+
+
+async def test_a_close_the_flatten_cancels_no_longer_counts_as_pending() -> None:
+    links, scope = scoped()
+    fake = _Venue("0.002", lists_closes=False)
+    guard, _ = guarded(fake)
+    guard.scope = scope
+    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
+    await _flatten(guard, scope, links)  # its close rests unfilled, pending
+    assert scope.unconfirmed() == Decimal("0.002")
+    fake.lists_closes = True
+    report = await _flatten(guard, scope, links)  # cancels that close, then closes again
+    assert report["cancelled"] == 1 and report["flatten_orders"] == 1 and report["flat"] is True
+    assert scope.unconfirmed() == 0 and fake.held == 0
+
+
+async def test_guarded_port_refuses_an_amend_or_a_cancel_of_another_order() -> None:
+    _, scope = scoped()
+    guard, fake = guarded()
+    guard.scope = scope
+    with pytest.raises(safety.Refused, match="its own"):
+        await guard.cancel_order(
+            CancelOrderRequest(account=ACCOUNT, symbol="BTCUSDT", order_link_id=link())
+        )
+    with pytest.raises(safety.Refused, match="its own"):
+        await guard.amend_order(
+            AmendOrderRequest(
+                account=ACCOUNT, symbol="BTCUSDT", order_link_id=link(), price=Decimal(1)
+            )
+        )
+    assert fake.calls == []
+
+
+def test_the_run_scope_owns_its_prefix_records_no_identifier_and_adopts_a_failed_runs() -> None:
+    links, scope = scoped()
+    mine, theirs = links.new(), link()
+    assert scope.owns(mine) and not scope.owns(theirs) and not scope.owns(None)
+    assert not scope.owns("ext-" + "0" * 32)
+    record = scope.record()
+    assert record["account_digest"] == safety.digest(str(ACCOUNT.account_id))
+    assert mine[: safety.LINK_PREFIX_LEN] not in str(record) and str(ACCOUNT.account_id) not in str(
+        record
+    )
+    later, other = scoped()
+    other.start_us = NOW_US
+    other.adopt(record)
+    assert other.owns(mine) and other.owns(later.new()) and other.start_us == NOW_US - 60_000_000
+    with pytest.raises(safety.Refused, match="no run scope"):
+        other.adopt({"link_prefix_digests": [], "window_start_ms": 1})
+
+
+def test_links_carry_one_prefix_and_keep_the_last_numbers_for_the_flatten(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from spike.oms_demo_path import harness
+
+    links = Links(ACCOUNT.account_id, Scrubber())
+    values = [links.new(), links.flatten(), links.new()]
+    assert len(set(values)) == 3 and {v[: safety.LINK_PREFIX_LEN] for v in values} == {links.prefix}
+    monkeypatch.setattr(harness, "FLATTEN_RESERVE", 3843 - 2)  # three numbers used: none left
+    with pytest.raises(safety.Refused, match="space is spent"):
+        links.new()
+    assert links.flatten().startswith(links.prefix)
 
 
 async def test_shutdown_trips_once_on_a_real_sigterm() -> None:

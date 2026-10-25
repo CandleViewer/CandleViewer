@@ -33,8 +33,8 @@ STACK_AUDIT_VOLUME: Final = "cv-audit-data"
 #: needs no UID, so none is asked for, held or written.
 BUCKET_UID: Final = "spike"
 
-type Mode = Literal["cycles", "soak", "shapes", "retention", "report"]
-MODES: Final[tuple[Mode, ...]] = ("cycles", "soak", "shapes", "retention", "report")
+type Mode = Literal["cycles", "soak", "shapes", "retention", "flatten", "report"]
+MODES: Final[tuple[Mode, ...]] = ("cycles", "soak", "shapes", "retention", "flatten", "report")
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +71,14 @@ class RunConfig:
 
     @property
     def places_orders(self) -> bool:
+        """A mode that places openers: its shutdown runs the scoped flatten once it is armed."""
         return self.mode in ("cycles", "shapes")
+
+    @property
+    def arms(self) -> bool:
+        """A mode that touches orders, so is armed only once its preflight passed (`flatten`,
+        the owner's retry, included: it sends cancels and closes)."""
+        return self.mode in ("cycles", "shapes", "flatten")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -85,7 +92,11 @@ def _parser() -> argparse.ArgumentParser:
     venue.add_argument("--offline", action="store_true", help="the corpus venue (default)")
     venue.add_argument("--demo", action="store_true", help="the exchange's demo host")
     p.add_argument("--i-understand-this-places-demo-orders", dest="understood", action="store_true")
-    p.add_argument("--account-id", type=UUID, help="exchange_accounts.id of the demo account")
+    p.add_argument(
+        "--account-id",
+        type=UUID,
+        help="exchange_accounts.id of the demo account (offline: the synthetic account's id)",
+    )
     p.add_argument("--key-ref", help="api_keys.id of its active key (M2 signs; never the key)")
     p.add_argument("--cycles", type=int, default=MIN_CYCLES)
     p.add_argument("--min-hours", type=float, default=MIN_HOURS)
@@ -100,7 +111,9 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--fill-mode", choices=("join", "cross", "alternate"), default="alternate")
     p.add_argument("--offset-every", type=int, default=25)
     p.add_argument("--since-ms", type=int, help="retention: the earlier run's started_at_ms")
-    p.add_argument("--run-dir", type=Path, help="report: a run's output directory")
+    p.add_argument(
+        "--run-dir", type=Path, help="report: a run's output directory; flatten: the failed run's"
+    )
     p.add_argument("--corpus", type=Path, help="offline: the recorded corpus directory")
     p.add_argument("--stack-audit-wal", default=STACK_AUDIT_WAL)
     p.add_argument("--stack-volume", default=STACK_AUDIT_VOLUME)

@@ -2,9 +2,15 @@
 and the ADR-0006 §Validation addendum template filled with its numbers (`adr-0006-addendum.md`).
 
 The findings PR quotes them: budget #4 judged by its own rule (the three p95s, the signing share
-beside our overhead, the verdict), the RTT, our overhead and the signing time per call class,
-the private stream's latency per kind, parity, the two ordering counts kept apart, the cycle
-outcomes, the soak's idle phase, the error shapes and the retention reading.
+beside our overhead, the verdict, and the create's p95 by connection and by kind), the RTT (with
+the failed exchanges per class), our overhead and the signing time per call class, the private
+stream's latency per kind, parity, the two ordering counts kept apart, the cycle outcomes, the
+soak's idle phase, the error shapes and the retention reading.
+
+What the audit log holds (R1S-05): the harness drives the port directly, so `audit_log` gets one
+`security.credential_borrowed` row per signed request (M2's write-ahead record), not one per
+order action; the order actions are in the scrubbed `events.jsonl`, kept with the run's
+artefacts. The addendum says so, and the findings PR must not claim order-action audit coverage.
 """
 
 from __future__ import annotations
@@ -23,6 +29,20 @@ ADDENDUM: Final = "adr-0006-addendum.md"
 MISSING: Final = "missing"
 NOT_EVIDENCE: Final = "offline corpus venue: not evidence"
 _STATS = ("n", "p50", "p95", "p99", "max")
+#: The audit coverage a run has, and what the findings may not claim (R1S-05).
+AUDIT_NOTE: Final = (
+    "Audit coverage: one `security.credential_borrowed` row per signed request, not one per"
+    " order action (the harness drives the port directly). The order actions are in the"
+    " scrubbed `events.jsonl`, kept with the run's artefacts; the findings PR must not claim"
+    " order-action audit coverage."
+)
+#: The create's p95 split (`budget4.create_rtt_p95_ms_by_split`, R1C-06), as the report says it.
+_SPLIT: Final = (
+    ("create:cold", "cold"),
+    ("create:warm", "warm"),
+    ("create_open", "limit openers"),
+    ("create_close", "reduce-only closes"),
+)
 _GAPS = ("n", "p50", "p95", "max", "over_threshold")
 #: The two ordering counts (`StreamMonitor.ordering_counts`): each its question, never merged.
 _QUESTIONS: Final = {
@@ -83,6 +103,15 @@ def _budget_rows(summary: Mapping[str, Any]) -> list[str]:
     return out
 
 
+def _split_line(summary: Mapping[str, Any]) -> str:
+    split = _of(summary, "budget4", "create_rtt_p95_ms_by_split") or {}
+    cells = [f"{label} {_num(split.get(key))}" for key, label in _SPLIT]
+    return (
+        f"Create RTT p95 by connection and kind (ms): {cells[0]}, {cells[1]}; {cells[2]},"
+        f" {cells[3]}"
+    )
+
+
 def _verdict_line(summary: Mapping[str, Any]) -> str:
     budget = summary.get("budget4", {})
     tail = "" if budget.get("evidence") else f" ({NOT_EVIDENCE})"
@@ -95,7 +124,19 @@ def _budget(summary: Mapping[str, Any]) -> list[str]:
         return []
     rule = f"Rule: {_num(budget.get('rule'))}"
     rows = _budget_rows(summary)
-    return ["### Budget #4 (create)", "", *rows, "", rule, "", _verdict_line(summary), ""]
+    split = _split_line(summary)
+    return [
+        "### Budget #4 (create)",
+        "",
+        *rows,
+        "",
+        split,
+        "",
+        rule,
+        "",
+        _verdict_line(summary),
+        "",
+    ]
 
 
 def _ordering_counts(private: Mapping[str, Any]) -> list[str]:
@@ -127,14 +168,16 @@ def _idle_phase(idle: object) -> list[str]:
 def render(run_dir: Path) -> str:
     summary = _load(run_dir)
     venue = "offline corpus venue" if summary.get("offline") else "demo venue"
-    lines = [
-        f"## E29-K01 harness run: {summary.get('mode')} ({venue})",
-        "",
-        f"Ended: {summary.get('shutdown', {}).get('reason', summary.get('refused', 'n/a'))}",
-        "",
-    ]
+    ended = summary.get("shutdown", {}).get("reason", summary.get("refused", "n/a"))
+    lines = [f"## E29-K01 harness run: {summary.get('mode')} ({venue})", "", f"Ended: {ended}", ""]
+    if summary.get("outcome") == "refused":  # ruling R1C-02 (a): nothing touched, and why
+        lines += [f"Refused, nothing touched: {summary.get('refused')}", ""]
     lines += _budget(summary)
-    lines += _table("Venue RTT at the seam (ms)", summary.get("rtt_ms", {}), _STATS)
+    rtt = summary.get("rtt_ms", {})
+    lines += _table("Venue RTT at the seam (ms)", rtt, (*_STATS, "failed"))
+    lines += _table(
+        "Venue RTT by connection and kind (ms)", summary.get("rtt_split_ms", {}), _STATS
+    )
     lines += _table("Port latency (ms)", summary.get("port_ms", {}), _STATS)
     lines += _table("Our overhead, port minus RTT (ms)", summary.get("overhead_ms", {}), _STATS)
     signing = summary.get("signing_ms", {})
@@ -178,7 +221,7 @@ def _addendum_budget(summary: Mapping[str, Any], offline: bool) -> list[str]:
     budget = summary.get("budget4", {})
     lines = [_heading("Budget #4 (`06` §5.2)", offline), ""]
     lines += [f"Rule (#843, agreed up front): {_num(budget.get('rule'))}", ""]
-    lines += [*_budget_rows(summary), "", _verdict_line(summary), ""]
+    lines += [*_budget_rows(summary), "", _split_line(summary), "", _verdict_line(summary), ""]
     return lines
 
 
@@ -301,6 +344,7 @@ def addendum(run_dir: Path) -> str:
     if offline:
         lines += [f"**Offline run: every number below comes from {venue}; offline numbers"]
         lines += ["are never evidence. The demo host's run replaces them.**", ""]
+    lines += [f"Note: {AUDIT_NOTE}", ""]
     lines += _addendum_budget(summary, offline)
     lines += _addendum_counts(summary, offline)
     lines += _addendum_soak(summary, offline)

@@ -21,6 +21,7 @@ something without a change, the gap is listed at the end with its workaround.
 | `soak`      | The private stream open for `--hours` (24 for the ticket), no orders: dials, `auth` grants and refusals, pongs and heartbeats, `down`s, gaps, the longest silence. The offset is re-measured every 10 minutes. Its idle phase is a block of its own (below).                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `shapes`    | The duplicate `orderLinkId` reply and the `10002` reply (below); `10018` is never provoked.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `retention` | On day 8 or later of a `cycles` run: its order history from `--since-ms` (its `started_at_ms`), by state and age (24 §8.3 rule 6).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `flatten`   | The owner's recovery when a run's shutdown flatten failed: it adopts that run's scope from its summary (`--run-dir`) and cancels and closes only that run's own orders and fills (below). The same consent flags and typed confirmation; no floors.                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `report`    | The tables of a run, from its scrubbed `summary.json` (`--run-dir`), and `adr-0006-addendum.md` in `--out`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 The order size is `--qty-multiple` minimum quantities, 2 by default: BTCUSDT's minimum is one
@@ -71,21 +72,42 @@ Pure logic is also tested against `FakeTradingPort` (`tests/test_safety.py`, `te
 - `Settings.environment` must be `demo` (C-2.11); the adapter's demo entries must be the pinned
   allow-list (`https://api-demo.bybit.com`, `wss://stream-demo.bybit.com/v5/private`); the
   recording transport refuses any other host and the recording connector any other URL, before
-  anything leaves. A proxy variable (`HTTP(S)_PROXY`, `ALL_PROXY`) refuses the run: httpx would
-  mount the proxy ahead of the adapter's transport and bypass the seam.
+  anything leaves. A proxy variable (`HTTP(S)_PROXY`, `ALL_PROXY`) refuses the run. httpx mounts
+  an environment proxy only when no transport is given (`trust_env` and no `transport`), and the
+  harness gives the adapter's account clients its recording transport, so that seam cannot be
+  bypassed. The check still matters for the adapter's `public_rest_client` (the reference price
+  and the instrument read: no transport is passed there) and for production, which passes none.
 - `--demo` needs `--i-understand-this-places-demo-orders`, `--account-id` (the
   `exchange_accounts.id`), `--key-ref` (the `api_keys.id`), the ticket's floors, and the typed
   confirmation `PLACE DEMO ORDERS`. The harness never holds a secret and needs no UID (the
   governor's bucket label is a constant; `AccountRef.uid` is never sent).
-- An online run refuses to start with an open order or a position on the account.
+- **A run that touches orders is armed only after its preflight** (ruling R1C-02 (a)): the size
+  limits set from the instrument read, the account flat (no open order, no position), the offset
+  measured. If anything fails first (an account not flat, the limits unset, a failed instrument
+  read, a failed key check, any error, composition included), the run is `refused` and touches
+  nothing on the account: no cancel, no close. The summary's `outcome` is `refused`, `refused`
+  names the reason and the `shutdown` block shows no action (`action: none`); the exit code is 2.
 - BTCUSDT only; no order above `--max-qty-multiple` minimums or off the quantity step.
 - **Every position-opening order carries a native `stop_loss` on the protective side** (C-2.6);
   a close is a reduce-only market order with no stop (the venue refuses one), so it never opens;
   no amend removes or zeroes a stop. `GuardedPort` is the only trading surface: no batch,
   leverage, stop write, withdrawal or transfer (C-2.8; the adapter has no such endpoint).
-- SIGINT, SIGTERM or an unhandled error ends the mode, then `cancel_all` (BTCUSDT, plain orders)
-  and a reduce-only flatten run before M2 and audit stop; the summary's `shutdown` records the
-  reason and what the flatten did. Three venue failures in a row end a `cycles` run the same way.
+- **Once armed, the shutdown flatten is scoped to the run's own state** (ruling R1C-02 (b)).
+  Every `orderLinkId` the run sends carries its own prefix (`cvd-` and one trade group per run,
+  `harness.Links`), and its `RunScope` keeps the fills of those orders. SIGINT, SIGTERM or an
+  unhandled error ends the mode, then, before M2 and audit stop, the flatten cancels only the
+  open orders carrying the run's prefix, one by one (never a cancel-all), and closes, reduce-only,
+  only the quantity the run's own fills hold open (re-read from the execution list over the run's
+  window), never more than the venue's position on that side. It never flattens the account: a
+  foreign order or position is left and counted (`shutdown.not_ours_left`). The guard refuses an
+  amend or a cancel of any order not the run's. The flatten has 40 s in all, inside the
+  container's 60 s grace. Three venue failures in a row end a `cycles` run the same way.
+- The venue keeps one one-way position per symbol, so a foreign position nets with the run's own:
+  a run's sell against a foreign long reduces that long, and undoing it would open a position.
+  The flatten never opens one: it reports the run's net it could not close (`net_not_held`) and
+  leaves it. The preflight's flat check and "No manual trading on that demo account during a
+  run." keep this from arising; a native stop's or a liquidation's close is the venue's own (no
+  prefix), so it is not in the run's fills either, and the same cap applies.
 
 ## Audit: a WAL of its own (decided, brief item 2)
 
@@ -113,6 +135,14 @@ The harness runs **beside** cv-api, with its own audit WAL; cv-api keeps running
 - Never delete `cv-spike-audit` before its WAL drained into Postgres: the summary's `audit`
   shows `buffer_depth` at exit; a WAL left undrained is replayed by the next harness start on
   the same volume (C-2.9).
+- **What the audit log holds** (R1S-05): the harness drives the `TradingPort` directly (#843
+  measures the venue, not the OMS), so `audit_log` gets one `security.credential_borrowed` row
+  per signed request, not one per order action (M2's write-ahead record, with its purpose and
+  the message's hash). A harness action name would need a catalogue entry in `candleviewer/`,
+  which this spike does not change. The order actions (each place, amend, drive, cancel and
+  close, with its outcome) are in the scrubbed `events.jsonl`, which is kept with the run's
+  artefacts. The findings PR must not claim order-action audit coverage; the ADR-0006 addendum
+  template carries the same note.
 
 ## M2: it only opens what exists (brief item 1)
 
@@ -145,15 +175,39 @@ signatures and `args` are dropped with their key; `auth` frames are dropped whol
 cleaned of every registered value (the account and key ids given, each request's key id and
 signature, every identifier any record has carried, the UID a push id leads with); the final text
 is re-checked and refused (never written) if anything registered is left. The process's own log
-(JSON on stderr) goes through the same scrubber. The fixture candidates are reviewed before
-anything reaches `packages/fixtures`, in the findings PR.
+(JSON on stderr) goes through the same scrubber; online, a mode's failure is logged as its class
+and the adapter's bounded `exchange_ret_code` only, never a traceback (whose text could carry a
+value nothing registered), which is kept for `--offline` runs (R1S-06). The fixture candidates
+are reviewed before anything reaches `packages/fixtures`, in the findings PR.
+
+- **Every key id and signature is registered** before its request leaves, REST and stream alike,
+  so neither reaches any output, that exchange's or a later one's (R1S-01).
+- **The UID** is learnt from both push-id forms the venue uses: `<uid>_<symbol>_<seq>`
+  (`execution`) and `<uid><uuid>` (`order`, `position`, `wallet`: the UID is what precedes the
+  36-character UUID; a leading run of digits would take the UUID's own leading digits with it).
+  A push id of neither form that leads with 7 or more digits teaches that run (R1S-02).
+- **Off the receive path** (R1C-03): an event, a private frame and a fixture candidate are queued
+  as they are handed over, and a writer task scrubs and writes them, one per turn of the loop,
+  in the order they came, so the private socket's `recv` and the port's calls never pay for a
+  scrub (else a push's measured latency would include its own scrub). The queue holds 10 000
+  items; past that an item is dropped and counted (`summary.outputs.dropped_by_bound`), never
+  waited for. The scrub itself costs O(length of the text) whatever the number of registered
+  values (indexed by their first 6 characters): one event scrubs in under 1 ms with 5000
+  registered (`tests/test_lenses.py`, a `perf` test).
 
 ## Measurements (brief item 5)
 
-- **RTT per call class** (create, amend, cancel, cancel-all, execution list, reads): at the
-  `rest_transport` seam, from send to the whole reply, on the monotonic clock. **Our overhead** is
-  each port call's latency minus the RTTs of its exchanges: it holds M2's key read and the
-  fsynced audit append before each signature, the governor and the parse (budget #4's <=50 ms).
+- **RTT per call class** (create, amend, cancel, execution list, reads): at the
+  `rest_transport` seam, from send to the whole reply, on the monotonic clock, with the
+  exchanges that failed (a timeout, a reset) counted per class (`summary.rtt_ms.<class>.failed`,
+  R1C-09). Each exchange records how long the seam had idled before it (`idle_s`): past httpx's
+  5 s keep-alive its connection was a new one, TCP and TLS included (`cold`), else `warm`; a
+  create is told apart as a limit opener or a reduce-only close. `summary.rtt_split_ms` holds
+  each class by `cold`/`warm` and the create by kind (`create_open`, `create_close`), and the
+  budget block prints the create's p95 by both (R1C-06): the cycles are paced 72 s apart, so an
+  opener's RTT is usually cold and a close's warm. **Our overhead** is each port call's latency
+  minus the RTTs of its exchanges: it holds M2's key read and the fsynced audit append before
+  each signature, the governor and the parse (budget #4's <=50 ms).
 - **The signing share**, on its own: the borrower `compose` hands `ExchangeBybitService` is
   wrapped (`measure.timed_borrower`, offline over the in-memory M2 the same way), and each M2
   `sign` call is timed: the key read, the fsynced audit append and the MAC. The wrapper passes
@@ -176,9 +230,13 @@ anything reaches `packages/fixtures`, in the findings PR.
   every 10 minutes of a soak. It feeds the port (`clock_offset_ms`), so REST and `auth` are signed
   on the exchange's clock.
 - **Private-stream latency**: `ts_ingest + offset - venue time` per kind (`execTime` for
-  executions, `updatedTime` for orders and positions, the push's `creationTime` for all).
+  executions, `updatedTime` for orders and positions, the push's `creationTime` for all). A
+  value below 0 is the offset's own uncertainty; `metrics.prom` keeps it as the summary does.
 - **Parity**: execution ids on the stream against `GET /v5/execution/list` per cycle and over the
-  whole run: `rest_only` (target zero) and `stream_only`; `execution.fast` separately.
+  whole run: `rest_only` (target zero) and `stream_only`; `execution.fast` separately. Each
+  window's ends are on the exchange's clock (host plus the measured offset), widened by the
+  offset's own uncertainty, never a fixed lead (R1C-11); the offline venue pages its lists by
+  the request's `limit`, as the venue does (R1C-08).
 - **Ordering** (23 §S5): an execution that arrives when an order event has already reported its
   fill.
 - **Two ordering counts, kept apart** (`summary.private.ordering_counts`): "Execution before its
@@ -220,8 +278,9 @@ anything reaches `packages/fixtures`, in the findings PR.
 
 ## Host runbook (the demo host of #3180)
 
-The commands target #3180's proposed shape; every line marked **CHECK #3180** is to be confirmed
-when it merges. Never read, print or copy a secret file, and never run `docker compose config`
+The commands target #3180's proposed shape, its demo-host overlay
+`infra/compose/docker-compose.demo-host.yml` (named in #3180's comment; its branch is not pushed
+yet); every line marked **CHECK #3180** is to be confirmed when it merges. Never read, print or copy a secret file, and never run `docker compose config`
 (it prints the resolved environment, the DSN included).
 
 **For the whole of every run:**
@@ -235,7 +294,11 @@ when it merges. Never read, print or copy a secret file, and never run `docker c
 `api_keys.id` (`<KEY_ID>`); the coordinator called the window; the bench runner is idle
 (`systemctl status 'actions.runner.*'` shows no job, and the [BENCH-BUSY] thread is quiet: a
 running bench leg finishes first, none starts during the window; RTT beside a bench leg is not
-evidence).
+evidence). **No KEK rotation (`CV_KEK_PREV_HANDLE` set), key rotation or revoke during a run**:
+the harness's M2 loads one KEK when it starts (it refuses to start inside a rotation window), and
+the run signs with the one key it was given, so a KEK re-wrap, a rotation or a revoke mid-run
+strands its signing: every signed request, the shutdown flatten's included, then fails closed
+(the native stop on each opener stays the backstop, and `flatten` retries once the key is back).
 
 1. **The spike checkout** at `<spike>` on `spike/oms-demo-path`, rebased onto the pinned sha if
    it differs from this branch's base, with its offline gates re-run (README "Offline"); the
@@ -246,7 +309,7 @@ evidence).
    ```sh
    cd <stack>/infra/compose
    docker compose -p cv-demo -f docker-compose.yml -f docker-compose.vps.yml \
-     -f <3180 overlay> --profile core build api
+     -f docker-compose.demo-host.yml --profile core build api
    ```
 
 3. **The output directory**, owned by the container's uid:
@@ -257,7 +320,8 @@ evidence).
    ```sh
    export CV_SPIKE_SRC=<spike>/services/api/spike CV_SPIKE_OUT=/srv/cv-spike/out
    SPIKE="docker compose -p cv-demo -f docker-compose.yml -f docker-compose.vps.yml \
-     -f <3180 overlay> -f <spike>/services/api/spike/oms_demo_path/docker-compose.spike.yml \
+     -f docker-compose.demo-host.yml \
+     -f <spike>/services/api/spike/oms_demo_path/docker-compose.spike.yml \
      --profile spike run --rm --no-deps spike"
    IDS="--demo --i-understand-this-places-demo-orders --account-id <ACCOUNT_ID> --key-ref <KEY_ID>"
    ```
@@ -280,11 +344,29 @@ evidence).
    Follow a run with `tail -f /srv/cv-spike/out/<run>/events.jsonl` (scrubbed).
 
 6. **Stop**: Ctrl-C in its terminal (SIGINT), or `docker kill --signal SIGTERM <container>`: the
-   harness cancels every BTCUSDT order, closes any position reduce-only and writes its summary
-   (`stop_grace_period` 60 s). If `summary.json` shows `shutdown.flat: false`, or there is no
-   summary, close the position in the venue's web UI; its native stop protects it meanwhile; the
-   next run's preflight refuses until the account is flat.
-7. **Report**: the tables on stdout and `adr-0006-addendum.md` (the §Validation template, filled)
+   harness cancels the run's own open orders, closes reduce-only what its own fills hold open,
+   and writes its summary (the flatten has 40 s, inside `stop_grace_period` 60 s). It touches
+   nothing it did not place. The summary is written provisionally when the run is armed and
+   again before that flatten, with the run's scope (`run_scope`: digests of its link prefix and
+   account, and its window start), so even a run killed past the grace period leaves both. A
+   refused run (`outcome: refused`) touched nothing: read `refused`, fix it, start again.
+7. **Flatten** (the owner's recovery when a run's shutdown flatten failed: `shutdown.flat: false`,
+   or a run killed with only its provisional summary): an audited, M2-signed retry, scoped to the
+   failed run as its shutdown was. It adopts that run's scope from its summary, refuses another
+   account's, cancels that run's own open orders and closes what its own fills hold open, never
+   the account; the same consent flags and typed confirmation, no floors. Its native stops
+   protect the position meanwhile.
+
+   ```sh
+   $SPIKE flatten $IDS --run-dir /var/lib/candleviewer/spike-out/<failed run> \
+     --out /var/lib/candleviewer/spike-out/flatten-<yyyymmdd>
+   ```
+
+   If its summary shows `flatten.flat: false` with `net_not_held`, the run's net is netted into a
+   position someone else holds (see Safety): close it in the venue's web UI. The next run's
+   preflight refuses until the account is flat.
+
+8. **Report**: the tables on stdout and `adr-0006-addendum.md` (the §Validation template, filled)
    in `--out`, then copy `/srv/cv-spike/out/<run>` off the host for the findings PR (the fixture
    candidates are reviewed there first):
 
@@ -293,22 +375,24 @@ evidence).
      --run-dir /var/lib/candleviewer/spike-out/<run>
    ```
 
-8. **Keep `cv-spike-audit`** until each summary's `audit.buffer_depth` is 0.
+9. **Keep `cv-spike-audit`** until each summary's `audit.buffer_depth` is 0.
 
 ## Production gaps found (none changed here)
 
-| Gap                                                                                               | Workaround here / follow-up                                                                                                                                                                                                                                                                     |
-| ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The port has no ticker, instrument or server-time read (`trading.ENDPOINTS`)                      | Reference price and filters through the adapter's own unsigned public client on the live public host (`public_rest_client`, as production reads demo's market data), two `GET` paths only; the offset from the signed wallet read's envelope. Follow-up only if the OMS needs a demo-host price |
-| `compose run api` inherits the stack's audit volume, WAL path, lane-key secret and static IP      | A dedicated `spike` service with volumes of its own (`docker-compose.spike.yml`); the harness refuses the stack's WAL directory                                                                                                                                                                 |
-| M2's start opens the export signing keys and may destroy, generate or re-wrap them                | `export_keys=None`; `prove_kek_possession` first; no previous KEK handle                                                                                                                                                                                                                        |
-| `SecretsService.start(ctx)` is typed `AppContext`                                                 | `cast` of a namespace holding `settings` and the gate (the M2 tests' pattern)                                                                                                                                                                                                                   |
-| The service's factory gives the streams and the port no `sleep`/`now_us` seam                     | Virtual-time tests build `BybitTradingPort` and `PrivateStreams` directly; the CLI runs in real time                                                                                                                                                                                            |
-| `order_submit_seconds` is planned (E29) and there is no private-stream latency name               | Registered from its catalogue entry here; `spike_*` names; a catalogue follow-up if Grafana panels want them                                                                                                                                                                                    |
-| The port surfaces a duplicate's code and text only                                                | The recording transport keeps the whole reply                                                                                                                                                                                                                                                   |
-| A `10018` cannot be provoked under the governor                                                   | Follow-up: capture in a sanctioned window, or accept the documented shape                                                                                                                                                                                                                       |
-| No reserve for stop and cancel calls yet (E34-T02)                                                | Low pacing (one cycle every 72 s at 200 over 4 h)                                                                                                                                                                                                                                               |
-| A flatten needs M2 and audit (every borrow is audited first, fail closed)                         | The native stop is the backstop; the runbook's step 6                                                                                                                                                                                                                                           |
-| httpx mounts an environment proxy ahead of the adapter's transport                                | The harness refuses a proxy variable (the production adapter has the same exposure; worth a note to E08)                                                                                                                                                                                        |
-| `audit.lane` is a façade over the writer, not `LaneNotWired`, once a writer runs with no lane key | Tests assert `lane_parts()` has no lane instead                                                                                                                                                                                                                                                 |
-| `FakeTradingPort.seed_order` keeps a stale open row when it seeds a terminal state                | The fake-backed cycle test drives partial fills only; full fills run through the corpus venue                                                                                                                                                                                                   |
+| Gap                                                                                                                   | Workaround here / follow-up                                                                                                                                                                                                                                                                     |
+| --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The port has no ticker, instrument or server-time read (`trading.ENDPOINTS`)                                          | Reference price and filters through the adapter's own unsigned public client on the live public host (`public_rest_client`, as production reads demo's market data), two `GET` paths only; the offset from the signed wallet read's envelope. Follow-up only if the OMS needs a demo-host price |
+| `compose run api` inherits the stack's audit volume, WAL path, lane-key secret and static IP                          | A dedicated `spike` service with volumes of its own (`docker-compose.spike.yml`); the harness refuses the stack's WAL directory                                                                                                                                                                 |
+| M2's start opens the export signing keys and may destroy, generate or re-wrap them                                    | `export_keys=None`; `prove_kek_possession` first; no previous KEK handle                                                                                                                                                                                                                        |
+| `SecretsService.start(ctx)` is typed `AppContext`                                                                     | `cast` of a namespace holding `settings` and the gate (the M2 tests' pattern)                                                                                                                                                                                                                   |
+| The service's factory gives the streams and the port no `sleep`/`now_us` seam                                         | Virtual-time tests build `BybitTradingPort` and `PrivateStreams` directly; the CLI runs in real time                                                                                                                                                                                            |
+| `order_submit_seconds` is planned (E29) and there is no private-stream latency name                                   | Registered from its catalogue entry here; `spike_*` names; a catalogue follow-up if Grafana panels want them                                                                                                                                                                                    |
+| The port surfaces a duplicate's code and text only                                                                    | The recording transport keeps the whole reply                                                                                                                                                                                                                                                   |
+| A `10018` cannot be provoked under the governor                                                                       | Follow-up: capture in a sanctioned window, or accept the documented shape                                                                                                                                                                                                                       |
+| No reserve for stop and cancel calls yet (E34-T02)                                                                    | Low pacing (one cycle every 72 s at 200 over 4 h)                                                                                                                                                                                                                                               |
+| A flatten needs M2 and audit (every borrow is audited first, fail closed)                                             | The native stop is the backstop; `flatten` (the runbook's step 7) retries it, audited and scoped                                                                                                                                                                                                |
+| The port audits signings, not order actions (the OMS will audit those)                                                | One `security.credential_borrowed` row per signed request; the order actions in `events.jsonl`; the findings claim no order-action audit coverage                                                                                                                                               |
+| The venue's one-way position nets a foreign position with the run's own                                               | The flatten never opens one: `net_not_held` is reported, the runbook's step 7 says what to do                                                                                                                                                                                                   |
+| httpx mounts an environment proxy for a client built without a transport (`public_rest_client`; production's clients) | The harness refuses a proxy variable; its account clients get the recording transport, so no proxy is mounted there (a note to E08 for the clients built without one)                                                                                                                           |
+| `audit.lane` is a façade over the writer, not `LaneNotWired`, once a writer runs with no lane key                     | Tests assert `lane_parts()` has no lane instead                                                                                                                                                                                                                                                 |
+| `FakeTradingPort.seed_order` keeps a stale open row when it seeds a terminal state                                    | The fake-backed cycle test drives partial fills only; full fills run through the corpus venue                                                                                                                                                                                                   |

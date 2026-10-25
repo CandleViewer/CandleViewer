@@ -7,6 +7,13 @@ public client (`ExchangeBybitService.public_rest_client`, the live public host, 
 reads demo's market data: demo has no public feed), limited to two `GET` paths and carrying no
 key; offline, the corpus. The clock offset comes from the signed wallet read's envelope `time`,
 timed at the seam (`ClockOffset`).
+
+A mode that touches orders runs `preflight` first: the size limits set, the account flat, the
+offset measured; only then is the run armed (`arm`). Until it is, nothing it does touches the
+account, and the shutdown touches nothing either (ruling R1C-02 (a)). Every `orderLinkId` the run
+sends carries its own prefix (`Links`, one trade group per run), and its `RunScope` keeps the
+fills of those orders, so the shutdown flatten cancels and closes only what the run itself
+placed and opened (ruling R1C-02 (b)).
 """
 
 from __future__ import annotations
@@ -21,15 +28,29 @@ from typing import TYPE_CHECKING, Any, Final, Protocol
 from uuid import uuid4
 
 from candleviewer.domain.primitives import AccountId, GroupId
-from candleviewer.exchange.base.models import AccountRef, Order, PrivateEvent, PrivateStreamStatus
+from candleviewer.exchange.base.models import (
+    AccountRef,
+    Execution,
+    Order,
+    PrivateEvent,
+    PrivateStreamStatus,
+)
 from candleviewer.exchange.bybit.instruments import parse_instrument
 from candleviewer.exchange.bybit.trades import RECENT_TRADE_PATH, recent_trades_fetcher
 from candleviewer.observability.context import spawn
-from candleviewer.oms.order_link import OrderLinkIdParts, OrderPurpose
+from candleviewer.oms.order_link import SEQ_MAX, OrderLinkIdParts, OrderPurpose
 from spike.oms_demo_path.config import SYMBOL
 from spike.oms_demo_path.measure import ClockOffset, StreamMonitor
 from spike.oms_demo_path.outputs import RunOutputs
-from spike.oms_demo_path.safety import GuardedPort, Refused, Shutdown, check_flat
+from spike.oms_demo_path.safety import (
+    LINK_PREFIX_LEN,
+    GuardedPort,
+    Refused,
+    RunScope,
+    Shutdown,
+    check_flat,
+    flatten,
+)
 from spike.oms_demo_path.scrub import Scrubber
 
 if TYPE_CHECKING:
@@ -42,6 +63,9 @@ _PUBLIC_PATHS: Final = frozenset({RECENT_TRADE_PATH, INSTRUMENTS_PATH})
 WALLET_PATH: Final = "/v5/account/wallet-balance"
 #: The stream's first `resyncing` (its subscriptions acknowledged), at most this long.
 STREAM_READY_S: Final = 30.0
+#: The `seq2` values kept for the flatten's closes: past `SEQ_MAX` minus these, no other order is
+#: given a link (the run's `orderLinkId` space is one trade group's).
+FLATTEN_RESERVE: Final = 100
 
 
 class GetPublic(Protocol):
@@ -77,22 +101,36 @@ class PublicReads:
 
 
 class Links:
-    """Our own `orderLinkId`s (24 §8.3), a fresh trade group each, each registered with the
-    scrubber before it is sent, so no output carries one."""
+    """Our own `orderLinkId`s (24 §8.3), all in one trade group of the run's own, numbered by
+    `seq2`, so each carries the run's prefix (`prefix`: `cvd-` and the group); each registered
+    with the scrubber before it is sent, so no output carries one. The last `FLATTEN_RESERVE`
+    numbers are kept for the flatten's closes."""
 
-    def __init__(self, account_id: AccountId, scrubber: Scrubber) -> None:
+    def __init__(
+        self, account_id: AccountId, scrubber: Scrubber, group: GroupId | None = None
+    ) -> None:
         self._account_id = account_id
         self._scrubber = scrubber
+        self._group = GroupId(uuid4()) if group is None else group
+        self._seq = 0
+        self.prefix = self._render(0, "entry")[:LINK_PREFIX_LEN]
 
-    def new(self, purpose: OrderPurpose = "entry") -> str:
-        value = OrderLinkIdParts.generate(
+    def _render(self, seq: int, purpose: OrderPurpose) -> str:
+        return OrderLinkIdParts.generate(
             mode="exchange",
             environment="demo",
-            group_id=GroupId(uuid4()),
+            group_id=self._group,
             account_id=self._account_id,
-            seq=0,
+            seq=seq,
             purpose=purpose,
         ).value
+
+    def new(self, purpose: OrderPurpose = "entry") -> str:
+        limit = SEQ_MAX if purpose == "flatten" else SEQ_MAX - FLATTEN_RESERVE
+        if self._seq > limit:
+            raise Refused("the run's orderLinkId space is spent: start another run")
+        value = self._render(self._seq, purpose)
+        self._seq += 1
         self._scrubber.known("link", value)
         return value
 
@@ -120,10 +158,16 @@ class Harness:
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
     now_us: Callable[[], int] = _wall_us
     monotonic: Callable[[], float] = time.monotonic
+    #: Called once the run is armed (`run.py` writes the provisional summary then).
+    on_armed: Callable[[], None] | None = None
     links: Links = field(init=False)
+    scope: RunScope = field(init=False)
+    armed: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
         self.links = Links(self.account.account_id, self.scrubber)
+        self.scope = RunScope(self.links.prefix, self.account.account_id, self.monotonic)
+        self.port.scope = self.scope
         if self.monitor is None:
             self.monitor = StreamMonitor(self.offset, self.monotonic)
 
@@ -134,11 +178,47 @@ class Harness:
             raise RuntimeError("no stream monitor")
         return monitor
 
+    def venue_now_us(self, *, slack: int) -> int:
+        """Now on the exchange's clock (host plus the measured offset), as `execTime` reads,
+        moved by `slack` times the offset's own uncertainty: half its best round trip, plus the
+        1 ms the venue's whole-ms `time` truncates. A window read from the venue is widened by
+        it at both ends (`slack=-1` at its start, `+1` at its end), so none of its executions
+        falls outside it (R1C-11: no fixed lead)."""
+        rtt = self.offset.best_rtt_ms or 0.0
+        return self.now_us() + (self.offset.value or 0) * 1000 + slack * round((1 + rtt / 2) * 1000)
+
     async def preflight(self) -> None:
-        """The flat-book check, then the size limits from the instrument read."""
+        """Ruling R1C-02 (a): the size limits set, the account flat (no open order, no
+        position), the offset measured; then the run is armed. Whatever fails first refuses the
+        run, and nothing was sent: the shutdown then touches nothing either."""
+        if self.port.limits is None:
+            raise Refused("no size limits: the instrument read comes first; nothing was sent")
         orders = await self.port.open_orders(self.account, SYMBOL)
         positions = await self.port.positions(self.account)
         check_flat(orders, positions)
+        await self.measure_offset()
+        self.arm()
+
+    async def flatten(self) -> dict[str, object]:
+        """`safety.flatten` over the run's own scope (ruling R1C-02 (b)), on its clocks."""
+        return await flatten(
+            self.port,
+            self.account,
+            self.scope,
+            self.links.flatten,
+            venue_now_us=lambda: self.venue_now_us(slack=1),
+            sleep=self.sleep,
+            monotonic=self.monotonic,
+        )
+
+    def arm(self) -> None:
+        """From here on the run may touch the account, and its shutdown flattens what it owns:
+        its window starts now, on the exchange's clock."""
+        start, held = self.venue_now_us(slack=-1), self.scope.start_us
+        self.scope.start_us = start if held is None else min(held, start)  # an adopted scope's
+        self.armed = True
+        if self.on_armed is not None:
+            self.on_armed()
 
     async def measure_offset(self, samples: int = 5) -> int | None:
         """The offset from the signed wallet read's envelope `time` against its exchange at the
@@ -172,6 +252,8 @@ class Harness:
         async def consume() -> None:
             async for item in stream:
                 monitor.observe(item)
+                if isinstance(item, PrivateEvent) and isinstance(item.payload, Execution):
+                    self.scope.add([item.payload])
                 self.outputs.event("private", _describe(item))
 
         task = spawn(consume(), name="spike-private-consumer")

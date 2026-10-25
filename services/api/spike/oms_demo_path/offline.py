@@ -10,7 +10,12 @@ it fills whole; a reduce-only market order closes the position. It answers `1000
 signed outside the receive window, the transcribed `110072` to a reused `orderLinkId`, and
 `10018` only when a test asks for one. `drop_every` and `reorder_every` withhold every Nth fill
 from the stream or push its order update first, so the parity and ordering counters can be seen
-to count; a run that sets either says so in its summary.
+to count; a run that sets either says so in its summary. Its list reads page by the request's
+`limit`, each `nextPageCursor` in its corpus row's own form (R1C-08), so a run long enough to
+list more than a page reads every page, as on the venue. A test can rest an order or hold a
+position no run placed (`rest_foreign_order`, `hold_foreign_position`): the account's other
+users, which the harness must never touch. It serves no cancel-all: the harness never sends one
+(ruling R1C-02 (b)), and one sent would be refused here as an unknown route.
 
 `offline_stack` stands in for the host: the stack's M2 boots once over an in-memory store (which
 enrols the KEK's check value, as cv-api's first boot does) and the owner imports one synthetic
@@ -24,6 +29,7 @@ import asyncio
 import itertools
 import json
 import os
+import re
 import secrets
 import time
 from collections.abc import Callable, Mapping
@@ -51,6 +57,14 @@ _QUEUE_BOUND: Final = 10_000
 _DROP: Final = "\x00drop"
 _TAKER, _MAKER = Decimal("0.00055"), Decimal("0.0002")
 _OPEN: Final = frozenset({"New", "PartiallyFilled"})
+#: A list read with no `limit`: the venue's own default page.
+_DEFAULT_LIMIT: Final = 50
+#: Where each list's corpus cursor carries a number: the offset of the next page goes there.
+_CURSOR_NUMBER: Final = {
+    "trading-execution-list": re.compile(r"^(\d+)(%3A\d+%2C)(\d+)"),
+    "trading-order-realtime": re.compile(r"(symbol%3D)(\d+)(%26)$"),
+    "trading-order-history": re.compile(r"(page_token%3D)(\d+)(%26)$"),
+}
 
 
 def default_corpus() -> Path:
@@ -195,6 +209,8 @@ class CorpusVenue:
         self.links: set[str] = set()
         self.executions: list[dict[str, Any]] = []
         self.creates: list[dict[str, Any]] = []
+        #: Every REST path the venue served, in order (what a refused run must never have sent).
+        self.paths: list[str] = []
         self.sockets: list[VenueSocket] = []
         self.size = Decimal(0)  # signed: long > 0
         self.entry: Decimal | None = None
@@ -242,6 +258,7 @@ class CorpusVenue:
     async def handle(self, request: httpx.Request) -> httpx.Response:
         if request.url.host != DEMO_REST_HOST:
             raise Refused("the offline venue serves the demo host only")
+        self.paths.append(request.url.path)
         skewed = self._skewed(request)
         if skewed is not None:
             return skewed
@@ -335,15 +352,6 @@ class CorpusVenue:
         order.updated_ms = self.now_ms()
         self._send("order", self._push_order(order))
 
-    def _order_cancel_all(self, body: dict[str, Any], _params: dict[str, str]) -> dict[str, Any]:
-        shape = self.corpus.rest("trading-cancel-all-reply")
-        [row, *_] = shape["result"]["list"]
-        cancelled = []
-        for order in [o for o in self.orders.values() if o.status in _OPEN]:
-            self._cancel(order)
-            cancelled.append(patched(row, orderId=order.order_id, orderLinkId=order.link))
-        return patched(shape, result=patched(shape["result"], list=cancelled))
-
     def _order_realtime(self, _body: dict[str, Any], params: dict[str, str]) -> dict[str, Any]:
         rows = [o for o in self.orders.values() if o.status in _OPEN]
         return self._order_page("trading-order-realtime", rows, params)
@@ -353,17 +361,42 @@ class CorpusVenue:
         rows = [o for o in self.orders.values() if low <= o.created_ms <= high]
         return self._order_page("trading-order-history", rows, params)
 
+    def _paged(
+        self, name: str, rows: list[Any], params: Mapping[str, str]
+    ) -> tuple[list[Any], str]:
+        """One page of `rows` by the request's `limit` from its `cursor`, and the next page's
+        cursor in the corpus row's own form (`""` after the last page)."""
+        limit = int(params.get("limit", _DEFAULT_LIMIT))
+        cursor = params.get("cursor", "")
+        form = _CURSOR_NUMBER[name]
+        start = 0
+        if cursor:
+            found = form.search(cursor)
+            if found is None:
+                raise Refused("the offline venue issued no such cursor")
+            start = int(found.group(1 if name == "trading-execution-list" else 2))
+        end = start + limit
+        if end >= len(rows):
+            return rows[start:end], ""
+        template = str(self.corpus.rest(name)["result"]["nextPageCursor"])
+        if name == "trading-execution-list":
+            following = form.sub(lambda m: f"{end}{m.group(2)}{end}", template)
+        else:
+            following = form.sub(lambda m: f"{m.group(1)}{end}{m.group(3)}", template)
+        return rows[start:end], following
+
     def _order_page(
         self, name: str, orders: list[VenueOrder], params: Mapping[str, str]
     ) -> dict[str, Any]:
         link, order_id = params.get("orderLinkId"), params.get("orderId")
         chosen = [o for o in orders if link in (None, o.link) and order_id in (None, o.order_id)]
+        page, following = self._paged(name, chosen, params)
         shape = self.corpus.rest(name)
         [row] = shape["result"]["list"]
         result = patched(
             shape["result"],
-            list=[self._order_row(row, o) for o in chosen],
-            nextPageCursor="",
+            list=[self._order_row(row, o) for o in page],
+            nextPageCursor=following,
         )
         return patched(shape, result=result)
 
@@ -378,8 +411,9 @@ class CorpusVenue:
     def _execution_list(self, _body: dict[str, Any], params: dict[str, str]) -> dict[str, Any]:
         low, high = int(params.get("startTime", 0)), int(params.get("endTime", 2**62))
         rows = [e for e in self.executions if low <= int(e["execTime"]) <= high]
+        page, following = self._paged("trading-execution-list", rows, params)
         shape = self.corpus.rest("trading-execution-list")
-        return patched(shape, result=patched(shape["result"], list=rows, nextPageCursor=""))
+        return patched(shape, result=patched(shape["result"], list=page, nextPageCursor=following))
 
     def _account_wallet_balance(
         self, _body: dict[str, Any], _params: dict[str, str]
@@ -595,6 +629,39 @@ class CorpusVenue:
             )
             self.orders[order.order_id] = order
 
+    def rest_foreign_order(self) -> VenueOrder:
+        """An order no run of the harness placed (a manual one: no `orderLinkId`), resting
+        away from the touch."""
+        now = self.now_ms()
+        order = VenueOrder(
+            order_id=str(uuid4()),
+            link="",
+            side="Buy",
+            order_type="Limit",
+            qty=self.step * 3,
+            price=(self.ref * Decimal("0.95")).quantize(self.tick, ROUND_DOWN),
+            tif="GTC",
+            reduce_only=False,
+            stop_loss=None,
+            created_ms=now,
+            updated_ms=now,
+        )
+        self.orders[order.order_id] = order
+        return order
+
+    def hold_foreign_position(self, qty: Decimal) -> None:
+        """A position no run opened (signed: long > 0), as a manual trade would leave it; it
+        nets with the runs' own in the one-way position, as on the venue."""
+        if self.size == 0:
+            self.entry = self.ref
+        self.size += qty
+
+    def list_fills(self, count: int) -> None:
+        """`count` executions the list holds and the stream never pushed, of an order no run
+        placed: the list's paging, exercised."""
+        for _ in range(count):
+            self.plant_unpushed_fill()
+
     def plant_unpushed_fill(self) -> str:
         """One fill the execution list holds and the stream never pushed, of an order no run
         placed (a manual taker fill, no `orderLinkId`): the missed execution a soak's idle phase
@@ -694,14 +761,17 @@ def _snapshot(fixture: Path) -> dict[str, Any]:
     return snapshot
 
 
-async def offline_stack(settings: Settings, ctx: Any, *, accounts_fixture: Path) -> OfflineStack:
+async def offline_stack(
+    settings: Settings, ctx: Any, *, accounts_fixture: Path, account_id: UUID | None = None
+) -> OfflineStack:
     """cv-api's first boot (the KEK check value enrolled) and the owner's key import, in memory:
-    the import goes through M2's own capability with a synthetic pasted pair."""
+    the import goes through M2's own capability with a synthetic pasted pair, for the account
+    `account_id` (a fresh one by default; a `flatten` test names its failed run's)."""
     store = InMemoryCredentialStore()
     stack = SecretsService(store=store, kcv_store=store, audit=_discard, harden=assume_hardened)
     bundle = secrets_bundle(stack)
     await bundle.lifecycle.start(ctx)
-    account_id = uuid4()
+    account_id = uuid4() if account_id is None else account_id
     snapshot = _snapshot(accounts_fixture)
 
     async def check(_signer: object) -> Mapping[str, Any]:

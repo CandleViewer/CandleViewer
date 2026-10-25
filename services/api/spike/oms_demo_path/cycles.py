@@ -14,10 +14,12 @@ one step, an order fills all or nothing, so no partial fill could be seen):
    truth) to record `filled`, `partial` or `unfilled`;
 4. a cancel of any remainder;
 5. a reduce-only market close of what filled, then a REST read that the book is flat (else the
-   flatten of `safety.py`).
+   flatten of `safety.py`, over the run's own orders and fills only).
 
-After each cycle the execution list is read back for the cycle's window (parity); a venue or
-transport failure is recorded, the cycle cleaned up and the run goes on, until three in a row.
+The outcome is read again after the cancel (R1C-10): a fill that landed meanwhile makes an
+`unfilled` cycle `partial`. After each cycle the execution list is read back for the cycle's
+window (parity), its ends on the exchange's clock (R1C-11); a venue or transport failure is
+recorded, the cycle cleaned up and the run goes on, until three in a row.
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ from candleviewer.exchange.base.models import (
 )
 from spike.oms_demo_path.config import SYMBOL, RunConfig
 from spike.oms_demo_path.harness import Harness
-from spike.oms_demo_path.safety import QtyLimits, flatten
+from spike.oms_demo_path.safety import QtyLimits
 
 type Side = Literal["buy", "sell"]
 type FillMode = Literal["join", "cross"]
@@ -45,8 +47,6 @@ MAX_CONSECUTIVE_FAILURES: Final = 3
 TERMINAL: Final = frozenset(
     {"filled", "cancelled", "partially_filled_canceled", "rejected", "deactivated"}
 )
-#: The backfill reaches this far before a cycle's first call, for a venue clock behind ours.
-BACKFILL_LEAD_US: Final = 60_000_000
 _BPS: Final = Decimal(10_000)
 
 
@@ -94,22 +94,21 @@ async def run_cycles(h: Harness, cfg: RunConfig) -> dict[str, object]:
         instrument, multiple=cfg.qty_multiple, max_multiple=cfg.max_qty_multiple
     )
     h.port.limits = limits
-    await h.preflight()
-    await h.measure_offset()
+    await h.preflight()  # flat, the offset measured: armed
     outcomes: Counter[str] = Counter()
     actions: Counter[str] = Counter()
     errors: Counter[str] = Counter()
     interval = cfg.min_hours * 3600 / max(cfg.cycles, 1)
-    window_start = h.now_us() - BACKFILL_LEAD_US
+    window_start = h.venue_now_us(slack=-1)
     failures = 0
     async with h.private_stream():
         for n in range(cfg.cycles):
             if h.shutdown.event.is_set():
                 break
             began = h.monotonic()
-            cycle_start = h.now_us() - BACKFILL_LEAD_US
             if cfg.offset_every and n and n % cfg.offset_every == 0:
                 await h.measure_offset()
+            cycle_start = h.venue_now_us(slack=-1)
             try:
                 outcomes[await one_cycle(h, cfg, n, qty, instrument.tick_size, actions)] += 1
                 failures = 0
@@ -117,7 +116,7 @@ async def run_cycles(h: Harness, cfg: RunConfig) -> dict[str, object]:
                 failures += 1
                 errors[type(exc).__name__] += 1
                 h.outputs.event("cycle_error", n=n, error=type(exc).__name__)
-                await flatten(h.port, h.account, h.links.flatten, sleep=h.sleep)
+                await h.flatten()
                 if failures >= MAX_CONSECUTIVE_FAILURES:
                     h.shutdown.trip("error:consecutive_failures")
             await backfill(h, cycle_start)
@@ -138,9 +137,11 @@ async def run_cycles(h: Harness, cfg: RunConfig) -> dict[str, object]:
 
 
 async def backfill(h: Harness, start_us: int) -> None:
-    """The execution list from `start_us` to now: the REST side of the parity count."""
-    fills = await h.port.executions(h.account, start_us, h.now_us())
+    """The execution list from `start_us` to now on the exchange's clock: the REST side of the
+    parity count, and the run's own fills for its scope."""
+    fills = await h.port.executions(h.account, start_us, h.venue_now_us(slack=1))
     h.stream.rest_executions([f for f in fills if f.symbol == SYMBOL])
+    h.scope.add(fills)
 
 
 def _step(h: Harness, n: int, step: str, ack: OrderAck) -> None:
@@ -242,6 +243,10 @@ async def one_cycle(
         await monitor.wait(lambda: oid in monitor.orders and filled(), cfg.fill_wait_s)
         after = await read_order(h, link)
         done = after.filled_qty if after is not None else done
+        if after is not None and after.state == "filled":
+            outcome = "filled"  # it filled whole before the cancel landed
+        elif outcome == "unfilled" and done > 0:
+            outcome = "partial"  # a fill landed between the read and the cancel
     if done > 0:
         closed = await h.port.place_order(
             PlaceOrderRequest(
@@ -265,7 +270,7 @@ async def one_cycle(
 
         await monitor.wait(close_done, cfg.fill_wait_s)
     if any(p.symbol == SYMBOL and p.qty > 0 for p in await h.port.positions(h.account)):
-        actions["residual_flatten"] += 1
-        await flatten(h.port, h.account, h.links.flatten, sleep=h.sleep)
+        if (await h.flatten())["flatten_orders"]:
+            actions["residual_flatten"] += 1
     h.outputs.event("cycle", n=n, side=side, mode=mode, outcome=outcome)
     return outcome

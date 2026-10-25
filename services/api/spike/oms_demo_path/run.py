@@ -6,9 +6,16 @@ connector; offline, demo settings over a KEK file made for the run, the stack in
 (`offline.offline_stack`), the corpus venue behind both seams. Everything between is the same
 composition, the same recording seams, the same scrubbed outputs.
 
-Whatever ends the mode (completion, SIGINT, SIGTERM, a refusal or an error), a mode that places
-orders runs `cancel_all` and a reduce-only flatten before M2 and audit stop, and the summary
-records why it ended and what the flatten did. Exit codes: 0 completed, 1 an error, 2 refused.
+A mode that touches orders is armed only once its preflight passed (the limits set, the account
+flat, the offset measured). Anything that ends it before that, a refusal or any error, composition
+included, is a `refused` outcome naming the reason, and nothing on the account is touched: no
+cancel, no close (ruling R1C-02 (a)). Once armed, whatever ends the mode (completion, SIGINT,
+SIGTERM or an error), the shutdown flatten runs over the run's own orders and fills only (ruling
+R1C-02 (b)) before M2 and audit stop, and the summary records why it ended and what the flatten
+did. The summary is written provisionally when the run is armed and again before that flatten,
+with the run's scope, so a run killed past its grace period still leaves both (R1C-14) and
+`flatten` (the owner's retry, R1S-04) can adopt the scope. Exit codes: 0 completed, 1 an error
+(or a flatten left unfinished), 2 refused (nothing touched).
 """
 
 from __future__ import annotations
@@ -32,6 +39,7 @@ import structlog
 
 from candleviewer.admin.wiring import AuditHandle, SecretsBundle, secrets_audit_sink, secrets_bundle
 from candleviewer.domain.primitives import AccountId
+from candleviewer.exchange.base.errors import ExchangeError
 from candleviewer.exchange.base.models import AccountRef
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS, SIGNED_REST_BASES
 from candleviewer.exchange.bybit.key_ws_probe import connect_private_stream
@@ -61,7 +69,7 @@ from spike.oms_demo_path.cycles import run_cycles
 from spike.oms_demo_path.harness import Harness, PublicReads
 from spike.oms_demo_path.measure import ClockOffset, Timings, stats
 from spike.oms_demo_path.metrics import export
-from spike.oms_demo_path.modes import run_retention, run_shapes, run_soak
+from spike.oms_demo_path.modes import run_flatten, run_retention, run_shapes, run_soak
 from spike.oms_demo_path.offline import (
     Corpus,
     CorpusVenue,
@@ -85,7 +93,6 @@ from spike.oms_demo_path.safety import (
     check_online_args,
     check_venue_urls,
     confirm,
-    flatten,
 )
 from spike.oms_demo_path.scrub import Scrubber
 
@@ -95,6 +102,15 @@ MODES: Final = {
     "soak": run_soak,
     "shapes": run_shapes,
     "retention": run_retention,
+    "flatten": run_flatten,
+}
+#: The shutdown block of a run that was never armed: nothing on the account was touched.
+NO_ACTION: Final[Mapping[str, object]] = {
+    "armed": False,
+    "action": "none",
+    "cancelled": 0,
+    "flatten_orders": 0,
+    "closed_qty": "0",
 }
 #: Budget #4 (`06-performance-and-load-standard.md` §5.2), demo: p95 < 300 ms end to end, of
 #: which <= 250 ms is the venue's REST round trip and <= 50 ms is ours.
@@ -146,6 +162,18 @@ def configure_logging(scrubber: Scrubber) -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
+def mode_failed(exc: BaseException, *, offline: bool) -> None:
+    """The failure on stderr (R1S-06): online, the class and the adapter's bounded
+    `exchange_ret_code` only, never a traceback, whose text can carry a value nothing
+    registered (a venue row a validation error echoes); offline, the traceback too."""
+    log = structlog.get_logger("spike")
+    code = exc.exchange_ret_code if isinstance(exc, ExchangeError) else None
+    if offline:
+        log.error("mode_failed", error=type(exc).__name__, exchange_ret_code=code, exc_info=exc)
+    else:
+        log.error("mode_failed", error=type(exc).__name__, exchange_ret_code=code)
+
+
 def offline_m2(
     store: CredentialStore, kcv: KcvStore, audit: AuditHandle, auth_keys: AuthKeyStore | None
 ) -> SecretsBundle:
@@ -180,11 +208,16 @@ def budget(timings: Timings, *, offline: bool) -> dict[str, object]:
     overhead = stats(timings.overhead_ms.get("create", [])).get("p95")
     total = stats(timings.port_ms.get("create", [])).get("p95")
     signing = stats(timings.signing_ms.get("create", []))
+    split = {
+        name: stats(timings.rtt_split_ms.get(name, [])).get("p95")
+        for name in ("create:cold", "create:warm", "create_open", "create_close")
+    }
     return {
         "rule": BUDGET4_RULE,
         "verdict": budget4_verdict(rtt),
         "evidence": not offline,
         "create_rtt_p95_ms": rtt,
+        "create_rtt_p95_ms_by_split": split,
         "create_overhead_p95_ms": overhead,
         "create_signing_ms": {k: signing.get(k) for k in ("n", "p50", "p95", "max")},
         "create_end_to_end_p95_ms": total,
@@ -249,6 +282,7 @@ async def open_harness(
                 settings,
                 app_context(settings, ReadOnlyGate()),
                 accounts_fixture=default_accounts_fixture(),
+                account_id=cfg.account_id,
             )
             stores = Stores(
                 credentials=stack.store,
@@ -331,6 +365,7 @@ def _summarise(h: Harness, summary: dict[str, Any]) -> None:
     summary |= timings.summary()
     summary["budget4"] = budget(timings, offline=bool(summary.get("offline")))
     summary["private"] = h.stream.summary()
+    summary["run_scope"] = h.scope.record()
     summary["clock"] = {
         "offset_ms": h.offset.value,
         "best_rtt_ms": None if h.offset.best_rtt_ms is None else round(h.offset.best_rtt_ms, 2),
@@ -350,6 +385,42 @@ def _summarise(h: Harness, summary: dict[str, Any]) -> None:
             "frames": dict(sorted(h.connector.counts.items())),
             "max_silence_s": round(h.connector.max_silence_s, 3),
         } | h.connector.gaps()
+
+
+def _provisional(outputs: RunOutputs, summary: Mapping[str, Any], h: Harness, at: str) -> None:
+    """The summary as it stands, marked `provisional`, with the run's scope (R1C-14, R1S-04)."""
+    outputs.write_summary({**summary, "provisional": at, "run_scope": h.scope.record()})
+
+
+def _failed(
+    exc: Exception, cfg: RunConfig, h: Harness, summary: dict[str, Any], shutdown: Shutdown
+) -> int:
+    """A mode's failure: before the run was armed, a refusal (2) that touched nothing (ruling
+    R1C-02 (a)); after, an error (1) the scoped flatten follows."""
+    if cfg.arms and not h.armed:
+        shutdown.trip("refused")
+        summary["refused"] = _refusal(exc)
+        return 2
+    shutdown.trip(f"error:{type(exc).__name__}")
+    summary["error"] = type(exc).__name__
+    return 1
+
+
+def _refusal(exc: BaseException) -> str:
+    """A refusal's reason: the harness's own words, else the error's class only (a setup
+    error's text may echo a setting's value)."""
+    if isinstance(exc, Refused):
+        return str(exc)
+    return f"an error before the run was armed: {type(exc).__name__}"
+
+
+def _outcome(code: int, summary: Mapping[str, Any]) -> str:
+    if code == 2:
+        return "refused"
+    if code == 1:
+        return "error"
+    reason = str(summary.get("shutdown", {}).get("reason", ""))
+    return "stopped" if reason.startswith("signal:") else "completed"
 
 
 async def run(
@@ -388,37 +459,58 @@ async def run(
     notes: dict[str, Any] = {}
     metrics_text = ""
     code = 0
+    entered = False
+    outputs.start()
     try:
         async with open_harness(cfg, outputs, scrubber, shutdown, notes, venue) as h:
+            entered = True
+            h.on_armed = lambda: _provisional(outputs, summary, h, "armed")
             try:
                 summary[cfg.mode] = await MODES[cfg.mode](h, cfg)
                 if (shutdown.reason or "").startswith("error:"):
                     code = 1  # the mode ended itself on repeated failures
             except Exception as exc:
-                shutdown.trip(f"error:{type(exc).__name__}")
-                code = 2 if isinstance(exc, Refused) else 1
-                summary["error"] = type(exc).__name__
-                structlog.get_logger("spike").error("mode_failed", exc_info=True)
+                code = _failed(exc, cfg, h, summary, shutdown)
+                mode_failed(exc, offline=not cfg.online)
             finally:
                 ending: dict[str, Any] = {"reason": shutdown.reason or "completed"}
-                if cfg.places_orders:
-                    ending |= await flatten(h.port, h.account, h.links.flatten, sleep=h.sleep)
+                if cfg.arms and not h.armed:
+                    ending |= NO_ACTION
+                elif cfg.places_orders:
+                    ending |= {"armed": True, "action": "scoped flatten"}
+                    _provisional(outputs, summary | {"shutdown": ending}, h, "flatten started")
+                    ending |= await h.flatten()
+                elif cfg.arms:  # `flatten`: the mode's own flatten is its summary block
+                    ending |= {"armed": True, "action": "the mode's own (summary.flatten)"}
                 summary["shutdown"] = ending
+                await outputs.flush()
                 _summarise(h, summary)
                 outcomes = summary.get("cycles", {}).get("outcomes", {})
                 metrics_text = export(h.port.timings, h.stream, outcomes, h.offset.value)
-    except Refused as exc:
-        code = 2
-        summary["refused"] = str(exc)
+    except Exception as exc:
+        if entered:
+            raise
+        code = 2  # nothing composed, nothing sent
+        summary["refused"] = _refusal(exc)
+        summary["shutdown"] = {"reason": "refused", **NO_ACTION}
     finally:
         remove()
+        await outputs.stop()
         summary |= notes
+        summary["outcome"] = _outcome(code, summary)
         summary["ended_at_ms"] = clock_ms()
-        summary["outputs"] = {"events": outputs.events, "refused_by_scrub": outputs.refused}
+        summary["outputs"] = {
+            "events": outputs.events,
+            "refused_by_scrub": outputs.refused,
+            "dropped_by_bound": outputs.dropped,
+            "write_errors": outputs.write_errors,
+        }
         outputs.write_summary(summary)
         if metrics_text:
             outputs.write_metrics(metrics_text)
         outputs.close()
+    if code == 2:
+        sys.stderr.write(f"refused: {summary['refused']}\n")
     return code
 
 

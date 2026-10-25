@@ -69,7 +69,10 @@ def _payload(shape: str, s: dict[str, str]) -> dict[str, Any]:
         if shape in ("execution", "fast"):
             row["execId"] = s["exec"]
         row["comment"] = echo  # an unknown free-text field
-        return {**frame, "id": f"{s['uid']}_BTCUSDT_1", "data": [row]}
+        # The venue's two push-id forms (R1S-02): `<uid>_<symbol>_<seq>` on executions, and
+        # `<uid><uuid>` on orders and positions (the corpus's private-order/-position.jsonl).
+        push = f"{s['uid']}{s['push']}" if shape in ("order", "position") else None
+        return {**frame, "id": push or f"{s['uid']}_BTCUSDT_1", "data": [row]}
     if shape == "execution_list":
         body = rest("rest/trading-execution-list.json")
         row = {**body["result"]["list"][0], "execId": s["exec"], "orderId": s["order"]}
@@ -116,6 +119,7 @@ def _harness_scrubber(s: dict[str, str]) -> Scrubber:
     signature=_SIGS,
     account=_UUIDS,
     key_ref=_UUIDS,
+    push=_UUIDS,
 )
 def test_no_seeded_identifier_survives_the_scrubber(
     shape: str,
@@ -127,6 +131,7 @@ def test_no_seeded_identifier_survives_the_scrubber(
     signature: str,
     account: str,
     key_ref: str,
+    push: str,
 ) -> None:
     seeds = {
         "order": order,
@@ -137,6 +142,7 @@ def test_no_seeded_identifier_survives_the_scrubber(
         "signature": signature,
         "account": account,
         "key_ref": key_ref,
+        "push": push,
     }
     assume(len(set(seeds.values())) == len(seeds))
     assume(not any(a != b and a in b for a in seeds.values() for b in seeds.values()))

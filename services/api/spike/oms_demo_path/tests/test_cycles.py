@@ -94,14 +94,15 @@ async def test_offline_cycles_place_fill_amend_cancel_and_close_flat(
     s = _summary(tmp_path / "out")
     assert s["cycles"]["outcomes"] == {"filled": 2, "partial": 2}
     assert s["cycles"]["actions"] == {"amend": 4, "cancel": 2, "close": 4, "drive": 4, "place": 4}
-    assert s["shutdown"] == {
-        "reason": "completed",
-        "cancel_all_calls": 1,
-        "cancelled": 0,
-        "flatten_orders": 0,
-        "flat": True,
-        "errors": [],
-    }
+    shutdown = s["shutdown"]
+    assert (shutdown["reason"], shutdown["armed"], shutdown["action"]) == (
+        "completed",
+        True,
+        "scoped flatten",
+    )
+    assert (shutdown["cancelled"], shutdown["flatten_orders"], shutdown["flat"]) == (0, 0, True)
+    assert shutdown["own_net_qty"] == shutdown["own_net_after"] == "0"
+    assert shutdown["errors"] == [] and s["outcome"] == "completed"
     assert venue.size == 0
     private = s["private"]
     assert private["parity"]["rest_only"] == private["parity"]["stream_only"] == 0
@@ -159,7 +160,7 @@ async def test_the_counters_count_what_the_venue_withholds_or_reorders(
     assert s["offline_venue"]["withheld_from_stream"] == venue.dropped
 
 
-async def test_an_unhandled_error_cancels_everything_and_flattens_before_exit(
+async def test_an_unhandled_error_cancels_and_closes_the_runs_own_before_exit(
     tmp_path: Path, stacks: list[OfflineStack], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def boom(h: Harness, link: str) -> None:
@@ -169,10 +170,11 @@ async def test_an_unhandled_error_cancels_everything_and_flattens_before_exit(
     venue = _venue()
     assert await run.run(_cfg(tmp_path / "out"), venue=venue) == 1
     s = _summary(tmp_path / "out")
-    assert s["error"] == "RuntimeError"
+    assert s["error"] == "RuntimeError" and s["outcome"] == "error"
     shutdown = s["shutdown"]
     assert shutdown["reason"] == "error:RuntimeError"
     assert shutdown["cancelled"] == 1  # the partly filled entry still resting
+    assert shutdown["own_net_qty"] == shutdown["closed_qty"] == "0.001"
     assert shutdown["flatten_orders"] == 1 and shutdown["flat"] is True
     assert venue.size == 0
     assert all(o.status not in ("New", "PartiallyFilled") for o in venue.orders.values())
@@ -197,8 +199,8 @@ def test_sigterm_ends_the_run_and_the_flatten_runs(
     assert code == 0
     s = _summary(tmp_path / "out")
     assert s["cycles"]["completed"] == 1
-    assert s["shutdown"]["reason"] == "signal:SIGTERM"
-    assert s["shutdown"]["flat"] is True and s["shutdown"]["cancel_all_calls"] >= 1
+    assert s["shutdown"]["reason"] == "signal:SIGTERM" and s["outcome"] == "stopped"
+    assert s["shutdown"]["flat"] is True and s["shutdown"]["action"] == "scoped flatten"
 
 
 # -- the same logic against FakeTradingPort ----------------------------------------------------

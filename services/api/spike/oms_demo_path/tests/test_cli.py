@@ -104,6 +104,15 @@ def test_report_mode_prints_the_tables(tmp_path: Path, capsys: pytest.CaptureFix
     assert "### Cycle outcomes" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("online", [False, True])
+def test_flatten_without_the_failed_runs_directory_is_refused(tmp_path: Path, online: bool) -> None:
+    out = tmp_path / "out"
+    ids = ["--account-id", str(uuid4()), "--key-ref", str(uuid4())]
+    demo = ["--demo", "--i-understand-this-places-demo-orders", *ids] if online else []
+    assert main(["flatten", "--out", str(out), *demo], read_line=lambda _p: CONFIRMATION) == 2
+    assert not out.exists()
+
+
 def test_offline_and_demo_together_is_a_usage_error() -> None:
     with pytest.raises(SystemExit) as exited:
         parse(["cycles", "--offline", "--demo", "--out", "/nonexistent"])
@@ -128,20 +137,36 @@ def test_a_run_never_reuses_an_earlier_runs_directory(tmp_path: Path) -> None:
     assert (out / "events.jsonl").read_text() == "{}\n"
 
 
-def test_a_setup_failure_reports_its_class_only(
+def test_a_setup_failure_is_refused_naming_its_class_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Ruling R1C-02 (a): any error before the run is armed, composition included, is a refused
+    outcome naming the reason, with nothing touched."""
     from spike.oms_demo_path import run as runner
 
     def broken(_state: Path) -> None:
         raise RuntimeError("a value that must not be echoed")
 
     monkeypatch.setattr(runner, "offline_settings", broken)
-    assert (
-        main(["cycles", "--out", str(tmp_path / "out"), "--cycles", "1", "--min-hours", "0"]) == 1
-    )
+    out = tmp_path / "out"
+    assert main(["cycles", "--out", str(out), "--cycles", "1", "--min-hours", "0"]) == 2
     err = capsys.readouterr().err
-    assert "failed: RuntimeError" in err and "must not be echoed" not in err
+    assert "refused: an error before the run was armed: RuntimeError" in err
+    assert "must not be echoed" not in err
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["outcome"] == "refused"
+    assert summary["refused"] == "an error before the run was armed: RuntimeError"
+    assert summary["shutdown"]["action"] == "none" and summary["shutdown"]["armed"] is False
+    assert "must not be echoed" not in (out / "summary.json").read_text()
+
+
+def test_a_failure_before_any_output_reports_its_class_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "a-file-not-a-directory"
+    out.write_text("not a run directory")
+    assert main(["cycles", "--out", str(out), "--cycles", "1", "--min-hours", "0"]) == 1
+    assert capsys.readouterr().err == "failed: NotADirectoryError\n"
 
 
 def test_a_refused_kek_proof_writes_its_summary_and_closes_what_it_opened(
@@ -158,4 +183,12 @@ def test_a_refused_kek_proof_writes_its_summary_and_closes_what_it_opened(
     assert main(["cycles", "--out", str(out), "--cycles", "1", "--min-hours", "0"]) == 2
     summary = json.loads((out / "summary.json").read_text())
     assert summary["refused"].startswith("the KEK proof failed (kek_not_enrolled)")
-    assert "cycles" not in summary and "shutdown" not in summary
+    assert summary["outcome"] == "refused" and "cycles" not in summary
+    assert summary["shutdown"] == {
+        "reason": "refused",
+        "armed": False,
+        "action": "none",
+        "cancelled": 0,
+        "flatten_orders": 0,
+        "closed_qty": "0",
+    }

@@ -8,9 +8,15 @@ under a key the venue uses for an identifier (`ID_KEYS`) becomes a stable per-ru
 left is cleaned of every value the run has registered: the account and key ids it was given,
 each request's key id and signature, and every identifier any record has shown under an id key,
 the record's own included (two passes), so a venue that echoes one in free text (`retMsg`, an
-unknown field) does not carry it out. A push id that leads with digits (`<uid>_<symbol>_<seq>`)
-teaches it the UID. `check` re-scans the final text and refuses it (`LeakDetected`) if any
-registered value is left, so a line is written scrubbed or not at all.
+unknown field) does not carry it out. A push id teaches it the UID in both of the venue's forms:
+`<uid>_<symbol>_<seq>` (`execution`) and `<uid><uuid>` (`order`, `position`, `wallet`), the
+UID being what precedes the 36-character UUID. `check` re-scans the final text and refuses it
+(`LeakDetected`) if any registered value is left, so a line is written scrubbed or not at all.
+
+The clean and the check cost O(len(text)), whatever the number of registered values (R1C-03:
+a run registers thousands): the registered values are indexed by their first `MIN_LEN`
+characters, so each position of a text costs one lookup, and only a position where a value
+could start is compared.
 """
 
 from __future__ import annotations
@@ -70,16 +76,25 @@ DROP_KEYS: Final = frozenset(
 #: A shorter value is no identifier the venue issues; registering it would rewrite ordinary text.
 MIN_LEN: Final = 6
 REDACTED: Final = "<redacted>"
-_PUSH_ID: Final = re.compile(r"(\d{5,})_[A-Z0-9]+_\d+")
+#: The `execution` push id: `<uid>_<symbol>_<seq>`.
+_PUSH_ID: Final = re.compile(r"(\d{6,})_[A-Z0-9]+_\d+")
+#: The `order`, `position` and `wallet` push id: `<uid><uuid>`, the UID what precedes the UUID.
+_UUID_PUSH_ID: Final = re.compile(
+    r"(\d{6,})[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+#: A push id of neither form that leads with 7 or more digits: that run is learnt as it is.
+_LEADING_DIGITS: Final = re.compile(r"\d{7,}")
 
 
 class LeakDetected(RuntimeError):
     """A registered value survived the scrub: the text is refused, never written."""
 
 
-def _digits(value: str) -> re.Pattern[str]:
+def _bounded(text: str, at: int, length: int) -> bool:
     """An all-digit value matches only between non-digits, so it never rewrites a timestamp."""
-    return re.compile(rf"(?<!\d){re.escape(value)}(?!\d)")
+    before = at > 0 and text[at - 1].isdigit()
+    end = at + length
+    return not before and not (end < len(text) and text[end].isdigit())
 
 
 class Scrubber:
@@ -90,20 +105,27 @@ class Scrubber:
         #: The tokens issued: a value already scrubbed is never learnt again (idempotent).
         self._issued: set[str] = {REDACTED}
         self._counts: dict[str, int] = {}
-        self._secrets: set[str] = set()
-        self._numeric: dict[str, re.Pattern[str]] = {}
-        self._ordered: list[tuple[str, str]] | None = None
+        #: Every registered value at least `MIN_LEN` long, to what replaces it: its token, else
+        #: `REDACTED`. Indexed by its first `MIN_LEN` characters (`_heads`: the lengths of the
+        #: values that start so, longest first).
+        self._replace: dict[str, str] = {}
+        self._heads: dict[str, list[int]] = {}
+
+    def _register(self, value: str, replacement: str) -> None:
+        if len(value) < MIN_LEN:
+            return
+        if value not in self._replace:
+            lengths = self._heads.setdefault(value[:MIN_LEN], [])
+            if len(value) not in lengths:
+                lengths.append(len(value))
+                lengths.sort(reverse=True)
+        self._replace[value] = replacement
 
     def secret(self, value: str | None) -> None:
         """A value that is replaced wherever it appears and never written (`<redacted>`)."""
-        if value is None or value in self._issued:
+        if value is None or value in self._issued or value in self._tokens:
             return
-        if len(value) >= MIN_LEN and value not in self._tokens:
-            if value not in self._secrets:
-                self._secrets.add(value)
-                self._ordered = None
-            if value.isdigit():
-                self._numeric[value] = _digits(value)
+        self._register(value, REDACTED)
 
     def known(self, kind: str, value: str) -> str:
         """`value`'s token of class `kind`, the same for the whole run; a token is its own."""
@@ -114,18 +136,28 @@ class Scrubber:
             self._counts[kind] = self._counts.get(kind, 0) + 1
             token = self._tokens[value] = f"{kind}#{self._counts[kind]}"
             self._issued.add(token)
-            self._secrets.discard(value)
-            self._ordered = None
-            if value.isdigit() and len(value) >= MIN_LEN:
-                self._numeric[value] = _digits(value)
+            self._register(value, token)
         return token
+
+    def registered(self) -> int:
+        """How many values a text is cleaned of."""
+        return len(self._replace)
 
     def scrub(self, value: object, transient: Sequence[str] = ()) -> object:
         """`value` with every identifier replaced and every dropped key gone: first the record's
         own identifiers are learnt, then everything is rewritten."""
         self._learn(value)
-        extra = tuple(v for v in transient if v and len(v) >= MIN_LEN)
+        extra = sorted((v for v in transient if v and len(v) >= MIN_LEN), key=len, reverse=True)
         return self._rewrite(value, extra)
+
+    def _learn_push(self, text: str) -> None:
+        """The UID a push id carries, in either of the venue's forms (see the module docstring)."""
+        for form in (_PUSH_ID, _UUID_PUSH_ID):
+            if (m := form.fullmatch(text)) is not None:
+                self.secret(m.group(1))
+                return
+        if (m := _LEADING_DIGITS.match(text)) is not None:
+            self.secret(m.group(0))
 
     def _learn(self, value: object) -> None:
         if isinstance(value, Mapping):
@@ -136,8 +168,8 @@ class Scrubber:
                 if kind is not None and isinstance(item, str | int) and str(item) != "":
                     text = str(item)
                     self.known(kind, text)
-                    if kind == "push" and (m := _PUSH_ID.fullmatch(text)) is not None:
-                        self.secret(m.group(1))
+                    if kind == "push":
+                        self._learn_push(text)
                 else:
                     self._learn(item)
         elif isinstance(value, list | tuple):
@@ -163,36 +195,52 @@ class Scrubber:
             return [self._rewrite(item, extra) for item in value]
         if isinstance(value, str):
             return self._clean(value, extra)
-        if isinstance(value, int) and not isinstance(value, bool) and str(value) in self._numeric:
-            return self._tokens.get(str(value), REDACTED)
+        if isinstance(value, int) and not isinstance(value, bool):
+            text = str(value)
+            if text in self._replace and text.isdigit():
+                return self._replace[text]
         return value
 
-    def _registered(self, extra: Sequence[str]) -> list[tuple[str, str]]:
-        """Every value a string is cleaned of, longest first (so no shorter one splits it): the
-        call's transient values, the secrets and every identifier long enough to be one."""
-        if self._ordered is None:
-            pairs = [(v, REDACTED) for v in self._secrets]
-            pairs += [(v, t) for v, t in self._tokens.items() if len(v) >= MIN_LEN]
-            self._ordered = sorted(pairs, key=lambda p: -len(p[0]))
-        if not extra:
-            return self._ordered
-        return sorted([(v, REDACTED) for v in extra] + self._ordered, key=lambda p: -len(p[0]))
+    def _match(self, text: str, at: int) -> tuple[int, str] | None:
+        """The longest registered value starting at `at`, with what replaces it."""
+        lengths = self._heads.get(text[at : at + MIN_LEN])
+        if lengths is None:
+            return None
+        for length in lengths:
+            found = self._replace.get(text[at : at + length])
+            if found is not None and (
+                not text[at].isdigit()
+                or not text[at : at + length].isdigit()
+                or _bounded(text, at, length)
+            ):
+                return length, found
+        return None
 
     def _clean(self, text: str, extra: Sequence[str]) -> str:
-        for value, replacement in self._registered(extra):
-            pattern = self._numeric.get(value)
-            if pattern is not None:
-                text = pattern.sub(replacement, text)
-            elif value in text:
-                text = text.replace(value, replacement)
-        return text
+        for value in extra:  # the call's own values (few), longest first
+            text = text.replace(value, REDACTED)
+        heads = self._heads
+        if len(text) < MIN_LEN or not heads:
+            return text
+        parts: list[str] = []
+        start = 0
+        for at in range(len(text) - MIN_LEN + 1):
+            if at < start or text[at : at + MIN_LEN] not in heads:
+                continue
+            hit = self._match(text, at)
+            if hit is not None:
+                parts += [text[start:at], hit[1]]
+                start = at + hit[0]
+        return "".join([*parts, text[start:]]) if parts else text
 
     def check(self, text: str, transient: Sequence[str] = ()) -> None:
         """Refuse `text` if any registered value is still in it."""
-        for value, _ in self._registered(tuple(v for v in transient if v and len(v) >= MIN_LEN)):
-            pattern = self._numeric.get(value)
-            found = pattern.search(text) is not None if pattern is not None else value in text
-            if found:
+        for value in transient:
+            if value and len(value) >= MIN_LEN and value in text:
+                raise LeakDetected("a registered identifier survived the scrub; nothing written")
+        heads = self._heads
+        for at in range(len(text) - MIN_LEN + 1):
+            if text[at : at + MIN_LEN] in heads and self._match(text, at) is not None:
                 raise LeakDetected("a registered identifier survived the scrub; nothing written")
 
     def dumps(self, value: object, transient: Sequence[str] = ()) -> str:

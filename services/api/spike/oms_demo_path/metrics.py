@@ -7,8 +7,9 @@ is no UI click here. `bybit_clock_drift_ms` (planned, E08) carries the measured 
 minus host. The adapter's own series are re-exported as cv-api serves them
 (`export_ingestion_metrics`). What the catalogue has no name for is `spike_`-prefixed: the venue
 RTT and our overhead per call class, M2's signing time per call class, the private stream's
-latency per kind, the parity and ordering counts and the cycle outcomes. No label holds an
-identifier (`DISALLOWED_LABEL_NAMES`).
+latency per kind (unclamped, as `summary.json` keeps it: a negative value is the measured
+offset's own uncertainty, R1C-15), the parity and ordering counts and the cycle outcomes. No
+label holds an identifier (`DISALLOWED_LABEL_NAMES`).
 """
 
 from __future__ import annotations
@@ -86,8 +87,8 @@ def export(
         buckets=PRIVATE_BUCKETS,
     )
     for kind, values in monitor.latency_ms.items():
-        for ms in values:
-            private.labels(kind).observe(max(ms, 0.0) / 1000)
+        for ms in values:  # as the summary keeps them: below 0 is the offset's own uncertainty
+            private.labels(kind).observe(ms / 1000)
     seen = metrics.gauge(
         "spike_executions", "Executions by where they were seen (E29-K01 parity).", ("seen",)
     )

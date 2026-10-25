@@ -7,26 +7,33 @@ every one is proven offline (`tests/test_safety.py`).
 - `check_online_args` and `confirm`: `--demo` needs `--i-understand-this-places-demo-orders`, the
   account and key ids, the ticket's floors and a typed confirmation.
 - `check_audit_dir`: the harness's audit WAL is never the stack's (brief item 2).
-- `check_flat`: an online run starts with no open order and no position.
+- `check_flat`: a run that touches orders starts with no open order and no position; until that
+  holds the run is not armed, and a refusal touches nothing (ruling R1C-02 (a)).
 - `GuardedPort`: the only trading surface the modes see. BTCUSDT only; no size above the cap;
   a native `stop_loss` on the protective side of every position-opening order (C-2.6); a close
   is a reduce-only market order with no stop (the venue refuses a stop on one), so it never
-  opens; no amend removes a stop; no batch, leverage, stop write, withdrawal or transfer (C-2.8).
-- `Shutdown` and `flatten`: SIGINT, SIGTERM or an unhandled error ends the mode, then
-  `cancel_all` and a reduce-only flatten run before M2 and audit stop (`run.py`).
+  opens; no amend removes a stop; an amend or a cancel names one of the run's own orders; no
+  cancel-all, batch, leverage, stop write, withdrawal or transfer (C-2.8).
+- `RunScope` and `flatten` (ruling R1C-02 (b)): what the run owns is the orders whose
+  `orderLinkId` carries its prefix and the fills of those orders. SIGINT, SIGTERM or an
+  unhandled error ends an armed mode, then the flatten cancels the run's own open orders one by
+  one and closes, reduce-only, the quantity its own fills hold open, before M2 and audit stop
+  (`run.py`). It never cancels or closes anything else: a foreign order or position is left.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import signal
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 from uuid import UUID
 
 from candleviewer.exchange.base.models import (
@@ -55,8 +62,10 @@ from spike.oms_demo_path.config import (
 from spike.oms_demo_path.measure import CallRecord, Timings
 
 if TYPE_CHECKING:
+    from uuid import UUID as AccountUuid
+
     from candleviewer.domain.events import Instrument
-    from candleviewer.domain.primitives import OrderLinkId, Symbol, TsUs
+    from candleviewer.domain.primitives import OrderLinkId, Side, Symbol, TsUs
     from candleviewer.exchange.base.ports import PrivateStream, TradingPort
     from candleviewer.settings import Settings
 
@@ -64,6 +73,16 @@ if TYPE_CHECKING:
 #: writer's, and the harness refuses it.
 WAL_MARKER: Final = "SPIKE-E29-K01.harness-wal"
 _DAY_MS: Final = 86_400_000
+#: The characters of one of our `orderLinkId`s that name its run: `cv`, the environment letter,
+#: `-` and the run's trade group (24 §8.3: `{prefix}{env}-{group22}-{acct4}-{seq2}{suffix}`).
+LINK_PREFIX_LEN: Final = 26
+#: The flatten's whole budget: inside the container's `stop_grace_period` (60 s), so a stop
+#: never ends in a kill before the summary is written (R1C-14).
+FLATTEN_DEADLINE_S: Final = 40.0
+#: How long a close the venue accepted counts as filled before its fill is listed: a slow
+#: execution list never makes the flatten close twice; past it, the list is believed.
+PENDING_S: Final = 10.0
+_ZERO: Final = Decimal(0)
 
 
 class Refused(RuntimeError):
@@ -98,12 +117,15 @@ def _canonical_uuid(value: str | None) -> bool:
 
 
 def check_online_args(cfg: RunConfig, *, now_ms: int) -> None:
-    """The run's arguments: the size bounds for every run; for `--demo`, consent, the ids and
-    the ticket's floors (`cycles` >=200 over >=4 h; `retention` on day 8 or later)."""
+    """The run's arguments: the size bounds for every run, and `flatten`'s failed run; for
+    `--demo`, consent, the ids and the ticket's floors (`cycles` >=200 over >=4 h; `retention`
+    on day 8 or later; `flatten` has none)."""
     if cfg.max_qty_multiple > QTY_MULTIPLE_CEILING:
         raise Refused(f"--max-qty-multiple is above its ceiling of {QTY_MULTIPLE_CEILING}")
     if not 1 <= cfg.qty_multiple <= cfg.max_qty_multiple:
         raise Refused("--qty-multiple must be between 1 and --max-qty-multiple")
+    if cfg.mode == "flatten" and cfg.run_dir is None:
+        raise Refused("flatten needs --run-dir, the failed run's directory (its summary's scope)")
     if not cfg.online:
         return
     if not cfg.understood:
@@ -184,9 +206,88 @@ def check_audit_dir(wal_path: str, *, stack_wal: str, stack_volume: str, mountin
 
 def check_flat(orders: Sequence[Order], positions: Sequence[Position]) -> None:
     if orders:
-        raise Refused("the account has an open order: an online run starts flat")
+        raise Refused("the account has an open order: a run starts flat; nothing was touched")
     if any(p.qty > 0 for p in positions):
-        raise Refused("the account holds a position: an online run starts flat")
+        raise Refused("the account holds a position: a run starts flat; nothing was touched")
+
+
+def digest(value: str) -> str:
+    """A run's handle on a value it never writes: the first 16 hex characters of its sha256."""
+    return hashlib.sha256(value.encode()).hexdigest()[:16]
+
+
+class RunScope:
+    """What a run owns on the account (ruling R1C-02 (b)): the orders whose `orderLinkId`
+    starts with one of its prefixes, and the trade fills of those orders, from `start_us` (the
+    venue's clock, when it was armed). The prefixes are held as digests, so the summary carries
+    them though no `orderLinkId` reaches an output, and a `flatten` run adopts a failed run's
+    scope from that run's summary (`adopt`). `net` is what the run's own fills hold open."""
+
+    def __init__(
+        self,
+        prefix: str,
+        account_id: AccountUuid,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.digests: set[str] = {digest(prefix)}
+        self.account = digest(str(account_id))
+        self.start_us: int | None = None
+        self._monotonic = monotonic
+        #: Each own fill: its exec id, to its order's link and its signed quantity (buy > 0).
+        self.fills: dict[str, tuple[str, Decimal]] = {}
+        #: Each reduce-only close the venue accepted: its link, to its size and when it was sent.
+        self.closes: dict[str, tuple[Decimal, float]] = {}
+
+    def owns(self, link: str | None) -> bool:
+        return (
+            link is not None
+            and len(link) >= LINK_PREFIX_LEN
+            and digest(link[:LINK_PREFIX_LEN]) in self.digests
+        )
+
+    def add(self, fills: Iterable[Execution]) -> None:
+        for fill in fills:
+            trade = fill.symbol == SYMBOL and fill.exec_type == "trade"
+            if trade and self.owns(fill.order_link_id):
+                signed = fill.qty if fill.side == "buy" else -fill.qty
+                self.fills[fill.exec_id] = (fill.order_link_id, signed)
+
+    def net(self) -> Decimal:
+        return sum((qty for _, qty in self.fills.values()), _ZERO)
+
+    def sent_close(self, link: str, qty: Decimal) -> None:
+        self.closes[link] = (qty, self._monotonic())
+
+    def unconfirmed(self) -> Decimal:
+        """The closes accepted in the last `PENDING_S` whose fill no read has listed yet."""
+        listed = {owner for owner, _ in self.fills.values()}
+        now = self._monotonic()
+        return sum(
+            (
+                qty
+                for link, (qty, at) in self.closes.items()
+                if link not in listed and now - at < PENDING_S
+            ),
+            _ZERO,
+        )
+
+    def adopt(self, record: Mapping[str, object]) -> None:
+        """A failed run's scope, from its summary's `run_scope`: its prefixes join this run's,
+        and the window reaches back to its start."""
+        digests, start_ms = record.get("link_prefix_digests"), record.get("window_start_ms")
+        if not isinstance(digests, list) or not digests or not isinstance(start_ms, int):
+            raise Refused("that summary names no run scope: nothing to flatten from it")
+        self.digests |= {str(d) for d in digests}
+        start = start_ms * 1000
+        self.start_us = start if self.start_us is None else min(self.start_us, start)
+
+    def record(self) -> dict[str, object]:
+        """The summary's `run_scope`: digests and a time, never an id."""
+        return {
+            "link_prefix_digests": sorted(self.digests),
+            "account_digest": self.account,
+            "window_start_ms": None if self.start_us is None else self.start_us // 1000,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,14 +322,20 @@ def _check_opener_stop(req: PlaceOrderRequest) -> None:
 
 class GuardedPort:
     """The only trading surface the modes see (see the module docstring); every call is timed
-    (`Timings`), so the recording transport can split our overhead from the venue's RTT."""
+    (`Timings`), so the recording transport can split our overhead from the venue's RTT. With a
+    `scope` (the harness sets the run's), an amend or a cancel of another order is refused."""
 
     def __init__(self, port: TradingPort, timings: Timings | None = None) -> None:
         self._port = port
         self.timings = timings if timings is not None else Timings()
         self.limits: QtyLimits | None = None
+        self.scope: RunScope | None = None
         self.openers = 0
         self.closes = 0
+
+    def _own(self, link: str | None) -> None:
+        if self.scope is not None and not self.scope.owns(link):
+            raise Refused("not one of the run's orders: the harness touches only its own")
 
     @asynccontextmanager
     async def _call(self, name: str) -> AsyncIterator[CallRecord]:
@@ -258,12 +365,15 @@ class GuardedPort:
             ack = await self._port.place_order(req)
         if req.reduce_only:
             self.closes += 1
+            if ack.ok and self.scope is not None:
+                self.scope.sent_close(req.order_link_id, req.qty)
         else:
             self.openers += 1
         return ack
 
     async def amend_order(self, req: AmendOrderRequest) -> OrderAck:
         check_symbol(req.symbol)
+        self._own(req.order_link_id)
         if req.qty is not None:
             self._qty(req.qty, closing=False)
         stop = req.stop_loss
@@ -274,13 +384,9 @@ class GuardedPort:
 
     async def cancel_order(self, req: CancelOrderRequest) -> OrderAck:
         check_symbol(req.symbol)
+        self._own(req.order_link_id)
         async with self._call("cancel"):
             return await self._port.cancel_order(req)
-
-    async def cancel_all(self, account: AccountRef, symbol: Symbol | None) -> Sequence[OrderAck]:
-        check_symbol(symbol or "")
-        async with self._call("cancel_all"):
-            return await self._port.cancel_all(account, symbol)
 
     async def open_orders(
         self,
@@ -365,67 +471,145 @@ class Shutdown:
         return self.event.is_set()
 
 
+def _held(positions: Sequence[Position], side: Side) -> tuple[Decimal, Literal[0, 1, 2]]:
+    """The venue's BTCUSDT position on `side`: its size and `positionIdx`."""
+    rows = [p for p in positions if p.symbol == SYMBOL and p.side == side and p.qty > 0]
+    return sum((p.qty for p in rows), _ZERO), (rows[0].position_idx if rows else 0)
+
+
+def _text(qty: Decimal) -> str:
+    """A quantity as plain decimal text, its trailing zeros dropped (`0.000` is `0`)."""
+    return format(qty.normalize(), "f")
+
+
+def _signed(positions: Sequence[Position]) -> Decimal:
+    rows = [p for p in positions if p.symbol == SYMBOL and p.side is not None]
+    return sum((p.qty if p.side == "buy" else -p.qty for p in rows), _ZERO)
+
+
 async def flatten(
     port: GuardedPort,
     account: AccountRef,
+    scope: RunScope,
     new_link: Callable[[], str],
     *,
+    venue_now_us: Callable[[], int],
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
     attempts: int = 3,
     settle_s: float = 1.0,
+    deadline_s: float = FLATTEN_DEADLINE_S,
 ) -> dict[str, object]:
-    """Cancel every BTCUSDT order, then close any BTCUSDT position with a reduce-only market
-    order, re-reading until flat; each failure is recorded by class, never raised. It needs M2
-    and audit up (every signing is audited first), so it runs before they stop."""
+    """Ruling R1C-02 (b): the run's own state, and nothing else, made flat.
+
+    1. Its own open orders (an `orderLinkId` with its prefix) are cancelled one by one, re-read
+       until none is left; no cancel-all, so a foreign order is never touched.
+    2. Its net, what its own fills hold open, is read again from the venue's execution list over
+       its window (`scope.start_us` to `venue_now_us()`), and closed by a reduce-only market
+       order of at most the venue's position on that side; re-read until the net is zero. A
+       close the venue accepted but no read has listed yet counts (`RunScope.unconfirmed`), so a
+       slow list never makes it close twice.
+
+    Every failure is recorded by class, never raised; the whole stays within `deadline_s`. It
+    needs M2 and audit up (every signing is audited first), so it runs before they stop."""
     errors: list[str] = []
-    cancel_calls = cancelled = closes = 0
-    flat = False
-    for _ in range(attempts):
+    began = monotonic()
+
+    def late() -> bool:
+        if monotonic() - began <= deadline_s:
+            return False
+        errors.append("deadline")
+        return True
+
+    cancelled = foreign_orders = 0
+    own_left: int | None = None  # unknown until a read succeeds
+    for attempt in range(attempts + 1):
+        if late():
+            break
         try:
-            acks = await port.cancel_all(account, SYMBOL)
-            cancel_calls += 1
-            cancelled += sum(1 for a in acks if a.ok and a.order_link_id is not None)
+            orders = await port.open_orders(account, SYMBOL)
         except Exception as exc:  # recorded by class; the flatten goes on
-            errors.append(f"cancel_all:{type(exc).__name__}")
-        try:
-            if not await port.open_orders(account, SYMBOL):
-                break
-        except Exception as exc:
             errors.append(f"open_orders:{type(exc).__name__}")
-    for _ in range(attempts):
-        try:
-            held = [p for p in await port.positions(account) if p.symbol == SYMBOL and p.qty > 0]
-        except Exception as exc:
-            errors.append(f"positions:{type(exc).__name__}")
             await sleep(settle_s)
             continue
-        if not held:
-            flat = True
+        own = [o for o in orders if scope.owns(o.order_link_id)]
+        own_left, foreign_orders = len(own), len(orders) - len(own)
+        if not own or attempt == attempts:
             break
-        for position in held:
-            if position.side is None:
-                continue
-            close = PlaceOrderRequest(
+        for order in own:
+            cancel = CancelOrderRequest(
                 account=account,
                 symbol=SYMBOL,
-                side="sell" if position.side == "buy" else "buy",
-                order_type="market",
-                qty=position.qty,
-                order_link_id=new_link(),
-                reduce_only=True,
-                position_idx=position.position_idx,
-                lane="critical",
+                order_link_id=order.order_link_id,
+                exchange_order_id=order.exchange_order_id,
             )
             try:
-                await port.place_order(close)
-                closes += 1
+                if (await port.cancel_order(cancel)).ok:
+                    cancelled += 1
+                    scope.closes.pop(order.order_link_id, None)  # a close it ends never fills
             except Exception as exc:
-                errors.append(f"close:{type(exc).__name__}")
+                errors.append(f"cancel:{type(exc).__name__}")
+        await sleep(settle_s)
+    closes = 0
+    closed, net, net_before, venue = _ZERO, _ZERO, None, None
+    flat = False
+    for _ in range(attempts + 1):
+        if late():
+            break
+        try:
+            if scope.start_us is not None:
+                scope.add(await port.executions(account, scope.start_us, venue_now_us()))
+            positions = await port.positions(account)
+        except Exception as exc:
+            errors.append(f"read:{type(exc).__name__}")
+            await sleep(settle_s)
+            continue
+        net, venue = scope.net(), _signed(positions)
+        net_before = net if net_before is None else net_before
+        if net == 0:
+            flat = own_left == 0
+            break
+        side: Side = "buy" if net > 0 else "sell"
+        held, idx = _held(positions, side)
+        unconfirmed = scope.unconfirmed()
+        qty = min(abs(net) - unconfirmed, held)
+        if qty <= 0:
+            if not unconfirmed:  # own fills the venue's position no longer holds on that side
+                errors.append("net_not_held")
+                break
+            await sleep(settle_s)
+            continue
+        link = new_link()
+        close = PlaceOrderRequest(
+            account=account,
+            symbol=SYMBOL,
+            side="sell" if side == "buy" else "buy",
+            order_type="market",
+            qty=qty,
+            order_link_id=link,
+            reduce_only=True,
+            position_idx=idx,
+            lane="critical",
+        )
+        try:
+            if (await port.place_order(close)).ok:
+                closes += 1
+                closed += qty
+        except Exception as exc:
+            errors.append(f"close:{type(exc).__name__}")
         await sleep(settle_s)
     return {
-        "cancel_all_calls": cancel_calls,
+        "scope": "the run's own orders and fills",
         "cancelled": cancelled,
+        "own_open_orders_left": own_left,
+        "own_net_qty": _text(net_before if net_before is not None else _ZERO),
+        "closed_qty": _text(closed),
         "flatten_orders": closes,
+        "own_net_after": _text(net),
         "flat": flat,
+        "not_ours_left": {
+            "open_orders": foreign_orders,
+            "venue_position_less_own_net": None if venue is None else _text(venue - net),
+        },
         "errors": errors,
     }

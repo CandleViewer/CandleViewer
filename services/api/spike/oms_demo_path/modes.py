@@ -18,11 +18,18 @@
   covers cv-api's egress too); a run of any mode that meets one records its shape.
 - `retention`: on day 8 or later of an earlier run, the order history from its start, counted by
   state and age (24 §8.3 rule 6: demo keeps orders 7 days; a cancelled one may show 24 h only).
+- `flatten` (R1S-04): the owner's audited, M2-signed retry when a run's shutdown flatten failed.
+  It adopts that run's scope from its summary (`--run-dir`: the digests of its link prefixes and
+  its window), refuses another account's, reads the instrument for the size step, measures the
+  offset, arms and runs `safety.flatten`: only that run's orders and fills, and its own closes,
+  are ever touched; never the account. No floors; the same consent flags and confirmation.
 """
 
 from __future__ import annotations
 
+import json
 from collections import Counter
+from pathlib import Path
 from typing import Final
 
 from candleviewer.exchange.base.errors import ExchangeError
@@ -42,17 +49,8 @@ MET: Final = "met"
 NOT_MET: Final = "not met"
 NO_DATA: Final = "no data"
 #: The port calls that write orders: a soak sends none.
-ORDER_CALLS: Final = ("create", "amend", "cancel", "cancel_all")
+ORDER_CALLS: Final = ("create", "amend", "cancel")
 _DAY_US: Final = 86_400_000_000
-
-
-def _venue_now_us(h: Harness, *, slack: int) -> int:
-    """Now on the exchange's clock (host plus the measured offset), as `execTime` reads, moved
-    by `slack` times the offset's own uncertainty: half its best round trip, plus the 1 ms the
-    venue's whole-ms `time` truncates. The soak's window is widened by it at both ends, so no
-    execution of the window falls outside it (the end is the read itself: nothing later)."""
-    rtt = h.offset.best_rtt_ms or 0.0
-    return h.now_us() + (h.offset.value or 0) * 1000 + slack * round((1 + rtt / 2) * 1000)
 
 
 def zero_missed(backfill_only: int | None) -> str:
@@ -67,7 +65,7 @@ def zero_missed(backfill_only: int | None) -> str:
 async def _missed(h: Harness, start_us: int) -> tuple[int | None, dict[str, object]]:
     """The execution list from `start_us` to now, through the port: how many executions it
     holds that the stream never delivered, or `None` with the error class if it failed."""
-    end_us = max(start_us, _venue_now_us(h, slack=1))
+    end_us = max(start_us, h.venue_now_us(slack=1))
     try:
         fills = await h.port.executions(h.account, start_us, end_us)
     except ExchangeError as exc:
@@ -103,7 +101,7 @@ async def run_soak(h: Harness, cfg: RunConfig) -> dict[str, object]:
     await h.measure_offset()
     deadline = h.monotonic() + cfg.hours * 3600
     async with h.private_stream():
-        held_from, window_start = h.monotonic(), _venue_now_us(h, slack=-1)
+        held_from, window_start = h.monotonic(), h.venue_now_us(slack=-1)
         while (left := deadline - h.monotonic()) > 0:
             if await h.shutdown.pause(min(SOAK_OFFSET_EVERY_S, left)):
                 break
@@ -111,6 +109,7 @@ async def run_soak(h: Harness, cfg: RunConfig) -> dict[str, object]:
                 await h.measure_offset()
         held_s = h.monotonic() - held_from
         missed, backfill = await _missed(h, window_start)
+    await h.outputs.flush()  # every frame counted (the writer classifies them)
     connector = h.connector
     return {
         "hours": cfg.hours,
@@ -127,8 +126,7 @@ async def run_shapes(h: Harness, cfg: RunConfig) -> dict[str, object]:
     instrument = await h.public.instrument()
     limits, qty = QtyLimits.of(instrument, multiple=1, max_multiple=cfg.max_qty_multiple)
     h.port.limits = limits
-    await h.preflight()
-    await h.measure_offset()
+    await h.preflight()  # flat, the offset measured: armed
     ref = await h.public.reference()
     away, _, stop = prices(ref, "buy", cfg, instrument.tick_size)
     link = h.links.new("entry")
@@ -193,3 +191,33 @@ async def run_retention(h: Harness, cfg: RunConfig) -> dict[str, object]:
         "older_than_1d": sum(1 for age in ages if age > 1),
         "age_days": stats(ages),
     }
+
+
+def failed_scope(run_dir: Path) -> dict[str, object]:
+    """The failed run's `run_scope`, from its summary (final or provisional)."""
+    try:
+        summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise Refused(f"no readable summary in --run-dir ({type(exc).__name__})") from None
+    record = summary.get("run_scope") if isinstance(summary, dict) else None
+    if not isinstance(record, dict):
+        raise Refused("that summary names no run scope: nothing to flatten from it")
+    return record
+
+
+async def run_flatten(h: Harness, cfg: RunConfig) -> dict[str, object]:
+    if cfg.run_dir is None:  # check_online_args refuses it first; a direct call here too
+        raise Refused("flatten needs --run-dir")
+    record = failed_scope(cfg.run_dir)
+    if record.get("account_digest") != h.scope.account:
+        raise Refused("--account-id is not the account of that run: nothing was touched")
+    instrument = await h.public.instrument()
+    limits, _ = QtyLimits.of(instrument, multiple=1, max_multiple=cfg.max_qty_multiple)
+    h.port.limits = limits
+    h.scope.adopt(record)
+    await h.measure_offset()
+    h.arm()
+    report = await h.flatten()
+    if not report["flat"]:
+        h.shutdown.trip("error:not_flat")
+    return report

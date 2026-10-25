@@ -103,3 +103,17 @@ def test_the_default_corpus_is_the_recorded_one() -> None:
     root = default_corpus()
     assert root.name == "2026-10-05" and (root / "manifest.json").is_file()
     assert Path(root, "rest", "trading-create-reply.json").is_file()
+
+
+async def test_a_list_read_with_a_cursor_the_venue_never_issued_is_refused() -> None:
+    venue = CorpusVenue(CORPUS)
+    url = "https://api-demo.bybit.com/v5/execution/list?category=linear&cursor=nonsense"
+    with pytest.raises(Refused, match="no such cursor"):
+        await venue.handle(httpx.Request("GET", url))
+
+
+async def test_the_venue_serves_no_cancel_all() -> None:  # the harness never sends one
+    venue = CorpusVenue(CORPUS)
+    request = httpx.Request("POST", "https://api-demo.bybit.com/v5/order/cancel-all", json={})
+    with pytest.raises(Refused, match="no route"):
+        await venue.handle(request)
