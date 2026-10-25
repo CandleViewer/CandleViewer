@@ -1,0 +1,260 @@
+"""The two recording seams (#843 A4 brief items 3, 5, 6, 7): the adapter's `rest_transport` and
+its `private_ws_connect`, the only edges the harness swaps (`ExchangeBybitService`).
+
+`RecordingTransport` wraps the transport every account REST client of the adapter sends through.
+It refuses any request that is not `https://api-demo.bybit.com` before anything leaves, registers
+the request's key id with the scrubber and its signature for that exchange only, times the
+exchange from send to the whole reply on the monotonic clock (the RTT at the seam, below the
+port's M2 signing and audit append), reads the body there and hands the client a fresh response
+without the transfer headers (the client streams and caps it again). Each exchange is an event
+and, for its first few replies per call class and code, a fixture candidate; never a header.
+
+`RecordingConnector` wraps the private-stream connector: it refuses any URL but the demo
+stream's, counts dials, and its sockets register each `auth` op's key id and signature with the
+scrubber before the frame leaves, never record an `auth` frame either way, count pongs and
+`auth` grants and refusals, track the longest silence, and tee the rest, scrubbed.
+
+Both sit below the adapter's own masking (`rest._mask`, `private_stream._classify`): the raw
+traffic holds the key id, the signature, `orderId`, `orderLinkId`, `execId` and the push ids,
+which is why nothing here writes a byte the scrubber has not seen.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from collections import Counter
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Final
+
+import httpx
+
+from candleviewer.exchange.bybit.private_stream import StreamSocket
+from spike.oms_demo_path.config import DEMO_PRIVATE_WS, DEMO_REST_HOST
+from spike.oms_demo_path.measure import Timings, call_class
+from spike.oms_demo_path.outputs import RunOutputs
+from spike.oms_demo_path.safety import Refused
+from spike.oms_demo_path.scrub import Scrubber
+
+#: Replies kept as fixture candidates per (call class, return code).
+FIXTURES_PER_CODE: Final = 3
+#: The most of a reply the seam reads (the adapter caps signed replies at 1 MiB itself).
+REPLY_CAP: Final = 4 * 1024 * 1024
+_TRANSFER_HEADERS: Final = frozenset({"content-encoding", "content-length", "transfer-encoding"})
+_KEY_HEADER: Final = "X-BAPI-API-KEY"
+_SIGN_HEADER: Final = "X-BAPI-SIGN"
+
+
+def _wall_ms() -> float:
+    return time.time() * 1000
+
+
+@dataclass(frozen=True, slots=True)
+class Exchange:
+    """One HTTP exchange at the seam (no header, no body: those go through the scrubber)."""
+
+    path: str
+    status: int
+    ret_code: int | None
+    rtt_ms: float
+    sent_wall_ms: float
+    received_wall_ms: float
+    venue_ms: int | None
+
+
+async def _capped(response: httpx.Response) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_bytes():
+        total += len(chunk)
+        if total > REPLY_CAP:
+            raise httpx.ReadError("a reply above the seam's cap")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _decoded(body: bytes) -> object:
+    try:
+        return json.loads(body)
+    except ValueError:
+        return None
+
+
+class RecordingTransport(httpx.AsyncBaseTransport):
+    """The adapter's account REST transport, recorded (see the module docstring)."""
+
+    def __init__(
+        self,
+        inner: httpx.AsyncBaseTransport,
+        *,
+        scrubber: Scrubber,
+        outputs: RunOutputs,
+        timings: Timings,
+        monotonic: Callable[[], float] = time.monotonic,
+        wall_ms: Callable[[], float] = _wall_ms,
+    ) -> None:
+        self._inner = inner
+        self._scrubber = scrubber
+        self._outputs = outputs
+        self._timings = timings
+        self._monotonic = monotonic
+        self._wall_ms = wall_ms
+        self._kept: Counter[tuple[str, int | None]] = Counter()
+        self.codes: Counter[int] = Counter()
+        self.shapes: dict[int, object] = {}
+        self.last: dict[str, Exchange] = {}
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        url = request.url
+        if url.scheme != "https" or url.host != DEMO_REST_HOST:
+            raise Refused("a request to a host off the demo allow-list; nothing was sent")
+        self._scrubber.secret(request.headers.get(_KEY_HEADER))
+        signature = request.headers.get(_SIGN_HEADER, "")
+        sent_wall, started = self._wall_ms(), self._monotonic()
+        try:
+            response = await self._inner.handle_async_request(request)
+            try:
+                body = await _capped(response)
+            finally:
+                await response.aclose()
+        except Exception as exc:  # counted by class, then the adapter's own handling
+            elapsed = round((self._monotonic() - started) * 1000, 2)
+            failed = type(exc).__name__
+            call = call_class(request.url.path)
+            self._outputs.event("rest_failed", call=call, failure=failed, ms=elapsed)
+            raise
+        rtt_ms = (self._monotonic() - started) * 1000
+        received_wall = self._wall_ms()
+        self._record(
+            request, response.status_code, body, rtt_ms, sent_wall, received_wall, signature
+        )
+        headers = [
+            (k, v) for k, v in response.headers.multi_items() if k.lower() not in _TRANSFER_HEADERS
+        ]
+        return httpx.Response(response.status_code, headers=headers, content=body)
+
+    def _record(
+        self,
+        request: httpx.Request,
+        status: int,
+        body: bytes,
+        rtt_ms: float,
+        sent_wall: float,
+        received_wall: float,
+        signature: str,
+    ) -> None:
+        path = request.url.path
+        reply = _decoded(body)
+        ret_code = reply.get("retCode") if isinstance(reply, dict) else None
+        code = ret_code if type(ret_code) is int else None
+        venue = reply.get("time") if isinstance(reply, dict) else None
+        exchange = Exchange(
+            path=path,
+            status=status,
+            ret_code=code,
+            rtt_ms=rtt_ms,
+            sent_wall_ms=sent_wall,
+            received_wall_ms=received_wall,
+            venue_ms=venue if type(venue) is int else None,
+        )
+        self.last[path] = exchange
+        self._timings.exchanged(path, rtt_ms)
+        name = call_class(path)
+        transient = (signature,) if signature else ()
+        sent = _decoded(request.content) if request.method == "POST" else dict(request.url.params)
+        self._outputs.event(
+            "rest",
+            call=name,
+            method=request.method,
+            status=status,
+            ret_code=code,
+            rtt_ms=round(rtt_ms, 2),
+            request=sent,
+            transient=transient,
+        )
+        if code is not None and code != 0:
+            self.codes[code] += 1
+            self.shapes.setdefault(code, self._scrubber.scrub(reply, transient=transient))
+        self._kept[(name, code)] += 1
+        if self._kept[(name, code)] <= FIXTURES_PER_CODE:
+            label = f"{name}_{'none' if code is None else code}_{self._kept[(name, code)]}"
+            self._outputs.rest_fixture(label, reply, transient=transient)
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
+class RecordingConnector:
+    """The adapter's private-stream connector, recorded (see the module docstring)."""
+
+    def __init__(
+        self,
+        inner: Callable[[str], Awaitable[StreamSocket]],
+        *,
+        scrubber: Scrubber,
+        outputs: RunOutputs,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._inner = inner
+        self._scrubber = scrubber
+        self._outputs = outputs
+        self._monotonic = monotonic
+        self.dials = 0
+        self.counts: Counter[str] = Counter()
+        self.max_silence_s = 0.0
+
+    async def __call__(self, url: str) -> StreamSocket:
+        if url != DEMO_PRIVATE_WS:
+            raise Refused("a private stream off the demo allow-list; nothing was dialled")
+        self.dials += 1
+        self._outputs.event("dial", n=self.dials)
+        return RecordingSocket(await self._inner(url), self)
+
+    def sent(self, frame: str) -> None:
+        message = _decoded(frame.encode())
+        op = message.get("op") if isinstance(message, dict) else None
+        if op == "auth" and isinstance(message, dict):
+            args = message.get("args")
+            if isinstance(args, list) and len(args) == 3:
+                for value in (args[0], args[2]):
+                    self._scrubber.secret(value if isinstance(value, str) else None)
+        self.counts[f"sent:{op}"] += 1
+
+    def received(self, frame: str, silence_s: float) -> None:
+        self.max_silence_s = max(self.max_silence_s, silence_s)
+        message = _decoded(frame.encode())
+        if not isinstance(message, dict):
+            self.counts["received:unreadable"] += 1
+            return
+        op, topic = message.get("op"), message.get("topic")
+        if op == "auth":
+            granted = message.get("success") is True
+            self.counts["auth:granted" if granted else "auth:refused"] += 1
+            return  # never recorded (#843 security notes)
+        label = str(topic) if isinstance(topic, str) else f"op_{op}"
+        self.counts[f"received:{label}"] += 1
+        self._outputs.frame(label.replace(".", "_"), frame)
+
+
+class RecordingSocket:
+    """One private socket, recorded through its connector."""
+
+    def __init__(self, inner: StreamSocket, owner: RecordingConnector) -> None:
+        self._inner = inner
+        self._owner = owner
+        self._last = owner._monotonic()
+
+    async def send(self, frame: str) -> None:
+        self._owner.sent(frame)
+        await self._inner.send(frame)
+
+    async def recv(self, max_bytes: int) -> str:
+        frame = await self._inner.recv(max_bytes)
+        now = self._owner._monotonic()
+        self._owner.received(frame, now - self._last)
+        self._last = now
+        return frame
+
+    async def close(self) -> None:
+        await self._inner.close()
