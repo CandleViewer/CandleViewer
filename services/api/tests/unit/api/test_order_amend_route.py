@@ -21,6 +21,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
+from structlog.testing import capture_logs
 
 from candleviewer.api.idempotency import StoredResponse, request_fingerprint
 from candleviewer.api.order_admission import MAX_ORDER_BODY_BYTES
@@ -35,6 +36,11 @@ from candleviewer.oms import exits as ex
 from candleviewer.oms.errors import OMS_NOT_READY_RETRY_AFTER_S
 from candleviewer.oms.ports import ArmToken, RequestRecord, StopOffset
 from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.statechart.gateway import (
+    GatewayDegradedError,
+    GatewayError,
+    GatewayOverloadedError,
+)
 from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import OrderRow, ScopedOrder
 from tests.unit.api import test_order_exits_route as er
@@ -165,6 +171,8 @@ _STEPS: list[tuple[str, Any, str, str, Any, UUID | None, int, str, list[tuple[st
     ("3_starting", _starting, "owner", "row", _CUT, KEY, 503, "oms_not_ready", []),
     ("3_stopping", lambda w: setattr(w.oms, "stopped", "exits"), "owner", "row", _CUT, KEY, 503,
      "oms_not_ready", []),
+    ("4_lane_stopped", lambda w: setattr(w.oms.service, "scope", er.lane_stopped), "owner", "row",
+     _CUT, KEY, 503, "oms_not_ready", []),
     ("4_missing", None, "owner", "missing", _CUT, KEY, 404, "not_found", []),
     ("5_too_large", None, "owner", "row", _LARGE, KEY, 400, "validation_failed",
      [(_DENIED, "validation_failed")]),
@@ -199,6 +207,7 @@ _STEPS: list[tuple[str, Any, str, str, Any, UUID | None, int, str, list[tuple[st
 #: gives one (`oms_not_ready`'s, the in-flight guard's), and each `errors[]` entry's field and rule.
 _RETRY = {
     "3_starting": OMS_NOT_READY_RETRY_AFTER_S, "3_stopping": OMS_NOT_READY_RETRY_AFTER_S,
+    "4_lane_stopped": OMS_NOT_READY_RETRY_AFTER_S,
     "9_in_flight": ex.IN_FLIGHT_RETRY_AFTER_S, "9_full": ex.IN_FLIGHT_RETRY_AFTER_S,
     "9_stopping": OMS_NOT_READY_RETRY_AFTER_S,
 }  # fmt: skip
@@ -224,10 +233,13 @@ async def test_each_step_refuses_before_the_next_runs(case: Any) -> None:
     if change is not None:
         change(world)
     target = {"row": row.id, "missing": uuid4()}.get(order, order)
-    answer = await patch(world, target, body, who, key)
+    with capture_logs() as logs:
+        answer = await patch(world, target, body, who, key)
     problem = answer.json()
     er._PROBLEM.validate(problem)
     assert (answer.status_code, problem["code"], world.actions()) == (status, code, records)
+    escaped = [line for line in logs if line["event"] == "oms_exit_refusal_escaped"]
+    assert escaped == []  # each a refusal the route answers, none one that escaped the service
     assert world.steps() == ([_STEP_OF[name]] if name in _STEP_OF else [])
     assert (machines.sent, world.oms.tasks, refused(world, code)) == ([], [], 1)
     retry = _RETRY.get(name)
@@ -779,6 +791,73 @@ async def test_the_services_body_refusal_is_answered_with_its_rules(rig: SubmitR
     assert (answer.status_code, answer.json()["code"]) == (400, "validation_failed")
     assert [e["rule"] for e in answer.json()["errors"]] == ["nothing_to_amend"]
     assert refused(world, "validation_failed") == 1 and amends(rig) == []
+
+
+@pytest.mark.parametrize("where", ["scope", "run", "amend"], ids=["step-4", "step-9", "step-11"])
+async def test_an_amend_that_meets_a_stopped_lane_is_the_counted_503_unaudited_and_unpaged(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch, where: str
+) -> None:
+    """24 Sec.8.4, binding on the amend over the order lane (L1b's handoff of 2026-10-25): an
+    `OmsNotReady` out of `exits.scope` or `exits.amend`, an `OnLaneExits` hop finding the lane
+    stopped, or the gate check not begun within 1 s, or out of `runtime.run`, its stop begun, is
+    step 3's answer: `503 oms_not_ready` with its `Retry-After`, counted once under `{amend,
+    oms_not_ready}`, its key free again, with no `ETag`, no 24 h record, no `deny` through the
+    stalled lane, no page and nothing sent. It is never logged `oms_exit_refusal_escaped`, which
+    `exit_fault` logs for a refusal that escaped the exit service: a stopped lane is no such
+    refusal, so nothing is logged at warning or above."""
+    world, row = await amendable(rig)
+    before, denied = world.actions(), list[tuple[Any, ...]]()
+    real = world.oms.service.deny
+
+    async def deny(*args: Any, **kwargs: Any) -> ex.ExitOutcome:
+        denied.append(args)
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(world.oms.service, "deny", deny)
+    if where == "run":
+        world.oms.stopped = "run"
+    else:
+        monkeypatch.setattr(world.oms.service, where, er.lane_stopped)
+    with capture_logs() as logs:
+        answer = await patch(world, row.id, {"price": "60100"})
+    assert (answer.status_code, answer.json()["code"]) == (503, "oms_not_ready")
+    assert answer.headers.get("retry-after") == str(OMS_NOT_READY_RETRY_AFTER_S)
+    assert "etag" not in answer.headers and world.pages == []
+    assert (world.actions(), denied, amends(rig)) == (before, [], [])
+    assert world.cache.get(str(OWNER), f"amendOrder:{KEY}") is None
+    assert (refused(world, "oms_not_ready"), world.refused("oms_not_ready")) == (1, 0)
+    assert callable(world.oms.service.guard.claim(OWNER, "amend", KEY))
+    assert [line for line in logs if line["log_level"] in ("warning", "error", "critical")] == []
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    [GatewayOverloadedError("order:x", "order"), GatewayDegradedError("order:x", "order")],
+    ids=["inbox-full", "degraded"],
+)
+async def test_an_amend_the_gateway_refuses_for_backpressure_is_the_services_recorded_503(
+    refusal: GatewayError, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SEC-S4D2A-01 on the amend route: the order's gateway refusing the `AMEND` for backpressure,
+    its inbox full or its admission refused, is no stopped lane but the exit service's own refusal
+    (`_refused(OmsNotReady())` through `_dispatch`), an outcome the route answers as given: `503
+    oms_not_ready` with its `Retry-After`, recorded `denied` beside the intent and counted once,
+    with no page, no `ETag`, nothing kept and nothing sent."""
+    world, machines, row, _ = await er.scripted_world("submitted")
+    amending(machines, monkeypatch)
+    routed(world, versions=machines)
+    machines.refuse = refusal
+    answer = await patch(world, row.id)
+    body, retry = answer.json(), OMS_NOT_READY_RETRY_AFTER_S
+    er._PROBLEM.validate(body)
+    assert (answer.status_code, body["code"], body.get("retry_after_seconds")) == (
+        503, "oms_not_ready", retry,
+    )  # fmt: skip
+    assert answer.headers["retry-after"] == str(retry) and "etag" not in answer.headers
+    assert (world.pages, machines.sent) == ([], [])
+    assert world.actions() == [(_DENIED, "user"), (_DENIED, "oms_not_ready")]
+    assert (refused(world, "oms_not_ready"), refused(world, "internal_error")) == (1, 0)
+    assert world.cache.get(str(OWNER), f"amendOrder:{KEY}") is None
 
 
 async def test_a_client_that_leaves_does_not_stop_the_amend_nor_free_its_key_early(

@@ -22,6 +22,7 @@ from fastapi import FastAPI
 from fastapi.responses import Response
 from httpx import ASGITransport, AsyncClient
 from jsonschema import Draft202012Validator
+from structlog.testing import capture_logs
 
 from candleviewer.api.idempotency import IdempotencyCache, StoredResponse
 from candleviewer.api.order_exits import make_order_exits_router
@@ -265,6 +266,12 @@ def _recorded_elsewhere(world: World) -> None:
     world.cache.put(str(OWNER), f"cancelOrder:{KEY}", held)
 
 
+async def lane_stopped(*args: Any, **kwargs: Any) -> Any:
+    """An `OnLaneExits` hop once the order lane has stopped, or has not answered within its bound
+    (L1b, `20-architecture.md` Sec.6.2): `OmsNotReady`, the exit service never reached."""
+    raise OmsNotReady
+
+
 _FULL = tuple(UUID(int=n) for n in range(1, ex.MAX_IN_FLIGHT_PER_PRINCIPAL + 1))
 _DENIED = "orders.cancel"
 #: The step a route refusal's record names (`deny`'s `step`, as `placeOrder`'s records do).
@@ -287,6 +294,8 @@ _STEPS: list[tuple[str, Any, str, str, UUID | None, int, str, list[tuple[str, st
     ("3_stopping", lambda w: setattr(w.oms, "stopped", "exits"), "owner", "row", KEY, 503,
      "oms_not_ready", []),
     ("4_missing", None, "owner", "missing", KEY, 404, "not_found", []),
+    ("4_lane_stopped", lambda w: setattr(w.oms.service, "scope", lane_stopped), "owner", "row",
+     KEY, 503, "oms_not_ready", []),
     ("7_no_key", None, "owner", "row", None, 400, "validation_failed",
      [(_DENIED, "validation_failed")]),
     ("8_reuse", _recorded_elsewhere, "owner", "row", KEY, 409, "idempotency_key_reuse",
@@ -302,6 +311,7 @@ _STEPS: list[tuple[str, Any, str, str, UUID | None, int, str, list[tuple[str, st
 #: gives one (`oms_not_ready`'s, the in-flight guard's), and the field of each `errors[]` entry.
 _RETRY = {
     "3_starting": OMS_NOT_READY_RETRY_AFTER_S, "3_stopping": OMS_NOT_READY_RETRY_AFTER_S,
+    "4_lane_stopped": OMS_NOT_READY_RETRY_AFTER_S,
     "9_in_flight": ex.IN_FLIGHT_RETRY_AFTER_S, "9_full": ex.IN_FLIGHT_RETRY_AFTER_S,
     "9_stopping": OMS_NOT_READY_RETRY_AFTER_S,
 }  # fmt: skip
@@ -314,10 +324,14 @@ async def test_each_step_refuses_before_the_next_runs(case: Any) -> None:
     world, machines, row, _ = await scripted_world("submitted", "cancelled")
     if change is not None:
         change(world)
-    answer = await delete(world, {"row": row.id, "missing": uuid4()}.get(order, order), who, key)
+    target = {"row": row.id, "missing": uuid4()}.get(order, order)
+    with capture_logs() as logs:
+        answer = await delete(world, target, who, key)
     body = answer.json()
     _PROBLEM.validate(body)
     assert (answer.status_code, body["code"], world.actions()) == (status, code, records)
+    escaped = [line for line in logs if line["event"] == "oms_exit_refusal_escaped"]
+    assert escaped == []  # each a refusal the route answers, none one that escaped the service
     assert world.steps() == ([_STEP_OF[name]] if name in _STEP_OF else [])
     assert (machines.sent, world.oms.tasks, world.refused(code)) == ([], [], 1)
     retry = _RETRY.get(name)
@@ -600,6 +614,31 @@ async def test_a_cancel_the_gateway_refuses_is_503_with_retry_after_recorded_and
     assert (world.pages, machines.sent) == ([], [])
     assert world.actions() == [(_DENIED, "user"), (_DENIED, "oms_not_ready")]
     assert (world.refused("oms_not_ready"), world.refused("internal_error")) == (1, 0)
+
+
+@pytest.mark.parametrize("where", ["scope", "cancel_admitted"], ids=["step-4", "step-11"])
+async def test_a_cancel_that_meets_a_stopped_lane_is_the_counted_503_never_an_escaped_refusal(
+    monkeypatch: pytest.MonkeyPatch, where: str
+) -> None:
+    """24 Sec.8.4 over the order lane (L1b's handoff of 2026-10-25): `OmsNotReady` out of step 4's
+    scope read or step 11's cancel, an `OnLaneExits` hop finding the lane stopped, is step 3's
+    answer, unlike the gateway's backpressure above: `503 oms_not_ready` with its `Retry-After`,
+    counted once, unaudited and unpaged, its key free and nothing kept or sent. It is never
+    logged `oms_exit_refusal_escaped`, as no refusal escaped the exit service: nothing is logged
+    at warning or above."""
+    world, machines, row, _ = await scripted_world()
+    monkeypatch.setattr(world.oms.service, where, lane_stopped)
+    with capture_logs() as logs:
+        answer = await delete(world, row.id)
+    body = answer.json()
+    _PROBLEM.validate(body)
+    assert (answer.status_code, body["code"]) == (503, "oms_not_ready")
+    assert answer.headers["retry-after"] == str(OMS_NOT_READY_RETRY_AFTER_S)
+    assert (world.actions(), world.pages, machines.sent) == ([], [], [])
+    assert world.refused("oms_not_ready") == 1
+    assert world.cache.get(str(OWNER), f"cancelOrder:{KEY}") is None
+    assert callable(world.oms.service.guard.claim(OWNER, "cancel", KEY))
+    assert [line for line in logs if line["log_level"] in ("warning", "error", "critical")] == []
 
 
 @pytest.mark.parametrize("fault", tx.GATEWAY_FAULTS)
