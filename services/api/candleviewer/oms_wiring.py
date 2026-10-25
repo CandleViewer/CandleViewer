@@ -156,7 +156,7 @@ from candleviewer.statechart.plugins.state_feed import (
 )
 from candleviewer.statechart.registry import Registry
 from candleviewer.statechart_wiring import EventFramesAdapter, EventsAdapter, PersistOps
-from candleviewer.storage.errors import StorageError
+from candleviewer.storage.errors import StorageError, StorageTierUnavailable
 from candleviewer.storage.repositories.accounts import AccountScope
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
 from candleviewer.storage.repositories.executions import ExecutionStore
@@ -1239,6 +1239,12 @@ class EnvironmentLocked(RuntimeError):
     host): this runtime refuses to start, failing closed, and is never ready."""
 
 
+class EnvironmentLockUnanswered(RuntimeError):
+    """CR-S3L2-01/02: the environment's lock could not be asked (Postgres unreachable, or no answer
+    within `ENVIRONMENT_LOCK_TIMEOUT_S`), which is no other holder: the start asks again, the whole
+    composition with it, after the sweep's backoff (`SWEEP_RETRY_S`), never ready meanwhile."""
+
+
 #: The fail-closed alarm the lane's audit writer fires (ruling 4): the cause, its error's class.
 type AuditAlarm = Callable[[str], Awaitable[None]]
 
@@ -1725,6 +1731,9 @@ class OmsRuntime:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._parts: _Parts | None = None
         self._startup: asyncio.Task[None] | None = None
+        #: The order lane while it runs for this start, composed or still asking the environment's
+        #: lock (CR-S3L2-01/02); `stop()` stops it.
+        self._lane: Lane | None = None
         self._running: set[asyncio.Task[Any]] = set()
         self._failed = self._stopping = False
         #: The step `_compose` has reached, which a failed start logs and pages.
@@ -1845,21 +1854,23 @@ class OmsRuntime:
     async def start(self) -> None:
         """Start the order lane and compose the OMS on it, then spawn the startup task (20
         Sec.6.2). A second call does nothing until `stop()`. What cannot be composed, the lane
-        included, fails the runtime closed, the lane stopped again."""
+        included, fails the runtime closed, the lane stopped again; but an environment lock that
+        was not answered (Postgres unreachable) is asked again by the startup task, the runtime
+        `starting` meanwhile (CR-S3L2-01/02)."""
         if self._loop is not None and not self._stopping:
             return
         self._loop, self._stopping, self._failed = asyncio.get_running_loop(), False, False
         self._lane_paged = threading.Lock()  # a new lane: its death pages anew
-        lane = self._lanes()
+        lane = self._lane = self._lanes()
+        serving = Serving(self._loop, self._metrics)
         try:
             self._phase = "lane"
             await lane.start()
-            self._parts = await lane.call(self._compose(lane, Serving(self._loop, self._metrics)))
+            self._parts = await lane.call(self._compose(lane, serving))
+        except EnvironmentLockUnanswered:  # no other holder: the startup task asks again
+            _log().warning("oms_environment_lock_unanswered", retry_s=SWEEP_RETRY_S[0])
         except Exception as exc:  # fail closed (C-2.21): never ready, no order admitted
-            await lane.stop()
-            self._failed, phase = True, self._phase
-            _log().critical("oms_runtime_failed_closed", phase=phase, error=type(exc).__name__)
-            _page(self._pager, f"oms_runtime_failed_closed: {phase}")
+            await self._fail_closed(lane, exc)
             return
         except BaseException:  # cancelled: the compose closes what it built on the lane first
             try:  # its wait there, then the join, within the stop reserve (20 Sec.6.2)
@@ -1867,10 +1878,43 @@ class OmsRuntime:
                     async with asyncio.timeout(OMS_STOP_RESERVE_S - LANE_JOIN_S):
                         await lane.idle()
             finally:  # cancelled again meanwhile or not (SEC-S3L1C-01)
+                self._lane = None
                 await lane.stop()
             raise
-        self._startup = spawn(self._started(), name="oms-startup")
+        self._startup = spawn(self._started(lane, serving), name="oms-startup")
         self._startup.add_done_callback(self._startup_ended)
+
+    async def _fail_closed(self, lane: Lane, error: Exception) -> None:
+        """A start that cannot compose fails the runtime closed (C-2.21): its lane stopped, logged
+        CRITICAL by its step and paged, `degraded` and never ready, no order admitted."""
+        self._lane = None
+        await lane.stop()
+        self._failed, phase = True, self._phase
+        _log().critical("oms_runtime_failed_closed", phase=phase, error=type(error).__name__)
+        _page(self._pager, f"oms_runtime_failed_closed: {phase}")
+
+    async def _composed_again(self, lane: Lane, serving: Serving) -> bool:
+        """CR-S3L2-01/02 (20 Sec.6.2): the start could not ask the environment's lock, which is no
+        other holder, so this asks again, the whole composition with it, after the sweep's backoff
+        on the runtime's sleep (`SWEEP_RETRY_S`), each failure logged, never ready meanwhile.
+        True once composed; another holder (`EnvironmentLocked`), or any other failure, fails the
+        runtime closed as a failed start does, paged. A failure met while a stop runs ends it,
+        cancelled, never paged."""
+        delay, ceiling = SWEEP_RETRY_S
+        while True:
+            await self._sleep(delay)
+            delay = min(2 * delay, ceiling)
+            try:
+                self._parts = await lane.call(self._compose(lane, serving))
+            except EnvironmentLockUnanswered:
+                _log().warning("oms_environment_lock_unanswered", retry_s=delay)
+                continue
+            except Exception as exc:
+                if self._stopping:  # the stop's cancel or its stopped lane, never a failure
+                    raise asyncio.CancelledError from exc
+                await self._fail_closed(lane, exc)
+                return False
+            return True
 
     async def stop(self) -> None:
         """Clear `ready`; give the submits in flight at most `CV_OMS_DRAIN_S`; cancel what remains
@@ -1878,8 +1922,8 @@ class OmsRuntime:
         close the stop gate (its complete reads and passes cancelled with the startup task, before
         the machines), the facade (it unwires B1's ports), the command port, the lane's own sink
         and audit writer, the trading port and its pool, each on its own loop, isolated, within its
-        share of what is left, and last the environment's lock (SEC-S3N-01); then stop the lane
-        and join its thread. All of it ends by
+        share of what is left, and last the environment's lock (SEC-S3N-01); then stop the lane,
+        one still asking the lock included, and join its thread. All of it ends by
         `OMS_STOP_RESERVE_S` after the drain, `LANE_JOIN_S` of it the join's, inside the OMS
         module's 15 s grace (20 Sec.6.2). The shared profile cache is its owner's to close."""
         self._ready.clear()
@@ -1891,22 +1935,28 @@ class OmsRuntime:
         for task in pending:
             task.cancel()
         deadline = asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S - LANE_JOIN_S
+        lane, self._lane = self._lane, None
         parts, self._parts = self._parts, None
         closers: list[_Closer] = [("cancelled", lambda: asyncio.wait(pending))] if pending else []
+        if lane is not None:  # its work cancelled above, a composition asked again among it
+            closers.append(("lane", lane.idle))
         if parts is not None:
-            closers += [("lane", parts.lane.idle), *parts.closers]
+            closers += parts.closers
         try:
             await _closed(closers, deadline)
         finally:
-            if parts is not None:  # cancelled or not: its own join bounds it (`LANE_JOIN_S`)
-                await parts.lane.stop()
+            if lane is not None:  # cancelled or not: its own join bounds it (`LANE_JOIN_S`)
+                await lane.stop()
         self._failed = False
 
-    async def _started(self) -> None:
-        """The startup sweep (20 Sec.6.2): step 1's waits, then steps 2 to 4, run again after a
-        backoff while the store or the audit fails them (any other error ends it `degraded` after
-        `SWEEP_MAX_FAILURES`, paged), then step 5, `ready`, never early. A failure met while a
-        stop runs ends it, cancelled, never retried."""
+    async def _started(self, lane: Lane, serving: Serving) -> None:
+        """The startup sweep (20 Sec.6.2): a composition the environment's lock held back first
+        (`_composed_again`), then step 1's waits, then steps 2 to 4, run again after a backoff while
+        the store or the audit fails them (any other error ends it `degraded` after
+        `SWEEP_MAX_FAILURES`, paged), then step 5, `ready`, never early. A failure met while a stop
+        runs ends it, cancelled, never retried."""
+        if self._parts is None and not await self._composed_again(lane, serving):
+            return
         await self._waited()
         parts, (delay, ceiling) = self._composed(), SWEEP_RETRY_S
         stuck = 0  # the failures no retry can outlast (CR-S3E3-02)
@@ -2085,7 +2135,11 @@ class OmsRuntime:
                 _log().critical("oms_machine_event_wal_unclaimed", pending_bytes=left)
                 raise UnclaimedMachineEvents(f"{left} bytes of machine_events no sink holds")
             self._phase = "environment_lock"  # SEC-S3N-01: before the facade or any machine
-            if not await stores.lock.acquire():
+            try:
+                held = await stores.lock.acquire()
+            except StorageTierUnavailable as exc:  # no other holder: asked again (CR-S3L2-01)
+                raise EnvironmentLockUnanswered(f"the {env} OMS lock was not answered") from exc
+            if not held:
                 raise EnvironmentLocked(f"another process holds the {env} OMS lock")
             closers.append(("environment_lock", lambda: lane.call(stores.lock.release())))  # last
             self._phase = "audit"
