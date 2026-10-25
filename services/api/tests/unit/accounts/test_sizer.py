@@ -82,7 +82,7 @@ def test_size_leg_pr1_golden_vector_matches(vid: str) -> None:
     p = profile(v["profile"]["id"], **v["profile"]["set"])
     got = sized(p, w, sz.SizingMarket(atr=reading), **i)
     assert (got.outcome, got.reason) == (want["outcome"], want.get("code"))
-    for name in ("qty", "notional", "risk_usdt", "risk_with_fees_usdt"):
+    for name in ("qty", "notional", "risk_usdt", "risk_with_fees_usdt", "initial_margin"):
         if name in want or name in also:
             assert getattr(got, name) == D({**also, **want}[name]), name
     if "stop" in want:

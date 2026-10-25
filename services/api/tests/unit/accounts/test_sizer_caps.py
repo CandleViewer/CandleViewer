@@ -56,13 +56,16 @@ def vector(vid: str) -> sz.LegSizing:
 
 _MID: Final = sz.SizingMarket(mid=D(64000), last_price=D(63000), atr=_ATR)
 #: Named legs off QA's vectors: a market order at mid where max_mkt_order_qty binds, the ATR
-#: fallback, a denied symbol, the day's room spent, and a market order with no price at all.
+#: fallback, a denied symbol, the day's room spent or overspent, and a market order with no price.
 _LEGS: Final = {
     "market-at-mid": lambda: sized(profile("P-PCT"), wallet("1000000000"), _MID, price=None),
     "atr-fallback": lambda: sized(profile("P-PCT")),
     "denied": lambda: sized(profile("P-PCT", denied_symbols=["SOLUSDT"]), **_SOL),
     "room-spent": lambda: sized(
         profile("P-NOTIONAL", **_ANY_SOL), wallet(realised_loss_today="250"), **_SOL
+    ),
+    "room-overspent": lambda: sized(
+        profile("P-NOTIONAL", **_ANY_SOL), wallet(realised_loss_today="300"), **_SOL
     ),
     "no-price": lambda: sized(profile("P-QTY"), price=None),
 }
@@ -173,6 +176,9 @@ _RENDERED: Final = {
     "V08": "fixed_qty: 0.01 SOL = 0.01 SOL -> 0.01 SOL; stop 148.5 USDT; notional 1.5 USDT; "
     "1R = 0.015 USDT; risk with fees 0.015 USDT; skipped: below_min_notional, min_notional 5 USDT",
     "room-spent": "fixed_notional: 1000 USDT / 150 USDT per SOL = 6.66666666 SOL capped by "
+    "max_daily_loss at 0 SOL -> 0 SOL; stop 149.5 USDT; notional 0 USDT; 1R = 0 USDT; risk "
+    "with fees 0 USDT; failed: cap_breached, min_order_qty 0.001 SOL",
+    "room-overspent": "fixed_notional: 1000 USDT / 150 USDT per SOL = 6.66666666 SOL capped by "
     "max_daily_loss at 0 SOL -> 0 SOL; stop 149.5 USDT; notional 0 USDT; 1R = 0 USDT; risk "
     "with fees 0 USDT; failed: cap_breached, min_order_qty 0.001 SOL",
     "atr-fallback": "pct_equity: 5000 USDT / 64000 USDT per BTC = 0.078125 BTC -> 0.078 BTC "
@@ -305,6 +311,7 @@ def test_size_leg_ok_passes_the_comparator_and_never_exceeds_a_cap(
     inst = instrument("BTCUSDT")
     event(f"{'market' if market else 'limit'} {got.outcome} {got.reason}")
     event(f"binding {got.binding and got.binding.cap}")
+    assert all(c.limit >= 0 for c in got.clamps)  # an overspent room is recorded as 0
     if got.qty is not None and got.ref_price is not None:  # never above a cap, restated plainly
         px = got.ref_price if got.limit_price is None else max(got.ref_price, got.limit_price)
         assert got.qty * px <= notional_cap

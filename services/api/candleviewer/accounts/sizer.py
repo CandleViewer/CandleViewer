@@ -194,12 +194,14 @@ class LegSizing(SizingExplanation):
             ("notional", self.notional),
             ("1R =", self.risk_usdt),
             ("risk with fees", self.risk_with_fees_usdt),
-            ("initial margin", self.initial_margin),
         )
         parts += [f"{name} {_shown(value)} {usdt}" for name, value in figures if value is not None]
-        ref, limit = self.ref_price or Decimal(0), self.limit_price or Decimal(0)
-        if self.initial_margin is not None and limit > ref:  # the margin's price, when not `ref`
-            parts[-1] += f" at {_shown(limit)} {usdt}"
+        if self.initial_margin is not None:
+            margin = f"initial margin {_shown(self.initial_margin)} {usdt}"
+            ref, limit = self.ref_price or Decimal(0), self.limit_price or Decimal(0)
+            if limit > ref:  # the margin's price, when not `ref`
+                margin += f" at {_shown(limit)} {usdt}"
+            parts.append(margin)
         if self.reason is not None:
             parts.append(f"{'skipped' if self.outcome == 'skip' else 'failed'}: {self.reason}")
             if self.minimum is not None:
@@ -306,7 +308,7 @@ def _caps(
     if e is None or lost is None or held is None or fee is None:
         return None
     caps = []
-    if p.max_leverage_cap is not None:  # BQ-10: qty <= max_leverage_cap * equity / ref
+    if p.max_leverage_cap is not None:  # BQ-10: qty <= max_leverage_cap * equity / px
         caps.append(Clamp("max_leverage_cap", p.max_leverage_cap * e / px))
     if p.max_position_pct_equity is not None:
         caps.append(Clamp("max_position_pct_equity", p.max_position_pct_equity * e / px))
@@ -317,9 +319,9 @@ def _caps(
         rooms.append(("max_daily_loss", p.max_daily_loss))
     if p.max_daily_loss_pct is not None:
         rooms.append(("max_daily_loss_pct", p.max_daily_loss_pct * e))
-    if rooms:  # the tighter; on a tie, max_daily_loss, as R2 names it
+    if rooms:  # the tighter; on a tie, max_daily_loss, as R2 names it; an overspent room is 0
         name, room = min(rooms, key=lambda entry: entry[1])
-        caps.append(Clamp(name, (room - lost - held) / (stop.distance + fee)))
+        caps.append(Clamp(name, _positive((room - lost - held) / (stop.distance + fee))))
     caps.append(Clamp("max_order_qty", inst.max_order_qty))  # BQ-13, by order type
     if market:
         caps.append(Clamp("max_mkt_order_qty", inst.max_mkt_order_qty))
@@ -437,6 +439,8 @@ def size_leg(
     leg = replace(leg, initial_margin=margin)
     if wallet.available_margin is None:
         return replace(leg, outcome="fail", reason=FailReason.FIGURE_UNKNOWN)
-    if margin > wallet.available_margin * MARGIN_SHARE:
+    # The limit rounds down at 100 digits (fail closed); the comparator's R6 forms the same
+    # product, `available_margin * MARGIN_SHARE`, in the default context.
+    if margin > _FLOOR.multiply(wallet.available_margin, MARGIN_SHARE):
         return replace(leg, outcome="fail", reason=FailReason.INSUFFICIENT_MARGIN)
     return leg
