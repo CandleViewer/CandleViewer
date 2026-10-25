@@ -73,6 +73,7 @@ def _num(value: object) -> str:
     text, so the Decimal round-trip runs only for the forms that need it."""
     if isinstance(value, float):
         text = repr(value)
+        # exponent forms hold "e"; the only reprs holding "n" are inf, -inf and nan
         if "e" in text or "n" in text:
             return format(Decimal(text), "f")
         return text

@@ -1,7 +1,8 @@
 """Perf lane (C-13.9) for the cold 5 000-bar kline read behind Budget #13 (#2523).
 
-A pack-shaped lake (`bench/ingestion/fixture_app.write_cold_lake`: one month partition, one
-`part-0000.parquet`, 30 days of 1-minute bars) is read through `ParquetKlineReader.__call__`.
+A lake shaped like the pack's (as `bench/ingestion/fixture_app.write_cold_lake` writes it: one
+month partition, one `part-0000.parquet`, 30 days of 1-minute bars), built here in `tmp_path`,
+is read through `ParquetKlineReader.__call__`.
 The bound is a ratio, not milliseconds: the reader's fastest call over a bare DuckDB
 `execute` + `to_arrow_table` of the same window in the same process, so runner speed cancels
 out. It fails on the pre-#2523 row build (tz-aware datetimes, per-row dicts, Decimal text).
