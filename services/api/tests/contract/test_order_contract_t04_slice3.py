@@ -859,11 +859,13 @@ def test_20_gives_the_lane_its_own_writer_and_sink_on_their_own_wal_files() -> N
 
 def test_20_24_and_the_e29_model_state_the_gate_in_place_and_its_stall_fence() -> None:
     """#913 slice 3 L4's fold (CR-S3L4-04, CR-S3L4-08; the orchestrator's rulings of 2026-10-25
-    18:27Z (2) and 19:19Z): 20 Sec.6.2 and 24 Sec.8.4 state the stall fence on new submits with its
-    numbers, from the code's own constants, and its outer bounds; the E29 model's OM-D11, F-20 and
-    Sec.11's order-lane row carry L4's gate halves on L2's wording, logged as revision 21; and
-    20 says the stall fence and the lost lock's compose, either refusing alone."""
+    18:27Z (2), 19:19Z and 21:56Z): 20 Sec.6.2 and 24 Sec.8.4 state the stall fence on new submits
+    and risk-increasing amends with its numbers, from the code's own constants, and its outer
+    bounds; the E29 model's OM-D11, F-20 and Sec.11's order-lane row carry L4's gate halves on
+    L2's wording, logged as revision 21; and 20 says the stall fence and the lost lock's compose,
+    either refusing alone."""
     tick, stale = oms_wiring.SERVING_TICK_S, oms_wiring.SERVING_STALE_S
+    assert stale == 2 * tick  # "twice that": the docs' 1 s is two ticks of 0.5 s
     lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
     assert not _missing(
         lane,
@@ -871,24 +873,27 @@ def test_20_24_and_the_e29_model_state_the_gate_in_place_and_its_stall_fence() -
         "`oms_not_ready`",
         f"So the OMS ticks on the serving loop every {tick:g} s (`SERVING_TICK_S`), a stamp the "
         f"lane reads in place, and once the last tick is over {stale:g} s old, twice that "
-        "(`SERVING_STALE_S`), every new submit is refused `oms_not_ready` (`FencedSwitches`: the "
-        "route's step 10, the pipeline's switches and a re-send), until the serving loop ticks "
-        "again, never as time passes.",
-        "The fence never holds the exit service's checks, a cancel, cancel-all, a stop attach or a "
-        "KILL (C-2.6).",
+        "(`SERVING_STALE_S`), new submits and risk-increasing amends are refused `oms_not_ready` "
+        "(`FencedSwitches`: the route's step 10, the pipeline's switches, a re-send, and the exit "
+        "service's gate read for a risk-increasing amend, which meets the gate as a submit does: "
+        "SR-E28-27, C-2.21), until the serving loop ticks again, never as time passes.",
+        "The fence never holds a protective amend, a cancel, cancel-all, a stop attach or a KILL, "
+        "none of which reads a switch (C-2.6).",
         f"The account's health decaying to `down` (at most {ACCOUNT_DOWN_MAX_S:g} s after its last "
         f"WS or REST success) and the last tracking read ageing out ({TRACKING_FAULT_AFTER_S:g} "
-        "s), each judged at read time, stay the outer bounds, and the only bounds of a "
-        "risk-increasing amend's gate read.",
+        "s), each judged at read time, stay the outer bounds.",
         "`FencedSwitches` wraps the binding whose first refusal is the environment lock's fence "
         "(above), so the two compose: either refuses on its own, the stall fence read first.",
     )
     assert "which no longer holds a gate read" not in lane
+    assert "the only bounds of a risk-increasing amend's gate read" not in lane
     assert (
-        "A new submit's reads of it, the route's, the pipeline's and a re-send's, are fenced: "
-        f"`oms_not_ready` while the serving loop has not ticked within {stale:g} s, the exit "
-        "service's never (`20-architecture.md` §6.2, #913 L4)."
+        "A new submit's reads of it, the route's, the pipeline's and a re-send's, and a "
+        "risk-increasing amend's in the exit service, are fenced: `oms_not_ready` while the "
+        f"serving loop has not ticked within {stale:g} s, twice its {tick:g} s tick, and no other "
+        "exit reads it (`20-architecture.md` §6.2, #913 L4)."
     ) in _words(_INTERNAL_DOC)
+    assert "the exit service's never (`20-architecture.md` §6.2" not in _words(_INTERNAL_DOC)
     threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
     lines = threat.read_text(encoding="utf-8").splitlines()
     [d11] = [_words(line) for line in lines if line.startswith("| OM-D11 |")]
@@ -898,12 +903,13 @@ def test_20_24_and_the_e29_model_state_the_gate_in_place_and_its_stall_fence() -
     assert not _missing(
         d11,
         "Since L4 the order-entry gate's reads take no hop (`ServedGate` reads it in place)",
-        f"the lane refuses new submits once its {tick:g} s tick is over {stale:g} s old, until it "
-        "ticks again",
-        "L4 reads the gate in place, twice, and fences new submits on a stalled serving loop, "
-        "never an exit or a KILL",
+        f"the lane refuses new submits and risk-increasing amends once its {tick:g} s tick is over "
+        f"{stale:g} s old (2 \u00d7 {tick:g} s), until it ticks again",  # the times sign (RUF001)
+        "L4 reads the gate in place, twice, and on a stall fences new submits and risk-increasing "
+        "amends, never a protective exit or KILL",
     )
     assert "A read not begun within 1 s answers `oms_not_ready`" not in d11
+    assert "never an exit or a KILL" not in d11
     assert "a stalled serving loop fencing new submits within 1 s instead" in f20
     assert "block the lane until L4" not in f20 and "| With #913's L1d |" in f20
     assert not _missing(
@@ -912,4 +918,5 @@ def test_20_24_and_the_e29_model_state_the_gate_in_place_and_its_stall_fence() -
         "while the serving loop stalls, shipped with their tests",
         "L2 closed OM-D11's sink half and L4 its gate half",
     )
-    assert "CR-S3L4-04" in log and "19:19Z" in log
+    assert "CR-S3L4-04" in log and "19:19Z" in log and "21:56Z" in log
+    assert "new submits and risk-increasing amends" in log and "never an exit" not in log

@@ -50,7 +50,7 @@ from candleviewer.oms.errors import (
     OrderEntryRefused,
     StoreUnavailable,
 )
-from candleviewer.oms.exits import ExitCaller, ExitOutcome, OrderExits
+from candleviewer.oms.exits import AmendTerms, ExitCaller, ExitOutcome, OrderExits
 from candleviewer.oms.fakes import FakeClockHealth, InMemoryOrderStore, InMemorySubmissionStore
 from candleviewer.oms.order_machine import OrderMachines
 from candleviewer.oms.ports import NoDayFigures, PositionKey, SubmitActor
@@ -95,7 +95,7 @@ from tests._signing import fake_capability
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms import order_rig
 from tests.unit.oms.order_rig import ACCOUNT, GATES, Pager, order_of
-from tests.unit.oms.submit_rig import REGISTRY, Profiles, ReadOnly
+from tests.unit.oms.submit_rig import REGISTRY, Profiles, ReadOnly, instrument
 
 T0 = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
 INTERIMS = ("stop_resolver", "risk_gate", "arm_records", "atr", "kill_switch")
@@ -2002,12 +2002,14 @@ async def test_native_sl_the_runtimes_kill_cancels_at_the_venue_and_spares_a_rec
     assert [r for _, r in world.writer.actions if str(r).startswith("kill_cancel")] == []
 
 
-async def test_a_stalled_serving_loop_fences_every_new_submit_never_an_exit_or_a_kill() -> None:
-    """#913 L4 (the orchestrator's CR-04 ruling of 2026-10-25 19:19Z): while the serving loop has
-    not ticked within twice its interval, the switches of every new submit, the route's step 10,
-    the pipeline's step and a re-send's, refuse `oms_not_ready`, logged, until it ticks again; the
-    exit service's switches never (a cancel, cancel-all and a stop attach read none), and a KILL
-    still cancels at the venue (C-2.6, C-2.21)."""
+async def test_a_stalled_serving_loop_fences_new_risk_never_a_protective_exit_or_a_kill() -> None:
+    """#913 L4 (the orchestrator's rulings of 2026-10-25 19:19Z on CR-04 and 21:56Z): while the
+    serving loop has not ticked within twice its interval, the switches of every new submit, the
+    route's step 10, the pipeline's step and a re-send's, refuse `oms_not_ready`, logged, until it
+    ticks again, and so do the exit service's, which a risk-increasing amend alone reads, as it
+    meets the order-entry gate as a submit does (SR-E28-27, C-2.21): the composed exit service
+    answers it `503 oms_not_ready`, recorded, nothing sent. A protective amend reads no switch and
+    is sent, and a KILL still cancels at the venue (C-2.6)."""
 
     class Stalled(oms_wiring.ServingTick):
         """The serving loop's tick, stale while the test says so, whatever the time."""
@@ -2017,8 +2019,10 @@ async def test_a_stalled_serving_loop_fences_every_new_submit_never_an_exit_or_a
         def stale(self) -> bool:
             return self.stalled
 
-    world, tick = World(), Stalled()
+    world, tick, owner = World(), Stalled(), UUID(int=1)
+    world.ingestion.instruments = SimpleNamespace(snapshot=lambda: {cr.SYMBOL: instrument()})
     await crashed(world)
+    world.store.seed_owner(owner)
     async with started(world.runtime(serving_tick=lambda: tick)) as runtime:
         for flag in world.flags:
             flag.read()
@@ -2027,18 +2031,29 @@ async def test_a_stalled_serving_loop_fences_every_new_submit_never_an_exit_or_a
         parts, account = runtime._composed(), AccountId(UUID(int=1))
         commands = parts.submission._commands
         submits = (runtime.route.switches, parts.submission._deps.switches, commands._switches)
+        caller = ExitCaller(OwnerScope(owner), SubmitActor(user_id=owner, role="owner"))
+        scoped = await runtime.exits.scope(caller, SENDING.id)
+        assert isinstance(scoped, ScopedOrder)
         tick.stalled = True
         with capture_logs() as logs:
             for switches in submits:
                 with pytest.raises(OmsNotReady):
                     switches.refusal(account, "demo")
         assert [e["event"] for e in logs] == ["oms_submit_fenced"] * len(submits)
-        assert parts.exits._d.switches.refusal(account, "demo") is None
+        up, down = AmendTerms(qty=Decimal("0.011")), AmendTerms(qty=Decimal("0.009"))
+        fenced = await runtime.exits.amend(scoped, up, caller=caller, expected_seq=None)
+        assert (fenced.kind, fenced.status, fenced.code) == ("refused", 503, "oms_not_ready")
+        assert ("orders.amend", "oms_not_ready") in world.writer.actions
+        kept = await runtime.exits.amend(scoped, down, caller=caller, expected_seq=None)
+        assert kept.kind == "accepted"
         assert await parts.machines.kill("kill switch") == ()
         tick.stalled = False
         assert [switches.refusal(account, "demo") for switches in submits] == [None] * 3
     [port] = world.venue.ports
-    assert [call.lane for call in port.calls if call.method == "cancel_order"] == ["critical"]
+    exits = [call for call in port.calls if call.method in ("amend_order", "cancel_order")]
+    assert [call.method for call in exits] == ["amend_order", "cancel_order"]
+    assert [getattr(call.request, "qty", None) for call in exits] == [Decimal("0.009"), None]
+    assert exits[-1].lane == "critical"
 
 
 async def test_the_serving_tick_beats_on_the_serving_loop_from_start_until_stop() -> None:

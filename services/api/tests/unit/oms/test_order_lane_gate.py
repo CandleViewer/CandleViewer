@@ -174,9 +174,9 @@ async def test_a_stalled_serving_loop_leaves_the_gate_answering_on_the_lane_at_o
 
 async def test_a_stalled_serving_loop_leaves_the_lane_admitting_until_its_gate_ages_out() -> None:
     """CR-S3L4-04, the outer bounds (20 Sec.6.2, OM-D11): with this loop blocked nothing it writes
-    lands, and the gate itself, which the exit service reads unfenced, admits on what it last wrote
-    (a new submit's switches are fenced first, `test_oms_runtime.py`), yet it judges its age bounds
-    at read time: the account's health goes `down` `ACCOUNT_DOWN_MAX_S` after its last success, and
+    lands, and the gate itself admits on what it last wrote (the switches of a new submit and of a
+    risk-increasing amend are fenced first, `test_oms_runtime.py`), yet it judges its age bounds at
+    read time: the account's health goes `down` `ACCOUNT_DOWN_MAX_S` after its last success, and
     the key standing lists nothing once its last tracking read is older than
     `TRACKING_FAULT_AFTER_S`."""
     world, done = _world(_serving(), [ACC]), threading.Event()
@@ -204,9 +204,10 @@ async def test_a_stalled_serving_loop_leaves_the_lane_admitting_until_its_gate_a
 
 def test_the_serving_tick_is_stale_past_twice_its_interval_until_it_beats_again() -> None:
     """The orchestrator's CR-04 ruling of 2026-10-25 19:19Z: the lane reads the serving loop's tick
-    in place, and a new submit is fenced once the last beat is older than twice the tick's interval,
-    the 1 s within which a stalled serving loop refused a gate read before L4. Sticky: however long
-    the lane waits, only a beat of the serving loop ends it."""
+    in place, and a new submit, or a risk-increasing amend (the ruling of 21:56Z), is fenced once
+    the last beat is older than twice the tick's interval, the 1 s within which a stalled serving
+    loop refused a gate read before L4. Sticky: however long the lane waits, only a beat of the
+    serving loop ends it."""
     now = [100.0]
     tick = oms_wiring.ServingTick(clock=lambda: now[0])
     assert oms_wiring.SERVING_STALE_S == 2 * oms_wiring.SERVING_TICK_S == 1.0
