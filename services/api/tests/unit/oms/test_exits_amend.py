@@ -1,39 +1,58 @@
 """The exit service's amend (E29-T04 slice 4, `oms.exits`; 22 `amendOrder`; rulings Q3 to Q5 and
-Q10, the S4-A decisions D1 and D3): over the real B1 facade, the real command port and the fake
-venue (`submit_rig`), the rig's limit buy entry resting `submitted` (0.010 at 60000, its stop
-58000 and its take-profit 64000, Full mode, unfilled)."""
+Q10, the S4-A decisions D1 and D3, SEC-S4C2B-01, the orchestrator's ruling of 2026-10-25 00:27Z
+(1), the code lens's CR-S4D2A-01 and -09, and the Fable lens's SEC-S4D2A-01 and -03): over the
+real B1 facade, the real command port and the fake venue (`submit_rig`), the rig's limit buy entry
+resting `submitted` (0.010 at 60000, its stop 58000 and its take-profit 64000, Full mode,
+unfilled)."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+import json
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import fields
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
+from fastapi.responses import Response
 
 from candleviewer.api.order_etag import NO_VERSION
+from candleviewer.api.order_exits_common import exit_fault, exit_response, run_claimed
 from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.exchange.base.fakes import FakeReject
 from candleviewer.oms.errors import (
+    OMS_NOT_READY_RETRY_AFTER_S,
     AccountScopeDenied,
     IllegalTransition,
     TradingDisabled,
     VersionConflict,
 )
-from candleviewer.oms.exits import AmendTerms, ExitCaller, risk_increasing
-from candleviewer.oms.ports import StopOffset
+from candleviewer.oms.exits import AmendTerms, ExitCaller, ExitOutcome, OrderExits, risk_increasing
+from candleviewer.oms.ports import RequestRecord, StopOffset
 from candleviewer.risk.models import RiskDecision, RiskRefusal
+from candleviewer.statechart.gateway import GatewayDegradedError, GatewayOverloadedError
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import OrderRow, ScopedOrder
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms import submit_rig as sr
 from tests.unit.oms.submit_rig import SubmitRig
-from tests.unit.oms.test_exits import OWNER, actor, exits_of, placed, refuse_after, requests
+from tests.unit.oms.test_exits import (
+    OWNER,
+    REQUEST,
+    actor,
+    exits_of,
+    placed,
+    refuse_after,
+    requests,
+)
 
 CALLER = ExitCaller(OwnerScope(OWNER), actor(OWNER))
+#: A caller whose request carries its correlation id, as the route's does (`exit_caller`).
+TRACED = ExitCaller(OwnerScope(OWNER), actor(OWNER), REQUEST)
 D = Decimal
 
 
@@ -200,18 +219,22 @@ async def in_partial_mode(rig: SubmitRig) -> ScopedOrder:
     return await placed_as(rig, sr.entry(tpsl_mode="Partial"))
 
 
-async def partly_filled(rig: SubmitRig) -> ScopedOrder:
-    """The rig's entry partly filled by a real `EXEC` of `_FILL` on its bound exchange order, the
-    venue holding the long it opened, as the scope then reads it (`partially_filled`)."""
-    row = (await scoped(rig)).order
-    rig.port.demo.seed_position(cr.position(qty=_FILL))  # so the stop's attach reads it back
-    fill = {
+def _fill(row: OrderRow) -> dict[str, Any]:
+    """A real `EXEC` of `_FILL` on the order's bound exchange order."""
+    return {
         "order_id": str(row.id), "order_link_id": row.order_link_id,
         "account_id": str(cr.ACCOUNT), "symbol": row.symbol, "side": "buy", "exec_id": "e1",
         "exchange_order_id": row.exchange_order_id, "qty": _FILL, "exec_type": "trade",
         "price": "60000", "fee": "0", "fee_rate": "0.0002", "ts_exec": cr.T0_US,
     }  # fmt: skip
-    await rig.machines.push(cr.ACCOUNT, row.id, "EXEC", fill)
+
+
+async def partly_filled(rig: SubmitRig) -> ScopedOrder:
+    """The rig's entry partly filled by a real `EXEC` of `_FILL` on its bound exchange order, the
+    venue holding the long it opened, as the scope then reads it (`partially_filled`)."""
+    row = (await scoped(rig)).order
+    rig.port.demo.seed_position(cr.position(qty=_FILL))  # so the stop's attach reads it back
+    await rig.machines.push(cr.ACCOUNT, row.id, "EXEC", _fill(row))
     await rig.quiet()
     found = await exits_of(rig).scope(CALLER, row.id)
     assert isinstance(found, ScopedOrder) and found.order.cum_exec_qty == D(_FILL)
@@ -342,26 +365,31 @@ async def test_an_amend_whose_intent_cannot_be_recorded_is_503_and_nothing_is_se
 
 
 @pytest.mark.parametrize(
-    ("error", "status", "code"),
-    [(VersionConflict(), 412, "version_conflict"),
-     (IllegalTransition("amend_pending", "AMEND"), 422, "order_not_amendable")],
-    ids=["version-moved-under-the-lock", "state-moved"],
+    ("error", "tagged", "status", "code", "retry"),
+    [(VersionConflict(), True, 412, "version_conflict", None),
+     (VersionConflict(), False, 409, "conflict", 1),
+     (IllegalTransition("amend_pending", "AMEND"), False, 422, "order_not_amendable", None)],
+    ids=["version-moved-under-the-lock-if-match", "version-moved-under-the-lock-unpinned",
+         "state-moved"],
 )  # fmt: skip
 async def test_an_amend_the_facade_refuses_is_refused_beside_its_intent_nothing_sent(
-    rig: SubmitRig, error: Exception, status: int, code: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Q5: the facade compares the version again under the order's lock (412), and a state that
-    moved under the amend takes no `AMEND` (422): nothing sent or recorded, the refusal recorded
-    beside the intent."""
+    rig: SubmitRig, error: Exception, tagged: bool, status: int, code: str, retry: int | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    """Q5 as amended (SEC-S4C2B-01): the facade compares the version again under the order's
+    lock, `412` for the client's own `If-Match`, `409 conflict` with `Retry-After: 1` for the
+    version an amend without one was admitted at, never `412`; a state that moved under the amend
+    takes no `AMEND` (422): nothing sent or recorded, the refusal recorded beside the intent."""
     found, exits = await scoped(rig), exits_of(rig)
     stops = len(rig.store._stops)
+    tag = rig.machines.version(found.order.id) if tagged else None
 
     async def refuses(*_args: Any, **_kwargs: Any) -> str:
         raise error
 
     monkeypatch.setattr(rig.machines, "command", refuses)
-    got = await exits.amend(found, AmendTerms(price=D("60100")), caller=CALLER, expected_seq=None)
-    assert (got.kind, got.status, got.code) == ("refused", status, code)
+    got = await exits.amend(found, AmendTerms(price=D("60100")), caller=CALLER, expected_seq=tag)
+    assert (got.kind, got.status, got.code, got.retry_after_s) == ("refused", status, code, retry)
     assert amends(rig) == [] and len(rig.store._stops) == stops
     assert requests(rig, "orders.amend") == [("success", "user"), ("denied", code)]
 
@@ -466,3 +494,428 @@ async def test_an_amend_whose_intent_was_written_as_aclose_ran_starts_nothing(
     assert (got.kind, got.status, got.code) == ("refused", 503, "oms_not_ready")
     assert amends(rig) == []
     assert requests(rig, "orders.amend") == [("success", "user"), ("denied", "oms_not_ready")]
+
+
+# --- SEC-S4C2B-01: the amend judged on the order as it stands, and sent at its version ----------
+
+
+#: Each race's two amends: the order's first, a cut or a repricing, which settles; then a request
+#: that the stale read takes for a cut (or no move), the order as it stands for a raise.
+_RACES = {
+    "qty": (AmendTerms(qty=D("0.001")), AmendTerms(qty=D("0.009"))),
+    "price": (AmendTerms(price=D("60100")), AmendTerms(price=D("60000"))),
+}
+
+
+async def stale(rig: SubmitRig, race: str) -> ScopedOrder:
+    """The scope's read of the rig's entry, then the order's first amend settled, so the read is
+    stale: the order as it stands holds the first amend's terms."""
+    found = await scoped(rig)
+    first, _ = _RACES[race]
+    got = await exits_of(rig).amend(found, first, caller=CALLER, expected_seq=None)
+    assert got.kind == "accepted" and len(amends(rig)) == 1
+    return found
+
+
+@pytest.mark.parametrize("race", list(_RACES))
+async def test_sec_s4c2b_01_a_stale_read_is_judged_on_the_order_as_it_stands(
+    rig: SubmitRig, race: str
+) -> None:
+    """The finding's exploit: FREEZE on, an entry cut to 0.001 (or repriced to 60100) since the
+    scope read it; a request the stale read takes for a cut (0.009 under 0.010) or for no move
+    (60000) raises the order as it stands, so it meets the gates and FREEZE refuses it: `403
+    trading_disabled`, recorded, nothing sent (C-2.21, C-12.5)."""
+    found = await stale(rig, race)
+    rig.port.switches.refusals[cr.ACCOUNT] = TradingDisabled()  # B18's FREEZE: no `reason`
+    _, then = _RACES[race]
+    got = await exits_of(rig).amend(found, then, caller=CALLER, expected_seq=None)
+    assert (got.kind, got.status, got.code) == ("refused", 403, "trading_disabled")
+    assert len(amends(rig)) == 1
+    assert requests(rig, "orders.amend")[-1] == ("denied", "trading_disabled")
+
+
+@pytest.mark.parametrize("race", list(_RACES))
+@pytest.mark.parametrize(
+    ("tagged", "status", "code", "retry"),
+    [(False, 409, "conflict", 1), (True, 412, "version_conflict", None)],
+    ids=["unpinned", "if-match"],
+)  # fmt: skip
+async def test_an_amend_a_step_made_risk_increasing_since_the_routes_read_is_refused(
+    rig: SubmitRig, race: str, tagged: bool, status: int, code: str, retry: int | None
+) -> None:
+    """24 Sec.8.4 steps 5 and 11, the orchestrator's ruling of 2026-10-25 00:27Z (1): the route
+    judged the arm token and the switches (steps 6 and 10) on step 4's read, which took the amend
+    for no raise; the order's row, amended since, makes it one, so step 11 refuses it before the
+    send, its gates passing: `409 conflict` with `Retry-After: 1` without `If-Match`, for the
+    client to send it again, `412` with it. Nothing is sent and nothing recorded as a success: one
+    record, `orders.amend` denied with its code, naming the principal, the request, the step
+    (`class`) and the reason (`reclassified`)."""
+    found = await stale(rig, race)
+    await rig.quiet()
+    tag = rig.machines.version(found.order.id) if tagged else None
+    _, then = _RACES[race]
+    written = len(rig.records())
+    got = await exits_of(rig).amend(found, then, caller=TRACED, expected_seq=tag)
+    assert (got.kind, got.status, got.code, got.retry_after_s) == ("refused", status, code, retry)
+    assert len(amends(rig)) == 1
+    [denied] = rig.records()[written:]
+    assert isinstance(denied, RequestRecord)
+    assert (denied.action, denied.outcome, denied.reason) == ("orders.amend", "denied", code)
+    assert (denied.actor, denied.request_id) == (TRACED.actor, REQUEST)
+    assert denied.detail == {
+        "operation": "amend", "code": code, "order_link_id": found.order.order_link_id,
+        "step": "class", "reason": "reclassified",
+    }  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("tagged", "status", "code", "retry"),
+    [(False, 409, "conflict", 1), (True, 412, "version_conflict", None)],
+    ids=["unpinned", "if-match"],
+)  # fmt: skip
+async def test_a_step_between_the_re_read_and_the_send_refuses_the_send_under_the_lock(
+    rig: SubmitRig, tagged: bool, status: int, code: str, retry: int | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    """A fill commits once the amend was judged, before its `AMEND` reaches the facade: the send
+    carries the version the amend was judged at, so the facade refuses it under the order's lock.
+    Without `If-Match` that is `409 conflict` with `Retry-After: 1`, never `412`, which stays the
+    client's own tag; the refusal recorded beside the intent, nothing sent."""
+    found, exits = await scoped(rig), exits_of(rig)
+    rig.port.demo.seed_position(cr.position(qty=_FILL))  # so the stop's attach reads it back
+    tag = rig.machines.version(found.order.id) if tagged else None
+    command = rig.machines.command
+
+    async def filled_first(account_id: Any, order_id: Any, *args: Any, **kwargs: Any) -> str:
+        await rig.machines.push(cr.ACCOUNT, order_id, "EXEC", _fill(found.order))
+        return await command(account_id, order_id, *args, **kwargs)
+
+    monkeypatch.setattr(rig.machines, "command", filled_first)
+    got = await exits.amend(found, AmendTerms(price=D("60100")), caller=CALLER, expected_seq=tag)
+    await rig.quiet()
+    assert (got.kind, got.status, got.code, got.retry_after_s) == ("refused", status, code, retry)
+    assert amends(rig) == []
+    assert requests(rig, "orders.amend") == [("success", "user"), ("denied", code)]
+    assert (rig.machines.state(found.order.id) or ("",))[0] == "partially_filled"
+    moved = rig.records("orders.amend")[-1]  # a version moved on, no class re-check: as it was
+    assert isinstance(moved, RequestRecord) and not {"step", "reason"} & set(moved.detail)
+
+
+def spied(rig: SubmitRig, monkeypatch: pytest.MonkeyPatch) -> list[int | None]:
+    """The version each `AMEND` the facade is commanded carries (`expected_seq`), in order."""
+    carried: list[int | None] = []
+    command = rig.machines.command
+
+    async def spy(*args: Any, **kwargs: Any) -> str:
+        carried.append(kwargs.get("expected_seq"))
+        return await command(*args, **kwargs)
+
+    monkeypatch.setattr(rig.machines, "command", spy)
+    return carried
+
+
+async def test_an_amend_without_if_match_sends_the_version_it_read(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Q5 as amended: with no `If-Match` the `AMEND` carries the version read before the row was
+    read again, never none."""
+    found, exits = await scoped(rig), exits_of(rig)
+    carried, seen = spied(rig, monkeypatch), rig.machines.version(found.order.id)
+    got = await exits.amend(found, AmendTerms(price=D("60100")), caller=CALLER, expected_seq=None)
+    assert got.kind == "accepted" and seen is not None and carried == [seen]
+
+
+async def test_an_amend_with_if_match_sends_its_tags_version(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Q5: an `If-Match` that names the version read is the version the `AMEND` carries, and the
+    answer's version is the step's, past it."""
+    found, exits = await scoped(rig), exits_of(rig)
+    carried, tag = spied(rig, monkeypatch), rig.machines.version(found.order.id)
+    got = await exits.amend(found, AmendTerms(price=D("60100")), caller=CALLER, expected_seq=tag)
+    assert got.kind == "accepted" and tag is not None and carried == [tag]
+    assert got.version is not None and got.version > tag
+
+
+async def stale_tag(rig: SubmitRig) -> tuple[ScopedOrder, int]:
+    """The rig's entry once an amend moved its version on, as the scope reads it then, and the tag
+    of the version before that amend, which the order has left."""
+    found, exits = await scoped(rig), exits_of(rig)
+    tag = rig.machines.version(found.order.id)
+    moved = await exits.amend(found, AmendTerms(price=D("60100")), caller=CALLER, expected_seq=None)
+    assert tag is not None and moved.kind == "accepted"
+    again = await exits.scope(CALLER, found.order.id)
+    assert isinstance(again, ScopedOrder)
+    return again, tag
+
+
+async def test_a_tag_other_than_the_version_read_is_412_and_nothing_is_commanded(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Q5: an `If-Match` naming a version the order has left is `412`, before anything is
+    commanded or sent."""
+    again, tag = await stale_tag(rig)
+    carried, sent = spied(rig, monkeypatch), len(amends(rig))
+    terms = AmendTerms(price=D("60200"))
+    got = await exits_of(rig).amend(again, terms, caller=CALLER, expected_seq=tag)
+    assert (got.kind, got.status, got.code) == ("refused", 412, "version_conflict")
+    assert carried == [] and len(amends(rig)) == sent
+
+
+async def test_a_stale_tags_refusal_is_recorded_naming_no_step_and_no_reason(
+    rig: SubmitRig,
+) -> None:
+    """A stale `If-Match` is no class re-check: its record, `orders.amend` denied with its code,
+    names neither a step nor a reason in its detail (the ruling of 2026-10-25 00:27Z (1))."""
+    again, tag = await stale_tag(rig)
+    terms = AmendTerms(price=D("60200"))
+    await exits_of(rig).amend(again, terms, caller=CALLER, expected_seq=tag)
+    stale = rig.records("orders.amend")[-1]
+    assert isinstance(stale, RequestRecord)
+    assert (stale.outcome, stale.reason) == ("denied", "version_conflict")
+    assert not {"step", "reason"} & set(stale.detail)
+
+
+class _Rereads:
+    """The exits' order reads, the scope's served by the rig's store and `get`, the amend's read
+    again, answering `answer`, or raising it."""
+
+    def __init__(self, inner: Any, answer: OrderRow | BaseException | None) -> None:
+        self._inner, self._answer = inner, answer
+
+    async def get_in_scope(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._inner.get_in_scope(*args, **kwargs)
+
+    async def accounts_in_scope(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._inner.accounts_in_scope(*args, **kwargs)
+
+    async def get(self, _account_id: Any, _order_id: Any) -> OrderRow | None:
+        if isinstance(self._answer, BaseException):
+            raise self._answer
+        return self._answer
+
+
+@pytest.mark.parametrize(
+    ("answer", "status", "code", "retry"),
+    [(_outage(), 503, "store_unavailable", 1), (None, 409, "conflict", None)],
+    ids=["unread", "gone"],
+)  # fmt: skip
+async def test_a_re_read_that_fails_or_finds_no_row_refuses_the_amend_nothing_sent(
+    rig: SubmitRig, answer: BaseException | None, status: int, code: str, retry: int | None
+) -> None:
+    """24 Sec.8.4 step 11: the row the amend is judged on is read again once its version was
+    read; a read that fails is `503 store_unavailable` with the shared `Retry-After: 1`, a row no
+    longer there `409 conflict`; each recorded denied, nothing recorded ahead or sent, the order
+    live on its terms."""
+    found = await scoped(rig)
+    exits = exits_of(rig, orders=_Rereads(rig.port.orders, answer))
+    got = await exits.amend(found, AmendTerms(price=D("60100")), caller=CALLER, expected_seq=None)
+    assert (got.kind, got.status, got.code, got.retry_after_s) == ("refused", status, code, retry)
+    assert amends(rig) == []
+    assert requests(rig, "orders.amend") == [("denied", code)]
+    assert rig.machines.state(found.order.id) == ("submitted", "not_required")
+
+
+# --- CR-S4D2A-01: the order of the reads, and the row the amend is judged on ---------------------
+
+
+class _SettlesFirst:
+    """The exits' order reads, whose first `get`, the amend's own re-read, reads the row, then lets
+    a step of the order settle (`settle`) before it answers that row: the order steps once the
+    amend read its version, and the row it is judged on is no fresher than that version."""
+
+    def __init__(self, inner: Any, settle: Callable[[], Awaitable[None]]) -> None:
+        self._inner, self._settle, self._first = inner, settle, True
+
+    async def get_in_scope(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._inner.get_in_scope(*args, **kwargs)
+
+    async def accounts_in_scope(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._inner.accounts_in_scope(*args, **kwargs)
+
+    async def get(self, account_id: Any, order_id: Any) -> OrderRow | None:
+        row: OrderRow | None = await self._inner.get(account_id, order_id)
+        if self._first:
+            self._first = False
+            await self._settle()
+        return row
+
+
+async def test_a_step_settling_as_the_row_is_read_again_refuses_the_send_under_the_lock(
+    rig: SubmitRig,
+) -> None:
+    """CR-S4D2A-01 (i): the version is read before the row is read again, so an amend of the order
+    that settles in between leaves the row this amend is judged on as old as the version it is
+    sent at, which the facade refuses under the order's lock: `409 conflict` with `Retry-After:
+    1`, nothing sent but the step's own amend. Were the version read after the row, it would be
+    the step's, and an amend judged on the row before the step would be sent."""
+    found = await scoped(rig)
+    first = exits_of(rig)  # the step: another amend of the order, over the rig's own reads
+
+    async def settle() -> None:
+        moved = await first.amend(
+            found, AmendTerms(price=D("60100")), caller=CALLER, expected_seq=None
+        )
+        assert moved.kind == "accepted"
+
+    exits = exits_of(rig, orders=_SettlesFirst(rig.port.orders, settle))
+    got = await exits.amend(found, AmendTerms(qty=D("0.009")), caller=CALLER, expected_seq=None)
+    assert (got.kind, got.status, got.code, got.retry_after_s) == ("refused", 409, "conflict", 1)
+    assert [(sent.price, sent.qty) for sent in amends(rig)] == [(D("60100"), None)]
+    assert requests(rig, "orders.amend") == [
+        ("success", "user"), ("success", "submitted"), ("success", "user"), ("denied", "conflict"),
+    ]  # fmt: skip
+
+
+async def _filled_since(rig: SubmitRig, found: ScopedOrder) -> None:
+    """A real `EXEC` of `_FILL` on the order once its scope was read."""
+    rig.port.demo.seed_position(cr.position(qty=_FILL))  # so the stop's attach reads it back
+    await rig.machines.push(cr.ACCOUNT, found.order.id, "EXEC", _fill(found.order))
+    await rig.quiet()
+
+
+async def _tightened_since(rig: SubmitRig, found: ScopedOrder) -> None:
+    """An amend that tightened the order's stop, 58000 to 59000, once its scope was read."""
+    terms = AmendTerms(sides={"stop_loss": StopOffset("price", D("59000"))})
+    moved = await exits_of(rig).amend(found, terms, caller=CALLER, expected_seq=None)
+    assert moved.kind == "accepted"
+    await rig.quiet()
+
+
+#: A stop under the one the step left (59000), so looser, but over the scope's (58000).
+_BETWEEN = {"stop_loss": StopOffset("price", D("58500"))}
+
+
+@pytest.mark.parametrize(
+    ("since", "terms", "status", "code", "rules"),
+    [(_filled_since, AmendTerms(qty=D(_FILL)), 400, "validation_failed",
+      ("qty_not_above_filled",)),
+     (_filled_since, AmendTerms(sides={"stop_loss": _TICKS}), 400, "validation_failed",
+      ("tpsl_after_fill",)),
+     (_tightened_since, AmendTerms(sides=_BETWEEN), 403, "risk_limit_breached", ())],
+    ids=["qty-at-the-fill", "a-tpsl-side-after-the-fill", "a-stop-looser-than-the-steps"],
+)  # fmt: skip
+async def test_an_amend_scoped_before_a_step_is_judged_on_the_row_the_step_left(
+    rig: SubmitRig,
+    since: Callable[[SubmitRig, ScopedOrder], Awaitable[None]],
+    terms: AmendTerms,
+    status: int,
+    code: str,
+    rules: tuple[str, ...],
+) -> None:
+    """CR-S4D2A-01 (ii): the scope read the order before a step, a real fill or a tightened stop,
+    and the amend is judged on its row read again, the step in it, never on the scope's read:
+    a quantity at the filled one, or a TP/SL side after a fill, is `400` (22 `amendOrder`), and a
+    stop looser than the step's, though tighter than the scope's, `403 risk_limit_breached` (the
+    ratchet, ruling Q4); each recorded denied with no intent recorded, and nothing sent. Judged on
+    the scope's read, the body or the ratchet would pass it on to the send."""
+    found = await scoped(rig)
+    await since(rig, found)
+    sent, stops = len(amends(rig)), len(rig.store._stops)
+    before = len(requests(rig, "orders.amend"))
+    got = await exits_of(rig).amend(found, terms, caller=CALLER, expected_seq=None)
+    assert (got.kind, got.status, got.code) == ("refused", status, code)
+    assert tuple(e.rule for e in got.errors) == rules
+    assert len(amends(rig)) == sent and len(rig.store._stops) == stops
+    assert requests(rig, "orders.amend")[before:] == [("denied", code)]
+
+
+# --- SEC-S4D2A-01 and -03: the gateway's backpressure, and a raise once the intent was written --
+
+
+class _Pages:
+    """A recording pager: each page's summary, in order."""
+
+    def __init__(self) -> None:
+        self.pages: list[str] = []
+
+    def raise_alert(self, severity: str, summary: str, *, machine_kind: str) -> None:
+        self.pages.append(summary)
+
+
+def refused_at_the_gateway(
+    rig: SubmitRig,
+    refusal: type[GatewayOverloadedError | GatewayDegradedError],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The order's gateway (`statechart.gateway`) refuses each `AMEND` as `refusal`, its inbox
+    full or its admission refused, so nothing reaches the machine; any other event goes on."""
+    gateway = rig.machines._gateway
+    send = gateway.send
+
+    async def refusing(key: str, event: Any, *, wait: bool = False) -> Any:
+        if isinstance(event, Mapping) and event.get("type") == "AMEND":
+            raise refusal(key, "order")
+        return await send(key, event, wait=wait)
+
+    monkeypatch.setattr(gateway, "send", refusing)
+
+
+async def routed(
+    exits: OrderExits, found: ScopedOrder, terms: AmendTerms, pager: _Pages
+) -> Response:
+    """The amend as the exit routes run it (`api.order_exits_common`): claimed and run as the
+    runtime's task (`run_claimed`), its outcome rendered by `exit_response`, and a fault it raises
+    by `exit_fault`, paging on `pager`."""
+
+    async def amend() -> Response:
+        outcome = await exits.amend(found, terms, caller=CALLER, expected_seq=None)
+        return exit_response(outcome, found, "demo")
+
+    async def unclaimed(_outcome: ExitOutcome) -> Response:
+        raise AssertionError("the key is this request's own")
+
+    runtime = SimpleNamespace(exits=exits, run=asyncio.ensure_future)
+    return await run_claimed(
+        runtime, OWNER, "amend", uuid4(), amend, refused=unclaimed,
+        faulted=lambda error: exit_fault(error, pager=pager)[1],
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "refusal", [GatewayOverloadedError, GatewayDegradedError], ids=["inbox-full", "degraded"]
+)
+async def test_an_amend_the_gateway_refuses_is_503_with_retry_after_recorded_and_unpaged(
+    rig: SubmitRig,
+    refusal: type[GatewayOverloadedError | GatewayDegradedError],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-S4D2A-01 (the Fable lens at 38bfb62e): the order's gateway refusing the `AMEND` for
+    backpressure is no fault. Run as the exit routes run it, the answer is `503 oms_not_ready`
+    with its `Retry-After`, the refusal recorded beside the intent (C-2.9), no exit page (the
+    gateway pages its own, C-2.18) and nothing sent, the order live on its terms."""
+    found, exits, pager = await scoped(rig), exits_of(rig), _Pages()
+    stops = len(rig.store._stops)
+    refused_at_the_gateway(rig, refusal, monkeypatch)
+    answer = await routed(exits, found, AmendTerms(price=D("60100")), pager)
+    body, retry = json.loads(bytes(answer.body)), OMS_NOT_READY_RETRY_AFTER_S
+    assert (answer.status_code, body["code"], body.get("retry_after_seconds")) == (
+        503, "oms_not_ready", retry,
+    )  # fmt: skip
+    assert answer.headers["retry-after"] == str(retry) and pager.pages == []
+    assert requests(rig, "orders.amend") == [("success", "user"), ("denied", "oms_not_ready")]
+    assert amends(rig) == [] and len(rig.store._stops) == stops
+    assert rig.machines.state(found.order.id) == ("submitted", "not_required")
+
+
+async def test_an_amend_that_raises_after_its_intent_records_its_failure_then_goes_on(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SEC-S4D2A-03 (the Fable lens at 38bfb62e): a raise once the amend's intent was written
+    leaves no `success` alone (C-2.9): `orders.amend` with outcome `failure` and the raise's class
+    as its reason, an error naming the principal and the request, is recorded beside it, best
+    effort; then the raise goes on as it was, nothing sent."""
+    found, exits = await scoped(rig), exits_of(rig)
+
+    async def faulty(*_args: Any, **_kwargs: Any) -> str:
+        raise RuntimeError("a defect at the facade")
+
+    monkeypatch.setattr(rig.machines, "command", faulty)
+    with pytest.raises(RuntimeError, match="a defect at the facade"):
+        await exits.amend(found, AmendTerms(price=D("60100")), caller=TRACED, expected_seq=None)
+    assert requests(rig, "orders.amend") == [("success", "user"), ("failure", "RuntimeError")]
+    failed = rig.records("orders.amend")[-1]
+    assert isinstance(failed, RequestRecord)
+    assert (failed.severity, failed.actor, failed.request_id) == ("error", TRACED.actor, REQUEST)
+    assert failed.detail == {"operation": "amend", "code": None, "state": None}
+    assert amends(rig) == []

@@ -1,18 +1,25 @@
 """Contract (#913, E29-T04 slice 4): the exit routes' texts that sub-slices B to G code against,
 read from 22 (`amendOrder`, `cancelOrder`, `cancelAllOrders`, `placeOrder`'s `ETag`, `OrderId`),
 24 (8.4's exit routes, 8.7, 8.8 rule 6, 15.5, 19), 21 (3.3.11, 10.7) and 20 (12.1), never from a
-copy: the orchestrator's slice-4 rulings of 2026-10-24 (issuecomment-6381292953, Q1 to Q12, Q14).
+copy: the orchestrator's slice-4 rulings of 2026-10-24 (issuecomment-6381292953, Q1 to Q12, Q14),
+and S4-D2a's (SEC-S4C2B-01; the rulings of 20:58Z and 21:47Z, and of 2026-10-25 00:27Z, 00:36Z,
+01:11Z, 01:24Z and 02:50Z (2); the code lens's CR-S4D2A-02, -04 and -07).
 """
 
 from __future__ import annotations
 
+import json
 import re
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
+from candleviewer.api.order_problems import order_problem
 from candleviewer.audit.actions import AUDIT_ACTIONS
+from candleviewer.observability.correlation import CORRELATION_HEADER
+from candleviewer.oms.errors import OmsError
+from candleviewer.oms.exits import ALREADY_FINAL, RECLASSIFIED, ExitStep
 from candleviewer.oms.recovery import FINALS
 from candleviewer.oms_wiring import ORDER_ALERTS
 from candleviewer.statechart.bindings.b01_order import NATIVE_STOP_REQUIRED
@@ -127,7 +134,8 @@ def test_an_order_etag_is_one_strong_tag_of_its_id_and_seq(tag: str, taken: bool
 
 def test_the_etag_is_sent_on_both_202s_and_checked_after_the_404_and_the_422() -> None:
     """Q5: under the order's lock, kept by the 24 h record; `*`, a list, a weak or unparseable
-    tag and another order's are 412; no `If-Match` is last write wins."""
+    tag and another order's are 412; no `If-Match` is the order as it stands when the amend is
+    admitted (Q5 as amended, SEC-S4C2B-01)."""
     for name in ("placeOrder", "amendOrder"):
         assert _OPS[name]["responses"]["202"]["headers"]["ETag"]["$ref"].endswith("/OrderETag")
     header = _COMPONENTS["headers"]["OrderETag"]
@@ -145,7 +153,7 @@ def test_the_etag_is_sent_on_both_202s_and_checked_after_the_404_and_the_422() -
     )
     assert not _missing(
         _AMEND,
-        "without `If-Match` it applies to the order as it stands (last write wins)",
+        "without `If-Match` it applies to the order as it stands when the amend is admitted",
         "`*`, a list of tags, a weak or unparseable tag and another order's tag are `412` too",
         "the order's scope (`404`, or `403` as `OrderId` says) first, whether it takes an "
         "amend (`422`) after the body's shape, the gates and the 24 h record, and `If-Match` "
@@ -158,7 +166,8 @@ def test_the_etag_is_sent_on_both_202s_and_checked_after_the_404_and_the_422() -
 
 
 def test_a_view_only_grant_is_a_403_and_a_frozen_or_missing_grant_a_404() -> None:
-    """Q7, and Q6's own orders (04 section 7.2.2 rows 12 to 14) with `requires_trade`."""
+    """Q7, and Q6's own orders (04 section 7.2.2 rows 12 to 14), the trade grant judged with the
+    order at step 4, as step 2 knows no account yet (vw3's code look on S4-D1b, item 10)."""
     assert not _missing(
         _words(_COMPONENTS["parameters"]["OrderId"]["description"]),
         "so is one on an account whose grant is frozen",
@@ -168,7 +177,8 @@ def test_a_view_only_grant_is_a_403_and_a_frozen_or_missing_grant_a_404() -> Non
     )
     assert not _missing(
         _EXITS,
-        "RBAC: `orders:write` with `requires_trade`",
+        "RBAC: `orders:write` alone, `403 forbidden` without the permission, as no account is "
+        "known yet: the trade grant is step 4's",
         "no grant on, or only a frozen one, or on a deleted account or one of another environment",
         "one on an account the caller may only view is `403 account_scope_denied`",
         "the creator being the order's trade group's `created_by`, else its anchor's",
@@ -548,8 +558,9 @@ def test_an_account_it_cannot_send_for_and_cancel_alls_counting_are_as_ruled() -
 
 def test_the_contract_lens_fold_defines_once_and_closes_the_gaps() -> None:
     """S4-A's contract-lens fold (2026-10-24): one definition of a risk-increasing amend in
-    24 section 8.10, the amend's risk check, `If-Match` alone carrying a version, the guard's
-    bound, the one pre-send path to `unknown`, cancel-all's open points, and the nits."""
+    24 section 8.10, the amend's risk check, the version an amend carries (SEC-S4C2B-01 since),
+    the guard's bound, the one pre-send path to `unknown`, cancel-all's open points, and the
+    nits."""
     [definition] = [
         line
         for line in _INTERNAL_DOC.splitlines()
@@ -568,8 +579,10 @@ def test_the_contract_lens_fold_defines_once_and_closes_the_gaps() -> None:
         _AMEND,
         "and the risk check of the amended, sized and rounded order evaluated at the amended "
         "price (`403 risk_limit_breached`, SR-E29-04)",
-        "the terms it compares change only through an amend, and B1 takes one at a time",
-        "an amend with no `If-Match` carries no version",
+        "class is read from the order as it stands when the amend is admitted, its version read "
+        "first, and the send carries that version",
+        "an amend with no `If-Match` carries the version the amend was judged at (ruling Q5, as "
+        "amended on 2026-10-24: SEC-S4C2B-01)",
         "the stop-request gate, 21-database-schema.md section 3.3.11",
         "the one way an amend that sent nothing reaches `unknown`",
         "An empty body is `validation_failed` / `nothing_to_amend`",
@@ -581,7 +594,8 @@ def test_the_contract_lens_fold_defines_once_and_closes_the_gaps() -> None:
         "the risk check of the amended, sized and rounded order evaluated at the amended price, "
         "the pipeline's own rule 3",
         "with `If-Match`, carrying the tag's version",
-        "without it, carrying none (last write wins)",
+        "without it, carrying the version the exit service read before it re-read the row and "
+        "judged the amend",
         "holding at most 1,024 keys",
         "a request arriving while the set, or its principal's share of it, is full is "
         "`429 rate_limited` with `Retry-After: 1`",
@@ -740,4 +754,271 @@ def test_the_delta_check_fold_points_info_to_the_one_class_and_orders_cancel_all
     threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
     assert "bound to the caller and scope; the exit routes' `404`" in threat.read_text(
         encoding="utf-8"
+    )
+
+
+def test_sec_s4c2b_01_judges_an_amend_on_the_order_as_it_stands_and_sends_its_version() -> None:
+    """SEC-S4C2B-01 (the orchestrator's rulings of 2026-10-24 20:58Z and 21:47Z (4)): an amend's
+    class and checks are judged on the order as it stands when it is admitted, its version read
+    first, and the send carries `If-Match`'s version, else the one read; a step the order took
+    meanwhile is `409 conflict` with `Retry-After: 1`, never `412`, which stays the client's own
+    tag; steps 6 and 10 judge the class on step 4's read, so an amend the re-read makes
+    risk-increasing when that read did not is refused before the send."""
+    assert not _missing(
+        _AMEND,
+        "an order that took a step meanwhile is refused, nothing sent, with `409 conflict` and "
+        "`Retry-After: 1` for the client to send the amend again, or with `412` when the amend's "
+        "`If-Match` names a version the step left behind",
+        "and so is an amend that this read makes risk-increasing when the route's first read of "
+        "the order, on which it judged the arm token, did not (SEC-S4C2B-01)",
+        "`412` stays the answer to the client's own tag: an amend sent without `If-Match` is "
+        "never refused with it",
+    )
+    for gone in ("B1 takes one at a time", "carries no version", "(last write wins)"):
+        assert gone not in _AMEND, gone
+    assert not _missing(
+        _EXITS,
+        "The class is read from the order as it stands when step 11 admits the amend, its version "
+        "read first, so a step the order took meanwhile refuses the send; steps 6 and 10 judge it "
+        "on step 4's read, and step 11 refuses an amend its own read makes risk-increasing when "
+        "step 4's did not (SEC-S4C2B-01);",
+        "An amend is judged on the order as it stands when the exit service admits it: its "
+        "machine's state and version read together, before any wait, then its row read again, "
+        "never older than that version",
+        "which must be the version read and which the facade compares under the order's lock "
+        "(`412 version_conflict`, ruling Q5)",
+        "a step the order took meanwhile answers `409 conflict` with `Retry-After: 1`, nothing "
+        "sent, never `412`",
+        "is refused before the send alike: `412` with `If-Match`, `409 conflict` with "
+        "`Retry-After: 1` without",
+    )
+    for gone in ("B1 takes one amend at a time", "carrying none (last write wins)"):
+        assert gone not in _EXITS, gone
+    conflict = _words(_COMPONENTS["responses"]["OrderExitConflict"]["description"])
+    assert (
+        "with `Retry-After: 1`, for an amend sent without `If-Match` whose order took a step while "
+        "it was admitted, which the client sends again: never `412`, which answers the client's "
+        "own stale tag alone" in conflict
+    )
+
+
+def test_a_step_11_class_refusal_is_audited_naming_its_step_and_its_reason() -> None:
+    """The orchestrator's ruling of 2026-10-25 00:27Z (1): an amend the order as it stands makes
+    risk-increasing where step 4's read did not is refused before the send, `409 conflict` with
+    `Retry-After: 1` without `If-Match` and `412` with it, and the refusal is audited
+    (`orders.amend`, the step and the reason named) and counted; the client sends the amend again
+    and is judged afresh."""
+    assert not _missing(
+        _AMEND,
+        "The refusal of an amend that the order as it stands makes risk-increasing, where the "
+        "route's first read did not, is audited (`orders.amend`, denied, the step and the reason "
+        "named: `class` and `reclassified`), and the client sends the amend again, judged afresh "
+        "(the orchestrator's ruling of 2026-10-25 00:27Z (1))",
+    )
+    assert not _missing(
+        _EXITS,
+        "is refused before the send alike: `412` with `If-Match`, `409 conflict` with "
+        "`Retry-After: 1` without; the refusal is audited (`orders.amend`, denied with its code, "
+        "the step and the reason named in its detail: `class`, the class re-check, and "
+        "`reclassified`, the class changed since step 4) and counted, and the client sends the "
+        "amend again, judged afresh (the orchestrator's ruling of 2026-10-25 00:27Z (1))",
+        "Every refusal, the unaudited ones too, is counted in "
+        "`oms_exit_refused_total{operation,code}`",
+    )
+
+
+def test_the_exit_routes_declare_every_answer_their_routes_give() -> None:
+    """The orchestrator's ruling of 2026-10-24 21:47Z (1) and vw3's gap of 22:11Z: `cancelOrder`
+    declares the `500` its route answers for a fault the exit service raises, as `amendOrder`,
+    whose route renders the same service, and `cancelAllOrders` (the ruling of 2026-10-25 00:27Z
+    (3)), all through one shared `InternalError`, the registry's `internal_error`, which says what
+    the shared renderer gives (00:36Z): no `instance`, the correlation id on `X-Correlation-Id`;
+    `cancelAllOrders` declares its in-flight guard's `429`; and each declares step 1's `401` (no
+    principal), the shared `Unauthorized`, as the orchestrator's security look on S4-D1b found it
+    undeclared. Each of the three declares these statuses and no other."""
+    declared = {
+        name: set(_OPS[name]["responses"])
+        for name in ("amendOrder", "cancelOrder", "cancelAllOrders")
+    }
+    assert declared == {
+        "amendOrder": {
+            *("202", "400", "401", "403", "404", "409", "412", "422", "429", "500", "501"),
+            *("502", "503"),
+        },
+        "cancelOrder": {
+            *("202", "400", "401", "403", "404", "409", "429", "500", "501", "502", "503"),
+        },
+        "cancelAllOrders": {"200", "400", "401", "403", "409", "429", "500", "501", "503"},
+    }
+    for name in declared:
+        assert _answers(name)["401"] == "Unauthorized", name
+    assert {_answers(name)["500"] for name in declared} == {"InternalError"}
+    assert _answers("cancelAllOrders")["429"] == "RateLimited"
+    fault = _COMPONENTS["responses"]["InternalError"]
+    assert list(fault["content"]) == ["application/problem+json"]
+    body = fault["content"]["application/problem+json"]
+    assert body["schema"] == {"$ref": "#/components/schemas/Problem"}
+    [example] = [shown["value"] for shown in body["examples"].values()]
+    [entry] = [e for e in _SPEC["x-error-codes"] if e["code"] == "internal_error"]
+    assert (entry["status"], entry["retryable"]) == (500, True)
+    assert (example["code"], example["status"], example["title"]) == (
+        "internal_error", 500, entry["title"],
+    )  # fmt: skip
+    assert example["type"] == "https://candleviewer.local/errors/internal_error"
+    rendered = order_problem(OmsError("a fault no row names"))  # the shared renderer's 500
+    assert json.loads(bytes(rendered.body)) == example and "instance" not in example
+    described = _words(fault["description"])
+    assert not _missing(
+        described,
+        "`internal_error`, retryable (the error-code registry)",
+        "The problem names no internals and carries no `instance`, which no order route sets: the "
+        f"request's correlation id rides the `{CORRELATION_HEADER}` response header",
+        "On the exit routes (`amendOrder`, `cancelOrder`, `cancelAllOrders`) it is a fault the "
+        "exit service raised, which also pages the operator",
+    )
+    assert "`instance` carries" not in described
+    assert (
+        "`429 rate_limited` with `Retry-After: 1` when the in-flight guard holds all its keys, or "
+        "all the caller's share of them, nothing sent (24-internal-schemas.md section 8.4 step 9)"
+        in _CANCEL_ALL
+    )
+
+
+def test_a_cancel_of_an_order_already_final_is_recorded_ahead_of_its_202() -> None:
+    """The orchestrator's ruling of 2026-10-24 21:47Z (2), built in S4-C2b (`ALREADY_FINAL`): the
+    user's cancel is the action even with nothing to send, and the `audit_outcome` enum has no
+    `noop`, so it is recorded `success` with a reason of its own."""
+    assert (
+        "A cancel that finds its order already final, nothing to send, is the user's action all "
+        "the same: `orders.cancel` with outcome `success` and reason `already_final`, written "
+        "before its `202`, else `503 audit_unavailable` in its place (C-2.9; the "
+        "`audit_outcome` enum has no `noop`; the orchestrator's ruling of 2026-10-24 21:47Z (2))"
+        in _EXITS
+    )
+    assert ALREADY_FINAL == "already_final"
+    enum = r"CREATE TYPE audit_outcome\s+AS ENUM \('success','failure','denied'\);"
+    assert re.search(enum, _SCHEMA_DOC) is not None
+
+
+def test_an_id_routes_malformed_id_and_step_2s_permission_sit_where_the_route_answers() -> None:
+    """vw3's code look on S4-D1b, item 10: an id route answers an order id that is no UUID after
+    step 1's principal and before step 2, unaudited, as `placeOrder`'s unreadable body; step 2
+    checks `orders:write` alone, as no account is known yet, and the trade grant is step 4's
+    (`can_trade` false is `403 account_scope_denied`)."""
+    assert not _missing(
+        _EXITS,
+        "1. the principal, as the route's step 1; then, on an id route, the order's id: one that "
+        "is not a UUID names no order, so it is `400 validation_failed` before step 2, "
+        "unaudited, as `placeOrder`'s unreadable body is;",
+        "2. RBAC: `orders:write` alone, `403 forbidden` without the permission, as no account is "
+        "known yet: the trade grant is step 4's, read with the order (a view-only grant is `403 "
+        "account_scope_denied` there) or, on `cancelAllOrders`, with the accounts its body lists;",
+    )
+    assert "`orders:write` with `requires_trade`" not in _EXITS
+
+
+def test_a_protective_cancel_under_view_as_runs_as_the_viewer_in_the_targets_scope() -> None:
+    """vw3's view-as look on S4-D2a, LOW-4 (the orchestrator's rulings of 2026-10-25 01:11Z (3)
+    and 01:24Z): 22's protective writes name the cancels, protective whole through the C-2.6
+    carve-out under `Forbidden`, where a cancel needs no `ArmToken`: a protective cancel runs as
+    the viewer, with both the viewer's RBAC and the target's `x-rbac`, and in the hold in the
+    viewer's own scope. 24's step 4 reads the target's trade grants as the viewer may act on them,
+    never the viewer's own, and in the hold the viewer's own scope."""
+    protective = _INFO.split("**Protective writes (C-2.6).**", 1)[1].split("* **Scope.**", 1)[0]
+    assert not _missing(
+        protective,
+        "Among the writes the carve-out names are the cancels, `cancelOrder` and "
+        "`cancelAllOrders`, protective whole (`ArmToken` lists the carve-out's full set: a cancel "
+        "is never refused for want of the arm token, so the cancel routes do not declare it)",
+        "both pass to their handlers, and a protective cancel runs as the viewer, admitted only "
+        "when both the viewer's own RBAC and the target's `x-rbac` allow it, and in the hold in "
+        "the viewer's own scope",
+    )
+    arm = _words(_COMPONENTS["parameters"]["ArmToken"]["description"])
+    assert "cancels, `closePosition`, `closeAllPositions`" in arm  # the full set it lists
+    assert "so the cancel and close routes do not declare it" in arm
+    for name in ("cancelOrder", "cancelAllOrders"):
+        refs = [param.get("$ref", "") for param in _OPS[name]["parameters"]]
+        assert not [ref for ref in refs if ref.endswith("/ArmToken")], name
+    assert not _missing(
+        _EXITS,
+        'Under view-as (`22-api-openapi.yaml` "View-as session", its protective writes) the '
+        "scope is the target's trade grants as the viewer may act on them (the view-as guard's "
+        "`scope_for_target`), never the viewer's own grants, as a protective write is admitted "
+        "only when both the viewer's own RBAC and the target's `x-rbac` allow it; in the hold it "
+        "is the viewer's own scope",
+    )
+
+
+def test_every_exit_500_pages_one_page_for_the_faults_class() -> None:
+    """The orchestrator's ruling of 2026-10-25 02:50Z (2), made of the first fold's note: an exit
+    route's `500` pages whatever raised it, by the fault's class alone, never its text, so 22's
+    "which also pages the operator" holds for every one; `placeOrder`'s `500`, which pages only
+    where its row does, is no longer the comparison (CR-S4D2A-08)."""
+    described = _words(_COMPONENTS["responses"]["InternalError"]["description"])
+    assert (
+        "On the exit routes (`amendOrder`, `cancelOrder`, `cancelAllOrders`) it is a fault the "
+        "exit service raised, which also pages the operator: every exit `500` pages, one page "
+        "for the fault's class, never its text" in described
+    )
+    assert "00:36Z and 02:50Z (2))" in described
+    assert "as `placeOrder`'s `500` does" not in described
+
+
+def test_a_step_into_a_state_that_takes_no_amend_is_422_as_at_admission() -> None:
+    """CR-S4D2A-02: the `409` and the `412` answer a step that leaves the order amendable; a step
+    into a state that takes no amend meets the facade's state check, which comes before its
+    version check, so it is `422 order_not_amendable`, as at admission, `If-Match` or not."""
+    assert (
+        "The `409` and the `412` answer a step that leaves the order amendable (a partial fill, "
+        "another amend settled): a step that leaves it in a state that takes no amend (a fill "
+        "that completes it, a cancel or another amend in flight) is `422 order_not_amendable`, "
+        "as at admission, with `If-Match` or without." in _AMEND
+    )
+    assert (
+        "The `412` and the `409` answer a step that leaves the order amendable: a step that "
+        "leaves it in a state that takes no amend (a fill that completes it, a cancel or another "
+        "amend in flight) is `422 order_not_amendable`, as at admission, with `If-Match` or "
+        "without, as the facade checks the state before the version." in _EXITS
+    )
+
+
+def test_a_gone_row_an_already_final_cancel_and_a_refusals_detail_are_written_down() -> None:
+    """CR-S4D2A-07: step 11 says that a row its re-read no longer finds is `409 conflict`, as
+    `OrderExits.amend` answers it; 15.5's reasons name `already_final` and a refusal's detail
+    keys, `step` (`ExitStep`'s four) and the class re-check's `reason` (`RECLASSIFIED`), beside
+    the record's own `reason`, its code."""
+    assert "a row that read no longer finds is `409 conflict`, nothing sent." in _EXITS
+    assert not _missing(
+        _RECORDS,
+        "A cancel that finds its order already final, nothing to send, is `orders.cancel` with "
+        "outcome `success` and reason `already_final`, written before its `202` (§8.4).",
+        "A refusal's detail names, beside `code`, the step that refused it where one did "
+        "(`step`: the route's `key`, `replay` or `guard`, or `class`, step 11's class "
+        "re-check), and the class re-check's refusal its cause too (`reason`: `reclassified`, "
+        "the class changed since step 4): the record's own `reason` is the code, "
+        "`detail.reason` the cause.",
+    )
+    assert (ALREADY_FINAL, RECLASSIFIED) == ("already_final", "reclassified")
+    assert set(get_args(ExitStep.__value__)) == {"key", "replay", "guard", "class"}
+
+
+def test_the_change_log_records_the_amend_judged_as_it_stands_and_the_exit_answers() -> None:
+    """CR-S4D2A-04: 19 is the contract change log, so S4-D2a's changes to 8.4, 15.5 and 22 have
+    an entry of their own, which supersedes 19.33's "`If-Match` alone carries a version"."""
+    entry = _words(_INTERNAL_DOC.split("\n### 19.35 2026-10-25 — §8.4, §15.5: ", 1)[1])
+    assert not _missing(
+        entry,
+        "an amend judged on the order as it stands, and the exit routes' answers (E29-T04, #913)",
+        "issues/913#issuecomment-6381292953) Q5, as amended for SEC-S4C2B-01 on 2026-10-24)",
+        "and sent at the version it was judged at, which `If-Match`, when given, must name",
+        "`409 conflict` with `Retry-After: 1`, and `412` for the client's own tag alone",
+        "one into a state that takes no amend is `422`, as at admission; a row no longer there "
+        "is `409 conflict`",
+        'This supersedes §19.33\'s "`If-Match` alone carries a version to the facade".',
+        "§8.4 steps 1, 2, 4, 5 and 11:",
+        "audited `orders.amend` denied with `step` `class` and `reason` `reclassified`",
+        "`amendOrder` and `cancelOrder` gain `401` and `500`, and `cancelAllOrders` `401`, "
+        "`429` and `500`. The three `500`s are one new response, `InternalError`",
+        "every exit `500` pages, one page for the fault's class",
     )

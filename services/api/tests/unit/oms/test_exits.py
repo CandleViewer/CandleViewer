@@ -9,7 +9,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, cast, get_args
 from uuid import UUID, uuid4
 
 import pytest
@@ -37,6 +37,14 @@ from candleviewer.oms.exits import ExitCaller, ExitDeps, ExitOutcome, InFlightGu
 from candleviewer.oms.ports import InterimStopResolver, RequestRecord, SubmitActor
 from candleviewer.oms.validator import Validator
 from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.statechart.gateway import (
+    GatewayDegradedError,
+    GatewayError,
+    GatewayOverloadedError,
+    LoopAffinityError,
+    SystemEventRefusedError,
+    UnknownMachineError,
+)
 from candleviewer.statechart.persistence import DegradedLatchError
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
@@ -608,19 +616,23 @@ async def test_a_cancel_whose_intent_cannot_be_recorded_is_503_and_sends_nothing
 @pytest.mark.parametrize(
     ("error", "status", "code"),
     [
-        (VersionConflict(), 412, "version_conflict"),
+        (VersionConflict(), 409, "conflict"),
         (OrderStepRefused("CANCEL", "StorageTierUnavailable"), 503, "store_unavailable"),
         (IllegalTransition("held", "CANCEL"), 409, "conflict"),
         (OrderNotLoaded("no machine in this process holds the order"), 409, "conflict"),
         (DegradedLatchError("latched"), 409, "conflict"),
+        (GatewayOverloadedError("order:x", "order"), 503, "oms_not_ready"),
+        (GatewayDegradedError("order:x", "order"), 503, "oms_not_ready"),
     ],
-    ids=["version", "step-refused", "illegal", "not-loaded", "latched"],
+    ids=["version", "step-refused", "illegal", "not-loaded", "latched", "inbox-full", "degraded"],
 )
 async def test_a_command_the_facade_did_not_take_is_refused_and_its_watch_forgotten(
     error: BaseException, status: int, code: str
 ) -> None:
-    """`_taken_not`: a stale version (412), a step the store refused (503, the shared retry), a
-    state the order no longer takes it in, an order not loaded or a latched machine (409, CV-C63):
+    """`_taken_not`: a stale version, which no client's `If-Match` named (409 `conflict`, never
+    412: SEC-S4C2B-01), a step the store refused (503, the shared retry), a state the order no
+    longer takes it in, an order not loaded or a latched machine (409, CV-C63), or the gateway's
+    backpressure, its inbox full or its admission refused (503 `oms_not_ready`, SEC-S4D2A-01):
     nothing sent, the watch forgotten (it answers None), the refusal recorded beside the intent."""
     exits, machines, row, port = await scripted("submitted")
     machines.refuse = error
@@ -628,6 +640,29 @@ async def test_a_command_the_facade_did_not_take_is_refused_and_its_watch_forgot
     assert (got.kind, got.status, got.code) == ("refused", status, code)
     assert machines.sent == [] and await forgotten(machines)
     assert written(port) == [("success", "user"), ("denied", code)]
+
+
+#: The gateway's refusals that are no backpressure (`statechart.gateway`): programming faults,
+#: which `_taken_not` never answers (SEC-S4D2AX-01). The route's cases take them too.
+GATEWAY_FAULTS = (UnknownMachineError, LoopAffinityError, SystemEventRefusedError)
+
+
+@pytest.mark.parametrize("fault", GATEWAY_FAULTS)
+async def test_a_gateway_refusal_that_is_no_backpressure_is_raised_never_taken_not(
+    fault: type[GatewayError],
+) -> None:
+    """SEC-S4D2AX-01 (the Fable delta at 896c1ebe): `_taken_not` answers the gateway's backpressure
+    alone, the two rows above. Any other `GatewayError` (an unknown machine, a send off its loop,
+    a system event) is a programming fault, which it never takes: raised as it was, for
+    `exit_fault`'s paged `500`, the watch forgotten, its one `failure` recorded beside the intent
+    by its class alone, never `denied`, and nothing sent."""
+    exits, machines, row, port = await scripted("submitted")
+    error = fault("a defect naming the machine 'order:x'")
+    machines.refuse = error
+    with pytest.raises(fault) as raised:
+        await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert raised.value is error and machines.sent == [] and await forgotten(machines)
+    assert written(port) == [("success", "user"), ("failure", fault.__name__)]
 
 
 async def test_a_step_whose_outcome_is_not_known_answers_the_order_as_it_stands() -> None:
@@ -645,16 +680,99 @@ async def test_a_step_whose_outcome_is_not_known_answers_the_order_as_it_stands(
 
 
 async def test_an_unlisted_raise_forgets_the_watch_and_is_raised_and_logged_once() -> None:
-    """A defect at the facade: the watch forgotten, the raise the caller's, the exit's task
-    logged failed once as it ends (`_ended`); only the intent was recorded."""
+    """A defect at the facade: the watch forgotten, the raise the caller's, logged by its class
+    before its failure's record (`oms_exit_fault`, SEC-S4D2AX-02) and the exit's task logged
+    failed once as it ends (`_ended`); beside the intent, its failure recorded by the raise's
+    class (SEC-S4D2A-03)."""
     exits, machines, row, port = await scripted("submitted")
     machines.refuse = RuntimeError("a defect")
     with capture_logs() as logs, pytest.raises(RuntimeError, match="a defect"):
         await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
     assert machines.sent == [] and await forgotten(machines) and exits._running == set()
-    assert written(port) == [("success", "user")]
+    assert written(port) == [("success", "user"), ("failure", "RuntimeError")]
     failed = [(log["event"], log["failure"]) for log in logs if log["log_level"] == "error"]
-    assert failed == [("oms_exit_task_failed", "RuntimeError")]
+    assert failed == [("oms_exit_fault", "RuntimeError"), ("oms_exit_task_failed", "RuntimeError")]
+
+
+async def test_a_raise_after_the_intent_records_its_failure_by_class_then_goes_on() -> None:
+    """SEC-S4D2A-03 (the Fable lens at 38bfb62e): a raise once the intent was written leaves no
+    `success` alone (C-2.9). Here B1 took the cancel and its settle raised: the failure is recorded
+    beside the intent, best effort, `orders.cancel` with outcome `failure` and the raise's class
+    as its reason, never its text, an error naming the principal and the request; then the raise
+    goes on as it was."""
+    text = "a defect naming order 0a000000-0000-4000-8000-000000000003"
+    exits, machines, row, port = await scripted("submitted", RuntimeError(text))
+    with pytest.raises(RuntimeError) as raised:
+        await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=REQUEST)
+    assert str(raised.value) == text and machines.sent == ["CANCEL"]
+    records = [record for record, _ in port.audits.written if isinstance(record, RequestRecord)]
+    [intent, failed] = records
+    assert (intent.outcome, intent.reason) == ("success", "user")
+    assert (failed.action, failed.outcome, failed.reason, failed.severity) == (
+        "orders.cancel", "failure", "RuntimeError", "error",
+    )  # fmt: skip
+    assert (failed.actor, failed.request_id, failed.object_id) == (actor(), REQUEST, row.id)
+    assert failed.detail == {"operation": "cancel", "code": None, "state": None}
+    assert text not in repr(failed)
+
+
+_UNRECORDED = "oms_exit_unrecorded"
+
+
+async def test_a_failure_that_cannot_be_recorded_never_masks_the_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-S4D2A-03: the failure's record is best effort. One that does not land is logged
+    (`oms_exit_unrecorded`), and the raise goes on as it was, never replaced by the record's."""
+    exits, machines, row, port = await scripted("submitted")
+    machines.refuse = ValueError("a defect")
+    refuse_after(port.audits, 1, monkeypatch)
+    with capture_logs() as logs, pytest.raises(ValueError, match="a defect"):
+        await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert written(port) == [("success", "user")] and exits._running == set()
+    lost = [(line["action"], line["failure"]) for line in logs if line["event"] == _UNRECORDED]
+    assert lost == [("orders.cancel", "RuntimeError")]
+
+
+async def test_a_cancellation_after_the_intent_is_no_failure_and_records_none() -> None:
+    """SEC-S4D2A-03: a cancellation is no fault: it goes on, nothing recorded beside the intent."""
+    exits, machines, row, port = await scripted("submitted")
+    machines.refuse = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+    assert written(port) == [("success", "user")] and exits._running == set()
+
+
+async def test_a_cancellation_landing_in_the_failures_record_leaves_the_fault_logged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-S4D2AX-02 (the Fable delta at 896c1ebe): a fault is logged by its class alone, never
+    its text (`oms_exit_fault`), before its `failure` is written, so a cancellation that lands in
+    that best-effort write, `aclose` at shutdown here, and replaces the fault never loses its
+    class. The cancellation goes on, never swallowed, and nothing is recorded beside the intent."""
+    text = "a defect naming order 0a000000-0000-4000-8000-000000000003"
+    exits, machines, row, port = await scripted("submitted")
+    machines.refuse = RuntimeError(text)
+    entered, write = asyncio.Event(), port.audits.write
+
+    async def held(record: cr.AnyRecord) -> None:
+        if port.audits.written:  # the intent landed: the failure's record waits for the shutdown
+            entered.set()
+            await asyncio.Event().wait()
+        await write(record)
+
+    monkeypatch.setattr(port.audits, "write", held)
+    with capture_logs() as logs:
+        task = asyncio.ensure_future(
+            exits.cancel_admitted(row, actor=actor(), reason="user", request_id=None)
+        )
+        await entered.wait()
+        await exits.aclose()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    failed = [(log["event"], log.get("failure")) for log in logs if log["log_level"] == "error"]
+    assert failed == [("oms_exit_fault", "RuntimeError")] and text not in repr(logs)
+    assert written(port) == [("success", "user")] and exits._running == set()
 
 
 async def test_a_stored_row_that_cannot_be_read_is_503_and_nothing_is_sent() -> None:
@@ -860,3 +978,24 @@ async def test_deny_names_the_routes_refusing_step_only_when_it_is_given(rig: Su
     [guarded, plain] = [record.detail for record in records]
     assert guarded["step"] == "guard" and "step" not in plain
     assert {k: v for k, v in guarded.items() if k != "step"} == plain
+
+
+async def test_deny_names_the_class_re_check_and_its_reason_beside_the_code(rig: SubmitRig) -> None:
+    """The orchestrator's ruling of 2026-10-25 00:27Z (1): step 11's class re-check names its
+    step, `class`, and its reason, `reclassified` (the class changed since step 4), in its
+    record's detail beside the code, which stays the record's reason; the action stays
+    `orders.amend`, as only the gate's own `reason` selects `account.disabled_by_policy`, and a
+    refusal given neither names neither."""
+    assert ex.RECLASSIFIED == "reclassified" and "class" in get_args(ex.ExitStep.__value__)
+    row, exits = await placed(rig), exits_of(rig)
+    await exits.deny(
+        row, "amend", ex._MOVED, actor=actor(), request_id=REQUEST, step="class",
+        reason=ex.RECLASSIFIED,
+    )  # fmt: skip
+    await exits.deny(row, "amend", ex._MOVED, actor=actor(), request_id=REQUEST)
+    [named, plain] = [r for r in rig.records("orders.amend") if isinstance(r, RequestRecord)]
+    assert [(r.outcome, r.reason) for r in (named, plain)] == [("denied", "conflict")] * 2
+    assert (named.detail["step"], named.detail["reason"]) == ("class", "reclassified")
+    assert {k: v for k, v in named.detail.items() if k not in ("step", "reason")} == plain.detail
+    assert not {"step", "reason"} & set(plain.detail)
+    assert requests(rig, "account.disabled_by_policy") == []

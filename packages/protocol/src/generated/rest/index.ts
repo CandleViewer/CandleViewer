@@ -3987,21 +3987,36 @@ export interface paths {
      *     meets, the `trading.oms_enabled` flag, live trading enabled, the B18 kill switch, the
      *     order-entry gate, on a live account the arm token, and the risk check of the amended, sized
      *     and rounded order evaluated at the amended price (`403 risk_limit_breached`, SR-E29-04). Its
-     *     class is read from the order as the route read it: the terms it compares change only through
-     *     an amend, and B1 takes one at a time. Every other amend meets none of them (the C-2.6
-     *     carve-out under `Forbidden`; ruling Q10).
+     *     class is read from the order as it stands when the amend is admitted, its version read
+     *     first, and the send carries that version: an order that took a step meanwhile is refused,
+     *     nothing sent, with `409 conflict` and `Retry-After: 1` for the client to send the amend
+     *     again, or with `412` when the amend's `If-Match` names a version the step left behind
+     *     (below), and so is an amend that this read makes risk-increasing when the route's first
+     *     read of the order, on which it judged the arm token, did not (SEC-S4C2B-01). Every other
+     *     amend meets none of them (the C-2.6 carve-out under `Forbidden`; ruling Q10). The refusal
+     *     of an amend that the order as it stands makes risk-increasing, where the route's first read
+     *     did not, is audited (`orders.amend`, denied, the step and the reason named: `class` and
+     *     `reclassified`), and the client sends the amend again, judged afresh (the orchestrator's
+     *     ruling of 2026-10-25 00:27Z (1)).
      *
      *     `If-Match` takes the order's `ETag` from an answer about it (`placeOrder`'s `202` or this
      *     route's). The `ETag` is opaque and changes with every step the order takes, each
      *     `order_events` row (an accepted amend, a fill, any change of state), and with nothing else
      *     (a `protection` step leaves it): when the order has changed since, the amend is refused with
      *     `412 version_conflict` and nothing is sent; without `If-Match` it applies to the order as it
-     *     stands (last write wins). `*`, a list of tags, a weak or unparseable tag and another order's
-     *     tag are `412` too. The checks come in the order 24-internal-schemas.md section 8.4 gives
-     *     the exit routes: the order's scope (`404`, or `403` as `OrderId` says) first, whether it
-     *     takes an amend (`422`) after the body's shape, the gates and the 24 h record, and
-     *     `If-Match` (`412`) last, the tag's version compared under the order's lock right before
-     *     the send; an amend with no `If-Match` carries no version (ruling Q5).
+     *     stands when the amend is admitted. `*`, a list of tags, a weak or unparseable tag and
+     *     another order's tag are `412` too. `412` stays the answer to the client's own tag: an amend
+     *     sent without `If-Match` is never refused with it, its order's step meanwhile answering
+     *     `409 conflict` (above). The `409` and the `412` answer a step that leaves the order
+     *     amendable (a partial fill, another amend settled): a step that leaves it in a state that
+     *     takes no amend (a fill that completes it, a cancel or another amend in flight) is
+     *     `422 order_not_amendable`, as at admission, with `If-Match` or without. The checks come in
+     *     the order 24-internal-schemas.md section 8.4 gives the exit routes: the order's scope
+     *     (`404`, or `403` as `OrderId` says) first, whether it takes an amend (`422`) after the
+     *     body's shape, the gates and the 24 h record, and `If-Match` (`412`) last, the tag's
+     *     version compared under the order's lock right before the send; an amend with no
+     *     `If-Match` carries the version the amend was judged at (ruling Q5, as amended on
+     *     2026-10-24: SEC-S4C2B-01).
      *
      *     The answer (ruling Q11): `202` with the order and its new `ETag` once the exchange took the
      *     amend; `502 exchange_error` with `exchange.ret_code` when it refused it, the order kept live
@@ -4112,9 +4127,11 @@ export interface paths {
      *     The request as a whole: `400 validation_failed` for a body `CancelAllRequest` refuses
      *     (an unknown field, a malformed id, an unknown intent); `409 idempotency_key_reuse`, or
      *     `idempotency_in_flight` with `Retry-After: 1`, as an order's conflicts are reported in
-     *     `results`, never as a `409`; `501 not_implemented` until the route is wired; and
-     *     `503 store_unavailable` when the scope itself cannot be read, nothing sent (#913 slice 4,
-     *     the rulings of 2026-10-24 11:31Z to 11:45Z).
+     *     `results`, never as a `409`; `429 rate_limited` with `Retry-After: 1` when the in-flight
+     *     guard holds all its keys, or all the caller's share of them, nothing sent
+     *     (24-internal-schemas.md section 8.4 step 9); `501 not_implemented` until the route is
+     *     wired; and `503 store_unavailable` when the scope itself cannot be read, nothing sent (#913
+     *     slice 4, the rulings of 2026-10-24 11:31Z to 11:45Z).
      */
     post: operations["cancelAllOrders"];
     delete?: never;
@@ -11124,6 +11141,15 @@ export interface components {
           components["schemas"]["Problem"] | components["schemas"]["TradingDisabledProblem"];
       };
     };
+    /** @description `internal_error`, retryable (the error-code registry): a fault the server raised and did not answer otherwise. The problem names no internals and carries no `instance`, which no order route sets: the request's correlation id rides the `X-Correlation-Id` response header, which finds the fault in the logs. On the exit routes (`amendOrder`, `cancelOrder`, `cancelAllOrders`) it is a fault the exit service raised, which also pages the operator: every exit `500` pages, one page for the fault's class, never its text (#913 slice 4, the orchestrator's rulings of 2026-10-24 21:47Z and of 2026-10-25 00:27Z (3), 00:36Z and 02:50Z (2)). */
+    InternalError: {
+      headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        "application/problem+json": components["schemas"]["Problem"];
+      };
+    };
     /** @description An import whose signed call got an error answer that is not a refusal of the key: no verdict, nothing stored (`exchange_error`). `exchange` holds `ret_code` only (`KeyExchangeProblem`). */
     KeyExchangeError: {
       headers: {
@@ -11203,7 +11229,7 @@ export interface components {
         "application/problem+json": components["schemas"]["OrderExchangeProblem"];
       };
     };
-    /** @description A conflict on `amendOrder`, `cancelOrder` or `cancelAllOrders`, nothing sent: `idempotency_key_reuse`; `idempotency_in_flight` with `Retry-After: 1` (see Idempotency); `stop_request_in_flight` with `Retry-After`, an amend's stop write meeting a stop request still in flight on the position; `account_unavailable`, without `Retry-After`, for an order whose account the OMS cannot send for; or `conflict`, for an order whose machine is latched degraded until the operator acknowledges it (CV-C63) and the cancel states `cancelOrder` names (#913 slice 4 rulings Q8, Q11; the ruling of 2026-10-24 11:34Z). On `cancelAllOrders` only the two idempotency codes apply: an order's conflicts there are reported in its account's result, never as a 409. */
+    /** @description A conflict on `amendOrder`, `cancelOrder` or `cancelAllOrders`, nothing sent: `idempotency_key_reuse`; `idempotency_in_flight` with `Retry-After: 1` (see Idempotency); `stop_request_in_flight` with `Retry-After`, an amend's stop write meeting a stop request still in flight on the position; `account_unavailable`, without `Retry-After`, for an order whose account the OMS cannot send for; or `conflict`, for an order whose machine is latched degraded until the operator acknowledges it (CV-C63) and the cancel states `cancelOrder` names (#913 slice 4 rulings Q8, Q11; the ruling of 2026-10-24 11:34Z), and, with `Retry-After: 1`, for an amend sent without `If-Match` whose order took a step while it was admitted, which the client sends again: never `412`, which answers the client's own stale tag alone (`amendOrder`; SEC-S4C2B-01, the orchestrator's ruling of 2026-10-24 20:58Z). On `cancelAllOrders` only the two idempotency codes apply: an order's conflicts there are reported in its account's result, never as a 409. */
     OrderExitConflict: {
       headers: {
         "Retry-After": components["headers"]["RetryAfter"];
@@ -17472,10 +17498,12 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["OrderExitConflict"];
       429: components["responses"]["RateLimited"];
+      500: components["responses"]["InternalError"];
       501: components["responses"]["NotImplemented"];
       502: components["responses"]["OrderExchangeError"];
       503: components["responses"]["ServiceUnavailable"];
@@ -17552,12 +17580,14 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["OrderExitConflict"];
       412: components["responses"]["PreconditionFailed"];
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
+      500: components["responses"]["InternalError"];
       501: components["responses"]["NotImplemented"];
       502: components["responses"]["OrderExchangeError"];
       503: components["responses"]["ServiceUnavailable"];
@@ -17623,8 +17653,11 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       409: components["responses"]["OrderExitConflict"];
+      429: components["responses"]["RateLimited"];
+      500: components["responses"]["InternalError"];
       501: components["responses"]["NotImplemented"];
       503: components["responses"]["ServiceUnavailable"];
     };
