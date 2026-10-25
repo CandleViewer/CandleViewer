@@ -64,6 +64,16 @@ it (BQ-16 is the scope):
    withdrawal OFF without its verified time (frame rows: the reveal words and the OFF only). A hit
    passes only inside a phrase of SECURITY_ALLOWED, each covering at most its pinned count of
    occurrences, so a copy of an allowed phrase elsewhere fails; one FAIL per line.
+7d. The security text, pinned default-deny (the orchestrator's text round 3): a clause of the spec
+   or the hand-off (a heading, a table cell, a prose sentence, a fenced line) that names a key, a
+   secret, a credential, a passphrase, private, a withdrawal / transfer word, a fund right, a reveal
+   or mask word, plain / clear text, CMP-034 / CMP-175 / CMP-201, a full / whole / raw id, or the
+   view-as leg is security-bearing (BEARING), and every one must equal, whitespace normalised and in
+   document order, its entry of SEC_PIN_TXT (section, row and column or "prose", exact text). New,
+   changed, moved or duplicated security text, and a pinned clause gone, FAIL ``sec-pin`` with its
+   line: no word list decides what may be said. ``--repin-security`` prints the table from the
+   current text for a reviewer; the table is committed at the end of this file. 7b and 7c stay as
+   additional gates.
 8. Cites and scans: ``KEY:line`` cites resolve to an existing line (FAIL past the end of the
    file); a cite followed by a quoted fragment WARNs when its line moved and FAILs when the
    fragment is gone or ambiguous (e35_d03's semantics); E27-D02's ``scan()`` (no secret-shaped
@@ -80,9 +90,15 @@ over a third, a dimmed T2, an altered unchanged seed, a moved / gone / ambiguous
 when the spec on disk has no FAIL it also runs every applicable mutation on it. Then
 K_MUTATIONS, one or more per K-item, each in memory on the spec on disk as a plain run: rc 1 with exactly
 one distinct FAIL of its own code; restored, ``--check`` passes and the file is byte-identical
-(sha256). The file on disk is never touched.
+(sha256). The file on disk is never touched. K mutations count one FAIL of their own code among
+the specific gates; 7d's pin refuses them too wherever they edit pinned text. Then 7d's own list:
+each round-3 lens form twice (in a clause with no security word, and inside a pinned clause),
+section 8's and 10.1's view-as leg cut and two hand-off placements, each one distinct FAIL
+(``sec-pin``), and ten phrasings drawn (seeded) from a verb x object grid, each placed in a table
+row and in a prose sentence and each refused by the pin.
 
 Usage: python3 -I -B docs/design/_tools/e27_d03_hifi_audit.py [--json] [--check] [--self-test]
+       [--repin-security]
 Exit 1 on any gated FAIL (a plain run and ``--check``); ``--check`` also re-derives the markers;
 WARNs never fail. UTF-8 stdout.
 """
@@ -94,7 +110,9 @@ import json
 import re
 import string
 import sys
+import textwrap
 from collections.abc import Callable
+from difflib import SequenceMatcher
 from hashlib import sha256 as _sha256
 from pathlib import Path
 from types import ModuleType
@@ -2147,6 +2165,179 @@ def doc_gate(spec: str, handoff: str, sec: dict[str, str], out: Out) -> None:
     )
 
 
+# --- 7d. the security text, pinned default-deny (the orchestrator's text round 3) ----------------
+# A clause of the spec or the hand-off (a heading, a table cell, a prose sentence, a fenced line) is
+# security-bearing when it names any of these, case-insensitive, at a word boundary, plurals and
+# hyphenations included: a key, an API key or a key id, a secret, a credential, a passphrase,
+# private, a withdrawal or transfer word, a fund right, reveal or (un)mask, plain or clear text,
+# CMP-034 / CMP-175 / CMP-201 by number or name, a full / whole / raw id; and, pinned explicitly,
+# a clause naming the view-as leg (section 8's and section 10.1's statements of the leg order).
+BEARING = re.compile(
+    r"\b(?:api[- ]?)?keys?(?:[- ]?ids?)?\b|\bsecrets?\b|\bcredentials?\b|\bpassphrases?\b"
+    r"|\bprivate\b|\bwithdraw\w*|\btransfer\w*|\bfunds?[- ]rights?\b"
+    r"|\b(?:un-?)?(?:reveal|mask)\w*|\bunmask\w*|\b(?:plain|clear)[- ]?text\b"
+    r"|\bCMP-(?:034|175|201)\b|MaskedValue|PasswordField|KeyPermissionBadge"
+    r"|\b(?:full|whole|complete|entire|raw|real|unmasked)\s+(?:\w+\s+)?ids?\b"
+    r"|\bview[- ]as leg\b",
+    re.IGNORECASE,
+)
+LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+\.)\s")
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+PIN_SEP = " ‖ "
+PIN_WIDTH = 96
+Clause = tuple[str, str, str, int]
+
+
+def one_space(text: str) -> str:
+    return " ".join(text.split())
+
+
+def text_clauses(name: str, text: str) -> list[Clause]:
+    """Every clause of one document as (section, where, text, line): a heading; each cell of a table
+    row (where: the header's ordinal, or the row's first cell and the cell's column); each sentence
+    of a prose paragraph (a blank line, a heading, a table or a list item ends one); each line of a
+    fenced block. Whitespace is normalised; the section is its heading, cut at 48 characters."""
+    out: list[Clause] = []
+    section, seen = f"{name} preamble", {f"{name} preamble": 1}
+    head: list[str] = []
+    para: list[tuple[int, str]] = []
+    state = {"fence": 0}
+
+    def flush() -> None:
+        joined = " ".join(one_space(x) for _n, x in para)
+        starts, at = [], 0
+        for num, x in para:
+            starts.append((at, num))
+            at += len(one_space(x)) + 1
+        pos = 0
+        for sentence in SENTENCE_END.split(joined) if para else []:
+            pos = joined.find(sentence, pos)
+            line = max(n for a, n in starts if a <= pos)
+            out.append((section, "prose", sentence, line))
+            pos += len(sentence)
+        para.clear()
+
+    lines = text.split("\n")
+    for num, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            flush()
+            state["fence"] ^= 1
+        elif state["fence"]:
+            if stripped:
+                out.append((section, "code", one_space(stripped), num))
+        elif line.startswith("#"):
+            flush()
+            label = one_space(line.lstrip("#"))[:48].rstrip()
+            seen[label] = seen.get(label, 0) + 1
+            section = label if seen[label] == 1 else f"{label} #{seen[label]}"
+            out.append((section, "heading", one_space(line), num))
+        elif stripped.startswith("|"):
+            flush()
+            if SEPARATOR.match(stripped):
+                continue
+            row = cells(stripped)
+            if not (num > 1 and lines[num - 2].strip().startswith("|")):
+                head = row
+                out += [(section, f"head {i}", one_space(c), num) for i, c in enumerate(row, 1)]
+                continue
+            rid = one_space(row[0])[:40].rstrip() if row else ""
+            for i, cell in enumerate(row):
+                column = one_space(head[i])[:24].rstrip() if i < len(head) else str(i + 1)
+                out.append((section, f"row {rid}{PIN_SEP}{column}", one_space(cell), num))
+        else:
+            if not stripped or LIST_ITEM.match(line):
+                flush()
+            if stripped:
+                para.append((num, stripped))
+    flush()
+    return out
+
+
+def bearing_clauses(name: str, text: str) -> list[Clause]:
+    return [c for c in text_clauses(name, text) if BEARING.search(c[2])]
+
+
+def render_pins(spec: str, handoff: str) -> str:
+    """The pinned table as ``--repin-security`` prints it for review and SEC_PIN_TXT holds it: a
+    ``§ doc ‖ section`` line per section, an ``@ where`` line per clause, its text wrapped (at
+    spaces only, so the joined lines are the clause again) on lines indented two spaces."""
+    lines: list[str] = []
+    for name, text in (("spec", spec), ("hand-off", handoff)):
+        last = ""
+        for section, where, clause, _num in bearing_clauses(name, text):
+            if section != last:
+                lines.append(f"§ {name}{PIN_SEP}{section}")
+                last = section
+            lines.append(f"@ {where}")
+            lines += [
+                "  " + part
+                for part in textwrap.wrap(
+                    clause, PIN_WIDTH, break_long_words=False, break_on_hyphens=False
+                )
+            ]
+    return "\n".join(lines)
+
+
+def pin_rows(table: str) -> list[tuple[str, str, str, str]]:
+    """SEC_PIN_TXT parsed: (doc, section, where, text) in document order."""
+    rows: list[tuple[str, str, str, str]] = []
+    doc, section, where = "", "", ""
+    parts: list[str] = []
+    for line in [*table.split("\n"), "@ end"]:
+        if line.startswith(("§ ", "@ ")) and parts:
+            rows.append((doc, section, where, " ".join(parts)))
+            parts = []
+        if line.startswith("§ "):
+            doc, section = line[2:].split(PIN_SEP, 1)
+        elif line.startswith("@ "):
+            where = line[2:]
+        elif line.startswith("  "):
+            parts.append(line[2:])
+    return rows
+
+
+def clip(text: str, width: int = 72) -> str:
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
+def pin_gate(spec: str, handoff: str, out: Out) -> None:
+    """§7d: every security-bearing clause equals its pinned entry, in order; a clause that is new,
+    changed, moved or duplicated, and a pinned clause that is gone, each FAIL ``sec-pin``."""
+    pinned = pin_rows(SEC_PIN_TXT)
+    for name, text in (("spec", spec), ("hand-off", handoff)):
+        want = [(s, w, t) for d, s, w, t in pinned if d == name]
+        now = bearing_clauses(name, text)
+        have = [(s, w, t) for s, w, t, _n in now]
+        match = SequenceMatcher(None, want, have, autojunk=False)
+        for tag, i1, i2, j1, j2 in match.get_opcodes():
+            if tag == "equal":
+                continue
+            pairs = min(i2 - i1, j2 - j1) if tag == "replace" else 0
+            for (s, w, t, num), (_s, _w, was) in zip(
+                now[j1 : j1 + pairs], want[i1 : i1 + pairs], strict=True
+            ):
+                out.fail(
+                    "sec-pin",
+                    f"[sec-pin] {name} line {num}, {s} · {w}: a pinned security-bearing clause "
+                    f"changed: {clip(was)!r} is now {clip(t)!r}",
+                )
+            for s, w, t, num in now[j1 + pairs : j2]:
+                out.fail(
+                    "sec-pin",
+                    f"[sec-pin] {name} line {num}, {s} · {w}: a security-bearing clause the "
+                    f"pin does not hold (new, moved or duplicated): {clip(t)!r}",
+                )
+            for s, w, t in want[i1 + pairs : i2]:
+                out.fail(
+                    "sec-pin",
+                    f"[sec-pin] {name}, {s} · {w}: a pinned security-bearing clause is gone "
+                    f"(changed, moved or deleted): {clip(t)!r}",
+                )
+        out.n[f"sec_pins_{'spec' if name == 'spec' else 'handoff'}"] = len(want)
+    out.n["sec_pins"] = len(pinned)
+
+
 # --- 8. cites and scans --------------------------------------------------------------------------
 CITE_FRAG = re.compile(rf"`({KEYS_ALT})(?:\.md)?:(\d+)(?:[-\u2013](\d+))?`\s+\"([^\"\n]+)\"")
 # a bare or backticked `KEY:line[-line]`; a clock time (followed by UTC / Z) is never a cite
@@ -2372,8 +2563,10 @@ def gates(
     base: dict[str, Any],
     check_markers: bool = False,
     exists: Callable[[str], bool] | None = None,
+    pin: bool = True,
 ) -> Out:
-    """Sections 2-9 over one spec text (section 1's FAILs carried in from the base)."""
+    """Sections 2-9 over one spec text (section 1's FAILs carried in from the base); ``pin`` off
+    for the in-memory fixture only, whose text the pinned table does not hold."""
     out, sec = Out(), sections(spec)
     for f in base["data"]["fails"]:
         out.fail("matrix", f)
@@ -2386,11 +2579,17 @@ def gates(
     appendix_gate(sec, base, out)
     frame_gate(spec, sec, base, out)
     doc_gate(spec, base["handoff"], sec, out)
+    if pin:
+        pin_gate(spec, base["handoff"], out)
     cite_gate(spec, out)
     misc_gate(spec, sec, base, out)
     bq_gate(sec, out)
     out.n.update(
-        {"mutations": len(MUTATIONS), "k_mutations": len(K_MUTATIONS) + len(HAND_MUTATIONS)}
+        {
+            "mutations": len(MUTATIONS),
+            "k_mutations": len(K_MUTATIONS) + len(HAND_MUTATIONS),
+            "pin_mutations": len(PIN_FORMS) * 2 + len(PIN_FIXED) + 2 * GRID_DRAWS,
+        }
     )
     if check_markers:
         marker_gate(spec, flat_data(base, out), out)
@@ -3046,8 +3245,13 @@ VENDOR_SHAPE = re.compile(
 )
 
 
+HEX_32 = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{32}(?![0-9A-Za-z])")
+
+
 def mask_vendor(line: str) -> str:
-    return VENDOR_SHAPE.sub(lambda m: m[0][:3] + "\u2026", line)
+    """A vendor-shaped run, and a 32-hex fixture id, cut to its first three characters."""
+    line = VENDOR_SHAPE.sub(lambda m: m[0][:3] + "\u2026", line)
+    return HEX_32.sub(lambda m: m[0][:3] + "\u2026", line)
 
 
 MIXED_16 = "xQ7m" + "K2pL" + "9vRt" + "4wZn"
@@ -3771,8 +3975,19 @@ HAND_MUTATIONS: tuple[tuple[str, str, str, str, str], ...] = (
 )
 
 
+def k_verdict(new: list[tuple[str, str]], code: str) -> tuple[bool, str]:
+    """A K mutation's own gate: exactly one FAIL besides the pin, of its own code; the pin's
+    ``sec-pin`` FAILs beside it (the edit touched pinned text) are counted, not printed."""
+    own = [(c, m) for c, m in new if c != "sec-pin"]
+    pins = len(new) - len(own)
+    hit = len(own) == 1 and own[0][0] == code
+    got = "; ".join(f"{c}: {m}" for c, m in own) or "none"
+    return hit, got + (f" (and the pin: {pins} sec-pin)" if pins else "")
+
+
 def k_selftest(spec: str, base: dict[str, Any]) -> tuple[bool, list[str]]:
-    """Every K mutation on the spec on disk: rc 1 with exactly one distinct FAIL, its own code."""
+    """Every K mutation on the spec on disk: rc 1 with exactly one distinct FAIL of its own code
+    among the specific gates (the default-deny pin refuses it too where it edits pinned text)."""
     before = gates(spec, base)
     if before.fails:
         return False, [f"K list: the spec on disk has {len(before.fails)} FAIL; nothing to mutate"]
@@ -3784,9 +3999,8 @@ def k_selftest(spec: str, base: dict[str, Any]) -> tuple[bool, list[str]]:
             lines.append(f"{k} {name}: n/a (the spec lacks its target)")
             continue
         new = sorted(set(gates(mutated, base).fails) - set(before.fails))
-        hit = len(new) == 1 and new[0][0] == code
+        hit, got = k_verdict(new, code)
         ok = ok and hit
-        got = "; ".join(f"{c}: {m}" for c, m in new) or "none"
         lines.append(f"{k} {name}: rc {1 if new else 0}, {'ok' if hit else 'WRONG'} — {got}")
     for k, name, code, old, repl in HAND_MUTATIONS:
         if old not in base["handoff"]:
@@ -3795,10 +4009,189 @@ def k_selftest(spec: str, base: dict[str, Any]) -> tuple[bool, list[str]]:
             continue
         edited = {**base, "handoff": base["handoff"].replace(old, repl, 1)}
         new = sorted(set(gates(spec, edited).fails) - set(before.fails))
-        hit = len(new) == 1 and new[0][0] == code
+        hit, got = k_verdict(new, code)
         ok = ok and hit
-        got = "; ".join(f"{c}: {m}" for c, m in new) or "none"
         lines.append(f"{k} {name}: rc {1 if new else 0}, {'ok' if hit else 'WRONG'} — {got}")
+    return ok, lines
+
+
+# r3o: the round-3 lens forms, each once where no security word was (a clause it makes
+# security-bearing, so new) and once inside a pinned clause (so changed); the default-deny pin must
+# refuse each alone (one distinct FAIL, `sec-pin`)
+PIN_FORMS = (
+    "see the secret",
+    "peek at the key",
+    "read out the key",
+    "the key in plain text",
+    "the key in clear",
+    "see the full id",
+    "the full key",
+    "key visible",
+    "the secret is visible",
+    "un-mask the key",
+    "decrypt the key",
+    "download the key",
+    "export the key",
+    "print the key",
+    "email the secret",
+    "click to see the key",
+    "un-hide the key",
+    "withdraw is on",
+    "Withdrawal ✓",
+)
+# r3o: the view-as prose (the MINOR) and two hand-off placements: (id, name, doc, old, new)
+PIN_FIXED: tuple[tuple[str, str, str, str, str], ...] = (
+    (
+        "P1",
+        "§8 prose: the view-as leg first cut",
+        "spec",
+        "gated in the server's leg order, the view-as leg first (T2 per §10.1;",
+        "gated in the server's leg order (T2 per §10.1;",
+    ),
+    (
+        "P2",
+        "§10.1 prose: the view-as leg first cut",
+        "spec",
+        "the view-as leg first on every write — `rbac.view_as`,",
+        "on every write — `rbac.view_as`,",
+    ),
+    (
+        "P3",
+        "hand-off prose: the key in plain text",
+        "hand-off",
+        "Fixture values only; no key material",
+        "Fixture values only; the key in plain text; no key material",
+    ),
+    ("P4", "hand-off row: Withdrawal ✓", "hand-off", HAND_ROW, f"{HAND_ROW}; Withdrawal ✓"),
+)
+# r3o: new phrasings drawn at run time (seeded, so two runs print the same) from a verb x object
+# grid, each into a table row and into a prose sentence; every one must FAIL `sec-pin`
+GRID_VERBS = ("see", "show", "read", "copy", "export", "print", "send", "decrypt", "unmask", "view")
+GRID_OBJECTS = ("the key", "the secret", "the key id")
+GRID_DRAWS = 10
+GRID_SEED = 816
+# the sections whose tables or prose a specific gate parses strictly (the variants, the deck, the
+# reason keys, T2, Appendix A, the BQ rows); a placement there would trip that gate as well
+PIN_SKIP = re.compile(r"^(?:0\.|2\.1 |10\.|12\.|14\.|16\.|Appendix A)")
+
+
+class Draw:
+    """A seeded, repeatable draw for the self-test's placements (sha256 of the seed and a counter,
+    so two runs pick the same; not a random source for anything else)."""
+
+    def __init__(self, seed: int) -> None:
+        self.seed, self.count = seed, 0
+
+    def index(self, n: int) -> int:
+        self.count += 1
+        return int(sha256(f"{self.seed}:{self.count}")[:12], 16) % n
+
+    def choice(self, items: list[Clause]) -> Clause:
+        return items[self.index(len(items))]
+
+    def sample(self, items: list[str], k: int) -> list[str]:
+        pool, out = list(items), []
+        for _ in range(k):
+            out.append(pool.pop(self.index(len(pool))))
+        return out
+
+
+def pin_targets(spec: str, sec: dict[str, str]) -> dict[str, list[Clause]]:
+    """The placements a pin mutation may edit: table cells (not a frame row, not a header) and
+    prose sentences whose last two words occur once in the spec, outside PIN_SKIP's sections and
+    away from an OFF; each split into plain (no security word) and pinned (security-bearing)."""
+    frames = {r["raw"].strip() for r in frame_rows(sec).values()}
+    lines = spec.split("\n")
+    out: dict[str, list[Clause]] = {"row": [], "row+": [], "prose": [], "prose+": []}
+    for clause in text_clauses("spec", spec):
+        section, where, text, num = clause
+        row = where.startswith("row ")
+        if PIN_SKIP.match(section) or len(text.split()) < 4:
+            continue
+        if OFF_DRAWN.search(lines[num - 1] if row else text):
+            continue  # a withdrawal word placed here would tie its OFF (k3.off) as well
+        if row and lines[num - 1].strip() not in frames:
+            kind = "row"
+        elif where == "prose" and spec.count(" ".join(text.split()[-2:])) == 1:
+            kind = "prose"
+        else:
+            continue
+        out[kind + ("+" if BEARING.search(text) else "")].append(clause)
+    return out
+
+
+def place(spec: str, clause: Clause, phrase: str) -> str:
+    """``phrase`` put inside one clause: a cell gets it appended; a sentence gets it before its
+    closing mark (found by its last two words, which occur once)."""
+    _section, where, text, num = clause
+    if where.startswith("row "):
+        lines = spec.split("\n")
+        row = cells(lines[num - 1])
+        i = next(i for i, c in enumerate(row) if one_space(c) == text)
+        row[i] = f"{row[i]}; {phrase}"
+        lines[num - 1] = "| " + " | ".join(c.replace("|", "\\|") for c in row) + " |"
+        return "\n".join(lines)
+    tail = " ".join(text.split()[-2:])
+    end = tail[-1] if tail[-1] in ".!?" else ""
+    return spec.replace(tail, f"{tail[: len(tail) - len(end)]}, {phrase}{end}", 1)
+
+
+def pin_selftest(spec: str, base: dict[str, Any]) -> tuple[bool, list[str]]:
+    """The default-deny pin's own mutations: each lens form twice, the fixed four, the grid."""
+    before = gates(spec, base)
+    if before.fails:
+        return False, [
+            f"pin list: the spec on disk has {len(before.fails)} FAIL; nothing to mutate"
+        ]
+    targets = pin_targets(spec, sections(spec))
+    rng = Draw(GRID_SEED)
+    ok, lines = True, []
+
+    def run(label: str, edited_spec: str, handoff: str, alone: bool) -> None:
+        nonlocal ok
+        edited = base if handoff == base["handoff"] else {**base, "handoff": handoff}
+        new = sorted(set(gates(edited_spec, edited).fails) - set(before.fails))
+        codes = sorted({c for c, _m in new})
+        hit = codes == ["sec-pin"] if alone else "sec-pin" in codes
+        ok = ok and hit
+        first = next((m for c, m in new if c == "sec-pin"), "none")
+        lines.append(
+            f"{label}: rc {1 if new else 0}, {'ok' if hit else 'WRONG'} — {', '.join(codes)} "
+            f"({len(new)} FAIL) — {first}"
+        )
+
+    for i, form in enumerate(PIN_FORMS, 1):
+        plain, pinned = ("row", "prose+") if i % 2 else ("prose", "row+")
+        for kind in (plain, pinned):
+            clause = rng.choice(targets[kind])
+            where = f"{clause[0]} · {clause[1]}"
+            run(
+                f"R{i}{kind[0]}{'+' if '+' in kind else ''} {form!r} in {where}",
+                place(spec, clause, form),
+                base["handoff"],
+                True,
+            )
+    for k, name, doc, old, new_text in PIN_FIXED:
+        text = spec if doc == "spec" else base["handoff"]
+        if text.count(old) != 1:
+            ok = False
+            lines.append(f"{k} {name}: n/a (its target is not there exactly once)")
+            continue
+        edited_text = text.replace(old, new_text, 1)
+        if doc == "spec":
+            run(f"{k} {name}", edited_text, base["handoff"], True)
+        else:
+            run(f"{k} {name}", spec, edited_text, True)
+    grid = [f"{v} {o}" for v in GRID_VERBS for o in GRID_OBJECTS]
+    for j, phrase in enumerate(rng.sample(grid, GRID_DRAWS), 1):
+        for kind in ("row", "prose"):
+            clause = rng.choice(targets[kind] + targets[kind + "+"])
+            run(
+                f"G{j}{kind[0]} {phrase!r} in {clause[0]} · {clause[1]}",
+                place(spec, clause, phrase),
+                base["handoff"],
+                False,
+            )
     return ok, lines
 
 
@@ -3807,7 +4200,9 @@ def run_mutation(fn: Callable[..., str | None], spec: str, base: dict[str, Any])
 
 
 def refused(got: Out, before: Out, kind: str, code: str) -> bool:
-    new_fails = {c for c, _m in set(got.fails) - set(before.fails)}
+    """A FAIL mutation raises its code; a WARN mutation raises its WARN and no FAIL but the pin's
+    (§7d refuses a moved cite inside pinned text as well, which on the spec is the point)."""
+    new_fails = {c for c, _m in set(got.fails) - set(before.fails)} - {"sec-pin"}
     new_warns = {c for c, _m in set(got.warns) - set(before.warns)}
     return code in new_fails if kind == "FAIL" else code in new_warns and not new_fails
 
@@ -3815,7 +4210,7 @@ def refused(got: Out, before: Out, kind: str, code: str) -> bool:
 def selftest(base: dict[str, Any], spec: str) -> tuple[bool, list[str]]:
     """The fixture passes and refuses every mutation; a clean spec on disk refuses its share."""
     lines, fx = [], fixture(base)
-    before = gates(fx, base, check_markers=True)
+    before = gates(fx, base, check_markers=True, pin=False)
     ok = not before.fails
     lines.append("fixture: pass" if ok else f"fixture: FAIL {before.fails}")
     ok_board = board_drawn(
@@ -3834,7 +4229,8 @@ def selftest(base: dict[str, Any], spec: str) -> tuple[bool, list[str]]:
         if mutated is None or mutated == fx:
             ok, got = False, "n/a (the fixture lacks its target)"
         else:
-            hit = refused(gates(mutated, base, check_markers=True), before, kind, code)
+            got_fx = gates(mutated, base, check_markers=True, pin=False)
+            hit = refused(got_fx, before, kind, code)
             ok = ok and hit
             got = f"refused ({kind} {code})" if hit else "PASSED (the check is blind)"
         if clean and on_disk is not None:
@@ -3848,13 +4244,15 @@ def selftest(base: dict[str, Any], spec: str) -> tuple[bool, list[str]]:
         lines.append(f"mutation {name}: {got}")
     k_ok, k_lines = k_selftest(spec, base)
     lines += k_lines
+    p_ok, p_lines = pin_selftest(spec, base)
+    lines += p_lines
     restored = gates(spec, base, check_markers=True)
     same = read(SPEC) == spec
     lines.append(
         f"restore: rc {1 if restored.fails else 0}, the spec on disk "
         f"{'byte-identical' if same else 'CHANGED'} (sha256 {sha256(spec)[:12]})"
     )
-    ok = ok and k_ok and same and not restored.fails
+    ok = ok and k_ok and p_ok and same and not restored.fails
     where = (
         "the fixture and the spec on disk" if clean else "the fixture (the spec on disk has FAILs)"
     )
@@ -3862,7 +4260,9 @@ def selftest(base: dict[str, Any], spec: str) -> tuple[bool, list[str]]:
         f"--self-test: {'ok' if ok else 'FAIL'} — {len(MUTATIONS)} mutations in memory, on "
         f"{where}; "
         f"{len(K_MUTATIONS)} K mutations on the spec and {len(HAND_MUTATIONS)} on the hand-off, "
-        "each one FAIL of its own"
+        "each one FAIL of its own; "
+        f"{len(PIN_FORMS) * 2 + len(PIN_FIXED)} pin mutations, each one distinct FAIL (sec-pin), "
+        f"and {2 * GRID_DRAWS} drawn phrasings, each refused by the pin"
     )
     return ok, [mask_vendor(x) for x in lines]
 
@@ -3879,6 +4279,7 @@ SECTION_CODES = (
         "7b. Frame rows (K1, K3-K9, K11-K13)",
         ("k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "k11", "k12", "k13"),
     ),
+    ("7d. The security text pinned default-deny (sec-pin)", ("sec-pin",)),
     (
         "8. Cites and scans",
         ("cite", "scan", "ids", "forbidden", "closing", "placeholder", "handoff", "pin"),
@@ -3979,6 +4380,9 @@ def main(argv: list[str]) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     base, spec = load_base(), read(SPEC)
+    if "--repin-security" in argv:
+        print(render_pins(spec, base["handoff"]))
+        return 0
     if "--selftest" in argv or "--self-test" in argv:
         ok, lines = selftest(base, spec)
         print("\n".join(lines))
@@ -4002,6 +4406,4029 @@ def main(argv: list[str]) -> int:
     else:
         print("\n".join(report(base, out, check)))
     return 1 if out.fails else 0
+
+
+# --- the pinned security text (§7d): ``--repin-security`` prints it; a reviewer reads it here ----
+SEC_PIN_TXT = r"""
+§ spec ‖ E27-D03 — Accounts and key vault hi-fi and desig
+@ heading
+  # E27-D03 — Accounts and key vault hi-fi and design-system contributions: SCR-125..129, SCR-079,
+  SCR-016 step 3 and SCR-019
+@ prose
+  BQ-1…BQ-16 are **RULED** (main-orchestrator, 2026-10-24 14:22Z, [LANE-hcl49]): all sixteen
+  defaults, with BQ-8 bound now by C-2.7 and C-12.2, BQ-14 amended and BQ-11's props consumed by
+  name; the riders of BQ-5 and BQ-6 and the supersession of E05-D02's time-limited reveal stay the
+  owner's, PROPOSED.
+@ prose
+  **Revision:** r9 — the orchestrator's text round 3 folded as a default-deny pin (§16 item 13):
+  every clause of this spec and the hand-off that names a key, a secret, a credential, a fund
+  right, a mask word, plain text or CMP-034, CMP-175 or CMP-201, and every statement of the
+  view-as leg, equals one entry of the audit tool's pinned table, so security text that is new,
+  changed, moved or duplicated fails `sec-pin` until a reviewer reads it there; no word list
+  decides what may be said; r8 — the orchestrator's text round 3 folded into the audit tool (§16
+  items 10–12): every line is read for a bare id, a show, view, copy or toggle of a key or a
+  secret, a visibility toggle, a bracketed control that is not the egress IP's copy and a fund
+  right in the modal form ("can withdraw"), with no key named on the line; a table row's
+  withdrawal word ties an OFF in any of its cells to its time; a view-as frame's class says
+  "view-as leg first"; r7 — the orchestrator's text round 2 folded into the audit tool (§16 item
+  12): K1, K2, K3, the dated OFF and the reveal words read every clause of every line of this spec
+  and the hand-off, case-insensitive, with no section list, and a hit passes only inside a pinned,
+  counted allow-list of exact phrases; a gated frame that E27-D02's inventory or its class names
+  as a view-as frame leads with `rbac.view_as`; r5 — the orchestrator's text round 1 folded into
+  the audit tool (§16): K1–K3 read every clause of every frame row and the secret-field rows
+  outside the frames (§2.3, §4.1, §5) for a bare id and a show, copy or toggle control, a
+  withdrawal control, and a withdrawal "OFF" without its time; no `lock` on a frame that is not
+  gated; a view-as row of §10.2 leads with its view-as leg; the confirm never drawn while the
+  summary loads; an exit gated after a comma; E42-D03's boards PR never pinned or quoted; the
+  environment gate reads every frame that names one; and the check list's fresh-pass "OFF ✓" dated
+  (D03-C15); r4 — re-pinned at its PR base `e8bca4bb7` (every moved `file:line` re-mapped and
+  re-read), and Appendix A's CMP-028 and CMP-044 rows re-based on #4414's rewrite of those entries
+  (D03-C16; CMP-015's skeleton token, D03-C12, resolved upstream); r3 — the audit tool's gates
+  read each frame row (the standing rule A2's K1–K15, §16), each with its own `--self-test`
+  mutation, and the rows that named an element only by reference now carry it (§16); r2 — the
+  security and design lens round 1 folded: every withdrawal "OFF" dated (D03-C15), the drawer's
+  critical state a badge, the check list's warnings on the triangle (HD17), the Enable… dialog,
+  the held step-up request's unanswered re-send, the link on the drawer measured, and the audit
+  tool's mirror mutation and OFF gate; r1 — the full text on r0's skeleton and audit tool: §1–§17,
+  Appendix A's copy-ready A-rows and the handoff file `docs/design/E27/E27-D03-handoff.md`; the
+  boards and their exports follow in the boards PR.
+@ prose
+  **Scope (the ticket):** hi-fi for every state of E27-D02's inventory (§0, §2–§8), in dark and
+  light, with the densities specified (BQ-3, BQ-4); the contributions CMP-175 KeyPermissionBadge,
+  CMP-176 AccountKeyRow and CMP-034 MaskedValue, and the documented extensions of CMP-028,
+  CMP-035, CMP-044, CMP-066 and CMP-178 (§2); the final copy deck (§12); the Storybook story lists
+  (§13).
+@ prose
+  **Key.** Every `path:line` is at `main` `e8bca4bb7`.
+@ prose
+  `D02` = `docs/design/E27/E27-D02.md` · `MEMO` = `docs/design/research/e27-key-custody.md`
+  (E27-D01) · `PROT` = `docs/design/research/e27-d01-session-protocol.md` · `NN` =
+  `docs/plan/NN-*.md` (`05`, `11`, `14`, `15`, `16`, `22` = `22-api-openapi.yaml`, `23`, `24`,
+  `31`) · `E05F` = `docs/design/E05/E05-D02-form-controls.md` · `GATE` =
+  `.claude/rules/32-design-specs.md` · `TM` = `docs/security/threat-models/E27-accounts.md` · `RB`
+  = `docs/ops/runbooks/key-selfcheck.md` · `ADR9` =
+  `docs/plan/27-adrs/ADR-0009-secrets-and-key-management.md` · `CON` = `CONSTITUTION.md` · `SECR`
+  = `.claude/rules/50-security.md` · `D09` = `docs/design/E09/E09-D09.md` · `D06` =
+  `docs/design/E09/E09-D06.md` · `E09D02`, `E30D02` and `E42D02` = those specs under
+  `docs/design/` · `E42D01` = `docs/design/research/e42-admin.md` · under
+  `services/api/candleviewer/`: `ACT` = `audit/actions.py`, `SU` = `api/step_up.py`, `ASU` =
+  `auth/step_up.py`, `SYS` = `net/system_topic.py`, `REV` = `ws/revocation.py` · `MX` =
+  `services/api/tests/contract/rbac/matrix.yaml` · `E27.json` and `E43.json` =
+  `docs/plan/backlog/E27.json` and `E43.json` (`E43.json:97` is E43-D02's ticket) · another spec
+  by its key (`E42-D03` = `docs/design/E42/E42-D03.md`).
+@ prose
+  Fixture values only (`D02:26-31`): LIVE `Main` (UID 1234567), `sub_001` (1234568) and `sub_002`
+  (1234569); DEMO `demo-1` (9000001); users `alex` and `bea`; key ids `...a1b2`, `...c3d4`,
+  `...e5f6`, `...a7b8` and `...d9e0`; the documentation addresses `203.0.113.10` and
+  `198.51.100.7`.
+@ prose
+  No real UID, key, secret or IP appears anywhere.
+§ spec ‖ Inputs pinned (base `e8bca4bb7`, 2026-10-25)
+@ row E27-D02 (`D02`) ‖ State at the base
+  merged text-first (#4338, `bf130fe52`), 1245 lines: the 78-frame inventory (`D02:911` "## 7.
+  State inventory (AC1, AC5)"), D1–D22 (`D02:185-208`), the T2 rule and the ten PROPOSED E27 state
+  keys (`D02:293-322`), the copy deck (`D02:1094-1118`), the component map (`D02:1120-1131`); its
+  boards PENDING and not a prerequisite (BQ-1); the owner's `approved` on #733 pending
+@ row `15` ‖ State at the base
+  the twelve entries Appendix A edits: CMP-011 (`15:149`), CMP-028 (`15:311`), CMP-033 (`15:361`),
+  CMP-034 (`15:371` "### CMP-034 MaskedValue"), CMP-035 (`15:381`), CMP-044 (`15:473`), CMP-066
+  (`15:681`), CMP-175 (`15:2042`), CMP-176 (`15:2051`), CMP-178 (`15:2068`), CMP-201 (`15:2411`),
+  CMP-203 (`15:2429`); #4414 (`04a8caa95`, E05-D02 slice 4) rewrote CMP-015, CMP-028, CMP-043 and
+  CMP-044 after E27-D02's base, and Appendix A is re-based on its text (D03-C12, D03-C16)
+@ row `16`, `05`, `11` ‖ State at the base
+  two density modes (`16:109-114`, `16:138`), three theme presets (`16:137`), bold reserved for
+  critical states (`16:85`), the §11.4 handoff checklist (`16:483-489`); text resize (`05:131`);
+  no reveal (`11:344` "no reveal control anywhere in the app or API")
+@ row E42-D02, E09-D09, E30-D02, E05-D02 ‖ State at the base
+  merged: E42-D02 (#3926, `e0bf7db3e`; DS-1…DS-6 at `E42-D02:1002-1007`), E09-D09 (`baccf724a`;
+  the seven `rbac.*` keys), E30-D02 (`f798a64e6`; the validity look, and the refusal string at
+  `E30-D02:437`), E05-D02's form controls (`3a2fc5c29`; CMP-034's reveal rules S1–S7 at
+  `E05F:748-795`)
+§ spec ‖ Acceptance-criteria trace (#816)
+@ row AC2 key states survive greyscale and col ‖ Item
+  AC2 key states survive greyscale and colour-vision deficiency
+@ row AC3 withdrawal-detected reads as blockin ‖ Item
+  AC3 withdrawal-detected reads as blocking
+@ row AC4 MaskedValue has no reveal ‖ Item
+  AC4 MaskedValue has no reveal
+@ row AC4 MaskedValue has no reveal ‖ Where
+  §2.3, Appendix A (CMP-034), BQ-8 (RULED: binds now, C-2.7, C-12.2); E05-D02's supersession
+  D03-C4 and D03-A3
+@ row Test plan — every pair measured; greysca ‖ Item
+  Test plan — every pair measured; greyscale and CVD per CMP-175 variant; each `14` checklist
+  ticked; copy re-tested
+@ row Security notes — misrepresentation is th ‖ Item
+  Security notes — misrepresentation is the threat; the Security engineer signs off CMP-175's
+  variant set and the SCR-126, SCR-127 and SCR-128 copy; no real UID, key or IP
+@ row Accessibility notes — text plus shape; f ‖ Item
+  Accessibility notes — text plus shape; focus at 3:1 against both adjacent colours; targets; the
+  masked value's description; live regions; 125 % and 200 %
+@ row [x] ‖ Item
+  SCR-125 (`14:2510`) withdrawal-permission failure is impossible to miss
+@ row [x] ‖ Frame (board)
+  frame 13 (04 · light 05): the CMP-175 critical badge — "BLOCKED — fund right found", bold, the 2
+  px border and the octagon — in the danger treatment, [Start the compromise response] first,
+  CMP-092's blocking row, assertive once, over the verdict's failed form, beside the page's
+  ordinary warnings — sub_001 degraded and demo-1's Bybit expiry, each on the triangle (§2.1,
+  §2.2, §3.4); frame 2 (01 · light 02)
+@ row [x] ‖ Item
+  SCR-125 (`14:2510`) key-age policy surfaced
+@ row [x] ‖ Item
+  SCR-125 (`14:2514`) columns (label, UID, environment, permissions, IP allowlist, key age, state)
+  drawn
+@ row [x] ‖ Frame (board)
+  frame 6 (04 · 05): the two-line record of §3.2 — label, UID and pill; the state; the key with
+  its rights and withdrawal facets (CMP-175); the allowlist facet; key age · rotation due; health
+@ row [x] ‖ Item
+  SCR-125 (`14:2514`) the warning state for a missing IP allowlist or a key older than the policy
+  is text plus icon
+@ row [x] ‖ Frame (board)
+  text plus icon throughout; the contract overrides the first half: a missing allowlist is a
+  refusal in every environment (`22:2722-2726`; AD-4), so "IP allowlist: none set" takes the
+  octagon and the failed class, never a warning — frame 14 (04 · 05); a key older than the policy
+  is the warning chip "Rotation due in {n} d" (triangle) or "Rotation overdue" (clock) — frames 9,
+  43
+@ row [x] ‖ Item
+  SCR-125 (`14:2514`) withdrawal-permission-detected state is drawn as a blocking error, not a
+  warning
+@ row [x] ‖ Item
+  SCR-125 (`14:2514`) per-row actions (edit, rotate key, disable, delete) with step-up
+@ row [x] ‖ Frame (board)
+  frame 11 (04 · 05): the row menu, each ask line before the press — the `keys` class served,
+  disable and delete stamped "not yet served — G-8, #895 / #898"; the step-up is SCR-006 on the
+  press (T1)
+@ row [x] ‖ Item
+  SCR-125 (`14:2514`) no secret is ever rendered in the list
+@ row [x] ‖ Frame (board)
+  CMP-034's `...{last4}` only (§2.3); §12's deck; the tool's scans (§16)
+@ row [x] ‖ Item
+  SCR-126 (`14:2542`) label, environment, API key and secret fields drawn, with the secret
+  write-only (never re-displayed after save)
+@ row [x] ‖ Frame (board)
+  frames 18, 19, 21 (06): CMP-201's write-only variant, both wells cleared after the save, "Its
+  secret can't be shown again."
+@ row [x] ‖ Item
+  SCR-126 (`14:2542`) the mandatory checks drawn: withdrawal permission must be OFF, IP allowlist
+  must be configured, trade+read only
+@ row [x] ‖ Frame (board)
+  frames 19 and 3 (06; 03): the instruction list and the check list as the contract has them — no
+  withdrawal or transfer right, the allowlist exactly the egress IP, only Contract trade — Order
+  and Position (`22:2704-2726`); a read-only key is refused (`key_missing_scopes`, `22:2715-2718`)
+@ row [x] ‖ Item
+  SCR-126 (`14:2542`) edit mode where the secret field is empty and optional
+@ row [x] ‖ Frame (board)
+  the contract overrides it (D02's C-2; the memo's C17): edit has no key field — the key row with
+  Rotate, frame 31 (06)
+@ row [x] ‖ Frame (board)
+  stated as the contract does it (D02's C-3): "Open orders stay open. Both keys work for 15
+  minutes while requests drain." (frame 34) and stage 4's line (frame 38) (07)
+@ row [x] ‖ Item
+  SCR-127 (`14:2555`) rollback state if the new key fails validation
+@ row [x] ‖ Frame (board)
+  the contract overrides it: no rollback exists until #897 serves one (G-4); the refused new key
+  reads "Nothing changed — the old key ...e5f6 is still active." — frame 36 (07); frame 40
+  annotates the absence
+@ row [x] ‖ Item
+  SCR-127 (`14:2555`) the reminder to delete the old key at Bybit, with a confirmation checkbox
+@ row [x] ‖ Item
+  SCR-127 (`14:2555`) key-age policy restated
+@ row [x] ‖ Item
+  SCR-128 (`14:2567`) per-key age, permissions, allowlist and rotation-due state drawn
+@ row [x] ‖ Frame (board)
+  frame 42 (04 · 05): the key table
+@ row [x] ‖ Item
+  SCR-128 (`14:2567`) the secrets-at-rest policy stated (where keys live, how they are encrypted,
+  who can read them)
+@ row [x] ‖ Item
+  SCR-128 (`14:2567`) 'mark as compromised' emergency action with its immediate effect (key
+  disabled, orders halted for that account)
+@ row [x] ‖ Frame (board)
+  stated as C-12.12 orders it (D02's C-4): the freeze stops new orders at once, the delete at
+  Bybit kills the key, the revoke ends it here — frames 46–48 (04 · 05)
+@ row [x] ‖ Item
+  SCR-128 (`14:2567`) no secret material is rendered anywhere - verified in copy review
+@ row [x] ‖ Item
+  SCR-079 (`14:1753`) no secret is displayed, ever - verified in copy review
+@ row [x] ‖ Frame (board)
+  CMP-034's `...{last4}` only; §12's deck
+@ row [x] ‖ Item
+  SCR-016 (`14:439`) key-entry step never echoes the secret after save
+@ row [x] ‖ Frame (board)
+  frame 73 (06): both wells cleared; CMP-201 write-only
+§ spec ‖ The questions (BQ-1…BQ-16) and the defaults buil
+@ prose
+  Drafted read-only at the base and ruled by main-orchestrator on 2026-10-24 at 14:22Z
+  ([LANE-hcl49]): every default below is built as ruled — BQ-8 bound now, BQ-14 amended, BQ-11's
+  props consumed by name — and the riders of BQ-5 and BQ-6 and BQ-8's supersession of E05-D02's
+  reveal stay the owner's, PROPOSED, drawn at their defaults meanwhile.
+@ row BQ-2 ‖ Default built
+  ten composite boards with nested frames, two of them light twins (02 of 01, 05 of 04), restated
+  in §0 as a PROPOSED deviation citing the 03:11Z ruling; every state not on a board is a text row
+  "not drawn — the text is binding; drawn on request" (precedent `E42-D03:152`); page `E27-D03
+  Accounts and key vault hi-fi` (36 characters), boards `E27-D03 / NN slug`, exports
+  `docs/design/E27/img/E27-D03-NN-<slug>.png` plus greyscale, deuteranopia and protanopia renders
+  for boards 01 and 02; PROPOSED stamps and "not yet served — {gap}, {owner}" strips sit on a
+  board annotation layer, never product UI and never a story (`D02:57-58`, `D02:326-331`)
+@ row BQ-4 ‖ Default built
+  a per-screen density sheet: SCR-125..129 comfortable only (`16:114`; `D02:132-135`), SCR-079
+  compact, its trading host's default (`16:113`), with one comfortable inset, SCR-016 and SCR-019
+  comfortable; the contributed components (CMP-175, CMP-176, CMP-034, CMP-011, CMP-203, CMP-178)
+  specified in both modes, which is where the SCR-128 clause is met — the compact key-table row
+  checked at 125 % zoom on 1280 × 800 as a component specimen; zoom: 125 % with no column loss on
+  the SCR-125 and SCR-128 tables, 200 % by D02's reflow (`D02:1087-1090`), the in-app text scale
+  at its 150 % maximum with `min-height` rows (`16:138`); C-rows to the ticket owner: "cosy" is
+  not a mode of `16`, and "200 % text scaling" is read as 200 % zoom plus the 150 % text scale
+  (`05:131`)
+@ row BQ-5 ‖ Question
+  CMP-175: ownership and the variant map
+@ row BQ-5 ‖ Default built
+  amend OQ-12 (`MEMO:528-533`): this spec owns CMP-175's E27 state set and its visual vocabulary,
+  and E43-D02 extends it additively (provenance and time on the verdict, drift naming, SCR-128's
+  hardening), its names mapping one to one (verified-off = verified, verified-on =
+  withdrawal-detected, unverifiable = not checked, stale = check overdue) — one component, never a
+  parallel badge; two scopes, `key` (the facets CMP-176 places) and `aggregate` (the dated
+  withdrawal verdict line, `D02:222-227`); served enums replace the boolean props (`15:2045`); the
+  ticket's eight variants plus "not checked" and "check overdue", each with its served source,
+  class, glyph and word (§2.1); the failure states' row forms stamped "not yet served — G-1, #895
+  / #896" (`D02:408-410`); OWNER-LEVEL rider: a stored read-only key (`22:16885`) is specified at
+  component level only, with a C-row to the owner and E27-S02 (#896)
+@ row BQ-6 ‖ Question
+  CMP-175: non-colour encodings and the critical mark
+@ row BQ-6 ‖ Default built
+  colour reinforces and never carries: (1) every state has its own word, and the critical one
+  leads with "BLOCKED"; (2) a glyph per severity class — check (passed, OFF), octagon (blocking,
+  failed, down, refused), triangle (warning), clock (time-based warning), dash (not checked), lock
+  (T2 only), info (a stored read-only key only) — and no warning-class state ever takes the
+  octagon; (3) the critical state alone takes a bold word (`font.weight.bold`, which `16:85`
+  reserves for critical states), a 2 px `color.status.danger.strong` border and CMP-176's danger
+  treatment; fills are the tone's subtle token with `color.text.primary` labels and the glyphs in
+  the strong token, never a solid red fill; glyph names from the registry and DS-5's octagon,
+  triangle and clock (`E42-D02:1006`); AC3 by heuristic plus an owner-walkthrough item;
+  OWNER-LEVEL rider: a distinct critical hue is the owner's (A6, `16:54`) or DS-6's
+  (`E42-D02:1007`), re-raised with §9's evidence and never overridden locally
+@ row BQ-7 ‖ Default built
+  D02's two-line row in a plain table with `th scope="row"` on the label and no grid
+  (`D02:346-357`, `D02:435-436`): line 1 label, UID, environment (word and badge), the state chip,
+  CMP-034's key id with CMP-175's key facets and [Actions for {label}]; line 2 CMP-175's allowlist
+  facet, key age and rotation due, CMP-178's inline health; "Details for {label}" is the row's own
+  disclosure; props drop the inline rotate, revoke and profile callbacks (`15:2054`) for a menu
+  model whose items carry their T2 second lines, a details slot and a served `state`; the chip is
+  CMP-011 with D02's words in D02's precedence (`D02:365-366`, `D02:1099`); blocked is the danger
+  treatment (`D02:403-410`): a `color.status.danger.subtle` fill, a 4 px
+  `color.status.danger.strong` inline-start rule (a border, so it survives forced colours), the
+  bold "BLOCKED — fund right found" chip with the octagon and [Start the compromise response]
+  first, never dismissible; disabled has two forms at full text contrast, never
+  `color.text.disabled` or `opacity.disabled` (`D02:326-327`) — "Disabled at {hh:mm} UTC — doesn't
+  trade here. [Enable…]" (`D02:751`) and "Off by policy", stamped "not yet served — G-12, #3657"
+  with no control (`D02:636-638`); one card per account at 200 % (`D02:1087-1088`)
+@ row BQ-8 ‖ Question
+  CMP-034: permanently masked
+@ row BQ-8 ‖ Default built
+  no reveal anywhere (AC4; `11:344`; D13 at `D02:199`; AD-11 at `MEMO:407`): CMP-034 renders only
+  the server's masked id (`22:16879-16882`) and never receives a full value; its props are the
+  masked id and `label`, and the toggle, the timer and the copy affordance are removed; masked is
+  its only state; a description in the DOM at mount says the value is write-only and can't be
+  shown; the entry records why the variant is absent and annotates "secret reveal" as a historical
+  name; secret entry takes a write-only CMP-201 variant (no toggle, autocomplete suppressed,
+  cleared on leave, paste allowed; `15:2414`), to which E05-D02's leak rules S4–S7 move; riders:
+  CMP-035 drops "secret auto-hide" and CMP-033 drops "API key display"; it settles E05-D02's open
+  review G19 / E05-X02 (`E05F:448-453`); RULED to bind now (C-2.7, C-12.2): only the supersession
+  of E05-D02's time-limited reveal stays the owner's, as a C-row and a copy-ready A-row to
+  E05-D02's owner (D03-C4, D03-A3), and no board draws a reveal meanwhile
+@ row BQ-9 ‖ Default built
+  the global banner is CMP-092 DegradedModeBanner, consumed, whose blocking row is the one
+  announcement for the condition (`15:929-935`); the panel notice is a CMP-028 extension: the
+  danger tone in a blocking, non-dismissible form that announces nothing itself, with a stable id
+  that every blocked key control's `aria-describedby` points at (one notice, many pointers), the
+  octagon and D02's two sentences (`D02:1117`); Revoke stays enabled (D17); an H-row to E43-D02
+  (#1139): its CMP-028 severity set keeps this form
+@ row BQ-10 ‖ Default built
+  SCR-127 stage 4 only; the served `overlap_until` (`22:17130-17134`; the 900 s is fixed,
+  `22:2883-2892`) is the primary, absolute time ("until 10:55:01 UTC") and the relative mm:ss is
+  secondary, on server-corrected time; the stage advances on the server's `state`, never on the
+  timer reaching 0; polite announcements at 60 s, 10 s and the end (D21); no colour change under
+  the threshold, bound to `color.text.secondary` (`color.text.warning` is not a token, `15:386`);
+  the row shows only the absolute line (`D02:578`), nothing ticking in a list; `Esc` at stage 4
+  closes the view while the overlap continues (`D02:586-590`); A-rows replace `font.mono` with
+  `type.num.*`, drop `color.text.warning` and drop "secret auto-hide"
+@ row BQ-13 ‖ Question
+  CMP-178 for per-key health
+@ row BQ-13 ‖ Default built
+  an inline, text-first form of CMP-178 with no tile chrome, sparkline or heading link: word,
+  glyph and heartbeat age — "Healthy · 2 s" (check), "Degraded — REST only" (triangle), "Down —
+  order entry off for this account" (octagon) with "last heartbeat {hh:mm:ss} UTC" (`D02:350`,
+  `D02:415-417`, `D02:786`); no number for a value not received (E42-D02 D4); no live region of
+  its own, transitions going through the shell announcer once (D21; `D02:1078-1079`); built on
+  E42-D03's unlanded props (`E42-D03:892-896`), qualified per GATE R6; used in CMP-176's line 2
+  and SCR-079's key block; never CMP-210, whose chips link to admin screens
+@ row BQ-14 ‖ Default built
+  every E27-D02 element on an existing CMP (§2.5): the verdict line is CMP-175 `aggregate`; the
+  check list is CMP-203 extended to three outcomes (check, octagon, dash) plus a detail line,
+  without its list-wide live region (`D02:235-238`); the row chip is CMP-011; the details row is
+  CMP-176's disclosure; the compromise card is a documented composition (CMP-050 as a region, an
+  ordered list, CMP-001 and CMP-005); the Bybit-delete note is CMP-005; the allowlist row and the
+  drawer's key block are CMP-036, with CMP-033 on the egress IP only; elapsed time is CMP-066's
+  `meta`; stamps are board annotations; Appendix A (old text verbatim at the base, then new) for
+  CMP-175, 176, 034, 028, 035, 044, 066, 178, 201, 203, 011 and 033 as copy-ready A-rows in this
+  text PR, which the catalogue owner applies (amended by the ruling: neither `15` nor `14` is
+  edited here), and the boards PR adds only content-only pointer lines, one per SCR block (the
+  eight screens) and one per CMP block; A-rows to E09-D09 §3.1 (the ten E27 state keys) and
+  E30-D02 §14 (C-9, `D02:1204`); the handoff file `docs/design/E27/E27-D03-handoff.md` written now
+  (`16:483-489`), which E27-D06 embeds by reference
+@ row BQ-15 ‖ Default built
+  keyed ids `e27.{screen}.{element}[.{state}]` beside the `keys.*`, `accounts.*` and `rbac.*`
+  reason keys, each row with its Where, String and Status · source (`unchanged` byte-equal to the
+  memo seed and gated, `refined` with the change noted, `new` PROPOSED, `consumed` verbatim from a
+  merged spec); validation by the adaptation — a heuristic re-test against CP-1…CP-6 and H7 (every
+  "delete" and "revoke" says where it happens), a written protocol for two people outside the D01
+  sessions and owner-walkthrough items, nothing claimed as measured; H6's predicted misreads
+  (CP-2, CP-4, CP-6; `MEMO:194`) are placed better, not rewritten; CD-2's failed clause reuses
+  E30-D02's words (`E30-D02:437`); the strings D02 named but never wrote are written; one string
+  for both Bybit-delete checkboxes (`MEMO:296`); before any check, CP-3's address and its [Copy]
+  are a target state stamped "not yet served" (`22:2745-2749`), a G-row to E27-S02 (#896), never
+  an IP echo; the delete warning says "This can't be undone, though the same Bybit account can be
+  added again as a new one."
+§ spec ‖ 0. The boards (PENDING; ten under the lever-4 ca
+@ prose
+  Page **`E27-D03 Accounts and key vault hi-fi`** (36 characters), created by name by the board
+  script at the boards step and its id recorded then (`docs/design/README.md:46-49`).
+@ prose
+  The board choice follows the ruling's order and its tie-breaker (contrast-critical screens, the
+  DEMO / LIVE badge, the two disabled looks), and E27-D02's own guidance (main-orchestrator,
+  2026-10-24 07:35Z): the key add, rotate and revoke with the step-up, the C-2.8 refusal and the
+  Manager and Viewer legs first, then the keyboard board.
+@ row 01 ‖ Board
+  `E27-D03 / 01 cmp-175-key-states`
+@ row 01 ‖ Frames (E27-D02 §7)
+  `Pattern / withdrawal verdict: dated, overdue, failed, unavailable, no keys`
+@ row 01 ‖ Draws
+  every CMP-175 state in its `key` and `aggregate` forms (frame 2 nested); the CMP-011 row chips;
+  CMP-034; the greyscale, deuteranopia and protanopia strips of the variant set
+@ row 01 ‖ Export (planned)
+  `docs/design/E27/img/E27-D03-01-cmp-175-key-states.png`
+@ row 02 ‖ Board
+  `E27-D03 / 02 cmp-175-key-states-light`
+@ row 02 ‖ Export (planned)
+  `docs/design/E27/img/E27-D03-02-cmp-175-key-states-light.png`
+@ row 03 ‖ Frames (E27-D02 §7)
+  `Pattern / check list: passed, failed, not checked`; `Pattern / T2 anatomy with the E27 state
+  keys`; `Pattern / rung 1 and rung 3 dialogs as used here`
+@ row 03 ‖ Draws
+  CMP-176 rows (BQ-7) and their 200 % card; CMP-178 inline; CMP-203 tri-state; CMP-201 write-only;
+  the CMP-028 KEK notice; CMP-035; CMP-066; CMP-044 rung 1 and rung 3; the T2 anatomy beside the
+  validity look
+@ row 04 ‖ Frames (E27-D02 §7)
+  `CMP-087 / the accounts route in the admin shell`; `SCR-125 / ok`; `SCR-125 / empty`; `SCR-125 /
+  loading and error`; `SCR-125 / key expiring (<14 d): rotation due and Bybit expiry`; `SCR-125 /
+  within Bybit's 48 h new-key restriction`; `SCR-125 / row menu and Test`; `SCR-125 / at the
+  sub-account cap`; `SCR-125 / withdrawal permission detected: blocking error`; `SCR-125 / IP
+  whitelist missing or mismatched`; `SCR-125 / key invalid`; `SCR-125 / health degraded and down`;
+  `SCR-125 / KEK unavailable`; `SCR-128 / key table and the secrets-at-rest policy`; `SCR-128 /
+  overdue rotation`; `SCR-128 / Test passed while trading is read-only`; `SCR-128 / KEK
+  unavailable: one panel notice`; `SCR-128 / mark as compromised: the ordered card`; `SCR-128 /
+  compromise card: the revoke refused`; `SCR-128 / compromise card: after the Bybit delete, the
+  account reads dead`
+@ row 06 ‖ Board
+  `E27-D03 / 06 scr-126-add-key`
+@ row 06 ‖ Frames (E27-D02 §7)
+  `SCR-126 / register the account shell`; `SCR-126 / paste the key: write-only fields and the
+  allowlist row`; `SCR-126 / validating state`; `SCR-126 / verified and stored: the result panel`;
+  `SCR-126 / validation: format, duplicate UID, the sixth sub-account`; `SCR-126 / refused:
+  withdrawal or transfer right`; `SCR-126 / refused: IP allowlist, Bybit refused the egress IP`;
+  `SCR-126 / refused: IP allowlist, CandleViewer's rule`; `SCR-126 / refused: the other checks`;
+  `SCR-126 / no verdict: nothing stored`; `SCR-126 / activation failed after a pass`; `SCR-126 /
+  KEK unavailable`; `SCR-126 / step-up gate before save`; `SCR-126 / edit mode: no key field, the
+  key row with Rotate`; `SCR-126 / edit conflict and refusals`; `SCR-016 / step 3 loading:
+  verifying`; `SCR-016 / step 3 valid: verified and stored`; `SCR-016 / step 3 invalid: a check
+  refused`; `SCR-016 / step 3 skipped: Skip for now`
+@ row 06 ‖ Draws
+  key add with the step-up; the C-2.8 refusal (CP-5); SCR-016 step 3 as insets
+@ row 06 ‖ Criterion (the 03:11Z ru
+  safety and T2: the key add with the step-up; the withdrawal refusal
+@ row 06 ‖ Export (planned)
+  `docs/design/E27/img/E27-D03-06-scr-126-add-key.png`
+@ row 07 ‖ Frames (E27-D02 §7)
+  `SCR-127 / stage 1: create the new key at Bybit`; `SCR-127 / stage 2: paste and confirm`;
+  `SCR-127 / stage 3: verifying, elapsed time per stage`; `SCR-127 / stage 3 refused: nothing
+  changed, the old key still active`; `SCR-127 / stage 3 no verdict: nothing changed`; `SCR-127 /
+  stage 4: switched, the 900 s overlap`; `SCR-127 / stage 5: old key revoked here, delete it at
+  Bybit`; `SCR-127 / not yet served: drain read, rollback, early revoke, failed`; `SCR-127 / KEK
+  unavailable: Rotate is T2`
+@ row 07 ‖ Draws
+  rotate with the step-up; the countdown; the refused new key
+@ row 08 ‖ Frames (E27-D02 §7)
+  `SCR-129 / revoke a key that is not the last: rung 1`; `SCR-129 / revoke the last key with
+  exposure: two choices, none selected`; `SCR-129 / revoke refused: a position without its
+  stop-loss`; `SCR-129 / revoked: the outcome and the Bybit line`; `SCR-129 / loading the
+  consequence summary`; `SCR-129 / disable: consequences and the typed label`; `SCR-129 / disable
+  with exposure: two choices, none selected`; `SCR-129 / exposure unknown: dead or fixable`;
+  `SCR-129 / exchange error`; `SCR-129 / delete (keeps history): no exposure`; `SCR-129 / delete
+  blocked by open exposure`; `SCR-129 / delete on an account that never had a key: T2`; `SCR-129 /
+  disabled and deleted: the outcome lines`
+@ row 09 ‖ Frames (E27-D02 §7)
+  `SCR-079 / healthy (owner)`; `SCR-079 / key expiring soon`; `SCR-079 / key invalid`; `SCR-079 /
+  IP-whitelist mismatch`; `SCR-079 / stale balance`; `SCR-079 / healthy (manager)`; `SCR-079 /
+  healthy (viewer)`; `SCR-079 / viewing as a manager`; `SCR-079 / disabled or suspended account`;
+  `SCR-079 / no API key yet`
+§ spec ‖ 1.1 Locked inputs — cited, never re-decided
+@ row E27-D02's binding and consumed decisions ‖ What it fixes here
+  D1 the shell (SCR-125..129 inside CMP-087, SCR-079 a trading drawer outside it; consumed) · D5
+  one "Verify and save" that verifies and stores (binding: the call) · D6 the allowlist a
+  read-only row, the egress IP the only copyable value (binding: the rule) · D8 the contract's
+  five rotation stages (binding) · D9 C-12.12's compromise order (binding) · D10 the contract's
+  exposure choices, none checked (binding) · D12 the rule's words, never exchange text (binding) ·
+  D13 no reveal anywhere (binding) · D19 the ladder (consumed) · D20 "not yet served" for an
+  unserved source (consumed) · D22's keys, Cancel first and focus return (consumed)
+@ row E30-D02 (consumed) ‖ What it fixes here
+  §14's state keys (`frozen`, `lockout`, `arm.locked`, `pending_key`) and the off-by-policy
+  refusal
+@ row E05-D02 (consumed) ‖ What it fixes here
+  CMP-007's field well, `color.surface.app` (G4); CMP-034's leak rules S4–S7, moved to CMP-201's
+  write-only variant (§2.3)
+§ spec ‖ 1.2 The hi-fi decisions (HD1…HD17)
+@ row HD1 ‖ Decision
+  CMP-175 holds the E27 state set: thirteen states in two scopes, `key` and `aggregate`, from
+  served enums with no default — a missing or unknown state renders "not checked" or nothing,
+  never OFF; E43-D02 extends the set additively (§2.1)
+@ row HD2 ‖ Decision
+  Every state is its own word with its class's glyph; the critical mark — a bold word and a 2 px
+  `color.status.danger.strong` border — is withdrawal-detected's alone; fills are the tone's
+  subtle token with `color.text.primary` words and the strong token on the glyph; no solid red and
+  no local hue (§2.1, §9)
+@ row HD3 ‖ Decision
+  CMP-176's state slot is one badge, the worst that applies: CMP-175's own word for a
+  key-verification state (BLOCKED, Expired at Bybit, the two allowlist states, Check overdue,
+  Withdrawal: not checked, Bybit expiry) and a CMP-011 chip for every other state, in E27-D02's
+  precedence with four additions (§2.2, §3.2)
+@ row HD5 ‖ Decision
+  CMP-034 is text only — `...{last4}` in `type.num.base`, no box, no control, no timer — with its
+  description in the DOM at mount; secret entry is CMP-201's `writeOnly` variant, to which
+  E05-D02's S4–S7 move (§2.3)
+@ row HD6 ‖ Decision
+  The KEK notice is CMP-028's `blocking` danger form: one per screen, silent (CMP-092's row is the
+  one announcement), a 2 px border, the stable id every blocked key control points at; Revoke
+  stays enabled (§2.4)
+@ row HD14 ‖ Decision
+  Before any check this client ran the egress IP and its Copy are a target state stamped "not yet
+  served", never an address another service echoes — SCR-125's details row (frame 14) included,
+  although the hourly self-check judged the stored key; from a served result the address is live,
+  with CMP-033 its only copy control (§3, §4, §5, §6, §8)
+@ row HD15 ‖ Decision
+  One keyed id per string: every screen row cites §12.1's ids, and the deck wins where a row
+  paraphrases; the screens' working keys were folded into the deck's ids at assembly (§12)
+@ row HD16 ‖ Decision
+  SCR-128's table is a plain table with a visible caption; the Status cell is the `KeyStatus`
+  word; the rotation state is CMP-011's chip under the date, never E27-D02's "OK" and "due"; the
+  rights and allowlist cells are CMP-175's facets (§6)
+§ spec ‖ 2.1 CMP-175 KeyPermissionBadge — the variant set
+@ heading
+  ### 2.1 CMP-175 KeyPermissionBadge — the variant set (AC2, AC3)
+@ prose
+  This spec owns CMP-175's E27 state set and its visual vocabulary, which amends OQ-12
+  (`MEMO:528-533`); E43-D02 (#1139) extends it additively — Bybit provenance on the verdict, drift
+  naming, SCR-128's hardening — and its `VerificationVerdict` names map one to one: `verified-off`
+  is `verified`, `verified-on` is `detected`, `unverifiable` is `not_checked` and `stale` is
+  `overdue` (`E43.json:97`; D03-H4, §14).
+@ prose
+  One component, never a parallel badge: every withdrawal, rights and allowlist verdict word in
+  E27 is a CMP-175 word, and so is Bybit's own expiry, while the rotation policy's clock stays
+  CMP-011's (D7, `D02:193`).
+@ prose
+  The table is the variant set the audit tool gates (§16): one row per state — the ticket's eight
+  (its CMP-175 deliverable), read-only's import and stored forms apart, plus "not checked", "check
+  overdue" and the allowlist facet's pass and unread forms.
+@ row verified ‖ Facet
+  withdrawal
+@ row verified ‖ Served source
+  the key's latest check passed with `withdraw_enabled: false` (`22:16947-16951`) and its
+  `last_verified_at` (`22:16888`) lies inside the freshness window: no
+  `accounts.key_verification_stale` or `accounts.key_selfcheck_failed` notice holds
+  (`23:4265-4269`); per key from `withdrawal_permission_present: false` once G-1 serves it
+  (`22:22028-22030`; O-A)
+@ row verified ‖ Word
+  "Withdrawal OFF ✓ · verified {hh:mm} UTC" (`D02:349`, dated per AD-3, `MEMO:399`)
+@ row read-only (stored; BQ-5 rider, OWNER-LEV ‖ Served source
+  `read_only: true` on a stored key (`22:16885`; `key_not_read_only`, `22:2718`); no story, `14`
+  state or E27-D02 frame shows one, so it is specified here and on board 01 only, with a C-row to
+  the owner and E27-S02 (#896) (D03-C3, §14)
+@ row withdrawal-detected (critical) ‖ Variant
+  withdrawal-detected (critical)
+@ row withdrawal-detected (critical) ‖ Facet
+  withdrawal
+@ row withdrawal-detected (critical) ‖ Served source
+  a stored key's check found a fund right: `withdrawal_permission_present: true`, which "raises a
+  critical finding immediately" (`22:22028-22030`); its row form is a target state stamped "not
+  yet served — G-1, #895 / #896" (`D02:408-410`); on import the same fact is CP-5's refusal
+  (`key_withdraw_permission`, `22:2707-2710`; `D02:1102`), a CMP-027 line, never this badge
+@ row withdrawal-detected (critical) ‖ Word
+  "BLOCKED — fund right found" (`D02:405`)
+@ row expired ‖ Word
+  "Expired at Bybit" (new; the check row's "This key has expired at Bybit.", `D02:249`)
+@ row not checked ‖ Facet
+  withdrawal
+@ row not checked ‖ Word
+  "Withdrawal: not checked" (D4, `D02:190`; AD-2, `MEMO:398`)
+@ row check overdue ‖ Facet
+  withdrawal
+@ row allowlist matches ‖ Served source
+  `ip_whitelist_matches_egress: true` (`22:16960-16964`); per key from
+  `ip_whitelist_matches_expected` once G-1 serves it (`22:22031`)
+@ prose
+  **Reading the table.** The word carries each state and is its own (AC2); the glyph repeats the
+  class — check pass, octagon failed and critical, triangle warning, clock time warning, dash not
+  checked, info a stored read-only key, and the lock is T2's alone — and no warning-class state
+  ever takes the octagon (BQ-6; `D02:235`, `D02:634`).
+@ prose
+  "OFF" appears in the verified word only and always with its time (AD-3); a key whose rights were
+  never read reads "Withdrawal: not checked" (`22:16950`, `22:16988-16990`).
+@ prose
+  **AC3 — withdrawal-detected reads as blocking.** Beside the ordinary warnings — rotation due,
+  Bybit expiry and degraded on the triangle, check overdue and rotation overdue on the clock
+  (`D02:389-392`, `D02:415`, `D02:634-635`) — the critical state is the octagon; beside the failed
+  states, which share the octagon, it alone is a bold word inside a 2 px border, and its word
+  leads with "BLOCKED"; bold is reserved for critical states (`16:85`).
+@ prose
+  Its row adds the danger treatment (§2.2), the page the server's read-only banner and the negated
+  verdict (`D02:403-410`), and its first control starts the compromise response, never Rotate
+  (OQ-13; `keys.compromise_path`, `D02:316`).
+§ spec ‖ CMP-175: scopes, forms and the aggregate line
+@ heading
+  #### CMP-175: scopes, forms and the aggregate line
+@ prose
+  - **`key` scope** — one facet of one key: withdrawal, rights, allowlist or expiry.
+@ prose
+  Two forms: `badge` (fill, glyph and word: CMP-176's state slot, and the critical state
+  everywhere) and `inline` (glyph and word on the host's surface: CMP-176's facet cells, SCR-128's
+  table cells and SCR-079's key block).
+@ prose
+  No expiry, or one beyond 14 days, draws no expiry facet; the drawer's key line then states the
+  date or "Bybit expiry: none" as plain metadata (`D02:784`).
+@ prose
+  - **`aggregate` scope** — the withdrawal verdict line under SCR-125's `h1` (D3; `D02:212-230`):
+  one line, never dismissible, its words the carrier.
+@ row dated ‖ When (served)
+  no `accounts.*` read-only notice holds; every stored key passed
+@ row dated ‖ Text
+  "Withdrawal: OFF on all {n} accounts with a key ✓ · verified {hh:mm} UTC" (`D02:222`)
+@ row overdue ‖ Text
+  "Withdrawal check overdue — last passed {hh:mm} UTC. Trading is read-only until a restart passes
+  the check." (`D02:223`)
+@ row unavailable ‖ Text
+  "Withdrawal check could not run — trading is read-only until a restart passes the check."
+  (`D02:225`)
+@ row read failed ‖ Text
+  "Withdrawal verdict unavailable — the accounts could not be read." (`D02:225`)
+@ row no keys ‖ Form
+  no keys
+@ row no keys ‖ When (served)
+  no account holds a stored key
+@ row no keys ‖ Text
+  "No stored keys yet — nothing to check." (`D02:226`)
+@ row loading ‖ Text
+  "Withdrawal verdict loading…" (`D02:387`), never OFF
+§ spec ‖ CMP-175: props — served enums
+@ heading
+  #### CMP-175: props — served enums
+@ row `scope` ‖ Type
+  `"key" | "aggregate"`
+@ row `facet` ‖ Type
+  `"withdrawal" | "rights" | "allowlist" | "expiry"`
+@ row `facet` ‖ Rule
+  `key` scope only
+@ row `state` ‖ Type
+  withdrawal `"verified" | "detected" | "not_checked" | "overdue"`; rights `"trade" |
+  "missing_scopes" | "read_only"`; allowlist `"matches" | "missing" | "mismatch" | "not_checked"`;
+  expiry `"expiring" | "expired"`
+@ row `state` ‖ Rule
+  required, no default: a missing or unknown value renders the facet's "not checked" form
+  (withdrawal, allowlist) or nothing (rights, expiry), never a pass
+@ row `count`, `asOf` ‖ From
+  the accounts with a stored key; the oldest `last_verified_at` (O-B)
+@ prose
+  They replace `permissions: {trade, read, withdraw}` and `ipWhitelisted: boolean` (`15:2045`):
+  two booleans cannot say "not checked" or "overdue", and a defaulted `false` would draw "OFF ✓"
+  for a key whose rights were never read, which the contract forbids (`withdraw_enabled` is "sent
+  only once the key's rights were read, never as a default", `22:16950`).
+§ spec ‖ CMP-175: states × tokens (dark; light and high c
+@ heading
+  #### CMP-175: states × tokens (dark; light and high contrast bind the same names)
+§ spec ‖ CMP-175: sizes per density
+@ heading
+  #### CMP-175: sizes per density
+§ spec ‖ CMP-175: accessibility and keyboard
+@ heading
+  #### CMP-175: accessibility and keyboard
+@ prose
+  - No live region of its own: its host announces a transition once through the shell announcer —
+  a failed key assertive, a recovery polite (D21; `D02:1078-1079`) — and the aggregate line per
+  the forms table.
+§ spec ‖ CMP-175: current → gap → proposal
+@ heading
+  #### CMP-175: current → gap → proposal
+@ row CMP-175 KeyPermissionBadge (Atom, securi ‖ CMP
+  CMP-175 KeyPermissionBadge (Atom, security-critical)
+@ row CMP-175 KeyPermissionBadge (Atom, securi ‖ Current (`15:2042-2049`)
+  two booleans, `permissions` and `ipWhitelisted`; the "Withdrawal: OFF ✓" text; colour names
+  `color.status.success/danger`; stories Default(SafeConfig), WithdrawEnabled,
+  NoIpWhitelist(warning)
+@ row CMP-175 KeyPermissionBadge (Atom, securi ‖ Proposal
+  served enums per facet; the `key` and `aggregate` scopes; the thirteen states above with their
+  class tokens and the critical mark; the stories of §13; the edits of Appendix A
+§ spec ‖ 2.2 CMP-176 AccountKeyRow — the row, blocked and
+@ row state ‖ Component · tokens
+  CMP-175 for a key-verification state, CMP-011 for any other
+@ row key and rights ‖ Part
+  key and rights
+@ row key and rights ‖ Content
+  the masked id with the rights and withdrawal facets: "...a1b2 · Trade · Withdrawal OFF ✓ ·
+  verified 14:02 UTC"
+@ row key and rights ‖ Component · tokens
+  CMP-034; CMP-175 `inline`
+@ row allowlist ‖ Component · tokens
+  CMP-175 `inline`
+@ row key age · rotation due ‖ Part
+  key age · rotation due
+@ row notice ‖ Content
+  the blocked sentence, the disabled outcome, "Rotation in progress · old key usable until
+  10:55:01 UTC" (`D02:578`), "Revoked at {hh:mm} UTC — delete it at Bybit" (`D02:1030`), the
+  off-by-policy line
+§ spec ‖ CMP-176: props
+@ row `key` ‖ Prop
+  `key`
+@ row `key` ‖ Type
+  the key's metadata: `key_id_masked`, `status`, `created_at`, `rotation_due_at`,
+  `rotation_state`, `expires_at`, `last_verified_at` (`listApiKeys`, `22:2672-2679`;
+  `22:16873-16900`)
+@ row `facets` ‖ Type
+  the CMP-175 `key` states of withdrawal, rights, allowlist and expiry
+@ row `facets` ‖ Rule
+  per key from the security summary once G-1 serves it (O-A, `D02:1211`); until then each failure
+  form is a target state stamped "not yet served — G-1, #895 / #896" (`D02:408-410`)
+@ row `menu` ‖ Rule
+  `ask` is the step-up line before the press, the item's second line (`D02:421-427`);
+  `disabledReason` is a registered key, rendered as the second line, T2 per §10.1
+§ spec ‖ CMP-176: the state slot — words, precedence and
+@ prose
+  One badge, the worst state that applies (`D02:365-366`), in this precedence — E27-D02's, with
+  four PROPOSED additions: "Expired at Bybit" and "IP allowlist: none set" (BQ-5), "Off by policy"
+  (BQ-7) and D4's "Withdrawal: not checked" as a row state.
+@ prose
+  BLOCKED › Key refused by Bybit · Expired at Bybit › IP allowlist: no match · none set › Down ›
+  Off by policy › Check overdue · Withdrawal: not checked › Rotation overdue › Degraded › Rotation
+  due · Bybit expiry › No key › Disabled › OK.
+@ prose
+  A key-verification state is a CMP-175 badge, so every verdict word lives in that one component
+  (BQ-5); every other state is a CMP-011 chip with E27-D02's words (`D02:1099`).
+@ prose
+  A facet that sets the state still shows in its own cell, because `14` requires the permissions
+  and allowlist columns as well as the state (`14:2514`); both come from CMP-175, so they never
+  disagree.
+@ row "BLOCKED — fund right found" ‖ State word
+  "BLOCKED — fund right found"
+@ row "BLOCKED — fund right found" ‖ Component
+  CMP-175
+@ row "Key refused by Bybit" ‖ State word
+  "Key refused by Bybit"
+@ row "Expired at Bybit" ‖ Component
+  CMP-175
+@ row "IP allowlist: no match" · "IP allowlist ‖ Component
+  CMP-175
+@ row "Check overdue — last passed {hh:mm} UTC ‖ Component
+  CMP-175
+@ row "Withdrawal: not checked" ‖ State word
+  "Withdrawal: not checked"
+@ row "Withdrawal: not checked" ‖ Component
+  CMP-175
+@ row "Bybit expiry in {n} d" ‖ Component
+  CMP-175
+@ row "No key — inactive" ‖ State word
+  "No key — inactive"
+§ spec ‖ CMP-176: blocked — the danger treatment (frame 1
+@ prose
+  - **Line 1.** The CMP-175 critical badge in the state slot, and [Start the compromise response]
+  (CMP-001 secondary) before [Actions for sub_002 · LIVE]: first in the row's Tab order; it opens
+  SCR-128's ordered card (D9, `D02:195`).
+@ prose
+  - **Line 2.** The notice, spanning the three facts: "This key can now withdraw or transfer — it
+  was changed at Bybit.
+@ prose
+  - **Never quieter.** It is not dismissible; Rotate key… on this key is T2 `keys.compromise_path`
+  (`D02:316`; T2 per §10.1); the shell announcer speaks it once, assertively (D21).
+@ prose
+  Until G-1 attributes the failure to a key, the row form is a target state stamped "not yet
+  served — G-1, #895 / #896" on the board's annotation layer, and the banner's frame adds "Find
+  the key in the audit log: action `account.tested`." (`D02:408-410`).
+§ spec ‖ CMP-176: current → gap → proposal
+@ row CMP-176 AccountKeyRow (Molecule) ‖ Current (`15:2051-2057`)
+  `account` · `onRotateKey` · `onRevoke` · `onEditProfile`; tokens "inherits CMP-106 ProfileBadge
+  + CMP-175"; stories Default, RotatingKey, Revoked; no A11y line
+§ spec ‖ 2.3 CMP-034 MaskedValue — permanently masked (AC
+@ heading
+  ### 2.3 CMP-034 MaskedValue — permanently masked (AC4)
+@ prose
+  Binding now: C-2.7 keeps plaintext inside the secrets module, and C-12.2 lets a response carry
+  only key metadata — label, masked id, permissions, environment (`CON:136-140`, `CON:747-757`;
+  `SECR:15`; main-orchestrator ruling, 2026-10-24 14:22Z, [LANE-hcl49], on BQ-8).
+@ head 3
+  Proposed (no reveal)
+@ row Heading ‖ Current (`15:371-379`)
+  "MaskedValue ("secret reveal")" (`15:371`)
+@ row Heading ‖ Proposed (no reveal)
+  "MaskedValue (historical name "secret reveal": permanently masked, no reveal)": the old name
+  kept and annotated
+@ row Purpose ‖ Current (`15:371-379`)
+  "masked API key/secret display with reveal toggle (admin key screens)" (`15:373`)
+@ row Purpose ‖ Proposed (no reveal)
+  the server's masked key id, `...{last4}` from `key_id_masked`, as plain text wherever a key is
+  named: the accounts list, the add, edit and rotate flows, the key table, the revoke dialog's
+  title, the drawer and the setup checklist; it never receives a full value or a secret, so there
+  is nothing to show and no control
+@ row Props ‖ Current (`15:371-379`)
+  `value` (a value the client holds in the current flow) · `label` · `revealed?` ·
+  `onToggleReveal` · `autoHideMs?` · `copyable?` (`15:374`)
+@ row Props ‖ Proposed (no reveal)
+  `maskedId: string`, the served `key_id_masked`, `...` plus 4 characters (`22:16879-16882`), any
+  other value rendering nothing and warning without echoing it · `label: string` ("API key"; names
+  the group)
+@ row States ‖ Current (`15:371-379`)
+  masked (an 8-character mask), revealed, expiring, copied (`15:375`)
+@ row States ‖ Proposed (no reveal)
+  masked, its only state; with no key its host renders no CMP-034 (the row reads "No key —
+  inactive")
+@ row A11y ‖ Proposed (no reveal)
+  `role="group"` named by `label`; the `...` is `aria-hidden` behind a visually hidden "ending
+  in", so it reads "API key, ending in a1b2"; one description node per page, in the DOM at mount,
+  which every CMP-034 on the page names by `aria-describedby` (one node, many pointers, as BQ-9's
+  KEK notice), says the value is write-only and can't be shown (below); not focusable, no control,
+  no timer, no live region
+@ row Tokens ‖ Current (`15:371-379`)
+  a box on `color.surface.raised` with a hairline; the value `type.num.base`; the mask
+  `color.text.secondary`; the countdown `color.text.tertiary` (`15:377`)
+@ row Storybook ‖ Current (`15:371-379`)
+  Masked, Revealed, AutoHideCountdown, Copyable (`15:378`)
+@ row Storybook ‖ Proposed (no reveal)
+  Default (on a row), InDialog, InTableCell, WithDescription, NonMaskedValueRendersNothing,
+  ForcedColors
+@ row Tests ‖ Proposed (no reveal)
+  unit (only `...` plus 4 characters renders), visual, axe; a regression that no attribute,
+  `title`, data attribute, accessible name or hidden node holds more than the masked id
+@ prose
+  **The description** is the deck's `e27.cmp034.description` (§12.1), PROPOSED: "Shows the last 4
+  characters of the key ID only.
+@ prose
+  The full key and its secret are write-only and can't be shown anywhere in CandleViewer." One
+  node per page holds it, in the DOM at mount, and every CMP-034 on the page points at it by
+  `aria-describedby` (one node, many pointers), so a page that names several keys carries it once;
+  a screen reader meets it with a key id, and it never names a control.
+@ prose
+  The accessible name is `e27.cmp034.name`, "API key, ending in a1b2" in frame 6.
+@ prose
+  **Why the reveal is deliberately absent** (the rationale the entry records, AC4).
+@ prose
+  C-2.7 keeps every secret and decrypted key out of any API response, WS frame and frontend
+  bundle, the secrets module exposing signing and metadata reads only (`CON:136-140`); C-12.2 and
+  `SECR:15` let a response carry only key metadata; `listApiKeys` returns "metadata only" and
+  `key_id_masked` holds at most the last 4 characters, the rest never stored in clear
+  (`22:2677-2678`, `22:16879-16882`; KV-I07, `TM:256`); and US-ACCT-002 asks for "no reveal
+  control anywhere in the app or API" (`11:344`).
+@ prose
+  A reveal path is a threat in itself — KV-I06 (`TM:255`), SR-E27-11 (`TM:664`), probes recorded
+  as `api_key.reveal_attempt` (`ACT:139`) — and E27-D02's D13 and the memo's AD-11 bind it
+  (`D02:199`, `MEMO:407`).
+@ prose
+  The ticket names "a masked value that implies a reveal is available" among the
+  misrepresentations that cause a wrong decision (its Security notes): a box, a toggle, a timer or
+  a copy control on a masked id would imply exactly that, so all four are gone, and the old name
+  stays only as an annotated historical name.
+@ prose
+  **What it supersedes.** E05-D02 respecified CMP-034 (#4322) as a time-limited display of a value
+  the client holds in the current flow on SCR-126 and SCR-127 (rules S1–S7, `E05F:748-795`),
+  flagged to the security engineer for E05-X02 (G19, `E05F:448-453`).
+@ prose
+  Under BQ-8 nothing on those screens displays a client-held secret: entry is CMP-201's write-only
+  variant (below) and a stored key is CMP-034's masked id.
+§ spec ‖ CMP-201 PasswordField — the write-only variant (
+@ heading
+  #### CMP-201 PasswordField — the write-only variant (BQ-8 rider)
+@ prose
+  `15:2414` offers neither the autocomplete suppression nor the lock-down E27-D02 requires on a
+  key field (`D02:532-536`): `showReveal` defaults to `true`, and `autoComplete` takes only the
+  two password values.
+@ prose
+  Secret entry therefore takes a `writeOnly` variant of CMP-201, PROPOSED, never a new component.
+@ row Purpose ‖ Current (`15:2411-2418`)
+  "password input with a reveal toggle, caps-lock warning and `autocomplete` wiring" (`15:2413`)
+@ row Purpose ‖ Proposed (the `writeOnly
+  + a `writeOnly` variant for an API key or secret: SCR-126's key step, SCR-127 stage 2 and
+  SCR-016 step 3 (`D02:453-456`, `D02:545-547`, `D02:855`)
+@ row A11y ‖ Proposed (the `writeOnly
+  no toggle in the DOM; the description — "value is write-only" for the key, CP-1's sentence for
+  the secret (`D02:1100`) — in the DOM at mount through `aria-describedby` (`14:2537`); the
+  caps-lock warning kept; a format error inline on press: key 8–128 and secret 8–256 characters
+  (`22:16906-16907`)
+@ row Leak rules ‖ Current (`15:2411-2418`)
+  — (E05-D02's S4–S7 sit with CMP-034, `E05F:779-789`)
+@ row Leak rules ‖ Proposed (the `writeOnly
+  moved here: the value lives only in the input's value — never an attribute, a `title`, a data
+  attribute, the accessible name or a hidden node — and print shows bullets (S4); no log,
+  analytics event, audit record, error report or telemetry carries the value, its length or
+  anything derived from it (S5; C-12.2, C-12.6); it is what the user typed in this flow, before it
+  is sent, and after a save the screen shows only the masked id (S6); it leaves state on unmount
+  and after a successful submit, and never enters browser storage, a URL, an autofill store or the
+  undo history (S7)
+@ row Storybook ‖ Current (`15:2411-2418`)
+  Default, Revealed, CapsLockOn, WithError (`15:2417`)
+@ prose
+  **Riders.** CMP-035 drops "secret auto-hide" from its purpose (`15:383`): with no display of a
+  secret there is no timer to run (§2.4).
+@ prose
+  CMP-033 keeps its props, and its purpose drops "API key display" (`15:363`): on the key screens
+  it copies only the egress IP, their one copy control (D6, `D02:192`; KV-I11, `TM:260`), and
+  never a key id, a UID or a secret.
+@ row CMP-033 CopyButton (Atom) ‖ Current (`15:361-369`)
+  "copy-to-clipboard affordance (API key display, audit record id, order id)"; stories Default,
+  CopiedState
+@ row CMP-033 CopyButton (Atom) ‖ Gap
+  it names key display, which the key screens never offer (KV-I11)
+@ row CMP-033 CopyButton (Atom) ‖ Proposal
+  the egress IP as the key screens' only copy; + the EgressIp story; the edits of Appendix A
+§ spec ‖ 2.4 The extensions — CMP-028, CMP-035, CMP-044,
+@ row CMP-028 Callout / Banner (Atom, composed ‖ Gap
+  the KEK notice must block and never dismiss, announce nothing (CMP-092's blocking row is the one
+  announcement for the condition, `15:935`) and carry the stable id every blocked key control
+  points at (one notice, many pointers: G-T2.5, `GATE:57-58`); `live="off"` silences a notice, but
+  nothing keeps a danger notice undismissable or gives it that id
+@ row CMP-035 Countdown / Timer text (Atom): t ‖ Current (`15`)
+  bar-close, re-auth expiry and "secret auto-hide" (`15:383`); `expiresAt` · `format` ·
+  `onExpire?`; polite at thresholds (`15:385`); tokens `font.mono`, `color.text.warning`
+  (`15:386`)
+@ row CMP-044 ConfirmDialog (Molecule): typed ‖ Current (`15`)
+  `variant` (standard, typed, hold) · `typedConfirmValue?` · `role?` · `restatement?` ·
+  `confirmDelayMs?` · `autoCancelMs?` · `busy?` (`15:476`); the typed Confirm natively disabled
+  until the summary loads and the field matches (`15:477`); Cancel first, the hold variant's
+  keyboard path and `Enter` in the typed field never confirming (`15:478`); the destructive
+  Confirm a solid CMP-001 `danger` (`15:479`); its purpose says "delete API key" (`15:475`)
+@ row CMP-044 ConfirmDialog (Molecule): typed ‖ Gap
+  no consequence-loading state (no confirm may render until the summary loads, `14:2576`); no
+  environment in the title; no rung, choice, ask line or marker until E42-D03's props land; a key
+  is revoked here and never deleted at Bybit (`22:2847-2851`); the solid `danger` confirm's label
+  is under the 7.0 hc-text bar (§9 `c175-solid-danger`), and a natively disabled confirm is not
+  E42-D03's validity form (D03-C11, D03-C16)
+@ row CMP-178 SystemHealthTile (Molecule): per ‖ CMP
+  CMP-178 SystemHealthTile (Molecule): per-key health (BQ-13)
+@ row CMP-178 SystemHealthTile (Molecule): per ‖ Gap
+  per-key health is a word with a heartbeat age inside a row or the drawer, not a tile; a tile's
+  heading link would hand a non-owner an admin link
+@ row CMP-178 SystemHealthTile (Molecule): per ‖ Proposed: props · a11y ·
+  + `variant?` (`tile` or `inline`), the inline form taking one served `AccountHealth`
+  (`22:16708-16737`); E42-D03's `state`, `asOf`, `lastGoodAt`, `detail` and `stopsWorking`
+  consumed by name, PROPOSED, contract pending (`E42-D03:892-896`) · a11y: plain text, no region,
+  heading or link, no live region of its own · tokens: the word `color.text.primary`, the age
+  `color.text.secondary`, the glyph in the tone's strong token · + InlineHealthy, InlineDegraded,
+  InlineDown, InlineNeverConnected, InlineInRow, InlineInDrawer
+§ spec ‖ CMP-028 — the KEK-unavailable notice (BQ-9; fram
+@ prose
+  - **Anatomy.** The octagon (`icon/octagon`) · sentence 1, "Off while the credential key is
+  unavailable.", which is the `keys.kek_unavailable` string and the node every blocked key
+  control's `aria-describedby` points at · sentence 2, "Keys can't be added, tested or rotated
+  until the KEK is back, and trading is off." (`D02:418-419`, `D02:1117`).
+@ prose
+  - **Where.** One per screen under its `h1` — SCR-125, SCR-126 and once in SCR-128's panel —
+  beside the server's banner (D17, `D02:203`); on SCR-127 the wizard does not open and Rotate key…
+  points at SCR-125's notice (`D02:585`).
+@ prose
+  - **The global banner is CMP-092, consumed.** Its blocking row carries the server's sentence,
+  "Trading disabled: the credential key is unavailable." (`SYS:66`), and is the one announcement
+  for the condition (`15:935`); the panel notice is CMP-028's `blocking` form and announces
+  nothing.
+@ prose
+  - **Revoke stays enabled** (D17): the notice blocks Verify and save, Add a key, Rotate and Test
+  (`D02:313`), never the revoke.
+@ prose
+  - **States.** One: present while `secrets.kek_unavailable` holds (`23:4262`), gone when it
+  clears.
+§ spec ‖ CMP-035 — the 900 s rotation overlap (BQ-10; fra
+@ prose
+  The old key ...e5f6 keeps working here until 10:55:01 UTC — 14:12 left — while requests in
+  flight finish.
+@ prose
+  - **Announcements.** `aria-live="off"`; polite at 60 s and 10 s, each with the absolute time —
+  the deck's `e27.scr127.overlap.at60` and `.at10` (§12.1), "1 minute left on the old key ...e5f6,
+  until 10:55:01 UTC." and "10 seconds left on the old key ...e5f6, until 10:55:01 UTC." — and the
+  end is CP-4's `e27.scr127.stage5.revoked`, polite once, with focus on stage 5's heading if the
+  wizard is open (`D02:586-588`; D21, `D02:207`).
+@ prose
+  - **The row.** Only the absolute line, "Rotation in progress · old key usable until 10:55:01
+  UTC" (`D02:578`), nothing ticking in a list (D21).
+§ spec ‖ CMP-044 — the rungs as E27 uses them (BQ-11; fra
+@ prose
+  E42-D03's rung props are consumed by name, PROPOSED, contract pending (`E42-D03:902-904`):
+  `rung` — rotate 1 (OQ-10), revoke 1 or, for the account's last active key, 3 (OQ-9), disable 3,
+  delete 3 (`D02:272-285`) — `blastRadius` (the counts), `choices` (the two exposure radios),
+  `stepUpState` (the ask line) and `auditCodes` (the marker).
+§ spec ‖ CMP-066 — one stepper, list or nav (BQ-12; frame
+@ row SCR-126's page ‖ Steps
+  1 Register the account · 2 Add its API key
+§ spec ‖ CMP-178 — per-key health, inline (BQ-13; frames
+@ heading
+  #### CMP-178 — per-key health, inline (BQ-13; frames 6, 16 and 62–71)
+@ prose
+  - **A11y.** Plain text in its cell: no region, heading or link, so not CMP-210, whose chips link
+  to admin screens (`15:2493-2499`).
+@ prose
+  - **Used in** CMP-176's line 2 and SCR-079's "Key and health" block (`D02:786`); a non-owner's
+  drawer shows the same words and nothing else of the key (`D02:806-808`).
+§ spec ‖ 2.5 The other homes (AC6) — CMP-011, CMP-201, CM
+@ heading
+  ### 2.5 The other homes (AC6) — CMP-011, CMP-201, CMP-203, CMP-033 and the compositions
+@ row the withdrawal verdict line ‖ E27-D02 element
+  the withdrawal verdict line
+@ row the withdrawal verdict line ‖ Home
+  CMP-175, `aggregate` scope
+@ row the key gate's check list ‖ E27-D02 element
+  the key gate's check list
+@ row the record's state ‖ Home
+  CMP-175's badge or a CMP-011 chip (HD3)
+@ row secret and key entry ‖ E27-D02 element
+  secret and key entry
+@ row secret and key entry ‖ Home
+  CMP-201's `writeOnly` variant inside CMP-040
+@ row every key id ‖ E27-D02 element
+  every key id
+@ row every key id ‖ Home
+  CMP-034
+@ row the egress IP's copy ‖ Extension or rule
+  the key screens' one copy control
+@ row the allowlist row; the drawer's key bloc ‖ E27-D02 element
+  the allowlist row; the drawer's key block
+@ row per-key health ‖ E27-D02 element
+  per-key health
+§ spec ‖ CMP-203 RequirementChecklist — the key gate's ch
+@ heading
+  #### CMP-203 RequirementChecklist — the key gate's check list (frame 3)
+@ prose
+  The same list runs on SCR-126's result card, SCR-127's stage 3, the Test dialog and SCR-016's
+  step 3 (`D02:233-258`): one row per check of the key gate in the pipeline's order, "{check}:
+  {outcome}" (`e27.checks.row`), the outcome a word with its glyph repeating it; a pass that
+  carries a served warning keeps the word and takes the triangle (HD17).
+@ row CMP-203 RequirementChecklist (Atom) ‖ Gap
+  two outcomes cannot say "not checked", which must never read as a pass, nor a pass that carries
+  a served warning (`22:16996-17003`); no detail line for a rule's words or a passed value; a
+  list-wide live region would announce every row, where the key gate's host announces its verdict
+  once (`D02:235-238`)
+@ row CMP-203 RequirementChecklist (Atom) ‖ Proposal
+  + `checks: {label, outcome: "passed"|"failed"|"not_checked", warning?:
+  "key_expiring_soon"|"clock_skew", detail?}[]` beside `items` · + `live?` (default `true`;
+  `false` for the key gate) · a11y: each row "{check}: {outcome}" in words, its glyph
+  `aria-hidden`; a check that did not run reads "not checked"; a passed check with a served
+  `warning` reads "passed with a warning — {detail}" beside the triangle (HD17) · tokens: passed
+  `color.status.success.strong`, passed with a warning `color.status.warning.strong`, failed
+  `color.status.danger.strong`, not checked `color.text.secondary`, words `color.text.primary`,
+  the detail `color.text.secondary` · + KeyGateAllPassed, KeyGateRefusedRightsNotRead,
+  KeyGateMixed, KeyGatePassedWithWarnings, KeyGateNotLive (§13)
+§ spec ‖ 2.6 The cross-screen pattern frames (E27-D02 fra
+@ prose
+  Frame 2 is drawn in its `aggregate` forms on board 01 beside CMP-175's key forms; frames 3–5 sit
+  on board 03 with the component specimens.
+@ head 6
+  Copy keys
+@ row 2 ‖ Frame (E27-D02 §7)
+  `Pattern / withdrawal verdict: dated, overdue, failed, unavailable, no keys`
+@ row 2 ‖ Hi-fi (dark; light by to
+  CMP-175 `aggregate` in its eight forms (§2.1), one 32 px line under the `h1` on
+  `color.surface.app`: dated with the check, "Withdrawal: OFF on all 4 accounts with a key ✓ ·
+  verified 14:02 UTC"; overdue with the clock; failed and unavailable with the octagon; read
+  failed and no keys with the dash; loading as a static skeleton line, never OFF; cleared back to
+  the dated form with the new time, never a claim that trading is on. Each negated form sits under
+  CMP-092's blocking row with the server's sentence, and the line never computes a verdict of its
+  own (`D02:212-230`)
+@ row 3 ‖ Hi-fi (dark; light by to
+  CMP-203's `checks` form (§2.5) on demo-1's key: the nine rows in the pipeline's order, all
+  passed, Withdrawal and transfer reading "OFF ✓ · verified 14:02 UTC" with the check's time
+  (D03-C15); a refused variant with "Withdrawal and transfer" failed and every later row "not
+  checked"; a mixed variant with the allowlist failed and its whitelist read; a warning variant,
+  every row passed and two of them carrying a served warning on the triangle (HD17) — Bybit expiry
+  "passed with a warning — Bybit expiry 2026-11-01 UTC, in 9 d" and Signed probe and clock "passed
+  with a warning — clock offset 640 ms, over the 500 ms limit"; the Environment and UID rows
+  always name the frame's own account (C-2.11)
+@ row 3 ‖ Copy keys
+  `e27.checks.row` · `e27.checks.names` · `e27.checks.not_checked` · `e27.checks.env.passed` ·
+  `e27.checks.withdrawal.passed` · `e27.checks.rights.passed` · `e27.checks.trade.passed` ·
+  `e27.checks.uta.passed` · `e27.checks.uid.passed` · `e27.checks.allowlist.passed` ·
+  `e27.checks.expiry.passed` · `e27.checks.expiry.expiring` · `e27.checks.probe.passed` ·
+  `e27.checks.probe.skew`
+@ row 4 ‖ Frame (E27-D02 §7)
+  `Pattern / T2 anatomy with the E27 state keys`
+@ row 4 ‖ Hi-fi (dark; light by to
+  four gated controls in E09-D09's T2 form — a menu item ("Rotate key…" under
+  `keys.kek_unavailable`), a button ("Verify and save"), a radio ("Leave positions and orders
+  open" under `accounts.stop_missing`) and a checklist step (`rbac.owner_only`) — each with the
+  `lock` leading its full label, `aria-disabled="true"` and its reason as the 2a second line,
+  inside CMP-079 RbacGate; beside them an unmet rung confirm in E42-D03's validity form (no lock,
+  no key) and the rejected dimmed look, drawn only as a struck-through specimen (§9 `t2-dimmed`);
+  the ten PROPOSED E27 keys of §12.2 listed with their strings
+@ row 4 ‖ Copy keys
+  the reason keys of §12.2 · `e27.scr129.hint.choose` · `e27.scr129.hint.typed`
+@ row 5 ‖ Hi-fi (dark; light by to
+  E42-D02 §4.1's anatomy as E27 applies it (§2.4, BQ-11): rung 1 — "Revoke key ...e5f6 on sub_002
+  · LIVE", its one consequence, "It stops working here at once; sub_002 keeps trading on ...d9e0.
+  It still works at Bybit until you delete it in Bybit's dashboard.", the ask line and the marker,
+  [Cancel] [Revoke key ...e5f6 here] enabled at once; rung 3 — "Disable sub_002 · LIVE", the
+  consequences with their counts, the two choices none checked, "Type sub_002 to confirm:", the
+  ask stamped "not yet served — G-8, #895 / #898", "Recorded in the audit log", the confirm in the
+  validity form with its hint; between them the loading state, Cancel alone and no confirm in the
+  DOM (`D02:260-291`)
+@ row 5 ‖ Copy keys
+  `e27.scr129.revoke.title` · `e27.scr129.revoke.not_last` · `e27.scr129.revoke.confirm` ·
+  `e27.scr129.disable.title` · `e27.scr129.typed` · `e27.shared.ask` · `e27.shell.grace.keys` ·
+  `e27.scr129.marker` · `e27.scr129.marker.revoke` · `e27.scr129.loading` ·
+  `e27.scr129.hint.choose` · `e27.scr129.hint.typed` · `e27.shared.cancel`
+§ spec ‖ 3. SCR-125 — Bybit accounts list (`/admin/accoun
+@ prose
+  - **Strings.** Each row names its §12 keys.
+@ prose
+  Fixture values only (the Key); every time in UTC.
+§ spec ‖ 3.1 Anatomy at 1280 × 800 and the redline (frame
+@ prose
+  Frame 6's dated withdrawal words take two text lines in their cell, so the list runs past the
+  StatusBar's top: blocks K and L are reached by scrolling, and the board draws them as the page's
+  continuation under the 1280 × 800 viewport line.
+@ row C Band, rule and strip (consumed) ‖ Content and copy
+  the band "Admin area · Accounts", with the `keys` grace line "Still trusted for key changes ·
+  02:14" at its right end while one is live (variant (b)); the 4 px rule; the strip region "Needs
+  your action", one line when empty: "Nothing needs your action"
+@ row D PageHeader (CMP-088) ‖ Content and copy
+  `h1` "Bybit accounts and keys", the skip link's target (CMP-085); the meta "As of 14:02:11 UTC"
+  (`e27.shell.meta`: E42-D03's `meta.asof` with the zone at the time); "+ Add account" (CMP-001
+  `primary`)
+@ row E Verdict line ‖ Content and copy
+  CMP-175 `aggregate` (BQ-5) in one of frame 2's forms (§2.6) — frame 6: "Withdrawal: OFF on all 4
+  accounts with a key ✓ · verified 14:02 UTC"; never dismissible, always dated in UTC, never OFF
+  without a time; it reads the server's notices and computes no verdict of its own
+@ row H Table head (CMP-049) ‖ Content and copy
+  a plain `table` with a visually hidden `caption` (the `h2` is its visible twin); two header
+  rows: "label · UID · env" · "state" · "key · rights" · "actions", then "IP allowlist" · "key age
+  · rotation due" · "health" under the last three
+@ row J Records (CMP-176) ‖ Size · tokens
+  two lines of 32 px `min-height` per record on `color.surface.raised`; in frame 6 line 1 is about
+  44 px, because cell 3's dated withdrawal word takes two text lines in its 272 px column (2 ×
+  18.2 px of `type.ui.body`, plus the 4 px block padding twice), breaking before "verified", which
+  stays whole — never truncated and never undated (D3, AD-3) — so a record is about 76 px:
+  CMP-176's record fill (§2.2) takes the place of CMP-049's zebra (`15:531`), so every pair sits
+  on the surface §9 measures; a 1 px `color.border.default` rule between records (`hairline`,
+  decorative); LIVE's group row y 352–384 and its records y 384–612; DEMO's group row y 612–644
+  and demo-1 y 644–720
+@ row K Region "Key health and secrets policy" ‖ Block
+  K Region "Key health and secrets policy"
+@ prose
+  **Focus and keys (R3).** Skip link → TopBar → NavRail → strip items → "+ Add account" → [Change]
+  → per record, in order: [Start the compromise response] where the record is blocked, then
+  Actions, then Details → the "Key health and secrets policy" button → RightRail → StatusBar
+  (`D02:434-435`; `E42-D03:199-200`, `E42-D03:589`).
+§ spec ‖ 3.2 The record (CMP-176) as this list draws it
+@ row 2 ‖ Line 1
+  the state: one badge, the worst that applies — CMP-175's badge for a key-verification state, a
+  CMP-011 chip for any other (§2.2, HD3; the table below)
+@ row 2 ‖ Line 2
+  the allowlist facet, CMP-175 `key` (§2.1) — frame 6: "matches"
+@ row 3 ‖ Line 1
+  CMP-034's `...{last4}` (`type.num.base`), then the CMP-175 `key` facets for the trade right and
+  the withdrawal check in their dated pass form (§2.1; AD-3) — frame 6: "...a1b2 · Trade ·
+  Withdrawal OFF ✓ · verified 14:02 UTC", breaking before "verified" in the 272 px column (§3.1
+  block J)
+@ row 3 ‖ Line 2
+  the key age and its rotation due date — frame 6: "41 d · due 2026-12-11 UTC"; the age's
+  description carries its absolute date (`E42-D02:119`)
+@ prose
+  **The state** takes §2.2's precedence — E27-D02's words (`D02:1099`) in its order
+  (`D02:365-366`) with four PROPOSED additions — and §2.2's components: CMP-175's own word for a
+  key-verification state, so every verdict word lives in that one component (BQ-5; HD3), and a
+  CMP-011 chip for every other state; line 2's CMP-175 facet repeats the allowlist state (§2.1).
+@ prose
+  Glyph names follow BQ-6; the slashed circle is E42-D03's `icon/slashed-circle`, the glyph of its
+  own "Disabled" chip (`E42-D03:635-641`); the copy keys are §12.1's `e27.cmp175.*` and
+  `e27.scr125.chip.*`.
+@ row 1 ‖ State
+  "BLOCKED — fund right found"
+@ row 1 ‖ Component · class or var
+  CMP-175 critical badge · octagon, with the critical mark: `font.weight.bold` and a 2 px
+  `color.status.danger.strong` border (`border.thick`)
+@ row 2 ‖ State
+  "Key refused by Bybit" · "Expired at Bybit"
+@ row 2 ‖ Component · class or var
+  CMP-011 `danger` · octagon; CMP-175 failed badge · octagon
+@ row 3 ‖ Component · class or var
+  CMP-175 failed badge · octagon: a refusal, never a warning (AD-4, `MEMO:400`)
+@ row 6 ‖ State
+  "Check overdue — last passed {hh:mm} UTC" · "Withdrawal: not checked"
+@ row 6 ‖ Component · class or var
+  CMP-175 time-warning badge · clock; CMP-175 unknown badge · dash, never OFF (D4)
+@ row 9 ‖ Component · class or var
+  CMP-011 `warning` · triangle; CMP-175 warning badge · triangle; two clocks, two words (D7)
+@ row 10 ‖ State
+  "No key — inactive"
+§ spec ‖ 3.3 The data and their producers
+@ row each key's facts ‖ Datum
+  each key's facts
+@ row each key's facts ‖ Operation · field (`22`)
+  `listApiKeys` (`22:2672-2690`): `key_id_masked`, `status`, `created_at` (the key age),
+  `rotation_due_at`, `rotation_state`, `expires_at`, `last_verified_at` (`22:16873-16900`)
+@ row each key's facts ‖ `x-rbac`
+  `keys:read`
+@ row the withdrawal and allowlist facets per ‖ Datum
+  the withdrawal and allowlist facets per key
+@ row the withdrawal and allowlist facets per ‖ Operation · field (`22`)
+  `getSecuritySummary` (`22:13742-13758`) `keys[]`: `withdrawal_permission_present`,
+  `ip_whitelist_matches_expected`, `last_verified_at` (`22:22011-22032`); the failing rule per key
+  is G-1's (O-A, `D02:1211`)
+@ row Test ‖ Operation · field (`22`)
+  `testApiKey` (`22:2955-3002`): a failing verdict latches read-only and disarms the account, a
+  pass changes neither; one test per key per minute, else `429`
+@ row Test ‖ `x-rbac`
+  `keys:read`
+@ row the egress IP and every right as reporte ‖ `x-rbac`
+  `keys:read`
+§ spec ‖ 3.4 The hi-fi rows (frames 1 and 6–17)
+@ head 7
+  Copy keys (§12)
+@ row 1 ‖ Hi-fi: layout and redlin
+  §3.1's page with the shell redlined (blocks A–D, K and L); the band's `keys` grace line "Still
+  trusted for key changes · 02:14", timed from the server's `step_up_expires_at` (variant (b));
+  the strip with one item, "Rotation due for sub_002 in 12 d → Rotate", carrying its LIVE pill and
+  "Attention:" in its accessible name (`D02:150`, `D02:390`); the route content is frame 6's
+@ row 1 ‖ Copy keys (§12)
+  `e27.shell.band`, `e27.shell.grace.keys`, `e27.shell.strip.title`,
+  `e27.shell.strip.rotation_due`, `e27.shell.meta`, `e27.shell.footer` (consumed: E42-D03's
+  `band.*`, `strip.*`, `meta.asof`, `footer.area_entered`, `E42-D03:608-610`); `e27.shell.h1`,
+  `e27.shell.cta.add`
+@ row 6 ‖ Components (variant · pr
+  CMP-049 (`caption`; no `grid`) · CMP-176 ×4 (`state` ok) · CMP-011 `neutral` + check · CMP-034 ·
+  CMP-175 `key` (verified, trade-only) and `aggregate` (dated) · CMP-178 inline (healthy) ·
+  CMP-075 · CMP-041 · CMP-001
+@ row 6 ‖ Copy keys (§12)
+  `e27.shell.h1`, `e27.shell.cta.add`, `e27.scr125.verdict.dated`, `e27.shell.region.accounts`,
+  `e27.scr125.cap.recorded`, `e27.scr125.table.caption`, `e27.scr125.table.headers`,
+  `e27.scr125.group`, `e27.scr125.chip.ok`, `e27.scr125.row.age`, `e27.scr125.row.health`,
+  `e27.scr125.row.actions`, `e27.scr125.row.details`; CMP-175's words (§2.1)
+@ row 7 ‖ Hi-fi: layout and redlin
+  the two header rows over one body row, a `td colspan="4"` with CMP-026 (2 × 32 px): "No Bybit
+  accounts yet. Register your main account first; its sub-accounts follow."; "+ Add account" in
+  the PageHeader is the one call to action; the verdict's no-keys form "No stored keys yet —
+  nothing to check."; no capacity line; the strip's empty line
+@ row 7 ‖ Components (variant · pr
+  CMP-049 (`emptyState`) · CMP-026 (no-data, `cta` omitted) · CMP-175 `aggregate` (no keys)
+@ row 8 ‖ Hi-fi: layout and redlin
+  two nested states. Loading: the header rows over three CMP-015 records of two 32 px lines each,
+  static under reduced motion, the table `aria-busy`, the verdict "Withdrawal verdict loading…",
+  never OFF. Error: the header rows over one row, CMP-027 "Couldn't load the accounts — {detail}.
+  [Retry]", and the verdict's read-failed form "Withdrawal verdict unavailable — the accounts
+  could not be read."; in both the capacity line keeps its own read and state (`E42-D03:122`)
+@ row 8 ‖ Components (variant · pr
+  CMP-049 (`loading`, then `error` with its retry) · CMP-015 (`shape` row, `count` 3) · CMP-027
+  (`retry`) · CMP-175 `aggregate`
+@ row 9 ‖ Frame (E27-D02 §7)
+  `SCR-125 / key expiring (<14 d): rotation due and Bybit expiry`
+@ row 9 ‖ Hi-fi: layout and redlin
+  frame 6 with two records changed: sub_002's chip "Rotation due in 12 d" over line 2 "78 d · due
+  2026-11-04 UTC" (the age SCR-127's stage 1 states, `D02:567-568`), its details open with
+  "Overdue never stops trading."; demo-1's chip "Bybit expiry in 9 d", its details (an inset) "The
+  key stops working at Bybit on 2026-11-01 UTC — rotate before then."; the strip's item "Rotation
+  due for sub_002 in 12 d → Rotate" (E42-D03's `strip.key_expiry` says "expires" for the policy
+  clock, which D7 forbids: D03-C6, §14)
+@ row 9 ‖ Components (variant · pr
+  CMP-011 `warning` + triangle · CMP-175 `key` expiring for demo-1 (§2.1) · CMP-036 (details) ·
+  CMP-021 (the strip item)
+@ row 10 ‖ Frame (E27-D02 §7)
+  `SCR-125 / within Bybit's 48 h new-key restriction`
+@ row 10 ‖ Hi-fi: layout and redlin
+  a freshly registered sub_002: the chip "No key — inactive"; cell 3 spans both lines with the
+  account-level sentence routed in C-9, "Bybit's 48 h restriction applies to this account's first
+  key; the time it lifts is not recorded. Demo trading is available meanwhile." (PROPOSED), never
+  a computed time (AD-14); health reads "Not monitored yet" with the dash while `health` is `null`
+  (§2.4; new, PROPOSED); the menu, an inset, opens on "Add a key…" (a keyless record only); the
+  timed form waits for G-3 and is not drawn (`D02:1001-1003`)
+@ row 10 ‖ Focus and announcements
+  Actions → "Add a key…" opens SCR-126's key step
+@ row 11 ‖ Hi-fi: layout and redlin
+  (a) sub_001's menu open under its Actions button: a CMP-041 popover on `color.surface.overlay`,
+  280 px wide, `elevation.popover`, `radius.card`, 32 px items in E27-D02's order — Edit… · Rotate
+  key… · Test key… · Revoke key… · Suspected compromise… · Disable… · Delete (keeps history)… —
+  Rotate and Revoke with the ask as a second line, "Asks for your password and a code" (or "Still
+  trusted for key changes · 02:14"), Revoke on sub_001's only key adding "and the account's name"
+  (`D02:426`), Disable and Delete with "Asks for your password, a code and the account's name",
+  stamped "not yet served — G-8, #895 / #898"; (b) the Test dialog "Test sub_001's key ...c3d4 ·
+  LIVE": CP-6's before-sentence as its description, [Cancel] (initial focus) [Run test]; while
+  running, Run test busy; the result: a heading, the check list with sub_001's rows (LIVE, UID
+  1234568; `D02:255-257`), "REST probe: passed · 118 ms" and "WebSocket: not checked"; the dismiss
+  button then reads "Close" (`e27.shared.close`, new, PROPOSED); (c) an inset of the minute after
+  this client's test: Run test and the menu's Test key… gated by `keys.test_throttled`, "One test
+  per key per minute; next at 14:04:10 UTC.", the reason as the item's second line and under the
+  dialog's buttons (2a); (d) an inset of a `429` because another session tested: "Tested at
+  14:03:10 UTC; the next test can run at 14:04:10 UTC." (a refusal at the point of action, never
+  gated)
+@ row 11 ‖ Copy keys (§12)
+  `e27.scr125.menu.items`, `e27.scr125.menu.ask.keys`, `e27.shell.grace.keys`,
+  `e27.scr125.menu.ask.label`, `e27.scr125.test.title`, `e27.scr125.test.before` (CP-6),
+  `e27.scr125.test.buttons`, `e27.shared.close`, `e27.scr125.test.result`,
+  `e27.checks.rest_probe`, `e27.checks.ws_probe`, `e27.scr125.test.passed`,
+  `e27.scr125.test.throttled`; reason `keys.test_throttled`
+@ row 11 ‖ Focus and announcements
+  Actions → `Enter` opens the menu on its first item; `↑` / `↓` reach a gated item without
+  activating it, and `Enter` there re-shows the reason with one polite announcement; Test key…
+  opens the dialog on Cancel → Run test; after the answer focus moves to the result heading; a
+  refusal assertive once, a pass polite once; `Esc` closes and focus returns to Actions
+  (`D02:429-437`, `D02:1049`)
+@ row 13 ‖ Frame (E27-D02 §7)
+  `SCR-125 / withdrawal permission detected: blocking error`
+@ row 13 ‖ Hi-fi: layout and redlin
+  block B holds CMP-092's blocking row "Trading disabled: a stored API key failed its check."
+  (`SYS:71`), whose `href` opens the audit log filtered to `account.tested` with "Find the key in
+  the audit log: action `account.tested`." (the served form today, `RB:51`); the verdict in its
+  failed form, with the octagon; the other records as frames 9 and 16 draw them, so one list holds
+  BLOCKED beside the ordinary warnings — Main "OK", sub_001 "Degraded — REST only" (triangle),
+  demo-1 "Bybit expiry in 9 d" (triangle); sub_002's record in the danger treatment (BQ-7, §2.2):
+  both lines on `color.status.danger.subtle`, a 4 px `color.status.danger.strong` inline-start
+  rule on the label cell, the chip "BLOCKED — fund right found" with the critical mark, [Start the
+  compromise response] (CMP-001 `secondary`) first in the actions cell, above Actions and Details,
+  and line 2 one cell across cells 2–4: "This key can now withdraw or transfer — it was changed at
+  Bybit. Trading is read-only for every account and off for sub_002."; never dismissible; the
+  strip's first item routes to it, "Attention: LIVE — a key on sub_002 can move funds → Start the
+  compromise response" (new, PROPOSED: E42-D03's `strip.withdrawal` says "remove it on Bybit",
+  where C-12.12 deletes the key at Bybit, so D03-C7, §14); the menu, an inset, keeps Rotate key…
+  gated by `keys.compromise_path` and Suspected compromise… live; until G-1 attributes the failure
+  to a key, the record, its strip item and its gated Rotate are a target state stamped "not yet
+  served — G-1, #895 / #896" (`D02:408-410`)
+@ row 13 ‖ Components (variant · pr
+  CMP-092 (`href`) · CMP-175 `aggregate` (failed) · CMP-176 blocked · CMP-175 critical badge
+  (octagon, the critical mark) · CMP-011 `warning` + triangle (sub_001) · CMP-175 `key` expiring
+  (demo-1) · CMP-178 inline (degraded) · CMP-001 · CMP-041 + CMP-079 + CMP-019 `lock`
+@ row 13 ‖ Copy keys (§12)
+  `e27.shell.banner.key_failed` (consumed, `SYS:71`), `e27.scr125.verdict.audit_hint`,
+  `e27.shell.strip.withdrawal`, `e27.scr125.verdict.failed`, `e27.cmp175.withdrawal_detected`,
+  `e27.scr125.blocked.line2`, `e27.scr125.blocked.action`, `e27.scr125.chip.degraded`,
+  `e27.cmp175.expiring`; reason `keys.compromise_path`
+@ row 14 ‖ Hi-fi: layout and redlin
+  sub_001's record: the chip "IP allowlist: no match" over line 2's facet "no match" (an inset
+  draws Main's empty whitelist, the facet "none set", §2.1); sub_001's details open with CD-3's
+  CandleViewer-rule form, its last clause "then test again"; its address and [Copy] come only from
+  a Test this client ran (frame 11; `KeyTestResult.verification.egress_ip`, `22:17135`), since no
+  list field carries the address (`22:16873-16900`) and the notice names no key or account
+  (`23:4270-4271`): before a Test they are the D03-G1 target state, stamped "not yet served —
+  D03-G1, #896" (HD14), and after one CMP-033 sits on 203.0.113.10; a stored key failing the check
+  latches read-only, so block B's blocking row and the verdict's failed form show too
+  (`D02:410-412`); the record is a target state stamped "not yet served — G-1, #895 / #896"
+@ row 14 ‖ Components (variant · pr
+  CMP-175 failed badge and `key` facet, IP-mismatch and IP-missing (§2.1) · CMP-036 + CMP-033 ·
+  CMP-092
+@ row 14 ‖ Focus and announcements
+  Details → Copy once a Test served the address ("Copied", polite, CMP-033's own); the re-test is
+  Actions → Test key…; CMP-092's row is the one announcement
+@ row 15 ‖ Frame (E27-D02 §7)
+  `SCR-125 / key invalid`
+@ row 15 ‖ Hi-fi: layout and redlin
+  sub_002's record with key ...e5f6: the chip "Key refused by Bybit", which outranks the Down its
+  health line shows; its details open: "Bybit no longer accepts key ...e5f6 — it signs nothing.
+  Rotate it, or revoke it here if you deleted it at Bybit." (Rotate's precondition on an `invalid`
+  key is G-5's and the server decides, `D02:414`); once the hourly check fails on it too, block B
+  and the verdict's failed form show as in frame 14 (`RB:53`)
+@ row 15 ‖ Focus and announcements
+  the record's Details; the failed key announced once through the shell announcer, assertive
+  (`D02:1078-1079`)
+@ row 17 ‖ Hi-fi: layout and redlin
+  block B holds CMP-092's blocking row "Trading disabled: the credential key is unavailable."
+  (`SYS:66`); one CMP-028 panel notice under the `h1` (BQ-9: the danger tone, blocking, never
+  dismissible, no live region, a stable `id`) with the octagon, "Off while the credential key is
+  unavailable." then "Keys can't be added, tested or rotated until the KEK is back, and trading is
+  off.", in y 176–240 so blocks E–L move down 64 px; in every menu Add a key…, Rotate key… and
+  Test key… are gated by `keys.kek_unavailable`, the reason as their second line and their
+  `aria-describedby` on the notice's `id` (one notice, many pointers; 2a); Revoke key… stays live
+  (D17)
+@ row 17 ‖ Copy keys (§12)
+  `e27.shell.banner.kek` (consumed, `SYS:66`); the notice's first line is the reason
+  `keys.kek_unavailable`; its second `e27.shared.kek_notice`
+§ spec ‖ 4.1 Anatomy at 1280 × 800 and the redline (frame
+@ row B PageHeader (CMP-088) ‖ Content and copy
+  `h1` "Add a Bybit account" at the left; at the right the CMP-066 `nav` stepper (BQ-12), "1
+  Register the account ✓ · 2 Add its API key (current)": the done step with its check and its
+  word, a link back to its step (CMP-021), and the current step `aria-current="step"`
+@ row D Key-step heading ‖ Block
+  D Key-step heading
+@ row D Key-step heading ‖ Content and copy
+  `h2` "API key for demo-1 · UID 9000001 · DEMO (this deployment)", the environment word as the
+  CMP-075 pill
+@ row E Instruction list ‖ Content and copy
+  "Create the key in Bybit's dashboard with only:" and three items — "Contract trade — Order and
+  Position (Derivatives — DerivativesTrade is allowed too)" · "no withdrawal or transfer right" ·
+  "the IP allowlist below"; static text, never boxes the owner ticks (the memo's F-19, `MEMO:260`)
+@ row F Allowlist row (CMP-036; BQ-14) ‖ Content and copy
+  `dt` "IP allowlist"; `dd` CP-3 verbatim: "Set this key's IP allowlist in Bybit's dashboard to
+  exactly 203.0.113.10 [Copy]. It can't be set here; CandleViewer only checks it." Before any
+  check the address and its Copy are a target state, stamped "not yet served — D03-G1, #896"
+  (BQ-15: only a verification result carries `egress_ip`); with no egress IP configured there is
+  no Copy and no import can pass (D6); CMP-033 is the one copy control on the screen
+@ row G API key field ‖ Block
+  G API key field
+@ row G API key field ‖ Content and copy
+  CMP-040 (label "API key"; help "value is write-only", in the DOM at mount and linked by
+  `aria-describedby`) on CMP-201's write-only variant (BQ-8, §2.3): `type=password`, autocomplete
+  suppressed, cleared on leave, paste allowed, no reveal control, never re-filled
+@ row H API secret field ‖ Block
+  H API secret field
+@ row H API secret field ‖ Content and copy
+  as G; label "API secret", help CP-1 verbatim: "Write-only: CandleViewer uses this secret to sign
+  orders, and no one can see it again — not you, not an admin. If it is lost, create a new key at
+  Bybit."
+@ row I Ask line and audit marker ‖ Content and copy
+  "You'll confirm with your password and a code." — inside the `keys` grace window "Still trusted
+  for key changes · 02:14", timed by the server's `step_up_expires_at` — then CMP-093's marker,
+  last before the buttons: "Recorded in the audit log · API key imported (api_key.import)"
+@ prose
+  **Focus and keys (R3).** Skip link → strip → the stepper's done step → Copy → API key → API
+  secret → Cancel → Verify and save (`D02:532-533`).
+@ prose
+  After an answer focus moves to the result heading; then the summary's controls, then the form
+  card's stops again, so a refused key is fixed and verified again without going back
+  (`D02:533-534`).
+§ spec ‖ 4.2 The data and their producers
+@ row import ‖ Operation · field (`22`)
+  `createApiKey` (`22:2691-2842`), stored only if every check passes (`22:2696`);
+  `CreateApiKeyRequest` (`22:16901-16914`): key 8–128 and secret 8–256 characters
+@ row import ‖ `x-rbac` · step-up class
+  `keys:manage` · `keys` (`SU:521`)
+@ row edit ‖ `x-rbac` · step-up class
+  `accounts:write`; `keys:read`
+§ spec ‖ 4.3 The hi-fi rows (frames 18–32)
+@ prose
+  A refusal keeps the pasted values in their wells, masked, so "verify again" sends them as they
+  are, except where a row says both fields clear (`D02:511-518`).
+@ head 7
+  Copy keys (§12)
+@ row 18 ‖ Hi-fi: layout and redlin
+  the stepper's step 1 current; the form card holds Label and Bybit UID (wells as block G, the UID
+  `type.num.base`), Kind as two radios in a row ("Main account" · "Sub-account"), Parent for a sub
+  only (this environment's main accounts), the environment as a CMP-036 row "DEMO (this
+  deployment)" with the pill and no control (OQ-4), then [Cancel] [Register account]; filled for
+  demo-1: demo-1 · 9000001 · Main account; once registered the account lists as "No key —
+  inactive" (`11:320`) and step 2 opens
+@ row 19 ‖ Frame (E27-D02 §7)
+  `SCR-126 / paste the key: write-only fields and the allowlist row`
+@ row 19 ‖ Hi-fi: layout and redlin
+  §4.1 exactly: demo-1's key step, the egress-IP stamp on block F
+@ row 19 ‖ Components (variant · pr
+  CMP-087 · CMP-088 · CMP-066 `nav` · CMP-050 · CMP-075 · CMP-036 + CMP-033 · CMP-040 + CMP-201
+  write-only · CMP-093 (its visible marker) · CMP-001
+@ row 19 ‖ Copy keys (§12)
+  `e27.scr126.key.h2`, `e27.scr126.key.instructions`, `e27.scr126.allowlist.label`,
+  `e27.scr126.allowlist.help` (CP-3), `e27.scr126.key.label`, `e27.scr126.secret.label`,
+  `e27.scr126.secret.help` (CP-1), `e27.shared.ask`, `e27.shell.grace.keys`, `e27.scr126.marker`,
+  `e27.scr126.buttons`
+@ row 20 ‖ Hi-fi: layout and redlin
+  frame 19 after the press: both wells `readonly`, their bullets kept; Verify and save in
+  CMP-001's loading state (the spinner replaces the label, width locked, `aria-busy`, focusable,
+  activation suppressed; never gated); the result card opens with its status line only, "Checking
+  the key with Bybit — environment, rights, withdrawal, IP allowlist, UID and clock…", and at
+  about 3 s adds "This can take up to 12 s."; no staged reveal of the checks, no progress bar and
+  no simulated time (D18; AD-16 at `MEMO:412`)
+@ row 21 ‖ Hi-fi: layout and redlin
+  the form card gives way to the result card, both wells cleared: the `h3`; the pass line "Saved.
+  Key ...a7b8 is active on demo-1. Its secret can't be shown again." with the check; the check
+  list all passed, demo-1's rows with Withdrawal and transfer "OFF ✓ · verified 14:02 UTC", the
+  stored key's `last_verified_at` (D03-C15) — what the backend verified: the UID, the rights, the
+  allowlist and the clock skew (`D02:242-250`; `14:2542`); [Done] (CMP-001 `primary`) back to
+  SCR-125; the stepper shows both steps done; on a LIVE account the card adds "Storing this key
+  doesn't turn live trading on — that has its own gate." (a deck string: no frame draws a LIVE
+  save, `D02:486-490`)
+@ row 21 ‖ Copy keys (§12)
+  `e27.scr126.result.h3`, `e27.scr126.saved`, `e27.scr126.saved.live`, `e27.scr126.saved.done`;
+  frame 3's check-list keys (§2.6)
+@ row 22 ‖ Hi-fi: layout and redlin
+  a LIVE registration, every environment line "LIVE (this deployment)", in four nested variants:
+  (a) sub_002's key step, "API key for sub_002 · UID 1234569 · LIVE (this deployment)", with the
+  format errors on press — key 8–128 and secret 8–256 characters (`22:16906-16907`); (b) the
+  register step's UID error, 4–20 digits and nothing else (`22:16764`); (c) "This Bybit UID is
+  already connected as 'sub_001'." (`14:2536`; a UID is unique per environment); (d) a sixth sub,
+  "Bybit allows 5 sub-accounts on your tier (20 with Business KYC) — you've used 5.", with no
+  acknowledgement control (the memo's C16, `MEMO:455`), and a parent in the other environment
+  refused, naming the mismatch
+@ row 23 ‖ Frame (E27-D02 §7)
+  `SCR-126 / refused: withdrawal or transfer right`
+@ row 23 ‖ Hi-fi: layout and redlin
+  the result card's summary is CMP-027 on a `color.status.danger.subtle` band with the octagon:
+  CP-5 verbatim, whose first clause is the "nothing was stored" lead, so no separate lead line:
+  "Refused: this key can withdraw or transfer, and nothing was stored. It still works at Bybit:
+  delete it in Bybit's dashboard, then create a key with only the trading rights CandleViewer
+  allows."; the server's `detail` sits in CMP-027's details disclosure, never as exchange text
+  (D12); the check list: Environment passed, "Withdrawal and transfer" failed, every later row not
+  checked; both fields clear at once (CP-5; KV-I10; `D02:511-514`)
+@ row 23 ‖ Copy keys (§12)
+  `e27.scr126.refused.withdrawal` (CP-5, unchanged); frame 3's check-list keys
+@ row 24 ‖ Hi-fi: layout and redlin
+  the summary leads "Nothing was stored." then CD-3's Bybit form, "Bybit refused requests from
+  203.0.113.10. In Bybit's dashboard, set this key's IP allowlist to 203.0.113.10 [Copy] and
+  nothing else, then verify again.", the address and its Copy served by this refusal's `egress_ip`
+  (`22:15263-15276`); every check not checked (`KeyVerificationNotRead`, `22:16981-16995`); the
+  fields stay
+@ row 25 ‖ Hi-fi: layout and redlin
+  "Nothing was stored." then CD-3's rule form, "CandleViewer accepts this key only if its IP
+  allowlist holds exactly 203.0.113.10. Set it in Bybit's dashboard [Copy], then verify again. It
+  can't be set from here."; the check list passes the rows before the allowlist, fails it with the
+  whitelist it read, "holds 203.0.113.10 and 198.51.100.7" (`D02:503-504`; `22:15225-15247`), and
+  leaves expiry and the probe not checked; the fields stay
+@ row 26 ‖ Hi-fi: layout and redlin
+  seven nested variants, one per rule, each "Nothing was stored." over the check list with that
+  rule's words in its failed row (frame 3): environment "This key doesn't belong to DEMO." · other
+  rights "Holds a right CandleViewer doesn't allow." · trade access "Can't trade: needs Contract
+  trade — Order and Position." · unified account "This account isn't a Unified Trading Account." ·
+  UID "This key belongs to another Bybit UID." · expiry "This key has expired at Bybit." · probe
+  "Bybit refused the signed test call."; the environment, UID and expiry variants clear both
+  fields, since no fix at Bybit turns that key into a pass and a key of the other environment is
+  never held (C-2.11), and the other four keep them (`D02:505-506`, `D02:514-517`)
+@ row 26 ‖ Copy keys (§12)
+  `e27.scr126.refused.lead`; frame 3's failed-row keys
+@ row 28 ‖ Hi-fi: layout and redlin
+  the check list all passed, then CMP-027 on the danger band: "The key passed its checks but could
+  not be switched on. It is stored revoked here and still works at Bybit — import it again, or
+  delete it in Bybit's dashboard." — never "nothing was stored" (the memo's C8, `MEMO:447`;
+  `ADR9:223-230`); the fields stay for "import it again"
+@ row 29 ‖ Hi-fi: layout and redlin
+  frame 19 under the KEK condition: block B of §3.1 holds CMP-092's blocking row "Trading
+  disabled: the credential key is unavailable." (`SYS:66`); §3's CMP-028 panel notice (BQ-9) sits
+  between the PageHeader and the form card, 64 px; Verify and save is gated by
+  `keys.kek_unavailable`: the lock leads its full label, label and lock in `color.text.tertiary`,
+  its fill `color.surface.raised` with a `color.border.default` hairline, its `aria-describedby`
+  on the notice's `id` (one notice, many pointers; 2a)
+@ row 29 ‖ Copy keys (§12)
+  `e27.shell.banner.kek` (consumed, `SYS:66`); the notice's first line is the reason
+  `keys.kek_unavailable`; its second `e27.shared.kek_notice`
+@ row 30 ‖ Hi-fi: layout and redlin
+  SCR-006 over frame 19, consumed from E09-D06 and never redrawn: the board draws frame 19 under a
+  flat 60 % scrim (`opacity.scrim`, no blur) with SCR-006's footprint labelled "SCR-006 code-only,
+  E09-D06" (`D06:16-17`, `D06:27-28`): `role="alertdialog"`, password and code fields (`D06:47`),
+  focus on the password field; its title "Confirm it's you" and its description the server's
+  `action_summary` verbatim, here in `22:14996`'s form for demo-1, "Import API key for account
+  'demo-1' (demo, UID 9000001)" (`22:15977-16002`); the press is held unchanged and re-sent once
+  on success (`22:11910-11919`; `D06:40`); a cancel, the expiry, the third failure, the idle lock
+  (SCR-005) or the absolute session expiry drops it, with "Not saved — nothing was sent." and both
+  secret fields cleared (KV-I10; `22:11915-11916`); a re-send that gets no answer (a network error
+  or a timeout) may have stored the key, so the card never says "Not saved" and never sends again:
+  it shows `e27.shared.resend_unconfirmed`, reads the key list back (`listApiKeys`) and shows what
+  it finds — the key listed, frame 21's result with both fields cleared; not listed, nothing was
+  stored and the fields stay for a new Verify and save (`22:11915-11919`); inside the 5-minute
+  `keys` grace no dialog opens and the ask line reads "Still trusted for key changes · 02:14"
+  (`22:11921-11924`)
+@ row 30 ‖ Copy keys (§12)
+  `e27.scr126.stepup.dropped`, `e27.shared.resend_unconfirmed`, `e27.shell.grace.keys`; SCR-006's
+  strings are E09-D06's and the server's
+@ row 31 ‖ Frame (E27-D02 §7)
+  `SCR-126 / edit mode: no key field, the key row with Rotate`
+@ row 31 ‖ Hi-fi: layout and redlin
+  the route `/admin/accounts/:accountId` for sub_002: the `h1` "Edit sub_002 · LIVE" (new,
+  PROPOSED: the title carries the environment, `D02:262-270`); the form card holds Label
+  (editable) and the account's facts as CMP-036 rows (Bybit UID 1234569, sub-account of Main,
+  "LIVE (this deployment)"), then the key as an outcome row: "API key ...e5f6 · active · verified
+  14:02 UTC · Rotation due 2026-11-04 UTC" (sub_002's 78-day key, as frames 9, 33 and 42 date it;
+  `D02:521`'s 2027-01-18 is its frame 6 fixture) with [Rotate key…] (CMP-001 `secondary`, opening
+  SCR-127) and "Write-only: the secret can't be shown or changed here; a new key goes through
+  Rotate."; a keyless account shows "Add a key…" in its place; Disable… and Delete (keeps
+  history)… (CMP-001 `secondary`) open SCR-129; [Cancel] [Save] (new, PROPOSED) send
+  `updateExchangeAccount` with `If-Match` through frame 5's rung-1 dialog (`D02:277`; §2.6), whose
+  marker is "Recorded in the audit log" with no code
+@ row 31 ‖ Components (variant · pr
+  CMP-050 · CMP-040 + CMP-007 · CMP-036 · CMP-034 · CMP-175 `key` facets · CMP-001
+@ row 31 ‖ Tokens (§9)
+  rows `row-text`, `row-secondary`; the key id `type.num.base`; the write-only line
+  `row-secondary`
+@ row 31 ‖ Focus and announcements
+  Label → Rotate key… → Disable… → Delete (keeps history)… → Cancel → Save; `Enter` in Label opens
+  the rung-1 dialog
+§ spec ‖ 4.4 SCR-016 step 3 — the account step as insets
+@ prose
+  The step is SCR-126 inline (`14:417`; `D02:864-866`): one "Verify and save" registers the shell
+  and verifies and stores the key (D5); the verdict is a row the server fills after a pass, never
+  a box the owner ticks (C-7; the memo's F-19, `MEMO:260`); the environment is the deployment's,
+  stated in words (OQ-4).
+@ row C Step card (CMP-050) ‖ Content and copy
+  §4.1's form card at 640 px, in E27-D02 §5.7's order: Label [demo-1], Bybit UID [9000001] and
+  "Main account" as text; the instruction list (§4.1 E); API key and API secret with CP-1 (§4.1
+  G–H); the allowlist row with CP-3 and its stamped Copy (§4.1 F; BQ-15); [Verify and save] with
+  the ask line
+@ row D Result row ‖ Content and copy
+  "Withdrawal and transfer: OFF ✓ — verified 14:02 UTC", a row the server fills after a pass, with
+  the check list under it; before a verdict the row is absent, never OFF (AD-3)
+@ prose
+  **Focus (R3).** The stepper's done steps → Label → Bybit UID → API key → API secret → Copy →
+  Verify and save → Back → Skip for now → Continue (`D02:854-860`); the step heading takes focus
+  on each step change (`14:434`).
+@ head 7
+  Copy keys (§12)
+@ row 72 ‖ Hi-fi: layout and redlin
+  the card after the press, as SCR-126's frame 20: wells `readonly`, Verify and save loading, the
+  status line and, at about 3 s, "This can take up to 12 s."; Continue stays enabled and, pressed,
+  says "Verify and save the key first, or skip this step." (`D02:869-870`)
+@ row 73 ‖ Copy keys (§12)
+  `e27.scr016.result`; frame 3's check-list keys
+@ row 74 ‖ Hi-fi: layout and redlin
+  the hard block of `14:433` drawn as SCR-126's frame 23: CP-5's refusal on the danger band,
+  "nothing was stored", the check list with the withdrawal row failed; both wells cleared at once
+  (`D02:511-514`); Continue answers as in frame 72, and Skip for now stays
+@ row 74 ‖ Copy keys (§12)
+  `e27.scr126.refused.withdrawal` (CP-5, unchanged)
+@ row 75 ‖ Hi-fi: layout and redlin
+  the step after Skip for now: the card gives way to "Skipped — the key you add later goes through
+  the same check." — a skip skips the step, never the check (the memo's IM-17, `MEMO:434`);
+  Continue moves on; SCR-019's account tasks stay pending (§8)
+§ spec ‖ 5. SCR-127 — Key rotation (board 07)
+@ heading
+  ## 5. SCR-127 — Key rotation (board 07)
+@ prose
+  A modal wizard, opened by "Rotate key…" from SCR-125's row menu, SCR-128's per-key menu or
+  SCR-126's edit key row (`D02:421-422`, `D02:624`, `D02:520-524`).
+@ prose
+  It runs the contract's two-phase `rotateApiKey` (`22:2876-2950`): the new key goes through the
+  `createApiKey` pipeline; on a pass the old key turns `rotating`, both keys work for the fixed
+  900 s overlap while requests in flight drain, and the old key is then revoked here; no request
+  changes the overlap, and a suspected compromise never rotates (`22:2885-2893`).
+@ prose
+  The five stages are binding (D8, `D02:194`); their form, rung 1 with the `keys` step-up
+  (`D02:279`; OQ-10, `MEMO:541`; `SU:522`) and every string here are PROPOSED.
+@ prose
+  No frame draws a rollback, an early revoke, a drain read, a `failed` state or a schedule control
+  (G-4; AD-6, `MEMO:402`; `D02:582-584`), and no frame shows more of a key than its masked id
+  `...{last4}` or anything of a secret (BQ-8; C-2.7, C-12.2).
+@ row Title ‖ Content and copy
+  "Rotate the key of sub_002 (...e5f6) · LIVE": the title, then CMP-075 EnvBadgeLocal for the
+  environment
+@ row Stage body ‖ Size · tokens
+  `type.ui.body`, `color.text.primary`; secondary sentences `color.text.secondary`; UID, times,
+  dates, addresses and masked ids `type.num.base`; `space.stack.sm` between paragraphs
+@ row Key fields (stage 2) ‖ Block
+  Key fields (stage 2)
+@ row Key fields (stage 2) ‖ Content and copy
+  two CMP-040 stacked fields holding CMP-201's write-only variant (§2.3, BQ-8): "New API key" with
+  "value is write-only", "New API secret" with CP-1's sentence, each line in the DOM at mount
+  through `aria-describedby`; `type=password`, autocomplete suppressed, paste allowed, no reveal
+  control and no copy control; both cleared on Cancel, on leaving the dialog, after an
+  environment, UID or expiry refusal, when a step-up is cancelled, expires or fails a third time,
+  on the idle lock (SCR-005), at absolute session expiry and on sign-out (`22:11915-11916`), and
+  once the server answers `200`
+@ row Ask line (stage 2) ‖ Content and copy
+  "You'll confirm with your password and a code."; inside the `keys` grace window "Still trusted
+  for key changes · {mm:ss}", from the server's `step_up_expires_at`, never a client clock
+@ row Audit marker (stage 2) ‖ Content and copy
+  CMP-093's line, "Recorded in the audit log · API key rotated (api_key.rotate)", the last line
+  before the footer
+@ prose
+  **Data and producers.** `rotateApiKey`'s `200` is an `ApiKeyRotation` (`new_key`,
+  `verification`, `overlap_until`, `state: overlapping`; `22:17126-17134`) and drives stages 3 →
+  4; a `422` is a refusal carrying the `verification` the pipeline reached, its `egress_ip`
+  included (frame 36; `22:2745-2749`); a `503` is no verdict (frame 37); stage 5 reads the old
+  key's `revoked` from `GET /exchange-accounts/{accountId}/keys` (`D02:559-561`).
+@ prose
+  The route is `keys:manage`, the Owner's alone, and not mounted at the base (`MX:596-602`).
+@ prose
+  Events: `api_key.rotate` once the switch happens (`ACT:137`), `security.key_policy_violation` on
+  a refused new key, nothing for the instructions or a no-verdict answer (`D02:954-962`).
+@ prose
+  `Enter` acts on Next and on Verify and switch; `Space` toggles the stage-5 note (`D02:1067`);
+  `Enter` in a key field never presses Verify and switch (PROPOSED: a rung's confirm is pressed on
+  itself, as E42-D03:594 rules for its typed fields).
+@ prose
+  CMP-035: `overlap_until` is the primary, absolute time and the relative mm:ss the secondary; it
+  is text, `type.num.*` replacing `font.mono` (not a token, `15:386`); no warning colour
+  (`color.text.warning` is not a token either) and no "secret auto-hide" use (BQ-8); the list rows
+  never tick — they show only the absolute line (`D02:578`).
+@ head 6
+  Copy keys
+@ row 33 ‖ Frame (E27-D02 §7)
+  `SCR-127 / stage 1: create the new key at Bybit`
+@ row 33 ‖ Hi-fi (dark; light by to
+  Stepper: 1 current, 2–5 not started. `h2` "Create the new key at Bybit". An ordered list: "In
+  Bybit's dashboard, create a new key for UID 1234569 with only Contract trade — Order and
+  Position, and no withdrawal or transfer right." · CP-3, "Set this key's IP allowlist in Bybit's
+  dashboard to exactly 203.0.113.10 [Copy]. It can't be set here; CandleViewer only checks it." —
+  the address and its CMP-033 Copy drawn as a target state stamped "not yet served — D03-G1,
+  #896": no read serves the address before a check (BQ-15 item 7; `22:16969-16980`) · the key-age
+  policy, "Keys are due for rotation every 90 days; this one is 78 days old (due 2026-11-04 UTC).
+  Overdue never stops trading." · the 48 h line, "Rotating doesn't start Bybit's 48 h wait: that
+  applies to a new account's first key.", stamped PROPOSED (OQ-5; RA-7, `MEMO:280`). No ask line
+  and no marker: nothing is sent at this stage. Footer [Cancel] [Next]; no Back. Focus: the `h2`;
+  Tab Copy → Cancel → Next.
+@ row 34 ‖ Hi-fi (dark; light by to
+  Stepper: 1 done, 2 current. `h2` "Paste the new key". Before the fields, the consequences of the
+  press: RA-1's lead, "Open orders stay open. Both keys work for 15 minutes while requests
+  drain.", and "Then the old key ...e5f6 is revoked here. There is no undo: to go back, rotate
+  again." (PROPOSED: OQ-10's line, `D02:577`, moved before the confirm so the rung states what it
+  cannot undo first). The two write-only fields, the ask line, the marker; footer [Cancel] [Back]
+  [Verify and switch] — the destructive confirm, rung 1, enabled at once; an empty field shows its
+  inline error on the press (`D02:1033-1035`). Without a live grace the press opens SCR-006 over
+  the wizard (T1; E09-D06's chassis, consumed and never redrawn; password and code; its
+  description the server's `action_summary` verbatim, which names sub_002 with LIVE and UID
+  1234569, `22:11857-11863`); the held request is re-sent once on success; Cancel, expiry, a third
+  failure, the idle lock (SCR-005) or the absolute session expiry reads "Not saved — nothing was
+  sent." and clears both fields (`D02:530-531`; `22:11915-11916`); a re-send that gets no answer
+  may have rotated the key, so the wizard never says "Not saved" and never sends again: it shows
+  `e27.shared.resend_unconfirmed`, reads the key list back (`listApiKeys`) and shows what it finds
+  — the old key `rotating`, the switch happened (stage 4), or still `active`, nothing changed
+  (stage 2) (`22:11915-11919`). Board 07 draws stage 2 and, inset, SCR-006 over it. Focus: the
+  `h2`; Tab New API key → New API secret → Cancel → Back → Verify and switch.
+@ row 34 ‖ Copy keys
+  `e27.scr127.stage2.h2` · `e27.scr127.stage2.lead` · `e27.scr127.stage2.no_undo` ·
+  `e27.scr127.stage2.fields` · `e27.scr126.key.label` · `e27.scr127.secret.help` ·
+  `e27.shared.ask` · `e27.shell.grace.keys` · `e27.scr127.marker` · `e27.scr127.buttons` ·
+  `e27.scr126.stepup.dropped` · `e27.shared.resend_unconfirmed`
+@ row 35 ‖ Hi-fi (dark; light by to
+  Stepper: 1–2 done, 3 current with its running `meta`, "Verify · 2 s". `h2` "Verifying the new
+  key". D18's line, "Checking the key with Bybit — environment, rights, withdrawal, IP allowlist,
+  UID and clock…", and after about 3 s "This can take up to 12 s." (H8, `MEMO:196`). The fields
+  stay, read-only and masked. Verify and switch is busy: CMP-001 `loading`, its label kept,
+  `aria-busy="true"`, focusable, no lock, never T2. Back is gone and Cancel becomes [Close]: the
+  request is in flight and closing changes nothing (PROPOSED, from `D02:588-589`). The checks
+  never appear one by one and nothing fakes progress: they arrive with the answer (D18; BQ-12's
+  rider to E27-D04). Focus: the `h2` (the press moved it).
+@ row 36 ‖ Frame (E27-D02 §7)
+  `SCR-127 / stage 3 refused: nothing changed, the old key still active`
+@ row 36 ‖ Hi-fi (dark; light by to
+  Stepper: 3 in its error status, the octagon and "Refused — nothing changed". `h2` "The new key
+  was refused". Under it the CMP-027 summary (`role="alert"`, assertive once): "Nothing changed —
+  the old key ...e5f6 is still active." (RA-6, `MEMO:279`). Then the CMP-203 check list in its
+  three outcomes (BQ-14) for sub_002's new key: Environment "passed — this key belongs to LIVE" ·
+  Withdrawal and transfer "OFF ✓ · verified 10:39 UTC" (the check's time, D03-C15) · Other rights
+  "only Contract trade: Order, Position" · Trade access "passed — a trade key" · Unified account
+  "passed" · UID "passed — UID 1234569" · IP allowlist failed, CD-3's rule form, "CandleViewer
+  accepts this key only if its IP allowlist holds exactly 203.0.113.10. Set it in Bybit's
+  dashboard [Copy], then verify again. It can't be set from here." with the whitelist read "holds
+  203.0.113.10 and 198.51.100.7" — the address is served in the `422`'s `verification`, so this
+  Copy is live (`22:2745-2749`) · Expiry "passed — none set" · Signed probe and clock "passed —
+  clock offset 4 ms" (`D02:240-258`). Then "The new key still works at Bybit; delete it there if
+  you won't use it." Footer [Cancel] [Back to paste]; the fields keep their masked values for the
+  resend (an allowlist refusal never clears them, `D02:511-518`). Focus: the `h2`.
+@ row 36 ‖ Copy keys
+  `e27.scr127.stepper.status` · `e27.scr127.stage3.refused_h2` · `e27.scr127.stage3.refused` ·
+  `e27.scr127.stage3.new_key_lives` · `e27.scr127.stage3.back` · the check list's keys (§2.6,
+  frame 3)
+@ row 37 ‖ Hi-fi (dark; light by to
+  Stepper: 3 stays current (nothing was judged, so no error status). `h2` "No answer from Bybit".
+  CMP-027 (`role="alert"`, once): "No answer from Bybit — nothing changed; the old key is still
+  active. Try again in 5 s." — the 5 s is the server's `Retry-After`, written once, never a
+  ticking count. No check list: no check reached a verdict (`D02:574`; `22:2753-2764`). Footer
+  [Cancel] [Back to paste]: trying again is stage 2's Verify and switch, with the consequences
+  read again before the press; the masked values stay. Focus: the `h2`.
+@ row 38 ‖ Hi-fi (dark; light by to
+  Stepper: 1–3 done (3 with "Verify · 2.4 s"), 4 current. The `200` cleared both write-only fields
+  (CMP-201's clear after a successful save, §2.3), as frame 21 clears SCR-126's. `h2` "Switched".
+  "Switched at 10:40:01 UTC. New requests use ...d9e0. The old key ...e5f6 keeps working here
+  until 10:55:01 UTC — {mm:ss} left — while requests in flight finish. Open orders stay open."
+  with CMP-035 in place of its two times (absolute first, relative second), then "There is no
+  undo: to go back, rotate again." (OQ-10). The switch time is `overlap_until` less the fixed 900
+  s, both served (`22:2885-2890`); the private WebSocket re-authenticates with ...d9e0 at the
+  switch, with no UI (`22:2891-2892`). Footer [Close] only: closing leaves the overlap running,
+  and the rows then show "Rotation in progress · old key usable until 10:55:01 UTC" (busy, not T2;
+  `D02:578`, `D02:1028-1029`). The stage advances to 5 only on the server's state. Announcements,
+  polite: "1 minute left on the old key ...e5f6, until 10:55:01 UTC." at 60 s and "10 seconds left
+  on the old key ...e5f6, until 10:55:01 UTC." at 10 s; nothing per tick. Event `api_key.rotate`
+  (`ACT:137`). Focus: the `h2` (the answer to the press moved it).
+@ row 39 ‖ Frame (E27-D02 §7)
+  `SCR-127 / stage 5: old key revoked here, delete it at Bybit`
+@ row 39 ‖ Hi-fi (dark; light by to
+  Stepper: all five done. `h2` "Old key revoked here". CP-4 and CD-8 together: "Revoked in
+  CandleViewer. The key still works at Bybit until you delete it in Bybit's dashboard." Then the
+  CMP-005 note, unchecked at mount: "I deleted ...e5f6 in Bybit's dashboard — a note for you; it
+  unlocks nothing and records nothing" — never required, never styled as a step to complete,
+  gating and recording nothing (`MEMO:296`; BQ-15 item 6's one string). Footer [Close] (primary).
+  Its arrival is the countdown's end, announced politely once with CP-4's sentence above (§11). If
+  the wizard is open, focus moves to the `h2`; Tab the note → Close.
+@ row 40 ‖ Hi-fi (dark; light by to
+  Frame 38's stage 4 exactly, plus the board's annotation strip — never product UI, never a story:
+  "not yet served — G-4, #897: no read of the requests still in flight, no rollback before the old
+  key is revoked, no early revoke of the old key, `state: failed` undefined (`22:17134`); no
+  schedule control (`D02:582-584`)". No control, link or disabled button stands in for any of
+  them, and nothing on the frame is T2 (D20, `D02:206`).
+@ row 41 ‖ Hi-fi (dark; light by to
+  SCR-125 under the system banner — CMP-092's blocking row with the server's "Trading disabled:
+  the credential key is unavailable." (`SYS:66`) — and the one CMP-028 notice under the `h1`
+  (BQ-9), with sub_002's row menu open (CMP-041, "Actions for sub_002 · LIVE"): "Rotate key…"
+  keeps its place, its role and its full label, the CMP-019 `lock` ("Not available") leading it,
+  `aria-disabled="true"`, its second line "Off while the credential key is unavailable."
+  (`keys.kek_unavailable`, 2a; CMP-079 once the E27 keys are registered, the item's own
+  `disabledReason` until then, E42-D03:602) and its `aria-describedby` naming that line and the
+  notice (one notice, many pointers). The wizard never opens. "Add a key…" and "Test key…" carry
+  the same reason; "Revoke key…", "Suspected compromise…", "Disable…" and "Delete (keeps
+  history)…" stay enabled (D17, `D02:203`). `Enter` or `Space` on the item changes nothing,
+  re-shows the reason with one polite announcement and sends nothing; the item emits nothing.
+@ row 41 ‖ Copy keys
+  `keys.kek_unavailable` · the row menu's item keys (§3) · the KEK notice's keys (one string set
+  for every screen's notice, §12.1)
+§ spec ‖ 6. SCR-128 — Key health and secrets policy (boar
+@ heading
+  ## 6. SCR-128 — Key health and secrets policy (boards 04 and 05)
+@ prose
+  A panel of `/admin/accounts` under SCR-125's list, never a route of its own: a CMP-051
+  disclosure whose header is the `h2`'s button "Key health and secrets policy" (`aria-expanded`),
+  collapsed by default, its open state kept in the URL so a strip item can deep-link to it
+  (`D02:622-625`).
+@ prose
+  It holds the rate line, the per-key table, the Test sentence and the secrets-at-rest policy in
+  sentences; "Suspected compromise…" opens the ordered card first under the `h1` (`D02:640-645`).
+@ prose
+  Owner only (`audit:read`, `keys:read`; everyone else meets SCR-155, T3); comfortable density on
+  the screen (BQ-4).
+@ prose
+  The table's rights and allowlist cells are CMP-175's E27 state set (§2.1), which E43-D02 extends
+  additively and never forks (BQ-5).
+@ row Disclosure ‖ Content and copy
+  the `h2`'s button "Key health and secrets policy" with a chevron, `aria-expanded` and
+  `aria-controls`; collapsed by default; opening it fires `admin.key_health_viewed` (analytics)
+@ row Key table ‖ Block
+  Key table
+@ row Key table ‖ Content and copy
+  CMP-049 in its table form — a plain `<table>`, no grid, no sort, no paging — with the visible
+  caption "Stored API keys, grouped LIVE then DEMO" (`type.ui.label`, `color.text.secondary`); two
+  row groups, "LIVE (3)" and "DEMO (1)", each a `th scope="rowgroup"` with CMP-075's badge; one
+  row per signable key, the account cell `th scope="row"`; the columns below
+@ row Test sentence ‖ Content and copy
+  under the table: "Test runs the full check: if a key fails it, trading stops on every account
+  until a restart passes the check, and trading on its account stays off until you turn it back
+  on." (CP-6 in panel form); "Overdue never stops trading." follows it whenever a key is overdue
+@ row Policy ‖ Content and copy
+  `h3` "How CandleViewer holds your keys", then a list of the seven sentences of `D02:607-619`,
+  always shown while the panel is open
+@ row Row menu ‖ Content and copy
+  CMP-041 behind "Actions for ...a1b2": "Test key…" · "Rotate key…", whose second line says the
+  ask before the press ("Asks for your password and a code" or the grace line) · "Suspected
+  compromise…"; Test and Suspected compromise ask nothing before the press
+@ row Key ‖ Column
+  Key
+@ row Key ‖ Cell
+  CMP-034, the masked id `...{last4}` and nothing more (BQ-8; `22:16879-16882`); `type.num.base`
+@ row Status ‖ Cell
+  the key's `status` as a word: active · rotating · invalid · expired at Bybit (`KeyStatus`,
+  `22:16092-16099`; "expired" names only Bybit's own expiry, AD-5)
+@ row Rights ‖ Cell
+  CMP-175 in its `key` scope: the trade facet and the dated withdrawal facet in §2.1's words,
+  "Trade · Withdrawal OFF ✓ · verified 14:02 UTC", where D02 draws "Trade, Withdrawal OFF ✓" with
+  no time (`D02:599`; D03-C15) — two text lines in this column, breaking before "verified"; a fund
+  right is the critical "BLOCKED — fund right found" and routes to the compromise card, never to
+  Rotate (`keys.compromise_path`, `D02:316`)
+@ row Allowlist ‖ Cell
+  CMP-175's allowlist facet in its header form (§2.1): "matches" (check) · "no match" or "none
+  set" (octagon) · "not checked" (dash), never "n/a" and never a warning
+@ prose
+  At 1280 × 800 the Rights cell's dated word already takes two lines, so a key row is about 44 px
+  (`min-height`).
+@ prose
+  At 200 % the rows reflow to one card per key, the account and key first, then the facts as
+  label–value pairs, Actions after the key (SCR-125's reflow, `D02:1087-1088`).
+@ prose
+  **Data and producers (Owner only).** The table: `GET /admin/security/summary`
+  (`getSecuritySummary`, `audit:read`; per key `status`, `age_days`, `expires_at`,
+  `withdrawal_permission_present`, `ip_whitelist_matches_expected`, `last_verified_at`;
+  `22:13742-13754`, `22:22011-22033`; not mounted, `MX:202-208`) and the key list, `GET
+  /exchange-accounts/{accountId}/keys` (`rotation_due_at`, `rotation_state`; `22:16873-16900`),
+  computed server-side and cached 60 s, never an exchange call from the browser (`14:2565`).
+@ prose
+  The KEK notice: the `system` notice `secrets.kek_unavailable` (`23:4262`) and the server's
+  banner sentence (`SYS:66`).
+@ prose
+  The card: step 1 is E39's freeze (`POST /trading/kill-switch`; not mounted, `MX:1521-1527`),
+  step 3 `revokeApiKey` through §7's revoke dialog, step 5 SCR-126's key step (`createApiKey`);
+  `admin.key_marked_compromised` has no operation and no registered code (G-6; `TM:612`), so the
+  card writes nothing of its own (`D02:666-671`).
+@ prose
+  Opening the card moves focus to its `h2` (the press moved it); inside it Tab runs Freeze → the
+  note → Revoke here → Add a new key → Close card, and each step's control opens its own dialog
+  and returns focus to that control (`D02:686-690`); the steps never time out (A-O).
+@ head 6
+  Copy keys
+@ row 42 ‖ Frame (E27-D02 §7)
+  `SCR-128 / key table and the secrets-at-rest policy`
+@ row 42 ‖ Hi-fi (dark; light by to
+  The panel open under SCR-125 (the anatomy): the rate line; the table with four rows in two
+  groups — LIVE: Main ...a1b2 active 41 d 2026-12-11 UTC · sub_001 ...c3d4 active 12 d 2027-01-09
+  UTC · sub_002 ...e5f6 active 78 d 2026-11-04 UTC with the warning chip "Rotation due in 12 d"
+  (triangle); DEMO: demo-1 ...a7b8 active 30 d 2026-12-22 UTC (`D02:597-603`). Every Rights cell
+  shows the pass facets with their time and every Allowlist cell "matches", each an affirmative,
+  dated word, never the absence of a warning (CMP-175, §2.1; AD-3, `MEMO:399`). Then the Test
+  sentence and the policy: its seven sentences as `D02:607-619` words them, the fourth, "IP
+  allowlists are set in Bybit's dashboard only; each key must allow exactly 203.0.113.10.
+  CandleViewer only checks it.", with the address a target state stamped "not yet served — D03-G1,
+  #896" (BQ-15 item 7). No key material, fingerprint, ciphertext or KEK id anywhere (C-12.2;
+  BQ-1). Focus: the disclosure; then the rows' Actions buttons in row order.
+@ row 42 ‖ Copy keys
+  `e27.shell.region.health` · `e27.scr128.rate_budget` · `e27.scr128.table.caption` ·
+  `e27.scr128.table.headers` · `e27.scr125.group` · `e27.scr128.status` · `e27.scr128.row.actions`
+  · `e27.scr128.test_note` · `e27.scr128.policy.h3` · `e27.scr128.policy.encrypted` ·
+  `e27.scr128.policy.write_only` · `e27.scr128.policy.backups` · `e27.scr128.policy.allowlist` ·
+  `e27.scr128.policy.withdrawal` · `e27.scr128.policy.rotation` · `e27.scr128.policy.kek` · the
+  CMP-175 and CMP-011 words (§2.1, §3)
+@ row 43 ‖ Hi-fi (dark; light by to
+  Frame 42 once 2026-11-04 UTC has passed: sub_002's Rotation due cell shows "2026-11-04 UTC" over
+  CMP-011's warning chip with the clock, "Rotation overdue"; the cell's accessible text is
+  "Rotation overdue since 2026-11-04 UTC" (`D02:633-634`). No octagon and no danger tone anywhere
+  on the row: overdue is a warning, never an error, and age alone never disables a key
+  (`22:16899-16900`). "Overdue never stops trading." follows the Test sentence; the shell's strip
+  carries "Rotation overdue for sub_002 → Rotate" (CMP-087's strip; `D02:635`); the row's menu
+  keeps "Rotate key…" as it was.
+@ row 44 ‖ Hi-fi (dark; light by to
+  The Test dialog (CMP-043 `role="dialog"`, SCR-125's dialog of §3) over the panel for Main's key:
+  title "Test Main's key ...a1b2 · LIVE"; its result — the CMP-203 check list all passed,
+  Environment "passed — this key belongs to LIVE" and UID "passed — UID 1234567" (`D02:252-258`),
+  then "REST probe: passed · 118 ms" and "WebSocket: not checked" (diagnostic only); under them
+  CP-6's pass sentence, "Passed — trading stays read-only until a restart passes the check. If a
+  failed check turned this account's trading off, it stays off until you turn it back on.";
+  [Close]. Behind it the system banner stays ("Trading disabled: a stored API key failed its
+  check.", `SYS:71`), and Main's SCR-125 row keeps CMP-176's off-by-policy form (§2.2, BQ-7),
+  "Trading on this account: off by policy", with no control, stamped "not yet served — G-12,
+  #3657" on the annotation layer (`D02:636-638`). The pass is announced politely once; nothing on
+  the frame says trading resumed (AD-1). Focus: the result's heading (the press moved it).
+@ row 44 ‖ Copy keys
+  `e27.scr128.off_by_policy` · the Test dialog's keys (§3)
+@ row 45 ‖ Hi-fi (dark; light by to
+  Under the system banner (CMP-092's blocking row; `SYS:66`) the panel shows the CMP-028 KEK
+  notice once, first in its body, as SCR-125 shows its own under the `h1` (frame 17) — one notice
+  per screen (D17; BQ-9): the octagon, "Off while the credential key is unavailable." and "Keys
+  can't be added, tested or rotated until the KEK is back, and trading is off." — blocking, never
+  dismissible, announcing nothing itself (CMP-092's row is the one announcement). Every key's menu
+  keeps "Test key…" and "Rotate key…" in place, T2 per §10.1: the `lock` leading the full label,
+  `aria-disabled="true"`, the second line "Off while the credential key is unavailable."
+  (`keys.kek_unavailable`, 2a; CMP-079 as in frame 41) and `aria-describedby` naming the notice
+  too (one notice, many pointers). "Suspected compromise…" stays enabled, and so does its card's
+  "Revoke here…" (D17, `D02:203`). The table, the policy and the Test sentence stay readable at
+  full contrast.
+@ row 45 ‖ Copy keys
+  `keys.kek_unavailable` · the KEK notice's keys (§12.1, as frame 41) · the row menu's item keys
+  (§3)
+@ row 46 ‖ Hi-fi (dark; light by to
+  sub_001's response open: the card first under the `h1` (the page's "Suspected compromise"
+  region, `D02:153-155`), its `h2` "Suspected compromise · sub_001 · key ...c3d4 · LIVE" with
+  [Close card]; the lead "Do these in order. CandleViewer can stop its own trading on sub_001 and
+  end the key here; only you can kill the key at Bybit."; the five steps in C-12.12's order
+  (binding, D9; `CON:824-825`): 1 "Freeze sub_001 — new orders stop here at once. No code. If you
+  also cancel or flatten there, don't wait for it." [Freeze sub_001…] (E39's rung-0 dialog,
+  consumed) · 2 "Delete key ...c3d4 in Bybit's dashboard now. Don't wait for step 3 or for a
+  flatten: this is the only step that stops the key, and CandleViewer can't do it or confirm it."
+  with the CMP-005 note "I deleted ...c3d4 in Bybit's dashboard — a note for you; it unlocks
+  nothing and records nothing" (BQ-15 item 6: stage 5's string, refined from `D02:654`) · 3
+  "Revoke it here — ends the key in CandleViewer." [Revoke here…] (§7's revoke dialog) and "If the
+  revoke is refused, step 2 is still the one that counts." · 4 "Rotate the credential key (KEK),
+  sign every session out and audit every order in the exposure window. The compromise runbook does
+  these; there is no control here." · 5 "Replace the key — only after step 4." [Add a new key…]
+  (SCR-126's key step); then "Then release the freeze and re-arm the rules by hand." and the
+  marker "Recorded: the freeze, the revoke and the new key each in the audit log. Marking a
+  compromise has no record of its own yet." (`D02:647-662`). No Rotate anywhere on the card, no
+  flatten-first before the Bybit delete (OQ-16, `D02:671-675`), and no step is a wait or times
+  out. Focus: the `h2`; Tab per the keyboard paragraph.
+@ row 47 ‖ Hi-fi (dark; light by to
+  The card after "Revoke here…" was refused: step 3's line becomes the CMP-027 inline error
+  (`role="alert"`, assertive once) "Not revoked: BTCUSDT long 0.250 has no stop-loss, so leaving
+  positions is refused." — or "Not revoked: the account is not flat.", or frame 56's fixable
+  remedy for sub_001 (`D02:679-680`) — followed at once by "Delete the key at Bybit now (step 2) —
+  that stops it."; no other next step is offered first (AD-7, `MEMO:403`). Step 2 keeps its note;
+  "Revoke here…" stays enabled for a retry, and focus returns to it when the revoke dialog closes.
+@ row 48 ‖ Hi-fi (dark; light by to
+  After the owner deleted ...c3d4 at Bybit, step 3 reads "Bybit no longer accepts key ...c3d4, so
+  sub_001 can't be read or flattened here. Revoking leaves its 2 positions at Bybit, each with
+  whatever stop-loss it carries — check each in Bybit's dashboard." and "Trading is read-only for
+  every account until the key is revoked here and a restart passes the check — that is the
+  containment C-12.12 asks for." (`D02:682-685`; `22:14531-14544`; `RB:30-31`): the read-only
+  state is stated as containment, never as a cost. "Revoke here…" opens §7's revoke dialog with
+  leaving the positions as its only choice — the dead remedy (`22:14531-14544`) — and the confirm
+  "Revoke here and leave positions open". The note stays as the owner left it: it gates nothing.
+  Event, once revoked: `api_key.revoke` carrying `exposure_unknown` (`22:14539-14544`).
+§ spec ‖ 7. SCR-129 — Disable, delete and the revoke dial
+@ row Title ‖ Content and copy
+  "Revoke key ...e5f6 on sub_002 · LIVE" · "Disable sub_002 · LIVE" · "Delete sub_002 (keeps
+  history) · LIVE", the environment as CMP-075's badge
+@ row Ask line ‖ Content and copy
+  revoke: "You'll confirm with your password and a code." (the `keys` class, served), or inside
+  the grace "Still trusted for key changes · {mm:ss}"; disable and delete: the same sentence as a
+  target state stamped "not yet served — G-8, #895 / #898" (no class serves them yet)
+@ row Marker ‖ Content and copy
+  revoke: "Recorded in the audit log · API key revoked (api_key.revoke)"; disable and delete:
+  "Recorded in the audit log", with no code (none registered)
+@ row Revoke a key that is not the last (49) ‖ Action (frames)
+  Revoke a key that is not the last (49)
+@ row Revoke a key that is not the last (49) ‖ Step-up
+  `keys`, served (`SU:523`)
+@ row Revoke a key that is not the last (49) ‖ Confirm label
+  "Revoke key ...e5f6 here" (new)
+@ row Revoke the last active key, with exposur ‖ Action (frames)
+  Revoke the last active key, with exposure (50, 51)
+@ row Revoke the last active key, with exposur ‖ Consequence stated befor
+  "sub_002 has no other active key: it stops trading here.", the counts with each position's
+  stop-loss state, CP-4's Bybit clause, CD-6's two choices
+@ row Revoke the last active key, with exposur ‖ Step-up
+  `keys`, served
+@ row Revoke the last key of a dead account (4 ‖ Action (frames)
+  Revoke the last key of a dead account (48's card, 56's remedy)
+@ row Revoke the last key of a dead account (4 ‖ Step-up
+  `keys`, served
+@ prose
+  **Data and producers.** Disable is `updateExchangeAccount` with `enabled: false`
+  (`accounts:write`; `22:2592-2631`, the disable rule at `22:2601-2606`); delete is
+  `deleteExchangeAccount`, `flatten_first` its only choice (`22:2632-2669`); revoke is
+  `revokeApiKey` (`keys:manage`; `22:2838-2875`; not mounted, `MX:589-595`), local only — the key
+  stays valid at Bybit until the Owner deletes it there (`22:2847-2852`).
+@ head 6
+  Copy keys
+@ row 49 ‖ Frame (E27-D02 §7)
+  `SCR-129 / revoke a key that is not the last: rung 1`
+@ row 49 ‖ Hi-fi (dark; light by to
+  Opened from "Revoke key…" on sub_002's row while ...d9e0 is also active: title "Revoke key
+  ...e5f6 on sub_002 · LIVE"; the consequence, "It stops working here at once; sub_002 keeps
+  trading on ...d9e0. It still works at Bybit until you delete it in Bybit's dashboard." — CP-4's
+  two clauses together, as H6 asks (`MEMO:194`); no choices, because another active key remains
+  and the account keeps trading (`22:2854-2860`); no typed label (rung 1); the ask line (served)
+  and the marker; [Cancel] [Revoke key ...e5f6 here], the confirm rendered and enabled at once.
+  Without a live grace the press opens SCR-006 (T1), the request held and re-sent once
+  (`22:11851-11863`); a re-send that gets no answer may have revoked the key, so the dialog never
+  says it was not sent and never sends again: it shows `e27.shared.resend_unconfirmed`, reads the
+  key list back (`listApiKeys`) and shows frame 52's outcome on a `revoked` key, or the key still
+  active (`22:11915-11919`). Focus: Cancel; `Esc` cancels; focus returns to "Actions for sub_002 ·
+  LIVE".
+@ row 50 ‖ Frame (E27-D02 §7)
+  `SCR-129 / revoke the last key with exposure: two choices, none selected`
+@ row 50 ‖ Hi-fi (dark; light by to
+  ...e5f6 is sub_002's only active key and the account holds exposure: title as frame 49; the
+  list: "sub_002 has no other active key: it stops trading here." · "sub_002 holds 2 positions, 3
+  working orders and 1 running algo." · "BTCUSDT long 0.250 — has its stop-loss" · "ETHUSDT short
+  1.20 — has its stop-loss" · "The key still works at Bybit until you delete it in Bybit's
+  dashboard." (CP-4's second clause); CD-6's two radios, none checked: ( ) "Leave positions and
+  orders open — they stay at Bybit, each position with its stop-loss; this account's algos stop
+  and its rules are disarmed." ( ) "Flatten first — cancel 3 orders, stop 1 algo and close 2
+  positions, then revoke." (`D02:756-757`; `MEMO:381`); "Type sub_002 to confirm:"; the ask line
+  (served); the marker; [Cancel] [Choose what happens to the open positions] in the validity look
+  with the hint "Choose an option first." — after a choice its label becomes "Revoke here and
+  leave positions open" or "Flatten first, then revoke here", with the hint "Type sub_002 to
+  confirm." until the label matches. Focus: Cancel.
+@ row 51 ‖ Hi-fi (dark; light by to
+  As frame 50, but the summary shows BTCUSDT long 0.250 with `native_stop_present: false`: its
+  line leads with the octagon, "BTCUSDT long 0.250 — no stop-loss", and the list adds "BTCUSDT
+  long 0.250 has no stop-loss; once the key is gone nothing could add one. Add its stop first, or
+  choose Flatten first." "Leave positions and orders open" keeps its place, its role and its full
+  label, T2 per §10.1: the `lock` leads it, `aria-disabled="true"`, its second line "Refused while
+  a position has no stop-loss." (`accounts.stop_missing`, 2a; carried by CMP-044's
+  `choices[].disabledReason`, CMP-079 once the key is registered, E42-D03:903); an arrow onto it
+  focuses it without checking it, `Space` re-shows the reason with one polite announcement, and it
+  emits nothing; "Flatten first — …" stays available, and the T2 choice can never enable the
+  confirm. A `409 open_exposure` after a stale read shows the same refusal at the point of action
+  (T4; `22:14505-14509`; #2903). The disable dialog's choice takes the same T2 (`D02:761-762`).
+@ row 52 ‖ Hi-fi (dark; light by to
+  The dialog closes and focus returns to "Actions for sub_002 · LIVE". In sub_002's row details
+  (§3) the revoked key's line reads "Revoked at 14:12 UTC — delete it at Bybit" (an outcome, never
+  T2; `D02:1030`), with CP-4 and CD-8 beside it, "Revoked in CandleViewer. The key still works at
+  Bybit until you delete it in Bybit's dashboard." — the two clauses always together, H6's
+  predicted misread placed at the action (`MEMO:194`); the shell announcer reads the outcome
+  politely once. Subscribers of sub_002 read the server's "The account's API key was revoked."
+  (`REV:108`).
+@ row 54 ‖ Hi-fi (dark; light by to
+  sub_002 holds no exposure: title "Disable sub_002 · LIVE"; the list: "sub_002 stops trading
+  here; new orders on it are refused." · "Assigned users: alex (trade), bea (read) — they can no
+  longer trade or open sub_002 here." · "Rules disarmed: "BTC breakout", "ETH fade"." · "History
+  stays." · "You can enable it again." · "Its keys still work at Bybit." (`D02:730-732`; what else
+  grant holders keep is O-F, `D02:1216`); "Type sub_002 to confirm:"; the ask line as a target
+  state stamped "not yet served — G-8, #895 / #898"; "Recorded in the audit log"; [Cancel]
+  [Disable sub_002] in the validity look with "Type sub_002 to confirm." until the label matches.
+  No choice block: nothing is open. Focus: Cancel.
+@ row 56 ‖ Hi-fi (dark; light by to
+  Two forms after the press (`22:14517-14561`; `22:16839-16854`). **Dead** (`remedy:
+  leave_positions`): the CMP-027 summary (`role="alert"`, once) "sub_002's keys no longer work at
+  Bybit, so its positions and orders can't be read or flattened. It can be disabled, leaving them
+  at Bybit, each with whatever stop-loss it carries — check each in Bybit's dashboard. It can't be
+  deleted."; the dialog then offers only that resend, a new request the Owner presses — the client
+  never sends it on its own (`22:16843-16853`): from Disable and from Delete the typed label, the
+  stamped ask and [Cancel] [Disable and leave positions open] (a dead account is disabled, never
+  deleted); from the revoke dialog, "Revoke here and leave positions open" with its served ask.
+  **Fixable** (`remedy: fix_key`): "Bybit refuses sub_002's key from 203.0.113.10. Fix it in
+  Bybit's dashboard [Copy], then try again; until then nothing can be revoked, disabled or
+  deleted." — the address and its Copy a target state stamped "not yet served — D03-G1, #896" (the
+  `409` carries no address, `22:15180-15188`); [Close] only: the action is reopened, and its
+  summary read again, once the key is fixed. Focus moves to the summary (`tabindex="-1"`), since
+  the answer replaces the dialog's content.
+@ row 58 ‖ Hi-fi (dark; light by to
+  Title "Delete sub_002 (keeps history) · LIVE"; CD-5's five sentences in CD-5's order, split as
+  D02's frame splits them, the first without counts and its "Its" as "sub_002's" (`D02:744-746`):
+  "Delete sub_002 (keeps history): if it holds positions, orders or running algos, it is flattened
+  first — orders cancelled, algos stopped, positions closed — and deleted only once it is flat." ·
+  "sub_002's keys are revoked here and it stops trading." · "Assigned users: alex (trade), bea
+  (read) — they lose sub_002." · "Rules disarmed: "BTC breakout", "ETH fade"." · "Its order
+  history, fills and audit log stay. This can't be undone, though the same Bybit account can be
+  added again as a new one." · "Its keys still work at Bybit until you delete them there. Backups
+  hold them only encrypted; without the KEK you keep offline they sign nothing." (CP-2 at the
+  delete, H6's other predicted misread); "Type sub_002 to confirm:"; the stamped ask; "Recorded in
+  the audit log"; [Cancel] [Delete sub_002]. No "irreversible", "permanently" or "all data
+  deleted" (D11; AD-9). Focus: Cancel.
+@ row 58 ‖ Copy keys
+  `e27.scr129.delete.title` · `e27.scr129.delete.flat` · `e27.scr129.delete.keys` ·
+  `e27.scr129.delete.users` · `e27.scr129.disable.rules` · `e27.scr129.delete.history` ·
+  `e27.scr129.delete.bybit` · `e27.scr129.delete.confirm` · `e27.scr129.typed` · `e27.shared.ask`
+  · `e27.scr129.marker`
+@ row 60 ‖ Frame (E27-D02 §7)
+  `SCR-129 / delete on an account that never had a key: T2`
+@ row 60 ‖ Hi-fi (dark; light by to
+  sub_002 registered with an empty key list (frame 10's state): its row menu (CMP-041, "Actions
+  for sub_002 · LIVE") keeps "Delete (keeps history)…" in place, T2 per §10.1: the `lock` leading
+  its full label, `aria-disabled="true"`, its second line "An account that never had a key can
+  only be disabled." (`accounts.never_keyed`, 2a; CMP-079 as in frame 41) — nothing can show it
+  holds no exposure (`22:14522-14524`); "Disable…" stays enabled with its ask line. `Enter` or
+  `Space` on the T2 item changes nothing, opens no dialog, re-shows the reason with one polite
+  announcement and emits nothing.
+@ row 60 ‖ Copy keys
+  `accounts.never_keyed` · the menu's item keys (§3)
+@ row 61 ‖ Hi-fi (dark; light by to
+  Disabled: sub_002's SCR-125 row reads "Disabled at 14:12 UTC — doesn't trade here." with
+  [Enable…] in the place of "Disable…" (an outcome, never T2; #960 Q13; `D02:750-751`), at full
+  text contrast and never dimmed (BQ-7; C-10, `D02:1205`). [Enable…] opens a rung-1 CMP-044 dialog
+  that is not destructive: "Enable sub_002 · LIVE", its one consequence "Its rules stay disarmed
+  until you arm them by hand.", the ask line as a target state stamped "not yet served — G-8, #895
+  / #898", the marker "Recorded in the audit log" with no code (`24:4854` names `account.disabled`
+  and no enable), then [Cancel] [Enable sub_002], the confirm a CMP-001 primary; it sends
+  `updateExchangeAccount` with `enabled: true` (`accounts:write`; `22:2592-2631`), and whether
+  that write records `accounts.enable_trading` (`ACT:135`) is D03-Q4. Deleted: the row leaves the
+  list, and a notice under the `h1` reads "sub_002 · LIVE deleted — history kept. Its keys still
+  work at Bybit until you delete them there." (polite once; `D02:752-753`, `D02:270`). Focus after
+  a disable returns to the row's Actions button; after a delete, whose opener is gone, it moves to
+  the notice (`tabindex="-1"`; PROPOSED).
+§ spec ‖ 8. SCR-079 — Account detail drawer, and SCR-019'
+@ prose
+  What a role sees is what the server serves to it (D15, `D02:201`): the Owner gets the key facts;
+  a Manager and a Viewer get the key status and health in words, and nothing else of the key
+  (`24:4766`; `D02:806-814`).
+@ prose
+  Every write in the drawer is gated in the server's leg order, the view-as leg first (T2 per
+  §10.1; the gated set and who sees what are §10.2).
+@ prose
+  No secret is displayed, ever (`14:1753`; D13, `D02:199`): the one key value is CMP-034's
+  `...{last4}` (§2.3, BQ-8).
+@ row Key and health — the Owner ‖ Block
+  Key and health — the Owner
+@ row Key and health — the Owner ‖ Content and copy
+  `h3` "Key and health"; the key line, "API key {key_id_masked} · {status} · Rotation due {date}
+  UTC · Bybit expiry: none" (CMP-034, the served status, both clocks, D7; from `listApiKeys`,
+  `keys:read`); the permission summary as a `ul` of plain statements, CMP-175's `key` facets in
+  sentence form — "Trade: yes." "Withdrawal: off — verified 14:02 UTC." "IP allowlist: matches." —
+  where "off" appears only for a fresh pass and always with its time, the key's `last_verified_at`
+  (AD-3, `MEMO:399`; D03-C15), every other state takes its own statement
+  (`e27.scr079.key.statements.other`; `15:2046`; D4), and the critical state is never a statement:
+  its list item is the CMP-175 critical badge — the octagon, the bold "BLOCKED — fund right found"
+  and the 2 px `border.thick` `color.status.danger.strong` border (§2.1;
+  `e27.cmp175.withdrawal_detected`); CMP-178 inline, "Health: healthy · heartbeat 2 s"; "Rate
+  budget: 72 % free (deployment)"
+@ row Key and health — any other role ‖ Block
+  Key and health — any other role
+@ row Key and health — any other role ‖ Content and copy
+  "API key: {status}" and "Health: {state} · heartbeat {n} s", in words; no rights or allowlist
+  statement, no egress IP, no rate budget
+@ row The drawer's one notice ‖ Content and copy
+  when a state blocks every write — key rejected, disabled, no key, view-as — one CMP-028 notice
+  under the header in BQ-9's silent form (no live role of its own; a stable id); every gated
+  write's `aria-describedby` points at it (one notice, many pointers)
+@ row The drawer's one notice ‖ Size · tokens
+  key rejected: tone danger, `color.text.primary` on `color.status.danger.subtle` with the octagon
+  in `color.status.danger.strong` (§9 `c175-danger-word`, `c175-danger-glyph`); disabled, no key,
+  view-as: tone info, `color.status.info.subtle` with `color.status.info.strong` (§9
+  `c175-info-word`, `c175-info-glyph`)
+@ prose
+  The Owner's statements are plain text led by their class glyphs, so a fund right found drawn as
+  one more statement would read like "IP allowlist: no match.", a failed state; it is the CMP-175
+  critical badge instead, the list item itself, with its bold word and its 2 px border.
+@ prose
+  No E27-D02 frame draws a blocked key in the drawer; CMP-175's WithdrawalDetected story carries
+  the form (§13).
+@ prose
+  Two light readings need the shape: the octagon of a rejected key and the triangle of a rotation
+  due share one hue in light (DS-6; §9 `glyph-critical-warning` is 0.00 <!--
+  audit:cvd.glyph-critical-warning.light.normal=0.00 --> there), so the glyph shape and the words
+  carry them; and the stale chip's clock is 3.37 <!-- audit:pairs.stale-glyph.light=3.37 --> in
+  light (`stale-glyph`), over the 3.0 bar, with its words beside it.
+@ prose
+  The Owner adds `GET /exchange-accounts/{accountId}/keys`, `GET /admin/security/summary` for the
+  rights and allowlist words — `not_mounted` at the base (`MX:202-208`), so until it is mounted
+  those statements are the target state, stamped "not yet served — G-1, #895 / #896" on the board
+  annotation layer (D20, `D02:206`) — and `system` `exchange.rate_budget_free_pct`.
+@ head 6
+  Copy keys
+@ row 62 ‖ Copy keys
+  `e27.scr079.h2`, `e27.scr079.balances.*`, `e27.scr079.key.line`, `e27.scr079.key.statements`,
+  `e27.scr079.health`, `e27.scr079.rate_budget`, `e27.scr079.profile`, `e27.scr079.links`,
+  `accounts.mode_locked`
+@ row 63 ‖ Frame (E27-D02 §7)
+  `SCR-079 / key expiring soon`
+@ row 63 ‖ Hi-fi (dark; light by to
+  the Owner's drawer with the key line changed: "Rotation due in 12 d · 2026-11-04 UTC" or "Bybit
+  expiry in 9 d", each led by the triangle, never one chip mixing the two clocks (D7, AD-5); the
+  other roles see no expiring state, because `key_status` serves none; the mode controls stay T2
+  `accounts.mode_locked`, the CMP-019 `lock` (CMP-079 RbacGate) leading each segment
+@ row 64 ‖ Frame (E27-D02 §7)
+  `SCR-079 / key invalid`
+@ row 64 ‖ Hi-fi (dark; light by to
+  the drawer's one notice, tone danger with the octagon: "This account's API key was rejected —
+  trading is off."; Change leverage… and both mode controls are T2 `accounts.key_rejected`, each
+  led by the CMP-019 `lock` (CMP-079 RbacGate), and point at it; the Owner's drawer adds "Rotate
+  it or revoke it in Admin → Accounts." under it, in a node no control points at; the transition
+  is announced assertively once (D21; §11)
+@ row 65 ‖ Copy keys
+  `e27.scr079.key.statements.other`, `e27.scr079.ip_mismatch`, `e27.shared.copy`,
+  `accounts.mode_locked`
+@ row 67 ‖ Hi-fi (dark; light by to
+  a Manager with the trade grant: balances with their freshness, positions and Change leverage…
+  enabled, both mode controls T2 `rbac.owner_only`, each led by the CMP-019 `lock` (CMP-079
+  RbacGate) ("Only the owner can change account settings."); the key block reduced to "API key:
+  active" and "Health: healthy · heartbeat 2 s"; no profile links (T3)
+@ row 67 ‖ Copy keys
+  `e27.scr079.key.status`, `e27.scr079.health`, `rbac.owner_only` ({verb} "change account
+  settings")
+@ row 68 ‖ Hi-fi (dark; light by to
+  as the Manager, and Change leverage… T2 `rbac.permission`, led by the CMP-019 `lock` (CMP-079
+  RbacGate) ("Your role can't change positions."); the balance block is not drawn until `24`
+  defines masked balances (OQ-6), a "not yet served" strip on the board, never an invented masking
+@ row 69 ‖ Class
+  T2 per §10.1 (view-as leg first)
+@ row 69 ‖ Hi-fi (dark; light by to
+  the Owner viewing as alex sees alex's drawer: the one notice "Read-only while viewing as alex."
+  (tone info), and Change leverage… and both mode controls T2 `rbac.view_as`, each led by the
+  CMP-019 `lock` (CMP-079 RbacGate), the view-as leg checked before every other; a forced write is
+  refused `view_as_read_only` (T4) and recorded `admin.view_as_refused`
+@ row 71 ‖ Frame (E27-D02 §7)
+  `SCR-079 / no API key yet`
+@ row 71 ‖ Hi-fi (dark; light by to
+  the one notice "No API key yet — trading is off for this account." (tone info) and every write
+  T2 `accounts.no_key`, each led by the CMP-019 `lock` (CMP-079 RbacGate); the Owner's drawer adds
+  the untimed account-level 48 h line when the account never held a key (D16; C-9)
+@ prose
+  The card's two account tasks are steps of CMP-097's ordered list with read-only checkbox
+  semantics (`aria-checked` reflects completion), each a CMP-021 link to the screen that completes
+  it (`14:485`): "Register a Bybit account" to SCR-126's register step and "Add its API key" to
+  SCR-126's key step.
+@ prose
+  The Owner's done line names the key and its verified time, both read from `listApiKeys`
+  (`keys:read`) and never from the checklist: `OnboardingChecklist.items[]` carries only `key`,
+  `state`, `reason`, `unblock_at` and `action_route` (`22:21029-21047`) on a read with
+  `permissions: []`, and stays free of key facts, so any other role's done line names no key fact
+  (D15).
+@ head 5
+  Copy keys
+@ row 76 ‖ Copy keys
+  `e27.scr019.task.register`, `e27.scr019.task.key`, `e27.scr019.error`
+@ row 77 ‖ Content (strings in §12.
+  "Bybit account registered"; "API key added — key ...a7b8 verified 14:02 UTC" for the Owner, "API
+  key added" for any other role; `setup.task_completed` (analytics)
+@ row 77 ‖ Copy keys
+  `e27.scr019.done.register`, `e27.scr019.done.key`, `e27.scr019.done.key_other`
+@ row 78 ‖ Content (strings in §12.
+  a Manager's tasks stay listed, each led by the CMP-019 `lock` (CMP-079 RbacGate),
+  `aria-disabled`, the reason as the step's second line — `rbac.owner_only` with {verb} "change
+  account settings" on `sub_account` and "manage API keys" on `api_key` — and the admin link
+  dropped; the Owner's `blocked` item renders through a registered key: `keys.kek_unavailable`,
+  `pending_key.untimed`, or E30-D02's timed `pending_key` once `unblock_at` carries a recorded
+  time (O-C)
+@ row 78 ‖ Copy keys
+  `rbac.owner_only` ({verb} "change account settings" or "manage API keys"),
+  `pending_key.untimed`, `keys.kek_unavailable`
+§ spec ‖ 9. Contrast, greyscale and colour vision — the m
+@ row 1 ‖ Where
+  CMP-175 pass words (verified, trade-only) on their fill
+@ row 2 ‖ Where
+  CMP-175 check glyph on the pass fill
+@ row 3 ‖ Where
+  CMP-175 critical and failed words (withdrawal-detected, IP-missing, IP-mismatch, expired,
+  read-only on import); the blocked row's line 1; the KEK notice; the destructive confirm (E42-D02
+  D3) — reproduces BQ-6 to the hundredth ✓
+@ row 4 ‖ Where
+  CMP-175 octagon on the critical and failed fill; the destructive confirm's border
+@ row 6 ‖ Where
+  CMP-175 warning words (expiring, check overdue)
+@ row 7 ‖ Where
+  CMP-175 triangle and clock on the warning fill
+@ row 8 ‖ Where
+  CMP-175 "not checked" (dash) on the neutral fill
+@ row 9 ‖ Where
+  CMP-175 dash; CMP-011's neutral label (the OK chip)
+@ row 10 ‖ Where
+  CMP-175 stored read-only (BQ-5 rider)
+@ row 11 ‖ Where
+  CMP-175 info glyph on the info fill
+@ row 19 ‖ Where
+  CMP-176 line 1 (label, UID, environment word), CMP-034's `...{last4}`, a disabled row at full
+  contrast — reproduces E30-D01 §3 to the hundredth ✓
+@ row 20 ‖ Where
+  CMP-176 line 2 (allowlist, key age, rotation due); the T2 reason — reproduces E09-D09 §11 to the
+  hundredth ✓
+@ row 39 ‖ Where
+  dialog and drawer title and body; the masked id in a dialog; the absolute overlap time —
+  reproduces E42-D02 §11 to the hundredth ✓
+@ prose
+  **Colour vision (AC2) — reported, never gated.** Colour reinforces and never carries a CMP-175
+  state: the tool gates the carriers in §2.1 instead — a word of its own, the glyph of its
+  severity class, and the critical state's bold word and 2 px border (BQ-6) — and reports Delta
+  E76 (CIE76) under protanopia, deuteranopia and tritanopia against the 5.0 JND
+  (`cvd_simulate.py`).
+@ prose
+  The subtle fills are never the carrier: "BLOCKED — fund right found", the octagon, the bold and
+  the border are.
+@ prose
+  - **The not-checked fill in light:** against the pass fill under tritanopia 4.81 <!--
+  audit:cvd.fill-unknown-pass.light.tritanopia=4.81 -->, against the critical fill under
+  protanopia 3.15 <!-- audit:cvd.fill-unknown-critical.light.protanopia=3.15 -->; the dash and
+  "Withdrawal: not checked" carry it, and it never reads as a pass (AD-2).
+@ row CMP-175 and CMP-011 fills ‖ Carrier
+  CMP-175 and CMP-011 fills
+@ row CMP-175 pass (verified, trade-only) ‖ Element
+  CMP-175 pass (verified, trade-only)
+@ row CMP-175 critical (withdrawal-detected) ‖ Element
+  CMP-175 critical (withdrawal-detected)
+@ row CMP-175 failed (IP-missing, IP-mismatch, ‖ Element
+  CMP-175 failed (IP-missing, IP-mismatch, expired, read-only at import)
+@ row CMP-175 warning and time warning (expiri ‖ Element
+  CMP-175 warning and time warning (expiring; check overdue)
+@ row CMP-175 unknown (not checked) ‖ Element
+  CMP-175 unknown (not checked)
+@ row CMP-175 info (a stored read-only key, co ‖ Element
+  CMP-175 info (a stored read-only key, component level only)
+@ row Fields (CMP-201 write-only; the typed la ‖ Element
+  Fields (CMP-201 write-only; the typed label)
+@ prose
+  The frames bind `color.text.tertiary` directly until the alias merges, so AC5 rests on no
+  unmerged token: SCR-126's key and secret fields, SCR-127 stage 2, SCR-016 step 3 and SCR-129's
+  typed field.
+§ spec ‖ 10.1 The T2 rule (stated once)
+@ prose
+  **Legs, in the server's order** (E09-D09 §2.1; `22:281-290`): the view-as leg first on every
+  write — `rbac.view_as`, "Read-only while viewing as {user}." — because the server refuses
+  `view_as_read_only` before it authorises; then the permission or owner-only leg
+  (`rbac.permission`, `rbac.owner_only`, each with its {verb} from E09-D09 §3.2), then the grant
+  (`rbac.account_read_only`), then the environment (`rbac.env`), and last a registered state — the
+  ten PROPOSED E27 keys of §12.2 (vocabulary owner E27, registration routed by C-9, `D02:1204`)
+  and E30-D02 §14's `frozen`, `lockout` and `arm.locked`, consumed; the first leg that holds gives
+  the reason.
+@ prose
+  **Semantics:** the control keeps its native role and its full label; `aria-disabled="true"`,
+  never the `disabled` attribute, so it stays in the Tab order and a menu item stays
+  arrow-reachable; the reason node is in the DOM at mount and linked by `aria-describedby`; where
+  one state blocks a whole panel or drawer, one notice carries the reason and every gated control
+  points at it — one notice, many pointers (the KEK notice of BQ-9, SCR-079's key-rejected,
+  disabled, no-key and view-as notices).
+@ prose
+  **Keys:** `Enter`, `Space`, a bound hotkey or an arrow onto a T2 radio changes nothing and
+  re-shows the reason inline with one polite announcement; `↑` and `↓` land on a T2 menu item
+  without activating it (E09-D09 §9.3).
+§ spec ‖ 10.2 The gated set
+@ prose
+  E27-D02's eight rows (`D02:1016-1025`) carried into hi-fi; the legs in the server's order, any
+  view-as leg first, each with its reason key (§12.2).
+@ head 3
+  Legs in order → reason key
+@ row Verify and save; Add a key… (`createApiK ‖ Control (operation)
+  Verify and save; Add a key… (`createApiKey`)
+@ row Verify and save; Add a key… (`createApiK ‖ Legs in order → reason k
+  KEK unavailable → `keys.kek_unavailable` (one notice, many pointers: the CMP-028 KEK notice)
+@ row Rotate key… (`rotateApiKey`) ‖ Control (operation)
+  Rotate key… (`rotateApiKey`)
+@ row Rotate key… (`rotateApiKey`) ‖ Legs in order → reason k
+  KEK unavailable → `keys.kek_unavailable`; a fund right found on the key, once G-1 attributes it
+  → `keys.compromise_path`
+@ row Test key… (`testApiKey`) ‖ Control (operation)
+  Test key… (`testApiKey`)
+@ row Test key… (`testApiKey`) ‖ Legs in order → reason k
+  KEK unavailable → `keys.kek_unavailable`; `pending`, `invalid` or `expired` →
+  `keys.not_signable`; this client's own test under a minute ago → `keys.test_throttled`, its time
+  from the server's `checked_at`, never the client clock
+@ row Delete (keeps history)… (`deleteExchange ‖ Legs in order → reason k
+  the account never had a key → `accounts.never_keyed`; Disable… stays enabled
+@ row Change leverage… (`setPositionLeverage`) ‖ Legs in order → reason k
+  view-as → `rbac.view_as`; Viewer → `rbac.permission` ({verb} "change positions"); a `read` grant
+  → `rbac.account_read_only`; LIVE without `live` → `rbac.env`; disabled → `accounts.disabled`;
+  key rejected → `accounts.key_rejected`; no key → `accounts.no_key`; then E30-D02's `frozen`,
+  `lockout`, `arm.locked` (consumed)
+@ row Position mode, margin mode (`updateExcha ‖ Legs in order → reason k
+  view-as → `rbac.view_as`; Manager, Viewer → `rbac.owner_only` ({verb} "change account
+  settings"); disabled → `accounts.disabled`; key rejected → `accounts.key_rejected`; no key →
+  `accounts.no_key`; open positions or orders → `accounts.mode_locked`
+@ row Tasks `sub_account`, `api_key` (CMP-097 ‖ Legs in order → reason k
+  a Manager or a Viewer — or the Owner viewing as one, whose self-scoped read answers as the
+  target (`D09:95`) — → `rbac.owner_only` ({verb} "change account settings" on `sub_account`,
+  "manage API keys" on `api_key`), the admin link dropped; the Owner's `blocked` →
+  `keys.kek_unavailable`, `pending_key.untimed` or E30-D02's `pending_key`
+@ head 3
+  SCR-079 key facts (rights, allowlist, egress IP, rate budget)
+@ head 4
+  SCR-079 key status and health
+@ row Manager, trade grant ‖ SCR-079 key status and h
+  "API key: {status}"; health in words
+@ row Viewer ‖ SCR-079 balances
+  not drawn until `24` defines masked balances (OQ-6)
+§ spec ‖ 10.3 What is NOT T2
+@ prose
+  None of these draws a lock, takes CMP-079 or names a reason key:
+@ prose
+  - **Busy** — Verify and save, Run test and Verify and switch while their own request runs:
+  CMP-001's `loading` with `aria-busy="true"`, focusable, the validating copy beside it (D18); a
+  key in its overlap, "Rotation in progress · old key usable until {hh:mm:ss} UTC"
+  (`e27.scr125.busy.overlap`).
+@ prose
+  - **Outcome** — an action done or no longer applicable shows its outcome line instead (#960
+  Q13): an import on an account with an active key is the key row with Rotate (AD-1); "Revoked at
+  {hh:mm} UTC — delete it at Bybit"; "Disabled at {hh:mm} UTC — doesn't trade here." with Enable…;
+  a passed Test's result line; stage 5's done line.
+@ prose
+  - **The validity look** — form validity, E42-D03's form for a rung confirm (`E42-D03:542`,
+  `E42-D03:566-567`), adopted for CMP-044 by BQ-11 in place of E30-D02's dimmed look
+  (`E30-D02:128`): a rung-3 confirm before the summary has loaded is not rendered at all (Cancel
+  only); after it, until the typed label matches and, where there are two, a radio is chosen, the
+  confirm stays focusable with `aria-disabled`, its danger fill dropped to `color.surface.raised`
+  with a `color.border.default` hairline, its label `color.text.tertiary` and its hint in
+  full-opacity `color.text.secondary` under it — no lock, no CMP-079, no key (layer
+  `validity-reason`); empty key fields show an inline error on press (CMP-040).
+§ spec ‖ 11. Keyboard, focus and live regions (board 10)
+@ row SCR-125 (`/admin/accounts`) ‖ Role · initial focus
+  landmarks: the band (`role="region"` "Admin area"), the strip, the `h1`, the regions "Suspected
+  compromise" (only while a response is open), "Accounts" and "Key health and secrets policy"; the
+  skip link lands on the `h1`
+@ row SCR-125 (`/admin/accounts`) ‖ Tab order
+  skip link → strip items → + Add account → per row in order: [Start the compromise response] (a
+  blocked row only, first), Actions for {label} · {ENV}, Details for {label} · {ENV} → the SCR-128
+  disclosure → SCR-128's per-key Actions → the footer; a plain `<table>` with a caption, two
+  header rows and `th scope="row"` on the label: no grid and no roving tabindex (D22)
+@ row SCR-126 add ‖ Tab order
+  register: Label → Bybit UID → Kind → Parent (a sub only) → Cancel → Register account; key step:
+  Copy (drawn as the target state until the egress-IP read is served, BQ-15 item 7; D03-G1) → API
+  key → API secret → Cancel → Verify and save
+@ row SCR-126 add ‖ `Esc` · focus return
+  after an answer focus moves to the result heading (the user's press moved it); leaving the page
+  clears both secret fields
+@ row SCR-126 edit ‖ Tab order
+  Label → Rotate key… (Add a key… when keyless) → Disable… → Delete (keeps history)… → Cancel →
+  Save (PROPOSED: E27-D02 names no order)
+@ row SCR-016 step 3 ‖ Tab order
+  Label → Bybit UID → API key → API secret → Copy (the target state before any check, BQ-15 item
+  7) → Verify and save → Back → Skip for now → Continue, the step's own order (`D02:850-860`)
+@ row SCR-127 wizard ‖ `Esc` · focus return
+  `Esc` = Cancel at stages 1, 2 and 5; at stages 3 and 4 it closes the view only, the server's
+  rotation continues and the row's busy line shows it; focus returns to the opener (the row's
+  Actions button, or SCR-126's Rotate key…)
+@ row Compromise card (a region of SCR-128) ‖ Tab order
+  Freeze {label}… → the Bybit note checkbox → Revoke here… → Add a new key… → Close card
+@ row SCR-128 key table ‖ Surface
+  SCR-128 key table
+@ row SCR-128 key table ‖ 200 % zoom (640 × 400 CS
+  one card per key under its LIVE or DEMO heading
+@ row a row chip turns BLOCKED, Key refused, I ‖ Event
+  a row chip turns BLOCKED, Key refused, IP allowlist: no match or Down
+@ row SCR-079's key is rejected while the draw ‖ Event
+  SCR-079's key is rejected while the drawer is open
+§ spec ‖ 12.1 The deck
+@ prose
+  Every product string the eight screens, the cross-screen patterns and the contributed components
+  show, keyed so that a screen cites a key and never writes its own string (the ticket's Technical
+  notes; BQ-15).
+@ prose
+  `{…}` are fills; every time reads UTC (`D02:178`); a key id is `...` plus 4 (D13).
+@ prose
+  The tool's copy gate holds every string here: no "reveal", "irreversible", "permanently",
+  "step-up", "re-authentication", "Bybit says" or "n/a"; "expiry" only with Bybit's name (AD-5);
+  every clock time followed by UTC, or "left" for a duration; a withdrawal "OFF" or "off" only
+  beside its verified time (AD-3); no withdrawal or transfer right drawn as allowed.
+@ prose
+  The ticket's six required items are marked **required** in Where: the withdrawal verdict
+  (`e27.scr125.verdict.*`, `e27.cmp175.withdrawal_detected`, `e27.scr125.blocked.line2`, the
+  import refusal `e27.scr126.refused.withdrawal`, the onboarding result row `e27.scr016.result`,
+  the drawer's statements); the IP-mismatch remediation with the allowlist set in Bybit's
+  dashboard (CD-3's two forms, CP-3 at the allowlist row and stage 1, `e27.scr079.ip_mismatch`,
+  `e27.scr129.unknown.fixable`, policy 4); the stale-balance badge (`e27.scr079.stale` and its
+  CD-4 suffix); the irreversible-delete warning, met without that word
+  (`e27.scr129.delete.history`, BQ-15 item 8); revoke and leave positions versus flatten first
+  (`e27.scr129.choice.*` and the confirm labels); and the write-only secret explanation (CP-1 on
+  every secret field, `e27.scr126.edit.write_only`, `e27.scr128.policy.write_only`,
+  `e27.cmp034.description`).
+@ row `e27.shell.strip.withdrawal` ‖ Id
+  `e27.shell.strip.withdrawal`
+@ row `e27.shell.strip.withdrawal` ‖ Where
+  SCR-125 strip item, first while a fund right is found · frame 13
+@ row `e27.shell.strip.withdrawal` ‖ String
+  "Attention: {ENV} — a key on {label} can move funds → Start the compromise response"
+@ row `e27.shell.h1` ‖ String
+  "Bybit accounts and keys"
+@ row `e27.shell.region.health` ‖ String
+  "Key health and secrets policy"
+@ row `e27.shell.grace.keys` ‖ Id
+  `e27.shell.grace.keys`
+@ row `e27.shell.grace.keys` ‖ Where
+  the band's grace line and every `keys` ask line inside the window
+@ row `e27.shell.grace.keys` ‖ String
+  "Still trusted for key changes · {m:ss}"
+@ row `e27.shell.grace.keys` ‖ Status · source
+  refined · E42-D03:608 `grace` with {class} = key changes (D02:173-174; the time from
+  `step_up_expires_at`, never a client clock)
+@ row `e27.shell.banner.kek` ‖ String
+  "Trading disabled: the credential key is unavailable."
+@ row `e27.shell.banner.key_failed` ‖ String
+  "Trading disabled: a stored API key failed its check."
+@ row `e27.shell.banner.key_stale` ‖ String
+  "Trading disabled: a stored API key has no recent passing check."
+@ row `e27.shell.banner.key_unchecked` ‖ String
+  "Trading disabled: the stored API keys could not be checked."
+@ row `e27.shell.notice.deleted` ‖ String
+  "{label} · {ENV} deleted — history kept. Its keys still work at Bybit until you delete them
+  there."
+@ prose
+  **The withdrawal verdict line** (frame 2; CMP-175 `aggregate`, BQ-5; D3, `D02:189`).
+@ row `e27.scr125.verdict.dated` ‖ Where
+  CMP-175 `aggregate`, under the `h1` · frames 2, 6 (**required: the withdrawal verdict**)
+@ row `e27.scr125.verdict.dated` ‖ String
+  "Withdrawal: OFF on all {n} accounts with a key ✓ · verified {hh:mm} UTC"
+@ row `e27.scr125.verdict.dated` ‖ Status · source
+  refined · CD-1 (+ “with a key”, D02:222; fills)
+@ row `e27.scr125.verdict.overdue` ‖ Where
+  CMP-175 `aggregate` · frame 2 (**required: the withdrawal verdict**)
+@ row `e27.scr125.verdict.overdue` ‖ String
+  "Withdrawal check overdue — last passed {hh:mm} UTC. Trading is read-only until a restart passes
+  the check."
+@ row `e27.scr125.verdict.failed` ‖ Where
+  CMP-175 `aggregate` · frames 2, 13, 14 (**required: the withdrawal verdict**)
+@ row `e27.scr125.verdict.failed` ‖ String
+  "A stored key failed its check — trading is read-only for everyone until the key is fixed or
+  revoked here and a restart passes the check, and order entry on that key's account stays
+  disabled by policy until it is turned back on."
+@ row `e27.scr125.verdict.failed` ‖ Status · source
+  refined · CD-2, the failed form: its account clause takes E30-D02:437's words (BQ-15 item 4);
+  “that key's account”, not {account}, because the notice names no key and no account
+  (23:4270-4271)
+@ row `e27.scr125.verdict.unavailable` ‖ Where
+  CMP-175 `aggregate` · frame 2
+@ row `e27.scr125.verdict.unavailable` ‖ String
+  "Withdrawal check could not run — trading is read-only until a restart passes the check."
+@ row `e27.scr125.verdict.read_failed` ‖ Where
+  CMP-175 `aggregate` · frame 8
+@ row `e27.scr125.verdict.read_failed` ‖ String
+  "Withdrawal verdict unavailable — the accounts could not be read."
+@ row `e27.scr125.verdict.no_keys` ‖ Where
+  CMP-175 `aggregate` · frames 2, 7
+@ row `e27.scr125.verdict.no_keys` ‖ String
+  "No stored keys yet — nothing to check."
+@ row `e27.scr125.verdict.loading` ‖ Where
+  CMP-175 `aggregate`, never OFF · frame 8
+@ row `e27.scr125.verdict.loading` ‖ String
+  "Withdrawal verdict loading…"
+@ row `e27.scr125.verdict.audit_hint` ‖ String
+  "Find the key in the audit log: action account.tested."
+@ row `e27.checks.names` ‖ String
+  "Environment" · "Withdrawal and transfer" · "Other rights" · "Trade access" · "Unified account"
+  · "UID" · "IP allowlist" · "Bybit expiry" · "Signed probe and clock"
+@ row `e27.checks.env.passed` ‖ String
+  "passed — this key belongs to {ENV}"
+@ row `e27.checks.env.failed` ‖ String
+  "This key doesn't belong to {ENV}."
+@ row `e27.checks.withdrawal.passed` ‖ Id
+  `e27.checks.withdrawal.passed`
+@ row `e27.checks.withdrawal.passed` ‖ Where
+  Withdrawal and transfer row, a fresh pass only (`15:2046`; D4, AD-2), dated (D03-C15) · frames
+  3, 21, 36
+@ row `e27.checks.trade.passed` ‖ String
+  "passed — a trade key"
+@ row `e27.checks.trade.failed` ‖ Where
+  Trade access row, and CMP-175's read-only word at import (§2.1) · frame 26
+@ row `e27.checks.uid.failed` ‖ String
+  "This key belongs to another Bybit UID."
+@ row `e27.checks.expiry.failed` ‖ String
+  "This key has expired at Bybit."
+@ row `e27.scr125.table.caption` ‖ String
+  "Bybit accounts and their keys, grouped LIVE then DEMO"
+@ row `e27.scr125.table.headers` ‖ String
+  "label · UID · env" · "state" · "key · rights" · "actions" · "IP allowlist" · "key age ·
+  rotation due" · "health"
+@ row `e27.scr125.row.key` ‖ Id
+  `e27.scr125.row.key`
+@ row `e27.scr125.row.key` ‖ Where
+  CMP-176 line 1, CMP-034 + CMP-175 `key` facets · frames 6–17
+@ row `e27.scr125.row.key` ‖ String
+  "{key_id_masked} · Trade · Withdrawal OFF ✓ · verified {hh:mm} UTC"
+@ row `e27.scr125.row.allowlist` ‖ Where
+  CMP-176 line 2, CMP-175's allowlist facet in its header form: `e27.cmp175.allowlist_matches`
+  without its "IP allowlist: " lead, which the column header gives (§2.1) · frames 6–17
+@ prose
+  **SCR-125 — the row's state** (CMP-176's state slot, one badge, the worst that applies, in
+  §2.2's precedence: a CMP-011 chip below, or CMP-175's own word for a key-verification state —
+  BLOCKED, Expired at Bybit, the two allowlist states, Check overdue, Withdrawal: not checked and
+  Bybit expiry — keyed once under `e27.cmp175.*`; HD3).
+@ row `e27.scr125.chip.key_refused` ‖ String
+  "Key refused by Bybit"
+@ row `e27.scr125.chip.no_key` ‖ String
+  "No key — inactive"
+@ row `e27.scr125.menu.items` ‖ String
+  "Edit…" · "Add a key…" · "Rotate key…" · "Test key…" · "Revoke key…" · "Suspected compromise…" ·
+  "Disable…" · "Delete (keeps history)…"
+@ row `e27.scr125.menu.ask.keys` ‖ Id
+  `e27.scr125.menu.ask.keys`
+@ row `e27.scr125.menu.ask.keys` ‖ Where
+  second line of Add a key…, Rotate key…, Revoke key… · frame 11
+@ row `e27.scr125.menu.ask.label` ‖ Where
+  second line of Disable…, Delete…, and Revoke key… on the last key; the ask stamped “not yet
+  served — G-8, #895 / #898” · frame 11
+@ row `e27.scr125.busy.overlap` ‖ String
+  "Rotation in progress · old key usable until {hh:mm:ss} UTC"
+@ row `e27.scr125.details.bybit_expiry` ‖ String
+  "The key stops working at Bybit on {date} UTC — rotate before then."
+@ row `e27.scr125.details.key_refused` ‖ String
+  "Bybit no longer accepts key {key_id_masked} — it signs nothing. Rotate it, or revoke it here if
+  you deleted it at Bybit."
+@ row `e27.scr125.details.allowlist` ‖ String
+  "CandleViewer accepts this key only if its IP allowlist holds exactly {egress_ip}. Set it in
+  Bybit's dashboard [Copy], then test it again. It can't be set from here."
+@ row `e27.scr125.blocked.line2` ‖ Where
+  CMP-176 blocked row, line 2 · frame 13 (**required: the withdrawal verdict**)
+@ row `e27.scr125.blocked.line2` ‖ String
+  "This key can now withdraw or transfer — it was changed at Bybit. Trading is read-only for every
+  account and off for {label}."
+@ row `e27.scr125.test.title` ‖ String
+  "Test {label}'s key {key_id_masked} · {ENV}"
+@ row `e27.scr125.test.before` ‖ String
+  "If this key fails its check, trading stops on every account until a restart passes the check,
+  and trading on this account stays off until you turn it back on."
+@ row `e27.scr125.test.passed_read_only` ‖ Where
+  Test result line while a stored-key latch holds · frame 44
+@ prose
+  **SCR-126 — register, paste and save** (frames 18–21; CMP-065, CMP-040, CMP-201 write-only,
+  CMP-036, CMP-033).
+@ row `e27.scr126.stepper` ‖ String
+  "Register the account" · "Add its API key"
+@ row `e27.scr126.key.h2` ‖ Id
+  `e27.scr126.key.h2`
+@ row `e27.scr126.key.h2` ‖ Where
+  key step `h2` · frames 19–29
+@ row `e27.scr126.key.h2` ‖ String
+  "API key for {label} · UID {uid} · {ENV} (this deployment)"
+@ row `e27.scr126.key.instructions` ‖ Id
+  `e27.scr126.key.instructions`
+@ row `e27.scr126.key.instructions` ‖ Where
+  key step, a static list (never boxes to tick, F-19) · frame 19
+@ row `e27.scr126.key.instructions` ‖ String
+  "Create the key in Bybit's dashboard with only:" · "Contract trade — Order and Position
+  (Derivatives — DerivativesTrade is allowed too)" · "no withdrawal or transfer right" · "the IP
+  allowlist below"
+@ row `e27.scr126.allowlist.help` ‖ String
+  "Set this key's IP allowlist in Bybit's dashboard to exactly {egress_ip} [Copy]. It can't be set
+  here; CandleViewer only checks it."
+@ row `e27.scr126.key.label` ‖ Id
+  `e27.scr126.key.label`
+@ row `e27.scr126.key.label` ‖ Where
+  CMP-201 write-only field label and its first description · frames 19–29
+@ row `e27.scr126.key.label` ‖ String
+  "API key" · "value is write-only"
+@ row `e27.scr126.secret.label` ‖ Id
+  `e27.scr126.secret.label`
+@ row `e27.scr126.secret.label` ‖ Where
+  CMP-201 write-only field label · frames 19–29
+@ row `e27.scr126.secret.label` ‖ String
+  "API secret"
+@ row `e27.scr126.secret.help` ‖ Id
+  `e27.scr126.secret.help`
+@ row `e27.scr126.secret.help` ‖ Where
+  CMP-201 description, in the DOM at mount (`aria-describedby`) · frames 19–29, 72–75 (**required:
+  the write-only secret explanation**)
+@ row `e27.scr126.secret.help` ‖ String
+  "Write-only: CandleViewer uses this secret to sign orders, and no one can see it again — not
+  you, not an admin. If it is lost, create a new key at Bybit."
+@ row `e27.scr126.marker` ‖ String
+  "Recorded in the audit log · API key imported (api_key.import)"
+@ row `e27.scr126.buttons` ‖ Where
+  the key step's action, after `e27.shared.cancel` · frames 19–29
+@ row `e27.scr126.validating` ‖ String
+  "Checking the key with Bybit — environment, rights, withdrawal, IP allowlist, UID and clock…"
+@ row `e27.scr126.saved` ‖ String
+  "Saved. Key {key_id_masked} is active on {label}. Its secret can't be shown again."
+@ row `e27.scr126.saved.live` ‖ String
+  "Storing this key doesn't turn live trading on — that has its own gate."
+@ row `e27.scr126.result.h3` ‖ String
+  "Key check result"
+@ row `e27.scr126.invalid.key_format` ‖ String
+  "The API key is 8 to 128 characters."
+@ row `e27.scr126.invalid.secret_format` ‖ String
+  "The API secret is 8 to 256 characters."
+@ row `e27.scr126.invalid.key_empty` ‖ String
+  "Paste the API key."
+@ row `e27.scr126.invalid.key_empty` ‖ Status · source
+  new · D02:1037 (an empty key field shows an inline error on press)
+@ row `e27.scr126.invalid.secret_empty` ‖ String
+  "Paste the API secret."
+@ row `e27.scr126.refused.withdrawal` ‖ Id
+  `e27.scr126.refused.withdrawal`
+@ row `e27.scr126.refused.withdrawal` ‖ Where
+  the refusal; both fields cleared at once · frames 23, 74 (**required: the withdrawal verdict, at
+  import**)
+@ row `e27.scr126.refused.withdrawal` ‖ String
+  "Refused: this key can withdraw or transfer, and nothing was stored. It still works at Bybit:
+  delete it in Bybit's dashboard, then create a key with only the trading rights CandleViewer
+  allows."
+@ row `e27.scr126.refused.ip_bybit` ‖ String
+  "Bybit refused requests from {egress_ip}. In Bybit's dashboard, set this key's IP allowlist to
+  {egress_ip} [Copy] and nothing else, then verify again."
+@ row `e27.scr126.refused.ip_rule` ‖ String
+  "CandleViewer accepts this key only if its IP allowlist holds exactly {egress_ip}. Set it in
+  Bybit's dashboard [Copy], then verify again. It can't be set from here."
+@ row `e27.scr126.activation_failed` ‖ String
+  "The key passed its checks but could not be switched on. It is stored revoked here and still
+  works at Bybit — import it again, or delete it in Bybit's dashboard."
+@ row `e27.scr126.edit.key_row` ‖ Where
+  the key as an outcome row with [Rotate key…] · frame 31
+@ row `e27.scr126.edit.key_row` ‖ String
+  "API key {key_id_masked} · {status} · verified {hh:mm} UTC · Rotation due {date} UTC"
+@ row `e27.scr126.edit.write_only` ‖ Where
+  under the key row · frame 31 (**required: the write-only secret explanation**)
+@ row `e27.scr126.edit.write_only` ‖ String
+  "Write-only: the secret can't be shown or changed here; a new key goes through Rotate."
+@ row `e27.scr126.stepup.title` ‖ Where
+  SCR-006 (consumed, E09-D06) over the key step · frame 30
+@ prose
+  **SCR-016 step 3** (frames 72–75; the key fields are SCR-126's rows above).
+@ row `e27.scr016.result` ‖ Where
+  a result row the server fills, never a box (F-19) · frame 73 (**required: the withdrawal
+  verdict**)
+@ row `e27.scr016.result` ‖ String
+  "Withdrawal and transfer: OFF ✓ — verified {hh:mm} UTC"
+@ row `e27.scr016.continue_early` ‖ String
+  "Verify and save the key first, or skip this step."
+@ row `e27.scr016.skipped` ‖ String
+  "Skipped — the key you add later goes through the same check."
+@ prose
+  **SCR-127 — the rotation wizard** (frames 33–41; CMP-066 `list`, CMP-035, CMP-201).
+@ row `e27.scr127.title` ‖ String
+  "Rotate the key of {label} ({key_id_masked}) · {ENV}"
+@ row `e27.scr127.stage1.create` ‖ String
+  "In Bybit's dashboard, create a new key for UID {uid} with only Contract trade — Order and
+  Position, and no withdrawal or transfer right."
+@ row `e27.scr127.stage1.h2` ‖ String
+  "Create the new key at Bybit"
+@ row `e27.scr127.stage1.allowlist` ‖ String
+  "Set this key's IP allowlist in Bybit's dashboard to exactly {egress_ip} [Copy]. It can't be set
+  here; CandleViewer only checks it."
+@ row `e27.scr127.stage1.policy` ‖ Where
+  stage 1, the key-age policy restated (`14:2555`) · frame 33
+@ row `e27.scr127.stage1.policy` ‖ String
+  "Keys are due for rotation every {n} days; this one is {age} days old (due {date} UTC). Overdue
+  never stops trading."
+@ row `e27.scr127.stage1.no_wait` ‖ String
+  "Rotating doesn't start Bybit's 48 h wait: that applies to a new account's first key."
+@ row `e27.scr127.stage2.h2` ‖ String
+  "Paste the new key"
+@ row `e27.scr127.stage2.lead` ‖ String
+  "Open orders stay open. Both keys work for 15 minutes while requests drain."
+@ row `e27.scr127.stage2.no_undo` ‖ String
+  "Then the old key {old} is revoked here. There is no undo: to go back, rotate again."
+@ row `e27.scr127.stage2.fields` ‖ Where
+  CMP-201 write-only labels · frame 34
+@ row `e27.scr127.stage2.fields` ‖ String
+  "New API key" · "New API secret"
+@ row `e27.scr127.secret.help` ‖ Id
+  `e27.scr127.secret.help`
+@ row `e27.scr127.secret.help` ‖ Where
+  CMP-201 description at mount · frame 34 (**required: the write-only secret explanation**)
+@ row `e27.scr127.secret.help` ‖ String
+  "Write-only: CandleViewer uses this secret to sign orders, and no one can see it again — not
+  you, not an admin. If it is lost, create a new key at Bybit."
+@ row `e27.scr127.marker` ‖ String
+  "Recorded in the audit log · API key rotated (api_key.rotate)"
+@ row `e27.scr127.stage3.h2` ‖ String
+  "Verifying the new key"
+@ row `e27.scr127.stage3.refused` ‖ String
+  "Nothing changed — the old key {key_id_masked} is still active."
+@ row `e27.scr127.stage3.refused_h2` ‖ String
+  "The new key was refused"
+@ row `e27.scr127.stage3.new_key_lives` ‖ String
+  "The new key still works at Bybit; delete it there if you won't use it."
+@ row `e27.scr127.stage3.no_verdict` ‖ String
+  "No answer from Bybit — nothing changed; the old key is still active. Try again in {n} s."
+@ row `e27.scr127.stage4.switched` ‖ String
+  "Switched at {hh:mm:ss} UTC. New requests use {new}. The old key {old} keeps working here until
+  {hh:mm:ss} UTC — {mm:ss} left — while requests in flight finish. Open orders stay open."
+@ row `e27.scr127.overlap.at60` ‖ String
+  "1 minute left on the old key {old}, until {hh:mm:ss} UTC."
+@ row `e27.scr127.overlap.at10` ‖ String
+  "10 seconds left on the old key {old}, until {hh:mm:ss} UTC."
+@ row `e27.scr127.stage5.h2` ‖ String
+  "Old key revoked here"
+@ row `e27.scr127.stage5.revoked` ‖ String
+  "Revoked in CandleViewer. The key still works at Bybit until you delete it in Bybit's
+  dashboard."
+@ prose
+  **SCR-128 — the key table and the secrets-at-rest policy** (frames 42–45).
+@ row `e27.scr128.table.caption` ‖ String
+  "Stored API keys, grouped LIVE then DEMO"
+@ row `e27.scr128.table.headers` ‖ String
+  "Account" · "Key" · "Status" · "Age" · "Rotation due" · "Rights" · "Allowlist" · "Actions"
+@ row `e27.scr128.status` ‖ Where
+  the Status cell, the key's `KeyStatus` as a word (`22:16092-16099`) · frames 42–45
+@ row `e27.scr128.row.actions` ‖ Where
+  the per-key menu button · frames 42–45
+@ row `e27.scr128.test_note` ‖ String
+  "Test runs the full check: if a key fails it, trading stops on every account until a restart
+  passes the check, and trading on its account stays off until you turn it back on."
+@ row `e27.scr128.policy.h3` ‖ String
+  "How CandleViewer holds your keys"
+@ row `e27.scr128.policy.encrypted` ‖ String
+  "Each API secret is stored only encrypted, under a key of its own that is wrapped by a
+  key-encryption key (KEK) kept outside the database."
+@ row `e27.scr128.policy.write_only` ‖ Where
+  policy 2 · frame 42 (**required: the write-only secret explanation**)
+@ row `e27.scr128.policy.write_only` ‖ String
+  "Write-only: CandleViewer uses a secret only to sign orders, and no one can see it again — not
+  you, not an admin. If it is lost, create a new key at Bybit."
+@ row `e27.scr128.policy.write_only` ‖ Status · source
+  refined · CP-1 (panel form: “this secret to sign” → “a secret only to sign”; D02:609-610)
+@ row `e27.scr128.policy.backups` ‖ String
+  "Backups hold your keys only encrypted. Without the separate key-encryption key you keep
+  offline, a restored backup cannot sign anything — on purpose."
+@ row `e27.scr128.policy.allowlist` ‖ String
+  "IP allowlists are set in Bybit's dashboard only; each key must allow exactly {egress_ip}.
+  CandleViewer only checks it."
+@ row `e27.scr128.policy.withdrawal` ‖ Id
+  `e27.scr128.policy.withdrawal`
+@ row `e27.scr128.policy.withdrawal` ‖ Where
+  policy 5 · frame 42 (**required: the withdrawal verdict**)
+@ row `e27.scr128.policy.withdrawal` ‖ String
+  "No stored key can withdraw or transfer: such a key is refused, and every stored key is checked
+  at start-up and every hour."
+@ row `e27.scr128.policy.rotation` ‖ String
+  "Keys are due for rotation every {n} days, set in this deployment's configuration; it can't be
+  changed here. Overdue never stops trading."
+@ row `e27.scr128.policy.kek` ‖ String
+  "Rotating the key-encryption key is an operator runbook, not a control here."
+@ row `e27.scr128.card.h2` ‖ String
+  "Suspected compromise · {label} · key {key_id_masked} · {ENV}"
+@ row `e27.scr128.card.lead` ‖ String
+  "Do these in order. CandleViewer can stop its own trading on {label} and end the key here; only
+  you can kill the key at Bybit."
+@ row `e27.scr128.card.step2` ‖ String
+  "Delete key {key_id_masked} in Bybit's dashboard now. Don't wait for step 3 or for a flatten:
+  this is the only step that stops the key, and CandleViewer can't do it or confirm it."
+@ row `e27.scr128.card.step3` ‖ String
+  "Revoke it here — ends the key in CandleViewer."
+@ row `e27.scr128.card.step4` ‖ String
+  "Rotate the credential key (KEK), sign every session out and audit every order in the exposure
+  window. The compromise runbook does these; there is no control here."
+@ row `e27.scr128.card.step5` ‖ String
+  "Replace the key — only after step 4."
+@ row `e27.scr128.card.step5.button` ‖ Where
+  step 5 control (SCR-126's key step) · frame 46
+@ row `e27.scr128.card.step5.button` ‖ String
+  "Add a new key…"
+@ row `e27.scr128.card.marker` ‖ String
+  "Recorded: the freeze, the revoke and the new key each in the audit log. Marking a compromise
+  has no record of its own yet."
+@ row `e27.scr128.card.refused.next` ‖ String
+  "Delete the key at Bybit now (step 2) — that stops it."
+@ row `e27.scr128.card.dead` ‖ String
+  "Bybit no longer accepts key {key_id_masked}, so {label} can't be read or flattened here.
+  Revoking leaves its {n} positions at Bybit, each with whatever stop-loss it carries — check each
+  in Bybit's dashboard."
+@ row `e27.scr128.card.containment` ‖ String
+  "Trading is read-only for every account until the key is revoked here and a restart passes the
+  check — that is the containment C-12.12 asks for."
+@ row `e27.scr129.marker.revoke` ‖ String
+  "Recorded in the audit log · API key revoked (api_key.revoke)"
+@ row `e27.scr129.unknown.dead` ‖ String
+  "{label}'s keys no longer work at Bybit, so its positions and orders can't be read or flattened.
+  It can be disabled, leaving them at Bybit, each with whatever stop-loss it carries — check each
+  in Bybit's dashboard. It can't be deleted."
+@ row `e27.scr129.unknown.fixable` ‖ String
+  "Bybit refuses {label}'s key from {egress_ip}. Fix it in Bybit's dashboard [Copy], then try
+  again; until then nothing can be revoked, disabled or deleted."
+@ row `e27.scr129.disable.history` ‖ String
+  "History stays." · "You can enable it again." · "Its keys still work at Bybit."
+@ row `e27.scr129.delete.keys` ‖ Id
+  `e27.scr129.delete.keys`
+@ row `e27.scr129.delete.keys` ‖ String
+  "{label}'s keys are revoked here and it stops trading."
+@ row `e27.scr129.delete.bybit` ‖ String
+  "Its keys still work at Bybit until you delete them there. Backups hold them only encrypted;
+  without the KEK you keep offline they sign nothing."
+@ row `e27.scr129.revoke.title` ‖ String
+  "Revoke key {key_id_masked} on {label} · {ENV}"
+@ row `e27.scr129.revoke.confirm` ‖ String
+  "Revoke key {key_id_masked} here"
+@ row `e27.scr129.revoke.last` ‖ Where
+  rung 3, the last active key · frames 50, 51
+@ row `e27.scr129.revoke.last` ‖ String
+  "{label} has no other active key: it stops trading here."
+@ row `e27.scr129.revoke.no_stop` ‖ String
+  "{symbol} {side} {qty} has no stop-loss; once the key is gone nothing could add one. Add its
+  stop first, or choose Flatten first."
+@ row `e27.scr129.revoked.row` ‖ String
+  "Revoked in CandleViewer. The key still works at Bybit until you delete it in Bybit's
+  dashboard."
+@ row `e27.scr129.revoked.subscribers` ‖ String
+  "The account's API key was revoked."
+@ row `e27.scr079.key.h3` ‖ Id
+  `e27.scr079.key.h3`
+@ row `e27.scr079.key.h3` ‖ String
+  "Key and health"
+@ row `e27.scr079.key.line` ‖ Id
+  `e27.scr079.key.line`
+@ row `e27.scr079.key.line` ‖ Where
+  the Owner's key line: CMP-034 + the served status and both clocks (D7), from `listApiKeys`
+  (`keys:read`) · frames 62–66
+@ row `e27.scr079.key.line` ‖ String
+  "API key {key_id_masked} · {status} · Rotation due {date} UTC · Bybit expiry: {date} UTC" · "API
+  key {key_id_masked} · {status} · Rotation due {date} UTC · Bybit expiry: none"
+@ row `e27.scr079.key.statements` ‖ Id
+  `e27.scr079.key.statements`
+@ row `e27.scr079.key.statements` ‖ Where
+  the Owner's permission summary, a list of plain statements (`14:1750`; CMP-175 `key` facets) ·
+  frames 62–66 (**required: the withdrawal verdict**)
+@ row `e27.scr079.key.statements` ‖ String
+  "Trade: yes." · "Withdrawal: off — verified {hh:mm} UTC." · "IP allowlist: matches."
+@ row `e27.scr079.key.statements.other` ‖ Id
+  `e27.scr079.key.statements.other`
+@ row `e27.scr079.key.statements.other` ‖ Where
+  the same list's other forms, one per CMP-175 state (“off” only for a fresh pass, `15:2046`; D4);
+  the critical state is never a statement: its list item is the badge
+  `e27.cmp175.withdrawal_detected` (§8) · frames 63–66
+@ row `e27.scr079.key.statements.other` ‖ String
+  "Withdrawal: not checked." · "Withdrawal: check overdue — last passed {hh:mm} UTC." · "IP
+  allowlist: no match." · "IP allowlist: none set." · "IP allowlist: not checked."
+@ row `e27.scr079.key.status` ‖ Id
+  `e27.scr079.key.status`
+@ row `e27.scr079.key.status` ‖ Where
+  a Manager's and a Viewer's key line: `key_status` in words only (D15) · frames 67, 68
+@ row `e27.scr079.key.status` ‖ String
+  "API key: {status}"
+@ row `e27.scr079.expiring.rotation` ‖ Where
+  the Owner's key line, the policy clock (triangle) · frame 63
+@ row `e27.scr079.ip_mismatch` ‖ String
+  "CandleViewer accepts this key only if its IP allowlist holds exactly {egress_ip}. Set it in
+  Bybit's dashboard [Copy], then test it again in Admin → Accounts. It can't be set from here."
+@ row `e27.scr019.task.key` ‖ Id
+  `e27.scr019.task.key`
+@ row `e27.scr019.task.key` ‖ Where
+  CMP-097 step, links to SCR-126's key step · frames 76–78
+@ row `e27.scr019.task.key` ‖ String
+  "Add its API key"
+@ row `e27.scr019.done.register` ‖ Status · source
+  new · D02:876-877 writes the key's done line only
+@ row `e27.scr019.done.key` ‖ Id
+  `e27.scr019.done.key`
+@ row `e27.scr019.done.key` ‖ Where
+  the step's done line, the Owner's: the key id and the time from `listApiKeys` (`keys:read`),
+  never from the checklist's items (`22:21029-21047`) · frame 77
+@ row `e27.scr019.done.key` ‖ String
+  "API key added — key {key_id_masked} verified {hh:mm} UTC"
+@ row `e27.scr019.done.key_other` ‖ Where
+  the step's done line for any other role: no key facts (D15) · frame 77
+@ row `e27.scr019.done.key_other` ‖ String
+  "API key added"
+@ prose
+  **The contributed components' own strings** (CMP-034, BQ-8; CMP-175, BQ-5 — §2.1 holds the same
+  words).
+@ row `e27.cmp034.name` ‖ Where
+  CMP-034 accessible name; the visible text is `...{last4}` only · every key id
+@ row `e27.cmp034.description` ‖ Where
+  CMP-034's description: one node per page in the DOM at mount, named by every CMP-034's
+  `aria-describedby` · every key id (**required: the write-only secret explanation**)
+@ row `e27.cmp034.description` ‖ String
+  "Shows the last 4 characters of the key ID only. The full key and its secret are write-only and
+  can't be shown anywhere in CandleViewer."
+@ row `e27.cmp175.verified` ‖ Where
+  CMP-175 pass (check) · §2.1
+@ row `e27.cmp175.verified` ‖ String
+  "Withdrawal OFF ✓ · verified {hh:mm} UTC"
+@ row `e27.cmp175.trade_only` ‖ Where
+  CMP-175 pass (check) · §2.1
+@ row `e27.cmp175.read_only.stored` ‖ Where
+  CMP-175 info, component level only (BQ-5 rider) · §2.1
+@ row `e27.cmp175.withdrawal_detected` ‖ Id
+  `e27.cmp175.withdrawal_detected`
+@ row `e27.cmp175.withdrawal_detected` ‖ Where
+  CMP-175 critical: octagon, bold, 2 px border; CMP-176's state slot, and the list item of
+  SCR-079's statements as the badge (§8) · §2.1, frame 13 (**required: the withdrawal verdict**)
+@ row `e27.cmp175.withdrawal_detected` ‖ String
+  "BLOCKED — fund right found"
+@ row `e27.cmp175.ip_missing` ‖ Where
+  CMP-175 failed (octagon) · §2.1
+@ row `e27.cmp175.ip_mismatch` ‖ Where
+  CMP-175 failed (octagon); CMP-176's state slot · §2.1, frame 14 (**required: the IP-mismatch
+  remediation**)
+@ row `e27.cmp175.expiring` ‖ Where
+  CMP-175 warning (triangle); CMP-176's state slot and SCR-079's key line · §2.1, frames 9, 63
+@ row `e27.cmp175.expired` ‖ Where
+  CMP-175 failed (octagon) · §2.1
+@ row `e27.cmp175.not_checked` ‖ Where
+  CMP-175 unknown (dash), never OFF · §2.1
+@ row `e27.cmp175.not_checked` ‖ String
+  "Withdrawal: not checked"
+@ row `e27.cmp175.check_overdue` ‖ Where
+  CMP-175 time warning (clock); CMP-176's state slot · §2.1, frame 2
+@ row `e27.cmp175.allowlist_matches` ‖ Where
+  CMP-175 pass (check); its header form "matches" on CMP-176's line 2 and in SCR-128's Allowlist
+  cell (§2.1) · §2.1, frames 6–17, 42
+@ row `e27.cmp175.allowlist_not_checked` ‖ Where
+  CMP-175 unknown (dash), never a pass (AD-4); its header form "not checked" (§2.1) · §2.1
+@ row `e27.shared.ask` ‖ Where
+  the ask line before every `keys` press; on disable, delete and Enable… stamped “not yet served —
+  G-8, #895 / #898” · frames 5, 19, 34, 49–59, 61
+@ row `e27.shared.kek_notice` ‖ Where
+  the CMP-028 silent blocking notice's second sentence (BQ-9); its first is the reason
+  `keys.kek_unavailable` (§12.2), the node every blocked key control's `aria-describedby` names ·
+  frames 17, 29, 41, 45
+@ row `e27.shared.kek_notice` ‖ String
+  "Keys can't be added, tested or rotated until the KEK is back, and trading is off."
+@ row `e27.shared.first_key_48h` ‖ String
+  "Bybit's 48 h restriction applies to this account's first key; the time it lifts is not
+  recorded. Demo trading is available meanwhile."
+@ row `e27.shared.resend_unconfirmed` ‖ String
+  "Couldn't confirm the result — reading the key's state…" · "Couldn't confirm the result —
+  reading the account's state…"
+§ spec ‖ 12.2 T2 reason keys
+@ heading
+  ### 12.2 T2 reason keys
+@ prose
+  A screen never writes its own reason (GATE G-T2.4): every gated control in §10.2 names one of
+  these keys.
+@ prose
+  The ten E27 keys are PROPOSED, vocabulary owner E27, their registration beside E30-D02's state
+  vocabulary routed to E09-D09 §3.1 by C-9 (`D02:1204`); each is one sentence of at most 60
+  characters with a full stop, naming a capability, never data (`D09:402`).
+@ prose
+  Reason keys: 15 <!-- audit:numbers.reason_keys=15 -->, of them E27's 10 <!--
+  audit:numbers.reason_keys_e27=10 -->.
+@ head 1
+  Key
+@ row `keys.kek_unavailable` ‖ Key
+  `keys.kek_unavailable`
+@ row `keys.kek_unavailable` ‖ String
+  "Off while the credential key is unavailable."
+@ row `keys.kek_unavailable` ‖ Kind · source
+  state, PROPOSED E27 (`D02:313`); known from `system` `secrets.kek_unavailable`; one notice, many
+  pointers (BQ-9)
+@ row `keys.kek_unavailable` ‖ Where
+  Verify and save, Add a key…, Rotate key…, Test key… (frames 17, 29, 41, 45), and the CMP-028
+  notice's first sentence; SCR-019's blocked step (frame 78)
+@ row `keys.not_signable` ‖ Key
+  `keys.not_signable`
+@ row `keys.not_signable` ‖ String
+  "Only an active or rotating key can be tested."
+@ row `keys.not_signable` ‖ Kind · source
+  state, PROPOSED E27 (`D02:314`); `ApiKey.status`
+@ row `keys.not_signable` ‖ Where
+  Test key… on a `pending`, `invalid` or `expired` key (frame 11)
+@ row `keys.test_throttled` ‖ Key
+  `keys.test_throttled`
+@ row `keys.test_throttled` ‖ String
+  "One test per key per minute; next at {hh:mm:ss} UTC."
+@ row `keys.test_throttled` ‖ Where
+  Test key… inside the minute after this client's own test (frame 11)
+@ row `keys.compromise_path` ‖ Key
+  `keys.compromise_path`
+@ row `keys.compromise_path` ‖ String
+  "A key that can move funds takes the compromise response."
+@ row `keys.compromise_path` ‖ Where
+  Rotate key… on a key whose check found a fund right (frame 13)
+@ row `accounts.never_keyed` ‖ String
+  "An account that never had a key can only be disabled."
+@ row `accounts.never_keyed` ‖ Kind · source
+  state, PROPOSED E27 (`D02:317`); an empty key list
+@ row `accounts.key_rejected` ‖ String
+  "This account's API key was rejected — trading is off."
+@ row `accounts.no_key` ‖ String
+  "No API key yet — trading is off for this account."
+@ row `rbac.owner_only` ‖ Kind · source
+  E09-D09 §3.1 (`D09:90`); {verb} "change account settings" for `accounts:write`, "manage API
+  keys" for `keys:manage` (`D09:104-105`)
+@ prose
+  The other vocabularies' state keys the gated set consumes, never rewritten here (their strings
+  may carry a time or a second sentence, GATE G-T2.4):
+@ head 1
+  Key
+@ row `pending_key` ‖ String
+  "API key pending — Bybit 48 h restriction, available after {date/time}. Demo trading is
+  available meanwhile."
+@ row `pending_key.untimed` ‖ String
+  "API key pending — Bybit 48 h restriction; the time it lifts is not recorded. Demo trading is
+  available meanwhile."
+@ row `pending_key.untimed` ‖ Kind · source
+  the memo's key (`MEMO:538`), routed to E30-D02 §14 by C-9 (`D02:1110`)
+§ spec ‖ 12.3 Observability
+@ prose
+  Payloads carry fingerprints or ids, never key material (`TM:597`; `D02:476-477`, `D02:563`); an
+  idempotency fingerprint leaves out `api_key` and `api_secret` or is a keyed hash (SR-E27-20,
+  `TM:673`); and `account.detail_viewed` carries only the viewer's role (`D02:805`).
+@ row `admin.key_form_opened` ‖ What the frame annotates
+  the key step opened
+§ spec ‖ 12.4 Validation against E27-D01
+@ head 2
+  Deck keys carrying it
+@ row CP-1 — the secret can never be shown aga ‖ Probe (the fact)
+  CP-1 — the secret can never be shown again
+@ row CP-1 — the secret can never be shown aga ‖ Deck keys carrying it
+  `e27.scr126.secret.help`, `e27.scr127.secret.help` (byte-equal to CP-1, also SCR-016 step 3's);
+  `e27.scr126.edit.write_only`, `e27.scr128.policy.write_only`, `e27.scr126.saved`,
+  `e27.cmp034.description`
+@ row CP-1 — the secret can never be shown aga ‖ What the placement does
+  the sentence is each secret field's description at mount; no control near it resembles a reveal
+  (CMP-034 and CMP-201 write-only, BQ-8); no ask line suggests that a code unlocks anything, the
+  misreading CP-1 names
+@ row CP-5 — a key that can withdraw is never ‖ Probe (the fact)
+  CP-5 — a key that can withdraw is never stored
+@ row CP-5 — a key that can withdraw is never ‖ Deck keys carrying it
+  `e27.scr126.refused.withdrawal` (byte-equal; SCR-016 step 3's too)
+@ row CP-5 — a key that can withdraw is never ‖ What the placement does
+  "Nothing was stored." leads the refusal and both fields clear at once; on a stored key the same
+  fact is the BLOCKED row with the compromise response first, never Rotate
+@ prose
+  A scan of the deck for the two verbs finds each string that does not name its place itself, and
+  the line read with it that does: the menu item "Revoke key…" and the revoke title open a dialog
+  whose first consequence says "here" and "at Bybit" (`e27.scr129.revoke.not_last`,
+  `e27.scr129.revoke.last`); the compromise card's "the revoke" lines sit under step 3, "Revoke it
+  here — ends the key in CandleViewer."; "Not revoked: …" points at once to step 2
+  (`e27.scr128.card.refused.next`); the delete confirms sit under the title "Delete {label} (keeps
+  history) · {ENV}" and CD-5's lines, which end with "Its keys still work at Bybit until you
+  delete them there."; "The account's API key was revoked." is the server's own text (`REV:108`),
+  never rewritten.
+@ prose
+  The failed verdict's account clause now says "order entry on that key's account stays disabled
+  by policy until it is turned back on", the words of E30-D02's
+  `refusal.trading_disabled.account_disabled_by_policy` ("Order entry is disabled on {account} by
+  policy", `E30-D02:437`).
+@ prose
+  The verdict says "that key's account", not "{account}", because the stored-key notice names no
+  key and no account (`23:4270-4271`) — D03-Q1, to the orchestrator (§14).
+@ prose
+  **Material.** The boards of this spec, or the deck strings on cards, each card labelled with its
+  key.
+@ prose
+  The compromise card (`e27.scr128.card.*`): "You suspect sub_001's key leaked.
+@ prose
+  What do you do first, second and third?" — understood if: freeze here, delete the key in Bybit's
+  dashboard at once, then revoke it here (W3, `MEMO:510-513`).
+@ prose
+  Activation failed (`e27.scr126.activation_failed`): "Where is this key now?" — understood if:
+  stored revoked here, and still working at Bybit.
+§ spec ‖ 13. Storybook stories
+@ row CMP-175 KeyPermissionBadge (`Atoms/KeyPe ‖ Component
+  CMP-175 KeyPermissionBadge (`Atoms/KeyPermissionBadge`; §2.1)
+@ row CMP-175 KeyPermissionBadge (`Atoms/KeyPe ‖ Stories
+  Default (verified, trade, allowlist matches) · WithdrawalVerified · WithdrawalDetected
+  (critical) · WithdrawalNotChecked · WithdrawalCheckOverdue · RightsTrade · RightsMissingScopes
+  (an import refusal) · RightsReadOnly (stored; the owner's question, BQ-5) · AllowlistMatches ·
+  AllowlistNoneSet · AllowlistNoMatch · AllowlistNotChecked · ExpiryExpiring · ExpiryExpired ·
+  InlineForm · AggregateDated · AggregateOverdue · AggregateFailed · AggregateUnavailable ·
+  AggregateReadFailed · AggregateNoKeys · AggregateLoading · VariantSet · MissingStateNeverOff ·
+  ForcedColors
+@ row CMP-034 MaskedValue (`Atoms/MaskedValue` ‖ Component
+  CMP-034 MaskedValue (`Atoms/MaskedValue`; §2.3)
+@ row CMP-034 MaskedValue (`Atoms/MaskedValue` ‖ Stories
+  Default (on a row) · InDialog · InTableCell · WithDescription · NonMaskedValueRendersNothing ·
+  ForcedColors; nothing else exists to show
+@ row CMP-201 PasswordField, the `writeOnly` v ‖ Component
+  CMP-201 PasswordField, the `writeOnly` variant (`Atoms/PasswordField`; §2.3)
+@ row CMP-033 CopyButton (`Atoms/CopyButton`; ‖ Stories
+  EgressIp (the key screens' one copy control)
+§ spec ‖ 14. A, C, G and H rows, deviations and questions
+@ row D03-A1 ‖ Row
+  **`15`, twelve entries (Appendix A, table 1).** 62 copy-ready A-rows over CMP-175, CMP-176,
+  CMP-034, CMP-028, CMP-035, CMP-044, CMP-066, CMP-178, CMP-201, CMP-203, CMP-011 and CMP-033,
+  each the old line verbatim with its cite and then the new one; the table's other twelve rows are
+  pointer lines (D03-A2), 74 rows in all <!-- audit:numbers.appendix_15=74 -->. CMP-044's and
+  CMP-178's rows are re-read and re-based if E42-D03's boards PR lands its Appendix A first,
+  CMP-066's against E42-D05's (GATE R6; D03-H8).
+@ row D03-A3 ‖ Row
+  **E05-D02's CMP-034 rules: the supersession** (BQ-8's owner rider, PROPOSED). Old (`E05F:448`):
+  `- **G19 — CMP-034's security rules** (the ticket's Security note, written as design rules S1–S7
+  in §7 CMP-034).` → new: ``- **G19 — CMP-034's security rules** (the ticket's Security note,
+  written as design rules S1–S7 in §7 CMP-034). **Superseded by E27-D03 §2.3** (C-2.7, C-12.2): no
+  screen displays a client-held key or secret, so CMP-034 is permanently masked; S4–S7 move to
+  CMP-201's `writeOnly` variant, and S1–S3, the `autoHideMs` cap and G20 lapse with the display.``
+  Old (`E05F:770`): `**Security design rules** (the ticket's Security note; flagged to the
+  security engineer for E05-X02, §6 G19):` → new: ``**Security design rules** (the ticket's
+  Security note; flagged to the security engineer for E05-X02, §6 G19; superseded by E27-D03 §2.3:
+  S4–S7 bind CMP-201's `writeOnly` variant, and S1–S3 lapse):`` No board draws a reveal meanwhile
+  (D03-C4).
+@ row D03-A4 ‖ Row
+  **E09-D09 §3.1: register E27's state vocabulary** (E27-D02's C-9, `D02:1204`). Old (`D09:85`, a
+  fragment): ``(E30-D02 §14 — today's owner of `lockout` and `frozen`; E39-D01 is planned, not yet
+  designed — and E17-D01 §7 for the feed states)`` → new: ``(E30-D02 §14 — today's owner of
+  `lockout` and `frozen`; E39-D01 is planned, not yet designed — E17-D01 §7 for the feed states,
+  and E27-D03 §12.2 for the ten accounts and key states, `keys.*` and `accounts.*`)``. Until it
+  lands, each gated control's own `disabledReason` carries the string, E42-D03's interim
+  (`E42-D03:602`).
+@ row D03-A5 ‖ Row
+  **E30-D02 §14: the two untimed 48 h strings** (E27-D02's C-9; OQ-5). Insert after `E30-D02:424`
+  (the `pending_key` row), in its Key · String · Source · Where columns: (1) `pending_key.untimed`
+  · "API key pending — Bybit 48 h restriction; the time it lifts is not recorded. Demo trading is
+  available meanwhile." · new, the memo's key (`MEMO:538`) · SCR-019's blocked step until
+  `unblock_at` records a time (frame 78); (2) `pending_key.first_key` (a name PROPOSED here) ·
+  "Bybit's 48 h restriction applies to this account's first key; the time it lifts is not
+  recorded. Demo trading is available meanwhile." · new, E27-D02's account-level wording
+  (`D02:1110`) · an account that never held a key (frames 10 and 71). The timed `pending_key` row
+  stays as it is.
+@ row D03-C3 ‖ Row
+  **A stored read-only key** (BQ-5's OWNER-LEVEL rider). The contract admits one: a key imported
+  with `read_only: true` must report `readOnly: 1` (`22:2715-2718`; `ApiKey.read_only`,
+  `22:16885`), while no `14` state, E27-D02 frame or story shows one and E27's flows import trade
+  keys. **Decision:** CMP-175 specifies it at component level only, the info class with "Read only
+  — can't trade" (§2.1; board 01), and no screen frame draws it until the owner rules whether E27
+  accepts a read-only import.
+@ row D03-C4 ‖ Row
+  **E05-D02's time-limited display vs AC4.** E05-D02 respecified CMP-034 as a time-limited display
+  of a value the client holds on SCR-126 and SCR-127 (S1–S7, `E05F:748-795`; G19, `E05F:448-453`);
+  AC4, US-ACCT-002 (`11:344`), D13 (`D02:199`) and C-2.7 with C-12.2 rule out any reveal.
+  **Decision (RULED to bind now, BQ-8):** CMP-034 is permanently masked, nothing displays a
+  client-held secret, and S4–S7 move to CMP-201's `writeOnly` variant (§2.3; HD5). The
+  supersession of E05-D02's text stays the owner's: D03-A3 is its copy-ready form, and no board
+  draws a reveal meanwhile.
+@ row D03-C5 ‖ Row
+  **`15`'s grid rule vs E27-D02's plain table.** CMP-049 implies the grid pattern whenever a body
+  column is interactive, an actions column included, and alternates canvas and raised rows
+  (`15:528`, `15:531`); D22 keeps six records or fewer a plain table (`D02:208`, `D02:435-436`).
+  **Decision:** SCR-125's list and SCR-128's key table are plain `<table>`s — header rows, `th
+  scope="row"`, each record's buttons its Tab stops, no roving tabindex — with every record on
+  `color.surface.raised`, so every pair is one §9 measures (§3.1, §6); CMP-049 should allow a
+  plain table with an actions column up to a stated row count.
+@ row D03-C6 ‖ Row
+  **E42-D03's `strip.key_expiry` vs D7.** "Key for {account} expires in {n} d → Rotate"
+  (`E42-D03:609`) names the rotation policy's clock with "expires", which D7 and AD-5 keep for
+  Bybit's own expiry (`D02:193`; `MEMO:401`). **Decision:** on `/admin/accounts` the strip says
+  `e27.shell.strip.rotation_due` and `e27.shell.strip.rotation_overdue` (§12.1; frames 9, 43).
+  Copy-ready for its owner: `key_expiry` "Rotation due for {account} in {n} d → Rotate";
+  `key_expiry_n` "{n} keys due for rotation within 30 days → Accounts and keys", one "1 key due
+  for rotation …".
+@ row D03-C7 ‖ Row
+  **E42-D03's withdrawal strip and announcement vs C-12.12.** `strip.withdrawal` ends "has
+  withdrawal permission — remove it on Bybit → Accounts and keys" and `announce.withdrawal` reads
+  "Withdrawal permission found on a key. Remove it on Bybit." (`E42-D03:609`, `E42-D03:611`): both
+  send the owner to edit the key's rights, where C-12.12 revokes the key at Bybit at once
+  (`CON:824-825`; D9). **Decision:** the strip item reads `e27.shell.strip.withdrawal`,
+  "Attention: {ENV} — a key on {label} can move funds → Start the compromise response" (frame 13),
+  and CMP-092's blocking row is the one announcement (`15:935`; D03-C9). Copy-ready for its owner:
+  `withdrawal` "Attention: a key on {account} can move funds → Start the compromise response";
+  `announce.withdrawal` dropped.
+@ row D03-C13 ‖ Row
+  **`14:2514`'s missing-allowlist warning.** SCR-125's checklist asks for "the warning state for a
+  missing IP allowlist" (`14:2514`), while the contract refuses an empty whitelist in every
+  environment and no setting turns the check off (`22:2722-2726`; AD-4, `MEMO:400`). **Decision:**
+  a missing allowlist is CMP-175's failed state, "IP allowlist: none set", with the octagon (§2.1;
+  frame 14); the warning class stays the clocks' and the health's.
+@ row D03-C15 ‖ Row
+  **E27-D02's undated "OFF".** D02's record, key table and drawer draw "Trade, Withdrawal OFF ✓"
+  (`D02:349`, `D02:599`) and "Withdrawal: off." (`D02:785`) with no time, against its own D3,
+  which "never says OFF without a time" (`D02:189`), and AD-3 (`MEMO:399`). **Decision:** the
+  dated forms — "{key_id_masked} · Trade · Withdrawal OFF ✓ · verified {hh:mm} UTC" on SCR-125's
+  record (`e27.scr125.row.key`), the same facet in SCR-128's Rights cell and "Withdrawal: off —
+  verified {hh:mm} UTC." in SCR-079's statements (`e27.scr079.key.statements`), each time the
+  key's `last_verified_at` (`22:16888`); and the check list's fresh pass, "OFF ✓ · verified
+  {hh:mm} UTC" (`e27.checks.withdrawal.passed`, frames 3, 21 and 36), timed by the stored key's
+  `last_verified_at` after a save and, on a refusal, whose `422` serves no time and stores
+  nothing, by the response's `Date` header — the server's clock, never the client's (PROPOSED); a
+  dated word wraps in its cell rather than lose its time (§3.1 block J, §6).
+@ row D03-G1 ‖ Row
+  **The egress IP before any check.** `EgressIp` is served only inside a verification result — a
+  test this client ran, a `422` refusal or a rotation's (`22:2745-2749`, `22:16965`, `22:16995`) —
+  and the `409 exposure_unknown` fix-key remedy carries no address (`22:15180-15188`). So the
+  address CP-3 names on SCR-126's key step, SCR-127's stage 1, SCR-016's step 3, SCR-128's policy
+  sentence 4, SCR-129's fixable remedy and SCR-079's mismatch has no source before a check, nor
+  has SCR-125's details row (frame 14) before a Test this client ran, although the hourly
+  self-check judged the stored key (no list field carries the address, `22:16873-16900`): each is
+  a target state stamped "not yet served — D03-G1, #896", never an address another service echoes
+  (BQ-15 item 7; HD14). PROPOSED: an Owner-only read of the configured egress IP, `GET
+  /admin/security/egress-ip` returning `EgressIp`. Research PRs never edit `22`. Contract-first,
+  the schema change lands in its own small PR, opened by the first implementation ticket that
+  needs the field; the names here are PROPOSED (orchestrator ruling, 2026-10-21).
+@ row D03-H1 ‖ Row
+  **E27-D04 (#817), motion.** The validating state without a staged reveal (D18; AD-16), the stage
+  changes and the 900 s countdown, which never changes colour and moves on the server's state
+  (BQ-10), the compromise card's step changes and CMP-015's static skeletons, all under reduced
+  motion; BQ-12's rider: checks appear one by one only when real backend progress drives them
+  (§2.4).
+@ row D03-H4 ‖ Row
+  **E43-D02 (#1139), SCR-128's hardening and CMP-175's verdict set.** It extends CMP-175
+  additively and never forks it — `verified-off` is `verified`, `verified-on` is `detected`,
+  `unverifiable` is `not_checked` and `stale` is `overdue` (§2.1; BQ-5) — and draws SCR-128's
+  provenance, drift naming, KEK id, last re-wrap, failure counts and per-UID rate budget (§6;
+  O-H); its CMP-028 severity set keeps the `blocking` form (BQ-9); before it draws the KEK id or
+  any other hardening state, it reviews each against C-12.2's metadata list — label, masked id,
+  permissions, env (`SECR:15`) — since a response may expose only key metadata.
+@ row D03-H5 ‖ Row
+  **E09-D09's vocabulary owner.** D03-A4 registers the ten E27 state keys (C-9); the `rbac.*`
+  strings stay E09-D09's, consumed verbatim (§12.2).
+@ row D03-D1 ‖ Row
+  Penpot, not Figma (the agent-delivery adaptation, owner decision 2026-09-25): page `E27-D03
+  Accounts and key vault hi-fi` (§0).
+@ row D03-Q1 ‖ Row
+  **CD-2's account clause.** Default: the failed verdict says "that key's account", because the
+  `accounts.key_selfcheck_failed` notice names no key and no account (`23:4270-4271`), while
+  E30-D02's refusal names `{account}` after a press (`E30-D02:437`). Question: should the notice
+  carry the account, so the verdict can name it (a `23` change)?
+@ row D03-Q2 ‖ Row
+  **The two added comprehension prompts** (§12.4, protocol item 6). Default: the protocol runs
+  them — the compromise card's first three steps, and "Where is this key now?" after a failed
+  activation — both PROPOSED and never run by an agent. Question: keep, change or drop them.
+§ spec ‖ 15. Heuristic evaluation `(heuristic)` and the o
+@ prose
+  Severity: **critical** — a misreading moves money, strands a position or hides a fund right;
+  **major** — a wrong step or a lost minute; **minor** — friction.
+@ row 1 ‖ Finding (heuristic)
+  N1, A-P: beside the ordinary warnings — rotation due, Bybit expiry, degraded, check overdue — a
+  fund right found on a stored key must read as blocking at a glance, in greyscale too and in
+  light, where the octagon and the triangle share one colour (§9) `(heuristic)`
+@ row 2 ‖ Finding (heuristic)
+  N1: "OFF" without a time, or for a key whose rights were never read, would overstate safety
+  `(heuristic)`
+@ row 2 ‖ Response
+  "OFF" lives in one word only, always with its time (AD-3); the unread state is "Withdrawal: not
+  checked" with the dash; a missing or unknown state renders "not checked" or nothing, never OFF
+  (served enums with no default, HD1; the MissingStateNeverOff story)
+@ row 3 ‖ Finding (heuristic)
+  N2, the memo's H7: a "revoke" or a "delete" that does not say where it happens invites CP-4's
+  predicted misreading, that a key revoked here is dead at Bybit (`MEMO:194`) `(heuristic)`
+@ row 5 ‖ Finding (heuristic)
+  N5, the ticket's Security notes: a masked key id drawn in a box, beside a toggle, under a timer
+  or with a copy control would imply a reveal `(heuristic)`
+@ row 5 ‖ Response
+  CMP-034 is text only, `...{last4}` with its write-only description at mount; secrets go into
+  CMP-201's write-only variant; the egress IP is the one copy control (BQ-8, RULED; §2.3; the
+  tool's scans)
+@ row 8 ‖ Response
+  two clocks, two words, never one chip (D7; AD-5): "Rotation due" and "Rotation overdue" on
+  CMP-011, "Bybit expiry" and "Expired at Bybit" on CMP-175; D03-C6 goes to E42-D03's owner
+@ row 14 ‖ Finding (heuristic)
+  N10: the hard facts — write-only secrets, KEK-separated backups, the allowlist set at Bybit —
+  must be found where they matter `(heuristic)`
+@ row 14 ‖ Response
+  CP-1 under every secret field at mount, CP-2 in the policy and at the delete, CP-3 at the
+  allowlist row and stage 1; SCR-128's policy in seven plain sentences (§6; §12.4)
+@ prose
+  (1) Metadata only: a key appears as its label, `...{last4}`, its rights, environment, status and
+  dates, the Owner's alone (C-12.2; §2.3, §8).
+@ prose
+  (2) No key material, no plaintext and no reveal: CMP-034 is text only and CMP-201 write-only,
+  and no frame draws more than the masked id (BQ-8; C-2.7).
+@ prose
+  (3) Withdrawal is never drawn as allowed: a fund right is CP-5's refusal on import and BLOCKED
+  on a stored key, and the copy gate refuses any string that grants it (C-2.8; §16).
+@ prose
+  (5) T2 is E09-D09's, the view-as leg first (§10.1).
+@ prose
+  Answer about the frames only: #816 is public, so never paste or read a real key, secret, UID or
+  IP.
+@ prose
+  Board 04 and its light twin 05: find the account whose key can move funds and say your first
+  action; say whether any warning on the page could be taken for it (AC3: this item stands in for
+  the fresh reviewer).
+@ prose
+  Boards 01 and 02, with their greyscale, deuteranopia and protanopia renders: name each CMP-175
+  state from its word and glyph alone, and say which ones stop trading.
+@ prose
+  Board 06: add a key for demo-1 without a mouse; say where its IP allowlist is set, and what was
+  stored after the withdrawal refusal.
+@ prose
+  Board 07: rotate sub_002's key; say what happens to open orders, until when the old key works
+  here, and what is left to do at Bybit.
+@ prose
+  Board 08: revoke sub_002's last key with positions open, then disable and delete sub_002; say
+  what happens to the positions each time, and whether anything closes them by itself.
+@ prose
+  Board 09: say what a Manager and a Viewer see of the key, and whether each locked control says
+  why.
+§ spec ‖ 16. Traceability and the audit tool's checks
+@ prose
+  HD1 and HD2 (CMP-175) → SCR-125, SCR-126, SCR-127, SCR-128, SCR-079 and SCR-016 · HD3 and HD4
+  (CMP-176) → SCR-125 · HD5 (CMP-034, CMP-201) → every screen that names a key, and the write-only
+  fields of SCR-126, SCR-127 and SCR-016 · HD6 (CMP-028) → SCR-125, SCR-126, SCR-127, SCR-128 and
+  SCR-079's one notice · HD7 (CMP-035) → SCR-127 · HD8 (CMP-044) → SCR-129, SCR-126's edit (rung
+  1) and SCR-128's card · HD9 (CMP-066) → SCR-126, SCR-127 and SCR-016 · HD10 (CMP-178) → SCR-125
+  and SCR-079 · HD11 (the field well) → SCR-126, SCR-127, SCR-129 and SCR-016 · HD12, HD13 and
+  HD15 → every screen · HD14 (the egress IP) → SCR-125, SCR-126, SCR-127, SCR-128, SCR-129,
+  SCR-079 and SCR-016 · HD16 → SCR-128 · HD17 (the check list's warnings) → SCR-125's Test dialog,
+  SCR-126, SCR-127 and SCR-016.
+@ prose
+  **Components → sections.** CMP-175 §2.1 · CMP-176 §2.2 and §3.2 · CMP-034, CMP-201 and CMP-033
+  §2.3 · CMP-028, CMP-035, CMP-044, CMP-066 and CMP-178 §2.4 · CMP-011, CMP-203 and the
+  compositions §2.5 · each of them in §13, Appendix A and the handoff file; the consumed
+  components (CMP-087, CMP-088, CMP-092, CMP-041, CMP-049, CMP-050, CMP-079, CMP-019, CMP-046,
+  CMP-239, CMP-006, CMP-005 and CMP-097) where §2.5 and the screen sections place them.
+@ prose
+  **T2** (`t2.*`, `key.*`): the rule once, view-as first; every T2 frame citing "T2 per §10.1";
+  every gated row naming CMP-079 and the `lock`; the not-T2 list whole; each reason one sentence
+  of at most 60 characters with its full stop; `rbac.*` verbatim.
+@ prose
+  **The copy deck** (`deck.*`, `copy.banned`, `copy.utc`, `copy.off`, `withdraw`): ids keyed and
+  unique; a status on every row; `unchanged` byte-equal to the memo and `consumed` verbatim in its
+  source; no banned word; every clock time in UTC; a withdrawal "OFF" or "off" only beside its
+  verified time (AD-3); no withdrawal or transfer right drawn as allowed.
+@ prose
+  **Appendix A** (`appx.*`, `reveal`): each Old cell found once in its entry — a moved line a
+  WARN, gone or ambiguous a FAIL; CMP-044 and CMP-178 WARN while E42-D03's boards PR is open;
+  pointer lines content-only; every Old and New cell read whole by item 12.
+@ prose
+  **Cites and scans** (`cite.*`, `scan`, `ids`, `forbidden`, `closing`, `placeholder`, `handoff`):
+  every `KEY:line` resolves and a quoted fragment is still on its line; E27-D02's scans (no
+  secret-shaped run, key ids `...` plus 4, addresses from RFC 5737 only, long numbers only the
+  placeholder UIDs); every C-, CMP-, SCR- and US- id resolves; no private path or host, closing
+  keyword or placeholder; no blank line in the handoff file.
+@ prose
+  **Frame rows** (standing rule A2, main-orchestrator 2026-10-25; `k1.masked`, `reveal`,
+  `k3.withdraw`, `k4.consequence`, `k4.loading`, `k5.stepup`, `k6.lock`, `k7.reason`, `k8.viewas`,
+  `k9.exit`, `k11.compromise`, `k12.env`, `k13.number`, `k2.field`, `k3.off`, `t2.viewas`,
+  `pin.inflight`): each of the 78 <!-- audit:numbers.frame_rows=78 --> frame rows is read on its
+  own, every clause of every cell.
+@ prose
+  K1: no control that shows or copies key material — a `[Show]`, a Show toggle, a `[Copy]` or a
+  copy control whose nearest cue is a key or a secret field rather than the egress IP — no key id
+  but `...` plus 4, no bare id (eight or more letters and digits, both present) and no
+  plaintext-like value (a 16+ character run with two digits or short mixed-case segments, or a key
+  value with a digit or an inner capital); K2: no reveal prop or state (item 12); K3: no
+  withdrawal or transfer right drawn as allowed or as a toggle, switch or checkbox, and every
+  withdrawal "OFF" a frame draws carries "verified" and its time in the same string or item
+  (`k3.off`); K4 and K5: each destructive confirm (frames 5, 34, 49–51, 54–56, 58 and 59: 10 <!--
+  audit:numbers.frames_destructive=10 --> in all) names its consequence key and the ask line
+  `e27.shared.ask` in its Copy keys, both in §12, and its Hi-fi cell draws them — the
+  consequence's §12 string with its placeholders filled, the ask line and, where its keys list
+  `e27.scr129.typed`, the typed label (a row opening "As frame N" or "Frame N's dialog" inherits
+  them from frame N); §7's confirms table states both, and no other frame draws a destructive
+  confirm, and while the summary loads no frame or §2.4 cell draws the confirm rendered or
+  disabled (`k4.loading`); K6 to K8: each of the 20 <!-- audit:numbers.frames_t2=20 --> gated
+  frames names the `lock` and CMP-079 RbacGate (§10.1's components) and a reason key a §10 or §12
+  table gives, `rbac.view_as` first wherever it appears and never put after another leg in the
+  row's prose, no frame that is not gated draws a `lock` or CMP-079, a frame E27-D02's inventory
+  or its name calls a view-as frame says "view-as leg first" in its class, and every §10.2 control
+  the view-as session reaches as T2 `rbac.view_as` (its "Who sees what" row) lists the view-as leg
+  first (`t2.viewas`); K9: no exit (Cancel, Close, Back, `Esc`) drawn gated (a parenthetical such
+  as "(disabled)" or a clause after a comma included), in a frame or in §10.2; K10: gate 2's word
+  and glyph per state (`ac2.*`); K11: frame 46's steps, their keys and their deck strings in
+  C-12.12's order (freeze, delete at Bybit, revoke, rotate the KEK, replace); K12: each of the 19
+  <!-- audit:numbers.frames_env=19 --> frames that names an environment, whose title or heading
+  names an account, or that draws an "Attention:" strip string, keeps its badge — derived from the
+  rows, not a fixed list; K13: the number before every marker is the marker's value, and every
+  two-decimal contrast or ΔE76 value carries a marker; K14 and K15: gate 4's `inv.missing` and
+  `inv.board`; and E42-D03's boards PR, in flight, is named by its branch only — a sha or a quote
+  beside it fails (`pin.inflight`).
+@ prose
+  **The self-test** (`--self-test`; `--selftest` too): a passing spec built in memory from the
+  base files refuses 37 <!-- audit:numbers.mutations=37 --> mutations, each by its own code, and a
+  spec on disk with no FAIL meets every one that applies to it; then the standing rule's list, one
+  mutation per K-item and a second (or more) where a K-item reads more than one element or form,
+  three for the in-flight pin, and item 12's record forms of the text round 2 — each in the
+  section the round named and again in another, in lower and title case, an allowed phrase copied
+  to a new place, Appendix A's States cell, frame 69's view-as leg cut from its prose or swapped
+  for the role leg, and three on the hand-off; and round 3's forms — "view the full key" and
+  "toggle visibility" on §6's Key cell, §8's owner key row, §4.1's block H, §2.5's CMP-034 row and
+  frame 36 (lower, title and upper case), "can withdraw" on §6's Rights row, §8's owner key row,
+  §4.4's block D and frame 36, a bare id, `[Show]` and `[Copy]` on §4.4's block D result row and
+  in §4's and §8's prose, a deck string cut to "off ✓" and "Off ✓" and §2.1's verified row cut to
+  "off ✓", frame 69's class naming the role leg, and three on the hand-off's CMP-033 row (a bare
+  32-hex id, "Can Withdraw", "view the full key") — 109 <!-- audit:numbers.k_mutations=109 --> in
+  all, each run in memory on this spec (or the hand-off) as a plain run: rc 1 with exactly one
+  distinct FAIL, its own code, among the gates of items 1–12 (item 13's pin refuses it too
+  wherever it edits pinned text); then item 13's 62 <!-- audit:numbers.pin_mutations=62 --> pin
+  mutations; restored, `--check` exits 0 and the spec on disk is byte-identical (its sha256
+  compared).
+@ prose
+  **The whole document** (the orchestrator's text round 2; `reveal`, `k1.masked`, `k2.field`,
+  `k3.withdraw`, `k3.off`): every clause of every line of this spec and of the hand-off — every
+  row of every table, every prose sentence, Appendix A's Old and New cells whole — is read
+  case-insensitively, with no section list and no cue: a reveal word or affordance (any form of
+  "reveal" or "unmask", CMP-034's old props and stories); K1's bare id (eight or more letters and
+  digits, both present; a backticked 9- or 40-character git sha or a CamelCase story name passes
+  only on a line that names no key) and an id after `...` that is not 4 characters; K2's show,
+  view, display, copy, toggle or expose of a key or a secret, a visibility toggle, a show or hide
+  control, and a bracketed `[Show]`, `[View]` or `[Copy]` whose nearest cue on the line is not the
+  egress IP; K3's withdrawal or transfer right drawn as allowed, granted, as a control or in the
+  modal form ("can withdraw", "may transfer", "able to withdraw"); and a withdrawal OFF, in any
+  case, without its verified time in its own string or item — on a table row a withdrawal or
+  transfer word in any cell ties the OFF to it, so a deck string cut to "off ✓" is read with its
+  Where cell.
+@ prose
+  A clause that names a key or a secret field (or whose row's first cell or heading does) is also
+  read for the plaintext-like run, a toggle and a bare "Copy".
+@ prose
+  The frame rows keep item 10's K1 and K3 and are read here for the reveal words, the dated OFF
+  and the modal fund right.
+@ prose
+  **The security text, pinned default-deny** (the orchestrator's text round 3; `sec-pin`): a
+  clause of this spec or of the hand-off (a heading, each table cell, each prose sentence, each
+  fenced line) is security-bearing when it names a key, an API key or a key id, a secret, a
+  credential, a passphrase, private, a withdrawal or transfer word, a fund right, a mask word in
+  any form, plain or clear text, CMP-034, CMP-175 or CMP-201 by number or name, or a full, whole
+  or raw id, case-insensitive, at a word boundary, plurals and hyphenations included; a clause
+  that names the view-as leg is pinned too (§8's and §10.1's statements of the leg order).
+@ prose
+  Its self-test: each round-3 lens form twice (in a clause with no security word, and inside a
+  pinned clause), §8's and §10.1's view-as leg cut, two placements on the hand-off, each refused
+  by the pin alone, and ten phrasings drawn at run time (seeded) from a verb × object grid, each
+  placed in a table row and in a prose sentence and each refused.
+@ prose
+  r3 gave the frame rows the elements the K gates read where a row named them only by reference:
+  the `lock` on frames 62–71 and 78, frame 66's `accounts.mode_locked` (`D02:828-830`), and the
+  consequence and ask keys of frames 50, 51, 55, 56 and 59, as §12's Where column already places
+  them.
+§ spec ‖ 17. Summary for #816 (≤ 10 lines)
+@ prose
+  CMP-175 holds thirteen states in two scopes from served enums; only withdrawal-detected is
+  BLOCKED, bold, bordered.
+@ prose
+  CMP-034 is permanently masked (BQ-8, RULED); secrets go into CMP-201's write-only variant; keys
+  show `...{last4}`.
+@ prose
+  T2 is stated once, view-as first, with ten PROPOSED E27 reason keys; what is not T2 is listed.
+§ spec ‖ Appendix A. The `15` and `14` edits, old → new
+@ prose
+  The rows cover twelve entries: the three contributions (CMP-175, CMP-176, CMP-034), the five
+  extensions (CMP-028, CMP-035, CMP-044, CMP-066, CMP-178), CMP-201's write-only variant and the
+  homes of §2.2, §2.3 and §2.5 (CMP-011, CMP-033, CMP-203).
+@ row CMP-175 · Tier and Purpose (`15:2044`) ‖ Entry · field
+  CMP-175 · Tier and Purpose (`15:2044`)
+@ row CMP-175 · Tier and Purpose (`15:2044`) ‖ Old (verbatim)
+  `- **Tier**: Atom (owner/admin, security-critical) · **Purpose**: shows the permission scope of
+  an API key (trade/read/withdraw flags, IP-whitelist state) with withdrawal-off always visually
+  confirmed.`
+@ row CMP-175 · Tier and Purpose (`15:2044`) ‖ New
+  ``- **Tier**: Atom (owner/admin, security-critical) · **Purpose**: one key's verified facts —
+  its withdrawal verdict, its trade rights, its IP allowlist and its Bybit expiry — each a word
+  with its class's glyph, never colour alone, and withdrawal-off always confirmed with its time;
+  scope `key` places one facet in a row, a table cell or the account drawer, scope `aggregate` is
+  the dated withdrawal verdict line under SCR-125's `h1`. E27-D03 owns the E27 state set; E43-D02
+  extends it additively (its `verified-off`, `verified-on`, `unverifiable` and `stale` are
+  `verified`, `detected`, `not_checked` and `overdue`).``
+@ row CMP-175 · Props (`15:2045`) ‖ Entry · field
+  CMP-175 · Props (`15:2045`)
+@ row CMP-175 · Props (`15:2045`) ‖ Old (verbatim)
+  ``- **Props**: `permissions: {trade:boolean; read:boolean; withdraw:boolean}` · `ipWhitelisted:
+  boolean`.``
+@ row CMP-175 · Props (`15:2045`) ‖ New
+  ``- **Props**: `scope: "key"|"aggregate"` · `facet: "withdrawal"|"rights"|"allowlist"|"expiry"`
+  (scope `key`) · `state` — withdrawal `"verified"|"detected"|"not_checked"|"overdue"`, rights
+  `"trade"|"missing_scopes"|"read_only"`, allowlist
+  `"matches"|"missing"|"mismatch"|"not_checked"`, expiry `"expiring"|"expired"` — served and
+  required, with no default: a missing or unknown state renders the facet's "not checked" form
+  (withdrawal, allowlist) or nothing (rights, expiry), never a pass · `verifiedAt?`
+  (`last_verified_at`, UTC; required with `verified` and `overdue`) · `expiresInDays?` (with
+  `expiring`) · `form?: "badge"|"inline"` (default `badge`; `detected` is always a badge) ·
+  `verdict: "dated"|"overdue"|"failed"|"unavailable"|"read_failed"|"no_keys"|"loading"` (scope
+  `aggregate`, from the `system` notices) · `count?` · `asOf?`. (Replaces `permissions` and
+  `ipWhitelisted`: two booleans cannot say "not checked" or "overdue".)``
+@ row CMP-175 · A11y (`15:2046`) ‖ Entry · field
+  CMP-175 · A11y (`15:2046`)
+@ row CMP-175 · A11y (`15:2046`) ‖ Old (verbatim)
+  `- **A11y**: withdrawal-off state is rendered with an affirmative "Withdrawal: OFF ✓" text, not
+  just the absence of a chip (absence-of-danger is not a safe visual pattern — must be explicit).`
+@ row CMP-175 · A11y (`15:2046`) ‖ New
+  ``- **A11y**: withdrawal-off is an affirmative, dated word, "Withdrawal OFF ✓ · verified {hh:mm}
+  UTC", never the absence of a chip (absence-of-danger is not a safe visual pattern — must be
+  explicit), and only for a key whose check passed inside the freshness window: a key whose rights
+  were never read reads "Withdrawal: not checked". Every state is its own word with its class's
+  glyph — check pass, octagon failed and critical, triangle warning, clock time warning, dash not
+  checked, info a stored read-only key — the glyph `aria-hidden` beside the word; the critical
+  word leads with "BLOCKED", in `font.weight.bold`, inside a 2 px border. Static text: not
+  focusable, no live region (its host announces a transition once); in forced colours the fills
+  drop and the word, the glyph and the critical border stay.``
+@ row CMP-175 · Tokens (`15:2047`) ‖ Entry · field
+  CMP-175 · Tokens (`15:2047`)
+@ row CMP-175 · Storybook (`15:2048`) ‖ Entry · field
+  CMP-175 · Storybook (`15:2048`)
+@ row CMP-175 · Storybook (`15:2048`) ‖ Old (verbatim)
+  `- **Storybook**: Default(SafeConfig), WithdrawEnabled(dangerVariant, shown only for
+  legacy-audit display, never settable via UI), NoIpWhitelist(warning).`
+@ row CMP-175 · Storybook (`15:2048`) ‖ New
+  `- **Storybook**: Default (verified, trade, allowlist matches), WithdrawalVerified,
+  WithdrawalDetected (critical; a stored key's check found a fund right; never settable via UI),
+  WithdrawalNotChecked, WithdrawalCheckOverdue, RightsTrade, RightsMissingScopes (an import
+  refusal), RightsReadOnly (a stored read-only key; the owner's question), AllowlistMatches,
+  AllowlistNoneSet, AllowlistNoMatch, AllowlistNotChecked, ExpiryExpiring, ExpiryExpired,
+  InlineForm, AggregateDated, AggregateOverdue, AggregateFailed, AggregateUnavailable,
+  AggregateReadFailed, AggregateNoKeys, AggregateLoading, VariantSet (with greyscale, deuteranopia
+  and protanopia snapshots), MissingStateNeverOff, ForcedColors.`
+@ row CMP-175 · Tests (`15:2049`) ‖ Entry · field
+  CMP-175 · Tests (`15:2049`)
+@ row CMP-175 · Tests (`15:2049`) ‖ Old (verbatim)
+  `- **Tests**: unit, visual, axe, "withdraw-enabled visual alarm" regression test (must never
+  render neutrally).`
+@ row CMP-175 · Tests (`15:2049`) ‖ New
+  `- **Tests**: unit, visual, axe, "withdraw-enabled visual alarm" regression test (must never
+  render neutrally); a missing or unknown state never renders OFF; the VariantSet snapshots in
+  greyscale, deuteranopia and protanopia keep every word, glyph shape and the critical border.`
+@ row CMP-175 · Hi-fi pointer (new; insert bef ‖ Entry · field
+  CMP-175 · Hi-fi pointer (new; insert before `15:2050`)
+@ row CMP-175 · Hi-fi pointer (new; insert bef ‖ New
+  ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.1 (text-first, owner approval
+  pending; boards 01 and 02 pending on page `E27-D03 Accounts and key vault hi-fi`) — the E27
+  state set in its `key` and `aggregate` scopes and the critical mark; handoff checklist
+  [E27-D03-handoff.md](../design/E27/E27-D03-handoff.md).``
+@ row CMP-176 · Tier and Purpose (`15:2053`) ‖ Old (verbatim)
+  `- **Tier**: Molecule (owner/admin) · **Purpose**: one row in the admin Accounts & Keys screen —
+  account nickname, env, KeyPermissionBadge, rotate/revoke actions.`
+@ row CMP-176 · Tier and Purpose (`15:2053`) ‖ New
+  `- **Tier**: Molecule (owner/admin) · **Purpose**: one account in SCR-125's plain table, as two
+  lines — line 1 the label, UID and environment (word and badge), the state (the worst that
+  applies, one badge), the masked key id (CMP-034) with its rights and withdrawal facets (CMP-175)
+  and one "Actions for {label}" menu; line 2 the allowlist facet (CMP-175), key age · rotation due
+  and the health line (CMP-178 inline) — and a "Details for {label}" disclosure; its blocked state
+  is the danger treatment and its two disabled forms keep full text contrast.`
+@ row CMP-176 · Props (`15:2054`) ‖ New
+  ``- **Props**: `account: AdminAccountRow` · `key?` (the key's served metadata; absent on a
+  keyless account) · `facets` (the CMP-175 `key` states) · `state` (the worst that applies, in
+  this precedence: `blocked`, then `key_refused` or `expired`, `allowlist_mismatch` or
+  `allowlist_missing`, `down`, `off_by_policy`, `check_overdue` or `not_checked`,
+  `rotation_overdue`, `degraded`, `rotation_due` or `bybit_expiry`, `no_key`, `disabled`, `ok`;
+  from served fields only) · `health` (one `AccountHealth`, rendered by CMP-178 inline) · `menu:
+  {id, label, ask?, disabledReason?, onSelect}[]` (the ask line and a gated item's reason as the
+  item's second line) · `notice?: {kind:
+  "blocked"|"disabled"|"off_by_policy"|"rotating"|"revoked", at?, until?}` (line 2's sentence) ·
+  `primaryAction?` (the blocked row's "Start the compromise response", first in the row) ·
+  `detailsOpen` · `onToggleDetails` · `details`. (Drops `onRotateKey`, `onRevoke` and
+  `onEditProfile`: rotate and revoke are menu items, never inline destructive buttons.)``
+@ row CMP-176 · Tokens (`15:2055`) ‖ Old (verbatim)
+  `- **Tokens**: inherits CMP-106 ProfileBadge + CMP-175.`
+@ row CMP-176 · Tokens (`15:2055`) ‖ New
+  ``- **Tokens**: inherits CMP-175, CMP-011, CMP-034 and CMP-178; row `color.surface.raised`
+  (hover `color.surface.hover`); line 1 `type.ui.body` in `color.text.primary` (the label
+  `type.ui.body-strong`); line 2 and the notice `color.text.secondary`; the UID, ages and dates
+  `type.num.base`; rows divided by a `border.hairline` rule in `color.border.default`; focus
+  `color.focus.ring` with `border.focus`; each line min-height `size.row.compact` or
+  `size.row.comfortable`; cells `space.inset.sm` or `space.inset.md` inline, `space.inset.xs`
+  block; blocked: the row `color.status.danger.subtle` with a 4 px (`space.1`) inline-start border
+  in `color.status.danger.strong`; disabled: the same text tokens as any row, never
+  `color.text.disabled` or `opacity.disabled`.``
+@ row CMP-176 · Hi-fi pointer (new; insert bef ‖ New
+  ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.2 (text-first, owner approval
+  pending; board 03 pending on page `E27-D03 Accounts and key vault hi-fi`) — the two-line row,
+  its state slot and precedence, the danger treatment and the two disabled forms; handoff
+  checklist [E27-D03-handoff.md](../design/E27/E27-D03-handoff.md).``
+@ row CMP-034 · Heading (`15:371`) ‖ Entry · field
+  CMP-034 · Heading (`15:371`)
+@ row CMP-034 · Heading (`15:371`) ‖ Old (verbatim)
+  `### CMP-034 MaskedValue ("secret reveal")`
+@ row CMP-034 · Heading (`15:371`) ‖ New
+  `### CMP-034 MaskedValue (historical name "secret reveal": permanently masked, no reveal)`
+@ row CMP-034 · Tier and Purpose (`15:373`) ‖ Entry · field
+  CMP-034 · Tier and Purpose (`15:373`)
+@ row CMP-034 · Tier and Purpose (`15:373`) ‖ Old (verbatim)
+  `- **Tier**: Atom · **Purpose**: masked API key/secret display with reveal toggle (admin key
+  screens).`
+@ row CMP-034 · Tier and Purpose (`15:373`) ‖ New
+  ``- **Tier**: Atom · **Purpose**: the server's masked key id, `...{last4}` from `key_id_masked`,
+  as plain text wherever a key is named (the admin key screens, the account drawer, the setup
+  checklist); it never receives a full value or a secret, so there is nothing to show and no
+  control. Why no reveal exists: no API response or frontend bundle holds a secret (C-2.7); a
+  response exposes only key metadata (C-12.2); "no reveal control anywhere in the app or API"
+  (US-ACCT-002); only the last 4 characters of a key id are stored in clear; and a value that
+  looks as if it could open is itself a misrepresentation (E27-D03 §2.3).``
+@ row CMP-034 · Props (`15:374`) ‖ Entry · field
+  CMP-034 · Props (`15:374`)
+@ row CMP-034 · Props (`15:374`) ‖ Old (verbatim)
+  ``- **Props**: `value: string` (a value the client holds in the current flow, never a stored
+  secret: C-2.7) · `label: string` (what it is, e.g. "API secret"; names the group and the
+  buttons) · `revealed?: boolean` (never `true` at mount) · `onToggleReveal` · `autoHideMs?:
+  number` (default 10000, re-masks automatically) · `copyable?: boolean` (default `false`;
+  CMP-033).``
+@ row CMP-034 · Props (`15:374`) ‖ New
+  ``- **Props**: `maskedId: string` (the served `key_id_masked`, `...` plus 4 characters; any
+  other value renders nothing and warns without echoing it) · `label: string` (what it identifies,
+  e.g. "API key"; names the group).``
+@ row CMP-034 · States (`15:375`) ‖ Entry · field
+  CMP-034 · States (`15:375`)
+@ row CMP-034 · States (`15:375`) ‖ Old (verbatim)
+  `- **States**: masked (default, at every mount: an 8-character mask whatever the value's
+  length), revealed (only after a press of the toggle), expiring (the last 2 s, announced once),
+  copied (CMP-033).`
+@ row CMP-034 · States (`15:375`) ‖ New
+  `- **States**: masked — its only state; with no key its host renders no CMP-034 (the row reads
+  "No key — inactive").`
+@ row CMP-034 · A11y (`15:376`) ‖ Entry · field
+  CMP-034 · A11y (`15:376`)
+@ row CMP-034 · A11y (`15:376`) ‖ Old (verbatim)
+  ``- **A11y**: toggle is CMP-002 IconButton with label "Show {label}"/"Hide {label}" ("Show
+  secret"/"Hide secret" when `label` is "secret"); auto-hide timer announced via polite live
+  region ~2s before hiding ("Secret will hide in 2 seconds") satisfying WCAG 2.2.1 (no silent
+  unannounced timing change). A route change, window blur, the idle lock and sign-out re-mask;
+  while masked the DOM holds the mask only, never the value; copy logs nothing and the live region
+  never holds the value; the value never enters browser storage
+  (`docs/design/E05/E05-D02-form-controls.md` §7, rules S1–S7; flagged for E05-X02; recovery codes
+  are CMP-206's).``
+@ row CMP-034 · A11y (`15:376`) ‖ New
+  ``- **A11y**: `role="group"` named by `label`; the `...` is `aria-hidden` behind a visually
+  hidden "ending in", so it reads "API key, ending in a1b2"; one description node per page, in the
+  DOM at mount, which every CMP-034 on the page names by `aria-describedby` (one node, many
+  pointers), says the value is write-only and can't be shown (the copy deck's string); not
+  focusable, no control, no timer, no live region; no attribute, `title`, data attribute,
+  accessible name or hidden node holds more than the masked id.``
+@ row CMP-034 · Tokens (`15:377`) ‖ Entry · field
+  CMP-034 · Tokens (`15:377`)
+@ row CMP-034 · Tokens (`15:377`) ‖ Old (verbatim)
+  ``- **Tokens**: box `color.surface.raised` with a 1 px `color.border.default` hairline,
+  `radius.control`, `size.control.height`, `space.inset.sm`; value `type.num.base` +
+  `color.text.primary`; mask `color.text.secondary`; countdown (CMP-035) `type.ui.caption` +
+  `color.text.tertiary`; buttons `space.inset.xs` apart. (Replaces `font.mono`.)``
+@ row CMP-034 · Storybook (`15:378`) ‖ Entry · field
+  CMP-034 · Storybook (`15:378`)
+@ row CMP-034 · Storybook (`15:378`) ‖ Old (verbatim)
+  `- **Storybook**: Masked, Revealed, AutoHideCountdown, Copyable.`
+@ row CMP-034 · Storybook (`15:378`) ‖ New
+  `- **Storybook**: Default (on a row), InDialog, InTableCell, WithDescription,
+  NonMaskedValueRendersNothing, ForcedColors.`
+@ row CMP-034 · Tests (`15:379`) ‖ Entry · field
+  CMP-034 · Tests (`15:379`)
+@ row CMP-034 · Tests (`15:379`) ‖ New
+  ``- **Tests**: unit (only `...` plus 4 characters renders), visual, axe; a regression that the
+  DOM never holds more than the masked id.``
+@ row CMP-034 · Hi-fi pointer (new; insert bef ‖ Entry · field
+  CMP-034 · Hi-fi pointer (new; insert before `15:380`)
+@ row CMP-034 · Hi-fi pointer (new; insert bef ‖ New
+  ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.3 (text-first, owner approval
+  pending; boards 01 and 02 pending on page `E27-D03 Accounts and key vault hi-fi`) — permanently
+  masked, the old name annotated, the rationale recorded; handoff checklist
+  [E27-D03-handoff.md](../design/E27/E27-D03-handoff.md).``
+@ row CMP-201 · Tier and Purpose (`15:2413`) ‖ Entry · field
+  CMP-201 · Tier and Purpose (`15:2413`)
+@ row CMP-201 · Tier and Purpose (`15:2413`) ‖ Old (verbatim)
+  ``- **Tier**: Atom · **Purpose**: password input with a reveal toggle, caps-lock warning and
+  `autocomplete` wiring.``
+@ row CMP-201 · Tier and Purpose (`15:2413`) ‖ New
+  ``- **Tier**: Atom · **Purpose**: password input with a reveal toggle, caps-lock warning and
+  `autocomplete` wiring; its `writeOnly` variant takes an API key or secret (SCR-126, SCR-127
+  stage 2, SCR-016 step 3) with no toggle at all.``
+@ row CMP-201 · Props (`15:2414`) ‖ Entry · field
+  CMP-201 · Props (`15:2414`)
+@ row CMP-201 · Variants (new; insert before ` ‖ Entry · field
+  CMP-201 · Variants (new; insert before `15:2415`)
+@ row CMP-201 · Variants (new; insert before ` ‖ New
+  ``- **Variants**: default; `writeOnly` — `type=password` always and never re-filled; paste
+  allowed; read-only, never `disabled`, while its form's action is busy; cleared on Cancel, on
+  leaving the page, on a cancelled, expired or third-failed step-up, on the idle lock (SCR-005),
+  at absolute session expiry and on sign-out, on a refusal that sends the key away (a withdrawal
+  or transfer right, the environment, the UID, the expiry) and after a successful save; the value
+  lives only in the input's value — never an attribute, a `title`, a data attribute, the
+  accessible name, a hidden node, a log, an analytics event, an audit record, an error report,
+  browser storage, a URL, an autofill store or the undo history — and leaves state on unmount
+  (E05-D02's rules S4–S7, moved here).``
+@ row CMP-201 · A11y (`15:2415`) ‖ Entry · field
+  CMP-201 · A11y (`15:2415`)
+@ row CMP-201 · A11y (`15:2415`) ‖ Old (verbatim)
+  ``- **A11y**: reveal is a real `<button aria-pressed>` labelled "Show password"/"Hide password";
+  caps-lock warning is a polite live region; never suppresses paste.``
+@ row CMP-201 · A11y (`15:2415`) ‖ New
+  ``- **A11y**: reveal is a real `<button aria-pressed>` labelled "Show password"/"Hide password";
+  caps-lock warning is a polite live region; never suppresses paste. With `writeOnly` no toggle
+  exists in the DOM, and the `description` ("value is write-only", or the write-only secret
+  sentence) is in the DOM at mount, linked by `aria-describedby`; a format error shows inline on
+  press.``
+@ row CMP-201 · Storybook (`15:2417`) ‖ Entry · field
+  CMP-201 · Storybook (`15:2417`)
+@ row CMP-201 · Storybook (`15:2417`) ‖ Old (verbatim)
+  `- **Storybook**: Default, Revealed, CapsLockOn, WithError.`
+@ row CMP-201 · Storybook (`15:2417`) ‖ New
+  `- **Storybook**: Default, Revealed, CapsLockOn, WithError, WriteOnlyKey, WriteOnlySecret,
+  WriteOnlyFormatError, WriteOnlyReadOnlyWhileVerifying, WriteOnlyClearedAfterRefusal,
+  WriteOnlyPaste.`
+@ row CMP-201 · Tests (`15:2418`) ‖ Entry · field
+  CMP-201 · Tests (`15:2418`)
+@ row CMP-201 · Tests (`15:2418`) ‖ Old (verbatim)
+  `- **Tests**: unit, visual, axe, interaction (reveal toggle, paste allowed).`
+@ row CMP-201 · Tests (`15:2418`) ‖ New
+  ``- **Tests**: unit, visual, axe, interaction (reveal toggle, paste allowed); with `writeOnly`:
+  no toggle rendered and `showReveal` refused by the type, cleared on leave, never in storage or
+  the accessible name.``
+@ row CMP-201 · Hi-fi pointer (new; insert bef ‖ Entry · field
+  CMP-201 · Hi-fi pointer (new; insert before `15:2419`)
+@ row CMP-201 · Hi-fi pointer (new; insert bef ‖ New
+  ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.3 (text-first, owner approval
+  pending; board 03 pending on page `E27-D03 Accounts and key vault hi-fi`) — the `writeOnly`
+  variant for API keys and secrets.``
+@ row CMP-028 · Hi-fi pointer (new; insert bef ‖ New
+  ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.4 (text-first, owner approval
+  pending; board 03 pending on page `E27-D03 Accounts and key vault hi-fi`) — the blocking danger
+  form: the KEK-unavailable notice.``
+@ row CMP-035 · Tier and Purpose (`15:383`) ‖ Old (verbatim)
+  `- **Tier**: Atom · **Purpose**: bar-close countdown, admin re-auth token expiry countdown,
+  secret auto-hide.`
+@ row CMP-035 · Tier and Purpose (`15:383`) ‖ New
+  `- **Tier**: Atom · **Purpose**: bar-close countdown, admin re-auth token expiry countdown, the
+  key-rotation overlap (SCR-127 stage 4: the served end time first, the time left second).`
+@ row CMP-035 · Hi-fi pointer (new; insert bef ‖ New
+  ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.4 (text-first, owner approval
+  pending; boards 03 and 07 pending on page `E27-D03 Accounts and key vault hi-fi`) — the 900 s
+  rotation overlap: the served end first, server-corrected time, no fault colour.``
+@ row CMP-044 · Tier and Purpose (`15:475`) ‖ Old (verbatim)
+  `- **Tier**: Molecule (composed on CMP-043) · **Purpose**: destructive/irreversible action gate
+  (flatten all, cancel all, Demo→Live switch, delete API key).`
+@ row CMP-044 · Tier and Purpose (`15:475`) ‖ New
+  `- **Tier**: Molecule (composed on CMP-043) · **Purpose**: destructive/irreversible action gate
+  (flatten all, cancel all, Demo→Live switch, revoke an API key here, disable or delete an
+  exchange account); a key is revoked in CandleViewer, never deleted at Bybit.`
+@ row CMP-044 · Hi-fi pointer (new; insert bef ‖ New
+  ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.4 (text-first, owner approval
+  pending; boards 03 and 08 pending on page `E27-D03 Accounts and key vault hi-fi`) — the rungs as
+  E27 uses them: the consequence summary before any confirm, the environment in the title, `Enter`
+  never confirming the typed label.``
+@ row CMP-066 · Tier and Purpose (`15:683`) ‖ New
+  `- **Tier**: Molecule · **Purpose**: onboarding/setup wizards (first-run account connect,
+  rule-creation wizard, the add-account steps of SCR-126, the key-rotation stages of SCR-127).`
+@ row CMP-066 · Hi-fi pointer (new; insert bef ‖ New
+  ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.4 (text-first, owner approval
+  pending; boards 03 and 07 pending on page `E27-D03 Accounts and key vault hi-fi`) — one stepper
+  in `list` and `nav` forms, refused never failed, real elapsed time.``
+@ row CMP-178 · Tier and Purpose (`15:2070`) ‖ New
+  ``- **Tier**: Molecule (owner/admin) · **Purpose**: one metric tile on the admin Health screen —
+  ingestion lag, WS state, DB status, engine FPS, each with threshold-based tone. Its `inline`
+  variant is one account's connection health as text inside a CMP-176 row or the account drawer's
+  key block: the word, its glyph and the heartbeat age, with no tile chrome, no sparkline and no
+  link.``
+@ row CMP-178 · A11y (new; insert before `15:2 ‖ New
+  ``- **A11y**: the `inline` variant is plain text in its host's cell, with no region, heading or
+  link; its word always carries its glyph (check healthy, triangle degraded, octagon down); no
+  live region of its own: the shell announces a transition once (down assertive, degraded and
+  recovery polite), never a refresh, and the age never ticks.``
+@ row CMP-178 · Hi-fi pointer (new; insert bef ‖ New
+  ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.4 (text-first, owner approval
+  pending; board 03 pending on page `E27-D03 Accounts and key vault hi-fi`) — the `inline` variant
+  for per-key health.``
+@ row CMP-011 · Hi-fi pointer (new; insert bef ‖ New
+  ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.2 (text-first, owner approval
+  pending; boards 01 and 02 pending on page `E27-D03 Accounts and key vault hi-fi`) — the
+  account-row state chips: "OK" neutral with the check, the clock for the overdue states.``
+@ row CMP-203 · Tier and Purpose (`15:2431`) ‖ New
+  `- **Tier**: Atom · **Purpose**: live-validating list of policy requirements (length, character
+  classes, not-reused) for SCR-004; and the key gate's check list (SCR-126, SCR-127 stage 3, the
+  Test dialog, SCR-016 step 3): one row per check, each passed, failed or not checked in words, a
+  pass that carries a served warning on the triangle.`
+@ row CMP-203 · Props (`15:2432`) ‖ New
+  ``- **Props**: `items: {label: string; met: boolean}[]` (SCR-004) or `checks: {label: string;
+  outcome: "passed"|"failed"|"not_checked"; warning?: "key_expiring_soon"|"clock_skew"; detail?:
+  string}[]` (the key gate; `detail` the rule's fixed words or the passed value, never exchange
+  text; `warning` the served warning a passed check carries) · `live?: boolean` (default `true`;
+  `false` for the key gate, whose host announces the verdict once).``
+@ row CMP-203 · Hi-fi pointer (new; insert bef ‖ New
+  ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.5 (text-first, owner approval
+  pending; board 03 pending on page `E27-D03 Accounts and key vault hi-fi`) — the key gate's check
+  list: passed, failed and not checked in words.``
+@ row CMP-033 · Tier and Purpose (`15:363`) ‖ Old (verbatim)
+  `- **Tier**: Atom · **Purpose**: copy-to-clipboard affordance (API key display, audit record id,
+  order id).`
+@ row CMP-033 · Tier and Purpose (`15:363`) ‖ New
+  `- **Tier**: Atom · **Purpose**: copy-to-clipboard affordance (the deployment's egress IP, the
+  only value the key screens copy; audit record id; order id); never a key id, a UID or a secret.`
+@ row CMP-033 · Storybook (`15:368`) ‖ New
+  `- **Storybook**: Default, CopiedState, EgressIp (the key screens' one copy control).`
+@ row CMP-033 · Hi-fi pointer (new; insert bef ‖ New
+  ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.3 (text-first, owner approval
+  pending; board 06 pending on page `E27-D03 Accounts and key vault hi-fi`) — the egress IP as the
+  key screens' only copy.``
+@ row SCR-016 · insert before `14:441` ‖ New
+  ``- **Hi-fi (E27-D03, step 3):** [E27-D03.md](../design/E27/E27-D03.md) §4 (text-first, owner
+  approval pending; insets on board 06, pending on page `E27-D03 Accounts and key vault hi-fi`) —
+  the account step in colour: CMP-201's write-only fields with the write-only sentence at mount,
+  the verdict as a result row the server fills, loading, valid, invalid and skipped.``
+@ row SCR-079 · insert before `14:1756` ‖ New
+  ``- **Hi-fi (E27-D03):** [E27-D03.md](../design/E27/E27-D03.md) §8 (text-first, owner approval
+  pending; board 09 pending on page `E27-D03 Accounts and key vault hi-fi`) — the drawer in
+  compact density with one comfortable inset, per role and in view-as, the stale balance at full
+  contrast, the Owner's key block in CMP-175's words.``
+@ row SCR-125 · insert before `14:2517` ‖ New
+  ``- **Hi-fi (E27-D03):** [E27-D03.md](../design/E27/E27-D03.md) §3 (text-first, owner approval
+  pending; boards 04 and 05 pending on page `E27-D03 Accounts and key vault hi-fi`) — CMP-176's
+  two-line rows grouped LIVE and DEMO, the dated verdict (CMP-175 `aggregate`), withdrawal
+  detected as the danger treatment beside the warnings, the KEK notice (CMP-028), in dark and
+  light.``
+@ row SCR-126 · insert before `14:2545` ‖ New
+  ``- **Hi-fi (E27-D03):** [E27-D03.md](../design/E27/E27-D03.md) §4 (text-first, owner approval
+  pending; board 06 pending on page `E27-D03 Accounts and key vault hi-fi`) — CMP-201's write-only
+  fields, the allowlist row with the one copy control, the three-outcome check list (CMP-203), the
+  result panel, the ask before the press and every refusal.``
+@ row SCR-127 · insert before `14:2558` ‖ New
+  ``- **Hi-fi (E27-D03):** [E27-D03.md](../design/E27/E27-D03.md) §5 (text-first, owner approval
+  pending; board 07 pending on page `E27-D03 Accounts and key vault hi-fi`) — the five stages on
+  CMP-066 with their real elapsed time, the 900 s overlap on CMP-035 with the served end first,
+  the refused new key and the delete-at-Bybit note.``
+@ row SCR-128 · insert before `14:2570` ‖ New
+  ``- **Hi-fi (E27-D03):** [E27-D03.md](../design/E27/E27-D03.md) §6 (text-first, owner approval
+  pending; boards 04 and 05 pending on page `E27-D03 Accounts and key vault hi-fi`) — the key
+  table (its compact density legible at 125 %), the secrets-at-rest policy, the overdue state and
+  the ordered compromise card; E43-D02 (#1139) adds the hardening states.``
+@ row SCR-129 · insert before `14:2582` ‖ New
+  ``- **Hi-fi (E27-D03):** [E27-D03.md](../design/E27/E27-D03.md) §7 (text-first, owner approval
+  pending; board 08 pending on page `E27-D03 Accounts and key vault hi-fi`) — revoke, disable and
+  delete on CMP-044's rungs: the consequence summary before any confirm, two choices with none
+  selected, the typed label and the Bybit line.``
+§ hand-off ‖ E27-D03 — Per-component handoff checklist (`16`
+@ heading
+  # E27-D03 — Per-component handoff checklist (`16` §11.4; the contracts the accounts and
+  key-vault hi-fi changes)
+@ prose
+  Three checklists for the contributions (CMP-175 KeyPermissionBadge, CMP-176 AccountKeyRow,
+  CMP-034 MaskedValue) with every line of the `16` §11.4 block kept; one delta row per extended
+  entry (CMP-028, CMP-035, CMP-044, CMP-066, CMP-178, CMP-201, CMP-203, CMP-011 and CMP-033);
+  Tables 1–5, the Density table and the Essential-exceptions table once each with a leading
+  `Component` column; the Storybook story lists with their cells; then §A, the `16` §12 design-QA
+  checklist, and §B, the `05` §10 template, for the eight screens.
+@ prose
+  The boards are PENDING: the Penpot page is `E27-D03 Accounts and key vault hi-fi`, named in spec
+  §0 and referenced by name only until the boards step records its id.
+@ prose
+  Fixture values only; no key material, secret, real UID or real address appears anywhere.
+§ hand-off ‖ Handoff checklist — CMP-175 KeyPermissionBadge (
+@ heading
+  ## Handoff checklist — CMP-175 KeyPermissionBadge (E27-D03, #816)
+@ prose
+  - [ ] **Final Penpot link** — PENDING: page `E27-D03 Accounts and key vault hi-fi` (spec §0),
+  boards 01 and 02 (its light twin); exports
+  `docs/design/E27/img/E27-D03-01-cmp-175-key-states.png` and
+  `docs/design/E27/img/E27-D03-02-cmp-175-key-states-light.png` with their greyscale, deuteranopia
+  and protanopia renders, all in the boards PR; no board exists yet
+@ prose
+  - [x] **Variants × States matrix** — thirteen states in the `key` scope (`badge` and `inline`
+  forms) and the `aggregate` line's eight forms, each with its served source, class, glyph and
+  word (spec §2.1); Table 1
+@ prose
+  - [x] **Live data** — no live region of its own: the host's shell announcer speaks a key's
+  failure once, assertive, and a recovery polite; the aggregate line's negated forms stay silent
+  while CMP-092's blocking row speaks (`15:935`; spec D03-C9); Table 5
+@ prose
+  - [x] **Data contract confirmed** — `KeyVerification` (`withdraw_enabled`, sent only once the
+  rights were read), `KeyVerificationNotRead`, `ApiKey` (`read_only`, `expires_at`,
+  `last_verified_at`), the security summary's `keys[]` (`withdrawal_permission_present`,
+  `ip_whitelist_matches_expected`) and the `system` read-only notices for the aggregate forms
+  (spec §2.1); gaps: G-1 (per-row attribution, #895 / #896), G-2 (the verdict's time) and D03-G1
+  (the egress IP before a check, #896)
+§ hand-off ‖ Handoff checklist — CMP-176 AccountKeyRow (E27-D
+@ prose
+  - [ ] **Final Penpot link** — PENDING: page `E27-D03 Accounts and key vault hi-fi`, boards 03
+  (the rows, blocked, both disabled forms, the 200 % card) and 04 with its light twin 05
+  (SCR-125's records); exports `docs/design/E27/img/E27-D03-03-components-and-looks.png`,
+  `docs/design/E27/img/E27-D03-04-scr-125-128-accounts.png` and
+  `docs/design/E27/img/E27-D03-05-scr-125-128-accounts-light.png`, in the boards PR
+@ prose
+  - [x] **Data contract confirmed** — `listExchangeAccounts` (`AdminAccountRow`: label, UID,
+  environment, kind, `key_status`, `health`, `enabled`), `listApiKeys` (the key's metadata),
+  `getSecuritySummary`'s `keys[]` for the facets and `AccountHealth` (spec §3.3); gaps: G-1
+  (per-row attribution, #895 / #896), D03-G2 (the off-by-policy state, #895) and G-12 (the re-arm,
+  #3657)
+§ hand-off ‖ Handoff checklist — CMP-034 MaskedValue (E27-D03
+@ heading
+  ## Handoff checklist — CMP-034 MaskedValue (E27-D03, #816)
+@ prose
+  - [ ] **Final Penpot link** — PENDING: page `E27-D03 Accounts and key vault hi-fi`, board 01
+  (the masked id beside CMP-175's set) and every screen board that names a key; exports in the
+  boards PR
+@ prose
+  - [x] **Variants × States matrix** — one state, masked, in four hosts (a row, a dialog, a table
+  cell, with its description) and forced colours; no reveal, timer or copy state exists (BQ-8,
+  RULED; spec §2.3); Table 1
+@ prose
+  - [x] **Accessible name / role table** — `role="group"` named by `label`; the `...` behind a
+  visually hidden "ending in", so it reads "API key, ending in a1b2"; the write-only description,
+  one node per page in the DOM at mount, named by every instance's `aria-describedby` (spec §2.3);
+  Table 3
+@ prose
+  - [x] **Data contract confirmed** — `ApiKey.key_id_masked`, `...` plus 4 characters, the rest
+  never stored in clear; any other value renders nothing (spec §2.3; `22:16879-16882`); the masked
+  id is the only key value any response carries (C-2.7, C-12.2)
+@ prose
+  - [ ] **Sign-off** — owner approval pending; the supersession of E05-D02's time-limited display
+  stays the owner's (spec D03-C4, D03-A3), and no board draws a reveal meanwhile
+§ hand-off ‖ The extended entries — one delta row each
+@ row CMP-178 SystemHealthTile ‖ Name / role
+  plain text in its cell: no region, heading or link
+@ row CMP-201 PasswordField ‖ Entry
+  CMP-201 PasswordField
+@ row CMP-203 RequirementChecklist ‖ Live data
+  `live={false}` for the key gate: its host announces the verdict once
+@ row CMP-033 CopyButton ‖ What changes (spec §)
+  the egress IP as the key screens' only copy, never a key id, UID or secret (§2.3)
+§ hand-off ‖ Table 1 — Variants × States
+@ row CMP-175 ‖ Component
+  CMP-175
+@ row CMP-175 ‖ Variant
+  `key` · `badge`
+@ row CMP-175 ‖ State (each a named fram
+  verified, trade-only, read-only (stored), withdrawal-detected (critical), IP-missing,
+  IP-mismatch, expiring, expired, not checked, check overdue, allowlist matches, allowlist not
+  checked; read-only at import is the check list's failed row
+@ row CMP-175 ‖ Penpot variant (planned)
+  `CMP-175 · KeyPermissionBadge / Scope=key, Form=badge, State=…`
+@ row CMP-175 ‖ Story (planned)
+  `Atoms/KeyPermissionBadge/*`
+@ row CMP-175 ‖ Component
+  CMP-175
+@ row CMP-175 ‖ Variant
+  `key` · `inline`
+@ row CMP-175 ‖ Penpot variant (planned)
+  `… / Scope=key, Form=inline, State=…`
+@ row CMP-175 ‖ Notes
+  CMP-176's facet cells, SCR-128's table, SCR-079's key block
+@ row CMP-175 ‖ Component
+  CMP-175
+@ row CMP-175 ‖ State (each a named fram
+  dated, overdue, failed, unavailable, read failed, no keys, loading, cleared
+@ row CMP-176 ‖ State (each a named fram
+  OK, rotating, revoked, blocked, key refused, expired at Bybit, allowlist no match, allowlist
+  none set, down, off by policy, check overdue, not checked, rotation overdue, degraded, rotation
+  due, Bybit expiry, no key, disabled; KEK unavailable; menu open, details open, hover,
+  focus-visible; 200 % card, 150 % text, compact at 125 %
+@ row CMP-034 ‖ Component
+  CMP-034
+@ row CMP-034 ‖ Variant
+  masked, its only state
+@ row CMP-034 ‖ State (each a named fram
+  on a row, in a dialog, in a table cell, with its description; a non-masked value renders
+  nothing; forced colours
+@ row CMP-034 ‖ Penpot variant (planned)
+  `CMP-034 · MaskedValue / Host=…`
+@ row CMP-034 ‖ Story (planned)
+  `Atoms/MaskedValue/*`
+@ row CMP-034 ‖ Notes
+  spec §2.3; no reveal, timer or copy exists
+§ hand-off ‖ Table 2 — Keyboard
+@ head 2
+  Key
+@ row CMP-175 ‖ Component
+  CMP-175
+@ row CMP-175 ‖ Notes
+  the row's actions carry the keys
+@ row CMP-034 ‖ Component
+  CMP-034
+§ hand-off ‖ Table 3 — Accessible name / role
+@ row CMP-175 ‖ Component
+  CMP-175
+@ row CMP-175 ‖ Accessible name (source)
+  its word, e.g. "BLOCKED — fund right found"
+@ row CMP-175 ‖ Component
+  CMP-175
+@ row CMP-175 ‖ Accessible name (source)
+  its sentence, e.g. "Withdrawal: OFF on all 4 accounts with a key ✓ · verified 14:02 UTC"
+@ row CMP-034 ‖ Component
+  CMP-034
+@ row CMP-034 ‖ Element
+  the masked id
+@ row CMP-034 ‖ Accessible name (source)
+  "API key, ending in a1b2"
+§ hand-off ‖ Table 4 — Motion pair
+@ row CMP-175 ‖ Component
+  CMP-175
+@ row CMP-034 ‖ Component
+  CMP-034
+§ hand-off ‖ Table 5 — Live data
+@ row CMP-175 ‖ Component
+  CMP-175
+@ row CMP-175 ‖ Field
+  a key's state turning failed, critical or down
+@ row CMP-175 ‖ Component
+  CMP-175
+@ row CMP-175 ‖ Component
+  CMP-175
+@ row CMP-176 ‖ Politeness
+  through the shell announcer, as CMP-175
+@ row CMP-034 ‖ Component
+  CMP-034
+§ hand-off ‖ Density
+@ row CMP-175 ‖ Component
+  CMP-175
+@ row CMP-175 ‖ Component
+  CMP-175
+@ row CMP-034 ‖ Component
+  CMP-034
+§ hand-off ‖ Storybook stories × themes × densities
+@ row CMP-175 ‖ Component
+  CMP-175
+@ row CMP-175 ‖ Stories (spec §13)
+  Default · WithdrawalVerified · WithdrawalDetected · WithdrawalNotChecked ·
+  WithdrawalCheckOverdue · RightsTrade · RightsMissingScopes · RightsReadOnly · AllowlistMatches ·
+  AllowlistNoneSet · AllowlistNoMatch · AllowlistNotChecked · ExpiryExpiring · ExpiryExpired ·
+  InlineForm · AggregateDated · AggregateOverdue · AggregateFailed · AggregateUnavailable ·
+  AggregateReadFailed · AggregateNoKeys · AggregateLoading · VariantSet · MissingStateNeverOff ·
+  ForcedColors
+@ row CMP-034 ‖ Component
+  CMP-034
+@ row CMP-034 ‖ Stories (spec §13)
+  Default · InDialog · InTableCell · WithDescription · NonMaskedValueRendersNothing · ForcedColors
+@ row CMP-201 (`writeOnly`) ‖ Component
+  CMP-201 (`writeOnly`)
+§ hand-off ‖ A. Design QA checklist (`16` §12) — SCR-125..129
+@ prose
+  601 luma, for every CMP-175 class (spec §9); the greyscale, deuteranopia and protanopia renders
+  of boards 01 and 02 come with the boards PR (BQ-16).
+@ prose
+  - [x] Disabled states use the disabled-with-reason pattern (CMP-079) — the one rule, view-as
+  first (spec §10.1), with ten PROPOSED E27 reason keys (spec §12.2); busy, outcome, availability,
+  the validity look, T4, T1 and T3 stay apart (spec §10.3).
+@ prose
+  - [x] Confirm-gate variant stated — revoke rung 1 with the `keys` step-up, or rung 3 with the
+  typed label for an account's last active key; disable and delete rung 3 with the typed label,
+  their step-up class stamped "not yet served — G-8, #895 / #898"; rotate rung 1 with the `keys`
+  step-up; each keyboard path in spec §7, §11.
+§ hand-off ‖ B. Accessibility acceptance criteria (`05` §10)
+@ code
+  Feature: E27-D03 accounts and key vault — accessibility acceptance criteria
+@ code
+  When the Owner adds a key on SCR-126, rotates it on SCR-127 and revokes it on SCR-129
+@ code
+  Then every control involved is reachable via Tab/arrow-key navigation (SCR-125's records
+@ code
+  When the Owner reads SCR-125 and tests a key
+@ code
+  LIVE" as the row header, "Withdrawal OFF ✓ · verified 14:02 UTC" as words, "API key,
+@ code
+  05-accessibility-standard.md §6.2, without flooding (a failed key assertive once through
+@ code
+  When a CMP-175, CMP-011 or CMP-178 state is rendered
+@ code
+  Given a T2 control (Rotate key… while the KEK is unavailable, the leave-positions radio
+"""
 
 
 if __name__ == "__main__":
