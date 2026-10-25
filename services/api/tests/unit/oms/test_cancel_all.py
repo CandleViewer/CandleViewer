@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import math
 from collections import Counter, OrderedDict
-from collections.abc import AsyncIterator, Collection, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import fields
 from decimal import Decimal
 from typing import Any
@@ -26,6 +26,7 @@ from candleviewer.oms.cancel_all import (
     ACCOUNTS_AT_ONCE,
     DEADLINE_S,
     FOLD_MIN,
+    READ_TIMEOUT_S,
     REASON,
     AccountCancels,
     AccountError,
@@ -535,9 +536,20 @@ class _Log(list[tuple[str, str]]):
 
 
 class _Venue(FakeTradingPort):
+    """The fake venue, each cancel logged; with `stall_reads`, an open-orders read is taken and
+    never answered."""
+
     def __init__(self, log: _Log) -> None:
         super().__init__()
-        self.log = log
+        self.log, self.stall_reads = log, False
+
+    async def open_orders(
+        self, account: AccountRef, symbol: Symbol | None = None, *, order_link_id: Any = None
+    ) -> Sequence[Order]:
+        rows = await super().open_orders(account, symbol, order_link_id=order_link_id)
+        if self.stall_reads:
+            await asyncio.Event().wait()
+        return rows
 
     async def cancel_all(self, account: AccountRef, symbol: Any) -> Sequence[OrderAck]:
         self.log.append(("venue", "cancel_all"))
@@ -598,11 +610,16 @@ class _Accounts:
         fail: bool = False,
         ref: AccountRef = _FOLD_REF,
         refs: Mapping[UUID, AccountRef] | None = None,
+        *,
+        stall: bool = False,
     ) -> None:
         self.fail, self.ref, self.refs, self.asked = fail, ref, dict(refs or {}), 0
+        self.stall = stall
 
     async def trading_account(self, account_id: AccountId) -> AccountRef:
         self.asked += 1
+        if self.stall:
+            await asyncio.Event().wait()
         if self.fail:
             raise StorageTierUnavailable("postgres unreachable (OSError)")
         return self.refs.get(account_id, self.ref)
@@ -614,18 +631,23 @@ class _Fold:
     def __init__(
         self, rows: Sequence[OrderRow], resting: Sequence[Order], *, refuse: Collection[UUID] = (),
         accounts: _Accounts | None = None, refs: Mapping[UUID, AccountRef] | None = None,
+        read_timeout_s: float = READ_TIMEOUT_S,
+        spacer_sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:  # fmt: skip
         self.log, self.accounts = _Log(), accounts or _Accounts(refs=refs)
         self.venue = _Venue(self.log)
         for order in resting:
             self.venue.seed_order(order, uid=_FOLD_REF.uid)
-        clock = _Clock()
-        self.spacer = CancelAllSpacer(monotonic=clock, sleep=_never)
+        self.clock = _Clock()
+        self.spacer = CancelAllSpacer(monotonic=self.clock, sleep=spacer_sleep or _never)
         self.port = CancelAllCoalescer(
-            self.venue, spacer=self.spacer, monotonic=clock, sleep=_never
+            self.venue, spacer=self.spacer, monotonic=self.clock, sleep=_never
         )
         self.exits = _PortExits(self.port, self.log, refuse, refs)
-        self.service = CancelAll(_Reads(rows), self.exits, folds=(self.port, self.accounts))
+        self.service = CancelAll(
+            _Reads(rows), self.exits, folds=(self.port, self.accounts),
+            read_timeout_s=read_timeout_s,
+        )  # fmt: skip
 
     async def run(self, **request: Any) -> Any:
         ask = _request(exclude_reduce_only=False) if not request else _request(**request)
@@ -749,6 +771,30 @@ async def test_two_overlapping_unrestricted_requests_on_one_symbol_both_finish()
     finally:
         first.cancel()
         await asyncio.wait([first])
+
+
+async def test_a_fold_account_read_past_its_bound_leaves_the_orders_to_their_own_cancels() -> None:
+    """CR-S4F-07: the fold port's account read is bounded by `read_timeout_s`; one that never
+    answers is no account, and the orders go one at a time, nothing read for coverage."""
+    fold = _Fold(
+        [_fold_row(1), _fold_row(2)], [_venue_order(1), _venue_order(2)],
+        accounts=_Accounts(stall=True), read_timeout_s=0.01,
+    )  # fmt: skip
+    got = await fold.run()
+    assert got.accounts == (AccountCancels(_A, affected=2, error=None),)
+    assert [c.method for c in fold.venue.calls] == ["cancel_order", "cancel_order"]
+
+
+async def test_a_coverage_read_past_its_bound_proves_nothing_and_never_folds() -> None:
+    """CR-S4F-07: the coverage read is bounded too, and one past the bound is no proof of
+    coverage (the fail-safe): no cancel-all, each order its own cancel."""
+    fold = _Fold(
+        [_fold_row(1), _fold_row(2)], [_venue_order(1), _venue_order(2)], read_timeout_s=0.01
+    )
+    fold.venue.stall_reads = True
+    got = await fold.run()
+    assert got.accounts == (AccountCancels(_A, affected=2, error=None),)
+    assert [c.method for c in fold.venue.calls] == ["open_orders", "cancel_order", "cancel_order"]
 
 
 async def test_each_symbol_folds_or_not_on_its_own_coverage() -> None:

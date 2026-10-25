@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-from collections.abc import Sequence
+import inspect
+from collections.abc import Awaitable, Callable, Sequence
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -29,7 +30,7 @@ from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms.cancel_all import FOLD_MIN
 from candleviewer.oms.cancel_all_coalescer import FOLD_OUTCOMES, CancelAllCoalescer, unfolded
 from candleviewer.oms.cancel_all_fold import CancelAllSpacer, FoldRefused
-from candleviewer.oms.routing import TradingRouter
+from candleviewer.oms.routing import RoutedPort, TradingRouter
 from candleviewer.storage.repositories.orders import OrderRow
 from tests.unit.oms import command_rig as cr
 
@@ -115,6 +116,80 @@ async def test_every_call_outside_a_fold_passes_through_as_it_is() -> None:
     assert await port.positions(_REF) == []
     assert port.headroom(_REF, "critical") == venue.headroom(_REF, "critical")
     assert _methods(venue) == ["open_orders", "cancel_order", "cancel_all", "positions"]
+
+
+_ANSWER, _A0, _A1, _A2, _A3, _A4 = (object() for _ in range(6))
+
+
+class _Recorder:
+    """An inner port that records each call as it is made and answers a sentinel of its own."""
+
+    capabilities = object()
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+
+    def headroom(self, *args: object, **kwargs: object) -> object:
+        self.calls.append(("headroom", args, kwargs))
+        return _ANSWER
+
+    def __getattr__(self, name: str) -> Callable[..., Awaitable[object]]:
+        async def call(*args: object, **kwargs: object) -> object:
+            self.calls.append((name, args, kwargs))
+            return _ANSWER
+
+        return call
+
+
+#: Every call the coalescer passes through, with arguments it must forward as they are.
+_PASS_THROUGHS: list[tuple[str, tuple[object, ...], dict[str, object]]] = [
+    ("headroom", (_A0, _A1), {}),
+    ("place_order", (_A0,), {}),
+    ("place_batch", (_A0,), {}),
+    ("amend_order", (_A0,), {}),
+    ("cancel_all", (_A0, _A1), {}),
+    ("set_trading_stop", (_A0,), {}),
+    ("set_leverage", (_A0, _A1, _A2), {}),
+    ("open_orders", (_A0, _A1), {"order_link_id": _A2}),
+    (
+        "order_history", (_A0,),
+        {"order_link_id": _A1, "exchange_order_id": _A2, "start": _A3, "end": _A4},
+    ),
+    ("positions", (_A0,), {}),
+    ("executions", (_A0, _A1, _A2), {}),
+    ("closed_pnl", (_A0, _A1, _A2), {}),
+    ("wallet", (_A0,), {}),
+    ("fee_rate", (_A0, _A1), {}),
+    ("account_info", (_A0,), {}),
+    ("subscribe_private", (_A0,), {}),
+]  # fmt: skip
+
+
+def test_the_pass_throughs_are_every_call_but_the_folds_own() -> None:
+    own = {"coverage", "fold", "cancel_order", "aclose"}
+    public = {name for name in vars(CancelAllCoalescer) if not name.startswith("_")}
+    assert public - own == {name for name, _, _ in _PASS_THROUGHS} and len(_PASS_THROUGHS) == 16
+
+
+@pytest.mark.parametrize(
+    ("name", "args", "kwargs"), _PASS_THROUGHS, ids=[name for name, _, _ in _PASS_THROUGHS]
+)
+async def test_each_pass_through_forwards_its_exact_arguments_and_answers_its_inner_result(
+    name: str, args: tuple[object, ...], kwargs: dict[str, object]
+) -> None:
+    """CR-S4F-08: each call passes to the inner port once, with the arguments it was given, and
+    answers what the inner port answered (`set_leverage` answers nothing, as its port's)."""
+    inner = _Recorder()
+    clock = _Clock()
+    port = CancelAllCoalescer(
+        cast(RoutedPort, inner), spacer=CancelAllSpacer(monotonic=clock), monotonic=clock
+    )
+    got = getattr(port, name)(*args, **kwargs)
+    if inspect.isawaitable(got):
+        got = await got
+    assert inner.calls == [(name, args, kwargs)]
+    assert got is (None if name == "set_leverage" else _ANSWER)
+    assert port.capabilities is _Recorder.capabilities
 
 
 async def test_coverage_holds_when_every_plain_order_resting_is_a_member() -> None:
