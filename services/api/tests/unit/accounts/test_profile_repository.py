@@ -633,24 +633,29 @@ async def test_a_move_rings_both_rows_demoted_first_with_the_bindings_new_versio
         ("delete", AccountProfileStoreScopeDeniedError(), AccountScopeDeniedError),
         ("update", StorageTierUnavailable("pg"), StorageTierUnavailable),
         ("delete", None, AccountNotFoundError),
+        ("create", None, AccountNotFoundError),
+        ("update", None, AccountNotFoundError),
         ("set_default", dataclasses.replace(_MOVE, written=False), None),
         ("mismatch", _row(), AccountNotFoundError),
     ],
     ids=[
         *(f"stale-{w}" for w in _WRITES),
-        *("conflict", "rule", "denied", "outage", "miss", "no-op-move", "path-mismatch"),
+        *("conflict", "rule", "denied", "outage", "miss-delete", "miss-create", "miss-update"),
+        *("no-op-move", "path-mismatch"),
     ],
 )
 async def test_a_write_that_changes_nothing_or_is_refused_rings_nothing(
     write: str, answer: object, raised: type[Exception] | None
 ) -> None:
     repo, bell, events = _belled(answer)
-    with nullcontext() if raised is None else pytest.raises(raised):
-        if write == "mismatch":  # a body naming another account reaches no store
-            await repo.create_profile(_OWNER, uuid4(), _P)
-        else:
-            await _write(repo, write)
+    with structlog.testing.capture_logs() as logs:
+        with nullcontext() if raised is None else pytest.raises(raised):
+            if write == "mismatch":  # a body naming another account reaches no store
+                await repo.create_profile(_OWNER, uuid4(), _P)
+            else:
+                await _write(repo, write)
     assert bell.heard == [] and "rang" not in events
+    assert "profile.change_unannounced" not in [log["event"] for log in logs]  # nor tried
 
 
 @pytest.mark.parametrize("fault", ["fails", "hangs"])
@@ -681,11 +686,23 @@ async def test_a_doorbell_that_fails_or_hangs_never_fails_the_write(
     ]  # fmt: skip
 
 
+async def test_an_event_that_cannot_be_built_never_fails_the_write() -> None:
+    """The write has committed: an event the model refuses (a binding version of 0) is logged by
+    its class and never raised, as a port's failure is."""
+    repo, bell, _ = _belled(dataclasses.replace(_MOVE, version=0))
+    with structlog.testing.capture_logs() as logs:
+        moved = await _write(repo, "set_default")
+    assert (bell.heard, getattr(moved, "version", None)) == ([], 0)
+    assert [(log["event"], log["error"]) for log in logs] == [
+        ("profile.change_unannounced", "ValidationError")
+    ]
+
+
 async def test_a_cancelled_write_is_not_swallowed_by_its_doorbell() -> None:
     """`CancelledError` is not an `Exception`: a write cancelled while it rings stays cancelled."""
     repo, bell, _ = _belled(_row(version=4), hangs=True)
     writing = asyncio.ensure_future(_write(repo, "update"))
-    await bell.entered.wait()
+    await asyncio.wait_for(bell.entered.wait(), 5)  # bounds the test; times nothing
     writing.cancel()
     done, _ = await asyncio.wait({writing}, timeout=5)  # bounds the test; times nothing
     assert writing in done and writing.cancelled()

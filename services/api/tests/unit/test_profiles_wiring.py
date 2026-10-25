@@ -177,7 +177,7 @@ async def test_the_bus_doorbell_is_its_topics_one_producer() -> None:
     bus, accounts = _CountingBus(), [uuid4() for _ in range(3)]
     doorbell = BusProfileChanges(cast(Bus, bus), "demo")
     ringing = [asyncio.ensure_future(doorbell.changed(_change(a))) for a in accounts]
-    await bus.entered.wait()  # the first publishes; the others have run up to the doorbell
+    await asyncio.wait_for(bus.entered.wait(), 5)  # the first publishes; the others wait
     bus.release.set()
     await asyncio.gather(*ringing)
     assert bus.most == 1
