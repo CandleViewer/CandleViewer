@@ -6,14 +6,18 @@ prints: (1) the WCAG 2.x ratio of every fg / bg pair SCR-069 and CMP-119 render 
 high-contrast (`themes.json` layering) and the validity composite; (2) every token the spec binds,
 resolved or MISSING; (3-4) the contract facts the spec quotes, parsed from text, beside the spec's
 claim; (5) the string gates (every E32-D02 section 3.8 key byte-equal, the CMP-158 sentence, the
-RULED class word, no "app-managed" in UI copy, T2 reasons within 60 characters, no private text,
+RULED class word in sections 2 / 5 / 10, no "app-managed" in UI copy and no middle-dot class word
+outside HA-14, T2 reasons within 60 characters, no private text,
 every cited id and `file:line` still valid, C-2.6 on every position-opening frame); (6) the counts
 and the fixture arithmetic (the E32-D01 ladder tool's formulas re-implemented; nothing typed twice).
 `--json` feeds the check-nums script; `--check` re-derives the spec's `audit:` markers;
 `--self-test` mutation-tests the cite rule (moved line = WARN; vanished or ambiguous = FAIL) and
 the section 3 frame gates on this spec (a present-tense stop marker on one pre-send row = one
 FAIL, in three phrasings; a renamed pre-send row = one FAIL; the viewer row without its stop =
-one FAIL; a post-confirm control = no FAIL).
+one FAIL with its label kept; `submitted` without its flag = no FAIL, without its flag and "held by
+the exchange" = one FAIL; a post-confirm control = no FAIL) and the class-word gate (a middle dot in
+section 10's `cls.emulated` or in one of section 5's two = one FAIL each; section 10 without the
+RULED word = one FAIL).
 Exit 1 on a gated FAIL or a failed gate.
 
 Usage: python3 -I docs/design/_tools/e32_d03_bracket_builder_audit.py [--json|--check|--self-test]
@@ -50,10 +54,14 @@ FORBIDDEN = (
     r"team-i[d]=",
     r"file-i[d]=",
 )
-# The class word the orchestrator's ruling retired from user copy (RULED 2026-10-24); UI sections.
-BANNED_COPY = (r"app-managed",)
 # Byte-equal to E33-D03 section 13 `tag.emulated`'s accessible name (em dash; HA-14).
 RULED_WORD = "Emulated — run by CandleViewer, not Bybit"
+# The middle-dot form HA-14 retired; only HA-14's quoted "from" string may still carry it.
+RETIRED_WORD = re.escape("Emulated · run by CandleViewer, not Bybit")
+HA14_ROW = r"^\| HA-14 \|[^\n]*\n?"
+# The class words the orchestrator's rulings retired (RULED 2026-10-24): "app-managed" in the UI
+# sections; the middle-dot class word anywhere in the spec outside the HA-14 row.
+BANNED_COPY = (r"app-managed", RETIRED_WORD)
 NOTE_DRAFT = (
     "Every position keeps a native stop — you can move it, not delete it. "
     "It is placed with the order, not after it."
@@ -61,8 +69,11 @@ NOTE_DRAFT = (
 SL_REQUIRED = "This account requires a stop-loss on every order."
 STOP_LABEL = "Stop-loss (required)"
 HOLDER = "held by Bybit"
-# C-2.6: every position-opening frame of section 3 names the stop and its holder (or the wire flag).
-STOP_MARKERS = (HOLDER, "native_sl_confirmed", STOP_LABEL)
+# C-2.6: every position-opening frame of section 3 names its stop's holder — the holder line
+# "held by Bybit", the registered "held by the exchange" or the wire flag. The label "Stop-loss
+# (required)" names the row, not the holder, so it alone never passes (AC Sc. 1, section 12).
+EXCHANGE = "held by the exchange"
+STOP_MARKERS = (HOLDER, EXCHANGE, "native_sl_confirmed")
 NON_OPENING = ("E33 extension point",)
 # The twelve pre-send rows of section 3: no exchange stop exists yet. `sl.holder` "held by Bybit
 # (exchange)" is the custodian word and stays verbatim; a marker or free sentence is state-true:
@@ -685,15 +696,87 @@ def self_test_frames() -> list[str]:
         mutated = rows3.copy()
         if old:
             mutated[hit[0]] = mutated[hit[0]].replace(old, new)
-        else:  # strip every stop marker from the row
-            for mk in STOP_MARKERS:
+        else:  # strip every holder phrase from the row; the label "Stop-loss (required)" stays
+            for mk in (HOLDER, EXCHANGE, "native_sl_confirmed"):
                 mutated[hit[0]] = mutated[hit[0]].replace(mk, "—")
         if mutated[hit[0]] == rows3[hit[0]]:
             bad.append(f"self-test: the {name[:-1]} mutation changed nothing")
             continue
+        if not old and STOP_LABEL not in mutated[hit[0]]:
+            bad.append("self-test: the viewer mutation must keep the label (label alone fails)")
         got = len(frame_gates("\n".join(mutated)))
         if got != want:
             bad.append(f"self-test: the {name[:-1]} mutation gave {got} FAIL, not {want}")
+    # Row 9 (`submitted`) names its stop as "held by the exchange" and the wire flag: without
+    # the flag the registered words still carry it (0 FAIL); without both, exactly one FAIL.
+    hit = [i for i, ln in enumerate(rows3) if "`SCR-069 / submitted`" in ln]
+    for want, strip in ((0, ("native_sl_confirmed",)), (1, ("native_sl_confirmed", EXCHANGE))):
+        if len(hit) != 1 or any(x not in rows3[hit[0]] for x in strip):
+            bad.append("self-test: cannot plant the submitted mutation")
+            continue
+        mutated = rows3.copy()
+        for x in strip:
+            mutated[hit[0]] = mutated[hit[0]].replace(x, "—")
+        got = len(frame_gates("\n".join(mutated)))
+        if got != want:
+            bad.append(f"self-test: submitted without {strip} gave {got} FAIL, not {want}")
+    return bad
+
+
+def class_word_gates(spec: str) -> list[str]:
+    """The RULED class word present in sections 2, 5 and 10; every retired word refused: the
+    "app-managed" pattern in the UI sections, the middle-dot form anywhere outside the HA-14 row
+    (one FAIL per occurrence, so a middle dot in section 10's `cls.emulated` or in one of
+    section 5's two is caught once)."""
+    bad: list[str] = []
+    for n in (2, 5, 10):
+        if RULED_WORD not in section(spec, n, n + 1):
+            bad.append(f"spec section {n}: the RULED class word is missing")
+    for n in (2, 3, 4, 5, 6, 7, 8, 10):
+        body = section(spec, n, n + 1)
+        bad += [
+            f"spec section {n}: retired word in UI copy: {mm.group(0)!r}"
+            for p in BANNED_COPY
+            if p != RETIRED_WORD
+            for mm in re.finditer(p, body)
+        ]
+    for mm in re.finditer(RETIRED_WORD, re.sub(HA14_ROW, "", spec, flags=MULTI)):
+        bad.append(f"spec: the retired middle-dot class word outside HA-14: {mm.group(0)!r}")
+    return bad
+
+
+def self_test_class_word() -> list[str]:
+    """Mutation-test the class-word gate: the head is clean; the middle-dot form planted in
+    section 10's `cls.emulated` row, or in one of section 5's two occurrences, is exactly one
+    FAIL each; section 10 without the RULED word is exactly one FAIL; HA-14's own quoted "from"
+    string is no FAIL."""
+    spec = SPEC.read_text(encoding="utf-8")
+    bad: list[str] = []
+    if class_word_gates(spec):
+        bad.append("self-test: the head's class words must pass the class-word gate")
+    dot = "Emulated · run by CandleViewer, not Bybit"
+    s5 = section(spec, 5, 6)
+    for label, start, end, want in (
+        ("section 10 cls.emulated", "\n| `cls.emulated` ", "\n", 1),
+        ("section 5 (first of two)", s5[:20], "\n## 6.", 1),
+    ):
+        i = spec.index(start)
+        j = spec.index(end, i + len(start))
+        k = spec.find(RULED_WORD, i, j)
+        if k < 0:
+            bad.append(f"self-test: cannot plant the {label} class-word mutation")
+            continue
+        mutated = spec[:k] + dot + spec[k + len(RULED_WORD) :]
+        got = len(class_word_gates(mutated))
+        if got != want:
+            bad.append(f"self-test: the {label} class-word mutation gave {got} FAIL, not {want}")
+    s10 = section(spec, 10, 11)
+    if class_word_gates(spec.replace(s10, s10.replace(RULED_WORD, "Emulated"))) != [
+        "spec section 10: the RULED class word is missing"
+    ]:
+        bad.append("self-test: section 10 without the RULED word must be exactly one FAIL")
+    if dot not in re.findall(HA14_ROW, spec, MULTI)[0]:
+        bad.append("self-test: HA-14's quoted from-string must keep the middle dot")
     return bad
 
 
@@ -715,16 +798,7 @@ def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, s
     for needle, where in ((NOTE_DRAFT, "the CMP-158 sentence"), (SL_REQUIRED, "v.sl.required")):
         if needle not in spec:
             bad.append(f"spec: {where} missing verbatim")
-    for n in (2, 5):
-        if RULED_WORD not in section(spec, n, n + 1):
-            bad.append(f"spec section {n}: the RULED class word is missing")
-    for n in (2, 3, 4, 5, 6, 7, 8, 10):
-        body = section(spec, n, n + 1)
-        bad += [
-            f"spec section {n}: retired word in UI copy: {mm.group(0)!r}"
-            for p in BANNED_COPY
-            for mm in re.finditer(p, body)
-        ]
+    bad += class_word_gates(spec)
     for key, cell in re.findall(REASON_RE, deck, MULTI):
         for s in quoted(cell):
             if len(s) > 60 or not s.endswith(".") or re.search(r"\d", s):
@@ -792,10 +866,13 @@ def flatten(d: object, prefix: str = "") -> dict[str, object]:
 
 def main(argv: list[str]) -> int:
     if "--self-test" in argv:
-        bad = self_test() + self_test_frames()
+        bad = self_test() + self_test_frames() + self_test_class_word()
         msg = "self-test: clean (cite: moved → WARN, gone → FAIL, ambiguous → FAIL; frames: "
         msg += "pre-send present tense (3 phrasings) → 1 FAIL, a renamed pre-send row → 1 FAIL, "
-        msg += "viewer without its stop → 1 FAIL, post-confirm → 0)"
+        msg += "viewer with its label alone → 1 FAIL, submitted without its flag → 0, without its "
+        msg += "flag and 'held by the exchange' → 1, post-confirm → 0; class word: middle dot in "
+        msg += "section 10 cls.emulated → 1 FAIL, in section 5 (one of two) → 1 FAIL, "
+        msg += "section 10 without it → 1 FAIL)"
         print(msg if not bad else "\n".join(bad))
         return 1 if bad else 0
     themes = {k: load_theme(k) for k in THEMES}
