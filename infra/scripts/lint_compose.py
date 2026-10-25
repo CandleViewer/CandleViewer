@@ -492,7 +492,7 @@ def _kek_secret_problems(compose: dict[str, Any], api: dict[str, Any]) -> list[s
             f"service 'api': does not mount cv_kek once at {KEK_HANDLE}, uid and gid "
             f"{_RUNTIME_ID}, mode 0400"
         )
-    targets = [mount["target"] for mount in mounts]
+    targets = [_secret_ends(entry)[1] for entry in api.get("secrets") or []]
     foreign = [m for m in mounts if _API_MOUNTS.get(str(m["source"])) != m]
     if foreign or len(set(targets)) < len(targets):
         errors.append(
