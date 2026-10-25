@@ -4192,20 +4192,807 @@ SEC_PIN_TXT = r"""
   `CMP-123/*`: default, holding, armed, the typed word on LIVE, busy, the T2 frames, offline
 @ row 10 ‖ Board
   `E29-D04 / 10 flatten-confirm-light`
+§ spec ‖ 1. Inputs and decisions
+@ row D01 D7 (D01:274); D02 gap 13 (D02:622 "a ‖ Row (cited)
+  D01 D7 (D01:274); D02 gap 13 (D02:622 "a Live flatten needs hold and typed")
+@ row D01 D7 (D01:274); D02 gap 13 (D02:622 "a ‖ Asked of E29-D04
+  the flatten confirm: a hold with a discrete second press, and on LIVE the typed confirm as well
+@ row D01 D7 (D01:274); D02 gap 13 (D02:622 "a ‖ Answered
+  §2.4, CMP-123's composite, defined once (RULED BQ-7; A-5)
+@ row D02 gap 13 (D02:622) ‖ Asked of E29-D04
+  CMP-028's tone; CMP-105 as a filter picker; CMP-129's read-only display; CMP-019
+@ row E39-D03 C9 (E39-D03:383); E33-D03 D03-A2 ‖ Asked of E29-D04
+  CMP-123's data contract; a CMP-123 sentence routed to E33-D04
+§ spec ‖ 2. The component contributions
+@ prose
+  Contributed whole (hand-off A-1 to A-4): CMP-114 PositionsGrid, CMP-115 OrderRow, CMP-116
+  PnLBadge and CMP-129 PositionModeToggle; amended field by field in Table A: CMP-123
+  FlattenAllButton (A-5) and the CMP-049 base table (A-6); reused by contract: CMP-105
+  AccountMultiSelect (A-7); answered by a delta or a change request to their owners: the
+  components D02 §15 and D03 §11.2 route here (§2.8), CMP-209's drawer motion among them as A-8;
+  consumed as catalogued: the rest (§2.9); D02 gap 8's elements are named parts of their parent
+  entries, never new ids (§2.10; RULED BQ-3).
+§ spec ‖ 2.1 CMP-114 PositionsGrid
+@ prose
+  Proposal (hand-off A-1; RULED BQ-4): CMP-049's `treegrid` (§2.7) with D02 D-1's levels
+  (D02:142); `PositionRow` gains `env`, `rPnlToday`, `r` (null without a stop), `protection` (the
+  B8 state and its `frozen` flag), `positionMode`, `adlRank` (null: on no frame yet, a contract
+  gap) and `marginMode` cross, isolated or portfolio, every money field the generated
+  `packages/protocol` decimal string, never `number`; `groupBy` gains `trade_group`, and Group by
+  Manager stays the Owner's view choice, never T2 (D02:374); `rowActions` take CMP-079's `allowed`
+  + `reason` (`15`:814), never a role prop (E09-D09:34).
+@ prose
+  Variants: `density`; `groupBy`; one environment or mixed (the Env column only while the account
+  scope spans both, D02:146; the LIVE block, then the DEMO block, D02:441); the narrow dock at 360
+  px (D02:469).
+@ row `CMP-114/t2-viewer` ‖ State
+  T2: a Viewer's Close ▾, `aria-disabled`, its reason the panel notice (D02:433)
+@ row `CMP-114/env-mixed-view` ‖ Word
+  "LIVE"
+@ row `CMP-114/sl-naked` ‖ Word
+  "NO SL ! 12 s"
+@ row `CMP-114/sl-naked-unrecoverable` ‖ State
+  `naked_unrecoverable`: the row keeps a reduce-only Close
+@ row `CMP-114/sl-naked-unrecoverable` ‖ Word
+  "NO SL — owner paged"
+@ row `CMP-114/sl-frozen` ‖ Frame
+  `CMP-114/sl-frozen`
+@ row `CMP-114/sl-frozen` ‖ State
+  `amend_lock.frozen`: a tighten is still sent (D02:234)
+@ row `CMP-114/sl-frozen` ‖ Word
+  "· frozen"
+@ row `CMP-114/group-header` ‖ Word
+  "▾ Main · LIVE · One-way · 1 position · uPnL +8.00 · rPnL today +37.40"
+@ row `CMP-114/totals-row` ‖ Word
+  "LIVE total"
+@ row `CMP-114/updates-paused-chip` ‖ Fill
+  `color.neutral.subtle`; `color.status.danger.subtle` while a held row carries NO SL
+@ prose
+  - **Keyboard:** A treegrid with one roving stop (D02:447): `↑` / `↓` rows, `←` / `→` cells (on a
+  group header `→` expands and `←` collapses), `Home` / `End`, `PageUp` / `PageDown`; `Space`
+  toggles the row's selection, `Shift+↑` / `Shift+↓` extend it and `Ctrl+A` selects all in view;
+  `Enter` opens SCR-064 on a row; `Shift+F10` or `Menu` opens the row menu; `Ctrl+Delete` acts on
+  the D01 D9 targets and confirms whenever they exclude the focused row (D02:457); `Ctrl+Shift+F`
+  opens Flatten account (§2.4), its owner still open (D02:667).
+@ prose
+  - **Accessible name:** A row's name is its environment in a mixed view, then symbol, side, size
+  and account ("LIVE · BTCUSDT · Long · 0.250 BTC · Main"); the tier cell reads the D5 label with
+  the share and the distance ("Critical — near liquidation: 14 % of the entry buffer left, 0.5 %
+  from liquidation", D02:222); a chip, tag or marker reads its word, its glyph named once; a T2
+  control keeps its full label and its reason is the description, never the name (E09-D09:49).
+@ prose
+  The polite region speaks the focused row's changed values and the environment totals, at most
+  once per 2 s per field, and the selection count and Near crossings once each; filled, rejected,
+  offline and reconnected, NO SL and Critical crossings are assertive, once (D02:465;
+  `05`:147–148).
+@ prose
+  Ages, "Last update", the NO SL timer and Mo-3 never speak.
+§ spec ‖ 2.2 CMP-115 OrderRow
+@ prose
+  Proposal (hand-off A-2; RULED BQ-5): `status` widens to D01 D2's fifteen labels (D01:174–191),
+  each a word with the CMP-019 glyph name D01 proposes (D01:170), drawn meanwhile as the text
+  glyph; null or unmapped reads "Working — state not reported" (D02:274); `purpose` joins the type
+  ("Limit · Take profit", D02:160); the sections are Working and "Conditional — not triggered"
+  (D02:281); the native-stop row's Cancel takes its `sl.note` sentence (D02:291).
+@ prose
+  A Cancel sent behind an amend is busy, "Cancelling…" with `aria-busy`, never T2; a native stop's
+  tighten in flight reads E32-D01's "Moving the stop to 63,980.0 — waiting for Bybit…" on the same
+  tag (D02:320).
+@ row `CMP-115/status-killed` ‖ State
+  killed by the kill switch
+@ row `CMP-115/status-killed` ‖ Word
+  "Killed (kill switch)"
+@ row `CMP-115/native-stop-row` ‖ Frame
+  `CMP-115/native-stop-row`
+@ row `CMP-115/native-stop-row` ‖ State
+  a native-stop row: Cancel is T2 with its `sl.note` sentence (D02:291)
+@ row `CMP-115/native-stop-row` ‖ Word
+  "Market · Stop loss"
+@ row `CMP-115/cancel-t2-held` ‖ State
+  Cancel on a held order: T2, `aria-disabled`, the reason as the item's second line
 § spec ‖ 2.4 CMP-123 FlattenAllButton (the flatten confir
 @ heading
   ### 2.4 CMP-123 FlattenAllButton (the flatten confirm, defined once)
+@ prose
+  Gap: D02 gap 13 (D02:622), and CMP-044 and CMP-211 each describe a hold of their own
+  (`15`:476–478, :2506).
+@ prose
+  Proposal (hand-off A-5; RULED BQ-7): this entry owns the flatten confirm as a composite, defined
+  once here.
+@ prose
+  `scope: "account"` is SCR-063's Flatten account… in each account group header's ⋯ menu
+  (D02:155): `cancelAllOrders` for the account with `exclude_reduce_only: true`, then
+  `closeAllPositions` with `cancel_open_orders: false`, in one confirmed gesture with an
+  `Idempotency-Key` each; the dialog restates the account, its environment, the positions it
+  closes and the orders it cancels, lists stops as "cancelled with the position" and ends in one
+  `BulkAccountResult` line per account with "Retry failed" (D02:353, :349).
+@ prose
+  `scope: "all-accounts"` is the shell's FLATTEN ALL…, whose button is CMP-211 and whose dialog is
+  this definition.
+@ prose
+  The confirm is the table below: CMP-044 `hold` with its discrete second press, and on LIVE the
+  typed word first, which CMP-044 already allows, as its `typedConfirmValue` gates a `hold`
+  Confirm (`15`:476; `docs/design/E05/E05-D02-feedback-overlays.md`:286–287).
+@ prose
+  Flatten account… leaves the ⋯ menu while its account's snapshot failed, nothing being loaded to
+  act on (D02:389).
+@ prose
+  The word typed on LIVE is its copy owner's: D02 routes bulk words to D03's deck ("CLOSE",
+  D02:349) and names none for Flatten account (D02:353), so it stays an open item, never chosen
+  here.
+@ row DEMO ‖ Environment
+  DEMO
+@ row LIVE ‖ Environment
+  LIVE
+@ row LIVE ‖ Confirm
+  CMP-044 `hold` and the typed word (`typedConfirmValue` gates the hold, `15`:476)
+@ row LIVE ‖ Discrete keyboard path
+  the typed word, then a second `Enter`
+@ row LIVE ‖ Source
+  D02:353 "Live adds the typed confirm"
+@ row `CMP-123/default` ‖ Frame
+  `CMP-123/default`
+@ row `CMP-123/default` ‖ Word
+  "Flatten account…"
+@ row `CMP-123/hover` ‖ Frame
+  `CMP-123/hover`
+@ row `CMP-123/hover` ‖ Word
+  "Flatten account…"
+@ row `CMP-123/focus-visible` ‖ Frame
+  `CMP-123/focus-visible`
+@ row `CMP-123/focus-visible` ‖ Word
+  "Flatten account…"
+@ row `CMP-123/holding` ‖ Frame
+  `CMP-123/holding`
+@ row `CMP-123/armed` ‖ Frame
+  `CMP-123/armed`
+@ row `CMP-123/typed-live` ‖ Frame
+  `CMP-123/typed-live`
+@ row `CMP-123/typed-live` ‖ State
+  LIVE: the typed field comes first and the hold starts on a match (`15`:476)
+@ row `CMP-123/typed-live` ‖ Word
+  the typed word (open: its copy owner)
+@ row `CMP-123/busy` ‖ Frame
+  `CMP-123/busy`
+@ row `CMP-123/busy` ‖ Word
+  "Flatten account…"
+@ row `CMP-123/t2-view-as` ‖ Frame
+  `CMP-123/t2-view-as`
+@ row `CMP-123/t2-view-as` ‖ State
+  T2 under view-as, the panel notice its reason (D02:435)
+@ row `CMP-123/t2-view-as` ‖ Word
+  "Flatten account…"
+@ row `CMP-123/t2-view-as` ‖ T2
+  `rbac.view_as`
+@ row `CMP-123/t2-viewer` ‖ Frame
+  `CMP-123/t2-viewer`
+@ row `CMP-123/t2-viewer` ‖ Word
+  "Flatten account…"
+@ row `CMP-123/t2-read-only` ‖ Frame
+  `CMP-123/t2-read-only`
+@ row `CMP-123/t2-read-only` ‖ State
+  T2 on a read-only grant, the account header's notice
+@ row `CMP-123/t2-read-only` ‖ Word
+  "Flatten account…"
+@ row `CMP-123/t2-manager-kill-switch` ‖ Frame
+  `CMP-123/t2-manager-kill-switch`
+@ row `CMP-123/t2-manager-kill-switch` ‖ State
+  T2 for a Manager under the kill switch while OD-11 is open (D02:421)
+@ row `CMP-123/t2-manager-kill-switch` ‖ Word
+  "Flatten account…"
+@ row `CMP-123/t2-manager-kill-switch` ‖ T2
+  E39-D01's "Frozen — the owner closes or releases"
+@ row `CMP-123/offline-rest-unreachable` ‖ Frame
+  `CMP-123/offline-rest-unreachable`
+@ row `CMP-123/offline-rest-unreachable` ‖ Word
+  "Flatten account…"
+@ prose
+  - **Keyboard:** The ⋯ item opens CMP-044 with focus on Cancel; the confirm takes a held `Enter`
+  or a second `Enter` within CMP-044's window, after the typed word on LIVE; `Escape` or blur
+  disarms and key repeat never confirms (`15`:478); `Ctrl+Shift+F` opens it for one account, its
+  owner still open (D02:667).
+@ prose
+  - **Accessible name:** Scope and effect, "Flatten account — Sub-1 · LIVE"; a T2 item keeps that
+  name and its reason is the description (E09-D09:49).
+§ spec ‖ 2.5 CMP-129 PositionModeToggle
+@ prose
+  Gap: SCR-063 shows the mode as text in the account group header (D02:238, :590), CMP-129 has no
+  read-only form (D02:622), and a radio group writes on every arrow key (E05-D02:464–467).
+@ prose
+  `toggle` is CMP-003's radio group with the change held behind its own CMP-044 `standard`
+  confirm, so arrow-browsing never writes; `disabled?` / `disabledReason?` give way to CMP-079's
+  `allowed` + `reason`, and its reasons are the view-as leg first, then the permission leg, which
+  E09-D09's chooser reads as `rbac.owner_only` "Only the owner can change account settings."
+  because no other role holds `accounts:write` (E09-D09:90; `15`:1479; D02:353).
+§ spec ‖ 2.6 CMP-105 AccountMultiSelect (reuse contract)
+@ prose
+  Each chosen account becomes a CMP-055 chip, "Account: Sub-1 ✕", its remove a labelled
+  IconButton; the use adds no new variant and no T2 ever sits on a filter (D02:433).
+@ prose
+  - **Accessible name:** A chip reads its filter, "Account: Sub-1", and its remove "Remove filter
+  Account: Sub-1" (D02:375).
+§ spec ‖ 2.7 CMP-049 Table (the base contract E05-D02 G12
+@ prose
+  - **Accessible name:** The caption names the table; a row is named by its `rowheader` cell (the
+  Symbol in SCR-063, D02:142) with its level and position; a totals row by its label ("LIVE
+  total").
+§ spec ‖ 2.8 The routed components (deltas and change req
+@ prose
+  - **2.8.6 CMP-075 EnvBadgeLocal (D02 gap 7).** A compact per-row pill: "LIVE" or "DEMO" in
+  `color.text.primary` on `color.surface.raised` with a `color.env.live` or `color.env.demo`
+  border, LIVE in `font.weight.bold`, `type.ui.caption` and `radius.badge`, never colour alone
+  (D02:516; D03:392); its 16 px height waits for a token (D02:619).
+@ prose
+  The record stays a contract gap: an export reaches no server, so SR-098's audit record waits for
+  G7's path (D03:478; D02:605).
+@ prose
+  Registered keys bind as they stand: `rbac.*`, `notice.*`, `inflight.*`, `panel.*` and E30-D02's
+  `frozen`, `lockout`, `arm.*`, `refusal.*` and `guard.mismatch`.
+§ spec ‖ 2.9 Consumed components (reuse only)
+@ prose
+  Used as catalogued, never redefined: CMP-001 Button, CMP-002 IconButton, CMP-009 Select (Group
+  by), CMP-011 Tag (chips; the Fills Type toggle chips take a `toggle` variant with `aria-pressed`
+  at control height, D02:299, :495, a change request to E05's owner, D02:617, and are never drawn
+  as CMP-042 tabs), CMP-015 Skeleton, CMP-016 Tooltip (the T2 echo), CMP-017 Popover (the slot's
+  expansion), CMP-020 NumericText, CMP-026 EmptyState, CMP-027 ErrorState, CMP-036 KeyValueRow,
+  CMP-038 InlineSpinnerText, CMP-043 Dialog, CMP-044 ConfirmDialog, CMP-045 Toast, CMP-063
+  DensityToggle, CMP-076 ConnectionStatus, CMP-077 ReconnectOverlay, CMP-092 DegradedModeBanner,
+  CMP-093 AuditActionTrigger, CMP-100 PriceInput, CMP-101 QtyInput, CMP-117 RiskLockoutBanner,
+  CMP-139 EnvironmentAwareOrderGuard and CMP-211 PanicButtons (the shell's FLATTEN ALL…, whose
+  dialog is CMP-123's, §2.4); CMP-079 RbacGate wraps every T2 control and CMP-019 Icon gives it
+  its `lock`, "Not available".
+§ spec ‖ 2.10 The AC1 map (every SCR-063 and SCR-078 elem
+@ row CMP-114 ‖ Name
+  its named parts: the liquidation tier cell, the protection chip, the correction markers, the
+  group header row, the totals row and the "Updates paused" chip
+@ row CMP-123, CMP-211 ‖ CMP
+  CMP-123, CMP-211
+@ row CMP-123, CMP-211 ‖ Name
+  FlattenAllButton, PanicButtons
+@ row CMP-123, CMP-211 ‖ Role here
+  amended (A-5): Flatten account… and its dialog; CMP-211 consumed: the shell's FLATTEN ALL…
+  button
+@ row CMP-036, CMP-038, CMP-043, CMP-044, CMP- ‖ Name
+  KeyValueRow, InlineSpinnerText, Dialog, ConfirmDialog, Toast, ConnectionStatus,
+  ReconnectOverlay, DegradedModeBanner, AuditActionTrigger, PriceInput, QtyInput,
+  RiskLockoutBanner
+@ row CMP-036, CMP-038, CMP-043, CMP-044, CMP- ‖ Role here
+  consumed: SCR-078's summary and running export, the confirms, the cancel toast, the connection
+  and account states, every write's audit, the cell editor
+§ spec ‖ 3.1 Data-row rules
+@ prose
+  Live data never moves focus (`05`:96), a focused row never leaves (D01:408), and a focused
+  control never sits inside a fading element (`docs/design/E05/E05-D02-feedback-overlays.md`:165).
+§ spec ‖ 3.2 The motion table
+@ row Mo-7 ‖ Component
+  CMP-123's hold ring (the flatten confirm, §2.4)
+@ row Mo-7 ‖ prefers-reduced-motion t
+  prefers-reduced-motion: static percentage text at frame 0, per CMP-123
+@ row Mo-7 ‖ Limit
+  per CMP-123: dialog motion, not a data row
+@ row Mo-8 ‖ Component
+  a state swap (status word, glyph, fill, pill, liq tier, protection chip, T2 ↔ enabled, DEMO /
+  LIVE)
+@ row Mo-11 ‖ Component
+  CMP-123's confirm dialog (CMP-044 on CMP-043)
+§ spec ‖ 3.3 State swaps are instant (RULED BQ-11; owner
+@ prose
+  Status words, glyphs, fills, pills, the liq tier, the protection chip, T2 ↔ enabled and DEMO /
+  LIVE swap at frame 0 in both modes (Mo-8): `motion.duration.instant` (0 ms), no easing; the
+  word, the glyph, the fill and a control's availability change in the same frame (E30-D04:553;
+  E09-D08:220; E11-D06:359).
+§ spec ‖ 3.4 Never per tick
+@ prose
+  Nothing animates per tick or per price update (D02:465 "Never per tick"): ages and the "Last
+  update" counter repaint as text at most once a second (D02:272), the NO SL timer swaps its
+  digits as text, the account line and the row markers change only on a notice (D03:477), and no
+  tab carries a count (D02:158).
 § spec ‖ 4. T2, view-as and environment on the components
 @ heading
   ## 4. T2, view-as and environment on the components
+@ prose
+  The T2 anatomy is E09-D09's, stated once in each merged spec and only pointed to here
+  (E09-D09:49; D02:429; D03:208): `aria-disabled="true"`, never the `disabled` attribute, so the
+  control stays in the Tab order and the roving grid; the reason node in the DOM at mount, named
+  by `aria-describedby` and swapped in place (E09-D09:236); the CMP-019 `lock` named "Not
+  available" leading the label (2a) or badging the control (2b); the label in
+  `color.text.tertiary`, the reason in `color.text.secondary`, a filled control on
+  `color.surface.raised` with a `color.border.default` hairline, never `color.text.disabled` or
+  `opacity.disabled` (the selected row's label is §5's measured exception).
+@ prose
+  While `GET /auth/session/view-as` reports a context, `rbac.view_as` is checked ahead of every
+  other leg and one panel-header notice describes every write; reads answer as the target, so the
+  target's own read-side reasons still render (D02:435; E09-D09:95).
+@ prose
+  The shell's view-as banner, its Exit and its countdown are E42-D02 D10's, cited and never
+  restated here (E42-D02:136, :415); the countdown sits outside the live region (E42-D02:424) and
+  never animates (§3.3).
+@ prose
+  Account labels are the fixtures' "Main", "Sub-1" and "Sub-2", ellipsised with the full label in
+  the tooltip and the accessible name (D02:149).
+@ prose
+  No `ret_msg` and no server `message` reach the DOM; a rejected amend shows D02's own line, and
+  the exchange's text lives only behind the audited diagnostics (D02:152; D03:78, :80).
+@ prose
+  The server authorises every request against the 4-tuple of `24` §15.2 and answers `403` with a
+  stable code and an audit record (`rbac.denied`) regardless of what the UI showed — a disabled
+  button, a hidden route or a missing palette command is never relied on to prevent anything
+  (C-2.12, C-12.4, `04` §7.3, E09-X01 D1-shared).
+§ spec ‖ 4.1 The gated controls (legs in order)
+@ prose
+  Legs follow the server's order of E09-D09 §2.1, view-as first (E09-D09:40); a key that is not
+  registered is PROPOSED with its owner on its row and in §6; a control's own drawn cases that are
+  not legs sit under Drawn exceptions.
+@ prose
+  **Renderings** (E09-D09:49; D02:429, :431): 2a is inline, beside a toolbar button or as a menu
+  item's second line; 2b, the tooltip echo, sits only on a row's text SplitButton and only for the
+  row's own reason, always repeated in the row menu, D02's extension of E09-D09 §2.2 (OQ-S,
+  D02:668); a reason that covers a scope renders once as a notice that every gated control of the
+  scope points at — the panel header for a Viewer, for view-as and offline, the other
+  environment's section row, the account header for a read-only grant.
+@ row "Close ▾" and its items "Close 25 %", "C ‖ Legs (in order)
+  `rbac.view_as` → `rbac.permission` → `rbac.account_read_only`
+@ row "Close ▾" and its items "Close 25 %", "C ‖ Drawn exceptions
+  offline with REST unreachable; a Manager under the kill switch, E39-D01's "Frozen — the owner
+  closes or releases" (OD-11 pending); the other environment's rows, `guard.mismatch.row`
+  (PROPOSED, E30-D02)
+@ row "Reverse…" ‖ Legs (in order)
+  `rbac.view_as` → `rbac.permission` → `rbac.account_read_only` → `rbac.env` (a LIVE row) → client
+  states: `frozen`, `recon.*`, `feed.*`, `refusal.trading_disabled.*`, `arm.locked`,
+  `blotter.close_in_flight`, E39-D01's lockout line, E17-D01's feed lines
+@ row "Edit price", "Edit trigger" and a quant ‖ Legs (in order)
+  `rbac.view_as` → `rbac.permission` → `rbac.account_read_only` → `rbac.env` (a risk-increasing
+  amend on a LIVE row) → client states: `frozen`, `recon.*`, `feed.*`, `blotter.amend_in_flight`,
+  E39-D01's lockout line
+@ row "Cancel ▾" (the primary) ‖ Legs (in order)
+  `rbac.view_as` → `rbac.permission` → `rbac.account_read_only`
+@ row "Cancel ▾" (the primary) ‖ Drawn exceptions
+  offline with REST unreachable; the other environment's rows, `guard.mismatch.row` (PROPOSED,
+  E30-D02); the order's own kind, never an account state: a native-stop row, `sl.note`'s first
+  sentence (PROPOSED to E32-D01), and Untracked, Held and Unknown orders, `blotter.untracked`,
+  `blotter.held` and `blotter.unknown` (PROPOSED, E29-D03)
+@ row "Edit qty" lowering the quantity; a reco ‖ Legs (in order)
+  `rbac.view_as` → `rbac.permission` → `rbac.account_read_only`
+@ row "Close selected" and "Close all in view… ‖ Control
+  "Close selected" and "Close all in view…" (CMP-114); "Cancel selected" and "Cancel all in view…"
+  (CMP-115)
+@ row "Close selected" and "Close all in view… ‖ Legs (in order)
+  `rbac.view_as` → `rbac.permission` → `rbac.account_read_only`
+@ row "Close selected" and "Close all in view… ‖ Drawn exceptions
+  offline with REST unreachable; a Manager's closes under the kill switch (OD-11 pending); every
+  target keeps its own row's gates
+@ row "Flatten account…" (the account header's ‖ Control
+  "Flatten account…" (the account header's ⋯ and `Ctrl+Shift+F`)
+@ row "Flatten account…" (the account header's ‖ Component
+  CMP-123 (`scope: account`)
+@ row "Flatten account…" (the account header's ‖ Legs (in order)
+  `rbac.view_as` → `rbac.permission` → `rbac.account_read_only`
+@ row "Flatten account…" (the account header's ‖ Drawn exceptions
+  offline with REST unreachable; a Manager under the kill switch, E39-D01's "Frozen — the owner
+  closes or releases" (OD-11 pending)
+@ row "Edit risk caps…" (the account header's ‖ Legs (in order)
+  `rbac.view_as` → `rbac.owner_only`
+@ row "Resolve…" on the account line ‖ Legs (in order)
+  `rbac.view_as` → `rbac.owner_only` with the verb "resolve the lock" (PROPOSED, an E09-D09 §3.2
+  amendment)
+@ row the row checkbox ‖ Legs (in order)
+  none: a Viewer and view-as keep it
+§ spec ‖ 4.2 Never gated
+@ prose
+  - **Exits keep their legs and nothing more.** Cancel, close and its items, the bulk closes and
+  cancels, Flatten account…, a quantity cut and a recorded take-profit's edit and Cancel are never
+  gated by a state key or `rbac.env`: in every account state of D02 §10.2 and §10.3, and under the
+  kill switch for the Owner, they take only the legs of §4.1 (D02:412, :420; D03:82).
+@ prose
+  Two drawn exceptions remain: offline with REST unreachable, where every write is T2 (D02:333,
+  :431), and a Manager's closes and Flatten account… under the kill switch, E39-D01's "Frozen —
+  the owner closes or releases" while OD-11 is pending; a Manager's Cancel stays sendable there
+  (D02:421; E39-D01:66, :687).
+@ prose
+  A Cancel's own reasons — a native-stop row, an Untracked, Held or Unknown order (§4.1) — name
+  what the order is, never the account's state, and a Cancel sent while the order's amend is in
+  flight stays busy, "Cancelling…", until it resolves (D02:345).
+@ prose
+  - **The C-2.6 carve-out.** A stop's tighten — a native stop's through `setPositionTpSl`, an
+  ordinary stop order's through `amendOrder`, an attach and a re-stamp — is never T2 by view-as,
+  by the kill switch, by a lockout or by a `recon.*` state: it takes the session's permission and
+  trade grant, under view-as the target's, and a loosen is refused inline for every role,
+  E32-D01's `sl.loosen.refused` (D02:435; D03:222; C-2.6).
+@ prose
+  SL/TP… and `Enter` into SCR-064 never take view-as, the kill switch, a lockout, a `recon.*`
+  state or a pending TP/SL write, because they only open SCR-064, which applies those gates
+  itself; they are T2 only for a Viewer, a read-only grant, the other environment's rows and
+  offline with REST unreachable (D02:338).
+@ prose
+  Export CSV builds its file client-side, a read that stays T1; should G7's path become a
+  write-method operation, it takes `rbac.view_as` alone, in 2b in the drawer's title bar (D03:181,
+  :519).
+@ prose
+  - **Busy and form validity are not T2** (E09-D09:231): a close in flight ("Closing…"), a cancel
+  held behind an amend ("Cancelling…"), an account loading, its Flatten account… included, and an
+  export running take CMP-001's loading state, `aria-busy="true"` with the ⟳ glyph leading the
+  label, no `lock`, no reason node and no CMP-079; a second press does nothing (D02:341, :345,
+  :353, :388; D03:181).
+@ prose
+  "Close all in view…" and "Cancel all in view…" leave the toolbar while nothing is in view
+  (D02:380), and the mandatory Columns read "Always shown" as helper text, with no `lock` and no
+  reason (D02:376).
+@ prose
+  - **A T2 press is quiet to the server, and its swaps are cuts:** `Enter`, `Space`, `F2` or the
+  bound hotkey sends nothing and re-shows the reason inline with one polite announcement, and it
+  emits no audit and no analytics (E09-D09:49, :243; D02:429).
+§ spec ‖ 4.3 Environment
+@ prose
+  The environment is the text pill "LIVE" or "DEMO" (CMP-075): `color.text.primary` on
+  `color.surface.raised` with a `color.env.live` or `color.env.demo` border, never colour alone
+  (`14`:81; D02:516); CMP-075's grammar, its weight, dot and border included, is E30-D04 D7's
+  (E30-D04:141), and its compact per-row form is §2.8.6's change request (D02:616).
+@ prose
+  In a mixed view every row's accessible name leads with its environment, group headers read "Main
+  · DEMO" and the panel is named "Positions and orders — LIVE and DEMO" (D02:441).
+@ prose
+  Totals are per environment and never summed: one totals row per environment, its rowheader "LIVE
+  total" (D02:142, :156).
+@ prose
+  The other environment's rows stay visible and read-only behind their block's notice,
+  `guard.mismatch.row` (PROPOSED, E30-D02), and `Ctrl+A`, "all in view" and every bulk dialog take
+  the session environment's rows only (D02:145; C-2.11).
+@ prose
+  DEMO ↔ LIVE is a frame-0 cut in both modes, and the pill never animates (§3.3).
+§ spec ‖ 5. Tokens and contrast (measured; every number f
+@ row `flatten-confirm-label` ‖ Pair
+  `flatten-confirm-label`
+@ prose
+  **Read from the table.** The closest margins pass: `bar-sell-selected` at 3.13 in dark and 3.70
+  in light, `env-demo-border` at 3.64 in dark, `bar-buy-selected` at 3.84 and `no-sl-glyph` at
+  3.85 in light, and `flatten-confirm-label` at 4.54 in high contrast; none of them carries
+  meaning alone, since a word, a sign or a glyph does (§2).
+@ prose
+  LIVE and DEMO stay ΔE76 91.9 or more apart under every simulation and ΔL* 2.4 in greyscale on
+  light, so the words LIVE and DEMO carry the environment (§4.3; `14`:81).
+§ spec ‖ 6. Copy keys
+@ row `rbac.view_as` ‖ Key
+  `rbac.view_as`
+@ row `rbac.view_as` ‖ String
+  "Read-only while viewing as {user}."
+@ row `rbac.account`, `rbac.account_read_only` ‖ Used on
+  a refused write after `403 account_scope_denied`, sticky (E09-D09:55); §4.1: every write of an
+  account held with a read-only grant, through its header's notice (D02:433)
+@ row `rbac.env` ‖ String
+  "Live trading isn't enabled for you."
+@ row `rbac.env` ‖ Used on
+  §4.1: Reverse… and a risk-increasing amend on a LIVE row, never an exit (D02:95)
+@ row `notice.panel_read_only`, `glyph.name`, ‖ String
+  "Read-only — {rbac sentence, first letter lower-cased}"; "Not available"; "No longer shown —
+  access to {account} was withdrawn."; "Not sent — your access changed. {reason}"; "Not sent —
+  read-only after three wrong codes."
+@ row `notice.panel_read_only`, `glyph.name`, ‖ Used on
+  the panel-header notice for a Viewer, for view-as and offline (D02:431); the name of the CMP-019
+  `lock` on every T2 control; a revoked account's rows (D02:400); the refusal at the point of
+  action after a role or grant change, and after three wrong codes, where the control stays T1
+  (D02:437)
+@ row `frozen` ‖ Key
+  `frozen`
+@ row `frozen` ‖ String
+  "Trading frozen by the owner at {hh:mm} UTC — new orders off. Cancel and close still work."
+@ row `frozen` ‖ Used on
+  §4.1: the Owner's Reverse… and entry edits under the kill switch (D02:420)
+@ row `arm.locked`, `arm.refused`, `refusal.tr ‖ String
+  "One-click trading is locked" (`arm.refused`; `arm.locked`'s description reads "one-click off —
+  Ctrl+Shift+T to arm"); "Order entry is paused for maintenance"; "{account} has no active API
+  key"; "Order is for a LIVE account while the workspace is DEMO"
+@ row `arm.locked`, `arm.refused`, `refusal.tr ‖ Used on
+  §4.1: Reverse… on a Live account, before a press and after one (D02:337); new exposure under
+  maintenance, and with no active key, held once by the account header (D02:395); CMP-139's
+  reason, whose row form is PROPOSED below
+@ row E39-D01's control string and lockout lin ‖ String
+  "Frozen — the owner closes or releases"; "Locked · daily loss limit · until 00:00 UTC · closing
+  and reducing still work"
+@ row E39-D01's control string and lockout lin ‖ Used on
+  §4.1: a Manager's closes and Flatten account… under the kill switch, OD-11 pending (D02:421);
+  new exposure under a risk lockout (D02:423)
+@ row `recon.reconciling`, `recon.desync`, `re ‖ String
+  "Reconciling with Bybit — new orders are paused."; "Data being verified — new orders are
+  paused."; "Stale — new orders locked until the owner resolves it."; "After the kill switch — new
+  orders locked until resolved."
+@ row `recon.reconciling`, `recon.desync`, `re ‖ Used on
+  §4.1: every new-exposure control of an account that is reconciling, being verified, on a stale
+  lock or on the lock the kill switch leaves
+@ row `guard.mismatch.row` ‖ String
+  "DEMO rows are read-only in a LIVE session."
+@ row `guard.mismatch.row` ‖ Status
+  PROPOSED (D02:145; OQ-L, D02:661), with its converse "LIVE rows are read-only in a DEMO
+  session."
+@ row `blotter.amend_in_flight` ‖ Used on
+  §4.1: an entry's edits and a quantity cut while an amend is in flight; a native stop's edit and
+  a recorded take-profit's edit and Cancel while a TP/SL write for the position is pending
+@ row `sl.note`, its first sentence ‖ String
+  "Every position keeps a native stop — you can move it, not delete it."
+@ row `sl.note`, its first sentence ‖ Used on
+  §4.1: Cancel on a native-stop row (C-2.6)
+§ spec ‖ 7.1 A-rows
+@ row A-5 ‖ Component
+  CMP-123 FlattenAllButton
+§ spec ‖ 7.2 Contradictions (C-rows)
+@ row D04-C5 ‖ Resolution
+  Every state swap is a cut: status words, glyphs, fills, pills, the liq tier, the protection
+  chip, T2 ↔ enabled and DEMO / LIVE change at frame 0 in both modes, `motion.duration.instant`,
+  no easing (§3.3; Mo-8, Mo-10, Mo-12); no token CR (RULED BQ-11; owner approval pending (#2701))
+§ spec ‖ 7.3 Contract gaps (G-rows)
+@ row D04-G4 ‖ Gap
+  `closeAllPositions` states neither the order of its close and cancel nor that a failed close
+  keeps its stop (D02:620): A-5.6 names the routes and shapes neither
+@ row D04-G5 ‖ Gap
+  CSV export has no endpoint, permission, audit action or size limit (D03:519, G7): CMP-099's
+  export writes no server record yet
+@ row D04-G7 ‖ Gap
+  CMP-211 offers a `group` scope (`15`:2505) and CMP-123 has none; SCR-063 draws Flatten account…
+  alone (D02:155)
+@ row D04-G7 ‖ Owner
+  E39-D03's owner (CMP-211), with E29-T09
+§ spec ‖ 7.4 Drift ledger (RULED BQ-12; owner approval pe
+@ row DR-3 ‖ Bound
+  CMP-123 `color.status.danger`
+§ spec ‖ 8.1 Ticket, stories and screens
+@ row The flatten confirm, defined once (§2.4; ‖ Item
+  The flatten confirm, defined once (§2.4; AC3)
+@ row The flatten confirm, defined once (§2.4; ‖ SCR
+  SCR-063; the shell's FLATTEN ALL…
+@ row The flatten confirm, defined once (§2.4; ‖ CMP
+  CMP-123, CMP-044, CMP-211
+§ spec ‖ 8.2 The gate tool: gates and mutations
+@ row G-FLATTEN ‖ Gate
+  G-FLATTEN
+@ row G-FLATTEN ‖ Rule (RULED)
+  hold and typed on LIVE, defined once (BQ-7; AC3)
+@ row G-VIEWAS ‖ Rule (RULED)
+  the legs in order, view-as first; nothing hidden (BQ-13)
+§ spec ‖ 9. Summary for #823 (at most ten lines)
+@ prose
+  - Four entries are written whole (CMP-114, CMP-115, CMP-116, CMP-129), three amended field by
+  field (CMP-123, CMP-049, CMP-209) and one reused by contract (CMP-105); hand-off §C holds them
+  copy-ready for E29-T09, and `15` and `16` stay byte-identical (RULED BQ-2; owner approval
+  pending (#2701)).
+@ prose
+  - CMP-123 owns the flatten confirm once, CMP-044's hold with the typed word added on LIVE; E30,
+  E31 and E39 reference it (AC3; RULED BQ-7).
+@ prose
+  - CMP-129 gains a read-only `display` variant with no control role, and its toggle writes only
+  behind a confirm (RULED BQ-8).
+@ prose
+  - Every gated control takes CMP-079's `allowed` + `reason` with view-as first, and exits are
+  never gated by a state key (RULED BQ-13); §5 measures 27 pairs in three themes.
 § hand-off ‖ E29-D04 — Per-component hand-off (`16` §11.4; th
 @ prose
   Four entries written whole — CMP-114 PositionsGrid, CMP-115 OrderRow, CMP-116 PnLBadge and
   CMP-129 PositionModeToggle — and the field deltas to CMP-123 FlattenAllButton, the CMP-049 base
-  table and the CMP-105 reuse contract, plus the `16` motion block.
+  table, the CMP-105 reuse contract and CMP-209 RightRail's drawer motion, plus the `16` motion
+  block.
 @ prose
   Every figure carries its `audit` marker from the tool's `--json`; E29-T09 keeps the value and
   drops the marker when it pastes a block.
+§ hand-off ‖ §A Placement
+@ row A-5 ‖ Component
+  CMP-123 FlattenAllButton
+@ prose
+  E29-T09 pastes each block verbatim after the owner's approval (RULED BQ-2; owner approval
+  pending (#2701)), keeping every value and dropping its `audit` marker.
+§ hand-off ‖ §B Density and theme matrix
+@ row CMP-123 FlattenAllButton ‖ Entry
+  CMP-123 FlattenAllButton
+§ hand-off ‖ §C Copy-ready `15` entries and the `16` block (P
+@ prose
+  Whole entries C.1 to C.4 in `15` §0.1's order as `15`'s trading entries apply it (Tier ·
+  Purpose, Props, Variants, States, A11y, Tokens, API sketch, Data contract, Storybook, Tests,
+  Motion spec, Design), the A11y bullet holding Keyboard, Accessible name and Live region on one
+  line; the field deltas to CMP-123, CMP-049, CMP-105 and CMP-209 in Table A (C.5), each Old cell
+  verbatim at its `15` line; the `16` block is C.6.
+@ prose
+  E29-T09 replaces an entry from its heading to its last bullet, keeps each figure and drops its
+  `audit` marker.
+§ hand-off ‖ C.1 A-1 — CMP-114 PositionsGrid
+@ code
+  - **Tier**: Organism (trading) · **Purpose**: the cross-account positions grid of SCR-063, a
+  CMP-049 `treegrid` whose named parts are the liquidation tier cell, the protection chip, the row
+  markers, the group header row, the totals row and the "Updates paused" chip; CMP-115 OrderRow is
+  its Working-orders sibling and CMP-123 the account header's Flatten account….
+@ code
+  - **Variants**: compact and comfortable, 24 and 32 px rows; grouped by account (default),
+  symbol, trade group or manager; one environment or mixed (the Env column and the LIVE, then DEMO
+  blocks); the narrow dock at 360 px (Symbol · Side · Size · uPnL · Status).
+@ code
+  - **States**: rows: default, hover, selected (the CMP-005 box, `color.surface.selected`,
+  `aria-selected`), focused cell (the 2 px inset ring), new ("New" for 5 s), closing (Close in
+  CMP-001's loading state with its label kept and `aria-busy`, not T2), lingering closed ("Closed
+  +12.40 USDT" for about 5 s), stale (CMP-078's grid-row variant). The other environment's block
+  is read-only behind `guard.mismatch.row` (PROPOSED to E30-D02), and a gated control is T2 per
+  E09-D09 §2.2. The liquidation tier cell: none, Watch, Near, Critical (with a 2 px leading
+  accent). The protection chip: the B8 states with `amend_lock.frozen` (`flat` leaves the frame).
+  The row markers of E29-D02 and E29-D03; the group header row with its state marker and ⋯ menu;
+  the totals row, one per environment, never summed; the "Updates paused" chip, critical while a
+  held row carries NO SL; the panel states of E29-D02 §10.1, by name.
+@ code
+  - **A11y**: Keyboard: a treegrid with one roving stop; arrows by row and cell, `→` and `←`
+  expand and collapse a group header, `Space` selects, `Enter` opens SCR-064, `Shift+F10` the row
+  menu, `Ctrl+Delete` the D01 D9 targets with a confirm whenever they exclude the focused row;
+  Accessible name: the environment leads in a mixed view, then symbol, side, size and account; a
+  tier, chip or marker reads its word with its glyph named once; a T2 control keeps its full label
+  and its reason is the description; Live region: row updates are never announced individually;
+  the focused row's changed values and the environment totals speak politely at most once per 2 s
+  per field; filled, rejected, offline and reconnected, NO SL and Critical crossings are
+  assertive, once.
+@ code
+  - **API sketch**: `interface PositionRow { id: string; accountId: string; env: "live" | "demo";
+  symbol: string; side: "long" | "short"; positionIdx: 0 | 1 | 2; size: string; entryPrice:
+  string; markPrice: string; liqPrice: string | null; unrealizedPnl: string; rPnlToday: string; r:
+  string | null; leverage: string; marginMode: "cross" | "isolated" | "portfolio"; positionMode:
+  "one-way" | "hedge"; protection: { state: "protected" | "attaching" | "verifying" | "amending" |
+  "naked" | "naked_unrecoverable"; frozen: boolean }; adlRank: number | null; liqTier: "none" |
+  "watch" | "near" | "critical" }`; money and price fields are the generated `packages/protocol`
+  decimal strings, never `number`.
+@ code
+  - **Data contract**: `positions` from the private `positions` WS topic (`23` §15.2
+  `PositionUpdate`) merged with the REST position-list snapshot; `positionMode` from
+  `ExchangeAccount.position_mode`; the tier derived client-side from the mark, the liquidation
+  price and the entry buffer (E29-D02 §5.3); `adlRank` is on no frame yet and its column stays out
+  of view (a contract gap).
+@ code
+  - **Tests**: unit, visual, axe, keyboard row and cell navigation, the treegrid roles, levels and
+  indices on a 500-row fixture, the live-region cadence (never per tick), the T2 tests (view-as
+  first, `aria-disabled`, no audit or analytics on a T2 press), busy is never T2, performance
+  (1,000 rows at the frame budget).
+§ hand-off ‖ C.2 A-2 — CMP-115 OrderRow
+@ code
+  - **Variants**: compact and comfortable, as CMP-114; the sections Working and "Conditional — not
+  triggered"; the native-stop row, whose Cancel is T2 with its `sl.note` sentence (PROPOSED to
+  E32-D01); the narrow dock, where the purpose folds into the state word ("Working · Stop loss").
+@ code
+  - **States**: the fifteen D01 D2 words, each with its glyph: Sending, Working, Triggered,
+  Partial, Cancelling, Amending, Unknown — checking, Quarantined, Held — owner review, Untracked —
+  not placed by CandleViewer, Filled, Cancelled, Rejected, Expired, Killed (kill switch). Null or
+  unmapped reads "Working — state not reported". The amend moments: editing ("Editing — 2,500.00
+  is live"); `pending`, a state ("Amending → 2,495.00 · 2,500.00 still live", the ⟳ marker and the
+  tag on `color.status.info.subtle`, the value cell keeping the live value); unconfirmed ("Unknown
+  — checking · 2,500.00 may still be live"); rejected ("⚠ Amend rejected — your order is
+  unchanged" with Dismiss). A Cancel sent behind an amend is busy ("Cancelling…", `aria-busy`),
+  never T2. The T2 reasons `blotter.untracked`, `blotter.held`, `blotter.unknown` and
+  `blotter.amend_in_flight` are PROPOSED with E29-D03 as their owner. Filled and Cancelled linger
+  about 5 s.
+@ code
+  - **Data contract**: the private `orders` WS topic (`23` §15.1 `OrderUpdate`, never throttled)
+  merged with the REST open-orders snapshot; `lifecycle_state` maps to the D01 D2 word, null or
+  unmapped to "Working — state not reported"; a pending amend waits for the `change: "amend"`
+  frame and a native stop's edit for the read that shows it; the exchange's text never reaches the
+  row (`getOrderDiagnostics` only).
+§ hand-off ‖ C.4 A-4 — CMP-129 PositionModeToggle
+@ code
+  - **Variants**: `display`: the word as text, read-only, outside the Tab order, with neither a
+  control role nor a reason. `toggle`: CMP-003's radio group, its change held behind a CMP-044
+  `standard` confirm, so arrow-browsing never writes.
+@ code
+  - **States**: `display`: one-way, hedge. `toggle`: default, hover, focus-visible, an option
+  arrowed but unwritten, the confirm open, T2 (the view-as leg first, then the permission leg,
+  read as `rbac.owner_only` for `accounts:write`; the open-positions reason PROPOSED to E30-D02's
+  owner, no key bound), busy while the write is in flight.
+§ hand-off ‖ C.5 Table A — Old (verbatim at `6fc8aacc6`) → Ne
+@ row A-5.1 ‖ Component
+  CMP-123
+@ row A-5.1 ‖ Old (verbatim)
+  **Tier**: Molecule (trading, risk-critical) · **Purpose**: global panic-button — closes all
+  positions and cancels all working orders for the active scope, gated by ConfirmDialog `hold` or
+  `typed` variant.
+@ row A-5.1 ‖ New
+  the Old text, then (after E33-D04 A-6.1's sentence once that row has landed; PENDING): Two
+  scopes: `account`, SCR-063's Flatten account… in each account group header's ⋯ menu, and
+  `all-accounts`, the shell's FLATTEN ALL…, whose button is CMP-211 and whose dialog is this
+  entry's. Its confirm, CMP-044 `hold` with the typed word added where E29-D04 §2.4's table asks
+  for it, is defined once here and referenced, never restated, by E30, E31 and E39.
+@ row A-5.2 ‖ Component
+  CMP-123
+@ row A-5.3 ‖ Component
+  CMP-123
+@ row A-5.3 ‖ New
+  the Old text, then two new bullets. **Variants**: `account` (SCR-063's Flatten account…) and
+  `all-accounts` (the shell's FLATTEN ALL…, its button CMP-211), each on DEMO or LIVE (E29-D04
+  §2.4's confirm table). **States**: default, hover, focus-visible; the CMP-044 dialog restating
+  the account, its environment, the positions it closes and the orders it cancels, stops
+  "cancelled with the position"; holding (CMP-044's ring with its percentage text); armed ("Press
+  again to …"); the typed word on LIVE; busy while the account loads (`aria-busy`, never T2); out
+  of the ⋯ menu while the account's snapshot failed; T2 for view-as, a Viewer and a read-only
+  grant, and for a Manager under the kill switch while OD-11 is open; offline with REST
+  unreachable (T2); the result, one `BulkAccountResult` line per account with "Retry failed".
+@ row A-5.4 ‖ Component
+  CMP-123
+@ row A-5.4 ‖ New
+  the Old text, then: Keyboard: the item opens CMP-044 with focus on Cancel; the confirm takes a
+  held `Enter` or a second `Enter` within CMP-044's window, after the typed word where E29-D04
+  §2.4 asks for it; `Escape` or blur disarms and key repeat never confirms. Accessible name: scope
+  and effect, "Flatten account — {account} · {environment}"; a T2 item keeps it and its reason is
+  the description. Live region: the result is polite, once; nothing speaks while the hold runs.
+@ row A-5.5 ‖ Component
+  CMP-123
+@ row A-5.6 ‖ Component
+  CMP-123
+@ row A-5.6 ‖ Old (verbatim)
+  Bybit `/v5/order/cancel-all` + market-close per position
+@ row A-5.6 ‖ New
+  the server's routes, their names E39-D03 C9's content fix (its owner's, E39-D03:383): for
+  `scope: "account"`, `cancelAllOrders` for the account with `exclude_reduce_only: true`, then
+  `closeAllPositions` with `cancel_open_orders: false`, in one confirmed gesture with an
+  `Idempotency-Key` each; stops end with their position, never as separate cancels, and a failed
+  cancel does not hold the close back
+@ row A-5.7 ‖ Component
+  CMP-123
+@ row A-5.8 ‖ Component
+  CMP-123
+@ row A-5.8 ‖ New
+  the Old text, then: on LIVE the hold starts once the typed word matches; key repeat never
+  confirms; view-as is the first leg; a T2 press emits no audit or analytics; busy is never T2;
+  the reduced-motion twin shows the percentage text, static. Then two new bullets. **Motion
+  spec**: Mo-7, CMP-044's ring by reference (E29-D04 §3.2). **Design (DS spec):** E29-D04 §2.4
+  (E29-D04; owner approval pending).
+@ row A-7.1 ‖ New
+  the Old text, then: Also SCR-063's account-filter picker, reused by contract (E29-D04 §2.6):
+  `mode="account"` over the server-scoped account list, without `profileSummary`, `onEditProfile`,
+  group rows or leg rows; each chosen account becomes a CMP-055 chip, "Account: Sub-1 ✕".
+§ hand-off ‖ C.6 The `16` block (copy-ready; recipe owner E05
+@ code
+  | state swap (status word, glyph, fill, pill, liq tier, protection chip, T2 ↔ enabled, DEMO /
+  LIVE; a disclosure; a row's busy glyph) | at frame 0; `prefers-reduced-motion`: the same cut at
+  frame 0 | none | E29-D04 Mo-8, Mo-10, Mo-12 |
+§ hand-off ‖ §D Storybook stories per entry
+@ row CMP-115 OrderRow ‖ Stories
+  §C.2's Storybook line (RULED BQ-5): one story per status family, the pending, unconfirmed and
+  rejected amend, the editor, the native-stop row, the T2 Held order and the reduced-motion
+  readings
+@ row CMP-123 FlattenAllButton ‖ Entry
+  CMP-123 FlattenAllButton
+@ row CMP-123 FlattenAllButton ‖ Stories
+  Table A's Storybook row (§C.5; RULED BQ-7): the `15` two (`15`:1410), the DEMO hold, the LIVE
+  hold and typed word, armed, busy, every T2 frame of spec §2.4, offline, the result and the
+  reduced-motion reading
+§ hand-off ‖ §E Test hooks
+@ row CMP-123 FlattenAllButton ‖ Entry
+  CMP-123 FlattenAllButton
+@ row CMP-123 FlattenAllButton ‖ Tests
+  axe; the keyboard-only confirm path of spec §2.4, key repeat never confirming; the result line
+  polite once; the exits test: sendable for the Owner in every account state (spec §4.2); the T2
+  test of spec §4.1's flatten row; the hold's `prefers-reduced-motion` reading (spec §3.2)
+@ prose
+  **The T2 test** (every row of spec §4.1): the legs fire in their order, view-as first; the
+  control keeps its role and its full label with `aria-disabled="true"`, never the `disabled`
+  attribute; its reason node is in the DOM at mount; a press sends nothing, re-shows the reason
+  once, politely, and emits no audit or analytics (E09-D09:228, :243; `15`:819).
+@ prose
+  **The exits test** (spec §4.2): in every account state of D02 §10.2 and §10.3 the Owner's
+  Cancel, Close, the bulk closes and cancels and Flatten account… send; the two drawn exceptions
+  are the only T2 on an exit (D02:412).
+§ hand-off ‖ §F Open items
+@ prose
+  - **Q-5** `sl.note`'s first sentence as the native-stop row's Cancel reason (D02:345).
+@ prose
+  - **Q-7** CMP-129's open-positions reason: a key and its string, asked of E30-D02's owner (RULED
+  BQ-8); until it is registered the toggle's T2 frames show `rbac.view_as` and `rbac.owner_only`
+  only (spec §4.1), and no E29 surface hosts the toggle (D02:622).
+@ prose
+  - **Q-9** A Manager's closes under the kill switch read E39-D01's "Frozen — the owner closes or
+  releases" until OD-11 rules (E39-D01:687; D02:654).
+@ prose
+  - **Q-10** CSV export for a Viewer (OQ-G, D02:656), and SR-098's identity watermark and audit
+  record, which need G7's server path (D03:519, :619).
+@ prose
+  - **Q-11** `Ctrl+Shift+F`: Flatten account in the Positions context, or E39-D03's global flatten
+  (OQ-R, D02:667), stays open; CMP-123 cites it and decides nothing (spec §2.4).
+@ prose
+  - **Q-12** CMP-123's Table A rows compose with E33-D04 A-6 (PENDING, by name): whichever lands
+  first applies the shared Tokens row, and the other is then a no-op.
+@ prose
+  - **Q-16** The assertive NO SL, Critical-crossing and amend-rejected announcements are proposed
+  for E29-D05 (D02:465); the entries' live-region lines follow D02 until its review rules.
+@ prose
+  - **Q-17** The typed word that Flatten account… asks on LIVE is named in no merged text: D02:353
+  names none, D02:349 routes the bulk words to D03's deck, which has none, and CMP-044 offers
+  fixed words for a scope without a name (`15`:476); spec §2.4 draws the field with its copy open.
 """
 
 
