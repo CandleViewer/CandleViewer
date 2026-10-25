@@ -7,8 +7,12 @@ once RBAC passed, steps 4 and 11 of 24 Sec.8.4 "The exit routes", whose rulings 
 account_scope_denied` on a view-only grant (Q7), `403 forbidden` for a Manager on an order it did
 not create (Q6), each record best effort. `cancel_admitted` is the route's and cancel-all's one
 per-order cancel (04 Sec.7.2.2 row 14: no creator check), with Q8's state rules and D9's bounded
-waits. `amend` checks the state (`422`), the body (`400`), the one ratchet (`403`), a
-risk-increasing amend's gates (Q10, D1, SEC-S4A-01) and `If-Match` (`412`), in that order (D3).
+waits. `amend` judges the amend on the order as it stands when it is admitted (SEC-S4C2B-01): the
+machine's state and version read together, then its row read again. It checks the state (`422`),
+the body (`400`), the one ratchet (`403`), a risk-increasing amend's gates (Q10, D1, SEC-S4A-01)
+and `If-Match` (`412`), in that order (D3), and sends at `If-Match`'s version, else at the one it
+read, so a step the order took meanwhile refuses the send under the order's lock: `412` for the
+client's own tag, else `409 conflict` with `Retry-After: 1`.
 
 Every refusal is an `ExitOutcome`, recorded ahead (`deny`, C-2.9), else `503 audit_unavailable`.
 An exit is written ahead (`orders.amend`, `orders.cancel`, with the request's reason), so a caller
@@ -107,7 +111,7 @@ from .validator import Validator
 
 __all__ = [
     "ALREADY_FINAL", "IN_FLIGHT_RETRY_AFTER_S", "MAX_IN_FLIGHT", "MAX_IN_FLIGHT_PER_PRINCIPAL",
-    "NOT_GRANTED", "NOT_ORDER_CREATOR",
+    "MOVED_RETRY_AFTER_S", "NOT_GRANTED", "NOT_ORDER_CREATOR",
     "SETTLE_TIMEOUT_S", "TRANSITION_TIMEOUT_S", "VIEW_ONLY", "AmendTerms", "CancelReason",
     "ExitCaller", "ExitCommands", "ExitDeps", "ExitMachines", "ExitOperation", "ExitOrders",
     "ExitOutcome", "ExitStep", "InFlightGuard", "LiveStops", "OrderExits", "OutcomeKind",
@@ -136,6 +140,9 @@ SETTLE_TIMEOUT_S: Final = CV_COMMAND_TIMEOUT + 1.0
 MAX_IN_FLIGHT: Final = 1024
 MAX_IN_FLIGHT_PER_PRINCIPAL: Final = 64
 IN_FLIGHT_RETRY_AFTER_S: Final = 1
+#: The `Retry-After` of `409 conflict` for an amend whose order took a step while it was admitted,
+#: nothing sent, for the client to send it again (SEC-S4C2B-01; the ruling of 2026-10-24 20:58Z).
+MOVED_RETRY_AFTER_S: Final = 1
 #: The bound on each store read and audit write of an exit, in seconds.
 STORE_TIMEOUT_S: Final = 2.0
 #: `rbac.denied`'s reasons (ruling Q12), the first two as `auth.scopes.decide` names them.
@@ -244,6 +251,10 @@ _NOT_CREATOR: Final = _problem(
 _CONFLICT: Final = _problem(
     409, "conflict", "The order's state takes no such exit now; nothing was sent."
 )
+_MOVED: Final = _problem(
+    409, "conflict", "The order took a step while the amend was admitted; nothing was sent.",
+    MOVED_RETRY_AFTER_S,
+)  # fmt: skip
 _ACCOUNT_UNAVAILABLE: Final = _problem(
     409, "account_unavailable", "The order's account cannot be traded now; nothing was sent."
 )
@@ -324,9 +335,10 @@ def risk_increasing(row: OrderRow, terms: AmendTerms) -> bool:
     """24 Sec.8.10, ruling Q10 (D5) and the S4-A security look's default (SEC-S4A-01): an amend of
     an order that is not reduce-only raises exposure when it raises the quantity or moves the
     price or the trigger (a deep limit entry repriced through the market fills at once), each
-    compared with the scoped read's terms. A reduce-only order's terms, any quantity cut, a stop
-    or a take-profit change and every cancel are never gated (C-2.6); a figure that is no number
-    is not compared, the body refuses it."""
+    compared with the terms of `row`, the order as the amend is judged on it (`OrderExits.amend`,
+    SEC-S4C2B-01). A reduce-only order's terms, any quantity cut, a stop or a take-profit change
+    and every cancel are never gated (C-2.6); a figure that is no number is not compared, the
+    body refuses it."""
     if row.reduce_only:
         return False
     raised = terms.qty is not None and terms.qty.is_finite() and terms.qty > row.qty
@@ -627,10 +639,13 @@ class OrderExits:
         actor: SubmitActor,
         request_id: UUID | None,
         expected_seq: int | None = None,
+        if_match: bool = False,
         terms: Mapping[str, Decimal] | None = None,
     ) -> ExitOutcome:
         """The command through the exit watch (the principal its `actor`), then B1's settle, at
-        most `SETTLE_TIMEOUT_S`; its outcome recorded beside its intent (`_outcome`)."""
+        most `SETTLE_TIMEOUT_S`; its outcome recorded beside its intent (`_outcome`). `if_match`
+        says that `expected_seq` is the client's own `If-Match`, not the version the exit read,
+        which decides what a version the facade finds moved on answers (`_taken_not`)."""
         kind = _kind(operation)
         account, pending = row.exchange_account_id, f"{kind}_pending"
         watch = self._d.commands.expect_exit(row.id, kind, request_id=request_id, actor=actor)
@@ -647,7 +662,7 @@ class OrderExits:
                 raise
             state = await self._moved(row, kind, exc)
             if state is None:
-                refusal = _taken_not(kind, exc)
+                refusal = _taken_not(kind, exc, if_match=if_match)
                 return await self._outcome(row, operation, refusal, actor, request_id)
         if state == pending:
             try:
@@ -765,25 +780,44 @@ class OrderExits:
         expected_seq: int | None,
     ) -> ExitOutcome:
         """`amendOrder`'s admission and send (module docstring) for an order `scope` returned;
-        `expected_seq` is `If-Match`'s version (`api.order_etag.expected_seq`), None without one."""
+        `expected_seq` is `If-Match`'s version (`api.order_etag.expected_seq`), None without one.
+
+        The amend is judged on the order as it stands when it is admitted (SEC-S4C2B-01): its
+        machine's state and version read together, before any await, then its row read again,
+        never older than that version, as B1 moves the version only once a step's write committed
+        (`order_machine.OrderMachines._stepped`). A state that takes no amend, or no version, is
+        `422`; a row that cannot be read `503 store_unavailable`, one no longer there `409
+        conflict`. The rest is judged on that row, and the `AMEND` carries the version read, which
+        `If-Match`, when given, must name, so a step the order took meanwhile is refused under the
+        order's lock (`_taken_not`). The route judged the arm token and the switches (24 Sec.8.4
+        steps 6 and 10) on `scoped`, its step 4 read: an amend the row makes risk-increasing when
+        `scoped` did not is refused before the send (`_version_refusal`)."""
         if self._closed:
             return _CLOSED
-        row, actor, rid = scoped.order, caller.actor, caller.request_id
-        held = self._d.machines.state(row.id)
-        if row.provenance != "placed" or held is None or held[0] not in _AMENDABLE:
-            return await self.deny(
-                row, "amend", _refused(OrderNotAmendable()), actor=actor, request_id=rid
+        read, actor, rid = scoped.order, caller.actor, caller.request_id
+        held, seen = self._d.machines.state(read.id), self._d.machines.version(read.id)
+        if seen is None or held is None or held[0] not in _AMENDABLE or read.provenance != "placed":
+            return await self.deny(  # a provenance never changes; no version, no state (resync)
+                read, "amend", _refused(OrderNotAmendable()), actor=actor, request_id=rid
             )
+        try:
+            row = await self._bounded(self._d.orders.get(read.exchange_account_id, read.id))
+        except _UNREAD as exc:
+            _log().warning("oms_exit_row_unread", failure=type(exc).__name__)
+            return await self.deny(read, "amend", _store(), actor=actor, request_id=rid)
+        if row is None:
+            return await self.deny(read, "amend", _CONFLICT, actor=actor, request_id=rid)
         checked = await self._checked(row, terms)
         if isinstance(checked, ExitOutcome):
             return await self.deny(row, "amend", checked, actor=actor, request_id=rid)
         sized, instrument, sides = checked
+        raises = risk_increasing(row, terms)
         refusal = await self._ratchet(row, sized.stop_loss if sides else None)
-        if refusal is None and risk_increasing(row, terms):
-            refusal = await self._gated(scoped, sized, instrument)
-        if refusal is None and expected_seq is not None:
-            if self._d.machines.version(row.id) != expected_seq:  # again under the lock (Q5)
-                refusal = _refused(VersionConflict())
+        if refusal is None and raises:
+            refusal = await self._gated(replace(scoped, order=row), sized, instrument)
+        if refusal is None:
+            reclassed = raises and not risk_increasing(read, terms)
+            refusal = _version_refusal(seen, expected_seq, reclassed=reclassed)
         if refusal is not None:
             return await self.deny(row, "amend", refusal, actor=actor, request_id=rid)
         named = {"qty": terms.qty, "price": terms.price, "trigger_price": terms.trigger_price}
@@ -799,7 +833,8 @@ class OrderExits:
             return await self.deny(row, "amend", _CLOSED, actor=actor, request_id=rid)
         send = self._dispatch(
             row, "amend", "AMEND", payload, actor=actor, request_id=rid,
-            expected_seq=expected_seq, terms=taken,
+            expected_seq=expected_seq if expected_seq is not None else seen,
+            if_match=expected_seq is not None, terms=taken,
         )  # fmt: skip
         return await self._shielded(send, "amend")
 
@@ -1016,12 +1051,26 @@ def _tpsl_refused(rule: str, sides: Mapping[str, object]) -> ExitOutcome:
     return _refused(OrderInvalid(errors=(_tpsl_error(rule, sides),)))
 
 
-def _taken_not(kind: ExitKind, error: BaseException) -> ExitOutcome:
-    """A command the facade did not take, nothing sent: a stale `If-Match` (412), a state that
+def _version_refusal(seen: int, expected_seq: int | None, *, reclassed: bool) -> ExitOutcome | None:
+    """An amend's version checks, last (D3), before anything is recorded or sent: `If-Match` names
+    the version read (`seen`), else `412` (Q5). `reclassed`: the order as it stands makes the
+    amend risk-increasing where the route's step 4 read did not, so the route judged its arm token
+    and its switches on a read the order has left. That is `412` with `If-Match`, as the order has
+    moved on from any tag its client held when the route read it, and without one `409 conflict`
+    with `Retry-After: 1`, never `412` (SEC-S4C2B-01)."""
+    if expected_seq is not None and (expected_seq != seen or reclassed):
+        return _refused(VersionConflict())
+    return _MOVED if reclassed else None
+
+
+def _taken_not(kind: ExitKind, error: BaseException, *, if_match: bool) -> ExitOutcome:
+    """A command the facade did not take, nothing sent: a version that moved on, `412` for the
+    client's own `If-Match`, else the version the exit was admitted at, a step the order took
+    meanwhile, `409 conflict` with `Retry-After: 1`, never `412` (SEC-S4C2B-01); a state that
     moved under it (an amend's 422, a cancel's 409), a latched machine (409, CV-C63), or a step
     the store refused (503)."""
     if isinstance(error, VersionConflict):
-        return _refused(error)
+        return _refused(error) if if_match else _MOVED
     if isinstance(error, OrderStepRefused):
         return _store()
     if kind == "amend" and not isinstance(error, DegradedLatchError):
