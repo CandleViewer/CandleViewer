@@ -12,8 +12,8 @@ from typing import Any
 
 import pytest
 
-from candleviewer.oms.errors import OrderBufferFull, ReconcileAnomaly
-from candleviewer.oms.order_machine import MAX_HELD
+from candleviewer.oms.errors import OrderBufferFull, OrderStepUnknown, ReconcileAnomaly
+from candleviewer.oms.order_machine import MAX_HELD, _Held
 from candleviewer.statechart.bindings import b01_order as b01
 from tests.unit.oms.order_rig import (
     ACCOUNT,
@@ -110,6 +110,7 @@ async def test_the_unbound_hold_is_bounded_at_max_held(rig: Rig) -> None:
     assert _held(rig, order) == MAX_HELD
     assert rig.facade.state(order.id) == ("submitting", "not_required")
     gate.set()
+    await rig.quiet()
 
 
 async def test_an_untracked_row_takes_the_push_at_once(rig: Rig) -> None:
@@ -132,3 +133,69 @@ async def test_a_final_rows_push_is_still_the_s6_anomaly(rig: Rig) -> None:
         await rig.facade.push(ACCOUNT, order.id, "REMOTE_CANCELLED", _end("y9"))
     assert rig.audit.reasons(_ANOMALY) == ["POST_TERMINAL_PUSH"]
     assert _held(rig, order) == 0
+
+
+async def test_a_fresh_end_naming_another_order_than_the_bound_one_changes_nothing(
+    rig: Rig,
+) -> None:
+    """SR-E29-03: after the bind, a push naming a foreign exchange order is an anomaly."""
+    order = await rig.submitted()  # bound as `x1`
+    with pytest.raises(ReconcileAnomaly):
+        await rig.facade.push(ACCOUNT, order.id, "REMOTE_CANCELLED", _end("y9"))
+    assert rig.audit.reasons(_ANOMALY) == ["POST_TERMINAL_PUSH"]
+    assert rig.facade.state(order.id) == ("submitted", "not_required")
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and row.state == "accepted" and row.exchange_order_id == "x1"
+
+
+async def test_a_held_push_naming_no_order_is_an_anomaly_after_the_bind(rig: Rig) -> None:
+    """A push held for the bind that names no exchange order cannot be shown to be ours."""
+    order, gate = await _unbound(rig)
+    await rig.facade.push(ACCOUNT, order.id, "REMOTE_CANCELLED", {"updated_time": 9})
+    assert _held(rig, order) == 1
+    gate.set()
+    await rig.quiet()
+    assert rig.audit.reasons(_ANOMALY) == ["POST_TERMINAL_PUSH"]
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and row.state == "accepted"
+
+
+async def test_a_held_rows_push_is_not_held_for_a_bind(rig: Rig) -> None:
+    """A row in lifecycle `held` never gets a bind from the stream: the push is not held."""
+    order = await rig.submitted()
+    await rig.facade.command(
+        ACCOUNT, order.id, "MISMATCH", {"exchange_order_id": "x9"}, actor="system"
+    )
+    assert rig.facade.state(order.id) == ("held", "not_required")
+    rig.facade._orders[order.id].view["exchange_order_id"] = None
+    await rig.facade.push(ACCOUNT, order.id, "TRIGGERED", _end("y9"))
+    assert _held(rig, order) == 0
+
+
+async def test_an_unbound_final_rows_push_is_the_s6_anomaly_not_held(rig: Rig) -> None:
+    order = await rig.submitted()
+    _gate, rig.commands.on_attach = gated(READ_BACK)
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "1"))
+    assert rig.facade.state(order.id) == ("filled", "sl_pending")
+    rig.facade._orders[order.id].view["exchange_order_id"] = None
+    async with asyncio.timeout(10):  # a hold above the final-row anomaly would wait for ever
+        with pytest.raises(ReconcileAnomaly):
+            await rig.facade.push(ACCOUNT, order.id, "REMOTE_CANCELLED", _end("y9"))
+    assert rig.audit.reasons(_ANOMALY) == ["POST_TERMINAL_PUSH"]
+    assert _held(rig, order) == 0
+
+
+async def test_a_store_failure_re_hold_keeps_the_unbound_flag(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    order = await rig.submitted()
+    machine = rig.facade._orders[order.id]
+    held = _Held((9_000, 0), "REMOTE_CANCELLED", _end("x1"), 0, True)
+
+    async def doubtful(*_args: Any) -> bool:
+        raise OrderStepUnknown("REMOTE_CANCELLED", "StepOutcomeUnknown")
+
+    monkeypatch.setattr(rig.facade, "_take", doubtful)
+    with pytest.raises(OrderStepUnknown):
+        await rig.facade._release(machine, held)
+    assert [(h.refused, h.unbound) for h in machine.held] == [(1, True)]

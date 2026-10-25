@@ -1310,6 +1310,11 @@ class OrderMachines:
         if o.view.get("exchange_order_id") is None and o.lifecycle not in ("held", "untracked"):
             self._hold(o, event, push, unbound=True)  # the bind says whose it is (SR-E29-03)
             return False
+        bound_id, named = o.view.get("exchange_order_id"), push.get("exchange_order_id")
+        if bound_id is not None and named is not None and named != bound_id:
+            # another exchange order than the bound one: not ours, so it changes nothing
+            await self._anomaly(o.order_id, o.account_id, o.lifecycle, event, push)
+            return True
         stamp = push.get("updated_time")
         stale = type(stamp) is int and stamp < o.last_update_ms
         unlisted = event not in self.legality.handled.get(o.lifecycle, frozenset())
