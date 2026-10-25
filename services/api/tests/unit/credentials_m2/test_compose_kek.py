@@ -73,7 +73,7 @@ def test_no_kek_in_compose_environment() -> None:
         ("cv_kek_b64", "${CV_KEK_B64:?x}"),
         ("KEK_HEX", "${KEK_HEX:?x}"),
         ("CV_KEK_HANDLE", "a" * 64),
-        ("CV_KEK_HANDLE", "/tmp/cv_kek"),
+        ("CV_KEK_HANDLE", "/var/lib/candleviewer/cv_kek"),
         ("CV_KEK_SOURCE", "${CV_KEK_SOURCE:?x}"),
         ("CV_KEK_VERSION", "${CV_KEK_VALUE:?x}"),
     ],
@@ -84,9 +84,9 @@ def test_no_kek_in_compose_environment() -> None:
 def test_negative_control_the_environment_guard_catches(key: str, value: str, form: str) -> None:
     doc = copy.deepcopy(yaml.safe_load(_DEMO_HOST.read_text(encoding="utf-8")))
     env = {**_env(doc["services"]["api"]), key: value}
-    doc["services"]["api"]["environment"] = env if form == "mapping" else [
-        f"{k}={v}" for k, v in env.items()
-    ]
+    doc["services"]["api"]["environment"] = (
+        env if form == "mapping" else [f"{k}={v}" for k, v in env.items()]
+    )
     assert len(kek_problems(doc)) == 1
 
 

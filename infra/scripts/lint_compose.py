@@ -21,8 +21,33 @@ Rule 4 applies to the deploy overlay, ``docker-compose.deploy.yml``, which
    are refused: the deploy runs the image it verified, with that image's own
    entrypoint and code.
 
-Run as a script (``python infra/scripts/lint_compose.py``, which checks both
-files) or imported by ``infra/scripts/tests/test_lint_compose.py``.
+Rule 5 applies to every compose file (``docker-compose*.yml``):
+
+5. No ``environment:`` carries a KEK (``docs/plan/spikes/e27-kek.md`` §3, C5
+   rejected). A name holding ``KEK`` must be one of §4's settings, each with a
+   value that cannot be key material: ``CV_KEK_SOURCE`` ``file`` or ``handle``,
+   ``CV_KEK_HANDLE`` a ``/run/secrets/`` path, ``CV_KEK_VERSION`` an integer or
+   its own variable. No value holds a run of 32 hex digits or 43 base64
+   characters. No message repeats a value.
+
+Rule 6 applies to the demo-host overlay, ``docker-compose.demo-host.yml``,
+which ``docs/ops/runbooks/demo-host.md`` applies after the base and VPS files:
+
+6. It touches only ``api`` and ``migrate`` (api: ``environment``, ``secrets``,
+   ``volumes``, ``ulimits``, ``ports``; migrate: ``environment``) and the
+   top-level ``secrets`` and ``volumes``; a port is bound to ``127.0.0.1``
+   (rule 1). Every environment value is the operator's variable
+   (``${NAME:?...}``, or ``${NAME:-}``), never a value committed here, except
+   ``CV_KEK_SOURCE=file`` and ``CV_KEK_HANDLE=/run/secrets/cv_kek``. The
+   ``cv_kek`` secret is ``file: ${CV_KEK_FILE:?...}`` with no default, mounted
+   on api as ``cv_kek`` (uid and gid 10001, mode 0400). ``ulimits.core`` is 0.
+   ``/data`` is one named volume this file declares, never a bind mount.
+   ``migrate``'s ``CV_PG_DSN`` is ``${CV_PG_OWNER_DSN:?...}``, and ``api``
+   never takes ``CV_PG_OWNER_DSN``.
+
+Run as a script (``python infra/scripts/lint_compose.py``, which checks the base
+file, both overlays and rule 5 over every compose file) or imported by
+``infra/scripts/tests/test_lint_compose.py``.
 """
 
 from __future__ import annotations
@@ -51,6 +76,36 @@ _DEPLOY_REFUSED = {  # any other key outside _DEPLOY_API_KEYS: "is not set by th
     "command": "replaces the image's command ({value!r})",
 }
 
+COMPOSE_DIR = Path(__file__).parent.parent / "compose"
+DEMO_HOST_OVERLAY = COMPOSE_DIR / "docker-compose.demo-host.yml"
+#: Rule 5: e27-kek.md §4's settings an environment may hold, and the shape of each value.
+_KEK_SETTINGS: dict[str, tuple[re.Pattern[str], str]] = {
+    "CV_KEK_SOURCE": (re.compile(r"file|handle"), "file or handle"),
+    "CV_KEK_HANDLE": (re.compile(r"/run/secrets/[a-z0-9_]+"), "a /run/secrets/ path"),
+    "CV_KEK_VERSION": (
+        re.compile(r"[1-9][0-9]{0,5}|\$\{CV_KEK_VERSION(?::\?[^}]*)?\}"),
+        "an integer or ${CV_KEK_VERSION:?...}",
+    ),
+}
+#: A key written out: 16 bytes or more as hex, 32 bytes as base64 (43 characters, unpadded).
+_KEY_MATERIAL = re.compile(r"[0-9A-Fa-f]{32,}|[A-Za-z0-9+/_-]{43,}")
+#: Rule 6: what the demo-host overlay may set.
+_DEMO_TOP_LEVEL = ("services", "secrets", "volumes")
+_DEMO_SERVICE_KEYS = {
+    "api": frozenset({"environment", "secrets", "volumes", "ulimits", "ports"}),
+    "migrate": frozenset({"environment"}),
+}
+KEK_HANDLE = "/run/secrets/cv_kek"
+DATA_DIR = "/data"
+_RUNTIME_ID = "10001"  # infra/images/Dockerfile.api's USER
+#: The only values the overlay commits; every other one is the operator's variable.
+_DEMO_FIXED = {"CV_KEK_SOURCE": "file", "CV_KEK_HANDLE": KEK_HANDLE}
+#: `${NAME:?...}` (compose refuses to run while it is unset or empty) or `${NAME:-}`.
+_OPERATOR_VALUE = re.compile(r"\$\{[A-Z][A-Z0-9_]*(?::\?[^}]*|:-)\}")
+_KEK_FILE = re.compile(r"\$\{CV_KEK_FILE:\?[^}]*\}")
+_OWNER_DSN = re.compile(r"\$\{CV_PG_OWNER_DSN:\?[^}]*\}")
+_KEK_MOUNT = {"source": "cv_kek", "target": "cv_kek", "uid": _RUNTIME_ID, "gid": _RUNTIME_ID}
+
 
 class ComposeLintError(Exception):
     """Raised with every violation found, joined into one message."""
@@ -58,6 +113,26 @@ class ComposeLintError(Exception):
 
 def _services(compose: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return compose.get("services", {}) or {}
+
+
+def _environment(service: dict[str, Any]) -> dict[str, str]:
+    """A service's `environment:`, mapping or list form, as names to strings."""
+    raw = service.get("environment") or {}
+    if isinstance(raw, dict):
+        return {str(k): "" if v is None else str(v) for k, v in raw.items()}
+    return {k: v for k, _, v in (str(item).partition("=") for item in raw)}
+
+
+def _mount(entry: Any) -> tuple[str, str, str]:
+    """A `volumes:` entry, short or long syntax, as (type, source, target)."""
+    if isinstance(entry, dict):
+        kind, source = str(entry.get("type", "volume")), str(entry.get("source", ""))
+        return kind, source, str(entry.get("target", ""))
+    source, sep, rest = str(entry).partition(":")
+    if not sep:
+        return "volume", "", source  # anonymous
+    kind = "bind" if source.startswith(("/", ".", "~", "$")) else "volume"
+    return kind, source, rest.partition(":")[0]
 
 
 def check_port_bindings(compose: dict[str, Any]) -> list[str]:
@@ -119,21 +194,146 @@ def check_deploy_overlay(compose: dict[str, Any]) -> list[str]:
     return errors
 
 
-def lint(compose_path: Path, *, deploy_overlay: bool = False) -> list[str]:
-    compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
-    if deploy_overlay:
-        return check_deploy_overlay(compose)
+def check_no_kek_in_environment(compose: dict[str, Any]) -> list[str]:
+    """Rule 5: no environment carries a KEK. Messages name settings, never a value."""
     errors: list[str] = []
-    errors += check_port_bindings(compose)
-    errors += check_image_digests(compose)
-    errors += check_healthchecks(compose)
+    for name, service in _services(compose or {}).items():
+        for key, value in _environment(service or {}).items():
+            setting = _KEK_SETTINGS.get(key.upper())
+            if "KEK" in key.upper() and setting is None:
+                allowed = ", ".join(_KEK_SETTINGS)
+                errors.append(
+                    f"service '{name}': environment {key} names a KEK; only {allowed} may, and "
+                    "never with the key itself (docs/plan/spikes/e27-kek.md §3)"
+                )
+            elif setting is not None and not setting[0].fullmatch(value):
+                errors.append(f"service '{name}': environment {key} is not {setting[1]}")
+            if _KEY_MATERIAL.search(value):
+                errors.append(f"service '{name}': environment {key} holds inline key material")
     return errors
 
 
+def check_demo_host_overlay(compose: dict[str, Any]) -> list[str]:
+    """Rule 6 (module docstring): the demo-host overlay's shape."""
+    compose = compose or {}
+    services = _services(compose)
+    errors = [
+        f"top-level '{key}': the demo-host overlay sets only {', '.join(_DEMO_TOP_LEVEL)}"
+        for key in compose
+        if key not in _DEMO_TOP_LEVEL
+    ]
+    for name, service in services.items():
+        allowed = _DEMO_SERVICE_KEYS.get(name)
+        if allowed is None:
+            errors.append(f"service '{name}': the demo-host overlay touches only api and migrate")
+            continue
+        errors += [
+            f"service '{name}': {key} is not set by the demo-host overlay"
+            for key in sorted(set(service or {}) - allowed)
+        ]
+        for key, value in _environment(service or {}).items():
+            fixed = _DEMO_FIXED.get(key) if name == "api" else None
+            if value != fixed and not _OPERATOR_VALUE.fullmatch(value):
+                errors.append(
+                    f"service '{name}': environment {key} is committed here, not taken from "
+                    "the operator's env file (${NAME:?...} or ${NAME:-})"
+                )
+    errors += check_port_bindings(compose)
+    api = services.get("api") or {}
+    if _environment(api).get("CV_KEK_HANDLE") != KEK_HANDLE:
+        errors.append(f"service 'api': CV_KEK_HANDLE is not {KEK_HANDLE}, the cv_kek mount")
+    errors += _kek_secret_problems(compose, api)
+    core = (api.get("ulimits") or {}).get("core")
+    if core != 0 and core != {"soft": 0, "hard": 0}:
+        errors.append(f"service 'api': ulimits.core is {core!r}, not 0 (SR-009: no core dumps)")
+    errors += _data_volume_problems(compose, api)
+    return errors + _owner_dsn_problems(services)
+
+
+def _kek_secret_problems(compose: dict[str, Any], api: dict[str, Any]) -> list[str]:
+    """`cv_kek` is the host file CV_KEK_FILE names (no default), mounted once on api."""
+    errors: list[str] = []
+    secret = (compose.get("secrets") or {}).get("cv_kek")
+    source = secret.get("file") if isinstance(secret, dict) and set(secret) == {"file"} else None
+    if not isinstance(source, str) or not _KEK_FILE.fullmatch(source):
+        errors.append(
+            "secret 'cv_kek' is not file: ${CV_KEK_FILE:?...} (the host file the operator's "
+            "env file names, with no default, so an unset name fails loudly)"
+        )
+    mounts = [
+        entry
+        for entry in api.get("secrets") or []
+        if (entry if isinstance(entry, str) else (entry or {}).get("source")) == "cv_kek"
+    ]
+    entry = mounts[0] if len(mounts) == 1 and isinstance(mounts[0], dict) else {}
+    shown = {key: str(entry.get(key)) for key in _KEK_MOUNT}
+    if shown != _KEK_MOUNT or entry.get("mode") != 0o400:
+        errors.append(
+            f"service 'api': does not mount cv_kek once at {KEK_HANDLE}, uid and gid "
+            f"{_RUNTIME_ID}, mode 0400"
+        )
+    return errors
+
+
+def _data_volume_problems(compose: dict[str, Any], api: dict[str, Any]) -> list[str]:
+    """api mounts one thing here: /data, a named volume this file declares."""
+    mounts = [_mount(entry) for entry in api.get("volumes") or []]
+    declared = compose.get("volumes") or {}
+    shape = [(kind, target) for kind, _, target in mounts]
+    if shape == [("volume", DATA_DIR)] and mounts[0][1] in declared:
+        return []
+    targets = [target for _, _, target in mounts]
+    return [
+        (
+            f"service 'api': mounts {targets}, not {DATA_DIR} alone as a named volume this file "
+            "declares (never a bind mount)"
+        )
+    ]
+
+
+def _owner_dsn_problems(services: dict[str, dict[str, Any]]) -> list[str]:
+    """The owner role's DSN reaches migrate, as its CV_PG_DSN, and never api."""
+    errors: list[str] = []
+    dsn = _environment(services.get("migrate") or {}).get("CV_PG_DSN", "")
+    if not _OWNER_DSN.fullmatch(dsn):
+        errors.append("service 'migrate': CV_PG_DSN is not ${CV_PG_OWNER_DSN:?...}")
+    api = _environment(services.get("api") or {})
+    if any("CV_PG_OWNER_DSN" in f"{key}={value}" for key, value in api.items()):
+        errors.append("service 'api': takes CV_PG_OWNER_DSN; only migrate may")
+    return errors
+
+
+def lint(
+    compose_path: Path, *, deploy_overlay: bool = False, demo_host_overlay: bool = False
+) -> list[str]:
+    """Rules 1-3 (rule 4 for the deploy overlay, rule 6 for the demo host's), then rule 5."""
+    compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+    if deploy_overlay:
+        errors = check_deploy_overlay(compose)
+    elif demo_host_overlay:
+        errors = check_demo_host_overlay(compose)
+    else:
+        errors = check_port_bindings(compose)
+        errors += check_image_digests(compose)
+        errors += check_healthchecks(compose)
+    return errors + check_no_kek_in_environment(compose)
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Lint `argv[0]` with rules 1-3; with no argument, the base file and the deploy overlay."""
-    files = [(Path(argv[0]), False)] if argv else [(BASE_FILE, False), (DEPLOY_OVERLAY, True)]
-    errors = [f"{p.name}: {e}" for p, overlay in files for e in lint(p, deploy_overlay=overlay)]
+    """Lint `argv[0]` with rules 1-3 and 5; with no argument, the base file and both overlays,
+    and rule 5 over every other compose file."""
+    files: list[tuple[Path, dict[str, bool]]] = [(BASE_FILE, {})]
+    if argv:
+        files = [(Path(argv[0]), {})]
+    else:
+        files += [(DEPLOY_OVERLAY, {"deploy_overlay": True})]
+        files += [(DEMO_HOST_OVERLAY, {"demo_host_overlay": True})]
+    errors = [f"{p.name}: {e}" for p, kind in files for e in lint(p, **kind)]
+    linted = {p.resolve() for p, _ in files}
+    for path in [] if argv else sorted(COMPOSE_DIR.glob("docker-compose*.yml")):
+        if path.resolve() not in linted:
+            compose = yaml.safe_load(path.read_text(encoding="utf-8"))
+            errors += [f"{path.name}: {e}" for e in check_no_kek_in_environment(compose)]
     if errors:
         for error in errors:
             print(f"lint_compose: {error}", file=sys.stderr)

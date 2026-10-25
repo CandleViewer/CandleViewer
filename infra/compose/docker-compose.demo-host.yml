@@ -1,0 +1,71 @@
+# infra/compose/docker-compose.demo-host.yml — the Bybit demo host's overlay (#3180).
+#
+# Manual compose on the demo host only, applied after docker-compose.yml and
+# docker-compose.vps.yml under the project `cv-demo` (docs/ops/runbooks/demo-host.md). It runs the
+# real backend: every setting below comes from the operator's infra/compose/.env, and compose
+# refuses every command while a required one (`:?`) is unset or empty. Not for local development,
+# and not the dev deploy's: tools/ci/deploy_dev.py applies docker-compose.deploy.yml over the base
+# file only (taking this overlay there is a follow-up). infra/scripts/lint_compose.py checks this
+# file: api and migrate only, values from the env file, the KEK a file secret and never a value,
+# no core dumps, /data a named volume.
+
+secrets:
+  # The KEK (docs/plan/spikes/e27-kek.md §3): a host file of exactly 32 raw bytes, mode 0400 and
+  # owned by uid 10001, outside every volume and the checkout. Only its path is in .env
+  # (CV_KEK_FILE), never the key. As for the audit lane key, compose without Swarm bind-mounts the
+  # file as it is and ignores the api entry's `mode`, `uid` and `gid`, so the host file must carry
+  # them; the loader refuses another mode, owner or length (kek_handle_permissions,
+  # kek_unavailable).
+  cv_kek:
+    file: ${CV_KEK_FILE:?set to the KEK file's host path in infra/compose/.env}
+  # The base file's /dev/null default, which a real backend refuses, becomes a loud error here.
+  cv_audit_lane_key:
+    file: ${CV_AUDIT_LANE_MAC_SOURCE:?set in infra/compose/.env}
+
+volumes:
+  # The api's data directory: the cold tier's root /data/parquet (CV_PARQUET_ROOT, from
+  # docker-compose.vps.yml), which the real backend requires and never creates, and the recorder
+  # WAL, admin jobs and audit exports beside it. A named volume, as the audit volume is: Docker
+  # copies the image's /data (uid 10001, mode 0700, with parquet/; infra/images/Dockerfile.api)
+  # into it on first mount, so the non-root api can write it under the read-only root filesystem.
+  # `down -v` deletes it.
+  cv-api-data:
+
+services:
+  api:
+    environment:
+      CV_STORAGE_BACKEND: ${CV_STORAGE_BACKEND:?set to real in infra/compose/.env}
+      # E27-T03: the stored-key self-check and the key import hold a key's IP whitelist to this
+      # address. Confidential (E27 threat model §1.2): in the operator's .env only.
+      CV_EGRESS_IP: ${CV_EGRESS_IP:?set in infra/compose/.env}
+      # Demo only: live refuses a file KEK (kek_source_not_permitted); demo logs
+      # secrets.kek_file_source at each boot.
+      CV_KEK_SOURCE: file
+      CV_KEK_HANDLE: /run/secrets/cv_kek
+      CV_KEK_VERSION: ${CV_KEK_VERSION:?set in infra/compose/.env}
+      CV_AUTH_PEPPER: ${CV_AUTH_PEPPER:?set in infra/compose/.env}
+      CV_AUTH_CSRF_KEY_HEX: ${CV_AUTH_CSRF_KEY_HEX:?set in infra/compose/.env}
+      CV_AUTH_TOTP_KEY_HEX: ${CV_AUTH_TOTP_KEY_HEX:?set in infra/compose/.env}
+      CV_AUTH_RECOVERY_HMAC_KEY_HEX: ${CV_AUTH_RECOVERY_HMAC_KEY_HEX:?set in infra/compose/.env}
+      # Must hold cv-internal (172.28.0.0/24): the healthcheck and the host's loopback publish
+      # reach the api from it, and MeshOnly refuses every other source but loopback.
+      CV_MESH_CIDRS_CSV: ${CV_MESH_CIDRS_CSV:?set in infra/compose/.env}
+      # Empty admits no browser origin (fail closed); the first-run script sends none.
+      CV_ALLOWED_ORIGINS: ${CV_ALLOWED_ORIGINS:-}
+    volumes:
+      - cv-api-data:/data
+    secrets:
+      - source: cv_kek
+        target: cv_kek
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+    # SR-009: no core dumps; cv-api also sets RLIMIT_CORE=0 and PR_SET_DUMPABLE=0 itself.
+    ulimits:
+      core: 0
+
+  # The schema step as the owner role (cv_owner): required here, with no placeholder DSN. Never
+  # api's: api keeps the app role's CV_PG_DSN (docs/ops/runbooks/storage-migrate.md).
+  migrate:
+    environment:
+      CV_PG_DSN: ${CV_PG_OWNER_DSN:?set in infra/compose/.env}
