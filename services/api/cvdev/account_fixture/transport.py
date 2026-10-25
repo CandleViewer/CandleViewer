@@ -14,9 +14,10 @@
   revoke the key, then restart (FX-D01).
 - A signature mismatch, or a body past `MAX_BODY_BYTES` that is never read whole, answers the
   pack's `_base/error_10004.json`.
+- An unsigned request off the public market allow-list (`guards.is_public_path`) is refused as
+  `refused_key` with the refusals, before any body is read: never answered, never latched.
 - What passes every guard is served (decisions 6 and 7): a signed call as the scenario its key is
-  stored under, an unsigned one only on `PUBLIC_CALLS` and as the stack default
-  (`CV_ACCOUNT_FIXTURE`); any other unsigned call is refused as `refused_key`, without a latch.
+  stored under, an unsigned one as the stack default (`CV_ACCOUNT_FIXTURE`).
   The reply follows the pack's lookup rule at the scenario's time and on the injected clock. A
   call nothing answers gets HTTP 404 with no exchange return code, which the client raises as
   `UnknownStateError`: not success, not retried, never a verdict on the key. So does a call signed
@@ -49,7 +50,6 @@ import structlog
 from cvdev.account_fixture import guards
 from cvdev.account_fixture.guards import Admission
 from cvdev.account_fixture.pack import (
-    SERVER_TIME_CALL,
     Pack,
     Scenario,
     UnstubbedCall,
@@ -73,8 +73,6 @@ SIGNATURE_ERROR_REPLY: Final = f"_base/error_{SIGNATURE_ERROR}.json"
 MAX_BODY_BYTES: Final = 64 * 1024
 UNSTUBBED_STATUS: Final = 404
 _UNSTUBBED: Final = b'{"error":"account_fixture_unstubbed"}'
-#: What an unsigned call may get: the pack's server time, which the adapter asks for unsigned.
-PUBLIC_CALLS: Final = frozenset({SERVER_TIME_CALL})
 #: An ack whose result names an order (a create's, a cancel's) names the request's (`_echo`); an
 #: order the stub creates gets an id derived from its link (uuid5 under this fabricated namespace).
 _LINK: Final = "orderLinkId"
@@ -173,7 +171,8 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         seen = guards.admit(request, self._key_ids)
         if seen.key_class == "non_fixture":  # whichever guard refuses it first (FX-S01)
             self._trip()
-        if seen.refusal is not None or self.latched:
+        private = not guards.is_public_path(request.url.path)
+        if seen.refusal is not None or self.latched or (seen.key_class == "unsigned" and private):
             self._refuse(request, seen)
         body: bytes | None = None
         verified: bool | None = None
@@ -192,13 +191,11 @@ class FixtureTransport(httpx.AsyncBaseTransport):
 
     async def _serve(self, request: httpx.Request, seen: Admission, body: bytes | None) -> Answer:
         """A request that passed every guard, with `body`, the bytes guard 4 verified (None when
-        unsigned). An unsigned call meets no key or signature guard, so only a public call is
-        answered; any other is refused. The reply is `_selection`'s scenario's at the time since
-        it started, which a stub's `when` matches on the verified JSON body: a stub's status, its
-        headers and its body, anchored on the clock. A call nothing answers is unstubbed."""
+        unsigned, and then on the public market allow-list). The reply is `_selection`'s
+        scenario's at the time since it started, which a stub's `when` matches on the verified JSON
+        body: a stub's status, its headers and its body, anchored on the clock. A call nothing
+        answers is unstubbed."""
         call = f"{request.method} {request.url.path}"
-        if seen.key_id is None and call not in PUBLIC_CALLS:
-            self._refuse(request, seen)
         now = self._clock()
         scenario, started = self._selection(seen.key_id, now)
         sent: dict[str, object] | None = None
@@ -247,7 +244,7 @@ class FixtureTransport(httpx.AsyncBaseTransport):
     def _refuse(self, request: httpx.Request, seen: Admission) -> NoReturn:
         """Never answered: log, then raise as a closed port would. A request every guard passed
         is refused as a key refusal without a P0: on a latched transport, whose trip carried the
-        P0, or when it is unsigned and not public."""
+        P0, or when it is unsigned and off the public market allow-list."""
         p0 = seen.refusal is not None
         outcome: Outcome = seen.refusal or "refused_key"
         event = {"outcome": outcome, "priority": _P0 if p0 else None, "latched": self.latched}

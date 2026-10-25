@@ -12,7 +12,9 @@ anything is answered:
    Enforcement).
 3. Key id (FX-S01): a signed request, one carrying any of the four auth headers, must carry a
    pack key id (`pack.fixture_key_ids`) exactly as its key header; the `fixture-<scenario>-NNNN`
-   shape alone is not enough. Otherwise it is never answered and the transport latches.
+   shape alone is not enough. Otherwise it is never answered and the transport latches. An
+   unsigned request is answered only under `/v5/market/` (`is_public_path`, normalised as fund
+   paths are); any other is refused as `refused_key`, without a latch or a P0.
 4. Signature (FX-S02): HMAC-SHA256 with the derived secret of the scenario the key is stored under
    (`pack.derived_secret`), over the string the adapter's signer has M2 sign: timestamp, key id,
    receive window, then the query string for GET and DELETE or the body otherwise (the REST
@@ -32,6 +34,7 @@ import hmac
 import posixpath
 from dataclasses import dataclass
 from typing import Final
+from urllib.parse import unquote
 
 import httpx
 
@@ -50,6 +53,9 @@ FUND_PATH_PREFIX: Final = "/v5/asset/"
 #: The read-only gate's reason code on a key-id trip (ADR-0036 decision 4).
 GUARD_REASON_CODE: Final = "account_fixture_guard"
 _FUND_SEGMENTS: Final = FUND_PATH_PREFIX.strip("/").split("/")
+#: The public market allow-list: the only prefix an unsigned request is answered under (guard 3).
+PUBLIC_PATH_PREFIX: Final = "/v5/market/"
+_PUBLIC_SEGMENTS: Final = PUBLIC_PATH_PREFIX.strip("/").split("/")
 QUERY_SIGNED: Final = frozenset({"GET", "DELETE"})
 
 
@@ -75,10 +81,22 @@ def host_env(host: str) -> HostEnv | None:
     return "testnet" if host == TESTNET_REST_HOST else "live"
 
 
+def _segments(path: str) -> list[str]:
+    """`path`'s segments, percent-decoded until nothing decodes, lower-cased, with repeated
+    slashes and dot segments resolved. Each decode that changes the text shortens it."""
+    while (decoded := unquote(path)) != path:
+        path = decoded
+    return [part for part in posixpath.normpath(path.lower()).split("/") if part]
+
+
 def is_fund_path(path: str) -> bool:
-    """Under `/v5/asset/`, whatever the case, repeated slashes or (decoded) dot segments."""
-    segments = [part for part in posixpath.normpath(path.lower()).split("/") if part]
-    return segments[:2] == _FUND_SEGMENTS
+    """Under `/v5/asset/`, whatever the case, repeated slashes, percent-encoding or dot segments."""
+    return _segments(path)[:2] == _FUND_SEGMENTS
+
+
+def is_public_path(path: str) -> bool:
+    """Under `/v5/market/`, normalised as in `is_fund_path`: where an unsigned call may go."""
+    return _segments(path)[:2] == _PUBLIC_SEGMENTS
 
 
 def stored_under(key_id: str) -> str:

@@ -36,9 +36,10 @@ from candleviewer.exchange.bybit.key_info import (
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.settings import Environment
+from cvdev.account_fixture.guards import PUBLIC_PATH_PREFIX
 from cvdev.account_fixture.pack import Pack, Scenario, fixture_key_ids
 from cvdev.account_fixture.requestlog import FILE_NAME, RequestLog
-from cvdev.account_fixture.transport import PUBLIC_CALLS, FixtureTransport, _listed
+from cvdev.account_fixture.transport import FixtureTransport, _listed
 from tests._account_fixtures import PACK, PACK_ROOT, load, manifest, scenario_names
 from tests.unit.cvdev.test_request_log import OMS_LINK, ORDER
 from tests.unit.cvdev.test_transport_guards import DEMO, _client, _get, _key, _of, _secret
@@ -68,6 +69,13 @@ _LISTED = manifest("working_orders_2")["rest"]["GET /v5/order/realtime"]["merge_
 SEEDED: Final = [(order["orderId"], order["orderLinkId"]) for order in _LISTED["list"]]
 #: Every call the pack stubs, but the wildcard.
 PACK_CALLS: Final = {c for n in scenario_names() for c in manifest(n).get("rest", {})} - {"*"}
+#: Unsigned calls off the public market allow-list, however spelled (S7 lens MINOR-2): refused.
+_SPELLED: Final = ["/V5/ACCOUNT/X", "//v5//account", "/%2Fv5%2Faccount", "/%252Fv5/order/x"]
+_OFF: Final = ["/v5/market/../account/x", "/v5/market/%252e%252e/account", *_SPELLED]
+UNSIGNED_REFUSED: Final = sorted(
+    {c for c in PACK_CALLS if not c.split(" ")[1].startswith(PUBLIC_PATH_PREFIX)}
+    | {f"GET {path}" for path in _OFF}
+)
 
 
 @dataclass
@@ -389,13 +397,12 @@ async def test_the_adapters_unsigned_calls_answer_as_the_stack_default(make: Mak
         assert await client.check_reachable()
         server = await client.server_time()
     assert server.time_us == (NOW_MS + 6_000) * 1_000  # clock_skew's exchange runs 6 s ahead
-    assert PUBLIC_CALLS == {"GET /v5/market/time"}
     assert [_of(line, "outcome", "key_class", "scenario") for line in stub.lines()] == [
         ("served", "unsigned", "clock_skew")
     ] * 2
 
 
-@pytest.mark.parametrize("call", sorted(PACK_CALLS - PUBLIC_CALLS))
+@pytest.mark.parametrize("call", UNSIGNED_REFUSED)
 async def test_an_unsigned_private_call_is_refused_never_answered(stub: Stub, call: str) -> None:
     method, path = call.split(" ")
     with capture_logs() as events, pytest.raises(httpx.ConnectError, match="refused_key"):
@@ -404,6 +411,22 @@ async def test_an_unsigned_private_call_is_refused_never_answered(stub: Stub, ca
     want = ("refused_key", "unsigned", None, None)
     assert _of(line, "outcome", "key_class", "verified", "scenario") == want
     assert [_of(e, "log_level", "priority", "latched") for e in events] == [("error", None, False)]
+    assert not stub.transport.latched
+
+
+async def test_an_unsigned_market_call_nothing_stubs_is_answered_unstubbed(stub: Stub) -> None:
+    assert (await stub.send(httpx.Request("GET", DEMO + "/v5/market/tickers")))[0] == 404
+    want = ("unstubbed", "unsigned", "compliant")
+    assert _of(stub.lines()[0], "outcome", "key_class", "scenario") == want
+
+
+async def test_a_refused_unsigned_call_is_never_success_through_the_client(stub: Stub) -> None:
+    async with _client(stub.transport, DEMO, _key("compliant"), _secret("compliant")) as client:
+        with pytest.raises(TransportError):
+            await client.get_public(WALLET)  # unsigned, so retried, then raised
+    assert {_of(line, "outcome", "key_class") for line in stub.lines()} == {
+        ("refused_key", "unsigned")
+    }
     assert not stub.transport.latched
 
 
