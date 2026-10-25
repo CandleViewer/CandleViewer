@@ -278,6 +278,13 @@ def test_protective_writes_are_decided_by_their_handlers() -> None:
         "A protective write runs as the viewer, is audited with the viewer as the actor, and is "
         "admitted only when both the viewer's own RBAC and the target's `x-rbac` allow it; in the "
         "hold it runs in the viewer's own scope.",
+        "Among the writes the carve-out names are the cancels, `cancelOrder` and "
+        "`cancelAllOrders`, protective whole (`ArmToken` lists the carve-out's full set: a cancel "
+        "is never refused for want of the arm token, so the cancel routes do not declare it): "
+        "both pass to their handlers, and a protective cancel runs as the viewer, admitted only "
+        "when both the viewer's own RBAC and the target's `x-rbac` allow it, and in the hold in "
+        "the viewer's own scope (#913 slice 4; the orchestrator's rulings of 2026-10-25 01:11Z "
+        "(3) and 01:24Z).",
     ):
         assert claim in section, claim
     assert "native SL" not in section  # the carve-out is pointed at, not restated (C-16.5)

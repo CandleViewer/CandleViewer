@@ -1027,9 +1027,11 @@ To answer a denial:
 
 1. Find the denial in the audit log. The `permission` label of `authz_denied_total` (below) says
    which decider counted it, and the audit action differs:
-   - `enforce` routes (`users:write`, `keys:manage`, `keys:read`) and the key store's owner gate (`keys:read`, reason `not_owner:keys:read:granted_accounts`): action `rbac.denied`,
+   - `enforce` routes (`users:write`, `keys:manage`, `keys:read`), the key store's owner gate (`keys:read`, reason `not_owner:keys:read:granted_accounts`) and the view-as guard (a protective write's target, reason `missing_permission:<code>:none`): action `rbac.denied`,
      `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=rbac.denied"` (add
-     `&actor_user_id=<id>`). The entry names the permission and scope (`auth/scopes.py`, `enforce`).
+     `&actor_user_id=<id>`; the view-as guard's actor is the viewing Owner, and the user whose
+     permission was missing is the entry's object). The entry names the permission and scope
+     (`auth/scopes.py`, `enforce`).
    - Admin-area routes on the E42 guard (`admin/http.py`; `permission="admin:read"` today): action
      `admin.area_entered`, not `rbac.denied`. The same action is written for every allowed entry,
      so filter on the outcome:
@@ -1046,7 +1048,7 @@ To answer a denial:
    `docs/qa/charters/E09-charter-2-rbac-boundaries.md`.
 
 **`authz_denied_total{permission}`** (the catalogue name; there is no `cv_` prefix) counts each
-permission denial decided by one of three deciders. It moves before the audit row is written, so an
+permission denial decided by one of four deciders. It moves before the audit row is written, so an
 audit failure never hides a denial. `permission` is the permission code from a closed set (the
 generated vocabulary plus `other`).
 
@@ -1062,6 +1064,15 @@ generated vocabulary plus `other`).
 - The key store's owner gate, for `testApiKey` (`api/exchange_keys.py`, audit row `rbac.denied` with
   reason `not_owner:keys:read:granted_accounts`): a caller `enforce` let through whom the store then
   refuses (SR-051) counts under `keys:read`, even when its audit row cannot be written; then only the warning log `key_test_denial_unaudited` (actor and account ids) names the caller.
+- The view-as guard, for a protective write in a live view-as context (`api/view_as_guard.py`,
+  audit row `rbac.denied` with reason `missing_permission:<code>:none`, the target as its object
+  and the viewer as its actor). A target who lacks the permission the operation's `x-rbac` names,
+  or who can no longer act, is refused `403 forbidden` and counted under that permission
+  (`orders:write` for the cancels and the amends, `positions:write` for `setPositionTpSl`,
+  `killswitch:write` for `setKillSwitch`), even when its audit row cannot be written; then only
+  the warning log `auth.view_as_target_denial_unaudited` (the error's class) marks it. A
+  protective write counts here once its handler has registered with the guard (none is mounted
+  yet; `PROTECTIVE_WRITES` in `api/view_as_policy.py` names each one's ticket).
 
 Not counted:
 
@@ -1077,7 +1088,7 @@ Read it on the metrics listener, for example
 `curl -s http://127.0.0.1:9108/metrics | grep '^authz_denied_total'` (every permission is listed at 0
 from process start). The `AuthzDeniedSpike` rule fires above 20 denials in 10 minutes
 (`sum by (permission) (increase(authz_denied_total[10m]))` shows which permission). Today a spike on
-`admin:read` comes from the admin-area guard, one on `users:write` or `keys:manage` from `enforce`, and one on `keys:read` from `enforce` or the key store's owner gate; use the
+`admin:read` comes from the admin-area guard, one on `users:write` or `keys:manage` from `enforce`, one on `keys:read` from `enforce` or the key store's owner gate, one on `orders:write` from `enforce` (the order route) or the view-as guard, and one on `positions:write` or `killswitch:write` from the view-as guard (its audit row has a user, the target, as its object); use the
 matching query in step 1.
 
 **`auth_stepup_failures_total`** (no labels) counts each failed step-up verification: wrong password,
