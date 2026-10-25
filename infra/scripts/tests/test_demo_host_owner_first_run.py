@@ -433,6 +433,14 @@ def test_a_successful_run_clears_what_it_showed_once_from_the_terminal(on_tty: T
     assert STILL_THERE not in on_tty.stderr and on_tty.stdout.splitlines() == VERDICT_LINES
 
 
+def test_a_successful_run_says_it_asked_the_terminal_to_clear(on_tty: TerminalRun) -> None:
+    """D-7: a terminal may ignore ED 3 and keep its scrollback, so the run says what it did, ask,
+    and to clear what is still there; neither its warning nor its end says the scrollback is or
+    will be cleared."""
+    assert "was asked to clear" in on_tty.stderr
+    assert "are cleared" not in on_tty.stderr and "clears this terminal" not in on_tty.stderr
+
+
 def test_the_account_id_reaches_the_terminal_alone(on_tty: TerminalRun) -> None:
     """L6: the one value `--account-id` needs is shown on the terminal, never on stdout or
     stderr, which a log could keep."""
