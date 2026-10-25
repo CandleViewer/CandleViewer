@@ -126,8 +126,9 @@ _IDENTITY: Final = frozenset(
 )
 OVERRIDE_REFUSED_ACTION: Final = "trade_group.override_refused"
 _PROBLEM: Final = "risk_limit_breached"
-#: Margin may use at most this share of the available margin (24 Sec.9.3 step 8).
-_MARGIN_SHARE: Final = Decimal("0.98")
+#: Margin may use at most this share of the available margin (24 Sec.9.3 step 8): the one
+#: constant the sizer's margin step reads too (BQ-19, no config key).
+MARGIN_SHARE: Final = Decimal("0.98")
 _DIGITS: Final = 100
 _CONTEXT: Final = Context(prec=_DIGITS)
 _FLOOR: Final = Context(prec=_DIGITS, rounding=ROUND_FLOOR)
@@ -679,8 +680,8 @@ def _r6_margin(c: _Case) -> list[Violation]:
     if available is None:
         return [_unknown("leverage", "R6", "available_margin")]
     margin = _CEILING.divide(c.notional, c.leg.leverage)
-    if margin > available * _MARGIN_SHARE:
-        return [_v("leverage", "R6", "above_limit", limit=available * _MARGIN_SHARE,
+    if margin > available * MARGIN_SHARE:
+        return [_v("leverage", "R6", "above_limit", limit=available * MARGIN_SHARE,
                    requested=margin)]  # fmt: skip
     return []
 

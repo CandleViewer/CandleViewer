@@ -1,4 +1,4 @@
-"""E28-T03 (#907) PR1: the sizer's gate, reference price, stops, modes, fees, floor and minimums,
+"""E28-T03 (#907): the sizer's gate, reference price, stops, modes, fees, floor and minimums,
 on the E28 fixture profiles and the 2026-10-05 capture's instruments (C-13.5)."""
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def atr(value: Decimal | None, period: int = 14) -> sz.AtrReading:
 _ATR: Final = atr(D(400))
 #: Gherkin: V01 the 0.416 example, V04 below the minimum lot, V05 5 % of equity, V06 the ATR
 #: warm-up fallback, V07 a short's conservative stop, V12 a symbol not allowed. No cap binds in
-#: any of these and no margin check fails, so PR1's steps fully determine them.
+#: any of these and no margin check fails.
 _PR1_VECTORS: Final = ("V01", "V02", "V03", "V04", "V05", "V06", "V07", "V08", "V09", "V12", "V14")
 
 
@@ -56,8 +56,9 @@ def instrument(symbol: str) -> Instrument:
     return parse_instrument(next(r for r in rows if r["symbol"] == symbol), fetched_at_us=0)
 
 
-def wallet(equity: str | None = "10000", taker: str | None = "0") -> AccountFigures:
-    known = {"equity": equity, "available_margin": equity, "taker_fee_rate": taker}
+def wallet(equity: str | None = "10000", taker: str | None = "0", **known: Any) -> AccountFigures:
+    known = {"equity": equity, "available_margin": equity, "taker_fee_rate": taker} | known
+    known = {"realised_loss_today": "0", "committed_risk": "0"} | known
     return AccountFigures.model_validate(dict.fromkeys(AccountFigures.model_fields) | known)
 
 
@@ -81,7 +82,7 @@ def test_size_leg_pr1_golden_vector_matches(vid: str) -> None:
     p = profile(v["profile"]["id"], **v["profile"]["set"])
     got = sized(p, w, sz.SizingMarket(atr=reading), **i)
     assert (got.outcome, got.reason) == (want["outcome"], want.get("code"))
-    for name in ("qty", "notional", "risk_usdt", "risk_with_fees_usdt"):
+    for name in ("qty", "notional", "risk_usdt", "risk_with_fees_usdt", "initial_margin"):
         if name in want or name in also:
             assert getattr(got, name) == D({**also, **want}[name]), name
     if "stop" in want:
@@ -138,10 +139,19 @@ def test_size_leg_market_order_takes_mid_then_last_else_fails(
     [
         ("buy", "64100", D(64000), "64000", "marketable_limit_mid"),  # a buy at or above mid
         ("sell", "63900", D(64000), "64000", "marketable_limit_mid"),  # a sell at or below mid
+        ("buy", "64000", D(64000), "64000", "marketable_limit_mid"),  # a buy at mid
+        ("sell", "64000", D(64000), "64000", "marketable_limit_mid"),  # a sell at mid
         ("buy", "63900", D(64000), "63900", "limit"),  # rests below mid
         ("buy", "64100", None, "64100", "limit"),  # no mid: the limit
     ],
-    ids=["marketable-buy", "marketable-sell", "non-marketable", "no-mid"],
+    ids=[
+        "marketable-buy",
+        "marketable-sell",
+        "buy-at-mid",
+        "sell-at-mid",
+        "non-marketable",
+        "no-mid",
+    ],
 )
 def test_size_leg_marketable_limit_sizes_and_stops_at_mid(
     side: str, limit: str, mid: Any, ref: str, source: str
@@ -161,7 +171,11 @@ def test_size_leg_market_order_sizes_at_mid_not_last() -> None:
 
 @pytest.mark.parametrize(
     "intent",
-    [{"order_type": "market", "price": "32000"}, {"order_type": "limit"}, {"price": "1" * 40}],
+    [
+        {"order_type": "market", "price": "32000"},
+        {"order_type": "limit"},
+        {"order_type": "limit", "price": "1" * 40},
+    ],
     ids=["market-with-price", "limit-without-price", "40-digit-price"],
 )
 def test_sizing_intent_refuses_a_price_against_the_order_type_or_too_long(intent: Any) -> None:
@@ -186,7 +200,17 @@ def test_size_leg_stop_at_zero_or_zero_distance_fails_invalid_stop_distance(
 
 
 @pytest.mark.parametrize(
-    ("handle", "unknown"), [("P-PCT", "equity"), ("P-RISK", "equity"), ("P-RISK", "taker")]
+    ("handle", "unknown"),
+    [
+        ("P-PCT", "equity"),
+        ("P-RISK", "equity"),
+        ("P-RISK", "taker"),
+        ("P-QTY", "equity"),  # the caps read it
+        ("P-QTY", "taker"),  # the daily room's loss per unit
+        ("P-QTY", "realised_loss_today"),
+        ("P-QTY", "committed_risk"),
+        ("P-QTY", "available_margin"),  # step 8b
+    ],
 )
 def test_size_leg_unknown_figure_fails_closed(handle: str, unknown: str) -> None:
     got = sized(profile(handle), w=wallet(**{unknown: None}), market=sz.SizingMarket(atr=_ATR))
@@ -223,7 +247,7 @@ _MIN_LOT: Final = ("min_order_qty", D("0.001"))  # BTCUSDT's; min_notional 5
     ("p", "w", "inst", "price", "qty", "minimum"),
     [
         (profile("P-PCT"), wallet(), _BTC_QUARTER, "300", "16.5", None),  # 5000 / 300 = 16.67
-        (profile("P-PCT"), wallet("1E+12"), None, "64000", "7812500", None),
+        (profile("P-PCT"), wallet("1E+12"), None, "64000", "100", None),  # max_order_qty
         (profile("P-PCT"), wallet("0"), None, "64000", "0", _MIN_LOT),
         (
             profile("P-PCT"),
@@ -235,14 +259,28 @@ _MIN_LOT: Final = ("min_order_qty", D("0.001"))  # BTCUSDT's; min_notional 5
         ),
         # 0.0005 misses the minimum lot and, at 0.05 USDT, the minimum notional: the lot is named
         (profile("P-QTY", fixed_qty="0.0005"), wallet(), _BTC_FINE, "100", "0.0005", _MIN_LOT),
+        # a fixed size at equity 0 is clamped to 0 by max_leverage_cap: red, not grey (24 Sec.9.3.4)
+        (profile("P-QTY"), wallet("0"), None, "64000", "0", ("cap_breached", *_MIN_LOT)),
     ],
-    ids=["step-0.25", "huge-qty", "equity-0", "equity-negative", "both-minimums-missed"],
+    ids=[
+        "step-0.25",
+        "huge-qty",
+        "equity-0",
+        "equity-negative",
+        "both-minimums-missed",
+        "equity-0-fixed-qty",
+    ],
 )
 def test_size_leg_edge_cases(
     p: AccountProfile, w: AccountFigures, inst: Any, price: str, qty: str, minimum: Any
 ) -> None:
     got = sized(p, w, inst=inst, price=price)
-    want = ("ok", None) if minimum is None else ("skip", sz.SkipReason.BELOW_MIN_NOTIONAL)
+    want: tuple[str, Any] = ("ok", None)
+    if minimum is not None:
+        want = ("skip", sz.SkipReason.BELOW_MIN_NOTIONAL)
+    if minimum is not None and minimum[0] == "cap_breached":
+        want, minimum = ("fail", sz.FailReason.CAP_BREACHED), minimum[1:]
+        assert got.binding is not None and got.binding.cap == "max_leverage_cap"
     assert (got.outcome, got.reason, got.qty, got.minimum) == (*want, D(qty), minimum)
 
 
@@ -298,6 +336,7 @@ def test_has_float_descends_into_the_minimum() -> None:
     assert _has_float(sz.LegSizing("skip", sz.SkipReason.BELOW_MIN_NOTIONAL, minimum=minimum))
 
 
+_RED: Final = {sz.FailReason.CAP_BREACHED, sz.FailReason.INSUFFICIENT_MARGIN}
 _UNITS: Final = {
     "ticks": st.integers(min_value=1, max_value=10_000).map(D),  # at most 5000 below a 10 000 ref
     "percent": st.decimals(min_value=D("0.0001"), max_value=D("0.2"), places=6),
@@ -339,7 +378,7 @@ def test_size_leg_risk_based_never_exceeds_budget_and_lands_on_the_lot(
         side=side,
         price=str(ref),
     )
-    assert got.outcome in {"ok", "skip"}
+    assert got.reason in {None, sz.SkipReason.BELOW_MIN_NOTIONAL, *_RED}
     assert not _has_float(got)  # (d)
     assert got.qty is not None and got.stop is not None and got.risk_with_fees_usdt is not None
     assert got.qty >= 0
@@ -349,6 +388,5 @@ def test_size_leg_risk_based_never_exceeds_budget_and_lands_on_the_lot(
         budget = equity * risk_pct
         per_unit = got.stop.distance + (ref + max(ref, got.stop.price)) * taker
         assert got.risk_with_fees_usdt <= budget  # (a), fees included, so 1R too
-        assert (
-            got.qty + step
-        ) * per_unit > budget  # the floor is the floor: one more lot breaks it
+        # the floor is the floor: one more lot breaks the budget, unless a cap bound first
+        assert got.binding is not None or (got.qty + step) * per_unit > budget
