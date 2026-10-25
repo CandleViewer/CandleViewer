@@ -44,7 +44,7 @@ import functools
 import json
 import uuid
 from collections.abc import Callable
-from typing import Any, Final, Literal, Protocol
+from typing import Any, Final, Protocol
 
 import structlog
 from fastapi import APIRouter, Request
@@ -94,7 +94,7 @@ from candleviewer.oms.errors import (
     StoreUnavailable,
     problem_for,
 )
-from candleviewer.oms.exits import NOT_GRANTED, ExitCaller, ExitOutcome
+from candleviewer.oms.exits import NOT_GRANTED, ExitCaller, ExitOutcome, ExitStep
 from candleviewer.oms.ports import RequestRecord, SubmitActor, SubmitAudit
 from candleviewer.oms.routing import retry_after
 from candleviewer.oms.submit import STORE_TIMEOUT_S
@@ -119,8 +119,6 @@ _STORE_DOWN: Final = ExitOutcome(
     kind="refused", status=503, code="store_unavailable", detail=StoreUnavailable.default_detail,
     retry_after_s=retry_after(STORE_UNAVAILABLE_RETRY_AFTER_S),
 )  # fmt: skip
-
-type _Step = Literal["key", "replay", "guard"]
 
 
 def _log() -> Any:
@@ -274,7 +272,7 @@ def make_cancel_all_router(
     async def recorded(
         accounts: ScopedAccounts,
         caller: ExitCaller,
-        step: _Step,
+        step: ExitStep,
         code: str,
         answer: Callable[[], JSONResponse],
     ) -> Response:
@@ -297,7 +295,7 @@ def make_cancel_all_router(
         return answer()
 
     async def refusal(
-        accounts: ScopedAccounts, caller: ExitCaller, step: _Step, error: OmsError
+        accounts: ScopedAccounts, caller: ExitCaller, step: ExitStep, error: OmsError
     ) -> Response:
         answer = functools.partial(order_problem, error, pager=paging)
         return await recorded(accounts, caller, step, problem_for(error).code, answer)
@@ -348,7 +346,7 @@ def make_cancel_all_router(
             return exit_problem(_STORE_DOWN)
         except OmsError as exc:  # the runtime's stop begun meanwhile
             return refused(exc)
-        step: _Step = "key"
+        step: ExitStep = "key"
         try:
             key = idempotency_key(request)
             digest = request_fingerprint("POST", CANCEL_ALL_PATH, raw)
