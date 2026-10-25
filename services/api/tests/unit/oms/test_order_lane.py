@@ -46,6 +46,7 @@ from tests.unit.oms.test_oms_runtime import (
     KEY,
     SENDING,
     STARTED,
+    STOPPED,
     Port,
     Sink,
     World,
@@ -662,8 +663,8 @@ async def test_the_oms_runs_on_the_lane_and_its_stop_drains_cancels_closes_and_j
     assert reserve - 1 < reserves[-1] <= reserve  # the join's share is the reserve's last
     assert Settings().oms_drain_s + OMS_STOP_RESERVE_S <= TEARDOWN_BUDGET_S  # the 15 s grace
     assert not thread.is_alive() and loop.is_closed() and not b01.ports_wired()
-    unwound = [*STARTED, "unwound", "machines", "commands", "sink.stop", "audit.stop"]
-    assert world.log == [*unwound, "pool.release"] and world.venue.ports[0].closed
+    unwound = [*STARTED, "unwound", "machines", "commands", *STOPPED]
+    assert world.log == unwound and world.venue.ports[0].closed
 
 
 async def test_an_amend_runs_on_the_lane_while_this_loop_is_blocked_and_reads_its_profile_here(
@@ -741,8 +742,8 @@ async def test_a_cancelled_start_lets_the_compose_close_on_the_lane_before_the_l
     start.cancel()
     with pytest.raises(asyncio.CancelledError):
         await start
-    assert world.log == ["audit.start", "audit.stop", "pool.release", "lane.stop"]
-    assert world.venue.ports[0].closed
+    unwound = ["audit.stop", "pool.release", "lock.release", "lane.stop"]
+    assert world.log == ["lock.acquire", "audit.start", *unwound] and world.venue.ports[0].closed
     assert not b01.ports_wired()
 
 
@@ -767,7 +768,8 @@ async def test_a_start_cancelled_again_while_the_compose_closes_still_stops_its_
         start.cancel()
     with pytest.raises(asyncio.CancelledError):
         await start
-    assert world.log == ["audit.start", "audit.stop", "lane.stop"] and not b01.ports_wired()
+    assert world.log == ["lock.acquire", "audit.start", "audit.stop", "lane.stop"]
+    assert not b01.ports_wired()
 
 
 def _dying_at(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
@@ -802,14 +804,16 @@ async def test_a_closer_the_dying_lane_refuses_leaves_the_closers_after_it_to_ru
     """SEC-S3L1CD-01: the lane dies as the stop calls the sink's close there, once the machines and
     the commands have closed. That closer is refused, `LaneStopped`, logged, and the ones after it
     still run: the lane's audit writer's is refused in turn (#913 L2), the trading port closes on
-    this loop, the pool's is refused too, and the stop ends, not cancelled."""
+    this loop, the pool's and the environment lock's are refused too, and the stop ends, not
+    cancelled."""
     _dying_at(monkeypatch, "Sink.stop")
     world = World()
     with capture_logs() as logs:
         async with asyncio.timeout(BOUND_S), started(world.runtime(lane=OrderLane)):
             pass
     steps = [(e["step"], e["error"]) for e in logs if e["event"] == "oms_stop_step_failed"]
-    assert steps == [("sink", "LaneStopped"), ("audit", "LaneStopped"), ("pool", "LaneStopped")]
+    refused = ["sink", "audit", "pool", "environment_lock"]
+    assert steps == [(step, "LaneStopped") for step in refused]
     assert world.venue.ports[0].closed and world.log == STARTED and not b01.ports_wired()
     assert [e["error"] for e in logs if e["event"] == "oms_lane_died"] == ["SystemExit"]
 

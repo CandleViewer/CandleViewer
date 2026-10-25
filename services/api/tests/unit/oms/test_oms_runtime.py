@@ -8,6 +8,7 @@ when the runtime sleeps on it."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import re
 from collections import OrderedDict
@@ -72,11 +73,12 @@ from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.persistence import ChainTripLatch, DegradedLatchError, MachineKey
 from candleviewer.statechart.plugins import InMemoryMachineEventSink
 from candleviewer.statechart_wiring import PersistOps
-from candleviewer.storage.errors import StorageQueryFailed
+from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
 from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import NewOrder
 from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
 from candleviewer.storage.repositories.recorded_stops import NewRecordedStop, RecordedStopRow
+from candleviewer.storage.repositories.session_lock_sqlalchemy import SqlAlchemySessionLock
 from candleviewer.storage.repositories.trading_accounts import (
     InMemoryTradingAccountReads,
     TradingAccountRow,
@@ -195,6 +197,29 @@ class Writer:
             self.actions.append((action, fields.get("reason")))
 
 
+@dataclass
+class Lock:
+    """The environment's lock (SEC-S3N-01): held unless another process holds it (`elsewhere`),
+    or refused with `fails`; each take and give-up lands in `log`, the world's, and each ask notes
+    whether B1's process-wide ports were wired then (a facade existed)."""
+
+    log: list[str] = field(default_factory=list)
+    elsewhere: bool = False
+    fails: Exception | None = None
+    wired: list[bool] = field(default_factory=list)
+
+    async def acquire(self) -> bool:
+        self.wired.append(b01.ports_wired())
+        if self.fails is not None:
+            raise self.fails
+        if not self.elsewhere:
+            self.log.append("lock.acquire")
+        return not self.elsewhere
+
+    async def release(self) -> None:
+        self.log.append("lock.release")
+
+
 class InlineLane:
     """The order lane on the test's own loop, so these tests step one loop (`test_order_lane`
     runs the runtime on `OrderLane`'s thread): `call` tracks each task as the lane does, and its
@@ -278,9 +303,10 @@ class World:
     sinks: list[Sink] = field(default_factory=list)
     #: The alarm each build of the lane's writer was given (ruling 4).
     alarms: list[Callable[[str], Awaitable[None]]] = field(default_factory=list)
+    lock: Lock = field(default_factory=Lock)
 
     def __post_init__(self) -> None:
-        self.writer.log = self.log
+        self.writer.log = self.lock.log = self.log
         self.health = FakeClockHealth(self.clock)
         self.health.measure()
         self.ingestion = SimpleNamespace(
@@ -313,7 +339,7 @@ class World:
             anchors=store.anchors, stops=store.stops, groups=cast(GroupStores, None),
             unclaimed=unclaimed,
             accounts=InMemoryTradingAccountReads(*self.accounts), sweep=store, audit=audit,
-            sink=sink, release=release,
+            sink=sink, lock=self.lock, release=release,
         )  # fmt: skip
 
     def runtime(
@@ -402,12 +428,12 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
             figures = parts.submission._deps.figures
             assert isinstance(figures, DayRiskFigures)
             assert parts.submission._commands._figures is figures
-            assert world.log == ["audit.start", "sink.start"]
+            assert world.log == STARTED and world.lock.wired == [False]  # before the facade
     warned = [e["port"] for e in logs if e["event"] == "oms_interim_port"]
     assert warned == [*INTERIMS, "machine_event_sink", "risk_figures"]  # one WARNING each
     runtime_ports = (*INTERIMS, "machine_event_sink", "risk_figures")
     assert [world.gauge(name) for name in runtime_ports] == [1.0] * 7
-    assert world.log == [*STARTED, "sink.stop", "audit.stop", "pool.release"] and port.closed
+    assert world.log == [*STARTED, *STOPPED] and port.closed  # the lock released last
     assert not b01.ports_wired()
 
 
@@ -430,8 +456,10 @@ async def test_the_router_and_cancel_all_share_the_one_fold_port_before_the_serv
         assert names.index("cancel_all_folds") == names.index("machines") + 1
 
 
-#: What a composed runtime has started, in order (#913 L2): the lane's own writer, then its sink.
-STARTED = ["audit.start", "sink.start"]
+#: What a composed runtime has started, in order (#913 L2): the environment's lock, then the lane's
+#: own writer and sink; and what its stop closes, in order, the lock last.
+STARTED = ["lock.acquire", "audit.start", "sink.start"]
+STOPPED = ["sink.stop", "audit.stop", "pool.release", "lock.release"]
 _SINK_WAL = Path(Settings().machine_event_wal_path)
 _BESIDE = str(_SINK_WAL.with_name(f"oms_lane.{_SINK_WAL.name}"))
 
@@ -501,8 +529,8 @@ async def test_the_oms_records_through_the_lanes_own_writer_and_sink_never_the_s
 @pytest.mark.parametrize(
     ("fails", "phase", "log"),
     [
-        ("build", "audit", ["pool.release"]),
-        ("start", "audit_start", ["audit.stop", "pool.release"]),
+        ("build", "audit", ["lock.acquire", "pool.release", "lock.release"]),
+        ("start", "audit_start", ["lock.acquire", "audit.stop", "pool.release", "lock.release"]),
     ],
 )
 async def test_a_lane_writer_that_cannot_build_or_start_fails_the_runtime_closed(
@@ -715,6 +743,55 @@ def test_the_lanes_sink_counts_its_pending_rows_apart_from_the_bundles(tmp_path:
     assert 'cv_machine_event_wal_pending{env="demo",where="serving_loop"} 2.0' in text
 
 
+@pytest.mark.parametrize(
+    ("refusal", "error"),
+    [
+        ("held", "EnvironmentLocked"),
+        ("unanswered", "StorageTierUnavailable"),
+    ],
+)
+async def test_a_second_process_of_the_environment_refuses_to_start_closed_and_paged(
+    refusal: str, error: str
+) -> None:
+    """SEC-S3N-01 (#913 L2): another process holds the environment's lock, a deploy overlapping
+    on another host, or the lock cannot be asked: the runtime fails closed before any facade or
+    machine exists, logged CRITICAL and paged, never ready; it sweeps nothing (the first's unsent
+    entry stays as it was) and gives up no lock it never held."""
+    world = World()
+    if refusal == "held":
+        world.lock.elsewhere = True
+    else:
+        world.lock.fails = StorageTierUnavailable("the session lock could not be asked")
+    await crashed(world)
+    for flag in world.flags:
+        flag.read()
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            assert (failed_closed(logs), failed_phases(logs)) == ([error], ["environment_lock"])
+            closed = [e["log_level"] for e in logs if e["event"] == "oms_runtime_failed_closed"]
+            assert closed == ["critical"] and world.lock.wired == [False]
+            assert world.pager.calls == ["oms_runtime_failed_closed: environment_lock"]
+            assert runtime.state == "degraded" and not b01.ports_wired()
+            with pytest.raises(OmsNotReady):
+                _ = runtime.submission
+    assert world.log == ["pool.release"] and world.venue.ports[0].closed
+    assert world.store._orders[UNSENT.id].lifecycle_state == "validated"
+
+
+def test_the_environments_lock_key_is_its_namespace_and_name_outside_any_hashtext_key() -> None:
+    """SEC-S3N-01: one key per environment, BLAKE2b's first 8 bytes over the namespace and the
+    environment, outside the 32-bit range of every `hashtext` key (the chain's, the migrations'),
+    which `pg_stores` locks on the OMS pool."""
+    keys = {env: oms_wiring.environment_lock_key(env) for env in ("live", "demo", "testnet")}
+    assert len(set(keys.values())) == 3
+    for env, key in keys.items():
+        digest = hashlib.blake2b(b"cv.oms.environment:" + env.encode(), digest_size=8).digest()
+        assert key == int.from_bytes(digest, "big", signed=True)
+        assert not -(2**31) <= key < 2**31
+    lock = pg_stores(Settings(environment=Env("demo")), Metrics("demo")).lock
+    assert isinstance(lock, SqlAlchemySessionLock) and lock._key == keys["demo"] and not lock.held
+
+
 async def test_a_composition_that_fails_late_closes_what_it_built_and_fails_closed() -> None:
     """The sink's start refuses (another process holds its WAL): the facade is unwired again and
     the port and the pool closed; the runtime serves no order."""
@@ -722,7 +799,7 @@ async def test_a_composition_that_fails_late_closes_what_it_built_and_fails_clos
     with capture_logs() as logs:
         async with started(world.runtime()) as runtime:
             assert failed_closed(logs) == ["RuntimeError"] and not b01.ports_wired()
-            assert world.log == [*STARTED, "audit.stop", "pool.release"]
+            assert world.log == [*STARTED, "audit.stop", "pool.release", "lock.release"]
             assert world.venue.ports[0].closed
             assert world.pager.calls == ["oms_runtime_failed_closed: sink_start"]
             assert failed_phases(logs) == ["sink_start"]
@@ -1111,10 +1188,10 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
     """CR-S3E2-04: each close step is isolated and has its share of `OMS_STOP_RESERVE_S`. The
     command port fails to close and the sink's drain never ends; the trading port, which needs a
     turn of the loop, and the pool still close, and the whole stop is bounded."""
-    # 10 closers share 0.5 s (the reserve less the lane's join): the drain's cancel, the lane's
+    # 11 closers share 0.5 s (the reserve less the lane's join): the drain's cancel, the lane's
     # wait, the exits, the stop gate (CR-S3H3B-01), the machines, the commands, then the hung sink,
-    # which costs a quarter of what is left, the lane's audit writer (#913 L2), the trading port
-    # and the pool
+    # which costs a fifth of what is left, the lane's audit writer (#913 L2), the trading port,
+    # the pool and the environment's lock (SEC-S3N-01)
     monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 1.5)
 
     async def fails(self: OmsCommandPort) -> None:
@@ -1137,7 +1214,7 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
     steps = [(e["step"], e["error"]) for e in logs if e["event"] == "oms_stop_step_failed"]
     assert steps == [("commands", "RuntimeError"), ("sink", "TimeoutError")]
     assert world.venue.ports[0].closed
-    assert world.log == [*STARTED, "audit.stop", "pool.release"]
+    assert world.log == [*STARTED, "audit.stop", "pool.release", "lock.release"]
     assert not b01.ports_wired()  # the facade, first in line, closed too
 
 

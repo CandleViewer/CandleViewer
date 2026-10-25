@@ -24,6 +24,8 @@ from candleviewer.oms import submit
 from candleviewer.oms.errors import OmsNotReady
 from candleviewer.oms_lane import BLOCK_TIMEOUT_S, HOP_TIMEOUT_S, LANE_JOIN_S, LANE_START_S
 from candleviewer.oms_wiring import (
+    ENVIRONMENT_LOCK_NAMESPACE,
+    ENVIRONMENT_LOCK_TIMEOUT_S,
     LANE_AUDIT_PAGE_S,
     LANE_AUDIT_STOP_S,
     LANE_WAL_PREFIX,
@@ -33,12 +35,14 @@ from candleviewer.oms_wiring import (
     REFERENCE_DEMAND_WINDOW_S,
     SWEEP_STATEMENT_TIMEOUT_MS,
     SYSTEM_ACTOR,
+    EnvironmentLocked,
     OmsAudit,
     OmsBounds,
     OmsRuntime,
     OrderStateFeed,
     ReferenceDemand,
     UnclaimedMachineEvents,
+    environment_lock_key,
 )
 from candleviewer.settings import (
     OMS_AFTER_ANCHOR_S,
@@ -452,7 +456,8 @@ def test_the_flag_is_narrower_than_the_gate_and_the_security_lens_nits_are_writt
 def test_20_says_what_a_second_oms_process_and_a_testnet_one_do() -> None:
     """CR-S3N-01, -03, -06, -08, -09a: the one-process presumption and what breaks it as the code
     does (the sweep voids an unsent entry's attach rows, and its KILL and the first process's
-    `SEND` race on the order row), a testnet process's `/readyz`, and the loop of the facade."""
+    `SEND` race on the order row), the lock that enforces it (SEC-S3N-01, #913 L2) from the code's
+    own names and bound, a testnet process's `/readyz`, and the loop of the facade."""
     assert not _missing(
         _RUNTIME,
         "builds it in its `start()`, on the order lane (below), and unwires it in its `stop()`.",
@@ -472,14 +477,28 @@ def test_20_says_what_a_second_oms_process_and_a_testnet_one_do() -> None:
         "so 24 §8.5 step 5 has no record to restore the position's stop against.",
         "Its step 3 also resumes the first's in-flight `submitting` creates under their own "
         '`orderLinkId`s (24 §8.2 "Recovery", C-2.10).',
-        "A per-environment advisory lock held for the facade's life would enforce the "
-        "presumption; that follow-up is not scheduled. On the real backend, while the runtime "
-        "runs, `/readyz` carries an `oms` check",
+        "The runtime enforces the presumption (SEC-S3N-01, #913 slice 3 L2): before its facade "
+        "or any machine exists, `start()` takes the environment's Postgres advisory lock, "
+        "`pg_try_advisory_lock` on the signed 64-bit key BLAKE2b gives for "
+        f"`{ENVIRONMENT_LOCK_NAMESPACE.decode()}` and the environment "
+        f"(`oms_wiring.{environment_lock_key.__name__}`), outside the 32-bit range every "
+        "`hashtext` key lies in, on a connection of the OMS pool's own, and holds it for the "
+        "facade's life, releasing it in `stop()` after every other closer.",
+        f"it fails closed (`{EnvironmentLocked.__name__}`, logged CRITICAL as "
+        "`oms_runtime_failed_closed` with `phase` `environment_lock`, and paged), sweeps and "
+        "hydrates nothing and is never `ready`",
+        f"A lock that cannot be asked within {ENVIRONMENT_LOCK_TIMEOUT_S:g} s "
+        "(`ENVIRONMENT_LOCK_TIMEOUT_S`, for the pool's connection and again for the statement) "
+        "fails the start closed the same way.",
+        "The lock is its session's: a holder whose connection drops (a cut network, a Postgres "
+        "restart) loses it without noticing until its stop",
+        "On the real backend, while the runtime runs, `/readyz` carries an `oms` check",
         "A testnet process's runtime is `degraded` from its start, before any sink is built: "
         "testnet serves connectivity smoke tests only (CONSTITUTION §1.2), and the exchange "
         "adapter builds no testnet trading port, so the runtime fails closed and its `/readyz` "
         "check stays `degraded`.",
     )
+    assert "that follow-up is not scheduled" not in _RUNTIME
     assert "no request can send any more" in _words(_SCHEMA_DOC)  # the sentence 20 quotes
     guard = _SCHEMA_DOC.split("CREATE FUNCTION rs_guard()", 1)[1].split("END $BODY$;", 1)[0]
     assert "('pending','void')" in guard and "('void'," not in guard  # a `void` row never leaves
