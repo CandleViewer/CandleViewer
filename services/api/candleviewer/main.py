@@ -22,7 +22,13 @@ import structlog
 from fastapi import FastAPI
 
 from candleviewer.account_fixture_wiring import account_fixture_guard, account_fixture_record
-from candleviewer.app import AppContext, Supervisor, audit_test_clock_boot, create_app
+from candleviewer.app import (
+    AppContext,
+    Supervisor,
+    audit_test_clock_boot,
+    create_app,
+    oms_runtime_of,
+)
 from candleviewer.observability.logging import configure_logging
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_server import MetricsRuntime
@@ -217,7 +223,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         account_health = getattr(app.state, "account_health", None)
         if account_health is not None:  # E27-T04 (#837): once `start_all` has brought modules up
             account_health.start()
-        oms_runtime = getattr(app.state, "oms_runtime", None)
+        oms_runtime = oms_runtime_of(app.state)
         if oms_runtime is not None:  # #913 slice 3E: after account health; its sweep is a task
             await oms_runtime.start()
         lost_jobs = getattr(app.state, "admin_jobs_lost", None)
