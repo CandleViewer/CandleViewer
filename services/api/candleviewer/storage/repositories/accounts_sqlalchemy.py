@@ -25,13 +25,15 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, cast
+from types import MappingProxyType
+from typing import Any, Final, cast
 from uuid import UUID
 
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
 from candleviewer.storage.repositories.accounts import (
+    SUB_ACCOUNT_CAP_CONFLICT,
     AccountKey,
     AccountScope,
     AccountsPage,
@@ -118,6 +120,35 @@ _OWNER_GATE = sa.text(
     "JOIN users u ON u.id = ur.user_id WHERE ur.user_id = CAST(:caller AS uuid) "
     "AND r.name = 'owner' AND u.deleted_at IS NULL AND u.status = 'active' "
     "AND (ur.expires_at IS NULL OR ur.expires_at > now()))"
+)
+
+#: The sub-account cap (#895): `22` createExchangeAccount caps sub-accounts at 5 (20 with Business
+#: KYC) and has the server reject the 6th with `conflict`. The tier is the recorded system
+#: setting `accounts.subaccount_tier` (`21` §3.9), never `max_sub_accounts_hint` (display only);
+#: an unrecorded tier is `regular`, so only a recorded `business_kyc` widens the cap. Same values as
+#: `admin.overview.capacity.TIER_CAPS` (unit-pinned; storage does not import admin). Any stored
+#: word other than `business_kyc` (an unrecognised or differently cased one) counts as `regular`
+#: here, the smaller cap, where the admin display reports it as an error: both fail safe. The tier
+#: is read unlocked, so a downgrade committed mid-create can admit one sub under the old cap; the
+#: tier records the exchange account's own limit, which the exchange enforces.
+SUB_ACCOUNT_CAPS: Final[Mapping[str, int]] = MappingProxyType({"regular": 5, "business_kyc": 20})
+#: Serialises sub creates under one parent: the count below runs as its own statement after this
+#: lock is held, so under READ COMMITTED it sees every sub a concurrent create committed first.
+#: `FOR NO KEY UPDATE` is enough for that and, unlike `FOR UPDATE`, does not block key or grant
+#: inserts that reference the parent (their `FOR KEY SHARE`). Only a live main parent of the
+#: account's environment is locked, so an invalid parent keeps `parent_unavailable`, never a 409.
+_LOCK_PARENT = sa.text(
+    "SELECT p.id::text AS id FROM exchange_accounts p WHERE p.id = CAST(:parent AS uuid) "
+    "AND p.deleted_at IS NULL AND p.kind = 'main' AND p.env::text = CAST(:env AS text) "
+    "FOR NO KEY UPDATE"
+)
+_COUNT_SUBS = sa.text(
+    "SELECT (SELECT count(*) FROM exchange_accounts s "
+    "WHERE s.parent_account_id = CAST(:parent AS uuid) AND s.deleted_at IS NULL "
+    "AND s.env::text = CAST(:env AS text)) AS used, "
+    "EXISTS (SELECT 1 FROM settings st WHERE st.scope = 'system' "
+    "AND st.key = 'accounts.subaccount_tier' "
+    "AND st.value = to_jsonb(CAST('business_kyc' AS text))) AS business_kyc"
 )
 
 _CREATE = sa.text(
@@ -412,8 +443,8 @@ _COUNT_PROFILES = sa.text(
 
 OWNER_STATEMENTS = frozenset(
     {
-        _CREATE, _GET_OWNER, _LIST_OWNER, _UPDATE, _SOFT_DELETE, _GET_KEY, _LIST_KEYS,
-        _TRANSITION, _START_ROT, _GET_ROT, _LIST_ROTS, *_STEPS.values(),
+        _CREATE, _LOCK_PARENT, _COUNT_SUBS, _GET_OWNER, _LIST_OWNER, _UPDATE, _SOFT_DELETE,
+        _GET_KEY, _LIST_KEYS, _TRANSITION, _START_ROT, _GET_ROT, _LIST_ROTS, *_STEPS.values(),
     }
 )  # fmt: skip
 GRANT_STATEMENTS = frozenset({_GET_GRANT, _LIST_GRANT})
@@ -573,6 +604,8 @@ class SqlAlchemyAccountsStore:
         try:
             async with self._relational.unit_of_work() as uow:
                 await self._gate(uow, owner)
+                if new.parent_account_id is not None:
+                    await self._admit_sub(uow, params)
                 row = (await uow.session.execute(_CREATE, params)).mappings().first()
                 if row is None:
                     raise AccountsStoreRuleError("parent_unavailable")
@@ -583,6 +616,19 @@ class SqlAlchemyAccountsStore:
             state, name = _sqlstate_and_constraint(exc)
             raise _refusal(state, name) from None
         return _account(row)
+
+    @staticmethod
+    async def _admit_sub(uow: Any, params: Mapping[str, Any]) -> None:
+        """Lock the parent row, then count its live subs of the account's environment: at the
+        cap the create is refused, before the insert and its write-ahead (#895)."""
+        parent = {"parent": params["parent"], "env": params["env"]}
+        if (await uow.session.execute(_LOCK_PARENT, parent)).mappings().first() is None:
+            raise AccountsStoreRuleError("parent_unavailable")
+        res = await uow.session.execute(_COUNT_SUBS, parent)
+        counted = res.mappings().first()
+        cap = SUB_ACCOUNT_CAPS["business_kyc" if counted["business_kyc"] else "regular"]
+        if int(counted["used"]) >= cap:
+            raise AccountsStoreConflictError(SUB_ACCOUNT_CAP_CONFLICT) from None
 
     async def get_account(self, scope: AccountScope, account_id: UUID) -> ExchangeAccountRow | None:
         rows = await self._scoped_rows(scope, _GET_OWNER, _GET_GRANT, {"id": str(account_id)})

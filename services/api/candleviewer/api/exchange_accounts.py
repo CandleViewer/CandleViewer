@@ -10,7 +10,8 @@ its parent, a `main` none, and the account's environment is the process's (C-2.1
 of another environment could never hold a key here). The store's live-owner gate refusing an Owner
 is a 403, audited. `accounts.create` is written ahead of the commit, in the insert's transaction
 (C-2.9): a record not written is `503 audit_unavailable`, with nothing stored. A taken UID or label
-is `409 conflict`, a parent that is missing, not a `main` or of another environment `422`.
+is `409 conflict`, as is a sub past its parent's cap (the 6th; the store locks the parent and counts
+before the insert), a parent that is missing, not a `main` or of another environment `422`.
 
 `listExchangeAccounts`: the session, `accounts:read` (a refusal is a 403 whatever its record), then
 the store, in the caller's scope applied in SQL (`auth.scopes.account_scope`, SR-051): an Owner
@@ -64,7 +65,11 @@ from candleviewer.auth.metrics import authz_denied_total, normalise_permission
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, account_scope, enforce
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.storage.errors import StorageError, StorageQueryFailed, WriteAheadTimeout
-from candleviewer.storage.repositories.accounts import AccountKey, OwnerScope
+from candleviewer.storage.repositories.accounts import (
+    SUB_ACCOUNT_CAP_CONFLICT,
+    AccountKey,
+    OwnerScope,
+)
 
 CURSOR_TTL_S: Final = 3600
 #: The one `ExchangeCode` the contract declares (v1 scope): the domain model carries no exchange.
@@ -72,6 +77,7 @@ CURSOR_TTL_S: Final = 3600
 _MAX_CURSOR: Final = 512
 _UID_TAKEN: Final = "This UID is already registered as {label}."
 _LABEL_TAKEN: Final = "This label is already used by another account of this environment."
+_SUB_CAP: Final = "The parent account already holds as many sub-accounts as its tier allows."
 #: A record not written: the writer refused it, has not started (`RuntimeError`), or timed out.
 _UNWRITTEN: Final = (AuditError, RuntimeError, TimeoutError)
 
@@ -337,6 +343,8 @@ def make_exchange_accounts_router(
                 return problem("conflict", await uid_holder(store, principal, body))
             if exc.constraint == "ux_ea_label":
                 return problem("conflict", _LABEL_TAKEN)
+            if exc.constraint == SUB_ACCOUNT_CAP_CONFLICT:
+                return problem("conflict", _SUB_CAP)
             return problem("conflict", "The account conflicts with a stored one.")
         except AccountRuleError as exc:
             entry: tuple[str | None, str, str]

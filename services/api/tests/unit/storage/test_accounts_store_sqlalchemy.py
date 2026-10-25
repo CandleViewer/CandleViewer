@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from candleviewer.storage.errors import StorageConstraintViolated
 from candleviewer.storage.repositories import accounts_sqlalchemy as mod
 from candleviewer.storage.repositories.accounts import (
+    SUB_ACCOUNT_CAP_CONFLICT,
     AccountKey,
     AccountsStoreConflictError,
     AccountsStoreRuleError,
@@ -178,6 +179,8 @@ _COLUMN_COPIES = {
 }  # fmt: skip
 _NO_COLUMN_COPY = {
     "_OWNER_GATE",
+    "_LOCK_PARENT",
+    "_COUNT_SUBS",
     "_SOFT_DELETE",
     "_START_ROT",
     "_COUNT_ACCOUNTS",
@@ -423,10 +426,13 @@ async def test_list_rejects_unknown_filters(env: str | None, kind: str | None) -
 
 async def test_create_binds_exchange_and_commits() -> None:
     parent = uuid4()
-    rel = _Rel(_Result(), _Result([_ea(kind="sub", parent_account_id=str(parent))]))
+    rel = _Rel(
+        _Result(), _Result([{"id": str(parent)}]), _Result([_subs(0)]),
+        _Result([_ea(kind="sub", parent_account_id=str(parent))]),
+    )  # fmt: skip
     new = NewExchangeAccount(uuid4(), "exch", "demo", "sub", "42", "L", parent)
     row = await _store(rel).create_account(_OWNER, new)
-    params = rel.calls[1][1]
+    params = rel.calls[3][1]
     assert params["exchange"] == "exch" and params["parent"] == str(parent)
     assert row.parent_account_id == parent and rel.commits == 1
 
@@ -480,6 +486,119 @@ async def test_create_refused_by_a_constraint_never_runs_its_write_ahead() -> No
     with pytest.raises(AccountsStoreConflictError):
         await _store(rel).create_account(_OWNER, new, write_ahead=ahead)
     assert (seen, rel.commits) == ([], 0)
+
+
+# -- the sub-account cap (#895, 22 createExchangeAccount: "the server rejects the 6th") -----------
+def _subs(used: int, *, business_kyc: bool = False) -> dict[str, Any]:
+    return {"used": used, "business_kyc": business_kyc}
+
+
+def _sub_rel(used: int, *, business_kyc: bool = False) -> tuple[_Rel, UUID]:
+    parent = uuid4()
+    return _Rel(
+        _Result(), _Result([{"id": str(parent)}]),
+        _Result([_subs(used, business_kyc=business_kyc)]),
+        _Result([_ea(kind="sub", parent_account_id=str(parent))]),
+    ), parent  # fmt: skip
+
+
+async def test_create_sub_locks_the_parent_and_counts_before_the_insert() -> None:
+    rel, parent = _sub_rel(0)
+    await _store(rel).create_account(
+        _OWNER, NewExchangeAccount(uuid4(), "e", "demo", "sub", "1", "L", parent)
+    )
+    stmts = [c[0] for c in rel.calls]
+    assert stmts == [mod._OWNER_GATE, mod._LOCK_PARENT, mod._COUNT_SUBS, mod._CREATE]
+    assert rel.calls[1][1] == {"parent": str(parent), "env": "demo"}
+    assert rel.calls[2][1] == {"parent": str(parent), "env": "demo"}
+
+
+async def test_create_sub_at_the_cap_is_refused_before_the_write_ahead_and_insert() -> None:
+    rel, parent = _sub_rel(mod.SUB_ACCOUNT_CAPS["regular"])
+    seen: list[object] = []
+
+    async def ahead(row: ExchangeAccountRow) -> None:
+        seen.append(row)
+
+    new = NewExchangeAccount(uuid4(), "e", "demo", "sub", "1", "L", parent)
+    with pytest.raises(AccountsStoreConflictError) as ei:
+        await _store(rel).create_account(_OWNER, new, write_ahead=ahead)
+    assert ei.value.constraint == SUB_ACCOUNT_CAP_CONFLICT == "sub_account_cap"
+    assert ei.value.__cause__ is None and ei.value.__suppress_context__ is True
+    assert mod._CREATE not in [c[0] for c in rel.calls]
+    assert (seen, rel.commits) == ([], 0)
+
+
+async def test_create_sub_below_the_cap_is_admitted() -> None:
+    rel, parent = _sub_rel(mod.SUB_ACCOUNT_CAPS["regular"] - 1)
+    row = await _store(rel).create_account(
+        _OWNER, NewExchangeAccount(uuid4(), "e", "demo", "sub", "1", "L", parent)
+    )
+    assert row.parent_account_id == parent and rel.commits == 1
+
+
+@pytest.mark.parametrize(("used", "refused"), [(19, False), (20, True)])
+async def test_create_sub_under_a_recorded_business_kyc_tier_caps_at_twenty(
+    used: int, refused: bool
+) -> None:
+    rel, parent = _sub_rel(used, business_kyc=True)
+    new = NewExchangeAccount(uuid4(), "e", "demo", "sub", "1", "L", parent)
+    if refused:
+        with pytest.raises(AccountsStoreConflictError):
+            await _store(rel).create_account(_OWNER, new)
+    else:
+        await _store(rel).create_account(_OWNER, new)
+    assert rel.commits == (0 if refused else 1)
+
+
+async def test_create_under_a_locked_parent_that_is_no_live_main_is_parent_unavailable() -> None:
+    """Defence in depth behind the lock: if the insert's own parent predicate still finds no
+    live main parent, the refusal is the same rule error."""
+    rel, parent = _sub_rel(0)
+    rel.results[-1] = _Result([])
+    with pytest.raises(AccountsStoreRuleError) as ei:
+        await _store(rel).create_account(
+            _OWNER, NewExchangeAccount(uuid4(), "e", "demo", "sub", "1", "L", parent)
+        )
+    assert ei.value.rule == "parent_unavailable" and rel.commits == 0
+
+
+async def test_create_main_takes_no_parent_lock_and_no_count() -> None:
+    rel = _Rel(_Result(), _Result([_ea()]))
+    new = NewExchangeAccount(uuid4(), "e", "demo", "main", "1", "L")
+    await _store(rel).create_account(_OWNER, new)
+    assert [c[0] for c in rel.calls] == [mod._OWNER_GATE, mod._CREATE]
+
+
+def test_sub_count_is_live_same_env_children_of_the_one_parent() -> None:
+    text = str(mod._COUNT_SUBS)
+    for fragment in (
+        "s.parent_account_id = CAST(:parent AS uuid)", "s.deleted_at IS NULL",
+        "s.env::text = CAST(:env AS text)", "st.scope = 'system'",
+        "st.key = 'accounts.subaccount_tier'",
+    ):  # fmt: skip
+        assert fragment in text
+    assert set(mod._COUNT_SUBS.compile().params) == {"parent", "env"}
+
+
+def test_parent_lock_is_a_no_key_row_lock_on_a_live_main_parent_of_the_env() -> None:
+    """`FOR NO KEY UPDATE` serialises sub creates without blocking key / grant inserts that
+    reference the parent (their `FOR KEY SHARE` does not conflict with it); an invalid parent
+    is not locked, so it keeps the insert's `parent_unavailable` answer, never a cap 409."""
+    text = str(mod._LOCK_PARENT)
+    for fragment in (
+        "p.id = CAST(:parent AS uuid)", "p.deleted_at IS NULL", "p.kind = 'main'",
+        "p.env::text = CAST(:env AS text)",
+    ):  # fmt: skip
+        assert fragment in text
+    assert text.endswith("FOR NO KEY UPDATE")
+    assert set(mod._LOCK_PARENT.compile().params) == {"parent", "env"}
+
+
+def test_sub_account_caps_match_the_admin_capacity_tiers() -> None:
+    from candleviewer.admin.overview.capacity import TIER_CAPS
+
+    assert dict(mod.SUB_ACCOUNT_CAPS) == dict(TIER_CAPS)
 
 
 class _DriverError(Exception):

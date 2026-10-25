@@ -291,6 +291,23 @@ def test_ac2_a_duplicate_uid_is_409_naming_the_account_that_holds_it(served: Ser
     assert world.audit.records == []
 
 
+def test_a_sixth_sub_under_one_parent_is_409_conflict_and_nothing_is_stored(
+    served: Served,
+) -> None:
+    """22 createExchangeAccount: "the server rejects the 6th with `conflict`". The store refuses
+    before its write-ahead, so, as for a taken UID or label, no `accounts.create` is written."""
+    world, store = served
+    store.fails = AccountsStoreConflictError("sub_account_cap")
+    before = set(store.rows)
+    resp = create(world, SUB)
+    got = answer(resp, "post")
+    assert (resp.status_code, got["code"], got["detail"]) == (
+        409, "conflict",
+        "The parent account already holds as many sub-accounts as its tier allows.",
+    )  # fmt: skip
+    assert (world.audit.records, set(store.rows)) == ([], before)
+
+
 def test_a_parent_of_another_environment_or_kind_is_422(served: Served) -> None:
     world, store = served
     store.fails = AccountsStoreRuleError("parent_unavailable")
