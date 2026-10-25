@@ -156,6 +156,10 @@ class World:
         self.retrying.set()
         await asyncio.Event().wait()
 
+    async def unfenced(self, seconds: float) -> None:
+        """The fencing grace once the lock is held (SEC-S3L2-01), passed at once: no other process
+        held it, and the backoff above waits for good."""
+
     def creates(self, since: int = 0) -> list[PlaceOrderRequest]:
         sent = [call.request for call in self.port.calls[since:] if call.method == "place_order"]
         return [create for create in sent if isinstance(create, PlaceOrderRequest)]
@@ -230,6 +234,7 @@ def _runtime(world: World, dsn: str, profiles: Profiles, metrics: Metrics) -> Om
             audit=lambda _alarm: world.writer,
         ),
         pager=world.pager, now=world.clock, sleep=world.backoff, registry=sr.REGISTRY,
+        fencing=world.unfenced,
     )  # fmt: skip
 
 

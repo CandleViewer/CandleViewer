@@ -189,7 +189,12 @@ def _runtime(rig: Rig, pg_dsn: str, tmp_path: Path, writer: Writer) -> OmsRuntim
         ),
         now=rig.clock,
         registry=REGISTRY,
+        fencing=_unfenced,
     )
+
+
+async def _unfenced(_seconds: float) -> None:
+    """The fencing grace (SEC-S3L2-01) passed at once: no other process held the lock."""
 
 
 @pytest.fixture(autouse=True)

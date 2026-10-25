@@ -24,6 +24,7 @@ from candleviewer.oms import submit
 from candleviewer.oms.errors import OmsNotReady
 from candleviewer.oms_lane import BLOCK_TIMEOUT_S, HOP_TIMEOUT_S, LANE_JOIN_S, LANE_START_S
 from candleviewer.oms_wiring import (
+    ENVIRONMENT_FENCE_GRACE_S,
     ENVIRONMENT_LOCK_NAMESPACE,
     ENVIRONMENT_LOCK_TIMEOUT_S,
     LANE_AUDIT_PAGE_S,
@@ -255,6 +256,45 @@ def test_live_needs_both_preconditions_and_the_switches_run_live_b18_gate() -> N
         "slice 3 ruling Q5: `kill_switch`, the B18 kill switch until E39-S03",
         "slice 3: `machine_event_sink`, B1's `machine_events` sink while no statechart persistence",
         "Status of these two: the contract of #913 slice 3 (sub-slices B to G); nothing serves",
+    )
+
+
+def test_a_new_holder_waits_out_the_fence_and_a_fenced_runtime_admits_nothing_new() -> None:
+    """SEC-S3L2-01, -02 (the Fable lens at 864fa082): 20 states the fencing grace from the code's
+    own names and bound, and the fence at the route's step 3 and in the switches; 24 gives the
+    switches' first refusal and both routes' step 3; the E29 model's §12.2 the grace's residual."""
+    assert not _missing(
+        _RUNTIME,
+        "The route's step 3 reads the runtime's readiness, `degraded` once the lock is lost, "
+        "while the exit routes read its state, and the fence is the switches' first refusal "
+        "(`TradingSwitches`, 24 §8.4), so a submit any caller makes on the lane, a resumed create "
+        "and a risk-increasing amend included, is refused `oms_not_ready` there too (SEC-S3L2-02).",
+        f"A process that takes the lock waits {ENVIRONMENT_FENCE_GRACE_S:g} s from then "
+        "(`ENVIRONMENT_FENCE_GRACE_S`, a tick and the watchdog's bound, step 1's waits counting "
+        "toward it) before its startup sweep, and so before its first admit: a previous holder "
+        "whose session ended has fenced itself by then, so the two never sweep or admit at once "
+        "(SEC-S3L2-01).",
+    )
+    switches = _between(_INTERNAL_DOC, "**`TradingSwitches`", "**A refused")
+    assert not _missing(
+        switches,
+        "the first refusal wins: the environment's lock held, then live trading enabled",
+        f"the binding refuses every order first, `{OmsNotReady.__name__}` "
+        "(`503 oms_not_ready`), whatever the rest say",
+    )
+    placed = _between(_INTERNAL_DOC, "\n3. the OMS runtime: none composed", "\n4. ")
+    assert "or one whose environment's lock is lost (its readiness, SEC-S3L2-02)" in placed
+    exits = _between(_INTERNAL_DOC, "\n3. the OMS runtime, as the route's step 3", "\n4. ")
+    assert "by its state, so a lost environment lock refuses no exit (C-2.6)" in exits
+    threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
+    residuals = _between(
+        threat.read_text(encoding="utf-8"), "### 12.2 Accepted residual risks", "### 12.3"
+    )
+    assert not _missing(
+        residuals,
+        "**The environment lock's fencing grace (#913 L2, SEC-S3L2-01).**",
+        f"A process that takes the lock waits those {ENVIRONMENT_FENCE_GRACE_S:g} s "
+        "(`ENVIRONMENT_FENCE_GRACE_S`) before its startup sweep and its first admit",
     )
 
 

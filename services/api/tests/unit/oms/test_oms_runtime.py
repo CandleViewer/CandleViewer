@@ -57,10 +57,12 @@ from candleviewer.oms.ports import NoDayFigures, PositionKey, SubmitActor
 from candleviewer.oms.repository import RecordedStopRepository
 from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, LaneStopped
 from candleviewer.oms_wiring import (
+    ENVIRONMENT_FENCE_GRACE_S,
     ENVIRONMENT_LOCK_TIMEOUT_S,
     HYDRATE_CONCURRENCY,
     LANE_STALE_S,
     LANE_TICK_S,
+    STARTUP_POLL_S,
     SWEEP_MAX_FAILURES,
     SWEEP_RETRY_S,
     SWEEP_STATEMENT_TIMEOUT_MS,
@@ -356,6 +358,8 @@ class World:
     alarms: list[Callable[[str], Awaitable[None]]] = field(default_factory=list)
     lock: Lock = field(default_factory=Lock)
     beats: Beats = field(default_factory=Beats)
+    #: Each wait of the fencing grace (SEC-S3L2-01), on the world's clock, apart from `sleep`'s.
+    graces: list[float] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.writer.log = self.lock.log = self.log
@@ -407,8 +411,14 @@ class World:
             "feed": feed, "stores": self.stores, "pager": self.pager, "now": lambda: T0,
             "monotonic": self.clock, "registry": REGISTRY, "oms_enabled": self.flags[0],
             "sleep": self.clock.sleep, "lane": self.lane, "heartbeat": self.heartbeat,
+            "fencing": self.fencing,
         }  # fmt: skip
         return OmsRuntime(settings, **(built | over))
+
+    async def fencing(self, seconds: float) -> None:
+        self.graces.append(seconds)
+        self.clock.s += seconds
+        await asyncio.sleep(0)
 
     def heartbeat(self, lock: Any, pager: Any) -> Heart:
         return Heart(lock, pager, self.beats, self.log)
@@ -920,6 +930,8 @@ async def test_a_lost_lock_fences_every_new_submit_and_pages_once_and_leaves_the
         await runtime.wait_ready()
         await settle()
         assert (runtime.readiness, world.lock.confirms) == ("ok", 1)
+        switches = runtime._composed().route.switches  # the composed ones, B1's `SEND`'s too
+        assert switches.refusal(cr.ACCOUNT, "demo") is None
         if lost == "released":
             world.lock.confirmed = False
         else:
@@ -934,6 +946,8 @@ async def test_a_lost_lock_fences_every_new_submit_and_pages_once_and_leaves_the
             runtime.run(asyncio.sleep(0))
         with pytest.raises(OmsNotReady):
             await runtime.submission.submit(cast(Any, None), cast(Any, None))
+        # SEC-S3L2-02: a submitter on the lane, past the route and `OnLane`, meets the switches
+        assert type(switches.refusal(cr.ACCOUNT, "demo")) is OmsNotReady
         await runtime._composed().machines.settled(
             cr.ACCOUNT, SENDING.id, leaving="submitting", timeout_s=10
         )
@@ -944,6 +958,51 @@ async def test_a_lost_lock_fences_every_new_submit_and_pages_once_and_leaves_the
         )
         assert (cancelled.kind, cancelled.status) == ("accepted", 202)
     assert world.pager.calls == ["oms_environment_lock_lost"] and world.lock.confirms == 2
+
+
+async def test_a_new_holder_waits_out_the_fencing_grace_before_its_sweep_and_first_admit() -> None:
+    """SEC-S3L2-01 (the Fable lens at 864fa082; 20 Sec.6.2): a previous holder whose session ended
+    fences itself within a tick and its watchdog's bound, so a process that takes the lock waits
+    `ENVIRONMENT_FENCE_GRACE_S` from then before its startup sweep, and so its first admit:
+    `starting`, nothing swept, until the grace has run out."""
+    world, go = World(), asyncio.Event()
+    await crashed(world)
+    for flag in world.flags:
+        flag.read()
+
+    async def held(seconds: float) -> None:
+        world.graces.append(seconds)
+        await go.wait()
+        world.clock.s += seconds
+
+    async with started(world.runtime(fencing=held)) as runtime:
+        await until(lambda: bool(world.graces))
+        assert world.graces == [ENVIRONMENT_FENCE_GRACE_S]
+        assert ENVIRONMENT_FENCE_GRACE_S == LANE_TICK_S + ENVIRONMENT_LOCK_TIMEOUT_S
+        await settle()
+        assert runtime.state == "starting" and world.log == STARTED
+        assert world.store._orders[UNSENT.id].lifecycle_state == "validated"  # not swept
+        go.set()
+        await asyncio.wait_for(runtime.wait_ready(), 10)  # a bound on the test
+        assert world.store._orders[UNSENT.id].lifecycle_state == "killed"  # swept after it
+
+
+async def test_step_ones_waits_count_toward_the_fencing_grace() -> None:
+    """SEC-S3L2-01: the grace runs from the lock's take, so step 1's waits count toward it, and the
+    sweep with its wait still fits a deploy's `/readyz` window: 2 s of polls leave 4 s of it."""
+    world = World(standings=SimpleNamespace(read_once=False))
+    for flag in world.flags:
+        flag.read()
+
+    async def polled(seconds: float) -> None:
+        await world.clock.sleep(seconds)
+        if len(world.clock.slept) == 8:  # the key standing's first good read, 2 s in
+            world.standings.read_once = True
+
+    async with started(world.runtime(sleep=polled)) as runtime:
+        await asyncio.wait_for(runtime.wait_ready(), 10)  # a bound on the test
+    assert world.clock.slept == [STARTUP_POLL_S] * 8
+    assert world.graces == [ENVIRONMENT_FENCE_GRACE_S - 8 * STARTUP_POLL_S]
 
 
 def test_the_heartbeats_bounds_fit_a_tick_and_a_probe_and_a_lanes_own_read() -> None:

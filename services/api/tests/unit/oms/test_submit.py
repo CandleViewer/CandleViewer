@@ -21,7 +21,8 @@ from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -56,6 +57,7 @@ from candleviewer.oms.errors import (
     IdempotencyInFlight,
     IdempotencyKeyReuse,
     OmsError,
+    OmsNotReady,
     OrderEntryRefused,
     OrderInvalid,
     OrderLinkIdExhausted,
@@ -87,6 +89,7 @@ from candleviewer.oms.submit import (
     _after_anchor_s,
     entry_order_id,
 )
+from candleviewer.oms_wiring import InterimKillSwitch, TradingSwitchesBinding
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -668,6 +671,29 @@ async def test_the_switches_refuse_just_before_the_persist(rig: SubmitRig) -> No
     assert isinstance(refused, OrderEntryRefused) and refused.reason == "account_unhealthy"
     _nothing_done(rig)
     assert rig.port.switches.asked == [(cr.ACCOUNT, "demo")] * 2
+
+
+async def test_the_lost_locks_fence_refuses_a_lane_side_submit_at_the_switches(
+    rig: SubmitRig,
+) -> None:
+    """SEC-S3L2-02 (the Fable lens at 864fa082): the environment lock's fence joins the composed
+    switches (`TradingSwitchesBinding`), so a submit made on the order lane through the pipeline
+    itself, no route or `OnLane` in front of it, is refused `oms_not_ready` at its switches step
+    once the lock is lost: nothing recorded or sent, no key bound."""
+    lost = [False]
+    switches = TradingSwitchesBinding(
+        live_enabled=False, live_flag=lambda: False, kill_switch=InterimKillSwitch(),
+        gate=cast(Any, SimpleNamespace(refusal=lambda _account: None)), fenced=lambda: lost[0],
+    )  # fmt: skip
+    made = cast(Any, rig.make)
+    ports, deps = made.args
+    pipeline = made.func(ports, replace(deps, switches=switches), **made.keywords)
+    lost[0] = True
+    with capture_logs() as logs, pytest.raises(OmsNotReady):
+        await pipeline.submit(entry(), context())
+    refused = [(e["step"], e["code"]) for e in logs if e["event"] == "oms_submit_refused"]
+    assert refused == [("switches", "oms_not_ready")]
+    _nothing_done(rig)
 
 
 async def test_rate_point_one_refuses_429_with_retry_after_and_binds_no_key(rig: SubmitRig) -> None:

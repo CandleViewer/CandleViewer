@@ -125,12 +125,13 @@ class _Check:
 
 
 def _switches(
-    *, live: bool = True, flag: bool = True, b18: Any = None, gate: Any = None
+    *, live: bool = True, flag: bool = True, b18: Any = None, gate: Any = None, lost: bool = False
 ) -> tuple[TradingSwitchesBinding, _Check, _Check]:
     kill, entry = _Check(b18), _Check(gate)
     binding = TradingSwitchesBinding(
-        live_enabled=live, live_flag=lambda: flag, kill_switch=kill, gate=entry
-    )
+        live_enabled=live, live_flag=lambda: flag, kill_switch=kill, gate=entry,
+        fenced=lambda: lost,
+    )  # fmt: skip
     return binding, kill, entry
 
 
@@ -158,6 +159,20 @@ def test_switches_count_an_environment_outside_the_set_as_live(environment: str)
     binding, kill, entry = _switches(live=False, flag=False)
     refused = binding.refusal(ACCOUNT, cast(Environment, environment))
     assert type(refused) is TradingDisabled and (kill.asked, entry.asked) == ([], [])
+
+
+@pytest.mark.parametrize("environment", ["live", "demo"])
+def test_a_lost_environment_lock_is_the_switches_first_refusal_oms_not_ready(
+    environment: Environment,
+) -> None:
+    """SEC-S3L2-02 (the Fable lens at 864fa082): the lane's watchdog fences the runtime once its
+    environment's lock is lost, and the fence is the switches' first refusal, so every submitter
+    that asks them, the route's step 10, the pipeline, a resumed create and a risk-increasing
+    amend, meets `oms_not_ready` whatever else stands, nothing else asked."""
+    binding, kill, entry = _switches(b18=TradingDisabled(), gate=_GATE, lost=True)
+    refused = binding.refusal(ACCOUNT, environment)
+    assert type(refused) is OmsNotReady and (kill.asked, entry.asked) == ([], [])
+    assert _switches(lost=False)[0].refusal(ACCOUNT, environment) is None
 
 
 def test_switches_run_the_kill_switch_before_the_gate_and_the_first_refusal_wins() -> None:
@@ -190,6 +205,7 @@ async def test_the_live_flag_view_refuses_a_live_order_while_it_is_unread() -> N
         live_flag=flags.live_enabled,
         kill_switch=InterimKillSwitch(),
         gate=_Check(),
+        fenced=lambda: False,
     )
     assert type(binding.refusal(ACCOUNT, "live")) is TradingDisabled
     await flags.live_enabled.on_change(LIVE_ENABLED, None, StoredFlag(True))
@@ -202,8 +218,9 @@ def test_the_kill_switch_is_announced_as_an_interim_port_while_the_interim_serve
 ) -> None:
     """Q5: the interim admits and is announced with one WARNING; a real switch counts 0."""
     binding = TradingSwitchesBinding(
-        live_enabled=False, live_flag=lambda: False, kill_switch=switch, gate=_Check()
-    )
+        live_enabled=False, live_flag=lambda: False, kill_switch=switch, gate=_Check(),
+        fenced=lambda: False,
+    )  # fmt: skip
     metrics = Metrics("live")
     with capture_logs() as logs:
         binding.announce(metrics=metrics)
