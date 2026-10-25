@@ -301,9 +301,10 @@ jobs:
   py-perf:
     name: py-perf
     runs-on: ubuntu-latest
-    # Fixed, not CV_CI_TIMEOUT_MINUTES: the perf set takes ~2.5 min; a run that needs more than 10
-    # is itself a C-13.9 budget failure and should be cancelled rather than waited for.
-    timeout-minutes: 10
+    # Fixed, not CV_CI_TIMEOUT_MINUTES. The per-test C-13.9 budgets gate inside the tests; this
+    # bounds a hung run. The set is 104 tests (the 1,000-sample login-timing test alone takes 86 s)
+    # and runs 9-10 min on hosted runners, so a 10-minute bound cancelled sound runs (#4460).
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: services/api
@@ -326,7 +327,7 @@ jobs:
       - name: Pre-pull postgres:16-alpine (CI-INFRA-001)
         working-directory: ${{ github.workspace }}
         env:
-          # 8 pulls x 45 s + 220 s of waits = 580 s, inside this job's 10-minute timeout.
+          # 8 pulls x 45 s + 220 s of waits = 580 s, inside this job's 20-minute timeout.
           PREPULL_PULL_TIMEOUT: "45"
         run: tools/ci/prepull_images.sh postgres
 
