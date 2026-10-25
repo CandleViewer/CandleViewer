@@ -5,7 +5,6 @@ from __future__ import annotations
 import gc
 import json
 import math
-import os
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -157,10 +156,6 @@ def test_mann_whitney_detects_a_shift_and_accepts_identical() -> None:
 
 
 @pytest.mark.perf
-@pytest.mark.skipif(
-    os.environ.get("CV_RUN_PERF") != "1",
-    reason="wall-clock statistical test: opt in with CV_RUN_PERF=1 (CI lane has coverage)",
-)
 async def test_ac_enum_03_timing_unknown_vs_wrong_password_500_samples(  # SR-014 / U8
     tmp_path: Path,
 ) -> None:
