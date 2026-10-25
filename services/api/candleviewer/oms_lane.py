@@ -139,7 +139,7 @@ class OrderLane:
         `TimeoutError`, its task on the lane cancelled, or never begun."""
         with self._lock:
             try:
-                if self._loop is None or self._died.is_set() or self._stopping.is_set():
+                if self._loop is None or self._stopping.is_set():  # stopped, or dead (`_serve`)
                     raise LaneStopped("the order lane is not running")
                 answer = _run_on(
                     self._loop, coro, name=f"{self._name}-call", tasks=self._tasks,
@@ -285,6 +285,8 @@ def _run_out(loop: asyncio.AbstractEventLoop, step: Coroutine[Any, Any, Any]) ->
 
 
 async def _spawned(step: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
+    """`step` spawned on the loop running this, as `spawn` needs one: it returns in its first turn,
+    so a stop pending there cannot cut it short, and `_run_out` runs the task to its end."""
     return spawn(step, name="oms-order-lane-cleanup")
 
 
@@ -303,14 +305,18 @@ def _serve(
     asyncio.set_event_loop(loop)
     loop.call_soon(running.set)
     try:
+        error: str | None = None
         try:
             loop.run_forever()
         except BaseException as exc:  # nothing else watches this thread: the runtime reads `dead`
-            died.set()
-            _log().critical("oms_lane_died", error=type(exc).__name__)
+            error = type(exc).__name__
         finally:
             with lock:  # a call taken before is refused in the cleanup (`_begin`), none after
+                if error is not None or not stopping.is_set():  # it ended without `stop()`
+                    died.set()
                 stopping.set()
+        if died.is_set():  # an error out of its loop, or a stop from within it (CR-S3L1C-01)
+            _log().critical("oms_lane_died", error=error)
         for _ in range(3):  # a task's cleanup may start another, a few times at most
             if not (left := asyncio.all_tasks(loop)):
                 break

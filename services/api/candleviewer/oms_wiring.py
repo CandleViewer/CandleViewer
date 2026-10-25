@@ -973,6 +973,7 @@ class ServedSink:
         try:
             self._serving.block(lambda: self._sink.append(row))
         except TimeoutError as exc:  # not begun, so never run: the row is lost
+            # the hop's alone: the append is synchronous, so one begun is waited out, never this
             now, paged = self._monotonic(), self._paged_at
             if paged is None or now - paged >= SINK_PAGE_COOLDOWN_S:
                 self._paged_at = now
@@ -1643,9 +1644,9 @@ class OmsRuntime:
             _page(self._pager, f"oms_runtime_failed_closed: {phase}")
             return
         except BaseException:  # cancelled: the compose closes what it built on the lane first
-            try:
+            try:  # its wait there, then the join, within the stop reserve (20 Sec.6.2)
                 with contextlib.suppress(LaneStopped, TimeoutError):
-                    async with asyncio.timeout(OMS_STOP_RESERVE_S):
+                    async with asyncio.timeout(OMS_STOP_RESERVE_S - LANE_JOIN_S):
                         await lane.idle()
             finally:  # cancelled again meanwhile or not (SEC-S3L1C-01)
                 await lane.stop()
@@ -1822,7 +1823,8 @@ class OmsRuntime:
         bounds = OmsBounds.from_settings(settings)
         ports = SubmissionPorts.interim(now=self._now)
         announce_interim_ports(ports, metrics=metrics)
-        standings = ServedStandings(self._standings, serving)  # its refusals, the lane's gate's
+        # one bridge for both: the gate refuses at once a credential the rejections report
+        standings = ServedStandings(self._standings, serving)
         switches = TradingSwitchesBinding(
             live_enabled=settings.trading_live_enabled,
             live_flag=self._live_enabled,
