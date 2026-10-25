@@ -290,11 +290,13 @@ def test_the_bundle_repr_names_neither_the_keys_nor_the_pool(tmp_path: Path) -> 
     assert "persister=" in text  # the rest of the repr is kept
 
 
-def test_a_direct_plugin_build_for_an_unseeded_key_is_refused(
+async def test_a_direct_plugin_build_for_an_unseeded_key_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """security-2: the synchronous builder refuses a key whose head the sink does not hold: its
-    first row would chain from the genesis and fork a stored chain. After a seed it builds."""
+    first row would chain from the genesis and fork a stored chain. After a seed it builds. On the
+    loop the app was built on, as `plugins_for` and a restore's `prepare` build: the sink serves
+    that loop alone (D6, #913 L2)."""
     bundle = create_app(_real(tmp_path), hmac_keys=FixedKeys()).state.statechart_persistence
     with pytest.raises(ChainSeedError, match="unseeded") as refused:
         bundle.plugins(KEY, "control")
