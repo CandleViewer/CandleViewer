@@ -116,9 +116,9 @@ def test_size_leg_leverage_above_the_instrument_maximum_fails_leverage_unavailab
     inst = instrument("BTCUSDT").model_copy(update={"max_leverage": D(5)})
     got = sized(profile("P-PCT"), inst=inst, market=sz.SizingMarket(atr=_ATR))
     assert (got.outcome, got.reason, got.qty) == ("fail", sz.FailReason.LEVERAGE_UNAVAILABLE, None)
-    assert (
-        got.render()
-        == "stop 63400 USDT from a 14-bar 1h ATR of 400 USDT; failed: leverage_unavailable"
+    assert got.render() == (
+        "stop 63400 USDT from a 14-bar 1h ATR of 400 USDT (source kernel, descriptor v1, kernel"
+        " build v1, closed bar 20261005T000000Z); failed: leverage_unavailable"
     )
 
 

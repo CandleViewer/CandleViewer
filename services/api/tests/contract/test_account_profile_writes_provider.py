@@ -11,6 +11,7 @@ import json
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -20,10 +21,16 @@ from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
 from candleviewer.accounts.models import ExchangeEnv
+from candleviewer.accounts.override_comparator import AccountFigures
 from candleviewer.accounts.profile_caps import PROFILE_CAPS
 from candleviewer.accounts.profile_repository import ARMED_SHOWN, ArmedRule
-from candleviewer.accounts.profile_validator import InstrumentLimitsUnavailable
+from candleviewer.accounts.profile_validator import (
+    InstrumentLimitsUnavailable,
+    SaveFigures,
+    SymbolFigures,
+)
 from candleviewer.accounts.profiles import profile_from_row, to_us
+from candleviewer.accounts.sizer import SizingMarket
 from candleviewer.api import profile_body as edge
 from candleviewer.api.deny_by_default import served_operations
 from candleviewer.api.idempotency import IDEMPOTENCY_TTL_S
@@ -43,6 +50,7 @@ from tests.contract._admin_support import SPEC, validate_example
 from tests.contract._profile_writes_world import WRITTEN, Row, Writes, build
 from tests.contract.rbac import rbac_harness as rbac
 from tests.contract.test_account_profile_reads_provider import EMPTIED, ENV, Store
+from tests.unit.accounts.test_profile_validator import _LISTED
 
 LIST = "/exchange-accounts/{accountId}/profiles"
 ITEM = LIST + "/{profileId}"
@@ -274,6 +282,27 @@ def test_a_writes_answer_carries_the_second_passes_warnings(w: Writes) -> None:
     message = "Allows every listed symbol — consider restricting."
     warning = {"code": "all_symbols", "message": message, "field": "allowed_symbols"}
     assert (resp.status_code, answered(resp)["warnings"]) == (201, [warning])
+
+
+def test_a_writes_answer_carries_the_sizing_warnings_of_its_port(w: Writes) -> None:
+    """E28-T03: the profile routes' `warnings` port feeds the second pass (SR-E28-26); a rate of
+    0.5 puts the estimated liquidation past entry, so the 2 % fallback stop lies beyond it."""
+    figures = AccountFigures.model_validate(dict.fromkeys(AccountFigures.model_fields))
+    one = SymbolFigures(_LISTED["BTCUSDT"], SizingMarket(mid=Decimal(64000)), Decimal("0.5"))
+    port = AsyncMock()
+    port.open_symbols.return_value = ()
+    port.figures.return_value = SaveFigures(figures, False, {"BTCUSDT": one})
+    object.__setattr__(w.writes, "warnings", port)  # the frozen wiring, for this test alone
+    try:
+        resp = create(w, _RISK)
+    finally:
+        object.__setattr__(w.writes, "warnings", None)
+    got = answered(resp)["warnings"]
+    assert (resp.status_code, [(x["code"], x.get("symbol"), x.get("estimated")) for x in got]) == (
+        201, [("stop_beyond_liquidation", "BTCUSDT", True)],
+    )  # fmt: skip
+    port.figures.assert_awaited_once()
+    assert port.figures.await_args.args[1] == ("BTCUSDT", "ETHUSDT")
 
 
 def test_a_create_replays_its_201_and_refuses_the_key_for_another_body(

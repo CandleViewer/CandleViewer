@@ -33,7 +33,7 @@ DURATION: Final = "cv_sizer_duration_seconds"
 OUTCOMES: Final = "cv_sizer_outcomes_total"
 CLAMPED: Final = "cv_sizer_clamped_total"
 FALLBACK: Final = "cv_sizer_stop_fallback_total"
-#: Every `(outcome, reason)` pair a leg can carry, in the catalogue's `max_series` (11).
+#: Every `(outcome, reason)` pair a leg can carry, in the catalogue's `max_series` (12).
 OUTCOME_REASONS: Final[tuple[tuple[str, str], ...]] = (
     ("ok", "none"),
     *(("skip", reason.value) for reason in SkipReason),

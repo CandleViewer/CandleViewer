@@ -4,8 +4,10 @@ A warning is advice that never blocks a save (`ProfileWarning`, `22-api-openapi.
 the two about the symbol lists, judged by `SymbolScope`, the matcher the order path uses
 (PF-T07): `no_symbols`, a profile that allows no symbol and so sizes nothing (decision D11), and
 `all_symbols`, one that allows every listed symbol. A read judges the profile alone; a write,
-which reads the instrument list, also judges what the exchange lists. `sizing_below_min_order`
-and `stop_beyond_liquidation` need the sizer (E28-T03).
+which reads the instrument list, also judges what the exchange lists. E28-T03 (#907) adds
+`sizing_below_min_order` and `stop_beyond_liquidation` (SR-E28-26) through the optional
+`SizingWarningsPort`: `sizing_warnings` judges them with the order path's sizer, and a missing
+input drops a warning with one log line, never a 503 (#907's ruling of 2026-10-25 17:27Z).
 
 `judge_exchange_limits` refuses a write against the exchange's limits (`ProfileRejected`'s second
 pass), judged for the entries the write introduces; it has no I/O, logging or clock.
@@ -17,16 +19,33 @@ refuse, so a write that introduces nothing never waits on the exchange's data.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import asyncio
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from decimal import Context, Decimal
-from typing import Final, Literal, Protocol
+from decimal import ROUND_CEILING, ROUND_FLOOR, Context, Decimal
+from typing import Any, Final, Literal, Protocol
+from uuid import UUID
+
+import structlog
 
 from candleviewer.accounts.errors import AccountNotFoundError, AccountsError
+from candleviewer.accounts.override_comparator import AccountFigures
 from candleviewer.accounts.profile_input import ProfileFieldError
 from candleviewer.accounts.profiles import AccountProfile, SymbolScope, is_trading_usdt_perpetual
+from candleviewer.accounts.sizer import (
+    LIQUIDATION_BUFFER_FRACTION,
+    FailReason,
+    LegSizing,
+    SizingIntent,
+    SizingMarket,
+    beyond_liquidation,
+    liquidation_edge,
+    liquidation_estimate,
+    resolve_stop,
+    size_leg,
+)
 from candleviewer.domain.events import Instrument
-from candleviewer.domain.primitives import Environment
+from candleviewer.domain.primitives import Environment, Side
 
 #: Every USDT perpetual's symbol ends with `USDT`: allowed, this pattern allows them all; blocked,
 #: it blocks them all.
@@ -37,15 +56,22 @@ _ALL_SYMBOLS: Final = "Allows every listed symbol — consider restricting."
 
 @dataclass(frozen=True, slots=True)
 class ProfileWarning:
-    """One entry of a profile answer's `warnings[]`; its message is fixed for its code."""
+    """One entry of a profile answer's `warnings[]`. T02's messages are fixed for their code; the
+    two sizing messages name the symbol and its figures."""
 
-    code: Literal["all_symbols", "no_symbols"]
+    code: Literal["all_symbols", "no_symbols", "sizing_below_min_order", "stop_beyond_liquidation"]
     message: str
     field: str  # the `AccountProfileInput` path it is about
+    symbol: str | None = None  # a sizing warning's
+    estimated: bool = False
 
-    def to_dict(self) -> dict[str, str]:
-        """The contract's `ProfileWarning`; T02 sets neither `symbol` nor `estimated`."""
-        return {"code": self.code, "message": self.message, "field": self.field}
+    def to_dict(self) -> dict[str, str | bool]:
+        """The contract's `ProfileWarning`; T02's set neither `symbol` nor `estimated`."""
+        said: dict[str, str | bool] = {"code": self.code, "message": self.message}
+        said["field"] = self.field
+        if self.symbol is not None:
+            said |= {"symbol": self.symbol, "estimated": self.estimated}
+        return said
 
 
 def profile_warnings(
@@ -236,6 +262,7 @@ async def check_exchange_limits(
     environment: Environment,
     instruments: InstrumentLimitsPort,
     stored: AccountProfile | None,
+    warnings: SizingWarningsPort | None = None,
 ) -> SecondPassResult:
     """The second pass over the listing of the account's `environment`, read only when the write
     introduces allow scope (a create allowing anything; a new allow entry, `all_symbols` turned
@@ -248,18 +275,23 @@ async def check_exchange_limits(
 
     Before any read, `AccountNotFoundError` for a port of another environment (C-2.11), and for a
     `stored` that is not the profile this write replaces (another profile, or another account's).
-    The port's `InstrumentLimitsUnavailable` passes through: nothing is judged."""
+    The port's `InstrumentLimitsUnavailable` passes through: nothing is judged. With `warnings`,
+    a write that is not refused also carries `sizing_warnings`' (`judge_sizing`), after T02's."""
     if instruments.environment != environment:
         raise AccountNotFoundError("account")
     replaced = (profile.profile_id, profile.account_id)
     if stored is not None and (stored.profile_id, stored.account_id) != replaced:
         raise AccountNotFoundError("profile")
     if not _needs_listing(profile, stored):
-        return SecondPassResult((), profile_warnings(profile))
-    listed = await instruments.listed(
-        max_age_s=INSTRUMENT_MAX_AGE_S, deadline_s=INSTRUMENT_DEADLINE_S
-    )
-    return judge_exchange_limits(profile, listed, stored=stored)
+        judged = SecondPassResult((), profile_warnings(profile))
+    else:
+        listed = await instruments.listed(
+            max_age_s=INSTRUMENT_MAX_AGE_S, deadline_s=INSTRUMENT_DEADLINE_S
+        )
+        judged = judge_exchange_limits(profile, listed, stored=stored)
+    if warnings is None or judged.errors:
+        return judged
+    return SecondPassResult((), (*judged.warnings, *await judge_sizing(profile, warnings)))
 
 
 def _needs_listing(profile: AccountProfile, stored: AccountProfile | None) -> bool:
@@ -278,3 +310,188 @@ def _needs_listing(profile: AccountProfile, stored: AccountProfile | None) -> bo
         or profile.fixed_qty != stored.fixed_qty
         or (cap is not None and (was is None or cap < was))
     )
+
+
+#: The symbols a save's sizing warnings judge, at most (#907's ruling of 2026-10-25 17:27Z).
+WARNING_SYMBOLS_MAX: Final = 25
+#: The warnings port's share of the save's 2 s, after the listing's 1.5 s (PF-D04).
+WARNINGS_DEADLINE_S: Final = 0.25
+_SIZING: Final = ("sizing_below_min_order", "stop_beyond_liquidation")
+_EXACT_100: Final = Context(prec=100)
+_SIDES: Final[tuple[Side, Side]] = ("buy", "sell")
+
+
+@dataclass(frozen=True, slots=True)
+class SymbolFigures:
+    """One symbol's save-time inputs: its instrument; its ticker and ATR as the order path builds
+    the `SizingMarket` (mid, else the last price; a stale ticker gives neither); and the
+    maintenance margin rate of the account's risk-limit tier for it, else tier 1's."""
+
+    instrument: Instrument | None
+    market: SizingMarket
+    maintenance_margin_rate: Decimal | None
+
+
+@dataclass(frozen=True, slots=True)
+class SaveFigures:
+    """The account's figures (`equity` from the account health feed's wallet), whether that
+    equity is older than the feed's staleness bound, and the inputs of each symbol asked."""
+
+    figures: AccountFigures
+    equity_stale: bool
+    symbols: Mapping[str, SymbolFigures]
+
+
+class SizingWarningsPort(Protocol):
+    """The account's market and wallet at save time, injected by the profile routes' wiring."""
+
+    async def open_symbols(self, account_id: UUID) -> Sequence[str]:
+        """The symbols of the account's open positions."""
+
+    async def figures(self, account_id: UUID, symbols: Sequence[str]) -> SaveFigures:
+        """The account's figures and each symbol's inputs; an unknown one is `None`."""
+
+
+@dataclass(frozen=True, slots=True)
+class DroppedWarning:
+    """A sizing warning not judged for want of an input; logged, never a 503."""
+
+    code: str
+    symbol: str | None
+    reason: str
+
+
+def warning_symbols(profile: AccountProfile, open_symbols: Sequence[str]) -> tuple[str, ...]:
+    """The profile's exact `allowed_symbols` entries (none for `all_symbols` or a pattern), then
+    the open positions' symbols: deduplicated in that order, at most `WARNING_SYMBOLS_MAX`."""
+    exact = () if profile.all_symbols else [e for e in profile.allowed_symbols if "*" not in e]
+    return tuple(dict.fromkeys([*exact, *open_symbols]))[:WARNING_SYMBOLS_MAX]
+
+
+def sizing_warnings(
+    profile: AccountProfile, save: SaveFigures, symbols: Sequence[str]
+) -> tuple[tuple[ProfileWarning, ...], tuple[DroppedWarning, ...]]:
+    """Every symbol in scope, each side as a market order through the order path's `size_leg`:
+    `sizing_below_min_order` when a leg misses a minimum (estimated when priced at the last
+    price, on the ATR fallback stop, or at a stale equity); `stop_beyond_liquidation` when a
+    side's stop is not inside `liquidation_estimate` (always estimated). Pure: what it cannot
+    judge comes back as dropped."""
+    found: list[ProfileWarning] = []
+    dropped: list[DroppedWarning] = []
+    able = profile.model_copy(update={"enabled": True, "trading_enabled": True})
+    for symbol in symbols:
+        got = save.symbols.get(symbol)
+        inst = None if got is None else got.instrument
+        ref = None if got is None else _price(got.market)
+        if got is None:
+            reason = "figures_missing"
+        elif inst is None or inst.symbol != symbol:
+            reason = "instrument"
+        elif ref is None:
+            reason = "no_reference_price"
+        else:
+            reason = ""
+        if reason or got is None or inst is None or ref is None:
+            dropped += [DroppedWarning(code, symbol, reason) for code in _SIZING]
+            continue
+        mmr, last = got.maintenance_margin_rate, got.market.mid is None
+        figures = save.figures.model_copy(update={"maintenance_margin_rate": mmr})
+        legs = [
+            size_leg(SizingIntent(symbol=inst.symbol, side=side, order_type="market"), able,
+                     figures, inst, got.market)
+            for side in _SIDES
+        ]  # fmt: skip
+        if missed := next((leg for leg in legs if leg.minimum is not None), None):
+            stale = last or missed.stop_fallback or save.equity_stale
+            found.append(_below_minimum(symbol, missed, estimated=stale))
+        elif any(leg.qty is None and leg.reason is FailReason.FIGURE_UNKNOWN for leg in legs):
+            dropped.append(DroppedWarning(_SIZING[0], symbol, "figure_unknown"))
+        elif unjudged := next((leg.reason for leg in legs if leg.reason in _UNJUDGED), None):
+            dropped.append(DroppedWarning(_SIZING[0], symbol, unjudged.value))
+        if mmr is None:
+            dropped.append(DroppedWarning(_SIZING[1], symbol, "maintenance_margin_rate"))
+        elif (beyond := _beyond(able, inst, ref, got.market, mmr)) is not None:
+            found.append(beyond)
+    return tuple(found), tuple(dropped)
+
+
+_UNJUDGED: Final = (FailReason.LEVERAGE_UNAVAILABLE, FailReason.INVALID_STOP_DISTANCE)
+
+
+def _price(market: SizingMarket) -> Decimal | None:
+    """The order path's reference: the mid, else the last price (`SizingMarket` refuses a price
+    at or below 0, so a present mid is never zero)."""
+    return market.mid if market.mid is not None else market.last_price
+
+
+def _on_tick(value: Decimal, tick: Decimal, rounding: str) -> Decimal:
+    """`value` on the tick grid, rounded as asked, at 100 digits (a shown price is never cut)."""
+    return _EXACT_100.multiply(_EXACT_100.divide(value, tick).to_integral_value(rounding), tick)
+
+
+def _below_minimum(symbol: str, leg: LegSizing, *, estimated: bool) -> ProfileWarning:
+    said = f"{symbol}: at the account's equity the sizing gives less than its minimum order"
+    return ProfileWarning("sizing_below_min_order", f"{said}: {leg.render()}.", "sizing",
+                          symbol, estimated)  # fmt: skip
+
+
+def _beyond(
+    p: AccountProfile, inst: Instrument, ref: Decimal, market: SizingMarket, mmr: Decimal
+) -> ProfileWarning | None:
+    """The first side whose stop is not inside the liquidation estimate by the buffer (the leg
+    refusal's `beyond_liquidation`); the estimate shown on the tick toward entry, the edge on the
+    tick away from it. `None` when both are inside."""
+    for side in _SIDES:
+        stop = resolve_stop(side, p, ref, inst, market.atr)
+        liquidation = liquidation_estimate(side, ref, p.leverage, mmr)
+        tick = inst.tick_size
+        if beyond_liquidation(side, stop.price, liquidation, entry=ref, tick=tick):
+            buy = side == "buy"
+            toward, away = (ROUND_CEILING, ROUND_FLOOR) if buy else (ROUND_FLOOR, ROUND_CEILING)
+            shown = _on_tick(liquidation, tick, toward)
+            edge = liquidation_edge(side, ref, liquidation, tick)
+            edge = _on_tick(edge, tick, away)
+            share = _plain(LIQUIDATION_BUFFER_FRACTION * 100)
+            message = (
+                f"{inst.symbol}: a {'long' if buy else 'short'}'s stop at "
+                f"{_plain(stop.price):f} USDT is not inside the estimated liquidation price "
+                f"{_plain(shown):f} USDT at {_plain(p.leverage):f}x by the {share:f} % buffer: "
+                f"it must be {'above' if buy else 'below'} {_plain(edge):f} USDT."
+            )
+            return ProfileWarning("stop_beyond_liquidation", message, "stop_loss", inst.symbol,
+                                  True)  # fmt: skip
+    return None
+
+
+def _log() -> Any:
+    """Resolved per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
+
+
+async def judge_sizing(
+    profile: AccountProfile, port: SizingWarningsPort
+) -> tuple[ProfileWarning, ...]:
+    """`sizing_warnings` over the port's figures, within `WARNINGS_DEADLINE_S`. An empty scope
+    judges nothing; a port that fails or runs out of time drops every warning of the scope known
+    so far. One structured log line per dropped warning (`code`, `symbol`, `reason`)."""
+    symbols = warning_symbols(profile, ())
+    try:
+        async with asyncio.timeout(WARNINGS_DEADLINE_S):
+            symbols = warning_symbols(profile, await port.open_symbols(profile.account_id))
+            if not symbols:
+                return ()
+            save = await port.figures(profile.account_id, symbols)
+    except Exception as exc:  # advice only: never a 503 (CancelledError is not an Exception)
+        reason = "timeout" if isinstance(exc, TimeoutError) else type(exc).__name__
+        found: tuple[ProfileWarning, ...] = ()
+        dropped = tuple(DroppedWarning(c, s, reason) for s in symbols or (None,) for c in _SIZING)
+    else:
+        try:
+            found, dropped = sizing_warnings(profile, save, symbols)
+        except Exception as exc:  # advice only: a malformed figure never fails the save
+            found, reason = (), type(exc).__name__
+            dropped = tuple(DroppedWarning(c, s, reason) for s in symbols for c in _SIZING)
+    for drop in dropped:
+        _log().info("profile_sizing_warning_dropped", code=drop.code, symbol=drop.symbol,
+                    reason=drop.reason)  # fmt: skip
+    return found

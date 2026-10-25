@@ -10,6 +10,7 @@ never up onto a lot step. Every outcome carries the explanation computed before 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import UTC
 from decimal import ROUND_CEILING, ROUND_FLOOR, Context, Decimal, localcontext
 from enum import StrEnum
 from typing import Annotated, Final, Literal, Self
@@ -47,6 +48,9 @@ CapName = Literal[
 AtrSource = Literal["kernel", "worker", "client", "preset", "cached"]
 #: E13's `unavailable(reason)` (24 Sec.7.4 `read`; IR-45, SR-E28-12).
 AtrUnavailable = Literal["missing", "parity_flagged", "stale", "warmup", "nan"]
+#: Why an `atr` stop fell back (SR-E28-12): no reading, one not the kernel's, one of another
+#: period than `sl_atr_period`, or the kernel's own `unavailable` reason.
+AtrFallbackReason = AtrUnavailable | Literal["no_reading", "not_kernel", "period_mismatch"]
 #: A descriptor `version` or a kernel `build_version` (IR-20): a whole number, at least 1.
 Version = Annotated[int, Field(strict=True, ge=1, le=2**31 - 1)]
 
@@ -120,6 +124,7 @@ class FailReason(StrEnum):
     CAP_BREACHED = "cap_breached"
     FIGURE_UNKNOWN = "figure_unknown"
     LEVERAGE_UNAVAILABLE = "leverage_unavailable"
+    STOP_BEYOND_LIQUIDATION = "stop_beyond_liquidation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,8 +161,9 @@ class SizingExplanation:
     (the anchor), while the caps and `initial_margin` use `px`, the larger notional (mid's for a
     marketable sell, else `ref`'s); `mid_price` the mid seen; `atr` the reading the stop or the
     take-profit used, with its provenance; an `atr` stop's `atr_source` (`kernel`, or `fallback`
-    when no kernel reading served) and `atr_multiple` (SR-E28-13); `minimum` the one a leg
-    missed; `rules` the rules that fired, in order. A gate skip carries none."""
+    when no kernel reading served, with `atr_fallback_reason`) and `atr_multiple` (SR-E28-13);
+    `minimum` the one a leg missed; `liquidation_price` the estimate the stop was judged against
+    (SR-E28-26); `rules` the rules that fired, in order. A gate skip carries none."""
 
     ref_price: Decimal | None = None
     ref_source: RefSource | None = None
@@ -166,6 +172,7 @@ class SizingExplanation:
     stop: ResolvedStop | None = None
     atr: AtrReading | None = None
     atr_source: Literal["kernel", "fallback"] | None = None
+    atr_fallback_reason: AtrFallbackReason | None = None
     atr_multiple: Decimal | None = None
     mode: SizingMode | None = None
     basis: Decimal | None = None
@@ -179,6 +186,7 @@ class SizingExplanation:
     risk_usdt: Decimal | None = None
     risk_with_fees_usdt: Decimal | None = None
     initial_margin: Decimal | None = None
+    liquidation_price: Decimal | None = None
     minimum: Minimum | None = None
     rules: tuple[str, ...] = ()
     base_coin: str = ""
@@ -206,8 +214,10 @@ class LegSizing(SizingExplanation):
 
     def render(self) -> str:
         """22 `ResolvedLegParams.sizing_explanation`: `<mode>: <basis> / <per unit> = <raw>
-        capped by <cap> -> <qty>`, then the stop, notional, risk and margin (`at <mid>` when a
-        marketable sell's mid, not `ref`, prices it); every figure carries its unit."""
+        capped by <cap> -> <qty>`, then the stop (with a kernel ATR's provenance when one set
+        it: source, descriptor and build versions, closed bar), notional, risk and margin
+        (`at <mid>` when a marketable sell's mid, not `ref`, prices it); every figure carries its
+        unit."""
         base, usdt, parts = self.base_coin, self.settle_coin, []
         basis, raw, qty, delta = self.basis, self.raw_qty, self.qty, self.rounding_delta
         if basis is not None and raw is not None and qty is not None and delta is not None:
@@ -224,9 +234,15 @@ class LegSizing(SizingExplanation):
         if self.stop is not None:
             fallback = " (ATR fallback)" if self.stop.fallback else ""
             parts.append(f"stop {_shown(self.stop.price)} {usdt}{fallback}")
-            if self.atr is not None and self.atr.value is not None:
-                atr = f"{self.atr.period}-bar {self.atr.timeframe} ATR"
-                parts[-1] += f" from a {atr} of {_shown(self.atr.value)} {usdt}"
+            reading = self.atr
+            if self.atr_source == "kernel" and reading is not None and reading.value is not None:
+                atr = f"{reading.period}-bar {reading.timeframe} ATR"
+                parts[-1] += f" from a {atr} of {_shown(reading.value)} {usdt}"
+                bar = reading.as_of.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")  # ISO 8601 basic
+                parts[-1] += (
+                    f" (source {reading.source}, descriptor v{reading.version}, kernel build"
+                    f" v{reading.build_version}, closed bar {bar})"
+                )
         figures = (
             ("notional", self.notional),
             ("1R =", self.risk_usdt),
@@ -281,6 +297,19 @@ def _atr_value(profile: AccountProfile, atr: AtrReading | None) -> Decimal | Non
     return atr.value
 
 
+def _fallback_reason(profile: AccountProfile, atr: AtrReading | None) -> AtrFallbackReason:
+    """Why `_atr_value` gave none, in its order of checks."""
+    if atr is None:
+        return "no_reading"
+    if atr.source != "kernel":
+        return "not_kernel"
+    if atr.period != profile.sl_atr_period:
+        return "period_mismatch"
+    if atr.unavailable is None:  # a programming error: `_atr_value` served this reading
+        raise ValueError("a served ATR reading has no fallback reason")
+    return atr.unavailable
+
+
 def resolve_stop(
     side: Side, profile: AccountProfile, ref: Decimal, inst: Instrument, atr: AtrReading | None
 ) -> ResolvedStop:
@@ -305,6 +334,63 @@ def resolve_stop(
         else:  # a programming error: `Side` is validated at every boundary
             raise ValueError(f"no stop resolves for side {side!r}")
         return ResolvedStop(price=price, distance=abs(ref - price), fallback=fallback)
+
+
+def liquidation_estimate(side: Side, entry: Decimal, leverage: Decimal, mmr: Decimal) -> Decimal:
+    """24 Sec.9.3.6 (SR-E28-26, F-15): the one liquidation estimate, of an isolated position at
+    `leverage` with maintenance margin rate `mmr`, fees and funding ignored: a long's
+    `entry * (1 - 1/leverage + mmr)`, a short's `entry * (1 + 1/leverage - mmr)`. For cross margin
+    it is the conservative bound (nearer entry than the real one). Every step rounds toward entry
+    at 100 digits, so a stop is never judged inside a liquidation it is not inside. A caller with
+    no position tier passes the rate of the lowest tier by `risk_limit_value` (the first after
+    sorting, `isLowestRisk` as a cross-check), never the tier whose id is 1: venue ids are not
+    positions (ETHUSDT's run 11 to 45)."""
+    if leverage <= 0:  # a programming error: `AccountProfile` refuses it
+        raise ValueError("no liquidation estimate at a leverage at or below 0")
+    if mmr < 0:  # a programming error: a rate is read from the venue's tiers, never negative
+        raise ValueError("no liquidation estimate at a negative maintenance margin rate")
+    inverse = _FLOOR.divide(Decimal(1), leverage)  # the smaller move: nearer entry
+    if side == "buy":
+        with localcontext(_CEILING):
+            return entry * (1 - inverse + mmr)
+    if side == "sell":
+        with localcontext(_FLOOR):
+            return entry * (1 + inverse - mmr)
+    raise ValueError(f"no liquidation estimate for side {side!r}")
+
+
+#: SR-E28-26's buffer (#907's ruling of 2026-10-25 18:22Z): a stop must sit inside the
+#: estimated liquidation by at least this share of the entry-to-liquidation distance, and by at
+#: least one tick. The estimate ignores fees, funding and mark/last divergence, so a stop just
+#: inside it can still lose the race; a share of the distance scales with leverage (about 0.15 %
+#: of price at 50x, about 2 % at 5x) where a fixed share of price would not. A constant, never a
+#: setting: no flag, config or role may loosen a safety invariant (C-4.14).
+LIQUIDATION_BUFFER_FRACTION: Final = Decimal("0.10")
+
+
+def liquidation_edge(side: Side, entry: Decimal, liquidation: Decimal, tick: Decimal) -> Decimal:
+    """The furthest a stop may not reach: the estimate moved toward `entry` by
+    `max(LIQUIDATION_BUFFER_FRACTION * |entry - liquidation|, tick)`, every step rounded toward
+    entry (a larger buffer). An estimate at or past entry leaves one tick: no stop is inside."""
+    if side == "buy":
+        room = _CEILING.subtract(entry, liquidation)
+    elif side == "sell":
+        room = _CEILING.subtract(liquidation, entry)
+    else:  # a programming error: `Side` is validated at every boundary
+        raise ValueError(f"no liquidation edge for side {side!r}")
+    buffer = max(_CEILING.multiply(LIQUIDATION_BUFFER_FRACTION, room), tick)
+    if side == "buy":
+        return _CEILING.add(liquidation, buffer)
+    return _FLOOR.subtract(liquidation, buffer)
+
+
+def beyond_liquidation(
+    side: Side, stop: Decimal, liquidation: Decimal, *, entry: Decimal, tick: Decimal
+) -> bool:
+    """Whether a stop is at or beyond `liquidation_edge`: the leg refusal and the save warning
+    both judge it here (SR-E28-26), so neither can drop the buffer."""
+    edge = liquidation_edge(side, entry, liquidation, tick)
+    return stop <= edge if side == "buy" else stop >= edge
 
 
 def _fee_per_unit(ref: Decimal, stop: ResolvedStop, taker: Decimal | None) -> Decimal | None:
@@ -494,6 +580,7 @@ def size_leg(
         stop=stop,
         atr=metrics.atr if kernel_atr else None,
         atr_source=("kernel" if kernel_atr else "fallback") if unit == "atr" else None,
+        atr_fallback_reason=_fallback_reason(profile, metrics.atr) if stop.fallback else None,
         atr_multiple=profile.sl_atr_multiple if kernel_atr else None,
         mode=mode,
         rules=("stop_fallback" if stop.fallback else f"stop_{unit}", mode),
@@ -560,6 +647,15 @@ def size_leg(
     # product, `available_margin * MARGIN_SHARE`, in the default context.
     if margin > _FLOOR.multiply(wallet.available_margin, MARGIN_SHARE):
         return replace(leg, outcome="fail", reason=FailReason.INSUFFICIENT_MARGIN)
+    # 8c. SR-E28-26: the native stop must fire before the estimated liquidation, inside it by the
+    # buffer (PF-D06, the 2 % fallback included); an unknown rate fails closed, as the
+    # comparator's R3 does, until "S-RL" (#913) supplies the risk-limit tier's rate.
+    if (mmr := wallet.maintenance_margin_rate) is None:
+        return replace(leg, outcome="fail", reason=FailReason.FIGURE_UNKNOWN)
+    liquidation = liquidation_estimate(intent.side, ref, profile.leverage, mmr)
+    leg = replace(leg, liquidation_price=liquidation)
+    if beyond_liquidation(intent.side, stop.price, liquidation, entry=ref, tick=inst.tick_size):
+        return replace(leg, outcome="fail", reason=FailReason.STOP_BEYOND_LIQUIDATION)
     tps = resolve_tps(intent.side, profile, ref, stop, qty, inst, metrics.atr)  # 9, from the anchor
     if not tps:
         return leg
