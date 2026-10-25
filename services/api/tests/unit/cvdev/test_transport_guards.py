@@ -23,11 +23,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.accounts.verification import VerificationInconclusive, VerificationPolicy, verify
-from candleviewer.exchange.base.errors import (
-    AmbiguousResultError,
-    ExchangeError,
-    UnknownStateError,
-)
+from candleviewer.exchange.base.errors import AmbiguousResultError, ExchangeError, UnknownStateError
 from candleviewer.exchange.base.models import RateLane
 from candleviewer.exchange.bybit.config import ALLOWED_REST_HOSTS, EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.key_info import (
@@ -69,6 +65,8 @@ KEY_IDS: Final = fixture_key_ids(PACK)
 TS, RECV = str(NOW_MS), "5000"
 #: Key-shaped and derived here, never a credential: a key outside the pack.
 NON_FIXTURE_KEY: Final = "".join(chr(65 + b % 26) for b in hashlib.sha256(b"cv-2893-s7").digest())
+#: A non-fixture key's log line: refused, classed, and its key id never written.
+REFUSED_NON_FIXTURE: Final = ("refused_key", "non_fixture", None)
 DEMO: Final = f"https://{DEMO_REST_HOST}"
 ORDER: Final = f"{DEMO}/v5/order/create"
 #: Every other origin, with the host and environment the log names: the adapter's other hosts,
@@ -187,11 +185,7 @@ async def test_non_fixture_key_never_answered_and_latches(rig: Rig) -> None:
     assert rig.transport.latched and rig.gate.is_read_only
     assert rig.gate.latched_reason_code == GUARD_REASON_CODE == "account_fixture_guard"
     [line] = rig.lines()
-    assert _of(line, "outcome", "key_class", "signing_key_id") == (
-        "refused_key",
-        "non_fixture",
-        None,
-    )
+    assert _of(line, "outcome", "key_class", "signing_key_id") == REFUSED_NON_FIXTURE
     assert _p0(events, "refused_key")
     # FX-I01: the client copies the message into its TransportError; nothing holds a header.
     seen = text + repr(events) + (rig.log_dir / FILE_NAME).read_text() + str(rig.gate.reason_text)
@@ -277,11 +271,7 @@ async def test_fixture_shape_outside_the_pack_is_refused(rig: Rig, auth: list[An
     await rig.refused(_get(headers=auth))
     assert rig.transport.latched and rig.gate.latched_reason_code == GUARD_REASON_CODE
     [line] = rig.lines()
-    assert _of(line, "outcome", "key_class", "signing_key_id") == (
-        "refused_key",
-        "non_fixture",
-        None,
-    )
+    assert _of(line, "outcome", "key_class", "signing_key_id") == REFUSED_NON_FIXTURE
 
 
 @pytest.mark.parametrize(
@@ -303,13 +293,9 @@ async def test_signature_mismatch_answers_10004_verified_false(
     assert response.status_code == 200
     assert json.loads(await response.aread()) == _payload("_base/error_10004.json")
     [line] = rig.lines()
-    assert _of(line, "outcome", "verified", "signing_key_id", "stored_under") == (
-        "signature_mismatch",
-        False,
-        _key("compliant"),
-        "compliant",
-    )
-    assert _of(line, "status", "ret_code") == (200, 10004)
+    assert _of(line, "outcome", "verified") == ("signature_mismatch", False)
+    assert _of(line, "status", "ret_code", "stored_under") == (200, 10004, "compliant")
+    assert line["signing_key_id"] == _key("compliant")
     assert [_of(e, "log_level", "event") for e in events] == [
         ("warning", "exchange.account_fixture_signature_mismatch")
     ]
@@ -453,7 +439,6 @@ async def test_refusal_is_inconclusive_through_the_rest_client(
     async def probe() -> NoReturn:
         raise AssertionError("verify() never probes after an inconclusive key-info call")
 
-    policy = VerificationPolicy(egress_ip=EGRESS_IP)
     async with client:
         with pytest.raises(VerificationInconclusive, match=r"^transport_error$"):
             await verify(
@@ -461,7 +446,7 @@ async def test_refusal_is_inconclusive_through_the_rest_client(
                 read_only=False,
                 key_info=key_info,
                 probe=probe,
-                policy=policy,
+                policy=VerificationPolicy(egress_ip=EGRESS_IP),
                 now=NOW,
             )
     # The client retries a transport error: every attempt is refused, none answered.
