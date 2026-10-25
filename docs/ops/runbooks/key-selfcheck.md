@@ -187,14 +187,16 @@ self-check, but its two account-health loops can still fault.
 Without a self-check the guard `ExpectedMetricMissingCvKeysFailingPolicy` stands there as a ticket.
 
 The case to expect is `CV_EGRESS_IP` unset with a stored key (`key_selfcheck_no_egress_ip`,
-`accounts.key_selfcheck_unavailable`), and compose cannot supply it today. It forwards neither
-`CV_EGRESS_IP` nor `CV_STORAGE_BACKEND` to the `api` container: the service lists its environment
-explicitly (`infra/compose/docker-compose.yml`, `environment:` of `api`) and has no `env_file`, so
-a value set in the deploy environment, or in the file the deploy renders, never reaches it. A dev
-deploy with a stored key on the real backend therefore fails the `/readyz` smoke test and is
-rolled back, and setting `CV_EGRESS_IP` in the deploy environment does not change that until #3180
-forwards both variables. Until then the container runs on the default `fake` backend, where no
-self-check is wired, and the deployed lifespan cannot boot the real one yet (#2334). The deploy
-adds no address itself: it renders the stack's environment file (`--env-out`) from the template
-named by `--env-example`, changing only the git sha and the image digest. The address is
-Confidential (E27 threat model §1.2): keep it out of committed files.
+`accounts.key_selfcheck_unavailable`). The base compose file forwards neither `CV_EGRESS_IP` nor
+`CV_STORAGE_BACKEND` to the `api` container: the service lists its environment explicitly
+(`infra/compose/docker-compose.yml`, `environment:` of `api`) and has no `env_file`, so it runs the
+default `fake` backend, where no self-check is wired. The demo-host overlay
+(`infra/compose/docker-compose.demo-host.yml`, runbook `demo-host.md`, #3180) forwards both from
+the operator's `infra/compose/.env`, with the KEK, the auth keys and the `/data` volume the real
+backend needs, and compose refuses to start it while either is empty. The dev deploy does not take
+that overlay: it applies `docker-compose.deploy.yml` over the base file only, so a value set in its
+environment, or in the file it renders, still never reaches the container. Giving the dev deploy
+the real backend is the follow-up to #3180, after the spike. The deploy adds no address itself: it
+renders the stack's environment file (`--env-out`) from the template named by `--env-example`,
+changing only the git sha and the image digest, and the template leaves `CV_EGRESS_IP` blank. The
+address is Confidential (E27 threat model §1.2): keep it out of committed files.
