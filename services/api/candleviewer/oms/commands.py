@@ -86,6 +86,22 @@ until G-8b's `sl_size`, #3963), so B1 goes to `sl_missing` and B8. The kill swit
 and the clock halt never gate it: a protective write, which 24 Sec.8.10 carves out (C-2.6,
 C-4.14).
 
+A failure before the send is answered, never raised, with nothing sent (S4-H): the account read, as
+the cancel's, refused (out of scope or with no active key: `ACCOUNT_UNAVAILABLE`) or failing
+otherwise (`STORE_UNAVAILABLE`); the position unread, or its read malformed (`POSITION_UNREAD`: no
+blind send, which could replace a tighter stop set outside the OMS, 24 Sec.8.8 rule 5); the gate's
+refusal or a request already in flight for the position (`STOP_REQUEST_PENDING`); or a store the
+gate or the record cannot reach (`STORE_UNAVAILABLE`). A record whose write is not confirmed (a
+timeout, or a storage failure at its commit) may leave its row `pending`, for the complete read
+(21 Sec.3.3.11) to put in force or void. Each is logged `oms_stop_not_sent` (the reason, the
+failure's class and the order's ids, never a price or a size) and audited `sl.attached` denied with
+its reason ahead of the answer, which carries no reading, so B1 lands in `sl_missing` as on a
+refused `trading-stop`: it pages `SL_ATTACH_FAILED` and asks B8 for the fallback attach
+(24 Sec.8.8 rule 3; E32). The venue holds nothing this attach added. A stored row that cannot be
+read (there is none to name), an account read that answers another account's ref (a defect,
+SR-E27-21), a route to another environment (C-2.11) and an audit that cannot be written, the
+request's or the denial's (C-2.9), still raise, which B1 also lands in `sl_missing`.
+
 **cancel** (24 Sec.8.8 rule 6, SR-E29-06; INV-B1-h, INV-B1-j; the S4 rulings Q8, Q9 and Q11).
 B1's cancel in `cancel_pending` and a KILL's (`kill_cancel`): one `cancel` call names the stored
 row by its exchange order id once bound, else by its own id (a KILL out of `unknown`), the same
@@ -216,10 +232,13 @@ __all__ = [
     "NEVER_SENT_ALERT",
     "PARTIAL_STOP_UNSUPPORTED",
     "PORT_TIMEOUT_S",
+    "POSITION_UNREAD",
     "RECORDED_STOP_READ_S",
     "RESEND_REFUSED",
     "STOP_LOOSENING_REFUSED",
+    "STOP_NOT_SENT",
     "STOP_REQUEST_IN_FLIGHT",
+    "STOP_REQUEST_PENDING",
     "STORE_UNAVAILABLE",
     "STORE_UNAVAILABLE_RETRY_AFTER_S",
     "SUBMIT_TIMEOUT_S",
@@ -307,6 +326,13 @@ ALREADY_SET: Final = "already_set"
 STOP_REQUESTED: Final = "first_fill_attach"
 STOP_REFUSED: Final = "trading_stop_refused"
 PARTIAL_STOP_UNSUPPORTED: Final = "PARTIAL_STOP_UNSUPPORTED"
+#: S4-H: an attach that failed before its send, answered with nothing sent (module docstring):
+#: its code the answer's (these, or the exits' `ACCOUNT_UNAVAILABLE` and `STORE_UNAVAILABLE`,
+#: with no `retry_after_s`: nothing retries an attach) and, lower-cased, its record's reason;
+#: and the log naming it.
+POSITION_UNREAD: Final = "POSITION_UNREAD"
+STOP_REQUEST_PENDING: Final = "STOP_REQUEST_PENDING"
+STOP_NOT_SENT: Final = "oms_stop_not_sent"
 ADOPTED: Final = "adopted_after_lookup"
 SL_ATTACHED: Final = "sl.attached"
 SL_MODIFIED: Final = "sl.modified"
@@ -981,7 +1007,10 @@ class OmsCommandPort:
 
     async def attach_stop(self, command: b01.Command) -> Mapping[str, Any]:
         """The stop B1 asks for after the first fill (24 Sec.8.8 rule 2), read back afresh on
-        every call (INV-B1-f; module docstring)."""
+        every call (INV-B1-f; module docstring). A failure before the send is answered with
+        nothing sent (`_not_sent`); a record whose write is not confirmed (a timeout, or a storage
+        failure at its commit) may leave its row `pending`, for the complete read (21 Sec.3.3.11)
+        to put in force or void."""
         stop = _stop_of(command.terms)
         account_id, order_id = (
             _uuid(command.order.get("account_id")),
@@ -998,9 +1027,19 @@ class OmsCommandPort:
             )
             _log().error("oms_partial_stop_refused", order_link_id=row.order_link_id)
             return {"ok": False, "error_code": PARTIAL_STOP_UNSUPPORTED}
-        account = await self._account(row)
+        try:  # the account read as the cancel's (S4-B1 ruling B)
+            account = await self._account(row)
+        except ValueError:  # the account resolved is another's: a defect, raised (SR-E27-21)
+            raise
+        except _ACCOUNT_REFUSED as exc:  # out of scope (soft-deleted) or no active key: no outage
+            return await self._not_sent(row, ACCOUNT_UNAVAILABLE, detail, exc)
+        except Exception as exc:  # unread, or a defect that reads as an outage
+            return await self._not_sent(row, STORE_UNAVAILABLE, detail, exc)
         port = self._router.port_for(account.environment)
-        before = await self._position(account, port, row)
+        try:  # this read only, never the send or the read-back after it
+            before = await self._position(account, port, row)
+        except (ExchangeError, TimeoutError, ValueError) as exc:  # unread, or read malformed
+            return await self._not_sent(row, POSITION_UNREAD, detail, exc)
         if before is not None and _shows(before, stop):  # Q-E: no call, but the trail (C-2.9)
             await self._audit_order(
                 order_id, account_id, SL_ATTACHED, "success", "info", ALREADY_SET, detail
@@ -1008,8 +1047,19 @@ class OmsCommandPort:
             return {"ok": True, "position": _reading(before)}
         key = PositionKey(account.account_id, row.symbol, row.position_idx)
         cleared = self._gate.clear(key, wait_s=ATTACH_GATE_WAIT_S, protective=True)
-        await self._bounded(cleared)  # whatever the gate bounds itself (C-2.18)
-        recorded = await self._record_stop(row, stop, detail)
+        try:
+            await self._bounded(cleared)  # whatever the gate bounds itself (C-2.18)
+        except StopRequestPending as exc:
+            return await self._not_sent(row, STOP_REQUEST_PENDING, detail, exc)
+        except (StoreUnavailable, TimeoutError) as exc:  # its reads, past even `PORT_TIMEOUT_S`
+            return await self._not_sent(row, STORE_UNAVAILABLE, detail, exc)
+        try:
+            recorded = await self._record_stop(row, stop, detail)
+        except StopRequestInFlight as exc:  # another request recorded for the position meanwhile
+            return await self._not_sent(row, STOP_REQUEST_PENDING, detail, exc)
+        except (OrderStoreError, StorageError, TimeoutError) as exc:
+            # not confirmed, so its row may stay pending (docstring); `AuditNotDurable` raises
+            return await self._not_sent(row, STORE_UNAVAILABLE, detail, exc)
         request = TradingStopRequest(
             account=account,
             symbol=row.symbol,
@@ -1061,6 +1111,23 @@ class OmsCommandPort:
             await self._submit_audit.write(record)
 
         return await self._bounded(self._stops.record([new], write_ahead=requested))
+
+    async def _not_sent(
+        self, row: OrderRow, code: str, detail: Mapping[str, str | None], failure: Exception
+    ) -> Mapping[str, Any]:
+        """An attach that failed before its send (S4-H, module docstring): logged with the
+        failure's class, never its text, as `oms_stop_settle_failed` is; then audited
+        `sl.attached` denied with its reason ahead of the answer (C-2.9), an audit that does not
+        land raising; the answer carries no reading, so B1 lands in `sl_missing`."""
+        reason = code.lower()
+        _log().error(
+            STOP_NOT_SENT, reason=reason, order_link_id=row.order_link_id, symbol=row.symbol,
+            position_idx=row.position_idx, failure=type(failure).__name__,
+        )  # fmt: skip
+        await self._audit_order(
+            row.id, row.exchange_account_id, SL_ATTACHED, "denied", "error", reason, detail
+        )
+        return {"ok": False, "error_code": code}
 
     async def _settle_stop(
         self,
