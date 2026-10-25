@@ -248,13 +248,14 @@ def test_catalogue_entry_is_live_and_bracketing_budgets() -> None:
 def test_create_app_orders_http_duration_outside_the_guard_trio() -> None:
     from candleviewer.api.csrf import CsrfMiddleware
     from candleviewer.net import MeshOnlyMiddleware
+    from candleviewer.observability.authz_denials import AuthzDenialMiddleware
 
     app = create_app(Settings(environment=Environment.DEMO))
     order: list[object] = [m.cls for m in app.user_middleware]  # outermost first
-    assert order[0] is HttpDurationMiddleware
+    assert order[:2] == [HttpDurationMiddleware, AuthzDenialMiddleware]  # #902 inside the timer
     trio: list[object] = [CorrelationMiddleware, MeshOnlyMiddleware, CsrfMiddleware]
     pos = [order.index(c) for c in trio]
-    assert pos == [1, 2, 3]  # guards stay adjacent and in order, inside the timer
+    assert pos == [2, 3, 4]  # guards stay adjacent and in order, inside the timer
 
 
 def test_create_app_times_a_mesh_refusal() -> None:

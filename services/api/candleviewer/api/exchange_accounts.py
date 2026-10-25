@@ -61,7 +61,7 @@ from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission, Scope
-from candleviewer.auth.metrics import authz_denied_total, normalise_permission
+from candleviewer.auth.metrics import count_authz_denial
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, account_scope, enforce
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.storage.errors import StorageError, StorageQueryFailed, WriteAheadTimeout
@@ -198,7 +198,7 @@ async def _not_owner(
     """`rbac.denied` for a caller the store's live-owner gate refused once `enforce` let it through
     (SR-051), in `enforce`'s reason shape; counted first (SR-125), and a record not written is
     logged by the actor and its class, the refusal standing."""
-    authz_denied_total.labels(permission=normalise_permission(permission)).inc()
+    count_authz_denial(permission, principal.roles)
     actor = principal.user_id
     try:
         await audit.emit(

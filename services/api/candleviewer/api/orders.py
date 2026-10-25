@@ -69,7 +69,7 @@ from candleviewer.api.order_problems import order_problem, outcome_problem
 from candleviewer.api.refusal_session import SessionsLike
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Scope
-from candleviewer.auth.metrics import authz_denied_total, normalise_permission
+from candleviewer.auth.metrics import count_authz_denial
 from candleviewer.auth.scopes import (
     DenyReason,
     ForbiddenError,
@@ -314,7 +314,7 @@ def make_orders_router(
     async def scope_denied(caller: _Caller) -> Response:
         """Step 4's refusal in step 2's shape (no oracle): counted, then `rbac.denied` as `enforce`
         writes it; a 403 even when that record cannot be written, as `testApiKey`'s is."""
-        authz_denied_total.labels(permission=normalise_permission(_PERMISSION)).inc()
+        count_authz_denial(_PERMISSION, caller.principal.roles)
         user, actor = caller.principal.user_id, caller.actor
         try:
             await OnAccount(audit, caller.account_id).emit(

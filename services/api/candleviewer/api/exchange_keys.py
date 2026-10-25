@@ -58,7 +58,7 @@ from candleviewer.api.refusal_session import NamesSession, SessionsLike
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission, Scope
-from candleviewer.auth.metrics import authz_denied_total, normalise_permission
+from candleviewer.auth.metrics import count_authz_denial
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.observability.context import current_request_id
 from candleviewer.observability.secret_type import Secret
@@ -201,7 +201,7 @@ async def _not_owner(audit: _Emitter, actor: Importer, account_id: uuid.UUID) ->
     through (SR-051), with `enforce`'s fields and its reason's shape, naming the account.
     Counted before the record, as `enforce` counts (SR-125), so a lost record never hides it: a
     refusal whose record fails is still a 403, logged by actor, account and error class (C-12.6)."""
-    authz_denied_total.labels(permission=normalise_permission(Permission.KEYS_READ)).inc()
+    count_authz_denial(Permission.KEYS_READ, actor.role.split(","))
     try:
         await _OnAccount(audit, account_id).emit(
             "rbac.denied", actor_label=str(actor.user_id), actor_user_id=actor.user_id,

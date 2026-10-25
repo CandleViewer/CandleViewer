@@ -48,7 +48,7 @@ def _status_class(status: int) -> str:
     return f"{status // 100}xx" if 100 <= status <= 599 else "5xx"
 
 
-def _route_template(scope: MutableMapping[str, Any]) -> str:
+def route_template(scope: MutableMapping[str, Any]) -> str:
     route = scope.get("route")
     path = getattr(route, "path", None)
     if not isinstance(path, str) or not path:
@@ -100,7 +100,7 @@ class HttpDurationMiddleware:
     def _observe(self, scope: MutableMapping[str, Any], status: int, elapsed: float) -> None:
         method = str(scope.get("method", ""))
         self._histogram.labels(
-            _route_template(scope),
+            route_template(scope),
             method if method in _METHODS else OTHER_METHOD,
             _status_class(status),
         ).observe(max(0.0, elapsed))

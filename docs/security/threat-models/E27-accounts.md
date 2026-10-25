@@ -663,6 +663,7 @@ material (SR-069). The table lists the events the model requires and what `audit
 | `cv_key_selfcheck_latch_state` (1 once the job latched read-only; a restart resets it)                                               | KV-E12                                        | #836 2c2: `KeySelfCheckLatched` alerts on it while no key fails                        |
 | `cv_key_soonest_expiry_seconds` (the soonest stored `expiredAt`)                                                                     | Key expiry (Area 1 K8; SR-034)                | #836 2c1a; tickets at 14, 7 and 1 days (2c2); a lapsed key fails `key_expired`         |
 | Executions or orders with no OMS intent, per account                                                                                 | KV-E11                                        | `oms_untracked_orders` planned but not paged (E29-T08); SR-E27-19 makes it a P1        |
+| `authz_denied_by_route_total{permission,route,role}`                                                                                 | Denials by route and role (N2)                | #902: `AuthzDeniedSpike` triage; capped at 1000 series                                 |
 
 Alerts that must reach the Owner's out-of-band channel (SR-126), each proven in the E27-X04 drills: KEK load
 failure; a key with a fund right; an IP mismatch; a self-check failing; a missed self-check run; a key past its

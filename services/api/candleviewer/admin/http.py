@@ -42,7 +42,7 @@ from fastapi.responses import JSONResponse
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission
-from candleviewer.auth.metrics import authz_denied_total, normalise_permission
+from candleviewer.auth.metrics import count_authz_denial
 
 AREA_ENTERED: Final = "admin.area_entered"
 _ERRORS: Final = "https://candleviewer.local/errors/"
@@ -127,7 +127,7 @@ def admin_area(
         route = str(getattr(request.scope.get("route"), "path", request.url.path))
         allowed = principal.has(permission)
         if not allowed:  # SR-125, counted before the audit write as in `auth.scopes.enforce`
-            authz_denied_total.labels(permission=normalise_permission(permission)).inc()
+            count_authz_denial(permission, ("owner",) if principal.is_owner else ())
         try:
             await audit.emit(
                 AREA_ENTERED,
