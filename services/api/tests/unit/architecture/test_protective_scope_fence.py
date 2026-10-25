@@ -21,8 +21,8 @@ in `test_view_as_mint_callers.py`; nor is a helper that is a method or a class, 
 dotted import of it, or a second hop. A call is not proven to be the scope the route's reads take,
 so one in dead code, or with its result unused, passes: each protective route's own tests are that
 guarantee. The scan fails when it read fewer than `MIN_MODULES` modules, since one of an emptied or
-moved root finds nothing. No protective route is mounted on `main` yet; the positive controls
-below prove the scan finds one.
+moved root finds nothing. One protective route is mounted, `cancelAllOrders`
+(`api/order_cancel_all.py`); the positive controls below prove the scan finds the others too.
 """
 
 from __future__ import annotations

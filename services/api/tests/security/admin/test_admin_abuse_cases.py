@@ -361,11 +361,12 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     """The deployed composition's whole path (the S13b security look's Low-2): an Owner starts
     viewing as a Manager, `201`, which `GET /auth/session/view-as` reads back `active`, with the
     start's record written and the Manager told, and ends it, `204` and its record. In between
-    the Owner sends every state-changing operation the app serves. Each but the viewer's own is
-    refused `403 view_as_read_only` and changes nothing, and each is recorded as the contract
-    says (22 "View-as session"): one `admin.view_as_refused`, outcome `denied`, naming the
-    operation's template, the viewer as actor and the viewer's session, never the Manager, and none
-    gets past the guard to the router, so no handler runs. The routes come from the app's router,
+    the Owner sends every state-changing operation the app serves. Each but the viewer's own and
+    the registered protective write is refused `403 view_as_read_only` and changes nothing, and
+    each is recorded as the contract says (22 "View-as session"): one `admin.view_as_refused`,
+    outcome `denied`, naming the operation's template, the viewer as actor and the viewer's
+    session, never the Manager, and none gets past the guard to the router, so no handler runs.
+    The routes come from the app's router,
     as `test_ac_adm_15` reads the audit routes, so a new write route cannot escape the case, and
     the world's refusal cap is above the sweep (`VIEW_AS_REFUSAL_BUDGET`), which the case asserts.
     The carve-out is the contract's list of the viewer's own operations, which the guard reads: a
@@ -484,10 +485,11 @@ def test_a_viewing_owners_cancel_the_target_may_not_make_is_forbidden_through_th
 ) -> None:
     """#3085, #913: `create_app`'s own wiring of the view-as guard's `permissions=`, `identity=`
     and `denials=`, which the unit tests (`test_view_as_gate.py`) build by hand. An Owner viewing
-    a Viewer, who holds no `orders:write`, sends a cancel whose handler has registered (none is
-    mounted yet, so the case registers it as its route will): `403 forbidden` before any handler,
-    counted, and one `rbac.denied` naming the Owner, the Owner's session and address as the
-    actor and the Viewer as the object, and the refused operation (22 "View-as session")."""
+    a Viewer, who holds no `orders:write`, sends a cancel whose handler has registered
+    (`cancelOrder` is not mounted yet, so the case registers it as its route will): `403
+    forbidden` before any handler, counted, and one `rbac.denied` naming the Owner, the Owner's
+    session and address as the actor and the Viewer as the object, and the refused operation (22
+    "View-as session")."""
     admin.elevate(["users"])  # the start's step-up class
     owner, viewer = admin.actors["owner"], admin.actors["viewer"]
     start = {"json": {"target_user_id": str(viewer.user_id), "reason": "cancel check"}}
