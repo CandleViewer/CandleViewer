@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, datetime, timedelta
@@ -913,15 +913,22 @@ async def test_a_put_in_force_whose_read_of_the_rows_in_force_moved_writes_nothi
 ) -> None:
     """SEC-S2D-03 (option b): under the key's lock the rows in force are compared, by id and kind,
     each once, with the caller's read of them; a row ended, replaced or put in force since is
-    `StaleRecordedStop` after the lock alone, nothing written, so an end and a put that both read
-    the key never both commit. The read as locked puts in force (the test above)."""
+    `StaleRecordedStop` after the lock alone, nothing written and no write-ahead hook called, so a
+    put never commits over an end that took a row of its read's rows in force out of force. The
+    read as locked puts in force (the test above)."""
     locked = [_live(_OLD, "stop_loss", "in_force", _T),
               _live(_SL, "stop_loss", "pending", None, _LATER)]  # fmt: skip
     rel = _Rel(locked, [_row(_OLD, status="replaced")], [_row(_SL, status="in_force")])
+    hooked = list[object]()
+
+    def hook(written: tuple[RecordedStopRow, ...]) -> Awaitable[None]:
+        hooked.append(written)
+        return asyncio.sleep(0)
+
     with pytest.raises(StaleRecordedStop):
         await _store(rel).put_in_force(_ACCOUNT, _rows(_row(_SL)), in_force=_in_force(*read),
-                                       at=_T)  # fmt: skip
-    assert len(rel.statements) == 1 and rel.commits == 0
+                                       at=_T, write_ahead=hook)  # fmt: skip
+    assert len(rel.statements) == 1 and rel.commits == 0 and hooked == []
 
 
 @pytest.mark.parametrize("script", ["lost_at_the_lock", "short_update", "late_audit"])

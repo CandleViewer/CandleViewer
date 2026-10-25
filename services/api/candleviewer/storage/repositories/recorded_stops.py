@@ -561,9 +561,12 @@ class RecordedStopStore(Protocol):
         """A read showed `rows`' stops (21 Sec.3.3.11): one transaction locks the key's live rows in
         id order and compare-and-sets `rows` and, SEC-S2D-03, the key's rows in force as that read
         saw them (`in_force`, `in_force_as_read`): a row ended, replaced or put in force since the
-        read is `StaleRecordedStop`, nothing written, so an end and a put never both commit on a
-        key the end showed flat. It then marks `replaced` first the row in force and older answered
-        rows of each kind, then puts `rows` in force, `answered_at` kept or stamped `at`.
+        read is `StaleRecordedStop`, nothing written, so a put never commits over an end that took
+        a row of its read's rows in force out of force. A key with nothing in force at the read, or
+        an end that took only other pending rows, still passes, and the next position read ends
+        what the put set (record quality, not C-2.6: the venue's stop is untouched). It then marks
+        `replaced` first the row in force and older answered rows of each kind, then puts `rows` in
+        force, `answered_at` kept or stamped `at`.
         `check_in_force` first; the hook is awaited bounded before the commit. `in_force` is
         required: the read is the caller's, and an empty one stands for a key read with none."""
         ...

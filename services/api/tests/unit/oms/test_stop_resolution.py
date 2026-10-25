@@ -217,7 +217,7 @@ async def test_an_account_other_than_the_keys_is_refused_before_any_read() -> No
     assert rig.port.calls == []
 
 
-async def test_a_restore_request_reads_nothing_and_writes_nothing() -> None:
+async def test_a_restore_request_reads_no_venue_and_writes_nothing() -> None:
     rig = build()
     rig.store.rows = [stop_row(source="restore")]
     (decision,) = await rig.resolve()

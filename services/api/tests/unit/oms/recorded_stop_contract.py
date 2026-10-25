@@ -122,9 +122,10 @@ class RecordedStopContract:
         ]  # fmt: skip
 
     async def test_two_reads_racing_on_one_key_leave_one_row_in_force(self, h: Harness) -> None:
-        """The key lock (id order) serialises them: the first puts its row in force, and the
-        second, whose read saw nothing in force, finds a row put in force since its read
-        (`StaleRecordedStop`, SEC-S2D-03) and writes nothing; `ux_rs_in_force` is never met."""
+        """The key lock (id order) serialises them, whichever takes it first: the winner puts its
+        row in force (and, if the newer request wins, replaces the older answered row of its
+        kind), and the loser, whose read saw nothing in force, finds a row put in force since its
+        read (`StaleRecordedStop`, SEC-S2D-03) and writes nothing; `ux_rs_in_force` is never met."""
         account, profile = h.new_account()
         older, newer = await request(h, account, profile), await request(h, account, profile)
         read = await read_in_force(h, account)  # both reads see the key with nothing in force
@@ -133,7 +134,8 @@ class RecordedStopContract:
         got = await asyncio.gather(*calls, return_exceptions=True)
         assert [type(r) for r in got if isinstance(r, BaseException)] == [StaleRecordedStop]
         statuses = sorted(r.status for r in await now_of(h, (older[0], newer[0])))
-        assert statuses == ["in_force", "pending"]
+        assert statuses in (["in_force", "pending"], ["in_force", "replaced"])  # either may win
+        assert [r.kind for r in await read_in_force(h, account)] == ["stop_loss"]
 
     async def test_a_put_whose_read_of_the_rows_in_force_moved_since_writes_nothing(
         self, h: Harness
@@ -147,10 +149,17 @@ class RecordedStopContract:
         rows = (*first, *second, *third)
 
         async def stale(read: tuple[RecordedStopRow, ...]) -> None:
-            before = await now_of(h, rows)
+            before, hooked = await now_of(h, rows), list[object]()
+
+            def hook(written: tuple[RecordedStopRow, ...]) -> Awaitable[None]:
+                hooked.append(written)  # never called on a stale put: nothing to audit
+                return asyncio.sleep(0)
+
             with pytest.raises(StaleRecordedStop):
-                await repo(h).put_in_force(account, third[:1], in_force=read, at=LATER)
-            assert await now_of(h, rows) == before
+                await repo(h).put_in_force(
+                    account, third[:1], in_force=read, at=LATER, write_ahead=hook
+                )
+            assert await now_of(h, rows) == before and hooked == []
 
         flat = await read_in_force(h, account)  # nothing in force yet
         await repo(h).put_in_force(account, first, in_force=flat, at=AT)

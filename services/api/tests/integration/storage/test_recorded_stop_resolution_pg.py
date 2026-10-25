@@ -1,7 +1,8 @@
 """Integration: the complete read's writes to the recorded stops on Postgres 16 (E29-T04 #913,
 S3-H; 21 Sec.3.3.11). `tests/unit/oms/recorded_stop_contract.py` runs here as `cv_app` on the
 submission contract's database: `trg_rs_guard` (`ENABLE ALWAYS`, pinned by the 0043 suites) admits
-each move it makes, replace-then-set holds under `ux_rs_in_force` with two reads racing on one key,
+each move it makes, two reads racing on one key leave one row in force (one put wins, the other is
+stale and writes nothing, SEC-S2D-03),
 a lost compare-and-set writes nothing, and a failed hook leaves every column of every row; and H3's
 gate end to end (`StopGateContract`): a waiting entry's rows put in force, a void audited ahead.
 And the lock order (the 06:38Z ruling): an order step settling an entry's rows and a read writing
