@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import duckdb
+import pyarrow as pa
 
 from candleviewer.observability import spawn
 from candleviewer.storage.cold.layout import ColdPaths, DatasetRegistry
@@ -29,7 +30,6 @@ from candleviewer.storage.errors import StorageExportVerifyFailed, StorageTierUn
 from candleviewer.storage.models import StreamKind
 
 _MAX_MONTHS = 120
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _DEFAULT_MAX_ROWS = 5_100
 _DEFAULT_CONCURRENCY = 2
 _MEMORY_LIMIT = "256MiB"
@@ -67,7 +67,17 @@ class ColdKlineRow:
 
 
 def _num(value: object) -> str:
-    return format(Decimal(repr(value)), "f") if isinstance(value, float) else str(value)
+    """Decimal text of a Parquet value, equal to `format(Decimal(repr(v)), "f")` for floats.
+
+    #2523: a float `repr` with no exponent (`e`) and not `inf`/`nan` (`n`) is already that
+    text, so the Decimal round-trip runs only for the forms that need it."""
+    if isinstance(value, float):
+        text = repr(value)
+        # exponent forms hold "e"; the only reprs holding "n" are inf, -inf and nan
+        if "e" in text or "n" in text:
+            return format(Decimal(text), "f")
+        return text
+    return str(value)
 
 
 def months_between(start_us: int, end_us: int) -> list[str]:
@@ -174,6 +184,14 @@ def _stamps(files: list[Path]) -> dict[Path, tuple[int, int]]:
     return out
 
 
+def _column(table: pa.Table, name: str, default: object) -> list[Any]:
+    """`name`'s values, or `default` per row when no file carries it (union_by_name)."""
+    if name in table.column_names:
+        values: list[Any] = table.column(name).to_pylist()
+        return values
+    return [default] * table.num_rows
+
+
 def _read_rows(
     con: duckdb.DuckDBPyConnection,
     files: list[str],
@@ -184,9 +202,12 @@ def _read_rows(
     try:
         con.execute("SET TimeZone = 'UTC'")
         # union_by_name tolerates schema drift; optional columns default in Python. Dedup on
-        # ts happens before LIMIT so duplicate part-file rows never eat the cap.
+        # ts happens before LIMIT so duplicate part-file rows never eat the cap. #2523: `ts`
+        # leaves DuckDB as int64 epoch us (the WHERE still binds the stored TIMESTAMPTZ, so the
+        # predicate is pushed into the scan), never as tz-aware datetimes built in Python.
         table = con.execute(
-            "SELECT * FROM read_parquet($files, hive_partitioning = false, union_by_name = true) "
+            "SELECT * REPLACE (epoch_us(ts) AS ts) "
+            "FROM read_parquet($files, hive_partitioning = false, union_by_name = true) "
             "WHERE ts >= make_timestamptz($lo::BIGINT) AND ts < make_timestamptz($hi::BIGINT) "
             "QUALIFY row_number() OVER (PARTITION BY ts ORDER BY ts) = 1 "
             "ORDER BY ts DESC LIMIT $n",
@@ -196,22 +217,32 @@ def _read_rows(
         raise ColdKlineReadError(f"cold kline read failed: {type(exc).__name__}") from exc
     finally:
         con.close()
-    out: list[ColdKlineRow] = []
-    for r in table.to_pylist():
-        ts = r["ts"]
-        out.append(
-            ColdKlineRow(
-                ts_us=(ts - _EPOCH) // timedelta(microseconds=1),
-                open=_num(r.get("open", "0")),
-                high=_num(r.get("high", "0")),
-                low=_num(r.get("low", "0")),
-                close=_num(r.get("close", "0")),
-                volume=_num(r.get("volume", "0")),
-                turnover=_num(r.get("turnover", "0")),
-                confirmed=bool(r.get("confirmed", True)),
-                source=str(r.get("source") or "parquet"),
-            )
+    # Column-wise: one `to_pylist` per column, no per-row dicts (#2523).
+    out = [
+        ColdKlineRow(
+            ts_us=ts,
+            open=_num(o),
+            high=_num(h),
+            low=_num(lo_),
+            close=_num(c),
+            volume=_num(v),
+            turnover=_num(t),
+            confirmed=bool(ok),
+            source=str(src or "parquet"),
         )
+        for ts, o, h, lo_, c, v, t, ok, src in zip(
+            table.column("ts").to_pylist(),
+            _column(table, "open", "0"),
+            _column(table, "high", "0"),
+            _column(table, "low", "0"),
+            _column(table, "close", "0"),
+            _column(table, "volume", "0"),
+            _column(table, "turnover", "0"),
+            _column(table, "confirmed", True),
+            _column(table, "source", None),
+            strict=True,
+        )
+    ]
     out.sort(key=lambda x: x.ts_us)
     return out
 
