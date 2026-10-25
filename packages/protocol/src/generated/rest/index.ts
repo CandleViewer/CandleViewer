@@ -1883,7 +1883,7 @@ export interface paths {
      *     **Binding (no-grace classes).** For each no-grace class the one-shot grant is bound to the challenged request: its method, its path including any query string, and its canonical JSON body. The fingerprint is the hex SHA-256 of the method, a line feed, the raw request target (path and query string exactly as received, with no percent-decoding and no trailing-slash or parameter-order normalisation), a line feed, and the RFC 8785 (JCS) serialisation of the body as the operation validated it (empty when the operation takes no body). The server parses and validates the body once, and `action_summary`, the fingerprint and the executed action all come from that one object, so number forms, string escapes and duplicate member names cannot make them disagree; no Unicode normalisation is applied. Headers, `Idempotency-Key` included, are not part of the binding. Only that identical request can use the grant. Any other request of the class is refused with `403 step_up_required`, which is a new challenge for that request, and audited as `auth.step_up_mismatch`. The refusal does not use up the grant: it stays bound to the challenged request until that request uses it or a newer step-up for the class replaces it. The grant expires 60 seconds after the step-up, which leaves time only for the immediate re-send, and it also ends when the session turns read-only, when it idle-locks (#2301) and at logout. For a no-grace class the `200`'s `elevated_until` is that expiry, 60 seconds after the step-up, and its `step_up_expires_at` is null. A session holds at most one grant per no-grace class. Grace classes keep the unbound 5-minute window described below.
      *     **Write-ahead audit and `503` (C-2.9).** The record an answer depends on is written before the answer is sent: `auth.step_up_mismatch` before the `403` that refuses a swapped request, `auth.step_up_failed` before the `400` of a challenge that cannot be answered (while the per-session refusal budget lasts) and `auth.mfa_reset_by_owner` before an owner TOTP reset revokes anything. When the audit writer cannot take that record within 2 seconds (it is down, not started or too slow) the answer is `503 audit_unavailable` instead, whatever the refusal would have been: no challenge is issued, no failure is counted, nothing is elevated or revoked, and a grant bound to a held request is neither used nor ended, so the client sends the same request again once the audit writer recovers. An operation that gates a no-grace class lists the same `503` among its responses and answers it when the `auth.step_up_mismatch` record of its refusal cannot be written; `resetUserMfa` answers it when its own record cannot.
      *     **Holding the refused request.** The client keeps the refused request unchanged (method, path, body and `Idempotency-Key`) and re-sends it as is after a successful step-up. The refusal bound no idempotency key (Idempotency, "Binding point"), so the re-send is a first submission and executes once. On cancel, at `challenge_expires_at`, on the third failure (`session_read_only`), on idle lock and at absolute session expiry the client drops the request without sending it and tells the user it was not sent. If the re-send gets no answer after a successful step-up (a network error or a timeout), the action may have executed: the client never reports it as not sent and never re-sends it on its own, and reads the affected state back to learn the outcome.
-     *     Grants a **5-minute** server-side grace for `action_class` on the current session (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the earlier 15). `live_enablement`, `killswitch`, `backups` and `sl_loosen` are no-grace: the response is `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on every write). Endpoints that require elevation return `403` with `code: step_up_required` until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`, `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
+     *     Grants a **5-minute** server-side grace for `action_class` on the current session (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the earlier 15). `live_enablement`, `killswitch`, `backups`, `sl_loosen` and `accounts` are no-grace: the response is `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on every write). Endpoints that require elevation return `403` with `code: step_up_required` until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`, `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
      *     **Session rotation (SR-013).** A successful step-up also rotates the session, the way `POST /auth/refresh` does: the server mints a replacement session with a new id, access token and refresh token. The replacement keeps the old session's absolute expiry and idle timeout, so rotation never extends the session's lifetime; it carries over the live step-up grants, including the one just granted, and drops the pending challenge. The old session is revoked as `rotated` and linked into the session family, so its access and refresh tokens stop working at once and replaying that refresh token at `POST /auth/refresh` revokes the whole family (reuse detection). The `200` carries the new access token in `tokens` (the `TokenBundle` of `POST /auth/mfa/verify`; the refresh token travels only in the cookie, so `refresh_token` is null) and sets rotated `cv_refresh` and `__Host-cv_csrf` cookies bound to the new session (SR-041). The client continues with the returned access token. A client that loses the `200` keeps only the old tokens: its next `POST /auth/refresh` trips reuse detection, so the user must sign in again.
      */
     post: operations["authStepUp"];
@@ -2211,6 +2211,15 @@ export interface paths {
      *     (`updateExchangeAccount` with `enabled: false`, a new request with a new `Idempotency-Key`
      *     that must carry `open_exposure=leave_positions`) or a key is to be fixed first, and
      *     `components.parameters.OpenExposure` defines both, and what a failed read is answered with.
+     *
+     *     **Step-up (SR-E27-02).** `accounts` is a no-grace step-up class: each delete spends a
+     *     fresh code, and without one the route answers `403 step_up_required` with `action_class`
+     *     set to `accounts`. The handler gates it after RBAC, validation and the `404`, and the
+     *     grant binds the method and the raw target with its `open_exposure` query (`authStepUp`),
+     *     so a `keys` grant never admits it. The delete is audited as `account.deleted`, written
+     *     ahead (C-2.9), naming the `challenge_id` of the grant it spent. The `422` is decided
+     *     before the gate and spends no code; the `409 open_exposure` and `409 exposure_unknown`
+     *     refusals are decided after it and leave the grant spent, as restore's do.
      */
     delete: operations["deleteExchangeAccount"];
     options?: never;
@@ -2219,7 +2228,10 @@ export interface paths {
      * Update label, enabled flag, position/margin mode
      * @description Changing `position_mode` or `margin_mode` proxies to Bybit
      *     (`POST /v5/position/switch-mode`, `switch-isolated`, `account/set-margin-mode`) and
-     *     fails with `conflict` when the account holds open positions or active orders.
+     *     fails with `conflict` when the account holds open positions or active orders. That proxy
+     *     is E27-S05's: until it lands, a body that carries `position_mode` or `margin_mode` is
+     *     refused with `422 validation_failed` (rule `mode_change_unavailable`) before the step-up
+     *     gate, and nothing changes.
      *
      *     **Disable** (`enabled: false`, SCR-129): when the account holds open positions, working
      *     orders or running emulated algos, the request must carry an `open_exposure` choice
@@ -2227,8 +2239,53 @@ export interface paths {
      *     and nothing changes. The choices, the `leave_positions` stop-loss refusal, unknown
      *     exposure and a failed read are defined once, at `components.parameters.OpenExposure`.
      *     The choice applies only to disabling, never to a mode change.
+     *
+     *     **Step-up (SR-E27-02).** `accounts` is a no-grace step-up class: each disable or
+     *     re-enable (`enabled: false`, whatever `open_exposure` says, or `enabled: true`) spends a
+     *     fresh code, and without one the route answers `403 step_up_required` with `action_class`
+     *     set to `accounts`. A `position_mode` or `margin_mode` change is an `accounts` branch as
+     *     well once E27-S05 serves it; until then it is the `422` above, decided before the gate.
+     *     Only a label-only patch is not step-up gated. The handler gates it after RBAC, account
+     *     scope, validation and the `404`, and the grant binds the method, the raw target with its
+     *     query and the validated body (`authStepUp`). The disable is audited as
+     *     `account.disabled`, written ahead (C-2.9), naming the `challenge_id` of the grant it
+     *     spent. The `422` is decided before the gate and spends no code; the `409 open_exposure`
+     *     and `409 exposure_unknown` refusals are decided after it and leave the grant spent, as
+     *     restore's do.
      */
     patch: operations["updateExchangeAccount"];
+    trace?: never;
+  };
+  "/exchange-accounts/{accountId}/consequences": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        accountId: components["parameters"]["AccountId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Read what revoking, disabling or deleting an account would affect
+     * @description The up-front read of `AccountConsequenceSummary` that SCR-129 renders before its confirm
+     *     control (SR-E27-07): one server-side aggregate, so no partial picture is shown. It has
+     *     no side effects: it changes nothing, spends nothing and, on success, writes no audit
+     *     record (a `403` is still recorded as `rbac.denied`). It holds
+     *     the permission and scope of the disable it precedes (`updateExchangeAccount`); the Owner
+     *     holds both. A foreign account and an absent one get the same `404 not_found`, byte for
+     *     byte, so the answer is no existence oracle. The exposure is read as
+     *     `components.parameters.OpenExposure` defines it: an exposure that cannot be read is
+     *     `409 exposure_unknown` with its `remedy`, and a failed read is answered as that
+     *     definition says. The `remedy` speaks for the disable or revoke the read precedes; a
+     *     delete is still refused whatever it carries.
+     */
+    get: operations["getAccountConsequences"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
     trace?: never;
   };
   "/exchange-accounts/{accountId}/default-profile": {
@@ -2430,16 +2487,31 @@ export interface paths {
      *     endpoints need a transfer or withdrawal right (vendor reference, to be confirmed on demo
      *     by E27-S04), which the key gate refuses (C-2.8), so a compliant key cannot delete itself
      *     there: the key stays valid at the exchange until the Owner deletes it in the Bybit
-     *     dashboard (SR-E27-06). Revoking the last active trade key drops the account to
-     *     `key_status: missing` and halts its private streams.
+     *     dashboard (SR-E27-06). Revoking the account's last signable key (no other `active` or
+     *     `rotating` key remains) drops it to `key_status: missing`, halts its private streams and
+     *     ends each of its `orders`, `positions` and `wallet` subscriptions with a `revoked` frame,
+     *     reason `key_revoked` (`23-ws-protocol.md` §9.5). The trigger is signable, not active,
+     *     because a `rotating` key still signs and streams, so the account is not keyless while one
+     *     remains.
      *
-     *     When no other `active` key remains and the account holds open positions, working orders
+     *     When no other signable key remains and the account holds open positions, working orders
      *     or running emulated algos, the request must carry an `open_exposure` choice (SR-E27-07).
      *     Without it the answer is `409 open_exposure` with the consequence summary, and nothing
      *     is revoked. The choices, the `leave_positions` stop-loss refusal, unknown exposure and a
      *     failed read are defined once, at `components.parameters.OpenExposure`. Every signable
      *     key of the account counts in that definition, a `rotating` key too: while a `rotating`
      *     key is usable the account is not dead, whatever the key being revoked answers.
+     *
+     *     **Step-up (SR-E27-02).** A revoke needs a live `keys` step-up. Any revoke that carries
+     *     `open_exposure=flatten_first`, which moves money, needs the no-grace `accounts` class
+     *     instead, whatever keys remain and whatever the account holds: each such revoke spends a
+     *     fresh code, and without one the route answers `403 step_up_required` with `action_class`
+     *     set to `accounts`. The handler gates both classes after RBAC, validation and the `404`,
+     *     so a caller without `keys:manage` gets `403 forbidden`, never a challenge, and the
+     *     `accounts` grant binds the method and the raw target with its query (`authStepUp`). The
+     *     `422` is decided before the gate and spends no code; the `409 open_exposure` and
+     *     `409 exposure_unknown` refusals are decided after it and leave the grant spent, as
+     *     restore's do.
      */
     delete: operations["revokeApiKey"];
     options?: never;
@@ -6132,7 +6204,7 @@ export interface components {
        */
       level: "read" | "trade";
     };
-    /** @description What revoking an account's last active key, disabling the account or deleting it would affect (SR-E27-07, SCR-129), read in one server-side query so no partial picture is shown. Confidential: served only under the operation's own permission and scope. This contract serves it only in the `409 open_exposure` answer. SCR-129 fetches it before the dialog renders, which needs a side-effect-free read: E27-S04 (#898) adds that operation in its own interface-first PR (C-6.1) before it mounts these routes. */
+    /** @description What revoking an account's last signable key, disabling the account or deleting it would affect (SR-E27-07, SCR-129), read in one server-side query so no partial picture is shown. Confidential: served only under the operation's own permission and scope. It is served in the `409 open_exposure` answer and by `getAccountConsequences`, the side-effect-free read SCR-129 fetches before the dialog renders (E27-S04, #898). */
     AccountConsequenceSummary: {
       /** @description Armed rules scoped to the account, listed by name; the action disarms them. */
       armed_rules: {
@@ -8711,7 +8783,7 @@ export interface components {
      * @enum {string}
      */
     OpenExposureChoice: "leave_positions" | "flatten_first";
-    /** @description The `409` problem of the revoke, disable and delete operations. `consequences` is present exactly when `code` is `open_exposure`, and `remedy` exactly when `code` is `exposure_unknown`, which carries no `consequences` because the exposure cannot be read. */
+    /** @description The `409` problem of the revoke, disable and delete operations. `consequences` is present exactly when `code` is `open_exposure`, and `remedy` exactly when `code` is `exposure_unknown`, which carries no `consequences` because the exposure cannot be read. The consequence read (`getAccountConsequences`) answers it only as `exposure_unknown`. */
     OpenExposureProblem: components["schemas"]["Problem"] &
       ({
         consequences?: components["schemas"]["AccountConsequenceSummary"];
@@ -11455,7 +11527,7 @@ export interface components {
     MarketCursor: string;
     MethodId: string;
     /**
-     * @description The explicit choice SR-E27-07 requires before revoking an account's last active key or
+     * @description The explicit choice SR-E27-07 requires before revoking an account's last signable key or
      *     disabling the account while it holds open positions, working orders or running emulated
      *     algos. This is the one definition of the choice, of the stop-loss refusal, of unknown
      *     exposure, of its remedy and of a failed read: `updateExchangeAccount`, `revokeApiKey` and
@@ -14003,7 +14075,7 @@ export interface operations {
       content: {
         "application/json": {
           /**
-           * @description Optional cross-check. The server elevates the class its last `403 step_up_required` challenged on this session; a different value is `400`. Without a pending challenge it is required. `audit` gates the audit-log export (`exportAuditLog`) and the download of its file (`downloadAuditExport`); `backups` gates a backup restore or a download-link issue or delete (`restoreBackup`, `issueBackupDownload`, `deleteBackup`), one fresh code per action. `sl_loosen` gates the owner's loosening of a position's stop (`setPositionTpSl`, 24-internal-schemas.md section 8.8 rule 5), one fresh code per loosening; declared ahead of the service (C-6.1), which E29-T07 extends.
+           * @description Optional cross-check. The server elevates the class its last `403 step_up_required` challenged on this session; a different value is `400`. Without a pending challenge it is required. `audit` gates the audit-log export (`exportAuditLog`) and the download of its file (`downloadAuditExport`); `backups` gates a backup restore or a download-link issue or delete (`restoreBackup`, `issueBackupDownload`, `deleteBackup`), one fresh code per action. `sl_loosen` gates the owner's loosening of a position's stop (`setPositionTpSl`, 24-internal-schemas.md section 8.8 rule 5), one fresh code per loosening; declared ahead of the service (C-6.1), which E29-T07 extends. `accounts` gates disabling, re-enabling or deleting an exchange account (`updateExchangeAccount` with `enabled` `false` or `true`, and a mode change once E27-S05 serves it; `deleteExchangeAccount`) and a revoke's `flatten_first` branch (`revokeApiKey`), one fresh code per action; declared ahead of the service (C-6.1), which E27-S04 (#898) lands.
            * @enum {string}
            */
           action_class?:
@@ -14016,10 +14088,11 @@ export interface operations {
             | "flags"
             | "audit"
             | "backups"
-            | "sl_loosen";
+            | "sl_loosen"
+            | "accounts";
           /**
            * Format: uuid
-           * @description The `challenge_id` of the `403 step_up_required` being answered (#2304). Required for a no-grace class (`live_enablement`, `killswitch`, `backups` or `sl_loosen`, named by the live challenge or by `action_class`): omitting it is `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_required}]`. Optional for a grace class: without it the server uses the session's live challenge. This grace-class optionality is transitional and ends with #2725 (the web client sends `challenge_id` on every step-up); from then on it is required whenever the session has a live challenge. A value that does not name the live challenge (expired, superseded, already used or unknown), or that is sent when there is none, gets `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_expired}]`. Either `400` is decided before the password and code are checked: no factor is verified, no failure is counted and nothing is elevated. The client then drops the held request without sending it.
+           * @description The `challenge_id` of the `403 step_up_required` being answered (#2304). Required for a no-grace class (`live_enablement`, `killswitch`, `backups`, `sl_loosen` or `accounts`, named by the live challenge or by `action_class`): omitting it is `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_required}]`. Optional for a grace class: without it the server uses the session's live challenge. This grace-class optionality is transitional and ends with #2725 (the web client sends `challenge_id` on every step-up); from then on it is required whenever the session has a live challenge. A value that does not name the live challenge (expired, superseded, already used or unknown), or that is sent when there is none, gets `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_expired}]`. Either `400` is decided before the password and code are checked: no factor is verified, no failure is counted and nothing is elevated. The client then drops the held request without sending it.
            */
           challenge_id?: string;
           code: string;
@@ -14717,6 +14790,15 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["OpenExposureConflict"];
+      /** @description Any `open_exposure` value but `flatten_first`, `leave_positions` included, fails the enum (`validation_failed`). Decided before the step-up gate: nothing changes. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       502: components["responses"]["ExchangeError"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -14725,7 +14807,7 @@ export interface operations {
     parameters: {
       query?: {
         /**
-         * @description The explicit choice SR-E27-07 requires before revoking an account's last active key or
+         * @description The explicit choice SR-E27-07 requires before revoking an account's last signable key or
          *     disabling the account while it holds open positions, working orders or running emulated
          *     algos. This is the one definition of the choice, of the stop-loss refusal, of unknown
          *     exposure, of its remedy and of a failed read: `updateExchangeAccount`, `revokeApiKey` and
@@ -14864,6 +14946,51 @@ export interface operations {
       404: components["responses"]["NotFound"];
       409: components["responses"]["OpenExposureConflict"];
       412: components["responses"]["PreconditionFailed"];
+      /** @description The body or `open_exposure` fails its schema (`validation_failed`), or the body carries `position_mode` or `margin_mode` before E27-S05 serves a mode change (rule `mode_change_unavailable`). Decided before the step-up gate: nothing changes. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      502: components["responses"]["ExchangeError"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  getAccountConsequences: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        accountId: components["parameters"]["AccountId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The consequence summary. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AccountConsequenceSummary"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      /** @description `exposure_unknown` only, with its `remedy` and no `consequences`: the exposure cannot be read (`components.parameters.OpenExposure`). A read never answers `open_exposure`. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["OpenExposureProblem"];
+        };
+      };
       502: components["responses"]["ExchangeError"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -15064,7 +15191,7 @@ export interface operations {
     parameters: {
       query?: {
         /**
-         * @description The explicit choice SR-E27-07 requires before revoking an account's last active key or
+         * @description The explicit choice SR-E27-07 requires before revoking an account's last signable key or
          *     disabling the account while it holds open positions, working orders or running emulated
          *     algos. This is the one definition of the choice, of the stop-loss refusal, of unknown
          *     exposure, of its remedy and of a failed read: `updateExchangeAccount`, `revokeApiKey` and
@@ -15195,6 +15322,15 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["OpenExposureConflict"];
+      /** @description `open_exposure` is neither choice and fails its schema (`validation_failed`). Decided before the step-up gate: nothing is revoked. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       502: components["responses"]["ExchangeError"];
       503: components["responses"]["ServiceUnavailable"];
     };
