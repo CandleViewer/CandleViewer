@@ -387,6 +387,7 @@ BIND = {"type": "none", "o": "bind", "device": "/srv/cv-data"}  # a host bind in
         ("services.api.secrets", [KEK_MOUNT, KEK_MOUNT], "does not mount cv_kek"),
         ("services.api.secrets", None, "does not mount cv_kek"),
         ("services.api.secrets", [KEK_MOUNT, {"source": "cv_kek_hex"}], "mounts a secret that"),
+        ("services.api.secrets", [KEK_MOUNT, "cv_kek_hex"], "mounts a secret that"),
         ("services.api.secrets", [KEK_MOUNT, {"source": "cv_kek_hex", "target": "cv_kek"}],
          "mounts a secret that"),
         ("services.api.secrets", [KEK_MOUNT, LANE_MOUNT | {"mode": 0o444}], "mounts a secret that"),
@@ -410,10 +411,11 @@ BIND = {"type": "none", "o": "bind", "device": "/srv/cv-data"}  # a host bind in
          "swapped-variable", "other-handle", "no-handle", "kek-file-default", "kek-file-optional",
          "kek-file-literal", "kek-environment-secret", "no-kek-secret", "lane-key-default",
          "no-lane-key", "extra-kek-secret", "owner-dsn-secret", "kek-mode-0444", "kek-uid-0",
-         "kek-twice", "kek-not-mounted", "api-extra-secret", "api-secret-onto-the-handle",
-         "api-lane-mode-0444", "core-unlimited", "no-ulimits", "data-bind", "data-bind-long",
-         "data-undeclared", "extra-bind", "no-data", "data-driver-opts", "data-driver",
-         "data-external", "audit-volume-redeclared", "migrate-app-dsn", "api-owner-dsn"],
+         "kek-twice", "kek-not-mounted", "api-extra-secret", "api-extra-secret-short",
+         "api-secret-onto-the-handle", "api-lane-mode-0444", "core-unlimited", "no-ulimits",
+         "data-bind", "data-bind-long", "data-undeclared", "extra-bind", "no-data",
+         "data-driver-opts", "data-driver", "data-external", "audit-volume-redeclared",
+         "migrate-app-dsn", "api-owner-dsn"],
 )  # fmt: skip
 def test_demo_host_overlay_lint_refuses(path: str, value: object, why: str) -> None:
     errors = lint_compose.check_demo_host_overlay(_demo_host(path, value))
