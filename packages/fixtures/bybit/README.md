@@ -71,7 +71,7 @@ Two `GET /v5/market/risk-limit` replies, recorded once with
 `capture_fixture.py --rest-path` from Bybit's public `api.bybit.com` endpoint, with no key and
 no signing. Each is one page, `category=linear`, one symbol. The tool redacted and leak-checked
 the body as received; the public reply holds no credential or account field, so nothing was
-replaced. The corpus manifest and the drift check cover both; the adapter contract test that reads them follows in the next change.
+replaced. `tests/contract/bybit/test_contract_risk_limits.py` reads both.
 
 Each line: file; source; date; symbol; env; redaction.
 

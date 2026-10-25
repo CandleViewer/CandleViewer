@@ -38,11 +38,19 @@ Design notes tying back to the ticket's Gherkin:
 - "Refresh does not stall readers": the fetch + parse + diff work all
   happens before the single atomic `cache.swap()` call; nothing here ever
   blocks a concurrent `cache.current()` read.
+- S-RL (#913), the risk-limit tiers: held in memory beside the instruments, in the same
+  snapshot, and never persisted (no migration). A symbol's tiers are first fetched on demand
+  (`ensure_risk_limits`, the detail route), then re-fetched by every catalogue refresh and
+  swapped with it, so they share its staleness (`stale_since`). A symbol whose tier fetch fails
+  has no tiers in the new snapshot (`None`, unknown) until a later fetch succeeds. After a
+  restart no symbol has tiers until its first fetch: the window fails closed, as a reader of
+  `None` must (the sizer's `figure_unknown`), and is never served a guessed ladder.
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import math
 import random
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -50,7 +58,8 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from candleviewer.domain.events import Instrument
-from candleviewer.exchange.base.instruments import InstrumentsFetcher
+from candleviewer.exchange.base.instruments import InstrumentsFetcher, RiskLimitsFetcher
+from candleviewer.exchange.base.models import RiskLimitTier
 from candleviewer.ingestion._logging import get_logger
 from candleviewer.ingestion.errors import IngestionError
 from candleviewer.ingestion.instruments import (
@@ -80,6 +89,8 @@ START_TIMEOUT_S = 10.0
 #: most this long, well under the 10 s HTTP client timeouts (the web shell's per request, the
 #: exchange REST client's per attempt); the route then answers 503 and the refresh runs on.
 ON_DEMAND_TIMEOUT_S = 3.0
+#: S-RL (#913): one symbol's risk-limit fetch inside a catalogue refresh, at most this long.
+RISK_LIMITS_FETCH_TIMEOUT_S = 10.0
 
 
 def retry_backoff_s(failures: int, rand: float) -> float:
@@ -165,8 +176,13 @@ class InstrumentsRefreshScheduler:
         on_demand_cooldown_s: float = 60.0,
         start_timeout_s: float = START_TIMEOUT_S,
         on_demand_timeout_s: float = ON_DEMAND_TIMEOUT_S,
+        fetch_risk_limits: RiskLimitsFetcher | None = None,
     ) -> None:
         self._fetch_instruments_info = fetch_instruments_info
+        self._fetch_risk_limits = fetch_risk_limits
+        #: S-RL: the symbols whose tiers were asked for; each refresh re-fetches them. Only
+        #: catalogue symbols join (`ensure_risk_limits`), so it is bounded by the catalogue.
+        self._tier_symbols: set[str] = set()
         self._repository = repository
         self._publish = publish
         self.cache = (
@@ -306,6 +322,57 @@ class InstrumentsRefreshScheduler:
         await self._join(refresh, self._on_demand_timeout_s)
         refreshed = self.cache.current()
         return refreshed.get(symbol) if refreshed is not None else None
+
+    async def ensure_risk_limits(self, symbol: str) -> tuple[RiskLimitTier, ...] | None:
+        """S-RL (#913): `symbol`'s risk-limit tiers, fetched on first demand and kept in the
+        snapshot (then refreshed with the catalogue). `None` when they are unknown: no fetcher
+        wired, no catalogue, a symbol outside it (no upstream call for it), or a fetch that failed
+        or missed `on_demand_timeout_s`; the caller fails closed. The fetch runs under the refresh
+        lock, so it never races a refresh's swap, and a concurrent caller re-checks after it.
+        """
+        current = self.cache.current()
+        if self._fetch_risk_limits is None or current is None or current.get(symbol) is None:
+            return None
+        known = current.risk_limit_tiers(symbol)
+        if known is not None:
+            return known
+        try:
+            async with asyncio.timeout(self._on_demand_timeout_s), self._refresh_lock:
+                snap = self.cache.current() or current  # a loaded cache is never unloaded
+                known = snap.risk_limit_tiers(symbol)
+                if known is not None:
+                    return known
+                self._tier_symbols.add(symbol)
+                tiers = tuple(await self._fetch_risk_limits(symbol))
+                self.cache.swap(
+                    dataclasses.replace(snap, risk_limits={**snap.risk_limits, symbol: tiers})
+                )
+                return tiers
+        except Exception as exc:  # a timeout too: unknown, and the caller fails closed
+            get_logger(__name__).warning(
+                "risk_limits_fetch_failed", symbol=symbol, error=type(exc).__name__
+            )
+            return None
+
+    async def _refresh_risk_limits(
+        self, parsed: Mapping[str, Instrument]
+    ) -> dict[str, tuple[RiskLimitTier, ...]]:
+        """S-RL: re-fetch every asked-for symbol still in the catalogue. A symbol whose fetch
+        fails is left out (unknown, fail closed) and does not fail the catalogue refresh.
+        """
+        fetch = self._fetch_risk_limits
+        tiers: dict[str, tuple[RiskLimitTier, ...]] = {}
+        if fetch is None:
+            return tiers
+        for symbol in sorted(self._tier_symbols & parsed.keys()):
+            try:
+                async with asyncio.timeout(RISK_LIMITS_FETCH_TIMEOUT_S):
+                    tiers[symbol] = tuple(await fetch(symbol))
+            except Exception as exc:
+                get_logger(__name__).warning(
+                    "risk_limits_fetch_failed", symbol=symbol, error=type(exc).__name__
+                )
+        return tiers
 
     async def ensure_fresh(self, max_age_s: float, deadline_s: float) -> CatalogueSnapshot | None:
         """#906 (B8): the catalogue, fetched at most `max_age_s` ago and not marked stale, so the
@@ -475,8 +542,13 @@ class InstrumentsRefreshScheduler:
             for symbol, instrument in current.by_symbol.items():
                 parsed.setdefault(symbol, instrument)
 
+        risk_limits = await self._refresh_risk_limits(parsed)
         await self._repository.upsert_snapshot([i.model_dump(mode="json") for i in parsed.values()])
-        self.cache.swap(CatalogueSnapshot(by_symbol=parsed, fetched_at_us=fetched_at_us))
+        self.cache.swap(
+            CatalogueSnapshot(
+                by_symbol=parsed, fetched_at_us=fetched_at_us, risk_limits=risk_limits
+            )
+        )
         self._failed.clear()
         instruments_cache_age_seconds.set(0.0)
         instruments_catalogue_size.set(len(parsed))

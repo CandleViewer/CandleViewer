@@ -7,10 +7,12 @@ per-row rejection list, never a raw exchange payload or the parser.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
 from candleviewer.domain.events import Instrument
+
+from .models import RiskLimitTier
 
 
 class InstrumentParseError(ValueError):
@@ -38,3 +40,7 @@ class InstrumentsFetchResult:
 #: Fetch every instrument page and normalise it. `now_us` is sampled by the
 #: adapter once the fetch completes and stamped as `Instrument.fetched_at`.
 InstrumentsFetcher = Callable[[Callable[[], int]], Awaitable[InstrumentsFetchResult]]
+
+#: S-RL (#913): one symbol's risk-limit tiers, ascending by `risk_limit_value`
+#: (`MarketDataPort.fetch_risk_limits`'s answer as a plain callable, like the fetcher above).
+RiskLimitsFetcher = Callable[[str], Awaitable[Sequence[RiskLimitTier]]]

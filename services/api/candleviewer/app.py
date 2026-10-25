@@ -235,7 +235,7 @@ from candleviewer.budget_wiring import build_disk_budget
 from candleviewer.bus.models import Topic
 from candleviewer.bus.service import BusService
 from candleviewer.domain.events import InstrumentUpdatedEvent
-from candleviewer.exchange.base.instruments import InstrumentsFetcher
+from candleviewer.exchange.base.instruments import InstrumentsFetcher, RiskLimitsFetcher
 from candleviewer.exchange.base.models import TickerEvent, TradeEvent
 from candleviewer.exchange.base.service import ExchangeBaseService
 
@@ -3290,7 +3290,10 @@ def _compose_instrument_catalogue(
     rest = (public_rest or PublicRest(ctx)).client
     relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "instruments")
     wire_instrument_catalogue(
-        ctx, fetch_instruments=ctx.exchange_bybit.instruments_fetcher(rest), relational=relational
+        ctx,
+        fetch_instruments=ctx.exchange_bybit.instruments_fetcher(rest),
+        relational=relational,
+        fetch_risk_limits=ctx.exchange_bybit.risk_limits_fetcher(rest),
     )
     ctx.ingestion.attach_closer(relational.dispose)
 
@@ -3300,12 +3303,14 @@ def wire_instrument_catalogue(
     *,
     fetch_instruments: InstrumentsFetcher,
     relational: SqlAlchemyRelationalRepository,
+    fetch_risk_limits: RiskLimitsFetcher | None = None,
 ) -> InstrumentsRefreshScheduler:
     """Compose the E08-S01-2 catalogue: the exchange adapter's neutral
     instruments fetcher (M4, built by the adapter and passed in as the
     neutral `InstrumentsFetcher` port) + Postgres repository (M10) + bus
     publisher (M5) -> ingestion (M6) scheduler. Only this composition root
-    sees all four modules (C-3.1)."""
+    sees all four modules (C-3.1). S-RL (#913): the adapter's risk-limit fetcher (same client,
+    same governor) feeds the tiers kept beside the catalogue."""
     bus = ctx.bus.bus
     env = ctx.settings.environment.value
 
@@ -3317,6 +3322,7 @@ def wire_instrument_catalogue(
         fetch_instruments_info=fetch_instruments,
         repository=SqlAlchemyInstrumentsRepository(relational),
         publish=_publish,
+        fetch_risk_limits=fetch_risk_limits,
     )
     ctx.ingestion.attach_instruments(scheduler)
     return scheduler
