@@ -838,6 +838,41 @@ def test_a_step_11_class_refusal_is_audited_naming_its_step_and_its_reason() -> 
     )
 
 
+def test_a_stopped_lane_after_step_3_is_a_counted_unaudited_503() -> None:
+    """L1b's handoff for D2b (2026-10-25): an `OmsNotReady` met through the order lane at step 4's
+    scope read, step 9's run or step 11's exit service is answered as step 3's is: counted, never
+    audited through the stalled lane, with no `ETag`, no 24 h record and its key freed."""
+    assert not _missing(
+        _EXITS,
+        "A `503 oms_not_ready` met after step 3, a stop begun meanwhile or the order lane stopped "
+        "or not answering a hop within its bound (`20-architecture.md` §6.2) at step 4's scope "
+        "read, step 9's run or step 11's exit service, is unaudited as step 3's is, as its record "
+        "would go through the stalled lane: it carries no `ETag`, keeps no 24 h record and frees "
+        "its in-flight key, and whatever B1 did before the lane stopped keeps B1's own records",
+        "Like step 3's, it pages nothing. The order's gateway refusing step 11's command for "
+        "backpressure, its inbox full or its admission refused, is no such stop: that `503 "
+        "oms_not_ready` is the exit service's own refusal, recorded `denied` beside the intent as "
+        "every step-11 refusal is.",
+    )
+
+
+def test_the_change_log_records_the_amend_routes_steps_and_a_stopped_lane() -> None:
+    """D2a's CR-S4D2A-04 for S4-D2b: 19 is the contract change log, so S4-D2b's changes to 8.4
+    (a stopped order lane's unaudited `503`, the gateway's backpressure told apart) and 15.5 (the
+    amend route's `body` and `arm` steps) have an entry of their own."""
+    entry = _words(_INTERNAL_DOC.split("\n### 19.37 2026-10-25 — §8.4, §15.5: ", 1)[1])
+    assert not _missing(
+        entry,
+        "the amend route's steps and a stopped order lane (E29-T04, #913)",
+        "is unaudited as step 3's is and pages nothing, with no `ETag`, no 24 h record and its "
+        "in-flight key freed",
+        "The gateway's backpressure at step 11 is no such stop: its `503` is the exit service's "
+        "own refusal, recorded `denied` beside the intent.",
+        "§15.5: a refusal's `step` names the amend route's `body` and `arm` too, its steps 5 "
+        "and 6.",
+    )
+
+
 def test_the_exit_routes_declare_every_answer_their_routes_give() -> None:
     """The orchestrator's ruling of 2026-10-24 21:47Z (1) and vw3's gap of 22:11Z: `cancelOrder`
     declares the `500` its route answers for a fault the exit service raises, as `amendOrder`,

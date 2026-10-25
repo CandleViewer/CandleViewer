@@ -36,12 +36,16 @@ and no switches (steps 5, 6 and 10): it is never gated (C-2.6).
 
 A refusal the route makes from step 5 on is recorded through `OrderExits.deny`, naming its step
 (`body`, `arm`, `key`, `replay`, `guard`), before it is answered (C-2.9), else `503
-audit_unavailable`; the service records its own (steps 4, 10 and 11). A fault the exit service
-raises at step 4, or in step 11's task once the client left too, is `exit_fault`'s answer: every
-such `500` pages, one page for the fault's class (the orchestrator's ruling of 2026-10-25 02:50Z
-(2)). Every refusal is counted in `oms_exit_refused_total{operation,code}` as it is answered
-(ruling Q14), the unaudited ones and the faults included. No log line or problem carries the key,
-the fingerprint or the token (C-12.6).
+audit_unavailable`; the service records its own (steps 4, 10 and 11). An `oms_not_ready` met
+after step 3, the runtime's stop begun or the order lane stopped or not answering within its bound
+(20 Sec.6.2) at step 4's scope read, step 9's run or step 11's exit, is step 3's answer
+(`not_ready`): counted, never audited or paged, and never logged as a refusal that escaped the
+exit service (`oms_exit_refusal_escaped`). Any other fault the exit service raises at step 4, or
+in step 11's task once the client left too, is `exit_fault`'s answer: every such `500` pages, one
+page for the fault's class (the orchestrator's ruling of 2026-10-25 02:50Z (2)). Every refusal is
+counted in `oms_exit_refused_total{operation,code}` as it is answered (ruling Q14), the unaudited
+ones and the faults included. No log line or problem carries the key, the fingerprint or the token
+(C-12.6).
 """
 
 from __future__ import annotations
@@ -275,7 +279,8 @@ def make_order_exits_router(
         return counted(operation, *exit_fault(error, pager=paging))
 
     def not_ready(operation: ExitOperation) -> Response:
-        """Step 3's answer, and a stop begun after it: counted, never audited (24 Sec.8.4)."""
+        """Step 3's answer, and a stop or a stopped lane met after it: counted, never audited
+        (24 Sec.8.4)."""
         return counted(operation, "oms_not_ready", order_problem(OmsNotReady(), pager=paging))
 
     async def audit_refusal(
@@ -334,6 +339,8 @@ def make_order_exits_router(
             return not_ready(operation)
         try:  # step 4
             scoped = await exits.scope(caller, order_id)
+        except OmsNotReady:  # the lane stopped, or did not answer within its bound (20 Sec.6.2)
+            return not_ready(operation)
         except Exception as exc:  # a fault the service did not answer: the paged `500`
             return faulted(operation, exc)
         if isinstance(scoped, ExitOutcome):  # recorded by the service, rulings Q6, Q7, Q12
@@ -345,11 +352,14 @@ def make_order_exits_router(
         digest: str, env: Environment,
     ) -> Response:  # fmt: skip
         """A cancel's step 11 task: the exit service's cancel, rendered, and a `202` kept for 24 h,
-        so a request cancelled midway still keeps it (24 Sec.8.4); a fault it raises is `faulted`'s
-        answer, in this task (`run_claimed`)."""
-        outcome = await exits.cancel_admitted(
-            scoped.order, actor=caller.actor, reason="user", request_id=caller.request_id
-        )
+        so a request cancelled midway still keeps it (24 Sec.8.4); a stopped lane is `not_ready`'s
+        answer, and any other fault it raises `faulted`'s, in this task (`run_claimed`)."""
+        try:
+            outcome = await exits.cancel_admitted(
+                scoped.order, actor=caller.actor, reason="user", request_id=caller.request_id
+            )
+        except OmsNotReady:  # the lane stopped, or a crossing not begun in its bound (20 Sec.6.2)
+            return not_ready(_CANCEL)
         out = exit_response(outcome, scoped, env)
         if outcome.kind == "refused":  # recorded by the service before it was answered
             return counted(_CANCEL, outcome.code or "internal_error", out)
@@ -363,9 +373,12 @@ def make_order_exits_router(
         """An amend's step 11 task: the exit service's amend, rendered with the order's `ETag`, and
         a `202` kept for 24 h with it (24 Sec.8.4). The tag names the version B1's step gave, else
         the facade's version as it stands, which an `unknown` amend's order has and a final one
-        has not (22 `OrderETag`); a fault it raises is `faulted`'s answer, in this task
-        (`run_claimed`)."""
-        outcome = await exits.amend(scoped, terms, caller=caller, expected_seq=expected)
+        has not (22 `OrderETag`); a stopped lane is `not_ready`'s answer, and any other fault it
+        raises `faulted`'s, in this task (`run_claimed`)."""
+        try:
+            outcome = await exits.amend(scoped, terms, caller=caller, expected_seq=expected)
+        except OmsNotReady:  # the lane stopped, or a crossing not begun in its bound (20 Sec.6.2)
+            return not_ready(_AMEND)
         out = exit_response(outcome, scoped, reads.environment)
         if outcome.kind == "refused":  # recorded by the service before it was answered
             return counted(_AMEND, outcome.code or "internal_error", out)
