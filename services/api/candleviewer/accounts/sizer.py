@@ -42,6 +42,13 @@ CapName = Literal[
     "max_order_qty",
     "max_mkt_order_qty",
 ]
+#: Where an ATR came from: PF-T12 and PF-T13 name the worker, client, preset and cached values.
+#: Only the kernel's sizes a stop or a take-profit (SR-E28-11); any other falls back (SR-E28-12).
+AtrSource = Literal["kernel", "worker", "client", "preset", "cached"]
+#: E13's `unavailable(reason)` (24 Sec.7.4 `read`; IR-45, SR-E28-12).
+AtrUnavailable = Literal["missing", "parity_flagged", "stale", "warmup", "nan"]
+#: A descriptor `version` or a kernel `build_version` (IR-20): a whole number, at least 1.
+Version = Annotated[int, Field(strict=True, ge=1, le=2**31 - 1)]
 
 
 class SizingIntent(BaseModel):
@@ -62,14 +69,28 @@ class SizingIntent(BaseModel):
 
 
 class AtrReading(BaseModel):
-    """A self-describing ATR: `timeframe` is the caller's bar timeframe (no domain type exists;
-    the caller supplies it), `as_of` the reading's time; `value` is `None` in warm-up."""
+    """A self-describing ATR with its TB-8 provenance (SR-E28-11 to -13; E13 IR-12, IR-20, IR-45).
+    `timeframe` is the caller's bar timeframe (no domain type exists; the caller supplies it),
+    `as_of` the closed bar's time; `source` where the value came from, the E13 descriptor's
+    `version` and the kernel's `build_version`. `value` is `None` exactly when the kernel read
+    `unavailable(reason)`: a typed reason, never a NaN. M13 imports no `orderflow`, so the
+    kernel's types are mirrored here as plain closed fields."""
 
     model_config = _FROZEN
     timeframe: Annotated[str, Field(min_length=1, max_length=16)]
     period: Annotated[int, Field(ge=1)]
     value: Price | None
     as_of: AwareDatetime
+    source: AtrSource
+    version: Version
+    build_version: Version
+    unavailable: AtrUnavailable | None = None
+
+    @model_validator(mode="after")
+    def _value_or_reason(self) -> Self:
+        if (self.value is None) == (self.unavailable is None):
+            raise ValueError("an ATR reading takes a value or an unavailable reason, exactly one")
+        return self
 
 
 class SizingMarket(BaseModel):
@@ -134,8 +155,9 @@ class SizingExplanation:
     (`distance * qty`) and `risk_with_fees_usdt` adds both taker fees; `notional` is at `ref`
     (the anchor), while the caps and `initial_margin` use `px`, the larger notional (mid's for a
     marketable sell, else `ref`'s); `mid_price` the mid seen; `atr` the reading the stop or the
-    take-profit used; `minimum` the one a leg missed; `rules` the rules that fired, in order. A
-    gate skip carries none."""
+    take-profit used, with its provenance; an `atr` stop's `atr_source` (`kernel`, or `fallback`
+    when no kernel reading served) and `atr_multiple` (SR-E28-13); `minimum` the one a leg
+    missed; `rules` the rules that fired, in order. A gate skip carries none."""
 
     ref_price: Decimal | None = None
     ref_source: RefSource | None = None
@@ -143,6 +165,8 @@ class SizingExplanation:
     limit_price: Decimal | None = None
     stop: ResolvedStop | None = None
     atr: AtrReading | None = None
+    atr_source: Literal["kernel", "fallback"] | None = None
+    atr_multiple: Decimal | None = None
     mode: SizingMode | None = None
     basis: Decimal | None = None
     per_unit: Decimal | None = None
@@ -250,8 +274,9 @@ def _to_grid(value: Decimal, step: Decimal, rounding: str) -> Decimal:
 
 
 def _atr_value(profile: AccountProfile, atr: AtrReading | None) -> Decimal | None:
-    """The reading's value, when it is warm and of `sl_atr_period`; otherwise none serves."""
-    if atr is None or atr.value is None or atr.period != profile.sl_atr_period:
+    """The reading's value, when the kernel's, warm and of `sl_atr_period`; otherwise none serves
+    (SR-E28-11, SR-E28-12): never a worker, client, preset or cached value."""
+    if atr is None or atr.source != "kernel" or atr.period != profile.sl_atr_period:
         return None
     return atr.value
 
@@ -260,7 +285,7 @@ def resolve_stop(
     side: Side, profile: AccountProfile, ref: Decimal, inst: Instrument, atr: AtrReading | None
 ) -> ResolvedStop:
     """24 Sec.9.3.1: below a long's entry, above a short's, on the tick away from entry. An `atr`
-    stop with no reading of `sl_atr_period` falls back to `fallback_sl_offset_pct`."""
+    stop with no warm kernel reading of `sl_atr_period` falls back to `fallback_sl_offset_pct`."""
     with localcontext(_FLOOR):
         unit, fallback = profile.sl_offset_unit, False
         if unit == "ticks":
@@ -459,6 +484,7 @@ def size_leg(
     ref, source = found
     stop = resolve_stop(intent.side, profile, ref, inst, metrics.atr)  # 3, measured from `ref`
     unit, mode = profile.sl_offset_unit, profile.sizing_mode
+    kernel_atr = unit == "atr" and not stop.fallback  # SR-E28-13: the stop's ATR provenance
     seen = LegSizing(
         "ok",
         ref_price=ref,
@@ -466,7 +492,9 @@ def size_leg(
         mid_price=metrics.mid,
         limit_price=intent.price,
         stop=stop,
-        atr=metrics.atr if unit == "atr" and not stop.fallback else None,
+        atr=metrics.atr if kernel_atr else None,
+        atr_source=("kernel" if kernel_atr else "fallback") if unit == "atr" else None,
+        atr_multiple=profile.sl_atr_multiple if kernel_atr else None,
         mode=mode,
         rules=("stop_fallback" if stop.fallback else f"stop_{unit}", mode),
         base_coin=inst.base_coin,
