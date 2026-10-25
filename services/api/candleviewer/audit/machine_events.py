@@ -59,10 +59,12 @@ lossy; fail closed) and reuses `AuditWal` (24-internal-schemas.md §17.6):
   adopt `plugins_for` keep their long-lived machines' keys resident until the keys that have a
   live plugin are pinned (review round 2, a follow-up).
 
-A sink serves one event loop (D6, #913 L2): the one it was built on, or, built outside one, that
-of its first checked call. `append`, `head`, `seed`, `start` and `stop` each refuse a call from
-any other loop, or from a thread that runs none, with `MachineEventWrongLoop` before anything is
-read or written; the first refusal of each `APPEND_FAILURE_COOLDOWN_S` window, on the sink's
+A sink serves one event loop (D6, #913 L2): the one it was built on, or, built outside one (the
+persistence bundle's, as `main.py` builds the app at import), the one its `start()` runs on, which
+alone binds it (SEC-S3L2-07): until then every other call is refused, from any loop, so a first
+caller elsewhere never takes it. `append`, `head`, `seed`, `start` and `stop` each refuse a call
+from any other loop, or from a thread that runs none, with `MachineEventWrongLoop` before anything
+is read or written; the first refusal of each `APPEND_FAILURE_COOLDOWN_S` window, on the sink's
 clock, is logged CRITICAL as a page (CR-S3L2-08). The order lane (29 CV-C13) has a sink of its
 own, on its own loop and WAL file, besides any the serving loop holds (E29-T04's ruling Q13).
 
@@ -310,9 +312,10 @@ class MachineEventWalSink:
         self.max_bytes = max_bytes
         self._clock, self._sleep = clock, sleep
         self._metrics = metrics or SinkMetrics()
-        #: D6: the event loop the sink serves, the one it was built on, else its first checked
-        #: call's (`_on_its_loop`); when a refusal from another loop last paged, and the lock the
-        #: refusing threads take to read and set it (CR-S3L2-08).
+        #: D6: the event loop the sink serves, the one it was built on, else the one its `start()`
+        #: binds (`_on_its_loop`, SEC-S3L2-07); when a refusal from another loop last paged, and
+        #: the lock the refusing threads take to read and set it (CR-S3L2-08), which a binding
+        #: `start()` takes too.
         self._loop = _running_loop()
         self._wrong_loop_paged_at: datetime | None = None
         self._wrong_loop_guard = threading.Lock()
@@ -355,14 +358,18 @@ class MachineEventWalSink:
         """Machine keys whose chain head is held."""
         return len(self._heads)
 
-    def _on_its_loop(self) -> None:
+    def _on_its_loop(self, *, binds: bool = False) -> None:
         """D6: a call from any loop but the sink's own, or from none, is `MachineEventWrongLoop`,
         before anything is read or written, the first of each `APPEND_FAILURE_COOLDOWN_S` window
         on the sink's clock paged, as `_not_running` pages (CR-S3L2-08). A sink built outside a
-        loop serves its first checked call's."""
+        loop serves the loop of the first call that `binds`, its `start()`, taken under the guard
+        so two loops never both take it (SEC-S3L2-07); before that every call is refused, so a
+        first caller elsewhere never takes it."""
         running = _running_loop()
-        if self._loop is None:
-            self._loop = running
+        if binds and running is not None and self._loop is None:
+            with self._wrong_loop_guard:
+                if self._loop is None:
+                    self._loop = running
         if running is None or running is not self._loop:
             now, cooldown = self._clock(), timedelta(seconds=APPEND_FAILURE_COOLDOWN_S)
             with self._wrong_loop_guard:
@@ -447,8 +454,9 @@ class MachineEventWalSink:
     async def start(self) -> None:
         """Lock and open the WAL off the loop, then start the flusher, which replays the leftover
         frames first. Never waits on Postgres. `MachineEventUnavailable` if another process holds
-        the WAL; a corrupt WAL raises `AuditWalCorrupt` (fail closed: the boot stops)."""
-        self._on_its_loop()
+        the WAL; a corrupt WAL raises `AuditWalCorrupt` (fail closed: the boot stops). A sink
+        built outside a loop is bound to this call's here (SEC-S3L2-07)."""
+        self._on_its_loop(binds=True)
         if self._task is not None and not self._task.done():
             return
         if self._lock is None:
