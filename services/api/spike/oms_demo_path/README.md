@@ -1,4 +1,4 @@
-# E29-K01 demo order-path spike harness (#843 A4)
+# E29-K01 demo order-path spike harness (#843 A4): throwaway, never merged
 
 Throwaway, on `spike/oms-demo-path`, **never merged** (#843: "Branch left unmerged and marked
 throwaway"). It measures the exchange's **demo** order path and the private stream's parity
@@ -18,10 +18,10 @@ something without a change, the gap is listed at the end with its workaround.
 | Mode        | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cycles`    | `--cycles` (>=200 online) cycles over `--min-hours` (>=4 online), BTCUSDT only: a GTC limit order `--away-bps` from the reference price **with its native `stop_loss`** `--sl-bps` away on the protective side (C-2.6); an amend one tick further away; the drive, an amend to the touch, joining it (a maker that may fill in part) or crossing it by `--cross-bps` (a taker), alternating; the outcome (`filled`, `partial`, `unfilled`) read back over REST; a cancel of any remainder; a reduce-only market close of what filled; a REST check that the book is flat; the execution list for the cycle's window. Every step, transition and outcome is counted. |
-| `soak`      | The private stream open for `--hours` (24 for the ticket), no orders: dials, `auth` grants and refusals, pongs and heartbeats, `down`s, gaps, the longest silence. The offset is re-measured every 10 minutes.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `soak`      | The private stream open for `--hours` (24 for the ticket), no orders: dials, `auth` grants and refusals, pongs and heartbeats, `down`s, gaps, the longest silence. The offset is re-measured every 10 minutes. Its idle phase is a block of its own (below).                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `shapes`    | The duplicate `orderLinkId` reply and the `10002` reply (below); `10018` is never provoked.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `retention` | On day 8 or later of a `cycles` run: its order history from `--since-ms` (its `started_at_ms`), by state and age (24 §8.3 rule 6).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `report`    | The tables of a run, from its scrubbed `summary.json` (`--run-dir`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `report`    | The tables of a run, from its scrubbed `summary.json` (`--run-dir`), and `adr-0006-addendum.md` in `--out`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 The order size is `--qty-multiple` minimum quantities, 2 by default: BTCUSDT's minimum is one
 quantity step, so a minimum-size order fills all or nothing and no partial fill could be seen.
@@ -154,7 +154,19 @@ anything reaches `packages/fixtures`, in the findings PR.
   `rest_transport` seam, from send to the whole reply, on the monotonic clock. **Our overhead** is
   each port call's latency minus the RTTs of its exchanges: it holds M2's key read and the
   fsynced audit append before each signature, the governor and the parse (budget #4's <=50 ms).
-  `summary.budget4` states p95s against 250 / 50 / 300 ms.
+- **The signing share**, on its own: the borrower `compose` hands `ExchangeBybitService` is
+  wrapped (`measure.timed_borrower`, offline over the in-memory M2 the same way), and each M2
+  `sign` call is timed: the key read, the fsynced audit append and the MAC. The wrapper passes
+  the call through and hands back what M2 returns untouched; no signature or key id is read or
+  recorded. `summary.signing_ms` holds n, p50, p95 and max per port call class (a REST signing
+  under the call in flight), `sign_ws_auth` for the stream's `auth`, `sign_rest` for a port no
+  guard wraps (the `10002` probe), and `overall`; `spike_signing_seconds` exports them.
+- **Budget #4 judges itself** (`summary.budget4`, the report's first table): the three p95s
+  (the create RTT at the seam, our overhead, end to end at the port) with the signing share
+  beside our overhead, the rule as #843 agreed it, "p95 create RTT > 250 ms ⇒ budget #4
+  renegotiated in `06` §5.2, never absorbed by our 50 ms", and the run's verdict: `within`,
+  `renegotiate` or `no data` (no create timed). An offline run's verdict is never evidence
+  (`evidence: false`).
 - **`order_submit_seconds{transport="rest"}`** (the catalogue entry, `SUBMIT_BUCKETS`): each
   create's call-to-ack latency at the port, our overhead included, as the OMS will measure it
   (there is no UI click here). `bybit_clock_drift_ms` carries the offset (exchange minus host);
@@ -169,6 +181,27 @@ anything reaches `packages/fixtures`, in the findings PR.
   whole run: `rest_only` (target zero) and `stream_only`; `execution.fast` separately.
 - **Ordering** (23 §S5): an execution that arrives when an order event has already reported its
   fill.
+- **Two ordering counts, kept apart** (`summary.private.ordering_counts`): "Execution before its
+  order transition", broken, is a venue reorder,
+  `venue_reorder_execution_after_its_order_transition` (the S5 count above; non-zero: E29-T05
+  gains a reorder buffer). "Execution only via the backfill" is a dropped push,
+  `dropped_push_execution_only_via_backfill` (parity's `rest_only`; non-zero: ADR-0006's
+  reconciliation cadence is revised). The old keys stay.
+- **The soak's idle phase** (`summary.soak.idle_phase`, a report section of its own): the window
+  the stream was held, the orders sent (every order call the guard let through: none), dials,
+  reconnects and outages, the ping gaps (between two pongs) and message gaps (between two
+  frames) as n, p50, p95, max and the count over 7.5 s (`LONG_SILENCE_S`: past the 5 s ping by
+  half the slack to the 10 s watchdog), and the executions only the backfill listed over the
+  window: at its end the port's own `executions` reads `GET /v5/execution/list` from when the
+  stream came up to now, on the exchange's clock, widened at both ends by the offset's own
+  uncertainty (half its best round trip plus 1 ms), and counts those the stream never
+  delivered. Zero missed executions: `met` (0), `not met` (any: that is the finding) or
+  `no data` (the read failed).
+- **The ADR-0006 addendum**: `report` writes `adr-0006-addendum.md` in `--out`, a template of
+  §Validation's Spike S3 addendum filled with the run's numbers: the budget #4 verdict, its
+  three p95s and the signing share; the two ordering counts under their own headings; the
+  idle phase; the error shapes; the retention reading. `missing` marks what the run did not
+  measure, and every section of an offline run says it is not evidence.
 
 ## Error shapes (brief item 4)
 
@@ -191,13 +224,18 @@ The commands target #3180's proposed shape; every line marked **CHECK #3180** is
 when it merges. Never read, print or copy a secret file, and never run `docker compose config`
 (it prints the resolved environment, the DSN included).
 
+**For the whole of every run:**
+
+- No manual trading on that demo account during a run.
+- cv-api stopped or untouched: it opens no private stream and runs no reconciler, so it never acts on the harness's orders.
+
 **Before anything**: A1 to A3 merged; the stack up and healthy from the checkout at the pinned
 `main` sha (`<stack>`); the owner imported the demo key through
 `POST /exchange-accounts/{id}/keys`; you hold its `exchange_accounts.id` (`<ACCOUNT_ID>`) and
 `api_keys.id` (`<KEY_ID>`); the coordinator called the window; the bench runner is idle
 (`systemctl status 'actions.runner.*'` shows no job, and the [BENCH-BUSY] thread is quiet: a
 running bench leg finishes first, none starts during the window; RTT beside a bench leg is not
-evidence). Nobody trades the demo account (venue UI or cv-api) during a run.
+evidence).
 
 1. **The spike checkout** at `<spike>` on `spike/oms-demo-path`, rebased onto the pinned sha if
    it differs from this branch's base, with its offline gates re-run (README "Offline"); the
@@ -246,8 +284,9 @@ evidence). Nobody trades the demo account (venue UI or cv-api) during a run.
    (`stop_grace_period` 60 s). If `summary.json` shows `shutdown.flat: false`, or there is no
    summary, close the position in the venue's web UI; its native stop protects it meanwhile; the
    next run's preflight refuses until the account is flat.
-7. **Report**: the tables, then copy `/srv/cv-spike/out/<run>` off the host for the findings PR
-   (the fixture candidates are reviewed there first):
+7. **Report**: the tables on stdout and `adr-0006-addendum.md` (the §Validation template, filled)
+   in `--out`, then copy `/srv/cv-spike/out/<run>` off the host for the findings PR (the fixture
+   candidates are reviewed there first):
 
    ```sh
    $SPIKE report --out /var/lib/candleviewer/spike-out/<run> \

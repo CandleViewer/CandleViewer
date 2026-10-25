@@ -12,7 +12,8 @@ and, for its first few replies per call class and code, a fixture candidate; nev
 `RecordingConnector` wraps the private-stream connector: it refuses any URL but the demo
 stream's, counts dials, and its sockets register each `auth` op's key id and signature with the
 scrubber before the frame leaves, never record an `auth` frame either way, count pongs and
-`auth` grants and refusals, track the longest silence, and tee the rest, scrubbed.
+`auth` grants and refusals, keep each silence between two frames (the message gaps) and between
+two pongs (the ping gaps) for their distributions, and tee the rest, scrubbed.
 
 Both sit below the adapter's own masking (`rest._mask`, `private_stream._classify`): the raw
 traffic holds the key id, the signature, `orderId`, `orderLinkId`, `execId` and the push ids,
@@ -30,9 +31,9 @@ from typing import Final
 
 import httpx
 
-from candleviewer.exchange.bybit.private_stream import StreamSocket
+from candleviewer.exchange.bybit.private_stream import PING_INTERVAL_S, WATCHDOG_S, StreamSocket
 from spike.oms_demo_path.config import DEMO_PRIVATE_WS, DEMO_REST_HOST
-from spike.oms_demo_path.measure import Timings, call_class
+from spike.oms_demo_path.measure import Timings, call_class, gap_stats
 from spike.oms_demo_path.outputs import RunOutputs
 from spike.oms_demo_path.safety import Refused
 from spike.oms_demo_path.scrub import Scrubber
@@ -41,6 +42,12 @@ from spike.oms_demo_path.scrub import Scrubber
 FIXTURES_PER_CODE: Final = 3
 #: The most of a reply the seam reads (the adapter caps signed replies at 1 MiB itself).
 REPLY_CAP: Final = 4 * 1024 * 1024
+#: A silence counted as long: past the adapter's 5 s ping by half its slack to the 10 s watchdog
+#: (7.5 s), so its pong came late though the socket lived. A silence of the watchdog's length
+#: is never seen: the socket ends first, and the next frame comes on another.
+LONG_SILENCE_S: Final = PING_INTERVAL_S + (WATCHDOG_S - PING_INTERVAL_S) / 2
+#: Silences kept per distribution (C-2.18: a bound; a 24 h soak's pongs, every 5 s, are 17 280).
+GAPS_KEPT: Final = 100_000
 _TRANSFER_HEADERS: Final = frozenset({"content-encoding", "content-length", "transfer-encoding"})
 _KEY_HEADER: Final = "X-BAPI-API-KEY"
 _SIGN_HEADER: Final = "X-BAPI-SIGN"
@@ -203,6 +210,9 @@ class RecordingConnector:
         self.dials = 0
         self.counts: Counter[str] = Counter()
         self.max_silence_s = 0.0
+        #: Each silence between two frames of one socket, and between two of its pongs (s).
+        self.message_gaps_s: list[float] = []
+        self.ping_gaps_s: list[float] = []
 
     async def __call__(self, url: str) -> StreamSocket:
         if url != DEMO_PRIVATE_WS:
@@ -210,6 +220,14 @@ class RecordingConnector:
         self.dials += 1
         self._outputs.event("dial", n=self.dials)
         return RecordingSocket(await self._inner(url), self)
+
+    def gaps(self) -> dict[str, object]:
+        """The ping and message gap distributions, and the threshold of a long silence."""
+        return {
+            "long_silence_s": LONG_SILENCE_S,
+            "ping_gaps_s": gap_stats(self.ping_gaps_s, LONG_SILENCE_S),
+            "message_gaps_s": gap_stats(self.message_gaps_s, LONG_SILENCE_S),
+        }
 
     def sent(self, frame: str) -> None:
         message = _decoded(frame.encode())
@@ -221,20 +239,28 @@ class RecordingConnector:
                     self._scrubber.secret(value if isinstance(value, str) else None)
         self.counts[f"sent:{op}"] += 1
 
-    def received(self, frame: str, silence_s: float) -> None:
+    def received(self, frame: str, silence_s: float) -> str | None:
+        """Count and tee one frame; its label (`op_pong` for a pong), `None` if not kept."""
         self.max_silence_s = max(self.max_silence_s, silence_s)
+        _kept(self.message_gaps_s, silence_s)
         message = _decoded(frame.encode())
         if not isinstance(message, dict):
             self.counts["received:unreadable"] += 1
-            return
+            return None
         op, topic = message.get("op"), message.get("topic")
         if op == "auth":
             granted = message.get("success") is True
             self.counts["auth:granted" if granted else "auth:refused"] += 1
-            return  # never recorded (#843 security notes)
+            return None  # never recorded (#843 security notes)
         label = str(topic) if isinstance(topic, str) else f"op_{op}"
         self.counts[f"received:{label}"] += 1
         self._outputs.frame(label.replace(".", "_"), frame)
+        return label
+
+
+def _kept(values: list[float], value: float) -> None:
+    if len(values) < GAPS_KEPT:
+        values.append(value)
 
 
 class RecordingSocket:
@@ -244,6 +270,7 @@ class RecordingSocket:
         self._inner = inner
         self._owner = owner
         self._last = owner._monotonic()
+        self._last_pong: float | None = None
 
     async def send(self, frame: str) -> None:
         self._owner.sent(frame)
@@ -252,8 +279,12 @@ class RecordingSocket:
     async def recv(self, max_bytes: int) -> str:
         frame = await self._inner.recv(max_bytes)
         now = self._owner._monotonic()
-        self._owner.received(frame, now - self._last)
+        label = self._owner.received(frame, now - self._last)
         self._last = now
+        if label == "op_pong":
+            if self._last_pong is not None:
+                _kept(self._owner.ping_gaps_s, now - self._last_pong)
+            self._last_pong = now
         return frame
 
     async def close(self) -> None:

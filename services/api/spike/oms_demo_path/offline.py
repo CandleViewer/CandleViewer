@@ -595,6 +595,36 @@ class CorpusVenue:
             )
             self.orders[order.order_id] = order
 
+    def plant_unpushed_fill(self) -> str:
+        """One fill the execution list holds and the stream never pushed, of an order no run
+        placed (a manual taker fill, no `orderLinkId`): the missed execution a soak's idle phase
+        must count. Its `execId`."""
+        now = self.now_ms()
+        order = VenueOrder(
+            order_id=str(uuid4()),
+            link="",
+            side="Buy",
+            order_type="Market",
+            qty=self.step,
+            price=Decimal(0),
+            tif="IOC",
+            reduce_only=False,
+            stop_loss=None,
+            created_ms=now,
+            updated_ms=now,
+            status="Filled",
+            filled=self.step,
+            value=self.step * self.ask,
+        )
+        exec_id = str(uuid4())
+        row = self.corpus.rest("trading-execution-list")["result"]["list"][0]
+        fee = (self.step * self.ask * _TAKER).quantize(Decimal("0.00000001"))
+        self.executions.append(
+            self._exec_row(row, order, exec_id, self.step, self.ask, fee, maker=False)
+        )
+        self.dropped += 1
+        return exec_id
+
 
 # -- the stack the harness meets on the host, in memory ----------------------------------------
 

@@ -6,8 +6,9 @@ create's call-to-ack latency at the port, our overhead included, as the OMS will
 is no UI click here. `bybit_clock_drift_ms` (planned, E08) carries the measured offset, exchange
 minus host. The adapter's own series are re-exported as cv-api serves them
 (`export_ingestion_metrics`). What the catalogue has no name for is `spike_`-prefixed: the venue
-RTT and our overhead per call class, the private stream's latency per kind, the parity and
-ordering counts and the cycle outcomes. No label holds an identifier (`DISALLOWED_LABEL_NAMES`).
+RTT and our overhead per call class, M2's signing time per call class, the private stream's
+latency per kind, the parity and ordering counts and the cycle outcomes. No label holds an
+identifier (`DISALLOWED_LABEL_NAMES`).
 """
 
 from __future__ import annotations
@@ -69,6 +70,15 @@ def export(
     for name, values in timings.overhead_ms.items():
         for ms in values:
             overhead.labels(name).observe(ms / 1000)
+    signing = metrics.histogram(
+        "spike_signing_seconds",
+        "One M2 sign call (key read, fsynced audit append, MAC), by call class (E29-K01).",
+        ("call",),
+        buckets=OVERHEAD_BUCKETS,
+    )
+    for name, values in timings.signing_ms.items():
+        for ms in values:
+            signing.labels(name).observe(ms / 1000)
     private = metrics.histogram(
         "spike_private_latency_seconds",
         "Venue time to local receipt, offset-corrected, by private event kind (E29-K01).",

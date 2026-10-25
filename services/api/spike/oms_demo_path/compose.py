@@ -13,10 +13,12 @@
    may destroy retired seeds, generate a key or re-wrap one (`_export_custody.open_at_boot`), so
    the harness never passes it; with no previous KEK handle it loads one KEK and re-wraps nothing.
    Then its health must be OK and the harness's own gate unlatched.
-5. `ExchangeBybitService(credentials=bundle.exchange_borrower, rest_transport=...,
-   private_ws_connect=..., environment="demo").trading_port("demo", clock_offset_ms=...)`: the
-   real port, signed by M2 under `sign_rest` and `sign_ws_auth`. The harness names the key by its
-   `api_keys.id` and never holds a secret.
+5. `ExchangeBybitService(credentials=timed_borrower(bundle.exchange_borrower, timings),
+   rest_transport=..., private_ws_connect=..., environment="demo").trading_port("demo",
+   clock_offset_ms=...)`: the real port, signed by M2 under `sign_rest` and `sign_ws_auth`
+   through a timing wrapper (`measure.timed_borrower`: each `sign` call timed, the call and its
+   result untouched), offline over the in-memory M2 the same way. The harness names the key by
+   its `api_keys.id` and never holds a secret.
 
 `close` stops in reverse, the flatten having run first (`run.py`): the adapter's streams, the
 ports, the transport, M2 (the KEK zeroed), then the audit writer, flushed into Postgres with what
@@ -51,6 +53,7 @@ from candleviewer.secrets import (
     KekCheckResult,
     prove_kek_possession,
 )
+from spike.oms_demo_path.measure import Timings, timed_borrower
 from spike.oms_demo_path.safety import Refused, check_environment
 
 if TYPE_CHECKING:
@@ -120,6 +123,7 @@ class Composed:
     venue: ExchangeBybitService
     port: BybitTradingPort
     transport: httpx.AsyncBaseTransport
+    timings: Timings
     ports: list[BybitTradingPort] = field(default_factory=list)
     kek_version: int | None = None
 
@@ -144,7 +148,10 @@ async def compose(
     clock_offset_ms: Callable[[], int | None],
     build_m2: BuildM2 = production_m2,
     prove: Prove = prove_kek_possession,
+    timings: Timings | None = None,
 ) -> Composed:
+    """Steps 1 to 5 of the module docstring; `timings` takes the signing times (a fresh one by
+    default: the borrower is wrapped either way)."""
     check_environment(settings)
     if settings.kek_prev_handle:
         raise Refused("a previous KEK handle is set (a rotation window): the harness waits")
@@ -165,8 +172,9 @@ async def compose(
         await bundle.lifecycle.stop(5.0)
         await audit.stop(5.0)
         raise
+    timed = Timings() if timings is None else timings
     venue = ExchangeBybitService(
-        credentials=bundle.exchange_borrower,
+        credentials=timed_borrower(bundle.exchange_borrower, timed),
         rest_transport=rest_transport,
         private_ws_connect=private_ws_connect,
         environment="demo",
@@ -181,6 +189,7 @@ async def compose(
         venue=venue,
         port=port,
         transport=rest_transport,
+        timings=timed,
         ports=[port],
         kek_version=proof.version,
     )

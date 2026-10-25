@@ -4,13 +4,17 @@
   `rest_transport` seam (`recorder.RecordingTransport` adds them to the call in flight through a
   context variable), so our overhead is the call's latency minus its round trips: budget #4's
   50 ms share (`06-performance-and-load-standard.md` §5.2). M2's key read and fsynced audit
-  append before each signature fall in that overhead (`secrets/broker.py`, `audit/writer.py`).
+  append before each signature fall in that overhead (`secrets/broker.py`, `audit/writer.py`),
+  and are also timed on their own: `timed_borrower` wraps the borrower the adapter is handed and
+  times each `sign` call, by the port call in flight (else by M2's purpose): the signing share.
 - `ClockOffset`: exchange minus host, from the wallet read's envelope `time` against the
   midpoint of its exchange at the seam; the sample with the smallest round trip wins.
 - `StreamMonitor`: the private stream's items in arrival order: latency from the venue's own
   time to local receipt, corrected by the offset; executions seen on the stream against the
-  `GET /v5/execution/list` backfill (parity); an execution arriving after the order transition
-  it caused (23 §S5); order state transitions; and the stream's statuses.
+  `GET /v5/execution/list` backfill (parity); order state transitions; the stream's statuses;
+  and two counts kept apart (`ordering_counts`): a venue reorder, an execution arriving after
+  the order transition it caused (23 §S5), and a dropped push, an execution only the backfill
+  listed.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from candleviewer.exchange.base.models import (
     Execution,
@@ -35,6 +39,13 @@ from candleviewer.exchange.base.models import (
     PrivateStreamStatus,
     Wallet,
 )
+from candleviewer.secrets import CredentialBorrower
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from candleviewer.secrets import Purpose, RequestSignature
+    from candleviewer.secrets.signing import SigningMessage
 
 #: The call classes the brief names, by REST path; any other path is `other`.
 CALL_CLASSES: Final = {
@@ -50,27 +61,40 @@ CALL_CLASSES: Final = {
 }
 
 
+#: The two ordering counts #843 keeps apart, by their record names (`ordering_counts`).
+REORDER_COUNT: Final = "venue_reorder_execution_after_its_order_transition"
+DROPPED_COUNT: Final = "dropped_push_execution_only_via_backfill"
+
+
 def call_class(path: str) -> str:
     return CALL_CLASSES.get(path, "other")
 
 
-def stats(values: Iterable[float]) -> dict[str, float]:
-    """n, p50, p95, p99 (nearest rank), min and max, in the values' unit, rounded to 0.1."""
+def stats(values: Iterable[float], digits: int = 1) -> dict[str, float]:
+    """n, p50, p95, p99 (nearest rank), min and max, in the values' unit, rounded to `digits`."""
     ordered = sorted(values)
     if not ordered:
         return {"n": 0}
 
     def rank(p: float) -> float:
-        return round(ordered[max(0, math.ceil(p * len(ordered)) - 1)], 1)
+        return round(ordered[max(0, math.ceil(p * len(ordered)) - 1)], digits)
 
     return {
         "n": len(ordered),
         "p50": rank(0.50),
         "p95": rank(0.95),
         "p99": rank(0.99),
-        "min": round(ordered[0], 1),
-        "max": round(ordered[-1], 1),
+        "min": round(ordered[0], digits),
+        "max": round(ordered[-1], digits),
     }
+
+
+def gap_stats(values: Sequence[float], threshold_s: float) -> dict[str, float]:
+    """A distribution of silences (s): n, p50, p95 and max to the ms, and how many were longer
+    than `threshold_s` (`over_threshold`)."""
+    held = stats(values, digits=3)
+    out = {k: held[k] for k in ("n", "p50", "p95", "max") if k in held}
+    return out | {"over_threshold": sum(1 for v in values if v > threshold_s)}
 
 
 @dataclass
@@ -85,13 +109,15 @@ CURRENT: ContextVar[CallRecord | None] = ContextVar("spike_current_call", defaul
 
 
 class Timings:
-    """Port latency, venue RTT and our overhead (port minus RTT), per call class, in ms."""
+    """Port latency, venue RTT, our overhead (port minus RTT) and M2's signing time, per call
+    class, in ms."""
 
     def __init__(self, monotonic: Callable[[], float] = time.monotonic) -> None:
         self._monotonic = monotonic
         self.port_ms: defaultdict[str, list[float]] = defaultdict(list)
         self.rtt_ms: defaultdict[str, list[float]] = defaultdict(list)
         self.overhead_ms: defaultdict[str, list[float]] = defaultdict(list)
+        self.signing_ms: defaultdict[str, list[float]] = defaultdict(list)
 
     @asynccontextmanager
     async def call(self, name: str) -> AsyncIterator[CallRecord]:
@@ -114,12 +140,39 @@ class Timings:
         if record is not None:
             record.rtts_ms.append(rtt_ms)
 
+    @asynccontextmanager
+    async def signing(self, purpose: Purpose) -> AsyncIterator[None]:
+        """One M2 `sign` call, timed: a REST signing under the port call in flight, else (the
+        stream's `auth`, a port no guard wraps) under M2's purpose."""
+        record = CURRENT.get()
+        name = record.name if record is not None and purpose == "sign_rest" else purpose
+        started = self._monotonic()
+        try:
+            yield
+        finally:
+            self.signing_ms[name].append((self._monotonic() - started) * 1000)
+
     def summary(self) -> dict[str, dict[str, dict[str, float]]]:
+        every = [ms for values in self.signing_ms.values() for ms in values]
+        signing = {k: stats(v) for k, v in sorted(self.signing_ms.items())}
         return {
             "rtt_ms": {k: stats(v) for k, v in sorted(self.rtt_ms.items())},
             "port_ms": {k: stats(v) for k, v in sorted(self.port_ms.items())},
             "overhead_ms": {k: stats(v) for k, v in sorted(self.overhead_ms.items())},
+            "signing_ms": signing | {"overall": stats(every)},
         }
+
+
+def timed_borrower(borrower: CredentialBorrower, timings: Timings) -> CredentialBorrower:
+    """`borrower`, each `sign` call timed into `timings` (M2's key read, its fsynced audit append
+    and the MAC: the signing share of our overhead). The call goes through unchanged, and what
+    it returns is handed back untouched: no signature or key id is read, kept or recorded."""
+
+    async def sign(key_id: UUID, message: SigningMessage, purpose: Purpose) -> RequestSignature:
+        async with timings.signing(purpose):
+            return await borrower.sign(key_id, message, purpose=purpose)
+
+    return CredentialBorrower(sign)
 
 
 class ClockOffset:
@@ -273,6 +326,15 @@ class StreamMonitor:
             "duplicates": self.duplicates,
         }
 
+    def ordering_counts(self) -> dict[str, int]:
+        """The two counts #843 keeps apart, each answering its own question: a venue reorder
+        (S5's execution before its order transition, broken: E29-T05's reorder buffer) and a
+        dropped push (an execution only the backfill listed: ADR-0006's reconciliation)."""
+        return {
+            REORDER_COUNT: self.after_order,
+            DROPPED_COUNT: len(self.rest_execs - self.stream_execs),
+        }
+
     def summary(self) -> dict[str, object]:
         return {
             "kinds": dict(sorted(self.kinds.items())),
@@ -287,4 +349,5 @@ class StreamMonitor:
                 "executions": len(self.stream_execs),
                 "order_events": self.kinds["order"],
             },
+            "ordering_counts": self.ordering_counts(),
         }

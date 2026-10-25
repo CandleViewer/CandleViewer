@@ -101,6 +101,14 @@ MODES: Final = {
 BUDGET_RTT_MS: Final = 250.0
 BUDGET_OVERHEAD_MS: Final = 50.0
 BUDGET_TOTAL_MS: Final = 300.0
+#: The decision rule #843 agreed up front (Technical notes), as the record prints it.
+BUDGET4_RULE: Final = (
+    "p95 create RTT > 250 ms ⇒ budget #4 renegotiated in `06` §5.2, never absorbed by our 50 ms"
+)
+#: Where a run falls on that rule.
+WITHIN: Final = "within"
+RENEGOTIATE: Final = "renegotiate"
+NO_DATA: Final = "no data"
 MOUNTINFO: Final = Path("/proc/self/mountinfo")
 
 
@@ -156,17 +164,33 @@ async def offline_proof(settings: Settings, kcv: KcvStore) -> KekCheckResult:
     return await prove_kek_possession(settings, kcv, harden=assume_hardened)
 
 
-def budget(timings: Timings) -> dict[str, object]:
+def budget4_verdict(create_rtt_p95_ms: float | None) -> str:
+    """The side of `BUDGET4_RULE` a run fell on, from its p95 create RTT as printed (0.1 ms):
+    above 250 ms `renegotiate`, else `within`; `no data` when no create was timed."""
+    if create_rtt_p95_ms is None:
+        return NO_DATA
+    return RENEGOTIATE if create_rtt_p95_ms > BUDGET_RTT_MS else WITHIN
+
+
+def budget(timings: Timings, *, offline: bool) -> dict[str, object]:
+    """Budget #4's table: the three p95s (create RTT at the seam, our overhead, end to end at the
+    port), the signing share beside our overhead, the rule and the run's verdict. An offline
+    run's numbers are never evidence (`evidence: false`)."""
     rtt = stats(timings.rtt_ms.get("create", [])).get("p95")
     overhead = stats(timings.overhead_ms.get("create", [])).get("p95")
     total = stats(timings.port_ms.get("create", [])).get("p95")
+    signing = stats(timings.signing_ms.get("create", []))
     return {
+        "rule": BUDGET4_RULE,
+        "verdict": budget4_verdict(rtt),
+        "evidence": not offline,
         "create_rtt_p95_ms": rtt,
         "create_overhead_p95_ms": overhead,
-        "create_port_p95_ms": total,
+        "create_signing_ms": {k: signing.get(k) for k in ("n", "p50", "p95", "max")},
+        "create_end_to_end_p95_ms": total,
         "rtt_within_250ms": None if rtt is None else rtt <= BUDGET_RTT_MS,
         "overhead_within_50ms": None if overhead is None else overhead <= BUDGET_OVERHEAD_MS,
-        "end_to_end_within_300ms": None if total is None else total <= BUDGET_TOTAL_MS,
+        "end_to_end_within_300ms": None if total is None else total < BUDGET_TOTAL_MS,
     }
 
 
@@ -253,6 +277,7 @@ async def open_harness(
             clock_offset_ms=offset.read,
             build_m2=build,
             prove=prove,
+            timings=timings,
         )
     except BaseException:  # nothing composed: what was opened for it is closed here
         if recorder is not None:
@@ -304,7 +329,7 @@ async def open_harness(
 def _summarise(h: Harness, summary: dict[str, Any]) -> None:
     timings = h.port.timings
     summary |= timings.summary()
-    summary["budget4"] = budget(timings)
+    summary["budget4"] = budget(timings, offline=bool(summary.get("offline")))
     summary["private"] = h.stream.summary()
     summary["clock"] = {
         "offset_ms": h.offset.value,
@@ -324,7 +349,7 @@ def _summarise(h: Harness, summary: dict[str, Any]) -> None:
             "dials": h.connector.dials,
             "frames": dict(sorted(h.connector.counts.items())),
             "max_silence_s": round(h.connector.max_silence_s, 3),
-        }
+        } | h.connector.gaps()
 
 
 async def run(
@@ -337,7 +362,9 @@ async def run(
     """One run (see the module docstring); `venue` is a test's own corpus venue."""
     started = clock_ms()
     if cfg.mode == "report":
-        sys.stdout.write(report.render(cfg.run_dir or cfg.out))
+        run_dir = cfg.run_dir or cfg.out
+        sys.stdout.write(report.render(run_dir))
+        report.write_addendum(run_dir, cfg.out)
         return 0
     check_online_args(cfg, now_ms=started)
     check_venue_urls(SIGNED_REST_BASES, PRIVATE_WS_URLS)
