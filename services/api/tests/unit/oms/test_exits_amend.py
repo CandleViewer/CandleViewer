@@ -1,7 +1,8 @@
 """The exit service's amend (E29-T04 slice 4, `oms.exits`; 22 `amendOrder`; rulings Q3 to Q5 and
-Q10, the S4-A decisions D1 and D3, SEC-S4C2B-01): over the real B1 facade, the real command port
-and the fake venue (`submit_rig`), the rig's limit buy entry resting `submitted` (0.010 at 60000,
-its stop 58000 and its take-profit 64000, Full mode, unfilled)."""
+Q10, the S4-A decisions D1 and D3, SEC-S4C2B-01 and the orchestrator's ruling of 2026-10-25 00:27Z
+(1)): over the real B1 facade, the real command port and the fake venue (`submit_rig`), the rig's
+limit buy entry resting `submitted` (0.010 at 60000, its stop 58000 and its take-profit 64000,
+Full mode, unfilled)."""
 
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from candleviewer.oms.errors import (
     VersionConflict,
 )
 from candleviewer.oms.exits import AmendTerms, ExitCaller, risk_increasing
-from candleviewer.oms.ports import StopOffset
+from candleviewer.oms.ports import RequestRecord, StopOffset
 from candleviewer.risk.models import RiskDecision, RiskRefusal
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.accounts import OwnerScope
@@ -31,9 +32,19 @@ from candleviewer.storage.repositories.orders import OrderRow, ScopedOrder
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms import submit_rig as sr
 from tests.unit.oms.submit_rig import SubmitRig
-from tests.unit.oms.test_exits import OWNER, actor, exits_of, placed, refuse_after, requests
+from tests.unit.oms.test_exits import (
+    OWNER,
+    REQUEST,
+    actor,
+    exits_of,
+    placed,
+    refuse_after,
+    requests,
+)
 
 CALLER = ExitCaller(OwnerScope(OWNER), actor(OWNER))
+#: A caller whose request carries its correlation id, as the route's does (`exit_caller`).
+TRACED = ExitCaller(OwnerScope(OWNER), actor(OWNER), REQUEST)
 D = Decimal
 
 
@@ -524,17 +535,29 @@ async def test_sec_s4c2b_01_a_stale_read_is_judged_on_the_order_as_it_stands(
 async def test_an_amend_a_step_made_risk_increasing_since_the_routes_read_is_refused(
     rig: SubmitRig, race: str, tagged: bool, status: int, code: str, retry: int | None
 ) -> None:
-    """24 Sec.8.4 steps 5 and 11: the route judged the arm token and the switches (steps 6 and 10)
-    on step 4's read, which took the amend for no raise; the order as it stands makes it one, so
-    it is refused before the send, its gates passing: `409 conflict` with `Retry-After: 1` without
-    `If-Match`, for the client to send it again, `412` with it; recorded, nothing sent."""
+    """24 Sec.8.4 steps 5 and 11, the orchestrator's ruling of 2026-10-25 00:27Z (1): the route
+    judged the arm token and the switches (steps 6 and 10) on step 4's read, which took the amend
+    for no raise; the order's row, amended since, makes it one, so step 11 refuses it before the
+    send, its gates passing: `409 conflict` with `Retry-After: 1` without `If-Match`, for the
+    client to send it again, `412` with it. Nothing is sent and nothing recorded as a success: one
+    record, `orders.amend` denied with its code, naming the principal, the request, the step
+    (`class`) and the reason (`reclassified`)."""
     found = await stale(rig, race)
+    await rig.quiet()
     tag = rig.machines.version(found.order.id) if tagged else None
     _, then = _RACES[race]
-    got = await exits_of(rig).amend(found, then, caller=CALLER, expected_seq=tag)
+    written = len(rig.records())
+    got = await exits_of(rig).amend(found, then, caller=TRACED, expected_seq=tag)
     assert (got.kind, got.status, got.code, got.retry_after_s) == ("refused", status, code, retry)
     assert len(amends(rig)) == 1
-    assert requests(rig, "orders.amend")[-1] == ("denied", code)
+    [denied] = rig.records()[written:]
+    assert isinstance(denied, RequestRecord)
+    assert (denied.action, denied.outcome, denied.reason) == ("orders.amend", "denied", code)
+    assert (denied.actor, denied.request_id) == (TRACED.actor, REQUEST)
+    assert denied.detail == {
+        "operation": "amend", "code": code, "order_link_id": found.order.order_link_id,
+        "step": "class", "reason": "reclassified",
+    }  # fmt: skip
 
 
 @pytest.mark.parametrize(
@@ -566,6 +589,8 @@ async def test_a_step_between_the_re_read_and_the_send_refuses_the_send_under_th
     assert amends(rig) == []
     assert requests(rig, "orders.amend") == [("success", "user"), ("denied", code)]
     assert (rig.machines.state(found.order.id) or ("",))[0] == "partially_filled"
+    moved = rig.records("orders.amend")[-1]  # a version moved on, no class re-check: as it was
+    assert isinstance(moved, RequestRecord) and not {"step", "reason"} & set(moved.detail)
 
 
 async def test_an_amend_without_if_match_sends_the_version_it_read_and_with_it_the_tag(
@@ -594,6 +619,9 @@ async def test_an_amend_without_if_match_sends_the_version_it_read_and_with_it_t
     old = await exits.amend(again, AmendTerms(price=D("60300")), caller=CALLER, expected_seq=tag)
     assert (old.status, old.code, carried) == (412, "version_conflict", [seen, tag])
     assert len(amends(rig)) == 2
+    moved = rig.records("orders.amend")[-1]  # a stale tag, no class re-check: as it was
+    assert isinstance(moved, RequestRecord) and moved.outcome == "denied"
+    assert not {"step", "reason"} & set(moved.detail)
 
 
 class _Rereads:

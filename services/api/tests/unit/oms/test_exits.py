@@ -9,7 +9,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, cast, get_args
 from uuid import UUID, uuid4
 
 import pytest
@@ -861,3 +861,24 @@ async def test_deny_names_the_routes_refusing_step_only_when_it_is_given(rig: Su
     [guarded, plain] = [record.detail for record in records]
     assert guarded["step"] == "guard" and "step" not in plain
     assert {k: v for k, v in guarded.items() if k != "step"} == plain
+
+
+async def test_deny_names_the_class_re_check_and_its_reason_beside_the_code(rig: SubmitRig) -> None:
+    """The orchestrator's ruling of 2026-10-25 00:27Z (1): step 11's class re-check names its
+    step, `class`, and its reason, `reclassified` (the class changed since step 4), in its
+    record's detail beside the code, which stays the record's reason; the action stays
+    `orders.amend`, as only the gate's own `reason` selects `account.disabled_by_policy`, and a
+    refusal given neither names neither."""
+    assert ex.RECLASSIFIED == "reclassified" and "class" in get_args(ex.ExitStep.__value__)
+    row, exits = await placed(rig), exits_of(rig)
+    await exits.deny(
+        row, "amend", ex._MOVED, actor=actor(), request_id=REQUEST, step="class",
+        reason=ex.RECLASSIFIED,
+    )  # fmt: skip
+    await exits.deny(row, "amend", ex._MOVED, actor=actor(), request_id=REQUEST)
+    [named, plain] = [r for r in rig.records("orders.amend") if isinstance(r, RequestRecord)]
+    assert [(r.outcome, r.reason) for r in (named, plain)] == [("denied", "conflict")] * 2
+    assert (named.detail["step"], named.detail["reason"]) == ("class", "reclassified")
+    assert {k: v for k, v in named.detail.items() if k not in ("step", "reason")} == plain.detail
+    assert not {"step", "reason"} & set(plain.detail)
+    assert requests(rig, "account.disabled_by_policy") == []
