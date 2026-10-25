@@ -1274,7 +1274,8 @@ class OrderRoute:
     12): the order by its account, and the group through the principal-scoped reader (SR-E28-21),
     never the system facade (C-12.4). The account, order and group reads are typed as the one read
     each step uses. The exit routes (E29-T04 slice 4) read the arm records too, and the process's
-    `environment`, which every order `OrderExits.scope` answers is of."""
+    `environment`, which every order `OrderExits.scope` answers is of. `versions` is B1's facade,
+    whose `version()` a `202`'s `ETag` names (ruling Q5)."""
 
     accounts: AccountExistence
     arm_records: ArmRecords
@@ -1282,6 +1283,7 @@ class OrderRoute:
     orders: OrderRead
     groups: GroupRead
     environment: Environment
+    versions: OrderMachines
 
 
 @dataclass(frozen=True, slots=True)
@@ -1609,11 +1611,12 @@ class OmsRuntime:
     @property
     def route(self) -> OrderRoute:
         """The route's reads of the composed OMS (`OrderRoute`): the account, order and group reads
-        on the lane, the arm records and the switches in place; `OmsNotReady` before."""
+        on the lane, the arm records, the switches and B1's facade's `version()` (`versions`) in
+        place; `OmsNotReady` before."""
         parts = self._composed()
-        lane, raw = OnLane(parts), parts.route
+        lane, groups, raw = OnLane(parts), OnLaneGroups(parts), parts.route
         return OrderRoute(
-            lane, raw.arm_records, raw.switches, lane, OnLaneGroups(parts), raw.environment
+            lane, raw.arm_records, raw.switches, lane, groups, raw.environment, raw.versions
         )
 
     @property
@@ -1991,7 +1994,7 @@ class OmsRuntime:
             )  # fmt: skip
             # `pg_stores`' one group adapter serves the system port and the scoped read alike.
             reader = TradeGroupReader(stores.groups)
-            route = OrderRoute(accounts, ports.arm_records, switches, orders, reader, env)
+            route = OrderRoute(accounts, ports.arm_records, switches, orders, reader, env, machines)
             exits = OrderExits(ExitDeps(
                 machines=machines, commands=commands, orders=orders, stops=stops, audit=audit,
                 instruments=instruments, profiles=profiles,
