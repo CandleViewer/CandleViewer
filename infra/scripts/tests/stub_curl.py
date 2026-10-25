@@ -21,8 +21,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from jsonschema import Draft202012Validator
-
 BASE = "http://127.0.0.1:8000"
 CSRF_COOKIE = "__Host-cv_csrf"
 _CONFIG_LINE = re.compile(r'([a-z][a-z0-9-]*)\s*=\s*"((?:[^"\\]|\\.)*)"')
@@ -97,7 +95,9 @@ def main() -> int:
         wanted = call.get("expect", {})
         members = body if isinstance(body, dict) else {}
         record["body_ok"] = {k: k in members and members[k] == v for k, v in wanted.items()}
-        if route.get("schema") is not None:
+        if route.get("schema") is not None:  # only the runs that check bodies pay the import
+            from jsonschema import Draft202012Validator
+
             errors = Draft202012Validator(route["schema"]).iter_errors(body)
             record["schema_errors"] = sorted([e.json_path, str(e.validator)] for e in errors)
         if route["session"]:

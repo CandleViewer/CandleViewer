@@ -189,14 +189,16 @@ class Run:
 
 def run(
     tmp_path: Path, calls: dict[str, list[dict[str, Any]]], answers: list[str], *args: str,
-    xtrace: bool = False,
+    xtrace: bool = False, schemas: bool = False,
 ) -> Run:  # fmt: skip
+    """One run of the script on `calls`; `schemas` also holds each body to 22 (a slower run)."""
     stub, bin_dir, cwd, home, tmp = (tmp_path / d for d in ("stub", "bin", "cwd", "home", "tmp"))
     for directory in (stub, bin_dir, cwd, home, tmp):
         directory.mkdir()
     routes = [
         {"method": method, "path": path, "session": session,
-         "schema": request_schema(op), "calls": calls.get(f"{method} {path}", [])}
+         "schema": request_schema(op) if schemas else None,
+         "calls": calls.get(f"{method} {path}", [])}
         for method, path, op, session in ROUTES
     ]  # fmt: skip
     (stub / "scenario.json").write_text(json.dumps({"routes": routes}), encoding="utf-8")
@@ -228,7 +230,7 @@ def run(
 
 @pytest.fixture(scope="module")
 def full(tmp_path_factory: pytest.TempPathFactory) -> Run:
-    return run(tmp_path_factory.mktemp("full"), full_run(), ANSWERS)
+    return run(tmp_path_factory.mktemp("full"), full_run(), ANSWERS, schemas=True)
 
 
 # --- the run: 22's operations, in order, with valid bodies ---------------------------------------
@@ -249,10 +251,12 @@ def test_a_full_run_calls_each_operation_once_in_order_and_exits_0(full: Run) ->
 
 
 def test_every_body_is_valid_against_22_and_carries_what_was_typed(full: Run) -> None:
-    for record in full.records:
+    for record, (_, _, operation_id, _) in zip(full.records, ROUTES, strict=True):
         assert record["path_ok"], record["route"]
-        assert record.get("schema_errors", []) == [], record["route"]
+        if request_schema(operation_id) is not None:  # all but getInvite, which sends no body
+            assert record.get("schema_errors") == [], record["route"]
         assert all(record["body_ok"].values()), record
+    assert sum("schema_errors" in record for record in full.records) == len(ORDER) - 1
     assert [r["route"] for r in full.records if not r["body_ok"]] == [ORDER[0]]
     assert full.records[0]["body_keys"] is None  # getInvite sends no body
     assert all("content-type" in r["header_names"] for r in full.records[1:])
@@ -411,7 +415,7 @@ def test_a_step_up_challenge_on_the_import_is_answered_and_the_import_sent_again
     again = dict(scenario[ORDER[6]][0])
     again["expect"] = {"password": PASSWORD, "code": "112358", "challenge_id": CHALLENGE_ID}
     scenario[ORDER[6]] = [scenario[ORDER[6]][0], again]
-    resent = run(tmp_path, scenario, [*ANSWERS, "112358"])
+    resent = run(tmp_path, scenario, [*ANSWERS, "112358"], schemas=True)
     assert resent.proc.returncode == 0, resent.proc.stderr
     assert resent.routes == [*ORDER, ORDER[6], ORDER[7]]
     assert all(all(r["body_ok"].values()) for r in resent.records)
