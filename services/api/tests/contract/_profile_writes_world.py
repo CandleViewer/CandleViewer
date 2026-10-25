@@ -1,6 +1,7 @@
-"""The profile writes' provider world (#906 D2-4, D2-5): the RBAC pack's real `create_app()` (no
+"""The profile writes' provider world (#906 D2-4 to D2-6): the RBAC pack's real `create_app()` (no
 network, C-13.5) over `WritableRows`, D1c's store fake (which answers the accounts too) with the
-writes, and the writes' router, included here until D2-m mounts it."""
+writes, and the writes' router, included here until D2-m mounts it. The app's own reads, the
+binding's `GET` among them, read the same fake."""
 
 from __future__ import annotations
 
@@ -35,9 +36,9 @@ Row = port.AccountProfileRow
 
 class WritableRows(Store):
     """The writes as Postgres answers them: `None` for an account or profile not live, `ux_ap_name`
-    in any case, a stale version, the default never deleted nor moved, the version bumped, the hook
-    under the store's bound seeing the row before and after, nothing kept when it or the commit
-    fails. `race` is what another session did to the row since the router read it."""
+    in any case, a stale version, the default never deleted nor moved but by the move, the version
+    bumped, the hook under the store's bound seeing the row before and after, nothing kept when it
+    or the commit fails. `race` is what another session did to the row since the router read it."""
 
     def __init__(self) -> None:
         self.reset()
@@ -83,6 +84,45 @@ class WritableRows(Store):
     ) -> Row | None:  # fmt: skip
         self.hooks.append(write_ahead)
         return await self._change("delete", scope, account_id, profile_id, None, expected_version)
+
+    async def set_default_profile(
+        self, scope: OwnerScope, account_id: uuid.UUID, profile_id: uuid.UUID, *,
+        expected_binding_version: int, write_ahead: port.ProfileWriteAhead | None = None,
+    ) -> port.DefaultMove | None:  # fmt: skip
+        """0d-3's order: the account, its binding's version (stale before any profile is read), the
+        profile; then the demoted default's hook and the new one's, each row one version on."""
+        self.hooks.append(write_ahead)
+        if not self._shown("profiles", scope, account_id) or account_id in self.gone:
+            return None
+        rows, version = self.rows[account_id], self.bindings[account_id]
+        if version != expected_binding_version:
+            raise port.AccountProfileStoreStaleError
+        target = next((r for r in rows if r.id == profile_id), None)
+        if target is None:
+            return None
+        if target.values.is_default:  # binding the current default writes nothing
+            return port.DefaultMove(target, None, False, version)
+        old = next((r for r in rows if r.values.is_default), None)
+        moved = [
+            (r, dataclasses.replace(
+                r, version=r.version + 1, updated_by=scope.user_id, updated_at=WRITTEN,
+                values=dataclasses.replace(r.values, is_default=r is target),
+            ))
+            for r in (old, target) if r is not None
+        ]  # fmt: skip
+        notices: list[port.RelaxedNotice] = []
+        for before, after in moved:  # the demoted default's hook first, as the store calls them
+            if write_ahead is not None:
+                notice = await roles.bounded_write_ahead(write_ahead(before, after), self.timeout_s)
+                notices += [] if notice is None else [notice]
+        if self.fail_commit:
+            raise StorageTierUnavailable("the commit failed")
+        put = {before.id: after for before, after in moved}
+        self.rows[account_id] = tuple(put.get(r.id, r) for r in rows)
+        self.bindings[account_id] = version + 1
+        self.notices += notices
+        previous = None if old is None else moved[0][1]
+        return port.DefaultMove(moved[-1][1], previous, True, version + 1)
 
     async def _change(
         self, kind: str, scope: OwnerScope, account_id: uuid.UUID, profile_id: uuid.UUID,
@@ -183,6 +223,7 @@ def build(mp: pytest.MonkeyPatch) -> Writes:
     # `effective` is the order path's cache, which the OMS runtime is handed; no write uses it.
     wiring = SimpleNamespace(repository=repository, effective=None)
     mp.setattr(appmod, "wire_profiles", lambda *_args: wiring)
+    mp.setattr(appmod, "_build_accounts_counts", lambda _settings: rows)  # the reads' accounts
     world = build_world(mp)
     writes = ProfileWrites(repository, AccountsRepository(cast(Any, rows)), limits, rules, "demo")
     ctx, replays = world.app.state.app_context, IdempotencyCache(clock=lambda: clock[0])

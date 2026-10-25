@@ -13,15 +13,18 @@ renders a row as stored: it is a projection, not a validator.
 `created_at` (the row's) and `environment` (the account's, C-2.11) are arguments, since the model
 holds neither; `warnings` are a write's, its second pass's against the listing (#906 D2-3), or else
 a read's, `profile_warnings` with no instrument listing. Nothing here sets a header: the
-single-profile read sends `profile_etag` as its `ETag`.
+single-profile read sends `profile_etag` as its `ETag`, and the default binding's read and move
+(#906 D2-6) send `binding_etag` with `binding_document`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from decimal import Decimal
+from uuid import UUID
 
 from candleviewer.accounts.models import ExchangeEnv
+from candleviewer.accounts.profile_repository import DefaultBinding
 from candleviewer.accounts.profile_validator import ProfileWarning, profile_warnings
 from candleviewer.accounts.profiles import AccountProfile, profile_values
 from candleviewer.accounts.trade_groups import from_us
@@ -48,6 +51,22 @@ def rfc3339(us: TsUs) -> str:
 def profile_etag(profile: AccountProfile) -> str:
     """`ProfileETag`: weak, naming the profile and its version."""
     return f'W/"{profile.profile_id}:{profile.version}"'
+
+
+def binding_etag(account_id: UUID, version: int) -> str:
+    """`DefaultBindingETag`: weak, naming the account's binding and its version, never its profile,
+    so a tag read before a move never matches after it."""
+    return f'W/"{account_id}:default:{version}"'
+
+
+def binding_document(binding: DefaultBinding, *, environment: ExchangeEnv) -> dict[str, object]:
+    """The contract's `AccountDefaultBinding` of `binding`, on an account of `environment`."""
+    return {
+        "exchange_account_id": str(binding.account_id),
+        "environment": environment.value,
+        "profile_id": str(binding.profile_id),
+        "version": binding.version,
+    }
 
 
 def profile_body(profile: AccountProfile) -> dict[str, object]:
