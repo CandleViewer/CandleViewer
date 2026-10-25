@@ -3,14 +3,14 @@ read from 22 (`amendOrder`, `cancelOrder`, `cancelAllOrders`, `placeOrder`'s `ET
 24 (8.4's exit routes, 8.7, 8.8 rule 6, 15.5, 19), 21 (3.3.11, 10.7) and 20 (12.1), never from a
 copy: the orchestrator's slice-4 rulings of 2026-10-24 (issuecomment-6381292953, Q1 to Q12, Q14),
 and S4-D2a's (SEC-S4C2B-01; the rulings of 20:58Z and 21:47Z, and of 2026-10-25 00:27Z, 00:36Z,
-01:11Z and 01:24Z).
+01:11Z, 01:24Z and 02:50Z (2); the code lens's CR-S4D2A-02, -04 and -07).
 """
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
@@ -19,7 +19,7 @@ from candleviewer.api.order_problems import order_problem
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.observability.correlation import CORRELATION_HEADER
 from candleviewer.oms.errors import OmsError
-from candleviewer.oms.exits import ALREADY_FINAL
+from candleviewer.oms.exits import ALREADY_FINAL, RECLASSIFIED, ExitStep
 from candleviewer.oms.recovery import FINALS
 from candleviewer.oms_wiring import ORDER_ALERTS
 from candleviewer.statechart.bindings.b01_order import NATIVE_STOP_REQUIRED
@@ -947,4 +947,78 @@ def test_a_protective_cancel_under_view_as_runs_as_the_viewer_in_the_targets_sco
         "`scope_for_target`), never the viewer's own grants, as a protective write is admitted "
         "only when both the viewer's own RBAC and the target's `x-rbac` allow it; in the hold it "
         "is the viewer's own scope",
+    )
+
+
+def test_every_exit_500_pages_one_page_for_the_faults_class() -> None:
+    """The orchestrator's ruling of 2026-10-25 02:50Z (2), made of the first fold's note: an exit
+    route's `500` pages whatever raised it, by the fault's class alone, never its text, so 22's
+    "which also pages the operator" holds for every one; `placeOrder`'s `500`, which pages only
+    where its row does, is no longer the comparison (CR-S4D2A-08)."""
+    described = _words(_COMPONENTS["responses"]["InternalError"]["description"])
+    assert (
+        "On the exit routes (`amendOrder`, `cancelOrder`, `cancelAllOrders`) it is a fault the "
+        "exit service raised, which also pages the operator: every exit `500` pages, one page "
+        "for the fault's class, never its text" in described
+    )
+    assert "00:36Z and 02:50Z (2))" in described
+    assert "as `placeOrder`'s `500` does" not in described
+
+
+def test_a_step_into_a_state_that_takes_no_amend_is_422_as_at_admission() -> None:
+    """CR-S4D2A-02: the `409` and the `412` answer a step that leaves the order amendable; a step
+    into a state that takes no amend meets the facade's state check, which comes before its
+    version check, so it is `422 order_not_amendable`, as at admission, `If-Match` or not."""
+    assert (
+        "The `409` and the `412` answer a step that leaves the order amendable (a partial fill, "
+        "another amend settled): a step that leaves it in a state that takes no amend (a fill "
+        "that completes it, a cancel or another amend in flight) is `422 order_not_amendable`, "
+        "as at admission, with `If-Match` or without." in _AMEND
+    )
+    assert (
+        "The `412` and the `409` answer a step that leaves the order amendable: a step that "
+        "leaves it in a state that takes no amend (a fill that completes it, a cancel or another "
+        "amend in flight) is `422 order_not_amendable`, as at admission, with `If-Match` or "
+        "without, as the facade checks the state before the version." in _EXITS
+    )
+
+
+def test_a_gone_row_an_already_final_cancel_and_a_refusals_detail_are_written_down() -> None:
+    """CR-S4D2A-07: step 11 says that a row its re-read no longer finds is `409 conflict`, as
+    `OrderExits.amend` answers it; 15.5's reasons name `already_final` and a refusal's detail
+    keys, `step` (`ExitStep`'s four) and the class re-check's `reason` (`RECLASSIFIED`), beside
+    the record's own `reason`, its code."""
+    assert "a row that read no longer finds is `409 conflict`, nothing sent." in _EXITS
+    assert not _missing(
+        _RECORDS,
+        "A cancel that finds its order already final, nothing to send, is `orders.cancel` with "
+        "outcome `success` and reason `already_final`, written before its `202` (§8.4).",
+        "A refusal's detail names, beside `code`, the step that refused it where one did "
+        "(`step`: the route's `key`, `replay` or `guard`, or `class`, step 11's class "
+        "re-check), and the class re-check's refusal its cause too (`reason`: `reclassified`, "
+        "the class changed since step 4): the record's own `reason` is the code, "
+        "`detail.reason` the cause.",
+    )
+    assert (ALREADY_FINAL, RECLASSIFIED) == ("already_final", "reclassified")
+    assert set(get_args(ExitStep.__value__)) == {"key", "replay", "guard", "class"}
+
+
+def test_the_change_log_records_the_amend_judged_as_it_stands_and_the_exit_answers() -> None:
+    """CR-S4D2A-04: 19 is the contract change log, so S4-D2a's changes to 8.4, 15.5 and 22 have
+    an entry of their own, which supersedes 19.33's "`If-Match` alone carries a version"."""
+    entry = _words(_INTERNAL_DOC.split("\n### 19.35 2026-10-25 — §8.4, §15.5: ", 1)[1])
+    assert not _missing(
+        entry,
+        "an amend judged on the order as it stands, and the exit routes' answers (E29-T04, #913)",
+        "issues/913#issuecomment-6381292953) Q5, as amended for SEC-S4C2B-01 on 2026-10-24)",
+        "and sent at the version it was judged at, which `If-Match`, when given, must name",
+        "`409 conflict` with `Retry-After: 1`, and `412` for the client's own tag alone",
+        "one into a state that takes no amend is `422`, as at admission; a row no longer there "
+        "is `409 conflict`",
+        'This supersedes §19.33\'s "`If-Match` alone carries a version to the facade".',
+        "§8.4 steps 1, 2, 4, 5 and 11:",
+        "audited `orders.amend` denied with `step` `class` and `reason` `reclassified`",
+        "`amendOrder` and `cancelOrder` gain `401` and `500`, and `cancelAllOrders` `401`, "
+        "`429` and `500`. The three `500`s are one new response, `InternalError`",
+        "every exit `500` pages, one page for the fault's class",
     )
