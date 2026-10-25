@@ -58,7 +58,8 @@ it (BQ-16 is the scope):
    fenced line (r13) - a line of the hand-off (r12) or section 10.2; a bare Esc too), and K4 no
    confirm drawn while the summary loads (a frame row, a section 2.4 row or a prose paragraph
    naming the load read whole; every other table row, heading and fenced line cell by cell, each
-   sentence and each part between semicolons that names the load (r13), an Old or Current cell
+   sentence and each part between semicolons that names the load (r13; r14: a part that opens on
+   "it", "which", "still" or a state word read with the part before it), an Old or Current cell
    aside), each gated word (GATED_ADJ) read before its noun or after it (r4o: ", visible but
    inactive", "it" carrying the subject), and on the loading frame the confirm named only denied
    (r13: "[Cancel] and [Confirm]" or "a faded confirm" with no state word fails); K10 is gate 2
@@ -124,7 +125,9 @@ one table cell of section 11's keyboard table and of seven other sections' table
 FAIL (``confirm-look``; the security pin's ``sec-pin`` beside it where the edit moves security
 text). The K list carries r13's table forms too: "an unavailable `Esc`", "`Esc` (disabled)" and
 "`Esc`, greyed out," (``k9.exit``) and "an unusable confirm while the summary loads"
-(``k4.loading``) in those eight cells, and the confirm with no state word on frame 53.
+(``k4.loading``) in those eight cells, r14's two confirms with the state word after a semicolon
+("...; it is shown", "...; still visible", ``k4.loading``) in the same cells, and the confirm with
+no state word on frame 53.
 
 Usage: python3 -I -B docs/design/_tools/e27_d03_hifi_audit.py [--json] [--check] [--self-test]
        [--repin-security] [--repin-confirm-look]
@@ -1791,6 +1794,27 @@ def prose_gate(spec: str, sec: dict[str, str], out: Out) -> None:
 OLD_HEAD = re.compile(r"(?:old|current)\b", re.IGNORECASE)
 
 
+# r14: a part after a semicolon that opens on a pronoun, "still" or a state word has no subject
+# of its own ("…; it is shown", "…; still visible"), so it is read with the part before it
+CARRY_PART = re.compile(
+    rf"(?:(?:and|but|yet|so) +)?(?:(?:it|its|which|this|that|they|still|both)\b"
+    rf"|(?:rendered|drawn|shown|visible|present)\b|{GATED_ADJ}(?![\w-]))",
+    re.IGNORECASE,
+)
+
+
+def semicolon_units(cell: str) -> list[str]:
+    """A table cell split at its semicolons (a list of items, each read on its own for the load),
+    each part that CARRY_PART opens joined to the part before it."""
+    units: list[str] = []
+    for part in re.split(r";\s+", cell):
+        if units and CARRY_PART.match(part):
+            units[-1] = f"{units[-1]}; {part}"
+        else:
+            units.append(part)
+    return units
+
+
 def table_gate(spec: str, sec: dict[str, str], out: Out) -> None:
     """K4 / K9 (r13) on every other spec line outside §16: each table row of every section (the
     inputs, AC and BQ tables, §0 to §15, §11's keyboard table, Appendix A), each heading and each
@@ -1825,7 +1849,7 @@ def table_gate(spec: str, sec: dict[str, str], out: Out) -> None:
             continue
         where = f"spec line {num} {stripped[:40]!r}"
         kept = [c for i, c in enumerate(parts) if not (i < len(old_col) and old_col[i])]
-        units = [u for c in kept for u in re.split(r";\s+", c)]
+        units = [u for c in kept for u in semicolon_units(c)]
         if shown := [x for u in units for x in loading_confirm(u)]:
             out.fail("k4.loading", f"{where} draws the confirm while the summary loads: {shown}")
         if gated := [m[0] for m in EXIT_GATED.finditer(line)]:
@@ -4376,6 +4400,11 @@ TABLE_EXIT = (
     "`Esc`, greyed out, while it reads",
 )
 TABLE_CONFIRM = "an unusable confirm while the summary loads"
+# r14: the state word after a semicolon, carried by "it" / "still" to the confirm before it
+TABLE_CARRY = (
+    "[Confirm] in the footer while the summary loads; it is shown",
+    "the confirm beside the summary while it loads; still visible",
+)
 TABLE_SPOTS = (
     ("11", "SCR-129 disable", "section 11's keyboard table, SCR-129's row"),
     ("pre", "| BQ-1 ", "the BQ table, BQ-1"),
@@ -4415,6 +4444,7 @@ def table_mutations() -> tuple[tuple[str, str, str, Mutation], ...]:
     out: list[tuple[str, str, str, Mutation]] = []
     forms = [(f"e{i}", f, "k9.exit") for i, f in enumerate(TABLE_EXIT, 1)]
     forms.append(("c", TABLE_CONFIRM, "k4.loading"))
+    forms += [(f"s{i}", f, "k4.loading") for i, f in enumerate(TABLE_CARRY, 1)]
     for j, (key, needle, where) in enumerate(TABLE_SPOTS, 1):
         for tag, form, code in forms:
             for case, fn in CASES:
@@ -5108,51 +5138,53 @@ SEC_PIN_TXT = r"""
   name; the riders of BQ-5 and BQ-6 and the supersession of E05-D02's time-limited reveal stay the
   owner's, PROPOSED.
 @ prose
-  **Revision:** r13 — the exit and loading checks read every table row, heading and fenced line of
-  every section, §11's keyboard table included (§16 items 10 and 11), the confirm-look check reads
-  every gated word, and the loading frame names the confirm only denied (§16 items 10 and 14); r12
-  — the confirm-look clauses pinned default-deny (§16 item 14), and the exit check reads every
-  line of the hand-off (§16 items 10 and 11); r11 — r10's re-check folded (§16 items 10 and 11): a
-  frame row, a §2.4 row and a prose paragraph that name the load are read whole for the confirm,
-  each sentence up to where it moves past the load; the exit check reads a bare Esc and Cancel in
-  any case, and also reads §2.4's cells and the spec's prose; r10 — the default-deny pin's
-  re-check folded (§16 items 10, 11 and 13): `k4.loading` and `k9.exit` read the gated words
-  (disabled, dimmed, greyed or grayed out, inactive, inert, locked, held, hidden, unavailable,
-  unusable, suppressed, no effect) on either side of the confirm or the exit, the appositive ",
-  visible but inactive" included, and a token, a password, a balance and "shown in full" make a
-  clause security-bearing; r9 — the orchestrator's text round 3 folded as a default-deny pin (§16
-  item 13): every clause of this spec and the hand-off that names a key, a secret, a credential, a
-  fund or money word, a reveal or mask word, plain or clear text or CMP-034, CMP-175 or CMP-201,
-  and every statement of the view-as leg, equals one entry of the audit tool's pinned table, so
-  security text that is new, changed, moved or duplicated fails `sec-pin` until a reviewer reads
-  it there; the word list decides which clauses are pinned, and the table what a pinned clause may
-  say; r8 — the orchestrator's text round 3 folded into the audit tool (§16 items 10–12): every
-  line is read for a bare id, a show, view, copy or toggle of a key or a secret, a visibility
-  toggle, a bracketed control that is not the egress IP's copy and a fund right in the modal form
-  ("can withdraw"), with no key named on the line; a table row's withdrawal word ties an OFF in
-  any of its cells to its time; a view-as frame's class says "view-as leg first"; r7 — the
-  orchestrator's text round 2 folded into the audit tool (§16 item 12): K1, K2, K3, the dated OFF
-  and the reveal words read every clause of every line of this spec and the hand-off,
-  case-insensitive, with no section list, and a hit passes only inside a pinned, counted
-  allow-list of exact phrases; a gated frame that E27-D02's inventory or its class names as a
-  view-as frame leads with `rbac.view_as`; r5 — the orchestrator's text round 1 folded into the
-  audit tool (§16): K1–K3 read every clause of every frame row and the secret-field rows outside
-  the frames (§2.3, §4.1, §5) for a bare id and a show, copy or toggle control, a withdrawal
-  control, and a withdrawal "OFF" without its time; no `lock` on a frame that is not gated; a
-  view-as row of §10.2 leads with its view-as leg; the confirm never drawn while the summary
-  loads; an exit gated after a comma; E42-D03's boards PR never pinned or quoted; the environment
-  gate reads every frame that names one; and the check list's fresh-pass "OFF ✓" dated (D03-C15);
-  r4 — re-pinned at its PR base `e8bca4bb7` (every moved `file:line` re-mapped and re-read), and
-  Appendix A's CMP-028 and CMP-044 rows re-based on #4414's rewrite of those entries (D03-C16;
-  CMP-015's skeleton token, D03-C12, resolved upstream); r3 — the audit tool's gates read each
-  frame row (the standing rule A2's K1–K15, §16), each with its own `--self-test` mutation, and
-  the rows that named an element only by reference now carry it (§16); r2 — the security and
-  design lens round 1 folded: every withdrawal "OFF" dated (D03-C15), the drawer's critical state
-  a badge, the check list's warnings on the triangle (HD17), the Enable… dialog, the held step-up
-  request's unanswered re-send, the link on the drawer measured, and the audit tool's mirror
-  mutation and OFF gate; r1 — the full text on r0's skeleton and audit tool: §1–§17, Appendix A's
-  copy-ready A-rows and the handoff file `docs/design/E27/E27-D03-handoff.md`; the boards and
-  their exports follow in the boards PR.
+  **Revision:** r14 — the loading check reads a table cell's part after a semicolon that opens on
+  "it", "which", "still" or a state word with the part before it, so "…while the summary loads; it
+  is shown" fails (§16 items 10 and 11); r13 — the exit and loading checks read every table row,
+  heading and fenced line of every section, §11's keyboard table included (§16 items 10 and 11),
+  the confirm-look check reads every gated word, and the loading frame names the confirm only
+  denied (§16 items 10 and 14); r12 — the confirm-look clauses pinned default-deny (§16 item 14),
+  and the exit check reads every line of the hand-off (§16 items 10 and 11); r11 — r10's re-check
+  folded (§16 items 10 and 11): a frame row, a §2.4 row and a prose paragraph that name the load
+  are read whole for the confirm, each sentence up to where it moves past the load; the exit check
+  reads a bare Esc and Cancel in any case, and also reads §2.4's cells and the spec's prose; r10 —
+  the default-deny pin's re-check folded (§16 items 10, 11 and 13): `k4.loading` and `k9.exit`
+  read the gated words (disabled, dimmed, greyed or grayed out, inactive, inert, locked, held,
+  hidden, unavailable, unusable, suppressed, no effect) on either side of the confirm or the exit,
+  the appositive ", visible but inactive" included, and a token, a password, a balance and "shown
+  in full" make a clause security-bearing; r9 — the orchestrator's text round 3 folded as a
+  default-deny pin (§16 item 13): every clause of this spec and the hand-off that names a key, a
+  secret, a credential, a fund or money word, a reveal or mask word, plain or clear text or
+  CMP-034, CMP-175 or CMP-201, and every statement of the view-as leg, equals one entry of the
+  audit tool's pinned table, so security text that is new, changed, moved or duplicated fails
+  `sec-pin` until a reviewer reads it there; the word list decides which clauses are pinned, and
+  the table what a pinned clause may say; r8 — the orchestrator's text round 3 folded into the
+  audit tool (§16 items 10–12): every line is read for a bare id, a show, view, copy or toggle of
+  a key or a secret, a visibility toggle, a bracketed control that is not the egress IP's copy and
+  a fund right in the modal form ("can withdraw"), with no key named on the line; a table row's
+  withdrawal word ties an OFF in any of its cells to its time; a view-as frame's class says
+  "view-as leg first"; r7 — the orchestrator's text round 2 folded into the audit tool (§16 item
+  12): K1, K2, K3, the dated OFF and the reveal words read every clause of every line of this spec
+  and the hand-off, case-insensitive, with no section list, and a hit passes only inside a pinned,
+  counted allow-list of exact phrases; a gated frame that E27-D02's inventory or its class names
+  as a view-as frame leads with `rbac.view_as`; r5 — the orchestrator's text round 1 folded into
+  the audit tool (§16): K1–K3 read every clause of every frame row and the secret-field rows
+  outside the frames (§2.3, §4.1, §5) for a bare id and a show, copy or toggle control, a
+  withdrawal control, and a withdrawal "OFF" without its time; no `lock` on a frame that is not
+  gated; a view-as row of §10.2 leads with its view-as leg; the confirm never drawn while the
+  summary loads; an exit gated after a comma; E42-D03's boards PR never pinned or quoted; the
+  environment gate reads every frame that names one; and the check list's fresh-pass "OFF ✓" dated
+  (D03-C15); r4 — re-pinned at its PR base `e8bca4bb7` (every moved `file:line` re-mapped and
+  re-read), and Appendix A's CMP-028 and CMP-044 rows re-based on #4414's rewrite of those entries
+  (D03-C16; CMP-015's skeleton token, D03-C12, resolved upstream); r3 — the audit tool's gates
+  read each frame row (the standing rule A2's K1–K15, §16), each with its own `--self-test`
+  mutation, and the rows that named an element only by reference now carry it (§16); r2 — the
+  security and design lens round 1 folded: every withdrawal "OFF" dated (D03-C15), the drawer's
+  critical state a badge, the check list's warnings on the triangle (HD17), the Enable… dialog,
+  the held step-up request's unanswered re-send, the link on the drawer measured, and the audit
+  tool's mirror mutation and OFF gate; r1 — the full text on r0's skeleton and audit tool: §1–§17,
+  Appendix A's copy-ready A-rows and the handoff file `docs/design/E27/E27-D03-handoff.md`; the
+  boards and their exports follow in the boards PR.
 @ prose
   **Scope (the ticket):** hi-fi for every state of E27-D02's inventory (§0, §2–§8), in dark and
   light, with the densities specified (BQ-3, BQ-4); the contributions CMP-175 KeyPermissionBadge,
@@ -8953,31 +8985,33 @@ SEC_PIN_TXT = r"""
   sentence up to where it moves past the load ("after it", "once the summary has loaded", "when
   the summary arrives", "until the summary has loaded": the ready dialog's validity look, §10.3);
   every other table row of every section, heading and fenced line is read cell by cell, each
-  sentence and each part between semicolons that names the load on its own and up to the same cue,
-  an Old or Current cell aside; and on the loading frame (frame 53) the confirm is named only
-  denied ("no confirm rendered", "the confirm is not in the DOM"), so "[Cancel] and [Confirm]" or
-  "a faded confirm" with no state word fails too (`k4.loading`); K6 to K8: each of the 20 <!--
-  audit:numbers.frames_t2=20 --> gated frames names the `lock` and CMP-079 RbacGate (§10.1's
-  components) and a reason key a §10 or §12 table gives, `rbac.view_as` first wherever it appears
-  and never put after another leg in the row's prose, no frame that is not gated draws a `lock` or
-  CMP-079, a frame E27-D02's inventory or its name calls a view-as frame says "view-as leg first"
-  in its class, and every §10.2 control the view-as session reaches as T2 `rbac.view_as` (its "Who
-  sees what" row) lists the view-as leg first (`t2.viewas`); K9: no exit (Cancel, Close, Back, Esc
-  with or without backticks) drawn gated, in any line of this spec outside §16 and the revision
-  line — a frame, a §2.4 cell, a prose paragraph, and every table row of every section (§11's
-  keyboard table included), every heading and every fenced line — in a line of the hand-off or in
-  §10.2, by the same gated words — after the exit in a parenthetical such as "(disabled)", after a
-  verb, after a comma or a two-word appositive (", visible but inactive"), or carried by "it" or
-  "which" later in the sentence, and before it ("a disabled [Cancel]", "an inactive CANCEL", "an
-  unavailable Esc"; Cancel and Esc in any case there, Close and Back in Title or UPPER case or in
-  brackets); K10: gate 2's word and glyph per state (`ac2.*`); K11: frame 46's steps, their keys
-  and their deck strings in C-12.12's order (freeze, delete at Bybit, revoke, rotate the KEK,
-  replace); K12: each of the 19 <!-- audit:numbers.frames_env=19 --> frames that names an
-  environment, whose title or heading names an account, or that draws an "Attention:" strip
-  string, keeps its badge — derived from the rows, not a fixed list; K13: the number before every
-  marker is the marker's value, and every two-decimal contrast or ΔE76 value carries a marker; K14
-  and K15: gate 4's `inv.missing` and `inv.board`; and E42-D03's boards PR, in flight, is named by
-  its branch only — a sha or a quote beside it fails (`pin.inflight`).
+  sentence and each part between semicolons that names the load on its own and up to the same cue
+  (r14: a part that opens on "it", "which", "still" or a state word such as "shown" or "visible"
+  is read with the part before it), an Old or Current cell aside; and on the loading frame (frame
+  53) the confirm is named only denied ("no confirm rendered", "the confirm is not in the DOM"),
+  so "[Cancel] and [Confirm]" or "a faded confirm" with no state word fails too (`k4.loading`); K6
+  to K8: each of the 20 <!-- audit:numbers.frames_t2=20 --> gated frames names the `lock` and
+  CMP-079 RbacGate (§10.1's components) and a reason key a §10 or §12 table gives, `rbac.view_as`
+  first wherever it appears and never put after another leg in the row's prose, no frame that is
+  not gated draws a `lock` or CMP-079, a frame E27-D02's inventory or its name calls a view-as
+  frame says "view-as leg first" in its class, and every §10.2 control the view-as session reaches
+  as T2 `rbac.view_as` (its "Who sees what" row) lists the view-as leg first (`t2.viewas`); K9: no
+  exit (Cancel, Close, Back, Esc with or without backticks) drawn gated, in any line of this spec
+  outside §16 and the revision line — a frame, a §2.4 cell, a prose paragraph, and every table row
+  of every section (§11's keyboard table included), every heading and every fenced line — in a
+  line of the hand-off or in §10.2, by the same gated words — after the exit in a parenthetical
+  such as "(disabled)", after a verb, after a comma or a two-word appositive (", visible but
+  inactive"), or carried by "it" or "which" later in the sentence, and before it ("a disabled
+  [Cancel]", "an inactive CANCEL", "an unavailable Esc"; Cancel and Esc in any case there, Close
+  and Back in Title or UPPER case or in brackets); K10: gate 2's word and glyph per state
+  (`ac2.*`); K11: frame 46's steps, their keys and their deck strings in C-12.12's order (freeze,
+  delete at Bybit, revoke, rotate the KEK, replace); K12: each of the 19 <!--
+  audit:numbers.frames_env=19 --> frames that names an environment, whose title or heading names
+  an account, or that draws an "Attention:" strip string, keeps its badge — derived from the rows,
+  not a fixed list; K13: the number before every marker is the marker's value, and every
+  two-decimal contrast or ΔE76 value carries a marker; K14 and K15: gate 4's `inv.missing` and
+  `inv.board`; and E42-D03's boards PR, in flight, is named by its branch only — a sha or a quote
+  beside it fails (`pin.inflight`).
 @ prose
   **The self-test** (`--self-test`; `--selftest` too): a passing spec built in memory from the
   base files refuses 37 <!-- audit:numbers.mutations=37 --> mutations, each by its own code, and a
@@ -9002,15 +9036,17 @@ SEC_PIN_TXT = r"""
   "the [Close], hidden", "a disabled cancel", "a dimmed [Back]") on frame 53, in §2.4's
   `consequenceState` and in §2.4's prose, and on the hand-off before its extended-entries
   paragraph and on its sign-off line; and r13's table forms — "an unavailable `Esc`", "`Esc`
-  (disabled)" and "`Esc`, greyed out," (each "while it reads") and "an unusable confirm while the
-  summary loads", in lower, Title and UPPER case, in one table cell of §11's keyboard table
-  (SCR-129's row), the BQ table, §1.1, §3.3, §8's anatomy table, §13, §14 and Appendix A's first
-  New cell, and "[Cancel] and [Confirm] in the footer", "the confirm beside it" and "a faded
-  confirm" on frame 53 — 485 <!-- audit:numbers.k_mutations=485 --> in all, each run in memory on
-  this spec (or the hand-off) as a plain run: rc 1 with exactly one distinct FAIL, its own code,
-  among the gates of items 1–12 (item 13's pin refuses it too wherever it edits pinned text); then
-  item 13's 94 <!-- audit:numbers.pin_mutations=94 --> pin mutations; restored, `--check` exits 0
-  and the spec on disk is byte-identical (its sha256 compared).
+  (disabled)" and "`Esc`, greyed out," (each "while it reads"), "an unusable confirm while the
+  summary loads", and r14's "[Confirm] in the footer while the summary loads; it is shown" and
+  "the confirm beside the summary while it loads; still visible", in lower, Title and UPPER case,
+  in one table cell of §11's keyboard table (SCR-129's row), the BQ table, §1.1, §3.3, §8's
+  anatomy table, §13, §14 and Appendix A's first New cell, and "[Cancel] and [Confirm] in the
+  footer", "the confirm beside it" and "a faded confirm" on frame 53 — 533 <!--
+  audit:numbers.k_mutations=533 --> in all, each run in memory on this spec (or the hand-off) as a
+  plain run: rc 1 with exactly one distinct FAIL, its own code, among the gates of items 1–12
+  (item 13's pin refuses it too wherever it edits pinned text); then item 13's 94 <!--
+  audit:numbers.pin_mutations=94 --> pin mutations; restored, `--check` exits 0 and the spec on
+  disk is byte-identical (its sha256 compared).
 @ prose
   **The whole document** (the orchestrator's text round 2; `reveal`, `k1.masked`, `k2.field`,
   `k3.withdraw`, `k3.off`): every clause of every line of this spec and of the hand-off — every
@@ -9795,51 +9831,53 @@ SEC_PIN_TXT = r"""
 CONFIRM_LOOK_PINS = r"""
 § spec ‖ E27-D03 — Accounts and key vault hi-fi and desig
 @ prose
-  **Revision:** r13 — the exit and loading checks read every table row, heading and fenced line of
-  every section, §11's keyboard table included (§16 items 10 and 11), the confirm-look check reads
-  every gated word, and the loading frame names the confirm only denied (§16 items 10 and 14); r12
-  — the confirm-look clauses pinned default-deny (§16 item 14), and the exit check reads every
-  line of the hand-off (§16 items 10 and 11); r11 — r10's re-check folded (§16 items 10 and 11): a
-  frame row, a §2.4 row and a prose paragraph that name the load are read whole for the confirm,
-  each sentence up to where it moves past the load; the exit check reads a bare Esc and Cancel in
-  any case, and also reads §2.4's cells and the spec's prose; r10 — the default-deny pin's
-  re-check folded (§16 items 10, 11 and 13): `k4.loading` and `k9.exit` read the gated words
-  (disabled, dimmed, greyed or grayed out, inactive, inert, locked, held, hidden, unavailable,
-  unusable, suppressed, no effect) on either side of the confirm or the exit, the appositive ",
-  visible but inactive" included, and a token, a password, a balance and "shown in full" make a
-  clause security-bearing; r9 — the orchestrator's text round 3 folded as a default-deny pin (§16
-  item 13): every clause of this spec and the hand-off that names a key, a secret, a credential, a
-  fund or money word, a reveal or mask word, plain or clear text or CMP-034, CMP-175 or CMP-201,
-  and every statement of the view-as leg, equals one entry of the audit tool's pinned table, so
-  security text that is new, changed, moved or duplicated fails `sec-pin` until a reviewer reads
-  it there; the word list decides which clauses are pinned, and the table what a pinned clause may
-  say; r8 — the orchestrator's text round 3 folded into the audit tool (§16 items 10–12): every
-  line is read for a bare id, a show, view, copy or toggle of a key or a secret, a visibility
-  toggle, a bracketed control that is not the egress IP's copy and a fund right in the modal form
-  ("can withdraw"), with no key named on the line; a table row's withdrawal word ties an OFF in
-  any of its cells to its time; a view-as frame's class says "view-as leg first"; r7 — the
-  orchestrator's text round 2 folded into the audit tool (§16 item 12): K1, K2, K3, the dated OFF
-  and the reveal words read every clause of every line of this spec and the hand-off,
-  case-insensitive, with no section list, and a hit passes only inside a pinned, counted
-  allow-list of exact phrases; a gated frame that E27-D02's inventory or its class names as a
-  view-as frame leads with `rbac.view_as`; r5 — the orchestrator's text round 1 folded into the
-  audit tool (§16): K1–K3 read every clause of every frame row and the secret-field rows outside
-  the frames (§2.3, §4.1, §5) for a bare id and a show, copy or toggle control, a withdrawal
-  control, and a withdrawal "OFF" without its time; no `lock` on a frame that is not gated; a
-  view-as row of §10.2 leads with its view-as leg; the confirm never drawn while the summary
-  loads; an exit gated after a comma; E42-D03's boards PR never pinned or quoted; the environment
-  gate reads every frame that names one; and the check list's fresh-pass "OFF ✓" dated (D03-C15);
-  r4 — re-pinned at its PR base `e8bca4bb7` (every moved `file:line` re-mapped and re-read), and
-  Appendix A's CMP-028 and CMP-044 rows re-based on #4414's rewrite of those entries (D03-C16;
-  CMP-015's skeleton token, D03-C12, resolved upstream); r3 — the audit tool's gates read each
-  frame row (the standing rule A2's K1–K15, §16), each with its own `--self-test` mutation, and
-  the rows that named an element only by reference now carry it (§16); r2 — the security and
-  design lens round 1 folded: every withdrawal "OFF" dated (D03-C15), the drawer's critical state
-  a badge, the check list's warnings on the triangle (HD17), the Enable… dialog, the held step-up
-  request's unanswered re-send, the link on the drawer measured, and the audit tool's mirror
-  mutation and OFF gate; r1 — the full text on r0's skeleton and audit tool: §1–§17, Appendix A's
-  copy-ready A-rows and the handoff file `docs/design/E27/E27-D03-handoff.md`; the boards and
-  their exports follow in the boards PR.
+  **Revision:** r14 — the loading check reads a table cell's part after a semicolon that opens on
+  "it", "which", "still" or a state word with the part before it, so "…while the summary loads; it
+  is shown" fails (§16 items 10 and 11); r13 — the exit and loading checks read every table row,
+  heading and fenced line of every section, §11's keyboard table included (§16 items 10 and 11),
+  the confirm-look check reads every gated word, and the loading frame names the confirm only
+  denied (§16 items 10 and 14); r12 — the confirm-look clauses pinned default-deny (§16 item 14),
+  and the exit check reads every line of the hand-off (§16 items 10 and 11); r11 — r10's re-check
+  folded (§16 items 10 and 11): a frame row, a §2.4 row and a prose paragraph that name the load
+  are read whole for the confirm, each sentence up to where it moves past the load; the exit check
+  reads a bare Esc and Cancel in any case, and also reads §2.4's cells and the spec's prose; r10 —
+  the default-deny pin's re-check folded (§16 items 10, 11 and 13): `k4.loading` and `k9.exit`
+  read the gated words (disabled, dimmed, greyed or grayed out, inactive, inert, locked, held,
+  hidden, unavailable, unusable, suppressed, no effect) on either side of the confirm or the exit,
+  the appositive ", visible but inactive" included, and a token, a password, a balance and "shown
+  in full" make a clause security-bearing; r9 — the orchestrator's text round 3 folded as a
+  default-deny pin (§16 item 13): every clause of this spec and the hand-off that names a key, a
+  secret, a credential, a fund or money word, a reveal or mask word, plain or clear text or
+  CMP-034, CMP-175 or CMP-201, and every statement of the view-as leg, equals one entry of the
+  audit tool's pinned table, so security text that is new, changed, moved or duplicated fails
+  `sec-pin` until a reviewer reads it there; the word list decides which clauses are pinned, and
+  the table what a pinned clause may say; r8 — the orchestrator's text round 3 folded into the
+  audit tool (§16 items 10–12): every line is read for a bare id, a show, view, copy or toggle of
+  a key or a secret, a visibility toggle, a bracketed control that is not the egress IP's copy and
+  a fund right in the modal form ("can withdraw"), with no key named on the line; a table row's
+  withdrawal word ties an OFF in any of its cells to its time; a view-as frame's class says
+  "view-as leg first"; r7 — the orchestrator's text round 2 folded into the audit tool (§16 item
+  12): K1, K2, K3, the dated OFF and the reveal words read every clause of every line of this spec
+  and the hand-off, case-insensitive, with no section list, and a hit passes only inside a pinned,
+  counted allow-list of exact phrases; a gated frame that E27-D02's inventory or its class names
+  as a view-as frame leads with `rbac.view_as`; r5 — the orchestrator's text round 1 folded into
+  the audit tool (§16): K1–K3 read every clause of every frame row and the secret-field rows
+  outside the frames (§2.3, §4.1, §5) for a bare id and a show, copy or toggle control, a
+  withdrawal control, and a withdrawal "OFF" without its time; no `lock` on a frame that is not
+  gated; a view-as row of §10.2 leads with its view-as leg; the confirm never drawn while the
+  summary loads; an exit gated after a comma; E42-D03's boards PR never pinned or quoted; the
+  environment gate reads every frame that names one; and the check list's fresh-pass "OFF ✓" dated
+  (D03-C15); r4 — re-pinned at its PR base `e8bca4bb7` (every moved `file:line` re-mapped and
+  re-read), and Appendix A's CMP-028 and CMP-044 rows re-based on #4414's rewrite of those entries
+  (D03-C16; CMP-015's skeleton token, D03-C12, resolved upstream); r3 — the audit tool's gates
+  read each frame row (the standing rule A2's K1–K15, §16), each with its own `--self-test`
+  mutation, and the rows that named an element only by reference now carry it (§16); r2 — the
+  security and design lens round 1 folded: every withdrawal "OFF" dated (D03-C15), the drawer's
+  critical state a badge, the check list's warnings on the triangle (HD17), the Enable… dialog,
+  the held step-up request's unanswered re-send, the link on the drawer measured, and the audit
+  tool's mirror mutation and OFF gate; r1 — the full text on r0's skeleton and audit tool: §1–§17,
+  Appendix A's copy-ready A-rows and the handoff file `docs/design/E27/E27-D03-handoff.md`; the
+  boards and their exports follow in the boards PR.
 § spec ‖ The questions (BQ-1…BQ-16) and the defaults buil
 @ row BQ-11 ‖ Default built
   consume E42-D03's unlanded rung props (`E42-D03:902-904`) by name, PROPOSED with a "contract
@@ -10051,31 +10089,33 @@ CONFIRM_LOOK_PINS = r"""
   sentence up to where it moves past the load ("after it", "once the summary has loaded", "when
   the summary arrives", "until the summary has loaded": the ready dialog's validity look, §10.3);
   every other table row of every section, heading and fenced line is read cell by cell, each
-  sentence and each part between semicolons that names the load on its own and up to the same cue,
-  an Old or Current cell aside; and on the loading frame (frame 53) the confirm is named only
-  denied ("no confirm rendered", "the confirm is not in the DOM"), so "[Cancel] and [Confirm]" or
-  "a faded confirm" with no state word fails too (`k4.loading`); K6 to K8: each of the 20 <!--
-  audit:numbers.frames_t2=20 --> gated frames names the `lock` and CMP-079 RbacGate (§10.1's
-  components) and a reason key a §10 or §12 table gives, `rbac.view_as` first wherever it appears
-  and never put after another leg in the row's prose, no frame that is not gated draws a `lock` or
-  CMP-079, a frame E27-D02's inventory or its name calls a view-as frame says "view-as leg first"
-  in its class, and every §10.2 control the view-as session reaches as T2 `rbac.view_as` (its "Who
-  sees what" row) lists the view-as leg first (`t2.viewas`); K9: no exit (Cancel, Close, Back, Esc
-  with or without backticks) drawn gated, in any line of this spec outside §16 and the revision
-  line — a frame, a §2.4 cell, a prose paragraph, and every table row of every section (§11's
-  keyboard table included), every heading and every fenced line — in a line of the hand-off or in
-  §10.2, by the same gated words — after the exit in a parenthetical such as "(disabled)", after a
-  verb, after a comma or a two-word appositive (", visible but inactive"), or carried by "it" or
-  "which" later in the sentence, and before it ("a disabled [Cancel]", "an inactive CANCEL", "an
-  unavailable Esc"; Cancel and Esc in any case there, Close and Back in Title or UPPER case or in
-  brackets); K10: gate 2's word and glyph per state (`ac2.*`); K11: frame 46's steps, their keys
-  and their deck strings in C-12.12's order (freeze, delete at Bybit, revoke, rotate the KEK,
-  replace); K12: each of the 19 <!-- audit:numbers.frames_env=19 --> frames that names an
-  environment, whose title or heading names an account, or that draws an "Attention:" strip
-  string, keeps its badge — derived from the rows, not a fixed list; K13: the number before every
-  marker is the marker's value, and every two-decimal contrast or ΔE76 value carries a marker; K14
-  and K15: gate 4's `inv.missing` and `inv.board`; and E42-D03's boards PR, in flight, is named by
-  its branch only — a sha or a quote beside it fails (`pin.inflight`).
+  sentence and each part between semicolons that names the load on its own and up to the same cue
+  (r14: a part that opens on "it", "which", "still" or a state word such as "shown" or "visible"
+  is read with the part before it), an Old or Current cell aside; and on the loading frame (frame
+  53) the confirm is named only denied ("no confirm rendered", "the confirm is not in the DOM"),
+  so "[Cancel] and [Confirm]" or "a faded confirm" with no state word fails too (`k4.loading`); K6
+  to K8: each of the 20 <!-- audit:numbers.frames_t2=20 --> gated frames names the `lock` and
+  CMP-079 RbacGate (§10.1's components) and a reason key a §10 or §12 table gives, `rbac.view_as`
+  first wherever it appears and never put after another leg in the row's prose, no frame that is
+  not gated draws a `lock` or CMP-079, a frame E27-D02's inventory or its name calls a view-as
+  frame says "view-as leg first" in its class, and every §10.2 control the view-as session reaches
+  as T2 `rbac.view_as` (its "Who sees what" row) lists the view-as leg first (`t2.viewas`); K9: no
+  exit (Cancel, Close, Back, Esc with or without backticks) drawn gated, in any line of this spec
+  outside §16 and the revision line — a frame, a §2.4 cell, a prose paragraph, and every table row
+  of every section (§11's keyboard table included), every heading and every fenced line — in a
+  line of the hand-off or in §10.2, by the same gated words — after the exit in a parenthetical
+  such as "(disabled)", after a verb, after a comma or a two-word appositive (", visible but
+  inactive"), or carried by "it" or "which" later in the sentence, and before it ("a disabled
+  [Cancel]", "an inactive CANCEL", "an unavailable Esc"; Cancel and Esc in any case there, Close
+  and Back in Title or UPPER case or in brackets); K10: gate 2's word and glyph per state
+  (`ac2.*`); K11: frame 46's steps, their keys and their deck strings in C-12.12's order (freeze,
+  delete at Bybit, revoke, rotate the KEK, replace); K12: each of the 19 <!--
+  audit:numbers.frames_env=19 --> frames that names an environment, whose title or heading names
+  an account, or that draws an "Attention:" strip string, keeps its badge — derived from the rows,
+  not a fixed list; K13: the number before every marker is the marker's value, and every
+  two-decimal contrast or ΔE76 value carries a marker; K14 and K15: gate 4's `inv.missing` and
+  `inv.board`; and E42-D03's boards PR, in flight, is named by its branch only — a sha or a quote
+  beside it fails (`pin.inflight`).
 @ prose
   **The self-test** (`--self-test`; `--selftest` too): a passing spec built in memory from the
   base files refuses 37 <!-- audit:numbers.mutations=37 --> mutations, each by its own code, and a
@@ -10100,15 +10140,17 @@ CONFIRM_LOOK_PINS = r"""
   "the [Close], hidden", "a disabled cancel", "a dimmed [Back]") on frame 53, in §2.4's
   `consequenceState` and in §2.4's prose, and on the hand-off before its extended-entries
   paragraph and on its sign-off line; and r13's table forms — "an unavailable `Esc`", "`Esc`
-  (disabled)" and "`Esc`, greyed out," (each "while it reads") and "an unusable confirm while the
-  summary loads", in lower, Title and UPPER case, in one table cell of §11's keyboard table
-  (SCR-129's row), the BQ table, §1.1, §3.3, §8's anatomy table, §13, §14 and Appendix A's first
-  New cell, and "[Cancel] and [Confirm] in the footer", "the confirm beside it" and "a faded
-  confirm" on frame 53 — 485 <!-- audit:numbers.k_mutations=485 --> in all, each run in memory on
-  this spec (or the hand-off) as a plain run: rc 1 with exactly one distinct FAIL, its own code,
-  among the gates of items 1–12 (item 13's pin refuses it too wherever it edits pinned text); then
-  item 13's 94 <!-- audit:numbers.pin_mutations=94 --> pin mutations; restored, `--check` exits 0
-  and the spec on disk is byte-identical (its sha256 compared).
+  (disabled)" and "`Esc`, greyed out," (each "while it reads"), "an unusable confirm while the
+  summary loads", and r14's "[Confirm] in the footer while the summary loads; it is shown" and
+  "the confirm beside the summary while it loads; still visible", in lower, Title and UPPER case,
+  in one table cell of §11's keyboard table (SCR-129's row), the BQ table, §1.1, §3.3, §8's
+  anatomy table, §13, §14 and Appendix A's first New cell, and "[Cancel] and [Confirm] in the
+  footer", "the confirm beside it" and "a faded confirm" on frame 53 — 533 <!--
+  audit:numbers.k_mutations=533 --> in all, each run in memory on this spec (or the hand-off) as a
+  plain run: rc 1 with exactly one distinct FAIL, its own code, among the gates of items 1–12
+  (item 13's pin refuses it too wherever it edits pinned text); then item 13's 94 <!--
+  audit:numbers.pin_mutations=94 --> pin mutations; restored, `--check` exits 0 and the spec on
+  disk is byte-identical (its sha256 compared).
 @ prose
   **The confirm-look text, pinned default-deny** (`confirm-look`): a clause of this spec or of the
   hand-off that pairs the confirm (confirm, Confirm, [Confirm], the confirm button) with a gated
