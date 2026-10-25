@@ -341,7 +341,10 @@ def liquidation_estimate(side: Side, entry: Decimal, leverage: Decimal, mmr: Dec
     `leverage` with maintenance margin rate `mmr`, fees and funding ignored: a long's
     `entry * (1 - 1/leverage + mmr)`, a short's `entry * (1 + 1/leverage - mmr)`. For cross margin
     it is the conservative bound (nearer entry than the real one). Every step rounds toward entry
-    at 100 digits, so a stop is never judged inside a liquidation it is not inside."""
+    at 100 digits, so a stop is never judged inside a liquidation it is not inside. A caller with
+    no position tier passes the rate of the lowest tier by `risk_limit_value` (the first after
+    sorting, `isLowestRisk` as a cross-check), never the tier whose id is 1: venue ids are not
+    positions (ETHUSDT's run 11 to 45)."""
     if leverage <= 0:  # a programming error: `AccountProfile` refuses it
         raise ValueError("no liquidation estimate at a leverage at or below 0")
     if mmr < 0:  # a programming error: a rate is read from the venue's tiers, never negative
