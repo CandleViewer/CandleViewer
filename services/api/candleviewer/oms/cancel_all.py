@@ -401,7 +401,10 @@ class CancelAll:
 
         with fold as join:
             async with asyncio.TaskGroup() as members:
-                tasks = [members.create_task(member(row, join)) for row in group]
+                tasks = [
+                    spawn_child(members, member(row, join), name="oms-cancel-all-fold-member")
+                    for row in group
+                ]
         return [task.result() for task in tasks]
 
     async def _selected(

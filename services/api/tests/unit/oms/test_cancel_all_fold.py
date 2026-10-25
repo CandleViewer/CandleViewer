@@ -64,7 +64,8 @@ def test_a_plain_order_the_request_left_out_keeps_the_symbol_on_per_order_cancel
     "kind", ["conditional", "take_profit", "stop_loss", "partial_stop_loss", "trailing_stop"]
 )
 def test_an_order_the_venues_cancel_all_leaves_does_not_count(kind: str) -> None:
-    """`orderFilter=Order` cancels plain orders only: a TP/SL or a conditional order stays put, so
+    """The venue's plain-order filter (24 Sec.14.2 rule 12, SR-E29-06) cancels plain orders only:
+    a TP/SL or a conditional order stays put, so
     it neither blocks the fold nor is taken by it (SR-E29-06)."""
     assert covers([_resting("a"), _resting("stop", kind)], {"a"})
     assert not covers([_resting("stop", kind)], {"stop"})  # nothing plain rests: no fold

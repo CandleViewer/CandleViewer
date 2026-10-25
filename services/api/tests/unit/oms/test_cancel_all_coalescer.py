@@ -23,10 +23,7 @@ from candleviewer.oms.cancel_all_coalescer import CancelAllCoalescer
 from candleviewer.oms.cancel_all_fold import CancelAllSpacer
 
 _ACCOUNT = AccountId(UUID("5b1c9d2e-7f30-4a6b-8c4d-2e3f4a5b6c7d"))
-_REF = AccountRef(
-    account_id=_ACCOUNT, uid="100001", environment="demo",
-    key_ref=str(UUID(int=1)),
-)  # fmt: skip
+_REF = AccountRef(account_id=_ACCOUNT, uid="100001", environment="demo", key_ref=str(UUID(int=1)))
 _BTC = Symbol("BTCUSDT")
 _NAMES = ("a", "b", "c", "d", "stop", "tp", "other")
 
@@ -142,7 +139,8 @@ async def test_a_fold_meets_every_member_with_one_venue_call() -> None:
 
 
 async def test_a_member_the_venue_call_leaves_sends_its_own_cancel() -> None:
-    """A conditional entry rests as a conditional order, which `orderFilter=Order` leaves."""
+    """A conditional entry rests as a conditional order, which the venue's plain-order filter
+    leaves (24 Sec.14.2 rule 12, SR-E29-06)."""
     venue = _venue("a", "stop", kinds={"stop": "conditional"})
     port, _, _ = _port(venue)
     with port.fold(_REF, _BTC, _ids("a", "stop")):

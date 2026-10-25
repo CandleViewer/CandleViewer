@@ -4,10 +4,10 @@ often one may leave, and how its members meet it.
 
 - **Coverage.** Only an unrestricted request folds, per account and symbol, and only when a
   `poll`-lane open-orders read shows every plain order resting there among the request's selected
-  orders. A plain order is the kind the venue's `cancel-all` with `orderFilter=Order` cancels
-  (`order_kind` "order"; never a TP/SL or a conditional order, SR-E29-06). Any other plain order
-  resting there (another client's, or one the request left out) keeps that symbol on per-order
-  cancels: the fail-safe, as a venue `cancel-all` would take it too.
+  orders. A plain order is the kind the venue's `cancel-all` cancels under the venue's plain-order
+  filter (24 Sec.14.2 rule 12, SR-E29-06): `order_kind` "order", never a TP/SL or a conditional
+  order. Any other plain order resting there (another client's, or one the request left out)
+  keeps that symbol on per-order cancels: the fail-safe, as a venue `cancel-all` would take it too.
 - **Spacing.** At most one venue `cancel-all` per UID per second (`order.cancel_all`, 1/s for
   linear; the exchange counts it per UID, shared by its keys), on a monotonic clock the OMS owns
   until E34-T02's governor takes it over (#859). A caller takes the UID's next free slot before
@@ -38,7 +38,8 @@ __all__ = [
     "CancelAllSpacer", "covers",
 ]  # fmt: skip
 
-#: The order kind the venue's `cancel-all` cancels (`orderFilter=Order`, 24 Sec.14.2 rule 12).
+#: The order kind the venue's `cancel-all` cancels: the venue's plain-order filter (24 Sec.14.2
+#: rule 12, SR-E29-06).
 FOLDED_KIND: Final = "order"
 #: One venue `cancel-all` per UID per second (24 Sec.8.7, `order.cancel_all`).
 CANCEL_ALL_INTERVAL_S: Final = 1.0

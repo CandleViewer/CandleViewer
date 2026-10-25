@@ -502,9 +502,8 @@ def test_each_bound_is_finite_and_above_zero(name: str, bound: float) -> None:
 
 _FOLD_ACCOUNT = AccountId(_A)
 _FOLD_REF = AccountRef(
-    account_id=_FOLD_ACCOUNT, uid="100001", environment="demo",
-    key_ref=str(UUID(int=1)),
-)  # fmt: skip
+    account_id=_FOLD_ACCOUNT, uid="100001", environment="demo", key_ref=str(UUID(int=1))
+)
 
 
 def _link(n: int) -> str:
