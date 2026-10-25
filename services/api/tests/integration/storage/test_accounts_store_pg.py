@@ -8,6 +8,7 @@ store is proven to read exactly the rows M2 writes and to honour M2's revocation
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import sys
@@ -25,6 +26,7 @@ from testcontainers.postgres import PostgresContainer
 
 from candleviewer.secrets.models import CredentialRow
 from candleviewer.storage.repositories.accounts import (
+    SUB_ACCOUNT_CAP_CONFLICT,
     AccountKey,
     AccountsStoreConflictError,
     AccountsStoreRuleError,
@@ -580,3 +582,73 @@ async def test_a_disarm_commits_its_code_and_time_and_stays_owed_until_its_recor
             (acct.id,),
         ).fetchone()
     assert row == (False, rule, at, later)
+
+
+async def _subs(store: SqlAlchemyAccountsStore, owner: OwnerScope, exch: str, parent: uuid.UUID,
+                n: int) -> list[uuid.UUID]:  # fmt: skip
+    return [(await store.create_account(owner, _new(exch, parent=parent))).id for _ in range(n)]
+
+
+async def test_the_sixth_live_sub_under_one_parent_is_a_conflict_and_is_not_stored(
+    store: SqlAlchemyAccountsStore, pg_dsn: str
+) -> None:
+    """#895, 22 createExchangeAccount: the 5th sub is admitted, the 6th refused with the cap's
+    conflict; a soft-deleted sub, another parent's subs and a main account are not counted."""
+    exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
+    parent = await store.create_account(owner, _new(exch))
+    other = await store.create_account(owner, _new(exch))
+    await _subs(store, owner, exch, other.id, 5)  # another parent's subs
+    subs = await _subs(store, owner, exch, parent.id, 5)  # the 5th is admitted
+    sixth = _new(exch, parent=parent.id)
+    with pytest.raises(AccountsStoreConflictError) as ei:
+        await store.create_account(owner, sixth)
+    assert ei.value.constraint == SUB_ACCOUNT_CAP_CONFLICT
+    assert (ei.value.__cause__, ei.value.__suppress_context__) == _TYPED
+    assert await store.get_account(owner, sixth.id) is None
+    await store.create_account(owner, _new(exch))  # a main account is not capped
+    assert await store.soft_delete_account(owner, subs[0]) is True
+    assert (await store.create_account(owner, sixth)).id == sixth.id  # the deleted one freed a slot
+
+
+async def test_a_recorded_business_kyc_tier_widens_the_cap_to_twenty(
+    store: SqlAlchemyAccountsStore, pg_dsn: str
+) -> None:
+    exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
+    parent = await store.create_account(owner, _new(exch))
+    with _c(pg_dsn) as c:
+        c.execute(
+            "INSERT INTO settings (id, scope, key, value, value_type) VALUES "
+            "(%s, 'system', 'accounts.subaccount_tier', to_jsonb('business_kyc'::text), 'string')",
+            (str(uuid.uuid4()),),
+        )
+    try:
+        await _subs(store, owner, exch, parent.id, 20)
+        with pytest.raises(AccountsStoreConflictError):
+            await store.create_account(owner, _new(exch, parent=parent.id))
+    finally:
+        with _c(pg_dsn) as c:
+            c.execute(
+                "DELETE FROM settings WHERE scope = 'system' AND key = 'accounts.subaccount_tier'"
+            )
+
+
+async def test_two_concurrent_creates_for_the_last_slot_admit_exactly_one(
+    store: SqlAlchemyAccountsStore, pg_dsn: str
+) -> None:
+    """`FOR UPDATE` on the parent serialises them: the later count sees the earlier commit."""
+    exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
+    parent = await store.create_account(owner, _new(exch))
+    await _subs(store, owner, exch, parent.id, 4)
+    got = await asyncio.gather(
+        *(store.create_account(owner, _new(exch, parent=parent.id)) for _ in "ab"),
+        return_exceptions=True,
+    )
+    refused = [g for g in got if isinstance(g, AccountsStoreConflictError)]
+    assert len(refused) == 1 and refused[0].constraint == SUB_ACCOUNT_CAP_CONFLICT
+    with _c(pg_dsn) as c:
+        row = c.execute(
+            "SELECT count(*) FROM exchange_accounts WHERE parent_account_id = %s "
+            "AND deleted_at IS NULL",
+            (parent.id,),
+        ).fetchone()
+    assert row == (5,)

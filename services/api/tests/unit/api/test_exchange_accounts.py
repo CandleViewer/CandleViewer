@@ -142,6 +142,7 @@ def test_a_write_refusal_whose_record_fails_is_503_and_a_read_refusal_stays_403(
         (WriteAheadTimeout("bound"), 503, "audit_unavailable"),
         (AccountsStoreConflictError("ux_ea_label"), 409, "conflict"),
         (AccountsStoreConflictError("exchange_accounts_pkey"), 409, "conflict"),
+        (AccountsStoreConflictError("sub_account_cap"), 409, "conflict"),
         (AccountsStoreRuleError("ea_uid_fmt"), 422, "validation_failed"),
         (StorageTierUnavailable("down"), 503, "store_unavailable"),
     ],

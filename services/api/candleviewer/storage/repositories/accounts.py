@@ -21,7 +21,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal, Protocol
+from typing import Final, Literal, Protocol
 from uuid import UUID
 
 
@@ -165,6 +165,10 @@ class AccountsStoreConflictError(AccountsStoreError):
     def __init__(self, constraint: str) -> None:
         super().__init__(constraint)
         self.constraint = constraint
+
+
+#: `AccountsStoreConflictError.constraint` of a sub refused past its parent's cap (#895: the 6th).
+SUB_ACCOUNT_CAP_CONFLICT: Final = "sub_account_cap"
 
 
 class AccountsStoreRuleError(AccountsStoreError):
