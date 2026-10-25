@@ -4,12 +4,15 @@
 configures a file KEK through e27-kek.md §4's settings, so a name holding `KEK` must be one of
 them, with a value that cannot hold key material; the key itself reaches cv-api only as the
 `cv_kek` file secret mounted at `CV_KEK_HANDLE`. `.env.example` names the file and the version,
-never the key. Every guard has a negative control.
+never the key, and the demo-host runbook's check value is the one the loader enrols. Every guard has
+a negative control.
 """
 
 from __future__ import annotations
 
 import copy
+import hashlib
+import hmac
 import re
 from pathlib import Path
 from typing import Any
@@ -17,9 +20,11 @@ from typing import Any
 import pytest
 import yaml
 
+from candleviewer.secrets._kek import LoadedKek
 from candleviewer.settings import Settings
 
 _INFRA = Path(__file__).resolve().parents[5] / "infra"
+_RUNBOOK = _INFRA.parent / "docs" / "ops" / "runbooks" / "demo-host.md"
 _DEMO_HOST = _INFRA / "compose" / "docker-compose.demo-host.yml"
 #: e27-kek.md §4's settings a compose environment may carry, and each value's shape: a source, a
 #: compose secret's mount, a version (a number, or the operator's variable).
@@ -107,3 +112,13 @@ def test_env_example_names_the_kek_file_and_its_version_never_the_key() -> None:
     pairs = [line.partition("=") for line in example.splitlines() if not line.startswith("#")]
     kek = {name: value for name, sep, value in pairs if sep and "KEK" in name.upper()}
     assert kek == {"CV_KEK_FILE": "", "CV_KEK_VERSION": "1"}  # a blank path, a number
+
+
+def test_the_demo_host_runbook_computes_the_check_value_the_loader_enrols() -> None:
+    """demo-host.md step 5 holds the KCV in `security.kek_enrolled` against one it computes from
+    the KEK file and the offline copy: the loader's derivation, or the check proves nothing."""
+    formula = 'hmac.new(k, b"cv-kek-kcv-v1", hashlib.sha256).hexdigest()[:16]'
+    assert formula in _RUNBOOK.read_text(encoding="utf-8")
+    key = bytes(range(32))  # a fixed test vector, never a key
+    shown = hmac.new(key, b"cv-kek-kcv-v1", hashlib.sha256).hexdigest()[:16]
+    assert LoadedKek(bytearray(key), 1, env_name="demo").kcv().hex() == shown
