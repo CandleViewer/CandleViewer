@@ -2,10 +2,13 @@
 only while its last recorded pass is inside the self-check's window, by `selfcheck.is_fresh` at
 read time (SR-E27-18); a failed key, an account not armed, a read past its age bound and a rejected
 credential (24-internal-schemas.md §8.6) refuse at once, and only a later recorded pass clears a
-rejection. Fake clock and a fake self-check job: no I/O."""
+rejection. The order lane reads it while the serving loop writes it (#913 slice 3 L4), so a read
+writes nothing and a write never changes what a read holds. Fake clock and a fake self-check job:
+no I/O."""
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -305,15 +308,89 @@ def test_a_rejection_a_later_pass_cleared_never_merges_into_the_next() -> None:
     assert standings.standing(ACC) == NO_KEY  # without the cleared refusal's disable
 
 
-def test_a_rejection_a_read_found_cleared_stays_dropped_when_that_key_fails() -> None:
+def _ports_aside(standings: KeyStandings) -> dict[str, object]:
+    """Each object the standing holds, its ports (the job and the clock) aside."""
+    return {k: v for k, v in vars(standings).items() if k not in ("_selfcheck", "_clock")}
+
+
+def test_a_standing_read_writes_nothing_not_even_a_rejection_a_later_pass_cleared() -> None:
+    """#913 slice 3 L4: the order lane reads the standing while the serving loop writes it, so a
+    read never writes. It answers a rejection a later pass has cleared as cleared, and keeps it."""
+    standings, job, clock = _world()
+    standings.credential_rejected(ACC, Refusal.UNKNOWN_KEY)
+    clock.advance(1)
+    job.results[KEY] = _check("passed", last_pass=clock.now())
+    held = copy.deepcopy(_ports_aside(standings))
+    assert (standings.standing(ACC), standings.standing(ACC_B)) == (ACTIVE, None)
+    assert _ports_aside(standings) == held
+
+
+def test_each_write_publishes_anew_never_changing_what_a_read_in_flight_holds() -> None:
+    """#913 slice 3 L4: a read on the order lane takes what the standing holds by reference, and
+    each write on the serving loop publishes anew rather than change it in place, so the read meets
+    the write whole or not at all."""
+    standings, _, clock = _world(key_row(ACC), key_row(ACC_B))
+    for write in (
+        lambda: standings.credential_rejected(ACC, Refusal.UNKNOWN_KEY),
+        lambda: standings.observe([key_row(ACC)]),
+    ):
+        held = _ports_aside(standings)  # each reference a read in flight holds
+        copied = copy.deepcopy(held)
+        clock.advance(1)
+        write()
+        assert held == copied  # each object held before the write is as it was
+
+
+def test_a_cleared_rejection_is_in_force_again_if_its_pass_leaves_before_the_next_read() -> None:
+    """#913 slice 3 L4's changed rule, failing closed: a read keeps a rejection a later pass has
+    cleared, so if the pass leaves the evidence (its key fails) before the next tracking read drops
+    it, the rejection is in force again, where a read used to drop it for good: it refuses longer,
+    never less."""
     standings, job, clock = _world(key_row(ACC), key_row(ACC, key=NEW_KEY))
     standings.credential_rejected(ACC, Refusal.UNKNOWN_KEY)
     clock.advance(1)
     job.results[NEW_KEY] = _check("passed", key=NEW_KEY, last_pass=clock.now())
-    assert standings.standing(ACC) == ACTIVE  # cleared, and dropped as it is read
+    assert standings.standing(ACC) == ACTIVE  # answered cleared, and kept
+    failed = _check("failed", key=NEW_KEY, last_pass=clock.now(), code="key_ip_whitelist_mismatch")
+    job.results[NEW_KEY] = failed
+    assert standings.standing(ACC) == KeyStanding(False, DisabledReason.KEY_IP_WHITELIST_MISMATCH)
+
+
+def test_a_rejection_a_tracking_read_found_cleared_stays_dropped_when_that_key_fails() -> None:
+    """The tracking read, on the serving loop, drops a rejection a later pass has cleared: once
+    dropped, nothing revives it."""
+    standings, job, clock = _world(key_row(ACC), key_row(ACC, key=NEW_KEY))
+    standings.credential_rejected(ACC, Refusal.UNKNOWN_KEY)
+    clock.advance(1)
+    job.results[NEW_KEY] = _check("passed", key=NEW_KEY, last_pass=clock.now())
+    standings.observe([key_row(ACC), key_row(ACC, key=NEW_KEY)])  # it finds it cleared
     failed = _check("failed", key=NEW_KEY, last_pass=clock.now(), code="key_ip_whitelist_mismatch")
     job.results[NEW_KEY] = failed
     assert standings.standing(ACC) == IP_REFUSED  # the other key stays active: nothing revives
+
+
+@pytest.mark.parametrize(
+    ("tracked", "expected"),
+    [
+        (False, KeyStanding(False, DisabledReason.KEY_IP_WHITELIST_MISMATCH)),  # in force: merged
+        (True, NO_KEY),  # dropped by the tracking read: it adds nothing
+    ],
+)
+def test_a_cleared_rejection_merges_into_the_next_only_until_the_next_tracking_read(
+    tracked: bool, expected: KeyStanding
+) -> None:
+    """`credential_rejected` since L4: a first rejection that a later pass has cleared adds nothing
+    once the next tracking read has dropped it; if the pass leaves the evidence before that read,
+    the first is in force again and merges, and both refuse."""
+    standings, job, clock = _world()
+    standings.credential_rejected(ACC, Refusal.IP_NOT_ALLOWED)
+    clock.advance(1)
+    job.results[KEY] = _check("passed", last_pass=clock.now())  # it clears the first
+    if tracked:
+        standings.observe([key_row(ACC)])
+    job.results.clear()  # the pass leaves the evidence: the stored pass predates the first
+    standings.credential_rejected(ACC, Refusal.UNKNOWN_KEY)
+    assert standings.standing(ACC) == expected
 
 
 def test_a_rejection_is_held_before_it_is_logged_so_a_logging_fault_withholds_nothing(

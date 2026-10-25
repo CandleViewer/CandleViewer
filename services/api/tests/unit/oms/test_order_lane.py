@@ -201,9 +201,9 @@ def _failing(value: str) -> None:
 
 
 async def test_hops_from_the_lane_land_in_order_and_a_failing_notice_is_logged() -> None:
-    """A notice sent before a read lands before it (a rejected credential, then the gate); one that
-    raises on the serving loop is logged by its type, never raised on the lane, and one the closed
-    serving loop cannot take is logged as lost; each is counted (CR-S3L1A-01)."""
+    """A notice sent before a read lands before it (a rejected credential, then a blocking call);
+    one that raises on the serving loop is logged by its type, never raised on the lane, and one the
+    closed serving loop cannot take is logged as lost; each is counted (CR-S3L1A-01)."""
     metrics, closed = Metrics("demo"), asyncio.new_event_loop()
     serving = Serving(asyncio.get_running_loop(), metrics)
 

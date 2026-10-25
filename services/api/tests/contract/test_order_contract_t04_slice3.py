@@ -46,6 +46,7 @@ from candleviewer.oms_wiring import (
     OmsRuntime,
     OrderStateFeed,
     ReferenceDemand,
+    ServedGate,
     UnclaimedMachineEvents,
     environment_lock_key,
 )
@@ -692,12 +693,13 @@ def test_24_gives_the_demand_and_the_audit_labels_the_code_holds() -> None:
 
 def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() -> None:
     """#913 slice 3 L1 (29 CV-C13): rule 1's one explicit thread; the lane, its crossings and its
-    stop inside the grace, from the code's own bounds; the hops named until L3 and L4, L2's gone;
+    stop inside the grace, from the code's own bounds; the hops named until L3, L2's and L4's gone;
     the notices' bound and their count (CR-S3L1A-01); the private stream the lane's port refuses
-    (CR-S3L1B-05); the blocking hops' bound in series (SEC-S3L1A-03); the lane's own refusals read
-    in place (SEC-S3L1C-02); its death paged (SEC-S3L1A-02); a cancelled start and nothing begun
-    once the lane stops or dies, with OM-D10 to OM-D12 (CR-S3L1C-03); and, the runtime on the lane
-    since L1b, no status note left in 20, 23 or 24."""
+    (CR-S3L1B-05); no blocking hop left (SEC-S3L1A-03), the gate read in place since L4, with its
+    read inventory and its two reads; the lane's own refusals read in place (SEC-S3L1C-02); its
+    death paged (SEC-S3L1A-02); a cancelled start and nothing begun once the lane stops or dies,
+    with OM-D10 to OM-D12 (CR-S3L1C-03); and, the runtime on the lane since L1b, no status note
+    left in 20, 23 or 24."""
     rule = _between(_ARCH, "\n1. **One serving loop, and the order lane.**", "\n2. ")
     assert "the one explicit thread is the order lane's" in rule
     lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
@@ -711,25 +713,34 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         f"awaited and cut at `CV_COMMAND_TIMEOUT` ({HOP_TIMEOUT_S:g} s): the profile cache and the "
         "clock guard's resync; and until L3 lets the lane sign and send from its own loop, every "
         "venue call",
-        "lane to serving loop, blocking: until L4 the order-entry gate, whose key-standing read is "
-        "not safe from another thread. The lane's thread waits",
         "the lane's port refuses `subscribe_private` (`PrivateStreamRefused`)",
         "the exit routes reach the exit service the same way (`OnLaneExits`)",
         "cancel-all reaches its own service the same way (`OnLaneCancelAll`): its scope, an "
         "account read, within that bound, and its run within the service's own deadline;",
         "and its refusal records, per-order cancels and amends within the service's own bounds",
         "and the exit routes' in-flight guard, claimed and released on the serving loop only",
-        f"waits at most `CV_PERSIST_TIMEOUT` ({BLOCK_TIMEOUT_S:g} s) for the call to begin",
         "a rejected credential, which the lane's gate refuses at once until its notice has landed "
         "there (for good, should it be lost or fail)",
-        "The bound is per call: while the serving loop stalls, N such calls hold the lane's thread "
-        "N times that bound in series, ahead of any other step there, the ruled interim until L4",
         "These notices have no cap of their own: while the serving loop stalls they queue there at "
         "the lane's step rate, so a stall holds at most that rate times its length.",
         "is logged by its call's name and counted (`oms_lane_notices_failed_total`, §12.1)",
         "The switches' gate reads the lane's own refusals of rejected credentials "
         "(`ServedStandings.refused`) on either loop: one dict read, GIL-atomic against the item "
         "the lane assigns and the one the serving loop drops once its notice lands.",
+        "Since L4 the lane reads the order-entry gate itself in place too "
+        f"(`{ServedGate.__name__}`), never by a hop, its own refusals first",
+        "which `observe` and `credential_rejected` publish anew on the serving loop, never "
+        "changing one in place, and which a read never writes, a rejection a later pass has "
+        "cleared dropped by the next tracking read",
+        "the self-check's results, a key at a time, each one `dict.get`",
+        "so a read that overlaps one of its writes admits only where the state before or after it "
+        "does",
+        "Each read takes its source at one instant, so a write is in force for every gate read "
+        "that begins after it returns",
+        "`_land` writes the key standing before it drops the lane's own refusal, so a read that "
+        "misses the one finds the other",
+        "so the lane reads the gate twice and admits only when both reads do: a refusing write "
+        "that lands inside the first is in force for the second",
         f"within {LANE_JOIN_S:g} s (`LANE_JOIN_S`), the last of the 5 s the drain leaves",
         f"A cancelled `start()` waits, within those {OMS_STOP_RESERVE_S:g} s, for the composition "
         "to close what it built on the lane, then stops the lane, cancelled again meanwhile or not",
@@ -766,7 +777,16 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         "The lane writes its audit records and `machine_events` rows through its own writer and "
         "sink (#913's L2), so neither waits on the serving loop" in ws
     )
+    assert "the order-entry gate it reads in place, never waiting there (#913's L4)" in ws
+    assert not _missing(
+        _ROUTE,
+        "The route's step 10 reads the binding on the serving loop and B1's `SEND` on the order "
+        "lane, both in place: the lane never waits on the serving loop for the gate",
+        "before the key standing holds it (`20-architecture.md` §6.2, #913 L4)",
+    )
     assert not [text for text in (lane, ws, _words(_ARCH)) if "until L2" in text]
+    assert not [text for text in (lane, ws, _ROUTE) if "until L4" in text]
+    assert "lane to serving loop, blocking" not in lane and "Serving.block" not in _ARCH
     assert not [text for text in (lane, _ROUTE, ws) if "L1b" in text]
     plan = (OPENAPI_SPEC_PATH.parent / "29-statechart-adoption-plan.md").read_text(encoding="utf-8")
     [row] = [line for line in plan.splitlines() if line.startswith("| CV-C13 ")]
