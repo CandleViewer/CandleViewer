@@ -1796,6 +1796,22 @@ D08_FOCUS_AFTER = (
 D08_A22 = '"Delete layout {name}? It has unsaved changes, and it can\'t be restored."'
 
 
+D08_E3 = "merged E15-D08 draws the row in its entry-point matrix (§3.2 E3 :419 at `" + D08_SHA + "`"
+D08_HANDED = re.compile(r"hand(?:ed|s)? to E15-D08's entry-point matrix|entry-point matrix \(§19\)")
+
+
+def d08_switch_row_gates(spec: str) -> list[str]:
+    """Re-check carry: merged E15-D08 §3.2 E3 draws the rail switch row; §19 no longer hands it over."""
+    i = spec.find("### 10.3 ")
+    sec = spec[i : spec.find("## 11. ", i)] if i >= 0 else ""
+    fails = []
+    if D08_E3 not in sec:
+        fails.append("siblings: §10.3 does not cite merged E15-D08 §3.2 E3 :419 for the switch row")
+    if D08_HANDED.search(spec):
+        fails.append("siblings: the spec still hands the switch row to E15-D08 (§19)")
+    return fails
+
+
 def strip_quotes(text: str) -> str:
     """Blank every double-quoted string (copy, not drawn state), keeping the offsets."""
     return re.sub(r'"[^"\n]*"', lambda m: " " * len(m.group(0)), text)
@@ -2570,6 +2586,155 @@ FAIL_RULE = re.compile(
 )
 
 
+# re-check M-1: the subject a word speaks of is the nearest control named before it in the WHOLE unit (the
+# row across its cells, the sentence across `;`, `—`, `(…)`), keyed by the control's full and short names;
+# every preset or arrangement name is a card, the geometric ones in digits or in words
+_NUM_NAME = {"1": "one", "2": "two", "3": "three", "4": "four", "9": "nine"}
+
+
+def _arrangement_alt(label: str) -> str:
+    m = re.fullmatch(r"(\d)([×+])(\d)", label)
+    if not m:
+        return re.escape(label) + (r"(?!\s+4H)" if label == "Swing" else "")
+    a, op, b = m.groups()
+    sep = r"\s*(?:[×x]|by)\s*" if op == "×" else r"\s*(?:\+|plus)\s*"
+    return f"(?:{a}|{_NUM_NAME[a]}){sep}(?:{b}|{_NUM_NAME[b]})"
+
+
+ARRANGEMENT_NAME = re.compile(
+    r"(?<![\w.×+`/-])(?:"
+    + "|".join(
+        _arrangement_alt(n)
+        for n in sorted(
+            {x for p in INVENTORY for x in (p["label"], p["l1"]) if x}, key=len, reverse=True
+        )
+    )
+    + r")(?![\w×+/-])",
+    re.IGNORECASE,
+)
+CARD_SUBJECT = re.compile(
+    ARRANGEMENT_NAME.pattern + r"|(?<![.\w`-])(?:cards?|presets?|thumbnails?|options?)\b",
+    re.IGNORECASE,
+)
+KEY_HOME = re.compile(  # a saved layout, its menu row, its picker or the trigger: never a card
+    r"\bsaved layouts?\b|\bLayout \d\b|\blayouts?\b|\bmenu(?:item\w*)?\b|\bmenu (?:rows?|items?)\b"
+    r"|\bYour layouts\b|\bkey picker\b|\btrigger\b|\btooltips?\b|\bworkspaces?\b|\brows?\b|\bslot\b",
+    re.IGNORECASE,
+)
+TRIGGER_SUBJECT = re.compile(
+    r"\btrigger\b|CMP-217/trigger|\binline\b|\[Layout ▾\]|\bbadge on the trigger\b", re.IGNORECASE
+)
+TRIGGER_OTHER = re.compile(
+    r"\bmenu(?: rows?| items?)?\b|\btooltips?\b|\bcards?\b|\bYour layouts\b|\bkey picker\b|\brows?\b"
+    r"|\bitems?\b|\btab strip\b|\b(?:saved )?layouts?\b",
+    re.IGNORECASE,
+)
+TRIGGER_KEY = re.compile(
+    KEY_WORD.pattern
+    + r"|\bbadges?\b|\b(?:shows?|carr(?:y|ies)|wears?|draws?|displays?|bears?)\s+(?:the|its|a|an)\s+"
+    r"(?:key|hotkey|chord|slot(?: number)?)\b",
+    re.IGNORECASE,
+)
+LOCK_T1 = re.compile(DOC_T1.pattern + r"|\bDiscard\b|\bApply\b")
+LOCK_OTHER = re.compile(
+    r"Save layout|Save as new layout…|\bSave as\b|\bRename\b…?|key picker|\bDelete\b…?|New workspace"
+    r"|Duplicate|Set as default|Move up|Move down|Export…|Revert to saved…|\bwrites?\b|\bbutton\b"
+    r"|\bitems?\b|\bthe saves\b|\bConfirm\b|\bName\b|\bcontrols?\b|\bT2\b|\bfields?\b"
+)
+SWITCH_SUBJECT = re.compile(  # a bare "open" after a list break or `Enter` opens a workspace (the rail)
+    SWITCH_WORD.pattern
+    + r"|(?:^|[;,|]\s*|\bEnter`?\s+)opens?\b(?=\s*(?:[;,.|)—]|$))|\bopens? the (?:first match|workspace)\b",
+    re.IGNORECASE,
+)
+# delta r4: a fixture workspace (Scalping only as a rail row), or "the / a / another / the next workspace",
+# opened, selected, picked or gone to is a switch too (D-9), whatever generic switch word the unit lacks
+WS_SUBJECT = re.compile(
+    "|".join(rf"\b{re.escape(w)}\b" for w in FIXTURE_WORKSPACES)
+    + r"|\bScalping(?=\s*(?:\\\*|workspace\b|row\b|'s row\b))|\bthe Scalping (?:workspace|row)\b"
+    + r"|(?<!New )\b(?:the next|the|a|another)\s+workspace\b(?!\s+(?:name|dialog|list|delete)\b)",
+    re.IGNORECASE,
+)
+WS_VERB = re.compile(
+    r"\bopen(?:s|ed|ing)?\b|\bselect(?:s|ed|ing)?\b|\bpick(?:s|ed|ing)?\b|\b(?:go(?:es)?|going|went)\s+to\b"
+    r"|\bjump(?:s|ed|ing)?\s+to\b",
+    re.IGNORECASE,
+)
+
+WS_OBJECT_GAP = re.compile(r"[\s,]*(?:the\s+)?")
+
+
+def ws_switch(text: str) -> bool:
+    """Whether a switch verb in the unit has a workspace as its subject (named up to 40 characters before it)
+    or its object (right after it, across a comma and an article)."""
+    for m in WS_VERB.finditer(text):
+        gap = WS_OBJECT_GAP.match(text, m.end())
+        if WS_SUBJECT.match(text, gap.end() if gap else m.end()):
+            return True
+        if any(w.end() >= m.start() - 40 for w in WS_SUBJECT.finditer(text, 0, m.start())):
+            return True
+    return False
+
+
+PROMPT_HOME = re.compile(  # what may own a dialog or a confirm here: never a switch
+    r"\bApply\b|SCR-029|SCR-025|\bDelete\b…?|typed (?:delete|confirm)|Save as new layout…|\bsave-as\b"
+    r"|New workspace|\bRename\b…?|\bgallery\b|E15-D08|Export…|Revert to saved…",
+    re.IGNORECASE,
+)
+# a token's usage list "(cards, chips, a gated fill)" names surfaces, never a state
+TOKEN_USE = re.compile(
+    r"`(?:color|space|size|type|radius|elevation|opacity|font|motion)\.[^`]*`\s*\([^)]*\)"
+)
+DIRTY_SUBJECT = re.compile(r"dirty|\basterisk\b|\\\*|unsaved changes", re.IGNORECASE)
+DIRTY_AWAY = re.compile(
+    DIRTY_DENY.pattern + r"|\boutside\s+(?:the\s+|its\s+)?(?:row(?:'s)?\s+)?name\b"
+    r"|\bin\s+(?:a|the)\s+(?:separate\s+)?(?:note|notice|banner|toast|badge|caption|callout|second line)\b"
+    r"|\b(?:under|below|beside|next to)\s+the\s+row\b",
+    re.IGNORECASE,
+)
+
+KEY_AWAY = re.compile(r"[^|;]{0,16}?(?:" + KEY_ELSEWHERE.pattern + ")", re.IGNORECASE)
+
+
+def subject_before(
+    text: str, i: int, kinds: dict[str, re.Pattern[str]], window: int = 10**6
+) -> str:
+    """The kind of the nearest subject named before offset i in the unit, across any punctuation."""
+    best, kind = -1, ""
+    lo = max(0, i - window, text.rfind("·", 0, i) + 1)  # a "·" list item is its own subject
+    for name, pat in kinds.items():
+        for m in pat.finditer(text, lo, i):
+            if m.end() <= i and m.end() > best:
+                best, kind = m.end(), name
+    return kind
+
+
+def _neg_before(text: str, i: int) -> bool:
+    a = max(text.rfind(c, 0, i) for c in ",;(|—") + 1
+    return bool(NEG_WORD.search(text[a:i]) or NEGATED.search(text[max(0, i - 24) : i]))
+
+
+def unit_key_on(
+    text: str, kinds: dict[str, re.Pattern[str]], keys: re.Pattern[str], want: str, window: int = 80
+) -> str:
+    """The first un-negated key word whose subject (the nearest named within `window` before it, across any
+    punctuation, or the one it is put on) is `want`, else ''."""
+    bare = TOKEN_USE.sub(lambda t: " " * len(t.group(0)), strip_quotes(text))
+    for m in keys.finditer(bare):
+        if _neg_before(bare, m.start()) or KEY_AWAY.match(bare, m.end()):
+            continue
+        tail = re.match(
+            r"[^;,|()]{0,24}?\b(?:on|for|of|to)\s+(?:the\s+|each\s+|every\s+|a\s+|an\s+)?",
+            bare[m.end() :],
+        )
+        after = ""
+        if tail:
+            j = m.end() + tail.end()
+            after = next((k for k, pat in kinds.items() if pat.match(bare, j)), "")
+        if want in (subject_before(bare, m.start(), kinds, window), after):
+            return bare[max(0, m.start() - 40) : m.end() + 20].strip()
+    return ""
+
+
 def sentences_of(line: str) -> list[str]:
     """A prose line split into sentences, never inside a double-quoted string."""
     out, start = [], 0
@@ -2687,6 +2852,23 @@ def doc_locked_t1(text: str) -> tuple[str, str]:
     return "", ""
 
 
+PRONOUN_LEAD = re.compile(r"(?:It|Its|This|That|They|Then|Both|Neither)\b")
+
+
+def unit_locked_t1(text: str) -> tuple[str, str]:
+    """(subject, lock word) where the nearest control before an un-negated lock word in the whole unit is a
+    T1 control (full or short name), else ('', '')."""
+    for ok in LOCK_SKIP:
+        text = text.replace(ok, " " * len(ok))
+    for m in DOC_LOCK_WORD.finditer(text):
+        if NEGATED.search(text[max(0, m.start() - 24) : m.start()]):
+            continue
+        if subject_before(text, m.start(), {"t1": LOCK_T1, "other": LOCK_OTHER}, 60) == "t1":
+            subj = [s for s in LOCK_T1.finditer(text, max(0, m.start() - 60), m.start())][-1]
+            return subj.group(0), m.group(0)
+    return "", ""
+
+
 def document_gates(spec: str, handoff: str, bindings: set[str]) -> list[str]:
     fails: list[str] = []
     seen: set[str] = set()
@@ -2697,7 +2879,12 @@ def document_gates(spec: str, handoff: str, bindings: set[str]) -> list[str]:
             fails.append(msg)
 
     low = {b.lower() for b in bindings} | {k.lower() for k in COMPONENT_KEYS}
+    unit_before = ("", "", "")
     for doc, where, text in doc_units(spec, handoff):
+        # a prose sentence that opens on a pronoun speaks of the previous sentence's subject (re-check M-1)
+        last, unit_before = unit_before, (doc, where, text)
+        if last[:2] == (doc, where) and "prose" in where and PRONOUN_LEAD.match(text):
+            text = last[2] + " " + text
         sec0 = where.split(" ")[0]
         major = re.match(r"§(\d+)", sec0)
         keyed_already = doc == "spec" and (
@@ -2746,6 +2933,19 @@ def document_gates(spec: str, handoff: str, bindings: set[str]) -> list[str]:
                     "merged E15-D03 D-9)"
                 )
                 break
+        else:
+            # the row's subject carries to its last cell: the trigger may be named a whole row earlier
+            tk = unit_key_on(
+                text,
+                {"trigger": TRIGGER_SUBJECT, "other": TRIGGER_OTHER},
+                TRIGGER_KEY,
+                "trigger",
+                10**6,
+            )
+            if tk:
+                add(
+                    f"trigger: {where} puts the key on the trigger ('{tk[-60:]}'; merged E15-D03 D-9)"
+                )
         # no key on a preset card
         if not (doc == "spec" and sec in ("§5.2", "§6.2") and prose):
             subject = (doc == "spec" and sec in ("§6.1", "§6.2") and not prose) or (
@@ -2761,6 +2961,13 @@ def document_gates(spec: str, handoff: str, bindings: set[str]) -> list[str]:
             cl = doc_key_on_card(
                 " | ".join(cells[2:]) if subject and doc == "hand-off" else text, subject
             ) or named_card_key(text)
+            ak = (
+                ""
+                if cl
+                else unit_key_on(text, {"card": CARD_SUBJECT, "home": KEY_HOME}, KEY_WORD, "card")
+            )
+            if ak:
+                add(f"spine: {where} keys an arrangement as a card ('{ak[-60:]}')")
             if cl:
                 add(f"spine: {where} puts a hotkey on a preset card ('{cl[:60]}')")
         # D-9: a switch never prompts (per table cell, per prose sentence)
@@ -2777,6 +2984,29 @@ def document_gates(spec: str, handoff: str, bindings: set[str]) -> list[str]:
                     for ok in PROMPT_OK + PROMPT_OTHER:
                         body = body.replace(ok, " " * len(ok))
                     found = found or _unnegated(body, DOC_PROMPT_WORD)
+            bare_unit = strip_quotes(text)
+            if not found and (_unnegated(bare_unit, SWITCH_SUBJECT) or ws_switch(bare_unit)):
+                body = text
+                for ok in PROMPT_OK + PROMPT_OTHER:
+                    body = body.replace(ok, " " * len(ok))
+                whole = next(
+                    (
+                        m
+                        for m in DOC_PROMPT_WORD.finditer(body)
+                        if not NEGATED.search(body[max(0, m.start() - 24) : m.start()])
+                        and subject_before(
+                            body,
+                            m.start(),
+                            {"switch": SWITCH_SUBJECT, "ws": WS_SUBJECT, "other": PROMPT_HOME},
+                        )
+                        != "other"
+                    ),
+                    None,
+                )
+                if whole:
+                    add(
+                        f"switch: {where} prompts in the row or sentence of a switch ('{whole.group(0)}')"
+                    )
             if found:
                 add(f"switch: {where} prompts on a switch ('{found.group(0)}')")
         # the dirty marker stays in the row name
@@ -2785,8 +3015,17 @@ def document_gates(spec: str, handoff: str, bindings: set[str]) -> list[str]:
             if hit:
                 add(f"dirty: {where} moves the dirty marker out of the row name ('{hit.group(0)}')")
                 break
+        else:
+            for m in DIRTY_AWAY.finditer(text):
+                if DIRTY_SUBJECT.search(text, 0, m.start()):
+                    add(
+                        f"dirty: {where} draws the dirty marker away from the row name ('{m.group(0)}')"
+                    )
+                    break
         # no lock, inert or can't-be-pressed wording on a T1 control
-        subj, lword = doc_locked_t1(text)
+        subj, lword = unit_locked_t1(text)
+        if not subj:
+            subj, lword = doc_locked_t1(text)
         if subj:
             add(f"lock: {where} locks {subj} ('{lword}')")
         # C-2.11: no account or environment control
@@ -3088,6 +3327,10 @@ CONSTS: dict[str, Any] = {
     "e10_glyph_125": 20,  # E10-D03 :275
     "e10_row_200": 48,  # E10-D03 :275: the rail at 200 % zoom
     "e10_glyph_200": 32,  # E10-D03 :275
+    "rail_motion_ms": 120,  # `14` :329: the rail's expand / collapse animates in <=120 ms
+    "search_settle_ms": 500,  # `15` CMP-048 :519: the results count, 500 ms after the last keystroke
+    "ws_name_min": 1,  # `22` WorkspaceInput.name minLength (:19636)
+    "ws_name_max": 40,  # `22` WorkspaceInput.name maxLength (:19637)
 }
 
 
@@ -3254,6 +3497,21 @@ _HANDOFF_LEDGER: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("handoff bar token", "`color.border.selected` (the {} px bar)", ("stroke_bar",)),
     ("handoff hit targets", "Hit targets ≥ {} px compact", ("tok_control_compact",)),
     ("handoff focus ring", "a visible {} px focus ring", ("stroke_ring",)),
+    # re-check M-3: the remaining typed numbers of the prose, each bound to its --json name
+    (
+        "handoff key picker target",
+        "the smallest target the {} × {} key picker in compact",
+        ("tok_control_compact", "tok_control_compact"),
+    ),
+    ("handoff hotkey slots", "`LayoutInput.hotkey_slot` 1..{} unique", ("hotkey_slots",)),
+    ("handoff workspace page", "`listWorkspaces` once (≤ {}, one page)", ("workspace_cap",)),
+    ("handoff workspace list", "`listWorkspaces` (≤ {}, by `sort_order`", ("workspace_cap",)),
+    ("handoff rail motion", "transform-only within {} ms (`14` :329)", ("rail_motion_ms",)),
+    (
+        "handoff name bounds",
+        "`WorkspaceInput.name` {}–{} unique per user",
+        ("ws_name_min", "ws_name_max"),
+    ),
 )
 _HANDOFF_TABLE_LEDGER: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
@@ -3286,12 +3544,39 @@ _HANDOFF_TABLE_LEDGER: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ),
     ("handoff table 1 limit", "view-as, {} layouts)", ("layout_cap",)),
     ("handoff table 2 search", "CMP-048; above {} workspaces", ("search_threshold",)),
+    ("handoff table 1 search", "ManyWorkspaces (search above {})", ("search_threshold",)),
+    # re-check M-3: the Density table's token values and target sizes, Tables 3 to 5 (any padding)
+    (
+        "handoff density CMP-217 compact pads",
+        "`space.dialog.padding` {}; `space.inset.md` {} | {} × {} (the key picker, Delete…)",
+        ("tok_dialog_pad", "tok_inset_md", "tok_control_compact", "tok_control_compact"),
+    ),
+    (
+        "handoff density CMP-217 comfortable pads",
+        "| `space.dialog.padding` {} | {} × {} |",
+        ("tok_dialog_pad", "tok_control_comfortable", "tok_control_comfortable"),
+    ),
+    (
+        "handoff density CMP-073 compact pads",
+        "| `space.inset.sm` {}; `space.inset.md` {} | {} × {} (a row)",
+        ("tok_inset_sm", "tok_inset_md", "tok_row_compact", "tok_row_compact"),
+    ),
+    (
+        "handoff density CMP-073 comfortable",
+        "| comfortable | rows {} | `space.inset.sm` {} | {} × {} |",
+        ("tok_row_comfortable", "tok_inset_sm", "tok_row_comfortable", "tok_row_comfortable"),
+    ),
+    ("handoff table 3 name", "| {}–{}; the validity look", ("ws_name_min", "ws_name_max")),
+    ("handoff table 4 rail", "transform-only within {} ms (`14` :329)", ("rail_motion_ms",)),
+    ("handoff table 5 list", "| ≤ {}, one page |", ("workspace_cap",)),
+    ("handoff table 5 search", "once per settled query ({} ms)", ("search_settle_ms",)),
 )
 
 
 def _tpl(template: str) -> str:
-    """A literal stretch of the spec with {} where a number stands, as a context pattern."""
-    return _N.join(re.escape(part) for part in template.split("{}"))
+    """A literal stretch of the spec with {} where a number stands, as a context pattern; a run of spaces
+    matches any run (a padded table cell, a re-aligned table)."""
+    return _N.join(re.sub(r"(?:\\ )+", r"\\s+", re.escape(part)) for part in template.split("{}"))
 
 
 # M-3: every other number the prose types, bound to its --json name (a marker, a token size or a carried
@@ -3599,6 +3884,14 @@ COVER = re.compile(
 )
 
 
+class _UniqueList(list[str]):
+    """A FAIL list that keeps one copy of each message (a spaced N × N edit is one wrong size)."""
+
+    def append(self, msg: str) -> None:
+        if msg not in self:
+            super().append(msg)
+
+
 def same_number(text: str, value: Any) -> bool:
     s = text.replace(",", "").replace(" ", "")
     try:
@@ -3666,8 +3959,43 @@ def allowed_ratios(m: dict[str, Any]) -> set[str]:
     return out
 
 
+# re-check M-3: a typed number of the hand-off is any digit run (a range N–M / N..M and a spaced
+# N × M count as one); left out, each for a stated reason: code and copy (backticks, double quotes)
+# and headings; a cite or an id (`16` §12, :329, E15-D02, CMP-217, Ctrl+1, §5.4); an index (Table 2,
+# row 17, the Layout 1 fixture); a key slot ("Hotkey: 1", the key gates own it); the contract's status
+# codes; the two-decimal ratios and the unspaced W×H (the ratio and size gates own them)
+HANDOFF_NUM = re.compile(
+    r"(?<![\w.:§#+\-–/…×])\d+(?:,\d{3})*(?:\.\d+)?(?:(?:–|\.\.)\d+| × \d+| ?%)?(?![\w+…×\-]|\.\d|:\d)"
+)
+HANDOFF_NUM_INDEX = re.compile(  # an index, a fixture name or a key slot (the key gates own a slot)
+    r"(?:\bTables?|\brow|\bLayout|\bstep|\b(?:hot-?)?keys?:?|\bslot)\s+$", re.IGNORECASE
+)
+HTTP_STATUS = ("409", "412")  # `22`'s refusals, named by code (never a measure)
+SCALES_PCT = (*TEXT_SCALES, 200)  # the text scales and the 200 % zoom the tool measures
+
+
+def handoff_numbers(text: str) -> list[tuple[str, int]]:
+    """(token, offset) for every typed number of a hand-off text the coverage gate reads."""
+    blank = re.sub(r"`[^`\n]*`", lambda m: " " * len(m.group(0)), strip_quotes(text))
+    blank = ARRANGEMENT_NAME.sub(lambda m: " " * len(m.group(0)), blank)  # "2 by 2" is a name
+    out: list[tuple[str, int]] = []
+    for hit in HANDOFF_NUM.finditer(blank):
+        tok_, at = hit.group(0), hit.start()
+        line_start = blank.rfind("\n", 0, at) + 1
+        if blank.startswith("#", line_start) or HANDOFF_NUM_INDEX.search(blank[line_start:at]):
+            continue
+        if tok_ in HTTP_STATUS or re.fullmatch(r"\d+\.\d\d", tok_):
+            continue
+        if re.match(r"\s*§", blank[hit.end() :]) or re.match(r"×\d", blank[hit.end() :]):
+            continue  # a document cite (16 §12) or an unspaced size (the size gate)
+        if blank[hit.end() :].startswith(" named frames"):
+            continue  # the frame-count gate in string_gates owns it
+        out.append((tok_, at))
+    return out
+
+
 def number_gates(spec: str, handoff: str) -> list[str]:
-    fails: list[str] = []
+    fails = _UniqueList()
     mk = build_markers(spec, handoff)
     seen: dict[str, int] = {}
     for hit in MARKER.finditer(spec):
@@ -3719,19 +4047,16 @@ def number_gates(spec: str, handoff: str) -> list[str]:
             continue
         if not any(a <= hit.start() < b for a, b in spans):
             fails.append(f"number: the spec types '{hit.group(0)}' outside a registered context")
-    # the hand-off too: every counted number it types sits inside a registered context (delta M-3)
+    # the hand-off too: EVERY number it types, with or without a unit word, with or without spaces around ×,
+    # sits inside a registered context (delta M-3, re-check M-3); handoff_numbers names the few exceptions
     for where, text in (("hand-off", hand_prose), ("hand-off table", hand_tables)):
-        blanked_h = strip_quotes(text)
-        for hit in COVER.finditer(blanked_h):
-            line_start = blanked_h.rfind("\n", 0, hit.start()) + 1
-            if blanked_h.startswith("#", line_start):
+        for tok_, at in handoff_numbers(text):
+            if tok_.endswith("%"):
+                if int(tok_[:-1].strip()) not in SCALES_PCT:
+                    fails.append(f"number: the {where}'s {tok_} is not a scale the tool measures")
                 continue
-            if hit.group(0).endswith("named frames"):
-                continue  # the frame-count gate in string_gates owns it
-            if not any(a <= hit.start() < b for a, b in hand_spans[where]):
-                fails.append(
-                    f"number: the {where} types '{hit.group(0)}' outside a registered context"
-                )
+            if not any(a <= at < b for a, b in hand_spans[where]):
+                fails.append(f"number: the {where} types '{tok_}' outside a registered context")
     # the section 13 matrix rows equal the tool's, row by row
     want = {r[0]: r for r in rows_of(matrix_table(_matrix()))}
     have = {
@@ -3785,6 +4110,7 @@ def gates(
     mk = build_markers(spec, handoff)
     fails += frame_gates(spec, bindings, ledger(mk))
     fails += load_error_gates(spec, handoff)
+    fails += d08_switch_row_gates(spec)
     fails += document_gates(spec, handoff, bindings)
     fails += number_gates(spec, handoff)
     fails += fit_gates(_gallery())
@@ -4285,6 +4611,107 @@ DELTA_MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
 )
 # fmt: on
 
+# Re-check fold (the orchestrator's re-check of the delta): the record's probes verbatim (E01–E15) and this
+# fold's own variants (E16–E32: other arrangement names, punctuation splits, the hand-off's other tables,
+# prose and table, a pronoun carry across sentences), each FAIL alone; the valid twins must stay clean.
+# fmt: off
+RECHECK_MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
+    ("E01", "trigger: §3.1 row 'D-7' puts the key on the trigger ('out's name and `*` when dirty, the badge on the trigger show'; merged E15-D03 D-9)",
+     (('line:| D-7 ', 'never a key chip inline (merged E15-D03 D-9: CMP-022', 'the badge on the trigger shows the key (merged E15-D03 D-9: CMP-022'),)),
+    ("E02", "lock: §5.3 prose locks Apply ('inert')",
+     (('line:Row 1: ', 'with [Apply] (CMP-001 `primary`)', 'with [Apply] (CMP-001 `primary`; inert until a card is chosen)'),)),
+    ("E03", "lock: §5.3 prose locks Apply ('greyed out')",
+     (('line:Row 1: ', 'with [Apply] (CMP-001 `primary`)', 'with [Apply] (CMP-001 `primary` — greyed out)'),)),
+    ("E04", "lock: §9 prose locks Discard ('greyed out')",
+     (('line:**Dirty** (`SCR-022/apply-dirty`', 'Cancel returns to the gallery with nothing applied.', 'Cancel returns to the gallery with nothing applied. For a viewer, Discard is greyed out.'),)),
+    ("E05", "switch: hand-off Table 2 row 'CMP-217 `Ctrl+1..9' prompts in the row or sentence of a switch ('sheet')",
+     (('hand:| CMP-217   | `Ctrl+1..9` ', 'defect H-1 (ranges never dispatch)', 'defect H-1 (ranges never dispatch); a confirmation sheet appears'),)),
+    ("E06", "switch: hand-off Table 2 row 'CMP-073 arrows, `Enter`, typ' prompts in the row or sentence of a switch ('confirmation')",
+     (('hand:| CMP-073   | arrows, `Enter`, type-ahead', '`role="tree"` (D-8)', '`role="tree"` (D-8); a confirmation sheet appears'),)),
+    ("E07", "dirty: hand-off Table 1 row 'CMP-073 rail tree' draws the dirty marker away from the row name ('in a notice')",
+     (('hand:| CMP-073   | rail tree ', 'the rail host is the tree', 'the dirty marker in a notice outside the row name; the rail host is the tree'),)),
+    ("E08", "dirty: hand-off Table 1 row 'CMP-073 rail tree' draws the dirty marker away from the row name ('in a note')",
+     (('hand:| CMP-073   | rail tree ', 'the rail host is the tree', 'the dirty asterisk in a note under the row only; the rail host is the tree'),)),
+    ("E09", "spine: §4 prose keys an arrangement as a card ('The Two by two arrangement wears a `Ctrl+1` chip.')",
+     (('line:**Three nouns, one each', '"Two by two, four panels". A **saved', '"Two by two, four panels". The Two by two arrangement wears a `Ctrl+1` chip. A **saved'),)),
+    ("E10", 'number: handoff density CMP-217 compact pads: the hand-off table says 16, the tool 12',
+     (('hand:| CMP-217   | compact ', '`space.inset.md` 12', '`space.inset.md` 16'),)),
+    ("E11", 'number: handoff density CMP-217 compact pads: the hand-off table says 28, the tool 24',
+     (('hand:| CMP-217   | compact ', '`space.dialog.padding` 24;', '`space.dialog.padding` 28;'),)),
+    ("E12", 'number: handoff density CMP-217 comfortable pads: the hand-off table says 30, the tool 32',
+     (('hand:| CMP-217   | comfortable ', '| 32 × 32 ', '| 30 × 30 '),)),
+    ("E13", 'number: handoff density CMP-217 compact pads: the hand-off table says 20, the tool 24',
+     (('hand:| CMP-217   | compact ', '24 × 24 (the key picker', '20 × 20 (the key picker'),)),
+    ("E14", 'number: handoff key picker target: the hand-off says 22, the tool 24',
+     (('hand:- [x] **Density notes** — the menu', 'the 24 × 24 key picker', 'the 22 × 22 key picker'),)),
+    ("E15", 'number: handoff table 5 search: the hand-off table says 400, the tool 500',
+     (('hand:| CMP-073   | the search results count', '(500 ms)', '(400 ms)'),)),
+    ("E16", "spine: §8 prose keys an arrangement as a card (' :410): One plus three carries the `Ctrl+4` key; the name is')",
+     (('line:**Rename** is inline', '(CARRIED :410): ', '(CARRIED :410): One plus three carries the `Ctrl+4` key; '),)),
+    ("E17", "spine: hand-off Table 5 row 'CMP-217 the layout-changed a' keys an arrangement as a card ('r switch | n/a | AN-1 / AN-2; 2 by 2 — `Ctrl+2`')",
+     (('hand:| CMP-217   | the layout-changed announcement ', '| AN-1 / AN-2 ', '| AN-1 / AN-2; 2 by 2 — `Ctrl+2` '),)),
+    ("E18", "spine: hand-off §B line keys an arrangement as a card ('politely once; Order-flow (shortcut `Ctrl+2`)')",
+     (('hand:    And applying announces', 'politely once', 'politely once; Order-flow (shortcut `Ctrl+2`)'),)),
+    ("E19", "spine: hand-off Table 4 row 'CMP-217 the Undo toast' keys an arrangement as a card ('pair; Fan-out review returns with `Ctrl+6` | instant | CMP-0')",
+     (('hand:| CMP-217   | the Undo toast ', "| CMP-045's pair ", "| CMP-045's pair; Fan-out review returns with `Ctrl+6` "),)),
+    ("E20", "trigger: hand-off Table 3 row 'CMP-217 the trigger' puts the key on the trigger ('spopup=      `, `aria-expanded` — its badge carries the slot'; merged E15-D03 D-9)",
+     (('hand:| CMP-217   | the trigger ', '`aria-haspopup="menu"`, `aria-expanded`', '`aria-haspopup="menu"`, `aria-expanded` — its badge carries the slot'),)),
+    ("E21", "trigger: hand-off Table 2 row 'CMP-217 `Enter` / `Space` / ' puts the key on the trigger ('yout; `[Layout ▾]` (once dirty) — a `Ctrl+3` chip | none | —'; merged E15-D03 D-9)",
+     (('hand:| CMP-217   | `Enter` / `Space` / `↓` on the trigger', '| the active layout ', '| the active layout; `[Layout ▾]` (once dirty) — a `Ctrl+3` chip '),)),
+    ("E22", "lock: hand-off §B line locks Discard ('inert')",
+     (('hand:    Then an alertdialog "You have unsaved', 'and Esc cancels', 'and Esc cancels; for a viewer Discard — inert'),)),
+    ("E23", "lock: §10.2 prose locks Open ('unavailable')",
+     (('line:**Create** = ', 'Open, Rename…, Duplicate', 'Open (CMP-041; unavailable for a viewer), Rename…, Duplicate'),)),
+    ("E24", "switch: hand-off CMP-073 block prose prompts in the row or sentence of a switch ('popover')",
+     (('hand:- [x] **Keyboard table** — the rail is one Tab stop', '`Enter` opens, type-ahead', '`Enter` opens — then a popover, type-ahead'),)),
+    ("E25", "dirty: hand-off Table 5 row 'CMP-073 the dirty marker' draws the dirty marker away from the row name ('under the row')",
+     (('hand:| CMP-073   | the dirty marker ', 'client state (G-3) ', 'client state (G-3); shown under the row '),)),
+    ("E26", 'number: handoff table 4 rail: the hand-off table says 150, the tool 120',
+     (('hand:| CMP-073   | rail expand / collapse ', 'within 120 ms', 'within 150 ms'),)),
+    ("E27", "number: the hand-off table types '30 × 30' outside a registered context",
+     (('hand:| CMP-217   | a thumbnail ', '| static SVG ', '| static SVG, 30 × 30 '),)),
+    ("E28", "number: the hand-off's 175 % is not a scale the tool measures",
+     (('hand:- [x] Hit targets', 'none logged', 'none logged; at 175 % too'),)),
+    ("E29", "number: the hand-off types '7' outside a registered context",
+     (('hand:- [x] Hit targets', 'none logged', '7 logged'),)),
+    ("E30", "lock: §9 prose locks Cancel ('greyed')",
+     (('line:**Dirty** (`SCR-022/apply-dirty`', 'Cancel returns to the gallery with nothing applied.', 'Cancel (`secondary`; greyed for a viewer) returns to the gallery with nothing applied.'),)),
+    ("E31", "switch: §9 prose prompts on a switch ('waits')",
+     (('line:**Dirty** (`SCR-022/apply-dirty`', 'never opens this dialog (§10.3).', 'never opens this dialog (§10.3). Switching a layout from the menu keeps the copy. It then waits on a sheet.'),)),
+    ("E32", "switch: hand-off Table 2 row 'CMP-217 `Ctrl+1..9' prompts in the row or sentence of a switch ('modal')",
+     (('hand:| CMP-217   | `Ctrl+1..9` ', '| unchanged ', '| unchanged — a modal first '),)),
+    ("E33", "siblings: the spec still hands the switch row to E15-D08 (§19)",
+     (("line:Selecting another workspace", "and merged E15-D08 draws the row in its entry-point matrix (§3.2 E3 :419 at", "and the row is handed to E15-D08's entry-point matrix (§19; merged E15-D08 draws the row in its entry-point matrix (§3.2 E3 :419 at"),)),
+    ("E34", "siblings: §10.3 does not cite merged E15-D08 §3.2 E3 :419 for the switch row",
+     (("line:Selecting another workspace", "(§3.2 E3 :419 at", "(§3.2 E4 :420 at"),)),
+    # delta r4: a named or articled workspace opened, selected or picked is a switch with no generic switch word
+    ("E35", "switch: §10.2 prose prompts in the row or sentence of a switch ('asks')",
+     (("line:**Create** = ", "(E30-D02 D3; no lock).", "(E30-D02 D3; no lock). Before it opens, Swing 4H asks you to save first."),)),
+    ("E36", "switch: hand-off Table 5 row 'CMP-073 the dirty marker' prompts in the row or sentence of a switch ('asks')",
+     (("hand:| CMP-073   | the dirty marker ", "client state (G-3) ", "client state (G-3); before it opens, Swing 4H asks you to save first "),)),
+    ("E37", "switch: §11.1 row 'Next or previous workspace' prompts in the row or sentence of a switch ('asks')",
+     (("line:| Next or previous workspace ", "serve meanwhile ", "serve meanwhile; the workspace asks before opening "),)),
+    ("E38", "switch: hand-off CMP-073 block prose prompts in the row or sentence of a switch ('confirm')",
+     (("hand:- [x] **Live data** — none streams: `listWorkspaces`", "— none streams", "— selecting Fanout review shows a confirm; none streams"),)),
+)
+VALID_TWINS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
+    ('V1', 'no key chip on any preset card',
+     (('line:**Three nouns, one each', '"Two by two, four panels". A **saved', '"Two by two, four panels". There is no key chip on any preset card. A **saved'),)),
+    ('V2', 'never prompts T2',
+     (('hand:| CMP-217   | `Ctrl+1..9` ', 'defect H-1 (ranges never dispatch)', 'defect H-1 (ranges never dispatch); never prompts'),)),
+    ('V3', 'saved layout Ctrl+1..9',
+     (('hand:| CMP-217   | a saved layout item ', '`aria-checked` on the active one', '`aria-checked` on the active one; the saved layout keeps its `Ctrl+1..9` chip'),)),
+    ('V4', 'Two by two no hotkey',
+     (('line:**Rename** is inline', '(CARRIED :410): ', '(CARRIED :410): Two by two never carries a hotkey; '),)),
+    ('V5', 'Discard never greyed',
+     (('line:**Dirty** (`SCR-022/apply-dirty`', 'Cancel returns to the gallery with nothing applied.', 'Cancel returns to the gallery with nothing applied. Discard is never greyed out.'),)),
+    ('V6', 'opening Swing 4H never prompts',
+     (('line:**Create** = ', '(E30-D02 D3; no lock).', '(E30-D02 D3; no lock). Opening Swing 4H never prompts, and selecting another workspace shows no dialog.'),)),
+    ('V7', 'the New workspace dialog is a create',
+     (('line:**Create** = ', '(E30-D02 D3; no lock).', '(E30-D02 D3; no lock). Creating a workspace opens the New workspace dialog; it never opens a workspace before Create workspace.'),)),
+)
+# fmt: on
+
 
 def apply_mutation(
     spec: str, handoff: str, edits: tuple[Edit, ...], catalogue: str = ""
@@ -4316,7 +4743,7 @@ def apply_mutation(
     return "\n".join(docs["spec"]), "\n".join(docs["hand"]), "\n".join(docs["cat"])
 
 
-SELF_TEST_RUNS: dict[str, int] = {"inline": 0, "table": 0, "one_fail": 0}
+SELF_TEST_RUNS: dict[str, int] = {"inline": 0, "table": 0, "one_fail": 0, "valid": 0}
 
 
 def self_test(spec: str, handoff: str, tool: str, bindings: set[str], catalogue: str) -> list[str]:
@@ -4429,7 +4856,9 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str], catalogue:
         ),
         "pairs: the §6.2 pair table",
     )
-    expects = [e for _m, e, _ed in MUTATIONS + RECORD_MUTATIONS + DELTA_MUTATIONS]
+    expects = [
+        e for _m, e, _ed in MUTATIONS + RECORD_MUTATIONS + DELTA_MUTATIONS + RECHECK_MUTATIONS
+    ]
     if len(set(expects)) != len(expects):
         problems.append("self-test: two mutations share a FAIL message")
     # the fit gate is computed, not read from the spec: probe it with a card one pixel taller than its viewport
@@ -4442,7 +4871,7 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str], catalogue:
         problems.append(
             "self-test: a card taller than its scroll viewport did not trip the fit gate once"
         )
-    for mid, want, edits in MUTATIONS + RECORD_MUTATIONS + DELTA_MUTATIONS:
+    for mid, want, edits in MUTATIONS + RECORD_MUTATIONS + DELTA_MUTATIONS + RECHECK_MUTATIONS:
         try:
             s2, h2, c2 = apply_mutation(spec, handoff, edits, catalogue)
         except ValueError as exc:
@@ -4462,6 +4891,12 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str], catalogue:
                 f"self-test: {mid} gave {len(got)} FAILs (only its own expected): "
                 + " / ".join(got)
             )
+    for vid, why, edits in VALID_TWINS:  # negated and saved-layout forms stay valid (re-check M-1)
+        s2, h2, c2 = apply_mutation(spec, handoff, edits, catalogue)
+        got = gates(s2, h2, tool, bindings, catalogue=c2)
+        SELF_TEST_RUNS["valid"] += not got
+        if got:
+            problems.append(f"self-test: valid twin {vid} ({why}) raised: " + " / ".join(got))
     if (SPEC.exists() and read(SPEC) != spec) or (HANDOFF.exists() and read(HANDOFF) != handoff):
         problems.append("self-test: the spec or the hand-off on disk changed during the run")
     return problems
@@ -4594,7 +5029,7 @@ def main(argv: list[str] | None = None) -> int:
             p(
                 "SELF-TEST: "
                 + (
-                    f"{r_['inline'] + r_['table']} mutations ({r_['inline']} inline + {r_['table']} table), {r_['one_fail']} with their own FAIL as the only one"
+                    f"{r_['inline'] + r_['table']} mutations ({r_['inline']} inline + {r_['table']} table), {r_['one_fail']} with their own FAIL as the only one; {r_['valid']} valid twins clean"
                     if not st
                     else "; ".join(st)
                 )
